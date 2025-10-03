@@ -1,0 +1,5 @@
+name: demo
+base_output_dir: ./outputs
+environment: {}
+state_dir: null
+resume: true

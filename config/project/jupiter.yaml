@@ -1,0 +1,6 @@
+name: jupiter
+base_output_dir: ./outputs/jupiter
+environment:
+  MACHINE_NAME: JUPITER
+state_dir: null
+resume: true

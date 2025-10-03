@@ -1,0 +1,26 @@
+name: juwels
+base_output_dir: ./outputs/juwels
+environment:
+  MACHINE_NAME: JUWELS
+  NCCL_SOCKET_IFNAME: ib0
+  GLOO_SOCKET_IFNAME: ib0
+  NCCL_SOCKET_FAMILY: AF_INET
+  GLOO_SOCKET_FAMILY: AF_INET
+  TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+  NCCL_IB_TIMEOUT: "18"
+  NCCL_IB_DISABLE: "0"
+  NCCL_IB_RETRY_CNT: "20"
+  NCCL_IB_HCA: mlx5_0,mlx5_1,mlx5_2,mlx5_3
+  NCCL_NET_GDR_LEVEL: "2"
+  NCCL_NET_GDR_READ: "1"
+  HF_ALLOW_CODE_EVAL: "1"
+  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1)i | grep \"Address: \" | tail -n1 | awk \"{print $2}\")"
+  MASTER_PORT: "20074"
+  NUM_NODES: "$SLURM_JOB_NUM_NODES"
+  GPUS_PER_NODE: "4"
+  NUM_GPUS_PER_NODE: "4"
+  NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
+  ARCH: "$(uname -m)"
+  SLURM_CPUS_PER_TASK: "12"
+state_dir: null
+resume: true

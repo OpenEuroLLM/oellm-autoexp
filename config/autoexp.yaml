@@ -1,0 +1,12 @@
+defaults:
+  - project@project: default
+  - backend@backend: megatron
+  - slurm@slurm: base
+  - monitoring@monitoring: default
+  - sweep@sweep: minimal
+  - restart@restart: default
+  - scheduler@scheduler: default
+  - _self_
+
+restart_policies: ${restart.policies}
+metadata: {}

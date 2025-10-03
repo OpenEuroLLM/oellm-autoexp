@@ -1,0 +1,21 @@
+project:
+  name: demo
+  base_output_dir: ./outputs
+sweep:
+  axes: {}
+slurm:
+  template_path: ./templates/train.sbatch
+  script_dir: ./scripts
+  log_dir: ./logs
+  launcher_cmd: ""
+  srun_opts: ""
+monitoring:
+  implementation:
+    class_name: NullMonitor
+backend:
+  implementation:
+    class_name: NullBackend
+restart_policies:
+  - mode: success
+    implementation:
+      class_name: NoRestartPolicy

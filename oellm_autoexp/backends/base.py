@@ -1,0 +1,63 @@
+"""Backend abstractions used by oellm_autoexp."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, Mapping, Sequence
+
+from compoconf import ConfigInterface, register
+
+from oellm_autoexp.config.schema import BackendInterface
+
+
+@dataclass
+class LaunchCommand:
+    """Concrete command to be executed on the cluster."""
+
+    argv: Sequence[str]
+    environment: Mapping[str, str] = field(default_factory=dict)
+    cwd: str | None = None
+
+
+@dataclass
+class BackendJobSpec:
+    """Information needed to construct a launch command."""
+
+    parameters: Dict[str, Any]
+
+
+class BaseBackend(BackendInterface):
+    """Base class for backend adapters."""
+
+    config: ConfigInterface
+
+    def __init__(self, config: ConfigInterface) -> None:
+        self.config = config
+
+    def validate(self, spec: BackendJobSpec) -> None:  # pragma: no cover - interface
+        raise NotImplementedError
+
+    def build_launch_command(self, spec: BackendJobSpec) -> LaunchCommand:  # pragma: no cover
+        raise NotImplementedError
+
+
+@dataclass
+class NullBackendConfig(ConfigInterface):
+    """Backend that simply echoes parameters."""
+
+    class_name: str = "NullBackend"
+
+
+@register
+class NullBackend(BaseBackend):
+    config: NullBackendConfig
+
+    def validate(self, spec: BackendJobSpec) -> None:
+        return
+
+    def build_launch_command(self, spec: BackendJobSpec) -> LaunchCommand:
+        argv = ["echo", str(spec.parameters)]
+        return LaunchCommand(argv=argv)
+
+
+__all__ = ["BaseBackend", "BackendJobSpec", "LaunchCommand", "NullBackendConfig"]

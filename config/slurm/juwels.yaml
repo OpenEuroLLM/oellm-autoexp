@@ -1,0 +1,17 @@
+defaults:
+  - base
+  - _self_
+
+template_path: templates/juwels.sbatch
+launcher_cmd: ""
+srun_opts: ""
+sbatch_overrides:
+  nodes: 1
+  ntasks_per_node: 4
+  cpus_per_task: 12
+  gres: "gpu:4"
+  partition: dc-gpu
+  account: project-default
+  time: "12:00:00"
+sbatch_extra_directives:
+  - "#SBATCH --constraint=volta"
