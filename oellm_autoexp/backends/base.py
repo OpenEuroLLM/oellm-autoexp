@@ -43,21 +43,28 @@ class BaseBackend(BackendInterface):
 
 @dataclass
 class NullBackendConfig(ConfigInterface):
-    """Backend that simply echoes parameters."""
+    """Backend that echoes sweep parameters for testing."""
 
     class_name: str = "NullBackend"
+    base_command: Sequence[str] = field(default_factory=lambda: ("echo",))
+    extra_cli_args: Sequence[str] = field(default_factory=tuple)
+    environment: Dict[str, str] = field(default_factory=dict)
 
 
 @register
 class NullBackend(BaseBackend):
     config: NullBackendConfig
 
-    def validate(self, spec: BackendJobSpec) -> None:
-        return
+    def validate(self, spec: BackendJobSpec) -> None:  # pragma: no cover - trivial
+        _ = spec  # deliberate no-op to mirror interface
 
     def build_launch_command(self, spec: BackendJobSpec) -> LaunchCommand:
-        argv = ["echo", str(spec.parameters)]
-        return LaunchCommand(argv=argv)
+        argv: list[str] = [str(arg) for arg in self.config.base_command]
+        for key, value in sorted(spec.parameters.items()):
+            argv.extend([str(key), str(value)])
+        argv.extend(str(arg) for arg in self.config.extra_cli_args)
+        environment = dict(self.config.environment)
+        return LaunchCommand(argv=argv, environment=environment)
 
 
 __all__ = ["BaseBackend", "BackendJobSpec", "LaunchCommand", "NullBackendConfig"]

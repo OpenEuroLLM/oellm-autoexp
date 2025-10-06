@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from oellm_autoexp.monitor.controller import MonitorController
+from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
 from oellm_autoexp.orchestrator import build_execution_plan, render_scripts
-from oellm_autoexp.slurm.fake_sbatch import FakeSlurm
+from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
 from oellm_autoexp.config.loader import load_config_reference
 
 CONFIG = """
@@ -18,12 +18,12 @@ slurm:
   log_dir: {log_dir}
   launcher_cmd: ""
   srun_opts: ""
+  client:
+    class_name: FakeSlurmClient
 monitoring:
-  implementation:
-    class_name: NullMonitor
+  class_name: NullMonitor
 backend:
-  implementation:
-    class_name: NullBackend
+  class_name: NullBackend
 restart_policies:
   - mode: stall
     implementation:
@@ -35,7 +35,8 @@ restart_policies:
 """
 
 
-def test_fake_slurm_monitoring_cycle(tmp_path: Path) -> None:
+def test_fake_slurm_monitoring_cycle(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SLURM_ACCOUNT", "debug")
     base_output = tmp_path / "outputs"
     template_path = tmp_path / "template.sbatch"
     script_dir = tmp_path / "scripts"
@@ -52,23 +53,28 @@ def test_fake_slurm_monitoring_cycle(tmp_path: Path) -> None:
     config_path.write_text(config_text)
 
     plan = build_execution_plan(config_path)
-    scripts = render_scripts(plan)
+    artifacts = render_scripts(plan)
 
-    slurm = FakeSlurm()
+    slurm = FakeSlurmClient(FakeSlurmClientConfig())
     controller = MonitorController(plan.runtime.monitor, slurm, plan.runtime.restart_policies)
 
     job = plan.jobs[0]
-    job_id = slurm.submit(job.name, scripts[0], job.log_path)
-    controller.register_job(job_id, job.name)
+    job_id = slurm.submit(job.name, artifacts.job_scripts[0], job.log_path)
+    controller.register_job(
+        job_id,
+        JobRegistration(name=job.name, script_path=artifacts.job_scripts[0], log_path=job.log_path),
+    )
 
     decision = controller.handle_state_change(job_id, "stall")
     assert decision.action == "restart"
 
-    decision = controller.handle_state_change(job_id, "success")
+    new_job_id = next(iter(controller.jobs())).job_id
+    decision = controller.handle_state_change(new_job_id, "success")
     assert decision.action == "stop"
 
-def test_hydra_plan(tmp_path: Path) -> None:
+def test_hydra_plan(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SLURM_ACCOUNT", "debug")
     cfg = load_config_reference("autoexp", Path("config"), overrides=["project=juwels", "slurm=juwels"])
     plan = build_execution_plan(cfg)
-    scripts = render_scripts(plan)
-    assert scripts
+    artifacts = render_scripts(plan)
+    assert artifacts.job_scripts

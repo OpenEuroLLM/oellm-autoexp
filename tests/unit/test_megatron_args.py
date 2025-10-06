@@ -1,6 +1,10 @@
 import argparse
 
-from oellm_autoexp.backends.megatron_args import build_cmdline_args, get_arg_metadata
+from oellm_autoexp.backends.megatron_args import (
+    build_cmdline_args,
+    extract_default_args,
+    get_arg_metadata,
+)
 
 
 def test_build_cmdline_args_coercion():
@@ -27,3 +31,23 @@ def test_build_cmdline_args_skips_defaults():
     metadata = get_arg_metadata(parser)
     cli = build_cmdline_args({"count": 1}, parser, metadata)
     assert cli == []
+
+
+def test_extract_default_args_handles_overrides_and_metadata():
+    parser = argparse.ArgumentParser(allow_abbrev=False)
+    parser.add_argument("--count", type=int, default=1, dest="count", help="Number of items")
+    parser.add_argument(
+        "--mode",
+        choices=["fast", "slow"],
+        default="slow",
+        dest="mode",
+        help="Execution mode",
+    )
+    parser.add_argument("--skip", action="store_true", dest="skip")
+
+    metadata = get_arg_metadata(parser)
+    defaults = extract_default_args(parser, exclude=["skip"], overrides={"count": 42})
+
+    assert defaults == {"count": 42, "mode": "slow"}
+    assert metadata["mode"].choices == ("fast", "slow")
+    assert metadata["count"].help == "Number of items"

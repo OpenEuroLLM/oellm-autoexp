@@ -1,0 +1,77 @@
+{
+  "project": "juwels",
+  "jobs": [
+    {
+      "name": "juwels_lr0.0001_0",
+      "output_dir": "output/juwels_lr0.0001_0",
+      "log_path": "output/juwels_lr0.0001_0/slurm.out",
+      "parameters": {
+        "max_steps": "1000",
+        "lr": "0.0001",
+        "model.scale": "small"
+      },
+      "launch": {
+        "argv": [
+          "scripts/run_megatron.sh",
+          "--lr",
+          "0.0001"
+        ],
+        "environment": {}
+      }
+    },
+    {
+      "name": "juwels_lr0.0001_1",
+      "output_dir": "output/juwels_lr0.0001_1",
+      "log_path": "output/juwels_lr0.0001_1/slurm.out",
+      "parameters": {
+        "max_steps": "1000",
+        "lr": "0.0001",
+        "model.scale": "large"
+      },
+      "launch": {
+        "argv": [
+          "scripts/run_megatron.sh",
+          "--lr",
+          "0.0001"
+        ],
+        "environment": {}
+      }
+    },
+    {
+      "name": "juwels_lr5e-05_2",
+      "output_dir": "output/juwels_lr5e-05_2",
+      "log_path": "output/juwels_lr5e-05_2/slurm.out",
+      "parameters": {
+        "max_steps": "1000",
+        "lr": "5e-05",
+        "model.scale": "small"
+      },
+      "launch": {
+        "argv": [
+          "scripts/run_megatron.sh",
+          "--lr",
+          "5e-05"
+        ],
+        "environment": {}
+      }
+    },
+    {
+      "name": "juwels_lr5e-05_3",
+      "output_dir": "output/juwels_lr5e-05_3",
+      "log_path": "output/juwels_lr5e-05_3/slurm.out",
+      "parameters": {
+        "max_steps": "1000",
+        "lr": "5e-05",
+        "model.scale": "large"
+      },
+      "launch": {
+        "argv": [
+          "scripts/run_megatron.sh",
+          "--lr",
+          "5e-05"
+        ],
+        "environment": {}
+      }
+    }
+  ]
+}

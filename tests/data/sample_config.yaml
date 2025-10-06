@@ -9,12 +9,18 @@ slurm:
   log_dir: ./logs
   launcher_cmd: ""
   srun_opts: ""
+  client:
+    class_name: FakeSlurmClient
 monitoring:
-  implementation:
-    class_name: NullMonitor
+  class_name: NullMonitor
+  poll_interval_seconds: 600
+  inactivity_threshold_seconds: 900
+  termination_string: null
+  termination_command: null
+  log_path_template: "{output_dir}/slurm.out"
 backend:
-  implementation:
-    class_name: NullBackend
+  class_name: NullBackend
+  extra_cli_args: []
 restart_policies:
   - mode: success
     implementation:

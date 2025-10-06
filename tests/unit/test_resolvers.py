@@ -9,13 +9,17 @@ def test_default_resolvers_evaluate_expressions():
     cfg = OmegaConf.create(
         {
             "product": "${oc.mul:2,3,4}",
-            "ceil": "${oc.ceil_div:5,2}",
+            "ceil": "${oc.cdivi:5,2}",
+            "difference": "${oc.sub:10,4}",
+            "ratio": "${oc.div:9,3}",
             "bool_int": "${oc.int:True}",
         }
     )
     resolved = OmegaConf.to_object(cfg)
     assert resolved["product"] == 24
     assert resolved["ceil"] == 3
+    assert resolved["difference"] == 6.0
+    assert resolved["ratio"] == 3.0
     assert resolved["bool_int"] == 1
 
 

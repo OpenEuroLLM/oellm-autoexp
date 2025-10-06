@@ -19,23 +19,43 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Skip submission step")
     parser.add_argument("--fake-submit", action="store_true", help="Use fake SLURM submission inside the container")
     parser.add_argument("--show-command", action="store_true")
+    parser.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        help="Environment variable assignment passed to the container (VAR=VALUE).",
+    )
+    parser.add_argument(
+        "--bind",
+        action="append",
+        default=[],
+        help="Bind mount passed to the container (Singularity --bind syntax).",
+    )
+    parser.add_argument(
+        "--no-submit",
+        action="store_true",
+        help="Only execute the dry-run phase inside the container.",
+    )
     return parser.parse_args()
 
 
 def _run_in_container(args: argparse.Namespace, cmd_parts: list[str]) -> int:
-    quoted_inner = " ".join(shlex.quote(part) for part in cmd_parts)
-    apptainer_cmd = [
-        args.apptainer_cmd,
-        "exec",
-        args.image,
-        "bash",
-        "-lc",
-        quoted_inner,
-    ]
+    apptainer_cmd = _build_container_command(args, cmd_parts)
     if args.show_command:
         print("Running:", " ".join(shlex.quote(c) for c in apptainer_cmd))
     result = subprocess.run(apptainer_cmd, check=False)
     return result.returncode
+
+
+def _build_container_command(args: argparse.Namespace, cmd_parts: list[str]) -> list[str]:
+    quoted_inner = " ".join(shlex.quote(part) for part in cmd_parts)
+    command = [args.apptainer_cmd, "exec"]
+    for bind in getattr(args, "bind", []) or []:
+        command.extend(["--bind", bind])
+    for env_assignment in getattr(args, "env", []) or []:
+        command.extend(["--env", env_assignment])
+    command.extend([args.image, "bash", "-lc", quoted_inner])
+    return command
 
 
 def main() -> None:
@@ -56,7 +76,7 @@ def main() -> None:
     if _run_in_container(args, dry_cmd) != 0:
         raise SystemExit(1)
 
-    if args.dry_run:
+    if args.dry_run or args.no_submit:
         return
 
     submit_cmd = base_cmd.copy()

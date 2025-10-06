@@ -12,22 +12,24 @@ def test_load_config(tmp_path: Path) -> None:
 
     assert cfg.project.name == "demo"
     assert cfg.project.base_output_dir == Path("./outputs")
-    assert cfg.monitoring.implementation.class_name == "NullMonitor"
-    assert cfg.backend.implementation.class_name == "NullBackend"
+    assert cfg.monitoring.class_name == "NullMonitor"
+    assert cfg.backend.class_name == "NullBackend"
     assert cfg.slurm.launcher_cmd == ""
     assert cfg.slurm.srun_opts == ""
     assert cfg.slurm.srun_opts == ""
+    assert cfg.slurm.client.class_name == "FakeSlurmClient"
     assert cfg.restart_policies[0].mode == "success"
     assert cfg.project.state_dir == Path("./outputs") / ".oellm-autoexp"
 
 
-def test_load_hydra_config() -> None:
+def test_load_hydra_config(monkeypatch) -> None:
+    monkeypatch.setenv("SLURM_ACCOUNT", "debug")
     cfg = load_config_reference("autoexp", Path("config"), overrides=["project=juwels", "slurm=juwels"])
 
     assert cfg.project.name == "juwels"
-    assert "JUWELS" in cfg.project.environment.get("MACHINE_NAME", "")
+    assert "JUWELS" in cfg.slurm.environment.get("MACHINE_NAME", "")
     assert str(cfg.slurm.template_path).endswith("juwels.sbatch")
-    assert cfg.slurm.launcher_cmd == ""
+    assert cfg.slurm.launcher_cmd.startswith("apptainer exec")
     assert cfg.slurm.srun_opts == ""
 
 
@@ -60,12 +62,12 @@ slurm:
   log_dir: ./logs
   launcher_cmd: ""
   srun_opts: ""
+  client:
+    class_name: FakeSlurmClient
 monitoring:
-  implementation:
-    class_name: NullMonitor
+  class_name: NullMonitor
 backend:
-  implementation:
-    class_name: NullBackend
+  class_name: NullBackend
 restart:
   policies:
     - mode: success

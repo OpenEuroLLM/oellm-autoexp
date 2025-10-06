@@ -1,3 +1,2 @@
-implementation:
-  class_name: NullBackend
+class_name: NullBackend
 extra_cli_args: []

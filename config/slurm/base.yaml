@@ -8,6 +8,8 @@ array: true
 submit_cmd: sbatch
 launcher_cmd: ""
 srun_opts: ""
+launcher_env_passthrough: false
+environment: {}
 sbatch_overrides:
   nodes: 1
   ntasks_per_node: 1
@@ -18,3 +20,5 @@ sbatch_overrides:
   gres: "gpu:1"
 sbatch_extra_directives: []
 test_only: false
+client:
+  class_name: FakeSlurmClient

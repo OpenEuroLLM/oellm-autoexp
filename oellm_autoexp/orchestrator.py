@@ -2,20 +2,36 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+import logging
+import time
+import json
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Mapping, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Iterable
 
 import shlex
 
+from compoconf import asdict
+
+from oellm_autoexp.backends.base import BackendJobSpec, LaunchCommand
 from oellm_autoexp.config.evaluator import RuntimeConfig, evaluate
 from oellm_autoexp.config.loader import load_config
 from oellm_autoexp.config.schema import RootConfig, SlurmConfig
+from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
+from oellm_autoexp.persistence import MonitorStateStore, StoredJob
+from oellm_autoexp.slurm.client import BaseSlurmClient
 from oellm_autoexp.slurm.template_renderer import render_template_file
 from oellm_autoexp.slurm.validator import validate_job_script
 from oellm_autoexp.sweep.expander import SweepPoint, expand_sweep
 from oellm_autoexp.sweep.planner import JobPlan, build_job_plans
-from oellm_autoexp.backends.base import BackendJobSpec, LaunchCommand
+from oellm_autoexp.utils.start_condition import (
+    resolve_start_condition_interval,
+    wait_for_start_condition,
+)
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -24,6 +40,15 @@ class ExecutionPlan:
     runtime: RuntimeConfig
     sweep_points: List[SweepPoint]
     jobs: List[JobPlan]
+
+
+@dataclass
+class RenderedArtifacts:
+    job_scripts: List[Path]
+    sweep_json: Optional[Path] = None
+    array_script: Optional[Path] = None
+    array_job_name: Optional[str] = None
+    sweep_entries: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def build_execution_plan(config: Path | RootConfig) -> ExecutionPlan:
@@ -37,26 +62,220 @@ def build_execution_plan(config: Path | RootConfig) -> ExecutionPlan:
     return ExecutionPlan(config=root, runtime=runtime, sweep_points=points, jobs=jobs)
 
 
-def render_scripts(plan: ExecutionPlan) -> List[Path]:
-    rendered_paths: List[Path] = []
+def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
     template_path = Path(plan.config.slurm.template_path)
+    script_dir = Path(plan.config.slurm.script_dir)
+    script_dir.mkdir(parents=True, exist_ok=True)
+
+    job_scripts: List[Path] = []
+    sweep_entries: List[Dict[str, Any]] = []
+
     for job in plan.jobs:
         spec = BackendJobSpec(parameters=dict(job.parameters))
         plan.runtime.backend.validate(spec)
         launch_cmd = plan.runtime.backend.build_launch_command(spec)
 
         replacements = _build_replacements(plan.runtime, job, launch_cmd)
-        script_path = Path(plan.config.slurm.script_dir) / f"{job.name}.sbatch"
+        script_path = script_dir / f"{job.name}.sbatch"
         rendered = render_template_file(template_path, script_path, replacements)
         validate_job_script(rendered, job.name)
-        rendered_paths.append(script_path)
-    return rendered_paths
+        job_scripts.append(script_path)
+
+        sweep_entries.append(_build_sweep_entry(job, launch_cmd))
+
+    sweep_path: Optional[Path] = None
+    if plan.config.sweep.store_sweep_json or plan.config.slurm.array:
+        sweep_path = _write_sweep_json(plan, sweep_entries)
+
+    array_script: Optional[Path] = None
+    array_job_name: Optional[str] = None
+    if plan.config.slurm.array and plan.jobs:
+        array_job_name = f"{plan.config.project.name}-array"
+        array_script = _render_array_script(
+            plan,
+            script_dir,
+            template_path,
+            sweep_path,
+            array_job_name,
+        )
+
+    return RenderedArtifacts(
+        job_scripts=job_scripts,
+        sweep_json=sweep_path,
+        array_script=array_script,
+        array_job_name=array_job_name,
+        sweep_entries=sweep_entries,
+    )
+
+
+def submit_jobs(
+    plan: ExecutionPlan,
+    artifacts: RenderedArtifacts,
+    slurm_client: Optional[BaseSlurmClient] = None,
+) -> MonitorController:
+    client = slurm_client or plan.runtime.slurm_client
+    state_store = MonitorStateStore(plan.runtime.state_dir)
+    saved_jobs = state_store.load()
+    controller = MonitorController(
+        plan.runtime.monitor,
+        client,
+        plan.runtime.restart_policies,
+        state_store=state_store,
+    )
+
+    restored_names = _restore_saved_jobs(controller, client, saved_jobs.values())
+
+    monitor_config = plan.runtime.monitor.config
+
+    job_script_map = {job.name: script for job, script in zip(plan.jobs, artifacts.job_scripts)}
+
+    pending_jobs = [job for job in plan.jobs if job.name not in restored_names]
+
+    use_array = (
+        plan.config.slurm.array
+        and artifacts.array_script is not None
+        and getattr(client, "supports_array", False)
+        and pending_jobs
+    )
+
+    if use_array:
+        if not pending_jobs:
+            return controller
+
+        for job in pending_jobs:
+            if job.start_condition_cmd:
+                interval = resolve_start_condition_interval(
+                    job.start_condition_interval_seconds,
+                    monitor_config,
+                )
+                wait_for_start_condition(
+                    job.start_condition_cmd,
+                    interval_seconds=interval,
+                    logger=LOGGER,
+                )
+
+        submit_array = getattr(client, "submit_array")
+        job_ids: List[int] = submit_array(  # type: ignore[misc]
+            artifacts.array_job_name or plan.config.project.name,
+            artifacts.array_script,
+            [job.log_path for job in pending_jobs],
+            [job.name for job in pending_jobs],
+        )
+
+        if len(job_ids) != len(pending_jobs):
+            raise RuntimeError("SLURM client returned mismatched job ids for array submission")
+
+        for job_id, job in zip(job_ids, pending_jobs):
+            job_metadata: Dict[str, Any] = {"parameters": dict(job.parameters)}
+            if job.inactivity_threshold_seconds is not None:
+                job_metadata["inactivity_threshold_seconds"] = job.inactivity_threshold_seconds
+
+            registration = JobRegistration(
+                name=job.name,
+                script_path=artifacts.array_script,
+                log_path=job.log_path,
+                metadata=job_metadata,
+                output_paths=job.output_paths,
+                start_condition_cmd=job.start_condition_cmd,
+                start_condition_interval_seconds=job.start_condition_interval_seconds,
+                termination_string=job.termination_string,
+                termination_command=job.termination_command,
+                inactivity_threshold_seconds=job.inactivity_threshold_seconds,
+            )
+            controller.register_job(job_id, registration)
+
+        return controller
+
+    for job in pending_jobs:
+        script = job_script_map[job.name]
+        if job.start_condition_cmd:
+            interval = resolve_start_condition_interval(
+                job.start_condition_interval_seconds,
+                monitor_config,
+            )
+            wait_for_start_condition(
+                job.start_condition_cmd,
+                interval_seconds=interval,
+                logger=LOGGER,
+            )
+        job_metadata: Dict[str, Any] = {"parameters": dict(job.parameters)}
+        if job.inactivity_threshold_seconds is not None:
+            job_metadata["inactivity_threshold_seconds"] = job.inactivity_threshold_seconds
+
+        job_id = client.submit(job.name, script, job.log_path)
+        registration = JobRegistration(
+            name=job.name,
+            script_path=script,
+            log_path=job.log_path,
+            metadata=job_metadata,
+            output_paths=job.output_paths,
+            start_condition_cmd=job.start_condition_cmd,
+            start_condition_interval_seconds=job.start_condition_interval_seconds,
+            termination_string=job.termination_string,
+            termination_command=job.termination_command,
+            inactivity_threshold_seconds=job.inactivity_threshold_seconds,
+        )
+        controller.register_job(job_id, registration)
+
+    return controller
+
+
+async def execute_plan(
+    plan: ExecutionPlan,
+    slurm_client: Optional[BaseSlurmClient] = None,
+    artifacts: Optional[RenderedArtifacts] = None,
+    controller: Optional[MonitorController] = None,
+) -> None:
+    rendered = artifacts or render_scripts(plan)
+    controller = controller or submit_jobs(plan, rendered, slurm_client)
+
+    if plan.runtime.monitor.__class__.__name__ == "NullMonitor":
+        controller.clear_state()
+        return
+
+    monitor_interval = getattr(
+        plan.runtime.monitor.config,
+        "poll_interval_seconds",
+        getattr(plan.runtime.monitor.config, "check_interval_seconds", 60),
+    )
+
+    while controller.jobs():
+        await asyncio.sleep(max(1, int(monitor_interval)))
+        await controller.observe_once()
+
+    controller.clear_state()
+
+
+def execute_plan_sync(
+    plan: ExecutionPlan,
+    slurm_client: Optional[BaseSlurmClient] = None,
+    artifacts: Optional[RenderedArtifacts] = None,
+    controller: Optional[MonitorController] = None,
+) -> None:
+    asyncio.run(
+        execute_plan(
+            plan,
+            slurm_client=slurm_client,
+            artifacts=artifacts,
+            controller=controller,
+        )
+    )
 
 
 def _build_replacements(runtime: RuntimeConfig, job: JobPlan, launch_cmd: LaunchCommand) -> Dict[str, str]:
     sbatch_directives = _format_sbatch_directives(runtime.root.slurm, job)
-    launcher_cmd = _compose_launcher_command(runtime.root.slurm, launch_cmd)
-    srun_opts = runtime.root.slurm.srun_opts.strip()
+    backend_cmd = _format_command(launch_cmd.argv)
+    launcher_prefix_raw = runtime.root.slurm.launcher_cmd.strip()
+    launcher_prefix = f"{launcher_prefix_raw} " if launcher_prefix_raw else ""
+    launcher_env_flags = ""
+    if getattr(runtime.root.slurm, "launcher_env_passthrough", False) and runtime.root.slurm.environment:
+        env_flags = " ".join(f"--env {key}=${key}" for key in runtime.root.slurm.environment.keys())
+        if env_flags:
+            launcher_env_flags = f"{env_flags} "
+    combined_launcher = f"{launcher_prefix}{launcher_env_flags}{backend_cmd}".strip()
+    launcher_cmd = combined_launcher or backend_cmd
+    srun_extras = asdict(runtime.root.slurm.srun)
+    srun_opts = _format_srun_options(runtime.root.slurm.srun_opts, srun_extras)
     if srun_opts:
         srun_opts = f"{srun_opts} "
 
@@ -65,22 +284,92 @@ def _build_replacements(runtime: RuntimeConfig, job: JobPlan, launch_cmd: Launch
         "output_dir": str(job.output_dir),
         "log_path": str(job.log_path),
         "launcher_cmd": launcher_cmd,
-        "env_exports": _format_env(runtime.root.project.environment, launch_cmd.environment),
+        "launcher_prefix": launcher_prefix,
+        "launcher_env_flags": launcher_env_flags,
+        "backend_cmd": backend_cmd,
+        "env_exports": _format_env(runtime.root.slurm.environment, launch_cmd.environment),
         "sbatch_directives": sbatch_directives,
         "srun_opts": srun_opts,
     }
+    if job.start_condition_cmd:
+        repl["start_condition_cmd"] = job.start_condition_cmd
+    if job.termination_string:
+        repl["termination_string"] = job.termination_string
+    if job.termination_command:
+        repl["termination_command"] = job.termination_command
+    if job.inactivity_threshold_seconds is not None:
+        repl["inactivity_threshold_seconds"] = str(job.inactivity_threshold_seconds)
     repl.update(job.parameters)
     repl.update({"project": runtime.root.project.name})
     return repl
+
+
+def _build_sweep_entry(job: JobPlan, launch_cmd: LaunchCommand) -> Dict[str, Any]:
+    return {
+        "name": job.name,
+        "output_dir": str(job.output_dir),
+        "log_path": str(job.log_path),
+        "parameters": dict(job.parameters),
+        "launch": {
+            "argv": list(launch_cmd.argv),
+            "environment": dict(launch_cmd.environment),
+        },
+    }
+
+
+def _write_sweep_json(plan: ExecutionPlan, entries: List[Dict[str, Any]]) -> Path:
+    base_output = Path(plan.config.project.base_output_dir)
+    base_output.mkdir(parents=True, exist_ok=True)
+    sweep_path = base_output / "sweep.json"
+    payload = {
+        "project": plan.config.project.name,
+        "jobs": entries,
+    }
+    sweep_path.write_text(json.dumps(payload, indent=2))
+    return sweep_path
+
+
+def _restore_saved_jobs(
+    controller: MonitorController,
+    slurm_client: BaseSlurmClient,
+    saved_jobs: Iterable[StoredJob],
+) -> set[str]:
+    restored: set[str] = set()
+    for saved in saved_jobs:
+        registration = JobRegistration(
+            name=saved.name,
+            script_path=Path(saved.script_path),
+            log_path=Path(saved.log_path),
+            metadata=dict(saved.metadata),
+            output_paths=[Path(p) for p in saved.output_paths],
+            termination_string=saved.termination_string,
+            termination_command=saved.termination_command,
+            inactivity_threshold_seconds=saved.inactivity_threshold_seconds,
+            start_condition_cmd=saved.start_condition_cmd,
+            start_condition_interval_seconds=saved.start_condition_interval_seconds,
+        )
+        if hasattr(slurm_client, "register_job"):
+            try:
+                slurm_client.register_job(  # type: ignore[attr-defined]
+                    saved.job_id,
+                    saved.name,
+                    Path(saved.script_path),
+                    Path(saved.log_path),
+                )
+            except TypeError:
+                pass
+        controller.register_job(saved.job_id, registration, attempts=saved.attempts)
+        restored.add(saved.name)
+    return restored
 
 
 def _format_command(argv: Sequence[str]) -> str:
     return " ".join(shlex.quote(arg) for arg in argv)
 
 
-def _format_env(project_env: Mapping[str, object], command_env: Mapping[str, object]) -> str:
+def _format_env(base_env: Mapping[str, object], command_env: Mapping[str, object]) -> str:
     merged: Dict[str, str] = {}
-    merged.update({k: str(v) for k, v in project_env.items()})
+    merged.update({k: str(v) for k, v in base_env.items()})
     merged.update({k: str(v) for k, v in command_env.items()})
     if not merged:
         return ""
@@ -88,20 +377,89 @@ def _format_env(project_env: Mapping[str, object], command_env: Mapping[str, obj
 
 
 def _format_sbatch_directives(slurm_conf: SlurmConfig, job: JobPlan) -> str:
-    overrides = dict(slurm_conf.sbatch_overrides)
-    overrides.setdefault("job-name", job.name)
-    overrides.setdefault("output", str(job.log_path))
-    lines = [f"#SBATCH --{k.replace('_', '-')}={v}" for k, v in overrides.items()]
+    sbatch_values = {
+        k.replace("_", "-"): v for k, v in asdict(slurm_conf.sbatch).items() if v is not None and not k.startswith("_")
+    }
+    override_values = {
+        k.replace("_", "-"): v
+        for k, v in slurm_conf.sbatch_overrides.items()
+        if v is not None and not k.startswith("_")
+    }
+    sbatch_values.update(override_values)
+    sbatch_values.setdefault("job-name", job.name)
+    sbatch_values.setdefault("output", str(job.log_path))
+    lines = [f"#SBATCH --{key}={value}" for key, value in sbatch_values.items()]
     lines.extend(slurm_conf.sbatch_extra_directives)
     return "\n".join(lines)
 
 
-def _compose_launcher_command(slurm_conf: SlurmConfig, launch_cmd: LaunchCommand) -> str:
-    launcher_prefix = slurm_conf.launcher_cmd.strip()
-    backend_cmd = _format_command(launch_cmd.argv)
-    if launcher_prefix:
-        return f"{launcher_prefix} {backend_cmd}".strip()
-    return backend_cmd
+def _format_srun_options(srun_opts: str, extras: Mapping[str, Any]) -> str:
+    options: list[str] = []
+    if extras:
+        for key, value in extras.items():
+            if key.startswith("_"):
+                continue
+            flag = f"--{key.replace('_', '-')}"
+            if isinstance(value, bool):
+                if value:
+                    options.append(flag)
+            else:
+                options.append(f"{flag}={value}")
+    srun_opts = srun_opts.strip()
+    if srun_opts:
+        options.append(srun_opts)
+    return " ".join(options).strip()
 
 
-__all__ = ["ExecutionPlan", "build_execution_plan", "render_scripts"]
+def _render_array_script(
+    plan: ExecutionPlan,
+    script_dir: Path,
+    template_path: Path,
+    sweep_path: Optional[Path],
+    array_job_name: str,
+) -> Path:
+    if sweep_path is None:
+        raise RuntimeError("sweep.json must be available for array submission")
+
+    array_log_dir = Path(plan.config.slurm.log_dir)
+    array_log_dir.mkdir(parents=True, exist_ok=True)
+    array_log_path = array_log_dir / f"{array_job_name}_%a.log"
+    array_output_dir = Path(plan.config.project.base_output_dir) / f"{array_job_name}_%a"
+
+    runner_script = Path("scripts/run_sweep_entry.py")
+    launcher_cmd = LaunchCommand(
+        argv=[
+            "python",
+            str(runner_script),
+            "--sweep",
+            str(sweep_path),
+            "--index",
+            "$SLURM_ARRAY_TASK_ID",
+        ],
+        environment={},
+    )
+
+    synthetic_job = JobPlan(
+        name=array_job_name,
+        parameters={},
+        output_dir=array_output_dir,
+        log_path=array_log_path,
+        output_paths=[],
+    )
+
+    replacements = _build_replacements(plan.runtime, synthetic_job, launcher_cmd)
+    script_path = script_dir / f"{array_job_name}.sbatch"
+    rendered = render_template_file(template_path, script_path, replacements)
+    validate_job_script(rendered, array_job_name)
+    return script_path
+
+
+__all__ = [
+    "ExecutionPlan",
+    "RenderedArtifacts",
+    "build_execution_plan",
+    "render_scripts",
+    "submit_jobs",
+    "execute_plan",
+    "execute_plan_sync",
+]

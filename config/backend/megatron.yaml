@@ -1,7 +1,6 @@
-implementation:
-  class_name: MegatronBackend
-  launcher_script: scripts/run_megatron.sh
-  config_overrides: {}
-  environment:
-    CUDA_DEVICE_MAX_CONNECTIONS: "1"
-extra_cli_args: []
+defaults:
+  - megatron: base
+  - _self_
+
+class_name: AutoMegatronBackend
+launcher_script: scripts/run_megatron.sh

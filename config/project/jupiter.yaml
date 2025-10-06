@@ -1,6 +1,4 @@
 name: jupiter
-base_output_dir: ./outputs/jupiter
-environment:
-  MACHINE_NAME: JUPITER
+base_output_dir: ${oc.env:$OUTPUT_DIR,"./output"}
 state_dir: null
 resume: true

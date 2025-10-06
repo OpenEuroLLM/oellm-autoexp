@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-from compoconf import ConfigInterface, RegistrableConfigInterface, register_interface
+from compoconf import ConfigInterface, RegistrableConfigInterface, register_interface, NonStrictDataclass
 
 # ---------------------------------------------------------------------------
 # Core interfaces
@@ -37,6 +37,11 @@ class MonitorInterface(RegistrableConfigInterface):
     """Monitoring implementation responsible for observing job execution."""
 
 
+@register_interface
+class SlurmClientInterface(RegistrableConfigInterface):
+    """Abstraction layer over SLURM command interactions."""
+
+
 # ---------------------------------------------------------------------------
 # Config dataclasses
 # ---------------------------------------------------------------------------
@@ -48,7 +53,6 @@ class ProjectConfig(ConfigInterface):
 
     name: str
     base_output_dir: Path
-    environment: Dict[str, str] = field(default_factory=dict)
     state_dir: Optional[Path] = None
     resume: bool = True
 
@@ -68,6 +72,20 @@ class SweepConfig(ConfigInterface):
     store_sweep_json: bool = True
 
 
+@dataclass(init=False)
+class SrunConfig(NonStrictDataclass):
+    pass
+
+
+@dataclass(init=False)
+class SbatchConfig(NonStrictDataclass):
+    account: Optional[str] = None
+    nodes: Optional[int] = None
+    partition: Optional[str] = None
+    qos: Optional[str] = None
+    time: str = "0-01:00:00"
+
+
 @dataclass
 class SlurmConfig(ConfigInterface):
     """Parameters for SBATCH rendering and submission."""
@@ -77,27 +95,19 @@ class SlurmConfig(ConfigInterface):
     log_dir: Path
     array: bool = True
     submit_cmd: str = "sbatch"
+    squeue_cmd: str = "squeue"
+    cancel_cmd: str = "scancel"
     launcher_cmd: str = ""
     srun_opts: str = ""
+    launcher_env_passthrough: bool = False
+    environment: Dict[str, Any] = field(default_factory=dict)
+    environment: Dict[str, Any] = field(default_factory=dict)
+    srun: SrunConfig = field(default_factory=SrunConfig)
+    sbatch: SbatchConfig = field(default_factory=SbatchConfig)
     sbatch_overrides: Dict[str, Any] = field(default_factory=dict)
     sbatch_extra_directives: List[str] = field(default_factory=list)
     test_only: bool = False
-
-
-@dataclass
-class MonitoringConfig(ConfigInterface):
-    """High-level monitoring configuration.
-
-    ``implementation`` points to a registered monitor implementation that can
-    interpret the remainder of the fields (commonly via ``MonitorInterface``).
-    """
-
-    implementation: MonitorInterface.cfgtype
-    poll_interval_seconds: int = 600
-    inactivity_threshold_seconds: Optional[int] = 900
-    termination_string: Optional[str] = None
-    termination_command: Optional[str] = None
-    log_path_template: str = "{output_dir}/slurm.out"
+    client: SlurmClientInterface.cfgtype | None = None
 
 
 @dataclass
@@ -118,22 +128,14 @@ class SchedulerConfig(ConfigInterface):
 
 
 @dataclass
-class BackendConfig(ConfigInterface):
-    """Wrapper for backend-specific configuration."""
-
-    implementation: BackendInterface.cfgtype
-    extra_cli_args: List[str] = field(default_factory=list)
-
-
-@dataclass
 class RootConfig(ConfigInterface):
     """Top-level configuration schema."""
 
     project: ProjectConfig
     sweep: SweepConfig
     slurm: SlurmConfig
-    monitoring: MonitoringConfig
-    backend: BackendConfig
+    monitoring: MonitorInterface.cfgtype
+    backend: BackendInterface.cfgtype
     restart_policies: List[RestartPolicyConfig] = field(default_factory=list)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     metadata: Dict[str, Any] = field(default_factory=dict)

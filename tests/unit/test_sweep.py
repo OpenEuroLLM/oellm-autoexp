@@ -15,9 +15,10 @@ def _basic_root() -> RootConfig:
             "log_dir": "./logs",
             "launcher_cmd": "",
             "srun_opts": "",
+            "client": {"class_name": "FakeSlurmClient"},
         },
-        "monitoring": {"implementation": {"class_name": "NullMonitor"}},
-        "backend": {"implementation": {"class_name": "NullBackend"}},
+        "monitoring": {"class_name": "NullMonitor"},
+        "backend": {"class_name": "NullBackend"},
     }
     return parse_config(RootConfig, data)
 
@@ -38,6 +39,34 @@ def test_build_job_plans_name_template():
     assert len(jobs) == 4
     assert jobs[0].name.startswith("demo")
     assert jobs[0].log_path.name == "slurm.out"
+
+
+def test_build_job_plans_extracts_lifecycle_fields():
+    root = _basic_root()
+    root.monitoring.start_condition_cmd = None
+    root.monitoring.termination_string = "all done"
+    root.monitoring.inactivity_threshold_seconds = 123
+    root.monitoring.start_condition_interval_seconds = 12
+    root.sweep.axes = {
+        "job.start_condition_cmd": ["echo 1"],
+        "monitoring.termination_string": ["Finished"],
+        "job.start_condition_interval_seconds": [30],
+        "job.inactivity_threshold_seconds": [45],
+        "lr": [0.1],
+    }
+
+    points = expand_sweep(root.sweep)
+    jobs = build_job_plans(root, points)
+
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.start_condition_cmd == "echo 1"
+    assert job.start_condition_interval_seconds == 30
+    assert job.termination_string == "Finished"
+    assert job.inactivity_threshold_seconds == 45
+    assert "job.start_condition_cmd" not in job.parameters
+    assert "monitoring.termination_string" not in job.parameters
+    assert job.parameters["lr"] == "0.1"
 
 
 def test_expand_sweep_with_base_values():

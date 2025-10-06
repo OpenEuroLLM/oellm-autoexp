@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from oellm_autoexp.slurm.fake_sbatch import FakeSlurm
+from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
 from oellm_autoexp.slurm.validator import SlurmValidationError, validate_job_script
 
 
@@ -24,7 +24,7 @@ def test_validate_job_script_required_tokens():
 
 
 def test_fake_slurm_state_transitions(tmp_path: Path) -> None:
-    slurm = FakeSlurm()
+    slurm = FakeSlurmClient(FakeSlurmClientConfig())
     job_id = slurm.submit("demo", tmp_path / "job.sbatch", tmp_path / "log.txt")
     slurm.set_state(job_id, "RUNNING")
     assert slurm.squeue()[job_id] == "RUNNING"

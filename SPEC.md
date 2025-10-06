@@ -62,15 +62,16 @@ oellm-autoexp/
 - Hydra configuration tree under `config/` provides reusable defaults (`project`, `slurm`, `backend`, `monitoring`, `sweep`, `restart`, `scheduler`). Top-level `autoexp.yaml` composes these via `group@key` syntax so the CLI can load configurations by name.
 - CLI still accepts plain YAML paths; Hydra references resolve via `load_config_reference`, which flattens nested structures (e.g., `restart.policies` → `restart_policies`).
 - Single YAML file consumed by the CLI, with named sections:
-  - `project`: descriptive metadata, default output root, global environment settings.
+  - `project`: descriptive metadata, default output root, and optional persistent state location.
   - `sweep`: Hydra-compatible structure; support product & list semantics similar to `autoexperiment.product_recursive`.
-  - `slurm`: defaults for template path, submission command, partition/account, SBATCH keyword args.
-  - `launcher` / `srun`: optional wrappers injected before the backend command and extra `srun` flags.
-  - `monitoring`: log file pattern, inactivity threshold, retry limits, termination criteria (string, command, metric-based).
-  - `backend`: name (`megatron` initially), CLI overrides, pointer to backend-specific configs.
+  - `slurm`: defaults for template path, submission command, partition/account, SBATCH keyword args, launch wrappers, and cluster-level environment exports.
+  - `launcher` settings split between `launch.environment` (env exports) and `launcher_cmd` (prefix command, e.g. container exec).
+- `monitoring`: log file pattern, inactivity threshold, retry limits, termination criteria (string, command, metric-based).
+- `monitoring.output_paths`: optional list of templates resolved per job (e.g. `{output_dir}/train.log`) that are tailed alongside the SLURM log to detect activity or checkpoints.
+- `backend`: concrete backend config (`megatron` initially). Config files such as `config/backend/megatron.yaml` extend other presets via Hydra `defaults` and expose Megatron arguments directly; there are no wrapper keys like `implementation` or manual merge steps.
   - `restart_policies`: list of rules keyed by `error_mode` (`stall`, `crash`, `timeout`, `success`), each specifying whether to restart, mutate args (e.g., bump `time_limit`, switch `checkpoint_path`), or abort.
 - YAML is read into compoconf-driven dataclasses:
-  - Define `ConfigInterface` subclasses for each section (e.g., `ProjectConfig`, `SlurmConfig`, `MonitoringConfig`, `BackendConfig`) so they inherit parsing/validation primitives.
+- Define `ConfigInterface` subclasses for core sections (e.g., `ProjectConfig`, `SlurmConfig`) and rely on compoconf registries for backend/monitor entries so YAML maps straight onto registrable configs without wrapper layers.
   - Use interface registrations (`@register_interface`, `@register`) where multiple implementations are possible (e.g., backend adapters, restart policies, monitoring strategies). This allows backend swaps without changing the schema.
   - `loader.parse_config` (thin wrapper around `compoconf.parse_config`) materialises the tree; `config/evaluator.py` can then instantiate concrete components using compoconf’s `instantiate` helpers.
 - Validation should flag:
@@ -81,9 +82,9 @@ oellm-autoexp/
 - Expose compoconf-based registries for backend-level options (e.g., `BackendInterface`, `RestartPolicyInterface`, `MonitorInterface`) so downstream modules can request instantiated implementations without bespoke factories.
 
 ## Workflow Overview
-1. **Load + Validate Config**: Use `compoconf.parse_config` (wrapped in `loader.py`) to map YAML into typed dataclass instances. The resulting objects implement `ConfigInterface`, enabling lazy instantiation. For `backend=megatron`, the evaluator resolves the `BackendConfig` to a concrete adapter and invokes Megatron argument validation.
+1. **Load + Validate Config**: Use `compoconf.parse_config` (wrapped in `loader.py`) to map YAML into typed dataclass instances. The resulting objects implement `ConfigInterface`, enabling lazy instantiation. For `backend=megatron`, the evaluator instantiates the registered Megatron backend directly from the parsed config and invokes argument validation.
 2. **Sweep Expansion**: Use Hydra-like resolver & Cartesian product semantics to expand `sweep` block into concrete job parameter sets. Each job receives a unique deterministic ID + job name.
-3. **Plan Generation**: Feed expanded configs into `config/evaluator.py`, which leverages compoconf’s registry-instantiated components (backend adapters, monitoring policies) to assemble a `JobPlan` (command, env, expected log paths). Persist optional `sweep.json` for compatibility.
+3. **Plan Generation**: Feed expanded configs into `config/evaluator.py`, which leverages compoconf’s registry-instantiated components (backend adapters, monitoring policies) to assemble a `JobPlan` (command, env, expected log paths). Persist optional `sweep.json` for compatibility and emit an aggregate array script when `slurm.array` is enabled so compatible sweeps collapse to SLURM job arrays.
 4. **SBATCH Rendering**: Fill a template (Jinja/Omega templating) with plan values. Validate script statically (e.g., ensure `#SBATCH --job-name` matches) and optionally run `sbatch --test-only` when available.
 5. **Submission**: Invoke `sbatch`, capturing job IDs. Support job arrays when all jobs are compatible; fall back to per-job submission otherwise.
 6. **Monitoring Loop** (derived from `autoexperiment.manager`):
@@ -100,6 +101,7 @@ Expose a single `oellm-autoexp` console script with subcommands:
 - `monitor CONFIG.yaml [--job JOB_NAME|JOB_ID]`: attach to running plan; can resume after process restarts.
 - `status [--config CONFIG.yaml]`: display table of job states.
 - `cleanup CONFIG.yaml`: optional helper to archive logs or cancel jobs.
+- `monitor MONITOR.yaml`: run monitoring/alerting standalone using only the monitoring config, emitting default signals and dispatching configured actions.
 
 CLI should share state via a project directory (`.oellm-autoexp/`) containing serialized plans, submission metadata, restart counters, etc., enabling resume/restarts akin to `autoexperiment`'s name-based recovery. Persist the compoconf-evaluated configuration (e.g., via `dump_config`) so repeated invocations reuse the same resolved objects.
 
@@ -114,6 +116,8 @@ CLI should share state via a project directory (`.oellm-autoexp/`) containing se
 
 ## Monitoring & Restart Logic
 - Track three signals: SLURM job state (`squeue`), wall-clock runtime, and log progress (mtime + optional regex heartbeat).
+- Monitoring config exposes `log_signals` that match regex/substring patterns in SLURM logs and emit named signals. Each signal can map to a restart `mode` (feeding into restart policies) or to an arbitrary `action` collected by the controller (e.g., enqueue checkpoint conversion jobs or trigger evaluation workflows). The standalone monitor CLI pre-registers generic signals for errors, run lifecycle (pending → running → ended), completion markers, and checkpoint publication so downstream tooling can attach commands without backend knowledge.
+- Monitor compares both SLURM log output and configured training output files; inactivity detection keys off the latest change across either source so freezes without log updates are still caught, mirroring the legacy `autoexperiment` behaviour.
 - Define error modes:
   - `stall`: log unchanged for N seconds while job is `RUNNING` → restart with same plan, increment `stall_retries`.
   - `crash`: SLURM exits non-zero without completion marker → restart if retries remain.
@@ -140,10 +144,20 @@ CLI should share state via a project directory (`.oellm-autoexp/`) containing se
 - Re-export main CLI in `oellm_autoexp/__init__.py` for programmatic use.
 - Document workflow in `README.md` (quickstart, example config) and `docs/` (architecture, backend guide).
 - Ensure linting & type checking (ruff + mypy) to keep interfaces tight.
+- Ship container helpers mirroring `megatron-train` (e.g., `scripts/run_megatron_container.py`) so images can execute dry-run and fake-submit workflows with configurable binds/env exports.
+
+## TODO / Backlog
+- Extend the standalone `monitor` CLI with persisted state and (optional) real SLURM integration, plus queue wiring for automated follow-up tasks.
+- Flesh out remaining CLI surface (`status`, `cleanup`) and persist plan state so processes can resume monitoring after restarts.
+- Teach orchestrator to persist/reload job history (JSONL/SQLite) and consume `MonitorController.drain_actions()` to enqueue downstream tasks (HF conversion/eval) automatically.
+- Implement first-class real SLURM submission path (drop `--fake` guard) including container-friendly sbatch invocation mirroring `megatron-train`.
+- Extend integration tests to cover log-signal driven actions/restarts, post-processing hooks, and container smoke tests.
+- Add scheduler throttling (`max_jobs`, rate limits) and restart policy variants that mutate launch arguments (e.g., checkpoint substitution) using signal metadata.
+- Provide richer container assets (constraint tooling, requirements reduction) akin to `megatron-train`, and document validation workflows.
 
 ## Open Questions / Follow-ups
 - Decide whether to keep Hydra as dependency or reimplement minimal resolver support. (Initial plan: depend on Hydra to reuse resolver ecosystem.)
-- Consider storing state in SQLite vs. plain JSON; JSONL is simpler, SQLite offers concurrent safety.
-- Evaluate whether job array submission should be default or opt-in based on homogeneous sweeps.
-- Determine policy for cleaning old log files/checkpoints when jobs restart frequently.
+- Consider storing state in SQLite vs. plain JSON; JSONL is simpler, SQLite offers concurrent safety. -> Use JSON
+- Evaluate whether job array submission should be default or opt-in based on homogeneous sweeps. -> Job Array as Default for sweeps
+- Determine policy for cleaning old log files/checkpoints when jobs restart frequently. 
 - Expand container validation to mirror `megatron-train` behaviour (dry-run + optional fake submission) so images can be smoke-tested without a real cluster.

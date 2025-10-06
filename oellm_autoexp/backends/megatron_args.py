@@ -3,11 +3,25 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from argparse import _StoreConstAction, _StoreFalseAction, _StoreTrueAction
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Optional, Sequence, Type
+from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Type
 
 _MegatronParser: Optional[argparse.ArgumentParser] = None
+
+
+def _maybe_add_submodule_to_path() -> None:
+    """Ensure the bundled Megatron-LM submodule is importable."""
+
+    root = Path(__file__).resolve().parents[2]
+    candidate = root / "submodules" / "Megatron-LM"
+    if candidate.exists():
+        candidate_str = str(candidate)
+        if candidate_str not in sys.path:
+            sys.path.insert(0, candidate_str)
 
 
 def get_megatron_parser() -> argparse.ArgumentParser:
@@ -15,10 +29,14 @@ def get_megatron_parser() -> argparse.ArgumentParser:
     if _MegatronParser is None:
         try:
             from megatron.training.arguments import add_megatron_arguments
-        except ImportError as exc:  # pragma: no cover - optional dependency
-            raise ImportError(
-                "Megatron-LM not available. Install the [megatron] extra or add submodules/megatron"
-            ) from exc
+        except ImportError:  # pragma: no cover - optional dependency
+            _maybe_add_submodule_to_path()
+            try:
+                from megatron.training.arguments import add_megatron_arguments
+            except ImportError as exc_inner:  # pragma: no cover - optional dependency
+                raise ImportError(
+                    "Megatron-LM not available. Install the [megatron] extra or add submodules/Megatron-LM"
+                ) from exc_inner
         parser = argparse.ArgumentParser(description="Megatron-LM Arguments", allow_abbrev=False)
         _MegatronParser = add_megatron_arguments(parser)
     return _MegatronParser
@@ -28,6 +46,10 @@ def get_megatron_parser() -> argparse.ArgumentParser:
 class MegatronArgMetadata:
     arg_type: Type | None
     default: Any
+    help: str | None = None
+    choices: tuple[Any, ...] | None = None
+    nargs: str | int | None = None
+    element_type: Type | None = None
 
 
 def get_arg_metadata(parser: argparse.ArgumentParser) -> Dict[str, MegatronArgMetadata]:
@@ -35,8 +57,53 @@ def get_arg_metadata(parser: argparse.ArgumentParser) -> Dict[str, MegatronArgMe
     for action in parser._actions:  # noqa: SLF001
         if not action.dest:
             continue
-        metadata[action.dest] = MegatronArgMetadata(_extract_action_type(action), action.default)
+        choices = None
+        if action.choices is not None:
+            normalized: list[Any] = []
+            for option in action.choices:
+                if isinstance(option, Enum):
+                    normalized.append(getattr(option, "value", option.name))
+                else:
+                    normalized.append(option)
+            choices = tuple(normalized)
+        element_type: Type | None = None
+        if action.nargs in {"+", "*"}:
+            element_type = action.type or str
+        metadata[action.dest] = MegatronArgMetadata(
+            _extract_action_type(action),
+            action.default,
+            help=action.help or None,
+            choices=choices,
+            nargs=action.nargs,
+            element_type=element_type,
+        )
     return metadata
+
+
+def extract_default_args(
+    parser: argparse.ArgumentParser,
+    exclude: Iterable[str] | None = None,
+    overrides: Mapping[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Return a mapping of Megatron argument defaults with optional overrides."""
+
+    namespace = parser.parse_args(args=[])
+    exclude_set = {item for item in (exclude or []) if item}
+    overrides = dict(overrides or {})
+
+    defaults: Dict[str, Any] = {}
+    for action in parser._actions:  # noqa: SLF001
+        dest = getattr(action, "dest", None)
+        if not dest or dest == "help" or dest in exclude_set:
+            continue
+        if dest in overrides:
+            value = overrides[dest]
+        else:
+            value = getattr(namespace, dest, None)
+        if isinstance(value, Enum):
+            value = value.value if hasattr(value, "value") else str(value)
+        defaults[dest] = value
+    return defaults
 
 
 def build_cmdline_args(
@@ -120,6 +187,7 @@ def _ensure_iterable(value: Any) -> Iterable[Any]:
 __all__ = [
     "MegatronArgMetadata",
     "build_cmdline_args",
+    "extract_default_args",
     "get_arg_metadata",
     "get_megatron_parser",
 ]

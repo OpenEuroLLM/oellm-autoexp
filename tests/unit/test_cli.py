@@ -19,6 +19,7 @@ def _write_config(tmp_path: Path) -> Path:
             "log_dir": str(tmp_path / "logs"),
             "launcher_cmd": "module load foo &&",
             "srun_opts": "--ntasks=1",
+            "client": {"class_name": "FakeSlurmClient"},
         },
         "monitoring": {"implementation": {"class_name": "NullMonitor"}},
         "backend": {"implementation": {"class_name": "NullBackend"}},
@@ -50,7 +51,59 @@ def test_cli_submit_fake(tmp_path: Path) -> None:
 
 def test_cli_submit_real_not_implemented(tmp_path: Path) -> None:
     config = _write_config(tmp_path)
+    data = yaml.safe_load(config.read_text())
+    data["slurm"]["client"]["class_name"] = "RealSlurmClient"
+    config.write_text(yaml.safe_dump(data))
     runner = CliRunner()
     result = runner.invoke(cli, ["submit", str(config)])
     assert result.exit_code != 0
-    assert "Real SLURM submission not implemented yet" in result.output
+    assert "Real SLURM submission not yet implemented" in result.output
+
+
+def test_cli_monitor_emits_checkpoint_action(tmp_path: Path) -> None:
+    monitor_cfg = tmp_path / "monitor.yaml"
+    monitor_cfg.write_text("class_name: SlurmLogMonitor\ncheck_interval_seconds: 1\n")
+    log_path = tmp_path / "job.log"
+    log_path.write_text("Checkpoint saved: /tmp/ckpt.bin\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "monitor",
+            "--monitor-config",
+            str(monitor_cfg),
+            "--log",
+            f"run={log_path}",
+            "--dry-run",
+            "--action",
+            "new_checkpoint=echo {checkpoint_path}",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "new_checkpoint" in result.output
+    assert "DRY-RUN command: echo /tmp/ckpt.bin" in result.output
+
+
+def test_cli_monitor_reports_slurm_transitions(tmp_path: Path) -> None:
+    monitor_cfg = tmp_path / "monitor.yaml"
+    monitor_cfg.write_text("class_name: SlurmLogMonitor\ncheck_interval_seconds: 1\n")
+    log_path = tmp_path / "job.log"
+    log_path.write_text("initial\n")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "monitor",
+            "--monitor-config",
+            str(monitor_cfg),
+            "--log",
+            f"run={log_path}",
+            "--slurm-state",
+            "run=RUNNING",
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "run_started" in result.output

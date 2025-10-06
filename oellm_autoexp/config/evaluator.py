@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Dict
 
 from . import schema
-from ..backends.base import BaseBackend, BackendJobSpec
+from ..backends.base import BaseBackend
 from ..monitor.policy import BaseRestartPolicy
 from ..monitor.watcher import BaseMonitor
+from ..slurm.client import BaseSlurmClient, FakeSlurmClientConfig
 
 
 @dataclass
@@ -20,6 +21,7 @@ class RuntimeConfig:
     backend: BaseBackend
     monitor: BaseMonitor
     restart_policies: Dict[str, BaseRestartPolicy]
+    slurm_client: BaseSlurmClient
 
     @property
     def state_dir(self) -> Path:
@@ -29,16 +31,25 @@ class RuntimeConfig:
 def evaluate(root: schema.RootConfig) -> RuntimeConfig:
     """Instantiate components defined in ``RootConfig``."""
 
-    backend = root.backend.implementation.instantiate(schema.BackendInterface)
-    monitor = root.monitoring.implementation.instantiate(schema.MonitorInterface)
+    backend = root.backend.instantiate(schema.BackendInterface)
+    monitor = root.monitoring.instantiate(schema.MonitorInterface)
 
     policies: Dict[str, BaseRestartPolicy] = {}
     for policy_cfg in root.restart_policies:
         policy = policy_cfg.implementation.instantiate(schema.RestartPolicyInterface)
         policies[policy_cfg.mode] = policy
 
-    return RuntimeConfig(root=root, backend=backend, monitor=monitor, restart_policies=policies)
+    client_cfg = root.slurm.client or FakeSlurmClientConfig()
+    slurm_client = client_cfg.instantiate(schema.SlurmClientInterface)
+    slurm_client.configure(root.slurm)
+
+    return RuntimeConfig(
+        root=root,
+        backend=backend,
+        monitor=monitor,
+        restart_policies=policies,
+        slurm_client=slurm_client,
+    )
 
 
 __all__ = ["RuntimeConfig", "evaluate"]
-

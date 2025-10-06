@@ -18,6 +18,25 @@ class ConfigLoaderError(RuntimeError):
     """Raised when the configuration file cannot be parsed."""
 
 
+_REGISTRY_SENTINEL = {"loaded": False}
+
+
+def _ensure_registrations() -> None:
+    if _REGISTRY_SENTINEL["loaded"]:
+        return
+
+    for module in (
+        "oellm_autoexp.backends.base",
+        "oellm_autoexp.backends.megatron_backend",
+        "oellm_autoexp.monitor.watcher",
+        "oellm_autoexp.monitor.policy",
+        "oellm_autoexp.slurm.client",
+    ):
+        import_module(module)
+
+    _REGISTRY_SENTINEL["loaded"] = True
+
+
 def _load_yaml(path: Path) -> Mapping[str, Any]:
     cfg = OmegaConf.load(path)
     return OmegaConf.to_container(cfg, resolve=True)  # type: ignore[return-value]
@@ -31,9 +50,11 @@ def load_config(path: str | Path) -> schema.RootConfig:
         raise ConfigLoaderError(f"Configuration file not found: {path}")
 
     register_default_resolvers()
-    _import_side_effects()
+    _ensure_registrations()
 
     data = _load_yaml(path)
+    if isinstance(data, dict):
+        _normalize_legacy_sections(data)
     try:
         root = parse_config(schema.RootConfig, data)
     except Exception as exc:  # pragma: no cover - compoconf raises rich errors
@@ -51,7 +72,6 @@ def load_hydra_config(
     overrides: Iterable[str] | None = None,
 ) -> schema.RootConfig:
     register_default_resolvers()
-    _import_side_effects()
 
     overrides = list(overrides or [])
     config_dir = Path(config_dir).resolve()
@@ -62,11 +82,13 @@ def load_hydra_config(
         cfg = compose(config_name=config_name, overrides=overrides)
 
     data = OmegaConf.to_container(cfg, resolve=True)  # type: ignore[return-value]
+    _ensure_registrations()
     if isinstance(data, dict):
         restart_cfg = data.pop("restart", None)
         if restart_cfg is not None and "restart_policies" not in data:
             if isinstance(restart_cfg, dict):
                 data["restart_policies"] = restart_cfg.get("policies", [])
+        _normalize_legacy_sections(data)
     try:
         root = parse_config(schema.RootConfig, data)
     except Exception as exc:  # pragma: no cover
@@ -89,13 +111,64 @@ def load_config_reference(
     return load_hydra_config(str(ref), config_dir, overrides)
 
 
-def _import_side_effects() -> None:
-    """Register built-in implementations with compoconf registries."""
+def ensure_registrations() -> None:
+    """Expose registry initialisation for consumers that only instantiate partial configs."""
 
-    import_module("oellm_autoexp.backends.base")
-    import_module("oellm_autoexp.backends.megatron")
-    import_module("oellm_autoexp.monitor.policy")
-    import_module("oellm_autoexp.monitor.watcher")
+    register_default_resolvers()
+    _ensure_registrations()
+
+
+def load_monitoring_reference(
+    ref: str | Path,
+    config_dir: str | Path,
+    overrides: Iterable[str] | None = None,
+) -> schema.MonitorInterface.cfgtype:
+    path = Path(ref)
+    register_default_resolvers()
+    _ensure_registrations()
+    if path.exists():
+        data = _load_yaml(path)
+        try:
+            return parse_config(schema.MonitorInterface.cfgtype, data)
+        except Exception as exc:  # pragma: no cover
+            raise ConfigLoaderError(f"Unable to parse monitor config {path}: {exc}") from exc
+
+    root = load_hydra_config(str(ref), config_dir, overrides)
+    return root.monitoring
+
+
+def _normalize_legacy_sections(data: dict[str, Any]) -> None:
+    """Flatten legacy `implementation` wrappers for backend and monitoring sections."""
+
+    for key in ("backend", "monitoring"):
+        section = data.get(key)
+        if not isinstance(section, dict):
+            continue
+        impl = section.get("implementation")
+        if isinstance(impl, dict):
+            merged = {**impl}
+            for sub_key, value in section.items():
+                if sub_key != "implementation":
+                    merged[sub_key] = value
+            section = merged
+            data[key] = section
+
+        if key == "backend":
+            namespace = section.get("megatron")
+            if isinstance(namespace, dict):
+                for sub_key, value in namespace.items():
+                    section.setdefault(sub_key, value)
+                section.pop("megatron", None)
+
+    slurm_section = data.get("slurm")
+    if isinstance(slurm_section, dict):
+        client = slurm_section.get("client")
+        if isinstance(client, dict):
+            name = client.get("class_name")
+            if name == "FakeSlurm":
+                client["class_name"] = "FakeSlurmClient"
+            elif name == "RealSlurm":
+                client["class_name"] = "RealSlurmClient"
 
 
 __all__ = [
@@ -103,4 +176,6 @@ __all__ = [
     "load_config",
     "load_hydra_config",
     "load_config_reference",
+    "load_monitoring_reference",
+    "ensure_registrations",
 ]

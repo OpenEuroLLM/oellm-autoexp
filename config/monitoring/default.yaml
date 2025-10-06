@@ -1,7 +1,9 @@
-implementation:
-  class_name: NullMonitor
+class_name: NullMonitor
 poll_interval_seconds: 600
 inactivity_threshold_seconds: 900
 termination_string: null
 termination_command: null
 log_path_template: "{output_dir}/slurm.out"
+output_paths: []
+start_condition_cmd: null
+start_condition_interval_seconds: null
