@@ -25,8 +25,10 @@ class MegatronBackendConfig(NonStrictDataclass, ConfigInterface):
 
     class_name: str = "MegatronBackend"
     launcher_script: Path = Path("scripts/run_megatron.sh")
-    environment: Dict[str, str] = field(default_factory=dict)
+    env: Dict[str, str] = field(default_factory=dict)
     extra_cli_args: list[str] = field(default_factory=list)
+    use_torchrun: bool = False
+    torchrun_args: Dict[str, Any] = field(default_factory=dict)
     megatron: MegatronConfig = field(default_factory=MegatronConfig)
 
     def cli_arguments(self) -> Dict[str, Any]:
@@ -68,8 +70,29 @@ class MegatronBackend(BaseBackend):
         merged_args = self._merge_args(spec)
         cli_args = build_cmdline_args(merged_args, self._parser, self._arg_metadata)
         argv = [str(self.config.launcher_script), *cli_args, *self.config.extra_cli_args]
-        environment = {**self.config.environment}
-        return LaunchCommand(argv=argv, environment=environment)
+
+        # Prepend torchrun if enabled
+        if self.config.use_torchrun:
+            torchrun_argv = self._build_torchrun_args()
+            argv = [*torchrun_argv, *argv]
+
+        env = {**self.config.env}
+        return LaunchCommand(argv=argv, env=env)
+
+    def _build_torchrun_args(self) -> list[str]:
+        """Build torchrun command line arguments."""
+        args = ["python", "-u", "-m", "torch.distributed.run"]
+
+        for key, value in self.config.torchrun_args.items():
+            key_formatted = key.replace("_", "-")
+            if isinstance(value, bool):
+                if value:
+                    args.append(f"--{key_formatted}")
+            elif value is not None:
+                args.append(f"--{key_formatted}")
+                args.append(str(value))
+
+        return args
 
     def _merge_args(self, spec: BackendJobSpec) -> Dict[str, Any]:
         args: Dict[str, Any] = {}

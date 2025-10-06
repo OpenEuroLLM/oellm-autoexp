@@ -97,7 +97,7 @@ def test_render_scripts_with_custom_slurm(tmp_path: Path) -> None:
     config_text = f"""
 project:
   name: demo
-  base_output_dir: {tmp_path / 'outputs'}
+  base_output_dir: {tmp_path / "outputs"}
 sweep:
   axes:
     lr: [0.1]
@@ -107,7 +107,7 @@ slurm:
   log_dir: {log_dir}
   launcher_cmd: "module load foo &&"
   srun_opts: "--ntasks=4"
-  environment:
+  env:
     ENV: 1
   sbatch_overrides:
     nodes: 2
@@ -177,15 +177,14 @@ def test_submit_jobs_honours_start_condition(monkeypatch, tmp_path: Path) -> Non
     assert job_state.registration.start_condition_cmd == "echo 1"
     assert job_state.registration.termination_string == "Done"
 
+
 def test_render_scripts_creates_array_assets(tmp_path: Path) -> None:
     base_output = tmp_path / "outputs"
     template_path = tmp_path / "template.sbatch"
     script_dir = tmp_path / "scripts"
     log_dir = tmp_path / "logs"
 
-    template_path.write_text(
-        "#!/bin/bash\n{sbatch_directives}\n\n{env_exports}\n\n{launcher_cmd}\n"
-    )
+    template_path.write_text("#!/bin/bash\n{sbatch_directives}\n\n{env_exports}\n\n{launcher_cmd}\n")
 
     config_text = f"""
 project:
@@ -274,6 +273,7 @@ restart_policies: []
     assert call_args
     assert call_args[0][1] == artifacts.array_script
     assert len(controller.jobs()) == 2
+
 
 def test_submit_jobs_persists_and_restores(tmp_path: Path) -> None:
     base_output = tmp_path / "outputs"

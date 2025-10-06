@@ -3,7 +3,7 @@ defaults:
   - backend: megatron
   - slurm: base
   - monitoring: default
-  - sweep: minimal
+  - sweep: none
   - restart: default
   - scheduler: default
   - _self_

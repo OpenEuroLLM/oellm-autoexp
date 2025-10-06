@@ -67,14 +67,10 @@ def submit(config_ref: str, config_dir: Path, override: tuple[str, ...], fake: b
     if fake:
         slurm_client = FakeSlurmClient(FakeSlurmClientConfig())
         slurm_client.configure(execution_plan.config.slurm)
-    elif getattr(slurm_client.config, "class_name", "") != "FakeSlurmClient":
-        raise click.ClickException(
-            "Real SLURM submission not yet implemented; use --fake or configure FakeSlurmClient"
-        )
 
     controller = submit_jobs(execution_plan, artifacts, slurm_client)
     for state in controller.jobs():
-        click.echo(f"submitted {state.name} -> job {state.job_id}")
+        click.echo(f"submitted {state.name} -> job {state.job_id} -> log: {state.registration.log_path}")
 
     execute_plan_sync(
         execution_plan,

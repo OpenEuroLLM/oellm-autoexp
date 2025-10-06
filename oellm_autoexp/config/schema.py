@@ -100,8 +100,7 @@ class SlurmConfig(ConfigInterface):
     launcher_cmd: str = ""
     srun_opts: str = ""
     launcher_env_passthrough: bool = False
-    environment: Dict[str, Any] = field(default_factory=dict)
-    environment: Dict[str, Any] = field(default_factory=dict)
+    env: Dict[str, Any] = field(default_factory=dict)
     srun: SrunConfig = field(default_factory=SrunConfig)
     sbatch: SbatchConfig = field(default_factory=SbatchConfig)
     sbatch_overrides: Dict[str, Any] = field(default_factory=dict)

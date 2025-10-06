@@ -1,0 +1,92 @@
+# Megatron monitoring with aggressive stall detection
+defaults:
+  - megatron_basic
+  - _self_
+
+# More aggressive monitoring for stall detection
+poll_interval_seconds: 120
+check_interval_seconds: 90
+# Reduced threshold: if no log updates for 15 minutes, consider it stalled
+# (normal iteration time is ~650ms based on successful run, so 15min is very conservative)
+inactivity_threshold_seconds: 900  # 15 minutes
+
+log_signals:
+  # All signals from megatron_basic, plus stall-specific ones:
+
+  # Training stuck/hanging indicator: no progress updates
+  # This is implicitly handled by inactivity_threshold_seconds above,
+  # but we can also detect specific hang patterns
+
+  # CUDA sync/hang patterns
+  - name: cuda_hang
+    pattern: '(?:CUDA.*(?:hang|stuck|frozen)|device-side assert)'
+    pattern_type: regex
+    action: error
+    mode: crash
+    metadata:
+      severity: critical
+      error_type: hang
+      subsystem: cuda
+    extract_groups:
+      error_message: match
+
+  # Deadlock detection
+  - name: deadlock
+    pattern: '(?:deadlock|Deadlock|DEADLOCK).*?(?P<message>.+)'
+    pattern_type: regex
+    action: error
+    mode: crash
+    metadata:
+      severity: critical
+      error_type: deadlock
+      subsystem: distributed
+    extract_groups:
+      error_message: message
+
+  # ProcessGroup timeout (PyTorch distributed)
+  - name: processgroup_timeout
+    pattern: '\[c10d\].*timeout.*(?P<details>.+)'
+    pattern_type: regex
+    action: error
+    mode: crash
+    metadata:
+      severity: critical
+      error_type: distributed_timeout
+      subsystem: distributed
+    extract_groups:
+      timeout_details: details
+
+  # Watchdog timeout
+  - name: watchdog_timeout
+    pattern: '(?:watchdog|Watchdog).*timeout.*(?P<message>.+)'
+    pattern_type: regex
+    action: error
+    mode: crash
+    metadata:
+      severity: critical
+      error_type: watchdog_timeout
+    extract_groups:
+      error_message: message
+
+  # Gradient NaN/Inf (can cause training to hang)
+  - name: gradient_invalid
+    pattern: '(?:NaN|Inf|nan|inf).*(?:gradient|grad).*?(?P<context>.+)'
+    pattern_type: regex
+    action: warning
+    metadata:
+      severity: warning
+      error_type: numerical_instability
+    extract_groups:
+      context: context
+
+  # Loss NaN/Inf
+  - name: loss_invalid
+    pattern: 'loss.*(?:NaN|Inf|nan|inf)'
+    pattern_type: regex
+    action: error
+    mode: crash
+    metadata:
+      severity: error
+      error_type: numerical_instability
+    extract_groups:
+      error_message: match

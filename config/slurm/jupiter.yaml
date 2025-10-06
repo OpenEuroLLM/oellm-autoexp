@@ -4,8 +4,8 @@ defaults:
 
 template_path: templates/jupiter.sbatch
 launcher_cmd: ""
-srun_opts: ""
-sbatch_overrides:
+srun: {}
+sbatch:
   nodes: 1
   ntasks_per_node: 8
   cpus_per_task: 8

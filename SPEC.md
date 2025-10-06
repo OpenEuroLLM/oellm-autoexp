@@ -65,7 +65,7 @@ oellm-autoexp/
   - `project`: descriptive metadata, default output root, and optional persistent state location.
   - `sweep`: Hydra-compatible structure; support product & list semantics similar to `autoexperiment.product_recursive`.
   - `slurm`: defaults for template path, submission command, partition/account, SBATCH keyword args, launch wrappers, and cluster-level environment exports.
-  - `launcher` settings split between `launch.environment` (env exports) and `launcher_cmd` (prefix command, e.g. container exec).
+  - `launcher` settings split between `launch.env` (env exports) and `launcher_cmd` (prefix command, e.g. container exec).
 - `monitoring`: log file pattern, inactivity threshold, retry limits, termination criteria (string, command, metric-based).
 - `monitoring.output_paths`: optional list of templates resolved per job (e.g. `{output_dir}/train.log`) that are tailed alongside the SLURM log to detect activity or checkpoints.
 - `backend`: concrete backend config (`megatron` initially). Config files such as `config/backend/megatron.yaml` extend other presets via Hydra `defaults` and expose Megatron arguments directly; there are no wrapper keys like `implementation` or manual merge steps.

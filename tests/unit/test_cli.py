@@ -23,9 +23,7 @@ def _write_config(tmp_path: Path) -> Path:
         },
         "monitoring": {"implementation": {"class_name": "NullMonitor"}},
         "backend": {"implementation": {"class_name": "NullBackend"}},
-        "restart_policies": [
-            {"mode": "success", "implementation": {"class_name": "NoRestartPolicy"}}
-        ],
+        "restart_policies": [{"mode": "success", "implementation": {"class_name": "NoRestartPolicy"}}],
     }
 
     config_path = tmp_path / "config.yaml"
@@ -38,7 +36,7 @@ def test_cli_plan(tmp_path: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(cli, ["plan", str(config)])
     assert result.exit_code == 0
-    assert "\"project\": \"demo\"" in result.output
+    assert '"project": "demo"' in result.output
 
 
 def test_cli_submit_fake(tmp_path: Path) -> None:
@@ -47,17 +45,34 @@ def test_cli_submit_fake(tmp_path: Path) -> None:
     result = runner.invoke(cli, ["submit", str(config), "--fake"])
     assert result.exit_code == 0
     assert "submitted" in result.output
+    assert "log:" in result.output
 
 
-def test_cli_submit_real_not_implemented(tmp_path: Path) -> None:
+def test_cli_submit_real_slurm_client(tmp_path: Path, monkeypatch) -> None:
+    """Test that SlurmClient can be used (though we mock the actual sbatch call)."""
     config = _write_config(tmp_path)
     data = yaml.safe_load(config.read_text())
-    data["slurm"]["client"]["class_name"] = "RealSlurmClient"
+    data["slurm"]["client"]["class_name"] = "SlurmClient"
     config.write_text(yaml.safe_dump(data))
+
+    # Mock subprocess.run to avoid needing real sbatch
+    import subprocess
+
+    class MockResult:
+        returncode = 0
+        stdout = "Submitted batch job 12345"
+        stderr = ""
+
+    def mock_subprocess_run(cmd, **kwargs):
+        return MockResult()
+
+    monkeypatch.setattr(subprocess, "run", mock_subprocess_run)
+
     runner = CliRunner()
     result = runner.invoke(cli, ["submit", str(config)])
-    assert result.exit_code != 0
-    assert "Real SLURM submission not yet implemented" in result.output
+    assert result.exit_code == 0
+    assert "submitted" in result.output
+    assert "log:" in result.output
 
 
 def test_cli_monitor_emits_checkpoint_action(tmp_path: Path) -> None:

@@ -9,7 +9,7 @@ namely a top-level object with a "jobs" list where each entry contains:
   "output_dir": str,
   "log_path": str,
   "parameters": {...},
-  "launch": {"argv": [...], "environment": {...}}
+  "launch": {"argv": [...], "env": {...}}
 }
 """
 
@@ -47,11 +47,11 @@ def load_entry(path: Path, index: int) -> dict:
 
 def prepare_environment(entry: dict) -> dict:
     launch_cfg = entry.get("launch", {})
-    environment = launch_cfg.get("environment", {})
-    if not isinstance(environment, dict):
-        environment = {}
+    env = launch_cfg.get("env", {})
+    if not isinstance(env, dict):
+        env = {}
     env = os.environ.copy()
-    env.update({str(k): str(v) for k, v in environment.items()})
+    env.update({str(k): str(v) for k, v in env.items()})
     env.setdefault("OELLM_AUTOEXP_JOB_NAME", str(entry.get("name", "")))
     return env
 
@@ -78,7 +78,19 @@ def main() -> None:
         print("Environment overrides:", {k: env[k] for k in env if k not in os.environ or os.environ[k] != env[k]})
         return
 
-    proc = subprocess.run(argv, env=env, check=False)
+    # Expand environment variables in arguments
+    # This is necessary because torchrun args may contain variables like $MASTER_ADDR
+    # Note: This happens AFTER sweep.json is generated, so Hydra syntax is already resolved
+    # We temporarily update os.environ so os.path.expandvars sees our env additions
+    original_env = os.environ.copy()
+    os.environ.update(env)
+    try:
+        argv_expanded = [os.path.expandvars(arg) for arg in argv]
+    finally:
+        os.environ.clear()
+        os.environ.update(original_env)
+
+    proc = subprocess.run(argv_expanded, env=env, check=False)
     if proc.returncode != 0:  # pragma: no cover - propagate failure upstream
         raise SystemExit(proc.returncode)
 

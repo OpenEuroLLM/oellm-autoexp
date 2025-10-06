@@ -1,0 +1,22 @@
+# @package _global_
+# Example Megatron experiment with monitoring and auto-restart
+# This config demonstrates using megatron_production monitoring
+# with selective restart on transient errors
+
+defaults:
+  - base
+  - override /backend: megatron_torchrun
+  - override /slurm: juwels
+  - override /monitoring: megatron_production
+  - override /restart: megatron_transient
+  - override /backend/megatron: base_llama_spaj
+  - _self_
+
+project:
+  name: megatron_auto_restart_example
+
+# This experiment will:
+# 1. Monitor for OOM, NCCL errors, hangs, stalls, and success
+# 2. Automatically restart on transient errors (hangs, NCCL, communication)
+# 3. Stop permanently on OOM or code bugs (requires human intervention)
+# 4. Restart up to 3 times on crashes, 2 times on stalls

@@ -2,23 +2,24 @@ defaults:
   - _self_
 
 template_path: templates/base.sbatch
-script_dir: ./generated/sbatch
+script_dir: ${project.base_output_dir}
 log_dir: ./logs
 array: true
 submit_cmd: sbatch
-launcher_cmd: ""
-srun_opts: ""
+launcher_cmd: "python"
 launcher_env_passthrough: false
-environment: {}
-sbatch_overrides:
+env: {}
+srun: {}
+sbatch:
   nodes: 1
   ntasks_per_node: 1
   cpus_per_task: 8
   time: "01:00:00"
-  partition: debug
-  account: default
+  account: ${oc.env:SLURM_ACCOUNT}
+  partition: ${oc.env:SLURM_PARTITION}
+  qos: ${oc.env:SLURM_QOS}
   gres: "gpu:1"
-sbatch_extra_directives: []
+  output: ${project.base_output_dir}/%j.out
 test_only: false
 client:
   class_name: FakeSlurmClient

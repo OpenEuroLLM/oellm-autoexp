@@ -168,7 +168,7 @@ def _normalize_legacy_sections(data: dict[str, Any]) -> None:
             if name == "FakeSlurm":
                 client["class_name"] = "FakeSlurmClient"
             elif name == "RealSlurm":
-                client["class_name"] = "RealSlurmClient"
+                client["class_name"] = "SlurmClient"
 
 
 __all__ = [

@@ -68,9 +68,14 @@ def _type_repr(meta: MegatronArgMetadata, default: Any) -> tuple[str, set[str]]:
         base_type = type(default)
 
     if meta.choices:
-        literals = ", ".join(_literal_token(option) for option in meta.choices)
-        imports.add("Literal")
-        type_repr = f"Literal[{literals}]"
+        # If default is a string but choices are not (e.g., enum converted to string name),
+        # use str type instead of Literal with incompatible types
+        if isinstance(default, str) and meta.choices and not all(isinstance(c, str) for c in meta.choices):
+            type_repr = "str"
+        else:
+            literals = ", ".join(_literal_token(option) for option in meta.choices)
+            imports.add("Literal")
+            type_repr = f"Literal[{literals}]"
     elif base_type is bool:
         type_repr = "bool"
     elif base_type is int:

@@ -19,7 +19,7 @@ apply_residual_connection_post_layernorm: false  # If set, use original BERT res
 apply_rope_fusion: true  # Disable rope fusion, the fusion is available only when using megatron-core.
 async_save: null  # Apply async checkpointing save. Currently works only with`torch_dist` distributed checkpoint format.
 async_tensor_model_parallel_allreduce: true  # DEPRECATED. This flag is ignored.
-attention_backend: 5  # choices: [1, 2, 3, 4, 5] | Attention backend to use (flash,fused,unfused,local,auto). Defaults to auto
+attention_backend: auto  # choices: [1, 2, 3, 4, 5] | Attention backend to use (flash,fused,unfused,local,auto). Defaults to auto
 attention_dropout: 0.1  # Post attention dropout probability.
 attention_softmax_in_fp32: false  # Run attention masking and softmax in fp32.
 auto_detect_ckpt_format: false  # Determine if the checkpoint format is in legacy or distributed format. If False, expects distributed checkpoint iff args.ckpt_format != "torch". Might slow down loading a bit (double rank0 ckpt load).

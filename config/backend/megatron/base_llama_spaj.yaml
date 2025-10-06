@@ -1,0 +1,66 @@
+defaults:
+  - base
+  - _self_
+
+# Core model architecture
+position_embedding_type: rope
+rotary_base: 500000
+rotary_percent: 1.0
+seq_length: 4096
+vocab_size: 50304
+max_position_embeddings: 131072
+micro_batch_size: 4
+hidden_size: 2048
+num_layers: 32
+num_attention_heads: 16
+
+# Precision & performance settings
+tensor_model_parallel_size: 1
+sequence_parallel: true
+normalization: RMSNorm
+norm_epsilon: 1e-6
+swiglu: true
+bf16: true
+use_flash_attn: true
+recompute_activations: true
+recompute_granularity: full
+ckpt_format: torch_dist
+
+# Optimization defaults
+weight_decay: 0.05
+adam_beta1: 0.9
+adam_beta2: 0.95
+init_method_std: 0.02
+clip_grad: 1.0
+attention_dropout: 0.0
+hidden_dropout: 0.0
+lr_decay_style: cosine
+lr: 0.001
+min_lr: ${oc.mul:0.1,${.lr}}
+
+# Tokenizer configuration
+tokenizer_model: EleutherAI/gpt-neox-20b
+tokenizer_type: HuggingFaceTokenizer
+
+# Data loading
+data_path:
+  - "/p/project1/projectnucleus/shared/data/cerebras-SlimPajama-627B/train/merged"
+data_cache_path: /p/project1/projectnucleus/shared/data/megatron_cache
+split: "989,10,1"
+lr_warmup_iters: 0
+train_iters: 500
+save_interval: 1000000000
+save: ${project.base_output_dir}
+load: ${project.base_output_dir}
+tensorboard_dir: ${project.base_output_dir}/tensorboard
+num_workers: 4
+
+# Distributed optimizer settings
+distributed_backend: nccl
+use_distributed_optimizer: true
+overlap_param_gather: true
+overlap_grad_reduce: true
+untie_embeddings_and_output_weights: true
+add_bias_linear: false
+add_qkv_bias: false
+

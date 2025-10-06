@@ -101,7 +101,7 @@ def extract_default_args(
         else:
             value = getattr(namespace, dest, None)
         if isinstance(value, Enum):
-            value = value.value if hasattr(value, "value") else str(value)
+            value = str(value).split(".")[-1]
         defaults[dest] = value
     return defaults
 

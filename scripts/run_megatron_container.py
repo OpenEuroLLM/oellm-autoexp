@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-"""Run autoexp inside a container similar to megatron-train utility."""
+"""Run autoexp inside a container similar to megatron-train utility.
+
+This script handles SLURM submission from outside the container:
+1. Runs plan generation inside the container with --no-submit
+2. Parses the sbatch command from container output
+3. Executes sbatch on the host system where SLURM commands are available
+"""
 
 from __future__ import annotations
 
 import argparse
+import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -13,12 +21,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Launch autoexp within a container")
     parser.add_argument("--image", required=True, help="Container image path")
     parser.add_argument("--apptainer-cmd", default="singularity")
-    parser.add_argument("--config-ref", default="autoexp")
+    parser.add_argument("--config-name", default="autoexp")
     parser.add_argument("-C", "--config-dir", default="config")
-    parser.add_argument("-o", "--override", action="append", default=[])
-    parser.add_argument("--dry-run", action="store_true", help="Skip submission step")
+    parser.add_argument("--no-run", action="store_true", help="Generate scripts but don't submit to SLURM")
     parser.add_argument("--fake-submit", action="store_true", help="Use fake SLURM submission inside the container")
-    parser.add_argument("--show-command", action="store_true")
     parser.add_argument(
         "--env",
         action="append",
@@ -32,22 +38,16 @@ def parse_args() -> argparse.Namespace:
         help="Bind mount passed to the container (Singularity --bind syntax).",
     )
     parser.add_argument(
-        "--no-submit",
+        "--ihelp",
         action="store_true",
-        help="Only execute the dry-run phase inside the container.",
+        help="Internal help",
     )
+    parser.add_argument("override", nargs="*", default=[], help="Additional overrides.")
     return parser.parse_args()
 
 
-def _run_in_container(args: argparse.Namespace, cmd_parts: list[str]) -> int:
-    apptainer_cmd = _build_container_command(args, cmd_parts)
-    if args.show_command:
-        print("Running:", " ".join(shlex.quote(c) for c in apptainer_cmd))
-    result = subprocess.run(apptainer_cmd, check=False)
-    return result.returncode
-
-
 def _build_container_command(args: argparse.Namespace, cmd_parts: list[str]) -> list[str]:
+    """Build the apptainer/singularity exec command."""
     quoted_inner = " ".join(shlex.quote(part) for part in cmd_parts)
     command = [args.apptainer_cmd, "exec"]
     for bind in getattr(args, "bind", []) or []:
@@ -65,28 +65,90 @@ def main() -> None:
     base_cmd = [
         "python",
         str(script),
-        args.config_ref,
+        "--config-name",
+        args.config_name,
         "-C",
         str(args.config_dir),
     ]
-    for override in args.override:
-        base_cmd.extend(["-o", override])
 
-    dry_cmd = base_cmd + ["--dry-run"]
-    if _run_in_container(args, dry_cmd) != 0:
+    # Run inside container with --no-submit to generate scripts and output sbatch command
+    container_cmd = base_cmd + ["--no-submit"]
+    if args.ihelp:
+        container_cmd.append("--help")
+    if args.fake_submit:
+        container_cmd.append("--use-fake-slurm")
+
+    container_cmd += args.override
+
+    apptainer_cmd = _build_container_command(args, container_cmd)
+    print("Running:", " ".join(shlex.quote(c) for c in apptainer_cmd))
+
+    result = subprocess.run(apptainer_cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        print("STDOUT:", result.stdout)
+        print("STDERR:", result.stderr)
         raise SystemExit(1)
 
-    if args.dry_run or args.no_submit:
+    # Parse the sbatch command from container output
+    sbatch_match = re.search(r"^Successful, to execute, run: (.*?)(sbatch .*)$", result.stdout, flags=re.MULTILINE)
+
+    if not sbatch_match:
+        # If no sbatch command found, this might be using fake SLURM or an error
+        print(result.stdout)
+        if result.stderr:
+            print("STDERR:", result.stderr)
+        if args.fake_submit:
+            # Fake SLURM handles submission internally, so this is expected
+            return
+        print("Warning: No sbatch command found in output")
         return
 
-    submit_cmd = base_cmd.copy()
-    if args.fake_submit:
-        submit_cmd.append("--use-fake-slurm")
-    else:
-        raise SystemExit("Real SLURM submission not yet implemented; use --fake-submit")
+    # Extract environment variables and sbatch command
+    env_string = sbatch_match.group(1).strip()
+    sbatch_cmd = sbatch_match.group(2).strip()
 
-    if _run_in_container(args, submit_cmd) != 0:
-        raise SystemExit(1)
+    print(result.stdout)
+    print(f"\nSLURM Command: {sbatch_cmd}")
+
+    if args.no_run:
+        print("Skipping submission (--no-run specified)")
+        return
+
+    # Parse environment variables
+    env = dict(os.environ)
+    if env_string:
+        for env_assignment in env_string.split():
+            if "=" in env_assignment:
+                key, value = env_assignment.split("=", 1)
+                env[key] = value
+                print(f"Setting env: {key}={value}")
+
+    # Execute sbatch on the host
+    print(f"Submitting: {sbatch_cmd}")
+    sbatch_result = subprocess.run(shlex.split(sbatch_cmd), env=env, capture_output=True, text=True)
+
+    print(sbatch_result.stdout)
+    if sbatch_result.stderr:
+        print("STDERR:", sbatch_result.stderr)
+
+    if sbatch_result.returncode != 0:
+        raise SystemExit(f"sbatch failed with return code {sbatch_result.returncode}")
+
+    # Extract job ID and show log location hint
+    job_match = re.search(r"Submitted batch job (\d+)", sbatch_result.stdout)
+    if job_match:
+        job_id = job_match.group(1)
+        print(f"\nSuccessfully submitted job {job_id}")
+
+        # Try to extract log paths from the container output
+        log_matches = re.findall(r"log:\s*(\S+)", result.stdout)
+        if log_matches:
+            print("\nOutput logs:")
+            for log_path in log_matches:
+                print(f"  - {log_path}")
+        else:
+            print("\nCheck SLURM logs in your configured log directory")
 
 
 if __name__ == "__main__":

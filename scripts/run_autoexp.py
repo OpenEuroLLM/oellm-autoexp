@@ -18,17 +18,20 @@ from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run autoexp orchestration")
-    parser.add_argument("config_ref", nargs="?", default="autoexp")
+    parser.add_argument("--config-name", default="autoexp")
     parser.add_argument("-C", "--config-dir", type=Path, default=Path("config"))
-    parser.add_argument("-o", "--override", action="append", default=[])
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--use-fake-slurm", action="store_true", default=False)
+    parser.add_argument(
+        "--no-submit", action="store_true", help="Generate scripts but output sbatch command instead of submitting"
+    )
+    parser.add_argument("override", nargs="*", default=[], help="Additional overrides.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    root = load_config_reference(args.config_ref, args.config_dir, args.override)
+    root = load_config_reference(args.config_name, args.config_dir, args.override)
     plan = build_execution_plan(root)
     artifacts = render_scripts(plan)
 
@@ -41,16 +44,27 @@ def main() -> None:
             print(f"Sweep JSON: {artifacts.sweep_json}")
         return
 
+    # When --no-submit is set, output the sbatch command for the host to execute
+    if args.no_submit:
+        if artifacts.array_script:
+            script_path = artifacts.array_script
+        elif artifacts.job_scripts:
+            script_path = artifacts.job_scripts[0]
+        else:
+            raise RuntimeError("No scripts generated to submit")
+
+        # Output in format expected by run_megatron_container.py
+        print(f"Successful, to execute, run: sbatch {script_path}")
+        return
+
     slurm_client = plan.runtime.slurm_client
     if args.use_fake_slurm:
         slurm_client = FakeSlurmClient(FakeSlurmClientConfig())
         slurm_client.configure(plan.config.slurm)
-    elif getattr(slurm_client.config, "class_name", "") != "FakeSlurmClient":
-        raise SystemExit("Real SLURM submission not yet implemented; pass --use-fake-slurm")
 
     controller = submit_jobs(plan, artifacts, slurm_client)
     for state in controller.jobs():
-        print(f"submitted {state.name} -> job {state.job_id}")
+        print(f"submitted {state.name} -> job {state.job_id} -> log: {state.registration.log_path}")
 
     execute_plan_sync(
         plan,

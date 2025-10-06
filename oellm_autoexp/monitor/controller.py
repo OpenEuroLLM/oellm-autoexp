@@ -126,7 +126,10 @@ class MonitorController:
             if outcome is not None:
                 for signal in outcome.signals:
                     if signal.mode:
-                        result = self._apply_policy(state, signal.mode, signal.metadata)
+                        # Include signal name in metadata for selective restart policies
+                        metadata = dict(signal.metadata)
+                        metadata["signal_name"] = signal.name
+                        result = self._apply_policy(state, signal.mode, metadata)
                         if result is not None:
                             decision, job_key = result
                             cycle_result.decisions[job_key] = decision

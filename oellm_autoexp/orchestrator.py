@@ -262,18 +262,43 @@ def execute_plan_sync(
     )
 
 
-def _build_replacements(runtime: RuntimeConfig, job: JobPlan, launch_cmd: LaunchCommand) -> Dict[str, str]:
-    sbatch_directives = _format_sbatch_directives(runtime.root.slurm, job)
-    backend_cmd = _format_command(launch_cmd.argv)
-    launcher_prefix_raw = runtime.root.slurm.launcher_cmd.strip()
-    launcher_prefix = f"{launcher_prefix_raw} " if launcher_prefix_raw else ""
+def _build_replacements(
+    runtime: RuntimeConfig,
+    job: JobPlan,
+    launch_cmd: LaunchCommand,
+    escape_str: bool = True,
+    sbatch_overrides: dict[str, str] = {},
+) -> Dict[str, str]:
+    sbatch_directives = _format_sbatch_directives(runtime.root.slurm, job, sbatch_overrides=sbatch_overrides)
+    backend_cmd = _format_command(launch_cmd.argv, escape_str=escape_str)
+    launcher_raw = runtime.root.slurm.launcher_cmd.strip()
+    launcher = f"{launcher_raw} " if launcher_raw else ""
     launcher_env_flags = ""
-    if getattr(runtime.root.slurm, "launcher_env_passthrough", False) and runtime.root.slurm.environment:
-        env_flags = " ".join(f"--env {key}=${key}" for key in runtime.root.slurm.environment.keys())
+    launcher_env_exports = ""
+    if runtime.root.slurm.env or launch_cmd.env:
+        environ = dict(**runtime.root.slurm.env)
+        environ.update(**launch_cmd.env)
+        env_flags = " ".join(f"--env {key}=${key}" for key in environ.keys())
+        env_exports = "; ".join(f"export {key}='\"${key}\"'" for key in environ.keys())
         if env_flags:
             launcher_env_flags = f"{env_flags} "
-    combined_launcher = f"{launcher_prefix}{launcher_env_flags}{backend_cmd}".strip()
-    launcher_cmd = combined_launcher or backend_cmd
+        if env_exports:
+            launcher_env_exports = f"{env_exports};"
+
+    def escape_for_double_quotes(s: str) -> str:
+        s = s.replace("\\", "\\\\")  # Backslash first!
+        s = s.replace("'", "'\"'\"'")
+        return s
+
+    launcher = escape_for_double_quotes(launcher)
+    backend_cmd = escape_for_double_quotes(backend_cmd)
+
+    if "{{env_flags}}" in launcher:
+        launcher = launcher.replace("{{env_flags}}", launcher_env_flags)
+    if "{{env_exports}}" in launcher:
+        launcher = launcher.replace("{{env_exports}}", launcher_env_exports)
+
+    launcher_cmd = f"{launcher}{backend_cmd}"
     srun_extras = asdict(runtime.root.slurm.srun)
     srun_opts = _format_srun_options(runtime.root.slurm.srun_opts, srun_extras)
     if srun_opts:
@@ -284,10 +309,10 @@ def _build_replacements(runtime: RuntimeConfig, job: JobPlan, launch_cmd: Launch
         "output_dir": str(job.output_dir),
         "log_path": str(job.log_path),
         "launcher_cmd": launcher_cmd,
-        "launcher_prefix": launcher_prefix,
+        "launcher": launcher,
         "launcher_env_flags": launcher_env_flags,
         "backend_cmd": backend_cmd,
-        "env_exports": _format_env(runtime.root.slurm.environment, launch_cmd.environment),
+        "env_exports": _format_env(runtime.root.slurm.env, launch_cmd.env),
         "sbatch_directives": sbatch_directives,
         "srun_opts": srun_opts,
     }
@@ -312,7 +337,7 @@ def _build_sweep_entry(job: JobPlan, launch_cmd: LaunchCommand) -> Dict[str, Any
         "parameters": dict(job.parameters),
         "launch": {
             "argv": list(launch_cmd.argv),
-            "environment": dict(launch_cmd.environment),
+            "env": dict(launch_cmd.env),
         },
     }
 
@@ -363,8 +388,8 @@ def _restore_saved_jobs(
     return restored
 
 
-def _format_command(argv: Sequence[str]) -> str:
-    return " ".join(shlex.quote(arg) for arg in argv)
+def _format_command(argv: Sequence[str], escape_str: bool = True) -> str:
+    return " ".join(shlex.quote(arg) if escape_str else arg for arg in argv)
 
 
 def _format_env(base_env: Mapping[str, object], command_env: Mapping[str, object]) -> str:
@@ -376,9 +401,11 @@ def _format_env(base_env: Mapping[str, object], command_env: Mapping[str, object
     return "\n".join(f"export {key}={value}" for key, value in merged.items())
 
 
-def _format_sbatch_directives(slurm_conf: SlurmConfig, job: JobPlan) -> str:
+def _format_sbatch_directives(slurm_conf: SlurmConfig, job: JobPlan, sbatch_overrides: dict[str, str] = {}) -> str:
+    sbatch_kwargs = asdict(slurm_conf.sbatch)
+    sbatch_kwargs.update(sbatch_overrides)
     sbatch_values = {
-        k.replace("_", "-"): v for k, v in asdict(slurm_conf.sbatch).items() if v is not None and not k.startswith("_")
+        k.replace("_", "-"): v for k, v in sbatch_kwargs.items() if v is not None and not k.startswith("_")
     }
     override_values = {
         k.replace("_", "-"): v
@@ -429,14 +456,13 @@ def _render_array_script(
     runner_script = Path("scripts/run_sweep_entry.py")
     launcher_cmd = LaunchCommand(
         argv=[
-            "python",
             str(runner_script),
             "--sweep",
             str(sweep_path),
             "--index",
             "$SLURM_ARRAY_TASK_ID",
         ],
-        environment={},
+        env={"SLURM_ARRAY_TASK_ID": "$SLURM_ARRAY_TASK_ID"},
     )
 
     synthetic_job = JobPlan(
@@ -447,7 +473,13 @@ def _render_array_script(
         output_paths=[],
     )
 
-    replacements = _build_replacements(plan.runtime, synthetic_job, launcher_cmd)
+    replacements = _build_replacements(
+        plan.runtime,
+        synthetic_job,
+        launcher_cmd,
+        escape_str=False,
+        sbatch_overrides={"array": f"0-{len(plan.sweep_points) - 1}"},
+    )
     script_path = script_dir / f"{array_job_name}.sbatch"
     rendered = render_template_file(template_path, script_path, replacements)
     validate_job_script(rendered, array_job_name)

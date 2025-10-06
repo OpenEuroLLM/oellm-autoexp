@@ -15,7 +15,7 @@ class LaunchCommand:
     """Concrete command to be executed on the cluster."""
 
     argv: Sequence[str]
-    environment: Mapping[str, str] = field(default_factory=dict)
+    env: Mapping[str, str] = field(default_factory=dict)
     cwd: str | None = None
 
 
@@ -48,7 +48,7 @@ class NullBackendConfig(ConfigInterface):
     class_name: str = "NullBackend"
     base_command: Sequence[str] = field(default_factory=lambda: ("echo",))
     extra_cli_args: Sequence[str] = field(default_factory=tuple)
-    environment: Dict[str, str] = field(default_factory=dict)
+    env: Dict[str, str] = field(default_factory=dict)
 
 
 @register
@@ -63,8 +63,8 @@ class NullBackend(BaseBackend):
         for key, value in sorted(spec.parameters.items()):
             argv.extend([str(key), str(value)])
         argv.extend(str(arg) for arg in self.config.extra_cli_args)
-        environment = dict(self.config.environment)
-        return LaunchCommand(argv=argv, environment=environment)
+        env = dict(self.config.env)
+        return LaunchCommand(argv=argv, env=env)
 
 
 __all__ = ["BaseBackend", "BackendJobSpec", "LaunchCommand", "NullBackendConfig"]

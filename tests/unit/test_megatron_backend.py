@@ -8,7 +8,7 @@ def test_megatron_backend_builds_command():
 
     config = MegatronBackendConfig(
         launcher_script=Path("launch.sh"),
-        environment={"ENV": "1"},
+        env={"ENV": "1"},
         extra_cli_args=["--extra"],
         lr=0.1,
         use_gpu=True,
@@ -25,7 +25,8 @@ def test_megatron_backend_builds_command():
     assert "--micro-batch-size" in cmd.argv and "4" in cmd.argv
     assert "--use-gpu" in cmd.argv
     assert cmd.argv[-1] == "--extra"
-    assert cmd.environment["ENV"] == "1"
+    assert cmd.env["ENV"] == "1"
+
 
 def test_auto_megatron_backend_converts_convenience_args():
     from oellm_autoexp.backends.megatron_backend import AutoMegatronBackend, AutoMegatronBackendConfig

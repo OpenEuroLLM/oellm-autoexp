@@ -27,7 +27,7 @@ def test_load_hydra_config(monkeypatch) -> None:
     cfg = load_config_reference("autoexp", Path("config"), overrides=["project=juwels", "slurm=juwels"])
 
     assert cfg.project.name == "juwels"
-    assert "JUWELS" in cfg.slurm.environment.get("MACHINE_NAME", "")
+    assert "JUWELS" in cfg.slurm.env.get("MACHINE_NAME", "")
     assert str(cfg.slurm.template_path).endswith("juwels.sbatch")
     assert cfg.slurm.launcher_cmd.startswith("apptainer exec")
     assert cfg.slurm.srun_opts == ""

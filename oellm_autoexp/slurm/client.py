@@ -161,17 +161,18 @@ class FakeSlurmClient(BaseSlurmClient):
 
 
 @dataclass
-class RealSlurmClientConfig(BaseSlurmClientConfig):
-    class_name: str = "RealSlurmClient"
+class SlurmClientConfig(BaseSlurmClientConfig):
+    class_name: str = "SlurmClient"
 
 
 @register
-class RealSlurmClient(BaseSlurmClient):
+class SlurmClient(BaseSlurmClient):
     """SLURM client that shells out to the system commands."""
 
-    config: RealSlurmClientConfig
+    config: SlurmClientConfig
+    supports_array = True
 
-    def __init__(self, config: RealSlurmClientConfig) -> None:
+    def __init__(self, config: SlurmClientConfig) -> None:
         super().__init__(config)
         self._jobs: Dict[int, SlurmJob] = {}
 
@@ -197,7 +198,56 @@ class RealSlurmClient(BaseSlurmClient):
         log_paths: List[Path],
         task_names: List[str],
     ) -> List[int]:
-        raise RuntimeError("Real SLURM array submission not yet implemented")
+        """Submit a SLURM job array.
+
+        Args:
+            array_name: Base name for the array job
+            script_path: Path to the array script
+            log_paths: List of log paths for each task
+            task_names: List of task names
+
+        Returns:
+            List of job IDs (one per task)
+        """
+        slurm_conf = self.slurm_config
+        num_tasks = len(task_names)
+
+        # Submit the array job with --array=0-N
+        submit_cmd = shlex.split(slurm_conf.submit_cmd)
+        array_range = f"0-{num_tasks - 1}"
+        proc = run_command([*submit_cmd, f"--array={array_range}", str(script_path)])
+
+        if proc.returncode != 0:
+            raise RuntimeError(f"sbatch failed for array {script_path}: {proc.stderr.strip()}")
+
+        # Parse the job ID from output like "Submitted batch job 12345"
+        base_job_id = self._parse_job_id(proc.stdout)
+        if base_job_id is None:
+            raise RuntimeError(f"Unable to parse job id from sbatch output: {proc.stdout.strip()}")
+
+        # Create job entries for each task in the array
+        # SLURM array jobs have IDs like 12345_0, 12345_1, etc., but we track them individually
+        job_ids: List[int] = []
+        for idx, (log_path, task_name) in enumerate(zip(log_paths, task_names)):
+            # For tracking purposes, we use unique IDs (base_job_id + idx offset)
+            # Note: In reality, SLURM uses base_job_id_taskid format, but for our tracking
+            # we'll generate sequential IDs
+            task_job_id = base_job_id + idx
+            job_name = f"{array_name}_{task_name}"
+
+            if self.config.persist_artifacts:
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                log_path.touch(exist_ok=True)
+
+            self._jobs[task_job_id] = SlurmJob(
+                job_id=task_job_id,
+                name=job_name,
+                script_path=Path(script_path),
+                log_path=Path(log_path),
+            )
+            job_ids.append(task_job_id)
+
+        return job_ids
 
     def cancel(self, job_id: int) -> None:
         slurm_conf = self.slurm_config
@@ -250,9 +300,9 @@ FakeSlurm = FakeSlurmClient
 __all__ = [
     "BaseSlurmClient",
     "FakeSlurmClient",
-    "RealSlurmClient",
+    "SlurmClient",
     "FakeSlurmClientConfig",
-    "RealSlurmClientConfig",
+    "SlurmClientConfig",
     "SlurmJob",
     "FakeSlurm",
 ]

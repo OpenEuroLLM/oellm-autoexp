@@ -30,7 +30,7 @@ class MegatronConfig(ConfigInterface):
     num_attention_heads: int | None = None
 
     # Attention backend to use (flash,fused,unfused,local,auto). Defaults to auto
-    attention_backend: Literal[1, 2, 3, 4, 5] = 5
+    attention_backend: str = 'auto'
 
     # Projection weights dimension in multi-head attention. This is set to    args.hidden_size
     # // args.num_attention_heads if not provided.
