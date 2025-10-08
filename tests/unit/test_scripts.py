@@ -1,9 +1,9 @@
 from pathlib import Path
 
 import argparse
-import subprocess
 
 from scripts import run_megatron_container
+import oellm_autoexp.utils.run
 
 
 def test_run_megatron_container_with_fake_submit(monkeypatch, tmp_path: Path):
@@ -17,7 +17,7 @@ def test_run_megatron_container_with_fake_submit(monkeypatch, tmp_path: Path):
         result.stderr = ""
         return result
 
-    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr(oellm_autoexp.utils.run, "run_with_tee", fake_subprocess_run)
 
     args = argparse.Namespace(
         image="image.sif",
@@ -61,7 +61,7 @@ def test_run_megatron_container_parses_sbatch_command(monkeypatch, tmp_path: Pat
 
         return result
 
-    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr(oellm_autoexp.utils.run, "run_with_tee", fake_subprocess_run)
 
     args = argparse.Namespace(
         image="image.sif",

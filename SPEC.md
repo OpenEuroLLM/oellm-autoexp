@@ -118,12 +118,28 @@ CLI should share state via a project directory (`.oellm-autoexp/`) containing se
 - Track three signals: SLURM job state (`squeue`), wall-clock runtime, and log progress (mtime + optional regex heartbeat).
 - Monitoring config exposes `log_signals` that match regex/substring patterns in SLURM logs and emit named signals. Each signal can map to a restart `mode` (feeding into restart policies) or to an arbitrary `action` collected by the controller (e.g., enqueue checkpoint conversion jobs or trigger evaluation workflows). The standalone monitor CLI pre-registers generic signals for errors, run lifecycle (pending → running → ended), completion markers, and checkpoint publication so downstream tooling can attach commands without backend knowledge.
 - Monitor compares both SLURM log output and configured training output files; inactivity detection keys off the latest change across either source so freezes without log updates are still caught, mirroring the legacy `autoexperiment` behaviour.
+- **Event Logging and Visibility**: The `MonitorController` logs all monitoring events, SLURM state transitions, signal detections, and policy decisions at INFO level to ensure full visibility into the restart system's behavior. This includes:
+  - Monitor outcomes (status, last_update, signal counts)
+  - SLURM state transitions (PENDING → RUNNING → CANCELLED/FAILED/COMPLETED)
+  - Signal detection with mode and action
+  - Policy decisions (restart/stop) with reason and attempt count
+  - Job restart operations (old job_id → new job_id)
+- **Mode Classification with Metadata**: When classifying job state into restart modes, the controller enriches the mode with contextual metadata:
+  - `crash` mode for CANCELLED jobs includes `error_type: cancelled` and `subsystem: slurm` to enable selective restart policies
+  - `crash` mode for FAILED jobs includes `error_type: slurm_failure`
+  - `timeout` mode includes `error_type: timeout` and reason codes
+  - This metadata allows restart policies to make informed decisions (e.g., restart on CANCELLED but not on OOM)
 - Define error modes:
   - `stall`: log unchanged for N seconds while job is `RUNNING` → restart with same plan, increment `stall_retries`.
-  - `crash`: SLURM exits non-zero without completion marker → restart if retries remain.
+  - `crash`: SLURM exits non-zero or is CANCELLED without completion marker → consult restart policy based on error_type metadata.
   - `timeout`: job cancelled due to wall-clock (detected via SLURM reason codes) → restart with updated `time_limit` or gracefully stop depending on policy.
   - `completed`: termination string or command detected → mark done, no restart.
-- Implement restart policies as `RegistrableConfigInterface` derivatives. They decide whether to `restart`, `adjust`, or `abort` and can be instantiated from the config via compoconf. Provide hooks for backend to adjust restart command (e.g., set `--load {latest_ckpt}`) through the same interface contracts. SLURM templates should accept aggregated directive/env strings so cluster-specific SBATCH, launcher, and `srun` settings live entirely in config rather than templated code.
+- Implement restart policies as `RegistrableConfigInterface` derivatives. They decide whether to `restart`, `adjust`, or `abort` based on mode and metadata (error_type, subsystem, signal_name). The `SelectiveRestartPolicy` supports:
+  - `restart_on_error_types`: List of error types to restart (e.g., `cancelled`, `hang`, `nccl`)
+  - `restart_on_subsystems`: List of subsystems to restart (e.g., `slurm`, `distributed`)
+  - `exclude_error_types`: List of permanent errors to never restart (e.g., `oom`, `exception`)
+  - `default_action`: Fallback action when no rules match (`restart` or `stop`)
+- Provide hooks for backend to adjust restart command (e.g., set `--load {latest_ckpt}`) through the same interface contracts. SLURM templates should accept aggregated directive/env strings so cluster-specific SBATCH, launcher, and `srun` settings live entirely in config rather than templated code.
 
 ## Testing Strategy
 - **Unit tests**: cover config parsing, sweep expansion semantics, SLURM template rendering, Megatron arg validation (use pared-down parser fixtures).
@@ -135,9 +151,20 @@ CLI should share state via a project directory (`.oellm-autoexp/`) containing se
     2. Stall detection: log stops updating, ensure restart triggered once, log mutated, job completes.
     3. Crash without restart policy → job marked failed, no rerun.
     4. Timeout with policy increasing limit or aborting after retry budget.
-    5. Resume monitoring after process restart (load persisted state, pick up existing job IDs).
+    5. Manual `scancel` → CANCELLED state → restart triggered with proper logging.
+    6. CUDA OOM in log → crash mode with `error_type: oom` → no restart (excluded).
+    7. Resume monitoring after process restart (load persisted state, pick up existing job IDs).
   - Validate that sbatch templates include required placeholders and `--job-name` consistency.
+  - **Event Logging Coverage**: Integration tests should verify that all monitoring events are logged:
+    - SLURM state transitions are logged with old and new states
+    - Log signal detection is logged with signal name and mode
+    - Policy decisions are logged with action, reason, and attempt count
+    - Job restart operations are logged with old and new job IDs
 - Provide fixtures for config YAMLs mirroring patterns from legacy repos to avoid regressions.
+- **Unit Test Coverage for Monitor**: Ensure unit tests cover:
+  - CANCELLED job state → crash mode with `error_type: cancelled` metadata
+  - Selective restart policy decision based on error_type and subsystem
+  - Logging output contains expected transition and decision messages
 
 ## Tooling & Packaging Notes
 - `pyproject.toml` with Poetry or Hatch for optional extras (`[project.optional-dependencies]` includes `megatron` entry).

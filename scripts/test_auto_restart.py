@@ -1,24 +1,70 @@
 #!/usr/bin/env python3
 """Test script for automatic restart functionality.
 
-This script tests the monitoring and restart system by:
-1. Submitting test jobs
-2. Simulating various failure scenarios
-3. Verifying restart behavior
+IMPORTANT: This script must be run from the SLURM login node, NOT from inside a container.
+
+Architecture Overview:
+  The oellm-autoexp system separates concerns between the login node and compute nodes:
+
+  Login Node (where THIS script runs):
+    - This test script (test_auto_restart.py)
+    - Calls run_autoexp.py via Python
+    - run_autoexp.py generates sbatch scripts and submits them via `sbatch` command
+    - The `sbatch` command is available on the login node, NOT inside containers
+
+  Compute Nodes (where training runs):
+    - sbatch scripts execute on compute nodes
+    - Scripts load required modules (CUDA, NCCL, etc.)
+    - Scripts use `srun ... singularity exec ...` to launch containers
+    - Megatron and training code run INSIDE the Singularity container
+    - Container path: $CONTAINER_CACHE_DIR/MegatronTraining_*.sif
+
+  Why this split?
+    - sbatch must be called from outside containers (SLURM client tools)
+    - Megatron needs GPU drivers, CUDA, NCCL from inside containers (reproducible env)
+    - This approach mirrors the architecture described in SPEC.md and README.md
+
+  Schema-only validation mode:
+    - This script sets OELLM_MEGATRON_SCHEMA_ONLY=1 before running
+    - This allows oellm-autoexp to validate configs WITHOUT importing Megatron-LM
+    - Uses pre-generated config_schema.py instead of megatron_args.py
+    - The full Megatron parser validation happens inside the container on compute nodes
+    - This avoids the "sbatch outside container, megatron inside container" conflict
+
+Test Workflow:
+  1. Submit test jobs via run_autoexp.py (which calls sbatch from login node)
+  2. Simulate various failure scenarios (cancel, hang, OOM, NCCL errors)
+  3. Verify that the monitoring system detects failures
+  4. Verify that restart policies work correctly (restart on transient errors, not on OOM)
+  5. Verify that retry limits are respected
+
+Prerequisites:
+  - Must be run on a SLURM login node with sbatch access
+  - Container image must be available at $CONTAINER_CACHE_DIR
+  - oellm-autoexp must be installed: pip install -e .
+  - Must have access to the config files in config/
 
 Usage:
+    # Run from the repo root
     python scripts/test_auto_restart.py --scenario scancel
     python scripts/test_auto_restart.py --scenario hang
     python scripts/test_auto_restart.py --scenario oom
     python scripts/test_auto_restart.py --scenario all
+    python scripts/test_auto_restart.py --scenario scancel --iterations 3
 """
 
 import argparse
+import os
 import subprocess
 import time
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
+
+import oellm_autoexp.utils.run
+
+# Global list to track background monitor processes
+_monitor_processes: List[subprocess.Popen] = []
 
 
 class Colors:
@@ -54,16 +100,110 @@ def log_warning(msg: str) -> None:
     log(f"⚠ {msg}", Colors.YELLOW)
 
 
+def cleanup_monitors() -> None:
+    """Kill all background monitoring processes."""
+    global _monitor_processes
+    for proc in _monitor_processes:
+        try:
+            if proc.poll() is None:  # Still running
+                log_info(f"Terminating monitor process {proc.pid}...")
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    log_warning(f"Monitor {proc.pid} didn't terminate, killing...")
+                    proc.kill()
+        except Exception as e:
+            log_warning(f"Error cleaning up monitor {proc.pid}: {e}")
+    _monitor_processes.clear()
+
+
+def check_environment() -> None:
+    """Check that we're running in the correct environment.
+
+    This script must run on the SLURM login node (not inside a container) because:
+    - sbatch must be called from outside containers
+    - The sbatch script will launch containers on compute nodes
+    """
+    # Check if sbatch is available
+    result = oellm_autoexp.utils.run.run_with_tee(["which", "sbatch"], capture_output=True, text=True)
+    if result.returncode != 0:
+        log_error("sbatch command not found!")
+        log_error("This script must be run on a SLURM login node, not inside a container.")
+        sys.exit(1)
+
+    # Warn if SINGULARITY_NAME or APPTAINER_NAME is set (indicates we're inside a container)
+    if os.environ.get("SINGULARITY_NAME") or os.environ.get("APPTAINER_NAME"):
+        log_error("Detected running inside a container (SINGULARITY_NAME or APPTAINER_NAME set)!")
+        log_error("This script must be run from the SLURM login node, NOT from inside a container.")
+        sys.exit(1)
+
+    # Check if oellm-autoexp is importable
+    try:
+        import oellm_autoexp  # noqa: F401
+    except ImportError:
+        log_error("oellm_autoexp package not found!")
+        log_error("Please install: pip install -e .")
+        sys.exit(1)
+
+    # Check if we're in the repo root
+    repo_root = Path(__file__).parent.parent
+    if not (repo_root / "pyproject.toml").exists():
+        log_error("Cannot find pyproject.toml in expected location!")
+        log_error(f"Expected repo root: {repo_root}")
+        log_error("Please run this script from the oellm-autoexp repository root.")
+        sys.exit(1)
+
+    # Change to repo root for consistent paths
+    os.chdir(repo_root)
+    log_info(f"Working directory: {repo_root}")
+
+    # Enable schema-only mode to avoid importing Megatron-LM on login node
+    # The full validation will happen inside the container on compute nodes
+    os.environ["OELLM_MEGATRON_SCHEMA_ONLY"] = "1"
+    log_info("Enabled schema-only validation mode (no Megatron-LM import required)")
+
+    # Set required SLURM environment variables if not already set
+    # These are needed by the base config but may not be set in test environment
+    if "SLURM_ACCOUNT" not in os.environ:
+        os.environ["SLURM_ACCOUNT"] = os.environ.get("USER", "test_user")
+        log_info(f"Set SLURM_ACCOUNT={os.environ['SLURM_ACCOUNT']}")
+    if "SLURM_PARTITION" not in os.environ:
+        os.environ["SLURM_PARTITION"] = "batch"
+        log_info(f"Set SLURM_PARTITION={os.environ['SLURM_PARTITION']}")
+    if "SLURM_QOS" not in os.environ:
+        os.environ["SLURM_QOS"] = "normal"
+        log_info(f"Set SLURM_QOS={os.environ['SLURM_QOS']}")
+
+    # Clean up any stale state from previous runs
+    state_dirs = [
+        Path("output/.oellm-autoexp"),
+        Path(".oellm-autoexp"),
+    ]
+    for state_dir in state_dirs:
+        state_file = state_dir / "state.json"
+        if state_file.exists():
+            log_info(f"Removing stale state file: {state_file}")
+            state_file.unlink()
+            # Also remove the directory if it's empty
+            try:
+                state_dir.rmdir()
+            except OSError:
+                pass  # Directory not empty, that's fine
+
+    log_success("Environment checks passed")
+
+
 def run_command(cmd: list[str], capture: bool = True) -> subprocess.CompletedProcess:
     """Run a command and return the result."""
     log_info(f"Running: {' '.join(cmd)}")
     if capture:
-        return subprocess.run(cmd, capture_output=True, text=True, check=False)
+        return oellm_autoexp.utils.run.run_with_tee(cmd, capture_output=True, text=True, check=False)
     else:
-        return subprocess.run(cmd, check=False)
+        return oellm_autoexp.utils.run.run_with_tee(cmd, check=False)
 
 
-def wait_for_job_state(job_id: int, expected_state: str, timeout: int = 120) -> bool:
+def wait_for_job_state(job_id: str, expected_state: str, timeout: int = 120, poll_interval: int = 30) -> bool:
     """Wait for a job to reach a specific SLURM state."""
     log_info(f"Waiting for job {job_id} to reach state {expected_state}...")
     start_time = time.time()
@@ -76,13 +216,13 @@ def wait_for_job_state(job_id: int, expected_state: str, timeout: int = 120) -> 
                 log_success(f"Job {job_id} reached state {expected_state}")
                 return True
             log_info(f"Current state: {current_state}")
-        time.sleep(5)
+        time.sleep(poll_interval)
 
     log_error(f"Timeout waiting for job {job_id} to reach {expected_state}")
     return False
 
 
-def get_job_state(job_id: int) -> Optional[str]:
+def get_job_state(job_id: str) -> Optional[str]:
     """Get the current SLURM state of a job."""
     result = run_command(["squeue", "-j", str(job_id), "-h", "-o", "%T"])
     if result.returncode == 0 and result.stdout.strip():
@@ -90,55 +230,106 @@ def get_job_state(job_id: int) -> Optional[str]:
     return None
 
 
-def submit_test_job(micro_batch_size: int = 8, train_iters: int = 100) -> Optional[int]:
+def submit_test_job(micro_batch_size: int = 8, train_iters: int = 100, array_mode: bool = False) -> Optional[int]:
     """Submit a test job and return the job ID.
+
+    This function runs on the login node and calls run_autoexp.py, which:
+    1. Generates sbatch scripts with singularity exec commands
+    2. Submits the scripts via sbatch (from login node)
+    3. The sbatch scripts run on compute nodes and launch Megatron in containers
+    4. Starts monitoring in the background to enable auto-restart
 
     Args:
         micro_batch_size: Batch size (8 works, 16 causes OOM)
         train_iters: Number of training iterations
+        array_mode: If True, use SLURM array job submission; otherwise use single job mode
 
     Returns:
         Job ID if successful, None otherwise
     """
     log_info(f"Submitting test job (micro_bs={micro_batch_size}, iters={train_iters})...")
 
+    # Ensure logs directory exists
+    Path("logs").mkdir(parents=True, exist_ok=True)
+
+    # Build the command
+    # Use sys.executable to ensure we use the same Python interpreter
+    # This runs on the login node and will call sbatch, which then runs the container
     cmd = [
-        "python",
+        sys.executable,
         "scripts/run_autoexp.py",
+        "--verbose",  # Enable INFO-level logging to see monitoring events
         "--config-name",
         "experiments/megatron_with_auto_restart",
-        "slurm=juwels",
-        "monitoring=megatron_production",
-        "restart=megatron_transient",
+        "-C",
+        "config",
         f"backend.megatron.micro_batch_size={micro_batch_size}",
         f"backend.megatron.train_iters={train_iters}",
         "slurm.sbatch.time=00:30:00",
         f"project.name=restart_test_mbs{micro_batch_size}",
+        # Explicitly set log paths to logs/ directory
+        "slurm.log_dir=logs",
+        # Array mode configuration
+        f"slurm.array={str(array_mode).lower()}",
+        # Log path template depends on array mode
+        # Array jobs: SLURM uses %A (array master ID) and %a (task ID)
+        # Single jobs: SLURM uses %j (job ID)
+        f"monitoring.log_path_template='logs/{{name}}-%{'A_%a' if array_mode else 'j'}.out'",
+        # Fast monitoring for testing (check every 10 seconds)
+        "monitoring.poll_interval_seconds=10",
+        "monitoring.check_interval_seconds=10",
     ]
 
-    result = run_command(cmd)
+    # Start the monitoring process in background (this will submit AND monitor)
+    log_info(f"Starting job submission and monitoring in background: {' '.join(cmd)}")
+    monitor_log = Path(f"logs/monitor_test_mbs{micro_batch_size}.log")
+    monitor_proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,  # Line buffered
+    )
 
-    # Parse job ID from output
-    # Expected format: "submitted <name> -> job <job_id> -> log: <path>"
-    for line in result.stdout.splitlines():
-        if "submitted" in line and "-> job" in line:
-            parts = line.split("-> job")
-            if len(parts) > 1:
-                job_id_str = parts[1].split("->")[0].strip()
-                try:
-                    job_id = int(job_id_str)
-                    log_success(f"Submitted job {job_id}")
-                    return job_id
-                except ValueError:
-                    pass
+    # Read output until we get the job ID
+    job_id = None
+    log_lines = []
+    try:
+        for line in monitor_proc.stdout:
+            log_lines.append(line)
+            log_info(f"Monitor output: {line.strip()}")
+            # Expected format: "submitted <name> -> job <job_id> -> log: <path>"
+            if "submitted" in line and "-> job" in line:
+                parts = line.split("-> job")
+                if len(parts) > 1:
+                    job_id_str = parts[1].split("->")[0].strip()
+                    try:
+                        job_id = int(job_id_str)
+                        log_success(f"Submitted job {job_id}")
+                        # Job submitted, monitoring will continue in background
+                        break
+                    except ValueError:
+                        pass
+    except Exception as e:
+        log_error(f"Error reading monitor output: {e}")
+        monitor_proc.terminate()
+        return None
 
-    log_error("Failed to parse job ID from output")
-    log_info(f"Output: {result.stdout}")
-    log_error(f"Error: {result.stderr}")
-    return None
+    if job_id is None:
+        log_error("Failed to parse job ID from output")
+        log_info(f"Output: {''.join(log_lines)}")
+        monitor_proc.terminate()
+        return None
+
+    # Store the monitor PID so we can clean it up later
+    global _monitor_processes
+    _monitor_processes.append(monitor_proc)
+    log_info(f"Monitoring running (PID: {monitor_proc.pid}, log: {monitor_log})")
+
+    return job_id
 
 
-def inject_error_pattern(job_id: int, pattern: str, description: str) -> bool:
+def inject_error_pattern(job_id: str, pattern: str, description: str) -> bool:
     """Inject an error pattern into a job's log file.
 
     Args:
@@ -151,16 +342,29 @@ def inject_error_pattern(job_id: int, pattern: str, description: str) -> bool:
     """
     log_info(f"Injecting {description} into job {job_id} log...")
 
-    # Find the log file
-    log_pattern = f"logs/*{job_id}*.out"
-    result = run_command(["bash", "-c", f"ls {log_pattern} 2>/dev/null"])
+    # Find the log file - try multiple patterns
+    # Pattern 1: logs/restart_test_mbs*.out (based on job name)
+    # Pattern 2: logs/*{job_id}*.out (if job ID is in filename)
+    # Pattern 3: output/{job_id}.out (fallback to SLURM default)
+    patterns = [
+        "logs/restart_test_*.out",
+        f"logs/*{job_id}*.out",
+        f"output/{job_id}.out",
+        f"logs/{job_id}.out",
+    ]
 
-    if result.returncode != 0 or not result.stdout.strip():
+    log_file = None
+    for log_pattern in patterns:
+        result = run_command(["bash", "-c", f"ls -t {log_pattern} 2>/dev/null | head -1"])
+        if result.returncode == 0 and result.stdout.strip():
+            log_file = result.stdout.strip()
+            log_info(f"Found log file: {log_file}")
+            break
+
+    if not log_file:
         log_error(f"Could not find log file for job {job_id}")
+        log_error(f"Tried patterns: {', '.join(patterns)}")
         return False
-
-    log_file = result.stdout.strip().split("\n")[0]
-    log_info(f"Found log file: {log_file}")
 
     # Append error pattern
     try:
@@ -173,19 +377,20 @@ def inject_error_pattern(job_id: int, pattern: str, description: str) -> bool:
         return False
 
 
-def cancel_job(job_id: int) -> bool:
+def cancel_job(job_id: str, array_id: int | None = None) -> bool:
     """Cancel a SLURM job."""
-    log_info(f"Cancelling job {job_id}...")
-    result = run_command(["scancel", str(job_id)])
+    job_id_full = str(job_id) + (("_" + str(array_id)) if array_id is not None else "")
+    log_info(f"Cancelling job {job_id_full}...")
+    result = run_command(["scancel", job_id_full])
     if result.returncode == 0:
-        log_success(f"Cancelled job {job_id}")
+        log_success(f"Cancelled job {job_id_full}")
         return True
     else:
-        log_error(f"Failed to cancel job {job_id}")
+        log_error(f"Failed to cancel job {job_id_full}")
         return False
 
 
-def check_for_restart(original_job_id: int, timeout: int = 300) -> Optional[int]:
+def check_for_restart(original_job_id: str, timeout: int = 200) -> Optional[int]:
     """Check if a job was restarted and return new job ID.
 
     Args:
@@ -203,7 +408,7 @@ def check_for_restart(original_job_id: int, timeout: int = 300) -> Optional[int]
 
     while time.time() - start_time < timeout:
         # Get all jobs for current user
-        result = run_command(["squeue", "-u", "$USER", "-h", "-o", "%i %j"])
+        result = run_command(["squeue", "-u", os.environ["USER"], "-h", "-o", "%i %j"])
 
         if result.returncode == 0:
             lines = result.stdout.strip().split("\n")
@@ -224,13 +429,13 @@ def check_for_restart(original_job_id: int, timeout: int = 300) -> Optional[int]
                     except ValueError:
                         continue
 
-        time.sleep(10)
+        time.sleep(10)  # Check every 10 seconds for restart
 
     log_warning(f"No restart detected within {timeout}s")
     return None
 
 
-def test_scenario_scancel(iterations: int = 2) -> bool:
+def test_scenario_scancel(iterations: int = 2, array_mode: bool = False) -> bool:
     """Test restart on manual scancel.
 
     Args:
@@ -244,12 +449,12 @@ def test_scenario_scancel(iterations: int = 2) -> bool:
     log(f"{'=' * 60}\n", Colors.BOLD)
 
     # Submit a job that will run for a while
-    job_id = submit_test_job(micro_batch_size=8, train_iters=1000)
+    job_id = submit_test_job(micro_batch_size=8, train_iters=1000, array_mode=array_mode)
     if job_id is None:
         return False
 
-    # Wait for job to start running
-    if not wait_for_job_state(job_id, "RUNNING", timeout=300):
+    # Wait for job to start running (30s intervals for initial start, as log file may not exist yet)
+    if not wait_for_job_state(job_id, "RUNNING", timeout=600, poll_interval=30):
         log_error("Job never started running")
         cancel_job(job_id)
         return False
@@ -261,8 +466,8 @@ def test_scenario_scancel(iterations: int = 2) -> bool:
         if not cancel_job(job_id):
             return False
 
-        # Check for restart
-        new_job_id = check_for_restart(job_id, timeout=120)
+        # Check for restart (10s intervals, 20 tries = 200s)
+        new_job_id = check_for_restart(job_id, timeout=200)
 
         if new_job_id is None:
             log_error(f"Iteration {i + 1}: No restart detected!")
@@ -270,8 +475,8 @@ def test_scenario_scancel(iterations: int = 2) -> bool:
 
         log_success(f"Iteration {i + 1}: Job restarted ({job_id} -> {new_job_id})")
 
-        # Wait for new job to start
-        if not wait_for_job_state(new_job_id, "RUNNING", timeout=300):
+        # Wait for new job to start (10s intervals for restart checks)
+        if not wait_for_job_state(new_job_id, "RUNNING", timeout=200, poll_interval=10):
             log_error("Restarted job never started running")
             cancel_job(new_job_id)
             return False
@@ -280,22 +485,23 @@ def test_scenario_scancel(iterations: int = 2) -> bool:
 
     # Clean up
     cancel_job(job_id)
+    cleanup_monitors()
     log_success("Test passed: scancel restart works!")
     return True
 
 
-def test_scenario_hang() -> bool:
+def test_scenario_hang(array_mode: bool = False) -> bool:
     """Test restart on CUDA hang detection."""
     log(f"\n{'=' * 60}", Colors.BOLD)
     log("TEST: CUDA hang (should restart)", Colors.BOLD)
     log(f"{'=' * 60}\n", Colors.BOLD)
 
-    job_id = submit_test_job(micro_batch_size=8, train_iters=1000)
+    job_id = submit_test_job(micro_batch_size=8, train_iters=1000, array_mode=array_mode)
     if job_id is None:
         return False
 
-    # Wait for job to start
-    if not wait_for_job_state(job_id, "RUNNING", timeout=300):
+    # Wait for job to start (30s intervals for initial start)
+    if not wait_for_job_state(job_id, "RUNNING", timeout=600, poll_interval=30):
         cancel_job(job_id)
         return False
 
@@ -318,6 +524,8 @@ def test_scenario_hang() -> bool:
     else:
         cancel_job(job_id)
 
+    cleanup_monitors()
+
     if new_job_id is None:
         log_error("No restart detected after CUDA hang!")
         return False
@@ -326,17 +534,18 @@ def test_scenario_hang() -> bool:
     return True
 
 
-def test_scenario_nccl_error() -> bool:
+def test_scenario_nccl_error(array_mode: bool = False) -> bool:
     """Test restart on NCCL error detection."""
     log(f"\n{'=' * 60}", Colors.BOLD)
     log("TEST: NCCL error (should restart)", Colors.BOLD)
     log(f"{'=' * 60}\n", Colors.BOLD)
 
-    job_id = submit_test_job(micro_batch_size=8, train_iters=1000)
+    job_id = submit_test_job(micro_batch_size=8, train_iters=1000, array_mode=array_mode)
     if job_id is None:
         return False
 
-    if not wait_for_job_state(job_id, "RUNNING", timeout=300):
+    # Wait for initial start (30s intervals)
+    if not wait_for_job_state(job_id, "RUNNING", timeout=600, poll_interval=30):
         cancel_job(job_id)
         return False
 
@@ -356,6 +565,8 @@ def test_scenario_nccl_error() -> bool:
     else:
         cancel_job(job_id)
 
+    cleanup_monitors()
+
     if new_job_id is None:
         log_error("No restart detected after NCCL error!")
         return False
@@ -364,7 +575,7 @@ def test_scenario_nccl_error() -> bool:
     return True
 
 
-def test_scenario_oom() -> bool:
+def test_scenario_oom(array_mode: bool = False) -> bool:
     """Test NO restart on OOM (excluded error type).
 
     This submits a job with micro_batch_size=16 which should OOM.
@@ -374,7 +585,7 @@ def test_scenario_oom() -> bool:
     log(f"{'=' * 60}\n", Colors.BOLD)
 
     # Submit with batch size that causes OOM
-    job_id = submit_test_job(micro_batch_size=16, train_iters=100)
+    job_id = submit_test_job(micro_batch_size=16, train_iters=100, array_mode=array_mode)
     if job_id is None:
         return False
 
@@ -392,27 +603,30 @@ def test_scenario_oom() -> bool:
     # Clean up
     if new_job_id:
         cancel_job(new_job_id)
+        cleanup_monitors()
         log_error("Job was restarted after OOM - this is incorrect!")
         return False
 
     if state == "RUNNING":
         cancel_job(job_id)
 
+    cleanup_monitors()
     log_success("Test passed: OOM did not trigger restart (as expected)!")
     return True
 
 
-def test_scenario_max_retries() -> bool:
+def test_scenario_max_retries(array_mode: bool = False) -> bool:
     """Test that max_retries is respected."""
     log(f"\n{'=' * 60}", Colors.BOLD)
     log("TEST: Max retries (should stop after 3 restarts)", Colors.BOLD)
     log(f"{'=' * 60}\n", Colors.BOLD)
 
-    job_id = submit_test_job(micro_batch_size=8, train_iters=1000)
+    job_id = submit_test_job(micro_batch_size=8, train_iters=1000, array_mode=array_mode)
     if job_id is None:
         return False
 
-    if not wait_for_job_state(job_id, "RUNNING", timeout=300):
+    # Initial start with 30s intervals
+    if not wait_for_job_state(job_id, "RUNNING", timeout=600, poll_interval=30):
         cancel_job(job_id)
         return False
 
@@ -421,7 +635,8 @@ def test_scenario_max_retries() -> bool:
         log_info(f"\n--- Attempt {attempt + 1}/{max_retries + 1} ---")
 
         cancel_job(job_id)
-        new_job_id = check_for_restart(job_id, timeout=120)
+        # Check for restart (10s intervals, 20 tries = 200s)
+        new_job_id = check_for_restart(job_id, timeout=200)
 
         if attempt < max_retries:
             # Should restart
@@ -431,7 +646,8 @@ def test_scenario_max_retries() -> bool:
             log_success(f"Attempt {attempt + 1}: Restarted as expected")
             job_id = new_job_id
 
-            if not wait_for_job_state(job_id, "RUNNING", timeout=300):
+            # Wait for restarted job (10s intervals)
+            if not wait_for_job_state(job_id, "RUNNING", timeout=200, poll_interval=10):
                 cancel_job(job_id)
                 return False
         else:
@@ -442,6 +658,7 @@ def test_scenario_max_retries() -> bool:
                 return False
             log_success(f"Attempt {attempt + 1}: Stopped as expected (retry budget exhausted)")
 
+    cleanup_monitors()
     log_success("Test passed: max_retries is respected!")
     return True
 
@@ -455,12 +672,27 @@ def main() -> int:
         help="Which test scenario to run",
     )
     parser.add_argument("--iterations", type=int, default=2, help="Number of iterations for scancel test")
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging for detailed diagnostics")
+    parser.add_argument(
+        "--array-mode",
+        action="store_true",
+        default=False,
+        help="Use SLURM array job submission (default: single job mode)",
+    )
 
     args = parser.parse_args()
 
     log(f"\n{'=' * 60}", Colors.BOLD)
     log("AUTO-RESTART TEST SUITE", Colors.BOLD)
     log(f"{'=' * 60}\n", Colors.BOLD)
+
+    # Register cleanup handler
+    import atexit
+
+    atexit.register(cleanup_monitors)
+
+    # Verify environment before running tests
+    check_environment()
 
     results = {}
 
@@ -469,17 +701,21 @@ def main() -> int:
     else:
         scenarios = [args.scenario]
 
+    # Log array mode setting
+    mode_str = "ARRAY MODE" if args.array_mode else "SINGLE JOB MODE"
+    log_info(f"Running tests in {mode_str}")
+
     for scenario in scenarios:
         if scenario == "scancel":
-            results[scenario] = test_scenario_scancel(args.iterations)
+            results[scenario] = test_scenario_scancel(args.iterations, args.array_mode)
         elif scenario == "hang":
-            results[scenario] = test_scenario_hang()
+            results[scenario] = test_scenario_hang(args.array_mode)
         elif scenario == "nccl":
-            results[scenario] = test_scenario_nccl_error()
+            results[scenario] = test_scenario_nccl_error(args.array_mode)
         elif scenario == "oom":
-            results[scenario] = test_scenario_oom()
+            results[scenario] = test_scenario_oom(args.array_mode)
         elif scenario == "max_retries":
-            results[scenario] = test_scenario_max_retries()
+            results[scenario] = test_scenario_max_retries(args.array_mode)
 
         # Wait between tests
         if len(scenarios) > 1:

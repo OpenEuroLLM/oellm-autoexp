@@ -9,7 +9,7 @@ policies:
       max_retries: 3
       restart_reason: Transient failure detected, restarting job
       stop_reason: Permanent failure detected, stopping job
-      default_action: stop  # Don't restart by default, only on specific errors
+      default_action: restart  # Restart by default on crashes unless excluded
 
       # Restart on these error types (transient/recoverable)
       restart_on_error_types:
@@ -21,10 +21,13 @@ policies:
         - communication      # Socket/connection errors
         - watchdog_timeout   # Watchdog timeouts
         - nccl_collective    # NCCL collective operation failures
+        - cancelled          # Job cancelled (e.g., manual scancel, preemption)
+        - slurm_failure      # SLURM job failures
 
       # Restart on these subsystems (likely transient)
       restart_on_subsystems:
         - distributed        # All distributed communication issues
+        - slurm              # SLURM-related issues (cancellation, node failures)
 
       # Restart on these specific signals
       restart_on_signals:

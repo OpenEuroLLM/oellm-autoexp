@@ -291,7 +291,10 @@ def _build_replacements(
         return s
 
     launcher = escape_for_double_quotes(launcher)
-    backend_cmd = escape_for_double_quotes(backend_cmd)
+    # Only escape backend_cmd if escape_str is True
+    # When False (e.g., for array jobs), preserve shell variable expansion
+    if escape_str:
+        backend_cmd = escape_for_double_quotes(backend_cmd)
 
     if "{{env_flags}}" in launcher:
         launcher = launcher.replace("{{env_flags}}", launcher_env_flags)

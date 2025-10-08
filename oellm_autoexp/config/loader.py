@@ -81,7 +81,39 @@ def load_hydra_config(
     with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
         cfg = compose(config_name=config_name, overrides=overrides)
 
-    data = OmegaConf.to_container(cfg, resolve=True)  # type: ignore[return-value]
+    # Temporarily escape {{...}} placeholders so Hydra doesn't try to parse them
+    # These are meant for Python's str.format(), not Hydra interpolation
+    def escape_double_braces(obj):
+        """Recursively escape {{...}} in strings to prevent Hydra from parsing them."""
+        if isinstance(obj, str):
+            # Replace {{env_flags}} with a placeholder that Hydra won't touch
+            return obj.replace("{{env_flags}}", "__PLACEHOLDER_ENV_FLAGS__").replace(
+                "{{env_exports}}", "__PLACEHOLDER_ENV_EXPORTS__"
+            )
+        elif isinstance(obj, dict):
+            return {k: escape_double_braces(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [escape_double_braces(v) for v in obj]
+        return obj
+
+    def unescape_double_braces(obj):
+        """Recursively restore {{...}} placeholders."""
+        if isinstance(obj, str):
+            return obj.replace("__PLACEHOLDER_ENV_FLAGS__", "{{env_flags}}").replace(
+                "__PLACEHOLDER_ENV_EXPORTS__", "{{env_exports}}"
+            )
+        elif isinstance(obj, dict):
+            return {k: unescape_double_braces(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [unescape_double_braces(v) for v in obj]
+        return obj
+
+    # Get unresolved config, escape {{...}}, then resolve
+    data_unresolved = OmegaConf.to_container(cfg, resolve=False)  # type: ignore[return-value]
+    data_escaped = escape_double_braces(data_unresolved)
+    cfg_escaped = OmegaConf.create(data_escaped)
+    data = OmegaConf.to_container(cfg_escaped, resolve=True)  # type: ignore[return-value]
+    data = unescape_double_braces(data)
     _ensure_registrations()
     if isinstance(data, dict):
         restart_cfg = data.pop("restart", None)

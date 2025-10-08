@@ -24,6 +24,7 @@ from oellm_autoexp.orchestrator import (
     submit_jobs,
 )
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
+import oellm_autoexp.utils.run
 
 
 @click.group()
@@ -174,7 +175,11 @@ def monitor(
     while True:
         result = controller.observe_once_sync()
         for action in result.actions:
-            payload = {"job_id": action.job_id, "job_name": action.job_name, **{k: str(v) for k, v in action.metadata.items()}}
+            payload = {
+                "job_id": action.job_id,
+                "job_name": action.job_name,
+                **{k: str(v) for k, v in action.metadata.items()},
+            }
             _emit_action(action.action, payload, action_map, dry_run, json_output)
             if not dry_run:
                 exit_code = max(exit_code, _execute_mapped_action(action.action, payload, action_map))
@@ -187,7 +192,6 @@ def monitor(
     if exit_code:
         raise SystemExit(exit_code)
 
- 
 
 def _load_monitor_components(
     config_ref: str | None,
@@ -229,7 +233,9 @@ def _parse_assignment(value: str, option: str) -> tuple[str, str]:
     return key, raw
 
 
-def _emit_action(action: str, payload: dict[str, str], action_map: dict[str, str], dry_run: bool, json_output: bool) -> None:
+def _emit_action(
+    action: str, payload: dict[str, str], action_map: dict[str, str], dry_run: bool, json_output: bool
+) -> None:
     if json_output:
         click.echo(json.dumps({"action": action, "payload": payload}))
     else:
@@ -246,7 +252,7 @@ def _execute_mapped_action(action: str, payload: dict[str, str], action_map: dic
     if not template:
         return 0
     command = _render_action_command(template, payload)
-    completed = subprocess.run(command, shell=True, check=False)
+    completed = oellm_autoexp.utils.run.run_with_tee(command, shell=True, check=False)
     if completed.returncode != 0:
         click.echo(
             f"Command '{command}' for action '{action}' failed with return code {completed.returncode}",

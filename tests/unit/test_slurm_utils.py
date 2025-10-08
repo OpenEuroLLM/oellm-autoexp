@@ -50,7 +50,7 @@ def test_fake_slurm_submit_array(tmp_path: Path) -> None:
     job_ids = slurm.submit_array("test_array", script_path, log_paths, task_names)
 
     assert len(job_ids) == 3
-    assert all(isinstance(jid, int) for jid in job_ids)
+    assert all(isinstance(jid, str) for jid in job_ids)
 
     # Check all jobs are tracked
     for job_id in job_ids:
@@ -61,7 +61,7 @@ def test_fake_slurm_submit_array(tmp_path: Path) -> None:
 
 def test_real_slurm_submit_array(tmp_path: Path, monkeypatch) -> None:
     """Test that SlurmClient.submit_array correctly calls sbatch with --array."""
-    import subprocess
+    import oellm_autoexp.utils.run
 
     calls = []
 
@@ -74,7 +74,7 @@ def test_real_slurm_submit_array(tmp_path: Path, monkeypatch) -> None:
         calls.append(cmd)
         return MockResult()
 
-    monkeypatch.setattr(subprocess, "run", mock_subprocess_run)
+    monkeypatch.setattr(oellm_autoexp.utils.run, "run_with_tee", mock_subprocess_run)
 
     client = SlurmClient(SlurmClientConfig())
     slurm_config = SlurmConfig(
@@ -99,7 +99,7 @@ def test_real_slurm_submit_array(tmp_path: Path, monkeypatch) -> None:
 
     # Verify job IDs were generated
     assert len(job_ids) == 3
-    assert job_ids == [10000, 10001, 10002]
+    assert job_ids == ["10000_0", "10000_1", "10000_2"]
 
     # Verify jobs are tracked
     for idx, job_id in enumerate(job_ids):

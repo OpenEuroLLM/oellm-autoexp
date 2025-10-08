@@ -113,9 +113,21 @@ Monitors parse logs using regex patterns and detect signals:
     allocation_size: size
 ```
 
-### 2. Policy Decision
+### 2. SLURM State Monitoring
 
-When a signal with `mode: crash` is detected, the restart policy decides:
+The monitor also tracks SLURM job state transitions and enriches them with metadata:
+
+- **PENDING → RUNNING**: Emits `run_started` action
+- **RUNNING → CANCELLED**: Classified as `crash` mode with `error_type: cancelled`, `subsystem: slurm`
+- **RUNNING → FAILED**: Classified as `crash` mode with `error_type: slurm_failure`
+- **RUNNING → COMPLETED**: Classified as `success` mode
+- **Job not in queue**: Classified as `timeout` mode with `error_type: timeout`
+
+All transitions are logged at INFO level with old and new states.
+
+### 3. Policy Decision
+
+When a signal with `mode: crash` is detected, or a SLURM state triggers a mode, the restart policy decides:
 
 ```python
 # SelectiveRestartPolicy checks:
@@ -127,13 +139,19 @@ else:
     return default_action
 ```
 
-### 3. Job Restart
+The policy logs its decision with action, reason, and attempt count.
+
+### 4. Job Restart
 
 If policy returns `restart`:
-1. Cancel current job (`scancel <job_id>`)
-2. Submit new job using same script
-3. Increment attempt counter
-4. Track new job_id
+1. Log restart decision with reason
+2. Cancel current job (`scancel <job_id>`)
+3. Submit new job using same script
+4. Log old job_id → new job_id
+5. Increment attempt counter
+6. Track new job_id
+
+All operations are logged at INFO level for full visibility.
 
 ## Usage Examples
 
@@ -188,6 +206,8 @@ The system detects and categorizes these error types:
 | `distributed_timeout` | ✅ Yes | ProcessGroup timeout |
 | `communication` | ✅ Yes | Socket/connection errors |
 | `watchdog_timeout` | ✅ Yes | Watchdog timeout |
+| `cancelled` | ✅ Yes | Job cancelled (scancel, preemption) |
+| `slurm_failure` | ✅ Yes | SLURM job failures |
 | `numerical_instability` | ❌ No | NaN/Inf in loss/gradients |
 | `exception` | ❌ No | Python exceptions (code bugs) |
 | `torch` | ❌ No | PyTorch errors |

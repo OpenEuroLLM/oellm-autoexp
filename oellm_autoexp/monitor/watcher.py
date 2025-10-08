@@ -12,13 +12,14 @@ from typing import Any, Dict, Iterable, List, Optional, Pattern, Tuple
 from compoconf import ConfigInterface, register
 
 from oellm_autoexp.config.schema import MonitorInterface
+import oellm_autoexp.utils.run
 
 
 @dataclass(frozen=True)
 class MonitoredJob:
     """Metadata describing an active job to be inspected."""
 
-    job_id: int
+    job_id: str
     name: str
     log_path: Path
     check_interval_seconds: int
@@ -32,7 +33,7 @@ class MonitoredJob:
 class MonitorOutcome:
     """Snapshot emitted by a monitor iteration."""
 
-    job_id: int
+    job_id: str
     status: str
     last_update_seconds: Optional[float]
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -43,7 +44,7 @@ class MonitorOutcome:
 class MonitorSignal:
     """Event detected by the monitor while inspecting a job."""
 
-    job_id: int
+    job_id: str
     name: str
     action: Optional[str]
     mode: Optional[str]
@@ -125,8 +126,7 @@ class SlurmLogMonitor(BaseMonitor):
             config.log_signals = default_log_signals()
         self._snapshots: Dict[int, _JobSnapshot] = {}
         self._compiled_rules: List[_CompiledLogSignal] = [
-            _CompiledLogSignal(rule=rule, pattern=_compile_pattern(rule))
-            for rule in config.log_signals
+            _CompiledLogSignal(rule=rule, pattern=_compile_pattern(rule)) for rule in config.log_signals
         ]
 
     async def watch(self, jobs: Iterable[MonitoredJob]) -> Dict[int, MonitorOutcome]:
@@ -306,7 +306,9 @@ class SlurmLogMonitor(BaseMonitor):
 
         command = job.termination_command or self.config.termination_command
         if command:
-            proc = subprocess.run(command, shell=True, capture_output=True, check=False, text=True)
+            proc = oellm_autoexp.utils.run.run_with_tee(
+                command, shell=True, capture_output=True, check=False, text=True
+            )
             try:
                 exit_value = int(proc.stdout.strip() or proc.returncode)
             except ValueError:

@@ -5,7 +5,8 @@ check_interval_seconds: 180
 inactivity_threshold_seconds: 1800  # 30 minutes without log updates
 termination_string: null
 termination_command: null
-log_path_template: "{output_dir}/slurm.out"
+# SLURM variables: %j=job_id, %A=array_master_id, %a=array_task_id
+log_path_template: "{output_dir}/slurm-${oc.if:${slurm.array},%A_%a,%j}.out"
 output_paths: []
 start_condition_cmd: null
 start_condition_interval_seconds: null

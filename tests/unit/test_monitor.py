@@ -272,3 +272,111 @@ def test_log_completion_triggers_run_finished(tmp_path: Path) -> None:
 
     result = controller.observe_once_sync()
     assert any(action.action == "run_finished" for action in result.actions)
+
+
+def test_cancelled_job_restarts_with_selective_policy(tmp_path: Path) -> None:
+    """Test that a CANCELLED job restarts when policy allows it."""
+    from oellm_autoexp.monitor.policy import SelectiveRestartPolicy, SelectiveRestartPolicyConfig
+
+    monitor = SlurmLogMonitor(SlurmLogMonitorConfig(check_interval_seconds=1))
+    slurm = FakeSlurmClient(FakeSlurmClientConfig())
+    policies = {
+        "crash": SelectiveRestartPolicy(
+            SelectiveRestartPolicyConfig(
+                max_retries=3,
+                default_action="restart",
+                restart_on_error_types=["cancelled"],
+                restart_on_subsystems=["slurm"],
+                exclude_error_types=["oom"],
+            )
+        ),
+        "success": NoRestartPolicy(NoRestartPolicyConfig()),
+    }
+    controller = MonitorController(monitor, slurm, policies)
+
+    script = tmp_path / "script.sh"
+    script.write_text("#!/bin/bash\n")
+    log = tmp_path / "log.txt"
+    log.write_text("running\n")
+
+    job_id = slurm.submit("demo", script, log)
+    controller.register_job(
+        job_id,
+        JobRegistration(name="demo", script_path=script, log_path=log),
+    )
+
+    # Simulate job running then being cancelled
+    slurm.set_state(job_id, "RUNNING")
+    first = controller.observe_once_sync()
+    assert any(action.action == "run_started" for action in first.actions)
+
+    # Cancel the job
+    slurm.set_state(job_id, "CANCELLED")
+    second = controller.observe_once_sync()
+
+    # Should trigger restart
+    assert any(dec.action == "restart" for dec in second.decisions.values())
+    assert any(action.action == "run_ended" for action in second.actions)
+
+    # Verify job was restarted
+    job_states = list(controller.jobs())
+    assert len(job_states) == 1
+    assert job_states[0].attempts == 2
+    assert job_states[0].job_id != job_id
+
+
+def test_cancelled_job_logging_visibility(tmp_path: Path) -> None:
+    """Test that cancelled job events are properly logged."""
+    import logging
+    from oellm_autoexp.monitor.policy import SelectiveRestartPolicy, SelectiveRestartPolicyConfig
+
+    # Capture log output
+    import io
+
+    log_capture = io.StringIO()
+    handler = logging.StreamHandler(log_capture)
+    handler.setLevel(logging.INFO)
+    logger = logging.getLogger("oellm_autoexp.monitor.controller")
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
+    try:
+        monitor = SlurmLogMonitor(SlurmLogMonitorConfig(check_interval_seconds=1))
+        slurm = FakeSlurmClient(FakeSlurmClientConfig())
+        policies = {
+            "crash": SelectiveRestartPolicy(
+                SelectiveRestartPolicyConfig(
+                    max_retries=3,
+                    default_action="restart",
+                    restart_on_error_types=["cancelled"],
+                )
+            ),
+            "success": NoRestartPolicy(NoRestartPolicyConfig()),
+        }
+        controller = MonitorController(monitor, slurm, policies)
+
+        script = tmp_path / "script.sh"
+        script.write_text("#!/bin/bash\n")
+        log = tmp_path / "log.txt"
+        log.write_text("running\n")
+
+        job_id = slurm.submit("demo", script, log)
+        controller.register_job(
+            job_id,
+            JobRegistration(name="demo", script_path=script, log_path=log),
+        )
+
+        # Set to CANCELLED
+        slurm.set_state(job_id, "CANCELLED")
+        controller.observe_once_sync()
+
+        # Verify logging happened
+        log_output = log_capture.getvalue()
+        assert "SLURM state transition" in log_output
+        assert "CANCELLED" in log_output
+        assert "classified as mode 'crash'" in log_output
+        assert "policy decision" in log_output
+        assert "restart" in log_output.lower()
+
+    finally:
+        logger.removeHandler(handler)

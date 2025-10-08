@@ -1,4 +1,4 @@
 name: demo
-base_output_dir: ${oc.env:$OUTPUT_DIR,"./output"}
+base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}
 state_dir: null
 resume: true

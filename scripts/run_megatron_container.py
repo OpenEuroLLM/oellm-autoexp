@@ -13,8 +13,9 @@ import argparse
 import os
 import re
 import shlex
-import subprocess
 from pathlib import Path
+
+import oellm_autoexp.utils.run
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,7 +84,7 @@ def main() -> None:
     apptainer_cmd = _build_container_command(args, container_cmd)
     print("Running:", " ".join(shlex.quote(c) for c in apptainer_cmd))
 
-    result = subprocess.run(apptainer_cmd, capture_output=True, text=True)
+    result = oellm_autoexp.utils.run.run_with_tee(apptainer_cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
         print("STDOUT:", result.stdout)
@@ -126,7 +127,9 @@ def main() -> None:
 
     # Execute sbatch on the host
     print(f"Submitting: {sbatch_cmd}")
-    sbatch_result = subprocess.run(shlex.split(sbatch_cmd), env=env, capture_output=True, text=True)
+    sbatch_result = oellm_autoexp.utils.run.run_with_tee(
+        shlex.split(sbatch_cmd), env=env, capture_output=True, text=True
+    )
 
     print(sbatch_result.stdout)
     if sbatch_result.stderr:

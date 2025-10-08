@@ -56,7 +56,7 @@ def test_cli_submit_real_slurm_client(tmp_path: Path, monkeypatch) -> None:
     config.write_text(yaml.safe_dump(data))
 
     # Mock subprocess.run to avoid needing real sbatch
-    import subprocess
+    import oellm_autoexp.utils.run
 
     class MockResult:
         returncode = 0
@@ -66,7 +66,7 @@ def test_cli_submit_real_slurm_client(tmp_path: Path, monkeypatch) -> None:
     def mock_subprocess_run(cmd, **kwargs):
         return MockResult()
 
-    monkeypatch.setattr(subprocess, "run", mock_subprocess_run)
+    monkeypatch.setattr(oellm_autoexp.utils.run, "run_with_tee", mock_subprocess_run)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["submit", str(config)])

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 from oellm_autoexp.config.loader import load_config_reference
@@ -25,12 +26,35 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-submit", action="store_true", help="Generate scripts but output sbatch command instead of submitting"
     )
+    parser.add_argument(
+        "--no-monitor", action="store_true", help="Submit jobs but don't monitor them (return immediately)"
+    )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Enable verbose logging (INFO level)"
+    )
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable debug logging (DEBUG level)"
+    )
     parser.add_argument("override", nargs="*", default=[], help="Additional overrides.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+
+    # Configure logging based on verbosity flags
+    log_level = logging.WARNING
+    if args.debug:
+        log_level = logging.DEBUG
+    elif args.verbose:
+        log_level = logging.INFO
+
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
     root = load_config_reference(args.config_name, args.config_dir, args.override)
     plan = build_execution_plan(root)
     artifacts = render_scripts(plan)
@@ -65,6 +89,10 @@ def main() -> None:
     controller = submit_jobs(plan, artifacts, slurm_client)
     for state in controller.jobs():
         print(f"submitted {state.name} -> job {state.job_id} -> log: {state.registration.log_path}")
+
+    if args.no_monitor:
+        # Just submit and return without monitoring
+        return
 
     execute_plan_sync(
         plan,

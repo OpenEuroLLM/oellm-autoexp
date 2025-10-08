@@ -11,7 +11,7 @@ from typing import Any, Dict, Iterable, Optional
 
 @dataclass
 class StoredJob:
-    job_id: int
+    job_id: str
     name: str
     script_path: str
     log_path: str
@@ -25,7 +25,7 @@ class StoredJob:
     start_condition_interval_seconds: Optional[int] = None
 
     @staticmethod
-    def from_registration(job_id: int, attempts: int, registration: Any) -> "StoredJob":
+    def from_registration(job_id: str, attempts: int, registration: Any) -> "StoredJob":
         return StoredJob(
             job_id=job_id,
             name=registration.name,
@@ -61,7 +61,7 @@ class MonitorStateStore:
         for raw in payload.get("jobs", []):
             try:
                 job = StoredJob(
-                    job_id=int(raw["job_id"]),
+                    job_id=str(raw["job_id"]),
                     name=raw.get("name", ""),
                     script_path=raw.get("script_path", ""),
                     log_path=raw.get("log_path", ""),
@@ -91,7 +91,7 @@ class MonitorStateStore:
         records[job.job_id] = job
         self.save_jobs(records.values())
 
-    def remove_job(self, job_id: int) -> None:
+    def remove_job(self, job_id: str) -> None:
         records = self.load()
         if job_id in records:
             records.pop(job_id)

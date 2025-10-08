@@ -97,6 +97,7 @@ class SlurmConfig(ConfigInterface):
     submit_cmd: str = "sbatch"
     squeue_cmd: str = "squeue"
     cancel_cmd: str = "scancel"
+    sacct_cmd: str = "sacct"
     launcher_cmd: str = ""
     srun_opts: str = ""
     launcher_env_passthrough: bool = False

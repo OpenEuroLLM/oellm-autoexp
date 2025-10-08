@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
+
+import oellm_autoexp.utils.run
 
 
 @dataclass(frozen=True)
@@ -29,7 +30,7 @@ class StartConditionResult:
 def check_start_condition(command: str) -> StartConditionResult:
     """Execute ``command`` and return its success metadata."""
 
-    proc = subprocess.run(
+    proc = oellm_autoexp.utils.run.run_with_tee(
         command,
         shell=True,
         check=False,

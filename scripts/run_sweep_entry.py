@@ -18,8 +18,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 from pathlib import Path
+
+import oellm_autoexp.utils.run
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,7 +91,7 @@ def main() -> None:
         os.environ.clear()
         os.environ.update(original_env)
 
-    proc = subprocess.run(argv_expanded, env=env, check=False)
+    proc = oellm_autoexp.utils.run.run_with_tee(argv_expanded, env=env, check=False)
     if proc.returncode != 0:  # pragma: no cover - propagate failure upstream
         raise SystemExit(proc.returncode)
 

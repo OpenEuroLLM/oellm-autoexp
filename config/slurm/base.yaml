@@ -15,11 +15,13 @@ sbatch:
   ntasks_per_node: 1
   cpus_per_task: 8
   time: "01:00:00"
-  account: ${oc.env:SLURM_ACCOUNT}
-  partition: ${oc.env:SLURM_PARTITION}
-  qos: ${oc.env:SLURM_QOS}
+  account: ${oc.env:SLURM_ACCOUNT,"dev"}
+  partition: ${oc.env:SLURM_PARTITION,"default"}
+  qos: ${oc.env:SLURM_QOS,"debug"}
   gres: "gpu:1"
-  output: ${project.base_output_dir}/%j.out
+  # output is set to null so orchestrator uses job.log_path
+  # job.log_path comes from monitoring.log_path_template (formatted with job details)
+  output: null
 test_only: false
 client:
   class_name: FakeSlurmClient
