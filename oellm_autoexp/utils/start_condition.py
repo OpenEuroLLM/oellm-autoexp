@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-import oellm_autoexp.utils.run
+from oellm_autoexp.utils.run import run_with_tee
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,7 @@ class StartConditionResult:
 def check_start_condition(command: str) -> StartConditionResult:
     """Execute ``command`` and return its success metadata."""
 
-    proc = oellm_autoexp.utils.run.run_with_tee(
+    proc = run_with_tee(
         command,
         shell=True,
         check=False,

@@ -82,7 +82,7 @@ class MonitorController:
         self._monitor = monitor
         self._slurm = slurm
         self._policies = policies
-        self._jobs: Dict[int, JobRuntimeState] = {}
+        self._jobs: Dict[str, JobRuntimeState] = {}  # Job IDs are strings
         self._pending_actions: List[MonitorAction] = []
         self._state_store = state_store
 

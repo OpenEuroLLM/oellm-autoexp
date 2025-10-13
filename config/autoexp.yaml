@@ -1,6 +1,7 @@
 defaults:
   - project: default
   - backend: megatron
+  - container: none
   - slurm: base
   - monitoring: default
   - sweep: none

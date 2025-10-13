@@ -12,7 +12,7 @@ from typing import Any, Dict, Iterable, List, Optional, Pattern, Tuple
 from compoconf import ConfigInterface, register
 
 from oellm_autoexp.config.schema import MonitorInterface
-import oellm_autoexp.utils.run
+from oellm_autoexp.utils.run import run_with_tee
 
 
 @dataclass(frozen=True)
@@ -306,9 +306,7 @@ class SlurmLogMonitor(BaseMonitor):
 
         command = job.termination_command or self.config.termination_command
         if command:
-            proc = oellm_autoexp.utils.run.run_with_tee(
-                command, shell=True, capture_output=True, check=False, text=True
-            )
+            proc = run_with_tee(command, shell=True, capture_output=True, check=False, text=True)
             try:
                 exit_value = int(proc.stdout.strip() or proc.returncode)
             except ValueError:

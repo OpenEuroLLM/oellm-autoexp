@@ -49,11 +49,22 @@ class SlurmClientInterface(RegistrableConfigInterface):
 
 @dataclass
 class ProjectConfig(ConfigInterface):
-    """Project-level metadata and defaults."""
+    """Project-level metadata and defaults.
+
+    Attributes:
+        name: Project name used in job naming
+        base_output_dir: Per-run output directory (may include timestamps for unique runs)
+        state_dir: [DEPRECATED] Use monitoring_state_dir instead
+        monitoring_state_dir: Stable directory for monitoring sessions (NO timestamps).
+            This directory persists across runs and enables --monitor-all to find sessions.
+            Defaults to a stable location (strips timestamps from base_output_dir).
+        resume: Whether to resume monitoring from persisted state
+    """
 
     name: str
     base_output_dir: Path
-    state_dir: Optional[Path] = None
+    state_dir: Optional[Path] = None  # Deprecated, use monitoring_state_dir
+    monitoring_state_dir: Optional[Path] = None  # Stable, cross-run monitoring state
     resume: bool = True
 
 
@@ -84,6 +95,16 @@ class SbatchConfig(NonStrictDataclass):
     partition: Optional[str] = None
     qos: Optional[str] = None
     time: str = "0-01:00:00"
+
+
+@dataclass
+class ContainerConfig(ConfigInterface):
+    """Container runtime configuration for reproducible execution."""
+
+    image: Optional[str] = None
+    runtime: str = "singularity"
+    bind: List[str] = field(default_factory=list)
+    env: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -136,6 +157,7 @@ class RootConfig(ConfigInterface):
     slurm: SlurmConfig
     monitoring: MonitorInterface.cfgtype
     backend: BackendInterface.cfgtype
+    container: Optional[ContainerConfig] = None
     restart_policies: List[RestartPolicyConfig] = field(default_factory=list)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     metadata: Dict[str, Any] = field(default_factory=dict)

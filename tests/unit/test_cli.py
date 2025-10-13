@@ -34,7 +34,7 @@ def _write_config(tmp_path: Path) -> Path:
 def test_cli_plan(tmp_path: Path) -> None:
     config = _write_config(tmp_path)
     runner = CliRunner()
-    result = runner.invoke(cli, ["plan", str(config)])
+    result = runner.invoke(cli, ["plan", "--config-ref", str(config)])
     assert result.exit_code == 0
     assert '"project": "demo"' in result.output
 
@@ -42,7 +42,7 @@ def test_cli_plan(tmp_path: Path) -> None:
 def test_cli_submit_fake(tmp_path: Path) -> None:
     config = _write_config(tmp_path)
     runner = CliRunner()
-    result = runner.invoke(cli, ["submit", str(config), "--fake"])
+    result = runner.invoke(cli, ["submit", "--config-ref", str(config), "--fake"])
     assert result.exit_code == 0
     assert "submitted" in result.output
     assert "log:" in result.output
@@ -56,7 +56,8 @@ def test_cli_submit_real_slurm_client(tmp_path: Path, monkeypatch) -> None:
     config.write_text(yaml.safe_dump(data))
 
     # Mock subprocess.run to avoid needing real sbatch
-    import oellm_autoexp.utils.run
+    import oellm_autoexp.cli
+    import oellm_autoexp.utils
 
     class MockResult:
         returncode = 0
@@ -66,10 +67,12 @@ def test_cli_submit_real_slurm_client(tmp_path: Path, monkeypatch) -> None:
     def mock_subprocess_run(cmd, **kwargs):
         return MockResult()
 
+    monkeypatch.setattr(oellm_autoexp.cli, "run_with_tee", mock_subprocess_run)
+    monkeypatch.setattr(oellm_autoexp.utils.shell, "run_with_tee", mock_subprocess_run)
     monkeypatch.setattr(oellm_autoexp.utils.run, "run_with_tee", mock_subprocess_run)
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["submit", str(config)])
+    result = runner.invoke(cli, ["submit", "--config-ref", str(config)])
     assert result.exit_code == 0
     assert "submitted" in result.output
     assert "log:" in result.output

@@ -20,7 +20,7 @@ import json
 import os
 from pathlib import Path
 
-import oellm_autoexp.utils.run
+from oellm_autoexp.utils.run import run_with_tee
 
 
 def parse_args() -> argparse.Namespace:
@@ -91,7 +91,7 @@ def main() -> None:
         os.environ.clear()
         os.environ.update(original_env)
 
-    proc = oellm_autoexp.utils.run.run_with_tee(argv_expanded, env=env, check=False)
+    proc = run_with_tee(argv_expanded, env=env, check=False)
     if proc.returncode != 0:  # pragma: no cover - propagate failure upstream
         raise SystemExit(proc.returncode)
 

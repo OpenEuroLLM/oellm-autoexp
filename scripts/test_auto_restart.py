@@ -61,7 +61,7 @@ import sys
 from pathlib import Path
 from typing import Optional, List
 
-import oellm_autoexp.utils.run
+from oellm_autoexp.utils.run import run_with_tee
 
 # Global list to track background monitor processes
 _monitor_processes: List[subprocess.Popen] = []
@@ -126,7 +126,7 @@ def check_environment() -> None:
     - The sbatch script will launch containers on compute nodes
     """
     # Check if sbatch is available
-    result = oellm_autoexp.utils.run.run_with_tee(["which", "sbatch"], capture_output=True, text=True)
+    result = run_with_tee(["which", "sbatch"], capture_output=True, text=True)
     if result.returncode != 0:
         log_error("sbatch command not found!")
         log_error("This script must be run on a SLURM login node, not inside a container.")
@@ -198,9 +198,9 @@ def run_command(cmd: list[str], capture: bool = True) -> subprocess.CompletedPro
     """Run a command and return the result."""
     log_info(f"Running: {' '.join(cmd)}")
     if capture:
-        return oellm_autoexp.utils.run.run_with_tee(cmd, capture_output=True, text=True, check=False)
+        return run_with_tee(cmd, capture_output=True, text=True, check=False)
     else:
-        return oellm_autoexp.utils.run.run_with_tee(cmd, check=False)
+        return run_with_tee(cmd, check=False)
 
 
 def wait_for_job_state(job_id: str, expected_state: str, timeout: int = 120, poll_interval: int = 30) -> bool:
@@ -259,7 +259,7 @@ def submit_test_job(micro_batch_size: int = 8, train_iters: int = 100, array_mod
         sys.executable,
         "scripts/run_autoexp.py",
         "--verbose",  # Enable INFO-level logging to see monitoring events
-        "--config-name",
+        "--config-ref",
         "experiments/megatron_with_auto_restart",
         "-C",
         "config",

@@ -24,7 +24,7 @@ from oellm_autoexp.orchestrator import (
     submit_jobs,
 )
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
-import oellm_autoexp.utils.run
+from oellm_autoexp.utils.run import run_with_tee
 
 
 @click.group()
@@ -33,9 +33,9 @@ def cli() -> None:
 
 
 @cli.command()
-@click.argument("config_ref", default="autoexp")
+@click.option("--config-ref", default="autoexp")
 @click.option("--config-dir", type=click.Path(path_type=Path), default=Path("config"))
-@click.option("-o", "--override", multiple=True, help="Hydra-style overrides")
+@click.option("--override", multiple=True, help="Hydra-style overrides")
 def plan(config_ref: str, config_dir: Path, override: tuple[str, ...]) -> None:
     """Validate configuration and emit a summary."""
 
@@ -53,13 +53,12 @@ def plan(config_ref: str, config_dir: Path, override: tuple[str, ...]) -> None:
 
 
 @cli.command()
-@click.argument("config_ref", default="autoexp")
+@click.option("--config-ref", default="autoexp")
 @click.option("--config-dir", type=click.Path(path_type=Path), default=Path("config"))
-@click.option("-o", "--override", multiple=True, help="Hydra-style overrides")
 @click.option("--fake", is_flag=True, help="Use the in-memory SLURM simulator")
+@click.option("--override", multiple=True, help="Hydra-style overrides")
 def submit(config_ref: str, config_dir: Path, override: tuple[str, ...], fake: bool) -> None:
     """Render scripts and submit jobs."""
-
     root = load_config_reference(config_ref, config_dir, override)
     execution_plan = build_execution_plan(root)
     artifacts = render_scripts(execution_plan)
@@ -82,10 +81,9 @@ def submit(config_ref: str, config_dir: Path, override: tuple[str, ...], fake: b
 
 
 @cli.command()
-@click.argument("config_ref", required=False)
+@click.option("--config-ref", default="autoexp")
 @click.option("--monitor-config", type=click.Path(path_type=Path), help="Path to monitoring YAML")
 @click.option("--config-dir", type=click.Path(path_type=Path), default=Path("config"))
-@click.option("-o", "--override", multiple=True, help="Hydra-style overrides")
 @click.option("--log", "logs", multiple=True, help="JOB=PATH to the SLURM log to follow")
 @click.option("--job", "jobs", multiple=True, help="JOB=JOB_ID to reuse an existing SLURM id")
 @click.option("--slurm-state", "slurm_states", multiple=True, help="JOB=STATE to seed fake SLURM status")
@@ -94,11 +92,11 @@ def submit(config_ref: str, config_dir: Path, override: tuple[str, ...], fake: b
 @click.option("--interval", type=int, help="Polling interval override (seconds)")
 @click.option("--dry-run", is_flag=True, help="Render commands without executing them")
 @click.option("--json-output", is_flag=True, help="Emit JSON lines for each detected action")
+@click.option("--override", multiple=True, help="Hydra-style overrides")
 def monitor(
     config_ref: str | None,
     monitor_config: Path | None,
     config_dir: Path,
-    override: tuple[str, ...],
     logs: tuple[str, ...],
     jobs: tuple[str, ...],
     slurm_states: tuple[str, ...],
@@ -107,6 +105,7 @@ def monitor(
     interval: int | None,
     dry_run: bool,
     json_output: bool,
+    override: tuple[str, ...],
 ) -> None:
     """Run monitoring standalone using monitoring config and log signals."""
 
@@ -252,7 +251,7 @@ def _execute_mapped_action(action: str, payload: dict[str, str], action_map: dic
     if not template:
         return 0
     command = _render_action_command(template, payload)
-    completed = oellm_autoexp.utils.run.run_with_tee(command, shell=True, check=False)
+    completed = run_with_tee(command, shell=True, check=False)
     if completed.returncode != 0:
         click.echo(
             f"Command '{command}' for action '{action}' failed with return code {completed.returncode}",

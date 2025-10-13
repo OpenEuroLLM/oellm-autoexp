@@ -4,9 +4,28 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
+
+
+def _serialize_for_json(obj: Any) -> Any:
+    """Recursively convert Path objects and other non-serializable types to JSON-compatible types."""
+    if isinstance(obj, Path):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {k: _serialize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [_serialize_for_json(item) for item in obj]
+    elif isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+    else:
+        # For other types, try to convert to string
+        try:
+            return str(obj)
+        except Exception:
+            return None
 
 
 @dataclass
@@ -43,18 +62,38 @@ class StoredJob:
 
 
 class MonitorStateStore:
-    """Persist monitor state to disk for crash-resilient restarts."""
+    """Persist monitor state to disk for crash-resilient restarts.
 
-    def __init__(self, root: Path) -> None:
+    Each monitoring session gets its own file in the monitoring_state directory.
+    Session files contain the full config and job state for that session.
+    """
+
+    def __init__(self, root: Path, session_id: Optional[str] = None) -> None:
         self._root = Path(root)
-        self._path = self._root / "monitor" / "state.json"
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._session_id = session_id or str(uuid.uuid4())[:8]
+        # New visible location: output/monitoring_state/<session_id>.json
+        self._session_path = self._root / f"{self._session_id}.json"
+        self._session_path.parent.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    @property
+    def session_path(self) -> Path:
+        return self._session_path
+
+    @property
+    def descriptor_path(self) -> Path:
+        """Alias for backward compatibility."""
+        return self._session_path
 
     def load(self) -> Dict[int, StoredJob]:
-        if not self._path.exists():
+        """Load jobs from session file."""
+        if not self._session_path.exists():
             return {}
         try:
-            payload = json.loads(self._path.read_text(encoding="utf-8"))
+            payload = json.loads(self._session_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return {}
         jobs: Dict[int, StoredJob] = {}
@@ -80,11 +119,23 @@ class MonitorStateStore:
         return jobs
 
     def save_jobs(self, jobs: Iterable[StoredJob]) -> None:
+        """Save jobs to session file (merges with existing config if present)."""
+        # Try to load existing session data to preserve config
+        existing_data = {}
+        if self._session_path.exists():
+            try:
+                existing_data = json.loads(self._session_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                pass
+
+        # Update with new job data
         payload = {
+            **existing_data,
+            "session_id": self._session_id,
             "timestamp": time.time(),
             "jobs": [asdict(job) for job in jobs],
         }
-        self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._session_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def upsert_job(self, job: StoredJob) -> None:
         records = self.load()
@@ -101,8 +152,58 @@ class MonitorStateStore:
                 self.clear()
 
     def clear(self) -> None:
-        if self._path.exists():
-            self._path.unlink()
+        """Remove session file."""
+        if self._session_path.exists():
+            self._session_path.unlink()
+
+    def save_session(self, config_dict: Dict[str, Any], project_name: str) -> None:
+        """Save monitoring session with full config for resumability.
+
+        Serializes Path objects and other non-JSON-compatible types to strings.
+        """
+        # Serialize config_dict to convert Path objects to strings
+        serialized_config = _serialize_for_json(config_dict)
+
+        session_data = {
+            "session_id": self._session_id,
+            "project_name": project_name,
+            "created_at": time.time(),
+            "config": serialized_config,
+            "jobs": [],  # Will be populated by save_jobs
+        }
+        self._session_path.write_text(json.dumps(session_data, indent=2), encoding="utf-8")
+
+    @staticmethod
+    def list_sessions(monitoring_state_dir: Path) -> list[Dict[str, Any]]:
+        """List all monitoring sessions in the monitoring_state directory."""
+        if not monitoring_state_dir.exists():
+            return []
+
+        sessions = []
+        for session_file in monitoring_state_dir.glob("*.json"):
+            try:
+                data = json.loads(session_file.read_text(encoding="utf-8"))
+                sessions.append({
+                    "session_id": data.get("session_id", session_file.stem),
+                    "project_name": data.get("project_name", "unknown"),
+                    "created_at": data.get("created_at", 0),
+                    "session_path": str(session_file),
+                    "job_count": len(data.get("jobs", [])),
+                })
+            except (json.JSONDecodeError, KeyError):
+                continue
+
+        return sorted(sessions, key=lambda x: x["created_at"], reverse=True)
+
+    @staticmethod
+    def load_session(session_path: Path) -> Optional[Dict[str, Any]]:
+        """Load a monitoring session file."""
+        if not session_path.exists():
+            return None
+        try:
+            return json.loads(session_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
 
 
 __all__ = ["MonitorStateStore", "StoredJob"]

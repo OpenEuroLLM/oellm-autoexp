@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Iterable
 import shlex
 
 from compoconf import asdict
+from omegaconf import OmegaConf
 
 from oellm_autoexp.backends.base import BackendJobSpec, LaunchCommand
 from oellm_autoexp.config.evaluator import RuntimeConfig, evaluate
@@ -114,7 +115,14 @@ def submit_jobs(
     slurm_client: Optional[BaseSlurmClient] = None,
 ) -> MonitorController:
     client = slurm_client or plan.runtime.slurm_client
-    state_store = MonitorStateStore(plan.runtime.state_dir)
+    monitoring_state_dir = plan.config.project.monitoring_state_dir or plan.runtime.state_dir
+    state_store = MonitorStateStore(monitoring_state_dir)
+
+    # Save monitoring session with full config for resumability
+    config_dict = asdict(plan.config)
+    state_store.save_session(config_dict, plan.config.project.name)
+    LOGGER.info(f"Saved monitoring session: {state_store.session_path}")
+
     saved_jobs = state_store.load()
     controller = MonitorController(
         plan.runtime.monitor,

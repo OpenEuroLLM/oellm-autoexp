@@ -25,7 +25,12 @@ class RuntimeConfig:
 
     @property
     def state_dir(self) -> Path:
-        return Path(self.root.project.state_dir or self.root.project.base_output_dir / ".oellm-autoexp")
+        """Returns the monitoring state directory (stable, not run-specific).
+
+        This is used for monitoring sessions and should NOT include timestamps
+        so that --monitor-all can find sessions across runs.
+        """
+        return self.root.project.monitoring_state_dir or self.root.project.state_dir or "./monitoring_state"
 
 
 def evaluate(root: schema.RootConfig) -> RuntimeConfig:

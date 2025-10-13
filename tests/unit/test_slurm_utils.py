@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+import oellm_autoexp.slurm.client
 from oellm_autoexp.slurm.client import (
     FakeSlurmClient,
     FakeSlurmClientConfig,
@@ -61,7 +62,6 @@ def test_fake_slurm_submit_array(tmp_path: Path) -> None:
 
 def test_real_slurm_submit_array(tmp_path: Path, monkeypatch) -> None:
     """Test that SlurmClient.submit_array correctly calls sbatch with --array."""
-    import oellm_autoexp.utils.run
 
     calls = []
 
@@ -74,7 +74,7 @@ def test_real_slurm_submit_array(tmp_path: Path, monkeypatch) -> None:
         calls.append(cmd)
         return MockResult()
 
-    monkeypatch.setattr(oellm_autoexp.utils.run, "run_with_tee", mock_subprocess_run)
+    monkeypatch.setattr(oellm_autoexp.slurm.client, "run_command", mock_subprocess_run)
 
     client = SlurmClient(SlurmClientConfig())
     slurm_config = SlurmConfig(

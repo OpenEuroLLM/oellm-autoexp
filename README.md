@@ -48,25 +48,59 @@ python scripts/run_autoexp.py autoexp -C config -o project=default --use-fake-sl
 
 The in-memory SLURM client mimics submission/monitoring without touching a real scheduler. Drop `--use-fake-slurm` once a real client is configured under `config/slurm`.
 
-**Container:**
+**Container (Recommended):**
 
 ```bash
 # Build an Apptainer/Singularity image tailored for Megatron
 ./container/build_container.sh --backend megatron --definition MegatronTraining --output ./artifacts
 
-# Dry-run inside the container (render scripts only)
-python scripts/run_megatron_container.py --image ./artifacts/MegatronTraining_$(uname -m).sif \
-    --config-ref autoexp -C config -o project=juwels --dry-run
+# Configure container in your config (e.g., config/container/juwels.yaml):
+# image: ${oc.env:CONTAINER_CACHE_DIR}/MegatronTraining_x86_64.sif
+# runtime: singularity
 
-# Execute with the fake SLURM client from inside the container
-python scripts/run_megatron_container.py --image ./artifacts/MegatronTraining_$(uname -m).sif \
-    --config-ref autoexp -C config -o project=juwels --fake-submit
+# Run with auto-detected container from config (recommended)
+python scripts/run_autoexp_container.py --config-ref autoexp -C config -o project=juwels
+
+# Or explicitly specify container image
+python scripts/run_autoexp_container.py --image ./artifacts/MegatronTraining_$(uname -m).sif \
+    --config-ref autoexp -C config -o project=juwels
+
+# Dry-run (render scripts only)
+python scripts/run_autoexp_container.py --config-ref autoexp -C config -o project=juwels --dry-run
+
+# Execute with fake SLURM client
+python scripts/run_autoexp_container.py --config-ref autoexp -C config -o project=juwels --fake-submit
 ```
 
-Here `slurm.launcher_cmd` is treated as a prefix (e.g. `apptainer exec ...`), while the backend command is rendered separately. Setting `slurm.launcher_env_passthrough: true` forwards `slurm.env` keys into the launcher via `--env VAR=$VAR`.
+**Key Points:**
+- `run_autoexp_container.py` is the **unified entry point** for all workflows
+- Automatically detects container from config or runs directly on host if no container configured
+- If `container: null` or `container: {}`, runs directly without container
+- Plan generation happens in container (needs Megatron), SLURM submission on host (needs sbatch)
+- Setting `slurm.launcher_env_passthrough: true` forwards `slurm.env` keys into the launcher via `--env VAR=$VAR`
 
 
 ### 3. Megatron Training with SLURM
+
+**Recommended approach (using container wrapper):**
+
+```bash
+# Submit with auto-detected container and monitoring
+python scripts/run_autoexp_container.py --config-ref autoexp -C config \
+  -o project=juwels -o slurm=juwels -o container=juwels
+
+# Submit without monitoring (monitor separately later)
+python scripts/run_autoexp_container.py --config-ref autoexp -C config \
+  -o project=juwels -o slurm=juwels -o container=juwels --no-monitor
+
+# Resume monitoring later from session file (recommended)
+python scripts/run_autoexp.py --monitor-all --monitoring-state-dir output/monitoring_state
+
+# Or monitor specific session by ID
+python scripts/run_autoexp.py --monitor-session <session_id> --monitoring-state-dir output/monitoring_state
+```
+
+**Alternative (direct CLI, requires oellm-autoexp installed):**
 
 ```bash
 # Plan and submit using the bundled hydra groups (JUWELS example)
@@ -158,9 +192,24 @@ class ExampleBackend(BaseBackend):
 Add a Hydra group under `config/backend/example.yaml` and select it with `-o backend=example`. The orchestration stack (sweeps, monitoring, restart logic) will work unchanged.
 
 ### 8. JUWELS LLaMA-1.8B Speed Test (Singularity)
-- Ensure `CONTAINER_CACHE_DIR` points to the folder holding `MegatronTraining_x86_64_202510011427.sif` and load the JUWELS environment exporting `SLURM_ACCOUNT` and `SLURM_PARTITION_DEBUG`.
-- Update the `templates/juwels.sbatch` module list if your site configuration differs.
-- Dry run with the fake SLURM client before touching the real scheduler:
+- Ensure `CONTAINER_CACHE_DIR` points to the folder holding the container image
+- Load the JUWELS environment exporting `SLURM_ACCOUNT` and `SLURM_PARTITION_DEBUG`
+- Update the `templates/juwels.sbatch` module list if your site configuration differs
+- Configure `config/container/juwels.yaml` with your container image path
+
+**Recommended (using container wrapper):**
+
+```bash
+python scripts/run_autoexp_container.py --config-ref autoexp -C config \
+  -o project=juwels_speed_test \
+  -o slurm=juwels \
+  -o container=juwels \
+  -o backend=megatron_speed_test_juwels \
+  -o sweep=speed_test_juwels \
+  --fake-submit
+```
+
+**Alternative (CLI, requires package installed):**
 
 ```bash
 oellm-autoexp submit autoexp --config-dir config \
@@ -171,7 +220,8 @@ oellm-autoexp submit autoexp --config-dir config \
   --fake
 ```
 
-- Drop `--fake` and set the real client once the SLURM integration in `oellm-autoexp` is ready, keeping overrides like `slurm.sbatch.partition=$SLURM_PARTITION_DEBUG` if you need a different queue.
+- Drop `--fake-submit` (or `--fake`) once ready for real submission
+- Use `slurm.sbatch.partition=$SLURM_PARTITION_DEBUG` to override the queue if needed
 
 ## Migration Guides
 
@@ -339,11 +389,21 @@ megatron:
     model_name: ${oc.env:MODEL_NAME,""}
 ```
 
-## State Persistence
+## State Persistence and Monitoring Sessions
 
-- The orchestrator writes `monitor/state.json` inside `project.state_dir` (defaults to `<base_output>/.oellm-autoexp`).
-- Rerunning `oellm-autoexp submit` against the same plan rehydrates in-flight jobs without resubmitting them.
-- When all jobs finish, the state file is removed automatically.
+- Each submission creates a monitoring session file in **visible location**: `<base_output_dir>/monitoring_state/<session_id>.json`
+- Session files contain:
+  - Full resolved configuration for reproducibility
+  - Job state (job IDs, names, attempts, restart history)
+  - Project metadata (name, creation timestamp)
+- Monitoring workflows:
+  - **List sessions**: `python scripts/manage_monitoring.py --monitoring-state-dir output/monitoring_state list`
+  - **Show session details**: `python scripts/manage_monitoring.py --monitoring-state-dir output/monitoring_state show <session_id>`
+  - **Monitor specific session**: `python scripts/run_autoexp.py --monitor-session <session_id> --monitoring-state-dir output/monitoring_state`
+  - **Monitor all sessions**: `python scripts/run_autoexp.py --monitor-all --monitoring-state-dir output/monitoring_state`
+  - **Remove session**: `python scripts/manage_monitoring.py --monitoring-state-dir output/monitoring_state remove <session_id> [--force]`
+- Session files persist even after jobs complete, enabling inspection and re-monitoring
+- The visible location (`output/monitoring_state/`) makes sessions easy to discover and manage
 
 ## Diagnostics & Testing
 

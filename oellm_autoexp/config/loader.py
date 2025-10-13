@@ -60,8 +60,20 @@ def load_config(path: str | Path) -> schema.RootConfig:
     except Exception as exc:  # pragma: no cover - compoconf raises rich errors
         raise ConfigLoaderError(f"Unable to parse config {path}: {exc}") from exc
 
+    # Set default monitoring_state_dir (visible, stable location NOT dependent on timestamped runs)
+    # This ensures monitoring sessions persist across runs and can be found for --monitor-all
+    if root.project.monitoring_state_dir is None:
+        # Use stable location: if OUTPUT_DIR is set, use that; otherwise use ./monitoring_state
+        # This avoids timestamps in monitoring_state_dir (which would break cross-run monitoring)
+        base = Path(root.project.base_output_dir)
+        # Strip timestamp suffix if present (e.g., "output/run_20250101" -> "output")
+        # by taking parent if base ends with timestamp-like pattern
+        stable_base = base.parent if base.name.split("_")[-1].isdigit() and len(base.name.split("_")[-1]) >= 8 else base
+        root.project.monitoring_state_dir = stable_base / "monitoring_state"
+
+    # Keep state_dir for backward compatibility (deprecated)
     if root.project.state_dir is None:
-        root.project.state_dir = Path(root.project.base_output_dir) / ".oellm-autoexp"
+        root.project.state_dir = root.project.monitoring_state_dir
 
     return root
 
@@ -126,8 +138,20 @@ def load_hydra_config(
     except Exception as exc:  # pragma: no cover
         raise ConfigLoaderError(f"Unable to parse Hydra config {config_name}: {exc}") from exc
 
+    # Set default monitoring_state_dir (visible, stable location NOT dependent on timestamped runs)
+    # This ensures monitoring sessions persist across runs and can be found for --monitor-all
+    if root.project.monitoring_state_dir is None:
+        # Use stable location: if OUTPUT_DIR is set, use that; otherwise use ./monitoring_state
+        # This avoids timestamps in monitoring_state_dir (which would break cross-run monitoring)
+        base = Path(root.project.base_output_dir)
+        # Strip timestamp suffix if present (e.g., "output/run_20250101" -> "output")
+        # by taking parent if base ends with timestamp-like pattern
+        stable_base = base.parent if base.name.split("_")[-1].isdigit() and len(base.name.split("_")[-1]) >= 8 else base
+        root.project.monitoring_state_dir = stable_base / "monitoring_state"
+
+    # Keep state_dir for backward compatibility (deprecated)
     if root.project.state_dir is None:
-        root.project.state_dir = Path(root.project.base_output_dir) / ".oellm-autoexp"
+        root.project.state_dir = root.project.monitoring_state_dir
 
     return root
 

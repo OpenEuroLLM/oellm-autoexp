@@ -3,7 +3,6 @@ from pathlib import Path
 import argparse
 
 from scripts import run_megatron_container
-import oellm_autoexp.utils.run
 
 
 def test_run_megatron_container_with_fake_submit(monkeypatch, tmp_path: Path):
@@ -17,12 +16,12 @@ def test_run_megatron_container_with_fake_submit(monkeypatch, tmp_path: Path):
         result.stderr = ""
         return result
 
-    monkeypatch.setattr(oellm_autoexp.utils.run, "run_with_tee", fake_subprocess_run)
+    monkeypatch.setattr(run_megatron_container, "run_with_tee", fake_subprocess_run)
 
     args = argparse.Namespace(
         image="image.sif",
         apptainer_cmd="apptainer",
-        config_name="autoexp",
+        config_ref="autoexp",
         config_dir=str(tmp_path),
         override=["project=demo"],
         no_run=False,
@@ -61,12 +60,12 @@ def test_run_megatron_container_parses_sbatch_command(monkeypatch, tmp_path: Pat
 
         return result
 
-    monkeypatch.setattr(oellm_autoexp.utils.run, "run_with_tee", fake_subprocess_run)
+    monkeypatch.setattr(run_megatron_container, "run_with_tee", fake_subprocess_run)
 
     args = argparse.Namespace(
         image="image.sif",
         apptainer_cmd="apptainer",
-        config_name="autoexp",
+        config_ref="autoexp",
         config_dir=str(tmp_path),
         override=["project=demo"],
         no_run=False,
