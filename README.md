@@ -2,6 +2,8 @@
 
 Work-in-progress monorepo consolidating sweep planning, SLURM submission, container workflows, and monitoring for OpenEuroLLM projects. The Megatron backend reuses Megatron-LM's parser so all sweeps stay compatible with upstream flags. See `SPEC.md` for the detailed architecture and outstanding work.
 
+FEEL FREE TO ADD PRs if you find a bug or inconsistent behavior!
+
 ## Installation
 
 ```bash
