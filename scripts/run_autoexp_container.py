@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("-C", "--config-dir", default="config")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--no-run", action="store_true", help="Generate scripts but don't submit to SLURM")
+    parser.add_argument("--dry-run", action="store_true", help="Generate scripts but don't submit to SLURM")
     parser.add_argument("--no-monitor", action="store_true", help="Submit jobs but don't monitor them")
     parser.add_argument("--monitor-only", action="store_true", help="Skip submission, only monitor existing jobs")
     parser.add_argument("--fake-submit", action="store_true", help="Use fake SLURM submission inside the container")
@@ -214,8 +214,8 @@ def main() -> None:
     print(result.stdout)
     print(f"\nSLURM Command: {sbatch_cmd}")
 
-    if args.no_run:
-        print("Skipping submission (--no-run specified)")
+    if args.dry_run:
+        print("Skipping submission (--dry-run specified)")
         return
 
     # Parse environment variables
