@@ -65,11 +65,25 @@ def build_execution_plan(config: Path | RootConfig) -> ExecutionPlan:
 
 def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
     template_path = Path(plan.config.slurm.template_path)
-    script_dir = Path(plan.config.slurm.script_dir)
-    script_dir.mkdir(parents=True, exist_ok=True)
+
+    preferred_script_dir = Path(plan.config.slurm.script_dir)
+    try:
+        preferred_script_dir.mkdir(parents=True, exist_ok=True)
+        script_dir = preferred_script_dir
+    except OSError as exc:
+        fallback_script_dir = Path.cwd() / ".oellm_autoexp" / "scripts"
+        fallback_script_dir.mkdir(parents=True, exist_ok=True)
+        LOGGER.warning(
+            "Unable to create script directory %s (%s); using fallback %s",
+            preferred_script_dir,
+            exc,
+            fallback_script_dir,
+        )
+        script_dir = fallback_script_dir
 
     job_scripts: List[Path] = []
     sweep_entries: List[Dict[str, Any]] = []
+    write_fallback_dir: Optional[Path] = None
 
     for job in plan.jobs:
         spec = BackendJobSpec(parameters=dict(job.parameters))
@@ -78,7 +92,21 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
 
         replacements = _build_replacements(plan.runtime, job, launch_cmd)
         script_path = script_dir / f"{job.name}.sbatch"
-        rendered = render_template_file(template_path, script_path, replacements)
+        try:
+            rendered = render_template_file(template_path, script_path, replacements)
+        except OSError as exc:
+            if write_fallback_dir is None:
+                write_fallback_dir = Path.cwd() / ".oellm_autoexp" / "scripts"
+                write_fallback_dir.mkdir(parents=True, exist_ok=True)
+            fallback_path = write_fallback_dir / script_path.name
+            LOGGER.warning(
+                "Unable to write script to %s (%s); using fallback %s",
+                script_path,
+                exc,
+                fallback_path,
+            )
+            rendered = render_template_file(template_path, fallback_path, replacements)
+            script_path = fallback_path
         validate_job_script(rendered, job.name)
         job_scripts.append(script_path)
 
@@ -355,13 +383,37 @@ def _build_sweep_entry(job: JobPlan, launch_cmd: LaunchCommand) -> Dict[str, Any
 
 def _write_sweep_json(plan: ExecutionPlan, entries: List[Dict[str, Any]]) -> Path:
     base_output = Path(plan.config.project.base_output_dir)
-    base_output.mkdir(parents=True, exist_ok=True)
-    sweep_path = base_output / "sweep.json"
+    try:
+        base_output.mkdir(parents=True, exist_ok=True)
+        sweep_dir = base_output
+    except OSError as exc:
+        fallback_output = Path.cwd() / ".oellm_autoexp" / "output"
+        fallback_output.mkdir(parents=True, exist_ok=True)
+        LOGGER.warning(
+            "Unable to create base output dir %s (%s); using fallback %s",
+            base_output,
+            exc,
+            fallback_output,
+        )
+        sweep_dir = fallback_output
+    sweep_path = sweep_dir / "sweep.json"
     payload = {
         "project": plan.config.project.name,
         "jobs": entries,
     }
-    sweep_path.write_text(json.dumps(payload, indent=2))
+    try:
+        sweep_path.write_text(json.dumps(payload, indent=2))
+    except OSError as exc:
+        fallback_output = Path.cwd() / ".oellm_autoexp" / "output"
+        fallback_output.mkdir(parents=True, exist_ok=True)
+        sweep_path = fallback_output / "sweep.json"
+        LOGGER.warning(
+            "Unable to write sweep metadata to %s (%s); using fallback %s",
+            sweep_dir / "sweep.json",
+            exc,
+            sweep_path,
+        )
+        sweep_path.write_text(json.dumps(payload, indent=2))
     return sweep_path
 
 
@@ -460,9 +512,33 @@ def _render_array_script(
         raise RuntimeError("sweep.json must be available for array submission")
 
     array_log_dir = Path(plan.config.slurm.log_dir)
-    array_log_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        array_log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        fallback_log_dir = Path.cwd() / ".oellm_autoexp" / "logs"
+        fallback_log_dir.mkdir(parents=True, exist_ok=True)
+        LOGGER.warning(
+            "Unable to create log directory %s (%s); using fallback %s",
+            array_log_dir,
+            exc,
+            fallback_log_dir,
+        )
+        array_log_dir = fallback_log_dir
     array_log_path = array_log_dir / f"{array_job_name}_%a.log"
-    array_output_dir = Path(plan.config.project.base_output_dir) / f"{array_job_name}_%a"
+    array_output_base = Path(plan.config.project.base_output_dir)
+    try:
+        array_output_base.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        fallback_output = Path.cwd() / ".oellm_autoexp" / "output"
+        fallback_output.mkdir(parents=True, exist_ok=True)
+        LOGGER.warning(
+            "Unable to create array output dir %s (%s); using fallback %s",
+            array_output_base,
+            exc,
+            fallback_output,
+        )
+        array_output_base = fallback_output
+    array_output_dir = array_output_base / f"{array_job_name}_%a"
 
     runner_script = Path("scripts/run_sweep_entry.py")
     launcher_cmd = LaunchCommand(
@@ -492,7 +568,20 @@ def _render_array_script(
         sbatch_overrides={"array": f"0-{len(plan.sweep_points) - 1}"},
     )
     script_path = script_dir / f"{array_job_name}.sbatch"
-    rendered = render_template_file(template_path, script_path, replacements)
+    try:
+        rendered = render_template_file(template_path, script_path, replacements)
+    except OSError as exc:
+        fallback_script_dir = Path.cwd() / ".oellm_autoexp" / "scripts"
+        fallback_script_dir.mkdir(parents=True, exist_ok=True)
+        fallback_script_path = fallback_script_dir / f"{array_job_name}.sbatch"
+        LOGGER.warning(
+            "Unable to write array script to %s (%s); using fallback %s",
+            script_path,
+            exc,
+            fallback_script_path,
+        )
+        rendered = render_template_file(template_path, fallback_script_path, replacements)
+        script_path = fallback_script_path
     validate_job_script(rendered, array_job_name)
     return script_path
 

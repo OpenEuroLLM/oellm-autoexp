@@ -298,7 +298,7 @@ def test_submit_jobs_persists_and_restores(tmp_path: Path) -> None:
     fake_client = FakeSlurmClient(FakeSlurmClientConfig())
     fake_client.configure(plan.config.slurm)
 
-    submit_jobs(plan, artifacts, fake_client)
+    controller = submit_jobs(plan, artifacts, fake_client)
 
     state_file = plan.runtime.state_dir / "monitor" / "state.json"
     assert state_file.exists()

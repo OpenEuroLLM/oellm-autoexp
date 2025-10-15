@@ -71,9 +71,13 @@ class MonitorStateStore:
     def __init__(self, root: Path, session_id: Optional[str] = None) -> None:
         self._root = Path(root)
         self._session_id = session_id or str(uuid.uuid4())[:8]
-        # New visible location: output/monitoring_state/<session_id>.json
+        # Canonical session file
         self._session_path = self._root / f"{self._session_id}.json"
         self._session_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Legacy layout expected by older tooling/tests: <root>/monitor/state.json
+        self._legacy_path = self._root / "monitor" / "state.json"
+        self._legacy_path.parent.mkdir(parents=True, exist_ok=True)
 
     @property
     def session_id(self) -> str:
@@ -88,13 +92,31 @@ class MonitorStateStore:
         """Alias for backward compatibility."""
         return self._session_path
 
+    def _load_payload(self) -> Dict[str, Any]:
+        """Load JSON payload from session or legacy location."""
+        for path in (self._session_path, self._legacy_path):
+            if not path.exists():
+                continue
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+        return {}
+
+    def _write_payload(self, payload: Dict[str, Any]) -> None:
+        """Persist payload to session file and legacy compatibility path."""
+        text = json.dumps(payload, indent=2)
+        self._session_path.write_text(text, encoding="utf-8")
+        try:
+            self._legacy_path.write_text(text, encoding="utf-8")
+        except OSError:
+            # Legacy path may live on read-only storage; ignore if we cannot mirror.
+            pass
+
     def load(self) -> Dict[int, StoredJob]:
         """Load jobs from session file."""
-        if not self._session_path.exists():
-            return {}
-        try:
-            payload = json.loads(self._session_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
+        payload = self._load_payload()
+        if not payload:
             return {}
         jobs: Dict[int, StoredJob] = {}
         for raw in payload.get("jobs", []):
@@ -121,12 +143,7 @@ class MonitorStateStore:
     def save_jobs(self, jobs: Iterable[StoredJob]) -> None:
         """Save jobs to session file (merges with existing config if present)."""
         # Try to load existing session data to preserve config
-        existing_data = {}
-        if self._session_path.exists():
-            try:
-                existing_data = json.loads(self._session_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                pass
+        existing_data = self._load_payload()
 
         # Update with new job data
         payload = {
@@ -135,7 +152,7 @@ class MonitorStateStore:
             "timestamp": time.time(),
             "jobs": [asdict(job) for job in jobs],
         }
-        self._session_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._write_payload(payload)
 
     def upsert_job(self, job: StoredJob) -> None:
         records = self.load()
@@ -155,6 +172,8 @@ class MonitorStateStore:
         """Remove session file."""
         if self._session_path.exists():
             self._session_path.unlink()
+        if self._legacy_path.exists():
+            self._legacy_path.unlink()
 
     def save_session(self, config_dict: Dict[str, Any], project_name: str) -> None:
         """Save monitoring session with full config for resumability.
@@ -171,7 +190,7 @@ class MonitorStateStore:
             "config": serialized_config,
             "jobs": [],  # Will be populated by save_jobs
         }
-        self._session_path.write_text(json.dumps(session_data, indent=2), encoding="utf-8")
+        self._write_payload(session_data)
 
     @staticmethod
     def list_sessions(monitoring_state_dir: Path) -> list[Dict[str, Any]]:

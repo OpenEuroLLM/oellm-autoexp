@@ -19,7 +19,7 @@ def test_load_config(tmp_path: Path) -> None:
     assert cfg.slurm.srun_opts == ""
     assert cfg.slurm.client.class_name == "FakeSlurmClient"
     assert cfg.restart_policies[0].mode == "success"
-    assert cfg.project.state_dir == Path("./outputs") / ".oellm-autoexp"
+    assert cfg.project.state_dir == Path("./outputs") / "monitoring_state"
 
 
 def test_load_hydra_config(monkeypatch) -> None:
