@@ -29,19 +29,13 @@ def test_megatron_backend_builds_command():
 
 
 def test_auto_megatron_backend_converts_convenience_args():
-    from oellm_autoexp.backends.megatron_backend import AutoMegatronBackend, AutoMegatronBackendConfig
+    from oellm_autoexp.backends.megatron_backend import (
+        AutoMegatronBackend,
+        AutoMegatronBackendConfig,
+    )
 
     config = AutoMegatronBackendConfig(launcher_script=Path("launch.sh"))
     backend = AutoMegatronBackend(config)
-
-    spec = BackendJobSpec(
-        parameters={
-            "train_tokens": "1_000",
-            "seq_length": 10,
-            "global_batch_size": 10,
-            "lr_decay_fraction": 0.5,
-        }
-    )
 
     normalized = {
         "train_tokens": "1_000",

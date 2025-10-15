@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import time
 from pathlib import Path
 
@@ -70,7 +69,9 @@ def submit(config_ref: str, config_dir: Path, override: tuple[str, ...], fake: b
 
     controller = submit_jobs(execution_plan, artifacts, slurm_client)
     for state in controller.jobs():
-        click.echo(f"submitted {state.name} -> job {state.job_id} -> log: {state.registration.log_path}")
+        click.echo(
+            f"submitted {state.name} -> job {state.job_id} -> log: {state.registration.log_path}"
+        )
 
     execute_plan_sync(
         execution_plan,
@@ -86,8 +87,12 @@ def submit(config_ref: str, config_dir: Path, override: tuple[str, ...], fake: b
 @click.option("--config-dir", type=click.Path(path_type=Path), default=Path("config"))
 @click.option("--log", "logs", multiple=True, help="JOB=PATH to the SLURM log to follow")
 @click.option("--job", "jobs", multiple=True, help="JOB=JOB_ID to reuse an existing SLURM id")
-@click.option("--slurm-state", "slurm_states", multiple=True, help="JOB=STATE to seed fake SLURM status")
-@click.option("--action", "actions", multiple=True, help="ACTION=command template executed on signal")
+@click.option(
+    "--slurm-state", "slurm_states", multiple=True, help="JOB=STATE to seed fake SLURM status"
+)
+@click.option(
+    "--action", "actions", multiple=True, help="ACTION=command template executed on signal"
+)
 @click.option("--loop", is_flag=True, help="Continuously poll instead of a single iteration")
 @click.option("--interval", type=int, help="Polling interval override (seconds)")
 @click.option("--dry-run", is_flag=True, help="Render commands without executing them")
@@ -151,7 +156,11 @@ def monitor(
             else:
                 job_id = slurm_client.submit(name, script_path, log_path)
         else:
-            job_id = requested_id if requested_id is not None else slurm_client.submit(name, script_path, log_path)
+            job_id = (
+                requested_id
+                if requested_id is not None
+                else slurm_client.submit(name, script_path, log_path)
+            )
 
         controller.register_job(
             job_id,
@@ -181,7 +190,9 @@ def monitor(
             }
             _emit_action(action.action, payload, action_map, dry_run, json_output)
             if not dry_run:
-                exit_code = max(exit_code, _execute_mapped_action(action.action, payload, action_map))
+                exit_code = max(
+                    exit_code, _execute_mapped_action(action.action, payload, action_map)
+                )
         controller.drain_actions()
 
         if not loop:
@@ -233,12 +244,18 @@ def _parse_assignment(value: str, option: str) -> tuple[str, str]:
 
 
 def _emit_action(
-    action: str, payload: dict[str, str], action_map: dict[str, str], dry_run: bool, json_output: bool
+    action: str,
+    payload: dict[str, str],
+    action_map: dict[str, str],
+    dry_run: bool,
+    json_output: bool,
 ) -> None:
     if json_output:
         click.echo(json.dumps({"action": action, "payload": payload}))
     else:
-        meta_items = [f"{k}={v}" for k, v in sorted(payload.items()) if k not in {"job_name", "job_id"}]
+        meta_items = [
+            f"{k}={v}" for k, v in sorted(payload.items()) if k not in {"job_name", "job_id"}
+        ]
         suffix = f" ({', '.join(meta_items)})" if meta_items else ""
         click.echo(f"[{action}] job={payload['job_name']}#{payload['job_id']}{suffix}")
     if dry_run and action in action_map:
@@ -265,7 +282,9 @@ def _render_action_command(template: str, payload: dict[str, str]) -> str:
         return template.format(**payload)
     except KeyError as exc:  # pragma: no cover - validation path
         missing = exc.args[0]
-        raise click.ClickException(f"Missing field '{missing}' for action template '{template}'") from exc
+        raise click.ClickException(
+            f"Missing field '{missing}' for action template '{template}'"
+        ) from exc
 
 
 def main() -> None:  # pragma: no cover - exercised via CLI

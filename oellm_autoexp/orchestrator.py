@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Iterable
+from typing import Any
+from collections.abc import Mapping, Sequence, Iterable
 
 import shlex
 
 from compoconf import asdict
-from omegaconf import OmegaConf
 
 from oellm_autoexp.backends.base import BackendJobSpec, LaunchCommand
 from oellm_autoexp.config.evaluator import RuntimeConfig, evaluate
@@ -39,17 +38,17 @@ LOGGER = logging.getLogger(__name__)
 class ExecutionPlan:
     config: RootConfig
     runtime: RuntimeConfig
-    sweep_points: List[SweepPoint]
-    jobs: List[JobPlan]
+    sweep_points: list[SweepPoint]
+    jobs: list[JobPlan]
 
 
 @dataclass
 class RenderedArtifacts:
-    job_scripts: List[Path]
-    sweep_json: Optional[Path] = None
-    array_script: Optional[Path] = None
-    array_job_name: Optional[str] = None
-    sweep_entries: List[Dict[str, Any]] = field(default_factory=list)
+    job_scripts: list[Path]
+    sweep_json: Path | None = None
+    array_script: Path | None = None
+    array_job_name: str | None = None
+    sweep_entries: list[dict[str, Any]] = field(default_factory=list)
 
 
 def build_execution_plan(config: Path | RootConfig) -> ExecutionPlan:
@@ -81,9 +80,9 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
         )
         script_dir = fallback_script_dir
 
-    job_scripts: List[Path] = []
-    sweep_entries: List[Dict[str, Any]] = []
-    write_fallback_dir: Optional[Path] = None
+    job_scripts: list[Path] = []
+    sweep_entries: list[dict[str, Any]] = []
+    write_fallback_dir: Path | None = None
 
     for job in plan.jobs:
         spec = BackendJobSpec(parameters=dict(job.parameters))
@@ -112,12 +111,12 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
 
         sweep_entries.append(_build_sweep_entry(job, launch_cmd))
 
-    sweep_path: Optional[Path] = None
+    sweep_path: Path | None = None
     if plan.config.sweep.store_sweep_json or plan.config.slurm.array:
         sweep_path = _write_sweep_json(plan, sweep_entries)
 
-    array_script: Optional[Path] = None
-    array_job_name: Optional[str] = None
+    array_script: Path | None = None
+    array_job_name: str | None = None
     if plan.config.slurm.array and plan.jobs:
         array_job_name = f"{plan.config.project.name}-array"
         array_script = _render_array_script(
@@ -140,7 +139,7 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
 def submit_jobs(
     plan: ExecutionPlan,
     artifacts: RenderedArtifacts,
-    slurm_client: Optional[BaseSlurmClient] = None,
+    slurm_client: BaseSlurmClient | None = None,
 ) -> MonitorController:
     client = slurm_client or plan.runtime.slurm_client
     monitoring_state_dir = plan.config.project.monitoring_state_dir or plan.runtime.state_dir
@@ -191,7 +190,7 @@ def submit_jobs(
                 )
 
         submit_array = getattr(client, "submit_array")
-        job_ids: List[int] = submit_array(  # type: ignore[misc]
+        job_ids: list[int] = submit_array(  # type: ignore[misc]
             artifacts.array_job_name or plan.config.project.name,
             artifacts.array_script,
             [job.log_path for job in pending_jobs],
@@ -202,7 +201,7 @@ def submit_jobs(
             raise RuntimeError("SLURM client returned mismatched job ids for array submission")
 
         for job_id, job in zip(job_ids, pending_jobs):
-            job_metadata: Dict[str, Any] = {"parameters": dict(job.parameters)}
+            job_metadata: dict[str, Any] = {"parameters": dict(job.parameters)}
             if job.inactivity_threshold_seconds is not None:
                 job_metadata["inactivity_threshold_seconds"] = job.inactivity_threshold_seconds
 
@@ -234,7 +233,7 @@ def submit_jobs(
                 interval_seconds=interval,
                 logger=LOGGER,
             )
-        job_metadata: Dict[str, Any] = {"parameters": dict(job.parameters)}
+        job_metadata: dict[str, Any] = {"parameters": dict(job.parameters)}
         if job.inactivity_threshold_seconds is not None:
             job_metadata["inactivity_threshold_seconds"] = job.inactivity_threshold_seconds
 
@@ -258,9 +257,9 @@ def submit_jobs(
 
 async def execute_plan(
     plan: ExecutionPlan,
-    slurm_client: Optional[BaseSlurmClient] = None,
-    artifacts: Optional[RenderedArtifacts] = None,
-    controller: Optional[MonitorController] = None,
+    slurm_client: BaseSlurmClient | None = None,
+    artifacts: RenderedArtifacts | None = None,
+    controller: MonitorController | None = None,
 ) -> None:
     rendered = artifacts or render_scripts(plan)
     controller = controller or submit_jobs(plan, rendered, slurm_client)
@@ -284,9 +283,9 @@ async def execute_plan(
 
 def execute_plan_sync(
     plan: ExecutionPlan,
-    slurm_client: Optional[BaseSlurmClient] = None,
-    artifacts: Optional[RenderedArtifacts] = None,
-    controller: Optional[MonitorController] = None,
+    slurm_client: BaseSlurmClient | None = None,
+    artifacts: RenderedArtifacts | None = None,
+    controller: MonitorController | None = None,
 ) -> None:
     asyncio.run(
         execute_plan(
@@ -304,8 +303,10 @@ def _build_replacements(
     launch_cmd: LaunchCommand,
     escape_str: bool = True,
     sbatch_overrides: dict[str, str] = {},
-) -> Dict[str, str]:
-    sbatch_directives = _format_sbatch_directives(runtime.root.slurm, job, sbatch_overrides=sbatch_overrides)
+) -> dict[str, str]:
+    sbatch_directives = _format_sbatch_directives(
+        runtime.root.slurm, job, sbatch_overrides=sbatch_overrides
+    )
     backend_cmd = _format_command(launch_cmd.argv, escape_str=escape_str)
     launcher_raw = runtime.root.slurm.launcher_cmd.strip()
     launcher = f"{launcher_raw} " if launcher_raw else ""
@@ -368,7 +369,7 @@ def _build_replacements(
     return repl
 
 
-def _build_sweep_entry(job: JobPlan, launch_cmd: LaunchCommand) -> Dict[str, Any]:
+def _build_sweep_entry(job: JobPlan, launch_cmd: LaunchCommand) -> dict[str, Any]:
     return {
         "name": job.name,
         "output_dir": str(job.output_dir),
@@ -381,7 +382,7 @@ def _build_sweep_entry(job: JobPlan, launch_cmd: LaunchCommand) -> Dict[str, Any
     }
 
 
-def _write_sweep_json(plan: ExecutionPlan, entries: List[Dict[str, Any]]) -> Path:
+def _write_sweep_json(plan: ExecutionPlan, entries: list[dict[str, Any]]) -> Path:
     base_output = Path(plan.config.project.base_output_dir)
     try:
         base_output.mkdir(parents=True, exist_ok=True)
@@ -456,7 +457,7 @@ def _format_command(argv: Sequence[str], escape_str: bool = True) -> str:
 
 
 def _format_env(base_env: Mapping[str, object], command_env: Mapping[str, object]) -> str:
-    merged: Dict[str, str] = {}
+    merged: dict[str, str] = {}
     merged.update({k: str(v) for k, v in base_env.items()})
     merged.update({k: str(v) for k, v in command_env.items()})
     if not merged:
@@ -464,11 +465,15 @@ def _format_env(base_env: Mapping[str, object], command_env: Mapping[str, object
     return "\n".join(f"export {key}={value}" for key, value in merged.items())
 
 
-def _format_sbatch_directives(slurm_conf: SlurmConfig, job: JobPlan, sbatch_overrides: dict[str, str] = {}) -> str:
+def _format_sbatch_directives(
+    slurm_conf: SlurmConfig, job: JobPlan, sbatch_overrides: dict[str, str] = {}
+) -> str:
     sbatch_kwargs = asdict(slurm_conf.sbatch)
     sbatch_kwargs.update(sbatch_overrides)
     sbatch_values = {
-        k.replace("_", "-"): v for k, v in sbatch_kwargs.items() if v is not None and not k.startswith("_")
+        k.replace("_", "-"): v
+        for k, v in sbatch_kwargs.items()
+        if v is not None and not k.startswith("_")
     }
     override_values = {
         k.replace("_", "-"): v
@@ -505,7 +510,7 @@ def _render_array_script(
     plan: ExecutionPlan,
     script_dir: Path,
     template_path: Path,
-    sweep_path: Optional[Path],
+    sweep_path: Path | None,
     array_job_name: str,
 ) -> Path:
     if sweep_path is None:

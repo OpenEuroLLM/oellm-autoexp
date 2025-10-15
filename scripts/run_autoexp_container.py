@@ -18,9 +18,7 @@ import argparse
 import os
 import re
 import shlex
-import sys
 from pathlib import Path
-from typing import Optional
 
 from oellm_autoexp.utils.run import run_with_tee
 
@@ -33,10 +31,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("-C", "--config-dir", default="config")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--no-run", action="store_true", help="Generate scripts but don't submit to SLURM")
-    parser.add_argument("--no-monitor", action="store_true", help="Submit jobs but don't monitor them")
-    parser.add_argument("--monitor-only", action="store_true", help="Skip submission, only monitor existing jobs")
-    parser.add_argument("--fake-submit", action="store_true", help="Use fake SLURM submission inside the container")
+    parser.add_argument(
+        "--no-run", action="store_true", help="Generate scripts but don't submit to SLURM"
+    )
+    parser.add_argument(
+        "--no-monitor", action="store_true", help="Submit jobs but don't monitor them"
+    )
+    parser.add_argument(
+        "--monitor-only", action="store_true", help="Skip submission, only monitor existing jobs"
+    )
+    parser.add_argument(
+        "--fake-submit", action="store_true", help="Use fake SLURM submission inside the container"
+    )
     parser.add_argument(
         "--env",
         action="append",
@@ -60,7 +66,7 @@ def parse_args() -> argparse.Namespace:
 
 def _build_container_command(args: argparse.Namespace, cmd_parts: list[str]) -> list[str]:
     """Build the apptainer/singularity exec command."""
-    quoted_inner = " ".join(shlex.quote(part) for part in cmd_parts)
+    quoted_inner = shlex.join(cmd_parts)
     command = [args.apptainer_cmd, "exec"]
     for bind in getattr(args, "bind", []) or []:
         command.extend(["--bind", bind])
@@ -70,10 +76,11 @@ def _build_container_command(args: argparse.Namespace, cmd_parts: list[str]) -> 
     return command
 
 
-def _load_container_config(config_ref: str, config_dir: Path, overrides: list[str]) -> Optional[dict]:
+def _load_container_config(config_ref: str, config_dir: Path, overrides: list[str]) -> dict | None:
     """Load container configuration from config using OmegaConf (lazy import).
 
-    Returns None if container is not configured, or a dict with container config.
+    Returns None if container is not configured, or a dict with
+    container config.
     """
     try:
         # Lazy import to allow running with --image even without OmegaConf installed
@@ -124,7 +131,7 @@ def main() -> None:
             monitor_cmd.append("--use-fake-slurm")
         monitor_cmd += args.override
 
-        print("Running monitoring from host:", " ".join(shlex.quote(c) for c in monitor_cmd))
+        print("Running monitoring from host:", shlex.join(monitor_cmd))
         result = run_with_tee(monitor_cmd)
         raise SystemExit(result.returncode)
 
@@ -134,7 +141,9 @@ def main() -> None:
 
     if not container_image:
         # Try to load from config
-        container_config = _load_container_config(args.config_ref, Path(args.config_dir), args.override)
+        container_config = _load_container_config(
+            args.config_ref, Path(args.config_dir), args.override
+        )
 
         if container_config:
             container_image = container_config.get("image")
@@ -184,7 +193,7 @@ def main() -> None:
     args.apptainer_cmd = container_runtime
 
     apptainer_cmd = _build_container_command(args, container_cmd)
-    print("Running:", " ".join(shlex.quote(c) for c in apptainer_cmd))
+    print("Running:", shlex.join(apptainer_cmd))
 
     result = run_with_tee(apptainer_cmd, capture_output=True, text=True)
 
@@ -194,7 +203,9 @@ def main() -> None:
         raise SystemExit(1)
 
     # Parse the sbatch command from container output
-    sbatch_match = re.search(r"^Successful, to execute, run: (.*?)(sbatch .*)$", result.stdout, flags=re.MULTILINE)
+    sbatch_match = re.search(
+        r"^Successful, to execute, run: (.*?)(sbatch .*)$", result.stdout, flags=re.MULTILINE
+    )
 
     if not sbatch_match:
         # If no sbatch command found, this might be using fake SLURM or an error
@@ -257,7 +268,9 @@ def main() -> None:
     if args.no_monitor:
         print("\nSkipping monitoring (--no-monitor specified)")
         print("To monitor later, run:")
-        print(f"  python {script} --config-ref {args.config_ref} -C {args.config_dir} {' '.join(args.override)}")
+        print(
+            f"  python {script} --config-ref {args.config_ref} -C {args.config_dir} {' '.join(args.override)}"
+        )
         return
 
     # Otherwise, start monitoring on the host (outside container)

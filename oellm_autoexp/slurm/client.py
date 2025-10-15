@@ -6,7 +6,6 @@ import shlex
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
 
 from compoconf import ConfigInterface, register
 
@@ -23,7 +22,7 @@ class SlurmJob:
     script_path: Path
     log_path: Path
     state: str = "PENDING"
-    return_code: Optional[int] = None
+    return_code: int | None = None
     submitted_at: float = field(default_factory=time.time)
 
 
@@ -35,21 +34,23 @@ class BaseSlurmClient(SlurmClientInterface):
 
     def __init__(self, config: ConfigInterface) -> None:
         self.config = config
-        self._slurm_config: Optional[SlurmConfig] = None
+        self._slurm_config: SlurmConfig | None = None
 
     def configure(self, slurm_config: SlurmConfig) -> None:
         self._slurm_config = slurm_config
 
-    def submit(self, name: str, script_path: Path, log_path: Path) -> int:  # pragma: no cover - interface
+    def submit(
+        self, name: str, script_path: Path, log_path: Path
+    ) -> int:  # pragma: no cover - interface
         raise NotImplementedError
 
     def submit_array(
         self,
         array_name: str,
         script_path: Path,
-        log_paths: List[Path],
-        task_names: List[str],
-    ) -> List[int]:  # pragma: no cover - interface
+        log_paths: list[Path],
+        task_names: list[str],
+    ) -> list[int]:  # pragma: no cover - interface
         raise NotImplementedError
 
     def cancel(self, job_id: str) -> None:  # pragma: no cover - interface
@@ -58,10 +59,10 @@ class BaseSlurmClient(SlurmClientInterface):
     def remove(self, job_id: str) -> None:  # pragma: no cover - interface
         raise NotImplementedError
 
-    def squeue(self) -> Dict[int, str]:  # pragma: no cover - interface
+    def squeue(self) -> dict[int, str]:  # pragma: no cover - interface
         raise NotImplementedError
 
-    def job_ids_by_name(self, name: str) -> List[int]:  # pragma: no cover - interface
+    def job_ids_by_name(self, name: str) -> list[int]:  # pragma: no cover - interface
         raise NotImplementedError
 
     def get_job(self, job_id: str) -> SlurmJob:  # pragma: no cover - interface
@@ -97,13 +98,15 @@ class FakeSlurmClient(BaseSlurmClient):
 
     def __init__(self, config: FakeSlurmClientConfig) -> None:
         super().__init__(config)
-        self._jobs: Dict[int, SlurmJob] = {}
+        self._jobs: dict[int, SlurmJob] = {}
         self._next_id = 1
 
     def submit(self, name: str, script_path: Path, log_path: Path) -> str:
         job_id = str(self._next_id)
         self._next_id += 1
-        job = SlurmJob(job_id=job_id, name=name, script_path=Path(script_path), log_path=Path(log_path))
+        job = SlurmJob(
+            job_id=job_id, name=name, script_path=Path(script_path), log_path=Path(log_path)
+        )
         job.state = "PENDING"
         self._jobs[job_id] = job
         if self.config.persist_artifacts:
@@ -115,11 +118,11 @@ class FakeSlurmClient(BaseSlurmClient):
         self,
         array_name: str,
         script_path: Path,
-        log_paths: List[Path],
-        task_names: List[str],
+        log_paths: list[Path],
+        task_names: list[str],
         start_index: int = 0,
-    ) -> List[str]:
-        job_ids: List[str] = []
+    ) -> list[str]:
+        job_ids: list[str] = []
         base_id = str(self._next_id)
         self._next_id += 1
 
@@ -152,16 +155,16 @@ class FakeSlurmClient(BaseSlurmClient):
     def remove(self, job_id: str) -> None:
         self._jobs.pop(job_id, None)
 
-    def squeue(self) -> Dict[str, str]:
+    def squeue(self) -> dict[str, str]:
         return {job_id: job.state for job_id, job in self._jobs.items()}
 
-    def job_ids_by_name(self, name: str) -> List[int]:
+    def job_ids_by_name(self, name: str) -> list[int]:
         return [job_id for job_id, job in self._jobs.items() if job.name == name]
 
     def get_job(self, job_id: str) -> SlurmJob:
         return self._jobs[job_id]
 
-    def set_state(self, job_id: str, state: str, return_code: Optional[int] = None) -> None:
+    def set_state(self, job_id: str, state: str, return_code: int | None = None) -> None:
         job = self._jobs[job_id]
         job.state = state
         if return_code is not None:
@@ -175,7 +178,13 @@ class FakeSlurmClient(BaseSlurmClient):
         log_path: Path,
         state: str = "PENDING",
     ) -> int:
-        job = SlurmJob(job_id=job_id, name=name, script_path=Path(script_path), log_path=Path(log_path), state=state)
+        job = SlurmJob(
+            job_id=job_id,
+            name=name,
+            script_path=Path(script_path),
+            log_path=Path(log_path),
+            state=state,
+        )
         self._jobs[job_id] = job
         self._next_id = max(self._next_id, int(job_id.split("_")[0]) + 1)
         return job_id
@@ -195,7 +204,7 @@ class SlurmClient(BaseSlurmClient):
 
     def __init__(self, config: SlurmClientConfig) -> None:
         super().__init__(config)
-        self._jobs: Dict[int, SlurmJob] = {}
+        self._jobs: dict[int, SlurmJob] = {}
 
     def submit(self, name: str, script_path: Path, log_path: Path) -> int:
         slurm_conf = self.slurm_config
@@ -209,17 +218,19 @@ class SlurmClient(BaseSlurmClient):
         if self.config.persist_artifacts:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_path.touch(exist_ok=True)
-        self._jobs[job_id] = SlurmJob(job_id=job_id, name=name, script_path=Path(script_path), log_path=Path(log_path))
+        self._jobs[job_id] = SlurmJob(
+            job_id=job_id, name=name, script_path=Path(script_path), log_path=Path(log_path)
+        )
         return job_id
 
     def submit_array(
         self,
         array_name: str,
         script_path: Path,
-        log_paths: List[Path],
-        task_names: List[str],
+        log_paths: list[Path],
+        task_names: list[str],
         start_index: int = 0,
-    ) -> List[int]:
+    ) -> list[int]:
         """Submit a SLURM job array.
 
         Args:
@@ -259,7 +270,7 @@ class SlurmClient(BaseSlurmClient):
 
         # SLURM array jobs have IDs like 12345_0, 12345_1
         # The array index corresponds to start_index + position in the list
-        job_ids: List[str] = []
+        job_ids: list[str] = []
         for offset, (log_path, task_name) in enumerate(zip(log_paths, task_names)):
             array_idx = start_index + offset
             task_job_id = f"{base_job_id}_{array_idx}"
@@ -305,7 +316,7 @@ class SlurmClient(BaseSlurmClient):
     def remove(self, job_id: str) -> None:
         self._jobs.pop(job_id, None)
 
-    def squeue(self) -> Dict[int, str]:
+    def squeue(self) -> dict[int, str]:
         import logging
 
         logger = logging.getLogger(__name__)
@@ -346,12 +357,14 @@ class SlurmClient(BaseSlurmClient):
 
         proc = run_command(full_cmd)
         if proc.returncode != 0:
-            logger.warning(f"squeue: command failed with rc={proc.returncode}, stderr={proc.stderr}")
+            logger.warning(
+                f"squeue: command failed with rc={proc.returncode}, stderr={proc.stderr}"
+            )
             # squeue failure doesn't mean jobs don't exist, try sacct as fallback
             return self._check_sacct_for_missing_jobs(real_job_ids, synthetic_to_real, logger)
 
         logger.debug(f"squeue: output: {proc.stdout.strip()}")
-        statuses: Dict[int, str] = {}
+        statuses: dict[int, str] = {}
 
         for line in proc.stdout.strip().splitlines():
             parts = line.strip().split(None, 1)
@@ -371,16 +384,20 @@ class SlurmClient(BaseSlurmClient):
         # For jobs not found in squeue, check sacct (they may have completed/cancelled recently)
         missing_jobs = [jid for jid in real_job_ids if synthetic_to_real.get(jid) not in statuses]
         if missing_jobs:
-            logger.info(f"squeue: {len(missing_jobs)} jobs not in queue, checking sacct for recent completion")
-            sacct_statuses = self._check_sacct_for_missing_jobs(missing_jobs, synthetic_to_real, logger)
+            logger.info(
+                f"squeue: {len(missing_jobs)} jobs not in queue, checking sacct for recent completion"
+            )
+            sacct_statuses = self._check_sacct_for_missing_jobs(
+                missing_jobs, synthetic_to_real, logger
+            )
             statuses.update(sacct_statuses)
 
         logger.debug(f"squeue: parsed statuses: {statuses}")
         return statuses
 
     def _check_sacct_for_missing_jobs(
-        self, real_job_ids: List[str], synthetic_to_real: Dict[str, str], logger
-    ) -> Dict[str, str]:
+        self, real_job_ids: list[str], synthetic_to_real: dict[str, str], logger
+    ) -> dict[str, str]:
         """Check sacct for jobs that are no longer in squeue.
 
         This catches jobs that have recently completed/cancelled/failed.
@@ -411,7 +428,7 @@ class SlurmClient(BaseSlurmClient):
             return {}
 
         logger.debug(f"sacct: output: {proc.stdout.strip()}")
-        statuses: Dict[str, str] = {}
+        statuses: dict[str, str] = {}
 
         for line in proc.stdout.strip().splitlines():
             if not line.strip():
@@ -445,7 +462,7 @@ class SlurmClient(BaseSlurmClient):
 
         return statuses
 
-    def job_ids_by_name(self, name: str) -> List[int]:
+    def job_ids_by_name(self, name: str) -> list[int]:
         return [job_id for job_id, job in self._jobs.items() if job.name == name]
 
     def get_job(self, job_id: str) -> SlurmJob:
@@ -462,14 +479,21 @@ class SlurmClient(BaseSlurmClient):
         """Register an externally submitted job for tracking.
 
         This is useful when jobs are submitted outside the orchestrator
-        but need to be monitored (e.g., for testing or resume scenarios).
+        but need to be monitored (e.g., for testing or resume
+        scenarios).
         """
-        job = SlurmJob(job_id=job_id, name=name, script_path=Path(script_path), log_path=Path(log_path), state=state)
+        job = SlurmJob(
+            job_id=job_id,
+            name=name,
+            script_path=Path(script_path),
+            log_path=Path(log_path),
+            state=state,
+        )
         self._jobs[job_id] = job
         return job_id
 
     @staticmethod
-    def _parse_job_id(output: str) -> Optional[int]:
+    def _parse_job_id(output: str) -> int | None:
         for token in output.split():
             if token.isdigit():
                 return int(token)

@@ -29,24 +29,34 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--use-fake-slurm", action="store_true", default=False)
     parser.add_argument(
-        "--no-submit", action="store_true", help="Generate scripts but output sbatch command instead of submitting"
+        "--no-submit",
+        action="store_true",
+        help="Generate scripts but output sbatch command instead of submitting",
     )
     parser.add_argument(
-        "--no-monitor", action="store_true", help="Submit jobs but don't monitor them (return immediately)"
+        "--no-monitor",
+        action="store_true",
+        help="Submit jobs but don't monitor them (return immediately)",
     )
     parser.add_argument(
-        "--monitor-session", type=str, help="Monitor a specific session by ID (reads from monitoring_state)"
+        "--monitor-session",
+        type=str,
+        help="Monitor a specific session by ID (reads from monitoring_state)",
     )
     parser.add_argument(
-        "--monitor-all", action="store_true", help="Monitor all active sessions in monitoring_state directory"
+        "--monitor-all",
+        action="store_true",
+        help="Monitor all active sessions in monitoring_state directory",
     )
     parser.add_argument(
-        "--monitoring-state-dir", type=Path, help="Path to monitoring_state directory (default: output/monitoring_state)"
+        "--monitoring-state-dir",
+        type=Path,
+        help="Path to monitoring_state directory (default: output/monitoring_state)",
     )
+    parser.add_argument("--dump-config", type=Path, help="Dump resolved config to file and exit")
     parser.add_argument(
-        "--dump-config", type=Path, help="Dump resolved config to file and exit"
+        "--verbose", "-v", action="store_true", help="Enable verbose logging (INFO level)"
     )
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging (INFO level)")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging (DEBUG level)")
     parser.add_argument("override", nargs="*", default=[], help="Additional overrides.")
     return parser.parse_args()
@@ -76,7 +86,8 @@ def monitor_from_session_file(session_path: Path, use_fake_slurm: bool = False) 
     # Load existing session with same ID
     session_id = session_data.get("session_id", session_path.stem)
     monitoring_state_dir = plan.config.project.monitoring_state_dir or plan.runtime.state_dir
-    state_store = MonitorStateStore(monitoring_state_dir, session_id=session_id)
+    # create monitor state store
+    MonitorStateStore(monitoring_state_dir, session_id=session_id)
 
     print(f"Monitoring session: {session_id} ({session_data.get('project_name', 'unknown')})")
 
@@ -117,11 +128,13 @@ def main() -> None:
 
             print(f"Found {len(sessions)} session(s) to monitor:")
             for session in sessions:
-                print(f"  - {session['session_id']}: {session['project_name']} ({session['job_count']} jobs)")
+                print(
+                    f"  - {session['session_id']}: {session['project_name']} ({session['job_count']} jobs)"
+                )
 
             # Monitor all sessions (this could be enhanced to run in parallel)
             for session in sessions:
-                session_path = Path(session['session_path'])
+                session_path = Path(session["session_path"])
                 try:
                     monitor_from_session_file(session_path, args.use_fake_slurm)
                 except Exception as e:
@@ -133,7 +146,7 @@ def main() -> None:
             session_path = monitoring_state_dir / f"{args.monitor_session}.json"
             if not session_path.exists():
                 print(f"Error: Session file not found: {session_path}")
-                print(f"Available sessions:")
+                print("Available sessions:")
                 sessions = MonitorStateStore.list_sessions(monitoring_state_dir)
                 for session in sessions:
                     print(f"  - {session['session_id']}: {session['project_name']}")
@@ -197,7 +210,9 @@ def main() -> None:
         artifacts = render_scripts(plan)
         controller = submit_jobs(plan, artifacts, slurm_client)
         for state in controller.jobs():
-            print(f"submitted {state.name} -> job {state.job_id} -> log: {state.registration.log_path}")
+            print(
+                f"submitted {state.name} -> job {state.job_id} -> log: {state.registration.log_path}"
+            )
         return
 
     # At this point, we're either:

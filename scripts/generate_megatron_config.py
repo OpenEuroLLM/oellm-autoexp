@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import ast
 from pathlib import Path
-from typing import Iterable, Mapping
+from collections.abc import Iterable, Mapping
 
 from omegaconf import OmegaConf
 
@@ -16,6 +16,17 @@ from oellm_autoexp.backends.megatron_args import (
     get_arg_metadata,
     get_megatron_parser,
 )
+
+import sys
+from unittest.mock import MagicMock
+
+# Mock all transformer_engine submodules before any imports
+te_mock = MagicMock()
+sys.modules["transformer_engine"] = te_mock
+sys.modules["transformer_engine.pytorch"] = MagicMock()
+sys.modules["transformer_engine.pytorch.distributed"] = MagicMock()
+sys.modules["transformer_engine.pytorch.tensor"] = MagicMock()
+
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -112,7 +123,9 @@ def _build_comment(metadata: Mapping[str, MegatronArgMetadata], key: str) -> str
     return " | ".join(part for part in parts if part)
 
 
-def _annotate_yaml(yaml_text: str, metadata: Mapping[str, MegatronArgMetadata], excluded: set[str]) -> str:
+def _annotate_yaml(
+    yaml_text: str, metadata: Mapping[str, MegatronArgMetadata], excluded: set[str]
+) -> str:
     lines = yaml_text.splitlines()
     for idx, line in enumerate(lines):
         stripped = line.lstrip()

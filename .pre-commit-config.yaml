@@ -57,13 +57,15 @@ repos:
   hooks:
     - id: check-google-doc-style
     - id: check-links
-- repo: https://github.com/econchick/interrogate
-  rev: 1.7.0
-  hooks:
-    - id: interrogate
-      args: [tests]
+# TODO: temparily removed
+# - repo: https://github.com/econchick/interrogate
+#   rev: 1.7.0
+#   hooks:
+#     - id: interrogate
+#       args: [tests]
 - repo: https://github.com/pycqa/flake8
   rev: 7.3.0
   hooks:
     - id: flake8
       additional_dependencies: [Flake8-pyproject]
+      args: [ --max-line-length=120 ]

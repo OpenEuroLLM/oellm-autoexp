@@ -2,7 +2,6 @@
 import os
 import re
 from sys import stdin
-import argparse
 
 
 def extract_editables():
@@ -25,7 +24,9 @@ def extract_editables():
         if " @ " in line:
             if "/home/conda" not in line:
                 constraints.append(f"{line.strip()}")
-        if line.strip().startswith("# Editable Git install") or line.strip().startswith("# Editable install"):
+        if line.strip().startswith("# Editable Git install") or line.strip().startswith(
+            "# Editable install"
+        ):
             # print(line)
             match = re.search(r"\((.*)\)", line)
             pkg = match.group(1) if match else None

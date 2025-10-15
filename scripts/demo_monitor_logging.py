@@ -1,10 +1,7 @@
-#!/usr/bin/env python3
 """Demo script showing monitor logging in action."""
 
-import asyncio
 import logging
 from pathlib import Path
-import sys
 
 from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
 from oellm_autoexp.monitor.policy import (
