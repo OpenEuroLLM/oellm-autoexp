@@ -76,7 +76,9 @@ def test_fake_slurm_monitoring_cycle(tmp_path: Path, monkeypatch) -> None:
 def test_hydra_plan(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("SLURM_ACCOUNT", "debug")
     monkeypatch.setenv("CONTAINER_CACHE_DIR", "debug")
-    cfg = load_config_reference("autoexp", Path("config"), overrides=["project=juwels", "slurm=juwels"])
+    cfg = load_config_reference(
+        "autoexp", Path("config"), overrides=["project=juwels", "slurm=juwels"]
+    )
     plan = build_execution_plan(cfg)
     artifacts = render_scripts(plan)
     assert artifacts.job_scripts

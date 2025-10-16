@@ -6,7 +6,8 @@ import asyncio
 from dataclasses import dataclass, field
 import logging
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any
+from collections.abc import Iterable
 
 from oellm_autoexp.monitor.policy import BaseRestartPolicy, RestartDecision, RestartEvent
 from oellm_autoexp.monitor.watcher import BaseMonitor, MonitoredJob, MonitorOutcome
@@ -28,13 +29,13 @@ class JobRegistration:
     name: str
     script_path: Path
     log_path: Path
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    termination_string: Optional[str] = None
-    termination_command: Optional[str] = None
-    inactivity_threshold_seconds: Optional[int] = None
-    output_paths: List[Path] = field(default_factory=list)
-    start_condition_cmd: Optional[str] = None
-    start_condition_interval_seconds: Optional[int] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    termination_string: str | None = None
+    termination_command: str | None = None
+    inactivity_threshold_seconds: int | None = None
+    output_paths: list[Path] = field(default_factory=list)
+    start_condition_cmd: str | None = None
+    start_condition_interval_seconds: int | None = None
 
 
 @dataclass
@@ -42,8 +43,8 @@ class JobRuntimeState:
     job_id: str
     registration: JobRegistration
     attempts: int = 1
-    last_outcome: Optional[MonitorOutcome] = None
-    last_slurm_state: Optional[str] = None
+    last_outcome: MonitorOutcome | None = None
+    last_slurm_state: str | None = None
 
     @property
     def name(self) -> str:
@@ -58,15 +59,15 @@ class MonitorAction:
     job_name: str
     action: str
     signal: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class MonitorCycleResult:
     """Aggregated outcome of a single monitoring iteration."""
 
-    decisions: Dict[int, RestartDecision] = field(default_factory=dict)
-    actions: List[MonitorAction] = field(default_factory=list)
+    decisions: dict[int, RestartDecision] = field(default_factory=dict)
+    actions: list[MonitorAction] = field(default_factory=list)
 
 
 class MonitorController:
@@ -76,14 +77,14 @@ class MonitorController:
         self,
         monitor: BaseMonitor,
         slurm: BaseSlurmClient,
-        policies: Dict[str, BaseRestartPolicy],
-        state_store: Optional[MonitorStateStore] = None,
+        policies: dict[str, BaseRestartPolicy],
+        state_store: MonitorStateStore | None = None,
     ) -> None:
         self._monitor = monitor
         self._slurm = slurm
         self._policies = policies
-        self._jobs: Dict[str, JobRuntimeState] = {}  # Job IDs are strings
-        self._pending_actions: List[MonitorAction] = []
+        self._jobs: dict[str, JobRuntimeState] = {}  # Job IDs are strings
+        self._pending_actions: list[MonitorAction] = []
         self._state_store = state_store
 
     def register_job(self, job_id: str, registration: JobRegistration, attempts: int = 1) -> None:
@@ -98,7 +99,7 @@ class MonitorController:
     def jobs(self) -> Iterable[JobRuntimeState]:
         return list(self._jobs.values())
 
-    async def observe_once(self) -> "MonitorCycleResult":
+    async def observe_once(self) -> MonitorCycleResult:
         interval = getattr(
             self._monitor.config,
             "check_interval_seconds",
@@ -147,7 +148,9 @@ class MonitorController:
                         # Include signal name in metadata for selective restart policies
                         metadata = dict(signal.metadata)
                         metadata["signal_name"] = signal.name
-                        LOGGER.info(f"[job {state.job_id}] detected signal '{signal.name}' with mode '{signal.mode}'")
+                        LOGGER.info(
+                            f"[job {state.job_id}] detected signal '{signal.name}' with mode '{signal.mode}'"
+                        )
                         result = self._apply_policy(state, signal.mode, metadata)
                         if result is not None:
                             decision, job_key = result
@@ -187,7 +190,7 @@ class MonitorController:
             cycle_result.decisions[job_key] = decision
         return cycle_result
 
-    def observe_once_sync(self) -> "MonitorCycleResult":
+    def observe_once_sync(self) -> MonitorCycleResult:
         return asyncio.run(self.observe_once())
 
     def handle_state_change(self, job_id: str, mode: str) -> RestartDecision:
@@ -198,10 +201,10 @@ class MonitorController:
         decision, _ = result
         return decision
 
-    def snapshot(self) -> Dict[int, str]:
+    def snapshot(self) -> dict[int, str]:
         return self._slurm.squeue()
 
-    def drain_actions(self) -> List[MonitorAction]:
+    def drain_actions(self) -> list[MonitorAction]:
         actions = self._pending_actions
         self._pending_actions = []
         return actions
@@ -260,17 +263,23 @@ class MonitorController:
                 new_job_id = job_ids[0] if job_ids else None
                 if new_job_id is None:
                     raise RuntimeError(f"Array job submission failed for {state.name}")
-                LOGGER.info(f"[job {old_job_id}] restarted as {new_job_id} with array index {array_idx}")
+                LOGGER.info(
+                    f"[job {old_job_id}] restarted as {new_job_id} with array index {array_idx}"
+                )
             else:
                 # Fallback to regular submission if we can't parse the array index
                 LOGGER.warning(
                     f"[job {old_job_id}] has underscore but can't parse array index, using regular submit"
                 )
-                new_job_id = self._slurm.submit(state.name, state.registration.script_path, state.registration.log_path)
+                new_job_id = self._slurm.submit(
+                    state.name, state.registration.script_path, state.registration.log_path
+                )
         else:
             # Regular single job restart
             LOGGER.info(f"[job {old_job_id}] restarting as regular single job")
-            new_job_id = self._slurm.submit(state.name, state.registration.script_path, state.registration.log_path)
+            new_job_id = self._slurm.submit(
+                state.name, state.registration.script_path, state.registration.log_path
+            )
 
         self._jobs.pop(old_job_id, None)
         state.job_id = new_job_id
@@ -286,8 +295,8 @@ class MonitorController:
         self,
         state: JobRuntimeState,
         mode: str,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[Tuple[RestartDecision, int]]:
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[RestartDecision, int] | None:
         policy = self._policies.get(mode)
         if policy is None:
             return None
@@ -298,7 +307,9 @@ class MonitorController:
             f"action={decision.action}, reason={decision.reason}, attempt={state.attempts}"
         )
         if decision.action == "restart":
-            LOGGER.info(f"[job {state.job_id}] restarting job (attempt {state.attempts} -> {state.attempts + 1})")
+            LOGGER.info(
+                f"[job {state.job_id}] restarting job (attempt {state.attempts} -> {state.attempts + 1})"
+            )
             new_job_id = self._restart_job(state)
             LOGGER.info(f"[job {state.job_id}] restarted as job {new_job_id}")
             augmented = RestartDecision(
@@ -318,8 +329,8 @@ class MonitorController:
     def _capture_slurm_transitions(
         self,
         state: JobRuntimeState,
-        current_state: Optional[str],
-        cycle_result: "MonitorCycleResult",
+        current_state: str | None,
+        cycle_result: MonitorCycleResult,
     ) -> None:
         previous = state.last_slurm_state
         if current_state != previous:
@@ -362,9 +373,9 @@ class MonitorController:
     @staticmethod
     def _classify_mode(
         state: JobRuntimeState,
-        outcome: Optional[MonitorOutcome],
-        slurm_snapshot: Dict[int, str],
-    ) -> Optional[Tuple[str, Dict[str, Any]]]:
+        outcome: MonitorOutcome | None,
+        slurm_snapshot: dict[int, str],
+    ) -> tuple[str, dict[str, Any]] | None:
         """Classify job state into a mode with associated metadata.
 
         Returns:
@@ -403,7 +414,7 @@ class MonitorController:
             }
         return None
 
-    def _build_job_metadata(self, state: JobRuntimeState) -> Dict[str, Any]:
+    def _build_job_metadata(self, state: JobRuntimeState) -> dict[str, Any]:
         metadata = dict(state.registration.metadata)
         if state.registration.inactivity_threshold_seconds is not None:
             metadata.setdefault(
@@ -447,9 +458,11 @@ class MonitorController:
         job_name: str,
         action: str,
         signal: str,
-        metadata: Dict[str, Any],
+        metadata: dict[str, Any],
     ) -> MonitorAction:
-        item = MonitorAction(job_id=job_id, job_name=job_name, action=action, signal=signal, metadata=metadata)
+        item = MonitorAction(
+            job_id=job_id, job_name=job_name, action=action, signal=signal, metadata=metadata
+        )
         self._pending_actions.append(item)
         return item
 

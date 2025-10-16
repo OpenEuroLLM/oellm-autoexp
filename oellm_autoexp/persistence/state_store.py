@@ -7,11 +7,13 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any
+from collections.abc import Iterable
 
 
 def _serialize_for_json(obj: Any) -> Any:
-    """Recursively convert Path objects and other non-serializable types to JSON-compatible types."""
+    """Recursively convert Path objects and other non-serializable types to
+    JSON-compatible types."""
     if isinstance(obj, Path):
         return str(obj)
     elif isinstance(obj, dict):
@@ -35,16 +37,16 @@ class StoredJob:
     script_path: str
     log_path: str
     attempts: int = 1
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     output_paths: list[str] = field(default_factory=list)
-    termination_string: Optional[str] = None
-    termination_command: Optional[str] = None
-    inactivity_threshold_seconds: Optional[int] = None
-    start_condition_cmd: Optional[str] = None
-    start_condition_interval_seconds: Optional[int] = None
+    termination_string: str | None = None
+    termination_command: str | None = None
+    inactivity_threshold_seconds: int | None = None
+    start_condition_cmd: str | None = None
+    start_condition_interval_seconds: int | None = None
 
     @staticmethod
-    def from_registration(job_id: str, attempts: int, registration: Any) -> "StoredJob":
+    def from_registration(job_id: str, attempts: int, registration: Any) -> StoredJob:
         return StoredJob(
             job_id=job_id,
             name=registration.name,
@@ -64,11 +66,12 @@ class StoredJob:
 class MonitorStateStore:
     """Persist monitor state to disk for crash-resilient restarts.
 
-    Each monitoring session gets its own file in the monitoring_state directory.
-    Session files contain the full config and job state for that session.
+    Each monitoring session gets its own file in the monitoring_state
+    directory. Session files contain the full config and job state for
+    that session.
     """
 
-    def __init__(self, root: Path, session_id: Optional[str] = None) -> None:
+    def __init__(self, root: Path, session_id: str | None = None) -> None:
         self._root = Path(root)
         self._session_id = session_id or str(uuid.uuid4())[:8]
         # Canonical session file
@@ -92,7 +95,7 @@ class MonitorStateStore:
         """Alias for backward compatibility."""
         return self._session_path
 
-    def _load_payload(self) -> Dict[str, Any]:
+    def _load_payload(self) -> dict[str, Any]:
         """Load JSON payload from session or legacy location."""
         for path in (self._session_path, self._legacy_path):
             if not path.exists():
@@ -103,7 +106,7 @@ class MonitorStateStore:
                 continue
         return {}
 
-    def _write_payload(self, payload: Dict[str, Any]) -> None:
+    def _write_payload(self, payload: dict[str, Any]) -> None:
         """Persist payload to session file and legacy compatibility path."""
         text = json.dumps(payload, indent=2)
         self._session_path.write_text(text, encoding="utf-8")
@@ -113,12 +116,12 @@ class MonitorStateStore:
             # Legacy path may live on read-only storage; ignore if we cannot mirror.
             pass
 
-    def load(self) -> Dict[int, StoredJob]:
+    def load(self) -> dict[int, StoredJob]:
         """Load jobs from session file."""
         payload = self._load_payload()
         if not payload:
             return {}
-        jobs: Dict[int, StoredJob] = {}
+        jobs: dict[int, StoredJob] = {}
         for raw in payload.get("jobs", []):
             try:
                 job = StoredJob(
@@ -141,7 +144,8 @@ class MonitorStateStore:
         return jobs
 
     def save_jobs(self, jobs: Iterable[StoredJob]) -> None:
-        """Save jobs to session file (merges with existing config if present)."""
+        """Save jobs to session file (merges with existing config if
+        present)."""
         # Try to load existing session data to preserve config
         existing_data = self._load_payload()
 
@@ -175,10 +179,11 @@ class MonitorStateStore:
         if self._legacy_path.exists():
             self._legacy_path.unlink()
 
-    def save_session(self, config_dict: Dict[str, Any], project_name: str) -> None:
+    def save_session(self, config_dict: dict[str, Any], project_name: str) -> None:
         """Save monitoring session with full config for resumability.
 
-        Serializes Path objects and other non-JSON-compatible types to strings.
+        Serializes Path objects and other non-JSON-compatible types to
+        strings.
         """
         # Serialize config_dict to convert Path objects to strings
         serialized_config = _serialize_for_json(config_dict)
@@ -193,7 +198,7 @@ class MonitorStateStore:
         self._write_payload(session_data)
 
     @staticmethod
-    def list_sessions(monitoring_state_dir: Path) -> list[Dict[str, Any]]:
+    def list_sessions(monitoring_state_dir: Path) -> list[dict[str, Any]]:
         """List all monitoring sessions in the monitoring_state directory."""
         if not monitoring_state_dir.exists():
             return []
@@ -202,20 +207,22 @@ class MonitorStateStore:
         for session_file in monitoring_state_dir.glob("*.json"):
             try:
                 data = json.loads(session_file.read_text(encoding="utf-8"))
-                sessions.append({
-                    "session_id": data.get("session_id", session_file.stem),
-                    "project_name": data.get("project_name", "unknown"),
-                    "created_at": data.get("created_at", 0),
-                    "session_path": str(session_file),
-                    "job_count": len(data.get("jobs", [])),
-                })
+                sessions.append(
+                    {
+                        "session_id": data.get("session_id", session_file.stem),
+                        "project_name": data.get("project_name", "unknown"),
+                        "created_at": data.get("created_at", 0),
+                        "session_path": str(session_file),
+                        "job_count": len(data.get("jobs", [])),
+                    }
+                )
             except (json.JSONDecodeError, KeyError):
                 continue
 
         return sorted(sessions, key=lambda x: x["created_at"], reverse=True)
 
     @staticmethod
-    def load_session(session_path: Path) -> Optional[Dict[str, Any]]:
+    def load_session(session_path: Path) -> dict[str, Any] | None:
         """Load a monitoring session file."""
         if not session_path.exists():
             return None

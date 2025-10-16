@@ -89,7 +89,9 @@ def test_build_execution_plan_and_render(tmp_path: Path) -> None:
 
 def test_render_scripts_with_custom_slurm(tmp_path: Path) -> None:
     template_path = tmp_path / "template.sbatch"
-    template_path.write_text("#!/bin/bash\n{sbatch_directives}\n\n{env_exports}\n\nsrun {srun_opts}{launcher_cmd}\n")
+    template_path.write_text(
+        "#!/bin/bash\n{sbatch_directives}\n\n{env_exports}\n\nsrun {srun_opts}{launcher_cmd}\n"
+    )
 
     script_dir = tmp_path / "scripts"
     log_dir = tmp_path / "logs"
@@ -184,7 +186,9 @@ def test_render_scripts_creates_array_assets(tmp_path: Path) -> None:
     script_dir = tmp_path / "scripts"
     log_dir = tmp_path / "logs"
 
-    template_path.write_text("#!/bin/bash\n{sbatch_directives}\n\n{env_exports}\n\n{launcher_cmd}\n")
+    template_path.write_text(
+        "#!/bin/bash\n{sbatch_directives}\n\n{env_exports}\n\n{launcher_cmd}\n"
+    )
 
     config_text = f"""
 project:

@@ -59,12 +59,11 @@ import subprocess
 import time
 import sys
 from pathlib import Path
-from typing import Optional, List
 
 from oellm_autoexp.utils.run import run_with_tee
 
 # Global list to track background monitor processes
-_monitor_processes: List[subprocess.Popen] = []
+_monitor_processes: list[subprocess.Popen] = []  # noqa
 
 
 class Colors:
@@ -102,7 +101,6 @@ def log_warning(msg: str) -> None:
 
 def cleanup_monitors() -> None:
     """Kill all background monitoring processes."""
-    global _monitor_processes
     for proc in _monitor_processes:
         try:
             if proc.poll() is None:  # Still running
@@ -203,7 +201,9 @@ def run_command(cmd: list[str], capture: bool = True) -> subprocess.CompletedPro
         return run_with_tee(cmd, check=False)
 
 
-def wait_for_job_state(job_id: str, expected_state: str, timeout: int = 120, poll_interval: int = 30) -> bool:
+def wait_for_job_state(
+    job_id: str, expected_state: str, timeout: int = 120, poll_interval: int = 30
+) -> bool:
     """Wait for a job to reach a specific SLURM state."""
     log_info(f"Waiting for job {job_id} to reach state {expected_state}...")
     start_time = time.time()
@@ -222,7 +222,7 @@ def wait_for_job_state(job_id: str, expected_state: str, timeout: int = 120, pol
     return False
 
 
-def get_job_state(job_id: str) -> Optional[str]:
+def get_job_state(job_id: str) -> str | None:
     """Get the current SLURM state of a job."""
     result = run_command(["squeue", "-j", str(job_id), "-h", "-o", "%T"])
     if result.returncode == 0 and result.stdout.strip():
@@ -230,7 +230,9 @@ def get_job_state(job_id: str) -> Optional[str]:
     return None
 
 
-def submit_test_job(micro_batch_size: int = 8, train_iters: int = 100, array_mode: bool = False) -> Optional[int]:
+def submit_test_job(
+    micro_batch_size: int = 8, train_iters: int = 100, array_mode: bool = False
+) -> int | None:
     """Submit a test job and return the job ID.
 
     This function runs on the login node and calls run_autoexp.py, which:
@@ -322,7 +324,6 @@ def submit_test_job(micro_batch_size: int = 8, train_iters: int = 100, array_mod
         return None
 
     # Store the monitor PID so we can clean it up later
-    global _monitor_processes
     _monitor_processes.append(monitor_proc)
     log_info(f"Monitoring running (PID: {monitor_proc.pid}, log: {monitor_log})")
 
@@ -390,7 +391,7 @@ def cancel_job(job_id: str, array_id: int | None = None) -> bool:
         return False
 
 
-def check_for_restart(original_job_id: str, timeout: int = 200) -> Optional[int]:
+def check_for_restart(original_job_id: str, timeout: int = 200) -> int | None:
     """Check if a job was restarted and return new job ID.
 
     Args:
@@ -510,7 +511,9 @@ def test_scenario_hang(array_mode: bool = False) -> bool:
 
     # Inject hang error
     if not inject_error_pattern(
-        job_id, "[default0]:CUDA device-side assert detected in kernel execution", "CUDA hang pattern"
+        job_id,
+        "[default0]:CUDA device-side assert detected in kernel execution",
+        "CUDA hang pattern",
     ):
         cancel_job(job_id)
         return False
@@ -553,7 +556,9 @@ def test_scenario_nccl_error(array_mode: bool = False) -> bool:
 
     # Inject NCCL error
     if not inject_error_pattern(
-        job_id, "[default0]:NCCL ERROR Remote process has terminated or communication failure", "NCCL error pattern"
+        job_id,
+        "[default0]:NCCL ERROR Remote process has terminated or communication failure",
+        "NCCL error pattern",
     ):
         cancel_job(job_id)
         return False
@@ -671,8 +676,12 @@ def main() -> int:
         default="scancel",
         help="Which test scenario to run",
     )
-    parser.add_argument("--iterations", type=int, default=2, help="Number of iterations for scancel test")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging for detailed diagnostics")
+    parser.add_argument(
+        "--iterations", type=int, default=2, help="Number of iterations for scancel test"
+    )
+    parser.add_argument(
+        "--debug", action="store_true", help="Enable debug logging for detailed diagnostics"
+    )
     parser.add_argument(
         "--array-mode",
         action="store_true",

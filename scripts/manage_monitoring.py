@@ -49,7 +49,9 @@ def show_session(monitoring_state_dir: Path, session_id: str) -> None:
 
     print(f"Session: {session_id}")
     print(f"Project: {session_data['project_name']}")
-    print(f"Created: {datetime.fromtimestamp(session_data['created_at']).strftime('%Y-%m-%d %H:%M:%S')}")
+    print(
+        f"Created: {datetime.fromtimestamp(session_data['created_at']).strftime('%Y-%m-%d %H:%M:%S')}"
+    )
     print(f"\nSession file: {session_path}")
 
     # Show job status
@@ -57,7 +59,9 @@ def show_session(monitoring_state_dir: Path, session_id: str) -> None:
     if jobs:
         print(f"\nJobs: {len(jobs)}")
         for job in jobs:
-            print(f"  - {job['name']} (job_id: {job['job_id']}, attempts: {job.get('attempts', 1)})")
+            print(
+                f"  - {job['name']} (job_id: {job['job_id']}, attempts: {job.get('attempts', 1)})"
+            )
     else:
         print("\nNo jobs in session.")
 

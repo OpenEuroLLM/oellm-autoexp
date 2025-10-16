@@ -25,7 +25,9 @@ def test_load_config(tmp_path: Path) -> None:
 def test_load_hydra_config(monkeypatch) -> None:
     monkeypatch.setenv("SLURM_ACCOUNT", "debug")
     monkeypatch.setenv("CONTAINER_CACHE_DIR", "debug")
-    cfg = load_config_reference("autoexp", Path("config"), overrides=["project=juwels", "slurm=juwels"])
+    cfg = load_config_reference(
+        "autoexp", Path("config"), overrides=["project=juwels", "slurm=juwels"]
+    )
 
     assert cfg.project.name == "juwels"
     assert "JUWELS" in cfg.slurm.env.get("MACHINE_NAME", "")

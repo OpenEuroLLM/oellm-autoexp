@@ -19,7 +19,9 @@ def test_megatron_backend_builds_launch_command(monkeypatch, tmp_path):
     monkeypatch.setenv("SLURM_ACCOUNT", "debug")
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
 
-    cfg = load_config_reference("autoexp", Path("config"), overrides=["backend/megatron=base", "project=default"])
+    cfg = load_config_reference(
+        "autoexp", Path("config"), overrides=["backend/megatron=base", "project=default"]
+    )
     runtime = evaluate(cfg)
 
     spec = BackendJobSpec(parameters={"megatron.micro_batch_size": 4})

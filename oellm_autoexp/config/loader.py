@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
+from collections.abc import Iterable, Mapping
 
 from compoconf import parse_config
 from hydra import compose, initialize_config_dir
@@ -68,7 +69,11 @@ def load_config(path: str | Path) -> schema.RootConfig:
         base = Path(root.project.base_output_dir)
         # Strip timestamp suffix if present (e.g., "output/run_20250101" -> "output")
         # by taking parent if base ends with timestamp-like pattern
-        stable_base = base.parent if base.name.split("_")[-1].isdigit() and len(base.name.split("_")[-1]) >= 8 else base
+        stable_base = (
+            base.parent
+            if base.name.split("_")[-1].isdigit() and len(base.name.split("_")[-1]) >= 8
+            else base
+        )
         root.project.monitoring_state_dir = stable_base / "monitoring_state"
 
     # Keep state_dir for backward compatibility (deprecated)
@@ -96,7 +101,8 @@ def load_hydra_config(
     # Temporarily escape {{...}} placeholders so Hydra doesn't try to parse them
     # These are meant for Python's str.format(), not Hydra interpolation
     def escape_double_braces(obj):
-        """Recursively escape {{...}} in strings to prevent Hydra from parsing them."""
+        """Recursively escape {{...}} in strings to prevent Hydra from parsing
+        them."""
         if isinstance(obj, str):
             # Replace {{env_flags}} with a placeholder that Hydra won't touch
             return obj.replace("{{env_flags}}", "__PLACEHOLDER_ENV_FLAGS__").replace(
@@ -146,7 +152,11 @@ def load_hydra_config(
         base = Path(root.project.base_output_dir)
         # Strip timestamp suffix if present (e.g., "output/run_20250101" -> "output")
         # by taking parent if base ends with timestamp-like pattern
-        stable_base = base.parent if base.name.split("_")[-1].isdigit() and len(base.name.split("_")[-1]) >= 8 else base
+        stable_base = (
+            base.parent
+            if base.name.split("_")[-1].isdigit() and len(base.name.split("_")[-1]) >= 8
+            else base
+        )
         root.project.monitoring_state_dir = stable_base / "monitoring_state"
 
     # Keep state_dir for backward compatibility (deprecated)
@@ -168,7 +178,8 @@ def load_config_reference(
 
 
 def ensure_registrations() -> None:
-    """Expose registry initialisation for consumers that only instantiate partial configs."""
+    """Expose registry initialisation for consumers that only instantiate
+    partial configs."""
 
     register_default_resolvers()
     _ensure_registrations()
@@ -194,7 +205,8 @@ def load_monitoring_reference(
 
 
 def _normalize_legacy_sections(data: dict[str, Any]) -> None:
-    """Flatten legacy `implementation` wrappers for backend and monitoring sections."""
+    """Flatten legacy `implementation` wrappers for backend and monitoring
+    sections."""
 
     for key in ("backend", "monitoring"):
         section = data.get(key)

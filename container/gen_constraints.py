@@ -1,6 +1,4 @@
-#!/usr/bin/env python3
-"""
-Write constraints from *installed* packages as clean 'name==version' pins,
+"""Write constraints from *installed* packages as clean 'name==version' pins,
 ignoring how they were originally installed (wheel path, URL, VCS, editable).
 
 Usage:
@@ -21,7 +19,11 @@ except Exception:  # pragma: no cover
 def installed_map():
     out = {}
     for dist in imd.distributions():
-        name = dist.metadata.get("Name") or dist.metadata.get("Summary") or dist.metadata.get("Home-page")
+        name = (
+            dist.metadata.get("Name")
+            or dist.metadata.get("Summary")
+            or dist.metadata.get("Home-page")
+        )
         if not name:
             continue
         out[canonicalize_name(name)] = dist.version
@@ -32,7 +34,7 @@ def read_requirements_names(path: str):
     from packaging.requirements import Requirement
 
     names = set()
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             s = line.strip()
             if not s or s.startswith("#") or s.startswith("-"):
@@ -54,8 +56,12 @@ def read_requirements_names(path: str):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("-o", "--output", default="constraints.installed.txt")
-    ap.add_argument("--only", help="If set, only pin packages that appear in this requirements file")
-    ap.add_argument("--exclude", nargs="*", default=[], help="Package names to exclude from constraints")
+    ap.add_argument(
+        "--only", help="If set, only pin packages that appear in this requirements file"
+    )
+    ap.add_argument(
+        "--exclude", nargs="*", default=[], help="Package names to exclude from constraints"
+    )
     args = ap.parse_args(argv)
 
     inst = installed_map()
