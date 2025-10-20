@@ -32,10 +32,10 @@ Hydra overrides (`-o key=value`) let you combine these building blocks per run.
 python scripts/run_autoexp.py autoexp -C config -o project=default --dry-run
 
 # Inspect the launch command for the first sweep entry
-python scripts/run_sweep_entry.py --sweep outputs/sweep.json --index 0 --dry-run
+python scripts/run_sweep_entry.py --sweep output/sweep.json --index 0 --dry-run
 
 # Execute locally (no SLURM)
-python scripts/run_sweep_entry.py --sweep outputs/sweep.json --index 0
+python scripts/run_sweep_entry.py --sweep output/sweep.json --index 0
 ```
 
 `scripts/run_sweep_entry.py` rehydrates the stored command, exports the configured environment, and can be embedded inside notebooks or custom launchers.
