@@ -1,0 +1,11 @@
+axes:
+  tensor_model_parallel_size: [1, 2, 4, 8]
+  pipeline_model_parallel_size: [1, 2, 4, 8, 16]
+  expert_model_parallel_size: [1, 2, 4, 8]
+  context_parallel_size: [1, 2, 4]
+  expert_tensor_parallel_size: [1, 2, 4]
+base_values:
+  run_name: megatron_parallelism_sweep
+name_template: "${project.name}_{run_name}_tp{tensor_model_parallel_size}_pp{pipeline_model_parallel_size}_ep{expert_model_parallel_size}_cp{context_parallel_size}_etp{expert_tensor_parallel_size}"
+store_sweep_json: true
+filter: "tensor_model_parallel_size * pipeline_model_parallel_size * expert_model_parallel_size * context_parallel_size * expert_tensor_parallel_size <= ${slurm.sbatch.gpus_per_node} * ${slurm.sbatch.nodes}"
