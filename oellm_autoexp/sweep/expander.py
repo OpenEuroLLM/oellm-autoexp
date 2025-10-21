@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, MISSING
 from itertools import product
 from typing import Any
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, List, Dict
 
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
@@ -26,13 +26,20 @@ def expand_sweep(config: SweepConfig) -> list[SweepPoint]:
     cfg = OmegaConf.create(config.axes or {})
     base_values = dict(config.base_values)
 
-    points: list[SweepPoint] = []
-    for idx, combination in enumerate(_product_recursive(cfg)):
-        flat: dict[str, Any] = dict(base_values)
+    points: List[SweepPoint] = []
+    for combination in _product_recursive(cfg):
+        flat: Dict[str, Any] = dict(base_values)
         for key_path, value in combination.items():
             key = _flatten_key(key_path)
             flat[key] = value
-        points.append(SweepPoint(index=idx, parameters=flat))
+        # Apply optional filter expression: only keep combinations satisfying the filter
+        if config.filter:
+            try:
+                if not eval(config.filter, {}, flat):
+                    continue
+            except Exception as e:
+                raise ValueError(f"Error evaluating sweep filter '{config.filter}': {e}")
+        points.append(SweepPoint(index=len(points), parameters=flat))
     if not points:
         points.append(SweepPoint(index=0, parameters=base_values))
     return points
