@@ -116,12 +116,12 @@ class MonitorStateStore:
             # Legacy path may live on read-only storage; ignore if we cannot mirror.
             pass
 
-    def load(self) -> dict[int, StoredJob]:
+    def load(self) -> dict[str, StoredJob]:
         """Load jobs from session file."""
         payload = self._load_payload()
         if not payload:
             return {}
-        jobs: dict[int, StoredJob] = {}
+        jobs: dict[str, StoredJob] = {}
         for raw in payload.get("jobs", []):
             try:
                 job = StoredJob(

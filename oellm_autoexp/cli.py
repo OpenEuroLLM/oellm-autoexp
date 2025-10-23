@@ -125,11 +125,10 @@ def monitor(
     )
     controller = MonitorController(monitor_obj, slurm_client, policies)
 
-    job_id_map: dict[str, int] = {}
-    requested_job_ids: dict[str, int] = {}
+    requested_job_ids: dict[str, str] = {}
     for entry in jobs:
         key, value = _parse_assignment(entry, "--job")
-        requested_job_ids[key] = int(value)
+        requested_job_ids[key] = value
 
     slurm_state_map: dict[str, str] = {}
     for entry in slurm_states:
@@ -171,7 +170,6 @@ def monitor(
                 metadata={"log_path": str(log_path)},
             ),
         )
-        job_id_map[name] = job_id
 
         state_override = slurm_state_map.get(name)
         if state_override and hasattr(slurm_client, "set_state"):

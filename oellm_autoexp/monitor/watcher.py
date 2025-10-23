@@ -62,7 +62,7 @@ class BaseMonitor(MonitorInterface):
 
     async def watch(
         self, jobs: Iterable[MonitoredJob]
-    ) -> dict[int, MonitorOutcome]:  # pragma: no cover
+    ) -> dict[str, MonitorOutcome]:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -104,7 +104,7 @@ class LogSignalConfig(ConfigInterface):
 class NullMonitor(BaseMonitor):
     config: NullMonitorConfig
 
-    async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[int, MonitorOutcome]:
+    async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
         return {}
 
 
@@ -127,15 +127,15 @@ class SlurmLogMonitor(BaseMonitor):
         super().__init__(config)
         if not config.log_signals:
             config.log_signals = default_log_signals()
-        self._snapshots: dict[int, _JobSnapshot] = {}
+        self._snapshots: dict[str, _JobSnapshot] = {}
         self._compiled_rules: list[_CompiledLogSignal] = [
             _CompiledLogSignal(rule=rule, pattern=_compile_pattern(rule))
             for rule in config.log_signals
         ]
 
-    async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[int, MonitorOutcome]:
+    async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
         now = time.time()
-        observations: dict[int, MonitorOutcome] = {}
+        observations: dict[str, MonitorOutcome] = {}
         for job in jobs:
             outcome = self._evaluate_job(job, now)
             observations[job.job_id] = outcome

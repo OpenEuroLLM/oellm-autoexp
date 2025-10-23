@@ -305,13 +305,10 @@ def submit_test_job(
                 parts = line.split("-> job")
                 if len(parts) > 1:
                     job_id_str = parts[1].split("->")[0].strip()
-                    try:
-                        job_id = int(job_id_str)
-                        log_success(f"Submitted job {job_id}")
-                        # Job submitted, monitoring will continue in background
-                        break
-                    except ValueError:
-                        pass
+                    job_id = job_id_str
+                    log_success(f"Submitted job {job_id}")
+                    # Job submitted, monitoring will continue in background
+                    break
     except Exception as e:
         log_error(f"Error reading monitor output: {e}")
         monitor_proc.terminate()
@@ -422,7 +419,7 @@ def check_for_restart(original_job_id: str, timeout: int = 200) -> int | None:
                     job_name = parts[1]
 
                     try:
-                        job_id = int(job_id_str)
+                        job_id = job_id_str
                         # Look for a job with the same name but different ID
                         if job_id != original_job_id and "restart_test" in job_name:
                             log_success(f"Found restarted job: {job_id}")

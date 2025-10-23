@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shlex
 import time
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -41,7 +42,7 @@ class BaseSlurmClient(SlurmClientInterface):
 
     def submit(
         self, name: str, script_path: Path, log_path: Path
-    ) -> int:  # pragma: no cover - interface
+    ) -> str:  # pragma: no cover - interface
         raise NotImplementedError
 
     def submit_array(
@@ -50,7 +51,7 @@ class BaseSlurmClient(SlurmClientInterface):
         script_path: Path,
         log_paths: list[Path],
         task_names: list[str],
-    ) -> list[int]:  # pragma: no cover - interface
+    ) -> list[str]:  # pragma: no cover - interface
         raise NotImplementedError
 
     def cancel(self, job_id: str) -> None:  # pragma: no cover - interface
@@ -59,10 +60,10 @@ class BaseSlurmClient(SlurmClientInterface):
     def remove(self, job_id: str) -> None:  # pragma: no cover - interface
         raise NotImplementedError
 
-    def squeue(self) -> dict[int, str]:  # pragma: no cover - interface
+    def squeue(self) -> dict[str, str]:  # pragma: no cover - interface
         raise NotImplementedError
 
-    def job_ids_by_name(self, name: str) -> list[int]:  # pragma: no cover - interface
+    def job_ids_by_name(self, name: str) -> list[str]:  # pragma: no cover - interface
         raise NotImplementedError
 
     def get_job(self, job_id: str) -> SlurmJob:  # pragma: no cover - interface
@@ -98,7 +99,7 @@ class FakeSlurmClient(BaseSlurmClient):
 
     def __init__(self, config: FakeSlurmClientConfig) -> None:
         super().__init__(config)
-        self._jobs: dict[int, SlurmJob] = {}
+        self._jobs: dict[str, SlurmJob] = {}
         self._next_id = 1
 
     def submit(self, name: str, script_path: Path, log_path: Path) -> str:
@@ -158,7 +159,7 @@ class FakeSlurmClient(BaseSlurmClient):
     def squeue(self) -> dict[str, str]:
         return {job_id: job.state for job_id, job in self._jobs.items()}
 
-    def job_ids_by_name(self, name: str) -> list[int]:
+    def job_ids_by_name(self, name: str) -> list[str]:
         return [job_id for job_id, job in self._jobs.items() if job.name == name]
 
     def get_job(self, job_id: str) -> SlurmJob:
@@ -177,7 +178,7 @@ class FakeSlurmClient(BaseSlurmClient):
         script_path: Path,
         log_path: Path,
         state: str = "PENDING",
-    ) -> int:
+    ) -> str:
         job = SlurmJob(
             job_id=job_id,
             name=name,
@@ -186,7 +187,11 @@ class FakeSlurmClient(BaseSlurmClient):
             state=state,
         )
         self._jobs[job_id] = job
-        self._next_id = max(self._next_id, int(job_id.split("_")[0]) + 1)
+        try:
+            base_id = int(str(job_id).split("_")[0])
+        except ValueError:
+            base_id = self._next_id
+        self._next_id = max(self._next_id, base_id + 1)
         return job_id
 
 
@@ -204,9 +209,9 @@ class SlurmClient(BaseSlurmClient):
 
     def __init__(self, config: SlurmClientConfig) -> None:
         super().__init__(config)
-        self._jobs: dict[int, SlurmJob] = {}
+        self._jobs: dict[str, SlurmJob] = {}
 
-    def submit(self, name: str, script_path: Path, log_path: Path) -> int:
+    def submit(self, name: str, script_path: Path, log_path: Path) -> str:
         slurm_conf = self.slurm_config
         submit_cmd = shlex.split(slurm_conf.submit_cmd)
         proc = run_command([*submit_cmd, str(script_path)])
@@ -230,7 +235,7 @@ class SlurmClient(BaseSlurmClient):
         log_paths: list[Path],
         task_names: list[str],
         start_index: int = 0,
-    ) -> list[int]:
+    ) -> list[str]:
         """Submit a SLURM job array.
 
         Args:
@@ -316,7 +321,7 @@ class SlurmClient(BaseSlurmClient):
     def remove(self, job_id: str) -> None:
         self._jobs.pop(job_id, None)
 
-    def squeue(self) -> dict[int, str]:
+    def squeue(self) -> dict[str, str]:
         import logging
 
         logger = logging.getLogger(__name__)
@@ -364,7 +369,7 @@ class SlurmClient(BaseSlurmClient):
             return self._check_sacct_for_missing_jobs(real_job_ids, synthetic_to_real, logger)
 
         logger.debug(f"squeue: output: {proc.stdout.strip()}")
-        statuses: dict[int, str] = {}
+        statuses: dict[str, str] = {}
 
         for line in proc.stdout.strip().splitlines():
             parts = line.strip().split(None, 1)
@@ -462,7 +467,7 @@ class SlurmClient(BaseSlurmClient):
 
         return statuses
 
-    def job_ids_by_name(self, name: str) -> list[int]:
+    def job_ids_by_name(self, name: str) -> list[str]:
         return [job_id for job_id, job in self._jobs.items() if job.name == name]
 
     def get_job(self, job_id: str) -> SlurmJob:
@@ -475,7 +480,7 @@ class SlurmClient(BaseSlurmClient):
         script_path: Path,
         log_path: Path,
         state: str = "PENDING",
-    ) -> int:
+    ) -> str:
         """Register an externally submitted job for tracking.
 
         This is useful when jobs are submitted outside the orchestrator
@@ -493,10 +498,10 @@ class SlurmClient(BaseSlurmClient):
         return job_id
 
     @staticmethod
-    def _parse_job_id(output: str) -> int | None:
+    def _parse_job_id(output: str) -> str | None:
         for token in output.split():
-            if token.isdigit():
-                return int(token)
+            if re.match(r"\d+(?:_\d+)?", token):
+                return token
         return None
 
 

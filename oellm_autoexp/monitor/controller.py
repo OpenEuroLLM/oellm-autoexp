@@ -66,7 +66,7 @@ class MonitorAction:
 class MonitorCycleResult:
     """Aggregated outcome of a single monitoring iteration."""
 
-    decisions: dict[int, RestartDecision] = field(default_factory=dict)
+    decisions: dict[str, RestartDecision] = field(default_factory=dict)
     actions: list[MonitorAction] = field(default_factory=list)
 
 
@@ -88,10 +88,13 @@ class MonitorController:
         self._state_store = state_store
 
     def register_job(self, job_id: str, registration: JobRegistration, attempts: int = 1) -> None:
-        state = JobRuntimeState(job_id=job_id, registration=registration, attempts=max(1, attempts))
-        self._jobs[job_id] = state
+        job_key = str(job_id)
+        state = JobRuntimeState(
+            job_id=job_key, registration=registration, attempts=max(1, attempts)
+        )
+        self._jobs[job_key] = state
         LOGGER.info(
-            f"[job {job_id}] registered for monitoring: name={registration.name}, "
+            f"[job {job_key}] registered for monitoring: name={registration.name}, "
             f"log_path={registration.log_path}, attempts={attempts}"
         )
         self._persist_job(state)
@@ -107,7 +110,7 @@ class MonitorController:
         )
         monitored_jobs = [
             MonitoredJob(
-                job_id=state.job_id,
+                job_id=str(state.job_id),
                 name=state.name,
                 log_path=self._expand_log_path(state.job_id, state.registration.log_path),
                 check_interval_seconds=interval,
@@ -201,7 +204,7 @@ class MonitorController:
         decision, _ = result
         return decision
 
-    def snapshot(self) -> dict[int, str]:
+    def snapshot(self) -> dict[str, str]:
         return self._slurm.squeue()
 
     def drain_actions(self) -> list[MonitorAction]:
@@ -296,7 +299,7 @@ class MonitorController:
         state: JobRuntimeState,
         mode: str,
         metadata: dict[str, Any] | None = None,
-    ) -> tuple[RestartDecision, int] | None:
+    ) -> tuple[RestartDecision, str] | None:
         policy = self._policies.get(mode)
         if policy is None:
             return None
@@ -374,7 +377,7 @@ class MonitorController:
     def _classify_mode(
         state: JobRuntimeState,
         outcome: MonitorOutcome | None,
-        slurm_snapshot: dict[int, str],
+        slurm_snapshot: dict[str, str],
     ) -> tuple[str, dict[str, Any]] | None:
         """Classify job state into a mode with associated metadata.
 

@@ -50,14 +50,14 @@ def test_slurm_log_monitor_detects_stall(tmp_path: Path) -> None:
     log_path = tmp_path / "job.log"
     log_path.write_text("initial\n")
 
-    job = MonitoredJob(job_id=1, name="demo", log_path=log_path, check_interval_seconds=1)
+    job = MonitoredJob(job_id="1", name="demo", log_path=log_path, check_interval_seconds=1)
 
     outcomes = asyncio.run(monitor.watch([job]))
-    assert outcomes[1].status == "active"
+    assert outcomes["1"].status == "active"
 
     time.sleep(1.1)
     outcomes = asyncio.run(monitor.watch([job]))
-    assert outcomes[1].status == "stall"
+    assert outcomes["1"].status == "stall"
 
 
 def test_monitor_controller_observe_restart(tmp_path: Path) -> None:
@@ -83,7 +83,7 @@ def test_monitor_controller_observe_restart(tmp_path: Path) -> None:
         JobRegistration(name="demo", script_path=script, log_path=log),
     )
 
-    async def _run() -> dict[int, Any]:
+    async def _run() -> dict[str, Any]:
         await controller.observe_once()
         result = await controller.observe_once()
         return result.decisions

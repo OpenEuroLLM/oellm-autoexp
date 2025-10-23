@@ -190,7 +190,7 @@ def submit_jobs(
                 )
 
         submit_array = getattr(client, "submit_array")
-        job_ids: list[int] = submit_array(  # type: ignore[misc]
+        job_ids: list[str] = submit_array(  # type: ignore[misc]
             artifacts.array_job_name or plan.config.project.name,
             artifacts.array_script,
             [job.log_path for job in pending_jobs],
