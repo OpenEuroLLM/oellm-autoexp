@@ -75,6 +75,7 @@ jobs:
           cache: 'pip'
           cache-dependency-path: |
             pyproject.toml
+            submodules/Megatron-LM
 
       - name: Install project
         run: |
