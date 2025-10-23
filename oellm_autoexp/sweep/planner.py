@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 
 from oellm_autoexp.config.schema import RootConfig
 from .expander import SweepPoint
@@ -35,9 +36,17 @@ def build_job_plans(config: RootConfig, points: list[SweepPoint]) -> list[JobPla
             "project": project_name,
             "index": str(point.index),
         }
-        context.update({key: str(value) for key, value in point.parameters.items()})
-
+        # TODO: Enable sweeping based on global naming scheme, not just within backend.
+        context.update(
+            {key.replace(".", "___"): str(value) for key, value in point.parameters.items()}
+        )
         job_name = config.sweep.name_template.format(**context)
+        t = config.sweep.name_template
+        m = re.search(r"\{([^\{]*)\.([^\}]*)\}", t)
+        while m:
+            t = t[: m.start()] + "{" + m.group(1) + "___" + m.group(2) + "}"
+            m = re.search(r"\{([^\{]*)\.([^\}]*)\}", t)
+
         output_dir = base_output / job_name
         log_template = config.monitoring.log_path_template
         format_context = {**context, "output_dir": str(output_dir), "name": job_name}
