@@ -38,7 +38,7 @@ def cli() -> None:
 @cli.command()
 @click.option("--config-ref", default="autoexp")
 @click.option("--config-dir", type=click.Path(path_type=Path), default=Path("config"))
-@click.option("--override", multiple=True, help="Hydra-style overrides")
+@click.option("--override", "-o", multiple=True, help="Hydra-style overrides")
 def plan(config_ref: str, config_dir: Path, override: tuple[str, ...]) -> None:
     """Validate configuration and emit a summary."""
 
@@ -60,7 +60,7 @@ def plan(config_ref: str, config_dir: Path, override: tuple[str, ...]) -> None:
 @click.option("--config-dir", type=click.Path(path_type=Path), default=Path("config"))
 @click.option("--fake", is_flag=True, help="Use the in-memory SLURM simulator")
 @click.option("--monitor", is_flag=True, help="Start monitoring after submission")
-@click.option("--override", multiple=True, help="Hydra-style overrides")
+@click.option("--override", "-o", multiple=True, help="Hydra-style overrides")
 def submit(
     config_ref: str,
     config_dir: Path,
@@ -152,7 +152,7 @@ def monitor_session(session_id: str, monitoring_state_dir: Path, fake: bool) -> 
 @click.option("--interval", type=int, help="Polling interval override (seconds)")
 @click.option("--dry-run", is_flag=True, help="Render commands without executing them")
 @click.option("--json-output", is_flag=True, help="Emit JSON lines for each detected action")
-@click.option("--override", multiple=True, help="Hydra-style overrides")
+@click.option("--override", "-o", multiple=True, help="Hydra-style overrides")
 def monitor(
     config_ref: str | None,
     monitor_config: Path | None,
