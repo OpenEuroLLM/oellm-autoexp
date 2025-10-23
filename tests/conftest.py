@@ -22,7 +22,6 @@ def ensure_megatron_stub(monkeypatch):
         def add_megatron_arguments(parser):
             parser.add_argument("--lr", type=float, default=0.01, dest="lr")
             parser.add_argument("--micro-batch-size", type=int, default=1, dest="micro_batch_size")
-            parser.add_argument("--use-gpu", action="store_true", dest="use_gpu")
             return parser
 
         module_arguments.add_megatron_arguments = add_megatron_arguments

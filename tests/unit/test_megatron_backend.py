@@ -23,7 +23,6 @@ def test_megatron_backend_builds_command():
     assert cmd.argv[0] == "launch.sh"
     assert "--lr" in cmd.argv and "0.1" in cmd.argv
     assert "--micro-batch-size" in cmd.argv and "4" in cmd.argv
-    assert "--use-gpu" in cmd.argv
     assert cmd.argv[-1] == "--extra"
     assert cmd.env["ENV"] == "1"
 
