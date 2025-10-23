@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import subprocess
-from typing import Sequence
+from collections.abc import Sequence
 
 from oellm_autoexp.utils.run import run_with_tee
 

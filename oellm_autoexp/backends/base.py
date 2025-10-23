@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Sequence
+from typing import Any
+from collections.abc import Mapping, Sequence
 
 from compoconf import ConfigInterface, register
 
@@ -23,7 +24,7 @@ class LaunchCommand:
 class BackendJobSpec:
     """Information needed to construct a launch command."""
 
-    parameters: Dict[str, Any]
+    parameters: dict[str, Any]
 
 
 class BaseBackend(BackendInterface):
@@ -48,7 +49,7 @@ class NullBackendConfig(ConfigInterface):
     class_name: str = "NullBackend"
     base_command: Sequence[str] = field(default_factory=lambda: ("echo",))
     extra_cli_args: Sequence[str] = field(default_factory=tuple)
-    env: Dict[str, str] = field(default_factory=dict)
+    env: dict[str, str] = field(default_factory=dict)
 
 
 @register

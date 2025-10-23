@@ -61,7 +61,8 @@ def test_fake_slurm_submit_array(tmp_path: Path) -> None:
 
 
 def test_real_slurm_submit_array(tmp_path: Path, monkeypatch) -> None:
-    """Test that SlurmClient.submit_array correctly calls sbatch with --array."""
+    """Test that SlurmClient.submit_array correctly calls sbatch with
+    --array."""
 
     calls = []
 

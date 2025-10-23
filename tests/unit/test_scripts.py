@@ -6,7 +6,8 @@ from scripts import run_autoexp_container
 
 
 def test_run_autoexp_container_with_fake_submit(monkeypatch, tmp_path: Path):
-    """Test that fake submit runs inside container and doesn't execute sbatch on host."""
+    """Test that fake submit runs inside container and doesn't execute sbatch
+    on host."""
 
     def fake_subprocess_run(cmd, **kwargs):
         # Simulate container returning output without sbatch command (fake SLURM handles internally)
@@ -41,7 +42,8 @@ def test_run_autoexp_container_with_fake_submit(monkeypatch, tmp_path: Path):
 
 
 def test_run_autoexp_container_parses_sbatch_command(monkeypatch, tmp_path: Path):
-    """Test that sbatch command is parsed from container output and executed on host."""
+    """Test that sbatch command is parsed from container output and executed on
+    host."""
 
     calls = []
 
