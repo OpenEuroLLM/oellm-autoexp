@@ -9,8 +9,7 @@ sbatch:
   nodes: 1
   ntasks_per_node: 8
   cpus_per_task: 8
-  gres: "gpu:8"
+  gres: "gpu:4"
   partition: booster
-  account: project-default
   time: "08:00:00"
 sbatch_extra_directives: []
