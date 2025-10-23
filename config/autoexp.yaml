@@ -1,6 +1,6 @@
 defaults:
   - project: default
-  - backend: megatron
+  - backend: megatron_torchrun
   - container: none
   - slurm: base
   - monitoring: default
@@ -8,4 +8,3 @@ defaults:
   - restart: default
   - scheduler: default
   - _self_
-

@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Mapping, Sequence, Iterable
 
-import shlex
 
 from compoconf import asdict
 
@@ -51,6 +50,23 @@ class RenderedArtifacts:
     sweep_entries: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass
+class SubmissionResult:
+    """Return value capturing submission side-effects."""
+
+    controller: MonitorController
+    state_store: MonitorStateStore
+    submitted_job_ids: list[str]
+
+    @property
+    def session_id(self) -> str:
+        return self.state_store.session_id
+
+    @property
+    def submitted_jobs(self) -> list[str]:
+        return list(self.submitted_job_ids)
+
+
 def build_execution_plan(config: Path | RootConfig) -> ExecutionPlan:
     if isinstance(config, (str, Path)):
         root = load_config(config)
@@ -84,13 +100,13 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
     sweep_entries: list[dict[str, Any]] = []
     write_fallback_dir: Path | None = None
 
-    for job in plan.jobs:
+    for job_it, job in enumerate(plan.jobs):
         spec = BackendJobSpec(parameters=dict(job.parameters))
         plan.runtime.backend.validate(spec)
         launch_cmd = plan.runtime.backend.build_launch_command(spec)
 
-        replacements = _build_replacements(plan.runtime, job, launch_cmd)
-        script_path = script_dir / f"{job.name}.sbatch"
+        replacements = _build_replacements(plan.runtime, job, launch_cmd, escape_str=True)
+        script_path = script_dir / f"{job.name}_{job_it}.sbatch"
         try:
             rendered = render_template_file(template_path, script_path, replacements)
         except OSError as exc:
@@ -136,20 +152,21 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
     )
 
 
-def submit_jobs(
-    plan: ExecutionPlan,
-    artifacts: RenderedArtifacts,
-    slurm_client: BaseSlurmClient | None = None,
-) -> MonitorController:
-    client = slurm_client or plan.runtime.slurm_client
+def _ensure_state_store(plan: ExecutionPlan, *, session_id: str | None = None) -> MonitorStateStore:
     monitoring_state_dir = plan.config.project.monitoring_state_dir or plan.runtime.state_dir
-    state_store = MonitorStateStore(monitoring_state_dir)
+    state_store = MonitorStateStore(monitoring_state_dir, session_id=session_id)
+    if not state_store.session_path.exists():
+        config_dict = asdict(plan.config)
+        state_store.save_session(config_dict, plan.config.project.name)
+        LOGGER.info("Created monitoring session: %s", state_store.session_path)
+    return state_store
 
-    # Save monitoring session with full config for resumability
-    config_dict = asdict(plan.config)
-    state_store.save_session(config_dict, plan.config.project.name)
-    LOGGER.info(f"Saved monitoring session: {state_store.session_path}")
 
+def _initialize_monitor_controller(
+    plan: ExecutionPlan,
+    client: BaseSlurmClient,
+    state_store: MonitorStateStore,
+) -> tuple[MonitorController, set[str]]:
     saved_jobs = state_store.load()
     controller = MonitorController(
         plan.runtime.monitor,
@@ -157,8 +174,19 @@ def submit_jobs(
         plan.runtime.restart_policies,
         state_store=state_store,
     )
-
     restored_names = _restore_saved_jobs(controller, client, saved_jobs.values())
+    return controller, restored_names
+
+
+def submit_jobs(
+    plan: ExecutionPlan,
+    artifacts: RenderedArtifacts,
+    slurm_client: BaseSlurmClient | None = None,
+) -> SubmissionResult:
+    client = slurm_client or plan.runtime.slurm_client
+    state_store = _ensure_state_store(plan)
+    controller, restored_names = _initialize_monitor_controller(plan, client, state_store)
+    submitted_job_ids: list[str] = []
 
     monitor_config = plan.runtime.monitor.config
 
@@ -175,7 +203,11 @@ def submit_jobs(
 
     if use_array:
         if not pending_jobs:
-            return controller
+            return SubmissionResult(
+                controller=controller,
+                state_store=state_store,
+                submitted_job_ids=submitted_job_ids,
+            )
 
         for job in pending_jobs:
             if job.start_condition_cmd:
@@ -218,8 +250,13 @@ def submit_jobs(
                 inactivity_threshold_seconds=job.inactivity_threshold_seconds,
             )
             controller.register_job(job_id, registration)
+            submitted_job_ids.append(job_id)
 
-        return controller
+        return SubmissionResult(
+            controller=controller,
+            state_store=state_store,
+            submitted_job_ids=submitted_job_ids,
+        )
 
     for job in pending_jobs:
         script = job_script_map[job.name]
@@ -251,18 +288,47 @@ def submit_jobs(
             inactivity_threshold_seconds=job.inactivity_threshold_seconds,
         )
         controller.register_job(job_id, registration)
+        submitted_job_ids.append(job_id)
 
-    return controller
+    return SubmissionResult(
+        controller=controller, state_store=state_store, submitted_job_ids=submitted_job_ids
+    )
+
+
+def load_monitor_controller(
+    plan: ExecutionPlan,
+    slurm_client: BaseSlurmClient | None = None,
+    *,
+    session_id: str | None = None,
+) -> SubmissionResult:
+    """Load monitor controller without submitting new jobs.
+
+    Returns a ``SubmissionResult`` with an empty ``submitted_job_ids`` list so callers
+    can reuse the same structure as ``submit_jobs`` when wiring the monitor.
+    """
+
+    client = slurm_client or plan.runtime.slurm_client
+    state_store = _ensure_state_store(plan, session_id=session_id)
+    controller, restored_names = _initialize_monitor_controller(plan, client, state_store)
+
+    # Warn if the execution plan contains jobs that were never submitted.
+    pending_jobs = [job.name for job in plan.jobs if job.name not in restored_names]
+    if pending_jobs:
+        LOGGER.warning(
+            "Monitoring session %s missing submissions for jobs: %s",
+            state_store.session_id,
+            ", ".join(pending_jobs),
+        )
+
+    return SubmissionResult(controller=controller, state_store=state_store, submitted_job_ids=[])
 
 
 async def execute_plan(
     plan: ExecutionPlan,
-    slurm_client: BaseSlurmClient | None = None,
-    artifacts: RenderedArtifacts | None = None,
-    controller: MonitorController | None = None,
+    controller: MonitorController,
 ) -> None:
-    rendered = artifacts or render_scripts(plan)
-    controller = controller or submit_jobs(plan, rendered, slurm_client)
+    if controller is None:
+        raise ValueError("execute_plan requires an initialized MonitorController")
 
     if plan.runtime.monitor.__class__.__name__ == "NullMonitor":
         controller.clear_state()
@@ -281,20 +347,8 @@ async def execute_plan(
     controller.clear_state()
 
 
-def execute_plan_sync(
-    plan: ExecutionPlan,
-    slurm_client: BaseSlurmClient | None = None,
-    artifacts: RenderedArtifacts | None = None,
-    controller: MonitorController | None = None,
-) -> None:
-    asyncio.run(
-        execute_plan(
-            plan,
-            slurm_client=slurm_client,
-            artifacts=artifacts,
-            controller=controller,
-        )
-    )
+def execute_plan_sync(plan: ExecutionPlan, controller: MonitorController) -> None:
+    asyncio.run(execute_plan(plan, controller))
 
 
 def _build_replacements(
@@ -352,7 +406,7 @@ def _build_replacements(
         "launcher": launcher,
         "launcher_env_flags": launcher_env_flags,
         "backend_cmd": backend_cmd,
-        "env_exports": _format_env(runtime.root.slurm.env, launch_cmd.env),
+        "env_exports": _format_env(runtime.root.slurm.env),
         "sbatch_directives": sbatch_directives,
         "srun_opts": srun_opts,
     }
@@ -453,16 +507,19 @@ def _restore_saved_jobs(
 
 
 def _format_command(argv: Sequence[str], escape_str: bool = True) -> str:
-    return " ".join(shlex.quote(arg) if escape_str else arg for arg in argv)
+    # do ? escape ENV VARIABLES
+    # return " ".join(shlex.quote(arg) if escape_str else arg for arg in argv)
+    def _escape(s: str) -> str:
+        s = s.replace("\\", "\\\\")
+        if " " in s and not (s.startswith("'") and s.endswith("'")):
+            s = "'" + s + "'"
+        return s
+
+    return " ".join(_escape(arg) if escape_str else arg for arg in argv)
 
 
-def _format_env(base_env: Mapping[str, object], command_env: Mapping[str, object]) -> str:
-    merged: dict[str, str] = {}
-    merged.update({k: str(v) for k, v in base_env.items()})
-    merged.update({k: str(v) for k, v in command_env.items()})
-    if not merged:
-        return ""
-    return "\n".join(f"export {key}={value}" for key, value in merged.items())
+def _format_env(base_env: Mapping[str, object]) -> str:
+    return "\n".join(f"export {key}={value}" for key, value in base_env.items())
 
 
 def _format_sbatch_directives(
@@ -594,9 +651,11 @@ def _render_array_script(
 __all__ = [
     "ExecutionPlan",
     "RenderedArtifacts",
+    "SubmissionResult",
     "build_execution_plan",
     "render_scripts",
     "submit_jobs",
+    "load_monitor_controller",
     "execute_plan",
     "execute_plan_sync",
 ]

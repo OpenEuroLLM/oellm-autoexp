@@ -1,7 +1,12 @@
 import json
 from pathlib import Path
 
-from oellm_autoexp.orchestrator import build_execution_plan, render_scripts, submit_jobs
+from oellm_autoexp.orchestrator import (
+    build_execution_plan,
+    load_monitor_controller,
+    render_scripts,
+    submit_jobs,
+)
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
 from oellm_autoexp.utils.start_condition import StartConditionResult
 
@@ -171,7 +176,9 @@ def test_submit_jobs_honours_start_condition(monkeypatch, tmp_path: Path) -> Non
 
     monkeypatch.setattr("oellm_autoexp.orchestrator.wait_for_start_condition", fake_wait)
 
-    controller = submit_jobs(plan, artifacts)
+    submission = submit_jobs(plan, artifacts)
+    controller = submission.controller
+    assert submission.submitted_job_ids
 
     assert calls == [("echo 1", 30)]
 
@@ -272,7 +279,9 @@ restart_policies: []
 
     monkeypatch.setattr(fake_client, "submit_array", fake_submit_array)
 
-    controller = submit_jobs(plan, artifacts, fake_client)
+    submission = submit_jobs(plan, artifacts, fake_client)
+    controller = submission.controller
+    assert set(submission.submitted_job_ids) == {state.job_id for state in controller.jobs()}
 
     assert call_args
     assert call_args[0][1] == artifacts.array_script
@@ -302,17 +311,25 @@ def test_submit_jobs_persists_and_restores(tmp_path: Path) -> None:
     fake_client = FakeSlurmClient(FakeSlurmClientConfig())
     fake_client.configure(plan.config.slurm)
 
-    controller = submit_jobs(plan, artifacts, fake_client)
+    submission = submit_jobs(plan, artifacts, fake_client)
+    controller = submission.controller
+    assert len(submission.submitted_job_ids) == len(plan.jobs)
 
     state_file = plan.runtime.state_dir / "monitor" / "state.json"
     assert state_file.exists()
     data = json.loads(state_file.read_text())
     assert len(data.get("jobs", [])) == len(plan.jobs)
 
-    # Simulate process restart by using a new client and re-submitting.
+    # Simulate process restart by loading the same monitoring session.
     fake_client_restarted = FakeSlurmClient(FakeSlurmClientConfig())
     fake_client_restarted.configure(plan.config.slurm)
-    controller = submit_jobs(plan, artifacts, fake_client_restarted)
+    restored = load_monitor_controller(
+        plan,
+        fake_client_restarted,
+        session_id=submission.session_id,
+    )
+    controller = restored.controller
+    assert restored.submitted_job_ids == []
 
     assert len(controller.jobs()) == len(plan.jobs)
     assert len(fake_client_restarted.squeue()) == len(plan.jobs)

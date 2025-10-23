@@ -153,9 +153,9 @@ Key parameters:
 ### No restart detected
 **Cause:** Monitor loop not running
 **Solution:**
-- The test script calls `run_autoexp.py` which should start the monitor
-- Verify monitoring config is not `NullMonitor`
-- Check that `execute_plan_sync` is being called
+- The test script runs `run_autoexp.py` without `--no-monitor`; ensure that flag wasn't provided
+- If you submitted separately, start `oellm-autoexp monitor-session --session-id <id>` for the recorded session
+- Verify the monitoring config is not `NullMonitor`
 
 ### Job fails immediately
 **Cause:** Config error or missing dependencies

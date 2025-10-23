@@ -3,13 +3,37 @@ defaults:
   - _self_
 
 template_path: templates/jupiter.sbatch
-launcher_cmd: ""
-srun: {}
+launcher_cmd: "{{env_exports}} export LOCAL_ADDR=$(nslookup $(hostname) | grep 'Address: ' | sed 's/Address: //' | tail) ; \
+  ${container.runtime} exec {{env_flags}} --nv --mount src=/e/,destination=/e/ ${container.image}"
+srun:
+  exclusive: true
+  wait: 60
+  cpus_per_task: 8
+  threads_per_core: 1
+  gpu_bind: "none"
+launcher_env_passthrough: true
+env:
+  MACHINE_NAME: JUPITER
+  HF_ALLOW_CODE_EVAL: "1"
+  HF_DATASETS_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
+  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep 'Address: ' | sed 's/Address: //' | tail) "
+  MASTER_PORT: "20074"
+  NUM_NODES: "$SLURM_JOB_NUM_NODES"
+  GPUS_PER_NODE: "4"
+  NUM_GPUS_PER_NODE: "4"
+  NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
+  ARCH: "$(uname -m)"
+  SLURM_CPUS_PER_TASK: "12"
+  SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
 sbatch:
   nodes: 1
-  ntasks_per_node: 8
-  cpus_per_task: 8
+  ntasks_per_node: 1
+  ntasks: ${.nodes}
+  gpus_per_node: 4
+  cpus_per_task: 16
   gres: "gpu:4"
-  partition: booster
-  time: "08:00:00"
-sbatch_extra_directives: []
+  gpu_bind: "none"
+  time: "12:00:00"
+client:
+  class_name: SlurmClient

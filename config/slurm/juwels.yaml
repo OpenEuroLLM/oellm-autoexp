@@ -5,7 +5,7 @@ defaults:
 template_path: templates/juwels.sbatch
 launcher_cmd: "{{env_exports}} export LOCAL_ADDR=$(nslookup $(hostname | sed 's/.juwels//' )i \
   | grep \"Address: \" | tail -n1 | awk '{print $2}') ; \
-  singularity exec {{env_flags}} --nv ${oc.env:CONTAINER_CACHE_DIR}/MegatronTraining_x86_64_202510011427.sif"
+  ${container.runtime} exec {{env_flags}} --nv ${container.image}"
 srun:
   exclusive: true
   wait: 60

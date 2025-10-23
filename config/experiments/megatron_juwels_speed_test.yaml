@@ -1,0 +1,19 @@
+# @package _global_
+defaults:
+  - base
+  - /backend: megatron_torchrun
+  - /container: juwels
+  - /slurm: juwels
+  - /monitoring: default
+  - /restart: default
+  - /project: juwels_speed_test
+  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_juwels]
+  - /sweep: none
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 500
+
+project:
+  name: megatron_juwels_speed_test

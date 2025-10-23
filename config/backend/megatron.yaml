@@ -3,8 +3,8 @@ defaults:
   - _self_
 
 class_name: AutoMegatronBackend
-launcher_script: ${.env.RUN_DIR}/pretrain_gpt.py
-env: 
+launcher_script: "python ${.env.RUN_DIR}/pretrain_gpt.py"
+env:
   PYTHONPATH: ".:submodules/Megatron-LM"
   PROJECT_DIR: ${oc.env:PROJECT_DIR,"."}
   RUN_DIR: ${.PROJECT_DIR}/submodules/Megatron-LM

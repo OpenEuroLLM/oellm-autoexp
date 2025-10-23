@@ -20,7 +20,14 @@ def test_megatron_backend_builds_launch_command(monkeypatch, tmp_path):
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "outputs"))
 
     cfg = load_config_reference(
-        "autoexp", Path("config"), overrides=["backend/megatron=base", "project=default"]
+        "autoexp",
+        Path("config"),
+        overrides=[
+            "backend/megatron=base",
+            "project=default",
+            "container=none",
+            "backend=megatron",
+        ],
     )
     runtime = evaluate(cfg)
 
@@ -28,5 +35,6 @@ def test_megatron_backend_builds_launch_command(monkeypatch, tmp_path):
     runtime.backend.validate(spec)
     command = runtime.backend.build_launch_command(spec)
 
-    assert command.argv[0].endswith("submodules/Megatron-LM/pretrain_gpt.py")
+    assert command.argv[0].endswith("python")
+    assert command.argv[1].endswith("submodules/Megatron-LM/pretrain_gpt.py")
     assert any(arg.startswith("--micro-batch-size") for arg in command.argv)
