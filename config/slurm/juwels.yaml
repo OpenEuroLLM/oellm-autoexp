@@ -5,7 +5,7 @@ defaults:
 template_path: templates/juwels.sbatch
 launcher_cmd: "{{env_exports}} export LOCAL_ADDR=$(nslookup $(hostname | sed 's/.juwels//' )i \
   | grep \"Address: \" | tail -n1 | awk '{print $2}') ; \
-  ${container.runtime} exec {{env_flags}} --nv ${container.image}"
+  ${oc.select:container.runtime,apptainer} exec {{env_flags}} --nv ${oc.select:container.image,container.sif}"
 srun:
   exclusive: true
   wait: 60
