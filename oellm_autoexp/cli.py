@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import time
 from pathlib import Path
 
 import click
+from compoconf import parse_config
 
 from oellm_autoexp.config import schema
 from oellm_autoexp.config.evaluator import evaluate
@@ -16,13 +16,16 @@ from oellm_autoexp.config.loader import (
     load_config_reference,
     load_monitoring_reference,
 )
+from oellm_autoexp.config.schema import RootConfig
 from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
 from oellm_autoexp.orchestrator import (
     build_execution_plan,
     execute_plan_sync,
+    load_monitor_controller,
     render_scripts,
     submit_jobs,
 )
+from oellm_autoexp.persistence import MonitorStateStore
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
 from oellm_autoexp.utils.run import run_with_tee
 
@@ -56,9 +59,16 @@ def plan(config_ref: str, config_dir: Path, override: tuple[str, ...]) -> None:
 @click.option("--config-ref", default="autoexp")
 @click.option("--config-dir", type=click.Path(path_type=Path), default=Path("config"))
 @click.option("--fake", is_flag=True, help="Use the in-memory SLURM simulator")
+@click.option("--monitor", is_flag=True, help="Start monitoring after submission")
 @click.option("--override", "-o", multiple=True, help="Hydra-style overrides")
-def submit(config_ref: str, config_dir: Path, override: tuple[str, ...], fake: bool) -> None:
-    """Render scripts and submit jobs."""
+def submit(
+    config_ref: str,
+    config_dir: Path,
+    override: tuple[str, ...],
+    fake: bool,
+    monitor: bool,
+) -> None:
+    """Render scripts, submit jobs, and optionally start monitoring."""
     root = load_config_reference(config_ref, config_dir, override)
     execution_plan = build_execution_plan(root)
     artifacts = render_scripts(execution_plan)
@@ -68,16 +78,62 @@ def submit(config_ref: str, config_dir: Path, override: tuple[str, ...], fake: b
         slurm_client = FakeSlurmClient(FakeSlurmClientConfig())
         slurm_client.configure(execution_plan.config.slurm)
 
-    controller = submit_jobs(execution_plan, artifacts, slurm_client)
-    for state in controller.jobs():
-        click.echo(f"submitted {state.name} -> job {state.job_id} -> log: {state.registration.log_path}")
+    submission = submit_jobs(execution_plan, artifacts, slurm_client)
+    controller = submission.controller
 
-    execute_plan_sync(
-        execution_plan,
-        slurm_client=slurm_client,
-        artifacts=artifacts,
-        controller=controller,
-    )
+    jobs_by_id = {state.job_id: state for state in controller.jobs()}
+    if submission.submitted_job_ids:
+        for job_id in submission.submitted_job_ids:
+            state = jobs_by_id.get(job_id)
+            job_name = state.name if state else "unknown"
+            log_path = state.registration.log_path if state else "?"
+            click.echo(f"submitted {job_name} -> job {job_id} -> log: {log_path}")
+    else:
+        click.echo("No new jobs submitted; monitoring session already contains all jobs.")
+
+    click.echo(f"Monitoring session: {submission.session_id}")
+
+    if monitor:
+        execute_plan_sync(execution_plan, controller)
+    else:
+        click.echo(
+            "Monitoring not started. Use `oellm-autoexp monitor-session --session-id {}` "
+            "or `run_autoexp.py --monitor-session` to resume.".format(submission.session_id)
+        )
+
+
+@cli.command("monitor-session")
+@click.option("--session-id", required=True, help="Monitoring session identifier")
+@click.option(
+    "--monitoring-state-dir",
+    type=click.Path(path_type=Path),
+    default=Path("output/monitoring_state"),
+    help="Directory containing session JSON files",
+)
+@click.option("--fake", is_flag=True, help="Use the in-memory SLURM simulator")
+def monitor_session(session_id: str, monitoring_state_dir: Path, fake: bool) -> None:
+    """Resume monitoring for an existing submission session."""
+
+    session_path = monitoring_state_dir / f"{session_id}.json"
+    session_data = MonitorStateStore.load_session(session_path)
+    if not session_data:
+        raise click.ClickException(f"Session file not found or unreadable: {session_path}")
+
+    config_dict = session_data.get("config")
+    if not config_dict:
+        raise click.ClickException(f"Session {session_id} does not contain configuration data")
+
+    root = parse_config(RootConfig, config_dict)
+    execution_plan = build_execution_plan(root)
+
+    slurm_client = execution_plan.runtime.slurm_client
+    if fake:
+        slurm_client = FakeSlurmClient(FakeSlurmClientConfig())
+        slurm_client.configure(execution_plan.config.slurm)
+
+    submission = load_monitor_controller(execution_plan, slurm_client, session_id=session_id)
+    click.echo(f"Monitoring session: {session_id} ({session_data.get('project_name', 'unknown')})")
+    execute_plan_sync(execution_plan, submission.controller)
 
 
 @cli.command()
@@ -86,8 +142,12 @@ def submit(config_ref: str, config_dir: Path, override: tuple[str, ...], fake: b
 @click.option("--config-dir", type=click.Path(path_type=Path), default=Path("config"))
 @click.option("--log", "logs", multiple=True, help="JOB=PATH to the SLURM log to follow")
 @click.option("--job", "jobs", multiple=True, help="JOB=JOB_ID to reuse an existing SLURM id")
-@click.option("--slurm-state", "slurm_states", multiple=True, help="JOB=STATE to seed fake SLURM status")
-@click.option("--action", "actions", multiple=True, help="ACTION=command template executed on signal")
+@click.option(
+    "--slurm-state", "slurm_states", multiple=True, help="JOB=STATE to seed fake SLURM status"
+)
+@click.option(
+    "--action", "actions", multiple=True, help="ACTION=command template executed on signal"
+)
 @click.option("--loop", is_flag=True, help="Continuously poll instead of a single iteration")
 @click.option("--interval", type=int, help="Polling interval override (seconds)")
 @click.option("--dry-run", is_flag=True, help="Render commands without executing them")
@@ -120,11 +180,10 @@ def monitor(
     )
     controller = MonitorController(monitor_obj, slurm_client, policies)
 
-    job_id_map: dict[str, int] = {}
-    requested_job_ids: dict[str, int] = {}
+    requested_job_ids: dict[str, str] = {}
     for entry in jobs:
         key, value = _parse_assignment(entry, "--job")
-        requested_job_ids[key] = int(value)
+        requested_job_ids[key] = value
 
     slurm_state_map: dict[str, str] = {}
     for entry in slurm_states:
@@ -151,7 +210,11 @@ def monitor(
             else:
                 job_id = slurm_client.submit(name, script_path, log_path)
         else:
-            job_id = requested_id if requested_id is not None else slurm_client.submit(name, script_path, log_path)
+            job_id = (
+                requested_id
+                if requested_id is not None
+                else slurm_client.submit(name, script_path, log_path)
+            )
 
         controller.register_job(
             job_id,
@@ -162,7 +225,6 @@ def monitor(
                 metadata={"log_path": str(log_path)},
             ),
         )
-        job_id_map[name] = job_id
 
         state_override = slurm_state_map.get(name)
         if state_override and hasattr(slurm_client, "set_state"):
@@ -181,7 +243,9 @@ def monitor(
             }
             _emit_action(action.action, payload, action_map, dry_run, json_output)
             if not dry_run:
-                exit_code = max(exit_code, _execute_mapped_action(action.action, payload, action_map))
+                exit_code = max(
+                    exit_code, _execute_mapped_action(action.action, payload, action_map)
+                )
         controller.drain_actions()
 
         if not loop:
@@ -233,12 +297,18 @@ def _parse_assignment(value: str, option: str) -> tuple[str, str]:
 
 
 def _emit_action(
-    action: str, payload: dict[str, str], action_map: dict[str, str], dry_run: bool, json_output: bool
+    action: str,
+    payload: dict[str, str],
+    action_map: dict[str, str],
+    dry_run: bool,
+    json_output: bool,
 ) -> None:
     if json_output:
         click.echo(json.dumps({"action": action, "payload": payload}))
     else:
-        meta_items = [f"{k}={v}" for k, v in sorted(payload.items()) if k not in {"job_name", "job_id"}]
+        meta_items = [
+            f"{k}={v}" for k, v in sorted(payload.items()) if k not in {"job_name", "job_id"}
+        ]
         suffix = f" ({', '.join(meta_items)})" if meta_items else ""
         click.echo(f"[{action}] job={payload['job_name']}#{payload['job_id']}{suffix}")
     if dry_run and action in action_map:
@@ -265,7 +335,9 @@ def _render_action_command(template: str, payload: dict[str, str]) -> str:
         return template.format(**payload)
     except KeyError as exc:  # pragma: no cover - validation path
         missing = exc.args[0]
-        raise click.ClickException(f"Missing field '{missing}' for action template '{template}'") from exc
+        raise click.ClickException(
+            f"Missing field '{missing}' for action template '{template}'"
+        ) from exc
 
 
 def main() -> None:  # pragma: no cover - exercised via CLI

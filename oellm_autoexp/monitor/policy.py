@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal
 
 from compoconf import ConfigInterface, register
 
@@ -18,7 +18,7 @@ class RestartDecision:
 
     action: ActionLiteral
     reason: str
-    adjustments: Dict[str, Any] | None = None
+    adjustments: dict[str, Any] | None = None
 
 
 @dataclass
@@ -27,7 +27,7 @@ class RestartEvent:
 
     mode: Literal["stall", "crash", "timeout", "success"]
     attempt: int
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class BaseRestartPolicy(RestartPolicyInterface):
@@ -60,7 +60,7 @@ class NoRestartPolicy(BaseRestartPolicy):
 class AlwaysRestartPolicyConfig(ConfigInterface):
     class_name: str = "AlwaysRestartPolicy"
     reason: str = "Retrying job"
-    max_retries: Optional[int] = None
+    max_retries: int | None = None
 
 
 @register
@@ -78,7 +78,7 @@ class SelectiveRestartPolicyConfig(ConfigInterface):
     """Restart policy that filters based on signal metadata."""
 
     class_name: str = "SelectiveRestartPolicy"
-    max_retries: Optional[int] = 3
+    max_retries: int | None = 3
     restart_on_error_types: list[str] = field(default_factory=list)
     restart_on_subsystems: list[str] = field(default_factory=list)
     restart_on_signals: list[str] = field(default_factory=list)

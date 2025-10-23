@@ -19,13 +19,15 @@ def test_load_config(tmp_path: Path) -> None:
     assert cfg.slurm.srun_opts == ""
     assert cfg.slurm.client.class_name == "FakeSlurmClient"
     assert cfg.restart_policies[0].mode == "success"
-    assert cfg.project.state_dir == Path("./outputs") / ".oellm-autoexp"
+    assert cfg.project.state_dir == Path("./outputs") / "monitoring_state"
 
 
 def test_load_hydra_config(monkeypatch) -> None:
     monkeypatch.setenv("SLURM_ACCOUNT", "debug")
     monkeypatch.setenv("CONTAINER_CACHE_DIR", "debug")
-    cfg = load_config_reference("autoexp", Path("config"), overrides=["project=juwels", "slurm=juwels"])
+    cfg = load_config_reference(
+        "autoexp", Path("config"), overrides=["project=juwels", "slurm=juwels"]
+    )
 
     assert cfg.project.name == "juwels"
     assert "JUWELS" in cfg.slurm.env.get("MACHINE_NAME", "")

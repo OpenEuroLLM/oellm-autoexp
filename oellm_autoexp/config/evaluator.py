@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict
 
 from . import schema
 from ..backends.base import BaseBackend
@@ -20,17 +19,21 @@ class RuntimeConfig:
     root: schema.RootConfig
     backend: BaseBackend
     monitor: BaseMonitor
-    restart_policies: Dict[str, BaseRestartPolicy]
+    restart_policies: dict[str, BaseRestartPolicy]
     slurm_client: BaseSlurmClient
 
     @property
     def state_dir(self) -> Path:
         """Returns the monitoring state directory (stable, not run-specific).
 
-        This is used for monitoring sessions and should NOT include timestamps
-        so that --monitor-all can find sessions across runs.
+        This is used for monitoring sessions and should NOT include
+        timestamps so that --monitor-all can find sessions across runs.
         """
-        return self.root.project.monitoring_state_dir or self.root.project.state_dir or "./monitoring_state"
+        return (
+            self.root.project.monitoring_state_dir
+            or self.root.project.state_dir
+            or "./monitoring_state"
+        )
 
 
 def evaluate(root: schema.RootConfig) -> RuntimeConfig:
@@ -39,7 +42,7 @@ def evaluate(root: schema.RootConfig) -> RuntimeConfig:
     backend = root.backend.instantiate(schema.BackendInterface)
     monitor = root.monitoring.instantiate(schema.MonitorInterface)
 
-    policies: Dict[str, BaseRestartPolicy] = {}
+    policies: dict[str, BaseRestartPolicy] = {}
     for policy_cfg in root.restart_policies:
         policy = policy_cfg.implementation.instantiate(schema.RestartPolicyInterface)
         policies[policy_cfg.mode] = policy

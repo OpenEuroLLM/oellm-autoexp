@@ -2,6 +2,8 @@
 
 Work-in-progress monorepo consolidating sweep planning, SLURM submission, container workflows, and monitoring for OpenEuroLLM projects. The Megatron backend reuses Megatron-LM's parser so all sweeps stay compatible with upstream flags. See `SPEC.md` for the detailed architecture and outstanding work.
 
+FEEL FREE TO ADD PRs if you find a bug or inconsistent behavior!
+
 ## Installation
 
 ```bash
@@ -19,7 +21,7 @@ git submodule update --init --recursive
 - `config/monitoring/*.yaml` defines log templates, inactivity thresholds, optional start conditions, and log-signal → action mappings.
 - `config/restart/*.yaml` contains restart policy definitions keyed by error mode (`stall`, `timeout`, `crash`, `success`).
 
-Hydra overrides (`-o key=value`) let you combine these building blocks per run.
+Hydra overrides (`key=value`) let you combine these building blocks per run.
 
 ## Usage Recipes
 
@@ -27,7 +29,7 @@ Hydra overrides (`-o key=value`) let you combine these building blocks per run.
 
 ```bash
 # Render scripts + sweep metadata without submitting
-python scripts/run_autoexp.py autoexp -C config -o project=default --dry-run
+python scripts/run_autoexp.py project=default --dry-run
 
 # Inspect the launch command for the first sweep entry
 python scripts/run_sweep_entry.py --sweep outputs/sweep.json --index 0 --dry-run
@@ -38,12 +40,12 @@ python scripts/run_sweep_entry.py --sweep outputs/sweep.json --index 0
 
 `scripts/run_sweep_entry.py` rehydrates the stored command, exports the configured environment, and can be embedded inside notebooks or custom launchers.
 
-### 2. Megatron Training (Direct Python vs. Container)
+### 2. Megatron Training (Direct Python versus Container)
 
 **Direct:**
 
 ```bash
-python scripts/run_autoexp.py autoexp -C config -o project=default --use-fake-slurm
+python scripts/run_autoexp.py -C config --config-ref experiments/megatron_jupiter_speed_test container=none
 ```
 
 The in-memory SLURM client mimics submission/monitoring without touching a real scheduler. Drop `--use-fake-slurm` once a real client is configured under `config/slurm`.
@@ -54,30 +56,30 @@ The in-memory SLURM client mimics submission/monitoring without touching a real 
 # Build an Apptainer/Singularity image tailored for Megatron
 ./container/build_container.sh --backend megatron --definition MegatronTraining --output ./artifacts
 
-# Configure container in your config (e.g., config/container/juwels.yaml):
+# Configure container in your config (for example, config/container/juwels.yaml):
 # image: ${oc.env:CONTAINER_CACHE_DIR}/MegatronTraining_x86_64.sif
 # runtime: singularity
 
 # Run with auto-detected container from config (recommended)
-python scripts/run_autoexp_container.py --config-ref autoexp -C config -o project=juwels
+python scripts/run_autoexp_container.py --config-ref experiments/megatron_jupiter_speed_test container=none
 
 # Or explicitly specify container image
 python scripts/run_autoexp_container.py --image ./artifacts/MegatronTraining_$(uname -m).sif \
-    --config-ref autoexp -C config -o project=juwels
+    --config-ref autoexp -C config project=juwels
 
 # Dry-run (render scripts only)
-python scripts/run_autoexp_container.py --config-ref autoexp -C config -o project=juwels --dry-run
+python scripts/run_autoexp_container.py --config-ref autoexp -C config project=juwels_speed_test --dry-run
 
 # Execute with fake SLURM client
-python scripts/run_autoexp_container.py --config-ref autoexp -C config -o project=juwels --fake-submit
+python scripts/run_autoexp_container.py --config-ref autoexp -C config project=juwels_speed_test --fake-submit
 ```
 
 **Key Points:**
-- `run_autoexp_container.py` is the **unified entry point** for all workflows
+- `run_autoexp_container.py` is the **unified entry point** for all workflows (needs omegaconf / compoconf / hydra-core / yaml to be installed)
 - Automatically detects container from config or runs directly on host if no container configured
 - If `container: null` or `container: {}`, runs directly without container
 - Plan generation happens in container (needs Megatron), SLURM submission on host (needs sbatch)
-- Setting `slurm.launcher_env_passthrough: true` forwards `slurm.env` keys into the launcher via `--env VAR=$VAR`
+- Setting `slurm.launcher_env_passthrough: true` forwards `slurm.env` keys into the launcher by way of `--env VAR=$VAR`
 
 
 ### 3. Megatron Training with SLURM
@@ -107,8 +109,13 @@ python scripts/run_autoexp.py --monitor-session <session_id> --monitoring-state-
 oellm-autoexp plan autoexp --config-dir config -o project=juwels -o slurm=juwels
 oellm-autoexp submit autoexp --config-dir config -o project=juwels -o slurm=juwels --fake
 
-# Remove --fake once a real SLURM client is wired up
-oellm-autoexp submit autoexp --config-dir config -o project=juwels -o slurm=juwels
+# Remove --fake once a real SLURM client is wired up. Pass --monitor to follow immediately
+oellm-autoexp submit autoexp --config-dir config -o project=juwels -o slurm=juwels --monitor
+
+# Submit now, monitor later
+SESSION_ID=$(oellm-autoexp submit autoexp --config-dir config -o project=juwels -o slurm=juwels | \
+  awk '/Monitoring session:/ {print $3}')
+oellm-autoexp monitor-session --session-id "$SESSION_ID"
 ```
 
 Scripts land in `slurm.script_dir`, logs in `slurm.log_dir`, and `outputs/sweep.json` documents the rendered sweep.
@@ -117,13 +124,13 @@ Scripts land in `slurm.script_dir`, logs in `slurm.log_dir`, and `outputs/sweep.
 
 ```bash
 oellm-autoexp submit autoexp --config-dir config \
-  -o project=juwels -o slurm=juwels -o slurm.array=true --fake
+  -o project=juwels -o slurm=juwels -o slurm.array=true --fake --monitor
 ```
 
 When `slurm.array=true`, `render_scripts` produces:
 
 - `outputs/sweep.json` (one entry per sweep point).
-- An aggregated array script (stored in `slurm.script_dir`) that dispatches via `scripts/run_sweep_entry.py` and `$SLURM_ARRAY_TASK_ID`.
+- An aggregated array script (stored in `slurm.script_dir`) that dispatches by way of `scripts/run_sweep_entry.py` and `$SLURM_ARRAY_TASK_ID`.
 - Metadata so `submit_jobs` routes through `submit_array` when the chosen SLURM client supports it (the bundled `FakeSlurmClient` does).
 
 ### 5. Adapting Behaviour for Errors & Timeouts
@@ -201,34 +208,20 @@ Add a Hydra group under `config/backend/example.yaml` and select it with `-o bac
 
 ```bash
 python scripts/run_autoexp_container.py --config-ref autoexp -C config \
-  -o project=juwels_speed_test \
-  -o slurm=juwels \
-  -o container=juwels \
-  -o backend=megatron_speed_test_juwels \
-  -o sweep=speed_test_juwels \
+  project=juwels_speed_test \
+  slurm=juwels \
+  container=juwels \
+  backend=megatron_speed_test_juwels \
+  sweep=speed_test_juwels \
   --fake-submit
 ```
-
-**Alternative (CLI, requires package installed):**
-
-```bash
-oellm-autoexp submit autoexp --config-dir config \
-  -o project=juwels_speed_test \
-  -o slurm=juwels_singularity \
-  -o backend=megatron_speed_test_juwels \
-  -o sweep=speed_test_juwels \
-  --fake
-```
-
-- Drop `--fake-submit` (or `--fake`) once ready for real submission
-- Use `slurm.sbatch.partition=$SLURM_PARTITION_DEBUG` to override the queue if needed
 
 ## Migration Guides
 
 ### autoexperiment ➜ oellm-autoexp
-- Swap `autoexperiment build|run|build_and_run` for `oellm-autoexp plan|submit|monitor`; add `--dry-run` to `submit` when you only want a preview.
+- Swap `autoexperiment build|run|build_and_run` for `oellm-autoexp plan|submit|monitor-session`; add `--dry-run` to `submit` when you only want a preview, or `--monitor` when you want to submit and watch in one shot.
 - Legacy single-file configs map into explicit `project`, `slurm`, `monitoring`, and `sweep` blocks. The bundled `config/autoexp.yaml` composes the same defaults automatically.
-- Job recovery data now lives under `.oellm-autoexp/`; keep sweep-driven names deterministic via `sweep.name_template` instead of hand-crafted `{name}` strings.
+- Job recovery data now lives under `.oellm-autoexp/`; keep sweep-driven names deterministic by way of `sweep.name_template` instead of hand-crafted `{name}` strings.
 
 | autoexperiment concept | oellm-autoexp equivalent | Notes |
 | --- | --- | --- |
@@ -274,7 +267,7 @@ sweep:
 ### oellm_pretrain ➜ oellm-autoexp
 - Replace the single `oellm-pretrain CONFIG.yaml` command with `oellm-autoexp submit CONFIG.yaml`; use `plan` for inspection and `monitor` to reattach later.
 - Split the old `sbatch_args` between `project` (naming, base output directory) and `slurm` (template path, launcher overrides, log root).
-- Keep Megatron flags under the `megatron` block; sweeps reference them via `sweep.axes`, letting the orchestrator validate every flag against Megatron-LM's parser.
+- Keep Megatron flags under the `megatron` block; sweeps reference them by way of `sweep.axes`, letting the orchestrator validate every flag against Megatron-LM's parser.
 
 | oellm_pretrain concept | oellm-autoexp location | Notes |
 | --- | --- | --- |
@@ -340,7 +333,7 @@ megatron:
 | `experiment_name` | `project.name` / `sweep.name_template` | Job naming + persisted state. |
 | `output_dir` | `project.base_output_dir` | Per-run directories derived from this root. |
 | `slurm.template` | `slurm.template_path` | SBATCH template reference. |
-| `launcher.cmd` | `slurm.launcher_cmd` | Prefix command (e.g., container runtime). |
+| `launcher.cmd` | `slurm.launcher_cmd` | Prefix command (for example, container runtime). |
 | `srun.opts` | `slurm.srun_opts` | Additional `srun` arguments. |
 | `env.*` | `slurm.env` | Environment variables exported for each job. |
 | Megatron Hydra group | `backend: megatron/...` + `megatron` block | Centralizes defaults and overrides. |

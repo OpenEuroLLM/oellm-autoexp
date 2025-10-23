@@ -1,16 +1,22 @@
 """Configuration dataclasses and registries for oellm_autoexp.
 
-These types are designed for use with compoconf so that new implementations can
-be registered declaratively from configuration files.
+These types are designed for use with compoconf so that new
+implementations can be registered declaratively from configuration
+files.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
-from compoconf import ConfigInterface, RegistrableConfigInterface, register_interface, NonStrictDataclass
+from compoconf import (
+    ConfigInterface,
+    RegistrableConfigInterface,
+    register_interface,
+    NonStrictDataclass,
+)
 
 # ---------------------------------------------------------------------------
 # Core interfaces
@@ -63,8 +69,8 @@ class ProjectConfig(ConfigInterface):
 
     name: str
     base_output_dir: Path
-    state_dir: Optional[Path] = None  # Deprecated, use monitoring_state_dir
-    monitoring_state_dir: Optional[Path] = None  # Stable, cross-run monitoring state
+    state_dir: Path | None = None  # Deprecated, use monitoring_state_dir
+    monitoring_state_dir: Path | None = None  # Stable, cross-run monitoring state
     resume: bool = True
 
 
@@ -78,7 +84,7 @@ class SweepConfig(ConfigInterface):
     """
 
     axes: Any
-    base_values: Dict[str, Any] = field(default_factory=dict)
+    base_values: dict[str, Any] = field(default_factory=dict)
     name_template: str = "{project}_{index}"
     store_sweep_json: bool = True
 
@@ -90,10 +96,10 @@ class SrunConfig(NonStrictDataclass):
 
 @dataclass(init=False)
 class SbatchConfig(NonStrictDataclass):
-    account: Optional[str] = None
-    nodes: Optional[int] = None
-    partition: Optional[str] = None
-    qos: Optional[str] = None
+    account: str | None = None
+    nodes: int | None = None
+    partition: str | None = None
+    qos: str | None = None
     time: str = "0-01:00:00"
 
 
@@ -101,10 +107,10 @@ class SbatchConfig(NonStrictDataclass):
 class ContainerConfig(ConfigInterface):
     """Container runtime configuration for reproducible execution."""
 
-    image: Optional[str] = None
+    image: str | None = None
     runtime: str = "singularity"
-    bind: List[str] = field(default_factory=list)
-    env: Dict[str, str] = field(default_factory=dict)
+    bind: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -122,11 +128,11 @@ class SlurmConfig(ConfigInterface):
     launcher_cmd: str = ""
     srun_opts: str = ""
     launcher_env_passthrough: bool = False
-    env: Dict[str, Any] = field(default_factory=dict)
+    env: dict[str, Any] = field(default_factory=dict)
     srun: SrunConfig = field(default_factory=SrunConfig)
     sbatch: SbatchConfig = field(default_factory=SbatchConfig)
-    sbatch_overrides: Dict[str, Any] = field(default_factory=dict)
-    sbatch_extra_directives: List[str] = field(default_factory=list)
+    sbatch_overrides: dict[str, Any] = field(default_factory=dict)
+    sbatch_extra_directives: list[str] = field(default_factory=list)
     test_only: bool = False
     client: SlurmClientInterface.cfgtype | None = None
 
@@ -137,15 +143,15 @@ class RestartPolicyConfig(ConfigInterface):
 
     mode: Literal["stall", "crash", "timeout", "success"]
     implementation: RestartPolicyInterface.cfgtype
-    max_retries: Optional[int] = None
+    max_retries: int | None = None
 
 
 @dataclass
 class SchedulerConfig(ConfigInterface):
     """Optional scheduler-level throttling and limits."""
 
-    max_jobs: Optional[int] = None
-    submit_rate_limit_seconds: Optional[float] = None
+    max_jobs: int | None = None
+    submit_rate_limit_seconds: float | None = None
 
 
 @dataclass
@@ -157,7 +163,7 @@ class RootConfig(ConfigInterface):
     slurm: SlurmConfig
     monitoring: MonitorInterface.cfgtype
     backend: BackendInterface.cfgtype
-    container: Optional[ContainerConfig] = None
-    restart_policies: List[RestartPolicyConfig] = field(default_factory=list)
+    container: ContainerConfig | None = None
+    restart_policies: list[RestartPolicyConfig] = field(default_factory=list)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)

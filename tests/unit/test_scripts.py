@@ -2,11 +2,12 @@ from pathlib import Path
 
 import argparse
 
-from scripts import run_megatron_container
+from scripts import run_autoexp_container
 
 
-def test_run_megatron_container_with_fake_submit(monkeypatch, tmp_path: Path):
-    """Test that fake submit runs inside container and doesn't execute sbatch on host."""
+def test_run_autoexp_container_with_fake_submit(monkeypatch, tmp_path: Path):
+    """Test that fake submit runs inside container and doesn't execute sbatch
+    on host."""
 
     def fake_subprocess_run(cmd, **kwargs):
         # Simulate container returning output without sbatch command (fake SLURM handles internally)
@@ -16,7 +17,7 @@ def test_run_megatron_container_with_fake_submit(monkeypatch, tmp_path: Path):
         result.stderr = ""
         return result
 
-    monkeypatch.setattr(run_megatron_container, "run_with_tee", fake_subprocess_run)
+    monkeypatch.setattr(run_autoexp_container, "run_with_tee", fake_subprocess_run)
 
     args = argparse.Namespace(
         image="image.sif",
@@ -26,18 +27,23 @@ def test_run_megatron_container_with_fake_submit(monkeypatch, tmp_path: Path):
         override=["project=demo"],
         no_run=False,
         fake_submit=True,
+        monitor_only=False,
+        no_monitor=True,
+        debug=False,
+        verbose=False,
         env=[],
         bind=[],
         ihelp=False,
     )
-    monkeypatch.setattr(run_megatron_container, "parse_args", lambda: args)
+    monkeypatch.setattr(run_autoexp_container, "parse_args", lambda: args)
 
     # Should not raise, and should handle fake SLURM gracefully
-    run_megatron_container.main()
+    run_autoexp_container.main()
 
 
-def test_run_megatron_container_parses_sbatch_command(monkeypatch, tmp_path: Path):
-    """Test that sbatch command is parsed from container output and executed on host."""
+def test_run_autoexp_container_parses_sbatch_command(monkeypatch, tmp_path: Path):
+    """Test that sbatch command is parsed from container output and executed on
+    host."""
 
     calls = []
 
@@ -60,7 +66,7 @@ def test_run_megatron_container_parses_sbatch_command(monkeypatch, tmp_path: Pat
 
         return result
 
-    monkeypatch.setattr(run_megatron_container, "run_with_tee", fake_subprocess_run)
+    monkeypatch.setattr(run_autoexp_container, "run_with_tee", fake_subprocess_run)
 
     args = argparse.Namespace(
         image="image.sif",
@@ -70,13 +76,17 @@ def test_run_megatron_container_parses_sbatch_command(monkeypatch, tmp_path: Pat
         override=["project=demo"],
         no_run=False,
         fake_submit=False,
+        monitor_only=False,
+        no_monitor=True,
+        debug=False,
+        verbose=False,
         env=[],
         bind=[],
         ihelp=False,
     )
-    monkeypatch.setattr(run_megatron_container, "parse_args", lambda: args)
+    monkeypatch.setattr(run_autoexp_container, "parse_args", lambda: args)
 
-    run_megatron_container.main()
+    run_autoexp_container.main()
 
     # Verify sbatch was called on the host
     assert len(calls) == 1
@@ -91,7 +101,7 @@ def test_build_container_command_includes_env_and_bind():
         env=["FOO=1", "BAR=2"],
         bind=["/data:/data"],
     )
-    cmd = run_megatron_container._build_container_command(args, ["python", "script.py"])
+    cmd = run_autoexp_container._build_container_command(args, ["python", "script.py"])
     assert "--bind" in cmd
     assert "--env" in cmd
     assert cmd[-1].endswith("script.py")

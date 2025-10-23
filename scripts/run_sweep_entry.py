@@ -26,7 +26,9 @@ from oellm_autoexp.utils.run import run_with_tee
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a sweep entry from sweep.json")
     parser.add_argument("--sweep", required=True, help="Path to sweep.json")
-    parser.add_argument("--index", type=int, required=True, help="Entry index (typically SLURM array id)")
+    parser.add_argument(
+        "--index", type=int, required=True, help="Entry index (typically SLURM array id)"
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print command without executing")
     return parser.parse_args()
 
@@ -76,7 +78,10 @@ def main() -> None:
 
     if args.dry_run:
         print("Command:", " ".join(argv))
-        print("Environment overrides:", {k: env[k] for k in env if k not in os.environ or os.environ[k] != env[k]})
+        print(
+            "Environment overrides:",
+            {k: env[k] for k in env if k not in os.environ or os.environ[k] != env[k]},
+        )
         return
 
     # Expand environment variables in arguments

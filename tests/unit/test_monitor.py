@@ -1,7 +1,7 @@
 import asyncio
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
 from oellm_autoexp.monitor.policy import AlwaysRestartPolicy, AlwaysRestartPolicyConfig
@@ -50,18 +50,20 @@ def test_slurm_log_monitor_detects_stall(tmp_path: Path) -> None:
     log_path = tmp_path / "job.log"
     log_path.write_text("initial\n")
 
-    job = MonitoredJob(job_id=1, name="demo", log_path=log_path, check_interval_seconds=1)
+    job = MonitoredJob(job_id="1", name="demo", log_path=log_path, check_interval_seconds=1)
 
     outcomes = asyncio.run(monitor.watch([job]))
-    assert outcomes[1].status == "active"
+    assert outcomes["1"].status == "active"
 
     time.sleep(1.1)
     outcomes = asyncio.run(monitor.watch([job]))
-    assert outcomes[1].status == "stall"
+    assert outcomes["1"].status == "stall"
 
 
 def test_monitor_controller_observe_restart(tmp_path: Path) -> None:
-    monitor = SlurmLogMonitor(SlurmLogMonitorConfig(inactivity_threshold_seconds=0, check_interval_seconds=1))
+    monitor = SlurmLogMonitor(
+        SlurmLogMonitorConfig(inactivity_threshold_seconds=0, check_interval_seconds=1)
+    )
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
     policies = {
         "stall": AlwaysRestartPolicy(AlwaysRestartPolicyConfig(max_retries=2)),
@@ -81,7 +83,7 @@ def test_monitor_controller_observe_restart(tmp_path: Path) -> None:
         JobRegistration(name="demo", script_path=script, log_path=log),
     )
 
-    async def _run() -> Dict[int, Any]:
+    async def _run() -> dict[str, Any]:
         await controller.observe_once()
         result = await controller.observe_once()
         return result.decisions
@@ -218,7 +220,9 @@ def test_output_file_emit_checkpoint_signal(tmp_path: Path) -> None:
     result = controller.observe_once_sync()
 
     assert any(action.action == "new_checkpoint" for action in result.actions)
-    checkpoint_action = next(action for action in result.actions if action.action == "new_checkpoint")
+    checkpoint_action = next(
+        action for action in result.actions if action.action == "new_checkpoint"
+    )
     assert checkpoint_action.metadata["checkpoint_path"] == "/tmp/check.ckpt"
     assert checkpoint_action.metadata["source"] == "output"
 

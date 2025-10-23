@@ -103,7 +103,7 @@ TEST: Manual scancel (should restart)
 **Symptom**: `classified as mode 'timeout' (slurm_state=None)`
 
 **Causes**:
-1. **Array mode mismatch**: Running with `--array-mode` but base config has `array: false` (or vice versa)
+1. **Array mode mismatch**: Running with `--array-mode` but base config has `array: false` (or the other way around)
 2. **Job completed too quickly**: Job finished before monitor could poll
 
 **Solution**: Ensure array mode flag matches config, or increase `train_iters`
