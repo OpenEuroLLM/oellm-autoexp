@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Mapping
+from collections.abc import Mapping
 
 
 class SbatchTemplateError(RuntimeError):
@@ -18,7 +18,9 @@ def render_template(template_text: str, replacements: Mapping[str, str]) -> str:
         raise SbatchTemplateError(f"Missing template variable: {missing}") from exc
 
 
-def render_template_file(template_path: Path, output_path: Path, replacements: Mapping[str, str]) -> str:
+def render_template_file(
+    template_path: Path, output_path: Path, replacements: Mapping[str, str]
+) -> str:
     template_text = template_path.read_text()
     rendered = render_template(template_text, replacements)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -27,4 +29,3 @@ def render_template_file(template_path: Path, output_path: Path, replacements: M
 
 
 __all__ = ["render_template", "render_template_file", "SbatchTemplateError"]
-

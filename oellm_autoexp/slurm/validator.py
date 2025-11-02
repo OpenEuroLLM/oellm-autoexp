@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable
+from collections.abc import Iterable
 
 
 class SlurmValidationError(RuntimeError):
     pass
 
 
-def validate_job_script(rendered: str, job_name: str, required_tokens: Iterable[str] | None = None) -> None:
+def validate_job_script(
+    rendered: str, job_name: str, required_tokens: Iterable[str] | None = None
+) -> None:
     if f"#SBATCH --job-name={job_name}" not in rendered:
         raise SlurmValidationError("Rendered script missing job name directive")
     if re.search(r"\{[A-Za-z0-9_]+\}", rendered):

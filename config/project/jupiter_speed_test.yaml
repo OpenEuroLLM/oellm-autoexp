@@ -1,0 +1,4 @@
+name: llama1p8b_speed
+base_output_dir: ${oc.concat:${oc.env:OUTPUT_DIR,"./output"}/,${.name}_${oc.timestring:}}
+state_dir: null
+resume: true

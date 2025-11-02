@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import product
-from typing import Any, Dict, Iterable, List, Mapping, Tuple
+from typing import Any
+from collections.abc import Iterable, Mapping
 
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
@@ -19,15 +20,15 @@ class SweepPoint:
     parameters: Mapping[str, Any]
 
 
-def expand_sweep(config: SweepConfig) -> List[SweepPoint]:
+def expand_sweep(config: SweepConfig) -> list[SweepPoint]:
     """Expand the sweep axes into concrete parameter sets."""
 
     cfg = OmegaConf.create(config.axes or {})
     base_values = dict(config.base_values)
 
-    points: List[SweepPoint] = []
-    for combination in _product_recursive(cfg):
-        flat: Dict[str, Any] = dict(base_values)
+    points: list[SweepPoint] = []
+    for idx, combination in enumerate(_product_recursive(cfg)):
+        flat: dict[str, Any] = dict(base_values)
         for key_path, value in combination.items():
             key = _flatten_key(key_path)
             flat[key] = value
@@ -44,16 +45,16 @@ def expand_sweep(config: SweepConfig) -> List[SweepPoint]:
     return points
 
 
-def _flatten_key(path: Tuple[str, ...]) -> str:
+def _flatten_key(path: tuple[str, ...]) -> str:
     return ".".join(path)
 
 
-def _product_recursive(cfg: Any) -> List[Dict[Tuple[str, ...], Any]]:
+def _product_recursive(cfg: Any) -> list[dict[tuple[str, ...], Any]]:
     if isinstance(cfg, (str, int, float, bool)):
         return [{tuple(): cfg}]
     if isinstance(cfg, ListConfig):
         if all(isinstance(item, DictConfig) and len(item) == 1 for item in cfg):
-            results: List[Dict[Tuple[str, ...], Any]] = []
+            results: list[dict[tuple[str, ...], Any]] = []
             for element in cfg:
                 key = _first_key(element)
                 value = _first_value(element)
@@ -64,7 +65,7 @@ def _product_recursive(cfg: Any) -> List[Dict[Tuple[str, ...], Any]]:
             return [{tuple(): item} for item in cfg]
         raise ValueError("List entries must be scalars or single-key mappings")
     if isinstance(cfg, DictConfig):
-        accum: List[List[Dict[Tuple[str, ...], Any]]] = []
+        accum: list[list[dict[tuple[str, ...], Any]]] = []
         for key, value in cfg.items():
             sub = [_add_key(key, sub) for sub in _product_recursive(value)]
             accum.append(sub)
@@ -75,7 +76,7 @@ def _product_recursive(cfg: Any) -> List[Dict[Tuple[str, ...], Any]]:
     raise ValueError(f"Unsupported sweep node type: {type(cfg)!r}")
 
 
-def _add_key(key: str, combination: Dict[Tuple[str, ...], Any]) -> Dict[Tuple[str, ...], Any]:
+def _add_key(key: str, combination: dict[tuple[str, ...], Any]) -> dict[tuple[str, ...], Any]:
     return {(key,) + path: value for path, value in combination.items()}
 
 
@@ -87,8 +88,8 @@ def _first_value(cfg: DictConfig) -> Any:
     return next(iter(cfg.values()))
 
 
-def _merge(nodes: Iterable[Dict[Tuple[str, ...], Any]]) -> Dict[Tuple[str, ...], Any]:
-    merged: Dict[Tuple[str, ...], Any] = {}
+def _merge(nodes: Iterable[dict[tuple[str, ...], Any]]) -> dict[tuple[str, ...], Any]:
+    merged: dict[tuple[str, ...], Any] = {}
     for node in nodes:
         merged.update(node)
     return merged

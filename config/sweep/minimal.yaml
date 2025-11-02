@@ -1,8 +1,5 @@
 axes:
   lr: [0.0001, 0.00005]
-  model.scale:
-    - small
-    - large
 base_values:
   max_steps: 1000
 name_template: "${project.name}_lr{lr}_{index}"

@@ -23,7 +23,9 @@ def _write_config(tmp_path: Path) -> Path:
         },
         "monitoring": {"implementation": {"class_name": "NullMonitor"}},
         "backend": {"implementation": {"class_name": "NullBackend"}},
-        "restart_policies": [{"mode": "success", "implementation": {"class_name": "NoRestartPolicy"}}],
+        "restart_policies": [
+            {"mode": "success", "implementation": {"class_name": "NoRestartPolicy"}}
+        ],
     }
 
     config_path = tmp_path / "config.yaml"
@@ -49,7 +51,8 @@ def test_cli_submit_fake(tmp_path: Path) -> None:
 
 
 def test_cli_submit_real_slurm_client(tmp_path: Path, monkeypatch) -> None:
-    """Test that SlurmClient can be used (though we mock the actual sbatch call)."""
+    """Test that SlurmClient can be used (though we mock the actual sbatch
+    call)."""
     config = _write_config(tmp_path)
     data = yaml.safe_load(config.read_text())
     data["slurm"]["client"]["class_name"] = "SlurmClient"

@@ -5,10 +5,21 @@ from __future__ import annotations
 
 import argparse
 import keyword
-import sys
 from pathlib import Path
 from textwrap import wrap
 from typing import Any
+
+
+import sys
+from unittest.mock import MagicMock
+
+# Mock all transformer_engine submodules before any imports
+te_mock = MagicMock()
+sys.modules["transformer_engine"] = te_mock
+sys.modules["transformer_engine.pytorch"] = MagicMock()
+sys.modules["transformer_engine.pytorch.distributed"] = MagicMock()
+sys.modules["transformer_engine.pytorch.tensor"] = MagicMock()
+
 
 from oellm_autoexp.backends.megatron_args import (  # noqa: E402
     MegatronArgMetadata,
@@ -70,7 +81,11 @@ def _type_repr(meta: MegatronArgMetadata, default: Any) -> tuple[str, set[str]]:
     if meta.choices:
         # If default is a string but choices are not (e.g., enum converted to string name),
         # use str type instead of Literal with incompatible types
-        if isinstance(default, str) and meta.choices and not all(isinstance(c, str) for c in meta.choices):
+        if (
+            isinstance(default, str)
+            and meta.choices
+            and not all(isinstance(c, str) for c in meta.choices)
+        ):
             type_repr = "str"
         else:
             literals = ", ".join(_literal_token(option) for option in meta.choices)
@@ -85,7 +100,9 @@ def _type_repr(meta: MegatronArgMetadata, default: Any) -> tuple[str, set[str]]:
     elif base_type is str:
         type_repr = "str"
     elif base_type is list or meta.nargs in {"+", "*"}:
-        elem_type = meta.element_type or (type(default[0]) if isinstance(default, list) and default else Any)
+        elem_type = meta.element_type or (
+            type(default[0]) if isinstance(default, list) and default else Any
+        )
         if elem_type is Any:
             imports.add("Any")
             elem_repr = "Any"
@@ -139,7 +156,6 @@ def generate_dataclass(output: Path, excluded: set[str], quiet: bool) -> None:
 
     fields: list[str] = []
     needs_field = False
-    imports: set[str] = {"dataclass"}
     typing_imports: set[str] = set()
 
     for action in parser._actions:  # noqa: SLF001

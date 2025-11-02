@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from functools import lru_cache
 from math import sqrt as _sqrt
-from typing import Mapping
+from collections.abc import Mapping
 
 from omegaconf import ListConfig, OmegaConf
 
@@ -105,7 +105,7 @@ def _sqrt_wrapper(value):
 
 
 def _slice(value, start, end):
-    return value[int(start) : int(end)]
+    return value[int(start) : int(end)]  # noqa
 
 
 def _mul_round_int(a, b, multiple):

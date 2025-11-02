@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any
+from collections.abc import Callable
 
 from oellm_autoexp.utils.run import run_with_tee
 
@@ -60,11 +61,12 @@ def check_start_condition(command: str) -> StartConditionResult:
 def wait_for_start_condition(
     command: str,
     *,
-    interval_seconds: Optional[int] = None,
-    logger: Optional[logging.Logger] = None,
+    interval_seconds: int | None = None,
+    logger: logging.Logger | None = None,
     sleep_fn: Callable[[float], None] = time.sleep,
 ) -> StartConditionResult:
-    """Block until ``command`` succeeds according to ``check_start_condition``."""
+    """Block until ``command`` succeeds according to
+    ``check_start_condition``."""
 
     if not command:
         return StartConditionResult(True, "", "", 0)
@@ -86,7 +88,7 @@ def wait_for_start_condition(
 
 
 def resolve_start_condition_interval(
-    job_interval_seconds: Optional[int],
+    job_interval_seconds: int | None,
     monitor_config: Any,
 ) -> int:
     """Determine an appropriate interval between start-condition retries."""

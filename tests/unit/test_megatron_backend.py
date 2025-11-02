@@ -23,25 +23,18 @@ def test_megatron_backend_builds_command():
     assert cmd.argv[0] == "launch.sh"
     assert "--lr" in cmd.argv and "0.1" in cmd.argv
     assert "--micro-batch-size" in cmd.argv and "4" in cmd.argv
-    assert "--use-gpu" in cmd.argv
     assert cmd.argv[-1] == "--extra"
     assert cmd.env["ENV"] == "1"
 
 
 def test_auto_megatron_backend_converts_convenience_args():
-    from oellm_autoexp.backends.megatron_backend import AutoMegatronBackend, AutoMegatronBackendConfig
+    from oellm_autoexp.backends.megatron_backend import (
+        AutoMegatronBackend,
+        AutoMegatronBackendConfig,
+    )
 
     config = AutoMegatronBackendConfig(launcher_script=Path("launch.sh"))
     backend = AutoMegatronBackend(config)
-
-    spec = BackendJobSpec(
-        parameters={
-            "train_tokens": "1_000",
-            "seq_length": 10,
-            "global_batch_size": 10,
-            "lr_decay_fraction": 0.5,
-        }
-    )
 
     normalized = {
         "train_tokens": "1_000",

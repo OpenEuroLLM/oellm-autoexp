@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List
+import re
 
 from oellm_autoexp.config.schema import RootConfig
 from .expander import SweepPoint
@@ -15,10 +15,10 @@ class JobPlan:
     """Normalized job description used by downstream modules."""
 
     name: str
-    parameters: Dict[str, str]
+    parameters: dict[str, str]
     output_dir: Path
     log_path: Path
-    output_paths: List[Path] = field(default_factory=list)
+    output_paths: list[Path] = field(default_factory=list)
     start_condition_cmd: str | None = None
     start_condition_interval_seconds: int | None = None
     termination_string: str | None = None
@@ -32,20 +32,28 @@ def build_job_plans(config: RootConfig, points: list[SweepPoint]) -> list[JobPla
 
     plans: list[JobPlan] = []
     for point in points:
-        context: Dict[str, str] = {
+        context: dict[str, str] = {
             "project": project_name,
             "index": str(point.index),
         }
-        context.update({key: str(value) for key, value in point.parameters.items()})
-
+        # TODO: Enable sweeping based on global naming scheme, not just within backend.
+        context.update(
+            {key.replace(".", "___"): str(value) for key, value in point.parameters.items()}
+        )
         job_name = config.sweep.name_template.format(**context)
+        t = config.sweep.name_template
+        m = re.search(r"\{([^\{]*)\.([^\}]*)\}", t)
+        while m:
+            t = t[: m.start()] + "{" + m.group(1) + "___" + m.group(2) + "}"
+            m = re.search(r"\{([^\{]*)\.([^\}]*)\}", t)
+
         output_dir = base_output / job_name
         log_template = config.monitoring.log_path_template
         format_context = {**context, "output_dir": str(output_dir), "name": job_name}
         log_path = Path(log_template.format(**format_context))
         monitoring_config = config.monitoring
         output_templates = getattr(monitoring_config, "output_paths", [])
-        resolved_outputs: List[Path] = []
+        resolved_outputs: list[Path] = []
         for template in output_templates:
             try:
                 resolved_outputs.append(Path(template.format(**format_context)))
@@ -66,7 +74,7 @@ def build_job_plans(config: RootConfig, points: list[SweepPoint]) -> list[JobPla
             None,
         )
 
-        filtered_params: Dict[str, str] = {}
+        filtered_params: dict[str, str] = {}
         for key, value in point.parameters.items():
             if value is None:
                 continue

@@ -1,7 +1,7 @@
 # Data inputs
 data_path:
-  - "/p/project1/projectnucleus/shared/data/cerebras-SlimPajama-627B/train/merged"
-data_cache_path: /p/project1/projectnucleus/shared/data/megatron_cache
+  - "/e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged"
+data_cache_path: /e/project1/projectnucleus/poeppel1/data
 split: "989,10,1"
 lr_warmup_iters: 0
 train_iters: 500

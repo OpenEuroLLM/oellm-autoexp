@@ -1,26 +1,26 @@
 import subprocess
 import sys
 import threading
-from typing import Sequence, Union, Optional
+from collections.abc import Sequence
 
 
 def run_with_tee(
-    args: Union[str, Sequence[str]],
+    args: str | Sequence[str],
     *,
     capture_output: bool = True,
     print_cmd: bool = True,
     check: bool = False,
-    timeout: Optional[float] = None,
-    input: Optional[Union[str, bytes]] = None,
-    text: Optional[bool] = None,  # None = follow Python default; True = text mode; False = bytes
-    encoding: Optional[str] = None,
-    errors: Optional[str] = None,
+    timeout: float | None = None,
+    input: str | bytes | None = None,
+    text: bool | None = None,  # None = follow Python default; True = text mode; False = bytes
+    encoding: str | None = None,
+    errors: str | None = None,
     env=None,
     cwd=None,
     shell: bool = False,
 ) -> subprocess.CompletedProcess:
-    """
-    Run a command like subprocess.run but:
+    """Run a command like subprocess.run but:
+
       - streams stdout/stderr live to this process' stdout/stderr (tee)
       - returns a CompletedProcess with captured stdout/stderr
       - supports check, timeout, input, text/encoding/errors
@@ -78,7 +78,11 @@ def run_with_tee(
     if input is not None:
         try:
             if is_text or isinstance(input, str):
-                data = input if isinstance(input, str) else input.decode(encoding or "utf-8", errors or "strict")
+                data = (
+                    input
+                    if isinstance(input, str)
+                    else input.decode(encoding or "utf-8", errors or "strict")
+                )
             else:
                 data = input if isinstance(input, (bytes, bytearray)) else str(input).encode()
             proc.stdin.write(data)  # type: ignore[union-attr]
@@ -106,7 +110,9 @@ def run_with_tee(
     captured_stderr = "".join(err_buf) if is_text else b"".join(err_buf)
 
     if check and retcode != 0:
-        raise subprocess.CalledProcessError(retcode, args, output=captured_stdout, stderr=captured_stderr)
+        raise subprocess.CalledProcessError(
+            retcode, args, output=captured_stdout, stderr=captured_stderr
+        )
 
     return subprocess.CompletedProcess(
         args=args,

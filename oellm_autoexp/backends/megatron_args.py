@@ -8,9 +8,10 @@ from argparse import _StoreConstAction, _StoreFalseAction, _StoreTrueAction
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Type
+from typing import Any
+from collections.abc import Iterable, Mapping
 
-_MegatronParser: Optional[argparse.ArgumentParser] = None
+_MegatronParser: argparse.ArgumentParser | None = None
 
 
 def _maybe_add_submodule_to_path() -> None:
@@ -44,16 +45,16 @@ def get_megatron_parser() -> argparse.ArgumentParser:
 
 @dataclass
 class MegatronArgMetadata:
-    arg_type: Type | None
+    arg_type: type | None
     default: Any
     help: str | None = None
     choices: tuple[Any, ...] | None = None
     nargs: str | int | None = None
-    element_type: Type | None = None
+    element_type: type | None = None
 
 
-def get_arg_metadata(parser: argparse.ArgumentParser) -> Dict[str, MegatronArgMetadata]:
-    metadata: Dict[str, MegatronArgMetadata] = {}
+def get_arg_metadata(parser: argparse.ArgumentParser) -> dict[str, MegatronArgMetadata]:
+    metadata: dict[str, MegatronArgMetadata] = {}
     for action in parser._actions:  # noqa: SLF001
         if not action.dest:
             continue
@@ -66,7 +67,7 @@ def get_arg_metadata(parser: argparse.ArgumentParser) -> Dict[str, MegatronArgMe
                 else:
                     normalized.append(option)
             choices = tuple(normalized)
-        element_type: Type | None = None
+        element_type: type | None = None
         if action.nargs in {"+", "*"}:
             element_type = action.type or str
         metadata[action.dest] = MegatronArgMetadata(
@@ -84,14 +85,15 @@ def extract_default_args(
     parser: argparse.ArgumentParser,
     exclude: Iterable[str] | None = None,
     overrides: Mapping[str, Any] | None = None,
-) -> Dict[str, Any]:
-    """Return a mapping of Megatron argument defaults with optional overrides."""
+) -> dict[str, Any]:
+    """Return a mapping of Megatron argument defaults with optional
+    overrides."""
 
     namespace = parser.parse_args(args=[])
     exclude_set = {item for item in (exclude or []) if item}
     overrides = dict(overrides or {})
 
-    defaults: Dict[str, Any] = {}
+    defaults: dict[str, Any] = {}
     for action in parser._actions:  # noqa: SLF001
         dest = getattr(action, "dest", None)
         if not dest or dest == "help" or dest in exclude_set:
@@ -107,9 +109,9 @@ def extract_default_args(
 
 
 def build_cmdline_args(
-    args: Dict[str, Any],
+    args: dict[str, Any],
     parser: argparse.ArgumentParser,
-    metadata: Dict[str, MegatronArgMetadata],
+    metadata: dict[str, MegatronArgMetadata],
 ) -> list[str]:
     coerced = _coerce_arguments(args, metadata)
     cli_args: list[str] = []
@@ -118,8 +120,10 @@ def build_cmdline_args(
     return cli_args
 
 
-def _coerce_arguments(args: Dict[str, Any], metadata: Dict[str, MegatronArgMetadata]) -> Dict[str, Any]:
-    coerced: Dict[str, Any] = {}
+def _coerce_arguments(
+    args: dict[str, Any], metadata: dict[str, MegatronArgMetadata]
+) -> dict[str, Any]:
+    coerced: dict[str, Any] = {}
     for key, value in args.items():
         if key not in metadata:
             continue
@@ -128,7 +132,7 @@ def _coerce_arguments(args: Dict[str, Any], metadata: Dict[str, MegatronArgMetad
     return coerced
 
 
-def _coerce_value(value: Any, target_type: Type | None) -> Any:
+def _coerce_value(value: Any, target_type: type | None) -> Any:
     if target_type is None or value is None:
         return value
     origin = getattr(target_type, "__origin__", None)
@@ -151,7 +155,7 @@ def _coerce_value(value: Any, target_type: Type | None) -> Any:
         return value
 
 
-def _extract_action_type(action: argparse.Action) -> Type | None:
+def _extract_action_type(action: argparse.Action) -> type | None:
     if isinstance(action, (_StoreTrueAction, _StoreFalseAction)):
         return bool
     if action.nargs in ("+", "*"):

@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+
+jobs:
+  lint:
+    name: Lint & Static Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Restore pip cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}-lint
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
+
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+          pip install pre-commit
+
+      - name: Run pre-commit
+        run: pre-commit run --all-files --show-diff-on-failure --color always
+
+  tests:
+    name: Tests (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: schema-only
+            python: '3.11'
+            extras: 'dev'
+            checkout_submodules: 'false'
+            schema_only: '1'
+            pytest_args: ''
+          - name: megatron-extras
+            python: '3.11'
+            extras: 'dev,megatron'
+            checkout_submodules: 'recursive'
+            schema_only: '1'
+            pytest_args: 'tests/unit/test_megatron_backend.py tests/integration/test_megatron_optional.py'
+      fail-fast: false
+
+    env:
+      OELLM_MEGATRON_SCHEMA_ONLY: ${{ matrix.schema_only }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: ${{ matrix.checkout_submodules }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Restore pip cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}-${{ matrix.name }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
+            submodules/Megatron-LM
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[${{ matrix.extras }}]"
+
+      - name: Run pytest
+        run: |
+          if [ -z "${{ matrix.pytest_args }}" ]; then
+            pytest
+          else
+            pytest ${{ matrix.pytest_args }}
+          fi

@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import pytest
 from omegaconf import OmegaConf
 
 from compoconf import parse_config

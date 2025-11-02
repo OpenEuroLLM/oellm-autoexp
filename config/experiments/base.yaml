@@ -1,10 +1,1 @@
 # @package _global_
-defaults:
-  - /project: default
-  - /backend: megatron
-  - /slurm: base
-  - /container: none
-  - /monitoring: default
-  - /sweep: none
-  - /restart: default
-  - /scheduler: default

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import subprocess
 import time
 from dataclasses import dataclass, field
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Pattern, Tuple
+from typing import Any
+from collections.abc import Iterable
+from re import Pattern
 
 from compoconf import ConfigInterface, register
 
@@ -23,10 +24,10 @@ class MonitoredJob:
     name: str
     log_path: Path
     check_interval_seconds: int
-    termination_string: Optional[str] = None
-    termination_command: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    output_paths: List[Path] = field(default_factory=list)
+    termination_string: str | None = None
+    termination_command: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    output_paths: list[Path] = field(default_factory=list)
 
 
 @dataclass
@@ -35,9 +36,9 @@ class MonitorOutcome:
 
     job_id: str
     status: str
-    last_update_seconds: Optional[float]
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    signals: List["MonitorSignal"] = field(default_factory=list)
+    last_update_seconds: float | None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    signals: list[MonitorSignal] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -46,9 +47,9 @@ class MonitorSignal:
 
     job_id: str
     name: str
-    action: Optional[str]
-    mode: Optional[str]
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    action: str | None
+    mode: str | None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class BaseMonitor(MonitorInterface):
@@ -59,7 +60,9 @@ class BaseMonitor(MonitorInterface):
     def __init__(self, config: ConfigInterface) -> None:
         self.config = config
 
-    async def watch(self, jobs: Iterable[MonitoredJob]) -> Dict[int, MonitorOutcome]:  # pragma: no cover
+    async def watch(
+        self, jobs: Iterable[MonitoredJob]
+    ) -> dict[str, MonitorOutcome]:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -69,13 +72,13 @@ class NullMonitorConfig(ConfigInterface):
 
     class_name: str = "NullMonitor"
     poll_interval_seconds: int = 600
-    inactivity_threshold_seconds: Optional[int] = 900
-    termination_string: Optional[str] = None
-    termination_command: Optional[str] = None
+    inactivity_threshold_seconds: int | None = 900
+    termination_string: str | None = None
+    termination_command: str | None = None
     log_path_template: str = "{output_dir}/slurm.out"
-    output_paths: List[str] = field(default_factory=list)
-    start_condition_cmd: Optional[str] = None
-    start_condition_interval_seconds: Optional[int] = None
+    output_paths: list[str] = field(default_factory=list)
+    start_condition_cmd: str | None = None
+    start_condition_interval_seconds: int | None = None
 
 
 @dataclass
@@ -84,11 +87,11 @@ class LogSignalConfig(ConfigInterface):
 
     name: str
     pattern: str
-    action: Optional[str] = None
-    mode: Optional[str] = None
+    action: str | None = None
+    mode: str | None = None
     pattern_type: str = "regex"
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    extract_groups: Dict[str, str | int] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    extract_groups: dict[str, str | int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.action and not self.mode:
@@ -101,7 +104,7 @@ class LogSignalConfig(ConfigInterface):
 class NullMonitor(BaseMonitor):
     config: NullMonitorConfig
 
-    async def watch(self, jobs: Iterable[MonitoredJob]) -> Dict[int, MonitorOutcome]:
+    async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
         return {}
 
 
@@ -110,10 +113,10 @@ class SlurmLogMonitorConfig(NullMonitorConfig):
     """Monitor that inspects SLURM logs for stalls or completion markers."""
 
     class_name: str = "SlurmLogMonitor"
-    inactivity_threshold_seconds: Optional[int] = 900
+    inactivity_threshold_seconds: int | None = 900
     check_interval_seconds: int = 300
-    log_signals: List[LogSignalConfig] = field(default_factory=list)
-    output_paths: List[str] = field(default_factory=list)
+    log_signals: list[LogSignalConfig] = field(default_factory=list)
+    output_paths: list[str] = field(default_factory=list)
 
 
 @register
@@ -124,14 +127,15 @@ class SlurmLogMonitor(BaseMonitor):
         super().__init__(config)
         if not config.log_signals:
             config.log_signals = default_log_signals()
-        self._snapshots: Dict[int, _JobSnapshot] = {}
-        self._compiled_rules: List[_CompiledLogSignal] = [
-            _CompiledLogSignal(rule=rule, pattern=_compile_pattern(rule)) for rule in config.log_signals
+        self._snapshots: dict[str, _JobSnapshot] = {}
+        self._compiled_rules: list[_CompiledLogSignal] = [
+            _CompiledLogSignal(rule=rule, pattern=_compile_pattern(rule))
+            for rule in config.log_signals
         ]
 
-    async def watch(self, jobs: Iterable[MonitoredJob]) -> Dict[int, MonitorOutcome]:
+    async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
         now = time.time()
-        observations: Dict[int, MonitorOutcome] = {}
+        observations: dict[str, MonitorOutcome] = {}
         for job in jobs:
             outcome = self._evaluate_job(job, now)
             observations[job.job_id] = outcome
@@ -140,9 +144,9 @@ class SlurmLogMonitor(BaseMonitor):
     def _evaluate_job(self, job: MonitoredJob, now: float) -> MonitorOutcome:
         log_path = job.log_path
         status = "pending"
-        last_update_seconds: Optional[float] = None
-        metadata: Dict[str, Any] = {}
-        signals: List[MonitorSignal] = []
+        last_update_seconds: float | None = None
+        metadata: dict[str, Any] = {}
+        signals: list[MonitorSignal] = []
         snapshot = self._snapshots.get(job.job_id)
         updated = False
 
@@ -252,15 +256,15 @@ class SlurmLogMonitor(BaseMonitor):
         previous: str,
         *,
         source: str,
-        source_path: Optional[Path] = None,
-    ) -> List[MonitorSignal]:
-        signals: List[MonitorSignal] = []
+        source_path: Path | None = None,
+    ) -> list[MonitorSignal]:
+        signals: list[MonitorSignal] = []
         if not self._compiled_rules:
             return signals
 
         new_text = content
         if previous and content.startswith(previous):
-            new_text = content[len(previous) :]
+            new_text = content[len(previous) :]  # noqa
 
         if not new_text:
             return signals
@@ -286,14 +290,14 @@ class SlurmLogMonitor(BaseMonitor):
                 )
         return signals
 
-    def _effective_threshold(self, job: MonitoredJob) -> Optional[int]:
+    def _effective_threshold(self, job: MonitoredJob) -> int | None:
         if job.metadata.get("inactivity_threshold_seconds") is not None:
             return job.metadata["inactivity_threshold_seconds"]
         return self.config.inactivity_threshold_seconds
 
-    def _check_termination(self, job: MonitoredJob) -> Dict[str, Any] | None:
+    def _check_termination(self, job: MonitoredJob) -> dict[str, Any] | None:
         log_path = job.log_path
-        result: Dict[str, Any] = {}
+        result: dict[str, Any] = {}
         termination_string = job.termination_string or self.config.termination_string
         if termination_string and log_path.exists():
             try:
@@ -322,7 +326,7 @@ class SlurmLogMonitor(BaseMonitor):
 class _JobSnapshot:
     log_content: str
     last_update: float
-    output_contents: Dict[Path, str] = field(default_factory=dict)
+    output_contents: dict[Path, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -338,8 +342,8 @@ def _compile_pattern(rule: LogSignalConfig) -> Pattern[str]:
     return re.compile(escaped, flags=re.MULTILINE)
 
 
-def _extract_metadata(match: re.Match[str], rule: LogSignalConfig) -> Dict[str, Any]:
-    extracted: Dict[str, Any] = {}
+def _extract_metadata(match: re.Match[str], rule: LogSignalConfig) -> dict[str, Any]:
+    extracted: dict[str, Any] = {}
     if not rule.extract_groups:
         return extracted
     for key, group in rule.extract_groups.items():
@@ -353,8 +357,9 @@ def _extract_metadata(match: re.Match[str], rule: LogSignalConfig) -> Dict[str, 
     return extracted
 
 
-def default_log_signals() -> List[LogSignalConfig]:
-    """Return generic monitoring signals covering errors and lifecycle events."""
+def default_log_signals() -> list[LogSignalConfig]:
+    """Return generic monitoring signals covering errors and lifecycle
+    events."""
 
     return [
         LogSignalConfig(
