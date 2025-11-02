@@ -87,7 +87,7 @@ class SweepConfig(ConfigInterface):
     base_values: dict[str, Any] = field(default_factory=dict)
     name_template: str = "{project}_{index}"
     store_sweep_json: bool = True
-    filter: Optional[str] = None
+    filter: str | None = None
 
 
 @dataclass(init=False)
