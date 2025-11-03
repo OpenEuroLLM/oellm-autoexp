@@ -19,9 +19,11 @@ echo ""
 
 # Submit a simple test job (without monitoring)
 echo "2. Submitting test job..."
+MANIFEST_PATH="output/scancel_test_plan.json"
 python scripts/run_autoexp_container.py \
   --verbose \
   --no-monitor \
+  --manifest "$MANIFEST_PATH" \
   --config-ref experiments/megatron_with_auto_restart \
   -C config \
   container=juwels \
@@ -58,12 +60,11 @@ fi
 echo "   Job submitted: $JOB_ID"
 echo ""
 
-# Start monitoring in background using --monitor-all
-echo "4. Starting monitoring process (--monitor-all)..."
-python scripts/run_autoexp.py \
-  --monitor-all \
+# Start monitoring in background using plan manifest
+echo "4. Starting monitoring process (manifest)..."
+python scripts/monitor_autoexp.py \
+  --manifest "$MANIFEST_PATH" \
   --verbose \
-  --monitoring-state-dir output/monitoring_state \
   > logs/monitor_output.log 2>&1 &
 
 MONITOR_PID=$!

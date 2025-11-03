@@ -1,23 +1,22 @@
 from pathlib import Path
 
 import argparse
+import pytest
 
 from scripts import run_autoexp_container
 
 
-def test_run_autoexp_container_with_fake_submit(monkeypatch, tmp_path: Path):
-    """Test that fake submit runs inside container and doesn't execute sbatch
-    on host."""
+def test_run_autoexp_container_submits_with_fake_slurm(monkeypatch, tmp_path: Path):
+    """Ensure the container wrapper executes plan inside the image and submit
+    on host with fake SLURM."""
 
-    def fake_subprocess_run(cmd, **kwargs):
-        # Simulate container returning output without sbatch command (fake SLURM handles internally)
-        result = argparse.Namespace()
-        result.returncode = 0
-        result.stdout = "Using fake SLURM client\nJob submitted internally"
-        result.stderr = ""
-        return result
+    calls: list[list[str]] = []
 
-    monkeypatch.setattr(run_autoexp_container, "run_with_tee", fake_subprocess_run)
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return argparse.Namespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(run_autoexp_container, "run_with_tee", fake_run)
 
     args = argparse.Namespace(
         image="image.sif",
@@ -26,72 +25,78 @@ def test_run_autoexp_container_with_fake_submit(monkeypatch, tmp_path: Path):
         config_dir=str(tmp_path),
         override=["project=demo"],
         dry_run=False,
-        fake_submit=True,
         monitor_only=False,
         no_monitor=True,
+        no_submit=False,
         debug=False,
         verbose=False,
         env=[],
         bind=[],
         ihelp=False,
+        use_fake_slurm=True,
+        manifest=tmp_path / "plan.json",
+        plan_id=None,
     )
     monkeypatch.setattr(run_autoexp_container, "parse_args", lambda: args)
 
-    # Should not raise, and should handle fake SLURM gracefully
-    run_autoexp_container.main()
+    with pytest.raises(SystemExit) as exc:
+        run_autoexp_container.main()
+
+    assert exc.value.code == 0
+
+    # Expect two calls: container plan + host submit
+    assert len(calls) == 2
+    assert calls[0][0] == args.apptainer_cmd
+    assert "plan_autoexp.py" in calls[0][-1]
+    assert calls[1][0] == "python"
+    assert calls[1][1].endswith("scripts/submit_autoexp.py")
+    assert "--use-fake-slurm" in calls[1]
+    assert "--no-monitor" in calls[1]
+    assert "--no-monitor" in calls[1]
 
 
-def test_run_autoexp_container_parses_sbatch_command(monkeypatch, tmp_path: Path):
-    """Test that sbatch command is parsed from container output and executed on
-    host."""
+def test_run_autoexp_container_monitor_only(monkeypatch, tmp_path: Path):
+    """Monitor-only mode should directly invoke the host monitor helper."""
 
-    calls = []
+    calls: list[list[str]] = []
 
-    def fake_subprocess_run(cmd, **kwargs):
-        result = argparse.Namespace()
-        result.returncode = 0
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return argparse.Namespace(returncode=0, stdout="", stderr="")
 
-        # First call: container generates scripts and outputs sbatch command
-        if "bash" in cmd and "-lc" in cmd:
-            result.stdout = "Successful, to execute, run: sbatch /path/to/script.sbatch"
-            result.stderr = ""
-        # Second call: sbatch execution on host
-        elif "sbatch" in cmd:
-            calls.append(("sbatch", cmd))
-            result.stdout = "Submitted batch job 12345"
-            result.stderr = ""
-        else:
-            result.stdout = ""
-            result.stderr = ""
-
-        return result
-
-    monkeypatch.setattr(run_autoexp_container, "run_with_tee", fake_subprocess_run)
+    monkeypatch.setattr(run_autoexp_container, "run_with_tee", fake_run)
 
     args = argparse.Namespace(
-        image="image.sif",
+        image=None,
         apptainer_cmd="apptainer",
         config_ref="autoexp",
         config_dir=str(tmp_path),
-        override=["project=demo"],
+        override=[],
         dry_run=False,
-        fake_submit=False,
-        monitor_only=False,
-        no_monitor=True,
+        monitor_only=True,
+        no_monitor=False,
+        no_submit=False,
         debug=False,
-        verbose=False,
+        verbose=True,
         env=[],
         bind=[],
         ihelp=False,
+        use_fake_slurm=False,
+        manifest=tmp_path / "plan.json",
+        plan_id=None,
     )
     monkeypatch.setattr(run_autoexp_container, "parse_args", lambda: args)
 
-    run_autoexp_container.main()
+    with pytest.raises(SystemExit) as exc:
+        run_autoexp_container.main()
 
-    # Verify sbatch was called on the host
+    assert exc.value.code == 0
+
     assert len(calls) == 1
-    assert calls[0][0] == "sbatch"
-    assert "sbatch" in calls[0][1]
+    assert calls[0][0] == "python"
+    assert calls[0][1].endswith("scripts/monitor_autoexp.py")
+    assert "--manifest" in calls[0]
+    assert "--verbose" in calls[0]
 
 
 def test_build_container_command_includes_env_and_bind():

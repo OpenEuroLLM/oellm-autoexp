@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, MISSING
 from pathlib import Path
 from typing import Any
 from collections.abc import Mapping, Sequence, Iterable
@@ -33,30 +33,30 @@ from oellm_autoexp.utils.tree_map import tree_map
 LOGGER = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ExecutionPlan:
-    config: RootConfig
-    runtime: RuntimeConfig
-    sweep_points: list[SweepPoint]
-    jobs: list[JobPlan]
+    config: RootConfig = field(default_factory=MISSING)
+    runtime: RuntimeConfig = field(default_factory=MISSING)
+    sweep_points: list[SweepPoint] = field(default_factory=list)
+    jobs: list[JobPlan] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class RenderedArtifacts:
-    job_scripts: list[str]
+    job_scripts: list[str] = field(default_factory=list)
     sweep_json: str | None = None
     array_script: str | None = None
     array_job_name: str | None = None
     sweep_entries: list[dict[str, Any]] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SubmissionResult:
     """Return value capturing submission side-effects."""
 
-    controller: MonitorController
-    state_store: MonitorStateStore
-    submitted_job_ids: list[str]
+    controller: MonitorController = field(default_factory=MISSING)
+    state_store: MonitorStateStore = field(default_factory=MISSING)
+    submitted_job_ids: list[str] = field(default_factory=list)
 
     @property
     def session_id(self) -> str:

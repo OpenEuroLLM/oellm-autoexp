@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, MISSING
 import logging
 from pathlib import Path
 from typing import Any
@@ -22,13 +22,13 @@ from oellm_autoexp.utils.start_condition import (
 LOGGER = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class JobRegistration:
     """Information required to resubmit and observe a job."""
 
-    name: str
-    script_path: str
-    log_path: str
+    name: str = field(default_factory=MISSING)
+    script_path: str = field(default_factory=MISSING)
+    log_path: str = field(default_factory=MISSING)
     metadata: dict[str, Any] = field(default_factory=dict)
     termination_string: str | None = None
     termination_command: str | None = None
@@ -38,10 +38,10 @@ class JobRegistration:
     start_condition_interval_seconds: int | None = None
 
 
-@dataclass
+@dataclass(kw_only=True)
 class JobRuntimeState:
-    job_id: str
-    registration: JobRegistration
+    job_id: str = field(default_factory=MISSING)
+    registration: JobRegistration = field(default_factory=MISSING)
     attempts: int = 1
     last_outcome: MonitorOutcome | None = None
     last_slurm_state: str | None = None
@@ -51,18 +51,18 @@ class JobRuntimeState:
         return self.registration.name
 
 
-@dataclass
+@dataclass(kw_only=True)
 class MonitorAction:
     """Action triggered by monitor signal processing."""
 
-    job_id: str
-    job_name: str
-    action: str
-    signal: str
+    job_id: str = field(default_factory=MISSING)
+    job_name: str = field(default_factory=MISSING)
+    action: str = field(default_factory=MISSING)
+    signal: str = field(default_factory=MISSING)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class MonitorCycleResult:
     """Aggregated outcome of a single monitoring iteration."""
 

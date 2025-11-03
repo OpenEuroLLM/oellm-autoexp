@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, MISSING
 from pathlib import Path
 
 from . import schema
@@ -12,15 +12,15 @@ from ..monitor.watcher import BaseMonitor
 from ..slurm.client import BaseSlurmClient, FakeSlurmClientConfig
 
 
-@dataclass
+@dataclass(kw_only=True)
 class RuntimeConfig:
     """Holds instantiated components alongside original config."""
 
-    root: schema.RootConfig
-    backend: BaseBackend
-    monitor: BaseMonitor
-    restart_policies: dict[str, BaseRestartPolicy]
-    slurm_client: BaseSlurmClient
+    root: schema.RootConfig = field(default_factory=MISSING)
+    backend: BaseBackend = field(default_factory=MISSING)
+    monitor: BaseMonitor = field(default_factory=MISSING)
+    restart_policies: dict[str, BaseRestartPolicy] = field(default_factory=dict)
+    slurm_client: BaseSlurmClient = field(default_factory=MISSING)
 
     @property
     def state_dir(self) -> Path:
@@ -29,7 +29,11 @@ class RuntimeConfig:
         This is used for monitoring sessions and should NOT include
         timestamps so that --monitor-all can find sessions across runs.
         """
-        return self.root.project.monitoring_state_dir or "./monitoring_state"
+        return (
+            self.root.project.monitoring_state_dir
+            or self.root.project.state_dir
+            or "./monitoring_state"
+        )
 
 
 def evaluate(root: schema.RootConfig) -> RuntimeConfig:

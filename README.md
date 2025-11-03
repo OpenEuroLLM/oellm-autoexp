@@ -28,24 +28,43 @@ Hydra overrides (`key=value`) let you combine these building blocks per run.
 ### 1. Single Megatron Job Without SLURM
 
 ```bash
-# Render scripts + sweep metadata without submitting
-python scripts/run_autoexp.py project=default --dry-run
+# One-shot plan+submit+monitor (writes manifest to output/local_plan.json)
+python scripts/run_autoexp.py --manifest output/local_plan.json project=default
 
-# Inspect the launch command for the first sweep entry
+# Preview without submission
+python scripts/run_autoexp.py --manifest output/local_plan.json project=default --dry-run
+
+# Submit but exit immediately (monitor later)
+python scripts/run_autoexp.py --manifest output/local_plan.json project=default --no-monitor
+
+# Resume monitoring later
+python scripts/monitor_autoexp.py --manifest output/local_plan.json
+
+# (Optional) Manual plan/submit flow for advanced control
+python scripts/plan_autoexp.py --manifest output/local_plan.json project=default
+python scripts/submit_autoexp.py --manifest output/local_plan.json --use-fake-slurm --dry-run
+
+# 3) Inspect the rendered launch command
 python scripts/run_sweep_entry.py --sweep output/sweep.json --index 0 --dry-run
 
-# Execute locally (no SLURM)
+# 4) Execute locally (no SLURM)
 python scripts/run_sweep_entry.py --sweep output/sweep.json --index 0
 ```
 
-`scripts/run_sweep_entry.py` rehydrates the stored command, exports the configured environment, and can be embedded inside notebooks or custom launchers.
+`scripts/run_sweep_entry.py` rehydrates the stored command, exports the configured environment, and can be embedded inside notebooks or custom launchers. The manifest produced in step 1 keeps the resolved configuration, scripts, and monitoring metadata for later reuse.
 
 ### 2. Megatron Training (Direct Python versus Container)
 
 **Direct:**
 
 ```bash
-python scripts/run_autoexp.py -C config --config-ref experiments/megatron_jupiter_speed_test container=none
+# Plan, submit, and monitor in one command
+python scripts/run_autoexp.py \
+  -C config \
+  --config-ref experiments/megatron_jupiter_speed_test \
+  --manifest output/megatron_plan.json \
+  container=none \
+  --use-fake-slurm
 ```
 
 The in-memory SLURM client mimics submission/monitoring without touching a real scheduler. Drop `--use-fake-slurm` once a real client is configured under `config/slurm`.
@@ -61,23 +80,40 @@ The in-memory SLURM client mimics submission/monitoring without touching a real 
 # runtime: singularity
 
 # Run with auto-detected container from config (recommended)
-python scripts/run_autoexp_container.py --config-ref experiments/megatron_jupiter_speed_test container=none
+python scripts/run_autoexp_container.py \
+  --config-ref experiments/megatron_jupiter_speed_test \
+  --manifest output/jupiter_plan.json \
+  container=none
 
 # Or explicitly specify container image
-python scripts/run_autoexp_container.py --image ./artifacts/MegatronTraining_$(uname -m).sif \
-    --config-ref autoexp -C config project=juwels
+python scripts/run_autoexp_container.py \
+    --image ./artifacts/MegatronTraining_$(uname -m).sif \
+    --config-ref autoexp \
+    -C config \
+    --manifest output/juwels_plan.json \
+    project=juwels
 
-# Dry-run (render scripts only)
-python scripts/run_autoexp_container.py --config-ref autoexp -C config project=juwels_speed_test --dry-run
+# Dry-run (render manifest only)
+python scripts/run_autoexp_container.py \
+  --config-ref autoexp \
+  -C config \
+  --manifest output/juwels_plan.json \
+  --no-submit \
+  project=juwels_speed_test
 
 # Execute with fake SLURM client
-python scripts/run_autoexp_container.py --config-ref autoexp -C config project=juwels_speed_test --fake-submit
+python scripts/run_autoexp_container.py \
+  --config-ref autoexp \
+  -C config \
+  --manifest output/juwels_plan.json \
+  --use-fake-slurm \
+  project=juwels_speed_test
 ```
 
 **Key Points:**
-- `run_autoexp_container.py` is the **unified entry point** for all workflows (needs omegaconf / compoconf / hydra-core / yaml to be installed)
-- Automatically detects container from config or runs directly on host if no container configured
-- If `container: null` or `container: {}`, runs directly without container
+- `run_autoexp_container.py` plans inside the container (render scripts + manifest) and submits/monitors on the host.
+- Pass `--manifest` to control storage location (defaults to `output/autoexp_plan.json`).
+- Use `--no-submit` to render only, `--no-monitor` to submit and exit immediately, or `--monitor-only` to attach to an existing manifest.
 - Plan generation happens in container (needs Megatron), SLURM submission on host (needs sbatch)
 - Setting `slurm.launcher_env_passthrough: true` forwards `slurm.env` keys into the launcher by way of `--env VAR=$VAR`
 
@@ -89,17 +125,20 @@ python scripts/run_autoexp_container.py --config-ref autoexp -C config project=j
 ```bash
 # Submit with auto-detected container and monitoring
 python scripts/run_autoexp_container.py --config-ref autoexp -C config \
+  --manifest output/juwels_plan.json \
   project=juwels slurm=juwels container=juwels
 
 # Submit without monitoring (monitor separately later)
 python scripts/run_autoexp_container.py --config-ref autoexp -C config \
-  project=juwels slurm=juwels container=juwels --no-monitor
+  --manifest output/juwels_plan.json \
+  --no-monitor \
+  project=juwels slurm=juwels container=juwels
 
-# Resume monitoring later from session file (recommended)
-python scripts/run_autoexp.py --monitor-all --monitoring-state-dir output/monitoring_state
+# Resume monitoring later (reads the manifest and session state)
+python scripts/monitor_autoexp.py --manifest output/juwels_plan.json
 
-# Or monitor specific session by ID
-python scripts/run_autoexp.py --monitor-session <session_id> --monitoring-state-dir output/monitoring_state
+# Inspect available sessions
+python scripts/manage_monitoring.py list --monitoring-state-dir output/monitoring_state
 ```
 
 **Alternative (direct CLI, requires oellm-autoexp installed):**
@@ -392,8 +431,8 @@ megatron:
 - Monitoring workflows:
   - **List sessions**: `python scripts/manage_monitoring.py --monitoring-state-dir output/monitoring_state list`
   - **Show session details**: `python scripts/manage_monitoring.py --monitoring-state-dir output/monitoring_state show <session_id>`
-  - **Monitor specific session**: `python scripts/run_autoexp.py --monitor-session <session_id> --monitoring-state-dir output/monitoring_state`
-  - **Monitor all sessions**: `python scripts/run_autoexp.py --monitor-all --monitoring-state-dir output/monitoring_state`
+    - The session JSON now records `manifest_path`, making it easy to resume monitoring.
+  - **Monitor from manifest**: `python scripts/monitor_autoexp.py --manifest output/<plan>.json`
   - **Remove session**: `python scripts/manage_monitoring.py --monitoring-state-dir output/monitoring_state remove <session_id> [--force]`
 - Session files persist even after jobs complete, enabling inspection and re-monitoring
 - The visible location (`output/monitoring_state/`) makes sessions easy to discover and manage
@@ -401,7 +440,7 @@ megatron:
 ## Diagnostics & Testing
 
 - `pytest` runs unit + integration suites (fake SLURM, Megatron parser, sweep expansion, monitoring).
-- `python scripts/run_autoexp.py ... --dry-run` previews scripts, sweep metadata, and array scripts without launching jobs.
+- `python scripts/submit_autoexp.py --manifest output/autoexp_plan.json --dry-run` previews scripts, sweep metadata, and array scripts without launching jobs.
 - `oellm-autoexp monitor ... --dry-run --json-output` renders planned actions for log signals while keeping side effects disabled.
 
 ## Containers & Validation

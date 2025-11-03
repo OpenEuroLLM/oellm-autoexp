@@ -31,7 +31,7 @@ Usage:
 ------
     # Enable schema-only mode (e.g., on login nodes)
     export OELLM_MEGATRON_SCHEMA_ONLY=1
-    python scripts/run_autoexp.py ...
+    python scripts/submit_autoexp.py --manifest path/to/plan.json ...
 
     # Or set in Python before importing
     import os

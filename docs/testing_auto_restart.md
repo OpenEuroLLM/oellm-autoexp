@@ -122,7 +122,7 @@ Key parameters:
 
 ### Success Example
 ```
-[10:30:15] ℹ Running: python scripts/run_autoexp.py ...
+[10:30:15] ℹ Running: python scripts/submit_autoexp.py ...
 [10:30:20] ✓ Submitted job 12345
 [10:30:25] ℹ Waiting for job 12345 to reach state RUNNING...
 [10:30:40] ✓ Job 12345 reached state RUNNING
@@ -153,7 +153,7 @@ Key parameters:
 ### No restart detected
 **Cause:** Monitor loop not running
 **Solution:**
-- The test script runs `run_autoexp.py` without `--no-monitor`; ensure that flag wasn't provided
+- The test script runs `submit_autoexp.py` without `--no-monitor`; ensure that flag wasn't provided
 - If you submitted separately, start `oellm-autoexp monitor-session --session-id <id>` for the recorded session
 - Verify the monitoring config is not `NullMonitor`
 
@@ -184,9 +184,14 @@ If the automated script has issues, you can test manually:
 
 ### Manual Test 1: Basic Restart
 ```bash
-# Terminal 1: Submit and monitor
-python scripts/run_autoexp.py \
-  --config-name experiments/megatron_with_auto_restart
+# Terminal 1: Plan, submit, and monitor
+python scripts/plan_autoexp.py \
+  --config-ref experiments/megatron_with_auto_restart \
+  --manifest output/manual_plan.json
+
+# In the same terminal (continues monitoring)
+python scripts/submit_autoexp.py \
+  --manifest output/manual_plan.json
 
 # Terminal 2: Cancel the job
 squeue -u $USER  # Get job ID
@@ -197,9 +202,13 @@ scancel <job_id>
 
 ### Manual Test 2: Inject Error Pattern
 ```bash
-# Terminal 1: Submit and monitor
-python scripts/run_autoexp.py \
-  --config-name experiments/megatron_with_auto_restart
+# Terminal 1: Plan, submit, and monitor
+python scripts/plan_autoexp.py \
+  --config-ref experiments/megatron_with_auto_restart \
+  --manifest output/manual_plan.json
+
+python scripts/submit_autoexp.py \
+  --manifest output/manual_plan.json
 
 # Terminal 2: Inject error and watch
 squeue -u $USER  # Get job ID

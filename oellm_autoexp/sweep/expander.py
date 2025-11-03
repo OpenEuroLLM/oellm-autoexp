@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, MISSING
 from itertools import product
 from typing import Any
 from collections.abc import Iterable, Mapping
@@ -16,7 +16,7 @@ from oellm_autoexp.config.schema import SweepConfig
 class SweepPoint:
     """Represents a single expanded sweep entry."""
 
-    index: int
+    index: int = field(default_factory=MISSING)
     parameters: Mapping[str, Any]
 
 

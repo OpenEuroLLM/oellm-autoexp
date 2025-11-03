@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field, MISSING
 from pathlib import Path
 from typing import Any
 from collections.abc import Iterable
+
+from compoconf import asdict
 
 
 def _serialize_for_json(obj: Any) -> Any:
@@ -30,12 +32,12 @@ def _serialize_for_json(obj: Any) -> Any:
             return None
 
 
-@dataclass
+@dataclass(kw_only=True)
 class StoredJob:
-    job_id: str
-    name: str
-    script_path: str
-    log_path: str
+    job_id: str = field(default_factory=MISSING)
+    name: str = field(default_factory=MISSING)
+    script_path: str = field(default_factory=MISSING)
+    log_path: str = field(default_factory=MISSING)
     attempts: int = 1
     metadata: dict[str, Any] = field(default_factory=dict)
     output_paths: list[str] = field(default_factory=list)

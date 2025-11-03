@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, MISSING
 import re
 from typing import Any
 from collections.abc import Iterable
@@ -20,22 +20,22 @@ from oellm_autoexp.utils.run import run_with_tee
 class MonitoredJob:
     """Metadata describing an active job to be inspected."""
 
-    job_id: str
-    name: str
-    log_path: str
-    check_interval_seconds: int
+    job_id: str = field(default_factory=MISSING)
+    name: str = field(default_factory=MISSING)
+    log_path: str = field(default_factory=MISSING)
+    check_interval_seconds: int = field(default_factory=MISSING)
     termination_string: str | None = None
     termination_command: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     output_paths: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class MonitorOutcome:
     """Snapshot emitted by a monitor iteration."""
 
-    job_id: str
-    status: str
+    job_id: str = field(default_factory=MISSING)
+    status: str = field(default_factory=MISSING)
     last_update_seconds: float | None
     metadata: dict[str, Any] = field(default_factory=dict)
     signals: list[MonitorSignal] = field(default_factory=list)
@@ -45,10 +45,10 @@ class MonitorOutcome:
 class MonitorSignal:
     """Event detected by the monitor while inspecting a job."""
 
-    job_id: str
-    name: str
-    action: str | None
-    mode: str | None
+    job_id: str = field(default_factory=MISSING)
+    name: str = field(default_factory=MISSING)
+    action: str | None = None
+    mode: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -66,7 +66,7 @@ class BaseMonitor(MonitorInterface):
         raise NotImplementedError
 
 
-@dataclass
+@dataclass(kw_only=True)
 class NullMonitorConfig(ConfigInterface):
     """Monitor configuration that performs no observation."""
 
@@ -81,10 +81,11 @@ class NullMonitorConfig(ConfigInterface):
     start_condition_interval_seconds: int | None = None
 
 
-@dataclass
+@dataclass(kw_only=True)
 class LogSignalConfig(ConfigInterface):
     """Configuration describing a log-derived signal."""
 
+    class_name: str = "LogSignal"
     name: str
     pattern: str
     action: str | None = None
@@ -108,7 +109,7 @@ class NullMonitor(BaseMonitor):
         return {}
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SlurmLogMonitorConfig(NullMonitorConfig):
     """Monitor that inspects SLURM logs for stalls or completion markers."""
 
@@ -322,7 +323,7 @@ class SlurmLogMonitor(BaseMonitor):
         return None
 
 
-@dataclass
+@dataclass(kw_only=True)
 class _JobSnapshot:
     log_content: str
     last_update: float

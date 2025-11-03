@@ -5,7 +5,7 @@ from __future__ import annotations
 import shlex
 import time
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, MISSING
 
 from compoconf import ConfigInterface, register
 
@@ -13,14 +13,14 @@ from oellm_autoexp.config.schema import SlurmClientInterface, SlurmConfig
 from oellm_autoexp.utils.shell import run_command
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SlurmJob:
     """Metadata tracked for submitted SLURM jobs."""
 
-    job_id: str
-    name: str
-    script_path: str
-    log_path: str
+    job_id: str = field(default_factory=MISSING)
+    name: str = field(default_factory=MISSING)
+    script_path: str = field(default_factory=MISSING)
+    log_path: str = field(default_factory=MISSING)
     state: str = "PENDING"
     return_code: int | None = None
     submitted_at: float = field(default_factory=time.time)
@@ -75,15 +75,15 @@ class BaseSlurmClient(SlurmClientInterface):
         return self._slurm_config
 
 
-@dataclass
+@dataclass(kw_only=True)
 class BaseSlurmClientConfig(ConfigInterface):
     """Shared configuration fields for SLURM clients."""
 
-    class_name: str
+    class_name: str = "BaseSlurmClient"
     persist_artifacts: bool = False
 
 
-@dataclass
+@dataclass(kw_only=True)
 class FakeSlurmClientConfig(BaseSlurmClientConfig):
     class_name: str = "FakeSlurmClient"
     persist_artifacts: bool = False
@@ -192,7 +192,7 @@ class FakeSlurmClient(BaseSlurmClient):
         return job_id
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SlurmClientConfig(BaseSlurmClientConfig):
     class_name: str = "SlurmClient"
 

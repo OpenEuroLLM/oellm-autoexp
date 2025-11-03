@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, MISSING
 from pathlib import Path
 import re
 
@@ -10,14 +10,14 @@ from oellm_autoexp.config.schema import RootConfig
 from .expander import SweepPoint
 
 
-@dataclass
+@dataclass(kw_only=True)
 class JobPlan:
     """Normalized job description used by downstream modules."""
 
-    name: str
-    parameters: dict[str, str]
-    output_dir: str
-    log_path: str
+    name: str = field(default_factory=MISSING)
+    parameters: dict[str, str] = field(default_factory=MISSING)
+    output_dir: str = field(default_factory=MISSING)
+    log_path: str = field(default_factory=MISSING)
     output_paths: list[str] = field(default_factory=list)
     start_condition_cmd: str | None = None
     start_condition_interval_seconds: int | None = None

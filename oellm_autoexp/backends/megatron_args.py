@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 from argparse import _StoreConstAction, _StoreFalseAction, _StoreTrueAction
-from dataclasses import dataclass
+from dataclasses import dataclass, field, MISSING
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -43,10 +43,10 @@ def get_megatron_parser() -> argparse.ArgumentParser:
     return _MegatronParser
 
 
-@dataclass
+@dataclass(kw_only=True)
 class MegatronArgMetadata:
-    arg_type: type | None
-    default: Any
+    arg_type: type | None = None
+    default: Any = field(default_factory=MISSING)
     help: str | None = None
     choices: tuple[Any, ...] | None = None
     nargs: str | int | None = None
@@ -71,8 +71,8 @@ def get_arg_metadata(parser: argparse.ArgumentParser) -> dict[str, MegatronArgMe
         if action.nargs in {"+", "*"}:
             element_type = action.type or str
         metadata[action.dest] = MegatronArgMetadata(
-            _extract_action_type(action),
-            action.default,
+            arg_type=_extract_action_type(action),
+            default=action.default,
             help=action.help or None,
             choices=choices,
             nargs=action.nargs,
