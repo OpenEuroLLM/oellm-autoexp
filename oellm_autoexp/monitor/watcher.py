@@ -8,6 +8,7 @@ import re
 from typing import Any
 from collections.abc import Iterable
 from re import Pattern
+from pathlib import Path
 
 from compoconf import ConfigInterface, register
 
@@ -141,7 +142,7 @@ class SlurmLogMonitor(BaseMonitor):
         return observations
 
     def _evaluate_job(self, job: MonitoredJob, now: float) -> MonitorOutcome:
-        log_path = job.log_path
+        log_path = Path(job.log_path)
         status = "pending"
         last_update_seconds: float | None = None
         metadata: dict[str, Any] = {}
@@ -201,7 +202,7 @@ class SlurmLogMonitor(BaseMonitor):
         output_contents = dict(snapshot.output_contents) if snapshot else {}
         for output_path in job.output_paths:
             try:
-                content = output_path.read_text(errors="ignore")
+                content = Path(output_path).read_text(errors="ignore")
             except OSError:
                 content = ""
             previous = output_contents.get(output_path, "")
@@ -295,7 +296,7 @@ class SlurmLogMonitor(BaseMonitor):
         return self.config.inactivity_threshold_seconds
 
     def _check_termination(self, job: MonitoredJob) -> dict[str, Any] | None:
-        log_path = job.log_path
+        log_path = Path(job.log_path)
         result: dict[str, Any] = {}
         termination_string = job.termination_string or self.config.termination_string
         if termination_string and log_path.exists():

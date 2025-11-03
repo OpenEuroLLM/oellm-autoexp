@@ -11,7 +11,7 @@ def test_load_config(tmp_path: Path) -> None:
     cfg = load_config(config_path)
 
     assert cfg.project.name == "demo"
-    assert cfg.project.base_output_dir == Path("./outputs")
+    assert Path(cfg.project.base_output_dir) == Path("./outputs")
     assert cfg.monitoring.class_name == "NullMonitor"
     assert cfg.backend.class_name == "NullBackend"
     assert cfg.slurm.launcher_cmd == ""
@@ -19,7 +19,7 @@ def test_load_config(tmp_path: Path) -> None:
     assert cfg.slurm.srun_opts == ""
     assert cfg.slurm.client.class_name == "FakeSlurmClient"
     assert cfg.restart_policies[0].mode == "success"
-    assert cfg.project.monitoring_state_dir == Path("./outputs") / "monitoring_state"
+    assert Path(cfg.project.monitoring_state_dir) == Path("./outputs") / "monitoring_state"
 
 
 def test_load_hydra_config(monkeypatch) -> None:

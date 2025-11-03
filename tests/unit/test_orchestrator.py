@@ -87,8 +87,8 @@ def test_build_execution_plan_and_render(tmp_path: Path) -> None:
     assert len(plan.jobs) == 2
     assert len(artifacts.job_scripts) == 2
     for script in artifacts.job_scripts:
-        assert script.exists()
-        content = script.read_text()
+        assert Path(script).exists()
+        content = Path(script).read_text()
         assert "#SBATCH --job-name=" in content
 
 
@@ -141,7 +141,7 @@ restart_policies:
     artifacts = render_scripts(plan)
 
     script_path = artifacts.job_scripts[0]
-    content = script_path.read_text()
+    content = Path(script_path).read_text()
     assert "#SBATCH --nodes=2" in content
     assert "#SBATCH --constraint=volta" in content
     assert "export ENV=1" in content
@@ -225,9 +225,9 @@ restart_policies: []
     artifacts = render_scripts(plan)
 
     assert artifacts.array_script is not None
-    assert artifacts.array_script.exists()
+    assert Path(artifacts.array_script).exists()
     assert artifacts.sweep_json is not None
-    payload = json.loads(artifacts.sweep_json.read_text())
+    payload = json.loads(Path(artifacts.sweep_json).read_text())
     assert payload["project"] == "demo"
     assert len(payload["jobs"]) == 2
     assert payload["jobs"][0]["launch"]["argv"]
@@ -315,7 +315,7 @@ def test_submit_jobs_persists_and_restores(tmp_path: Path) -> None:
     controller = submission.controller
     assert len(submission.submitted_job_ids) == len(plan.jobs)
 
-    state_file = plan.runtime.monitoring_state_dir / "monitor" / "state.json"
+    state_file = plan.runtime.state_dir / "monitor" / "state.json"
     assert state_file.exists()
     data = json.loads(state_file.read_text())
     assert len(data.get("jobs", [])) == len(plan.jobs)

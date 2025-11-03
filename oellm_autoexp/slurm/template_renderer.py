@@ -1,6 +1,7 @@
 """Utilities to render SBATCH scripts."""
 
 from __future__ import annotations
+from pathlib import Path
 
 from collections.abc import Mapping
 
@@ -20,7 +21,7 @@ def render_template(template_text: str, replacements: Mapping[str, str]) -> str:
 def render_template_file(
     template_path: str, output_path: str, replacements: Mapping[str, str]
 ) -> str:
-    template_text = template_path.read_text()
+    template_text = Path(template_path).read_text()
     rendered = render_template(template_text, replacements)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(rendered)
