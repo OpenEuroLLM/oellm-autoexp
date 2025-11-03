@@ -8,7 +8,6 @@ files.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Literal
 
 from compoconf import (
@@ -68,9 +67,8 @@ class ProjectConfig(ConfigInterface):
     """
 
     name: str
-    base_output_dir: Path
-    state_dir: Path | None = None  # Deprecated, use monitoring_state_dir
-    monitoring_state_dir: Path | None = None  # Stable, cross-run monitoring state
+    base_output_dir: str
+    monitoring_state_dir: str | None = None  # Stable, cross-run monitoring state
     resume: bool = True
 
 
@@ -117,9 +115,9 @@ class ContainerConfig(ConfigInterface):
 class SlurmConfig(ConfigInterface):
     """Parameters for SBATCH rendering and submission."""
 
-    template_path: Path
-    script_dir: Path
-    log_dir: Path
+    template_path: str
+    script_dir: str
+    log_dir: str
     array: bool = True
     submit_cmd: str = "sbatch"
     squeue_cmd: str = "squeue"

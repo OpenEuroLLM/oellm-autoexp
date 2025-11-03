@@ -315,7 +315,7 @@ def test_submit_jobs_persists_and_restores(tmp_path: Path) -> None:
     controller = submission.controller
     assert len(submission.submitted_job_ids) == len(plan.jobs)
 
-    state_file = plan.runtime.state_dir / "monitor" / "state.json"
+    state_file = plan.runtime.monitoring_state_dir / "monitor" / "state.json"
     assert state_file.exists()
     data = json.loads(state_file.read_text())
     assert len(data.get("jobs", [])) == len(plan.jobs)

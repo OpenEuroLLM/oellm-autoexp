@@ -76,7 +76,7 @@ def _build_container_command(args: argparse.Namespace, cmd_parts: list[str]) -> 
     return command
 
 
-def _load_container_config(config_ref: str, config_dir: Path, overrides: list[str]) -> dict | None:
+def _load_container_config(config_ref: str, config_dir: str, overrides: list[str]) -> dict | None:
     """Load container configuration from config using OmegaConf (lazy import).
 
     Returns None if container is not configured, or a dict with
@@ -96,6 +96,12 @@ def _load_container_config(config_ref: str, config_dir: Path, overrides: list[st
         return None
 
     try:
+        overrides = [
+            override.split("=")[0] + '="' + "=".join(override.split("=")[1:]) + '"'
+            if "${" in override
+            else override
+            for override in overrides
+        ]
         with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
             cfg = compose(config_name=config_ref, overrides=list(overrides))
 

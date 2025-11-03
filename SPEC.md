@@ -15,7 +15,6 @@
 oellm-autoexp/
 ├── oellm_autoexp/
 │   ├── __init__.py
-│   ├── cli.py                        # entry points (click/typer)
 │   ├── config/
 │   │   ├── schema.py                 # compoconf-based dataclasses defining the config tree
 │   │   ├── loader.py                 # parse YAML by way of compoconf.parse_config into typed objects
@@ -100,19 +99,6 @@ oellm-autoexp/
      - Sessions contain full config, enabling monitoring without re-parsing original config
      - This enables resuming monitoring after process restarts and separating concerns between submission and long-running monitoring.
 7. **Extensibility**: Backends expose `validate(config)`, `build_launch_command(expanded_cfg)`, and optional `postprocess(log_dir)` hooks. New backends register by way of entry points for discoverability.
-
-## Command-Line Interface
-Expose a single `oellm-autoexp` console script with subcommands:
-- `plan CONFIG.yaml`: load+validate, output sweep summary, write artifacts without submitting.
-- `submit CONFIG.yaml [--dry-run]`: plan + render + submit (supports `--dry-run` to print commands and exit). When `--no-monitor` is specified, returns immediately after submission without starting the monitoring loop. Creates session file in `monitoring_state/` directory.
-- `monitor CONFIG.yaml [--job JOB_NAME|JOB_ID]`: attach to running plan; can resume after process restarts. Can be run independently after jobs are submitted.
-- `monitor --monitor-session <id>`: monitor a specific session by reading from `monitoring_state/<id>.json`.
-- `monitor --monitor-all`: discover and monitor all active sessions in `monitoring_state/` directory.
-- `status [--config CONFIG.yaml]`: display table of job states.
-- `cleanup CONFIG.yaml`: optional helper to archive logs or cancel jobs.
-- `monitor MONITOR.yaml`: run monitoring/alerting standalone using only the monitoring config, emitting default signals and dispatching configured actions.
-
-CLI should share state by way of a project directory containing serialized plans, submission metadata, restart counters, etc., enabling resume/restarts akin to `autoexperiment`'s name-based recovery. Persist the compoconf-evaluated configuration (for example, by way of `dump_config`) so repeated invocations reuse the same resolved objects.
 
 ### Monitoring Sessions and State Persistence
 - Each monitoring session receives a unique session ID (8-character UUID prefix) for tracking

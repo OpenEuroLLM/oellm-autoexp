@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Mapping, Sequence, Iterable
 
-
 from compoconf import asdict
 
 from oellm_autoexp.backends.base import BackendJobSpec, LaunchCommand
@@ -28,6 +27,7 @@ from oellm_autoexp.utils.start_condition import (
     resolve_start_condition_interval,
     wait_for_start_condition,
 )
+from oellm_autoexp.utils.tree_map import tree_map
 
 
 LOGGER = logging.getLogger(__name__)
@@ -43,9 +43,9 @@ class ExecutionPlan:
 
 @dataclass
 class RenderedArtifacts:
-    job_scripts: list[Path]
-    sweep_json: Path | None = None
-    array_script: Path | None = None
+    job_scripts: list[str]
+    sweep_json: str | None = None
+    array_script: str | None = None
     array_job_name: str | None = None
     sweep_entries: list[dict[str, Any]] = field(default_factory=list)
 
@@ -67,7 +67,7 @@ class SubmissionResult:
         return list(self.submitted_job_ids)
 
 
-def build_execution_plan(config: Path | RootConfig) -> ExecutionPlan:
+def build_execution_plan(config: str | RootConfig) -> ExecutionPlan:
     if isinstance(config, (str, Path)):
         root = load_config(config)
     else:
@@ -80,7 +80,7 @@ def build_execution_plan(config: Path | RootConfig) -> ExecutionPlan:
 
 def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
     template_path = Path(plan.config.slurm.template_path)
-
+    base_config = plan.config
     preferred_script_dir = Path(plan.config.slurm.script_dir)
     try:
         preferred_script_dir.mkdir(parents=True, exist_ok=True)
@@ -96,9 +96,9 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
         )
         script_dir = fallback_script_dir
 
-    job_scripts: list[Path] = []
+    job_scripts: list[str] = []
     sweep_entries: list[dict[str, Any]] = []
-    write_fallback_dir: Path | None = None
+    write_fallback_dir: str | None = None
 
     for job_it, job in enumerate(plan.jobs):
         spec = BackendJobSpec(parameters=dict(job.parameters))
@@ -123,15 +123,15 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
             rendered = render_template_file(template_path, fallback_path, replacements)
             script_path = fallback_path
         validate_job_script(rendered, job.name)
-        job_scripts.append(script_path)
+        job_scripts.append(str(script_path))
 
-        sweep_entries.append(_build_sweep_entry(job, launch_cmd))
+        sweep_entries.append(_build_sweep_entry(job, base_config, launch_cmd))
 
-    sweep_path: Path | None = None
+    sweep_path: str | None = None
     if plan.config.sweep.store_sweep_json or plan.config.slurm.array:
         sweep_path = _write_sweep_json(plan, sweep_entries)
 
-    array_script: Path | None = None
+    array_script: str | None = None
     array_job_name: str | None = None
     if plan.config.slurm.array and plan.jobs:
         array_job_name = f"{plan.config.project.name}-array"
@@ -153,7 +153,7 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
 
 
 def _ensure_state_store(plan: ExecutionPlan, *, session_id: str | None = None) -> MonitorStateStore:
-    monitoring_state_dir = plan.config.project.monitoring_state_dir or plan.runtime.state_dir
+    monitoring_state_dir = plan.config.project.monitoring_state_dir
     state_store = MonitorStateStore(monitoring_state_dir, session_id=session_id)
     if not state_store.session_path.exists():
         config_dict = asdict(plan.config)
@@ -423,11 +423,14 @@ def _build_replacements(
     return repl
 
 
-def _build_sweep_entry(job: JobPlan, launch_cmd: LaunchCommand) -> dict[str, Any]:
+def _build_sweep_entry(
+    job: JobPlan, base_config: RootConfig, launch_cmd: LaunchCommand
+) -> dict[str, Any]:
     return {
         "name": job.name,
         "output_dir": str(job.output_dir),
         "log_path": str(job.log_path),
+        "base_config": asdict(base_config),
         "parameters": dict(job.parameters),
         "launch": {
             "argv": list(launch_cmd.argv),
@@ -456,6 +459,10 @@ def _write_sweep_json(plan: ExecutionPlan, entries: list[dict[str, Any]]) -> Pat
         "project": plan.config.project.name,
         "jobs": entries,
     }
+    payload = tree_map(
+        lambda path: str(path) if isinstance(path, Path) else path,
+        payload,
+    )
     try:
         sweep_path.write_text(json.dumps(payload, indent=2))
     except OSError as exc:
@@ -481,10 +488,10 @@ def _restore_saved_jobs(
     for saved in saved_jobs:
         registration = JobRegistration(
             name=saved.name,
-            script_path=Path(saved.script_path),
-            log_path=Path(saved.log_path),
+            script_path=saved.script_path,
+            log_path=saved.log_path,
             metadata=dict(saved.metadata),
-            output_paths=[Path(p) for p in saved.output_paths],
+            output_paths=[p for p in saved.output_paths],
             termination_string=saved.termination_string,
             termination_command=saved.termination_command,
             inactivity_threshold_seconds=saved.inactivity_threshold_seconds,
@@ -496,8 +503,8 @@ def _restore_saved_jobs(
                 slurm_client.register_job(  # type: ignore[attr-defined]
                     saved.job_id,
                     saved.name,
-                    Path(saved.script_path),
-                    Path(saved.log_path),
+                    saved.script_path,
+                    saved.log_path,
                 )
             except TypeError:
                 pass
@@ -565,9 +572,9 @@ def _format_srun_options(srun_opts: str, extras: Mapping[str, Any]) -> str:
 
 def _render_array_script(
     plan: ExecutionPlan,
-    script_dir: Path,
-    template_path: Path,
-    sweep_path: Path | None,
+    script_dir: str,
+    template_path: str,
+    sweep_path: str | None,
     array_job_name: str,
 ) -> Path:
     if sweep_path is None:

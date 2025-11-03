@@ -89,11 +89,11 @@ python scripts/run_autoexp_container.py --config-ref autoexp -C config project=j
 ```bash
 # Submit with auto-detected container and monitoring
 python scripts/run_autoexp_container.py --config-ref autoexp -C config \
-  -o project=juwels -o slurm=juwels -o container=juwels
+  project=juwels slurm=juwels container=juwels
 
 # Submit without monitoring (monitor separately later)
 python scripts/run_autoexp_container.py --config-ref autoexp -C config \
-  -o project=juwels -o slurm=juwels -o container=juwels --no-monitor
+  project=juwels slurm=juwels container=juwels --no-monitor
 
 # Resume monitoring later from session file (recommended)
 python scripts/run_autoexp.py --monitor-all --monitoring-state-dir output/monitoring_state

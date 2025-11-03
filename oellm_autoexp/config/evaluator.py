@@ -29,11 +29,7 @@ class RuntimeConfig:
         This is used for monitoring sessions and should NOT include
         timestamps so that --monitor-all can find sessions across runs.
         """
-        return (
-            self.root.project.monitoring_state_dir
-            or self.root.project.state_dir
-            or "./monitoring_state"
-        )
+        return self.root.project.monitoring_state_dir or "./monitoring_state"
 
 
 def evaluate(root: schema.RootConfig) -> RuntimeConfig:

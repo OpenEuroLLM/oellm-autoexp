@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 import re
-from pathlib import Path
 from typing import Any
 from collections.abc import Iterable
 from re import Pattern
@@ -22,12 +21,12 @@ class MonitoredJob:
 
     job_id: str
     name: str
-    log_path: Path
+    log_path: str
     check_interval_seconds: int
     termination_string: str | None = None
     termination_command: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    output_paths: list[Path] = field(default_factory=list)
+    output_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -256,7 +255,7 @@ class SlurmLogMonitor(BaseMonitor):
         previous: str,
         *,
         source: str,
-        source_path: Path | None = None,
+        source_path: str | None = None,
     ) -> list[MonitorSignal]:
         signals: list[MonitorSignal] = []
         if not self._compiled_rules:
@@ -326,7 +325,7 @@ class SlurmLogMonitor(BaseMonitor):
 class _JobSnapshot:
     log_content: str
     last_update: float
-    output_contents: dict[Path, str] = field(default_factory=dict)
+    output_contents: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

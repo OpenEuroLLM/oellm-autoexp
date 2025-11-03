@@ -63,7 +63,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def monitor_from_session_file(session_path: Path, use_fake_slurm: bool = False) -> None:
+def monitor_from_session_file(session_path: str, use_fake_slurm: bool = False) -> None:
     """Monitor jobs from a session file."""
     session_data = MonitorStateStore.load_session(session_path)
     if not session_data:

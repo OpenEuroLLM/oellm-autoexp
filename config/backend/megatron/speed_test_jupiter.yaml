@@ -9,3 +9,4 @@ save_interval: 1000000000
 save: ${project.base_output_dir}
 load: ${project.base_output_dir}
 tensorboard_dir: ${project.base_output_dir}/tensorboard
+log_interval: 10

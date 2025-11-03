@@ -27,13 +27,13 @@ class JobRegistration:
     """Information required to resubmit and observe a job."""
 
     name: str
-    script_path: Path
-    log_path: Path
+    script_path: str
+    log_path: str
     metadata: dict[str, Any] = field(default_factory=dict)
     termination_string: str | None = None
     termination_command: str | None = None
     inactivity_threshold_seconds: int | None = None
-    output_paths: list[Path] = field(default_factory=list)
+    output_paths: list[str] = field(default_factory=list)
     start_condition_cmd: str | None = None
     start_condition_interval_seconds: int | None = None
 
@@ -431,12 +431,12 @@ class MonitorController:
             )
         return metadata
 
-    def _expand_log_path(self, job_id: str, log_path: Path) -> Path:
+    def _expand_log_path(self, job_id: str, log_path: str) -> Path:
         """Expand SLURM log path templates (%j, %A, %a) to actual paths.
 
         Args:
             job_id: Job ID (synthetic for array jobs, real for single jobs)
-            log_path: Path with potential SLURM templates
+            log_path: str with potential SLURM templates
 
         Returns:
             Path with templates expanded

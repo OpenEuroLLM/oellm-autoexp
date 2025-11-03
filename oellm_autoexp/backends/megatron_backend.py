@@ -44,7 +44,6 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from compoconf import ConfigInterface, NonStrictDataclass, asdict, register
@@ -70,7 +69,7 @@ class MegatronBackendConfig(NonStrictDataclass, ConfigInterface):
     """Configuration for the Megatron backend."""
 
     class_name: str = "MegatronBackend"
-    launcher_script: Path = Path("scripts/run_megatron.sh")
+    launcher_script: str = "scripts/run_megatron.sh"
     env: dict[str, str] = field(default_factory=dict)
     extra_cli_args: list[str] = field(default_factory=list)
     use_torchrun: bool = False

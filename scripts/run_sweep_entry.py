@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_entry(path: Path, index: int) -> dict:
+def load_entry(path: str, index: int) -> dict:
     with path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
     jobs = payload.get("jobs")
@@ -61,10 +61,10 @@ def prepare_environment(entry: dict) -> dict:
 
 def main() -> None:
     args = parse_args()
-    sweep_path = Path(args.sweep).expanduser().resolve()
+    sweep_path = str(Path(args.sweep).expanduser().resolve())
     entry = load_entry(sweep_path, args.index)
 
-    output_dir = Path(entry.get("output_dir", ""))
+    output_dir = str(Path(entry.get("output_dir", "")))
     if output_dir.as_posix():
         output_dir.mkdir(parents=True, exist_ok=True)
 

@@ -16,9 +16,9 @@ class JobPlan:
 
     name: str
     parameters: dict[str, str]
-    output_dir: Path
-    log_path: Path
-    output_paths: list[Path] = field(default_factory=list)
+    output_dir: str
+    log_path: str
+    output_paths: list[str] = field(default_factory=list)
     start_condition_cmd: str | None = None
     start_condition_interval_seconds: int | None = None
     termination_string: str | None = None
@@ -47,18 +47,18 @@ def build_job_plans(config: RootConfig, points: list[SweepPoint]) -> list[JobPla
             t = t[: m.start()] + "{" + m.group(1) + "___" + m.group(2) + "}"
             m = re.search(r"\{([^\{]*)\.([^\}]*)\}", t)
 
-        output_dir = base_output / job_name
+        output_dir = str(base_output / job_name)
         log_template = config.monitoring.log_path_template
         format_context = {**context, "output_dir": str(output_dir), "name": job_name}
-        log_path = Path(log_template.format(**format_context))
+        log_path = log_template.format(**format_context)
         monitoring_config = config.monitoring
         output_templates = getattr(monitoring_config, "output_paths", [])
-        resolved_outputs: list[Path] = []
+        resolved_outputs: list[str] = []
         for template in output_templates:
             try:
-                resolved_outputs.append(Path(template.format(**format_context)))
+                resolved_outputs.append(template.format(**format_context))
             except KeyError:
-                resolved_outputs.append(Path(template))
+                resolved_outputs.append(template)
 
         start_condition_cmd = getattr(monitoring_config, "start_condition_cmd", None)
         start_condition_interval = getattr(

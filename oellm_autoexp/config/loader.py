@@ -38,7 +38,7 @@ def _ensure_registrations() -> None:
     _REGISTRY_SENTINEL["loaded"] = True
 
 
-def _load_yaml(path: Path) -> Mapping[str, Any]:
+def _load_yaml(path: str) -> Mapping[str, Any]:
     cfg = OmegaConf.load(path)
     return OmegaConf.to_container(cfg, resolve=True)  # type: ignore[return-value]
 
@@ -76,10 +76,6 @@ def load_config(path: str | Path) -> schema.RootConfig:
         )
         root.project.monitoring_state_dir = stable_base / "monitoring_state"
 
-    # Keep state_dir for backward compatibility (deprecated)
-    if root.project.state_dir is None:
-        root.project.state_dir = root.project.monitoring_state_dir
-
     return root
 
 
@@ -91,6 +87,13 @@ def load_hydra_config(
     register_default_resolvers()
 
     overrides = list(overrides or [])
+    overrides = [
+        override.split("=")[0] + '="' + "=".join(override.split("=")[1:]) + '"'
+        if "${" in override
+        else override
+        for override in overrides
+    ]
+
     config_dir = Path(config_dir).resolve()
     if not config_dir.exists():
         raise ConfigLoaderError(f"Hydra config directory not found: {config_dir}")
@@ -158,10 +161,6 @@ def load_hydra_config(
             else base
         )
         root.project.monitoring_state_dir = stable_base / "monitoring_state"
-
-    # Keep state_dir for backward compatibility (deprecated)
-    if root.project.state_dir is None:
-        root.project.state_dir = root.project.monitoring_state_dir
 
     return root
 
