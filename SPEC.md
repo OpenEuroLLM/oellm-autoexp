@@ -129,7 +129,7 @@ oellm-autoexp/
 - `scripts/run_autoexp_container.py` orchestrates the full flow:
   1. Execute `scripts/plan_autoexp.py` inside the container (render scripts + manifest).
   2. Execute `scripts/submit_autoexp.py --manifest …` on the host (submit + optional monitoring).
-- `--manifest <path>` controls where the plan manifest is written/read (default `output/autoexp_plan.json`).
+- `--manifest <path>` controls where the plan manifest is written/read (defaults to `<base_output_dir>/manifests/plan_<timestamp>.json`).
 - `--no-submit` stops after planning; useful when subsequent actions (evaluation, conversions) will consume the manifest later.
 - `--no-monitor` submits jobs but exits immediately; monitoring can be resumed by way of `scripts/monitor_autoexp.py --manifest …`.
 - `--monitor-only` skips planning/submission and forwards straight to the host `monitor` command.

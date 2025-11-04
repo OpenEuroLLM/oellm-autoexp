@@ -323,10 +323,9 @@ class MonitorController:
             return augmented, new_job_id
         if mode == "success":
             LOGGER.info(f"[job {state.job_id}] job completed successfully, finalizing")
-            self._finalize_job(state.job_id)
         else:
             LOGGER.info(f"[job {state.job_id}] job stopped (no restart), reason: {decision.reason}")
-            self._persist_job(state)
+        self._finalize_job(state.job_id)
         return decision, state.job_id
 
     def _capture_slurm_transitions(
