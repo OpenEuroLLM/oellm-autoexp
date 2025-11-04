@@ -1,7 +1,7 @@
 # Basic Megatron monitoring for successful runs and common errors
 class_name: SlurmLogMonitor
-poll_interval_seconds: 300
-check_interval_seconds: 180
+poll_interval_seconds: 30
+check_interval_seconds: 30
 inactivity_threshold_seconds: 1800  # 30 minutes without log updates
 termination_string: null
 termination_command: null

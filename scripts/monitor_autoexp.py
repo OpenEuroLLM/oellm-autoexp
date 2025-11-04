@@ -28,17 +28,17 @@ def _configure_logging(verbose: bool = False, debug: bool = False) -> None:
     )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--use-fake-slurm", action="store_true", help="Use in-memory SLURM backend")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--debug", action="store_true")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     _configure_logging(args.verbose, args.debug)
 
     manifest_path = Path(args.manifest).resolve()

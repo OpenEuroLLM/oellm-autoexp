@@ -10,6 +10,8 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
+from compoconf import parse_config
+
 
 def _import_object(module: str, name: str) -> Any:
     """Load an object given its module and attribute name."""
@@ -31,7 +33,7 @@ class ComponentSpec:
         """Instantiate the described component."""
         config_cls = _import_object(self.config_module, self.config_class)
         component_cls = _import_object(self.module, self.class_name)
-        config_obj = config_cls(**self.config)
+        config_obj = parse_config(config_cls, self.config)
         return component_cls(config_obj)
 
 
@@ -142,12 +144,14 @@ class PlanManifest:
                 for job in self.jobs
             ],
             "rendered": {
-                "job_scripts": list(self.rendered.job_scripts),
-                "sweep_json": self.rendered.sweep_json,
+                "job_scripts": [str(path) for path in self.rendered.job_scripts],
+                "sweep_json": str(self.rendered.sweep_json)
+                if self.rendered.sweep_json is not None
+                else None,
                 "array": None
                 if self.rendered.array is None
                 else {
-                    "script_path": self.rendered.array.script_path,
+                    "script_path": str(self.rendered.array.script_path),
                     "job_name": self.rendered.array.job_name,
                     "size": self.rendered.array.size,
                 },

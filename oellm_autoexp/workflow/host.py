@@ -52,8 +52,9 @@ async def _monitor_loop(
     while list(controller.jobs()):
         await asyncio.sleep(sleep_seconds)
         cycle = await controller.observe_once()
-        actions = list(cycle.actions)
-        actions.extend(controller.drain_actions())
+        actions = controller.drain_actions()
+        if not actions and cycle.actions:
+            actions = list(cycle.actions)
         if actions:
             _record_actions(actions, action_queue_dir)
 

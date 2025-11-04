@@ -1,4 +1,0 @@
-name: jupiter
-base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}
-monitoring_state_dir: null
-resume: true

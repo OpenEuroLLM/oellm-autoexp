@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from oellm_autoexp.config.loader import load_config_reference
 from oellm_autoexp.orchestrator import build_execution_plan, render_scripts
@@ -12,11 +14,11 @@ from oellm_autoexp.workflow.manifest import write_manifest
 from oellm_autoexp.workflow.plan import create_manifest
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config-ref", default="autoexp")
     parser.add_argument("-C", "--config-dir", type=Path, default=Path("config"))
-    parser.add_argument("--manifest", type=Path, default=Path("output/autoexp_plan.json"))
+    parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--plan-id", type=str, help="Explicit plan identifier for the manifest")
     parser.add_argument(
         "--container-image", type=str, help="Override container image recorded in manifest"
@@ -27,11 +29,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "override", nargs="*", default=[], help="Hydra-style overrides (`key=value`)."
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def _default_manifest_path(monitoring_state_dir: Path) -> Path:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    manifest_dir = monitoring_state_dir / "manifests"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    suffix = uuid4().hex[:6]
+    return manifest_dir / f"plan_{timestamp}_{suffix}.json"
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     config_dir = Path(args.config_dir)
 
     root = load_config_reference(args.config_ref, config_dir, args.override)
@@ -49,7 +59,15 @@ def main() -> None:
         plan_id=args.plan_id,
     )
 
-    manifest_path = Path(args.manifest).resolve()
+    if args.manifest is not None:
+        manifest_path = Path(args.manifest)
+    else:
+        monitoring_state_dir = Path(plan.config.project.monitoring_state_dir)
+        manifest_path = _default_manifest_path(monitoring_state_dir)
+
+    manifest_path = manifest_path.resolve()
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
     write_manifest(manifest, manifest_path)
 
     print(f"Plan manifest written to: {manifest_path}")
@@ -57,8 +75,7 @@ def main() -> None:
     print(f"Jobs: {len(manifest.jobs)}")
     if manifest.rendered.array:
         print(
-            f"Array script: {manifest.rendered.array.script_path} "
-            f"({manifest.rendered.array.size} tasks)"
+            f"Array script: {manifest.rendered.array.script_path} ({manifest.rendered.array.size} tasks)"
         )
     else:
         for script in manifest.rendered.job_scripts:

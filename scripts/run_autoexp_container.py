@@ -4,17 +4,18 @@
 from __future__ import annotations
 
 import argparse
+import re
 import shlex
 from pathlib import Path
 
 from oellm_autoexp.utils.run import run_with_tee
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plan in container, submit on host.")
     parser.add_argument("--image", help="Container image path")
     parser.add_argument("--apptainer-cmd", default="singularity")
-    parser.add_argument("--manifest", type=Path, default=Path("output/autoexp_plan.json"))
+    parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--config-ref", default="autoexp")
     parser.add_argument("-C", "--config-dir", type=Path, default=Path("config"))
     parser.add_argument("--plan-id", help="Explicit plan identifier")
@@ -42,7 +43,7 @@ def parse_args() -> argparse.Namespace:
         help="Bind mount passed to the container (Singularity --bind syntax)",
     )
     parser.add_argument("override", nargs="*", default=[], help="Configuration overrides")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _build_container_command(args: argparse.Namespace, inner: list[str]) -> list[str]:
@@ -88,15 +89,25 @@ def _run_host_command(cmd: list[str]) -> int:
     return result.returncode
 
 
-def main() -> None:
-    args = parse_args()
+def _extract_manifest_path(output: str) -> Path | None:
+    match = re.search(r"Plan manifest written to:\s*(.+)", output)
+    if not match:
+        return None
+    candidate = match.group(1).strip()
+    return Path(candidate).expanduser().resolve()
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     scripts_dir = Path(__file__).resolve().parent
     plan_script = scripts_dir / "plan_autoexp.py"
     submit_script = scripts_dir / "submit_autoexp.py"
     monitor_script = scripts_dir / "monitor_autoexp.py"
-    manifest_path = args.manifest.resolve()
+    manifest_path: Path | None = args.manifest.resolve() if args.manifest else None
 
     if args.monitor_only:
+        if manifest_path is None:
+            raise SystemExit("monitor-only requires --manifest to be specified")
         host_cmd = [
             "python",
             str(monitor_script),
@@ -130,9 +141,9 @@ def main() -> None:
         args.config_ref,
         "-C",
         str(args.config_dir),
-        "--manifest",
-        str(manifest_path),
     ]
+    if manifest_path is not None:
+        plan_cmd.extend(["--manifest", str(manifest_path)])
     if args.plan_id:
         plan_cmd.extend(["--plan-id", args.plan_id])
     if container_image:
@@ -145,13 +156,20 @@ def main() -> None:
         args.apptainer_cmd = container_runtime
         container_cmd = _build_container_command(args, plan_cmd)
         print("Running inside container:", shlex.join(container_cmd))
-        plan_result = run_with_tee(container_cmd)
+        plan_result = run_with_tee(container_cmd, text=True)
     else:
         print("No container configured; running planning step on host.")
-        plan_result = run_with_tee(plan_cmd)
+        plan_result = run_with_tee(plan_cmd, text=True)
 
     if plan_result.returncode != 0:
         raise SystemExit(plan_result.returncode)
+
+    if manifest_path is None:
+        manifest_path = _extract_manifest_path(plan_result.stdout or "")
+        if manifest_path is None:
+            raise SystemExit(
+                "Unable to determine manifest path from plan output; please pass --manifest explicitly."
+            )
 
     if args.no_submit:
         print("Plan generated; skipping submission (--no-submit).")

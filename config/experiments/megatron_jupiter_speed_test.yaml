@@ -4,9 +4,9 @@ defaults:
   - /backend: megatron_torchrun
   - /container: jupiter
   - /slurm: jupiter
-  - /monitoring: default
+  - /monitoring: megatron_basic
   - /restart: default
-  - /project: jupiter_speed_test
+  - /project: default
   - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_jupiter]
   - /sweep: none
   - _self_
@@ -17,3 +17,4 @@ backend:
 
 project:
   name: megatron_juwels_speed_test
+  resume: true

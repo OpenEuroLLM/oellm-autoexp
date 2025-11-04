@@ -5,11 +5,14 @@
 
 defaults:
   - base
-  - override /backend: megatron_torchrun
-  - override /slurm: juwels
-  - override /monitoring: megatron_production
-  - override /restart: megatron_transient
-  - override /backend/megatron: base_llama_spaj
+  - /backend: megatron_torchrun
+  - /container: juwels
+  - /slurm: juwels
+  - /monitoring: megatron_production
+  - /restart: megatron_transient
+  - /project: default
+  - /backend/megatron:  [llama1_8b_qkln,megatron_fsdp,speed_test_juwels]
+  - /sweep: none
   - _self_
 
 project:

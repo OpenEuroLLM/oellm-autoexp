@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
 from oellm_autoexp.orchestrator import build_execution_plan, render_scripts
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
@@ -76,6 +78,11 @@ def test_fake_slurm_monitoring_cycle(tmp_path: Path, monkeypatch) -> None:
 def test_hydra_plan(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("SLURM_ACCOUNT", "debug")
     monkeypatch.setenv("CONTAINER_CACHE_DIR", "debug")
+    project_cfg = Path("config/project/juwels.yaml")
+    slurm_cfg = Path("config/slurm/juwels.yaml")
+    if not (project_cfg.exists() and slurm_cfg.exists()):
+        pytest.skip("juwels config not available in this checkout")
+
     cfg = load_config_reference(
         "autoexp", Path("config"), overrides=["project=juwels", "slurm=juwels"]
     )

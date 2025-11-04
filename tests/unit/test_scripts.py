@@ -37,7 +37,7 @@ def test_run_autoexp_container_submits_with_fake_slurm(monkeypatch, tmp_path: Pa
         manifest=tmp_path / "plan.json",
         plan_id=None,
     )
-    monkeypatch.setattr(run_autoexp_container, "parse_args", lambda: args)
+    monkeypatch.setattr(run_autoexp_container, "parse_args", lambda _=None: args)
 
     with pytest.raises(SystemExit) as exc:
         run_autoexp_container.main()
@@ -52,7 +52,54 @@ def test_run_autoexp_container_submits_with_fake_slurm(monkeypatch, tmp_path: Pa
     assert calls[1][1].endswith("scripts/submit_autoexp.py")
     assert "--use-fake-slurm" in calls[1]
     assert "--no-monitor" in calls[1]
-    assert "--no-monitor" in calls[1]
+
+
+def test_run_autoexp_container_infers_manifest_path(monkeypatch, tmp_path: Path):
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        if "plan_autoexp.py" in " ".join(cmd):
+            return argparse.Namespace(
+                returncode=0,
+                stdout=f"Plan manifest written to: {tmp_path}/outputs/manifests/plan_20240101-000000_abcdef.json\n",
+                stderr="",
+            )
+        calls.append(cmd)
+        return argparse.Namespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("SLURM_ACCOUNT", "demo")
+    monkeypatch.setattr(run_autoexp_container, "run_with_tee", fake_run)
+
+    args = argparse.Namespace(
+        image=None,
+        apptainer_cmd="apptainer",
+        config_ref="autoexp",
+        config_dir=str(tmp_path),
+        override=[],
+        dry_run=True,
+        monitor_only=False,
+        no_monitor=True,
+        no_submit=False,
+        debug=False,
+        verbose=False,
+        env=[],
+        bind=[],
+        ihelp=False,
+        use_fake_slurm=False,
+        manifest=None,
+        plan_id=None,
+    )
+    monkeypatch.setattr(run_autoexp_container, "parse_args", lambda _=None: args)
+
+    with pytest.raises(SystemExit) as exc:
+        run_autoexp_container.main()
+
+    assert exc.value.code == 0
+    assert calls
+    submit_cmd = calls[0]
+    assert submit_cmd[0] == "python"
+    assert submit_cmd[1].endswith("scripts/submit_autoexp.py")
+    assert any(str(tmp_path) in part for part in submit_cmd)
 
 
 def test_run_autoexp_container_monitor_only(monkeypatch, tmp_path: Path):
@@ -85,7 +132,7 @@ def test_run_autoexp_container_monitor_only(monkeypatch, tmp_path: Path):
         manifest=tmp_path / "plan.json",
         plan_id=None,
     )
-    monkeypatch.setattr(run_autoexp_container, "parse_args", lambda: args)
+    monkeypatch.setattr(run_autoexp_container, "parse_args", lambda _=None: args)
 
     with pytest.raises(SystemExit) as exc:
         run_autoexp_container.main()
