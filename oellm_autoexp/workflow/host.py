@@ -10,7 +10,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
-from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
+from oellm_autoexp.monitor.controller import JobRegistration, MonitorController, MonitorRecord
 from oellm_autoexp.persistence.state_store import MonitorStateStore, StoredJob, _serialize_for_json
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig, BaseSlurmClient
 from oellm_autoexp.workflow.manifest import PlanJobSpec, PlanManifest
@@ -52,32 +52,37 @@ async def _monitor_loop(
     while list(controller.jobs()):
         await asyncio.sleep(sleep_seconds)
         cycle = await controller.observe_once()
-        actions = controller.drain_actions()
-        if not actions and cycle.actions:
-            actions = list(cycle.actions)
-        if actions:
-            _record_actions(actions, action_queue_dir)
+        records = controller.drain_events()
+        if not records and cycle.events:
+            records = list(cycle.events)
+        actionable = [record for record in records if record.action]
+        if actionable:
+            _record_monitor_events(actionable, action_queue_dir)
 
     controller.clear_state()
 
 
-def _record_actions(actions: list[Any], action_queue_dir: Path) -> None:
+def _record_monitor_events(records: list[MonitorRecord], action_queue_dir: Path) -> None:
     action_queue_dir.mkdir(parents=True, exist_ok=True)
     timestamp = int(time.time())
-    for idx, action in enumerate(actions):
+    for idx, record in enumerate(records):
+        if not record.action:
+            continue
         payload = {
-            "job_id": action.job_id,
-            "job_name": action.job_name,
-            "action": action.action,
-            "signal": action.signal,
-            "metadata": _serialize_for_json(action.metadata),
+            "job_id": record.job_id,
+            "job_name": record.job_name,
+            "event": record.event,
+            "state": record.state,
+            "action": record.action,
+            "payload": _serialize_for_json(record.payload),
+            "metadata": _serialize_for_json(record.metadata),
             "created_at": timestamp,
         }
-        name = f"{timestamp}_{idx}_{action.action}.json"
+        name = f"{timestamp}_{idx}_{record.action}.json"
         path = action_queue_dir / name
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(
-            f"[actions] wrote {path} for job {action.job_id} ({action.job_name}) -> {action.action}"
+            f"[actions] wrote {path} for job {record.job_id} ({record.job_name}) -> {record.action}"
         )
 
 

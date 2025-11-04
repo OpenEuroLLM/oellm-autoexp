@@ -9,7 +9,23 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Iterable
 
+from oellm_autoexp.monitor.actions import BaseMonitorAction
 from oellm_autoexp.monitor.policy import BaseRestartPolicy, RestartDecision, RestartEvent
+from oellm_autoexp.monitor.states import (
+    BaseMonitorState,
+    CrashState,
+    CrashStateConfig,
+    StalledState,
+    StalledStateConfig,
+    TimeoutState,
+    TimeoutStateConfig,
+    PendingState,
+    PendingStateConfig,
+    StartedState,
+    StartedStateConfig,
+    SuccessState,
+    SuccessStateConfig,
+)
 from oellm_autoexp.monitor.watcher import BaseMonitor, MonitoredJob, MonitorOutcome
 from oellm_autoexp.persistence import MonitorStateStore, StoredJob
 from oellm_autoexp.slurm.client import BaseSlurmClient
@@ -45,6 +61,7 @@ class JobRuntimeState:
     attempts: int = 1
     last_outcome: MonitorOutcome | None = None
     last_slurm_state: str | None = None
+    state: BaseMonitorState = field(default_factory=lambda: PendingState(PendingStateConfig()))
 
     @property
     def name(self) -> str:
@@ -52,13 +69,15 @@ class JobRuntimeState:
 
 
 @dataclass(kw_only=True)
-class MonitorAction:
-    """Action triggered by monitor signal processing."""
+class MonitorRecord:
+    """Recorded monitor event and optional action payload."""
 
     job_id: str = field(default_factory=MISSING)
     job_name: str = field(default_factory=MISSING)
-    action: str = field(default_factory=MISSING)
-    signal: str = field(default_factory=MISSING)
+    event: str = field(default_factory=MISSING)
+    state: str | None = None
+    action: str | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -67,7 +86,7 @@ class MonitorCycleResult:
     """Aggregated outcome of a single monitoring iteration."""
 
     decisions: dict[str, RestartDecision] = field(default_factory=dict)
-    actions: list[MonitorAction] = field(default_factory=list)
+    events: list[MonitorRecord] = field(default_factory=list)
 
 
 class MonitorController:
@@ -84,13 +103,16 @@ class MonitorController:
         self._slurm = slurm
         self._policies = policies
         self._jobs: dict[str, JobRuntimeState] = {}  # Job IDs are strings
-        self._pending_actions: list[MonitorAction] = []
+        self._pending_records: list[MonitorRecord] = []
         self._state_store = state_store
 
     def register_job(self, job_id: str, registration: JobRegistration, attempts: int = 1) -> None:
         job_key = str(job_id)
         state = JobRuntimeState(
-            job_id=job_key, registration=registration, attempts=max(1, attempts)
+            job_id=job_key,
+            registration=registration,
+            attempts=max(1, attempts),
+            state=PendingState(PendingStateConfig()),
         )
         self._jobs[job_key] = state
         LOGGER.info(
@@ -114,6 +136,7 @@ class MonitorController:
                 name=state.name,
                 log_path=self._expand_log_path(state.job_id, state.registration.log_path),
                 check_interval_seconds=interval,
+                state=state.state.key,
                 termination_string=state.registration.termination_string,
                 termination_command=state.registration.termination_command,
                 metadata=self._build_job_metadata(state),
@@ -134,7 +157,7 @@ class MonitorController:
             if outcome:
                 LOGGER.debug(
                     f"[job {state.job_id}] monitor outcome: status={outcome.status}, "
-                    f"last_update={outcome.last_update_seconds}s, signals={len(outcome.signals)}"
+                    f"last_update={outcome.last_update_seconds}s, events={len(outcome.events)}"
                 )
 
             # Log SLURM state for debugging
@@ -143,35 +166,58 @@ class MonitorController:
                 f"(previous: {state.last_slurm_state or 'NONE'})"
             )
 
-            self._capture_slurm_transitions(state, slurm_state, cycle_result)
+            transition_records = self._capture_slurm_transitions(state, slurm_state)
+            if transition_records:
+                cycle_result.events.extend(transition_records)
             handled = False
             if outcome is not None:
-                for signal in outcome.signals:
-                    if signal.mode:
-                        # Include signal name in metadata for selective restart policies
-                        metadata = dict(signal.metadata)
-                        metadata["signal_name"] = signal.name
+                for event in outcome.events:
+                    event_metadata = dict(event.metadata)
+                    event_metadata.setdefault("event_name", event.name)
+                    event_metadata.setdefault("signal_name", event.name)
+                    if event.state:
+                        state.state = event.state
+                        event_metadata.setdefault("state_key", event.state.key)
+                    base_record = self._queue_event(
+                        job_id=state.job_id,
+                        job_name=state.name,
+                        event_name=event.name,
+                        state_key=event.state.key if event.state else None,
+                        action=None,
+                        metadata=event_metadata,
+                    )
+                    if base_record:
+                        cycle_result.events.append(base_record)
+                    if event.state:
                         LOGGER.info(
-                            f"[job {state.job_id}] detected signal '{signal.name}' with mode '{signal.mode}'"
+                            f"[job {state.job_id}] detected event '{event.name}' with state '{event.state.key}'"
                         )
-                        result = self._apply_policy(state, signal.mode, metadata)
+                        result = self._apply_policy(state, event.state.key, event_metadata)
                         if result is not None:
                             decision, job_key = result
                             cycle_result.decisions[job_key] = decision
                             handled = True
-                    if signal.action:
-                        cycle_result.actions.append(
-                            self._record_action(
-                                job_id=state.job_id,
-                                job_name=state.name,
-                                action=signal.action,
-                                signal=signal.name,
-                                metadata=dict(signal.metadata),
-                            )
-                        )
+                    elif event.actions:
                         LOGGER.info(
-                            f"[job {state.job_id}] action '{signal.action}' triggered by signal '{signal.name}'"
+                            (f"[job {state.job_id}] detected event '{event.name}' ")
+                            + (f"with actions {', '.join(action.kind for action in event.actions)}")
                         )
+                    else:
+                        LOGGER.info(f"[job {state.job_id}] detected event '{event.name}'")
+                    for action in event.actions:
+                        record = self._queue_event(
+                            job_id=state.job_id,
+                            job_name=state.name,
+                            event_name=event.name,
+                            state_key=event.state.key if event.state else None,
+                            action=action,
+                            metadata=event_metadata,
+                        )
+                        if record:
+                            cycle_result.events.append(record)
+                            LOGGER.info(
+                                f"[job {state.job_id}] action '{action.kind}' triggered by event '{event.name}'"
+                            )
             if handled:
                 continue
             classification = self._classify_mode(state, outcome, slurm_snapshot)
@@ -207,10 +253,10 @@ class MonitorController:
     def snapshot(self) -> dict[str, str]:
         return self._slurm.squeue()
 
-    def drain_actions(self) -> list[MonitorAction]:
-        actions = self._pending_actions
-        self._pending_actions = []
-        return actions
+    def drain_events(self) -> list[MonitorRecord]:
+        records = self._pending_records
+        self._pending_records = []
+        return records
 
     def clear_state(self) -> None:
         if self._state_store:
@@ -221,6 +267,21 @@ class MonitorController:
             return
         stored = StoredJob.from_registration(state.job_id, state.attempts, state.registration)
         self._state_store.upsert_job(stored)
+
+    def _set_state(self, state: JobRuntimeState, key: str) -> None:
+        normalized = (key or "").lower()
+        if normalized in {"success", "completed"}:
+            state.state = SuccessState(SuccessStateConfig())
+        elif normalized in {"running", "started", "active"}:
+            state.state = StartedState(StartedStateConfig())
+        elif normalized in {"stall", "stalled"}:
+            state.state = StalledState(StalledStateConfig())
+        elif normalized in {"timeout"}:
+            state.state = TimeoutState(TimeoutStateConfig())
+        elif normalized in {"crash", "failed", "error", "cancelled"}:
+            state.state = CrashState(CrashStateConfig())
+        elif normalized in {"pending"}:
+            state.state = PendingState(PendingStateConfig())
 
     def _finalize_job(self, job_id: str) -> None:
         self._jobs.pop(job_id, None)
@@ -288,6 +349,7 @@ class MonitorController:
         state.job_id = new_job_id
         state.attempts += 1
         state.last_slurm_state = None
+        state.state = PendingState(PendingStateConfig())
         self._jobs[new_job_id] = state
         if self._state_store:
             self._state_store.remove_job(old_job_id)
@@ -305,6 +367,7 @@ class MonitorController:
             return None
         event = RestartEvent(mode=mode, attempt=state.attempts, metadata=metadata or {})
         decision = policy.decide(event)
+        self._set_state(state, mode)
         LOGGER.info(
             f"[job {state.job_id}] policy decision for mode '{mode}': "
             f"action={decision.action}, reason={decision.reason}, attempt={state.attempts}"
@@ -332,45 +395,63 @@ class MonitorController:
         self,
         state: JobRuntimeState,
         current_state: str | None,
-        cycle_result: MonitorCycleResult,
-    ) -> None:
+    ) -> list[MonitorRecord]:
         previous = state.last_slurm_state
+        records: list[MonitorRecord] = []
         if current_state != previous:
             LOGGER.info(
-                f"[job {state.job_id}] SLURM state transition: {previous or 'NONE'} -> {current_state or 'NOT_FOUND'}"
+                (f"[job {state.job_id}] SLURM state transition: {previous or 'NONE'} ")
+                + (f"-> {current_state or 'NOT_FOUND'}")
             )
+            metadata = {
+                "slurm_state": current_state or "NOT_FOUND",
+                "previous_state": previous or "NONE",
+            }
             if current_state == "RUNNING":
-                cycle_result.actions.append(
-                    self._record_action(
-                        job_id=state.job_id,
-                        job_name=state.name,
-                        action="run_started",
-                        signal="slurm-run-started",
-                        metadata={"slurm_state": current_state or "UNKNOWN"},
-                    )
+                self._set_state(state, "running")
+                record = self._queue_event(
+                    job_id=state.job_id,
+                    job_name=state.name,
+                    event_name="slurm_state_transition",
+                    state_key=state.state.key,
+                    action=None,
+                    metadata=metadata,
+                    action_name="run_started",
+                    payload={"type": "slurm", **metadata},
                 )
+                if record:
+                    records.append(record)
             if current_state in {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT"}:
-                cycle_result.actions.append(
-                    self._record_action(
-                        job_id=state.job_id,
-                        job_name=state.name,
-                        action="run_ended",
-                        signal="slurm-run-ended",
-                        metadata={"slurm_state": current_state},
-                    )
+                self._set_state(state, current_state.lower())
+                record = self._queue_event(
+                    job_id=state.job_id,
+                    job_name=state.name,
+                    event_name="slurm_state_transition",
+                    state_key=state.state.key,
+                    action=None,
+                    metadata=metadata,
+                    action_name="run_ended",
+                    payload={"type": "slurm", **metadata},
                 )
+                if record:
+                    records.append(record)
             if current_state is None and previous is not None:
-                cycle_result.actions.append(
-                    self._record_action(
-                        job_id=state.job_id,
-                        job_name=state.name,
-                        action="run_ended",
-                        signal="slurm-run-ended",
-                        metadata={"slurm_state": "UNKNOWN"},
-                    )
+                self._set_state(state, "timeout")
+                record = self._queue_event(
+                    job_id=state.job_id,
+                    job_name=state.name,
+                    event_name="slurm_state_transition",
+                    state_key=state.state.key,
+                    action=None,
+                    metadata=metadata,
+                    action_name="run_ended",
+                    payload={"type": "slurm", **metadata},
                 )
+                if record:
+                    records.append(record)
         state.last_slurm_state = current_state
         self._persist_job(state)
+        return records
 
     @staticmethod
     def _classify_mode(
@@ -454,25 +535,42 @@ class MonitorController:
 
         return Path(log_str)
 
-    def _record_action(
+    def _queue_event(
         self,
         job_id: str,
         job_name: str,
-        action: str,
-        signal: str,
+        event_name: str,
+        state_key: str | None,
+        action: BaseMonitorAction | None,
         metadata: dict[str, Any],
-    ) -> MonitorAction:
-        item = MonitorAction(
-            job_id=job_id, job_name=job_name, action=action, signal=signal, metadata=metadata
+        *,
+        action_name: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> MonitorRecord | None:
+        derived_action = action_name
+        derived_payload = payload
+        if action is not None:
+            derived_action = action.kind
+            derived_payload = action.describe(job_id, metadata)
+        if derived_payload is None:
+            derived_payload = {}
+        record = MonitorRecord(
+            job_id=job_id,
+            job_name=job_name,
+            event=event_name,
+            state=state_key,
+            action=derived_action,
+            payload=derived_payload,
+            metadata=dict(metadata),
         )
-        self._pending_actions.append(item)
-        return item
+        self._pending_records.append(record)
+        return record
 
 
 __all__ = [
     "MonitorController",
     "JobRuntimeState",
     "JobRegistration",
-    "MonitorAction",
+    "MonitorRecord",
     "MonitorCycleResult",
 ]

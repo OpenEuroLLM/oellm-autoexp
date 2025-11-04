@@ -6,6 +6,8 @@ from typing import Any
 from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
 from oellm_autoexp.monitor.policy import AlwaysRestartPolicy, AlwaysRestartPolicyConfig
 from oellm_autoexp.monitor.policy import NoRestartPolicy, NoRestartPolicyConfig
+from oellm_autoexp.monitor.actions import ErrorNoteActionConfig
+from oellm_autoexp.monitor.states import CrashStateConfig
 from oellm_autoexp.monitor.watcher import (
     NullMonitor,
     NullMonitorConfig,
@@ -50,7 +52,13 @@ def test_slurm_log_monitor_detects_stall(tmp_path: Path) -> None:
     log_path = tmp_path / "job.log"
     log_path.write_text("initial\n")
 
-    job = MonitoredJob(job_id="1", name="demo", log_path=log_path, check_interval_seconds=1)
+    job = MonitoredJob(
+        job_id="1",
+        name="demo",
+        log_path=log_path,
+        check_interval_seconds=1,
+        state="pending",
+    )
 
     outcomes = asyncio.run(monitor.watch([job]))
     assert outcomes["1"].status == "active"
@@ -101,7 +109,8 @@ def test_slurm_monitor_defaults_populated():
     names = {signal.name for signal in monitor.config.log_signals}
     assert {"error", "checkpoint", "training_complete"}.issubset(names)
     defaults = default_log_signals()
-    assert defaults[0].mode == "crash"
+    assert defaults[0].state is not None
+    assert defaults[0].state.class_name == "CrashState"
 
 
 def test_monitor_signal_triggers_action(tmp_path: Path) -> None:
@@ -113,7 +122,7 @@ def test_monitor_signal_triggers_action(tmp_path: Path) -> None:
                 name="checkpoint",
                 pattern=r"Checkpoint saved: (?P<path>.+)",
                 pattern_type="regex",
-                action="enqueue_evaluation",
+                actions=[ErrorNoteActionConfig(note="enqueue_evaluation")],
                 metadata={"kind": "checkpoint"},
                 extract_groups={"checkpoint_path": "path"},
             )
@@ -140,14 +149,17 @@ def test_monitor_signal_triggers_action(tmp_path: Path) -> None:
     result = controller.observe_once_sync()
 
     assert not result.decisions
-    assert len(result.actions) == 1
-    action = result.actions[0]
-    assert action.action == "enqueue_evaluation"
+    action_records = [record for record in result.events if record.action]
+    assert len(action_records) == 1
+    action = action_records[0]
+    assert action.action == "ErrorNoteAction"
+    assert action.payload["note"] == "enqueue_evaluation"
     assert action.metadata["checkpoint_path"] == "/ckpt/path"
+    assert action.metadata["signal_name"] == "checkpoint"
 
     # Same content should not fire duplicate signals
     result_repeat = controller.observe_once_sync()
-    assert not result_repeat.actions
+    assert not any(record.action for record in result_repeat.events)
 
 
 def test_monitor_signal_triggers_restart(tmp_path: Path) -> None:
@@ -159,7 +171,7 @@ def test_monitor_signal_triggers_restart(tmp_path: Path) -> None:
                 name="fatal",
                 pattern="FATAL ERROR",
                 pattern_type="substring",
-                mode="crash",
+                state=CrashStateConfig(),
             )
         ],
     )
@@ -195,6 +207,16 @@ def test_output_file_emit_checkpoint_signal(tmp_path: Path) -> None:
         inactivity_threshold_seconds=0,
         check_interval_seconds=1,
         output_paths=[str(output_file)],
+        log_signals=[
+            LogSignalConfig(
+                name="checkpoint",
+                pattern=r"Checkpoint saved: (?P<checkpoint>\S+)",
+                pattern_type="regex",
+                actions=[ErrorNoteActionConfig(note="new_checkpoint")],
+                metadata={"kind": "checkpoint"},
+                extract_groups={"checkpoint_path": "checkpoint"},
+            )
+        ],
     )
     monitor = SlurmLogMonitor(config)
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
@@ -219,10 +241,13 @@ def test_output_file_emit_checkpoint_signal(tmp_path: Path) -> None:
 
     result = controller.observe_once_sync()
 
-    assert any(action.action == "new_checkpoint" for action in result.actions)
-    checkpoint_action = next(
-        action for action in result.actions if action.action == "new_checkpoint"
-    )
+    action_records = [
+        record
+        for record in result.events
+        if record.action == "ErrorNoteAction" and record.payload.get("note") == "new_checkpoint"
+    ]
+    assert action_records
+    checkpoint_action = action_records[0]
     assert checkpoint_action.metadata["checkpoint_path"] == "/tmp/check.ckpt"
     assert checkpoint_action.metadata["source"] == "output"
 
@@ -248,11 +273,11 @@ def test_slurm_state_transitions_emit_actions(tmp_path: Path) -> None:
 
     slurm.set_state(job_id, "RUNNING")
     first = controller.observe_once_sync()
-    assert any(action.action == "run_started" for action in first.actions)
+    assert any(record.action == "run_started" for record in first.events)
 
     slurm.set_state(job_id, "COMPLETED")
     second = controller.observe_once_sync()
-    assert any(action.action == "run_ended" for action in second.actions)
+    assert any(record.action == "run_ended" for record in second.events)
 
 
 def test_log_completion_triggers_run_finished(tmp_path: Path) -> None:
@@ -275,7 +300,7 @@ def test_log_completion_triggers_run_finished(tmp_path: Path) -> None:
     )
 
     result = controller.observe_once_sync()
-    assert any(action.action == "run_finished" for action in result.actions)
+    assert any(record.state == "success" for record in result.events)
 
 
 def test_cancelled_job_restarts_with_selective_policy(tmp_path: Path) -> None:
@@ -312,7 +337,7 @@ def test_cancelled_job_restarts_with_selective_policy(tmp_path: Path) -> None:
     # Simulate job running then being cancelled
     slurm.set_state(job_id, "RUNNING")
     first = controller.observe_once_sync()
-    assert any(action.action == "run_started" for action in first.actions)
+    assert any(record.action == "run_started" for record in first.events)
 
     # Cancel the job
     slurm.set_state(job_id, "CANCELLED")
@@ -320,7 +345,7 @@ def test_cancelled_job_restarts_with_selective_policy(tmp_path: Path) -> None:
 
     # Should trigger restart
     assert any(dec.action == "restart" for dec in second.decisions.values())
-    assert any(action.action == "run_ended" for action in second.actions)
+    assert any(record.action == "run_ended" for record in second.events)
 
     # Verify job was restarted
     job_states = list(controller.jobs())

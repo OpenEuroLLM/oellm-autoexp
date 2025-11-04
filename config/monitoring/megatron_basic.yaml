@@ -16,8 +16,11 @@ log_signals:
   - name: validation_complete
     pattern: 'validation loss at iteration \d+ on test set \| lm loss value: (?P<loss>[\d.E+\-]+)'
     pattern_type: regex
-    action: run_finished
-    mode: success
+    state:
+      class_name: SuccessState
+    actions:
+      - class_name: ErrorNoteAction
+        note: run_finished
     metadata:
       kind: completion
       stage: validation
@@ -28,7 +31,9 @@ log_signals:
   - name: checkpoint_saved
     pattern: 'successfully saved checkpoint from iteration\s+(?P<iteration>\d+) to (?P<path>\S+)'
     pattern_type: regex
-    action: new_checkpoint
+    actions:
+      - class_name: ErrorNoteAction
+        note: new_checkpoint
     metadata:
       kind: checkpoint
     extract_groups:
@@ -36,22 +41,27 @@ log_signals:
       checkpoint_path: path
 
   # Training progress: iteration updates
-  - name: training_iteration
-    pattern: '\[[\d\-\s:]+\] iteration\s+(?P<current>\d+)/\s*(?P<total>\d+) \|'
-    pattern_type: regex
-    action: progress_update
-    metadata:
-      kind: progress
-    extract_groups:
-      current_iteration: current
-      total_iterations: total
+  # - name: training_iteration
+  #   pattern: '\[[\d\-\s:]+\] iteration\s+(?P<current>\d+)/\s*(?P<total>\d+) \|'
+  #   pattern_type: regex
+  #   actions:
+  #     - class_name: ErrorNoteAction
+  #       note: progress_update
+  #   metadata:
+  #     kind: progress
+  #   extract_groups:
+  #     current_iteration: current
+  #     total_iterations: total
 
   # OOM Error: CUDA out of memory
   - name: cuda_oom
     pattern: '(?:CUDA out of memory|OutOfMemoryError).*Tried to allocate (?P<size>[\d.]+\s*[KMGT]iB)'
     pattern_type: regex
-    action: error
-    mode: crash
+    state:
+      class_name: CrashState
+    actions:
+      - class_name: ErrorNoteAction
+        note: error
     metadata:
       severity: critical
       error_type: oom
@@ -62,8 +72,11 @@ log_signals:
   - name: torch_error
     pattern: 'torch\.(?P<error_class>\w+Error): (?P<message>.+)'
     pattern_type: regex
-    action: error
-    mode: crash
+    state:
+      class_name: CrashState
+    actions:
+      - class_name: ErrorNoteAction
+        note: error
     metadata:
       severity: error
       error_type: torch
@@ -75,8 +88,11 @@ log_signals:
   - name: python_exception
     pattern: '(?P<exception>\w+Error): (?P<message>.+)'
     pattern_type: regex
-    action: error
-    mode: crash
+    state:
+      class_name: CrashState
+    actions:
+      - class_name: ErrorNoteAction
+        note: error
     metadata:
       severity: error
       error_type: exception

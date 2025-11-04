@@ -17,6 +17,17 @@ from oellm_autoexp.workflow.host import (
 from oellm_autoexp.workflow.manifest import read_manifest
 
 
+def _render_log_hint(log_template: str | Path, job_id: str) -> str:
+    """Expand SLURM log templates (%j, %A, %a) using the current job id."""
+    log_str = str(log_template)
+    if "_" in job_id:
+        base_id, array_idx = job_id.split("_", 1)
+        log_str = log_str.replace("%A", base_id)
+        log_str = log_str.replace("%a", array_idx)
+    log_str = log_str.replace("%j", job_id)
+    return log_str
+
+
 def _configure_logging(verbose: bool = False, debug: bool = False) -> None:
     level = logging.WARNING
     if debug:
@@ -64,22 +75,41 @@ def main(argv: list[str] | None = None) -> None:
             state = jobs_by_id.get(job_id)
             job_name = state.name if state else "unknown"
             log_path = state.registration.log_path if state else "?"
-            print(f"submitted {job_name} -> job {job_id} -> log: {log_path}")
+            print(f"submitted {job_name} -> job {job_id} -> log: {log_path}", flush=True)
     else:
-        print("No new jobs submitted; monitoring session already contains all jobs.")
+        print("No new jobs submitted; monitoring session already contains all jobs.", flush=True)
 
-    print(f"Monitoring session: {runtime.state_store.session_id}")
+    print(f"Monitoring session: {runtime.state_store.session_id}", flush=True)
 
     if args.dry_run:
         return
 
     if args.no_monitor:
         cmd = f"{sys.executable} scripts/monitor_autoexp.py --manifest {manifest_path}"
-        print("Skipping monitoring (--no-monitor).")
-        print(f"To monitor later run: {cmd}")
+        print("Skipping monitoring (--no-monitor).", flush=True)
+        print(f"To monitor later run: {cmd}", flush=True)
         return
 
-    run_monitoring(runtime, controller)
+    monitor_cmd = f"{sys.executable} scripts/monitor_autoexp.py --manifest {manifest_path}"
+
+    try:
+        run_monitoring(runtime, controller)
+    except KeyboardInterrupt:
+        print("\nMonitoring interrupted by user (Ctrl+C).", flush=True)
+        active_jobs = list(controller.jobs())
+        if len(active_jobs) == 1:
+            job_state = active_jobs[0]
+            log_hint = _render_log_hint(job_state.registration.log_path, job_state.job_id)
+            print(
+                f"To inspect the active log directly:\n  tail -n 1000 -f {log_hint}",
+                flush=True,
+            )
+        elif len(active_jobs) > 1:
+            print(
+                "Multiple jobs are active; inspect their logs individually (see manifest).",
+                flush=True,
+            )
+        print(f"To resume monitoring later run:\n  {monitor_cmd}", flush=True)
 
 
 if __name__ == "__main__":

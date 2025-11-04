@@ -29,6 +29,8 @@ oellm-autoexp/
 │   │   └── fake_sbatch.py            # mock sbatch/squeue/scancel used in tests
 │   ├── monitor/
 │   │   ├── watcher.py                # log/time-based freeze detection
+│   │   ├── actions.py                # compoconf-registered monitor actions
+│   │   ├── states.py                 # typed monitor state definitions
 │   │   └── policy.py                 # restart/abort decisions encapsulated here
 │   ├── backends/
 │   │   ├── __init__.py
@@ -146,12 +148,12 @@ oellm-autoexp/
 
 ## Monitoring & Restart Logic
 - Track three signals: SLURM job state (`squeue`), wall-clock runtime, and log progress (mtime + optional regex heartbeat).
-- Monitoring config exposes `log_signals` that match regex/substring patterns in SLURM logs and emit named signals. Each signal can map to a restart `mode` (feeding into restart policies) or to an arbitrary `action` collected by the controller (for example, enqueue checkpoint conversion jobs or trigger evaluation workflows). The standalone monitor CLI pre-registers generic signals for errors, run lifecycle (pending → running → ended), completion markers, and checkpoint publication so downstream tooling can attach commands without backend knowledge.
+- Monitoring config exposes `log_signals` that match regex/substring patterns in SLURM logs and emit named events. Each log match materialises a `MonitorEvent` with optional typed state (`MonitorStateInterface`) and one or more actions (`MonitorActionInterface`) so downstream tooling can trigger follow-up work (for example, enqueue checkpoint conversion jobs or downstream evaluations). The standalone monitor CLI pre-registers generic events for errors, lifecycle transitions (pending → running → ended), completion markers, and checkpoint publication so downstream tooling can attach actions without backend knowledge.
 - Monitor compares both SLURM log output and configured training output files; inactivity detection keys off the latest change across either source so freezes without log updates are still caught, mirroring the legacy `autoexperiment` behaviour.
 - **Event Logging and Visibility**: The `MonitorController` logs all monitoring events, SLURM state transitions, signal detections, and policy decisions at INFO level to ensure full visibility into the restart system's behavior. This includes:
   - Monitor outcomes (status, last_update, signal counts)
   - SLURM state transitions (PENDING → RUNNING → CANCELLED/FAILED/COMPLETED)
-  - Signal detection with mode and action
+- Signal detection with state/action payload
   - Policy decisions (restart/stop) with reason and attempt count
   - Job restart operations (old job_id → new job_id)
 - **Mode Classification with Metadata**: When classifying job state into restart modes, the controller enriches the mode with contextual metadata:
@@ -206,7 +208,7 @@ oellm-autoexp/
 ## TODO / Backlog
 - Extend the standalone `monitor` CLI with persisted state and (optional) real SLURM integration, plus queue wiring for automated follow-up tasks.
 - Flesh out remaining CLI surface (`status`, `cleanup`) and persist plan state so processes can resume monitoring after restarts. ✓ (Partially done: monitoring can resume from state)
-- Teach orchestrator to persist/reload job history (JSONL/SQLite) and consume `MonitorController.drain_actions()` to enqueue downstream tasks (HF conversion/eval) automatically.
+- Teach orchestrator to persist/reload job history (JSONL/SQLite) and consume `MonitorController.drain_events()` to enqueue downstream tasks (HF conversion/eval) automatically.
 - Implement first-class real SLURM submission path (drop `--fake` guard) including container-friendly sbatch invocation. ✓ (Container workflow separates plan generation from sbatch execution)
 - Extend integration tests to cover log-signal driven actions/restarts, post-processing hooks, and container smoke tests.
 - Add scheduler throttling (`max_jobs`, rate limits) and restart policy variants that mutate launch arguments (for example, checkpoint substitution) using signal metadata.

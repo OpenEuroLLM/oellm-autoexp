@@ -105,8 +105,7 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Jobs: {len(manifest.jobs)}")
     if manifest.rendered.array:
         print(
-            f"Array script: {manifest.rendered.array.script_path} "
-            f"({manifest.rendered.array.size} tasks)"
+            f"Array script: {manifest.rendered.array.script_path} ({manifest.rendered.array.size} tasks)"
         )
     else:
         for script in manifest.rendered.job_scripts:
@@ -139,7 +138,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.no_monitor:
-        cmd = f"{sys.executable} scripts/monitor_autoexp.py --manifest {manifest_path}"
+        cmd = f"{sys.executable} -u scripts/monitor_autoexp.py --manifest {manifest_path}"
         print("Skipping monitoring (--no-monitor).")
         print(f"To monitor later run: {cmd}")
         return

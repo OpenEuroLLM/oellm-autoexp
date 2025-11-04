@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_entry(path: str, index: int) -> dict:
-    with path.open("r", encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         payload = json.load(handle)
     jobs = payload.get("jobs")
     if not isinstance(jobs, list):
@@ -64,7 +64,7 @@ def main() -> None:
     sweep_path = str(Path(args.sweep).expanduser().resolve())
     entry = load_entry(sweep_path, args.index)
 
-    output_dir = str(Path(entry.get("output_dir", "")))
+    output_dir = Path(entry.get("output_dir", ""))
     if output_dir.as_posix():
         output_dir.mkdir(parents=True, exist_ok=True)
 

@@ -182,12 +182,48 @@ monitoring:
     - name: checkpoint_ready
       pattern: "Checkpoint saved: (?P<path>.+\.pt)"
       pattern_type: regex
-      action: convert_checkpoint
+      actions:
+        - class_name: ExecutionAction
+          command:
+            - python
+            - scripts/run_downstream_eval.py
+            - "--checkpoint"
+            - "{checkpoint_path}"
       metadata:
         kind: checkpoint
 ```
 
-Actions are queued whenever the pattern appears, enabling seamless hand-offs to evaluation or conversion scripts.
+When the pattern matches, a monitoring **event** is recorded. Any configured actions are materialised through `MonitorController.drain_events()` and written to the run's `actions/` directory (one JSON payload per action). Built-in action types live under `oellm_autoexp.monitor.actions`:
+
+- `ExecutionAction`: run an arbitrary command (downstream evaluation, conversions, etc.).
+- `RestartAction`: annotate restart decisions with an explicit reason (see note below).
+- `TerminationAction`: record a terminal event separate from policy decisions.
+- `ErrorNoteAction`: attach a human-readable note to error events.
+
+Actions receive the `MonitorEvent` metadata (including regex capture groups such as `{checkpoint_path}`) so they can template commands or notes. Custom actions can be registered by way of compoconf by subclassing `BaseMonitorAction`.
+
+**How `RestartAction` fits with restart policies:** Monitors surface event metadata (including the optional `RestartAction` payload), but the actual decision to resubmit a job still comes exclusively from the configured restart policies. A `RestartAction` therefore acts as a side-channel to capture intent—for example “restart due to node maintenance”—for downstream automation or audit trails. If the policy chooses `stop`, the action is still emitted for logging, but no resubmission occurs. Conversely, policies can restart without an accompanying `RestartAction`. Pair them when you want both a policy-driven retry *and* a descriptive record for operators or external orchestration.
+Need a ready-to-use preset? `config/monitoring/megatron_checkpoint_eval.yaml` mirrors the production monitor but adds an `ExecutionAction` that queues `python scripts/run_checkpoint_evaluation.py --checkpoint <path> --iteration <iter>` whenever a checkpoint is written. Select it with `-o monitoring=megatron_checkpoint_eval` and point a lightweight worker at the `actions/` directory to execute evaluation payloads.
+
+To trigger downstream evaluations automatically upon checkpoints:
+
+1. Add the `ExecutionAction` configuration shown above to your monitoring config (either in Hydra YAML or as a manifest override).
+2. Run planning/submission as usual. The monitor loop will emit JSON payloads under `outputs/<run>/actions/` with the rendered command.
+3. Point a lightweight worker (or CI job) at that folder to execute queued evaluations. Each payload is written once, so duplicate execution is easy to avoid.
+
+To exercise the monitoring pipeline locally:
+
+```bash
+PYTHONPATH=$PYTHONPATH:. pytest tests/integration/test_workflow_scripts.py::test_plan_submit_monitor_fake_slurm \
+  --maxfail=1
+
+# Append simulated CUDA errors to the generated SLURM log and rerun:
+python scripts/monitor_autoexp.py --manifest outputs/manifests/<plan>.json --use-fake-slurm
+echo "CUDA out of memory. Tried to allocate 4GiB" >> output/logs/<job>/slurm-<id>.out
+python scripts/monitor_autoexp.py --manifest outputs/manifests/<plan>.json --use-fake-slurm
+```
+
+The rerun verifies that crash signals (like CUDA OOM) are detected and restart policies fire as expected. For real-cluster validation you can run the same monitoring CLI without `--use-fake-slurm`; the compoconf registries ensure only the necessary Megatron configuration modules are imported on the host.
 
 ### 7. Integrating a New Backend
 

@@ -286,6 +286,7 @@ def submit_test_job(
 
     submit_cmd = [
         sys.executable,
+        "-u",
         "scripts/submit_autoexp.py",
         "--manifest",
         str(manifest_path),
@@ -301,6 +302,7 @@ def submit_test_job(
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,  # Line buffered
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
     )
 
     # Read output until we get the job ID

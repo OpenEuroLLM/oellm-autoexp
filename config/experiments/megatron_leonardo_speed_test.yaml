@@ -1,0 +1,20 @@
+# @package _global_
+defaults:
+  - base
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+  - /monitoring: megatron_basic
+  - /restart: default
+  - /project: default
+  - /sweep: none
+  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_leonardo]
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 500
+
+project:
+  name: megatron_leonardo_speed_test
+  resume: true

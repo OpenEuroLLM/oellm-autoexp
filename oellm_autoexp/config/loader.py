@@ -29,6 +29,8 @@ def _ensure_registrations() -> None:
     for module in (
         "oellm_autoexp.backends.base",
         "oellm_autoexp.backends.megatron_backend",
+        "oellm_autoexp.monitor.actions",
+        "oellm_autoexp.monitor.states",
         "oellm_autoexp.monitor.watcher",
         "oellm_autoexp.monitor.policy",
         "oellm_autoexp.slurm.client",

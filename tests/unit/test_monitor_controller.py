@@ -7,9 +7,9 @@ import pytest
 
 from oellm_autoexp.monitor.controller import (
     JobRegistration,
-    MonitorAction,
     MonitorController,
     MonitorCycleResult,
+    MonitorRecord,
 )
 from oellm_autoexp.monitor.policy import NoRestartPolicyConfig, NoRestartPolicy
 from oellm_autoexp.monitor.watcher import NullMonitor, NullMonitorConfig
@@ -58,17 +58,25 @@ def test_monitor_loop_writes_single_action(tmp_path: Path, monkeypatch) -> None:
     class DummyController:
         def __init__(self) -> None:
             self._done = False
-            self._action = MonitorAction(job_id="1", job_name="demo", action="notify", signal="sig")
+            self._record = MonitorRecord(
+                job_id="1",
+                job_name="demo",
+                event="manual",
+                state=None,
+                action="notify",
+                payload={"message": "hello"},
+                metadata={"signal": "sig"},
+            )
 
         def jobs(self):
             return [] if self._done else [object()]
 
         async def observe_once(self):
             self._done = True
-            return MonitorCycleResult(actions=[self._action])
+            return MonitorCycleResult(events=[self._record])
 
-        def drain_actions(self):
-            return [self._action]
+        def drain_events(self):
+            return [self._record]
 
         def clear_state(self):
             self.cleared = True

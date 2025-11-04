@@ -15,6 +15,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plan in container, submit on host.")
     parser.add_argument("--image", help="Container image path")
     parser.add_argument("--apptainer-cmd", default="singularity")
+    parser.add_argument("--container-python", default="python")
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--config-ref", default="autoexp")
     parser.add_argument("-C", "--config-dir", type=Path, default=Path("config"))
@@ -83,9 +84,9 @@ def _load_container_config(config_ref: str, config_dir: Path, overrides: list[st
         return None
 
 
-def _run_host_command(cmd: list[str]) -> int:
+def _run_host_command(cmd: list[str], *, use_pty: bool = False) -> int:
     print("Running on host:", shlex.join(cmd))
-    result = run_with_tee(cmd)
+    result = run_with_tee(cmd, use_pty=use_pty)
     return result.returncode
 
 
@@ -134,8 +135,10 @@ def main(argv: list[str] | None = None) -> None:
             if container_image:
                 print(f"Using container from config: {container_image}")
 
+    container_python = getattr(args, "container_python", "python")
+
     plan_cmd = [
-        "python",
+        container_python,
         str(plan_script),
         "--config-ref",
         args.config_ref,
@@ -177,6 +180,7 @@ def main(argv: list[str] | None = None) -> None:
 
     submit_cmd = [
         "python",
+        "-u",
         str(submit_script),
         "--manifest",
         str(manifest_path),
@@ -192,7 +196,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.debug:
         submit_cmd.append("--debug")
 
-    rc = _run_host_command(submit_cmd)
+    rc = _run_host_command(submit_cmd, use_pty=True)
     raise SystemExit(rc)
 
 

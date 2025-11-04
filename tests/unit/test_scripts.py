@@ -49,7 +49,7 @@ def test_run_autoexp_container_submits_with_fake_slurm(monkeypatch, tmp_path: Pa
     assert calls[0][0] == args.apptainer_cmd
     assert "plan_autoexp.py" in calls[0][-1]
     assert calls[1][0] == "python"
-    assert calls[1][1].endswith("scripts/submit_autoexp.py")
+    assert any(part.endswith("scripts/submit_autoexp.py") for part in calls[1])
     assert "--use-fake-slurm" in calls[1]
     assert "--no-monitor" in calls[1]
 
@@ -98,7 +98,7 @@ def test_run_autoexp_container_infers_manifest_path(monkeypatch, tmp_path: Path)
     assert calls
     submit_cmd = calls[0]
     assert submit_cmd[0] == "python"
-    assert submit_cmd[1].endswith("scripts/submit_autoexp.py")
+    assert any(part.endswith("scripts/submit_autoexp.py") for part in submit_cmd)
     assert any(str(tmp_path) in part for part in submit_cmd)
 
 
