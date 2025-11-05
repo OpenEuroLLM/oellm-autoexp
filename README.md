@@ -29,13 +29,14 @@ Hydra overrides (`-o key=value`) let you combine these building blocks per run.
 
 ```bash
 # Render scripts + sweep metadata without submitting
-python scripts/run_autoexp.py autoexp -C config -o project=default --dry-run
+# python scripts/run_autoexp.py autoexp -C config -o project=default --dry-run
+python scripts/run_autoexp.py -C config --dry-run project=default
 
 # Inspect the launch command for the first sweep entry
-python scripts/run_sweep_entry.py --sweep outputs/sweep.json --index 0 --dry-run
+python scripts/run_sweep_entry.py --sweep output/sweep.json --index 0 --dry-run
 
 # Execute locally (no SLURM)
-python scripts/run_sweep_entry.py --sweep outputs/sweep.json --index 0
+python scripts/run_sweep_entry.py --sweep output/sweep.json --index 0
 ```
 
 `scripts/run_sweep_entry.py` rehydrates the stored command, exports the configured environment, and can be embedded inside notebooks or custom launchers.
@@ -45,7 +46,8 @@ python scripts/run_sweep_entry.py --sweep outputs/sweep.json --index 0
 **Direct:**
 
 ```bash
-python scripts/run_autoexp.py autoexp -C config -o project=default --use-fake-slurm
+# python scripts/run_autoexp.py autoexp -C config -o project=default --use-fake-slurm
+python scripts/run_autoexp.py -C config --use-fake-slurm project=default
 ```
 
 The in-memory SLURM client mimics submission/monitoring without touching a real scheduler. Drop `--use-fake-slurm` once a real client is configured under `config/slurm`.
@@ -54,14 +56,14 @@ The in-memory SLURM client mimics submission/monitoring without touching a real 
 
 ```bash
 # Build an Apptainer/Singularity image tailored for Megatron
-./container/build_container.sh --backend megatron --definition MegatronTraining --output ./artifacts
+./container/build_container.sh --backend megatron --definition MegatronTraining --output $CONTAINER_CACHE_DIR
 
 # Configure container in your config (e.g., config/container/juwels.yaml):
 # image: ${oc.env:CONTAINER_CACHE_DIR}/MegatronTraining_x86_64.sif
 # runtime: singularity
 
 # Run with auto-detected container from config (recommended)
-python scripts/run_autoexp_container.py --config-ref autoexp -C config -o project=juwels
+python scripts/run_autoexp_container.py --config-ref autoexp -C config project=juwels
 
 # Or explicitly specify container image
 python scripts/run_autoexp_container.py --image ./artifacts/MegatronTraining_$(uname -m).sif \
@@ -113,7 +115,7 @@ oellm-autoexp submit autoexp --config-dir config -o project=juwels -o slurm=juwe
 oellm-autoexp submit autoexp --config-dir config -o project=juwels -o slurm=juwels
 ```
 
-Scripts land in `slurm.script_dir`, logs in `slurm.log_dir`, and `outputs/sweep.json` documents the rendered sweep.
+Scripts land in `slurm.script_dir`, logs in `slurm.log_dir`, and `output/sweep.json` documents the rendered sweep.
 
 ### 4. Megatron Sweep as a SLURM Job Array
 
@@ -124,7 +126,7 @@ oellm-autoexp submit autoexp --config-dir config \
 
 When `slurm.array=true`, `render_scripts` produces:
 
-- `outputs/sweep.json` (one entry per sweep point).
+- `output/sweep.json` (one entry per sweep point).
 - An aggregated array script (stored in `slurm.script_dir`) that dispatches via `scripts/run_sweep_entry.py` and `$SLURM_ARRAY_TASK_ID`.
 - Metadata so `submit_jobs` routes through `submit_array` when the chosen SLURM client supports it (the bundled `FakeSlurmClient` does).
 
@@ -166,7 +168,7 @@ monitoring:
 
 ```bash
 oellm-autoexp monitor autoexp -C config --fake \
-  --log train=outputs/logs/train.out \
+  --log train=output/logs/train.out \
   --action convert_checkpoint='python tools/convert.py {checkpoint_path}'
 ```
 
@@ -280,7 +282,7 @@ sweep:
 
 | oellm_pretrain concept | oellm-autoexp location | Notes |
 | --- | --- | --- |
-| `sbatch_args.out_dir` | `project.base_output_dir` (root) + `slurm.log_dir` | Separate run outputs from log location. |
+| `sbatch_args.out_dir` | `project.base_output_dir` (root) + `slurm.log_dir` | Separate run output from log location. |
 | `sbatch_args.job_name` | `project.name` / `sweep.name_template` | Controls job naming and recovery keys. |
 | implicit job arrays | `slurm.array` | Toggle arrays explicitly per config. |
 | `sweep_args` | `sweep.axes` | Declare cartesian products directly. |

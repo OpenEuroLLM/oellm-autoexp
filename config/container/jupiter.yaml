@@ -1,0 +1,4 @@
+image: ${oc.env:CONTAINER_CACHE_DIR}/MegatronTraining_aarch64.sif
+runtime: singularity
+bind: []
+env: {}

@@ -3,10 +3,10 @@
 
 {env_exports}
 
-module load Stages/2024
-module load GCC/12.3.0
-module load CUDA/12.1
-module load NCCL/2.20.5
+module load Stages/2025
+module load GCCcore/.13.3.0
+module load Python/3.12.3
+module load CUDA/12
 
 echo "Launching {name} on JUPITER"
 srun {srun_opts}bash -c '{launcher_cmd}'

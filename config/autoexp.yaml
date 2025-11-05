@@ -1,10 +1,10 @@
 defaults:
-  - project: default
+  - project: jupiter
   - backend: megatron
-  - container: none
-  - slurm: base
+  - container: jupiter
+  - slurm: jupiter
   - monitoring: default
-  - sweep: none
+  - sweep: minimal
   - restart: default
   - scheduler: default
   - _self_

@@ -148,6 +148,12 @@ class MegatronBackend(BaseBackend):
 
         argv = [str(self.config.launcher_script), *cli_args, *self.config.extra_cli_args]
 
+        if (
+            not self.config.use_torchrun
+            and self.config.launcher_script.suffix == ".py"
+        ):
+            argv = ["python", *argv]
+
         # Prepend torchrun if enabled
         if self.config.use_torchrun:
             torchrun_argv = self._build_torchrun_args()

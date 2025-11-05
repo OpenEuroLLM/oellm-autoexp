@@ -1,9 +1,21 @@
 axes:
   lr: [0.0001, 0.00005]
-  model.scale:
-    - small
-    - large
 base_values:
+  micro_batch_size: 4
   max_steps: 1000
+  hidden_size: 2048
+  num_layers: 26
+  num_attention_heads: 16
+  num_query_groups: 2
+  kv_channels: 128
+  ffn_hidden_size: 8192
+  seq_length: 4096
+  vocab_size: 50304
+  tensor_model_parallel_size: 1
+  max_position_embeddings: 4096
+  train_iters: 1000000
+  tokenizer_type: HuggingFaceTokenizer
+  data_path: /e/scratch/jureap59/cache/tokenized_data/test
+  tokenizer_model: /e/scratch/jureap59/cache/tokenizer/gpt-neox-20b
 name_template: "${project.name}_lr{lr}_{index}"
 store_sweep_json: true

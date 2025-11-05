@@ -72,7 +72,7 @@ def _build_container_command(args: argparse.Namespace, cmd_parts: list[str]) -> 
         command.extend(["--bind", bind])
     for env_assignment in getattr(args, "env", []) or []:
         command.extend(["--env", env_assignment])
-    command.extend([args.image, "bash", "-lc", quoted_inner])
+    command.extend(["--nv", args.image, "bash", "-lc", quoted_inner])
     return command
 
 
