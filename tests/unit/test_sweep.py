@@ -95,5 +95,5 @@ def test_expand_sweep_filter_expression():
     )
     points = expand_sweep(sweep_cfg)
     values = [p.parameters for p in points]
-    assert len(values) == 4
+    assert len(values) == 6
     assert all(v["a"] * v["b"] <= 40 for v in values)
