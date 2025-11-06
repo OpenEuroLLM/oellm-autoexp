@@ -185,6 +185,23 @@ def restore_jobs(
             start_condition_cmd=saved.start_condition_cmd,
             start_condition_interval_seconds=saved.start_condition_interval_seconds,
         )
+        if hasattr(runtime.slurm_client, "register_job"):
+            log_path_for_client = saved.resolved_log_path or saved.log_path
+            try:
+                runtime.slurm_client.register_job(  # type: ignore[attr-defined]
+                    saved.job_id,
+                    saved.name,
+                    saved.script_path,
+                    str(log_path_for_client),
+                    state=saved.last_slurm_state or "PENDING",
+                )
+            except TypeError:
+                runtime.slurm_client.register_job(  # type: ignore[attr-defined]
+                    saved.job_id,
+                    saved.name,
+                    saved.script_path,
+                    saved.log_path,
+                )
         controller.register_job(saved.job_id, registration, attempts=saved.attempts)
         restored_names.add(saved.name)
     return restored_names
@@ -287,7 +304,18 @@ def snapshot_runtime(runtime: HostRuntime, controller: MonitorController) -> Non
     """Persist controller state for crash recovery."""
     jobs = []
     for state in controller.jobs():
-        stored = StoredJob.from_registration(state.job_id, state.attempts, state.registration)
+        resolved_log_path = controller._expand_log_path(  # type: ignore[attr-defined]
+            state.job_id,
+            state.registration.log_path,
+        )
+        stored = StoredJob.from_registration(
+            state.job_id,
+            state.attempts,
+            state.registration,
+            resolved_log_path=str(resolved_log_path),
+            monitor_state=state.state.key if state.state else None,
+            slurm_state=state.last_slurm_state,
+        )
         jobs.append(stored)
     runtime.state_store.save_jobs(jobs)
 

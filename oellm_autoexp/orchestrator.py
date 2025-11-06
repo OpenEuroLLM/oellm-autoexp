@@ -539,15 +539,22 @@ def _restore_saved_jobs(
             start_condition_interval_seconds=saved.start_condition_interval_seconds,
         )
         if hasattr(slurm_client, "register_job"):
+            log_path_for_client = saved.resolved_log_path or saved.log_path
             try:
+                slurm_client.register_job(  # type: ignore[attr-defined]
+                    saved.job_id,
+                    saved.name,
+                    saved.script_path,
+                    str(log_path_for_client),
+                    state=saved.last_slurm_state or "PENDING",
+                )
+            except TypeError:
                 slurm_client.register_job(  # type: ignore[attr-defined]
                     saved.job_id,
                     saved.name,
                     saved.script_path,
                     saved.log_path,
                 )
-            except TypeError:
-                pass
         controller.register_job(saved.job_id, registration, attempts=saved.attempts)
         restored.add(saved.name)
     return restored

@@ -168,11 +168,7 @@ def test_monitor_signal_triggers_action(tmp_path: Path) -> None:
     result = controller.observe_once_sync()
 
     assert not result.decisions
-    action_records = [
-        record
-        for record in result.events
-        if record.action == "actions" and record.event == "checkpoint"
-    ]
+    action_records = [record for record in result.events if record.action == "actions" and record.event == "checkpoint"]
     assert len(action_records) == 1
     action = action_records[0]
     assert action.payload["restart"] is False
@@ -182,10 +178,7 @@ def test_monitor_signal_triggers_action(tmp_path: Path) -> None:
 
     # Same content should not fire duplicate signals
     result_repeat = controller.observe_once_sync()
-    assert not any(
-        record.action == "actions" and record.event == "checkpoint"
-        for record in result_repeat.events
-    )
+    assert not any(record.action == "actions" and record.event == "checkpoint" for record in result_repeat.events)
 
 
 def test_monitor_signal_triggers_restart(tmp_path: Path) -> None:

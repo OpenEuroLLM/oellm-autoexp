@@ -264,7 +264,16 @@ class MonitorController:
     def _persist_job(self, state: JobRuntimeState) -> None:
         if not self._state_store:
             return
-        stored = StoredJob.from_registration(state.job_id, state.attempts, state.registration)
+        resolved_log_path = self._expand_log_path(state.job_id, state.registration.log_path)
+        monitor_state = state.state.key if state.state else None
+        stored = StoredJob.from_registration(
+            state.job_id,
+            state.attempts,
+            state.registration,
+            resolved_log_path=str(resolved_log_path),
+            monitor_state=monitor_state,
+            slurm_state=state.last_slurm_state,
+        )
         self._state_store.upsert_job(stored)
 
     def _set_state(self, state: JobRuntimeState, key: str) -> None:
