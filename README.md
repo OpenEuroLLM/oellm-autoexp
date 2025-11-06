@@ -89,7 +89,7 @@ Hydra overrides (`key=value`) let you combine these building blocks per run.
 
 ## Usage Recipes
 
-### 1. Single Megatron Job Without SLURM
+### 1. Single Megatron Job
 
 ```bash
 # One-shot plan+submit+monitor (manifest stored under ./outputs/manifests)

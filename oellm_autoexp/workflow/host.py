@@ -60,6 +60,31 @@ async def _monitor_loop(
     controller.clear_state()
 
 
+def _monitor_loop_sync(
+    controller: MonitorController,
+    monitor: BaseMonitor,
+    action_queue_dir: Path,
+) -> None:
+    interval = getattr(
+        monitor.config,
+        "check_interval_seconds",
+        getattr(monitor.config, "poll_interval_seconds", 60),
+    )
+    sleep_seconds = max(1, int(interval))
+
+    while list(controller.jobs()):
+        time.sleep(sleep_seconds)
+        cycle = controller.observe_once_sync()
+        records = controller.drain_events()
+        if not records and cycle.events:
+            records = list(cycle.events)
+        actionable = [record for record in records if record.action]
+        if actionable:
+            _record_monitor_events(actionable, action_queue_dir)
+
+    controller.clear_state()
+
+
 def _record_monitor_events(records: list[MonitorRecord], action_queue_dir: Path) -> None:
     action_queue_dir.mkdir(parents=True, exist_ok=True)
     timestamp = int(time.time())
@@ -76,7 +101,7 @@ def _record_monitor_events(records: list[MonitorRecord], action_queue_dir: Path)
             "metadata": _serialize_for_json(record.metadata),
             "created_at": timestamp,
         }
-        name = f"{timestamp}_{idx}_{record.action}.json"
+        name = f"{timestamp}_{record.job_id}_{idx}_{record.action}.json"
         path = action_queue_dir / name
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(
@@ -252,7 +277,10 @@ def submit_pending_jobs(
 
 
 def run_monitoring(runtime: HostRuntime, controller: MonitorController) -> None:
-    asyncio.run(_monitor_loop(controller, runtime.monitor, runtime.action_queue_dir))
+    if runtime.monitor.config.debug_sync:
+        _monitor_loop_sync(controller, runtime.monitor, runtime.action_queue_dir)
+    else:
+        asyncio.run(_monitor_loop(controller, runtime.monitor, runtime.action_queue_dir))
 
 
 def snapshot_runtime(runtime: HostRuntime, controller: MonitorController) -> None:
