@@ -12,6 +12,19 @@ cd oellm-autoexp
 pip install -e .[dev,megatron]
 git submodule update --init --recursive
 ```
+### Lumi
+
+```bash
+
+module load cray-python/3.11.7 #Pytorch module wont work because it is a singularity container wrapper
+
+git clone https://github.com/OpenEuroLLM/oellm-autoexp.git
+cd oellm-autoexp
+python3 -m venv .venv --system-site-packages
+pip install -e .[dev]
+git submodule update --init --recursive
+#TODO: Do a replacement for venv; squashfs, container for launching or easybuild module
+```
 
 When running scripts directly from the checkout (without installing the package), make sure Python can see the repository and submodules:
 

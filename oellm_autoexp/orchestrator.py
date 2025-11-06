@@ -366,6 +366,16 @@ def _build_replacements(
     launcher = f"{launcher_raw} " if launcher_raw else ""
     launcher_env_flags = ""
     launcher_env_exports = ""
+    
+    # Add bind directories from container yaml
+    # The bind directories are within a list of strings, so we seperate this from below
+    launcher_bind_flags = ""
+    container_cfg = runtime.root.container
+    if container_cfg and container_cfg.bind:
+        bind_flags = " ".join(f"--bind {entry}" for entry in container_cfg.bind)
+        if bind_flags:
+            launcher_bind_flags = f"{bind_flags} "
+
     if runtime.root.slurm.env or launch_cmd.env:
         environ = dict(**runtime.root.slurm.env)
         environ.update(**launch_cmd.env)
@@ -386,6 +396,11 @@ def _build_replacements(
     # When False (e.g., for array jobs), preserve shell variable expansion
     if escape_str:
         backend_cmd = escape_for_double_quotes(backend_cmd)
+
+    if "{{bind_flags}}" in launcher:
+        launcher = launcher.replace("{{bind_flags}}", launcher_bind_flags)
+    elif launcher_bind_flags:
+        launcher = f"{launcher_bind_flags}{launcher}"
 
     if "{{env_flags}}" in launcher:
         launcher = launcher.replace("{{env_flags}}", launcher_env_flags)

@@ -132,6 +132,12 @@ def main(argv: list[str] | None = None) -> None:
             container_image = cfg.get("image")
             if cfg.get("runtime"):
                 container_runtime = cfg["runtime"]
+            cfg_binds = cfg.get("bind") or []
+            if cfg_binds:
+                args.bind = [*cfg_binds, *getattr(args, "bind", [])]
+            cfg_env = cfg.get("env") or {}
+            if cfg_env:
+                args.env = [*(f"{k}={v}" for k, v in cfg_env.items()), *getattr(args, "env", [])]
             if container_image:
                 print(f"Using container from config: {container_image}")
 

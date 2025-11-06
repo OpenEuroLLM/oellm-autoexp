@@ -1,0 +1,26 @@
+defaults:
+  - base
+  - _self_
+
+template_path: templates/lumi.sbatch
+launcher_cmd: "{{env_exports}} ${oc.select:container.runtime,singularity} exec {{bind_flags}}{{env_flags}} ${oc.select:container.image,container.sif}"
+srun:
+  exclusive: true
+  wait: 60
+  jobid: "$SLURM_JOB_ID"
+  network: "disable_rdzv_get"
+launcher_env_passthrough: true
+env:
+  MACHINE_NAME: LUMI
+  MASTER_ADDR: '$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'
+  MASTER_PORT: "20074"
+  NCCL_TUNER_PLUGIN: "/projappl/project_462000353/villekom/rccl-tuner/librccl-tuner.so"
+  HSA_ENABLE_SDMA: 0
+sbatch:
+  nodes: 1
+  ntasks_per_node: 8
+  gpus_per_node: 8
+  cpus_per_task: 7
+  time: "00:30:00"
+client:
+  class_name: SlurmClient
