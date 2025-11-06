@@ -62,6 +62,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: cuda_oom
+        mode: crash
     metadata:
       severity: critical
       error_type: oom
@@ -77,6 +80,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: torch_error
+        mode: crash
     metadata:
       severity: error
       error_type: torch
@@ -93,6 +99,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: python_exception
+        mode: crash
     metadata:
       severity: error
       error_type: exception

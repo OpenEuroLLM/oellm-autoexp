@@ -20,6 +20,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: nccl_error
+        mode: crash
     metadata:
       severity: critical
       error_type: nccl
@@ -51,6 +54,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: nccl_timeout
+        mode: crash
     metadata:
       severity: critical
       error_type: nccl_timeout
@@ -67,6 +73,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: communication_error
+        mode: crash
     metadata:
       severity: error
       error_type: communication
@@ -83,6 +92,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: nccl_collective_fail
+        mode: crash
     metadata:
       severity: critical
       error_type: nccl_collective

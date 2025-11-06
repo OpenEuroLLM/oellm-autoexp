@@ -42,7 +42,7 @@ Hydra overrides (`key=value`) let you combine these building blocks per run.
 
 ## Usage Recipes
 
-### 1. Single Megatron Job Without SLURM
+### 1. Single Megatron Job
 
 ```bash
 # One-shot plan+submit+monitor (manifest stored under ./outputs/manifests)
@@ -196,13 +196,13 @@ monitoring:
 When the pattern matches, a monitoring **event** is recorded. Any configured actions are materialised through `MonitorController.drain_events()` and written to the run's `actions/` directory (one JSON payload per action). Built-in action types live under `oellm_autoexp.monitor.actions`:
 
 - `ExecutionAction`: run an arbitrary command (downstream evaluation, conversions, etc.).
-- `RestartAction`: annotate restart decisions with an explicit reason (see note below).
+- `RestartAction`: trigger restart policies (optionally overriding the `mode`) and annotate the decision (see note below).
 - `TerminationAction`: record a terminal event separate from policy decisions.
 - `ErrorNoteAction`: attach a human-readable note to error events.
 
 Actions receive the `MonitorEvent` metadata (including regex capture groups such as `{checkpoint_path}`) so they can template commands or notes. Custom actions can be registered by way of compoconf by subclassing `BaseMonitorAction`.
 
-**How `RestartAction` fits with restart policies:** Monitors surface event metadata (including the optional `RestartAction` payload), but the actual decision to resubmit a job still comes exclusively from the configured restart policies. A `RestartAction` therefore acts as a side-channel to capture intent—for example “restart due to node maintenance”—for downstream automation or audit trails. If the policy chooses `stop`, the action is still emitted for logging, but no resubmission occurs. Conversely, policies can restart without an accompanying `RestartAction`. Pair them when you want both a policy-driven retry *and* a descriptive record for operators or external orchestration.
+**How `RestartAction` fits with restart policies:** The controller only invokes restart policies when an event includes at least one `RestartAction`. The action’s optional `mode` field selects the policy bucket (defaults to the event’s state, for example `crash`), and its `reason` is carried into the metadata that reaches the restart policy. If the policy elects to `stop`, the generated event is still recorded for observability, but the job is not resubmitted.
 Need a ready-to-use preset? `config/monitoring/megatron_checkpoint_eval.yaml` mirrors the production monitor but adds an `ExecutionAction` that queues `python scripts/run_checkpoint_evaluation.py --checkpoint <path> --iteration <iter>` whenever a checkpoint is written. Select it with `-o monitoring=megatron_checkpoint_eval` and point a lightweight worker at the `actions/` directory to execute evaluation payloads.
 
 To trigger downstream evaluations automatically upon checkpoints:

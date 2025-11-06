@@ -17,6 +17,7 @@ from oellm_autoexp.monitor.actions import (
     BaseMonitorAction,
     ErrorNoteActionConfig,
     MonitorActionInterface,
+    RestartActionConfig,
 )
 from oellm_autoexp.monitor.states import (
     BaseMonitorState,
@@ -78,6 +79,11 @@ class BaseMonitor(MonitorInterface):
     ) -> dict[str, MonitorOutcome]:  # pragma: no cover
         raise NotImplementedError
 
+    def watch_sync(
+        self, jobs: Iterable[MonitoredJob]
+    ) -> dict[str, MonitorOutcome]:  # pragma: no cover
+        raise NotImplementedError
+
 
 @dataclass(kw_only=True)
 class NullMonitorConfig(ConfigInterface):
@@ -92,6 +98,7 @@ class NullMonitorConfig(ConfigInterface):
     output_paths: list[str] = field(default_factory=list)
     start_condition_cmd: str | None = None
     start_condition_interval_seconds: int | None = None
+    debug_sync: bool = False
 
 
 @dataclass(kw_only=True)
@@ -123,6 +130,9 @@ class NullMonitor(BaseMonitor):
     async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
         return {}
 
+    def watch_sync(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
+        return {}
+
 
 @dataclass(kw_only=True)
 class SlurmLogMonitorConfig(NullMonitorConfig):
@@ -133,7 +143,9 @@ class SlurmLogMonitorConfig(NullMonitorConfig):
     check_interval_seconds: int = 300
     log_signals: list[LogSignalConfig] = field(default_factory=list)
     output_paths: list[str] = field(default_factory=list)
-    state_whitelist: list[str] = field(default_factory=lambda: ["pending", "running", "stall"])
+    state_whitelist: list[str] = field(
+        default_factory=lambda: ["pending", "running", "stall", "undefined"]
+    )
 
 
 @register
@@ -155,13 +167,16 @@ class SlurmLogMonitor(BaseMonitor):
             for rule in config.log_signals
         ]
 
-    async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
+    def watch_sync(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
         now = time.time()
         observations: dict[str, MonitorOutcome] = {}
         for job in jobs:
             outcome = self._evaluate_job(job, now)
             observations[job.job_id] = outcome
         return observations
+
+    async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
+        return self.watch_sync(jobs=jobs)
 
     def _evaluate_job(self, job: MonitoredJob, now: float) -> MonitorOutcome:
         if self._state_whitelist and job.state.lower() not in self._state_whitelist:
@@ -418,7 +433,10 @@ def default_log_signals() -> list[LogSignalConfig]:
             pattern=r"(?P<error_type>ERROR|Error|error)[:\s]+(?P<message>.+)",
             pattern_type="regex",
             state=CrashStateConfig(),
-            actions=[ErrorNoteActionConfig(note="log_error")],
+            actions=[
+                ErrorNoteActionConfig(note="log_error"),
+                RestartActionConfig(reason="log_error", mode="crash"),
+            ],
             metadata={"severity": "error"},
             extract_groups={
                 "error_message": "message",

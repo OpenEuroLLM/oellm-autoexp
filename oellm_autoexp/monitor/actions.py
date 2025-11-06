@@ -53,6 +53,7 @@ class ExecutionAction(BaseMonitorAction):
 class RestartActionConfig(ConfigInterface):
     class_name: str = "RestartAction"
     reason: str | None = None
+    mode: str | None = None
 
 
 @register
@@ -61,7 +62,7 @@ class RestartAction(BaseMonitorAction):
 
     def describe(self, job_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
         payload = super().describe(job_id, metadata)
-        payload.update({"type": self.kind, "reason": self.config.reason})
+        payload.update({"type": self.kind, "reason": self.config.reason, "mode": self.config.mode})
         return payload
 
 

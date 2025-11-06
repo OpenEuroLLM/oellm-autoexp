@@ -106,24 +106,25 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
         launch_cmd = plan.runtime.backend.build_launch_command(spec)
 
         replacements = _build_replacements(plan.runtime, job, launch_cmd, escape_str=True)
-        script_path = script_dir / f"{job.name}_{job_it}.sbatch"
-        try:
-            rendered = render_template_file(template_path, script_path, replacements)
-        except OSError as exc:
-            if write_fallback_dir is None:
-                write_fallback_dir = Path.cwd() / ".oellm_autoexp" / "scripts"
-                write_fallback_dir.mkdir(parents=True, exist_ok=True)
-            fallback_path = write_fallback_dir / script_path.name
-            LOGGER.warning(
-                "Unable to write script to %s (%s); using fallback %s",
-                script_path,
-                exc,
-                fallback_path,
-            )
-            rendered = render_template_file(template_path, fallback_path, replacements)
-            script_path = fallback_path
-        validate_job_script(rendered, job.name)
-        job_scripts.append(str(script_path))
+        if not plan.config.slurm.array:
+            script_path = script_dir / f"{job.name}_{job_it}.sbatch"
+            try:
+                rendered = render_template_file(template_path, script_path, replacements)
+            except OSError as exc:
+                if write_fallback_dir is None:
+                    write_fallback_dir = Path.cwd() / ".oellm_autoexp" / "scripts"
+                    write_fallback_dir.mkdir(parents=True, exist_ok=True)
+                fallback_path = write_fallback_dir / script_path.name
+                LOGGER.warning(
+                    "Unable to write script to %s (%s); using fallback %s",
+                    script_path,
+                    exc,
+                    fallback_path,
+                )
+                rendered = render_template_file(template_path, fallback_path, replacements)
+                script_path = fallback_path
+            validate_job_script(rendered, job.name)
+            job_scripts.append(str(script_path))
 
         sweep_entries.append(_build_sweep_entry(job, base_config, launch_cmd))
 
@@ -142,6 +143,7 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
             sweep_path,
             array_job_name,
         )
+        job_scripts = [str(array_script)] * len(plan.jobs)
 
     return RenderedArtifacts(
         job_scripts=job_scripts,
@@ -593,7 +595,7 @@ def _render_array_script(
             fallback_log_dir,
         )
         array_log_dir = fallback_log_dir
-    array_log_path = array_log_dir / f"{array_job_name}_%a.log"
+    array_log_path = array_log_dir / f"{array_job_name}_%A_%a.log"
     array_output_base = Path(plan.config.project.base_output_dir)
     try:
         array_output_base.mkdir(parents=True, exist_ok=True)
@@ -620,6 +622,12 @@ def _render_array_script(
         ],
         env={"SLURM_ARRAY_TASK_ID": "$SLURM_ARRAY_TASK_ID"},
     )
+
+    # Ensure each JobPlan reflects the actual array log template so manifests and
+    # monitoring point at the file that SLURM will write.
+    array_log_template = str(array_log_path)
+    for job in plan.jobs:
+        job.log_path = array_log_template
 
     synthetic_job = JobPlan(
         name=array_job_name,

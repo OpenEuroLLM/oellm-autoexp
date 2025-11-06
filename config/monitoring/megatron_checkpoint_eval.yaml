@@ -70,6 +70,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: cuda_oom
+        mode: crash
     metadata:
       severity: critical
       error_type: oom
@@ -85,6 +88,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: cpu_oom
+        mode: crash
     metadata:
       severity: critical
       error_type: oom
@@ -102,6 +108,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: nccl_error
+        mode: crash
     metadata:
       severity: critical
       error_type: nccl
@@ -117,6 +126,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: nccl_timeout
+        mode: crash
     metadata:
       severity: critical
       error_type: nccl_timeout
@@ -132,6 +144,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: processgroup_timeout
+        mode: crash
     metadata:
       severity: critical
       error_type: distributed_timeout
@@ -147,6 +162,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: communication_error
+        mode: crash
     metadata:
       severity: error
       error_type: communication
@@ -164,6 +182,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: loss_nan
+        mode: crash
     metadata:
       severity: error
       error_type: numerical_instability
@@ -194,6 +215,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: cuda_hang
+        mode: crash
     metadata:
       severity: critical
       error_type: hang
@@ -209,6 +233,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: deadlock
+        mode: crash
     metadata:
       severity: critical
       error_type: deadlock
@@ -226,6 +253,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: torch_error
+        mode: crash
     metadata:
       severity: error
       error_type: torch
@@ -241,6 +271,9 @@ log_signals:
     actions:
       - class_name: ErrorNoteAction
         note: error
+      - class_name: RestartAction
+        reason: python_exception
+        mode: crash
     metadata:
       severity: error
       error_type: exception

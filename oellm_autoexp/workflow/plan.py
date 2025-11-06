@@ -55,7 +55,17 @@ def create_manifest(
     slurm_config_obj = plan.config.slurm
 
     jobs: list[PlanJobSpec] = []
-    for job, script_path in zip(plan.jobs, artifacts.job_scripts):
+
+    script_paths = {job.name: path for job, path in zip(plan.jobs, artifacts.job_scripts)}
+    default_array_script = (
+        str(artifacts.array_script) if artifacts.array_script is not None else None
+    )
+
+    for job in plan.jobs:
+        script_path = script_paths.get(job.name, default_array_script)
+        if script_path is None:
+            # Fallback: this should not happen, but keep manifest valid
+            script_path = f"ARRAY::{plan.config.project.name}"
         jobs.append(
             PlanJobSpec(
                 name=job.name,

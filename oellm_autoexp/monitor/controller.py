@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field, MISSING
 import logging
 from pathlib import Path
 from typing import Any
 from collections.abc import Iterable
 
-from oellm_autoexp.monitor.actions import BaseMonitorAction
+from oellm_autoexp.monitor.actions import BaseMonitorAction, RestartAction
 from oellm_autoexp.monitor.policy import BaseRestartPolicy, RestartDecision, RestartEvent
 from oellm_autoexp.monitor.states import (
     BaseMonitorState,
@@ -21,6 +20,8 @@ from oellm_autoexp.monitor.states import (
     TimeoutStateConfig,
     PendingState,
     PendingStateConfig,
+    UndefinedState,
+    UndefinedStateConfig,
     StartedState,
     StartedStateConfig,
     SuccessState,
@@ -61,7 +62,7 @@ class JobRuntimeState:
     attempts: int = 1
     last_outcome: MonitorOutcome | None = None
     last_slurm_state: str | None = None
-    state: BaseMonitorState = field(default_factory=lambda: PendingState(PendingStateConfig()))
+    state: BaseMonitorState = field(default_factory=lambda: UndefinedState(UndefinedStateConfig()))
 
     @property
     def name(self) -> str:
@@ -106,13 +107,19 @@ class MonitorController:
         self._pending_records: list[MonitorRecord] = []
         self._state_store = state_store
 
-    def register_job(self, job_id: str, registration: JobRegistration, attempts: int = 1) -> None:
+    def register_job(
+        self,
+        job_id: str,
+        registration: JobRegistration,
+        attempts: int = 1,
+        state: BaseMonitorState = UndefinedState(UndefinedStateConfig()),
+    ) -> None:
         job_key = str(job_id)
         state = JobRuntimeState(
             job_id=job_key,
             registration=registration,
             attempts=max(1, attempts),
-            state=PendingState(PendingStateConfig()),
+            state=state,
         )
         self._jobs[job_key] = state
         LOGGER.info(
@@ -124,7 +131,7 @@ class MonitorController:
     def jobs(self) -> Iterable[JobRuntimeState]:
         return list(self._jobs.values())
 
-    async def observe_once(self) -> MonitorCycleResult:
+    def observe_once_sync(self) -> MonitorCycleResult:
         interval = getattr(
             self._monitor.config,
             "check_interval_seconds",
@@ -140,11 +147,14 @@ class MonitorController:
                 termination_string=state.registration.termination_string,
                 termination_command=state.registration.termination_command,
                 metadata=self._build_job_metadata(state),
-                output_paths=list(state.registration.output_paths),
+                output_paths=[
+                    str(self._expand_log_path(state.job_id, path))
+                    for path in state.registration.output_paths
+                ],
             )
             for state in self._jobs.values()
         ]
-        outcomes = await self._monitor.watch(monitored_jobs)
+        outcomes = self._monitor.watch_sync(monitored_jobs)
         slurm_snapshot = self._slurm.squeue()
 
         cycle_result = MonitorCycleResult()
@@ -192,18 +202,16 @@ class MonitorController:
                         LOGGER.info(
                             f"[job {state.job_id}] detected event '{event.name}' with state '{event.state.key}'"
                         )
-                        result = self._apply_policy(state, event.state.key, event_metadata)
-                        if result is not None:
-                            decision, job_key = result
-                            cycle_result.decisions[job_key] = decision
-                            handled = True
-                    elif event.actions:
+                    if event.actions:
                         LOGGER.info(
                             (f"[job {state.job_id}] detected event '{event.name}' ")
                             + (f"with actions {', '.join(action.kind for action in event.actions)}")
                         )
                     else:
                         LOGGER.info(f"[job {state.job_id}] detected event '{event.name}'")
+                    restart_actions = [
+                        action for action in event.actions if isinstance(action, RestartAction)
+                    ]
                     for action in event.actions:
                         record = self._queue_event(
                             job_id=state.job_id,
@@ -218,6 +226,24 @@ class MonitorController:
                             LOGGER.info(
                                 f"[job {state.job_id}] action '{action.kind}' triggered by event '{event.name}'"
                             )
+                    for action in restart_actions:
+                        mode_override = getattr(action.config, "mode", None)
+                        mode = mode_override or (
+                            event.state.key if event.state is not None else None
+                        )
+                        if not mode:
+                            LOGGER.warning(
+                                f"[job {state.job_id}] restart action '{action.kind}' missing mode; skipping"
+                            )
+                            continue
+                        restart_metadata = dict(event_metadata)
+                        if action.config.reason:
+                            restart_metadata.setdefault("restart_reason", action.config.reason)
+                        result = self._apply_policy(state, mode, restart_metadata)
+                        if result is not None:
+                            decision, job_key = result
+                            cycle_result.decisions[job_key] = decision
+                            handled = True
             if handled:
                 continue
             classification = self._classify_mode(state, outcome, slurm_snapshot)
@@ -239,8 +265,8 @@ class MonitorController:
             cycle_result.decisions[job_key] = decision
         return cycle_result
 
-    def observe_once_sync(self) -> MonitorCycleResult:
-        return asyncio.run(self.observe_once())
+    async def observe_once(self) -> MonitorCycleResult:
+        return self.observe_once_sync()
 
     def handle_state_change(self, job_id: str, mode: str) -> RestartDecision:
         state = self._jobs[job_id]
