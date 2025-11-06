@@ -7,7 +7,7 @@ from typing import Any, Literal
 from compoconf import ConfigInterface
 
 
-@dataclass
+@dataclass(kw_only=True)
 class MegatronConfig(ConfigInterface):
     """Typed projection of Megatron-LM CLI arguments."""
 

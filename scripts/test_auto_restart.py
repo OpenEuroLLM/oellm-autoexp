@@ -8,8 +8,8 @@ Architecture Overview:
 
   Login Node (where THIS script runs):
     - This test script (test_auto_restart.py)
-    - Calls run_autoexp.py via Python
-    - run_autoexp.py generates sbatch scripts and submits them via `sbatch` command
+    - Calls plan_autoexp.py to render manifests/scripts and submit_autoexp.py to submit/monitor
+    - submit_autoexp.py generates sbatch scripts (from the manifest) and submits them via `sbatch`
     - The `sbatch` command is available on the login node, NOT inside containers
 
   Compute Nodes (where training runs):
@@ -32,7 +32,7 @@ Architecture Overview:
     - This avoids the "sbatch outside container, megatron inside container" conflict
 
 Test Workflow:
-  1. Submit test jobs via run_autoexp.py (which calls sbatch from login node)
+  1. Generate the plan manifest (`plan_autoexp.py`) and submit/monitor via `submit_autoexp.py`
   2. Simulate various failure scenarios (cancel, hang, OOM, NCCL errors)
   3. Verify that the monitoring system detects failures
   4. Verify that restart policies work correctly (restart on transient errors, not on OOM)
@@ -235,9 +235,9 @@ def submit_test_job(
 ) -> int | None:
     """Submit a test job and return the job ID.
 
-    This function runs on the login node and calls run_autoexp.py, which:
-    1. Generates sbatch scripts with singularity exec commands
-    2. Submits the scripts via sbatch (from login node)
+    This function runs on the login node and invokes plan/submit helpers:
+    1. Generates sbatch scripts inside the manifest via `plan_autoexp.py`
+    2. Submits the scripts via `submit_autoexp.py` (calls sbatch from login node)
     3. The sbatch scripts run on compute nodes and launch Megatron in containers
     4. Starts monitoring in the background to enable auto-restart
 
@@ -254,43 +254,55 @@ def submit_test_job(
     # Ensure logs directory exists
     Path("logs").mkdir(parents=True, exist_ok=True)
 
-    # Build the command
-    # Use sys.executable to ensure we use the same Python interpreter
-    # This runs on the login node and will call sbatch, which then runs the container
-    cmd = [
-        sys.executable,
-        "scripts/run_autoexp.py",
-        "--verbose",  # Enable INFO-level logging to see monitoring events
-        "--config-ref",
-        "experiments/megatron_with_auto_restart",
-        "-C",
-        "config",
+    overrides = [
         f"backend.megatron.micro_batch_size={micro_batch_size}",
         f"backend.megatron.train_iters={train_iters}",
         "slurm.sbatch.time=00:30:00",
         f"project.name=restart_test_mbs{micro_batch_size}",
-        # Explicitly set log paths to logs/ directory
         "slurm.log_dir=logs",
-        # Array mode configuration
         f"slurm.array={str(array_mode).lower()}",
-        # Log path template depends on array mode
-        # Array jobs: SLURM uses %A (array master ID) and %a (task ID)
-        # Single jobs: SLURM uses %j (job ID)
         f"monitoring.log_path_template='logs/{{name}}-%{'A_%a' if array_mode else 'j'}.out'",
-        # Fast monitoring for testing (check every 10 seconds)
         "monitoring.poll_interval_seconds=10",
         "monitoring.check_interval_seconds=10",
     ]
 
+    manifest_path = Path("logs") / f"plan_mbs{micro_batch_size}.json"
+    plan_cmd = [
+        sys.executable,
+        "scripts/plan_autoexp.py",
+        "--config-ref",
+        "experiments/megatron_with_auto_restart",
+        "-C",
+        "config",
+        "--manifest",
+        str(manifest_path),
+    ] + overrides
+
+    log_info(f"Generating plan manifest: {' '.join(plan_cmd)}")
+    plan_result = run_command(plan_cmd)
+    if plan_result.returncode != 0:
+        log_error("Plan generation failed")
+        return None
+
+    submit_cmd = [
+        sys.executable,
+        "-u",
+        "scripts/submit_autoexp.py",
+        "--manifest",
+        str(manifest_path),
+        "--verbose",
+    ]
+
     # Start the monitoring process in background (this will submit AND monitor)
-    log_info(f"Starting job submission and monitoring in background: {' '.join(cmd)}")
+    log_info(f"Starting job submission and monitoring in background: {' '.join(submit_cmd)}")
     monitor_log = Path(f"logs/monitor_test_mbs{micro_batch_size}.log")
     monitor_proc = subprocess.Popen(
-        cmd,
+        submit_cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,  # Line buffered
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
     )
 
     # Read output until we get the job ID

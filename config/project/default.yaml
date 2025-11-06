@@ -1,4 +1,6 @@
+
+
 name: demo
-base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}
-state_dir: null
+base_output_dir: ${oc.concat:${oc.env:OUTPUT_DIR,"./output"}/,${.name}_${oc.timestring:}}
+monitoring_state_dir: "./monitor"
 resume: true

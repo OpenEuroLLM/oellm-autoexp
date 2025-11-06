@@ -12,7 +12,7 @@ from pathlib import Path
 from oellm_autoexp.persistence import MonitorStateStore
 
 
-def list_sessions(monitoring_state_dir: Path) -> None:
+def list_sessions(monitoring_state_dir: str) -> None:
     """List all active monitoring sessions."""
     sessions = MonitorStateStore.list_sessions(monitoring_state_dir)
 
@@ -31,7 +31,7 @@ def list_sessions(monitoring_state_dir: Path) -> None:
         print()
 
 
-def show_session(monitoring_state_dir: Path, session_id: str) -> None:
+def show_session(monitoring_state_dir: str, session_id: str) -> None:
     """Show details of a specific monitoring session."""
     sessions = MonitorStateStore.list_sessions(monitoring_state_dir)
     session = next((s for s in sessions if s["session_id"] == session_id), None)
@@ -66,7 +66,7 @@ def show_session(monitoring_state_dir: Path, session_id: str) -> None:
         print("\nNo jobs in session.")
 
 
-def remove_session(monitoring_state_dir: Path, session_id: str, force: bool = False) -> None:
+def remove_session(monitoring_state_dir: str, session_id: str, force: bool = False) -> None:
     """Remove a monitoring session."""
     sessions = MonitorStateStore.list_sessions(monitoring_state_dir)
     session = next((s for s in sessions if s["session_id"] == session_id), None)
@@ -98,7 +98,7 @@ def remove_session(monitoring_state_dir: Path, session_id: str, force: bool = Fa
     print(f"Session {session_id} removed.")
 
 
-def dump_config(monitoring_state_dir: Path, session_id: str, output: Path) -> None:
+def dump_config(monitoring_state_dir: str, session_id: str, output: str) -> None:
     """Dump the config from a monitoring session."""
     sessions = MonitorStateStore.list_sessions(monitoring_state_dir)
     session = next((s for s in sessions if s["session_id"] == session_id), None)

@@ -7,8 +7,7 @@ files.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass, field, MISSING
 from typing import Any, Literal
 
 from compoconf import (
@@ -53,7 +52,7 @@ class SlurmClientInterface(RegistrableConfigInterface):
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ProjectConfig(ConfigInterface):
     """Project-level metadata and defaults.
 
@@ -67,14 +66,14 @@ class ProjectConfig(ConfigInterface):
         resume: Whether to resume monitoring from persisted state
     """
 
-    name: str
-    base_output_dir: Path
-    state_dir: Path | None = None  # Deprecated, use monitoring_state_dir
-    monitoring_state_dir: Path | None = None  # Stable, cross-run monitoring state
+    class_name: str = "Project"
+    name: str = ""
+    base_output_dir: str = ""
+    monitoring_state_dir: str | None = None  # Stable, cross-run monitoring state
     resume: bool = True
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SweepConfig(ConfigInterface):
     """Sweep expansion settings.
 
@@ -83,7 +82,8 @@ class SweepConfig(ConfigInterface):
     sweep is generated.
     """
 
-    axes: Any
+    class_name: str = "Sweep"
+    axes: Any = field(default_factory=MISSING)
     base_values: dict[str, Any] = field(default_factory=dict)
     name_template: str = "{project}_{index}"
     store_sweep_json: bool = True
@@ -104,23 +104,25 @@ class SbatchConfig(NonStrictDataclass):
     time: str = "0-01:00:00"
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ContainerConfig(ConfigInterface):
     """Container runtime configuration for reproducible execution."""
 
+    class_name: str = "Container"
     image: str | None = None
     runtime: str = "singularity"
     bind: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SlurmConfig(ConfigInterface):
     """Parameters for SBATCH rendering and submission."""
 
-    template_path: Path
-    script_dir: Path
-    log_dir: Path
+    class_name: str = "Slurm"
+    template_path: str = field(default_factory=MISSING)
+    script_dir: str = field(default_factory=MISSING)
+    log_dir: str = field(default_factory=MISSING)
     array: bool = True
     submit_cmd: str = "sbatch"
     squeue_cmd: str = "squeue"
@@ -138,32 +140,35 @@ class SlurmConfig(ConfigInterface):
     client: SlurmClientInterface.cfgtype | None = None
 
 
-@dataclass
+@dataclass(kw_only=True)
 class RestartPolicyConfig(ConfigInterface):
     """Entry describing how to react to specific error modes."""
 
+    class_name: str = "RestartPolicy"
     mode: Literal["stall", "crash", "timeout", "success"]
     implementation: RestartPolicyInterface.cfgtype
     max_retries: int | None = None
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SchedulerConfig(ConfigInterface):
     """Optional scheduler-level throttling and limits."""
 
+    class_name: str = "Scheduler"
     max_jobs: int | None = None
     submit_rate_limit_seconds: float | None = None
 
 
-@dataclass
+@dataclass(kw_only=True)
 class RootConfig(ConfigInterface):
     """Top-level configuration schema."""
 
-    project: ProjectConfig
-    sweep: SweepConfig
-    slurm: SlurmConfig
-    monitoring: MonitorInterface.cfgtype
-    backend: BackendInterface.cfgtype
+    class_name: str = "Root"
+    project: ProjectConfig = field(default_factory=MISSING)
+    sweep: SweepConfig = field(default_factory=MISSING)
+    slurm: SlurmConfig = field(default_factory=MISSING)
+    monitoring: MonitorInterface.cfgtype = field(default_factory=MISSING)
+    backend: BackendInterface.cfgtype = field(default_factory=MISSING)
     container: ContainerConfig | None = None
     restart_policies: list[RestartPolicyConfig] = field(default_factory=list)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)

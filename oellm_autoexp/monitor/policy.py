@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, MISSING
 from typing import Any, Literal
 
 from compoconf import ConfigInterface, register
@@ -12,21 +12,21 @@ from oellm_autoexp.config.schema import RestartPolicyInterface
 ActionLiteral = Literal["restart", "stop", "adjust"]
 
 
-@dataclass
+@dataclass(kw_only=True)
 class RestartDecision:
     """Result returned by a restart policy."""
 
-    action: ActionLiteral
-    reason: str
+    action: ActionLiteral = field(default_factory=MISSING)
+    reason: str = field(default_factory=MISSING)
     adjustments: dict[str, Any] | None = None
 
 
-@dataclass
+@dataclass(kw_only=True)
 class RestartEvent:
     """Information about a job failure/stall."""
 
-    mode: Literal["stall", "crash", "timeout", "success"]
-    attempt: int
+    mode: Literal["stall", "crash", "timeout", "success"] = field(default_factory=MISSING)
+    attempt: int = field(default_factory=MISSING)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -42,7 +42,7 @@ class BaseRestartPolicy(RestartPolicyInterface):
         raise NotImplementedError
 
 
-@dataclass
+@dataclass(kw_only=True)
 class NoRestartPolicyConfig(ConfigInterface):
     class_name: str = "NoRestartPolicy"
     message: str = "No restart configured"
@@ -56,7 +56,7 @@ class NoRestartPolicy(BaseRestartPolicy):
         return RestartDecision(action="stop", reason=self.config.message)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class AlwaysRestartPolicyConfig(ConfigInterface):
     class_name: str = "AlwaysRestartPolicy"
     reason: str = "Retrying job"
@@ -73,7 +73,7 @@ class AlwaysRestartPolicy(BaseRestartPolicy):
         return RestartDecision(action="restart", reason=self.config.reason)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SelectiveRestartPolicyConfig(ConfigInterface):
     """Restart policy that filters based on signal metadata."""
 

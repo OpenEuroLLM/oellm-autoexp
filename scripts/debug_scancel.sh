@@ -55,7 +55,7 @@ find logs -name "*${JOB_ID}*" -type f 2>/dev/null | head -5
 echo ""
 
 echo "10. Checking if monitor is running:"
-ps aux | grep -i "run_autoexp\|monitor" | grep -v grep
+ps aux | grep -i "submit_autoexp\|monitor_autoexp" | grep -v grep
 echo ""
 
 echo "========================================="

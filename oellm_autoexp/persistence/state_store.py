@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field, MISSING
 from pathlib import Path
 from typing import Any
 from collections.abc import Iterable
+
+from compoconf import asdict
 
 
 def _serialize_for_json(obj: Any) -> Any:
@@ -30,12 +32,12 @@ def _serialize_for_json(obj: Any) -> Any:
             return None
 
 
-@dataclass
+@dataclass(kw_only=True)
 class StoredJob:
-    job_id: str
-    name: str
-    script_path: str
-    log_path: str
+    job_id: str = field(default_factory=MISSING)
+    name: str = field(default_factory=MISSING)
+    script_path: str = field(default_factory=MISSING)
+    log_path: str = field(default_factory=MISSING)
     attempts: int = 1
     metadata: dict[str, Any] = field(default_factory=dict)
     output_paths: list[str] = field(default_factory=list)
@@ -71,7 +73,7 @@ class MonitorStateStore:
     that session.
     """
 
-    def __init__(self, root: Path, session_id: str | None = None) -> None:
+    def __init__(self, root: str, session_id: str | None = None) -> None:
         self._root = Path(root)
         self._session_id = session_id or str(uuid.uuid4())[:8]
         # Canonical session file
@@ -198,7 +200,7 @@ class MonitorStateStore:
         self._write_payload(session_data)
 
     @staticmethod
-    def list_sessions(monitoring_state_dir: Path) -> list[dict[str, Any]]:
+    def list_sessions(monitoring_state_dir: str) -> list[dict[str, Any]]:
         """List all monitoring sessions in the monitoring_state directory."""
         if not monitoring_state_dir.exists():
             return []
@@ -222,7 +224,7 @@ class MonitorStateStore:
         return sorted(sessions, key=lambda x: x["created_at"], reverse=True)
 
     @staticmethod
-    def load_session(session_path: Path) -> dict[str, Any] | None:
+    def load_session(session_path: str) -> dict[str, Any] | None:
         """Load a monitoring session file."""
         if not session_path.exists():
             return None

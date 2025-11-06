@@ -15,7 +15,6 @@
 oellm-autoexp/
 ├── oellm_autoexp/
 │   ├── __init__.py
-│   ├── cli.py                        # entry points (click/typer)
 │   ├── config/
 │   │   ├── schema.py                 # compoconf-based dataclasses defining the config tree
 │   │   ├── loader.py                 # parse YAML by way of compoconf.parse_config into typed objects
@@ -30,12 +29,17 @@ oellm-autoexp/
 │   │   └── fake_sbatch.py            # mock sbatch/squeue/scancel used in tests
 │   ├── monitor/
 │   │   ├── watcher.py                # log/time-based freeze detection
+│   │   ├── actions.py                # compoconf-registered monitor actions
+│   │   ├── states.py                 # typed monitor state definitions
 │   │   └── policy.py                 # restart/abort decisions encapsulated here
 │   ├── backends/
 │   │   ├── __init__.py
 │   │   ├── base.py                   # abstract interface (arg dataclasses, command builder)
 │   │   └── megatron.py               # concrete adapter + argument extraction by way of megatron parser
 │   ├── orchestrator.py               # glue: sweep → job plan → submission → monitoring loop
+│   ├── workflow/
+│   │   ├── manifest.py               # serialisable plan manifests shared between container and host
+│   │   └── host.py                   # host-side helpers for submission/monitoring from manifests
 │   ├── job_state.py                  # job model, enums for status/error type
 │   └── utils/
 │       └── shell.py                  # wrappers for invoking sbatch, squeue, etc.
@@ -83,36 +87,21 @@ oellm-autoexp/
 - Expose compoconf-based registries for backend-level options (for example, `BackendInterface`, `RestartPolicyInterface`, `MonitorInterface`) so downstream modules can request instantiated implementations without bespoke factories.
 
 ## Workflow Overview
-1. **Load + Validate Config**: Use `compoconf.parse_config` (wrapped in `loader.py`) to map YAML into typed dataclass instances. The resulting objects implement `ConfigInterface`, enabling lazy instantiation. For `backend=megatron`, the evaluator instantiates the registered Megatron backend directly from the parsed config and invokes argument validation.
-2. **Sweep Expansion**: Use Hydra-like resolver & Cartesian product semantics to expand `sweep` block into concrete job parameter sets. Each job receives a unique deterministic ID + job name.
-3. **Plan Generation**: Feed expanded configs into `config/evaluator.py`, which leverages compoconf's registry-instantiated components (backend adapters, monitoring policies) to assemble a `JobPlan` (command, env, expected log paths). Persist optional `sweep.json` for compatibility and emit an aggregate array script when `slurm.array` is enabled so compatible sweeps collapse to SLURM job arrays.
-4. **SBATCH Rendering**: Fill a template (Jinja/Omega templating) with plan values. Validate script statically (for example, ensure `#SBATCH --job-name` matches) and optionally run `sbatch --test-only` when available.
-5. **Submission**: Invoke `sbatch`, capturing job IDs. Support job arrays when all jobs are compatible; fall back to per-job submission otherwise. Create monitoring session file in `<base_output_dir>/monitoring_state/<session_id>.json` containing full config and job state.
-   - **Container Workflow**: When `container` is configured, the script generation happens inside the container (which has all dependencies), but `sbatch` submission happens on the host (which has SLURM commands). The container runner (`run_autoexp_container.py`) orchestrates this by running plan generation with `--no-submit` inside the container, parsing the generated sbatch command, and executing it on the host.
-6. **Monitoring Loop** (derived from `autoexperiment.manager`):
-   - Poll fake or real `squeue`, track runtime and last log modification time.
-   - Detect states: `pending`, `running`, `stalled`, `failed`, `completed`.
-   - On stall/crash, consult compoconf-registered restart policy implementations: optionally mutate job plan (for example, update `--load` to latest checkpoint) and requeue by instantiating new run directives.
-   - Record transitions in session files for post-mortem/CLI queries.
-   - **Separate Execution**: Monitoring can run independently from submission. After jobs are submitted, monitoring can be started separately by reading session files:
-     - `--monitor-session <id>`: Monitor specific session from `monitoring_state/<id>.json`
-     - `--monitor-all`: Discover and monitor all sessions in `monitoring_state/` directory
-     - Sessions contain full config, enabling monitoring without re-parsing original config
-     - This enables resuming monitoring after process restarts and separating concerns between submission and long-running monitoring.
-7. **Extensibility**: Backends expose `validate(config)`, `build_launch_command(expanded_cfg)`, and optional `postprocess(log_dir)` hooks. New backends register by way of entry points for discoverability.
-
-## Command-Line Interface
-Expose a single `oellm-autoexp` console script with subcommands:
-- `plan CONFIG.yaml`: load+validate, output sweep summary, write artifacts without submitting.
-- `submit CONFIG.yaml [--dry-run]`: plan + render + submit (supports `--dry-run` to print commands and exit). When `--no-monitor` is specified, returns immediately after submission without starting the monitoring loop. Creates session file in `monitoring_state/` directory.
-- `monitor CONFIG.yaml [--job JOB_NAME|JOB_ID]`: attach to running plan; can resume after process restarts. Can be run independently after jobs are submitted.
-- `monitor --monitor-session <id>`: monitor a specific session by reading from `monitoring_state/<id>.json`.
-- `monitor --monitor-all`: discover and monitor all active sessions in `monitoring_state/` directory.
-- `status [--config CONFIG.yaml]`: display table of job states.
-- `cleanup CONFIG.yaml`: optional helper to archive logs or cancel jobs.
-- `monitor MONITOR.yaml`: run monitoring/alerting standalone using only the monitoring config, emitting default signals and dispatching configured actions.
-
-CLI should share state by way of a project directory containing serialized plans, submission metadata, restart counters, etc., enabling resume/restarts akin to `autoexperiment`'s name-based recovery. Persist the compoconf-evaluated configuration (for example, by way of `dump_config`) so repeated invocations reuse the same resolved objects.
+1. **Load + Validate Config**: `load_config_reference` hydrates YAML into compoconf-backed dataclasses. Evaluator objects remain lazy until instantiated during plan generation, allowing schema-only validation on hosts where heavy dependencies (Megatron/Torch) are unavailable.
+2. **Sweep Expansion**: Hydra-style expansion creates deterministic job parameter sets (`JobPlan`) with derived names and output paths. Optional `sweep.json` is still emitted for compatibility and tooling.
+3. **Plan Generation & Rendering**: Inside the container (or host when dependencies are installed), `scripts/plan_autoexp.py` renders SBATCH scripts, sweep metadata, and a SLURM array wrapper when allowed. The step serialises a **plan manifest** (`oellm_autoexp/workflow/manifest.py`) capturing rendered artifacts, job metadata, instantiated monitor/restart/slurm components, and the fully resolved config. By default manifests are written to `<project.base_output_dir>/manifests/plan_<timestamp>_<token>.json`, so concurrent runs do not clobber each other. (`scripts/run_autoexp.py` wraps steps 3–6 for the common single-shot workflow.)
+4. **Manifest Persistence**: The manifest is a JSON document shared between container and host. It includes:
+   - job entries (script path, log path, start conditions, inactivity thresholds),
+   - component specs (monitor implementation, restart policies, SLURM client config),
+   - project/context metadata (base output dir, monitoring state dir, container image/runtime hints),
+   - the resolved configuration (paths coerced to strings) for reproducibility and follow-up actions.
+5. **Host Submission**: `scripts/submit_autoexp.py --manifest …` consumes the manifest without re-instantiating the backend. It loads monitor/slurm components by way of the manifest specs, submits pending jobs (arrays or individual), and records session state in `<base_output_dir>/monitoring_state/<plan_id>.json`. Restart attempts reuse the stored script path; new actions can request fresh renders by calling the plan step again.
+6. **Monitoring Loop**: The same host runtime spins `MonitorController` from manifest data (`submit_autoexp.py` or `monitor_autoexp.py`).
+   - Polls SLURM state and log/output timestamps.
+   - Applies restart policies configured in the manifest.
+   - Records every cycle into the monitoring session; actions emitted by the monitor are written to an `actions/` queue directory derived from the manifest.
+   - Monitoring is resumable: `scripts/monitor_autoexp.py --manifest plan.json` rehydrates the manifest, attaches to existing SLURM job IDs, and continues observing without new submissions.
+7. **Extensibility**: Backends still expose `validate()` and `build_launch_command()`; new runtimes only need to add component specs into the manifest builder so host-side code can instantiate them without reaching into backend modules.
 
 ### Monitoring Sessions and State Persistence
 - Each monitoring session receives a unique session ID (8-character UUID prefix) for tracking
@@ -126,10 +115,9 @@ CLI should share state by way of a project directory containing serialized plans
   - Inspecting historical runs and their configurations
   - Managing multiple concurrent monitoring sessions
 - Workflow:
-  - **On submission**: `submit_jobs()` creates/updates a session file in `monitoring_state/` and returns a `SubmissionResult` with the active `MonitorController`
-  - **Monitoring**: `execute_plan_sync(plan, controller)` consumes that controller; standalone tools call `load_monitor_controller()` to resume without re-submitting
-  - **On monitoring**: `run_autoexp.py --monitor-session <id>` reads session file and reconstructs config
-  - **Monitor all**: `run_autoexp.py --monitor-all` discovers and monitors all active sessions
+  - **On submission**: host `submit` command creates/updates a session file in `monitoring_state/` and writes a pointer to the manifest path.
+  - **Monitoring**: `submit_autoexp.py` keeps monitoring unless `--no-monitor` is provided. A later invocation of `monitor_autoexp.py --manifest plan.json` rehydrates the manifest and resumes monitoring without touching the backend.
+  - **Session discovery**: `scripts/manage_monitoring.py list/show/remove` remain the primary tooling for enumerating sessions; the manifest path stored in each JSON descriptor makes it trivial to restart monitoring even after long gaps.
 - Cleanup behavior:
   - Session files persist for inspection even after jobs complete
   - Manual cleanup by way of `scripts/manage_monitoring.py remove <session_id> [--force]`
@@ -140,21 +128,14 @@ CLI should share state by way of a project directory containing serialized plans
   - `manage_monitoring.py dump-config <id>`: Extract full config from session
 
 ### Container Integration
-- `scripts/run_autoexp_container.py` is the **recommended entry point** for all workflows (containerized or not)
-- The script intelligently handles execution based on configuration:
-  - `--image <path>`: Use specified container image (explicit override)
-  - No `--image` + `container.image` set in config: Auto-detect and use configured container
-  - No `--image` + `container: null` or `container: {}`: Execute directly on host without container
-- For containerized execution, handles SLURM submission split:
-  - Plan generation runs inside container (has all backend dependencies like Megatron)
-  - SLURM submission (`sbatch`) runs on host (has SLURM commands)
-  - Monitoring runs on host (only needs SLURM commands and file access)
-- The container script supports:
-  - `--no-run`: Generate scripts inside container, output sbatch command, but don't execute sbatch
-  - `--no-monitor`: Execute sbatch on host, but return immediately without monitoring
-  - `--monitor-only`: Skip submission, attach to existing jobs and monitor (resuming from persisted state)
-- Container configuration persisted at top level (`container.image`, `container.runtime`) makes workflows fully reproducible from config alone
-- Lazy imports: OmegaConf/Hydra only imported when auto-detecting config, so `--image` works even without these dependencies installed on host
+- `scripts/run_autoexp_container.py` orchestrates the full flow:
+  1. Execute `scripts/plan_autoexp.py` inside the container (render scripts + manifest).
+  2. Execute `scripts/submit_autoexp.py --manifest …` on the host (submit + optional monitoring).
+- `--manifest <path>` controls where the plan manifest is written/read (defaults to `<base_output_dir>/manifests/plan_<timestamp>.json`).
+- `--no-submit` stops after planning; useful when subsequent actions (evaluation, conversions) will consume the manifest later.
+- `--no-monitor` submits jobs but exits immediately; monitoring can be resumed by way of `scripts/monitor_autoexp.py --manifest …`.
+- `--monitor-only` skips planning/submission and forwards straight to the host `monitor` command.
+- Container autodiscovery honours top-level `container.image` / `container.runtime`, but explicit overrides remain available by way of `--image`/`--apptainer-cmd`.
 
 ## Megatron Integration
 - Vendored as Git submodule under `submodules/megatron`; package installs optional dependencies with `pip install .[megatron]`.
@@ -167,12 +148,13 @@ CLI should share state by way of a project directory containing serialized plans
 
 ## Monitoring & Restart Logic
 - Track three signals: SLURM job state (`squeue`), wall-clock runtime, and log progress (mtime + optional regex heartbeat).
-- Monitoring config exposes `log_signals` that match regex/substring patterns in SLURM logs and emit named signals. Each signal can map to a restart `mode` (feeding into restart policies) or to an arbitrary `action` collected by the controller (for example, enqueue checkpoint conversion jobs or trigger evaluation workflows). The standalone monitor CLI pre-registers generic signals for errors, run lifecycle (pending → running → ended), completion markers, and checkpoint publication so downstream tooling can attach commands without backend knowledge.
+- Monitoring config exposes `log_signals` that match regex/substring patterns in SLURM logs and emit named events. Each log match materialises a `MonitorEvent` with optional typed state (`MonitorStateInterface`) and one or more actions (`MonitorActionInterface`) so downstream tooling can trigger follow-up work (for example, enqueue checkpoint conversion jobs or downstream evaluations). The standalone monitor CLI pre-registers generic events for errors, lifecycle transitions (pending → running → ended), completion markers, and checkpoint publication so downstream tooling can attach actions without backend knowledge.
+- Only events carrying a `RestartAction` trigger restart policies; the action may override the policy mode by way of its `mode` field (defaulting to the event state). This keeps incidental log matches from resubmitting jobs while still letting policies enforce retry budgets and exclusions.
 - Monitor compares both SLURM log output and configured training output files; inactivity detection keys off the latest change across either source so freezes without log updates are still caught, mirroring the legacy `autoexperiment` behaviour.
 - **Event Logging and Visibility**: The `MonitorController` logs all monitoring events, SLURM state transitions, signal detections, and policy decisions at INFO level to ensure full visibility into the restart system's behavior. This includes:
   - Monitor outcomes (status, last_update, signal counts)
   - SLURM state transitions (PENDING → RUNNING → CANCELLED/FAILED/COMPLETED)
-  - Signal detection with mode and action
+- Signal detection with state/action payload
   - Policy decisions (restart/stop) with reason and attempt count
   - Job restart operations (old job_id → new job_id)
 - **Mode Classification with Metadata**: When classifying job state into restart modes, the controller enriches the mode with contextual metadata:
@@ -227,7 +209,7 @@ CLI should share state by way of a project directory containing serialized plans
 ## TODO / Backlog
 - Extend the standalone `monitor` CLI with persisted state and (optional) real SLURM integration, plus queue wiring for automated follow-up tasks.
 - Flesh out remaining CLI surface (`status`, `cleanup`) and persist plan state so processes can resume monitoring after restarts. ✓ (Partially done: monitoring can resume from state)
-- Teach orchestrator to persist/reload job history (JSONL/SQLite) and consume `MonitorController.drain_actions()` to enqueue downstream tasks (HF conversion/eval) automatically.
+- Teach orchestrator to persist/reload job history (JSONL/SQLite) and consume `MonitorController.drain_events()` to enqueue downstream tasks (HF conversion/eval) automatically.
 - Implement first-class real SLURM submission path (drop `--fake` guard) including container-friendly sbatch invocation. ✓ (Container workflow separates plan generation from sbatch execution)
 - Extend integration tests to cover log-signal driven actions/restarts, post-processing hooks, and container smoke tests.
 - Add scheduler throttling (`max_jobs`, rate limits) and restart policy variants that mutate launch arguments (for example, checkpoint substitution) using signal metadata.

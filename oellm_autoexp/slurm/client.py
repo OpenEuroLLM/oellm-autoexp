@@ -5,8 +5,7 @@ from __future__ import annotations
 import shlex
 import time
 import re
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass, field, MISSING
 
 from compoconf import ConfigInterface, register
 
@@ -14,14 +13,14 @@ from oellm_autoexp.config.schema import SlurmClientInterface, SlurmConfig
 from oellm_autoexp.utils.shell import run_command
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SlurmJob:
     """Metadata tracked for submitted SLURM jobs."""
 
-    job_id: str
-    name: str
-    script_path: Path
-    log_path: Path
+    job_id: str = field(default_factory=MISSING)
+    name: str = field(default_factory=MISSING)
+    script_path: str = field(default_factory=MISSING)
+    log_path: str = field(default_factory=MISSING)
     state: str = "PENDING"
     return_code: int | None = None
     submitted_at: float = field(default_factory=time.time)
@@ -41,15 +40,15 @@ class BaseSlurmClient(SlurmClientInterface):
         self._slurm_config = slurm_config
 
     def submit(
-        self, name: str, script_path: Path, log_path: Path
+        self, name: str, script_path: str, log_path: str
     ) -> str:  # pragma: no cover - interface
         raise NotImplementedError
 
     def submit_array(
         self,
         array_name: str,
-        script_path: Path,
-        log_paths: list[Path],
+        script_path: str,
+        log_paths: list[str],
         task_names: list[str],
     ) -> list[str]:  # pragma: no cover - interface
         raise NotImplementedError
@@ -76,15 +75,15 @@ class BaseSlurmClient(SlurmClientInterface):
         return self._slurm_config
 
 
-@dataclass
+@dataclass(kw_only=True)
 class BaseSlurmClientConfig(ConfigInterface):
     """Shared configuration fields for SLURM clients."""
 
-    class_name: str
+    class_name: str = "BaseSlurmClient"
     persist_artifacts: bool = False
 
 
-@dataclass
+@dataclass(kw_only=True)
 class FakeSlurmClientConfig(BaseSlurmClientConfig):
     class_name: str = "FakeSlurmClient"
     persist_artifacts: bool = False
@@ -102,12 +101,10 @@ class FakeSlurmClient(BaseSlurmClient):
         self._jobs: dict[str, SlurmJob] = {}
         self._next_id = 1
 
-    def submit(self, name: str, script_path: Path, log_path: Path) -> str:
+    def submit(self, name: str, script_path: str, log_path: str) -> str:
         job_id = str(self._next_id)
         self._next_id += 1
-        job = SlurmJob(
-            job_id=job_id, name=name, script_path=Path(script_path), log_path=Path(log_path)
-        )
+        job = SlurmJob(job_id=job_id, name=name, script_path=script_path, log_path=log_path)
         job.state = "PENDING"
         self._jobs[job_id] = job
         if self.config.persist_artifacts:
@@ -118,8 +115,8 @@ class FakeSlurmClient(BaseSlurmClient):
     def submit_array(
         self,
         array_name: str,
-        script_path: Path,
-        log_paths: list[Path],
+        script_path: str,
+        log_paths: list[str],
         task_names: list[str],
         start_index: int = 0,
     ) -> list[str]:
@@ -135,8 +132,8 @@ class FakeSlurmClient(BaseSlurmClient):
             job = SlurmJob(
                 job_id=task_job_id,
                 name=job_name,
-                script_path=Path(script_path),
-                log_path=Path(log_path),
+                script_path=script_path,
+                log_path=log_path,
             )
             job.state = "PENDING"
             self._jobs[task_job_id] = job
@@ -175,15 +172,15 @@ class FakeSlurmClient(BaseSlurmClient):
         self,
         job_id: str,
         name: str,
-        script_path: Path,
-        log_path: Path,
+        script_path: str,
+        log_path: str,
         state: str = "PENDING",
     ) -> str:
         job = SlurmJob(
             job_id=job_id,
             name=name,
-            script_path=Path(script_path),
-            log_path=Path(log_path),
+            script_path=script_path,
+            log_path=log_path,
             state=state,
         )
         self._jobs[job_id] = job
@@ -195,7 +192,7 @@ class FakeSlurmClient(BaseSlurmClient):
         return job_id
 
 
-@dataclass
+@dataclass(kw_only=True)
 class SlurmClientConfig(BaseSlurmClientConfig):
     class_name: str = "SlurmClient"
 
@@ -211,7 +208,7 @@ class SlurmClient(BaseSlurmClient):
         super().__init__(config)
         self._jobs: dict[str, SlurmJob] = {}
 
-    def submit(self, name: str, script_path: Path, log_path: Path) -> str:
+    def submit(self, name: str, script_path: str, log_path: str) -> str:
         slurm_conf = self.slurm_config
         submit_cmd = shlex.split(slurm_conf.submit_cmd)
         proc = run_command([*submit_cmd, str(script_path)])
@@ -224,15 +221,15 @@ class SlurmClient(BaseSlurmClient):
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_path.touch(exist_ok=True)
         self._jobs[job_id] = SlurmJob(
-            job_id=job_id, name=name, script_path=Path(script_path), log_path=Path(log_path)
+            job_id=job_id, name=name, script_path=script_path, log_path=log_path
         )
         return job_id
 
     def submit_array(
         self,
         array_name: str,
-        script_path: Path,
-        log_paths: list[Path],
+        script_path: str,
+        log_paths: list[str],
         task_names: list[str],
         start_index: int = 0,
     ) -> list[str]:
@@ -240,7 +237,7 @@ class SlurmClient(BaseSlurmClient):
 
         Args:
             array_name: Base name for the array job
-            script_path: Path to the array script
+            script_path: str to the array script
             log_paths: List of log paths for each task
             task_names: List of task names
             start_index: Starting array index (default 0, used for restarting specific tasks)
@@ -288,8 +285,8 @@ class SlurmClient(BaseSlurmClient):
             job = SlurmJob(
                 job_id=task_job_id,
                 name=job_name,
-                script_path=Path(script_path),
-                log_path=Path(log_path),
+                script_path=script_path,
+                log_path=log_path,
             )
             self._jobs[task_job_id] = job
             job_ids.append(task_job_id)
@@ -477,8 +474,8 @@ class SlurmClient(BaseSlurmClient):
         self,
         job_id: str,
         name: str,
-        script_path: Path,
-        log_path: Path,
+        script_path: str,
+        log_path: str,
         state: str = "PENDING",
     ) -> str:
         """Register an externally submitted job for tracking.
@@ -490,8 +487,8 @@ class SlurmClient(BaseSlurmClient):
         job = SlurmJob(
             job_id=job_id,
             name=name,
-            script_path=Path(script_path),
-            log_path=Path(log_path),
+            script_path=script_path,
+            log_path=log_path,
             state=state,
         )
         self._jobs[job_id] = job

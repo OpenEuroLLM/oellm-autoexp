@@ -3,16 +3,29 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, MISSING
 import re
-from pathlib import Path
 from typing import Any
 from collections.abc import Iterable
 from re import Pattern
+from pathlib import Path
 
 from compoconf import ConfigInterface, register
 
 from oellm_autoexp.config.schema import MonitorInterface
+from oellm_autoexp.monitor.actions import (
+    BaseMonitorAction,
+    ErrorNoteActionConfig,
+    MonitorActionInterface,
+    RestartActionConfig,
+)
+from oellm_autoexp.monitor.states import (
+    BaseMonitorState,
+    CrashStateConfig,
+    MonitorStateInterface,
+    SuccessState,
+    SuccessStateConfig,
+)
 from oellm_autoexp.utils.run import run_with_tee
 
 
@@ -20,35 +33,36 @@ from oellm_autoexp.utils.run import run_with_tee
 class MonitoredJob:
     """Metadata describing an active job to be inspected."""
 
-    job_id: str
-    name: str
-    log_path: Path
-    check_interval_seconds: int
+    job_id: str = field(default_factory=MISSING)
+    name: str = field(default_factory=MISSING)
+    log_path: str = field(default_factory=MISSING)
+    check_interval_seconds: int = field(default_factory=MISSING)
+    state: str = field(default_factory=MISSING)
     termination_string: str | None = None
     termination_command: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    output_paths: list[Path] = field(default_factory=list)
+    output_paths: list[str] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class MonitorOutcome:
     """Snapshot emitted by a monitor iteration."""
 
-    job_id: str
-    status: str
+    job_id: str = field(default_factory=MISSING)
+    status: str = field(default_factory=MISSING)
     last_update_seconds: float | None
     metadata: dict[str, Any] = field(default_factory=dict)
-    signals: list[MonitorSignal] = field(default_factory=list)
+    events: list[MonitorEvent] = field(default_factory=list)
 
 
-@dataclass(frozen=True)
-class MonitorSignal:
+@dataclass(kw_only=True)
+class MonitorEvent:
     """Event detected by the monitor while inspecting a job."""
 
-    job_id: str
-    name: str
-    action: str | None
-    mode: str | None
+    job_id: str = field(default_factory=MISSING)
+    name: str = field(default_factory=MISSING)
+    state: BaseMonitorState | None = None
+    actions: list[BaseMonitorAction] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -65,8 +79,13 @@ class BaseMonitor(MonitorInterface):
     ) -> dict[str, MonitorOutcome]:  # pragma: no cover
         raise NotImplementedError
 
+    def watch_sync(
+        self, jobs: Iterable[MonitoredJob]
+    ) -> dict[str, MonitorOutcome]:  # pragma: no cover
+        raise NotImplementedError
 
-@dataclass
+
+@dataclass(kw_only=True)
 class NullMonitorConfig(ConfigInterface):
     """Monitor configuration that performs no observation."""
 
@@ -79,23 +98,27 @@ class NullMonitorConfig(ConfigInterface):
     output_paths: list[str] = field(default_factory=list)
     start_condition_cmd: str | None = None
     start_condition_interval_seconds: int | None = None
+    debug_sync: bool = False
 
 
-@dataclass
+@dataclass(kw_only=True)
 class LogSignalConfig(ConfigInterface):
     """Configuration describing a log-derived signal."""
 
+    class_name: str = "LogSignal"
     name: str
     pattern: str
-    action: str | None = None
-    mode: str | None = None
+    state: MonitorStateInterface.cfgtype | None = None
+    actions: list[MonitorActionInterface.cfgtype] = field(default_factory=list)
     pattern_type: str = "regex"
     metadata: dict[str, Any] = field(default_factory=dict)
     extract_groups: dict[str, str | int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.action and not self.mode:
-            raise ValueError(f"LogSignalConfig '{self.name}' must specify action or mode")
+        if self.state is None and not self.actions:
+            raise ValueError(
+                f"LogSignalConfig '{self.name}' must specify a state change or at least one action"
+            )
         if self.pattern_type not in {"regex", "substring"}:
             raise ValueError(f"Unsupported pattern_type {self.pattern_type!r} for '{self.name}'")
 
@@ -107,8 +130,11 @@ class NullMonitor(BaseMonitor):
     async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
         return {}
 
+    def watch_sync(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
+        return {}
 
-@dataclass
+
+@dataclass(kw_only=True)
 class SlurmLogMonitorConfig(NullMonitorConfig):
     """Monitor that inspects SLURM logs for stalls or completion markers."""
 
@@ -117,6 +143,9 @@ class SlurmLogMonitorConfig(NullMonitorConfig):
     check_interval_seconds: int = 300
     log_signals: list[LogSignalConfig] = field(default_factory=list)
     output_paths: list[str] = field(default_factory=list)
+    state_whitelist: list[str] = field(
+        default_factory=lambda: ["pending", "running", "stall", "undefined"]
+    )
 
 
 @register
@@ -128,12 +157,17 @@ class SlurmLogMonitor(BaseMonitor):
         if not config.log_signals:
             config.log_signals = default_log_signals()
         self._snapshots: dict[str, _JobSnapshot] = {}
+        self._state_whitelist = {state.lower() for state in config.state_whitelist}
         self._compiled_rules: list[_CompiledLogSignal] = [
-            _CompiledLogSignal(rule=rule, pattern=_compile_pattern(rule))
+            _CompiledLogSignal(
+                rule=rule,
+                pattern=_compile_pattern(rule),
+                actions_config=tuple(rule.actions),
+            )
             for rule in config.log_signals
         ]
 
-    async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
+    def watch_sync(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
         now = time.time()
         observations: dict[str, MonitorOutcome] = {}
         for job in jobs:
@@ -141,32 +175,32 @@ class SlurmLogMonitor(BaseMonitor):
             observations[job.job_id] = outcome
         return observations
 
+    async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
+        return self.watch_sync(jobs=jobs)
+
     def _evaluate_job(self, job: MonitoredJob, now: float) -> MonitorOutcome:
-        log_path = job.log_path
+        if self._state_whitelist and job.state.lower() not in self._state_whitelist:
+            return MonitorOutcome(
+                job_id=job.job_id,
+                status=job.state,
+                last_update_seconds=None,
+                metadata={},
+                events=[],
+            )
+
+        log_path = Path(job.log_path)
         status = "pending"
         last_update_seconds: float | None = None
         metadata: dict[str, Any] = {}
-        signals: list[MonitorSignal] = []
+        events: list[MonitorEvent] = []
         snapshot = self._snapshots.get(job.job_id)
         updated = False
 
-        termination = self._check_termination(job)
-        if termination:
+        termination_event = self._check_termination(job)
+        if termination_event:
             status = "complete"
-            metadata.update(termination)
-            signals.append(
-                MonitorSignal(
-                    job_id=job.job_id,
-                    name="run_finished",
-                    action="run_finished",
-                    mode="success",
-                    metadata={
-                        **termination,
-                        "job_name": job.name,
-                        "log_path": str(job.log_path),
-                    },
-                )
-            )
+            metadata.update(termination_event.metadata)
+            events.append(termination_event)
             snapshot = _JobSnapshot(log_content="", last_update=now)
             snapshot.output_contents = {}
             self._snapshots[job.job_id] = snapshot
@@ -175,7 +209,7 @@ class SlurmLogMonitor(BaseMonitor):
                 status=status,
                 last_update_seconds=0.0,
                 metadata=metadata,
-                signals=signals,
+                events=events,
             )
 
         log_previous = snapshot.log_content if snapshot else ""
@@ -186,8 +220,8 @@ class SlurmLogMonitor(BaseMonitor):
             except OSError:
                 log_current = ""
             if log_current != log_previous:
-                signals.extend(
-                    self._extract_signals(
+                events.extend(
+                    self._extract_events(
                         job,
                         log_current,
                         log_previous,
@@ -202,13 +236,13 @@ class SlurmLogMonitor(BaseMonitor):
         output_contents = dict(snapshot.output_contents) if snapshot else {}
         for output_path in job.output_paths:
             try:
-                content = output_path.read_text(errors="ignore")
+                content = Path(output_path).read_text(errors="ignore")
             except OSError:
                 content = ""
             previous = output_contents.get(output_path, "")
             if content != previous:
-                signals.extend(
-                    self._extract_signals(
+                events.extend(
+                    self._extract_events(
                         job,
                         content,
                         previous,
@@ -246,28 +280,28 @@ class SlurmLogMonitor(BaseMonitor):
             status=status,
             last_update_seconds=last_update_seconds,
             metadata=metadata,
-            signals=signals,
+            events=events,
         )
 
-    def _extract_signals(
+    def _extract_events(
         self,
         job: MonitoredJob,
         content: str,
         previous: str,
         *,
         source: str,
-        source_path: Path | None = None,
-    ) -> list[MonitorSignal]:
-        signals: list[MonitorSignal] = []
+        source_path: str | None = None,
+    ) -> list[MonitorEvent]:
+        events: list[MonitorEvent] = []
         if not self._compiled_rules:
-            return signals
+            return events
 
         new_text = content
         if previous and content.startswith(previous):
             new_text = content[len(previous) :]  # noqa
 
         if not new_text:
-            return signals
+            return events
 
         for compiled in self._compiled_rules:
             rule = compiled.rule
@@ -279,25 +313,29 @@ class SlurmLogMonitor(BaseMonitor):
                 if source_path is not None:
                     metadata.setdefault("source_path", str(source_path))
                 metadata.setdefault("source", source)
-                signals.append(
-                    MonitorSignal(
+                state_instance = compiled.instantiate_state()
+                events.append(
+                    MonitorEvent(
                         job_id=job.job_id,
                         name=rule.name,
-                        action=rule.action,
-                        mode=rule.mode,
+                        state=state_instance,
+                        actions=[
+                            action_cfg.instantiate(MonitorActionInterface)
+                            for action_cfg in compiled.actions_config
+                        ],
                         metadata=metadata,
                     )
                 )
-        return signals
+        return events
 
     def _effective_threshold(self, job: MonitoredJob) -> int | None:
         if job.metadata.get("inactivity_threshold_seconds") is not None:
             return job.metadata["inactivity_threshold_seconds"]
         return self.config.inactivity_threshold_seconds
 
-    def _check_termination(self, job: MonitoredJob) -> dict[str, Any] | None:
-        log_path = job.log_path
-        result: dict[str, Any] = {}
+    def _check_termination(self, job: MonitoredJob) -> MonitorEvent | None:
+        log_path = Path(job.log_path)
+        metadata: dict[str, Any] = {}
         termination_string = job.termination_string or self.config.termination_string
         if termination_string and log_path.exists():
             try:
@@ -305,8 +343,19 @@ class SlurmLogMonitor(BaseMonitor):
             except OSError:
                 content = ""
             if termination_string in content:
-                result["reason"] = "termination-string"
-                return result
+                metadata.update(
+                    {
+                        "reason": "termination-string",
+                        "log_path": str(log_path),
+                    }
+                )
+                metadata.setdefault("job_name", job.name)
+                return MonitorEvent(
+                    job_id=job.job_id,
+                    name="termination",
+                    state=SuccessState(SuccessStateConfig()),
+                    metadata=metadata,
+                )
 
         command = job.termination_command or self.config.termination_command
         if command:
@@ -316,23 +365,40 @@ class SlurmLogMonitor(BaseMonitor):
             except ValueError:
                 exit_value = proc.returncode
             if exit_value == 1:
-                result["reason"] = "termination-command"
-                return result
+                metadata.update(
+                    {
+                        "reason": "termination-command",
+                        "command": command,
+                    }
+                )
+                metadata.setdefault("job_name", job.name)
+                return MonitorEvent(
+                    job_id=job.job_id,
+                    name="termination",
+                    state=SuccessState(SuccessStateConfig()),
+                    metadata=metadata,
+                )
 
         return None
 
 
-@dataclass
+@dataclass(kw_only=True)
 class _JobSnapshot:
     log_content: str
     last_update: float
-    output_contents: dict[Path, str] = field(default_factory=dict)
+    output_contents: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class _CompiledLogSignal:
     rule: LogSignalConfig
     pattern: Pattern[str]
+    actions_config: tuple[MonitorActionInterface.cfgtype, ...] = tuple()
+
+    def instantiate_state(self) -> BaseMonitorState | None:
+        if self.rule.state is None:
+            return None
+        return self.rule.state.instantiate(MonitorStateInterface)
 
 
 def _compile_pattern(rule: LogSignalConfig) -> Pattern[str]:
@@ -366,8 +432,11 @@ def default_log_signals() -> list[LogSignalConfig]:
             name="error",
             pattern=r"(?P<error_type>ERROR|Error|error)[:\s]+(?P<message>.+)",
             pattern_type="regex",
-            action="error",
-            mode="crash",
+            state=CrashStateConfig(),
+            actions=[
+                ErrorNoteActionConfig(note="log_error"),
+                RestartActionConfig(reason="log_error", mode="crash"),
+            ],
             metadata={"severity": "error"},
             extract_groups={
                 "error_message": "message",
@@ -378,7 +447,7 @@ def default_log_signals() -> list[LogSignalConfig]:
             name="checkpoint",
             pattern=r"Checkpoint (?:saved|written)[:\s]+(?P<checkpoint>\S+)",
             pattern_type="regex",
-            action="new_checkpoint",
+            actions=[ErrorNoteActionConfig(note="new_checkpoint")],
             metadata={"kind": "checkpoint"},
             extract_groups={
                 "checkpoint_path": "checkpoint",
@@ -388,8 +457,7 @@ def default_log_signals() -> list[LogSignalConfig]:
             name="training_complete",
             pattern=r"(Training complete|Training finished)",
             pattern_type="regex",
-            action="run_finished",
-            mode="success",
+            state=SuccessStateConfig(),
             metadata={"kind": "completion"},
             extract_groups={"matched": "match"},
         ),
@@ -400,7 +468,7 @@ __all__ = [
     "BaseMonitor",
     "MonitoredJob",
     "MonitorOutcome",
-    "MonitorSignal",
+    "MonitorEvent",
     "NullMonitorConfig",
     "LogSignalConfig",
     "SlurmLogMonitor",

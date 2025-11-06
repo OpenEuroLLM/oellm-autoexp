@@ -149,7 +149,7 @@ def _summarise_help(meta: MegatronArgMetadata) -> str:
     return help_text.strip()
 
 
-def generate_dataclass(output: Path, excluded: set[str], quiet: bool) -> None:
+def generate_dataclass(output: str, excluded: set[str], quiet: bool) -> None:
     parser = get_megatron_parser()
     metadata = get_arg_metadata(parser)
     defaults = extract_default_args(parser)

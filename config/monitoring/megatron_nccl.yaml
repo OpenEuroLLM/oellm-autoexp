@@ -15,8 +15,14 @@ log_signals:
   - name: nccl_error
     pattern: 'NCCL ERROR.*?(?P<error_code>[\w]+).*?(?P<message>.+)'
     pattern_type: regex
-    action: error
-    mode: crash
+    state:
+      class_name: CrashState
+    actions:
+      - class_name: ErrorNoteAction
+        note: error
+      - class_name: RestartAction
+        reason: nccl_error
+        mode: crash
     metadata:
       severity: critical
       error_type: nccl
@@ -29,7 +35,9 @@ log_signals:
   - name: nccl_warning
     pattern: 'NCCL WARN.*?(?P<message>.+)'
     pattern_type: regex
-    action: warning
+    actions:
+      - class_name: ErrorNoteAction
+        note: warning
     metadata:
       severity: warning
       error_type: nccl
@@ -41,8 +49,14 @@ log_signals:
   - name: nccl_timeout
     pattern: 'NCCL.*timeout.*(?P<details>.+)'
     pattern_type: regex
-    action: error
-    mode: crash
+    state:
+      class_name: CrashState
+    actions:
+      - class_name: ErrorNoteAction
+        note: error
+      - class_name: RestartAction
+        reason: nccl_timeout
+        mode: crash
     metadata:
       severity: critical
       error_type: nccl_timeout
@@ -54,8 +68,14 @@ log_signals:
   - name: communication_error
     pattern: '(?:socket|connection|comm).*(?:error|failed|abort).*?(?P<message>.+)'
     pattern_type: regex
-    action: error
-    mode: crash
+    state:
+      class_name: CrashState
+    actions:
+      - class_name: ErrorNoteAction
+        note: error
+      - class_name: RestartAction
+        reason: communication_error
+        mode: crash
     metadata:
       severity: error
       error_type: communication
@@ -67,8 +87,14 @@ log_signals:
   - name: nccl_collective_fail
     pattern: 'NCCL.*(?:allreduce|broadcast|reduce|allgather).*(?:failed|error).*(?P<message>.+)'
     pattern_type: regex
-    action: error
-    mode: crash
+    state:
+      class_name: CrashState
+    actions:
+      - class_name: ErrorNoteAction
+        note: error
+      - class_name: RestartAction
+        reason: nccl_collective_fail
+        mode: crash
     metadata:
       severity: critical
       error_type: nccl_collective

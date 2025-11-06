@@ -1,5 +1,7 @@
 from compoconf import parse_config
 
+from pathlib import Path
+
 from oellm_autoexp.config.schema import RootConfig, SweepConfig
 from oellm_autoexp.sweep.expander import expand_sweep
 from oellm_autoexp.sweep.planner import build_job_plans
@@ -38,7 +40,7 @@ def test_build_job_plans_name_template():
     jobs = build_job_plans(root, points)
     assert len(jobs) == 4
     assert jobs[0].name.startswith("demo")
-    assert jobs[0].log_path.name == "slurm.out"
+    assert Path(jobs[0].log_path).name == "slurm.out"
 
 
 def test_build_job_plans_extracts_lifecycle_fields():

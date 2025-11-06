@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field, MISSING
 from typing import Any
 from collections.abc import Callable
 
@@ -15,10 +15,10 @@ from oellm_autoexp.utils.run import run_with_tee
 class StartConditionResult:
     """Represents the outcome of a start condition command execution."""
 
-    success: bool
-    stdout: str
-    stderr: str
-    returncode: int
+    success: bool = field(default_factory=MISSING)
+    stdout: str = field(default_factory=MISSING)
+    stderr: str = field(default_factory=MISSING)
+    returncode: int = field(default_factory=MISSING)
 
     def summary(self) -> str:
         if self.stdout:

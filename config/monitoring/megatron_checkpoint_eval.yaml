@@ -1,17 +1,12 @@
-# Comprehensive Megatron monitoring for production runs
-# Includes: success detection, OOM errors, NCCL issues, and stall detection
-class_name: SlurmLogMonitor
-poll_interval_seconds: 180
-check_interval_seconds: 120
-inactivity_threshold_seconds: 1200  # 20 minutes without updates = stalled
-termination_string: null
-termination_command: null
-# SLURM variables: %j=job_id, %A=array_master_id, %a=array_task_id
-log_path_template: "{output_dir}/slurm-${oc.if:${slurm.array},%A_%a,%j}.out"
-output_paths: []
-start_condition_cmd: null
-start_condition_interval_seconds: null
+# Megatron monitoring with automatic checkpoint evaluation trigger
+# Extends megatron_production by adding an ExecutionAction that enqueues
+# downstream evaluations whenever a checkpoint is written.
+defaults:
+  - megatron_production
+  - _self_
 
+# Re-declare log signals so we can enrich checkpoint events with ExecutionAction.
+# Aside from the checkpoint signal, definitions mirror megatron_production.
 log_signals:
   # === SUCCESS SIGNALS ===
 
@@ -32,11 +27,22 @@ log_signals:
   - name: checkpoint_saved
     pattern: 'successfully saved checkpoint from iteration\s+(?P<iteration>\d+) to (?P<path>\S+)'
     pattern_type: regex
+    state:
+      class_name: SuccessState
     actions:
       - class_name: ErrorNoteAction
         note: new_checkpoint
+      - class_name: ExecutionAction
+        command:
+          - python
+          - scripts/run_checkpoint_evaluation.py
+          - "--checkpoint"
+          - "{checkpoint_path}"
+          - "--iteration"
+          - "{checkpoint_iteration}"
     metadata:
       kind: checkpoint
+      trigger: checkpoint_evaluation
     extract_groups:
       checkpoint_iteration: iteration
       checkpoint_path: path
@@ -131,7 +137,7 @@ log_signals:
       timeout_details: details
 
   - name: processgroup_timeout
-    pattern: '[c10d].*timeout.*(?P<details>.+)'
+    pattern: '\[c10d\].*timeout.*(?P<details>.+)'
     pattern_type: regex
     state:
       class_name: CrashState

@@ -21,8 +21,14 @@ log_signals:
   - name: cuda_hang
     pattern: '(?:CUDA.*(?:hang|stuck|frozen)|device-side assert)'
     pattern_type: regex
-    action: error
-    mode: crash
+    state:
+      class_name: CrashState
+    actions:
+      - class_name: ErrorNoteAction
+        note: error
+      - class_name: RestartAction
+        reason: cuda_hang
+        mode: crash
     metadata:
       severity: critical
       error_type: hang
@@ -34,8 +40,14 @@ log_signals:
   - name: deadlock
     pattern: '(?:deadlock|Deadlock|DEADLOCK).*?(?P<message>.+)'
     pattern_type: regex
-    action: error
-    mode: crash
+    state:
+      class_name: CrashState
+    actions:
+      - class_name: ErrorNoteAction
+        note: error
+      - class_name: RestartAction
+        reason: deadlock
+        mode: crash
     metadata:
       severity: critical
       error_type: deadlock
@@ -47,8 +59,14 @@ log_signals:
   - name: processgroup_timeout
     pattern: '\[c10d\].*timeout.*(?P<details>.+)'
     pattern_type: regex
-    action: error
-    mode: crash
+    state:
+      class_name: CrashState
+    actions:
+      - class_name: ErrorNoteAction
+        note: error
+      - class_name: RestartAction
+        reason: processgroup_timeout
+        mode: crash
     metadata:
       severity: critical
       error_type: distributed_timeout
@@ -60,8 +78,14 @@ log_signals:
   - name: watchdog_timeout
     pattern: '(?:watchdog|Watchdog).*timeout.*(?P<message>.+)'
     pattern_type: regex
-    action: error
-    mode: crash
+    state:
+      class_name: CrashState
+    actions:
+      - class_name: ErrorNoteAction
+        note: error
+      - class_name: RestartAction
+        reason: watchdog_timeout
+        mode: crash
     metadata:
       severity: critical
       error_type: watchdog_timeout
@@ -72,7 +96,9 @@ log_signals:
   - name: gradient_invalid
     pattern: '(?:NaN|Inf|nan|inf).*(?:gradient|grad).*?(?P<context>.+)'
     pattern_type: regex
-    action: warning
+    actions:
+      - class_name: ErrorNoteAction
+        note: warning
     metadata:
       severity: warning
       error_type: numerical_instability
@@ -83,8 +109,14 @@ log_signals:
   - name: loss_invalid
     pattern: 'loss.*(?:NaN|Inf|nan|inf)'
     pattern_type: regex
-    action: error
-    mode: crash
+    state:
+      class_name: CrashState
+    actions:
+      - class_name: ErrorNoteAction
+        note: error
+      - class_name: RestartAction
+        reason: loss_invalid
+        mode: crash
     metadata:
       severity: error
       error_type: numerical_instability

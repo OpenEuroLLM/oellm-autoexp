@@ -40,7 +40,6 @@ cfgv==3.4.0
 chardet @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/chardet/chardet-5.2.0
 charset-normalizer @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/charsetnormalizer/charset-normalizer-3.3.2
 cleo @ file:///p/data1/swmanage/EasyBuild/sources/p/Python-bundle-PyPI/extensions/cleo-2.1.0-py3-none-any.whl#sha256=4a31bd4dd45695a64ee3c4758f583f134267c2bc518d8ae9a29cf237d009b07e
-click @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/click/click-8.1.7
 cloudpickle @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/cloudpickle/cloudpickle-3.0.0
 cmake==3.31.6
 colorama @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/colorama/colorama-0.4.6

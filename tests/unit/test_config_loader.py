@@ -11,7 +11,7 @@ def test_load_config(tmp_path: Path) -> None:
     cfg = load_config(config_path)
 
     assert cfg.project.name == "demo"
-    assert cfg.project.base_output_dir == Path("./outputs")
+    assert Path(cfg.project.base_output_dir) == Path("./outputs")
     assert cfg.monitoring.class_name == "NullMonitor"
     assert cfg.backend.class_name == "NullBackend"
     assert cfg.slurm.launcher_cmd == ""
@@ -19,17 +19,17 @@ def test_load_config(tmp_path: Path) -> None:
     assert cfg.slurm.srun_opts == ""
     assert cfg.slurm.client.class_name == "FakeSlurmClient"
     assert cfg.restart_policies[0].mode == "success"
-    assert cfg.project.state_dir == Path("./outputs") / "monitoring_state"
+    assert Path(cfg.project.monitoring_state_dir) == Path("./outputs") / "monitoring_state"
 
 
 def test_load_hydra_config(monkeypatch) -> None:
     monkeypatch.setenv("SLURM_ACCOUNT", "debug")
     monkeypatch.setenv("CONTAINER_CACHE_DIR", "debug")
     cfg = load_config_reference(
-        "autoexp", Path("config"), overrides=["project=juwels", "slurm=juwels"]
+        "autoexp", Path("config"), overrides=["project=default", "slurm=juwels"]
     )
 
-    assert cfg.project.name == "juwels"
+    assert cfg.project.name == "demo"
     assert "JUWELS" in cfg.slurm.env.get("MACHINE_NAME", "")
     assert str(cfg.slurm.template_path).endswith("juwels.sbatch")
     assert cfg.slurm.launcher_cmd.startswith("{{env_exports}}")

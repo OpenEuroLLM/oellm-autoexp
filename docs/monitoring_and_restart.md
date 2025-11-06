@@ -104,8 +104,11 @@ Monitors parse logs using regex patterns and detect signals:
 - name: cuda_oom
   pattern: '(?:CUDA out of memory).*Tried to allocate (?P<size>[\d.]+\s*[KMGT]iB)'
   pattern_type: regex
-  action: error
-  mode: crash  # Triggers crash policy
+  state:
+    class_name: CrashState  # Triggers crash policy
+  actions:
+    - class_name: ErrorNoteAction
+      note: error
   metadata:
     severity: critical
     error_type: oom  # Used by SelectiveRestartPolicy
@@ -127,7 +130,7 @@ All transitions are logged at INFO level with old and new states.
 
 ### 3. Policy Decision
 
-When a signal with `mode: crash` is detected, or a SLURM state triggers a mode, the restart policy decides:
+When an event carries a `CrashState` (or SLURM classifies the job into a restartable mode), the restart policy decides:
 
 ```python
 # SelectiveRestartPolicy checks:
@@ -226,8 +229,11 @@ log_signals:
   - name: signal_name
     pattern: 'regex pattern with (?P<name>capture groups)'
     pattern_type: regex
-    action: progress_update | error | warning | new_checkpoint | run_finished
-    mode: crash | stall | success | null
+    state:
+      class_name: CrashState | SuccessState | StalledState | TimeoutState
+    actions:
+      - class_name: ErrorNoteAction | ExecutionAction | RestartAction | TerminationAction
+        note: optional_tag
     metadata:
       error_type: oom | hang | nccl | ...
       subsystem: cuda | distributed | ...
@@ -259,6 +265,8 @@ exclude_error_types: [oom, exception, ...]
 3. **Check logs**: Review extracted metadata to tune restart rules
 4. **Set max_retries**: Prevent infinite restart loops (recommended: 2-5)
 5. **Exclude permanent errors**: Always exclude OOM and code bugs from restart
+6. **Automate evaluations**: Select `monitoring=megatron_checkpoint_eval` to reuse the packaged preset that enqueues checkpoint evaluation commands by way of `ExecutionAction`.
+7. **Separate policy from actions**: `RestartAction` augments the record of *why* a restart happened, but only the configured restart policy decides whether a job is resubmitted. Use the action for logging/automation, and let the policy enforce retry limits and exclusions.
 
 ## Troubleshooting
 
@@ -268,7 +276,7 @@ exclude_error_types: [oom, exception, ...]
 - Review logs to confirm error classification
 
 ### Job not restarting when expected
-- Verify signal has `mode: crash` (or stall/timeout)
+- Verify the event attaches a restartable state (`CrashState`, `StalledState`, `TimeoutState`)
 - Check error_type matches `restart_on_error_types`
 - Ensure `default_action: restart` if using catch-all
 

@@ -11,20 +11,20 @@ from compoconf import ConfigInterface, register
 from oellm_autoexp.config.schema import BackendInterface
 
 
-@dataclass
+@dataclass(kw_only=True)
 class LaunchCommand:
     """Concrete command to be executed on the cluster."""
 
-    argv: Sequence[str]
+    argv: Sequence[str] = field(default_factory=list)
     env: Mapping[str, str] = field(default_factory=dict)
     cwd: str | None = None
 
 
-@dataclass
+@dataclass(kw_only=True)
 class BackendJobSpec:
     """Information needed to construct a launch command."""
 
-    parameters: dict[str, Any]
+    parameters: dict[str, Any] = field(default_factory=dict)
 
 
 class BaseBackend(BackendInterface):
@@ -42,11 +42,10 @@ class BaseBackend(BackendInterface):
         raise NotImplementedError
 
 
-@dataclass
+@dataclass(kw_only=True)
 class NullBackendConfig(ConfigInterface):
     """Backend that echoes sweep parameters for testing."""
 
-    class_name: str = "NullBackend"
     base_command: Sequence[str] = field(default_factory=lambda: ("echo",))
     extra_cli_args: Sequence[str] = field(default_factory=tuple)
     env: dict[str, str] = field(default_factory=dict)
