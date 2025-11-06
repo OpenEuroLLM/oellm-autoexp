@@ -46,9 +46,23 @@ class StoredJob:
     inactivity_threshold_seconds: int | None = None
     start_condition_cmd: str | None = None
     start_condition_interval_seconds: int | None = None
+    resolved_log_path: str | None = None
+    last_monitor_state: str | None = None
+    last_slurm_state: str | None = None
+    last_updated: float = field(default_factory=time.time)
 
     @staticmethod
-    def from_registration(job_id: str, attempts: int, registration: Any) -> StoredJob:
+    def from_registration(
+        job_id: str,
+        attempts: int,
+        registration: Any,
+        *,
+        resolved_log_path: str | None = None,
+        monitor_state: str | None = None,
+        slurm_state: str | None = None,
+    ) -> StoredJob:
+        if resolved_log_path is None:
+            resolved_log_path = str(registration.log_path)
         return StoredJob(
             job_id=job_id,
             name=registration.name,
@@ -62,6 +76,10 @@ class StoredJob:
             inactivity_threshold_seconds=registration.inactivity_threshold_seconds,
             start_condition_cmd=registration.start_condition_cmd,
             start_condition_interval_seconds=registration.start_condition_interval_seconds,
+            resolved_log_path=resolved_log_path,
+            last_monitor_state=monitor_state,
+            last_slurm_state=slurm_state,
+            last_updated=time.time(),
         )
 
 
@@ -139,6 +157,10 @@ class MonitorStateStore:
                     inactivity_threshold_seconds=raw.get("inactivity_threshold_seconds"),
                     start_condition_cmd=raw.get("start_condition_cmd"),
                     start_condition_interval_seconds=raw.get("start_condition_interval_seconds"),
+                    resolved_log_path=raw.get("resolved_log_path") or raw.get("expanded_log_path"),
+                    last_monitor_state=raw.get("last_monitor_state"),
+                    last_slurm_state=raw.get("last_slurm_state"),
+                    last_updated=float(raw.get("last_updated", time.time())),
                 )
             except (TypeError, ValueError):
                 continue
@@ -200,8 +222,9 @@ class MonitorStateStore:
         self._write_payload(session_data)
 
     @staticmethod
-    def list_sessions(monitoring_state_dir: str) -> list[dict[str, Any]]:
+    def list_sessions(monitoring_state_dir: str | Path) -> list[dict[str, Any]]:
         """List all monitoring sessions in the monitoring_state directory."""
+        monitoring_state_dir = Path(monitoring_state_dir)
         if not monitoring_state_dir.exists():
             return []
 
@@ -216,6 +239,7 @@ class MonitorStateStore:
                         "created_at": data.get("created_at", 0),
                         "session_path": str(session_file),
                         "job_count": len(data.get("jobs", [])),
+                        "manifest_path": data.get("manifest_path"),
                     }
                 )
             except (json.JSONDecodeError, KeyError):
@@ -224,8 +248,9 @@ class MonitorStateStore:
         return sorted(sessions, key=lambda x: x["created_at"], reverse=True)
 
     @staticmethod
-    def load_session(session_path: str) -> dict[str, Any] | None:
+    def load_session(session_path: str | Path) -> dict[str, Any] | None:
         """Load a monitoring session file."""
+        session_path = Path(session_path)
         if not session_path.exists():
             return None
         try:

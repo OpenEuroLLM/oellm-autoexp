@@ -1,9 +1,17 @@
+import json
 from pathlib import Path
 
 import argparse
 import pytest
 
+from types import SimpleNamespace
+
 from scripts import run_autoexp_container
+from scripts.monitor_autoexp import (
+    _apply_monitor_overrides,
+    _load_session_target,
+    _resolve_session_path,
+)
 
 
 def test_run_autoexp_container_submits_with_fake_slurm(monkeypatch, tmp_path: Path):
@@ -157,3 +165,43 @@ def test_build_container_command_includes_env_and_bind():
     assert "--bind" in cmd
     assert "--env" in cmd
     assert cmd[-1].endswith("script.py")
+
+
+def test_apply_monitor_overrides_sets_direct_key():
+    config = {
+        "class_name": "NullMonitor",
+        "poll_interval_seconds": 600,
+        "inactivity_threshold_seconds": 900,
+        "termination_string": None,
+        "termination_command": None,
+        "log_path_template": "{output_dir}/slurm.out",
+        "output_paths": [],
+        "start_condition_cmd": None,
+        "start_condition_interval_seconds": None,
+        "debug_sync": False,
+    }
+    spec = SimpleNamespace(config=config)
+    _apply_monitor_overrides(spec, ["debug_sync=true"])
+    assert spec.config["debug_sync"] in (True, "true")
+
+
+def test_resolve_session_path_accepts_ids(tmp_path: Path) -> None:
+    state_dir = tmp_path / "monitor"
+    state_dir.mkdir()
+    session_file = state_dir / "abc123.json"
+    session_file.write_text(json.dumps({"session_id": "abc123", "manifest_path": "plan.json"}))
+
+    resolved = _resolve_session_path("abc123", state_dir)
+    assert resolved == session_file.resolve()
+
+
+def test_load_session_target_reads_manifest(tmp_path: Path) -> None:
+    manifest = tmp_path / "plan.json"
+    manifest.write_text("{}", encoding="utf-8")
+    session_file = tmp_path / "session.json"
+    session_file.write_text(json.dumps({"session_id": "sess", "manifest_path": str(manifest)}))
+
+    target = _load_session_target(session_file)
+    assert target.session_id == "sess"
+    assert target.manifest_path == manifest.resolve()
+    assert target.session_path == session_file.resolve()

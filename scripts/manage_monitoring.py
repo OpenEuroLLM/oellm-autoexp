@@ -12,7 +12,7 @@ from pathlib import Path
 from oellm_autoexp.persistence import MonitorStateStore
 
 
-def list_sessions(monitoring_state_dir: str) -> None:
+def list_sessions(monitoring_state_dir: Path, include_completed: bool = False) -> None:
     """List all active monitoring sessions."""
     sessions = MonitorStateStore.list_sessions(monitoring_state_dir)
 
@@ -22,16 +22,20 @@ def list_sessions(monitoring_state_dir: str) -> None:
 
     print(f"Found {len(sessions)} monitoring session(s):\n")
     for session in sessions:
+        if session.get("job_count", 0) == 0 and not include_completed:
+            continue
         created = datetime.fromtimestamp(session["created_at"]).strftime("%Y-%m-%d %H:%M:%S")
         print(f"Session ID: {session['session_id']}")
         print(f"  Project: {session['project_name']}")
         print(f"  Created: {created}")
         print(f"  Jobs: {session['job_count']}")
         print(f"  File: {session['session_path']}")
+        if session.get("manifest_path"):
+            print(f"  Manifest: {session['manifest_path']}")
         print()
 
 
-def show_session(monitoring_state_dir: str, session_id: str) -> None:
+def show_session(monitoring_state_dir: Path, session_id: str) -> None:
     """Show details of a specific monitoring session."""
     sessions = MonitorStateStore.list_sessions(monitoring_state_dir)
     session = next((s for s in sessions if s["session_id"] == session_id), None)
@@ -53,6 +57,9 @@ def show_session(monitoring_state_dir: str, session_id: str) -> None:
         f"Created: {datetime.fromtimestamp(session_data['created_at']).strftime('%Y-%m-%d %H:%M:%S')}"
     )
     print(f"\nSession file: {session_path}")
+    manifest_path = session_data.get("manifest_path")
+    if manifest_path:
+        print(f"Manifest path: {manifest_path}")
 
     # Show job status
     jobs = session_data.get("jobs", [])
@@ -66,7 +73,7 @@ def show_session(monitoring_state_dir: str, session_id: str) -> None:
         print("\nNo jobs in session.")
 
 
-def remove_session(monitoring_state_dir: str, session_id: str, force: bool = False) -> None:
+def remove_session(monitoring_state_dir: Path, session_id: str, force: bool = False) -> None:
     """Remove a monitoring session."""
     sessions = MonitorStateStore.list_sessions(monitoring_state_dir)
     session = next((s for s in sessions if s["session_id"] == session_id), None)
@@ -98,7 +105,7 @@ def remove_session(monitoring_state_dir: str, session_id: str, force: bool = Fal
     print(f"Session {session_id} removed.")
 
 
-def dump_config(monitoring_state_dir: str, session_id: str, output: str) -> None:
+def dump_config(monitoring_state_dir: Path, session_id: str, output: Path) -> None:
     """Dump the config from a monitoring session."""
     sessions = MonitorStateStore.list_sessions(monitoring_state_dir)
     session = next((s for s in sessions if s["session_id"] == session_id), None)
@@ -124,14 +131,19 @@ def main() -> None:
     parser.add_argument(
         "--monitoring-state-dir",
         type=Path,
-        default=Path("output/monitoring_state"),
-        help="Monitoring state directory (default: output/monitoring_state)",
+        default=Path("monitor"),
+        help="Monitoring state directory (default: ./monitor)",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # List command
-    subparsers.add_parser("list", help="List all monitoring sessions")
+    list_parser = subparsers.add_parser("list", help="List all monitoring sessions")
+    list_parser.add_argument(
+        "--include-completed",
+        action="store_true",
+        help="Show sessions without active jobs",
+    )
 
     # Show command
     show_parser = subparsers.add_parser("show", help="Show details of a session")
@@ -153,14 +165,31 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    state_dir = _select_state_dir(args.monitoring_state_dir)
+
     if args.command == "list":
-        list_sessions(args.monitoring_state_dir)
+        list_sessions(state_dir, include_completed=args.include_completed)
     elif args.command == "show":
-        show_session(args.monitoring_state_dir, args.session_id)
+        show_session(state_dir, args.session_id)
     elif args.command == "remove":
-        remove_session(args.monitoring_state_dir, args.session_id, args.force)
+        remove_session(state_dir, args.session_id, args.force)
     elif args.command == "dump-config":
-        dump_config(args.monitoring_state_dir, args.session_id, args.output)
+        dump_config(state_dir, args.session_id, args.output)
+
+
+def _select_state_dir(requested: Path) -> Path:
+    requested = requested.resolve()
+    if requested.exists():
+        return requested
+    fallbacks: list[Path] = []
+    if requested == Path("monitor").resolve():
+        fallbacks.append(Path("output/monitoring_state"))
+    elif requested == Path("output/monitoring_state").resolve():
+        fallbacks.append(Path("monitor"))
+    for candidate in fallbacks:
+        if candidate.exists():
+            return candidate.resolve()
+    return requested
 
 
 if __name__ == "__main__":

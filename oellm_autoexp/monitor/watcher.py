@@ -15,7 +15,7 @@ from compoconf import ConfigInterface, register
 from oellm_autoexp.config.schema import MonitorInterface
 from oellm_autoexp.monitor.actions import (
     BaseMonitorAction,
-    ErrorNoteActionConfig,
+    LogActionConfig,
     MonitorActionInterface,
     RestartActionConfig,
 )
@@ -434,7 +434,7 @@ def default_log_signals() -> list[LogSignalConfig]:
             pattern_type="regex",
             state=CrashStateConfig(),
             actions=[
-                ErrorNoteActionConfig(note="log_error"),
+                LogActionConfig(note="log_error"),
                 RestartActionConfig(reason="log_error", mode="crash"),
             ],
             metadata={"severity": "error"},
@@ -447,7 +447,7 @@ def default_log_signals() -> list[LogSignalConfig]:
             name="checkpoint",
             pattern=r"Checkpoint (?:saved|written)[:\s]+(?P<checkpoint>\S+)",
             pattern_type="regex",
-            actions=[ErrorNoteActionConfig(note="new_checkpoint")],
+            actions=[LogActionConfig(note="new_checkpoint")],
             metadata={"kind": "checkpoint"},
             extract_groups={
                 "checkpoint_path": "checkpoint",

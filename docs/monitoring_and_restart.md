@@ -107,7 +107,7 @@ Monitors parse logs using regex patterns and detect signals:
   state:
     class_name: CrashState  # Triggers crash policy
   actions:
-    - class_name: ErrorNoteAction
+    - class_name: LogAction
       note: error
   metadata:
     severity: critical
@@ -232,7 +232,7 @@ log_signals:
     state:
       class_name: CrashState | SuccessState | StalledState | TimeoutState
     actions:
-      - class_name: ErrorNoteAction | ExecutionAction | RestartAction | TerminationAction
+      - class_name: LogAction | ExecutionAction | RestartAction | TerminationAction
         note: optional_tag
     metadata:
       error_type: oom | hang | nccl | ...

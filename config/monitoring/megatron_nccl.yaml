@@ -18,7 +18,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: nccl_error
@@ -36,7 +36,7 @@ log_signals:
     pattern: 'NCCL WARN.*?(?P<message>.+)'
     pattern_type: regex
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: warning
     metadata:
       severity: warning
@@ -52,7 +52,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: nccl_timeout
@@ -71,7 +71,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: communication_error
@@ -90,7 +90,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: nccl_collective_fail

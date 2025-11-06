@@ -95,12 +95,12 @@ oellm-autoexp/
    - component specs (monitor implementation, restart policies, SLURM client config),
    - project/context metadata (base output dir, monitoring state dir, container image/runtime hints),
    - the resolved configuration (paths coerced to strings) for reproducibility and follow-up actions.
-5. **Host Submission**: `scripts/submit_autoexp.py --manifest …` consumes the manifest without re-instantiating the backend. It loads monitor/slurm components by way of the manifest specs, submits pending jobs (arrays or individual), and records session state in `<base_output_dir>/monitoring_state/<plan_id>.json`. Restart attempts reuse the stored script path; new actions can request fresh renders by calling the plan step again.
+5. **Host Submission**: `scripts/submit_autoexp.py --manifest …` consumes the manifest without re-instantiating the backend. It loads monitor/slurm components by way of the manifest specs, submits pending jobs (arrays or individual), and records session state in `<base_output_dir>/monitoring_state/<plan_id>.json`. Each `StoredJob` entry now includes the resolved log path (with `%j`/`%A_%a` expanded), `last_monitor_state`, `last_slurm_state`, and `last_updated` to simplify resume scenarios. Restart attempts reuse the stored script path; new actions can request fresh renders by calling the plan step again.
 6. **Monitoring Loop**: The same host runtime spins `MonitorController` from manifest data (`submit_autoexp.py` or `monitor_autoexp.py`).
    - Polls SLURM state and log/output timestamps.
    - Applies restart policies configured in the manifest.
    - Records every cycle into the monitoring session; actions emitted by the monitor are written to an `actions/` queue directory derived from the manifest.
-   - Monitoring is resumable: `scripts/monitor_autoexp.py --manifest plan.json` rehydrates the manifest, attaches to existing SLURM job IDs, and continues observing without new submissions.
+   - Monitoring is resumable: `scripts/monitor_autoexp.py --session <plan_id>` reads the persisted session JSON (which points back to the manifest), rehydrates the runtime, and continues observing without new submissions. The legacy `--manifest` path remains available for backwards compatibility. When invoked with `--all`, sessions without active jobs are skipped unless `--include-completed` is specified.
 7. **Extensibility**: Backends still expose `validate()` and `build_launch_command()`; new runtimes only need to add component specs into the manifest builder so host-side code can instantiate them without reaching into backend modules.
 
 ### Monitoring Sessions and State Persistence
@@ -116,11 +116,12 @@ oellm-autoexp/
   - Managing multiple concurrent monitoring sessions
 - Workflow:
   - **On submission**: host `submit` command creates/updates a session file in `monitoring_state/` and writes a pointer to the manifest path.
-  - **Monitoring**: `submit_autoexp.py` keeps monitoring unless `--no-monitor` is provided. A later invocation of `monitor_autoexp.py --manifest plan.json` rehydrates the manifest and resumes monitoring without touching the backend.
+  - **Monitoring**: `submit_autoexp.py` keeps monitoring unless `--no-monitor` is provided. A later invocation of `monitor_autoexp.py --session <plan_id>` rehydrates the manifest (by way of the session file), re-registers the persisted jobs with the SLURM client, and resumes monitoring without touching the backend. Completed sessions are ignored by default when using `--all`, but `--include-completed` can override this.
   - **Session discovery**: `scripts/manage_monitoring.py list/show/remove` remain the primary tooling for enumerating sessions; the manifest path stored in each JSON descriptor makes it trivial to restart monitoring even after long gaps.
 - Cleanup behavior:
   - Session files persist for inspection even after jobs complete
-  - Manual cleanup by way of `scripts/manage_monitoring.py remove <session_id> [--force]`
+- Manual cleanup by way of `scripts/manage_monitoring.py remove <session_id> [--force]`
+- Cluster smoke test `scripts/tests/test_monitor_resume.py` plans, submits, interrupts, and resumes monitoring to validate the persisted state end-to-end.
 - Management commands (all require `--monitoring-state-dir` parameter):
   - `manage_monitoring.py list`: Show all monitoring sessions
   - `manage_monitoring.py show <id>`: Display session details and active jobs
@@ -133,7 +134,7 @@ oellm-autoexp/
   2. Execute `scripts/submit_autoexp.py --manifest …` on the host (submit + optional monitoring).
 - `--manifest <path>` controls where the plan manifest is written/read (defaults to `<base_output_dir>/manifests/plan_<timestamp>.json`).
 - `--no-submit` stops after planning; useful when subsequent actions (evaluation, conversions) will consume the manifest later.
-- `--no-monitor` submits jobs but exits immediately; monitoring can be resumed by way of `scripts/monitor_autoexp.py --manifest …`.
+  - `--no-monitor` submits jobs but exits immediately; monitoring can be resumed by way of `scripts/monitor_autoexp.py --session <plan_id>`.
 - `--monitor-only` skips planning/submission and forwards straight to the host `monitor` command.
 - Container autodiscovery honours top-level `container.image` / `container.runtime`, but explicit overrides remain available by way of `--image`/`--apptainer-cmd`.
 

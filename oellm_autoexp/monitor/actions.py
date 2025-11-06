@@ -83,14 +83,14 @@ class TerminationAction(BaseMonitorAction):
 
 
 @dataclass
-class ErrorNoteActionConfig(ConfigInterface):
-    class_name: str = "ErrorNoteAction"
+class LogActionConfig(ConfigInterface):
+    class_name: str = "LogAction"
     note: str = ""
 
 
 @register
-class ErrorNoteAction(BaseMonitorAction):
-    config: ErrorNoteActionConfig
+class LogAction(BaseMonitorAction):
+    config: LogActionConfig
 
     def describe(self, job_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
         payload = super().describe(job_id, metadata)

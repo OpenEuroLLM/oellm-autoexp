@@ -6,7 +6,7 @@ from typing import Any
 from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
 from oellm_autoexp.monitor.policy import AlwaysRestartPolicy, AlwaysRestartPolicyConfig
 from oellm_autoexp.monitor.policy import NoRestartPolicy, NoRestartPolicyConfig
-from oellm_autoexp.monitor.actions import ErrorNoteActionConfig, RestartActionConfig
+from oellm_autoexp.monitor.actions import LogActionConfig, RestartActionConfig
 from oellm_autoexp.monitor.states import CrashStateConfig
 from oellm_autoexp.monitor.watcher import (
     NullMonitor,
@@ -122,7 +122,7 @@ def test_monitor_signal_triggers_action(tmp_path: Path) -> None:
                 name="checkpoint",
                 pattern=r"Checkpoint saved: (?P<path>.+)",
                 pattern_type="regex",
-                actions=[ErrorNoteActionConfig(note="enqueue_evaluation")],
+                actions=[LogActionConfig(note="enqueue_evaluation")],
                 metadata={"kind": "checkpoint"},
                 extract_groups={"checkpoint_path": "path"},
             )
@@ -152,7 +152,7 @@ def test_monitor_signal_triggers_action(tmp_path: Path) -> None:
     action_records = [record for record in result.events if record.action]
     assert len(action_records) == 1
     action = action_records[0]
-    assert action.action == "ErrorNoteAction"
+    assert action.action == "LogAction"
     assert action.payload["note"] == "enqueue_evaluation"
     assert action.metadata["checkpoint_path"] == "/ckpt/path"
     assert action.metadata["signal_name"] == "checkpoint"
@@ -250,7 +250,7 @@ def test_output_file_emit_checkpoint_signal(tmp_path: Path) -> None:
                 name="checkpoint",
                 pattern=r"Checkpoint saved: (?P<checkpoint>\S+)",
                 pattern_type="regex",
-                actions=[ErrorNoteActionConfig(note="new_checkpoint")],
+                actions=[LogActionConfig(note="new_checkpoint")],
                 metadata={"kind": "checkpoint"},
                 extract_groups={"checkpoint_path": "checkpoint"},
             )
@@ -282,7 +282,7 @@ def test_output_file_emit_checkpoint_signal(tmp_path: Path) -> None:
     action_records = [
         record
         for record in result.events
-        if record.action == "ErrorNoteAction" and record.payload.get("note") == "new_checkpoint"
+        if record.action == "LogAction" and record.payload.get("note") == "new_checkpoint"
     ]
     assert action_records
     checkpoint_action = action_records[0]

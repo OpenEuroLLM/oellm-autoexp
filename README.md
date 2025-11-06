@@ -26,9 +26,10 @@ export PYTHONPATH="$PYTHONPATH:$(pwd):$(pwd)/submodules/Megatron-LM"
 | `scripts/run_autoexp.py` | One-shot plan → submit → (optional) monitor on the local host. |
 | `scripts/plan_autoexp.py` | Render SBATCH scripts and record a manifest (defaults to `<base_output_dir>/manifests`). |
 | `scripts/submit_autoexp.py` | Submit/monitor jobs defined by a manifest. |
-| `scripts/monitor_autoexp.py` | Resume monitoring from an existing manifest/session. |
+| `scripts/monitor_autoexp.py` | Resume monitoring by way of session JSONs (or legacy manifest paths). |
 | `scripts/run_autoexp_container.py` | Run planning inside a container, submission/monitoring on the host. |
 | `scripts/manage_monitoring.py` | List, inspect, and remove monitoring sessions on disk. |
+| `scripts/tests/test_monitor_resume.py` | Cluster-side smoke test covering monitor interruption and resume. |
 
 ## Configuration Primer
 
@@ -54,7 +55,9 @@ python scripts/run_autoexp.py project=default --dry-run
 # Submit but exit immediately (monitor later)
 python scripts/run_autoexp.py project=default --no-monitor
 
-# Resume monitoring later (pick the desired manifest from outputs/manifests)
+# Resume monitoring later (pick the desired session from ./monitor)
+python scripts/monitor_autoexp.py --session <plan_id>
+# Legacy manifest path still works
 python scripts/monitor_autoexp.py --manifest outputs/manifests/<plan>.json
 
 # Manual plan/submit flow for advanced control
@@ -67,6 +70,25 @@ python scripts/run_sweep_entry.py --sweep output/sweep.json --index 0 --dry-run
 # Execute a single sweep entry locally (no SLURM)
 python scripts/run_sweep_entry.py --sweep output/sweep.json --index 0
 ```
+
+### Monitoring Resume Workflow
+
+- Each submission writes a monitoring session file under
+  `<monitoring_state_dir>/<plan_id>.json`. The controller now records
+  `resolved_log_path`, `last_monitor_state`, `last_slurm_state`, and a
+  `last_updated` timestamp so resumed sessions no longer depend on `%j` or
+  array placeholders.
+- `monitor_autoexp.py` can attach directly to a session file by way of
+  `--session <plan_id>` (or `--session path/to/session.json`). It re-registers
+  persisted jobs with the SLURM client before the first monitoring cycle, which
+  restores accurate `squeue()` snapshots after an interruption.
+- Pass `--all` to run one monitor per session concurrently (useful when several
+  experiments are active). Completed sessions (no active jobs) are skipped by
+  default; add `--include-completed` if you need to re-process archived runs.
+- To rehearse the whole flow on a login node, run
+  `python scripts/tests/test_monitor_resume.py`. The harness plans, submits,
+  interrupts the monitor with SIGINT, and verifies that a second monitor run
+  reports restored jobs and keeps concrete log paths in the session file.
 
 Run `ls outputs/manifests` to inspect the manifests created by the helper scripts.
 
@@ -198,7 +220,7 @@ When the pattern matches, a monitoring **event** is recorded. Any configured act
 - `ExecutionAction`: run an arbitrary command (downstream evaluation, conversions, etc.).
 - `RestartAction`: trigger restart policies (optionally overriding the `mode`) and annotate the decision (see note below).
 - `TerminationAction`: record a terminal event separate from policy decisions.
-- `ErrorNoteAction`: attach a human-readable note to error events.
+- `LogAction`: attach a human-readable note to error events.
 
 Actions receive the `MonitorEvent` metadata (including regex capture groups such as `{checkpoint_path}`) so they can template commands or notes. Custom actions can be registered by way of compoconf by subclassing `BaseMonitorAction`.
 
@@ -218,9 +240,9 @@ PYTHONPATH=$PYTHONPATH:. pytest tests/integration/test_workflow_scripts.py::test
   --maxfail=1
 
 # Append simulated CUDA errors to the generated SLURM log and rerun:
-python scripts/monitor_autoexp.py --manifest outputs/manifests/<plan>.json --use-fake-slurm
+python scripts/monitor_autoexp.py --session <plan_id> --use-fake-slurm
 echo "CUDA out of memory. Tried to allocate 4GiB" >> output/logs/<job>/slurm-<id>.out
-python scripts/monitor_autoexp.py --manifest outputs/manifests/<plan>.json --use-fake-slurm
+python scripts/monitor_autoexp.py --session <plan_id> --use-fake-slurm
 ```
 
 The rerun verifies that crash signals (like CUDA OOM) are detected and restart policies fire as expected. For real-cluster validation you can run the same monitoring CLI without `--use-fake-slurm`; the compoconf registries ensure only the necessary Megatron configuration modules are imported on the host.
@@ -438,13 +460,13 @@ megatron:
   - Job state (job IDs, names, attempts, restart history)
   - Project metadata (name, creation timestamp)
 - Monitoring workflows:
-  - **List sessions**: `python scripts/manage_monitoring.py --monitoring-state-dir output/monitor list`
-  - **Show session details**: `python scripts/manage_monitoring.py --monitoring-state-dir output/monitor show <session_id>`
+- **List sessions**: `python scripts/manage_monitoring.py list` (add `--include-completed` to show archived sessions)
+- **Show session details**: `python scripts/manage_monitoring.py show <session_id>`
     - The session JSON now records `manifest_path`, making it easy to resume monitoring.
-  - **Monitor from manifest**: `python scripts/monitor_autoexp.py --manifest outputs/manifests/<plan>.json`
-  - **Remove session**: `python scripts/manage_monitoring.py --monitoring-state-dir output/monitor remove <session_id> [--force]`
+  - **Monitor from session**: `python scripts/monitor_autoexp.py --session <plan_id>`
+  - **Remove session**: `python scripts/manage_monitoring.py remove <session_id> [--force]`
 - Session files persist even after jobs complete, enabling inspection and re-monitoring
-- The visible location (`output/monitor/`) makes sessions easy to discover and manage
+- The visible location (`monitor/` by default, or `<base_output_dir>/monitoring_state/`) makes sessions easy to discover and manage
 
 ## Diagnostics & Testing
 

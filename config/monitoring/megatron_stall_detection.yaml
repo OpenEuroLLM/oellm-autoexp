@@ -24,7 +24,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: cuda_hang
@@ -43,7 +43,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: deadlock
@@ -62,7 +62,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: processgroup_timeout
@@ -81,7 +81,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: watchdog_timeout
@@ -97,7 +97,7 @@ log_signals:
     pattern: '(?:NaN|Inf|nan|inf).*(?:gradient|grad).*?(?P<context>.+)'
     pattern_type: regex
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: warning
     metadata:
       severity: warning
@@ -112,7 +112,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: loss_invalid

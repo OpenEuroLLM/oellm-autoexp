@@ -16,7 +16,7 @@ log_signals:
     state:
       class_name: SuccessState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: run_finished
     metadata:
       kind: completion
@@ -30,7 +30,7 @@ log_signals:
     state:
       class_name: SuccessState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: new_checkpoint
       - class_name: ExecutionAction
         command:
@@ -51,7 +51,7 @@ log_signals:
     pattern: '\[[\d\-\s:]+\] iteration\s+(?P<current>\d+)/\s*(?P<total>\d+) \|.*lm loss: (?P<loss>[\d.E+\-]+)'
     pattern_type: regex
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: progress_update
     metadata:
       kind: progress
@@ -68,7 +68,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: cuda_oom
@@ -86,7 +86,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: cpu_oom
@@ -106,7 +106,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: nccl_error
@@ -124,7 +124,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: nccl_timeout
@@ -142,7 +142,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: processgroup_timeout
@@ -160,7 +160,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: communication_error
@@ -180,7 +180,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: loss_nan
@@ -196,7 +196,7 @@ log_signals:
     pattern: '(?:NaN|nan).*(?:gradient|grad)'
     pattern_type: regex
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: warning
     metadata:
       severity: warning
@@ -213,7 +213,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: cuda_hang
@@ -231,7 +231,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: deadlock
@@ -251,7 +251,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: torch_error
@@ -269,7 +269,7 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
+      - class_name: LogAction
         note: error
       - class_name: RestartAction
         reason: python_exception
