@@ -1,15 +1,14 @@
-image: /scratch/project_462000394/containers/for-turkunlp-team/lumi-pytorch-rocm-6.2.4-python-3.12-pytorch-v2.7.1-te-dockerhash-560b76ceab56.sif
+image: ${oc.env:CONTAINER_CACHE_DIR}/MegatronTrainingLumi_x86_64_202511090219.sif
 runtime: singularity
 bind:
   [
     "/boot/config-5.14.21-150500.55.49_13.0.56-cray_shasta_c",
     "/pfs/",
-    "/pfs/lustrep4/scratch/project_462000963/users/villekom/open_eurollm/oellm-autoexp",
     "/scratch/",
     "/flash/",
-    "/scratch/project_462000394/containers/for-turkunlp-team/tuner-2025-07-09/",
     "${oc.env:PWD}",
     "/opt/cray/pe/lmod/"
   ]
+pwd: ${oc.env:PWD}
 env:
-  VIRTUAL_ENV: /pfs/lustrep4/scratch/project_462000963/users/villekom/open_eurollm/oellm-autoexp/.venv
+  VIRTUAL_ENV: ${oc.env:PWD}/.venv

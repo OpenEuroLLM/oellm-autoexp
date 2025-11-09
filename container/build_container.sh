@@ -15,6 +15,7 @@ Options:
   --output DIR        Directory to write the resulting .sif image (default: current dir).
   --append-date       Append a UTC timestamp to the generated image name.
   --base-image IMAGE  Override the base image (default: nvcr.io/nvidia/pytorch:25.08-py3).
+  --container-cmd CONTAINER_RUNTIME   Override container command (default: singularity).
 USAGE
 }
 
@@ -25,6 +26,7 @@ REQUIREMENTS_FILE="${SPEC_ROOT}/${BACKEND}/requirements_latest.txt"
 OUTPUT_DIR="${CONTAINER_CACHE_DIR:-$(pwd)}"
 APPEND_DATE=false
 BASE_IMAGE=${BASE_IMAGE:-nvcr.io/nvidia/pytorch:25.08-py3}
+CONTAINER_RUNTIME="singularity"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -50,6 +52,10 @@ while [[ $# -gt 0 ]]; do
     --base-image)
       shift
       BASE_IMAGE="$1"
+      ;;
+    --container-cmd)
+      shift
+      CONTAINER_RUNTIME="$1"
       ;;
     -h|--help)
       show_usage
@@ -100,13 +106,13 @@ TARGET_PATH="$OUTPUT_DIR/$IMAGE_NAME"
 
 mkdir -p "$OUTPUT_DIR"
 
-if ! command -v apptainer >/dev/null 2>&1; then
-  echo "apptainer not found in PATH" >&2
+if ! command -v $CONTAINER_RUNTIME >/dev/null 2>&1; then
+  echo "$CONTAINER_RUNTIME not found in PATH" >&2
   exit 1
 fi
 
 set -x
-apptainer build "$TARGET_PATH" "$TMP_DEF"
+$CONTAINER_RUNTIME build --fakeroot "$TARGET_PATH" "$TMP_DEF"
 set +x
 
 echo "Image written to $TARGET_PATH"

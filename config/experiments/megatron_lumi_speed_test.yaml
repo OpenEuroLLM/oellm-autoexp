@@ -1,14 +1,14 @@
 # @package _global_
 defaults:
   - base
-  - /backend: megatron_torchrun_localaddr
-  - /container: juwels
-  - /slurm: juwels
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
   - /monitoring: megatron_basic
   - /restart: default
   - /project: default
   - /sweep: none
-  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_juwels]
+  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_lumi]
   - _self_
 
 backend:
@@ -16,5 +16,5 @@ backend:
     train_iters: 500
 
 project:
-  name: megatron_juwels_speed_test
+  name: megatron_lumi_speed_test
   resume: true

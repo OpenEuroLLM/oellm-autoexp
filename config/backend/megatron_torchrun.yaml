@@ -13,7 +13,6 @@ torchrun_args:
   rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
   rdzv_backend: static
   node_rank: "$SLURM_NODEID"
-  local_addr: "$LOCAL_ADDR"
   master_addr: "$MASTER_ADDR"
   master_port: "$MASTER_PORT"
 env:
@@ -21,6 +20,5 @@ env:
   PROJECT_DIR: ${oc.env:PROJECT_DIR,"."}
   RUN_DIR: ${.PROJECT_DIR}/submodules/Megatron-LM
   SLURM_NODEID: "$SLURM_NODEID"
-  LOCAL_ADDR: "$LOCAL_ADDR"
   MASTER_ADDR: "$MASTER_ADDR"
   MASTER_PORT: "$MASTER_PORT"
