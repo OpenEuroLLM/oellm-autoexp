@@ -4,7 +4,7 @@ defaults:
 
 template_path: templates/lumi.sbatch
 launcher_cmd: "{{env_exports}} export MIOPEN_USER_DB_PATH=/tmp/$USER-miopen-cache-$SLURM_NODEID ; \
-   export MIOPEN_CUSTOM_CACHE_DIR=$MIOPEN_USER_DB_PATH ;  \
+   export MIOPEN_CUSTOM_CACHE_DIR=$MIOPEN_USER_DB_PATH ; export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; \
   ${oc.select:container.runtime,singularity} exec --pwd ${container.pwd} \
   {{bind_flags}}{{env_flags}} ${oc.select:container.image,container.sif}"
 srun:
@@ -17,6 +17,9 @@ env:
   MACHINE_NAME: LUMI
   MASTER_ADDR: '$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'
   MASTER_PORT: "20074"
+  LOCAL_RANK: "0" # will be overridden
+  RANK: "0"  # will be overridden
+  WORLD_SIZE: ${oc.muli:${..sbatch.nodes},${..sbatch.ntasks_per_node}}
   NCCL_TUNER_PLUGIN: "${oc.env:HOME}/rccl-tuner/librccl-tuner.so"
   HSA_ENABLE_SDMA: 0
   NCCL_SOCKET_IFNAME: "hsn0,hsn1,hsn2,hsn3"
@@ -26,6 +29,7 @@ env:
   NVTE_DEBUG_LEVEL: "0"
   CC: "gcc-12"
   CXX: "g++-12"
+  CUDA_DEVICE_MAX_CONNECTIONS: 1
 sbatch:
   nodes: 1
   ntasks_per_node: 8

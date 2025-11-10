@@ -10,9 +10,9 @@ seq_length: 4096
 vocab_size: 50304
 max_position_embeddings: 131072
 micro_batch_size: 4
-hidden_size: null
-num_layers: null
-num_attention_heads: null
+hidden_size: 2048
+num_layers: 32
+num_attention_heads: 16
 
 # Precision & performance settings
 tensor_model_parallel_size: 1
@@ -37,14 +37,22 @@ hidden_dropout: 0.0
 lr_decay_style: cosine
 lr: 0.001
 min_lr: ${oc.mul:0.1,${.lr}}
-lr_warmup_iters: 2000
 
 # Tokenizer configuration
 tokenizer_model: EleutherAI/gpt-neox-20b
 tokenizer_type: HuggingFaceTokenizer
 
 # Data loading
-split: 989,10,1
+data_path:
+  - "/p/project1/projectnucleus/shared/data/cerebras-SlimPajama-627B/train/merged"
+data_cache_path: /p/project1/projectnucleus/shared/data/megatron_cache
+split: "989,10,1"
+lr_warmup_iters: 0
+train_iters: 500
+save_interval: 1000000000
+save: ${project.base_output_dir}
+load: ${project.base_output_dir}
+tensorboard_dir: ${project.base_output_dir}/tensorboard
 num_workers: 4
 
 # Distributed optimizer settings

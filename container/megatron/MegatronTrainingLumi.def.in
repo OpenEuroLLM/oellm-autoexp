@@ -34,10 +34,10 @@ if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
         -r "/workspace/${REQUIREMENTS_BASENAME}"
 fi
 
-if [ -d "/workspace/oellm-autoexp/submodules/Megatron-LM" ]; then
+if [ -d "/workspace/oellm-autoexp/submodules/ROCm-Megatron-LM" ]; then
     python3 -m pip install --no-cache-dir \
         -c /workspace/constraints.installed.txt \
-        -e /workspace/oellm-autoexp/submodules/Megatron-LM
+        -e /workspace/oellm-autoexp/submodules/ROCm-Megatron-LM
 fi
 
 python3 -m pip install --no-cache-dir \

@@ -11,4 +11,5 @@ bind:
   ]
 pwd: ${oc.env:PWD}
 env:
-  VIRTUAL_ENV: ${oc.env:PWD}/.venv
+  CC: "gcc-12"
+  CXX: "g++-12"

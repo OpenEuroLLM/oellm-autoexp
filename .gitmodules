@@ -1,3 +1,6 @@
 [submodule "submodules/Megatron-LM"]
 	path = submodules/Megatron-LM
 	url = https://github.com/NVIDIA/Megatron-LM/
+[submodule "submodules/ROCm-Megatron-LM"]
+	path = submodules/ROCm-Megatron-LM
+	url = git@github.com:OpenEuroLLM/ROCm-Megatron-LM.git

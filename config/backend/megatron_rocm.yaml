@@ -1,0 +1,13 @@
+defaults:
+  - megatron_rocm: base
+  - _self_
+
+class_name: AutoMegatronROCmBackend
+launcher_script: "python ${.env.RUN_DIR}/pretrain_gpt.py"
+use_torchrun: false
+env:
+  PYTHONPATH: ".:submodules/ROCm-Megatron-LM"
+  PROJECT_DIR: ${oc.env:PROJECT_DIR,"."}
+  RUN_DIR: ${.PROJECT_DIR}/submodules/ROCm-Megatron-LM
+  RANK: "$RANK"
+  LOCAL_RANK: "$LOCAL_RANK"

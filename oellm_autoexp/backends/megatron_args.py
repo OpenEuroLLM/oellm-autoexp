@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import argparse
 import sys
-from argparse import _StoreConstAction, _StoreFalseAction, _StoreTrueAction
-from dataclasses import dataclass, field, MISSING
+from argparse import _StoreFalseAction, _StoreTrueAction
+from dataclasses import MISSING, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -81,6 +81,31 @@ def get_arg_metadata(parser: argparse.ArgumentParser) -> dict[str, MegatronArgMe
     return metadata
 
 
+@dataclass(frozen=True)
+class MegatronActionSpec:
+    option_strings: tuple[str, ...]
+    action_type: str
+    nargs: int | str | None
+    const: Any
+    default: Any
+
+
+def get_action_specs(parser: argparse.ArgumentParser) -> dict[str, MegatronActionSpec]:
+    specs: dict[str, MegatronActionSpec] = {}
+    for action in parser._actions:  # noqa: SLF001
+        dest = getattr(action, "dest", None)
+        if not dest or dest == "help":
+            continue
+        specs[dest] = MegatronActionSpec(
+            option_strings=tuple(action.option_strings),
+            action_type=_action_type_name(action),
+            nargs=action.nargs,
+            const=getattr(action, "const", None),
+            default=action.default,
+        )
+    return specs
+
+
 def extract_default_args(
     parser: argparse.ArgumentParser,
     exclude: Iterable[str] | None = None,
@@ -110,18 +135,23 @@ def extract_default_args(
 
 def build_cmdline_args(
     args: dict[str, Any],
-    parser: argparse.ArgumentParser,
-    metadata: dict[str, MegatronArgMetadata],
+    metadata: Mapping[str, MegatronArgMetadata],
+    action_specs: Mapping[str, MegatronActionSpec],
+    *,
+    skip_defaults: bool = True,
 ) -> list[str]:
     coerced = _coerce_arguments(args, metadata)
     cli_args: list[str] = []
     for key, value in coerced.items():
-        cli_args.extend(_arg_to_cmdline(key, value, parser))
+        spec = action_specs.get(key)
+        if not spec:
+            continue
+        cli_args.extend(_spec_to_cmdline(spec, value, skip_defaults))
     return cli_args
 
 
 def _coerce_arguments(
-    args: dict[str, Any], metadata: dict[str, MegatronArgMetadata]
+    args: dict[str, Any], metadata: Mapping[str, MegatronArgMetadata]
 ) -> dict[str, Any]:
     coerced: dict[str, Any] = {}
     for key, value in args.items():
@@ -163,23 +193,55 @@ def _extract_action_type(action: argparse.Action) -> type | None:
     return action.type
 
 
-def _arg_to_cmdline(arg: str, argval: Any, parser: argparse.ArgumentParser) -> list[str]:
-    for action in parser._actions:  # noqa: SLF001
-        if action.dest != arg:
-            continue
-        if isinstance(action, _StoreConstAction):
-            if argval == action.const and argval != action.default:
-                return [action.option_strings[0]]
+def _action_type_name(action: argparse.Action) -> str:
+    name = action.__class__.__name__.lstrip("_").lower()
+    if "storetrue" in name:
+        return "store_true"
+    if "storefalse" in name:
+        return "store_false"
+    if "storeconst" in name:
+        return "store_const"
+    if "appendconst" in name:
+        return "append_const"
+    if "append" in name:
+        return "append"
+    if "count" in name:
+        return "count"
+    return "store"
+
+
+def _spec_to_cmdline(spec: MegatronActionSpec, argval: Any, skip_defaults: bool) -> list[str]:
+    if not spec.option_strings:
+        return []
+    option = spec.option_strings[0]
+
+    if spec.action_type in {"store_true", "store_false", "store_const"}:
+        trigger = spec.const
+        if argval == trigger and (not skip_defaults or argval != spec.default):
+            return [option]
+        return []
+
+    if spec.action_type == "count":
+        count = int(argval or 0)
+        default_count = int(spec.default or 0)
+        if skip_defaults and count == default_count:
             return []
-        if action.nargs in ("+", "*"):
-            if not argval:
-                return []
-            values = _ensure_iterable(argval)
-            return [action.option_strings[0], *[str(v) for v in values]]
-        if argval == action.default:
+        if count <= 0:
             return []
-        return [action.option_strings[0], str(argval)]
-    return []
+        return [option] * count
+
+    if spec.nargs in ("+", "*"):
+        if skip_defaults and argval == spec.default:
+            return []
+        if not argval:
+            return []
+        values = _ensure_iterable(argval)
+        return [option, *[str(v) for v in values]]
+
+    if skip_defaults and argval == spec.default:
+        return []
+
+    return [option, str(argval)]
 
 
 def _ensure_iterable(value: Any) -> Iterable[Any]:
@@ -189,9 +251,11 @@ def _ensure_iterable(value: Any) -> Iterable[Any]:
 
 
 __all__ = [
+    "MegatronActionSpec",
     "MegatronArgMetadata",
     "build_cmdline_args",
     "extract_default_args",
+    "get_action_specs",
     "get_arg_metadata",
     "get_megatron_parser",
 ]
