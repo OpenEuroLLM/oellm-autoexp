@@ -4,6 +4,30 @@ Work-in-progress monorepo consolidating sweep planning, SLURM submission, contai
 
 FEEL FREE TO ADD PRs if you find a bug or inconsistent behavior!
 
+## Environment setup
+
+Please add the following environment variables to your `.bashrc`, as they are used to store container images, access slurm, load data etc. Otherwise you need to override the respective parts in the config yamls.
+
+```bash
+export SLURM_ACCOUNT="myproject"
+export DATA_ACCOUNT="myproject"
+export SLURM_PARTITION="booster"
+export SLURM_PARTITION_DEBUG="develbooster"
+export SLURM_QOS="normal"
+export SLURM_QOS_DEBUG="normal"
+
+export WORK=/p/scratch/$DATA_ACCOUNT/poeppel1
+export DATA_DIR="$WORK/data"
+export OUTPUT_DIR="$WORK/output"
+export TRITON_CACHE_DIR="$WORK/cache/triton"
+export HF_DATASETS_CACHE="$WORK/data/cache"
+export HF_HOME="$WORK/cache"
+export APPTAINER_CACHEDIR="$WORK/.apptainer/cache"
+export APPTAINER_TMPDIR="$WORK/.tmp"
+export CONTAINER_CACHE_DIR="$WORK/container_cache"
+export ARCH=$(uname -m)
+```
+
 ## Installation
 
 ```bash
