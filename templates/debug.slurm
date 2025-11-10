@@ -66,7 +66,7 @@ export TORCHINDUCTOR_FORCE_DISABLE_CACHES=1             #Disable all caching for
 export TORCHINDUCTOR_MAX_AUTOTUNE=1                     #More rigorous autotuning done by Triton for GPU kernels, this might lead to more performant kernels at the cost of increased compilation time
 #export TORCHINDUCTOR_UNIQUE_KERNEL_NAMES=1             #Enabling this decreases the chance of cache hit slightly
 #export TORCHINDUCTOR_COMPILE_THREADS=$
-export TORCH_LOGS="+inductor,+dynamo"                   
+export TORCH_LOGS="+inductor,+dynamo"
 export TORCHDYNAMO_VERBOSE=1
 export ROCM_PYTORCH_ARCH=gfx90a
 

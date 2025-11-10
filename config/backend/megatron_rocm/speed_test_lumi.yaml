@@ -1,0 +1,11 @@
+# Data inputs
+data_path:
+  - ${oc.env:DATA_DIR}/cerebras-SlimPajama-627B/train/small
+data_cache_path: ${oc.env:DATA_DIR}/cache
+split: "989,10,1"
+lr_warmup_iters: 0
+train_iters: 500
+save_interval: 1000000000
+save: ${project.base_output_dir}
+load: ${project.base_output_dir}
+tensorboard_dir: ${project.base_output_dir}/tensorboard

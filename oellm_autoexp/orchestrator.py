@@ -366,7 +366,7 @@ def _build_replacements(
     launcher = f"{launcher_raw} " if launcher_raw else ""
     launcher_env_flags = ""
     launcher_env_exports = ""
-    
+
     # Add bind directories from container yaml
     # The bind directories are within a list of strings, so we seperate this from below
     launcher_bind_flags = ""

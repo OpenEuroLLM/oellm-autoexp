@@ -18,6 +18,12 @@ git submodule update --init --recursive
 
 module load cray-python/3.11.7 #Pytorch module wont work because it is a singularity container wrapper
 
+# in your $HOME folder
+git clone https://github.com/sfantao/rccl-tuner
+cd rccl-tuner
+make Makefile.lumi
+# creates the librccl-tuner.so file needed for the interconnect
+
 git clone https://github.com/OpenEuroLLM/oellm-autoexp.git
 cd oellm-autoexp
 python3 -m venv .venv --system-site-packages
