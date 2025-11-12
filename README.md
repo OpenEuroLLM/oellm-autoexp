@@ -33,9 +33,13 @@ export ARCH=$(uname -m)
 ```bash
 git clone https://github.com/OpenEuroLLM/oellm-autoexp.git
 cd oellm-autoexp
-pip install -e .[dev,megatron]
+pip install -e .
 git submodule update --init --recursive
 ```
+
+Create your container to run things then, see `container/`.
+
+
 ### Lumi
 
 ```bash
