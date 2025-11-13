@@ -1,7 +1,7 @@
 # @package _global_
 defaults:
   - base
-  - /backend: megatron_torchrun
+  - /backend: megatron_torchrun_localaddr
   - /container: juwels
   - /slurm: juwels
   - /monitoring: megatron_basic

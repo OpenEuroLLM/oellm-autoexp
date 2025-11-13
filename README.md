@@ -4,13 +4,60 @@ Work-in-progress monorepo consolidating sweep planning, SLURM submission, contai
 
 FEEL FREE TO ADD PRs if you find a bug or inconsistent behavior!
 
+## Environment setup
+
+Please add the following environment variables to your `.bashrc`, as they are used to store container images, access slurm, load data etc. Otherwise you need to override the respective parts in the config yamls.
+
+```bash
+export SLURM_ACCOUNT="myproject"
+export DATA_ACCOUNT="myproject"
+export SLURM_PARTITION="booster"
+export SLURM_PARTITION_DEBUG="develbooster"
+export SLURM_QOS="normal"
+export SLURM_QOS_DEBUG="normal"
+
+export WORK=/p/scratch/$DATA_ACCOUNT/poeppel1
+export DATA_DIR="$WORK/data"
+export OUTPUT_DIR="$WORK/output"
+export TRITON_CACHE_DIR="$WORK/cache/triton"
+export HF_DATASETS_CACHE="$WORK/data/cache"
+export HF_HOME="$WORK/cache"
+export APPTAINER_CACHEDIR="$WORK/.apptainer/cache"
+export APPTAINER_TMPDIR="$WORK/.tmp"
+export CONTAINER_CACHE_DIR="$WORK/container_cache"
+export ARCH=$(uname -m)
+```
+
 ## Installation
 
 ```bash
 git clone https://github.com/OpenEuroLLM/oellm-autoexp.git
 cd oellm-autoexp
-pip install -e .[dev,megatron]
+pip install -e .
 git submodule update --init --recursive
+```
+
+Create your container to run things then, see `container/`.
+
+
+### Lumi
+
+```bash
+
+module load cray-python/3.11.7 #Pytorch module wont work because it is a singularity container wrapper
+
+# in your $HOME folder
+git clone https://github.com/sfantao/rccl-tuner
+cd rccl-tuner
+make Makefile.lumi
+# creates the librccl-tuner.so file needed for the interconnect
+
+git clone https://github.com/OpenEuroLLM/oellm-autoexp.git
+cd oellm-autoexp
+python3 -m venv .venv --system-site-packages
+pip install -e .[dev]
+git submodule update --init --recursive
+#TODO: Do a replacement for venv; squashfs, container for launching or easybuild module
 ```
 
 When running scripts directly from the checkout (without installing the package), make sure Python can see the repository and submodules:

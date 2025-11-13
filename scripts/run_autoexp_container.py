@@ -43,6 +43,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=[],
         help="Bind mount passed to the container (Singularity --bind syntax)",
     )
+    parser.add_argument(
+        "--pwd",
+        default=None,
+        type=str,
+    )
     parser.add_argument("override", nargs="*", default=[], help="Configuration overrides")
     return parser.parse_args(argv)
 
@@ -54,6 +59,8 @@ def _build_container_command(args: argparse.Namespace, inner: list[str]) -> list
         command.extend(["--bind", bind])
     for env_assignment in getattr(args, "env", []) or []:
         command.extend(["--env", env_assignment])
+    if args.pwd:
+        command.extend(["--pwd", args.pwd])
     command.extend([args.image, "bash", "-lc", quoted])
     return command
 
@@ -132,6 +139,14 @@ def main(argv: list[str] | None = None) -> None:
             container_image = cfg.get("image")
             if cfg.get("runtime"):
                 container_runtime = cfg["runtime"]
+            cfg_binds = cfg.get("bind") or []
+            if cfg_binds:
+                args.bind = [*cfg_binds, *getattr(args, "bind", [])]
+            cfg_env = cfg.get("env") or {}
+            if cfg_env:
+                args.env = [*(f"{k}={v}" for k, v in cfg_env.items()), *getattr(args, "env", [])]
+            cfg_pwd = cfg.get("pwd") or None
+            args.pwd = cfg_pwd
             if container_image:
                 print(f"Using container from config: {container_image}")
 
@@ -158,7 +173,6 @@ def main(argv: list[str] | None = None) -> None:
         args.image = container_image
         args.apptainer_cmd = container_runtime
         container_cmd = _build_container_command(args, plan_cmd)
-        print("Running inside container:", shlex.join(container_cmd))
         plan_result = run_with_tee(container_cmd, text=True)
     else:
         print("No container configured; running planning step on host.")

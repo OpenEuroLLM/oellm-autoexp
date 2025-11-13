@@ -14,7 +14,7 @@ def test_container_def_template_has_placeholders():
 
 def test_build_script_references_apptainer():
     script = (REPO_ROOT / "container" / "build_container.sh").read_text()
-    assert "apptainer build" in script
+    assert "$CONTAINER_RUNTIME build" in script
     assert "MegatronTraining" in script
 
 

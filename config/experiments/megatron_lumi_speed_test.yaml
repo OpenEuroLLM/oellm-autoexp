@@ -1,0 +1,20 @@
+# @package _global_
+defaults:
+  - base
+  - /backend: megatron_rocm
+  - /container: lumi
+  - /slurm: lumi
+  - /monitoring: megatron_basic
+  - /restart: default
+  - /project: default
+  - /sweep: none
+  - /backend/megatron_rocm: [llama1_8b_qkln,megatron_fsdp,speed_test_lumi]
+  - _self_
+
+backend:
+  megatron_rocm:
+    train_iters: 500
+
+project:
+  name: megatron_lumi_speed_test
+  resume: true

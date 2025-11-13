@@ -17,3 +17,11 @@ Typical usage:
 
 The generated image carries the repository inside `/workspace/oellm-autoexp` and is
 compatible with `scripts/run_megatron_container.py`.
+
+
+LUMI
+```bash
+python ./container/build_container_user.py --backend megatron --definition MegatronTrainingLumi \
+    --requirements container/megatron/requirements_latest.txt \
+    --output ./artifacts
+```

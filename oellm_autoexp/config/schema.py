@@ -113,6 +113,7 @@ class ContainerConfig(ConfigInterface):
     runtime: str = "singularity"
     bind: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+    pwd: str | None = None
 
 
 @dataclass(kw_only=True)

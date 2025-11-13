@@ -40,6 +40,7 @@ def test_run_autoexp_container_submits_with_fake_slurm(monkeypatch, tmp_path: Pa
         verbose=False,
         env=[],
         bind=[],
+        pwd=None,
         ihelp=False,
         use_fake_slurm=True,
         manifest=tmp_path / "plan.json",
@@ -92,6 +93,7 @@ def test_run_autoexp_container_infers_manifest_path(monkeypatch, tmp_path: Path)
         verbose=False,
         env=[],
         bind=[],
+        pwd=None,
         ihelp=False,
         use_fake_slurm=False,
         manifest=None,
@@ -135,6 +137,7 @@ def test_run_autoexp_container_monitor_only(monkeypatch, tmp_path: Path):
         verbose=True,
         env=[],
         bind=[],
+        pwd=None,
         ihelp=False,
         use_fake_slurm=False,
         manifest=tmp_path / "plan.json",
@@ -158,6 +161,7 @@ def test_build_container_command_includes_env_and_bind():
     args = argparse.Namespace(
         apptainer_cmd="singularity",
         image="container.sif",
+        pwd=None,
         env=["FOO=1", "BAR=2"],
         bind=["/data:/data"],
     )
