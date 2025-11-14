@@ -26,6 +26,8 @@ from oellm_autoexp.monitor.states import (
     TimeoutStateConfig,
     PendingState,
     PendingStateConfig,
+    UndefinedState,
+    UndefinedStateConfig,
     StartedState,
     StartedStateConfig,
     SuccessState,
@@ -72,7 +74,7 @@ class JobRuntimeState:
     attempts: int = 1
     last_outcome: MonitorOutcome | None = None
     last_slurm_state: str | None = None
-    state: BaseMonitorState = field(default_factory=lambda: PendingState(PendingStateConfig()))
+    state: BaseMonitorState = field(default_factory=lambda: UndefinedState(UndefinedStateConfig()))
 
     @property
     def name(self) -> str:
@@ -142,13 +144,19 @@ class MonitorController:
             state_event_cfgs = default_state_events()
         self._state_event_configs = {cfg.name: cfg for cfg in state_event_cfgs}
 
-    def register_job(self, job_id: str, registration: JobRegistration, attempts: int = 1) -> None:
+    def register_job(
+        self,
+        job_id: str,
+        registration: JobRegistration,
+        attempts: int = 1,
+        state: BaseMonitorState = UndefinedState(UndefinedStateConfig()),
+    ) -> None:
         job_key = str(job_id)
         state = JobRuntimeState(
             job_id=job_key,
             registration=registration,
             attempts=max(1, attempts),
-            state=PendingState(PendingStateConfig()),
+            state=state,
         )
         self._jobs[job_key] = state
         LOGGER.info(
@@ -160,7 +168,7 @@ class MonitorController:
     def jobs(self) -> Iterable[JobRuntimeState]:
         return list(self._jobs.values())
 
-    async def observe_once(self) -> MonitorCycleResult:
+    def observe_once_sync(self) -> MonitorCycleResult:
         interval = getattr(
             self._monitor.config,
             "check_interval_seconds",
@@ -176,11 +184,14 @@ class MonitorController:
                 termination_string=state.registration.termination_string,
                 termination_command=state.registration.termination_command,
                 metadata=self._build_job_metadata(state),
-                output_paths=list(state.registration.output_paths),
+                output_paths=[
+                    str(self._expand_log_path(state.job_id, path))
+                    for path in state.registration.output_paths
+                ],
             )
             for state in self._jobs.values()
         ]
-        outcomes = await self._monitor.watch(monitored_jobs)
+        outcomes = self._monitor.watch_sync(monitored_jobs)
         slurm_snapshot = self._slurm.squeue()
 
         cycle_result = MonitorCycleResult()
@@ -231,8 +242,8 @@ class MonitorController:
             self._handle_monitor_event(state, synthetic_event, cycle_result)
         return cycle_result
 
-    def observe_once_sync(self) -> MonitorCycleResult:
-        return asyncio.run(self.observe_once())
+    async def observe_once(self) -> MonitorCycleResult:
+        return self.observe_once_sync()
 
     def handle_state_change(self, job_id: str, mode: str) -> MonitorDecision:
         state = self._jobs[job_id]

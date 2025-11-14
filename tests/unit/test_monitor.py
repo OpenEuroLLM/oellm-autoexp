@@ -219,6 +219,43 @@ def test_monitor_signal_triggers_restart(tmp_path: Path) -> None:
     assert any(dec.action == "restart" for dec in result.decisions.values())
 
 
+def test_monitor_signal_without_restart_action(tmp_path: Path) -> None:
+    config = SlurmLogMonitorConfig(
+        inactivity_threshold_seconds=0,
+        check_interval_seconds=1,
+        log_signals=[
+            LogSignalConfig(
+                name="fatal",
+                pattern="FATAL ERROR",
+                pattern_type="substring",
+                state=CrashStateConfig(),
+            )
+        ],
+    )
+    monitor = SlurmLogMonitor(config)
+    slurm = FakeSlurmClient(FakeSlurmClientConfig())
+    policies = {
+        "crash": AlwaysRestartPolicy(AlwaysRestartPolicyConfig(max_retries=1)),
+        "success": NoRestartPolicy(NoRestartPolicyConfig()),
+    }
+    controller = MonitorController(monitor, slurm, policies)
+
+    script = tmp_path / "script.sh"
+    script.write_text("#!/bin/bash\n")
+    log = tmp_path / "log.txt"
+    log.write_text("FATAL ERROR occurred\n")
+
+    job_id = slurm.submit("demo", script, log)
+    controller.register_job(
+        job_id,
+        JobRegistration(name="demo", script_path=script, log_path=log),
+    )
+
+    result = controller.observe_once_sync()
+
+    assert not result.decisions
+
+
 def test_output_file_emit_checkpoint_signal(tmp_path: Path) -> None:
     output_file = tmp_path / "train.log"
     output_file.write_text("Checkpoint saved: /tmp/check.ckpt\n")

@@ -103,7 +103,7 @@ log_events:
       timeout_details: details
 
   - name: processgroup_timeout
-    pattern: '\[c10d\].*timeout.*(?P<details>.+)'
+    pattern: '[c10d].*timeout.*(?P<details>.+)'
     pattern_type: regex
     state:
       class_name: CrashState

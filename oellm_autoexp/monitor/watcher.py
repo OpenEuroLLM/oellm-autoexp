@@ -84,6 +84,11 @@ class BaseMonitor(MonitorInterface):
     ) -> dict[str, MonitorOutcome]:  # pragma: no cover
         raise NotImplementedError
 
+    def watch_sync(
+        self, jobs: Iterable[MonitoredJob]
+    ) -> dict[str, MonitorOutcome]:  # pragma: no cover
+        raise NotImplementedError
+
 
 @dataclass(kw_only=True)
 class NullMonitorConfig(ConfigInterface):
@@ -146,6 +151,9 @@ class NullMonitor(BaseMonitor):
     async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
         return {}
 
+    def watch_sync(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
+        return {}
+
 
 @dataclass(kw_only=True)
 class SlurmLogMonitorConfig(NullMonitorConfig):
@@ -183,13 +191,16 @@ class SlurmLogMonitor(BaseMonitor):
             for rule in config.log_events
         ]
 
-    async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
+    def watch_sync(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
         now = time.time()
         observations: dict[str, MonitorOutcome] = {}
         for job in jobs:
             outcome = self._evaluate_job(job, now)
             observations[job.job_id] = outcome
         return observations
+
+    async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
+        return self.watch_sync(jobs=jobs)
 
     def _evaluate_job(self, job: MonitoredJob, now: float) -> MonitorOutcome:
         if self._state_whitelist and job.state.lower() not in self._state_whitelist:

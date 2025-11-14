@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resume monitoring for jobs described by a plan manifest."""
+"""Resume monitoring for jobs recorded in monitoring state sessions."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import logging
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from compoconf import parse_config
 
@@ -34,9 +35,34 @@ def _configure_logging(verbose: bool = False, debug: bool = False) -> None:
     )
 
 
+@dataclass(kw_only=True)
+class MonitorTarget:
+    manifest_path: Path
+    session_path: Path | None = None
+    session_id: str | None = None
+    job_count: int | None = None
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", type=Path, required=True)
+    target_group = parser.add_mutually_exclusive_group(required=True)
+    target_group.add_argument("--manifest", type=Path, help="Path to a plan manifest")
+    target_group.add_argument(
+        "--session",
+        type=str,
+        help="Session ID or path to a monitoring session JSON (e.g. monitor/<id>.json)",
+    )
+    target_group.add_argument(
+        "--all",
+        action="store_true",
+        help="Attach to every session in --monitoring-state-dir concurrently",
+    )
+    parser.add_argument(
+        "--monitoring-state-dir",
+        type=Path,
+        default=Path("monitor"),
+        help="Monitoring state directory containing <session_id>.json files (default: ./monitor)",
+    )
     parser.add_argument("--use-fake-slurm", action="store_true", help="Use in-memory SLURM backend")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--debug", action="store_true")
@@ -160,13 +186,55 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     _configure_logging(args.verbose, args.debug)
 
-    manifest_path = Path(args.manifest).resolve()
-    manifest = read_manifest(manifest_path)
+def _resolve_targets(args: argparse.Namespace) -> list[MonitorTarget]:
+    if args.manifest:
+        manifest_path = Path(args.manifest).resolve()
+        if not manifest_path.exists():
+            raise SystemExit(f"Manifest not found: {manifest_path}")
+        return [MonitorTarget(manifest_path=manifest_path)]
+
+    state_dir = _select_state_dir(args.monitoring_state_dir)
+    if args.session:
+        session_path = _resolve_session_path(args.session, state_dir)
+        target = _load_session_target(session_path)
+        if target.job_count == 0 and not args.include_completed:
+            print(
+                f"Session {target.session_id} has no active jobs; use --include-completed to monitor anyway."
+            )
+            return []
+        return [target]
+
+    if args.all:
+        sessions = MonitorStateStore.list_sessions(state_dir)
+        if not sessions:
+            print(f"No monitoring sessions found under {state_dir}")
+            return []
+        targets: list[MonitorTarget] = []
+        for entry in sessions:
+            if entry.get("job_count", 0) == 0 and not args.include_completed:
+                continue
+            session_path = Path(entry["session_path"]).resolve()
+            try:
+                target = _load_session_target(session_path)
+            except SystemExit as exc:
+                logging.warning(str(exc))
+                continue
+            if target.job_count == 0 and not args.include_completed:
+                continue
+            targets.append(target)
+        return targets
+
+    raise SystemExit("No monitoring target provided")
+
+
+def _monitor_single(target: MonitorTarget, args: argparse.Namespace) -> None:
+    manifest = read_manifest(target.manifest_path)
+    _apply_monitor_overrides(manifest.monitor, args.override)
 
     runtime = build_host_runtime(
         manifest,
         use_fake_slurm=args.use_fake_slurm,
-        manifest_path=manifest_path,
+        manifest_path=target.manifest_path,
     )
 
     if args.cmd == "resume":
@@ -184,6 +252,54 @@ def main(argv: list[str] | None = None) -> None:
         _print_queue(runtime.state_store)
     elif args.cmd == "actions":
         _run_action_worker(runtime)
+
+
+def _monitor_all(targets: list[MonitorTarget], args: argparse.Namespace) -> None:
+    threads: list[threading.Thread] = []
+
+    def run_target(target: MonitorTarget) -> None:
+        try:
+            _monitor_single(target, args)
+        except SystemExit as exc:
+            logging.error(str(exc))
+
+    for target in targets:
+        thread = threading.Thread(target=run_target, args=(target,), daemon=False)
+        thread.start()
+        threads.append(thread)
+
+    for thread in threads:
+        thread.join()
+
+
+def _select_state_dir(requested: Path) -> Path:
+    requested = requested.resolve()
+    if requested.exists():
+        return requested
+    # Fall back between common defaults to smooth over older configurations
+    fallbacks: list[Path] = []
+    if requested == Path("monitor").resolve():
+        fallbacks.append(Path("output/monitoring_state"))
+    elif requested == Path("output/monitoring_state").resolve():
+        fallbacks.append(Path("monitor"))
+    for candidate in fallbacks:
+        if candidate.exists():
+            return candidate.resolve()
+    return requested
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    _configure_logging(args.verbose, args.debug)
+
+    targets = _resolve_targets(args)
+    if not targets:
+        return
+
+    if args.all and len(targets) > 1:
+        _monitor_all(targets, args)
+    else:
+        _monitor_single(targets[0], args)
 
 
 if __name__ == "__main__":
