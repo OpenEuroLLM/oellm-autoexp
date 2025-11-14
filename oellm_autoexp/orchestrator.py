@@ -8,6 +8,7 @@ import json
 from dataclasses import dataclass, field, MISSING
 from pathlib import Path
 from typing import Any
+import time
 from collections.abc import Mapping, Sequence, Iterable
 
 from compoconf import asdict
@@ -67,13 +68,20 @@ class SubmissionResult:
         return list(self.submitted_job_ids)
 
 
-def build_execution_plan(config: str | RootConfig) -> ExecutionPlan:
+def build_execution_plan(
+    config: str | RootConfig,
+    subset_indices: set[int] | None = None,
+) -> ExecutionPlan:
     if isinstance(config, (str, Path)):
         root = load_config(config)
     else:
         root = config
     runtime = evaluate(root)
     points = expand_sweep(root.sweep)
+    if subset_indices:
+        points = [point for point in points if point.index in subset_indices]
+        if not points:
+            raise ValueError(f"No sweep points match indices: {sorted(subset_indices)}")
     jobs = build_job_plans(root, points)
     return ExecutionPlan(config=root, runtime=runtime, sweep_points=points, jobs=jobs)
 
@@ -171,7 +179,6 @@ def _initialize_monitor_controller(
     controller = MonitorController(
         plan.runtime.monitor,
         client,
-        plan.runtime.restart_policies,
         state_store=state_store,
     )
     restored_names = _restore_saved_jobs(controller, client, saved_jobs.values())
@@ -193,6 +200,19 @@ def submit_jobs(
     job_script_map = {job.name: script for job, script in zip(plan.jobs, artifacts.job_scripts)}
 
     pending_jobs = [job for job in plan.jobs if job.name not in restored_names]
+
+    scheduler_cfg = plan.config.scheduler
+    max_jobs = scheduler_cfg.max_jobs
+    rate_limit = scheduler_cfg.submit_rate_limit_seconds or 0.0
+    if max_jobs is not None and len(pending_jobs) > max_jobs:
+        LOGGER.info(
+            "Scheduler max_jobs=%s trimming submissions from %s to %s",
+            max_jobs,
+            len(pending_jobs),
+            max_jobs,
+        )
+        pending_jobs = pending_jobs[:max_jobs]
+    last_submit_ts = 0.0
 
     use_array = (
         plan.config.slurm.array
@@ -222,6 +242,7 @@ def submit_jobs(
                 )
 
         submit_array = getattr(client, "submit_array")
+        last_submit_ts = _respect_submit_rate(last_submit_ts, rate_limit)
         job_ids: list[str] = submit_array(  # type: ignore[misc]
             artifacts.array_job_name or plan.config.project.name,
             artifacts.array_script,
@@ -270,10 +291,14 @@ def submit_jobs(
                 interval_seconds=interval,
                 logger=LOGGER,
             )
-        job_metadata: dict[str, Any] = {"parameters": dict(job.parameters)}
+        job_metadata: dict[str, Any] = {
+            "parameters": dict(job.parameters),
+            "output_dir": job.output_dir,
+        }
         if job.inactivity_threshold_seconds is not None:
             job_metadata["inactivity_threshold_seconds"] = job.inactivity_threshold_seconds
 
+        last_submit_ts = _respect_submit_rate(last_submit_ts, rate_limit)
         job_id = client.submit(job.name, script, job.log_path)
         registration = JobRegistration(
             name=job.name,
@@ -608,7 +633,9 @@ def _render_array_script(
             fallback_log_dir,
         )
         array_log_dir = fallback_log_dir
-    array_log_path = array_log_dir / f"{array_job_name}_%a.log"
+    # Include both the array task id (%a) and parent job id (%A) so repeated submissions
+    # do not overwrite earlier SLURM logs.
+    array_log_path = array_log_dir / f"{array_job_name}_%A_%a.log"
     array_output_base = Path(plan.config.project.base_output_dir)
     try:
         array_output_base.mkdir(parents=True, exist_ok=True)
@@ -622,7 +649,7 @@ def _render_array_script(
             fallback_output,
         )
         array_output_base = fallback_output
-    array_output_dir = array_output_base / f"{array_job_name}_%a"
+    array_output_dir = array_output_base / f"{array_job_name}_%A_%a"
 
     runner_script = Path("scripts/run_sweep_entry.py")
     launcher_cmd = LaunchCommand(
@@ -668,6 +695,16 @@ def _render_array_script(
         script_path = fallback_script_path
     validate_job_script(rendered, array_job_name)
     return script_path
+
+
+def _respect_submit_rate(last_ts: float, rate_limit: float) -> float:
+    if rate_limit <= 0:
+        return time.monotonic()
+    if last_ts:
+        elapsed = time.monotonic() - last_ts
+        if elapsed < rate_limit:
+            time.sleep(rate_limit - elapsed)
+    return time.monotonic()
 
 
 __all__ = [

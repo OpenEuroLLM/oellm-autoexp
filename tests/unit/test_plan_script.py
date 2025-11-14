@@ -27,7 +27,6 @@ monitoring:
   class_name: NullMonitor
 backend:
   class_name: NullBackend
-restart_policies: []
 """
 
 

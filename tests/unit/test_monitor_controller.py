@@ -11,7 +11,6 @@ from oellm_autoexp.monitor.controller import (
     MonitorCycleResult,
     MonitorRecord,
 )
-from oellm_autoexp.monitor.policy import NoRestartPolicyConfig, NoRestartPolicy
 from oellm_autoexp.monitor.watcher import NullMonitor, NullMonitorConfig
 from oellm_autoexp.persistence.state_store import MonitorStateStore
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
@@ -21,13 +20,9 @@ from oellm_autoexp.workflow import host as host_runtime
 @pytest.fixture
 def controller(tmp_path: Path) -> MonitorController:
     monitor = NullMonitor(NullMonitorConfig())
-    policies = {
-        "crash": NoRestartPolicy(NoRestartPolicyConfig()),
-        "success": NoRestartPolicy(NoRestartPolicyConfig(message="done")),
-    }
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
     state_store = MonitorStateStore(tmp_path / "state")
-    return MonitorController(monitor, slurm, policies, state_store=state_store)
+    return MonitorController(monitor, slurm, state_store=state_store)
 
 
 def test_stop_action_removed_from_monitoring(controller: MonitorController, tmp_path: Path) -> None:

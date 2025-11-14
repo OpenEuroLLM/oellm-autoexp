@@ -14,7 +14,6 @@ from oellm_autoexp.monitor.controller import JobRegistration, MonitorController,
 from oellm_autoexp.persistence.state_store import MonitorStateStore, StoredJob, _serialize_for_json
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig, BaseSlurmClient
 from oellm_autoexp.workflow.manifest import PlanJobSpec, PlanManifest
-from oellm_autoexp.monitor.policy import BaseRestartPolicy
 from oellm_autoexp.monitor.watcher import BaseMonitor
 from oellm_autoexp.utils.start_condition import (
     resolve_start_condition_interval,
@@ -31,7 +30,6 @@ def _import_object(module: str, name: str) -> Any:
 class HostRuntime:
     manifest: PlanManifest = field(default_factory=MISSING)
     monitor: BaseMonitor = field(default_factory=MISSING)
-    restart_policies: dict[str, BaseRestartPolicy] = field(default_factory=dict)
     slurm_client: BaseSlurmClient = field(default_factory=MISSING)
     state_store: MonitorStateStore = field(default_factory=MISSING)
     action_queue_dir: Path = field(default_factory=MISSING)
@@ -94,11 +92,6 @@ def build_host_runtime(
 ) -> HostRuntime:
     monitor = manifest.monitor.instantiate()
 
-    restart_policies: dict[str, BaseRestartPolicy] = {}
-    for spec in manifest.restart_policies:
-        policy = spec.instantiate()
-        restart_policies[spec.mode] = policy
-
     if use_fake_slurm:
         slurm_client: BaseSlurmClient = FakeSlurmClient(FakeSlurmClientConfig())
     else:
@@ -127,7 +120,6 @@ def build_host_runtime(
     return HostRuntime(
         manifest=manifest,
         monitor=monitor,
-        restart_policies=restart_policies,
         slurm_client=slurm_client,
         state_store=state_store,
         action_queue_dir=action_queue_dir,
@@ -140,7 +132,6 @@ def instantiate_controller(runtime: HostRuntime, *, quiet: bool = False) -> Moni
     controller = MonitorController(
         runtime.monitor,
         runtime.slurm_client,
-        runtime.restart_policies,
         state_store=runtime.state_store,
     )
     restored = restore_jobs(runtime, controller)
@@ -180,7 +171,7 @@ def _register_job(
     job: PlanJobSpec,
     attempts: int = 1,
 ) -> None:
-    metadata = {"parameters": dict(job.parameters)}
+    metadata = {"parameters": dict(job.parameters), "output_dir": job.output_dir}
     registration = JobRegistration(
         name=job.name,
         script_path=job.script_path,

@@ -4,30 +4,40 @@ from pathlib import Path
 from typing import Any
 
 from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
-from oellm_autoexp.monitor.policy import AlwaysRestartPolicy, AlwaysRestartPolicyConfig
-from oellm_autoexp.monitor.policy import NoRestartPolicy, NoRestartPolicyConfig
-from oellm_autoexp.monitor.actions import ErrorNoteActionConfig
+from oellm_autoexp.monitor.actions import LogActionConfig, RestartActionConfig
+from oellm_autoexp.monitor.conditions import MetadataConditionConfig
+from oellm_autoexp.monitor.event_bindings import EventActionConfig
 from oellm_autoexp.monitor.states import CrashStateConfig
 from oellm_autoexp.monitor.watcher import (
-    NullMonitor,
-    NullMonitorConfig,
     SlurmLogMonitor,
     SlurmLogMonitorConfig,
-    LogSignalConfig,
+    LogEventConfig,
+    StateEventConfig,
     MonitoredJob,
-    default_log_signals,
+    default_log_events,
 )
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
 
 
 def test_monitor_controller_restart_increments():
-    monitor = NullMonitor(NullMonitorConfig())
+    monitor = SlurmLogMonitor(
+        SlurmLogMonitorConfig(
+            check_interval_seconds=1,
+            inactivity_threshold_seconds=0,
+            state_events=[
+                StateEventConfig(
+                    name="stall",
+                    actions=[
+                        EventActionConfig(
+                            action=RestartActionConfig(reason="retry stall"),
+                        )
+                    ],
+                )
+            ],
+        )
+    )
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
-    policies = {
-        "stall": AlwaysRestartPolicy(AlwaysRestartPolicyConfig(max_retries=2)),
-        "success": NoRestartPolicy(NoRestartPolicyConfig()),
-    }
-    controller = MonitorController(monitor, slurm, policies)
+    controller = MonitorController(monitor, slurm)
 
     script = Path("script")
     log = Path("log")
@@ -43,7 +53,7 @@ def test_monitor_controller_restart_increments():
     new_job_id = job_states[0].job_id
 
     decision = controller.handle_state_change(new_job_id, "missing-mode")
-    assert decision.action == "stop"
+    assert decision.action == "noop"
 
 
 def test_slurm_log_monitor_detects_stall(tmp_path: Path) -> None:
@@ -70,15 +80,23 @@ def test_slurm_log_monitor_detects_stall(tmp_path: Path) -> None:
 
 def test_monitor_controller_observe_restart(tmp_path: Path) -> None:
     monitor = SlurmLogMonitor(
-        SlurmLogMonitorConfig(inactivity_threshold_seconds=0, check_interval_seconds=1)
+        SlurmLogMonitorConfig(
+            inactivity_threshold_seconds=0,
+            check_interval_seconds=1,
+            state_events=[
+                StateEventConfig(
+                    name="stall",
+                    actions=[
+                        EventActionConfig(
+                            action=RestartActionConfig(reason="restart stalled job"),
+                        )
+                    ],
+                )
+            ],
+        )
     )
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
-    policies = {
-        "stall": AlwaysRestartPolicy(AlwaysRestartPolicyConfig(max_retries=2)),
-        "success": NoRestartPolicy(NoRestartPolicyConfig()),
-        "timeout": NoRestartPolicy(NoRestartPolicyConfig(message="timeout")),
-    }
-    controller = MonitorController(monitor, slurm, policies)
+    controller = MonitorController(monitor, slurm)
 
     script = tmp_path / "script.sh"
     script.write_text("#!/bin/bash\n")
@@ -106,9 +124,9 @@ def test_monitor_controller_observe_restart(tmp_path: Path) -> None:
 
 def test_slurm_monitor_defaults_populated():
     monitor = SlurmLogMonitor(SlurmLogMonitorConfig())
-    names = {signal.name for signal in monitor.config.log_signals}
+    names = {event.name for event in monitor.config.log_events}
     assert {"error", "checkpoint", "training_complete"}.issubset(names)
-    defaults = default_log_signals()
+    defaults = default_log_events()
     assert defaults[0].state is not None
     assert defaults[0].state.class_name == "CrashState"
 
@@ -117,23 +135,24 @@ def test_monitor_signal_triggers_action(tmp_path: Path) -> None:
     config = SlurmLogMonitorConfig(
         inactivity_threshold_seconds=0,
         check_interval_seconds=1,
-        log_signals=[
-            LogSignalConfig(
+        log_events=[
+            LogEventConfig(
                 name="checkpoint",
                 pattern=r"Checkpoint saved: (?P<path>.+)",
                 pattern_type="regex",
-                actions=[ErrorNoteActionConfig(note="enqueue_evaluation")],
                 metadata={"kind": "checkpoint"},
                 extract_groups={"checkpoint_path": "path"},
+                actions=[
+                    EventActionConfig(
+                        action=LogActionConfig(message="enqueue_evaluation"),
+                    )
+                ],
             )
         ],
     )
     monitor = SlurmLogMonitor(config)
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
-    policies = {
-        "success": NoRestartPolicy(NoRestartPolicyConfig()),
-    }
-    controller = MonitorController(monitor, slurm, policies)
+    controller = MonitorController(monitor, slurm)
 
     script = tmp_path / "script.sh"
     script.write_text("#!/bin/bash\n")
@@ -149,39 +168,47 @@ def test_monitor_signal_triggers_action(tmp_path: Path) -> None:
     result = controller.observe_once_sync()
 
     assert not result.decisions
-    action_records = [record for record in result.events if record.action]
+    action_records = [
+        record
+        for record in result.events
+        if record.action == "actions" and record.event == "checkpoint"
+    ]
     assert len(action_records) == 1
     action = action_records[0]
-    assert action.action == "ErrorNoteAction"
-    assert action.payload["note"] == "enqueue_evaluation"
+    assert action.payload["restart"] is False
+    assert action.payload["results"] == ["enqueue_evaluation"]
     assert action.metadata["checkpoint_path"] == "/ckpt/path"
-    assert action.metadata["signal_name"] == "checkpoint"
+    assert action.metadata["event_name"] == "checkpoint"
 
     # Same content should not fire duplicate signals
     result_repeat = controller.observe_once_sync()
-    assert not any(record.action for record in result_repeat.events)
+    assert not any(
+        record.action == "actions" and record.event == "checkpoint"
+        for record in result_repeat.events
+    )
 
 
 def test_monitor_signal_triggers_restart(tmp_path: Path) -> None:
     config = SlurmLogMonitorConfig(
         inactivity_threshold_seconds=0,
         check_interval_seconds=1,
-        log_signals=[
-            LogSignalConfig(
+        log_events=[
+            LogEventConfig(
                 name="fatal",
                 pattern="FATAL ERROR",
                 pattern_type="substring",
                 state=CrashStateConfig(),
+                actions=[
+                    EventActionConfig(
+                        action=RestartActionConfig(reason="fatal restart"),
+                    )
+                ],
             )
         ],
     )
     monitor = SlurmLogMonitor(config)
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
-    policies = {
-        "crash": AlwaysRestartPolicy(AlwaysRestartPolicyConfig(max_retries=2)),
-        "success": NoRestartPolicy(NoRestartPolicyConfig()),
-    }
-    controller = MonitorController(monitor, slurm, policies)
+    controller = MonitorController(monitor, slurm)
 
     script = tmp_path / "script.sh"
     script.write_text("#!/bin/bash\n")
@@ -207,21 +234,24 @@ def test_output_file_emit_checkpoint_signal(tmp_path: Path) -> None:
         inactivity_threshold_seconds=0,
         check_interval_seconds=1,
         output_paths=[str(output_file)],
-        log_signals=[
-            LogSignalConfig(
+        log_events=[
+            LogEventConfig(
                 name="checkpoint",
                 pattern=r"Checkpoint saved: (?P<checkpoint>\S+)",
                 pattern_type="regex",
-                actions=[ErrorNoteActionConfig(note="new_checkpoint")],
                 metadata={"kind": "checkpoint"},
                 extract_groups={"checkpoint_path": "checkpoint"},
+                actions=[
+                    EventActionConfig(
+                        action=LogActionConfig(message="new_checkpoint"),
+                    )
+                ],
             )
         ],
     )
     monitor = SlurmLogMonitor(config)
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
-    policies = {"success": NoRestartPolicy(NoRestartPolicyConfig())}
-    controller = MonitorController(monitor, slurm, policies)
+    controller = MonitorController(monitor, slurm)
 
     script = tmp_path / "script.sh"
     script.write_text("#!/bin/bash\n")
@@ -241,11 +271,7 @@ def test_output_file_emit_checkpoint_signal(tmp_path: Path) -> None:
 
     result = controller.observe_once_sync()
 
-    action_records = [
-        record
-        for record in result.events
-        if record.action == "ErrorNoteAction" and record.payload.get("note") == "new_checkpoint"
-    ]
+    action_records = [record for record in result.events if record.action == "actions"]
     assert action_records
     checkpoint_action = action_records[0]
     assert checkpoint_action.metadata["checkpoint_path"] == "/tmp/check.ckpt"
@@ -255,10 +281,7 @@ def test_output_file_emit_checkpoint_signal(tmp_path: Path) -> None:
 def test_slurm_state_transitions_emit_actions(tmp_path: Path) -> None:
     monitor = SlurmLogMonitor(SlurmLogMonitorConfig(check_interval_seconds=1))
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
-    policies = {
-        "success": NoRestartPolicy(NoRestartPolicyConfig()),
-    }
-    controller = MonitorController(monitor, slurm, policies)
+    controller = MonitorController(monitor, slurm)
 
     script = tmp_path / "script.sh"
     script.write_text("#!/bin/bash\n")
@@ -283,10 +306,7 @@ def test_slurm_state_transitions_emit_actions(tmp_path: Path) -> None:
 def test_log_completion_triggers_run_finished(tmp_path: Path) -> None:
     monitor = SlurmLogMonitor(SlurmLogMonitorConfig(check_interval_seconds=1))
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
-    policies = {
-        "success": NoRestartPolicy(NoRestartPolicyConfig()),
-    }
-    controller = MonitorController(monitor, slurm, policies)
+    controller = MonitorController(monitor, slurm)
 
     script = tmp_path / "script.sh"
     script.write_text("#!/bin/bash\n")
@@ -303,25 +323,31 @@ def test_log_completion_triggers_run_finished(tmp_path: Path) -> None:
     assert any(record.state == "success" for record in result.events)
 
 
-def test_cancelled_job_restarts_with_selective_policy(tmp_path: Path) -> None:
-    """Test that a CANCELLED job restarts when policy allows it."""
-    from oellm_autoexp.monitor.policy import SelectiveRestartPolicy, SelectiveRestartPolicyConfig
-
-    monitor = SlurmLogMonitor(SlurmLogMonitorConfig(check_interval_seconds=1))
+def test_cancelled_job_restarts_with_metadata_condition(tmp_path: Path) -> None:
+    """Test that a CANCELLED job restarts when metadata condition allows it."""
+    monitor = SlurmLogMonitor(
+        SlurmLogMonitorConfig(
+            check_interval_seconds=1,
+            state_events=[
+                StateEventConfig(
+                    name="crash",
+                    actions=[
+                        EventActionConfig(
+                            conditions=[
+                                MetadataConditionConfig(
+                                    key="error_type",
+                                    equals="cancelled",
+                                )
+                            ],
+                            action=RestartActionConfig(reason="retry cancelled job"),
+                        )
+                    ],
+                )
+            ],
+        )
+    )
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
-    policies = {
-        "crash": SelectiveRestartPolicy(
-            SelectiveRestartPolicyConfig(
-                max_retries=3,
-                default_action="restart",
-                restart_on_error_types=["cancelled"],
-                restart_on_subsystems=["slurm"],
-                exclude_error_types=["oom"],
-            )
-        ),
-        "success": NoRestartPolicy(NoRestartPolicyConfig()),
-    }
-    controller = MonitorController(monitor, slurm, policies)
+    controller = MonitorController(monitor, slurm)
 
     script = tmp_path / "script.sh"
     script.write_text("#!/bin/bash\n")
@@ -357,7 +383,6 @@ def test_cancelled_job_restarts_with_selective_policy(tmp_path: Path) -> None:
 def test_cancelled_job_logging_visibility(tmp_path: Path) -> None:
     """Test that cancelled job events are properly logged."""
     import logging
-    from oellm_autoexp.monitor.policy import SelectiveRestartPolicy, SelectiveRestartPolicyConfig
 
     # Capture log output
     import io
@@ -370,19 +395,29 @@ def test_cancelled_job_logging_visibility(tmp_path: Path) -> None:
     logger.setLevel(logging.INFO)
 
     try:
-        monitor = SlurmLogMonitor(SlurmLogMonitorConfig(check_interval_seconds=1))
+        monitor = SlurmLogMonitor(
+            SlurmLogMonitorConfig(
+                check_interval_seconds=1,
+                state_events=[
+                    StateEventConfig(
+                        name="crash",
+                        actions=[
+                            EventActionConfig(
+                                conditions=[
+                                    MetadataConditionConfig(
+                                        key="error_type",
+                                        equals="cancelled",
+                                    )
+                                ],
+                                action=RestartActionConfig(reason="retry cancelled job"),
+                            )
+                        ],
+                    )
+                ],
+            )
+        )
         slurm = FakeSlurmClient(FakeSlurmClientConfig())
-        policies = {
-            "crash": SelectiveRestartPolicy(
-                SelectiveRestartPolicyConfig(
-                    max_retries=3,
-                    default_action="restart",
-                    restart_on_error_types=["cancelled"],
-                )
-            ),
-            "success": NoRestartPolicy(NoRestartPolicyConfig()),
-        }
-        controller = MonitorController(monitor, slurm, policies)
+        controller = MonitorController(monitor, slurm)
 
         script = tmp_path / "script.sh"
         script.write_text("#!/bin/bash\n")
@@ -404,7 +439,8 @@ def test_cancelled_job_logging_visibility(tmp_path: Path) -> None:
         assert "SLURM state transition" in log_output
         assert "CANCELLED" in log_output
         assert "classified as mode 'crash'" in log_output
-        assert "policy decision" in log_output
+        assert "detected event 'crash'" in log_output
+        assert "restarting job due to event 'crash'" in log_output
         assert "restart" in log_output.lower()
 
     finally:

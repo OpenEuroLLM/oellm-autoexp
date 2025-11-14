@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
 
 from compoconf import (
     ConfigInterface,
@@ -12,6 +15,42 @@ from compoconf import (
     register,
     register_interface,
 )
+
+from oellm_autoexp.monitor.events import EventRecord, EventStatus
+
+ActionStatus = Literal["success", "retry", "failed"]
+
+
+@dataclass(kw_only=True)
+class ActionResult:
+    status: ActionStatus
+    message: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(kw_only=True)
+class ActionContext:
+    event: EventRecord
+    job_metadata: dict[str, Any] = field(default_factory=dict)
+    attempts: int = 0
+    workspace: Path | None = None
+    env: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def variables(self) -> dict[str, Any]:
+        merged: dict[str, Any] = {}
+        merged.update(self.job_metadata)
+        merged.update(self.event.metadata)
+        merged.update(self.event.payload)
+        merged.setdefault("event_id", self.event.event_id)
+        merged.setdefault("event_name", self.event.name)
+        return merged
+
+    def render(self, template: str) -> str:
+        try:
+            return template.format(**self.variables)
+        except KeyError:
+            return template
 
 
 @register_interface
@@ -27,71 +66,170 @@ class BaseMonitorAction(MonitorActionInterface):
 
     def describe(self, job_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
         payload = asdict(self.config)
-        return {k: v for k, v in payload.items() if v is not None}
+        payload.update({"type": self.kind})
+        return payload
+
+    def execute(self, context: ActionContext) -> ActionResult:  # pragma: no cover
+        raise NotImplementedError
+
+    def update_event(self, event: EventRecord, result: ActionResult) -> None:
+        if result.status == "success":
+            event.set_status(EventStatus.PROCESSED, note=result.message or self.kind)
+        elif result.status == "failed":
+            event.set_status(EventStatus.FAILED, note=result.message or self.kind)
+        else:
+            event.set_status(EventStatus.PENDING, note=result.message or self.kind)
 
     @property
     def kind(self) -> str:  # pragma: no cover - override in subclasses
         return self.__class__.__name__
 
 
+def _run_command(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None):
+    return subprocess.run(
+        command,
+        cwd=str(cwd) if cwd else None,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+
 @dataclass
-class ExecutionActionConfig(ConfigInterface):
-    class_name: str = "ExecutionAction"
+class RunCommandActionConfig(ConfigInterface):
+    class_name: str = "RunCommandAction"
     command: list[str] = field(default_factory=list)
+    cwd: str | None = None
 
 
 @register
-class ExecutionAction(BaseMonitorAction):
-    config: ExecutionActionConfig
+class RunCommandAction(BaseMonitorAction):
+    config: RunCommandActionConfig
 
-    def describe(self, job_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
-        rendered = [segment.format(**metadata) for segment in self.config.command]
-        return {"type": self.kind, "command": rendered}
+    def execute(self, context: ActionContext) -> ActionResult:
+        if not self.config.command:
+            return ActionResult(status="failed", message="command is empty")
+        rendered = [context.render(segment) for segment in self.config.command]
+        cwd = Path(self.config.cwd).expanduser() if self.config.cwd else context.workspace
+        env = {**context.env} if context.env else None
+        proc = _run_command(rendered, cwd=cwd, env=env)
+        if proc.returncode == 0:
+            return ActionResult(
+                status="success",
+                message="command completed",
+                metadata={"stdout": proc.stdout.strip()},
+            )
+        return ActionResult(
+            status="failed",
+            message=f"command exited {proc.returncode}",
+            metadata={"stdout": proc.stdout.strip(), "stderr": proc.stderr.strip()},
+        )
 
 
 @dataclass
 class RestartActionConfig(ConfigInterface):
     class_name: str = "RestartAction"
-    reason: str | None = None
+    reason: str = "Restart requested"
 
 
 @register
 class RestartAction(BaseMonitorAction):
     config: RestartActionConfig
 
-    def describe(self, job_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
-        payload = super().describe(job_id, metadata)
-        payload.update({"type": self.kind, "reason": self.config.reason})
-        return payload
+    def execute(self, context: ActionContext) -> ActionResult:
+        return ActionResult(status="retry", message=self.config.reason)
 
 
 @dataclass
-class TerminationActionConfig(ConfigInterface):
-    class_name: str = "TerminationAction"
-    message: str | None = None
+class RunAutoexpActionConfig(ConfigInterface):
+    class_name: str = "RunAutoexpAction"
+    script: str = "scripts/run_autoexp.py"
+    overrides: list[str] = field(default_factory=list)
+    config_path: str | None = None
 
 
 @register
-class TerminationAction(BaseMonitorAction):
-    config: TerminationActionConfig
+class RunAutoexpAction(BaseMonitorAction):
+    config: RunAutoexpActionConfig
 
-    def describe(self, job_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
-        payload = super().describe(job_id, metadata)
-        payload.update({"type": self.kind})
-        return payload
+    def execute(self, context: ActionContext) -> ActionResult:
+        cmd = [sys.executable, self.config.script]
+        if self.config.config_path:
+            cmd.extend(["--config-path", context.render(self.config.config_path)])
+        cmd.extend(context.render(arg) for arg in self.config.overrides)
+        proc = _run_command(cmd, cwd=context.workspace, env=context.env)
+        if proc.returncode == 0:
+            return ActionResult(status="success", message="run_autoexp completed")
+        return ActionResult(
+            status="failed",
+            message=f"run_autoexp exited {proc.returncode}",
+            metadata={"stderr": proc.stderr.strip()},
+        )
 
 
 @dataclass
-class ErrorNoteActionConfig(ConfigInterface):
-    class_name: str = "ErrorNoteAction"
-    note: str = ""
+class LogActionConfig(ConfigInterface):
+    class_name: str = "LogAction"
+    message: str = ""
 
 
 @register
-class ErrorNoteAction(BaseMonitorAction):
-    config: ErrorNoteActionConfig
+class LogAction(BaseMonitorAction):
+    config: LogActionConfig
 
-    def describe(self, job_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
-        payload = super().describe(job_id, metadata)
-        payload.update({"type": self.kind, "note": self.config.note})
-        return payload
+    def execute(self, context: ActionContext) -> ActionResult:
+        return ActionResult(status="success", message=context.render(self.config.message))
+
+
+@dataclass
+class _LegacyLogMessageActionConfig(LogActionConfig):
+    class_name: str = "LogMessageAction"
+
+
+@register
+class LogMessageAction(LogAction):
+    config: _LegacyLogMessageActionConfig
+
+
+# Backwards compatibility alias for configs referenced in existing configs/tests.
+LogMessageActionConfig = _LegacyLogMessageActionConfig
+
+
+@dataclass
+class PublishEventActionConfig(ConfigInterface):
+    class_name: str = "PublishEventAction"
+    metadata: dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict)
+    event_name: str = ""
+
+
+@register
+class PublishEventAction(BaseMonitorAction):
+    config: PublishEventActionConfig
+
+    def execute(self, context: ActionContext) -> ActionResult:
+        return ActionResult(
+            status="success",
+            message="event published",
+            metadata={
+                "publish_event": {
+                    "name": self.config.event_name,
+                    "metadata": self.config.metadata,
+                    "payload": self.config.payload,
+                }
+            },
+        )
+
+
+__all__ = [
+    "MonitorActionInterface",
+    "BaseMonitorAction",
+    "ActionContext",
+    "ActionResult",
+    "RunCommandAction",
+    "RestartAction",
+    "RunAutoexpAction",
+    "LogAction",
+    "LogMessageAction",
+    "PublishEventAction",
+]

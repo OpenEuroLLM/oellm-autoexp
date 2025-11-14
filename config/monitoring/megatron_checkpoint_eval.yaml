@@ -1,13 +1,13 @@
 # Megatron monitoring with automatic checkpoint evaluation trigger
-# Extends megatron_production by adding an ExecutionAction that enqueues
+# Extends megatron_production by adding queued actions that enqueue
 # downstream evaluations whenever a checkpoint is written.
 defaults:
   - megatron_production
   - _self_
 
-# Re-declare log signals so we can enrich checkpoint events with ExecutionAction.
-# Aside from the checkpoint signal, definitions mirror megatron_production.
-log_signals:
+# Re-declare log events so we can enrich checkpoint events with queued actions.
+# Aside from the checkpoint event, definitions mirror megatron_production.
+log_events:
   # === SUCCESS SIGNALS ===
 
   - name: validation_complete
@@ -15,46 +15,74 @@ log_signals:
     pattern_type: regex
     state:
       class_name: SuccessState
-    actions:
-      - class_name: ErrorNoteAction
-        note: run_finished
     metadata:
       kind: completion
       stage: validation
     extract_groups:
       validation_loss: loss
+    actions:
+      - class_name: EventAction
+        action:
+          class_name: LogAction
+          message: "run_finished"
 
   - name: checkpoint_saved
     pattern: 'successfully saved checkpoint from iteration\s+(?P<iteration>\d+) to (?P<path>\S+)'
     pattern_type: regex
     state:
       class_name: SuccessState
-    actions:
-      - class_name: ErrorNoteAction
-        note: new_checkpoint
-      - class_name: ExecutionAction
-        command:
-          - python
-          - scripts/run_checkpoint_evaluation.py
-          - "--checkpoint"
-          - "{checkpoint_path}"
-          - "--iteration"
-          - "{checkpoint_iteration}"
     metadata:
       kind: checkpoint
       trigger: checkpoint_evaluation
+      note: new_checkpoint
     extract_groups:
       checkpoint_iteration: iteration
       checkpoint_path: path
+    actions:
+      - class_name: EventAction
+        action:
+          class_name: LogAction
+          message: "new_checkpoint"
+      - class_name: EventAction
+        mode: queue
+        conditions:
+          - class_name: MetadataCondition
+            key: trigger
+            equals: checkpoint_evaluation
+          - class_name: FileExistsCondition
+            path: "{checkpoint_path}"
+            blocking: true
+            timeout_seconds: 600
+        action:
+          class_name: RunCommandAction
+          command:
+            - python
+            - scripts/run_checkpoint_evaluation.py
+            - "--checkpoint"
+            - "{checkpoint_path}"
+            - "--iteration"
+            - "{checkpoint_iteration}"
+      - class_name: EventAction
+        mode: queue
+        conditions:
+          - class_name: MetadataCondition
+            key: trigger
+            equals: checkpoint_evaluation
+        action:
+          class_name: RunAutoexpAction
+          script: scripts/run_autoexp.py
+          config_path: "{output_dir}/_provenance/config_reference.json"
+          overrides:
+            - monitor=megatron_basic
+            - checkpoint_path={checkpoint_path}
+            - checkpoint_iteration={checkpoint_iteration}
 
   - name: training_iteration
     pattern: '\[[\d\-\s:]+\] iteration\s+(?P<current>\d+)/\s*(?P<total>\d+) \|.*lm loss: (?P<loss>[\d.E+\-]+)'
     pattern_type: regex
-    actions:
-      - class_name: ErrorNoteAction
-        note: progress_update
     metadata:
       kind: progress
+      note: progress_update
     extract_groups:
       current_iteration: current
       total_iterations: total
@@ -67,9 +95,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: critical
       error_type: oom
@@ -82,9 +107,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: critical
       error_type: oom
@@ -99,9 +121,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: critical
       error_type: nccl
@@ -114,9 +133,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: critical
       error_type: nccl_timeout
@@ -129,9 +145,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: critical
       error_type: distributed_timeout
@@ -144,9 +157,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: error
       error_type: communication
@@ -161,9 +171,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: error
       error_type: numerical_instability
@@ -174,9 +181,6 @@ log_signals:
   - name: gradient_nan
     pattern: '(?:NaN|nan).*(?:gradient|grad)'
     pattern_type: regex
-    actions:
-      - class_name: ErrorNoteAction
-        note: warning
     metadata:
       severity: warning
       error_type: numerical_instability
@@ -191,9 +195,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: critical
       error_type: hang
@@ -206,9 +207,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: critical
       error_type: deadlock
@@ -223,9 +221,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: error
       error_type: torch
@@ -238,9 +233,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: error
       error_type: exception

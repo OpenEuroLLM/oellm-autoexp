@@ -27,10 +27,6 @@ monitoring:
   class_name: NullMonitor
 backend:
   class_name: NullBackend
-restart_policies:
-  - mode: success
-    implementation:
-      class_name: NoRestartPolicy
 """
 
 

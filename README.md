@@ -83,7 +83,7 @@ export PYTHONPATH="$PYTHONPATH:$(pwd):$(pwd)/submodules/Megatron-LM"
 - `config/slurm/*.yaml` describes cluster-specific `sbatch` overrides, launcher prefixes, optional `slurm.array` toggles, SLURM client implementation, node-level environment exports, and `launcher_env_passthrough` to forward those exports into containers.
 - `config/backend/megatron.yaml` selects the `AutoMegatronBackend`, which expands convenience arguments (`train_tokens`, `lr_decay_fraction`, …) into canonical Megatron flags before validation.
 - `config/monitoring/*.yaml` defines log templates, inactivity thresholds, optional start conditions, and log-signal → action mappings.
-- `config/restart/*.yaml` contains restart policy definitions keyed by error mode (`stall`, `timeout`, `crash`, `success`).
+- Monitoring configs (`config/monitoring/*.yaml`) now own restart + follow-up behaviour through `log_events` + `state_events` with inline action bindings.
 
 Hydra overrides (`key=value`) let you combine these building blocks per run.
 
@@ -200,61 +200,85 @@ python scripts/manage_monitoring.py list --monitoring-state-dir output/monitorin
 ```
 ### 4. Adapting Behaviour for Errors & Timeouts
 
-Restart policies are pluggable through compoconf:
-
-```yaml
-restart_policies:
-  - mode: stall
-    implementation:
-      class_name: AlwaysRestartPolicy
-      max_retries: 2
-  - mode: timeout
-    implementation:
-      class_name: AdjustTimeLimitPolicy
-      minutes: 30
-  - mode: crash
-    implementation:
-      class_name: NoRestartPolicy
-      message: "manual intervention required"
-```
-
-Combine policy decisions with monitoring metadata (inactivity thresholds, SLURM states, log signals) to enforce the right recovery behaviour.
-
-### 5. Trigger Post-processing from Log Signals
+Monitoring behaviour is now expressed directly on `log_events` and `state_events` without a separate policy file. Each event can declare inline `EventAction` bindings (with optional conditions) that execute inline or enqueue JSON payloads under the per-session `actions/` directory.
 
 ```yaml
 monitoring:
   class_name: SlurmLogMonitor
-  log_signals:
-    - name: checkpoint_ready
-      pattern: "Checkpoint saved: (?P<path>.+\.pt)"
-      pattern_type: regex
-      actions:
-        - class_name: ExecutionAction
-          command:
-            - python
-            - scripts/run_downstream_eval.py
-            - "--checkpoint"
-            - "{checkpoint_path}"
+  log_events:
+    - name: cuda_oom
+      pattern: "CUDA out of memory"
+      pattern_type: substring
+      state:
+        class_name: CrashState
       metadata:
-        kind: checkpoint
+        error_type: oom
+      actions:
+        - class_name: EventAction
+          conditions:
+            - class_name: MaxAttemptsCondition
+              max_attempts: 2
+          action:
+            class_name: RestartAction
+            reason: "retry oom once"
+  state_events:
+    - name: success
+      actions:
+        - class_name: EventAction
+          action:
+            class_name: LogAction
+            message: "run_finished"
 ```
 
-When the pattern matches, a monitoring **event** is recorded. Any configured actions are materialised through `MonitorController.drain_events()` and written to the run's `actions/` directory (one JSON payload per action). Built-in action types live under `oellm_autoexp.monitor.actions`:
+Conditions have a shared interface (`ConditionInterface.check`) and can block (`FileExistsCondition(blocking=true)`), filter (`MetadataCondition`), or limit retries (`MaxAttemptsCondition`). No extra layers: the monitor sees a `cuda_oom` event, evaluates the bindings, and either restarts the job or leaves the event in `pending` for later.
 
-- `ExecutionAction`: run an arbitrary command (downstream evaluation, conversions, etc.).
-- `RestartAction`: annotate restart decisions with an explicit reason (see note below).
-- `TerminationAction`: record a terminal event separate from policy decisions.
-- `ErrorNoteAction`: attach a human-readable note to error events.
+### 5. Trigger Post-processing from Log Events
 
-Actions receive the `MonitorEvent` metadata (including regex capture groups such as `{checkpoint_path}`) so they can template commands or notes. Custom actions can be registered by way of compoconf by subclassing `BaseMonitorAction`.
+```yaml
+monitoring:
+  class_name: SlurmLogMonitor
+  log_events:
+    - name: checkpoint_ready
+      pattern: "Checkpoint saved: (?P<checkpoint_path>.+\.pt)"
+      pattern_type: regex
+      metadata:
+        kind: checkpoint
+      actions:
+        - class_name: EventAction
+          mode: queue
+          conditions:
+            - class_name: FileExistsCondition
+              path: "{checkpoint_path}"
+              blocking: true
+          action:
+            class_name: RunCommandAction
+            command:
+              - python
+              - scripts/run_downstream_eval.py
+              - "--checkpoint"
+              - "{checkpoint_path}"
+```
 
-**How `RestartAction` fits with restart policies:** Monitors surface event metadata (including the optional `RestartAction` payload), but the actual decision to resubmit a job still comes exclusively from the configured restart policies. A `RestartAction` therefore acts as a side-channel to capture intent—for example “restart due to node maintenance”—for downstream automation or audit trails. If the policy chooses `stop`, the action is still emitted for logging, but no resubmission occurs. Conversely, policies can restart without an accompanying `RestartAction`. Pair them when you want both a policy-driven retry *and* a descriptive record for operators or external orchestration.
-Need a ready-to-use preset? `config/monitoring/megatron_checkpoint_eval.yaml` mirrors the production monitor but adds an `ExecutionAction` that queues `python scripts/run_checkpoint_evaluation.py --checkpoint <path> --iteration <iter>` whenever a checkpoint is written. Select it with `-o monitoring=megatron_checkpoint_eval` and point a lightweight worker at the `actions/` directory to execute evaluation payloads.
+When the pattern matches, `MonitorController` records the event and materialises queued actions as `{monitoring_state_dir}/session.actions/<event_id>/<action_id>.json`. Built-in action types live under `oellm_autoexp.monitor.actions`:
+
+- `RunCommandAction`: run arbitrary scripts (downstream evaluation, conversions, cooldown).
+- `RestartAction`: request a restart (controller increments attempts and resubmits).
+- `RunAutoexpAction`: call `scripts/run_autoexp.py` with stored configs/overrides.
+- `LogAction`: attach a human-readable note to the event history.
+- `PublishEventAction`: emit follow-up events for chained workflows.
+
+Actions receive monitor metadata (regex groups like `{checkpoint_path}`, job metadata such as `{output_dir}` and `{job_id}`) so templates stay simple. Custom actions inherit from `BaseMonitorAction` and register by way of compoconf.
+
+Need a ready-to-use preset?
+
+- `config/monitoring/megatron_checkpoint_eval.yaml` mirrors the production monitor but adds queued `RunCommandAction` + `RunAutoexpAction` entries whenever a checkpoint lands.
+- `config/monitoring/megatron_followup.yaml` adds state-event bindings that schedule a cooldown command and a follow-up autoexp invocation after a clean `success`.
+
+Select them with `-o monitoring=megatron_checkpoint_eval` (or `megatron_followup`) and point a lightweight worker at the `actions/` directory to execute queued payloads.
 
 To trigger downstream evaluations automatically upon checkpoints:
 
-1. Add the `ExecutionAction` configuration shown above to your monitoring config (either in Hydra YAML or as a manifest override).
+1. Add the `RunCommandAction` configuration shown above to your monitoring config (either in Hydra YAML or as a manifest override).
 2. Run planning/submission as usual. The monitor loop will emit JSON payloads under `outputs/<run>/actions/` with the rendered command.
 3. Point a lightweight worker (or CI job) at that folder to execute queued evaluations. Each payload is written once, so duplicate execution is easy to avoid.
 
@@ -270,7 +294,7 @@ echo "CUDA out of memory. Tried to allocate 4GiB" >> output/logs/<job>/slurm-<id
 python scripts/monitor_autoexp.py --manifest outputs/manifests/<plan>.json --use-fake-slurm
 ```
 
-The rerun verifies that crash signals (like CUDA OOM) are detected and restart policies fire as expected. For real-cluster validation you can run the same monitoring CLI without `--use-fake-slurm`; the compoconf registries ensure only the necessary Megatron configuration modules are imported on the host.
+The rerun verifies that crash signals (like CUDA OOM) are detected and the restart bindings fire as expected. For real-cluster validation you can run the same monitoring CLI without `--use-fake-slurm`; the compoconf registries ensure only the necessary Megatron configuration modules are imported on the host.
 
 ### 7. Integrating a New Backend
 
@@ -323,7 +347,7 @@ python scripts/run_autoexp_container.py --config-ref autoexp -C config \
 | `template` | `slurm.template_path` | SBATCH template rendered per job. |
 | `sbatch_script` | `slurm.script_dir` | Output directory for rendered scripts. |
 | `cmd` | `slurm.submit_cmd` | Still defaults to `sbatch`; supports arrays and launch wrappers. |
-| `output_file` | `monitoring.log_path_template` | Defaults to `"{output_dir}/slurm.out"` and feeds the monitor. |
+| `output_file` | `monitoring.log_path_template` | Defaults to `"{output_dir}/slurm-%j.out"` so reruns never overwrite prior logs. |
 | `start_condition_cmd` | `monitoring.start_condition_cmd` | Checked before submission until it exits 0. |
 | `check_interval_secs` | `monitoring.poll_interval_seconds` | Poll cadence for freeze detection. |
 | `termination_str` | `monitoring.termination_string` | Ends restart loops when matched. |
@@ -337,7 +361,7 @@ python scripts/run_autoexp_container.py --config-ref autoexp -C config \
 template: template.sbatch
 sbatch_script: "sbatch/{name}.sbatch"
 cmd: "sbatch {sbatch_script}"
-output_file: "{logs}/{name}/slurm.out"
+output_file: "{logs}/{name}/slurm-%j.out"
 check_interval_secs: 600
 termination_str: "Eval Epoch: {epochs}"
 ```
@@ -350,7 +374,7 @@ slurm:
   script_dir: generated/sbatch
   submit_cmd: sbatch
 monitoring:
-  log_path_template: "{output_dir}/slurm.out"
+  log_path_template: "{output_dir}/slurm-%j.out"
   poll_interval_seconds: 600
   termination_string: "Eval Epoch: {epochs}"
 sweep:

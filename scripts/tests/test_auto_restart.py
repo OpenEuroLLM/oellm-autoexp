@@ -35,7 +35,7 @@ Test Workflow:
   1. Generate the plan manifest (`plan_autoexp.py`) and submit/monitor via `submit_autoexp.py`
   2. Simulate various failure scenarios (cancel, hang, OOM, NCCL errors)
   3. Verify that the monitoring system detects failures
-  4. Verify that restart policies work correctly (restart on transient errors, not on OOM)
+  4. Verify that restart bindings fire correctly (restart on transient errors, not on OOM)
   5. Verify that retry limits are respected
 
 Prerequisites:

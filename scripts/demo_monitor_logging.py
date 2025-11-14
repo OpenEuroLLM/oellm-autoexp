@@ -4,15 +4,10 @@ import logging
 from pathlib import Path
 
 from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
-from oellm_autoexp.monitor.policy import (
-    AlwaysRestartPolicy,
-    AlwaysRestartPolicyConfig,
-    NoRestartPolicy,
-    NoRestartPolicyConfig,
-    SelectiveRestartPolicy,
-    SelectiveRestartPolicyConfig,
-)
-from oellm_autoexp.monitor.watcher import SlurmLogMonitor, SlurmLogMonitorConfig
+from oellm_autoexp.monitor.actions import RestartActionConfig
+from oellm_autoexp.monitor.event_bindings import EventActionConfig
+from oellm_autoexp.monitor.states import CrashStateConfig
+from oellm_autoexp.monitor.watcher import SlurmLogMonitor, SlurmLogMonitorConfig, StateEventConfig
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
 
 
@@ -36,23 +31,25 @@ def main():
     logger.info("=== Monitor Logging Demo ===")
     logger.info("This demonstrates the comprehensive logging added to MonitorController")
 
-    # Set up monitor with selective restart policy
-    monitor = SlurmLogMonitor(SlurmLogMonitorConfig(check_interval_seconds=1))
+    # Set up monitor with an inline event-driven restart binding
+    monitor = SlurmLogMonitor(
+        SlurmLogMonitorConfig(
+            check_interval_seconds=1,
+            state_events=[
+                StateEventConfig(
+                    name="crash",
+                    state=CrashStateConfig(),
+                    actions=[
+                        EventActionConfig(
+                            action=RestartActionConfig(reason="demo restart after crash"),
+                        )
+                    ],
+                )
+            ],
+        )
+    )
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
-    policies = {
-        "crash": SelectiveRestartPolicy(
-            SelectiveRestartPolicyConfig(
-                max_retries=3,
-                default_action="restart",
-                restart_on_error_types=["cancelled", "hang", "nccl"],
-                restart_on_subsystems=["slurm"],
-                exclude_error_types=["oom"],
-            )
-        ),
-        "success": NoRestartPolicy(NoRestartPolicyConfig()),
-        "stall": AlwaysRestartPolicy(AlwaysRestartPolicyConfig(max_retries=2)),
-    }
-    controller = MonitorController(monitor, slurm, policies)
+    controller = MonitorController(monitor, slurm)
 
     # Create test job files
     script = tmp_dir / "test.sh"
@@ -72,14 +69,14 @@ def main():
     logger.info("\n=== SCENARIO 1: Job starts running ===")
     slurm.set_state(job_id, "RUNNING")
     result = controller.observe_once_sync()
-    logger.info(f"Actions: {[a.action for a in result.actions]}")
+    logger.info(f"Events captured: {[record.event for record in result.events]}")
 
     # Scenario 2: Job is cancelled (should restart)
     logger.info("\n=== SCENARIO 2: Job is cancelled (should restart) ===")
     slurm.set_state(job_id, "CANCELLED")
     result = controller.observe_once_sync()
     logger.info(f"Decisions: {[(k, v.action, v.reason) for k, v in result.decisions.items()]}")
-    logger.info(f"Actions: {[a.action for a in result.actions]}")
+    logger.info(f"Events: {[record.event for record in result.events]}")
 
     # Check if job was restarted
     job_states = list(controller.jobs())
@@ -97,7 +94,6 @@ def main():
     logger.info("Review the log output above to see all monitoring events:")
     logger.info("  - SLURM state transitions")
     logger.info("  - Mode classification")
-    logger.info("  - Policy decisions")
     logger.info("  - Restart operations")
 
 

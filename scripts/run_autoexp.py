@@ -4,11 +4,18 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
+import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Iterable
 from uuid import uuid4
+
+from compoconf import asdict
 
 from oellm_autoexp.config.loader import load_config_reference
 from oellm_autoexp.orchestrator import build_execution_plan, render_scripts
@@ -20,6 +27,8 @@ from oellm_autoexp.workflow.host import (
 )
 from oellm_autoexp.workflow.manifest import write_manifest
 from oellm_autoexp.workflow.plan import create_manifest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _configure_logging(verbose: bool = False, debug: bool = False) -> None:
@@ -55,6 +64,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument(
+        "--array-subset",
+        type=str,
+        help="Comma-separated sweep indices or ranges (e.g., '0,3-5') to rerun.",
+    )
+    parser.add_argument(
         "override", nargs="*", default=[], help="Hydra-style overrides (`key=value`)."
     )
     return parser.parse_args(argv)
@@ -68,14 +82,130 @@ def _default_manifest_path(base_output_dir: Path) -> Path:
     return manifest_dir / f"plan_{timestamp}_{suffix}.json"
 
 
+def _collect_git_metadata(repo_root: Path) -> dict[str, str | bool]:
+    def _run(cmd: Iterable[str]) -> str:
+        try:
+            result = subprocess.run(
+                list(cmd),
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return ""
+        return result.stdout.strip()
+
+    commit = _run(["git", "rev-parse", "HEAD"]) or "unknown"
+    status = _run(["git", "status", "--porcelain"])
+    dirty = bool(status)
+    diff = _run(["git", "diff"]) if dirty else ""
+    return {
+        "commit": commit,
+        "dirty": dirty,
+        "status": status,
+        "diff": diff,
+    }
+
+
+def _sanitize_env() -> dict[str, str]:
+    pattern = re.compile(r"(KEY|SECRET)", re.IGNORECASE)
+    return {key: value for key, value in os.environ.items() if not pattern.search(key)}
+
+
+def _write_job_provenance(
+    plan,
+    *,
+    args: argparse.Namespace,
+    subset_indices: set[int],
+    overrides: list[str],
+) -> None:
+    resolved_config = asdict(plan.config)
+    git_meta = _collect_git_metadata(REPO_ROOT)
+    sanitized_env = _sanitize_env()
+    config_reference = {
+        "config_ref": args.config_ref,
+        "config_dir": str(Path(args.config_dir).resolve()),
+        "overrides": overrides,
+    }
+    base_payload = {
+        "git": git_meta,
+        "command": sys.argv,
+        "overrides": overrides,
+        "subset_indices": sorted(subset_indices),
+        "config_reference": config_reference,
+        "environment": sanitized_env,
+    }
+
+    for job in plan.jobs:
+        output_dir = Path(job.output_dir)
+        provenance_dir = output_dir / "_provenance"
+        provenance_dir.mkdir(parents=True, exist_ok=True)
+
+        resolved_path = provenance_dir / "resolved_config.json"
+        resolved_path.write_text(json.dumps(resolved_config, indent=2), encoding="utf-8")
+
+        reference_path = provenance_dir / "config_reference.json"
+        reference_path.write_text(json.dumps(config_reference, indent=2), encoding="utf-8")
+
+        job_payload = {
+            **base_payload,
+            "job": {
+                "name": job.name,
+                "parameters": job.parameters,
+                "log_path": job.log_path,
+                "output_dir": job.output_dir,
+            },
+        }
+        metadata_path = provenance_dir / "run_metadata.json"
+        metadata_path.write_text(json.dumps(job_payload, indent=2), encoding="utf-8")
+
+
+def _parse_subset(spec: str | None) -> set[int]:
+    indices: set[int] = set()
+    if not spec:
+        return indices
+    for token in spec.split(","):
+        part = token.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start_str, end_str = part.split("-", 1)
+            start = int(start_str)
+            end = int(end_str)
+            if end < start:
+                raise ValueError(f"invalid range '{part}'")
+            indices.update(range(start, end + 1))
+        else:
+            indices.add(int(part))
+    return indices
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     _configure_logging(args.verbose, args.debug)
 
     config_dir = Path(args.config_dir)
     root = load_config_reference(args.config_ref, config_dir, args.override)
+    try:
+        subset_indices = _parse_subset(args.array_subset)
+    except ValueError as exc:
+        print(f"Invalid --array-subset argument: {exc}", file=sys.stderr)
+        return
 
-    plan = build_execution_plan(root)
+    try:
+        plan = build_execution_plan(root, subset_indices=subset_indices or None)
+    except ValueError as exc:
+        print(f"Error while building execution plan: {exc}", file=sys.stderr)
+        return
+
+    _write_job_provenance(
+        plan,
+        args=args,
+        subset_indices=subset_indices,
+        overrides=args.override,
+    )
+
     artifacts = render_scripts(plan)
 
     manifest = create_manifest(

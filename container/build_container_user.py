@@ -10,6 +10,7 @@ environments such as Conda without requiring elevated privileges.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
 import re
@@ -18,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 ENV_VAR_PATTERN = re.compile(r"\$(?:\{([^}]+)\}|([A-Za-z_][A-Za-z0-9_]*))")
@@ -170,6 +172,55 @@ def copy_into_sandbox(entries: list[tuple[str, str]], sandbox_dir: Path) -> None
             shutil.copy2(src_path, dst_path)
 
 
+def collect_git_metadata(repo_root: Path) -> tuple[str, bool, str, str]:
+    def run(args: list[str]) -> str:
+        try:
+            result = subprocess.run(
+                args,
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError:
+            return ""
+        return result.stdout.strip()
+
+    commit = run(["git", "rev-parse", "HEAD"]) or "unknown"
+    status = run(["git", "status", "--porcelain"])
+    dirty = bool(status)
+    diff = run(["git", "diff"]) if dirty else ""
+    return commit, dirty, status, diff
+
+
+def write_provenance_file(
+    repo_root: Path,
+    *,
+    base_image: str,
+    args: argparse.Namespace,
+    container_cmd: str,
+    requirements_file: Path,
+) -> tuple[Path, tempfile.TemporaryDirectory]:
+    commit, dirty, status, diff = collect_git_metadata(repo_root)
+    temp_dir = tempfile.TemporaryDirectory(prefix="oellm_provenance")
+    output_path = Path(temp_dir.name) / "container_provenance.json"
+    payload = {
+        "built_at": datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(),
+        "git_commit": commit,
+        "git_dirty": dirty,
+        "git_status": status,
+        "git_diff": diff,
+        "build_command": shlex.join(sys.argv),
+        "backend": args.backend,
+        "definition": args.definition,
+        "requirements_file": str(requirements_file),
+        "base_image": base_image,
+        "container_runtime": container_cmd,
+    }
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return output_path, temp_dir
+
+
 def main() -> None:
     args = parse_args()
 
@@ -242,6 +293,15 @@ def main() -> None:
             f"Provided path not found: {base_image_path}"
         )
 
+    provenance_path, provenance_tmp = write_provenance_file(
+        repo_root,
+        base_image=str(base_image_path),
+        args=args,
+        container_cmd=container_cmd,
+        requirements_file=requirements_file,
+    )
+    substitutions["PROVENANCE_PATH"] = str(provenance_path)
+
     temp_dir_manager = None
     if args.keep_sandbox:
         temp_dir = Path(tempfile.mkdtemp(prefix=args.tempdir_prefix))
@@ -286,11 +346,12 @@ def main() -> None:
     if args.force:
         final_build_cmd.append("--force")
     final_build_cmd += [str(target_path), str(sandbox_dir)]
-    print(final_build_cmd)
     run_command(final_build_cmd)
 
     if not args.keep_sandbox and temp_dir_manager is not None:
         temp_dir_manager.cleanup()
+    if provenance_tmp is not None:
+        provenance_tmp.cleanup()
 
     print(f"[+] Image written to {target_path}")
 

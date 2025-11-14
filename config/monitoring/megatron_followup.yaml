@@ -1,0 +1,30 @@
+# Megatron monitoring that schedules follow-up evaluation + cooldown commands
+defaults:
+  - megatron_basic
+  - _self_
+
+# Inherit log/state events from megatron_basic and add follow-up actions when a run succeeds.
+state_events:
+  - name: success
+    metadata:
+      note: run_finished
+    actions:
+      - class_name: EventAction
+        mode: queue            # Run asynchronously so the monitor loop stays light-weight.
+        action:
+          class_name: RunAutoexpAction
+          script: scripts/run_autoexp.py
+          # UNCLEAR: confirm that the config reference path is stable when manifests move.
+          config_path: "{output_dir}/_provenance/config_reference.json"
+          overrides:
+            - "+mode=evaluation"
+            - "+checkpoint_path={output_dir}/checkpoints/latest"
+      - class_name: EventAction
+        mode: queue
+        action:
+          class_name: RunCommandAction
+          command:
+            - bash
+            - scripts/run_cooldown.sh
+            - "--job"
+            - "{job_name}"
