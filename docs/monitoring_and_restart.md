@@ -1,286 +1,171 @@
 # Monitoring and Automatic Restart
 
-This document describes the monitoring and automatic restart capabilities for handling training failures.
+This document explains how the monitoring stack detects failures, persists events, and reacts through the unified Event → Condition → Action primitives. The legacy `config/restart/*.yaml` policies have been removed; everything now lives inside the monitoring configuration itself.
 
 ## Overview
 
-The system provides:
-1. **Log-based monitoring** - Detect errors, progress, and completion from SLURM logs
-2. **Selective restart policies** - Automatically restart jobs on transient errors
-3. **Signal extraction** - Capture error details (loss values, error messages, etc.)
+1. **Log + SLURM monitoring** – `SlurmLogMonitor` watches both SLURM state and log/output files. Regex or substring matches emit named `log_events`; SLURM transitions emit `state_events`.
+2. **Inline bindings** – Each event carries a list of `EventAction` bindings. A binding can include conditions (`MetadataCondition`, `MaxAttemptsCondition`, `FileExistsCondition`, …) and chooses whether to run inline or enqueue work.
+3. **Action queue** – Queued actions are stored as individual JSON files under `{monitoring_state_dir}/session.actions/<event_id>/<action_id>.json`. Workers can inspect/replay items without touching the monitor.
+4. **Controller decisions** – `MonitorController` restarts jobs when an inline action returns `retry`, finalises success/stall/crash states, and records every action/event transition for post-mortems.
 
 ## Monitoring Configurations
 
-### Megatron-specific Monitors
+All configurations live in `config/monitoring/` and compose by way of Hydra defaults. They share the same primitives but target different workflows:
 
-Located in `config/monitoring/`:
+| Config | Purpose | Highlights |
+| --- | --- | --- |
+| `megatron_basic.yaml` | Minimal Megatron monitoring | Success detection, checkpoint logging, CUDA/Python error capture |
+| `megatron_nccl.yaml` | NCCL-focused runs (`NCCL_DEBUG=info`) | Extra `log_events` for NCCL ERROR/WARN, timeouts, collectives |
+| `megatron_stall_detection.yaml` | Aggressive hang detection | Lower inactivity threshold, CUDA hang/deadlock patterns |
+| `megatron_production.yaml` | Recommended default | Combines success, OOM, NCCL, stall, and numerical diagnostics |
+| `megatron_checkpoint_eval.yaml` | Checkpoint-triggered evals | Adds queued `RunCommandAction` + `RunAutoexpAction` for each checkpoint |
+| `megatron_followup.yaml` | Follow-up automation after success | Queues a cooldown command and a second `run_autoexp.py` invocation |
 
-#### `megatron_basic.yaml`
-Basic monitoring for Megatron training runs:
-- **Success detection**: validation completion, checkpoint saves
-- **Progress tracking**: iteration updates with loss values
-- **Error detection**: OOM, torch errors, Python exceptions
-- **Use for**: Simple monitoring, testing
+Each config can be selected with `python scripts/run_autoexp.py ... monitoring=<name>`.
 
-#### `megatron_nccl.yaml`
-Extends `megatron_basic` with NCCL debugging:
-- NCCL ERROR/WARN messages
-- NCCL timeouts
-- Communication errors
-- Collective operation failures
-- **Use for**: Debugging distributed training, runs with `NCCL_DEBUG=info`
+## Event Bindings
 
-#### `megatron_stall_detection.yaml`
-Extends `megatron_basic` with aggressive stall detection:
-- Reduced inactivity threshold (15 minutes)
-- CUDA hang detection
-- Deadlock detection
-- ProcessGroup timeouts
-- Gradient/loss NaN detection
-- **Use for**: Detecting hangs between training iterations
-
-#### `megatron_production.yaml` (Recommended)
-Comprehensive production monitoring combining all features:
-- Success: validation, checkpoints, progress
-- Memory: CUDA/CPU OOM
-- Distributed: NCCL errors, timeouts, communication
-- Numerical: NaN/Inf in loss/gradients
-- Hangs: CUDA hangs, deadlocks
-- Generic: torch/Python errors
-- **Use for**: Production training runs
-
-## Restart Policies
-
-### Policy Types
-
-Located in `config/restart/`:
-
-#### `default.yaml`
-Simple always-restart policy:
-- Restarts on all crashes (max 2 retries)
-- Restarts on all stalls (max 3 retries)
-- No restart on success
-
-#### `megatron_transient.yaml` (Recommended)
-Selective restart on transient errors only:
-
-**Will restart on:**
-- CUDA hangs, deadlocks
-- NCCL errors and timeouts
-- Distributed communication failures
-- Watchdog timeouts
-
-**Will NOT restart on:**
-- OOM errors (requires config change)
-- Python exceptions (code bugs)
-- NaN/Inf (hyperparameter issue)
-
-**Limits:**
-- Max 3 crash restarts
-- Max 2 stall restarts
-- Max 1 timeout restart
-
-#### `megatron_aggressive.yaml`
-Restarts on most errors for maximum uptime:
-- Restarts on almost everything except OOM and code bugs
-- Max 5 crash restarts
-- Max 3 stall restarts
-- **Use for**: Long training runs where uptime is critical
-
-#### `megatron_conservative.yaml`
-Minimal restarts, requires human intervention:
-- Only restarts on clear transient network/hang issues
-- Max 2 crash restarts, 1 stall restart
-- No restart on timeouts
-- **Use for**: Production with strict control
-
-## How It Works
-
-### 1. Signal Detection
-
-Monitors parse logs using regex patterns and detect signals:
+### Anatomy of a `log_events` entry
 
 ```yaml
-- name: cuda_oom
-  pattern: '(?:CUDA out of memory).*Tried to allocate (?P<size>[\d.]+\s*[KMGT]iB)'
-  pattern_type: regex
-  state:
-    class_name: CrashState  # Triggers crash policy
-  actions:
-    - class_name: LogAction
-      note: error
-  metadata:
-    severity: critical
-    error_type: oom  # Used by SelectiveRestartPolicy
-  extract_groups:
-    allocation_size: size
+log_events:
+  - name: cuda_oom
+    pattern: "(?:CUDA out of memory).*?(?P<bytes>\\d+ GiB)"
+    pattern_type: regex
+    state:
+      class_name: CrashState
+    metadata:
+      severity: critical
+      error_type: oom
+    extract_groups:
+      allocation_bytes: bytes
+    actions:
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 2
+        action:
+          class_name: RestartAction
+          reason: "retry oom"
 ```
 
-### 2. SLURM State Monitoring
+- **Detection** – Regex match emits `cuda_oom` with crash state.
+- **Metadata** – Capture groups (for example, `{allocation_bytes}`) become part of the action context.
+- **Actions** – Inline binding restarts at most twice; subsequent OOMs stop the job.
 
-The monitor also tracks SLURM job state transitions and enriches them with metadata:
+### `state_events`
 
-- **PENDING → RUNNING**: Emits `run_started` action
-- **RUNNING → CANCELLED**: Classified as `crash` mode with `error_type: cancelled`, `subsystem: slurm`
-- **RUNNING → FAILED**: Classified as `crash` mode with `error_type: slurm_failure`
-- **RUNNING → COMPLETED**: Classified as `success` mode
-- **Job not in queue**: Classified as `timeout` mode with `error_type: timeout`
-
-All transitions are logged at INFO level with old and new states.
-
-### 3. Policy Decision
-
-When an event carries a `CrashState` (or SLURM classifies the job into a restartable mode), the restart policy decides:
-
-```python
-# SelectiveRestartPolicy checks:
-if error_type in restart_on_error_types:
-    return restart
-elif error_type in exclude_error_types:
-    return stop
-else:
-    return default_action
+```yaml
+state_events:
+  - name: success
+    actions:
+      - class_name: EventAction
+        mode: queue
+        action:
+          class_name: RunAutoexpAction
+          script: scripts/run_autoexp.py
+          config_path: "{output_dir}/_provenance/config_reference.json"
+          overrides:
+            - "+mode=evaluation"
+      - class_name: EventAction
+        action:
+          class_name: LogAction
+          message: "run_finished"
 ```
 
-The policy logs its decision with action, reason, and attempt count.
+`state_events` fire off SLURM lifecycle transitions. Here, a clean finish queues an evaluation run and logs a note.
 
-### 4. Job Restart
+## Action Queue Layout
 
-If policy returns `restart`:
-1. Log restart decision with reason
-2. Cancel current job (`scancel <job_id>`)
-3. Submit new job using same script
-4. Log old job_id → new job_id
-5. Increment attempt counter
-6. Track new job_id
+- Location: `{monitoring_state_dir}/<plan_id>.actions/`
+- Structure: one directory per `event_id`, one JSON file per action (`<action_id>.json`)
+- Contents:
 
-All operations are logged at INFO level for full visibility.
+```json
+{
+  "queue_id": "bcf2dafa-...",
+  "event_id": "123:checkpoint_saved:171225213",
+  "action_class": "RunCommandAction",
+  "config": {"command": ["python", "scripts/run_eval.py", "--ckpt", "/.../iter_1000.pt"]},
+  "metadata": {"job": {"job_name": "demo_0", "output_dir": "/.../demo_0"}},
+  "status": "pending"
+}
+```
+
+Workers pop files, execute the described action, and mark the entry as `done` or `failed`. Successful entries are deleted automatically so the queue reflects the current backlog.
+
+## Restart Flow
+
+1. Monitor detects failure (log or SLURM). `MonitorController` persists/updates an `EventRecord`.
+2. Action bindings execute. An inline `RestartAction` returns `status="retry"` which the controller interprets as a restart request.
+3. Controller cancels/resubmits the job, increments the attempt counter, and records a `MonitorRecord` linking old/new job IDs.
+4. If no restart action fired, the job ends in `stop` state with metadata describing the reason.
+
+Because everything hinges on a single primitive set, you can explain any restart by inspecting:
+- the event record (`monitoring_state_dir/<plan>.json`),
+- the action queue,
+- the controller logs (`oellm_autoexp.monitor.controller` logger).
 
 ## Usage Examples
 
-### Basic Usage
+### Basic restart on cancelled jobs
 
 ```yaml
-defaults:
-  - /monitoring: megatron_production
-  - /restart: megatron_transient
-```
-
-### Custom Selective Policy
-
-```yaml
-# config/restart/my_policy.yaml
-policies:
-  - mode: crash
-    implementation:
-      class_name: SelectiveRestartPolicy
-      max_retries: 5
-      default_action: stop
-
-      # Only restart on NCCL issues
-      restart_on_error_types:
-        - nccl
-        - nccl_timeout
-
-      # Never restart OOM
-      exclude_error_types:
-        - oom
-```
-
-### Monitor-Only (No Restart)
-
-```yaml
-defaults:
-  - /monitoring: megatron_production
-  # No restart config = NoRestartPolicy by default
-```
-
-## Monitored Error Types
-
-The system detects and categorizes these error types:
-
-| Error Type | Restartable? | Description |
-|------------|--------------|-------------|
-| `oom` | ❌ No | CUDA/CPU out of memory |
-| `hang` | ✅ Yes | CUDA hang, training stuck |
-| `deadlock` | ✅ Yes | Distributed deadlock |
-| `nccl` | ✅ Yes | NCCL errors |
-| `nccl_timeout` | ✅ Yes | NCCL timeout |
-| `distributed_timeout` | ✅ Yes | ProcessGroup timeout |
-| `communication` | ✅ Yes | Socket/connection errors |
-| `watchdog_timeout` | ✅ Yes | Watchdog timeout |
-| `cancelled` | ✅ Yes | Job cancelled (scancel, preemption) |
-| `slurm_failure` | ✅ Yes | SLURM job failures |
-| `numerical_instability` | ❌ No | NaN/Inf in loss/gradients |
-| `exception` | ❌ No | Python exceptions (code bugs) |
-| `torch` | ❌ No | PyTorch errors |
-
-## Configuration Reference
-
-### Monitoring Config Schema
-
-```yaml
-class_name: SlurmLogMonitor
-poll_interval_seconds: 180           # How often to check logs
-check_interval_seconds: 120          # Interval for inactivity detection
-inactivity_threshold_seconds: 1200   # Max time without updates before "stall"
-
-log_signals:
-  - name: signal_name
-    pattern: 'regex pattern with (?P<name>capture groups)'
-    pattern_type: regex
-    state:
-      class_name: CrashState | SuccessState | StalledState | TimeoutState
+state_events:
+  - name: crash
     actions:
-      - class_name: LogAction | ExecutionAction | RestartAction | TerminationAction
-        note: optional_tag
-    metadata:
-      error_type: oom | hang | nccl | ...
-      subsystem: cuda | distributed | ...
-      severity: critical | error | warning
-    extract_groups:
-      field_name: capture_group_name
+      - class_name: EventAction
+        conditions:
+          - class_name: MetadataCondition
+            key: error_type
+            equals: cancelled
+        action:
+          class_name: RestartAction
+          reason: "retry cancelled job"
 ```
 
-### Restart Policy Schema
+### Queue checkpoint evaluations
 
 ```yaml
-class_name: SelectiveRestartPolicy
-max_retries: 3
-default_action: restart | stop
-
-# Restart if any match
-restart_on_error_types: [hang, nccl, ...]
-restart_on_subsystems: [distributed, ...]
-restart_on_signals: [cuda_hang, ...]
-
-# Never restart if match
-exclude_error_types: [oom, exception, ...]
+log_events:
+  - name: checkpoint_saved
+    pattern: "saved checkpoint to (?P<ckpt>\\S+)"
+    pattern_type: regex
+    metadata:
+      kind: checkpoint
+    actions:
+      - class_name: EventAction
+        mode: queue
+        conditions:
+          - class_name: FileExistsCondition
+            path: "{ckpt}"
+            blocking: true
+            timeout_seconds: 900
+        action:
+          class_name: RunCommandAction
+          command:
+            - python
+            - scripts/run_checkpoint_eval.py
+            - "--checkpoint"
+            - "{ckpt}"
 ```
 
-## Best Practices
+### Trigger second autoexp run after success
 
-1. **Start conservative**: Use `megatron_transient` or `megatron_conservative` initially
-2. **Monitor first**: Run with monitoring only, no restart, to understand failure patterns
-3. **Check logs**: Review extracted metadata to tune restart rules
-4. **Set max_retries**: Prevent infinite restart loops (recommended: 2-5)
-5. **Exclude permanent errors**: Always exclude OOM and code bugs from restart
-6. **Automate evaluations**: Select `monitoring=megatron_checkpoint_eval` to reuse the packaged preset that enqueues checkpoint evaluation commands by way of `ExecutionAction`.
-7. **Separate policy from actions**: `RestartAction` augments the record of *why* a restart happened, but only the configured restart policy decides whether a job is resubmitted. Use the action for logging/automation, and let the policy enforce retry limits and exclusions.
+Use `monitoring=megatron_followup` (ships with this repository) or embed the same snippet:
 
-## Troubleshooting
+```yaml
+state_events:
+  - name: success
+    actions:
+      - class_name: EventAction
+        mode: queue
+        action:
+          class_name: RunAutoexpAction
+          config_path: "{output_dir}/_provenance/config_reference.json"
+          overrides:
+            - "+mode=evaluation"
+```
 
-### Job keeps restarting on same error
-- Check `max_retries` is set
-- Verify error is in `exclude_error_types` if it's permanent
-- Review logs to confirm error classification
-
-### Job not restarting when expected
-- Verify the event attaches a restartable state (`CrashState`, `StalledState`, `TimeoutState`)
-- Check error_type matches `restart_on_error_types`
-- Ensure `default_action: restart` if using catch-all
-
-### False positive stall detection
-- Increase `inactivity_threshold_seconds`
-- Check training iterations aren't legitimately slow
-- Verify log updates are being written regularly
+Run planning/submission as usual; queued entries will appear under `monitoring_state/<session>.actions/`.

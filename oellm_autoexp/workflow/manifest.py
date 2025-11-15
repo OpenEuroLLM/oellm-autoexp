@@ -38,17 +38,13 @@ class ComponentSpec:
 
 
 @dataclass(kw_only=True)
-class PolicySpec(ComponentSpec):
-    mode: str = ""
-
-
-@dataclass(kw_only=True)
 class PlanJobSpec:
     """Metadata required to re-submit and monitor a job."""
 
     name: str = field(default_factory=MISSING)
     script_path: str = field(default_factory=MISSING)
     log_path: str = field(default_factory=MISSING)
+    output_dir: str = ""
     output_paths: list[str] = field(default_factory=list)
     parameters: dict[str, Any] = field(default_factory=dict)
     start_condition_cmd: str | None = None
@@ -91,7 +87,6 @@ class PlanManifest:
     jobs: list[PlanJobSpec] = field(default_factory=list)
     rendered: RenderedArtifactsSpec = field(default_factory=MISSING)
     monitor: ComponentSpec = field(default_factory=MISSING)
-    restart_policies: list[PolicySpec] = field(default_factory=list)
     slurm_client: ComponentSpec = field(default_factory=MISSING)
     slurm_config_module: str = field(default_factory=MISSING)
     slurm_config_class: str = field(default_factory=MISSING)
@@ -104,16 +99,13 @@ class PlanManifest:
 
     def to_dict(self) -> dict[str, Any]:
         def serialize_component(spec: ComponentSpec) -> dict[str, Any]:
-            payload = {
+            return {
                 "module": spec.module,
                 "class_name": spec.class_name,
                 "config_module": spec.config_module,
                 "config_class": spec.config_class,
                 "config": spec.config,
             }
-            if isinstance(spec, PolicySpec):
-                payload["mode"] = spec.mode
-            return payload
 
         data = {
             "version": self.version,
@@ -133,6 +125,7 @@ class PlanManifest:
                     "name": job.name,
                     "script_path": job.script_path,
                     "log_path": job.log_path,
+                    "output_dir": job.output_dir,
                     "output_paths": list(job.output_paths),
                     "parameters": dict(job.parameters),
                     "start_condition_cmd": job.start_condition_cmd,
@@ -157,7 +150,6 @@ class PlanManifest:
                 },
             },
             "monitor": serialize_component(self.monitor),
-            "restart_policies": [serialize_component(spec) for spec in self.restart_policies],
             "slurm_client": serialize_component(self.slurm_client),
             "slurm_config_module": self.slurm_config_module,
             "slurm_config_class": self.slurm_config_class,
@@ -168,15 +160,13 @@ class PlanManifest:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PlanManifest:
-        def load_component(payload: dict[str, Any], *, is_policy: bool = False) -> ComponentSpec:
-            spec_cls = PolicySpec if is_policy else ComponentSpec
-            return spec_cls(
+        def load_component(payload: dict[str, Any]) -> ComponentSpec:
+            return ComponentSpec(
                 module=payload["module"],
                 class_name=payload["class_name"],
                 config_module=payload["config_module"],
                 config_class=payload["config_class"],
                 config=payload.get("config", {}),
-                **({"mode": payload.get("mode", "")} if is_policy else {}),
             )
 
         jobs = [
@@ -184,6 +174,7 @@ class PlanManifest:
                 name=item["name"],
                 script_path=item["script_path"],
                 log_path=item["log_path"],
+                output_dir=item.get("output_dir", ""),
                 output_paths=list(item.get("output_paths", [])),
                 parameters=dict(item.get("parameters", {})),
                 start_condition_cmd=item.get("start_condition_cmd"),
@@ -210,9 +201,6 @@ class PlanManifest:
         )
 
         monitor_spec = load_component(data["monitor"])
-        policy_specs = [
-            load_component(item, is_policy=True) for item in data.get("restart_policies", [])
-        ]
         slurm_spec = load_component(data["slurm_client"])
 
         return cls(
@@ -231,7 +219,6 @@ class PlanManifest:
             jobs=jobs,
             rendered=rendered,
             monitor=monitor_spec,
-            restart_policies=policy_specs,
             slurm_client=slurm_spec,
             slurm_config_module=data.get("slurm_config_module", "oellm_autoexp.config.schema"),
             slurm_config_class=data.get("slurm_config_class", "SlurmConfig"),
@@ -258,7 +245,6 @@ __all__ = [
     "ComponentSpec",
     "PlanJobSpec",
     "PlanManifest",
-    "PolicySpec",
     "RenderedArtifactsSpec",
     "read_manifest",
     "write_manifest",

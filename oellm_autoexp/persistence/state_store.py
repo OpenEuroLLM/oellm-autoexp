@@ -12,6 +12,8 @@ from collections.abc import Iterable
 
 from compoconf import asdict
 
+from oellm_autoexp.monitor.events import EventRecord
+
 
 def _serialize_for_json(obj: Any) -> Any:
     """Recursively convert Path objects and other non-serializable types to
@@ -181,6 +183,38 @@ class MonitorStateStore:
             "jobs": [asdict(job) for job in jobs],
         }
         self._write_payload(payload)
+
+    def load_events(self) -> dict[str, EventRecord]:
+        payload = self._load_payload()
+        events: dict[str, EventRecord] = {}
+        for raw in payload.get("events", []):
+            try:
+                record = EventRecord.from_dict(raw)
+            except (KeyError, ValueError):
+                continue
+            events[record.event_id] = record
+        return events
+
+    def save_events(self, events: Iterable[EventRecord]) -> None:
+        existing_data = self._load_payload()
+        payload = {
+            **existing_data,
+            "session_id": self._session_id,
+            "timestamp": time.time(),
+            "events": [event.to_dict() for event in events],
+        }
+        self._write_payload(payload)
+
+    def upsert_event(self, event: EventRecord) -> None:
+        records = self.load_events()
+        records[event.event_id] = event
+        self.save_events(records.values())
+
+    def remove_event(self, event_id: str) -> None:
+        records = self.load_events()
+        if event_id in records:
+            records.pop(event_id)
+            self.save_events(records.values())
 
     def upsert_job(self, job: StoredJob) -> None:
         records = self.load()

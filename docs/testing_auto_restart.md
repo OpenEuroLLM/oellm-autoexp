@@ -168,7 +168,7 @@ Key parameters:
 **Cause:** OOM not being detected or not in exclude list
 **Solution:**
 - Check monitoring config has `cuda_oom` signal
-- Verify restart policy excludes `error_type: oom`
+- Verify the `crash` state-event binding excludes `error_type: oom` (or limits retries by way of `MaxAttemptsCondition`)
 - Review monitor logs to see what was detected
 
 ### "Could not find log file"

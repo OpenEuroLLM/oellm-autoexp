@@ -2,7 +2,6 @@ from pathlib import Path
 
 from oellm_autoexp.config.evaluator import evaluate
 from oellm_autoexp.config.loader import load_config
-from oellm_autoexp.monitor.policy import BaseRestartPolicy
 
 
 def test_evaluate_config(tmp_path: Path) -> None:
@@ -12,4 +11,3 @@ def test_evaluate_config(tmp_path: Path) -> None:
 
     assert runtime.backend.config.class_name == "NullBackend"
     assert runtime.monitor.config.class_name == "NullMonitor"
-    assert isinstance(runtime.restart_policies["success"], BaseRestartPolicy)

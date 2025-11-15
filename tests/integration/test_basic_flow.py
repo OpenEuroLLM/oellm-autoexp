@@ -23,17 +23,23 @@ slurm:
   client:
     class_name: FakeSlurmClient
 monitoring:
-  class_name: NullMonitor
+  class_name: SlurmLogMonitor
+  poll_interval_seconds: 10
+  check_interval_seconds: 10
+  state_events:
+    - name: stall
+      state:
+        class_name: CrashState
+      actions:
+        - class_name: EventAction
+          action:
+            class_name: RestartAction
+            reason: "stall restart"
+    - name: success
+      state:
+        class_name: SuccessState
 backend:
   class_name: NullBackend
-restart_policies:
-  - mode: stall
-    implementation:
-      class_name: AlwaysRestartPolicy
-      max_retries: 2
-  - mode: success
-    implementation:
-      class_name: NoRestartPolicy
 """
 
 
@@ -58,7 +64,7 @@ def test_fake_slurm_monitoring_cycle(tmp_path: Path, monkeypatch) -> None:
     artifacts = render_scripts(plan)
 
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
-    controller = MonitorController(plan.runtime.monitor, slurm, plan.runtime.restart_policies)
+    controller = MonitorController(plan.runtime.monitor, slurm)
 
     job = plan.jobs[0]
     job_id = slurm.submit(job.name, artifacts.job_scripts[0], job.log_path)
@@ -72,7 +78,7 @@ def test_fake_slurm_monitoring_cycle(tmp_path: Path, monkeypatch) -> None:
 
     new_job_id = next(iter(controller.jobs())).job_id
     decision = controller.handle_state_change(new_job_id, "success")
-    assert decision.action == "stop"
+    assert decision.action == "success"
 
 
 def test_hydra_plan(tmp_path: Path, monkeypatch) -> None:

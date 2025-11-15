@@ -40,7 +40,7 @@ def test_build_job_plans_name_template():
     jobs = build_job_plans(root, points)
     assert len(jobs) == 4
     assert jobs[0].name.startswith("demo")
-    assert Path(jobs[0].log_path).name == "slurm.out"
+    assert Path(jobs[0].log_path).name == "slurm-%j.out"
 
 
 def test_build_job_plans_extracts_lifecycle_fields():

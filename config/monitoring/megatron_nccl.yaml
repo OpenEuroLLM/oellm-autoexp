@@ -8,7 +8,7 @@ poll_interval_seconds: 180
 check_interval_seconds: 120
 inactivity_threshold_seconds: 1200  # 20 minutes (NCCL timeouts can be long)
 
-log_signals:
+log_events:
   # All signals from megatron_basic, plus NCCL-specific ones:
 
   # NCCL ERROR messages
@@ -18,11 +18,10 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: LogAction
-        note: error
-      - class_name: RestartAction
-        reason: nccl_error
-        mode: crash
+      - class_name: EventAction
+        action:
+          class_name: LogAction
+          message: "nccl_error"
     metadata:
       severity: critical
       error_type: nccl
@@ -36,8 +35,10 @@ log_signals:
     pattern: 'NCCL WARN.*?(?P<message>.+)'
     pattern_type: regex
     actions:
-      - class_name: LogAction
-        note: warning
+      - class_name: EventAction
+        action:
+          class_name: LogAction
+          message: "nccl_warning"
     metadata:
       severity: warning
       error_type: nccl
@@ -52,11 +53,10 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: LogAction
-        note: error
-      - class_name: RestartAction
-        reason: nccl_timeout
-        mode: crash
+      - class_name: EventAction
+        action:
+          class_name: LogAction
+          message: "nccl_timeout"
     metadata:
       severity: critical
       error_type: nccl_timeout
@@ -71,11 +71,10 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: LogAction
-        note: error
-      - class_name: RestartAction
-        reason: communication_error
-        mode: crash
+      - class_name: EventAction
+        action:
+          class_name: LogAction
+          message: "communication_error"
     metadata:
       severity: error
       error_type: communication
@@ -90,11 +89,10 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: LogAction
-        note: error
-      - class_name: RestartAction
-        reason: nccl_collective_fail
-        mode: crash
+      - class_name: EventAction
+        action:
+          class_name: LogAction
+          message: "nccl_collective_fail"
     metadata:
       severity: critical
       error_type: nccl_collective

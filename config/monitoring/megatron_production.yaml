@@ -1,4 +1,9 @@
 # Comprehensive Megatron monitoring for production runs
+# UNCLEAR: inherits megatron_basic log_events + state events via defaults.
+defaults:
+  - megatron_basic
+  - _self_
+
 # Includes: success detection, OOM errors, NCCL issues, and stall detection
 class_name: SlurmLogMonitor
 poll_interval_seconds: 180
@@ -12,7 +17,7 @@ output_paths: []
 start_condition_cmd: null
 start_condition_interval_seconds: null
 
-log_signals:
+log_events:
   # === SUCCESS SIGNALS ===
 
   - name: validation_complete
@@ -20,9 +25,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: SuccessState
-    actions:
-      - class_name: LogAction
-        note: run_finished
     metadata:
       kind: completion
       stage: validation
@@ -32,9 +34,6 @@ log_signals:
   - name: checkpoint_saved
     pattern: 'successfully saved checkpoint from iteration\s+(?P<iteration>\d+) to (?P<path>\S+)'
     pattern_type: regex
-    actions:
-      - class_name: LogAction
-        note: new_checkpoint
     metadata:
       kind: checkpoint
     extract_groups:
@@ -44,9 +43,6 @@ log_signals:
   - name: training_iteration
     pattern: '\[[\d\-\s:]+\] iteration\s+(?P<current>\d+)/\s*(?P<total>\d+) \|.*lm loss: (?P<loss>[\d.E+\-]+)'
     pattern_type: regex
-    actions:
-      - class_name: LogAction
-        note: progress_update
     metadata:
       kind: progress
     extract_groups:
@@ -61,12 +57,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: LogAction
-        note: error
-      - class_name: RestartAction
-        reason: cuda_oom
-        mode: crash
     metadata:
       severity: critical
       error_type: oom
@@ -79,12 +69,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: LogAction
-        note: error
-      - class_name: RestartAction
-        reason: cpu_oom
-        mode: crash
     metadata:
       severity: critical
       error_type: oom
@@ -99,12 +83,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: LogAction
-        note: error
-      - class_name: RestartAction
-        reason: nccl_error
-        mode: crash
     metadata:
       severity: critical
       error_type: nccl
@@ -117,12 +95,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: LogAction
-        note: error
-      - class_name: RestartAction
-        reason: nccl_timeout
-        mode: crash
     metadata:
       severity: critical
       error_type: nccl_timeout
@@ -135,12 +107,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: LogAction
-        note: error
-      - class_name: RestartAction
-        reason: processgroup_timeout
-        mode: crash
     metadata:
       severity: critical
       error_type: distributed_timeout
@@ -153,12 +119,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: LogAction
-        note: error
-      - class_name: RestartAction
-        reason: communication_error
-        mode: crash
     metadata:
       severity: error
       error_type: communication
@@ -173,12 +133,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: LogAction
-        note: error
-      - class_name: RestartAction
-        reason: loss_nan
-        mode: crash
     metadata:
       severity: error
       error_type: numerical_instability
@@ -189,9 +143,6 @@ log_signals:
   - name: gradient_nan
     pattern: '(?:NaN|nan).*(?:gradient|grad)'
     pattern_type: regex
-    actions:
-      - class_name: LogAction
-        note: warning
     metadata:
       severity: warning
       error_type: numerical_instability
@@ -206,12 +157,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: LogAction
-        note: error
-      - class_name: RestartAction
-        reason: cuda_hang
-        mode: crash
     metadata:
       severity: critical
       error_type: hang
@@ -224,12 +169,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: LogAction
-        note: error
-      - class_name: RestartAction
-        reason: deadlock
-        mode: crash
     metadata:
       severity: critical
       error_type: deadlock
@@ -244,12 +183,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: LogAction
-        note: error
-      - class_name: RestartAction
-        reason: torch_error
-        mode: crash
     metadata:
       severity: error
       error_type: torch
@@ -262,15 +195,11 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: LogAction
-        note: error
-      - class_name: RestartAction
-        reason: python_exception
-        mode: crash
     metadata:
       severity: error
       error_type: exception
     extract_groups:
       exception_type: exception
       error_message: message
+
+## UNCLEAR: inherits megatron_basic event bindings; extend via specialized configs when needed.

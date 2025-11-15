@@ -7,9 +7,8 @@ from pathlib import Path
 
 from . import schema
 from ..backends.base import BaseBackend
-from ..monitor.policy import BaseRestartPolicy
 from ..monitor.watcher import BaseMonitor
-from ..slurm.client import BaseSlurmClient, FakeSlurmClientConfig
+from ..slurm.client import BaseSlurmClient, SlurmClientConfig
 
 
 @dataclass(kw_only=True)
@@ -19,7 +18,6 @@ class RuntimeConfig:
     root: schema.RootConfig = field(default_factory=MISSING)
     backend: BaseBackend = field(default_factory=MISSING)
     monitor: BaseMonitor = field(default_factory=MISSING)
-    restart_policies: dict[str, BaseRestartPolicy] = field(default_factory=dict)
     slurm_client: BaseSlurmClient = field(default_factory=MISSING)
 
     @property
@@ -42,12 +40,7 @@ def evaluate(root: schema.RootConfig) -> RuntimeConfig:
     backend = root.backend.instantiate(schema.BackendInterface)
     monitor = root.monitoring.instantiate(schema.MonitorInterface)
 
-    policies: dict[str, BaseRestartPolicy] = {}
-    for policy_cfg in root.restart_policies:
-        policy = policy_cfg.implementation.instantiate(schema.RestartPolicyInterface)
-        policies[policy_cfg.mode] = policy
-
-    client_cfg = root.slurm.client or FakeSlurmClientConfig()
+    client_cfg = root.slurm.client or SlurmClientConfig()
     slurm_client = client_cfg.instantiate(schema.SlurmClientInterface)
     slurm_client.configure(root.slurm)
 
@@ -55,7 +48,6 @@ def evaluate(root: schema.RootConfig) -> RuntimeConfig:
         root=root,
         backend=backend,
         monitor=monitor,
-        restart_policies=policies,
         slurm_client=slurm_client,
     )
 

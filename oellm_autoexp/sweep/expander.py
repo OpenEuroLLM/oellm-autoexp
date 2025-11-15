@@ -7,6 +7,7 @@ from itertools import product
 from typing import Any
 from collections.abc import Iterable, Mapping
 
+
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from oellm_autoexp.config.schema import SweepConfig
@@ -27,7 +28,7 @@ def expand_sweep(config: SweepConfig) -> list[SweepPoint]:
     base_values = dict(config.base_values)
 
     points: list[SweepPoint] = []
-    for idx, combination in enumerate(_product_recursive(cfg)):
+    for combination in _product_recursive(cfg):
         flat: dict[str, Any] = dict(base_values)
         for key_path, value in combination.items():
             key = _flatten_key(key_path)

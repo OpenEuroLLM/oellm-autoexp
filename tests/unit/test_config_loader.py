@@ -18,7 +18,6 @@ def test_load_config(tmp_path: Path) -> None:
     assert cfg.slurm.srun_opts == ""
     assert cfg.slurm.srun_opts == ""
     assert cfg.slurm.client.class_name == "FakeSlurmClient"
-    assert cfg.restart_policies[0].mode == "success"
     assert Path(cfg.project.monitoring_state_dir) == Path("./outputs") / "monitoring_state"
 
 
@@ -46,7 +45,7 @@ def test_load_config_reference_missing_dir(tmp_path: Path) -> None:
         load_config_reference("autoexp", tmp_path / "missing")
 
 
-def test_load_hydra_config_restart(tmp_path: Path) -> None:
+def test_load_hydra_config_state_events(tmp_path: Path) -> None:
     config_dir = tmp_path / "hydra"
     config_dir.mkdir()
     (config_dir / "autoexp.yaml").write_text(
@@ -69,13 +68,16 @@ slurm:
     class_name: FakeSlurmClient
 monitoring:
   class_name: NullMonitor
+  state_events:
+    - class_name: StateEvent
+      name: success
+      actions:
+        - class_name: EventAction
+          action:
+            class_name: LogAction
+            message: done
 backend:
   class_name: NullBackend
-restart:
-  policies:
-    - mode: success
-      implementation:
-        class_name: NoRestartPolicy
 scheduler:
   max_jobs: null
   submit_rate_limit_seconds: null
@@ -84,4 +86,4 @@ metadata: {}
     )
 
     cfg = load_config_reference("autoexp", config_dir)
-    assert cfg.restart_policies[0].mode == "success"
+    assert cfg.monitoring.state_events[0].name == "success"

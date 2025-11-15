@@ -3,6 +3,8 @@
 
 set -euo pipefail
 
+ORIGINAL_ARGS=("$@")
+
 show_usage() {
   cat <<USAGE
 Usage: ./build_container.sh [OPTIONS]
@@ -95,11 +97,70 @@ fi
 
 TMP_DEF="${BACKEND}_${DEFINITION}_${ARCH}.def"
 export BASE_IMAGE
+export CONTAINER_RUNTIME
 export REPO_ROOT="$(cd "${SPEC_ROOT}/.." && pwd)"
-export REQUIREMENTS_PATH="$REQUIREMENTS_FILE"
-export REQUIREMENTS_BASENAME=$(basename "$REQUIREMENTS_FILE")
+
+PROVENANCE_TMP_DIR=$(mktemp -d -t oellm_provenance.XXXXXX)
+PROVENANCE_JSON="${PROVENANCE_TMP_DIR}/container_provenance.json"
+BUILD_COMMAND="$0"
+for arg in "${ORIGINAL_ARGS[@]}"; do
+  BUILD_COMMAND+=" $(printf '%q' "$arg")"
+done
+
+export BUILD_COMMAND
+export PROVENANCE_PATH="$PROVENANCE_JSON"
+
+python3 <<'PY'
+import json
+import os
+import pathlib
+import subprocess
+from datetime import datetime, timezone
+
+repo_root = pathlib.Path(os.environ.get("REPO_ROOT", "."))
+provenance_path = pathlib.Path(os.environ["PROVENANCE_PATH"])
+
+def run_git(args):
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return ""
+    return result.stdout.strip()
+
+commit = run_git(["rev-parse", "HEAD"]) or "unknown"
+status = run_git(["status", "--porcelain"])
+dirty = bool(status)
+diff = run_git(["diff"]) if dirty else ""
+
+payload = {
+    "built_at": datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(),
+    "git_commit": commit,
+    "git_dirty": dirty,
+    "git_status": status,
+    "git_diff": diff,
+    "build_command": os.environ.get("BUILD_COMMAND", ""),
+    "backend": os.environ.get("BACKEND"),
+    "definition": os.environ.get("DEFINITION"),
+    "requirements_file": os.environ.get("REQUIREMENTS_PATH"),
+    "base_image": os.environ.get("BASE_IMAGE"),
+    "container_runtime": os.environ.get("CONTAINER_RUNTIME"),
+}
+provenance_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+PY
 
 envsubst < "$DEFINITION_TEMPLATE" > "$TMP_DEF"
+
+cleanup() {
+  rm -f "$TMP_DEF"
+  rm -rf "$PROVENANCE_TMP_DIR"
+}
+trap cleanup EXIT
 
 IMAGE_NAME="${DEFINITION}_${ARCH}${STAMP}.sif"
 TARGET_PATH="$OUTPUT_DIR/$IMAGE_NAME"

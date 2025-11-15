@@ -83,9 +83,8 @@ TEST: Manual scancel (should restart)
 [11:24:15] ℹ Cancelling job 12345...
 2025-10-08 11:24:26 [INFO] oellm_autoexp.monitor.controller: [job 12345] SLURM state transition: RUNNING -> CANCELLED
 2025-10-08 11:24:26 [INFO] oellm_autoexp.monitor.controller: [job 12345] classified as mode 'crash' (slurm_state=CANCELLED)
-2025-10-08 11:24:26 [INFO] oellm_autoexp.monitor.controller: [job 12345] policy decision for mode 'crash': action=restart, reason=Transient failure detected (error_type=cancelled, subsystem=slurm)
-2025-10-08 11:24:26 [INFO] oellm_autoexp.monitor.controller: [job 12345] restarting job (attempt 1 -> 2)
-2025-10-08 11:24:26 [INFO] oellm_autoexp.monitor.controller: [job 12346] restarted as job 12346
+2025-10-08 11:24:26 [INFO] oellm_autoexp.monitor.controller: [job 12345] detected event 'crash' with state 'crash'
+2025-10-08 11:24:26 [INFO] oellm_autoexp.monitor.controller: [job 12345] restarting job due to event 'crash' (attempt 1 -> 2)
 [11:24:36] ✓ Job 12346 started (restart #1)
 [11:24:36] ✓ Test passed: scancel restart works!
 ```
@@ -145,11 +144,31 @@ Run unit tests to verify core functionality:
 python -m pytest tests/unit/test_monitor.py -v
 
 # Run specific test
-python -m pytest tests/unit/test_monitor.py::test_cancelled_job_restarts_with_selective_policy -v
+python -m pytest tests/unit/test_monitor.py::test_cancelled_job_restarts_with_metadata_condition -v
 
 # Run with coverage
 python -m pytest tests/unit/test_monitor.py --cov=oellm_autoexp/monitor
 ```
+
+## Cluster E2E Harness (real SLURM)
+
+Use the Python harness under `scripts/tests/` to exercise the monitoring stack directly on your cluster while still benefiting from OmegaConf overrides:
+
+```bash
+# Basic scancel/restart check on JUWELS
+python scripts/tests/run_cluster_monitoring.py \
+  --scenario scancel \
+  --config-ref experiments/megatron_with_auto_restart \
+  --override container=juwels \
+  --override slurm.sbatch.partition=$SLURM_PARTITION_DEBUG \
+  --override project.name=juwels_monitor_e2e
+```
+
+Arguments:
+- `--override` can be repeated to adapt for different clusters (LUMI/JUPITER/etc.).
+- `--run-arg` / `--monitor-arg` forward extra CLI flags to `run_autoexp_container.py` or `monitor_autoexp.py`.
+- `--no-monitor` skips automatic monitor startup if you want to attach manually.
+- `--dry-run` prints the planned commands without executing them.
 
 ## Quick Verification
 

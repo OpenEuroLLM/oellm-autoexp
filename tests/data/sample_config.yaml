@@ -17,11 +17,7 @@ monitoring:
   inactivity_threshold_seconds: 900
   termination_string: null
   termination_command: null
-  log_path_template: "{output_dir}/slurm.out"
+  log_path_template: "{output_dir}/slurm-%j.out"
 backend:
   class_name: NullBackend
   extra_cli_args: []
-restart_policies:
-  - mode: success
-    implementation:
-      class_name: NoRestartPolicy
