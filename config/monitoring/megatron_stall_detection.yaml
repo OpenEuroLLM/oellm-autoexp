@@ -13,6 +13,20 @@ inactivity_threshold_seconds: 900  # 15 minutes
 log_events:
   # All signals from megatron_basic, plus stall-specific ones:
 
+  - name: inactivity_timeout
+    pattern: ""
+    pattern_type: inactivity
+    state:
+      class_name: StalledState
+    metadata:
+      severity: warning
+      reason: idle_output
+    actions:
+      - class_name: EventAction
+        action:
+          class_name: LogAction
+          message: "inactivity_timeout"
+
   # Training stuck/hanging indicator: no progress updates
   # This is implicitly handled by inactivity_threshold_seconds above,
   # but we can also detect specific hang patterns

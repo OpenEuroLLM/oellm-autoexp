@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field, MISSING, asdict
 import logging
 from pathlib import Path
@@ -26,20 +25,12 @@ from oellm_autoexp.monitor.states import (
     TimeoutStateConfig,
     PendingState,
     PendingStateConfig,
-    UndefinedState,
-    UndefinedStateConfig,
     StartedState,
     StartedStateConfig,
     SuccessState,
     SuccessStateConfig,
 )
-from oellm_autoexp.monitor.watcher import (
-    BaseMonitor,
-    MonitoredJob,
-    MonitorEvent,
-    MonitorOutcome,
-    default_state_events,
-)
+from oellm_autoexp.monitor.watcher import BaseMonitor, MonitoredJob, MonitorEvent, MonitorOutcome
 from oellm_autoexp.persistence import MonitorStateStore, StoredJob
 from oellm_autoexp.slurm.client import BaseSlurmClient
 from oellm_autoexp.utils.start_condition import (
@@ -74,7 +65,7 @@ class JobRuntimeState:
     attempts: int = 1
     last_outcome: MonitorOutcome | None = None
     last_slurm_state: str | None = None
-    state: BaseMonitorState = field(default_factory=lambda: UndefinedState(UndefinedStateConfig()))
+    state: BaseMonitorState = field(default_factory=lambda: PendingState(PendingStateConfig()))
 
     @property
     def name(self) -> str:
@@ -139,9 +130,7 @@ class MonitorController:
                     self._event_index[(str(job_id), record.name)] = record.event_id
             queue_path = self._state_store.session_path.with_suffix(".actions")
             self._action_queue = ActionQueue(queue_path)
-        state_event_cfgs = getattr(self._monitor.config, "state_events", None)
-        if not state_event_cfgs:
-            state_event_cfgs = default_state_events()
+        state_event_cfgs = getattr(self._monitor.config, "state_events", None) or []
         self._state_event_configs = {cfg.name: cfg for cfg in state_event_cfgs}
 
     def register_job(
@@ -149,7 +138,7 @@ class MonitorController:
         job_id: str,
         registration: JobRegistration,
         attempts: int = 1,
-        state: BaseMonitorState = UndefinedState(UndefinedStateConfig()),
+        state: BaseMonitorState = PendingState(PendingStateConfig()),
     ) -> None:
         job_key = str(job_id)
         state = JobRuntimeState(

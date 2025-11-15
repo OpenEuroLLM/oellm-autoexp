@@ -13,7 +13,6 @@ from pathlib import Path
 from compoconf import ConfigInterface, register
 
 from oellm_autoexp.config.schema import MonitorInterface
-from oellm_autoexp.monitor.actions import LogActionConfig
 from oellm_autoexp.monitor.event_bindings import (
     EventActionBinding,
     EventActionConfig,
@@ -120,12 +119,16 @@ class LogEventConfig(ConfigInterface):
     extract_groups: dict[str, str | int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if self.pattern_type not in {"regex", "substring", "inactivity"}:
+            raise ValueError(f"Unsupported pattern_type {self.pattern_type!r} for '{self.name}'")
         if self.state is None and not self.metadata:
             raise ValueError(
                 f"LogEventConfig '{self.name}' must specify a state change or metadata payload"
             )
-        if self.pattern_type not in {"regex", "substring"}:
-            raise ValueError(f"Unsupported pattern_type {self.pattern_type!r} for '{self.name}'")
+        if self.pattern_type in {"regex", "substring"} and not self.pattern:
+            raise ValueError(
+                f"LogEventConfig '{self.name}' requires a pattern for type {self.pattern_type}"
+            )
 
 
 # Backwards compatibility alias to ease config migration.
@@ -174,21 +177,21 @@ class SlurmLogMonitor(BaseMonitor):
 
     def __init__(self, config: SlurmLogMonitorConfig) -> None:
         super().__init__(config)
-        if not config.log_events:
-            config.log_events = default_log_events()
-        if not config.state_events:
-            config.state_events = default_state_events()
         self._snapshots: dict[str, _JobSnapshot] = {}
         self._state_whitelist = {state.lower() for state in config.state_whitelist}
         self._state_event_map: dict[str, StateEventConfig] = {
             state_event.name: state_event for state_event in config.state_events
         }
+        regex_rules = [rule for rule in config.log_events if rule.pattern_type != "inactivity"]
         self._compiled_rules: list[_CompiledLogEvent] = [
             _CompiledLogEvent(
                 rule=rule,
                 pattern=_compile_pattern(rule),
             )
-            for rule in config.log_events
+            for rule in regex_rules
+        ]
+        self._inactivity_rules: list[LogEventConfig] = [
+            rule for rule in config.log_events if rule.pattern_type == "inactivity"
         ]
 
     def watch_sync(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
@@ -219,6 +222,7 @@ class SlurmLogMonitor(BaseMonitor):
         events: list[MonitorEvent] = []
         snapshot = self._snapshots.get(job.job_id)
         updated = False
+        threshold = self._effective_threshold(job)
 
         termination_event = self._check_termination(job)
         if termination_event:
@@ -288,7 +292,6 @@ class SlurmLogMonitor(BaseMonitor):
         else:
             if snapshot.log_content or snapshot.output_contents:
                 last_update_seconds = now - snapshot.last_update
-                threshold = self._effective_threshold(job)
                 if threshold is not None and last_update_seconds >= threshold:
                     status = "stall"
                 else:
@@ -297,7 +300,25 @@ class SlurmLogMonitor(BaseMonitor):
                 status = "pending"
                 last_update_seconds = None
 
-        self._snapshots[job.job_id] = snapshot
+        inactivity_events: list[MonitorEvent] = []
+        if status == "stall":
+            if snapshot is None:
+                snapshot = _JobSnapshot(log_current, now)
+            inactivity_events = self._build_inactivity_events(
+                job,
+                snapshot,
+                last_update_seconds,
+                threshold if updated else self._effective_threshold(job),
+            )
+        else:
+            if snapshot:
+                snapshot.triggered_inactivity_events.clear()
+
+        if snapshot:
+            snapshot.last_status = status
+            self._snapshots[job.job_id] = snapshot
+
+        events.extend(inactivity_events)
 
         return MonitorOutcome(
             job_id=job.job_id,
@@ -306,6 +327,45 @@ class SlurmLogMonitor(BaseMonitor):
             metadata=metadata,
             events=events,
         )
+
+    def _build_inactivity_events(
+        self,
+        job: MonitoredJob,
+        snapshot: _JobSnapshot,
+        stall_duration: float | None,
+        threshold: float | None,
+    ) -> list[MonitorEvent]:
+        if not self._inactivity_rules:
+            return []
+        if stall_duration is None:
+            return []
+        events: list[MonitorEvent] = []
+        for rule in self._inactivity_rules:
+            if rule.name in snapshot.triggered_inactivity_events:
+                continue
+            metadata = dict(rule.metadata)
+            metadata.setdefault("job_name", job.name)
+            metadata.setdefault("stall_seconds", stall_duration)
+            if threshold is not None:
+                metadata.setdefault("stall_threshold_seconds", threshold)
+            metadata.setdefault("source", "inactivity")
+            state_instance = (
+                rule.state.instantiate(MonitorStateInterface)
+                if rule.state
+                else StalledState(StalledStateConfig())
+            )
+            actions = instantiate_bindings(rule.actions)
+            events.append(
+                MonitorEvent(
+                    job_id=job.job_id,
+                    name=rule.name,
+                    state=state_instance,
+                    metadata=metadata,
+                    actions=actions,
+                )
+            )
+            snapshot.triggered_inactivity_events.add(rule.name)
+        return events
 
     def _extract_events(
         self,
@@ -426,6 +486,8 @@ class _JobSnapshot:
     log_content: str
     last_update: float
     output_contents: dict[str, str] = field(default_factory=dict)
+    last_status: str = "pending"
+    triggered_inactivity_events: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -474,73 +536,6 @@ def _fallback_state_for(name: str) -> BaseMonitorState | None:
     return None
 
 
-def default_log_events() -> list[LogEventConfig]:
-    """Return generic monitoring signals covering errors and lifecycle
-    events."""
-
-    return [
-        LogEventConfig(
-            name="error",
-            pattern=r"(?P<error_type>ERROR|Error|error)[:\s]+(?P<message>.+)",
-            pattern_type="regex",
-            state=CrashStateConfig(),
-            metadata={"severity": "error"},
-            extract_groups={
-                "error_message": "message",
-                "error_kind": "error_type",
-            },
-        ),
-        LogEventConfig(
-            name="checkpoint",
-            pattern=r"Checkpoint (?:saved|written)[:\s]+(?P<checkpoint>\S+)",
-            pattern_type="regex",
-            metadata={"kind": "checkpoint"},
-            extract_groups={
-                "checkpoint_path": "checkpoint",
-            },
-        ),
-        LogEventConfig(
-            name="training_complete",
-            pattern=r"(Training complete|Training finished)",
-            pattern_type="regex",
-            state=SuccessStateConfig(),
-            metadata={"kind": "completion"},
-            extract_groups={"matched": "match"},
-        ),
-    ]
-
-
-def default_state_events() -> list[StateEventConfig]:
-    """Default synthetic events for stall/crash/timeout/success."""
-
-    return [
-        StateEventConfig(
-            name="stall",
-            state=StalledStateConfig(),
-            actions=[],
-        ),
-        StateEventConfig(
-            name="timeout",
-            state=TimeoutStateConfig(),
-            actions=[],
-        ),
-        StateEventConfig(
-            name="crash",
-            state=CrashStateConfig(),
-            actions=[],
-        ),
-        StateEventConfig(
-            name="success",
-            state=SuccessStateConfig(),
-            actions=[
-                EventActionConfig(
-                    action=LogActionConfig(message="run_finished"),
-                )
-            ],
-        ),
-    ]
-
-
 __all__ = [
     "BaseMonitor",
     "MonitoredJob",
@@ -551,6 +546,4 @@ __all__ = [
     "StateEventConfig",
     "SlurmLogMonitor",
     "SlurmLogMonitorConfig",
-    "default_log_events",
-    "default_state_events",
 ]

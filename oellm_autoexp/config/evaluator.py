@@ -8,7 +8,7 @@ from pathlib import Path
 from . import schema
 from ..backends.base import BaseBackend
 from ..monitor.watcher import BaseMonitor
-from ..slurm.client import BaseSlurmClient, FakeSlurmClientConfig
+from ..slurm.client import BaseSlurmClient, SlurmClientConfig
 
 
 @dataclass(kw_only=True)
@@ -40,7 +40,7 @@ def evaluate(root: schema.RootConfig) -> RuntimeConfig:
     backend = root.backend.instantiate(schema.BackendInterface)
     monitor = root.monitoring.instantiate(schema.MonitorInterface)
 
-    client_cfg = root.slurm.client or FakeSlurmClientConfig()
+    client_cfg = root.slurm.client or SlurmClientConfig()
     slurm_client = client_cfg.instantiate(schema.SlurmClientInterface)
     slurm_client.configure(root.slurm)
 

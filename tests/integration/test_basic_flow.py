@@ -23,7 +23,21 @@ slurm:
   client:
     class_name: FakeSlurmClient
 monitoring:
-  class_name: NullMonitor
+  class_name: SlurmLogMonitor
+  poll_interval_seconds: 10
+  check_interval_seconds: 10
+  state_events:
+    - name: stall
+      state:
+        class_name: CrashState
+      actions:
+        - class_name: EventAction
+          action:
+            class_name: RestartAction
+            reason: "stall restart"
+    - name: success
+      state:
+        class_name: SuccessState
 backend:
   class_name: NullBackend
 """

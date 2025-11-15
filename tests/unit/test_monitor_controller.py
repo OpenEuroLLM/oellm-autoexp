@@ -47,14 +47,10 @@ def test_stop_action_removed_from_monitoring(controller: MonitorController, tmp_
 
 def test_restore_jobs_re_registers_slurm_client(tmp_path: Path) -> None:
     monitor = NullMonitor(NullMonitorConfig())
-    policies = {
-        "crash": NoRestartPolicy(NoRestartPolicyConfig()),
-        "success": NoRestartPolicy(NoRestartPolicyConfig(message="done")),
-    }
     state_dir = tmp_path / "state"
     state_store = MonitorStateStore(state_dir)
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
-    controller = MonitorController(monitor, slurm, policies, state_store=state_store)
+    controller = MonitorController(monitor, slurm, state_store=state_store)
 
     script_path = tmp_path / "demo.sbatch"
     log_dir = tmp_path / "logs"
@@ -80,13 +76,11 @@ def test_restore_jobs_re_registers_slurm_client(tmp_path: Path) -> None:
     fresh_controller = MonitorController(
         fresh_monitor,
         fresh_slurm,
-        policies,
         state_store=state_store,
     )
     runtime = host_runtime.HostRuntime(
         manifest=object(),
         monitor=fresh_monitor,
-        restart_policies=policies,
         slurm_client=fresh_slurm,
         state_store=state_store,
         action_queue_dir=tmp_path / "actions",

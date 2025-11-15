@@ -76,3 +76,22 @@ log_events:
     extract_groups:
       exception_type: exception
       error_message: message
+
+state_events:
+  - name: stall
+    state:
+      class_name: StalledState
+  - name: crash
+    state:
+      class_name: CrashState
+  - name: timeout
+    state:
+      class_name: TimeoutState
+  - name: success
+    state:
+      class_name: SuccessState
+    actions:
+      - class_name: EventAction
+        action:
+          class_name: LogAction
+          message: "run_finished"

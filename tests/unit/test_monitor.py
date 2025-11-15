@@ -7,16 +7,73 @@ from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
 from oellm_autoexp.monitor.actions import LogActionConfig, RestartActionConfig
 from oellm_autoexp.monitor.conditions import MetadataConditionConfig
 from oellm_autoexp.monitor.event_bindings import EventActionConfig
-from oellm_autoexp.monitor.states import CrashStateConfig
+from oellm_autoexp.monitor.states import (
+    CrashStateConfig,
+    StalledStateConfig,
+    SuccessStateConfig,
+    TimeoutStateConfig,
+)
 from oellm_autoexp.monitor.watcher import (
     SlurmLogMonitor,
     SlurmLogMonitorConfig,
     LogEventConfig,
     StateEventConfig,
     MonitoredJob,
-    default_log_events,
 )
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
+
+
+def _basic_log_events() -> list[LogEventConfig]:
+    return [
+        LogEventConfig(
+            name="error",
+            pattern=r"(?P<error_type>ERROR|Error|error)[:\s]+(?P<message>.+)",
+            pattern_type="regex",
+            state=CrashStateConfig(),
+            metadata={"severity": "error"},
+            extract_groups={"error_message": "message", "error_kind": "error_type"},
+        ),
+        LogEventConfig(
+            name="checkpoint",
+            pattern=r"Checkpoint (?:saved|written)[:\s]+(?P<checkpoint>\S+)",
+            pattern_type="regex",
+            metadata={"kind": "checkpoint"},
+            extract_groups={"checkpoint_path": "checkpoint"},
+        ),
+        LogEventConfig(
+            name="training_complete",
+            pattern=r"(Training complete|Training finished)",
+            pattern_type="regex",
+            state=SuccessStateConfig(),
+            metadata={"kind": "completion"},
+        ),
+    ]
+
+
+def _basic_state_events() -> list[StateEventConfig]:
+    return [
+        StateEventConfig(name="stall", state=StalledStateConfig()),
+        StateEventConfig(name="crash", state=CrashStateConfig()),
+        StateEventConfig(name="timeout", state=TimeoutStateConfig()),
+        StateEventConfig(
+            name="success",
+            state=SuccessStateConfig(),
+            actions=[
+                EventActionConfig(
+                    action=LogActionConfig(message="run_finished"),
+                )
+            ],
+        ),
+    ]
+
+
+def _default_monitor_config(**overrides):
+    cfg_kwargs = {
+        "log_events": _basic_log_events(),
+        "state_events": _basic_state_events(),
+    }
+    cfg_kwargs.update(overrides)
+    return SlurmLogMonitorConfig(**cfg_kwargs)
 
 
 def test_monitor_controller_restart_increments():
@@ -123,10 +180,10 @@ def test_monitor_controller_observe_restart(tmp_path: Path) -> None:
 
 
 def test_slurm_monitor_defaults_populated():
-    monitor = SlurmLogMonitor(SlurmLogMonitorConfig())
+    monitor = SlurmLogMonitor(_default_monitor_config())
     names = {event.name for event in monitor.config.log_events}
     assert {"error", "checkpoint", "training_complete"}.issubset(names)
-    defaults = default_log_events()
+    defaults = _basic_log_events()
     assert defaults[0].state is not None
     assert defaults[0].state.class_name == "CrashState"
 
@@ -168,7 +225,11 @@ def test_monitor_signal_triggers_action(tmp_path: Path) -> None:
     result = controller.observe_once_sync()
 
     assert not result.decisions
-    action_records = [record for record in result.events if record.action == "actions" and record.event == "checkpoint"]
+    action_records = [
+        record
+        for record in result.events
+        if record.action == "actions" and record.event == "checkpoint"
+    ]
     assert len(action_records) == 1
     action = action_records[0]
     assert action.payload["restart"] is False
@@ -178,7 +239,10 @@ def test_monitor_signal_triggers_action(tmp_path: Path) -> None:
 
     # Same content should not fire duplicate signals
     result_repeat = controller.observe_once_sync()
-    assert not any(record.action == "actions" and record.event == "checkpoint" for record in result_repeat.events)
+    assert not any(
+        record.action == "actions" and record.event == "checkpoint"
+        for record in result_repeat.events
+    )
 
 
 def test_monitor_signal_triggers_restart(tmp_path: Path) -> None:
@@ -219,31 +283,33 @@ def test_monitor_signal_triggers_restart(tmp_path: Path) -> None:
     assert any(dec.action == "restart" for dec in result.decisions.values())
 
 
-def test_monitor_signal_without_restart_action(tmp_path: Path) -> None:
+def test_inactivity_log_event_emitted(tmp_path: Path) -> None:
     config = SlurmLogMonitorConfig(
-        inactivity_threshold_seconds=0,
+        inactivity_threshold_seconds=1,
         check_interval_seconds=1,
-        log_signals=[
-            LogSignalConfig(
-                name="fatal",
-                pattern="FATAL ERROR",
-                pattern_type="substring",
-                state=CrashStateConfig(),
+        log_events=[
+            LogEventConfig(
+                name="stall_timeout",
+                pattern="",
+                pattern_type="inactivity",
+                state=StalledStateConfig(),
+                metadata={"kind": "stall"},
+                actions=[
+                    EventActionConfig(
+                        action=LogActionConfig(message="stall_detected"),
+                    )
+                ],
             )
         ],
     )
     monitor = SlurmLogMonitor(config)
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
-    policies = {
-        "crash": AlwaysRestartPolicy(AlwaysRestartPolicyConfig(max_retries=1)),
-        "success": NoRestartPolicy(NoRestartPolicyConfig()),
-    }
-    controller = MonitorController(monitor, slurm, policies)
+    controller = MonitorController(monitor, slurm)
 
     script = tmp_path / "script.sh"
     script.write_text("#!/bin/bash\n")
     log = tmp_path / "log.txt"
-    log.write_text("FATAL ERROR occurred\n")
+    log.write_text("running\n")
 
     job_id = slurm.submit("demo", script, log)
     controller.register_job(
@@ -251,9 +317,13 @@ def test_monitor_signal_without_restart_action(tmp_path: Path) -> None:
         JobRegistration(name="demo", script_path=script, log_path=log),
     )
 
+    controller.observe_once_sync()
+    time.sleep(1.01)
     result = controller.observe_once_sync()
 
-    assert not result.decisions
+    stall_events = [record for record in result.events if record.event == "stall_timeout"]
+    assert stall_events, "expected inactivity event"
+    assert stall_events[0].metadata["kind"] == "stall"
 
 
 def test_output_file_emit_checkpoint_signal(tmp_path: Path) -> None:
@@ -309,7 +379,7 @@ def test_output_file_emit_checkpoint_signal(tmp_path: Path) -> None:
 
 
 def test_slurm_state_transitions_emit_actions(tmp_path: Path) -> None:
-    monitor = SlurmLogMonitor(SlurmLogMonitorConfig(check_interval_seconds=1))
+    monitor = SlurmLogMonitor(_default_monitor_config(check_interval_seconds=1))
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
     controller = MonitorController(monitor, slurm)
 
@@ -334,7 +404,7 @@ def test_slurm_state_transitions_emit_actions(tmp_path: Path) -> None:
 
 
 def test_log_completion_triggers_run_finished(tmp_path: Path) -> None:
-    monitor = SlurmLogMonitor(SlurmLogMonitorConfig(check_interval_seconds=1))
+    monitor = SlurmLogMonitor(_default_monitor_config(check_interval_seconds=1))
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
     controller = MonitorController(monitor, slurm)
 
