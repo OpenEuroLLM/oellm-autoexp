@@ -66,31 +66,6 @@ When running scripts directly from the checkout (without installing the package)
 export PYTHONPATH="$PYTHONPATH:$(pwd):$(pwd)/submodules/Megatron-LM"
 ```
 
-## Common ENV variables
-
-This project uses the following naming convention for env variables that recommended to be in your bashrc.
-
-```bash
-export PROJECT=12345678
-export PROJECT_DIR="/scratch/project_12345678"
-export SLURM_PARTITION=standard-g
-export SLURM_PARTITION_DEBUG=dev-g
-export SLURM_QOS=""
-export SLURM_QOS_DEBUG=""
-
-
-export WORK="$PROJECT_DIR/work"
-export OUTPUT_DIR="$PROJECT_DIR/output"
-export DATA_DIR="$PROJECT_DIR/data"
-export CONTAINER_CACHE_DIR="$PROJECT_DIR/container_cache/"
-export TRITON_CACHE_DIR="$PROJECT_DIR/cache/triton"
-export HF_DATASETS_CACHE="$PROJECT_DIR/data/cache"
-export HF_HOME="$PROJECT_DIR/cache"
-export APPTAINER_CACHEDIR="$WORK/.apptainer/cache"
-export APPTAINER_TMPDIR="$WORK/.tmp"
-export ARCH=$(uname -m)
-```
-
 
 
 ## Script Overview
