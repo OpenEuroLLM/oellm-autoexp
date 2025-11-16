@@ -670,7 +670,10 @@ def test_scenario_max_retries(array_mode: bool = False, overrides: list[str] = [
     log(f"{'=' * 60}\n", Colors.BOLD)
 
     job_id = submit_test_job(
-        micro_batch_size=8, train_iters=1000, array_mode=array_mode, overrides=overrides
+        micro_batch_size=8,
+        train_iters=1000,
+        array_mode=array_mode,
+        overrides=["monitoring.state_events.1.actions.0.conditions.1.max_attempts=2"] + overrides,
     )
     if job_id is None:
         return False
@@ -680,7 +683,7 @@ def test_scenario_max_retries(array_mode: bool = False, overrides: list[str] = [
         cancel_job(job_id)
         return False
 
-    max_retries = 3
+    max_retries = 1
     for attempt in range(max_retries + 1):  # Try one more than max
         log_info(f"\n--- Attempt {attempt + 1}/{max_retries + 1} ---")
 

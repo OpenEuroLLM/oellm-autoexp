@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict
 from pathlib import Path
 
+from compoconf import asdict
 from oellm_autoexp.config.loader import load_config_reference
 
 

@@ -73,11 +73,6 @@ class MonitorEvent:
 class BaseMonitor(MonitorInterface):
     """Base class monitors can inherit from to gain a common signature."""
 
-    config: ConfigInterface
-
-    def __init__(self, config: ConfigInterface) -> None:
-        self.config = config
-
     async def watch(
         self, jobs: Iterable[MonitoredJob]
     ) -> dict[str, MonitorOutcome]:  # pragma: no cover
@@ -144,12 +139,15 @@ class StateEventConfig(ConfigInterface):
     name: str
     state: MonitorStateInterface.cfgtype | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    actions: list[Any] = field(default_factory=list)
+    actions: list[BaseMonitorAction.cfgtype] = field(default_factory=list)
 
 
 @register
 class NullMonitor(BaseMonitor):
     config: NullMonitorConfig
+
+    def __init__(self, config: NullMonitorConfig):
+        self.config = config
 
     async def watch(self, jobs: Iterable[MonitoredJob]) -> dict[str, MonitorOutcome]:
         return {}
@@ -177,7 +175,7 @@ class SlurmLogMonitor(BaseMonitor):
     config: SlurmLogMonitorConfig
 
     def __init__(self, config: SlurmLogMonitorConfig) -> None:
-        super().__init__(config)
+        self.config = config
         self._snapshots: dict[str, _JobSnapshot] = {}
         self._state_whitelist = {state.lower() for state in config.state_whitelist}
         self._state_event_map: dict[str, StateEventConfig] = {

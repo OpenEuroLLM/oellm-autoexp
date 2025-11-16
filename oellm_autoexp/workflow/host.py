@@ -10,6 +10,8 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
+from compoconf import parse_config
+
 from oellm_autoexp.monitor.controller import JobRegistration, MonitorController, MonitorRecord
 from oellm_autoexp.persistence.state_store import MonitorStateStore, StoredJob, _serialize_for_json
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig, BaseSlurmClient
@@ -19,6 +21,7 @@ from oellm_autoexp.utils.start_condition import (
     resolve_start_condition_interval,
     wait_for_start_condition,
 )
+from oellm_autoexp.config.schema import SlurmConfig
 
 
 def _import_object(module: str, name: str) -> Any:
@@ -122,8 +125,7 @@ def build_host_runtime(
     else:
         slurm_client = manifest.slurm_client.instantiate()
 
-    slurm_config_cls = _import_object(manifest.slurm_config_module, manifest.slurm_config_class)
-    slurm_config_obj = slurm_config_cls(**manifest.slurm_config)
+    slurm_config_obj = parse_config(SlurmConfig, manifest.slurm_config)
     slurm_client.configure(slurm_config_obj)
 
     state_store = MonitorStateStore(manifest.monitoring_state_dir, session_id=manifest.plan_id)

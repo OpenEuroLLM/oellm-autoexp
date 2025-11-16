@@ -90,8 +90,13 @@ log_events:
     extract_groups:
       error_message: message
     actions:
-      - class_name: RestartAction
-        reason: "nccl error restart"
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4  # initial attempt + 3 retries
+        action:
+          class_name: RestartAction
+          reason: "nccl error restart"
 
   - name: nccl_timeout
     pattern: 'NCCL.*timeout.*(?P<details>.+)'
@@ -105,8 +110,13 @@ log_events:
     extract_groups:
       timeout_details: details
     actions:
-      - class_name: RestartAction
-        reason: "nccl timeout restart"
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "nccl timeout restart"
 
   - name: processgroup_timeout
     pattern: '\[c10d\].*timeout.*(?P<details>.+)'
@@ -120,8 +130,13 @@ log_events:
     extract_groups:
       timeout_details: details
     actions:
-      - class_name: RestartAction
-        reason: "processgroup timeout restart"
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "processgroup timeout restart"
 
   - name: communication_error
     pattern: '(?:socket|connection|comm).*(?:error|failed|abort).*?(?P<message>.{0,200})'
@@ -135,8 +150,13 @@ log_events:
     extract_groups:
       error_message: message
     actions:
-      - class_name: RestartAction
-        reason: "communication error restart"
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "communication error restart"
 
   # === NUMERICAL STABILITY ===
 
@@ -176,8 +196,13 @@ log_events:
     extract_groups:
       error_message: message
     actions:
-      - class_name: RestartAction
-        reason: "cuda hang restart"
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "cuda hang restart"
 
   - name: deadlock
     pattern: '(?:deadlock|Deadlock|DEADLOCK).*?(?P<message>.{0,200})'
@@ -191,8 +216,13 @@ log_events:
     extract_groups:
       error_message: message
     actions:
-      - class_name: RestartAction
-        reason: "deadlock restart"
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "deadlock restart"
 
   # === GENERIC ERRORS ===
 
@@ -225,8 +255,13 @@ state_events:
     state:
       class_name: StalledState
     actions:
-      - class_name: RestartAction
-        reason: "log inactivity"
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "log inactivity"
   - name: crash
     state:
       class_name: CrashState
@@ -236,6 +271,8 @@ state_events:
           - class_name: MetadataCondition
             key: error_type
             equals: cancelled
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
         action:
           class_name: RestartAction
           reason: "retry cancelled job"
@@ -244,6 +281,8 @@ state_events:
           - class_name: MetadataCondition
             key: error_type
             equals: slurm_failure
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
         action:
           class_name: RestartAction
           reason: "retry slurm failure"
@@ -251,8 +290,13 @@ state_events:
     state:
       class_name: TimeoutState
     actions:
-      - class_name: RestartAction
-        reason: "timeout restart"
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "timeout restart"
   - name: success
     state:
       class_name: SuccessState

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import time
-from dataclasses import asdict
 from pathlib import Path
 from collections.abc import Iterable
+
+from compoconf import asdict
+
 
 from oellm_autoexp.persistence.state_store import _serialize_for_json
 from oellm_autoexp.workflow.manifest import (
