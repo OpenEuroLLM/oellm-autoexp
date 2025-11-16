@@ -2,7 +2,7 @@
 
 ## Integration Tests
 
-The `scripts/test_auto_restart.py` script provides comprehensive integration tests for the auto-restart functionality.
+The `scripts/tests/test_auto_restart.py` script provides comprehensive integration tests for the auto-restart functionality.
 
 ### Running Tests
 
@@ -10,43 +10,43 @@ The `scripts/test_auto_restart.py` script provides comprehensive integration tes
 
 ```bash
 # Test single job mode (default)
-python scripts/test_auto_restart.py --scenario scancel
+python scripts/tests/test_auto_restart.py --scenario scancel
 
 # Test array job mode
-python scripts/test_auto_restart.py --scenario scancel --array-mode
+python scripts/tests/test_auto_restart.py --scenario scancel --array-mode
 
 # Run all scenarios
-python scripts/test_auto_restart.py --scenario all
+python scripts/tests/test_auto_restart.py --scenario all
 
 # Enable debug logging
-python scripts/test_auto_restart.py --scenario scancel --debug
+python scripts/tests/test_auto_restart.py --scenario scancel --debug
 ```
 
 #### Test Scenarios
 
 1. **scancel**: Tests restart after manual job cancellation
    ```bash
-   python scripts/test_auto_restart.py --scenario scancel --iterations 2
+   python scripts/tests/test_auto_restart.py --scenario scancel --iterations 2
    ```
 
 2. **hang**: Tests restart on CUDA hang detection
    ```bash
-   python scripts/test_auto_restart.py --scenario hang
+   python scripts/tests/test_auto_restart.py --scenario hang
    ```
 
 3. **nccl**: Tests restart on NCCL error detection
    ```bash
-   python scripts/test_auto_restart.py --scenario nccl
+   python scripts/tests/test_auto_restart.py --scenario nccl
    ```
 
 4. **oom**: Tests that OOM errors do NOT trigger restart (excluded error type)
    ```bash
-   python scripts/test_auto_restart.py --scenario oom
+   python scripts/tests/test_auto_restart.py --scenario oom
    ```
 
 5. **max_retries**: Tests that retry budget is respected
    ```bash
-   python scripts/test_auto_restart.py --scenario max_retries
+   python scripts/tests/test_auto_restart.py --scenario max_retries
    ```
 
 ### Array Mode vs Single Job Mode
@@ -156,7 +156,7 @@ Use the Python harness under `scripts/tests/` to exercise the monitoring stack d
 
 ```bash
 # Basic scancel/restart check on JUWELS
-python scripts/tests/run_cluster_monitoring.py \
+python scripts/tests/test_cluster_monitoring.py \
   --scenario scancel \
   --config-ref experiments/megatron_with_auto_restart \
   --override container=juwels \
@@ -169,6 +169,23 @@ Arguments:
 - `--run-arg` / `--monitor-arg` forward extra CLI flags to `run_autoexp_container.py` or `monitor_autoexp.py`.
 - `--no-monitor` skips automatic monitor startup if you want to attach manually.
 - `--dry-run` prints the planned commands without executing them.
+
+## Action Queue CLI
+
+Queued actions are stored next to the monitoring session (`<plan_id>.actions/<event>/<queue_id>.json`). The CLI keeps the queue tidy:
+
+```bash
+# Show summaries (filter by event if needed)
+python scripts/monitor_autoexp.py --session <plan_id> --cmd queue
+python scripts/monitor_autoexp.py --session <plan_id> --cmd queue --queue-event checkpoint_saved
+
+# Inspect or retry a single entry
+python scripts/monitor_autoexp.py --session <plan_id> --cmd queue --queue-id <queue_uuid> --queue-show
+python scripts/monitor_autoexp.py --session <plan_id> --cmd queue --queue-id <queue_uuid> --queue-retry
+
+# Execute queued RunAutoexpAction / RunCommandAction payloads
+python scripts/monitor_autoexp.py --session <plan_id> --cmd actions
+```
 
 ## Quick Verification
 

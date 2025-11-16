@@ -9,9 +9,8 @@ defaults:
   - /container: juwels
   - /slurm: juwels
   - /monitoring: megatron_production
-  - /restart: megatron_transient
   - /project: default
-  - /backend/megatron:  [llama1_8b_qkln,megatron_fsdp,speed_test_juwels]
+  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_juwels]
   - /sweep: none
   - _self_
 

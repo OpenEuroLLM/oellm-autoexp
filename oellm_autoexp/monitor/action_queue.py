@@ -66,6 +66,15 @@ class ActionQueue:
         event_dir.mkdir(parents=True, exist_ok=True)
         return event_dir / f"{queue_id}.json"
 
+    def _find_record_path(self, queue_id: str) -> Path | None:
+        for event_dir in self._root.iterdir():
+            if not event_dir.is_dir():
+                continue
+            candidate = event_dir / f"{queue_id}.json"
+            if candidate.exists():
+                return candidate
+        return None
+
     def _load_path(self, path: Path) -> QueuedAction | None:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -128,12 +137,7 @@ class ActionQueue:
         status: ActionQueueStatus,
         result: dict[str, Any] | None = None,
     ) -> None:
-        path = None
-        for event_dir in self._root.iterdir():
-            candidate = event_dir / f"{queue_id}.json"
-            if candidate.exists():
-                path = candidate
-                break
+        path = self._find_record_path(queue_id)
         if path is None:
             return
         record = self._load_path(path)
@@ -153,6 +157,23 @@ class ActionQueue:
                 pass
         else:
             self._write(record)
+
+    def load(self, queue_id: str) -> QueuedAction | None:
+        """Return the queued action without mutating state."""
+        path = self._find_record_path(queue_id)
+        if path is None:
+            return None
+        return self._load_path(path)
+
+    def retry(self, queue_id: str) -> bool:
+        """Reset a running/pending queue entry to pending again."""
+        record = self.load(queue_id)
+        if record is None:
+            return False
+        record.status = "pending"
+        record.updated_at = time.time()
+        self._write(record)
+        return True
 
 
 __all__ = ["ActionQueue", "QueuedAction"]

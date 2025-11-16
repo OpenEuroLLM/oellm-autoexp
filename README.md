@@ -30,6 +30,22 @@ python scripts/monitor_autoexp.py --session <plan_id>
 python scripts/monitor_autoexp.py --manifest outputs/manifests/<plan>.json
 ```
 - The session file stores `resolved_log_path`, last SLURM state, per-event history, and the manifest path so you can crash/restart without guessing log names. `scripts/tests/test_monitor_resume.py` is the on-cluster smoke test that exercises plan → submit → interrupt → resume.
+- The action queue lives next to the session file (`<plan_id>.actions/`). Use the CLI to keep it short and readable:
+```bash
+# Summaries (optionally filter by event)
+python scripts/monitor_autoexp.py --session <plan_id> --cmd queue
+python scripts/monitor_autoexp.py --session <plan_id> --cmd queue --queue-event checkpoint_saved
+
+# Inspect or retry a specific entry
+python scripts/monitor_autoexp.py --session <plan_id> --cmd queue \
+    --queue-id <queue_uuid> --queue-show
+python scripts/monitor_autoexp.py --session <plan_id> --cmd queue \
+    --queue-id <queue_uuid> --queue-retry
+
+# Run the worker that executes queued actions (for example, RunAutoexpAction)
+python scripts/monitor_autoexp.py --session <plan_id> --cmd actions
+```
+Each entry is a single JSON file (`<event_id>/<queue_id>.json`) so manual inspection is always possible, but the CLI avoids editing files directly.
 
 ### Container workflow (recommended for Megatron)
 ```bash

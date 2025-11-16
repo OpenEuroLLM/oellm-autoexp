@@ -21,7 +21,7 @@ from oellm_autoexp.workflow.host import (
 )
 from oellm_autoexp.workflow.manifest import read_manifest
 from oellm_autoexp.monitor.action_queue import ActionQueue
-from oellm_autoexp.monitor.actions import ActionContext, MonitorActionInterface
+from oellm_autoexp.monitor.actions import ActionContext, BaseMonitorAction
 
 
 def _configure_logging(verbose: bool = False, debug: bool = False) -> None:
@@ -70,6 +70,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=[],
         metavar="key=value",
         help="Override monitor config entries before instantiating the controller.",
+    )
+    parser.add_argument(
+        "--queue-id",
+        help="When --cmd queue is used, operate on a single queue entry (inspect or retry).",
+    )
+    parser.add_argument(
+        "--queue-event",
+        help="Limit --cmd queue listings to a specific event_id.",
+    )
+    parser.add_argument(
+        "--queue-show",
+        action="store_true",
+        help="With --cmd queue and --queue-id, print the raw JSON payload for the entry.",
+    )
+    parser.add_argument(
+        "--queue-retry",
+        action="store_true",
+        help="With --cmd queue and --queue-id, reset the entry back to pending state.",
     )
     return parser.parse_args(argv)
 
@@ -188,9 +206,10 @@ def _print_events(state_store) -> None:
         )
 
 
-def _print_queue(state_store) -> None:
-    queue = ActionQueue(_action_queue_path(state_store))
-    records = queue.list()
+def _print_queue(queue: ActionQueue, *, event_filter: str | None = None) -> None:
+    records = [
+        record for record in queue.list() if not event_filter or record.event_id == event_filter
+    ]
     if not records:
         print("Action queue is empty.")
         return
@@ -201,6 +220,43 @@ def _print_queue(state_store) -> None:
             f"{record.queue_id} | {record.action_class} | status={record.status} "
             f"| event={record.event_id} | updated={_render_timestamp(record.updated_at)}"
         )
+
+
+def _show_queue_entry(queue: ActionQueue, queue_id: str) -> None:
+    record = queue.load(queue_id)
+    if record is None:
+        print(f"Queue entry not found: {queue_id}")
+        return
+    payload = record.to_dict()
+    print(json.dumps(payload, indent=2, sort_keys=True))
+
+
+def _retry_queue_entry(queue: ActionQueue, queue_id: str) -> None:
+    if queue.retry(queue_id):
+        print(f"Queue entry {queue_id} reset to pending.")
+    else:
+        print(f"Queue entry not found: {queue_id}")
+
+
+def _handle_queue_cmd(state_store, args: argparse.Namespace) -> None:
+    queue = ActionQueue(_action_queue_path(state_store))
+    if args.queue_id:
+        if args.queue_retry:
+            _retry_queue_entry(queue, args.queue_id)
+            return
+        if args.queue_show:
+            _show_queue_entry(queue, args.queue_id)
+            return
+        record = queue.load(args.queue_id)
+        if record is None:
+            print(f"Queue entry not found: {args.queue_id}")
+        else:
+            print(
+                f"{record.queue_id} | {record.action_class} | status={record.status} "
+                f"| event={record.event_id} | updated={_render_timestamp(record.updated_at)}"
+            )
+        return
+    _print_queue(queue, event_filter=args.queue_event)
 
 
 def _run_action_worker(runtime) -> None:
@@ -221,8 +277,8 @@ def _run_action_worker(runtime) -> None:
             continue
         cfg_dict = dict(record.config)
         cfg_dict.setdefault("class_name", record.action_class)
-        action_cfg = parse_config(MonitorActionInterface.cfgtype, cfg_dict)
-        action = action_cfg.instantiate(MonitorActionInterface)
+        action_cfg = parse_config(BaseMonitorAction.cfgtype, cfg_dict)
+        action = action_cfg.instantiate(BaseMonitorAction)
         context = ActionContext(
             event=event_record,
             job_metadata=record.metadata.get("job", {}),
@@ -287,7 +343,7 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "events":
         _print_events(runtime.state_store)
     elif args.cmd == "queue":
-        _print_queue(runtime.state_store)
+        _handle_queue_cmd(runtime.state_store, args)
     elif args.cmd == "actions":
         _run_action_worker(runtime)
 

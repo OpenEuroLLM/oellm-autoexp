@@ -79,3 +79,15 @@ def test_action_queue_roundtrip(tmp_path: Path) -> None:
     queue.mark_done(claimed.queue_id, status="done", result={"status": "ok"})
     assert not event_dir.exists() or not any(event_dir.glob("*.json"))
     assert not queue.list()
+
+
+def test_action_queue_retry(tmp_path: Path) -> None:
+    queue = ActionQueue(tmp_path)
+    record = queue.enqueue("LogAction", {"message": "hi"}, event_id="evt")
+    claimed = queue.claim_next()
+    assert claimed is not None
+    assert claimed.status == "running"
+    assert queue.retry(record.queue_id)
+    reloaded = queue.load(record.queue_id)
+    assert reloaded is not None
+    assert reloaded.status == "pending"

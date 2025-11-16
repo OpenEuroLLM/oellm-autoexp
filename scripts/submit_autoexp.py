@@ -90,9 +90,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"To monitor later run: {cmd}", flush=True)
         return
 
-    monitor_cmd = (
-        f"{sys.executable} scripts/monitor_autoexp.py --manifest {runtime.state_store.session_id}"
-    )
+    monitor_cmd = f"{sys.executable} scripts/monitor_autoexp.py --session {runtime.state_store.session_id} --verbose"
 
     try:
         run_monitoring(runtime, controller)

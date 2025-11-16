@@ -15,7 +15,6 @@ from compoconf import ConfigInterface, register
 from oellm_autoexp.config.schema import MonitorInterface
 from oellm_autoexp.monitor.event_bindings import (
     EventActionBinding,
-    EventActionConfig,
     instantiate_bindings,
 )
 from oellm_autoexp.monitor.states import (
@@ -30,6 +29,7 @@ from oellm_autoexp.monitor.states import (
     TimeoutState,
     TimeoutStateConfig,
 )
+from oellm_autoexp.monitor.actions import BaseMonitorAction
 from oellm_autoexp.utils.run import run_with_tee
 
 
@@ -113,7 +113,7 @@ class LogEventConfig(ConfigInterface):
     name: str
     pattern: str
     state: MonitorStateInterface.cfgtype | None = None
-    actions: list[EventActionConfig] = field(default_factory=list)
+    actions: list[BaseMonitorAction.cfgtype] = field(default_factory=list)
     pattern_type: str = "regex"
     metadata: dict[str, Any] = field(default_factory=dict)
     extract_groups: dict[str, str | int] = field(default_factory=dict)
@@ -144,7 +144,7 @@ class StateEventConfig(ConfigInterface):
     name: str
     state: MonitorStateInterface.cfgtype | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    actions: list[EventActionConfig] = field(default_factory=list)
+    actions: list[Any] = field(default_factory=list)
 
 
 @register
@@ -169,6 +169,7 @@ class SlurmLogMonitorConfig(NullMonitorConfig):
     output_paths: list[str] = field(default_factory=list)
     state_whitelist: list[str] = field(default_factory=lambda: ["pending", "running", "stall"])
     state_events: list[StateEventConfig] = field(default_factory=list)
+    debug_sync: bool = True
 
 
 @register

@@ -154,7 +154,7 @@ oellm-autoexp/
 
 ## Monitoring & Restart Logic
 - Track three signals: SLURM job state (`squeue`), wall-clock runtime, and log progress (mtime + optional regex heartbeat).
-- Monitoring config exposes `log_events` that match regex/substring patterns in SLURM logs and emit named events. Each log match materialises a `MonitorEvent` with optional typed state (`MonitorStateInterface`) and one or more actions (`MonitorActionInterface`) so downstream tooling can trigger follow-up work (for example, enqueue checkpoint conversion jobs or downstream evaluations). The standalone monitor CLI pre-registers generic events for errors, lifecycle transitions (pending → running → ended), completion markers, and checkpoint publication so downstream tooling can attach actions without backend knowledge.
+- Monitoring config exposes `log_events` that match regex/substring patterns in SLURM logs and emit named events. Each log match materialises a `MonitorEvent` with optional typed state (`MonitorStateInterface`) and one or more actions (`BaseMonitorAction`) so downstream tooling can trigger follow-up work (for example, enqueue checkpoint conversion jobs or downstream evaluations). The standalone monitor CLI pre-registers generic events for errors, lifecycle transitions (pending → running → ended), completion markers, and checkpoint publication so downstream tooling can attach actions without backend knowledge.
 - Monitor compares both SLURM log output and configured training output files; inactivity detection keys off the latest change across either source so freezes without log updates are still caught, mirroring the legacy `autoexperiment` behaviour.
 - **Event Logging and Visibility**: The `MonitorController` logs all monitoring events, SLURM state transitions, signal detections, and action evaluations at INFO level to ensure full visibility into the restart system's behaviour. This includes:
   - Monitor outcomes (status, last_update, signal counts)
@@ -210,8 +210,7 @@ oellm-autoexp/
 ## TODO / Backlog
 
 ### Active TODOs
-1. **Action queue UX** — add CLI surface area (or extend `monitor_autoexp.py --cmd=actions`) to list, retry, and tail the new per-event JSON queue. Document the workflow (including cleanup) in README/docs so operators can manage follow-up jobs without digging through directories manually.
-2. **End-to-end tests for queued RunAutoexpAction** — extend the fake-SLURM integration test suite to simulate checkpoint events, assert the action queue records the rendered command/overrides, and ensure the worker stub can mark entries `done`/`failed` without races.
+_None. Add next items here._
 
 ### Backlog (Done / Deferred)
 - Improve provenance capture for container builds and job executions (commit hash, CLI args, git diff when dirty, resolved/unresolved configs, sanitized env). Stored inside container images and under each job's output directory. ✓ (`build_container_user.py` and `run_autoexp.py` now emit `_provenance` snapshots.)
@@ -227,6 +226,8 @@ oellm-autoexp/
 - Ship a concrete checkpoint-follow-up config (`monitoring/megatron_checkpoint_eval.yaml`) with `RunCommandAction` + `RunAutoexpAction`, plus config-parsing tests under `tests/config`. ✓
 - Provide richer container assets (constraint tooling, requirements reduction) and document validation workflows. (Still pending; provenance work done, asset curation outstanding.)
 - Document the event/condition/action primitives across README/docs (architecture diagrams, cookbook recipes). (Docs still to be updated.)
+- Improve action queue UX. ✓ (`monitor_autoexp.py --cmd queue` now supports filtering, JSON inspection, and retries; README/TESTING document the workflow.)
+- Add end-to-end coverage for queued `RunAutoexpAction`. ✓ (Integration test now writes checkpoint logs, inspects rendered queue entries, and simulates worker success/failure with the fake SLURM client.)
 
 ## Core Automation Primitives
 

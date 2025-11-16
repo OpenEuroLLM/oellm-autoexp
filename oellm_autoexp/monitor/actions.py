@@ -54,11 +54,7 @@ class ActionContext:
 
 
 @register_interface
-class MonitorActionInterface(RegistrableConfigInterface):
-    """Interface for monitor-triggered actions."""
-
-
-class BaseMonitorAction(MonitorActionInterface):
+class BaseMonitorAction(RegistrableConfigInterface):
     config: ConfigInterface
 
     def __init__(self, config: ConfigInterface) -> None:
@@ -222,7 +218,7 @@ class PublishEventAction(BaseMonitorAction):
 
 
 __all__ = [
-    "MonitorActionInterface",
+    "BaseMonitorAction",
     "BaseMonitorAction",
     "ActionContext",
     "ActionResult",

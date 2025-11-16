@@ -10,7 +10,7 @@ from typing import Any, Literal
 from collections.abc import Iterable
 
 from oellm_autoexp.monitor.action_queue import ActionQueue
-from oellm_autoexp.monitor.actions import ActionContext, ActionResult
+from oellm_autoexp.monitor.actions import ActionContext, ActionResult, BaseMonitorAction
 from oellm_autoexp.monitor.event_bindings import EventActionBinding, instantiate_bindings
 from oellm_autoexp.monitor.conditions import ConditionContext
 from oellm_autoexp.monitor.events import EventRecord, EventStatus
@@ -692,7 +692,7 @@ class MonitorController:
             if binding.mode == "queue":
                 if self._action_queue is None:
                     raise RuntimeError("Action queue not configured but queue mode requested")
-                config_payload = asdict(binding.action.config)
+                config_payload = self._render_queued_action_config(binding.action, action_context)
                 record = self._action_queue.enqueue(
                     binding.action.config.class_name,
                     config_payload,
@@ -715,6 +715,23 @@ class MonitorController:
             "queued": queued_ids,
             "results": inline_results,
         }
+
+    def _render_queued_action_config(
+        self,
+        action: BaseMonitorAction,
+        context: ActionContext,
+    ) -> dict[str, Any]:
+        payload = asdict(action.config)
+        return self._render_action_value(payload, context)
+
+    def _render_action_value(self, value: Any, context: ActionContext) -> Any:
+        if isinstance(value, str):
+            return context.render(value)
+        if isinstance(value, list):
+            return [self._render_action_value(item, context) for item in value]
+        if isinstance(value, dict):
+            return {key: self._render_action_value(item, context) for key, item in value.items()}
+        return value
 
     def _evaluate_action_conditions(
         self,

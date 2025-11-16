@@ -21,10 +21,8 @@ log_events:
     extract_groups:
       validation_loss: loss
     actions:
-      - class_name: EventAction
-        action:
-          class_name: LogAction
-          message: "run_finished"
+      - class_name: LogAction
+        message: "run_finished"
 
   - name: checkpoint_saved
     pattern: 'successfully saved checkpoint from iteration\s+(?P<iteration>\d+) to (?P<path>\S+)'
@@ -39,10 +37,8 @@ log_events:
       checkpoint_iteration: iteration
       checkpoint_path: path
     actions:
-      - class_name: EventAction
-        action:
-          class_name: LogAction
-          message: "new_checkpoint"
+      - class_name: LogAction
+        message: "new_checkpoint"
       - class_name: EventAction
         mode: queue
         conditions:
@@ -103,7 +99,7 @@ log_events:
       allocation_size: size
 
   - name: cpu_oom
-    pattern: '(?:Cannot allocate memory|MemoryError).*?(?P<message>.{0,200})'
+    pattern: '(?:Cannot allocate memory|(?<!OutOf)MemoryError).*?(?P<message>.{0,200})'
     pattern_type: regex
     state:
       class_name: CrashState

@@ -18,10 +18,8 @@ log_events:
     state:
       class_name: CrashState
     actions:
-      - class_name: EventAction
-        action:
-          class_name: LogAction
-          message: "nccl_error"
+      - class_name: LogAction
+        message: "nccl_error"
     metadata:
       severity: critical
       error_type: nccl
@@ -35,10 +33,8 @@ log_events:
     pattern: 'NCCL WARN.*?(?P<message>.+)'
     pattern_type: regex
     actions:
-      - class_name: EventAction
-        action:
-          class_name: LogAction
-          message: "nccl_warning"
+      - class_name: LogAction
+        message: "nccl_warning"
     metadata:
       severity: warning
       error_type: nccl
@@ -53,10 +49,8 @@ log_events:
     state:
       class_name: CrashState
     actions:
-      - class_name: EventAction
-        action:
-          class_name: LogAction
-          message: "nccl_timeout"
+      - class_name: LogAction
+        message: "nccl_timeout"
     metadata:
       severity: critical
       error_type: nccl_timeout
@@ -71,10 +65,8 @@ log_events:
     state:
       class_name: CrashState
     actions:
-      - class_name: EventAction
-        action:
-          class_name: LogAction
-          message: "communication_error"
+      - class_name: LogAction
+        message: "communication_error"
     metadata:
       severity: error
       error_type: communication
@@ -89,10 +81,8 @@ log_events:
     state:
       class_name: CrashState
     actions:
-      - class_name: EventAction
-        action:
-          class_name: LogAction
-          message: "nccl_collective_fail"
+      - class_name: LogAction
+        message: "nccl_collective_fail"
     metadata:
       severity: critical
       error_type: nccl_collective
