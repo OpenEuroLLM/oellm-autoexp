@@ -200,10 +200,9 @@ def write_provenance_file(
     args: argparse.Namespace,
     container_cmd: str,
     requirements_file: Path,
-) -> tuple[Path, tempfile.TemporaryDirectory]:
+    provenance_path: Path,
+) -> None:
     commit, dirty, status, diff = collect_git_metadata(repo_root)
-    temp_dir = tempfile.TemporaryDirectory(prefix="oellm_provenance")
-    output_path = Path(temp_dir.name) / "container_provenance.json"
     payload = {
         "built_at": datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(),
         "git_commit": commit,
@@ -217,8 +216,7 @@ def write_provenance_file(
         "base_image": base_image,
         "container_runtime": container_cmd,
     }
-    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    return output_path, temp_dir
+    provenance_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def main() -> None:
@@ -261,11 +259,15 @@ def main() -> None:
                 f"Target image {target_path} already exists. Use --force to overwrite."
             )
 
+    provenance_tmp = tempfile.TemporaryDirectory(prefix="oellm_provenance")
+    provenance_path = Path(provenance_tmp.name) / "container_provenance.json"
+
     substitutions = {
         "REPO_ROOT": str(repo_root),
         "REQUIREMENTS_PATH": str(requirements_file),
         "REQUIREMENTS_BASENAME": requirements_file.name,
         "ARCH": arch,
+        "PROVENANCE_PATH": str(provenance_path),
     }
     if args.base_image:
         substitutions["BASE_IMAGE"] = args.base_image
@@ -293,12 +295,13 @@ def main() -> None:
             f"Provided path not found: {base_image_path}"
         )
 
-    provenance_path, provenance_tmp = write_provenance_file(
+    write_provenance_file(
         repo_root,
         base_image=str(base_image_path),
         args=args,
         container_cmd=container_cmd,
         requirements_file=requirements_file,
+        provenance_path=provenance_path,
     )
     substitutions["PROVENANCE_PATH"] = str(provenance_path)
 
