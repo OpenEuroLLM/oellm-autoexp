@@ -4,7 +4,7 @@ defaults:
 
 template_path: templates/jupiter.sbatch
 launcher_cmd: "{{env_exports}} export LOCAL_ADDR=$(nslookup $(hostname) | grep 'Address: ' | sed 's/Address: //' | tail) ; \
-  ${oc.select:container.runtime,apptainer} exec {{env_flags}} --nv --mount src=/leonardo_scratch/,destination=/leonardo_scratch/ ${oc.select:container.image,container.sif}"
+  ${oc.select:container.runtime,apptainer} exec {{env_flags}} --nv {{bind_flags}} --mount src=/leonardo_scratch/,destination=/leonardo_scratch/ ${oc.select:container.image,container.sif}"
 srun:
   exclusive: true
   wait: 60
