@@ -7,6 +7,17 @@ Single CLI surface for planning sweeps, launching jobs (directly or by way of co
 - Build the Megatron container from the provided defs (see `container/megatron/MegatronTrainingLumi.def.in`) so the correct ROCm + network tuning ends up inside the image.
 - Export the usual SLURM/paths (at a minimum `SLURM_ACCOUNT`, `SLURM_PARTITION[_DEBUG]`, `CONTAINER_CACHE_DIR`, `OUTPUT_DIR`) in your profile—scripts read them automatically.
 
+## Cluster setup: MARENOSTRUM notes
+You need to install oellm-autoexp or its requirements in a conda environment to run it on MARENOSTRUM. To do this:
+- Install conda-pack with: `conda install conda-pack` on your local machine
+- Create new conda environment with `conda env create -f base_environment.yaml -n oellm_autoexp`
+- Pack/Export the conda env: `conda-pack --name oellm_autoexp --output oellm_autoexp.tar.gz`
+- Send this to `marenostrum`: `rsync oellm_autoexp.tar.gz marenostrum:~/`
+- Unpack it there: `mkdir oellm_autoexp_env ; cd oellm_autoexp_env ; tar -xzvf ../oellm_autoexp.tar.gz`
+- Add the environment to your bashrc: `echo "source ~/oellm_autoexp_env/bin/activate" >> ~/.bashrc` or load it when you need it
+- Use a container built on LEONARDO or JUWELS (MARENOSTRUM has no internet access to you can't build anything there)
+
+
 ## Quick Recipes
 
 ### Single job / Sweep debugging
