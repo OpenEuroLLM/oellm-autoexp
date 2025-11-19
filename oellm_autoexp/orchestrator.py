@@ -596,7 +596,10 @@ def _format_sbatch_directives(
     sbatch_values.update(override_values)
     sbatch_values.setdefault("job-name", job.name)
     sbatch_values.setdefault("output", str(job.log_path))
-    lines = [f"#SBATCH --{key}={value}" for key, value in sbatch_values.items()]
+    lines = [
+        f"#SBATCH --{key}={value}" if value is not True else f"#SBATCH --{key}"
+        for key, value in sbatch_values.items()
+    ]
     lines.extend(slurm_conf.sbatch_extra_directives)
     return "\n".join(lines)
 
