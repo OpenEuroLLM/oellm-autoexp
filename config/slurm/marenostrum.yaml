@@ -9,10 +9,14 @@ srun:
   wait: 60
   cpus_per_task: 8
   threads_per_core: 1
+  cpu_bind: "none"
   gpu_bind: "none"
+  kill_on_bad_exit: 1
+  gpus_per_node: ${..sbatch.gpus_per_node}
+  ntasks_per_node: ${..sbatch.ntasks_per_node}
 launcher_env_passthrough: true
 env:
-  MACHINE_NAME: LEONARDO
+  MACHINE_NAME: MARENOSTRUM
   HF_ALLOW_CODE_EVAL: "1"
   HF_DATASETS_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
@@ -30,10 +34,12 @@ sbatch:
   ntasks_per_node: 1
   ntasks: ${.nodes}
   gpus_per_node: 4
-  cpus_per_task: 16
+  cpus_per_task: 20
   gres: "gpu:4"
   gpu_bind: "none"
   time: "12:00:00"
   qos: ${oc.env:SLURM_QOS,null}
+  wait_all_nodes: 1
+  exclusive: true
 client:
   class_name: SlurmClient

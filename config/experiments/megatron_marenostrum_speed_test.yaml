@@ -1,0 +1,19 @@
+# @package _global_
+defaults:
+  - base
+  - /backend: megatron_torchrun
+  - /container: marenostrum
+  - /slurm: marenostrum
+  - /monitoring: megatron_basic
+  - /project: default
+  - /sweep: none
+  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_marenostrum]
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 500
+
+project:
+  name: megatron_marenostrum_speed_test
+  resume: true
