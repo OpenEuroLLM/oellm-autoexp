@@ -1,0 +1,65 @@
+Bootstrap: docker
+From: ${BASE_IMAGE}
+
+%labels
+    Author OpenSci
+    Version 0.1.0
+    Base ${BASE_IMAGE}
+    Description Megatron container based on NVIDIA PyTorch with full HPC support
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export PYTHONPATH=/workspace/oellm-autoexp:${PYTHONPATH}
+    export OELLM_AUTOEXP_CACHE=/workspace/cache
+    export HF_HOME=/workspace/cache/hf
+
+%files
+    ${REPO_ROOT} /workspace/oellm-autoexp
+    ${REQUIREMENTS_PATH} /workspace/${REQUIREMENTS_BASENAME}
+    ${PROVENANCE_PATH} /workspace/oellm-autoexp/_provenance/container_provenance.json
+
+%post
+set -euo pipefail
+mkdir -p /workspace/oellm-autoexp/_provenance
+mkdir -p /workspace/cache
+cd /workspace
+
+python3 -m pip install --upgrade pip setuptools packaging wheel
+
+python3 /workspace/oellm-autoexp/container/gen_constraints.py \
+    --output /workspace/constraints.installed.txt \
+    --exclude pip setuptools wheel
+
+if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
+    python3 -m pip install --no-cache-dir \
+        -c /workspace/constraints.installed.txt \
+        -r "/workspace/${REQUIREMENTS_BASENAME}"
+fi
+
+if [ -d "/workspace/oellm-autoexp/submodules/Megatron-LM" ]; then
+    python3 -m pip install --no-cache-dir \
+        -c /workspace/constraints.installed.txt \
+        -e /workspace/oellm-autoexp/submodules/Megatron-LM
+fi
+
+python3 -m pip install --no-cache-dir \
+    -c /workspace/constraints.installed.txt \
+    -e /workspace/oellm-autoexp
+
+python3 -m pip uninstall -y megatron-core || true
+
+%runscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%startscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%test
+cd /workspace/oellm-autoexp
+python scripts/plan_autoexp.py --help >/dev/null
+
+%help
+    Build with container/build_container.sh and run via
+    `apptainer exec MegatronTraining.sif python -m oellm_autoexp.plan`.

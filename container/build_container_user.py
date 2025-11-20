@@ -290,10 +290,7 @@ def main() -> None:
 
     base_image_path = Path(base_image).expanduser()
     if not base_image_path.exists():
-        raise SystemExit(
-            "Base image must be a local .sif file when building without setuid. "
-            f"Provided path not found: {base_image_path}"
-        )
+        base_image_path = base_image
 
     write_provenance_file(
         repo_root,

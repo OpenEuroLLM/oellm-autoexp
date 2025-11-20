@@ -98,6 +98,7 @@ class NullMonitorConfig(ConfigInterface):
     start_condition_cmd: str | None = None
     start_condition_interval_seconds: int | None = None
     state_events: list[StateEventConfig] = field(default_factory=list)
+    debug_sync: bool = True
 
 
 @dataclass(kw_only=True)
