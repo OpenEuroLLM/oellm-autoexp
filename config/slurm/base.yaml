@@ -4,7 +4,7 @@ defaults:
 template_path: templates/base.sbatch
 script_dir: ${project.base_output_dir}
 log_dir: ${project.base_output_dir}
-array: true
+array: false
 submit_cmd: sbatch
 launcher_cmd: "python"
 launcher_env_passthrough: false

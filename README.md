@@ -2,10 +2,27 @@
 
 Single CLI surface for planning sweeps, launching jobs (directly or by way of containers), and monitoring SLURM runs by way of declarative configs. See `SPEC.md` for platform-wide goals; this README focuses on the workflows you touch every day.
 
+## Using this repository
+First, clone this repository including its submodules:
+```bash
+git clone https://github.com/OpenEuroLLM/oellm-autoexp.git --recurse-submodules
+```
+Then, install it to have the basic requirements installed:
+```bash
+pip install -e .
+```
+Whenever you have `numpy>=2.0` in your system, apply the annoying `numpy.product` error patch:
+```bash
+bash ./apply_megatron_numpy_product_patch.sh
+```
+
+
+
 ## Cluster setup: LUMI notes
-- Install prerequisites outside the container (rccl-tuner, cray-python, etc.) following LUMI docs.
+- Install prerequisites outside the container (rccl-tuner, cray-python, etc.) following the LUMI docs. (SEE: https://github.com/sfantao/rccl-tuner.git)
 - Build the Megatron container from the provided defs (see `container/megatron/MegatronTrainingLumi.def.in`) so the correct ROCm + network tuning ends up inside the image.
 - Export the usual SLURM/paths (at a minimum `SLURM_ACCOUNT`, `SLURM_PARTITION[_DEBUG]`, `CONTAINER_CACHE_DIR`, `OUTPUT_DIR`) in your profile—scripts read them automatically.
+- Apply the numpy patch, as the container numpy version is too new for `np.product` to be supported still
 
 ## Cluster setup: MARENOSTRUM notes
 You need to install oellm-autoexp or its requirements in a conda environment to run it on MARENOSTRUM. To do this:

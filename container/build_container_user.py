@@ -76,6 +76,11 @@ def parse_args() -> argparse.Namespace:
         help="Preserve the intermediate sandbox directory for inspection.",
     )
     parser.add_argument(
+        "--existing-sandbox",
+        default="",
+        help="Use an existing sandbox for edits.",
+    )
+    parser.add_argument(
         "--tempdir-prefix",
         default="oellm_sandbox",
         type=str,
@@ -303,24 +308,30 @@ def main() -> None:
     substitutions["PROVENANCE_PATH"] = str(provenance_path)
 
     temp_dir_manager = None
-    if args.keep_sandbox:
-        temp_dir = Path(tempfile.mkdtemp(prefix=args.tempdir_prefix))
+
+    if args.existing_sandbox:
+        sandbox_dir = Path(args.existing_sandbox)
+        if not sandbox_dir.exists():
+            raise FileNotFoundError(sandbox_dir)
     else:
-        temp_dir_manager = tempfile.TemporaryDirectory(prefix=args.tempdir_prefix)
-        temp_dir = Path(temp_dir_manager.name)
+        if args.keep_sandbox:
+            temp_dir = Path(tempfile.mkdtemp(prefix=args.tempdir_prefix))
+        else:
+            temp_dir_manager = tempfile.TemporaryDirectory(prefix=args.tempdir_prefix)
+            temp_dir = Path(temp_dir_manager.name)
 
-    sandbox_dir = temp_dir / "sandbox"
+        sandbox_dir = temp_dir / "sandbox"
 
-    sandbox_build_cmd = [
-        container_cmd,
-        "build",
-        "--sandbox",
-        "--force",
-        "--fix-perms",
-        str(sandbox_dir),
-        str(base_image_path),
-    ]
-    run_command(sandbox_build_cmd)
+        sandbox_build_cmd = [
+            container_cmd,
+            "build",
+            "--sandbox",
+            "--force",
+            "--fix-perms",
+            str(sandbox_dir),
+            str(base_image_path),
+        ]
+        run_command(sandbox_build_cmd)
 
     if files_entries:
         copy_into_sandbox(files_entries, sandbox_dir)
