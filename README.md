@@ -36,7 +36,7 @@ You need to install oellm-autoexp or its requirements in a conda environment to 
 
 ## Cluster setup: LEONARDO notes
 For LEONARDO, all should work with a pre-built container image. To build a container image on LEONARDO, please run these commands:
-- Download the pytorch base image from nvcr.io: `singularity build --sandbox --fix-perms --force $CONTAINER_CACHE_DIR/pytorch__25.08-py3_sandbox`
+- Download the pytorch base image from nvcr.io: `singularity build --sandbox --fix-perms --force $CONTAINER_CACHE_DIR/pytorch__25.08-py3_sandbox docker://nvcr.io/nvidia/pytorch:25.08-py3`
 - Build the user-base container (in `container`), but from a compute node: `python build_container_user.py --backend megatron --definition MegatronTrainingNoRoot --append-date --container-cmd singularity --base-image $CONTAINER_CACHE_DIR/pytorch__25.08-py3_sandbox`
 Otherwise, on the login node you run out of resources and get killed.
 
