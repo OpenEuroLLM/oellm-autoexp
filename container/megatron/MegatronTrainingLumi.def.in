@@ -1,5 +1,5 @@
-Bootstrap: docker
-From: /appl/local/containers/sif-images/lumi-pytorch-rocm-6.2.4-python-3.12-pytorch-v2.7.1.sif
+Bootstrap: localimage
+From: /scratch/project_462000394/containers/for-turkunlp-team/lumi-pytorch-rocm-6.2.4-python-3.12-pytorch-v2.7.1-te-dockerhash-560b76ceab56.sif
 
 %labels
     Author OpenSci
