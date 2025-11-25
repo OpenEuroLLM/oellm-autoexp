@@ -1,0 +1,20 @@
+#!/bin/bash
+
+export SLURM_ACCOUNT="project_462000963"
+export DATA_ACCOUNT="project_462000963"
+export SLURM_PARTITION="dev-g"
+export SLURM_PARTITION_DEBUG="dev-g"
+export SLURM_QOS="normal"
+export SLURM_QOS_DEBUG="normal"
+
+export LUMI_SCRATCH="/project_462000963/"
+export WORK="/scratch/$DATA_ACCOUNT/users/$USER"
+export DATA_DIR="$WORK/data"
+export OUTPUT_DIR="$WORK/output"
+export TRITON_CACHE_DIR="$WORK/cache/triton"
+export HF_DATASETS_CACHE="$WORK/data/cache"
+export HF_HOME="$WORK/cache"
+export APPTAINER_CACHEDIR="$WORK/.apptainer/cache"
+export APPTAINER_TMPDIR="$WORK/.tmp"
+export CONTAINER_CACHE_DIR="$WORK/container_cache"
+export ARCH="$(uname -m)"
