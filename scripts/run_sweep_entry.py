@@ -64,7 +64,7 @@ def main() -> None:
     sweep_path = str(Path(args.sweep).expanduser().resolve())
     entry = load_entry(sweep_path, args.index)
 
-    output_dir = Path(entry.get("output_dir", ""))
+    output_dir = Path(entry.get("output_dir", "") + f"_{args.index}")
     if output_dir.as_posix():
         output_dir.mkdir(parents=True, exist_ok=True)
 

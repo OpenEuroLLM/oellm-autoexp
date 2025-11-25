@@ -5,7 +5,6 @@ defaults:
   - /container: lumi
   - /slurm: lumi
   - /monitoring: megatron_basic
-  - /restart: default
   - /project: default
   - /sweep: none
   - /backend/megatron_rocm: [llama1_8b_qkln,megatron_fsdp,speed_test_lumi]

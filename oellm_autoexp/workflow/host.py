@@ -10,16 +10,18 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
+from compoconf import parse_config
+
 from oellm_autoexp.monitor.controller import JobRegistration, MonitorController, MonitorRecord
 from oellm_autoexp.persistence.state_store import MonitorStateStore, StoredJob, _serialize_for_json
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig, BaseSlurmClient
 from oellm_autoexp.workflow.manifest import PlanJobSpec, PlanManifest
-from oellm_autoexp.monitor.policy import BaseRestartPolicy
 from oellm_autoexp.monitor.watcher import BaseMonitor
 from oellm_autoexp.utils.start_condition import (
     resolve_start_condition_interval,
     wait_for_start_condition,
 )
+from oellm_autoexp.config.schema import SlurmConfig
 
 
 def _import_object(module: str, name: str) -> Any:
@@ -31,7 +33,6 @@ def _import_object(module: str, name: str) -> Any:
 class HostRuntime:
     manifest: PlanManifest = field(default_factory=MISSING)
     monitor: BaseMonitor = field(default_factory=MISSING)
-    restart_policies: dict[str, BaseRestartPolicy] = field(default_factory=dict)
     slurm_client: BaseSlurmClient = field(default_factory=MISSING)
     state_store: MonitorStateStore = field(default_factory=MISSING)
     action_queue_dir: Path = field(default_factory=MISSING)
@@ -62,6 +63,31 @@ async def _monitor_loop(
     controller.clear_state()
 
 
+def _monitor_loop_sync(
+    controller: MonitorController,
+    monitor: BaseMonitor,
+    action_queue_dir: Path,
+) -> None:
+    interval = getattr(
+        monitor.config,
+        "check_interval_seconds",
+        getattr(monitor.config, "poll_interval_seconds", 60),
+    )
+    sleep_seconds = max(1, int(interval))
+
+    while list(controller.jobs()):
+        time.sleep(sleep_seconds)
+        cycle = controller.observe_once_sync()
+        records = controller.drain_events()
+        if not records and cycle.events:
+            records = list(cycle.events)
+        actionable = [record for record in records if record.action]
+        if actionable:
+            _record_monitor_events(actionable, action_queue_dir)
+
+    controller.clear_state()
+
+
 def _record_monitor_events(records: list[MonitorRecord], action_queue_dir: Path) -> None:
     action_queue_dir.mkdir(parents=True, exist_ok=True)
     timestamp = int(time.time())
@@ -78,7 +104,7 @@ def _record_monitor_events(records: list[MonitorRecord], action_queue_dir: Path)
             "metadata": _serialize_for_json(record.metadata),
             "created_at": timestamp,
         }
-        name = f"{timestamp}_{idx}_{record.action}.json"
+        name = f"{timestamp}_{record.job_id}_{idx}_{record.action}.json"
         path = action_queue_dir / name
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(
@@ -94,18 +120,12 @@ def build_host_runtime(
 ) -> HostRuntime:
     monitor = manifest.monitor.instantiate()
 
-    restart_policies: dict[str, BaseRestartPolicy] = {}
-    for spec in manifest.restart_policies:
-        policy = spec.instantiate()
-        restart_policies[spec.mode] = policy
-
     if use_fake_slurm:
         slurm_client: BaseSlurmClient = FakeSlurmClient(FakeSlurmClientConfig())
     else:
         slurm_client = manifest.slurm_client.instantiate()
 
-    slurm_config_cls = _import_object(manifest.slurm_config_module, manifest.slurm_config_class)
-    slurm_config_obj = slurm_config_cls(**manifest.slurm_config)
+    slurm_config_obj = parse_config(SlurmConfig, manifest.slurm_config)
     slurm_client.configure(slurm_config_obj)
 
     state_store = MonitorStateStore(manifest.monitoring_state_dir, session_id=manifest.plan_id)
@@ -127,7 +147,6 @@ def build_host_runtime(
     return HostRuntime(
         manifest=manifest,
         monitor=monitor,
-        restart_policies=restart_policies,
         slurm_client=slurm_client,
         state_store=state_store,
         action_queue_dir=action_queue_dir,
@@ -140,7 +159,6 @@ def instantiate_controller(runtime: HostRuntime, *, quiet: bool = False) -> Moni
     controller = MonitorController(
         runtime.monitor,
         runtime.slurm_client,
-        runtime.restart_policies,
         state_store=runtime.state_store,
     )
     restored = restore_jobs(runtime, controller)
@@ -169,6 +187,23 @@ def restore_jobs(
             start_condition_cmd=saved.start_condition_cmd,
             start_condition_interval_seconds=saved.start_condition_interval_seconds,
         )
+        if hasattr(runtime.slurm_client, "register_job"):
+            log_path_for_client = saved.resolved_log_path or saved.log_path
+            try:
+                runtime.slurm_client.register_job(  # type: ignore[attr-defined]
+                    saved.job_id,
+                    saved.name,
+                    saved.script_path,
+                    str(log_path_for_client),
+                    state=saved.last_slurm_state or "PENDING",
+                )
+            except TypeError:
+                runtime.slurm_client.register_job(  # type: ignore[attr-defined]
+                    saved.job_id,
+                    saved.name,
+                    saved.script_path,
+                    saved.log_path,
+                )
         controller.register_job(saved.job_id, registration, attempts=saved.attempts)
         restored_names.add(saved.name)
     return restored_names
@@ -180,7 +215,7 @@ def _register_job(
     job: PlanJobSpec,
     attempts: int = 1,
 ) -> None:
-    metadata = {"parameters": dict(job.parameters)}
+    metadata = {"parameters": dict(job.parameters), "output_dir": job.output_dir}
     registration = JobRegistration(
         name=job.name,
         script_path=job.script_path,
@@ -261,14 +296,28 @@ def submit_pending_jobs(
 
 
 def run_monitoring(runtime: HostRuntime, controller: MonitorController) -> None:
-    asyncio.run(_monitor_loop(controller, runtime.monitor, runtime.action_queue_dir))
+    if runtime.monitor.config.debug_sync:
+        _monitor_loop_sync(controller, runtime.monitor, runtime.action_queue_dir)
+    else:
+        asyncio.run(_monitor_loop(controller, runtime.monitor, runtime.action_queue_dir))
 
 
 def snapshot_runtime(runtime: HostRuntime, controller: MonitorController) -> None:
     """Persist controller state for crash recovery."""
     jobs = []
     for state in controller.jobs():
-        stored = StoredJob.from_registration(state.job_id, state.attempts, state.registration)
+        resolved_log_path = controller._expand_log_path(  # type: ignore[attr-defined]
+            state.job_id,
+            state.registration.log_path,
+        )
+        stored = StoredJob.from_registration(
+            state.job_id,
+            state.attempts,
+            state.registration,
+            resolved_log_path=str(resolved_log_path),
+            monitor_state=state.state.key if state.state else None,
+            slurm_state=state.last_slurm_state,
+        )
         jobs.append(stored)
     runtime.state_store.save_jobs(jobs)
 

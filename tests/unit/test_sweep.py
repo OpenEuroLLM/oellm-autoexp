@@ -40,7 +40,7 @@ def test_build_job_plans_name_template():
     jobs = build_job_plans(root, points)
     assert len(jobs) == 4
     assert jobs[0].name.startswith("demo")
-    assert Path(jobs[0].log_path).name == "slurm.out"
+    assert Path(jobs[0].log_path).name == "slurm-%j.out"
 
 
 def test_build_job_plans_extracts_lifecycle_fields():
@@ -85,3 +85,15 @@ def test_expand_sweep_scalars_and_lists():
     assert len(values) == 6
     assert any(v["flags"] == "a" for v in values)
     assert any(v["nested.x"] == 2 for v in values)
+
+
+def test_expand_sweep_filter_expression():
+    # Only combinations where a * b <= 40 are kept
+    sweep_cfg = SweepConfig(
+        axes={"a": [1, 2, 3], "b": [10, 20, 30]},
+        filter="a * b <= 40",
+    )
+    points = expand_sweep(sweep_cfg)
+    values = [p.parameters for p in points]
+    assert len(values) == 6
+    assert all(v["a"] * v["b"] <= 40 for v in values)

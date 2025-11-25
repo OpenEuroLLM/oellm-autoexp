@@ -11,19 +11,17 @@ output_paths: []
 start_condition_cmd: null
 start_condition_interval_seconds: null
 
-log_signals:
+log_events:
   # Success: validation loss reported (indicates training completed successfully)
   - name: validation_complete
     pattern: 'validation loss at iteration \d+ on test set \| lm loss value: (?P<loss>[\d.E+\-]+)'
     pattern_type: regex
     state:
       class_name: SuccessState
-    actions:
-      - class_name: ErrorNoteAction
-        note: run_finished
     metadata:
       kind: completion
       stage: validation
+      note: run_finished
     extract_groups:
       validation_loss: loss
 
@@ -31,27 +29,12 @@ log_signals:
   - name: checkpoint_saved
     pattern: 'successfully saved checkpoint from iteration\s+(?P<iteration>\d+) to (?P<path>\S+)'
     pattern_type: regex
-    actions:
-      - class_name: ErrorNoteAction
-        note: new_checkpoint
     metadata:
       kind: checkpoint
+      note: new_checkpoint
     extract_groups:
       checkpoint_iteration: iteration
       checkpoint_path: path
-
-  # Training progress: iteration updates
-  # - name: training_iteration
-  #   pattern: '\[[\d\-\s:]+\] iteration\s+(?P<current>\d+)/\s*(?P<total>\d+) \|'
-  #   pattern_type: regex
-  #   actions:
-  #     - class_name: ErrorNoteAction
-  #       note: progress_update
-  #   metadata:
-  #     kind: progress
-  #   extract_groups:
-  #     current_iteration: current
-  #     total_iterations: total
 
   # OOM Error: CUDA out of memory
   - name: cuda_oom
@@ -59,12 +42,10 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: critical
       error_type: oom
+      note: error
     extract_groups:
       allocation_size: size
 
@@ -74,12 +55,10 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: error
       error_type: torch
+      note: error
     extract_groups:
       error_class: error_class
       error_message: message
@@ -90,12 +69,27 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: error
       error_type: exception
+      note: error
     extract_groups:
       exception_type: exception
       error_message: message
+
+state_events:
+  - name: stall
+    state:
+      class_name: StalledState
+  - name: crash
+    state:
+      class_name: CrashState
+  - name: timeout
+    state:
+      class_name: TimeoutState
+  - name: success
+    state:
+      class_name: SuccessState
+    actions:
+      - class_name: LogAction
+        message: "run_finished"

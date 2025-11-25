@@ -35,7 +35,7 @@ Test Workflow:
   1. Generate the plan manifest (`plan_autoexp.py`) and submit/monitor via `submit_autoexp.py`
   2. Simulate various failure scenarios (cancel, hang, OOM, NCCL errors)
   3. Verify that the monitoring system detects failures
-  4. Verify that restart policies work correctly (restart on transient errors, not on OOM)
+  4. Verify that restart bindings fire correctly (restart on transient errors, not on OOM)
   5. Verify that retry limits are respected
 
 Prerequisites:
@@ -54,11 +54,13 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import subprocess
 import time
 import sys
 from pathlib import Path
+import threading
 
 from oellm_autoexp.utils.run import run_with_tee
 
@@ -145,7 +147,7 @@ def check_environment() -> None:
         sys.exit(1)
 
     # Check if we're in the repo root
-    repo_root = Path(__file__).parent.parent
+    repo_root = Path(__file__).parent.parent.parent
     if not (repo_root / "pyproject.toml").exists():
         log_error("Cannot find pyproject.toml in expected location!")
         log_error(f"Expected repo root: {repo_root}")
@@ -231,7 +233,10 @@ def get_job_state(job_id: str) -> str | None:
 
 
 def submit_test_job(
-    micro_batch_size: int = 8, train_iters: int = 100, array_mode: bool = False
+    micro_batch_size: int = 8,
+    train_iters: int = 100,
+    array_mode: bool = False,
+    overrides: list[str] = [],
 ) -> int | None:
     """Submit a test job and return the job ID.
 
@@ -264,7 +269,7 @@ def submit_test_job(
         f"monitoring.log_path_template='logs/{{name}}-%{'A_%a' if array_mode else 'j'}.out'",
         "monitoring.poll_interval_seconds=10",
         "monitoring.check_interval_seconds=10",
-    ]
+    ] + overrides
 
     manifest_path = Path("logs") / f"plan_mbs{micro_batch_size}.json"
     plan_cmd = [
@@ -283,6 +288,18 @@ def submit_test_job(
     if plan_result.returncode != 0:
         log_error("Plan generation failed")
         return None
+
+    try:
+        manifest_json = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        log_warning(f"Unable to read manifest for monitor config: {exc}")
+    else:
+        monitor_spec = manifest_json.get("monitor", {})
+        log_info("Monitor component spec:")
+        log_info(f"  class: {monitor_spec.get('class_name')} ({monitor_spec.get('module')})")
+        cfg_text = json.dumps(monitor_spec.get("config", {}), indent=2)
+        for line in cfg_text.splitlines():
+            log_info(f"    {line}")
 
     submit_cmd = [
         sys.executable,
@@ -305,30 +322,37 @@ def submit_test_job(
         env={**os.environ, "PYTHONUNBUFFERED": "1"},
     )
 
-    # Read output until we get the job ID
-    job_id = None
-    log_lines = []
-    try:
-        for line in monitor_proc.stdout:
-            log_lines.append(line)
-            log_info(f"Monitor output: {line.strip()}")
-            # Expected format: "submitted <name> -> job <job_id> -> log: <path>"
-            if "submitted" in line and "-> job" in line:
-                parts = line.split("-> job")
-                if len(parts) > 1:
-                    job_id_str = parts[1].split("->")[0].strip()
-                    job_id = job_id_str
-                    log_success(f"Submitted job {job_id}")
-                    # Job submitted, monitoring will continue in background
-                    break
-    except Exception as e:
-        log_error(f"Error reading monitor output: {e}")
+    job_ready = threading.Event()
+    job_info: dict[str, str | None] = {"job_id": None}
+
+    def _drain_monitor_output() -> None:
+        assert monitor_proc.stdout is not None  # for mypy
+        monitor_log.parent.mkdir(parents=True, exist_ok=True)
+        with monitor_log.open("w", encoding="utf-8") as log_fp:
+            for line in monitor_proc.stdout:
+                log_fp.write(line)
+                log_fp.flush()
+                log_info(f"Monitor output: {line.strip()}")
+                if job_info["job_id"] is None and "submitted" in line and "-> job" in line:
+                    parts = line.split("-> job")
+                    if len(parts) > 1:
+                        job_id_str = parts[1].split("->")[0].strip()
+                        job_info["job_id"] = job_id_str
+                        job_ready.set()
+
+    reader_thread = threading.Thread(
+        target=_drain_monitor_output, name="monitor-output", daemon=True
+    )
+    reader_thread.start()
+
+    if not job_ready.wait(timeout=120):
+        log_error("Timed out waiting for job submission output")
         monitor_proc.terminate()
         return None
 
+    job_id = job_info["job_id"]
     if job_id is None:
         log_error("Failed to parse job ID from output")
-        log_info(f"Output: {''.join(log_lines)}")
         monitor_proc.terminate()
         return None
 
@@ -445,7 +469,9 @@ def check_for_restart(original_job_id: str, timeout: int = 200) -> int | None:
     return None
 
 
-def test_scenario_scancel(iterations: int = 2, array_mode: bool = False) -> bool:
+def test_scenario_scancel(
+    iterations: int = 2, array_mode: bool = False, overrides: list[str] = []
+) -> bool:
     """Test restart on manual scancel.
 
     Args:
@@ -459,7 +485,9 @@ def test_scenario_scancel(iterations: int = 2, array_mode: bool = False) -> bool
     log(f"{'=' * 60}\n", Colors.BOLD)
 
     # Submit a job that will run for a while
-    job_id = submit_test_job(micro_batch_size=8, train_iters=1000, array_mode=array_mode)
+    job_id = submit_test_job(
+        micro_batch_size=8, train_iters=1000, array_mode=array_mode, overrides=overrides
+    )
     if job_id is None:
         return False
 
@@ -500,13 +528,15 @@ def test_scenario_scancel(iterations: int = 2, array_mode: bool = False) -> bool
     return True
 
 
-def test_scenario_hang(array_mode: bool = False) -> bool:
+def test_scenario_hang(array_mode: bool = False, overrides: list[str] = []) -> bool:
     """Test restart on CUDA hang detection."""
     log(f"\n{'=' * 60}", Colors.BOLD)
     log("TEST: CUDA hang (should restart)", Colors.BOLD)
     log(f"{'=' * 60}\n", Colors.BOLD)
 
-    job_id = submit_test_job(micro_batch_size=8, train_iters=1000, array_mode=array_mode)
+    job_id = submit_test_job(
+        micro_batch_size=8, train_iters=1000, array_mode=array_mode, overrides=overrides
+    )
     if job_id is None:
         return False
 
@@ -546,13 +576,15 @@ def test_scenario_hang(array_mode: bool = False) -> bool:
     return True
 
 
-def test_scenario_nccl_error(array_mode: bool = False) -> bool:
+def test_scenario_nccl_error(array_mode: bool = False, overrides: list[str] = []) -> bool:
     """Test restart on NCCL error detection."""
     log(f"\n{'=' * 60}", Colors.BOLD)
     log("TEST: NCCL error (should restart)", Colors.BOLD)
     log(f"{'=' * 60}\n", Colors.BOLD)
 
-    job_id = submit_test_job(micro_batch_size=8, train_iters=1000, array_mode=array_mode)
+    job_id = submit_test_job(
+        micro_batch_size=8, train_iters=1000, array_mode=array_mode, overrides=overrides
+    )
     if job_id is None:
         return False
 
@@ -589,7 +621,7 @@ def test_scenario_nccl_error(array_mode: bool = False) -> bool:
     return True
 
 
-def test_scenario_oom(array_mode: bool = False) -> bool:
+def test_scenario_oom(array_mode: bool = False, overrides: list[str] = []) -> bool:
     """Test NO restart on OOM (excluded error type).
 
     This submits a job with micro_batch_size=16 which should OOM.
@@ -599,17 +631,19 @@ def test_scenario_oom(array_mode: bool = False) -> bool:
     log(f"{'=' * 60}\n", Colors.BOLD)
 
     # Submit with batch size that causes OOM
-    job_id = submit_test_job(micro_batch_size=16, train_iters=100, array_mode=array_mode)
+    job_id = submit_test_job(
+        micro_batch_size=16, train_iters=100, array_mode=array_mode, overrides=overrides
+    )
     if job_id is None:
         return False
 
     # Wait for job to start and likely OOM
     log_info("Waiting for job to start and hit OOM...")
-    time.sleep(60)
+    time.sleep(120)
 
     # Check if job is still running or failed
     state = get_job_state(job_id)
-    log_info(f"Job state after 60s: {state}")
+    log_info(f"Job state after 120s: {state}")
 
     # Check for restart (should not happen)
     new_job_id = check_for_restart(job_id, timeout=120)
@@ -629,13 +663,18 @@ def test_scenario_oom(array_mode: bool = False) -> bool:
     return True
 
 
-def test_scenario_max_retries(array_mode: bool = False) -> bool:
+def test_scenario_max_retries(array_mode: bool = False, overrides: list[str] = []) -> bool:
     """Test that max_retries is respected."""
     log(f"\n{'=' * 60}", Colors.BOLD)
     log("TEST: Max retries (should stop after 3 restarts)", Colors.BOLD)
     log(f"{'=' * 60}\n", Colors.BOLD)
 
-    job_id = submit_test_job(micro_batch_size=8, train_iters=1000, array_mode=array_mode)
+    job_id = submit_test_job(
+        micro_batch_size=8,
+        train_iters=1000,
+        array_mode=array_mode,
+        overrides=["monitoring.state_events.1.actions.0.conditions.1.max_attempts=2"] + overrides,
+    )
     if job_id is None:
         return False
 
@@ -644,7 +683,7 @@ def test_scenario_max_retries(array_mode: bool = False) -> bool:
         cancel_job(job_id)
         return False
 
-    max_retries = 3
+    max_retries = 1
     for attempt in range(max_retries + 1):  # Try one more than max
         log_info(f"\n--- Attempt {attempt + 1}/{max_retries + 1} ---")
 
@@ -697,6 +736,7 @@ def main() -> int:
         default=False,
         help="Use SLURM array job submission (default: single job mode)",
     )
+    parser.add_argument("override", nargs="*", default=[], help="Overrides")
 
     args = parser.parse_args()
 
@@ -725,15 +765,17 @@ def main() -> int:
 
     for scenario in scenarios:
         if scenario == "scancel":
-            results[scenario] = test_scenario_scancel(args.iterations, args.array_mode)
+            results[scenario] = test_scenario_scancel(
+                args.iterations, args.array_mode, overrides=args.override
+            )
         elif scenario == "hang":
-            results[scenario] = test_scenario_hang(args.array_mode)
+            results[scenario] = test_scenario_hang(args.array_mode, overrides=args.override)
         elif scenario == "nccl":
-            results[scenario] = test_scenario_nccl_error(args.array_mode)
+            results[scenario] = test_scenario_nccl_error(args.array_mode, overrides=args.override)
         elif scenario == "oom":
-            results[scenario] = test_scenario_oom(args.array_mode)
+            results[scenario] = test_scenario_oom(args.array_mode, overrides=args.override)
         elif scenario == "max_retries":
-            results[scenario] = test_scenario_max_retries(args.array_mode)
+            results[scenario] = test_scenario_max_retries(args.array_mode, overrides=args.override)
 
         # Wait between tests
         if len(scenarios) > 1:

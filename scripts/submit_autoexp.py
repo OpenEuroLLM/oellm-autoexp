@@ -85,12 +85,12 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.no_monitor:
-        cmd = f"{sys.executable} scripts/monitor_autoexp.py --manifest {manifest_path}"
+        cmd = f"{sys.executable} scripts/monitor_autoexp.py --session {runtime.state_store.session_id}"
         print("Skipping monitoring (--no-monitor).", flush=True)
         print(f"To monitor later run: {cmd}", flush=True)
         return
 
-    monitor_cmd = f"{sys.executable} scripts/monitor_autoexp.py --manifest {manifest_path}"
+    monitor_cmd = f"{sys.executable} scripts/monitor_autoexp.py --session {runtime.state_store.session_id} --verbose"
 
     try:
         run_monitoring(runtime, controller)

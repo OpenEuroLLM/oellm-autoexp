@@ -5,6 +5,5 @@ defaults:
   - slurm: base
   - monitoring: default
   - sweep: none
-  - restart: default
   - scheduler: default
   - _self_

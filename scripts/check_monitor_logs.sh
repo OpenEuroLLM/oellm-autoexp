@@ -33,8 +33,8 @@ echo "5. Searching for 'classified as mode' in monitor logs:"
 grep -h "classified as mode" logs/monitor_*.log 2>/dev/null | tail -10
 echo ""
 
-echo "6. Searching for 'policy decision' in monitor logs:"
-grep -h "policy decision" logs/monitor_*.log 2>/dev/null | tail -10
+echo "6. Searching for 'restarting job due to event' in monitor logs:"
+grep -h "restarting job due to event" logs/monitor_*.log 2>/dev/null | tail -10
 echo ""
 
 echo "7. Searching for 'sacct' in monitor logs:"

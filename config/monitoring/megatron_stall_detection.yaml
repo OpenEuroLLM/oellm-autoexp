@@ -10,8 +10,20 @@ check_interval_seconds: 90
 # (normal iteration time is ~650ms based on successful run, so 15min is very conservative)
 inactivity_threshold_seconds: 900  # 15 minutes
 
-log_signals:
+log_events:
   # All signals from megatron_basic, plus stall-specific ones:
+
+  - name: inactivity_timeout
+    pattern: ""
+    pattern_type: inactivity
+    state:
+      class_name: StalledState
+    metadata:
+      severity: warning
+      reason: idle_output
+    actions:
+      - class_name: LogAction
+        message: "inactivity_timeout"
 
   # Training stuck/hanging indicator: no progress updates
   # This is implicitly handled by inactivity_threshold_seconds above,
@@ -24,8 +36,8 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
-        note: error
+      - class_name: LogAction
+        message: "cuda_hang"
     metadata:
       severity: critical
       error_type: hang
@@ -40,8 +52,8 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
-        note: error
+      - class_name: LogAction
+        message: "deadlock"
     metadata:
       severity: critical
       error_type: deadlock
@@ -56,8 +68,8 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
-        note: error
+      - class_name: LogAction
+        message: "processgroup_timeout"
     metadata:
       severity: critical
       error_type: distributed_timeout
@@ -72,8 +84,8 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
-        note: error
+      - class_name: LogAction
+        message: "watchdog_timeout"
     metadata:
       severity: critical
       error_type: watchdog_timeout
@@ -85,8 +97,8 @@ log_signals:
     pattern: '(?:NaN|Inf|nan|inf).*(?:gradient|grad).*?(?P<context>.+)'
     pattern_type: regex
     actions:
-      - class_name: ErrorNoteAction
-        note: warning
+      - class_name: LogAction
+        message: "gradient_invalid"
     metadata:
       severity: warning
       error_type: numerical_instability
@@ -100,8 +112,8 @@ log_signals:
     state:
       class_name: CrashState
     actions:
-      - class_name: ErrorNoteAction
-        note: error
+      - class_name: LogAction
+        message: "loss_invalid"
     metadata:
       severity: error
       error_type: numerical_instability

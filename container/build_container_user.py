@@ -10,6 +10,7 @@ environments such as Conda without requiring elevated privileges.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
 import re
@@ -18,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 ENV_VAR_PATTERN = re.compile(r"\$(?:\{([^}]+)\}|([A-Za-z_][A-Za-z0-9_]*))")
@@ -72,6 +74,11 @@ def parse_args() -> argparse.Namespace:
         "--keep-sandbox",
         action="store_true",
         help="Preserve the intermediate sandbox directory for inspection.",
+    )
+    parser.add_argument(
+        "--existing-sandbox",
+        default="",
+        help="Use an existing sandbox for edits.",
     )
     parser.add_argument(
         "--tempdir-prefix",
@@ -170,6 +177,53 @@ def copy_into_sandbox(entries: list[tuple[str, str]], sandbox_dir: Path) -> None
             shutil.copy2(src_path, dst_path)
 
 
+def collect_git_metadata(repo_root: Path) -> tuple[str, bool, str, str]:
+    def run(args: list[str]) -> str:
+        try:
+            result = subprocess.run(
+                args,
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError:
+            return ""
+        return result.stdout.strip()
+
+    commit = run(["git", "rev-parse", "HEAD"]) or "unknown"
+    status = run(["git", "status", "--porcelain"])
+    dirty = bool(status)
+    diff = run(["git", "diff"]) if dirty else ""
+    return commit, dirty, status, diff
+
+
+def write_provenance_file(
+    repo_root: Path,
+    *,
+    base_image: str,
+    args: argparse.Namespace,
+    container_cmd: str,
+    requirements_file: Path,
+    provenance_path: Path,
+) -> None:
+    commit, dirty, status, diff = collect_git_metadata(repo_root)
+    payload = {
+        "built_at": datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(),
+        "git_commit": commit,
+        "git_dirty": dirty,
+        "git_status": status,
+        "git_diff": diff,
+        "build_command": shlex.join(sys.argv),
+        "backend": args.backend,
+        "definition": args.definition,
+        "requirements_file": str(requirements_file),
+        "base_image": base_image,
+        "container_runtime": container_cmd,
+    }
+    provenance_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
 def main() -> None:
     args = parse_args()
 
@@ -210,11 +264,15 @@ def main() -> None:
                 f"Target image {target_path} already exists. Use --force to overwrite."
             )
 
+    provenance_tmp = tempfile.TemporaryDirectory(prefix="oellm_provenance")
+    provenance_path = Path(provenance_tmp.name) / "container_provenance.json"
+
     substitutions = {
         "REPO_ROOT": str(repo_root),
         "REQUIREMENTS_PATH": str(requirements_file),
         "REQUIREMENTS_BASENAME": requirements_file.name,
         "ARCH": arch,
+        "PROVENANCE_PATH": str(provenance_path),
     }
     if args.base_image:
         substitutions["BASE_IMAGE"] = args.base_image
@@ -237,30 +295,43 @@ def main() -> None:
 
     base_image_path = Path(base_image).expanduser()
     if not base_image_path.exists():
-        raise SystemExit(
-            "Base image must be a local .sif file when building without setuid. "
-            f"Provided path not found: {base_image_path}"
-        )
+        base_image_path = base_image
+
+    write_provenance_file(
+        repo_root,
+        base_image=str(base_image_path),
+        args=args,
+        container_cmd=container_cmd,
+        requirements_file=requirements_file,
+        provenance_path=provenance_path,
+    )
+    substitutions["PROVENANCE_PATH"] = str(provenance_path)
 
     temp_dir_manager = None
-    if args.keep_sandbox:
-        temp_dir = Path(tempfile.mkdtemp(prefix=args.tempdir_prefix))
+
+    if args.existing_sandbox:
+        sandbox_dir = Path(args.existing_sandbox)
+        if not sandbox_dir.exists():
+            raise FileNotFoundError(sandbox_dir)
     else:
-        temp_dir_manager = tempfile.TemporaryDirectory(prefix=args.tempdir_prefix)
-        temp_dir = Path(temp_dir_manager.name)
+        if args.keep_sandbox:
+            temp_dir = Path(tempfile.mkdtemp(prefix=args.tempdir_prefix))
+        else:
+            temp_dir_manager = tempfile.TemporaryDirectory(prefix=args.tempdir_prefix)
+            temp_dir = Path(temp_dir_manager.name)
 
-    sandbox_dir = temp_dir / "sandbox"
+        sandbox_dir = temp_dir / "sandbox"
 
-    sandbox_build_cmd = [
-        container_cmd,
-        "build",
-        "--sandbox",
-        "--force",
-        "--fix-perms",
-        str(sandbox_dir),
-        str(base_image_path),
-    ]
-    run_command(sandbox_build_cmd)
+        sandbox_build_cmd = [
+            container_cmd,
+            "build",
+            "--sandbox",
+            "--force",
+            "--fix-perms",
+            str(sandbox_dir),
+            str(base_image_path),
+        ]
+        run_command(sandbox_build_cmd)
 
     if files_entries:
         copy_into_sandbox(files_entries, sandbox_dir)
@@ -286,11 +357,12 @@ def main() -> None:
     if args.force:
         final_build_cmd.append("--force")
     final_build_cmd += [str(target_path), str(sandbox_dir)]
-    print(final_build_cmd)
     run_command(final_build_cmd)
 
     if not args.keep_sandbox and temp_dir_manager is not None:
         temp_dir_manager.cleanup()
+    if provenance_tmp is not None:
+        provenance_tmp.cleanup()
 
     print(f"[+] Image written to {target_path}")
 

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import time
-from dataclasses import asdict
 from pathlib import Path
 from collections.abc import Iterable
+
+from compoconf import asdict
+
 
 from oellm_autoexp.persistence.state_store import _serialize_for_json
 from oellm_autoexp.workflow.manifest import (
@@ -13,7 +15,6 @@ from oellm_autoexp.workflow.manifest import (
     ComponentSpec,
     PlanJobSpec,
     PlanManifest,
-    PolicySpec,
     RenderedArtifactsSpec,
 )
 
@@ -37,17 +38,6 @@ def create_manifest(
     monitor_spec = plan.runtime.monitor.__class__
     monitor_config_cls = monitor.config.__class__
 
-    policy_specs = []
-    for mode, policy in plan.runtime.restart_policies.items():
-        policy_specs.append(
-            (
-                mode,
-                policy.__class__,
-                policy.config.__class__,
-                _serialize_for_json(asdict(policy.config)),
-            )
-        )
-
     slurm_client = plan.runtime.slurm_client
     slurm_client_cls = slurm_client.__class__
     slurm_client_config_cls = slurm_client.config.__class__
@@ -55,12 +45,23 @@ def create_manifest(
     slurm_config_obj = plan.config.slurm
 
     jobs: list[PlanJobSpec] = []
-    for job, script_path in zip(plan.jobs, artifacts.job_scripts):
+
+    script_paths = {job.name: path for job, path in zip(plan.jobs, artifacts.job_scripts)}
+    default_array_script = (
+        str(artifacts.array_script) if artifacts.array_script is not None else None
+    )
+
+    for job in plan.jobs:
+        script_path = script_paths.get(job.name, default_array_script)
+        if script_path is None:
+            # Fallback: this should not happen, but keep manifest valid
+            script_path = f"ARRAY::{plan.config.project.name}"
         jobs.append(
             PlanJobSpec(
                 name=job.name,
                 script_path=str(script_path),
                 log_path=str(job.log_path),
+                output_dir=str(job.output_dir),
                 output_paths=[str(path) for path in job.output_paths],
                 parameters=dict(job.parameters),
                 start_condition_cmd=job.start_condition_cmd,
@@ -109,17 +110,6 @@ def create_manifest(
             config_class=monitor_config_cls.__name__,
             config=_serialize_for_json(asdict(monitor.config)),
         ),
-        restart_policies=[
-            PolicySpec(
-                module=policy_cls.__module__,
-                class_name=policy_cls.__name__,
-                config_module=config_cls.__module__,
-                config_class=config_cls.__name__,
-                config=config_payload,
-                mode=mode,
-            )
-            for mode, policy_cls, config_cls, config_payload in policy_specs
-        ],
         slurm_client=ComponentSpec(
             module=slurm_client_cls.__module__,
             class_name=slurm_client_cls.__name__,

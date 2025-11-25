@@ -35,6 +35,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
 
+      - name: Restore pre-commit cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: ${{ runner.os }}-precommit-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-precommit-
+
       - name: Install tooling
         run: |
           python -m pip install --upgrade pip
@@ -86,6 +94,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
             submodules/Megatron-LM
+
+      - name: Restore pre-commit cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: ${{ runner.os }}-precommit-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-precommit-
 
       - name: Install project
         run: |

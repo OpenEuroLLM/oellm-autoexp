@@ -1,3 +1,3 @@
-from . import controller, policy, watcher
+from . import controller, watcher
 
-__all__ = ["controller", "policy", "watcher"]
+__all__ = ["controller", "watcher"]

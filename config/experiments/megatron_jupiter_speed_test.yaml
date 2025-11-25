@@ -5,7 +5,6 @@ defaults:
   - /container: jupiter
   - /slurm: jupiter
   - /monitoring: megatron_basic
-  - /restart: default
   - /project: default
   - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_jupiter]
   - /sweep: none

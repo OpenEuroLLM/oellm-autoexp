@@ -99,6 +99,21 @@ class StartedState(BaseMonitorState):
 
 
 @dataclass
+class UndefinedStateConfig(ConfigInterface):
+    class_name: str = "UndefinedState"
+    key: str = "undefined"
+
+
+@register
+class UndefinedState(BaseMonitorState):
+    config: UndefinedStateConfig
+
+    @property
+    def key(self) -> str:
+        return self.config.key
+
+
+@dataclass
 class PendingStateConfig(ConfigInterface):
     class_name: str = "PendingState"
     key: str = "pending"

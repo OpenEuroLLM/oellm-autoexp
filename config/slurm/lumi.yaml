@@ -34,6 +34,7 @@ sbatch:
   nodes: 1
   ntasks_per_node: 8
   gpus_per_node: 8
+  gres: "gpu:8"
   cpus_per_task: 7
   time: "00:30:00"
 client:

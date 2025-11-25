@@ -8,7 +8,7 @@ files.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, MISSING
-from typing import Any, Literal
+from typing import Any
 
 from compoconf import (
     ConfigInterface,
@@ -30,11 +30,6 @@ class BackendInterface(RegistrableConfigInterface):
     backend-specific validation. They receive a config dataclass defined via
     ``BackendInterface.cfgtype``.
     """
-
-
-@register_interface
-class RestartPolicyInterface(RegistrableConfigInterface):
-    """Decision logic for handling job errors/stalls."""
 
 
 @register_interface
@@ -87,6 +82,7 @@ class SweepConfig(ConfigInterface):
     base_values: dict[str, Any] = field(default_factory=dict)
     name_template: str = "{project}_{index}"
     store_sweep_json: bool = True
+    filter: str | None = None
 
 
 @dataclass(init=False)
@@ -141,16 +137,6 @@ class SlurmConfig(ConfigInterface):
 
 
 @dataclass(kw_only=True)
-class RestartPolicyConfig(ConfigInterface):
-    """Entry describing how to react to specific error modes."""
-
-    class_name: str = "RestartPolicy"
-    mode: Literal["stall", "crash", "timeout", "success"]
-    implementation: RestartPolicyInterface.cfgtype
-    max_retries: int | None = None
-
-
-@dataclass(kw_only=True)
 class SchedulerConfig(ConfigInterface):
     """Optional scheduler-level throttling and limits."""
 
@@ -170,6 +156,5 @@ class RootConfig(ConfigInterface):
     monitoring: MonitorInterface.cfgtype = field(default_factory=MISSING)
     backend: BackendInterface.cfgtype = field(default_factory=MISSING)
     container: ContainerConfig | None = None
-    restart_policies: list[RestartPolicyConfig] = field(default_factory=list)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     metadata: dict[str, Any] = field(default_factory=dict)

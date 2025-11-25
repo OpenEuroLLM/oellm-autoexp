@@ -30,10 +30,6 @@ monitoring:
 backend:
   implementation:
     class_name: NullBackend
-restart_policies:
-  - mode: success
-    implementation:
-      class_name: NoRestartPolicy
 """
 
 GATING_TEMPLATE = """
@@ -57,10 +53,6 @@ monitoring:
 backend:
   implementation:
     class_name: NullBackend
-restart_policies:
-  - mode: success
-    implementation:
-      class_name: NoRestartPolicy
 """
 
 
@@ -90,6 +82,28 @@ def test_build_execution_plan_and_render(tmp_path: Path) -> None:
         assert Path(script).exists()
         content = Path(script).read_text()
         assert "#SBATCH --job-name=" in content
+
+
+def test_build_execution_plan_subset(tmp_path: Path) -> None:
+    base_output = tmp_path / "outputs"
+    template_path = tmp_path / "template.sbatch"
+    script_dir = tmp_path / "scripts"
+    log_dir = tmp_path / "logs"
+
+    template_path.write_text("#!/bin/bash\n{sbatch_directives}\n\nsrun {srun_opts}{launcher_cmd}\n")
+
+    config_text = CONFIG_TEMPLATE.format(
+        base_output=base_output,
+        template_path=template_path,
+        script_dir=script_dir,
+        log_dir=log_dir,
+    )
+    config_path = tmp_path / "config_subset.yaml"
+    config_path.write_text(config_text)
+
+    plan = build_execution_plan(config_path, subset_indices={1})
+    assert len(plan.jobs) == 1
+    assert plan.jobs[0].name.endswith("_1")
 
 
 def test_render_scripts_with_custom_slurm(tmp_path: Path) -> None:
@@ -128,10 +142,6 @@ monitoring:
 backend:
   implementation:
     class_name: NullBackend
-restart_policies:
-  - mode: success
-    implementation:
-      class_name: NoRestartPolicy
 """
 
     config_path = tmp_path / "config.yaml"
@@ -215,7 +225,6 @@ monitoring:
   class_name: NullMonitor
 backend:
   class_name: NullBackend
-restart_policies: []
 """
 
     config_path = tmp_path / "config.yaml"
@@ -259,7 +268,6 @@ monitoring:
   class_name: NullMonitor
 backend:
   class_name: NullBackend
-restart_policies: []
 """
 
     config_path = tmp_path / "config.yaml"

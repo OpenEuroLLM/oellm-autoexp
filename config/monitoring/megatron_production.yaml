@@ -1,4 +1,9 @@
 # Comprehensive Megatron monitoring for production runs
+# UNCLEAR: inherits megatron_basic log_events + state events via defaults.
+defaults:
+  - megatron_basic
+  - _self_
+
 # Includes: success detection, OOM errors, NCCL issues, and stall detection
 class_name: SlurmLogMonitor
 poll_interval_seconds: 180
@@ -12,7 +17,7 @@ output_paths: []
 start_condition_cmd: null
 start_condition_interval_seconds: null
 
-log_signals:
+log_events:
   # === SUCCESS SIGNALS ===
 
   - name: validation_complete
@@ -20,9 +25,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: SuccessState
-    actions:
-      - class_name: ErrorNoteAction
-        note: run_finished
     metadata:
       kind: completion
       stage: validation
@@ -32,9 +34,6 @@ log_signals:
   - name: checkpoint_saved
     pattern: 'successfully saved checkpoint from iteration\s+(?P<iteration>\d+) to (?P<path>\S+)'
     pattern_type: regex
-    actions:
-      - class_name: ErrorNoteAction
-        note: new_checkpoint
     metadata:
       kind: checkpoint
     extract_groups:
@@ -44,9 +43,6 @@ log_signals:
   - name: training_iteration
     pattern: '\[[\d\-\s:]+\] iteration\s+(?P<current>\d+)/\s*(?P<total>\d+) \|.*lm loss: (?P<loss>[\d.E+\-]+)'
     pattern_type: regex
-    actions:
-      - class_name: ErrorNoteAction
-        note: progress_update
     metadata:
       kind: progress
     extract_groups:
@@ -61,31 +57,25 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: critical
       error_type: oom
       subsystem: cuda
     extract_groups:
       allocation_size: size
-
+    actions: []  # Do not restart on OOM; requires manual intervention
   - name: cpu_oom
-    pattern: '(?:Cannot allocate memory|MemoryError).*?(?P<message>.{0,200})'
+    pattern: '(?:Cannot allocate memory|(?<!OutOf)MemoryError).*?(?P<message>.{0,200})'
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: critical
       error_type: oom
       subsystem: cpu
     extract_groups:
       error_message: message
-
+    actions: []  # Do not restart on OOM; requires manual intervention
   # === NCCL/DISTRIBUTED ERRORS ===
 
   - name: nccl_error
@@ -93,60 +83,80 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: critical
       error_type: nccl
       subsystem: distributed
     extract_groups:
       error_message: message
+    actions:
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4  # initial attempt + 3 retries
+        action:
+          class_name: RestartAction
+          reason: "nccl error restart"
 
   - name: nccl_timeout
     pattern: 'NCCL.*timeout.*(?P<details>.+)'
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: critical
       error_type: nccl_timeout
       subsystem: distributed
     extract_groups:
       timeout_details: details
+    actions:
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "nccl timeout restart"
 
   - name: processgroup_timeout
     pattern: '\[c10d\].*timeout.*(?P<details>.+)'
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: critical
       error_type: distributed_timeout
       subsystem: distributed
     extract_groups:
       timeout_details: details
+    actions:
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "processgroup timeout restart"
 
   - name: communication_error
     pattern: '(?:socket|connection|comm).*(?:error|failed|abort).*?(?P<message>.{0,200})'
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: error
       error_type: communication
       subsystem: distributed
     extract_groups:
       error_message: message
+    actions:
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "communication error restart"
 
   # === NUMERICAL STABILITY ===
 
@@ -155,9 +165,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: error
       error_type: numerical_instability
@@ -168,9 +175,6 @@ log_signals:
   - name: gradient_nan
     pattern: '(?:NaN|nan).*(?:gradient|grad)'
     pattern_type: regex
-    actions:
-      - class_name: ErrorNoteAction
-        note: warning
     metadata:
       severity: warning
       error_type: numerical_instability
@@ -185,30 +189,40 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: critical
       error_type: hang
       subsystem: cuda
     extract_groups:
       error_message: message
+    actions:
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "cuda hang restart"
 
   - name: deadlock
     pattern: '(?:deadlock|Deadlock|DEADLOCK).*?(?P<message>.{0,200})'
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: critical
       error_type: deadlock
       subsystem: distributed
     extract_groups:
       error_message: message
+    actions:
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "deadlock restart"
 
   # === GENERIC ERRORS ===
 
@@ -217,9 +231,6 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: error
       error_type: torch
@@ -232,12 +243,63 @@ log_signals:
     pattern_type: regex
     state:
       class_name: CrashState
-    actions:
-      - class_name: ErrorNoteAction
-        note: error
     metadata:
       severity: error
       error_type: exception
     extract_groups:
       exception_type: exception
       error_message: message
+
+state_events:
+  - name: stall
+    state:
+      class_name: StalledState
+    actions:
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "log inactivity"
+  - name: crash
+    state:
+      class_name: CrashState
+    actions:
+      - class_name: EventAction
+        conditions:
+          - class_name: MetadataCondition
+            key: error_type
+            equals: cancelled
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "retry cancelled job"
+      - class_name: EventAction
+        conditions:
+          - class_name: MetadataCondition
+            key: error_type
+            equals: slurm_failure
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "retry slurm failure"
+  - name: timeout
+    state:
+      class_name: TimeoutState
+    actions:
+      - class_name: EventAction
+        conditions:
+          - class_name: MaxAttemptsCondition
+            max_attempts: 4
+        action:
+          class_name: RestartAction
+          reason: "timeout restart"
+  - name: success
+    state:
+      class_name: SuccessState
+    actions:
+      - class_name: LogAction
+        message: "run_finished"
