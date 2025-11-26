@@ -109,6 +109,7 @@ class ContainerConfig(ConfigInterface):
     bind: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     pwd: str | None = None
+    python: str = "python"
 
 
 @dataclass(kw_only=True)

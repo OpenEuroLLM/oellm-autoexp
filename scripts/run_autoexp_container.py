@@ -13,9 +13,9 @@ from oellm_autoexp.utils.run import run_with_tee
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plan in container, submit on host.")
-    parser.add_argument("--image", help="Container image path")
-    parser.add_argument("--apptainer-cmd", default="singularity")
-    parser.add_argument("--container-python", default="python")
+    parser.add_argument("--image", help="Container image path", default=None)
+    parser.add_argument("--apptainer-cmd", default=None)
+    parser.add_argument("--container-python", default=None)
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--config-ref", default="autoexp")
     parser.add_argument("-C", "--config-dir", type=Path, default=Path("config"))
@@ -132,25 +132,28 @@ def main(argv: list[str] | None = None) -> None:
 
     container_image = args.image
     container_runtime = args.apptainer_cmd
+    container_python = "python"
 
-    if not container_image:
-        cfg = _load_container_config(args.config_ref, args.config_dir, args.override)
-        if cfg:
-            container_image = cfg.get("image")
-            if cfg.get("runtime"):
-                container_runtime = cfg["runtime"]
-            cfg_binds = cfg.get("bind") or []
-            if cfg_binds:
-                args.bind = [*cfg_binds, *getattr(args, "bind", [])]
-            cfg_env = cfg.get("env") or {}
-            if cfg_env:
-                args.env = [*(f"{k}={v}" for k, v in cfg_env.items()), *getattr(args, "env", [])]
-            cfg_pwd = cfg.get("pwd") or None
-            args.pwd = cfg_pwd
-            if container_image:
-                print(f"Using container from config: {container_image}")
+    cfg = _load_container_config(args.config_ref, args.config_dir, args.override)
+    if cfg:
+        container_image = cfg.get("image")
+        if cfg.get("runtime"):
+            container_runtime = cfg["runtime"]
+        cfg_binds = cfg.get("bind") or []
+        if cfg_binds:
+            args.bind = [*cfg_binds, *getattr(args, "bind", [])]
+        cfg_env = cfg.get("env") or {}
+        if cfg_env:
+            args.env = [*(f"{k}={v}" for k, v in cfg_env.items()), *getattr(args, "env", [])]
+        cfg_pwd = cfg.get("pwd") or None
+        args.pwd = cfg_pwd
+        if container_image:
+            print(f"Using container from config: {container_image}")
+        container_python = cfg.get("python") or "python"
 
-    container_python = getattr(args, "container_python", "python")
+    container_image = args.image if args.image else container_image
+    container_runtime = args.apptainer_cmd if args.apptainer_cmd else container_runtime
+    container_python = args.container_python if args.container_python else container_python
 
     plan_cmd = [
         container_python,

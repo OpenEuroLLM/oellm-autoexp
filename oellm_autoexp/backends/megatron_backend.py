@@ -83,6 +83,7 @@ class MegatronBackendConfig(NonStrictDataclass, ConfigInterface):
     torchrun_args: dict[str, Any] = field(default_factory=dict)
     megatron: MegatronConfig = field(default_factory=MegatronConfig)
     differential_cmd: bool = True  # if to only pass non-default arguments
+    python_cmd: str = "python"
 
     def cli_arguments(self) -> dict[str, Any]:
         """Return Megatron arguments from config and dynamic extras."""
@@ -169,7 +170,7 @@ class MegatronBackend(BaseBackend):
 
     def _build_torchrun_args(self) -> list[str]:
         """Build torchrun command line arguments."""
-        args = ["python", "-u", "-m", "torch.distributed.run"]
+        args = [self.config.python_cmd, "-u", "-m", "torch.distributed.run"]
 
         for key, value in self.config.torchrun_args.items():
             key_formatted = key.replace("_", "-")
