@@ -220,3 +220,6 @@ generated/
 
 autoexperiment
 *venv*
+monitor/
+core
+*debug*
