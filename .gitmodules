@@ -4,3 +4,4 @@
 [submodule "submodules/ROCm-Megatron-LM"]
 	path = submodules/ROCm-Megatron-LM
 	url = git@github.com:OpenEuroLLM/ROCm-Megatron-LM.git
+	branch = feature/bias_fix
