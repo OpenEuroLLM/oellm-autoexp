@@ -18,7 +18,9 @@ def _maybe_add_submodule_to_path() -> None:
     """Ensure the bundled Megatron-LM submodule is importable."""
 
     root = Path(__file__).resolve().parents[2]
-    candidate = root / "submodules" / "Megatron-LM"
+    candidate = (
+        root / "submodules" / "ROCm-Megatron-LM"
+    )  # TODO Fix this hardcode to include both megatrons?
     if candidate.exists():
         candidate_str = str(candidate)
         if candidate_str not in sys.path:

@@ -53,7 +53,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     ),
     "add_bias_linear": MegatronArgMetadata(
         arg_type=bool,
-        default=True,
+        default=False,
         help="Disable bias in the linear layers",
         choices=None,
         nargs=0,
@@ -6467,6 +6467,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "te_fallback_layernorm_linear": MegatronActionSpec(
+        option_strings=("--te-fallback-layernorm-linear",),
+        action_type="store_true",
+        nargs=None,
+        const=True,
+        default=False,
     ),
 }
 

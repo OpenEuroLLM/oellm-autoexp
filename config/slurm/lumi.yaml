@@ -11,7 +11,6 @@ srun:
   exclusive: true
   wait: 60
   jobid: "$SLURM_JOB_ID"
-  network: "disable_rdzv_get"
 launcher_env_passthrough: true
 env:
   MACHINE_NAME: LUMI
@@ -20,11 +19,9 @@ env:
   LOCAL_RANK: "0" # will be overridden
   RANK: "0"  # will be overridden
   WORLD_SIZE: ${oc.muli:${..sbatch.nodes},${..sbatch.ntasks_per_node}}
-  NCCL_TUNER_PLUGIN: "${oc.env:HOME}/rccl-tuner/librccl-tuner.so"
   HSA_ENABLE_SDMA: 0
   NCCL_SOCKET_IFNAME: "hsn0,hsn1,hsn2,hsn3"
   NCCL_NET_GDR_LEVEL: "PHB"
-  HSA_FORCE_FINE_GRAIN_PCIE: "1"
   NVTE_DEBUG: "0"
   NVTE_DEBUG_LEVEL: "0"
   CC: "gcc-12"
@@ -34,8 +31,9 @@ sbatch:
   nodes: 1
   ntasks_per_node: 8
   gpus_per_node: 8
-  gres: "gpu:8"
+  gres: null
   cpus_per_task: 7
   time: "00:30:00"
+  mem: 0
 client:
   class_name: SlurmClient

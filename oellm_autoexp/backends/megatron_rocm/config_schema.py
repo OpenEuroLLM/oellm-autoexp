@@ -1408,6 +1408,8 @@ class MegatronConfig(ConfigInterface):
         "transient_error"
     )
 
+    te_fallback_layernorm_linear: bool = False
+
     # Use re-run engine to validate results (default) or to emit stats on variability of
     # computations due to non-deterministic algorithms.
     rerun_mode: Literal["disabled", "validate_results", "report_stats"] = "disabled"

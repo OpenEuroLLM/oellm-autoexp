@@ -395,3 +395,4 @@ weight_decay_incr_style: constant  # choices: ['constant', 'linear', 'cosine'] |
 wgrad_deferral_limit: 0  # Number of micro-batches for whichweight gradient computation of vocabulary projection is deferred, defaults to 0 whichmeans all the micro-batches are deferred. Invalid if `defer-embedding-wgrad-compute`is not set
 window_size: null  # sliding window size
 yaml_cfg: null  # Config file to add additional arguments
+te_fallback_layernorm_linear: false

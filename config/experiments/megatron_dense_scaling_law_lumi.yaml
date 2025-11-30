@@ -1,0 +1,20 @@
+# @package _global_
+defaults:
+  - base
+  - /backend: megatron_rocm
+  - /container: lumi
+  - /slurm: lumi
+  - /monitoring: megatron_basic
+  - /project: default
+  - /sweep: dense_scaling_laws
+  - /backend/megatron_rocm: [dense_50M]
+  - _self_
+
+project:
+  name: dense_scaling_test
+  resume: true
+
+slurm:
+  lumi:
+    partition: small-g
+    time: "02:00:00"
