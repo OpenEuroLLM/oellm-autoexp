@@ -2,8 +2,8 @@ accumulate_allreduce_grads_in_fp32: false  # Gradient accumulation and all-reduc
 adam_beta1: 0.9  # First coefficient for computing running averages of gradient and its square
 adam_beta2: 0.999  # Second coefficient for computing running averages of gradient and its square
 adam_eps: 1.0e-08  # Term added to the denominator to improvenumerical stability
-add_bias_linear: true  # Disable bias in the linear layers
-add_position_embedding: true  # Disable position embedding. Deprecated: use --position-embedding-type
+add_bias_linear: false  # Disable bias in the linear layers
+add_position_embedding: false # Disable position embedding. Deprecated: use --position-embedding-type
 add_qkv_bias: false  # Enable bias only in the QKV linear layers
 adlr_autoresume: false  # Enable autoresume on adlr cluster.
 adlr_autoresume_interval: 1000  # Intervals over which check for autoresumetermination signal
@@ -128,7 +128,7 @@ fp8_param_gather: false  # Keep the compute param in fp8 (do not use any other i
 fp8_wgrad: true  # Execute wgrad in higher precision even for FP8 runs
 fused_padded_mla_attention: false  # Pad value head dim to the size of qk head dim, and run ck fused attention.
 global_batch_size: null  # Training batch size. If set, it should be a multiple of micro-batch-size times data-parallel-size. If this value is None, then use micro-batch-size * data-parallel-size as the global batch size. This choice will result in 1 for number of micro-batches.
-gradient_accumulation_fusion: true  # Disable fusing gradient accumulation to weight gradient computation of linear layers
+gradient_accumulation_fusion: false # Disable fusing gradient accumulation to weight gradient computation of linear layers
 group_query_attention: false  # Use group-query attention.
 head_lr_mult: 1.0  # learning rate multiplier for head during finetuning
 hidden_dropout: 0.1  # Dropout probability for hidden state transformer.
@@ -189,7 +189,7 @@ manual_gc_interval: 0  # Training step interval to trigger manual garbage collec
 mask_factor: 1.0  # mask size scaling parameter
 mask_prob: 0.15  # Probability of replacing a token with mask.
 mask_type: random  # choices: ['random', 'row'] | mask types
-masked_softmax_fusion: true  # Disable fusion of query_key_value scaling, masking, and softmax.
+masked_softmax_fusion: false # Disable fusion of query_key_value scaling, masking, and softmax.
 max_position_embeddings: null  # Maximum number of position embeddings to use. This is the size of position embedding.
 max_tokens_to_oom: 12000  # Maximum number of tokens during inferencetokens here is # in prompt + # to generateAllows us to throw an error before OOM crashes server
 memory_snapshot_path: snapshot.pickle  # Specifies where to dump the memory history pickle.

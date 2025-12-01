@@ -1,0 +1,10 @@
+axes:
+  global_batch_size: [64]
+  # lr: [5.e-4]
+  # global_batch_size: [64, 128, 256, 512]
+  # lr: [5.e-4, 1.e-3, 2.e-3, 4.e-3, 8.e-3]
+
+base_values:
+  run_name: megatron_sweep
+name_template: "${project.name}_{run_name}_m{micro_batch_size}_{index}"
+store_sweep_json: true

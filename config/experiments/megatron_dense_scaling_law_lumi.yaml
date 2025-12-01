@@ -7,12 +7,14 @@ defaults:
   - /monitoring: megatron_basic
   - /project: default
   - /sweep: none
-  - /backend/megatron_rocm: [llama1_8b_qkln,speed_test_lumi]
+  - /backend/megatron_rocm: [dense-50M]
   - _self_
+
 backend:
   megatron_rocm:
     train_iters: 500
     log_throughput: true
+    log_interval: 10
 
 project:
   name: megatron_lumi_speed_test
