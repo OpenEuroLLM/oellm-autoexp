@@ -6,13 +6,12 @@ defaults:
   - /slurm: lumi
   - /monitoring: megatron_basic
   - /project: default
-  - /sweep: none
+  - /sweep: dense_50M_scaling_law
   - /backend/megatron_rocm: [dense-50M]
   - _self_
 
 backend:
   megatron_rocm:
-    train_iters: 500
     log_throughput: true
     log_interval: 10
 

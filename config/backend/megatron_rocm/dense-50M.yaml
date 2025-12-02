@@ -20,7 +20,7 @@ data_cache_path: ${oc.env:WORK}/.cache
 tokenizer_model: EleutherAI/gpt-neox-20b
 tokenizer_type: HuggingFaceTokenizer
 
-micro_batch_size: 16
+# micro_batch_size: 16
 global_batch_size: 512
 
 # MODEL
@@ -53,8 +53,9 @@ pipeline_model_parallel_size: 1
 context_parallel_size: 1
 sequence_parallel: False
 
-lr_warmup_iters: 0
-train_iters: 500
+
+train_iters: ${oc.eval:(${tokens} + ${seq_length} * ${global_batch_size} - 1) // (${seq_length} * ${global_batch_size})}
+lr_wsd_decay_iters: 10
 save_interval: 1000000000
 save: ${project.base_output_dir}
 load: ${project.base_output_dir}

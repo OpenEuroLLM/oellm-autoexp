@@ -1,10 +1,7 @@
 axes:
-  global_batch_size: [64]
-  # lr: [5.e-4]
-  # global_batch_size: [64, 128, 256, 512]
-  # lr: [5.e-4, 1.e-3, 2.e-3, 4.e-3, 8.e-3]
-
+  lr: [5.e-4] #, 1.e-3, 2.e-3, 4.e-3, 8.e-3]
+  global_batch_size: [32] #, 64, 128, 256, 512]
 base_values:
-  run_name: megatron_sweep
-name_template: "${project.name}_{run_name}_m{micro_batch_size}_{index}"
+  run_name: dense_scaling_50M
+name_template: "${project.name}_{run_name}_gbs{global_batch_size}_lr{lr}"
 store_sweep_json: true
