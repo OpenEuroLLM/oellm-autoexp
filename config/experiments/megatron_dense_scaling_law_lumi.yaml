@@ -7,13 +7,52 @@ defaults:
   - /monitoring: megatron_basic
   - /project: default
   - /sweep: dense_50M_scaling_law
-  - /backend/megatron_rocm: [dense-50M]
+  - /backend/megatron_rocm: [model-dense-50M]
   - _self_
 
 backend:
   megatron_rocm:
     log_throughput: true
     log_interval: 10
+      micro_batch_size: 8
+      global_batch_size: 512
+
+
+    # Data configuration
+    seq_length: 4096
+    max_position_embeddings: 4096
+    num_workers: 2
+    split: '99,1,0'
+    data_path:
+      - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-actual
+      - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-syntetic-distill
+      - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-syntetic-diverse_qa_pairs
+      - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-syntetic-extract_knowledge
+      - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-syntetic-knowledge_list
+      - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-syntetic-wrap_medium
+    data_cache_path: ${oc.env:WORK}/.cache
+
+    # Tokenizer configuration
+    tokenizer_model: EleutherAI/gpt-neox-20b
+    tokenizer_type: HuggingFaceTokenizer
+
+    # micro_batch_size: 16
+    global_batch_size: 512
+    
+    # TRAINING, PARALLELISM
+    recompute_activations: False
+    use_torch_fsdp2: False # it's either this or the next 4 args
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: True 
+
+
+    lr_wsd_decay_iters: 10
+    save_interval: 1000000000
+    save: ${project.base_output_dir}
+    load: ${project.base_output_dir}
+    tensorboard_dir: ${project.base_output_dir}/tensorboard
 
 project:
   name: megatron_lumi_speed_test
