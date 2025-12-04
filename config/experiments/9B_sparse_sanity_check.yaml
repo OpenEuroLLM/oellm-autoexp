@@ -7,7 +7,7 @@ defaults:
   - /monitoring: megatron_basic
   - /project: default
   - /sweep: none
-  - /backend/megatron_rocm: base
+  - /backend/megatron: base
   - _self_
 
 project:
@@ -20,7 +20,7 @@ slurm:
     nodes: 2
     time: 01:00:00
 backend:
-  megatron_rocm:
+  megatron:
     log_throughput: true
     log_interval: 1
     log_progress: true
@@ -72,8 +72,9 @@ backend:
     # MEMORY OPTIMIZATIONS
     recompute_activations: False
     use_torch_fsdp2: False # it's either this or the next 4 args
-    tensor_model_parallel_size: 2
+    tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
+    expert_model_parallel_size: 2
     context_parallel_size: 1
     sequence_parallel: True
     use_distributed_optimizer: True

@@ -1,4 +1,0 @@
-use_distributed_optimizer: true
-# data_parallel_sharding_strategy: optim_grads_params
-gradient_accumulation_fusion: false
-tensor_model_parallel_size: 1
