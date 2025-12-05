@@ -107,6 +107,16 @@ def _sanitize_env() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if not pattern.search(key)}
 
 
+def _render_log_hint(log_template: str | Path, job_id: str) -> str:
+    """Expand SLURM log templates (%j, %A, %a) using the submitted job id."""
+    log_str = str(log_template)
+    if "_" in job_id:
+        base_id, array_idx = job_id.split("_", 1)
+        log_str = log_str.replace("%A", base_id)
+        log_str = log_str.replace("%a", array_idx)
+    return log_str.replace("%j", job_id)
+
+
 def _write_job_provenance(
     plan: ExecutionPlan,
     *,
@@ -204,7 +214,6 @@ def main(argv: list[str] | None = None) -> None:
     res = submit_jobs(
         plan, no_error_catching=args.debug, local_mode=args.local, dry_run=args.dry_run
     )
-
     if args.dry_run:
         return
 
