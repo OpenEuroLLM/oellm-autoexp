@@ -292,7 +292,62 @@ def main(argv: list[str] | None = None) -> None:
         res.loop.observe_once()
         exit(0)
 
-    run_loop(res.loop)
+    if args.manifest is not None:
+        manifest_path = Path(args.manifest)
+    else:
+        base_output = Path(plan.config.project.base_output_dir)
+        manifest_path = _default_manifest_path(base_output)
+
+    manifest_path = manifest_path.resolve()
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
+    write_manifest(manifest, manifest_path)
+
+    print(f"Plan manifest written to: {manifest_path}")
+    print(f"Project: {manifest.project_name}")
+    print(f"Jobs: {len(manifest.jobs)}")
+    if manifest.rendered.array:
+        print(
+            f"Array script: {manifest.rendered.array.script_path} ({manifest.rendered.array.size} tasks)"
+        )
+    else:
+        for script in manifest.rendered.job_scripts:
+            print(f"Generated script: {script}")
+    if manifest.rendered.sweep_json:
+        print(f"Sweep manifest: {manifest.rendered.sweep_json}")
+
+    runtime = build_host_runtime(
+        manifest,
+        use_fake_slurm=args.use_fake_slurm,
+        manifest_path=manifest_path,
+    )
+    controller = instantiate_controller(runtime, quiet=True)
+
+    submitted_job_ids = submit_pending_jobs(runtime, controller, dry_run=args.dry_run)
+
+    if submitted_job_ids:
+        jobs_by_id = {state.job_id: state for state in controller.jobs()}
+        for job_id in submitted_job_ids:
+            state = jobs_by_id.get(job_id)
+            job_name = state.name if state else "unknown"
+            log_path = state.registration.log_path if state else "?"
+            log_path = log_path.replace("%j", job_id)
+            print(f"submitted {job_name} -> job {job_id} -> log: {log_path}")
+    else:
+        print("No new jobs submitted; monitoring session already contains all jobs.")
+
+    print(f"Monitoring session: {runtime.state_store.session_id}")
+
+    if args.dry_run:
+        return
+
+    if args.no_monitor:
+        cmd = f"{sys.executable} -u scripts/monitor_autoexp.py --manifest {manifest_path}"
+        print("Skipping monitoring (--no-monitor).")
+        print(f"To monitor later run: {cmd}")
+        return
+
+    run_monitoring(runtime, controller)
 
 
 if __name__ == "__main__":
