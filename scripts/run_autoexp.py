@@ -302,6 +302,7 @@ def main(argv: list[str] | None = None) -> None:
             state = jobs_by_id.get(job_id)
             job_name = state.name if state else "unknown"
             log_path = state.registration.log_path if state else "?"
+            log_path = log_path.replace("%j", job_id)
             print(f"submitted {job_name} -> job {job_id} -> log: {log_path}")
     else:
         print("No new jobs submitted; monitoring session already contains all jobs.")
