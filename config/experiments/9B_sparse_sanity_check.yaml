@@ -16,13 +16,13 @@ project:
   
 slurm:
   sbatch:
-    partition: dev-g
-    nodes: 2
-    time: 01:00:00
+    partition: standard-g
+    nodes: 32
+    time: 2-00:00:00
 backend:
   megatron:
     log_throughput: true
-    log_interval: 1
+    log_interval: 10
     log_progress: true
 
     # MODEL
@@ -31,8 +31,9 @@ backend:
     ffn_hidden_size: 14336 # not used in the current MoE 
     moe_ffn_hidden_size: 1280
     kv_channels: 128
-    moe_router_topk: 8
     num_experts: 64
+    moe_router_topk: 8
+    moe_router_dtype: "fp32"
     moe_grouped_gemm: True 
     moe_aux_loss_coeff: 0.01
     num_attention_heads: 16
@@ -58,8 +59,7 @@ backend:
     max_position_embeddings: 2048
     num_workers: 2
     split: '969,30,1'
-    # data_args_path: local/6040_datapath.txt
-    mock_data: True
+    data_args_path: local/6040_datapath.txt
     data_cache_path: ${oc.env:USER_FLASH}/.cache
 
     # Tokenizer configuration
@@ -78,12 +78,14 @@ backend:
     context_parallel_size: 1
     sequence_parallel: True
     use_distributed_optimizer: True
+    moe_token_dispatcher_type: "allgather"
     
     # COMM OPTIONS
     distributed_timeout_minutes: 120
     overlap_param_gather: True
     overlap_grad_reduce: True
     gradient_accumulation_fusion: False
+    overlap_moe_expert_parallel_comm: True
     bias_swiglu_fusion: False
     add_bias_linear: False
     bias_dropout_fusion: False
@@ -104,9 +106,15 @@ backend:
     lr_warmup_iters: ${oc.eval:'min(${.train_iters} // 10, 25000)'}
     lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
     lr_decay_iters: ${.train_iters}
-
-    save_interval: 1000000000
+    ckpt_format: torch
+    save_interval: 1000
     save: ${project.base_output_dir}
     load: ${project.base_output_dir}
     tensorboard_dir: ${project.base_output_dir}/tensorboard
+    wandb: false 
+    wandb_save_dir: "${project.base_output_dir}/wandb"
+    wandb_project: "${project.name}"
+    wandb_exp_name: "${project.name}"
+
+
 
