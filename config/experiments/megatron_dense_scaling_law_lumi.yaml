@@ -11,10 +11,6 @@ defaults:
   - _self_
 
 project:
-  name: dense_scaling_test
+  name: dense_Scaling
   resume: true
-
-slurm:
-  lumi:
-    partition: small-g
-    time: "02:00:00"
+  base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${project.name}

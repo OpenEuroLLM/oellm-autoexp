@@ -22,7 +22,7 @@ tokenizer_model: EleutherAI/gpt-neox-20b
 tokenizer_type: HuggingFaceTokenizer
 
 micro_batch_size: 16
-global_batch_size: 512
+global_batch_size: 128
 
 # MODEL
 num_layers: 12
@@ -45,6 +45,7 @@ untie_embeddings_and_output_weights: False
 use_flash_attn: True
 attention_softmax_in_fp32: False # OpenSci style
 te_fallback_layernorm_linear: True
+add_bias_linear: True
 
 # TRAINING, PARALLELISM
 group_query_attention: False
@@ -55,19 +56,8 @@ pipeline_model_parallel_size: 1
 context_parallel_size: 1
 sequence_parallel: False
 
-train_iters: 10
-lr_wsd_decay_iters: 10
+# CHECKPOINTS
 save_interval: 1000000000
-save: ${project.base_output_dir}
-load: ${project.base_output_dir}
-tensorboard_dir: ${project.base_output_dir}/tensorboard
-add_bias_linear: true
-
-# SCHEDULER
-min_lr: 0.0
-lr_decay_style: WSD
-lr_wsd_decay_style: linear
-lr_warmup_iters: 1000 # For now we fix it to 1k
 
 #OPTIMIZER
 lr: 0.008
@@ -82,3 +72,6 @@ weight_decay: 0.1
 bias_dropout_fusion: false  # Disable bias and dropout fusion.
 bias_swiglu_fusion: false  # Disable bias and swiglu fusion, the fusion is available only when using megatron-core.
 gradient_accumulation_fusion: false  # Disable fusing gradient accumulation to weight gradient computation of linear layers
+
+#LOGGING
+log_throughput: true

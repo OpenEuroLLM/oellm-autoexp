@@ -1,7 +1,30 @@
 axes:
   lr: [5.e-4, 1.e-3, 2.e-3, 4.e-3, 8.e-3]
-  global_batch_size: [32, 64, 128, 256, 512]
+  global_batch_size: [128, 256, 512]
+
 base_values:
-  run_name: dense_scaling_50M
-name_template: "${project.name}_{run_name}_gbs{global_batch_size}_lr{lr}"
+  run_name: 50M
+  save_interval: 5000
+  ckpt_format: torch
+  min_lr: 0.0
+  lr_decay_style: WSD
+  lr_wsd_decay_style: linear
+  lr_warmup_iters: 1000
+  decay_fraction: 0.2 #Custom value to derive decay iters
+  wandb: true
+  wandb_project: "dense_scaling"
+  eval-iters: 5000
+
+# config/sweep/dense_scaling_laws.yaml
+derived_values:
+  train_iters: "(50000000000 + 4096 * global_batch_size - 1) // (4096 * global_batch_size)" # TOOD: Use oc.eval
+  lr_wsd_decay_iters: "int(train_iters * decay_fraction)"
+  wandb_exp_name: "f'LUMI_50M_lr{lr}_gbs{global_batch_size}'"
+  job_name: "f\"${project.name}_{run_name}_lr{lr}_gbs{global_batch_size}\""  # same as name_template
+  save: "f\"${project.base_output_dir}/{job_name}\""
+  load: "save"
+  tensorboard_dir: "f\"{save}/tensorboard\""
+  wandb_save_dir: "f\"{save}/wandb\""
+
+name_template: "${project.name}_{run_name}_lr{lr}_gbs{global_batch_size}"
 store_sweep_json: true

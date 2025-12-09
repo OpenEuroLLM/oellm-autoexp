@@ -3,8 +3,7 @@ defaults:
   - _self_
 
 template_path: templates/lumi.sbatch
-launcher_cmd: "{{env_exports}} export MIOPEN_USER_DB_PATH=/tmp/$USER-miopen-cache-$SLURM_NODEID ; \
-   export MIOPEN_CUSTOM_CACHE_DIR=$MIOPEN_USER_DB_PATH ; export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; \
+launcher_cmd: "{{env_exports}} export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; \
   ${oc.select:container.runtime,singularity} exec --pwd ${container.pwd} \
   {{bind_flags}}{{env_flags}} ${oc.select:container.image,container.sif}"
 srun:
@@ -29,6 +28,7 @@ env:
   CUDA_DEVICE_MAX_CONNECTIONS: 1
 sbatch:
   nodes: 1
+  partition: dev-g
   ntasks_per_node: 8
   gpus_per_node: 8
   gres: null

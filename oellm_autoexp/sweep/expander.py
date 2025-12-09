@@ -33,6 +33,10 @@ def expand_sweep(config: SweepConfig) -> list[SweepPoint]:
         for key_path, value in combination.items():
             key = _flatten_key(key_path)
             flat[key] = value
+        # Calculate derived values i.e the amount of iterations based on GBS
+        for key, expr in getattr(config, "derived_values", {}).items():
+            if key not in flat:
+                flat[key] = eval(expr, {}, flat)
         # Apply optional filter expression: only keep combinations satisfying the filter
         if config.filter:
             try:

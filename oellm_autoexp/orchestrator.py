@@ -393,7 +393,6 @@ def _build_replacements(
     launcher = f"{launcher_raw} " if launcher_raw else ""
     launcher_env_flags = ""
     launcher_env_exports = ""
-
     # Add bind directories from container yaml
     # The bind directories are within a list of strings, so we seperate this from below
     launcher_bind_flags = ""
@@ -433,6 +432,10 @@ def _build_replacements(
         launcher = launcher.replace("{{env_flags}}", launcher_env_flags)
     if "{{env_exports}}" in launcher:
         launcher = launcher.replace("{{env_exports}}", launcher_env_exports)
+
+    # add newlines to improve readability of the output script
+    backend_cmd = backend_cmd.replace("--", "\\\n--")
+    launcher = launcher.replace(";", ";\\\n")
 
     launcher_cmd = f"{launcher}{backend_cmd}"
     srun_extras = asdict(runtime.root.slurm.srun)
