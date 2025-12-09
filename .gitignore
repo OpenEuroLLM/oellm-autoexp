@@ -223,3 +223,4 @@ autoexperiment
 monitor/
 core
 *debug*
+config/experiments/piccolo_dense_50.yaml
