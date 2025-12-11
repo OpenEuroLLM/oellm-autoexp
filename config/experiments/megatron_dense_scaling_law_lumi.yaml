@@ -14,3 +14,9 @@ project:
   name: dense_Scaling
   resume: true
   base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${project.name}
+
+slurm:
+  sbatch:
+    nodes: 1
+    partition: small-g
+    time: "3-00:00:00"
