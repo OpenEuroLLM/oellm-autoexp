@@ -20,3 +20,7 @@ slurm:
     nodes: 1
     partition: small-g
     time: "3-00:00:00"
+
+backend:
+  megatron_rocm:
+    dataloader_type: cyclic
