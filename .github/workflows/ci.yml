@@ -62,7 +62,6 @@ jobs:
             python: '3.11'
             extras: 'dev'
             checkout_submodules: 'false'
-            schema_only: '1'
             pytest_args: ''
           - name: megatron-extras
             python: '3.11'
@@ -71,9 +70,6 @@ jobs:
             schema_only: '1'
             pytest_args: 'tests/unit/test_megatron_backend.py tests/integration/test_megatron_optional.py'
       fail-fast: false
-
-    env:
-      OELLM_MEGATRON_SCHEMA_ONLY: ${{ matrix.schema_only }}
 
     steps:
       - name: Checkout

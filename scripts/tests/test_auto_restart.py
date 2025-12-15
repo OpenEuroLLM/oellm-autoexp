@@ -25,7 +25,6 @@ Architecture Overview:
     - This approach mirrors the architecture described in SPEC.md and README.md
 
   Schema-only validation mode:
-    - This script sets OELLM_MEGATRON_SCHEMA_ONLY=1 before running
     - This allows oellm-autoexp to validate configs WITHOUT importing Megatron-LM
     - Uses pre-generated config_schema.py instead of megatron_args.py
     - The full Megatron parser validation happens inside the container on compute nodes
@@ -157,11 +156,6 @@ def check_environment() -> None:
     # Change to repo root for consistent paths
     os.chdir(repo_root)
     log_info(f"Working directory: {repo_root}")
-
-    # Enable schema-only mode to avoid importing Megatron-LM on login node
-    # The full validation will happen inside the container on compute nodes
-    os.environ["OELLM_MEGATRON_SCHEMA_ONLY"] = "1"
-    log_info("Enabled schema-only validation mode (no Megatron-LM import required)")
 
     # Set required SLURM environment variables if not already set
     # These are needed by the base config but may not be set in test environment

@@ -1,4 +1,4 @@
-"""Megatron backend adapter that mirrors megatron-train behaviour.
+"""Megatron backend adapter.
 
 Schema-Only Validation Mode
 ============================
@@ -11,7 +11,7 @@ The Megatron backend supports two validation modes:
    - Requires Megatron-LM to be installed or available in submodules/
    - Use this mode when running inside containers with Megatron available
 
-2. **Schema-only mode (set OELLM_MEGATRON_SCHEMA_ONLY=1)**:
+2. **Schema only validation (full_validation=False):
    - Uses pre-generated config_schema.py without importing Megatron-LM
    - Provides basic type checking and argument filtering
    - Does NOT require Megatron-LM to be importable
@@ -26,23 +26,11 @@ In SLURM environments with containers:
   - The login node may not have Megatron-LM installed
   - Schema-only mode allows job submission from login nodes
   - Full validation happens when the job runs inside the container
-
-Usage:
-------
-    # Enable schema-only mode (e.g., on login nodes)
-    export OELLM_MEGATRON_SCHEMA_ONLY=1
-    python scripts/submit_autoexp.py --manifest path/to/plan.json ...
-
-    # Or set in Python before importing
-    import os
-    os.environ["OELLM_MEGATRON_SCHEMA_ONLY"] = "1"
-    from oellm_autoexp import ...
 """
 
 from __future__ import annotations
 
 import math
-import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -59,19 +47,7 @@ from oellm_autoexp.backends.megatron_backend import (
 )
 from oellm_autoexp.backends.megatron_rocm.config_schema import MegatronConfig
 
-# Schema-only mode: use pre-generated schema without importing Megatron-LM
-# This allows validation on login nodes without containers
-USE_SCHEMA_ONLY = os.environ.get("OELLM_MEGATRON_SCHEMA_ONLY", "0") == "1"
-
-if not USE_SCHEMA_ONLY:
-    from oellm_autoexp.backends.megatron_args import (
-        MegatronArgMetadata,
-        get_action_specs,
-        get_arg_metadata,
-        get_megatron_parser,
-    )
-else:
-    from oellm_autoexp.backends.megatron_args import MegatronArgMetadata
+from oellm_autoexp.backends.megatron_args import MegatronArgMetadata
 
 
 @dataclass(init=False)
@@ -108,13 +84,19 @@ class MegatronROCmBackend(MegatronBackend):
 
     def __init__(self, config: MegatronROCmBackendConfig) -> None:
         self.config = config
-        if USE_SCHEMA_ONLY:
+        if not config.full_validation:
             # Schema-only mode: skip parser initialization
             self._parser = None
             self._arg_metadata: dict[str, MegatronArgMetadata] = dict(MEGATRON_ARG_METADATA)
             self._action_specs = dict(MEGATRON_ACTION_SPECS)
             self._schema_only = True
         else:
+            from oellm_autoexp.backends.megatron_args import (
+                get_action_specs,
+                get_arg_metadata,
+                get_megatron_parser,
+            )
+
             self._parser = get_megatron_parser()
             self._arg_metadata: dict[str, MegatronArgMetadata] = get_arg_metadata(self._parser)
             self._action_specs = get_action_specs(self._parser)

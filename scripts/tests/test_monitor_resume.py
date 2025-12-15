@@ -63,7 +63,6 @@ def _check_environment() -> None:
     if not marker.exists():
         raise SystemExit(f"Expected to find {marker}; run from repository root")
 
-    os.environ.setdefault("OELLM_MEGATRON_SCHEMA_ONLY", "1")
     os.environ.setdefault("SLURM_ACCOUNT", os.environ.get("USER", "debug"))
     os.environ.setdefault("SLURM_PARTITION", "batch")
     os.environ.setdefault("SLURM_QOS", "normal")
