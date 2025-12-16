@@ -42,7 +42,7 @@ log_events:
             timeout_seconds: 600
         action:
           class_name: RunAutoexpAction
-          script: scripts/run_autoexp.py
+          script: scripts/run_autoexp_container.py
           config_path: "{output_dir}/provenance/unresolved_config.yaml"
           overrides:
             # Load from original checkpoint (absolute path)
@@ -75,7 +75,7 @@ log_events:
             timeout_seconds: 600
         action:
           class_name: RunAutoexpAction
-          script: scripts/run_autoexp.py
+          script: scripts/run_autoexp_container.py
           config_path: "{output_dir}/provenance/unresolved_config.yaml"
           overrides:
             # Load from original checkpoint (absolute path)
@@ -111,7 +111,7 @@ log_events:
             timeout_seconds: 600
         action:
           class_name: RunAutoexpAction
-          script: scripts/run_autoexp.py
+          script: scripts/run_autoexp_container.py
           config_path: "{output_dir}/provenance/unresolved_config.yaml"
           overrides:
             # Load from original checkpoint (absolute path)
