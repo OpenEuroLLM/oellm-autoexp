@@ -122,10 +122,9 @@ log_events:
             path: "{checkpoint_path}"
             blocking: true
         action:
-          class_name: RunAutoexpAction
-          config_path: "{output_dir}/provenance/config_reference.json"
-          overrides:
-            - evaluation.checkpoint={checkpoint_path}
+          class_name: RunCommandAction
+          # does not work yet
+          command: "python convert_checkpoint.py {checkpoint_path} {checkpoint_path}/../converted"
 
 state_events:
   - name: stall
