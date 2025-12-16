@@ -36,8 +36,6 @@ log_events:
           - class_name: MetadataCondition
             key: checkpoint_iteration
             equals: "10000"
-          - class_name: MaxAttemptsCondition
-            max_attempts: 1
           - class_name: FileExistsCondition
             path: "{checkpoint_path}/latest_checkpointed_iteration.txt"
             blocking: true
@@ -71,8 +69,6 @@ log_events:
           - class_name: MetadataCondition
             key: checkpoint_iteration
             equals: "50000"
-          - class_name: MaxAttemptsCondition
-            max_attempts: 1
           - class_name: FileExistsCondition
             path: "{checkpoint_path}/latest_checkpointed_iteration.txt"
             blocking: true
@@ -109,8 +105,6 @@ log_events:
           - class_name: MetadataCondition
             key: checkpoint_iteration
             equals: "100000"
-          - class_name: MaxAttemptsCondition
-            max_attempts: 1
           - class_name: FileExistsCondition
             path: "{checkpoint_path}/latest_checkpointed_iteration.txt"
             blocking: true

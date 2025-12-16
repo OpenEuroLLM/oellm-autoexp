@@ -58,20 +58,6 @@ log_events:
             - "{checkpoint_path}"
             - "--iteration"
             - "{checkpoint_iteration}"
-      - class_name: EventAction
-        mode: queue
-        conditions:
-          - class_name: MetadataCondition
-            key: trigger
-            equals: checkpoint_evaluation
-        action:
-          class_name: RunAutoexpAction
-          script: scripts/run_autoexp.py
-          config_path: "{output_dir}/provenance/config_reference.json"
-          overrides:
-            - monitor=megatron_basic
-            - checkpoint_path={checkpoint_path}
-            - checkpoint_iteration={checkpoint_iteration}
 
   - name: training_iteration
     pattern: '\[[\d\-\s:]+\] iteration\s+(?P<current>\d+)/\s*(?P<total>\d+) \|.*lm loss: (?P<loss>[\d.E+\-]+)'
