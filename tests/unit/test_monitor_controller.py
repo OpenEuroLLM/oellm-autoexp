@@ -16,6 +16,8 @@ from oellm_autoexp.persistence.state_store import MonitorStateStore
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
 from oellm_autoexp.workflow import host as host_runtime
 
+from types import SimpleNamespace
+
 
 @pytest.fixture
 def controller(tmp_path: Path) -> MonitorController:
@@ -79,7 +81,7 @@ def test_restore_jobs_re_registers_slurm_client(tmp_path: Path) -> None:
         state_store=state_store,
     )
     runtime = host_runtime.HostRuntime(
-        manifest=object(),
+        manifest=SimpleNamespace(config={}),
         monitor=fresh_monitor,
         slurm_client=fresh_slurm,
         state_store=state_store,
@@ -134,8 +136,23 @@ def test_monitor_loop_writes_single_action(tmp_path: Path, monkeypatch) -> None:
 
     controller = DummyController()
     monitor = DummyMonitor()
+    fresh_slurm = FakeSlurmClient(FakeSlurmClientConfig())
+    state_dir = tmp_path / "state"
+    state_store = MonitorStateStore(state_dir)
 
-    asyncio.run(host_runtime._monitor_loop(controller, monitor, tmp_path))
+    runtime = host_runtime.HostRuntime(
+        manifest=SimpleNamespace(config={}),
+        monitor=monitor,
+        slurm_client=fresh_slurm,
+        state_store=state_store,
+        action_queue_dir=tmp_path / "actions",
+    )
+
+    asyncio.run(
+        host_runtime._monitor_loop(
+            controller, monitor, tmp_path, state_store=runtime.state_store, runtime=runtime
+        )
+    )
 
     files = list(tmp_path.glob("*.json"))
     assert len(files) == 1

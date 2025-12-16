@@ -1,0 +1,72 @@
+# Megatron monitoring with single cooldown at specific iteration
+# This configuration triggers a cooldown run when training reaches a specific iteration
+defaults:
+  - megatron_production
+  - _self_
+
+# Cooldown iteration threshold
+metadata:
+  cooldown:
+    iteration: 100  # Cooldown starts at this iteration
+    description: "Single cooldown with reduced learning rate"
+
+log_events:
+  # Monitor checkpoint saves to trigger cooldown
+  - name: checkpoint_saved_cooldown
+    pattern: 'successfully saved checkpoint from iteration\s+(?P<iteration>\d+) to (?P<path>\S+)'
+    pattern_type: regex
+    metadata:
+      kind: checkpoint
+      trigger: cooldown_check
+    extract_groups:
+      checkpoint_iteration: iteration
+      checkpoint_path: path
+    actions:
+      # Log the checkpoint save
+      - class_name: LogAction
+        message: "checkpoint saved at iteration {checkpoint_iteration}"
+
+      # Cooldown action - triggers new training run with modified config
+      - class_name: EventAction
+        mode: queue
+        conditions:
+          # Only execute when we hit the cooldown start iteration
+          - class_name: MetadataCondition
+            key: checkpoint_iteration
+            equals: "100"
+          # Wait for checkpoint to be fully written
+          - class_name: FileExistsCondition
+            path: "{checkpoint_path}/latest_checkpointed_iteration.txt"
+            blocking: true
+            timeout_seconds: 600
+        action:
+          class_name: RunAutoexpAction
+          script: scripts/run_autoexp_container.py
+          # Load unresolved config to enable flexible path management
+          config_path: "{output_dir}/provenance/unresolved_config.yaml"
+          overrides:
+            # Absolute path for load (pinned to original checkpoint)
+            - backend.megatron.load={checkpoint_path}
+
+            # New base_output_dir with cooldown suffix and fresh timestamp
+            # Format: {original}_cooldown_{iteration}_{timestamp}
+            # Note: $$ escapes the interpolation so it's resolved at cooldown run time, not config load time
+            - "project.base_output_dir={project.base_output_dir}_cooldown_{checkpoint_iteration}_\\${oc.timestring:}"
+
+            # Update project name to avoid conflicts
+            - project.name={project.name}_cooldown_{checkpoint_iteration}
+
+            # Cooldown-specific training parameters
+            - backend.megatron.train_iters=200  # Total iterations for cooldown (checkpoint is at 100, so 100 more steps)
+            - backend.megatron.lr=0.0001  # Reduced LR for fine-tuning (10x lower than typical)
+            - backend.megatron.min_lr=0.00001  # Minimum LR for decay
+            - backend.megatron.lr_decay_style=cosine  # Cosine decay for smooth cooldown
+            - backend.megatron.lr_warmup_iters=0  # No warmup when continuing from checkpoint
+            - backend.megatron.override_opt_param_scheduler=true  # Reset scheduler to use these new values
+            - backend.megatron.lr_decay_iters=200  # Decay over the full cooldown period
+
+            # Save will resolve to new base_output_dir automatically
+            # (because unresolved config has: save=${project.base_output_dir}/checkpoints)
+
+            # Use simplified monitoring to avoid recursive cooldowns
+            - monitoring=megatron_basic

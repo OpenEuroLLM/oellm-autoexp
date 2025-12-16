@@ -123,7 +123,7 @@ log_events:
             blocking: true
         action:
           class_name: RunAutoexpAction
-          config_path: "{output_dir}/_provenance/config_reference.json"
+          config_path: "{output_dir}/provenance/config_reference.json"
           overrides:
             - evaluation.checkpoint={checkpoint_path}
 

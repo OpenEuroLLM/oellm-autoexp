@@ -15,7 +15,7 @@ state_events:
           class_name: RunAutoexpAction
           script: scripts/run_autoexp.py
           # UNCLEAR: confirm that the config reference path is stable when manifests move.
-          config_path: "{output_dir}/_provenance/config_reference.json"
+          config_path: "{output_dir}/provenance/config_reference.json"
           overrides:
             - "+mode=evaluation"
             - "+checkpoint_path={output_dir}/checkpoints/latest"

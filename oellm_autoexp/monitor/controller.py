@@ -127,7 +127,8 @@ class MonitorController:
             for record in self._event_records.values():
                 job_id = record.metadata.get("job_id")
                 if job_id:
-                    self._event_index[(str(job_id), record.name)] = record.event_id
+                    key = self._event_key(str(job_id), record.name, record.metadata)
+                    self._event_index[key] = record.event_id
             queue_path = self._state_store.session_path.with_suffix(".actions")
             self._action_queue = ActionQueue(queue_path)
         state_event_cfgs = getattr(self._monitor.config, "state_events", None) or []
@@ -532,7 +533,17 @@ class MonitorController:
 
         return Path(log_str)
 
-    def _event_key(self, job_id: str, event_name: str) -> tuple[str, str]:
+    def _event_key(
+        self, job_id: str, event_name: str, metadata: dict[str, Any] | None = None
+    ) -> tuple[str, str]:
+        """Generate a unique key for event indexing.
+
+        For events with checkpoint_iteration metadata, include it in the
+        key to allow multiple checkpoint events to coexist.
+        """
+        if metadata and "checkpoint_iteration" in metadata:
+            # Include iteration in key so each checkpoint creates a separate event
+            return (str(job_id), f"{event_name}:{metadata['checkpoint_iteration']}")
         return (str(job_id), event_name)
 
     def _get_or_create_event_record(
@@ -540,13 +551,22 @@ class MonitorController:
         state: JobRuntimeState,
         monitor_event: MonitorEvent,
     ) -> EventRecord:
-        key = self._event_key(state.job_id, monitor_event.name)
+        key = self._event_key(state.job_id, monitor_event.name, monitor_event.metadata)
         event_id = self._event_index.get(key)
         if event_id and event_id in self._event_records:
             record = self._event_records[event_id]
             record.touch(payload=dict(monitor_event.metadata))
             return record
-        event_id = f"{state.job_id}:{monitor_event.name}:{int(time.time() * 1000)}"
+
+        # Build event_id with checkpoint_iteration if present (to match event_key logic)
+        if monitor_event.metadata and "checkpoint_iteration" in monitor_event.metadata:
+            event_id = (
+                f"{state.job_id}:{monitor_event.name}:"
+                f"{monitor_event.metadata['checkpoint_iteration']}:{int(time.time() * 1000)}"
+            )
+        else:
+            event_id = f"{state.job_id}:{monitor_event.name}:{int(time.time() * 1000)}"
+
         metadata = {"job_id": state.job_id, "job_name": state.name}
         metadata.update(monitor_event.metadata)
         record = EventRecord(
@@ -566,7 +586,7 @@ class MonitorController:
 
     def _maybe_release_event(self, job_id: str, record: EventRecord) -> None:
         if record.status in {EventStatus.PROCESSED, EventStatus.FAILED}:
-            key = self._event_key(job_id, record.name)
+            key = self._event_key(job_id, record.name, record.metadata)
             self._event_index.pop(key, None)
 
     def _handle_monitor_event(
@@ -698,6 +718,14 @@ class MonitorController:
                     config_payload,
                     event_id=event_record.event_id,
                     metadata={"job": job_metadata, "event": event_record.event_id},
+                )
+                LOGGER.info(
+                    f"Queued action: {binding.action.config.class_name} "
+                    f"(queue_id={record.queue_id}, event_id={event_record.event_id})"
+                )
+                print(
+                    f"[controller] Queued {binding.action.config.class_name} for event {event_record.event_id}",
+                    flush=True,
                 )
                 queued_ids.append(record.queue_id)
                 event_record.set_status(EventStatus.PENDING, note="action queued")

@@ -168,7 +168,72 @@ def load_config_reference(
 ) -> schema.RootConfig:
     path = Path(ref)
     if path.exists():
-        return load_config(path)
+        # If overrides are provided with a direct path, check for config_reference.json
+        # to use Hydra compose with original overrides + new overrides
+        if overrides:
+            # Check for config_reference.json in the same directory
+            config_reference_path = path.parent / "config_reference.json"
+            if config_reference_path.exists():
+                # Load config reference to get original overrides
+                import json
+
+                try:
+                    reference_data = json.loads(config_reference_path.read_text(encoding="utf-8"))
+                    original_config_ref = reference_data.get("config_ref")
+                    original_config_dir = reference_data.get("config_dir")
+                    original_overrides = reference_data.get("overrides", [])
+
+                    # Combine original overrides + new overrides
+                    combined_overrides = list(original_overrides) + list(overrides)
+
+                    print(
+                        f"[config] Using Hydra compose with original overrides + new overrides\n"
+                        f"  Config: {original_config_ref}\n"
+                        f"  Original overrides: {original_overrides}\n"
+                        f"  New overrides: {list(overrides)}\n"
+                        f"  Combined: {combined_overrides}"
+                    )
+
+                    # Use Hydra compose with combined overrides
+                    return load_hydra_config(
+                        original_config_ref, original_config_dir or config_dir, combined_overrides
+                    )
+                except Exception as exc:
+                    print(
+                        f"Warning: Could not load config_reference.json, falling back to OmegaConf: {exc}"
+                    )
+
+            # Fallback: use OmegaConf (won't handle Hydra group overrides properly)
+            register_default_resolvers()
+            _ensure_registrations()
+
+            # Load YAML as OmegaConf
+            cfg = OmegaConf.load(str(path))
+
+            # Apply overrides (Hydra-style: key=value)
+            for override_str in overrides:
+                if "=" not in override_str:
+                    continue
+                key, value = override_str.split("=", 1)
+                # Handle OmegaConf dot notation
+                OmegaConf.update(cfg, key, value, merge=True)
+
+            # Convert to container and parse
+            data = OmegaConf.to_container(cfg, resolve=True)
+            if not isinstance(data, Mapping):
+                raise ConfigLoaderError(f"Config file {path} did not produce a mapping")
+            _ensure_no_deprecated_monitoring_keys(data, source=str(path))
+            data = normalize_config_data(data)
+            try:
+                root = parse_config(schema.RootConfig, data)
+            except Exception as exc:
+                raise ConfigLoaderError(f"Unable to parse config {path}: {exc}") from exc
+
+            ensure_monitoring_state_dir(root)
+            return root
+        else:
+            # No overrides, use simple loader
+            return load_config(path)
     return load_hydra_config(str(ref), config_dir, overrides)
 
 

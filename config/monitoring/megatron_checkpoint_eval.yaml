@@ -67,7 +67,7 @@ log_events:
         action:
           class_name: RunAutoexpAction
           script: scripts/run_autoexp.py
-          config_path: "{output_dir}/_provenance/config_reference.json"
+          config_path: "{output_dir}/provenance/config_reference.json"
           overrides:
             - monitor=megatron_basic
             - checkpoint_path={checkpoint_path}

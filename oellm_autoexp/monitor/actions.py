@@ -7,6 +7,9 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+import re
+from collections.abc import Mapping
+
 
 from compoconf import (
     ConfigInterface,
@@ -19,6 +22,16 @@ from compoconf import (
 from oellm_autoexp.monitor.events import EventRecord, EventStatus
 
 ActionStatus = Literal["success", "retry", "failed"]
+
+_PATTERN = re.compile(r"(?<!\$)\{([^\{\}\$:]+)\}")
+
+
+def replace_braced_keys(s: str, values: Mapping[str, Any]) -> str:
+    def repl(m: re.Match[str]) -> str:
+        key = m.group(1)
+        return str(values[key]) if key in values else m.group(0)  # keep as-is if missing
+
+    return _PATTERN.sub(repl, s)
 
 
 @dataclass(kw_only=True)
@@ -48,7 +61,7 @@ class ActionContext:
 
     def render(self, template: str) -> str:
         try:
-            return template.format(**self.variables)
+            return replace_braced_keys(template, self.variables)
         except KeyError:
             return template
 
@@ -82,6 +95,7 @@ class BaseMonitorAction(RegistrableConfigInterface):
 
 
 def _run_command(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None):
+    print(f"RUNNING: {' '.join(command)}")
     return subprocess.run(
         command,
         cwd=str(cwd) if cwd else None,
@@ -142,6 +156,7 @@ class RunAutoexpActionConfig(ConfigInterface):
     script: str = "scripts/run_autoexp.py"
     overrides: list[str] = field(default_factory=list)
     config_path: str | None = None
+    no_monitor: bool = True  # Skip nested monitoring by default
 
 
 @register
@@ -151,11 +166,26 @@ class RunAutoexpAction(BaseMonitorAction):
     def execute(self, context: ActionContext) -> ActionResult:
         cmd = [sys.executable, self.config.script]
         if self.config.config_path:
-            cmd.extend(["--config-path", context.render(self.config.config_path)])
+            cmd.extend(["--config-ref", context.render(self.config.config_path)])
         cmd.extend(context.render(arg) for arg in self.config.overrides)
-        proc = _run_command(cmd, cwd=context.workspace, env=context.env)
+
+        # Pass --no-monitor flag to prevent nested monitoring loop
+        if self.config.no_monitor:
+            cmd.append("--no-monitor")
+
+        # Pass current session ID to reuse the same monitoring session
+        session_id = context.job_metadata.get("session_id")
+        if session_id:
+            cmd.extend(["--plan-id", session_id])
+
+        env = {**context.env} if context.env else None
+        proc = _run_command(cmd, cwd=context.workspace, env=env)
         if proc.returncode == 0:
-            return ActionResult(status="success", message="run_autoexp completed")
+            return ActionResult(
+                status="success",
+                message="run_autoexp completed",
+                metadata={"session_id": session_id},
+            )
         return ActionResult(
             status="failed",
             message=f"run_autoexp exited {proc.returncode}",

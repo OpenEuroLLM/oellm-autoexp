@@ -7,8 +7,10 @@ import argparse
 import re
 import shlex
 from pathlib import Path
+from omegaconf import OmegaConf
 
 from oellm_autoexp.utils.run import run_with_tee
+from oellm_autoexp.config.loader import load_config_reference
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -67,24 +69,7 @@ def _build_container_command(args: argparse.Namespace, inner: list[str]) -> list
 
 def _load_container_config(config_ref: str, config_dir: Path, overrides: list[str]) -> dict | None:
     try:
-        from hydra import compose, initialize_config_dir
-        from omegaconf import OmegaConf
-    except ImportError:
-        return None
-
-    config_dir = Path(config_dir).resolve()
-    if not config_dir.exists():
-        return None
-
-    try:
-        hydra_overrides = [
-            override.split("=")[0] + '="' + "=".join(override.split("=")[1:]) + '"'
-            if "${" in override
-            else override
-            for override in overrides
-        ]
-        with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
-            cfg = compose(config_name=config_ref, overrides=list(hydra_overrides))
+        cfg = load_config_reference(config_ref, config_dir, overrides)
         container_cfg = OmegaConf.to_container(cfg.get("container", None), resolve=True)
         return container_cfg if container_cfg else None
     except Exception:

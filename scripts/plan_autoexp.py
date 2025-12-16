@@ -4,9 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
+
+from compoconf import asdict
+from omegaconf import OmegaConf
 
 from oellm_autoexp.config.loader import load_config_reference
 from oellm_autoexp.orchestrator import build_execution_plan, render_scripts
@@ -40,12 +45,85 @@ def _default_manifest_path(monitoring_state_dir: Path) -> Path:
     return manifest_dir / f"plan_{timestamp}_{suffix}.json"
 
 
+def _write_job_provenance(
+    plan,
+    *,
+    config_ref: str,
+    config_dir: Path,
+    overrides: list[str],
+) -> None:
+    """Write provenance files for each job in the plan."""
+    resolved_config = asdict(plan.config)
+    config_reference = {
+        "config_ref": config_ref,
+        "config_dir": str(config_dir.resolve()),
+        "overrides": overrides,
+    }
+
+    # Re-load config as OmegaConf to preserve interpolations for unresolved YAML
+    from hydra import compose, initialize_config_dir
+    from hydra.core.global_hydra import GlobalHydra
+    from oellm_autoexp.config.resolvers import register_default_resolvers
+
+    register_default_resolvers()
+    config_dir_resolved = config_dir.resolve()
+
+    # Check if Hydra is already initialized to avoid conflicts
+    try:
+        if GlobalHydra.instance().is_initialized():
+            GlobalHydra.instance().clear()
+    except Exception:
+        pass
+
+    cfg_omega = None
+    try:
+        with initialize_config_dir(version_base=None, config_dir=str(config_dir_resolved)):
+            cfg_omega = compose(config_name=config_ref, overrides=overrides)
+    except Exception as e:
+        print(f"Warning: Could not generate unresolved config YAML: {e}", file=sys.stderr)
+
+    for job in plan.jobs:
+        output_dir = Path(job.output_dir)
+        provenance_dir = output_dir / "provenance"
+        provenance_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write resolved_config.json (for backwards compatibility)
+        resolved_path = provenance_dir / "resolved_config.json"
+        resolved_path.write_text(json.dumps(resolved_config, indent=2), encoding="utf-8")
+
+        # Write YAML configs if Hydra load succeeded
+        if cfg_omega is not None:
+            try:
+                # Resolved YAML (fully resolved)
+                resolved_yaml_path = provenance_dir / "resolved_config.yaml"
+                OmegaConf.save(config=cfg_omega, f=str(resolved_yaml_path), resolve=True)
+
+                # Unresolved YAML (keep ${...} interpolations)
+                unresolved_yaml_path = provenance_dir / "unresolved_config.yaml"
+                OmegaConf.save(config=cfg_omega, f=str(unresolved_yaml_path), resolve=False)
+            except Exception as e:
+                print(f"Warning: Could not write YAML configs: {e}", file=sys.stderr)
+
+        # Write config_reference.json (for Hydra reconstruction)
+        reference_path = provenance_dir / "config_reference.json"
+        reference_path.write_text(json.dumps(config_reference, indent=2), encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     config_dir = Path(args.config_dir)
 
     root = load_config_reference(args.config_ref, config_dir, args.override)
     plan = build_execution_plan(root)
+
+    # Write provenance files for each job
+    _write_job_provenance(
+        plan,
+        config_ref=args.config_ref,
+        config_dir=config_dir,
+        overrides=args.override,
+    )
+
     artifacts = render_scripts(plan)
 
     manifest = create_manifest(

@@ -169,6 +169,7 @@ class SlurmLogMonitorConfig(NullMonitorConfig):
     state_whitelist: list[str] = field(default_factory=lambda: ["pending", "running", "stall"])
     state_events: list[StateEventConfig] = field(default_factory=list)
     debug_sync: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @register

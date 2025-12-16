@@ -7,6 +7,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+import re
+from collections.abc import Mapping
+
 
 from compoconf import (
     ConfigInterface,
@@ -18,6 +21,17 @@ from compoconf import (
 from oellm_autoexp.monitor.events import EventRecord
 
 ConditionStatus = Literal["pass", "fail", "waiting"]
+
+
+_PATTERN = re.compile(r"(?<!\$)\{([^\{\}\$:]+)\}")
+
+
+def replace_braced_keys(s: str, values: Mapping[str, Any]) -> str:
+    def repl(m: re.Match[str]) -> str:
+        key = m.group(1)
+        return str(values[key]) if key in values else m.group(0)  # keep as-is if missing
+
+    return _PATTERN.sub(repl, s)
 
 
 @register_interface
@@ -58,7 +72,7 @@ class ConditionContext:
 
     def render(self, template: str) -> str:
         try:
-            return template.format(**self.variables)
+            return replace_braced_keys(template, self.variables)
         except KeyError:
             return template
 

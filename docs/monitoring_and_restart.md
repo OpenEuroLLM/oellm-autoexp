@@ -65,7 +65,7 @@ state_events:
         action:
           class_name: RunAutoexpAction
           script: scripts/run_autoexp.py
-          config_path: "{output_dir}/_provenance/config_reference.json"
+          config_path: "{output_dir}/provenance/config_reference.json"
           overrides:
             - "+mode=evaluation"
       - class_name: EventAction
@@ -163,7 +163,7 @@ state_events:
         mode: queue
         action:
           class_name: RunAutoexpAction
-          config_path: "{output_dir}/_provenance/config_reference.json"
+          config_path: "{output_dir}/provenance/config_reference.json"
           overrides:
             - "+mode=evaluation"
 ```

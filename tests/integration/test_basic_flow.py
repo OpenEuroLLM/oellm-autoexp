@@ -84,7 +84,7 @@ monitoring:
           action:
             class_name: RunAutoexpAction
             script: scripts/run_autoexp.py
-            config_path: "{{output_dir}}/_provenance/config_reference.json"
+            config_path: "{{output_dir}}/provenance/config_reference.json"
             overrides:
               - "evaluation.checkpoint={{checkpoint_path}}"
   state_events:
@@ -274,7 +274,7 @@ def test_run_autoexp_action_queue(tmp_path: Path, monkeypatch) -> None:
     assert len(records) == 1
     record = records[0]
     assert record.action_class == "RunAutoexpAction"
-    assert record.config["config_path"].endswith("_provenance/config_reference.json")
+    assert record.config["config_path"].endswith("provenance/config_reference.json")
     assert str(ckpt_one) in record.config["overrides"][0]
     assert record.metadata["job"]["job_name"] == job.name
 

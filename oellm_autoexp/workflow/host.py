@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass, field, MISSING
 from importlib import import_module
@@ -13,6 +14,8 @@ from typing import Any
 from compoconf import parse_config
 
 from oellm_autoexp.monitor.controller import JobRegistration, MonitorController, MonitorRecord
+from oellm_autoexp.monitor.action_queue import ActionQueue
+from oellm_autoexp.monitor.actions import ActionContext, BaseMonitorAction
 from oellm_autoexp.persistence.state_store import MonitorStateStore, StoredJob, _serialize_for_json
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig, BaseSlurmClient
 from oellm_autoexp.workflow.manifest import PlanJobSpec, PlanManifest
@@ -24,9 +27,28 @@ from oellm_autoexp.utils.start_condition import (
 from oellm_autoexp.config.schema import SlurmConfig
 
 
+LOGGER = logging.getLogger(__name__)
+
+
 def _import_object(module: str, name: str) -> Any:
     mod = import_module(module)
     return getattr(mod, name)
+
+
+def _flatten_config(config: dict[str, Any], parent_key: str = "", sep: str = ".") -> dict[str, Any]:
+    """Flatten nested config dict so {project.name} template syntax works.
+
+    Example:
+        {"project": {"name": "test"}} -> {"project.name": "test"}
+    """
+    items: list[tuple[str, Any]] = []
+    for k, v in config.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(_flatten_config(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
 
 
 @dataclass(kw_only=True)
@@ -38,10 +60,106 @@ class HostRuntime:
     action_queue_dir: Path = field(default_factory=MISSING)
 
 
+def _process_action_queue(
+    state_store: MonitorStateStore,
+    controller: MonitorController,
+    runtime: HostRuntime,
+) -> int:
+    """Process all pending actions in the queue and return count of processed
+    actions."""
+    queue = ActionQueue(state_store.session_path.with_suffix(".actions"))
+    processed = 0
+
+    # Track existing jobs before processing actions
+    existing_job_ids = {state.job_id for state in controller.jobs()}
+
+    while True:
+        record = queue.claim_next()
+        if record is None:
+            break
+
+        print(
+            f"[worker] Processing {record.action_class} (queue_id={record.queue_id}, event_id={record.event_id})",
+            flush=True,
+        )
+
+        events = state_store.load_events()
+        event_record = events.get(record.event_id)
+        if event_record is None:
+            error_msg = f"Event record not found for event_id={record.event_id}"
+            print(f"[worker] ERROR: {error_msg}", flush=True)
+            queue.mark_done(
+                record.queue_id,
+                status="failed",
+                result={"error": error_msg},
+            )
+            continue
+
+        cfg_dict = dict(record.config)
+        cfg_dict.setdefault("class_name", record.action_class)
+
+        try:
+            action_cfg = parse_config(BaseMonitorAction.cfgtype, cfg_dict)
+            action = action_cfg.instantiate(BaseMonitorAction)
+        except Exception as exc:
+            queue.mark_done(
+                record.queue_id,
+                status="failed",
+                result={"error": f"failed to instantiate action: {exc}"},
+            )
+            continue
+
+        context = ActionContext(
+            event=event_record,
+            job_metadata=record.metadata.get("job", {}),
+            workspace=None,
+            env={},
+        )
+
+        try:
+            result = action.execute(context)
+        except Exception as exc:
+            queue.mark_done(
+                record.queue_id,
+                status="failed",
+                result={"error": str(exc)},
+            )
+            continue
+
+        action.update_event(event_record, result)
+        state_store.upsert_event(event_record)
+        queue.mark_done(
+            record.queue_id,
+            status="done" if result.status == "success" else "failed",
+            result={"message": result.message, "metadata": result.metadata},
+        )
+        processed += 1
+
+    # After processing all actions, check if new jobs were submitted to this session
+    restored = restore_jobs(runtime, controller)
+    new_jobs = [
+        name
+        for name in restored
+        if name
+        and not any(
+            state.name == name for state in controller.jobs() if state.job_id in existing_job_ids
+        )
+    ]
+    if new_jobs:
+        print(
+            f"[worker] Registered {len(new_jobs)} new job(s) from actions: {', '.join(new_jobs)}",
+            flush=True,
+        )
+
+    return processed
+
+
 async def _monitor_loop(
     controller: MonitorController,
     monitor: BaseMonitor,
     action_queue_dir: Path,
+    state_store: MonitorStateStore,
+    runtime: HostRuntime,
 ) -> None:
     interval = getattr(
         monitor.config,
@@ -60,6 +178,22 @@ async def _monitor_loop(
         if actionable:
             _record_monitor_events(actionable, action_queue_dir)
 
+        # Process queued actions automatically
+        processed = _process_action_queue(state_store, controller, runtime)
+        if processed > 0:
+            print(f"Processed {processed} queued action(s).", flush=True)
+        else:
+            # Debug: check if there are any queued actions
+            queue = ActionQueue(state_store.session_path.with_suffix(".actions"))
+            pending = [r for r in queue.list() if r.status == "pending"]
+            if pending:
+                print(f"WARNING: {len(pending)} actions queued but not processed!", flush=True)
+                for r in pending[:3]:  # Show first 3
+                    print(
+                        f"  - {r.action_class} (event_id={r.event_id}, status={r.status})",
+                        flush=True,
+                    )
+
     controller.clear_state()
 
 
@@ -67,6 +201,8 @@ def _monitor_loop_sync(
     controller: MonitorController,
     monitor: BaseMonitor,
     action_queue_dir: Path,
+    state_store: MonitorStateStore,
+    runtime: HostRuntime,
 ) -> None:
     interval = getattr(
         monitor.config,
@@ -85,12 +221,28 @@ def _monitor_loop_sync(
         if actionable:
             _record_monitor_events(actionable, action_queue_dir)
 
+        # Process queued actions automatically
+        processed = _process_action_queue(state_store, controller, runtime)
+        if processed > 0:
+            print(f"Processed {processed} queued action(s).", flush=True)
+        else:
+            # Debug: check if there are any queued actions
+            queue = ActionQueue(state_store.session_path.with_suffix(".actions"))
+            pending = [r for r in queue.list() if r.status == "pending"]
+            if pending:
+                print(f"WARNING: {len(pending)} actions queued but not processed!", flush=True)
+                for r in pending[:3]:  # Show first 3
+                    print(
+                        f"  - {r.action_class} (event_id={r.event_id}, status={r.status})",
+                        flush=True,
+                    )
+
     controller.clear_state()
 
 
 def _record_monitor_events(records: list[MonitorRecord], action_queue_dir: Path) -> None:
     action_queue_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = int(time.time())
+    timestamp = int(time.time() * 1000)  # Millisecond precision to avoid overwrites
     for idx, record in enumerate(records):
         if not record.action:
             continue
@@ -104,7 +256,12 @@ def _record_monitor_events(records: list[MonitorRecord], action_queue_dir: Path)
             "metadata": _serialize_for_json(record.metadata),
             "created_at": timestamp,
         }
-        name = f"{timestamp}_{record.job_id}_{idx}_{record.action}.json"
+        # Include checkpoint_iteration in filename if present to avoid overwrites
+        checkpoint_iter = record.metadata.get("checkpoint_iteration", "")
+        if checkpoint_iter:
+            name = f"{timestamp}_{record.job_id}_iter{checkpoint_iter}_{idx}_{record.action}.json"
+        else:
+            name = f"{timestamp}_{record.job_id}_{idx}_{record.action}.json"
         path = action_queue_dir / name
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(
@@ -175,11 +332,18 @@ def restore_jobs(
     restored_names: set[str] = set()
 
     for saved in saved_jobs.values():
+        metadata = dict(saved.metadata)
+
+        # Add flattened config to metadata so templates like {project.name} work
+        if runtime.manifest.config:
+            flattened = _flatten_config(runtime.manifest.config)
+            metadata.update(flattened)
+
         registration = JobRegistration(
             name=saved.name,
             script_path=saved.script_path,
             log_path=saved.log_path,
-            metadata=dict(saved.metadata),
+            metadata=metadata,
             termination_string=saved.termination_string,
             termination_command=saved.termination_command,
             inactivity_threshold_seconds=saved.inactivity_threshold_seconds,
@@ -213,9 +377,24 @@ def _register_job(
     controller: MonitorController,
     job_id: str,
     job: PlanJobSpec,
+    config: dict[str, Any] | None = None,
     attempts: int = 1,
+    session_id: str | None = None,
 ) -> None:
     metadata = {"parameters": dict(job.parameters), "output_dir": job.output_dir}
+
+    # Add session_id to metadata so actions can reuse it for nested jobs
+    if session_id:
+        metadata["session_id"] = session_id
+
+    # Add flattened config to metadata so templates like {project.name} work
+    if config:
+        flattened = _flatten_config(config)
+        metadata.update(flattened)
+        # Debug: show a sample of flattened config keys
+        sample_keys = list(flattened.keys())[:5]
+        LOGGER.debug(f"Added {len(flattened)} config keys to job metadata (sample: {sample_keys})")
+
     registration = JobRegistration(
         name=job.name,
         script_path=job.script_path,
@@ -265,7 +444,13 @@ def submit_pending_jobs(
             if len(job_ids) != len(pending_jobs):
                 raise RuntimeError("SLURM client returned mismatched job ids for array submission")
             for job_id, job in zip(job_ids, pending_jobs):
-                _register_job(controller, job_id, job)
+                _register_job(
+                    controller,
+                    job_id,
+                    job,
+                    config=runtime.manifest.config,
+                    session_id=runtime.state_store.session_id,
+                )
                 submitted_job_ids.append(job_id)
         return submitted_job_ids
 
@@ -289,7 +474,13 @@ def submit_pending_jobs(
             continue
 
         job_id = slurm_client.submit(job.name, job.script_path, job.log_path)
-        _register_job(controller, job_id, job)
+        _register_job(
+            controller,
+            job_id,
+            job,
+            config=runtime.manifest.config,
+            session_id=runtime.state_store.session_id,
+        )
         submitted_job_ids.append(job_id)
 
     return submitted_job_ids
@@ -297,9 +488,15 @@ def submit_pending_jobs(
 
 def run_monitoring(runtime: HostRuntime, controller: MonitorController) -> None:
     if runtime.monitor.config.debug_sync:
-        _monitor_loop_sync(controller, runtime.monitor, runtime.action_queue_dir)
+        _monitor_loop_sync(
+            controller, runtime.monitor, runtime.action_queue_dir, runtime.state_store, runtime
+        )
     else:
-        asyncio.run(_monitor_loop(controller, runtime.monitor, runtime.action_queue_dir))
+        asyncio.run(
+            _monitor_loop(
+                controller, runtime.monitor, runtime.action_queue_dir, runtime.state_store, runtime
+            )
+        )
 
 
 def snapshot_runtime(runtime: HostRuntime, controller: MonitorController) -> None:
