@@ -11,12 +11,12 @@ create_attention_mask_in_dataloader: False
 data_path:
   # These show high performance in initial experiments
   - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-actual
-  # - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-wrap_medium
-  # - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-extract_knowledge
+  - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-wrap_medium
+  - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-extract_knowledge
 
-  # - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-diverse_qa_pairs
-  # - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-knowledge_list
-  # - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-distill
+  - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-diverse_qa_pairs
+  - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-knowledge_list
+  - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-distill
 data_cache_path: /flash/project_462000353/rluukkon/cache
 
 # Tokenizer
