@@ -1,0 +1,30 @@
+# @package backend.megatron
+# Data configuration
+global_batch_size: 1024
+seq_length: 2048 
+
+max_position_embeddings: ${.seq_length}
+num_workers: 7
+split: '99,1,0'
+create_attention_mask_in_dataloader: False
+# data_args_path: local/6040_datapath.txt
+data_path:
+  # These show high performance in initial experiments
+  - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-actual
+  # - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-wrap_medium
+  # - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-extract_knowledge
+
+  # - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-diverse_qa_pairs
+  # - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-knowledge_list
+  # - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-distill
+data_cache_path: /flash/project_462000353/rluukkon/cache
+
+# Tokenizer
+tokenizer_model: EleutherAI/gpt-neox-20b
+tokenizer_type: HuggingFaceTokenizer
+# tokenizer_model: google/gemma-3-27b-pt
+# tokenizer_type: HuggingFaceTokenizer
+
+# DATA
+micro_batch_size: 16
+

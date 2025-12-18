@@ -1,0 +1,27 @@
+# @package backend.megatron
+
+micro_batch_size: 8
+global_batch_size: 512
+
+# MODEL
+num_layers: 12
+hidden_size: 384
+ffn_hidden_size: 1536
+num_attention_heads: 6
+init_method_std: 0.02
+position_embedding_type: "rope"
+rotary_base: 10000
+rotary_percent: 1.0
+num_query_groups: 6 # no gqa when NUM_QUERY_GROUPS==NUM_ATTENTION_HEADS TODO: check
+group_query_attention: False
+attention_dropout: 0.0
+hidden_dropout: 0.0
+normalization: RMSNorm
+norm_epsilon: 1.e-5 # rmsnorm epsilon
+qk_layernorm: True # potentially enable qk-norm
+bf16: True
+swiglu: True
+untie_embeddings_and_output_weights: False
+use_flash_attn: True
+attention_softmax_in_fp32: False # OpenSci style
+
