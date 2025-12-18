@@ -7,7 +7,8 @@ defaults:
   - /monitoring: megatron_basic
   - /project: default
   - /sweep: none
-  - /backend/megatron: [moe_0.7B_115M, moe_ablation_data]
+  - /experiments/rluukkon/models: moe_0.7B_115M
+  - /experiments/rluukkon/data:   moe_ablation_data
   - _self_
 
 project:
@@ -17,8 +18,8 @@ project:
 slurm:
   sbatch:
     partition: standard-g
-    nodes: 8
-    time: 0-10:00:00
+    nodes: 4
+    time: 0-00:10:00
 
 backend:
   megatron:
