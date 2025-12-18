@@ -17,8 +17,8 @@ project:
   
 slurm:
   sbatch:
-    partition: dev-g
-    nodes: 1
+    partition: standard-g
+    nodes: 4
     time: 0-00:10:00
 
 backend:

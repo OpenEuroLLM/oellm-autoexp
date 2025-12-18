@@ -18,8 +18,8 @@ project:
 slurm:
   sbatch:
     partition: standard-g
-    nodes: 8
-    time: 0-10:00:00
+    nodes: 4
+    time: 0-00:10:00
 
 backend:
   megatron:
