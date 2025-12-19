@@ -19,6 +19,7 @@ class EventActionConfig(ConfigInterface):
     mode: Literal["inline", "queue"] = "inline"
     action: BaseMonitorAction.cfgtype | None = None
     conditions: list[MonitorConditionInterface.cfgtype] = field(default_factory=list)
+    aux: dict[str, Any] = field(default_factory=dict)
 
 
 @register

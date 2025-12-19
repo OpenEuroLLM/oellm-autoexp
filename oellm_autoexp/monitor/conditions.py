@@ -286,6 +286,7 @@ class MetadataConditionConfig(ConfigInterface):
     class_name: str = "MetadataCondition"
     key: str = ""
     equals: Any | None = None
+    within: list[Any] | None = None
 
 
 @register
@@ -304,6 +305,11 @@ class MetadataCondition(BaseCondition):
             return ConditionResult(
                 status="fail",
                 message=f"metadata key '{self.config.key}' != {self.config.equals!r}",
+            )
+        if self.config.within is not None and value not in self.config.within:
+            return ConditionResult(
+                status="fail",
+                message=f"metadata key '{self.config.key}' not in {self.config.within!r}",
             )
         return ConditionResult(status="pass")
 
