@@ -1,4 +1,5 @@
 image: ${oc.env:CONTAINER_CACHE_DIR}/MegatronTrainingLumi_x86_64.sif
+# image: /scratch/project_462000394/containers/for-turkunlp-team/lumi-pytorch-rocm-6.2.4-python-3.12-pytorch-v2.7.1-te-dockerhash-560b76ceab56.sif
 runtime: singularity
 bind:
   [
