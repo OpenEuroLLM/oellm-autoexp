@@ -6,7 +6,7 @@ class_name: AutoMegatronBackend
 launcher_script: ${.env.RUN_DIR}/pretrain_gpt.py
 use_torchrun: true
 python_cmd: "python"
-full_validation: true
+full_validation: false 
 torchrun_args:
   nproc_per_node: ${slurm.sbatch.gpus_per_node}
   nnodes: ${slurm.sbatch.nodes}

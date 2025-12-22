@@ -30,10 +30,12 @@ env:
   CC: "gcc-12"
   CXX: "g++-12"
   CUDA_DEVICE_MAX_CONNECTIONS: 1
+  USE_ROCM_AITER_ROPE_BACKEND: 0
 sbatch:
   nodes: 1
-  ntasks_per_node: 8
+  ntasks_per_node: 1
   gpus_per_node: 8
+  mem: "0"
   gres: "gpu:8"
   cpus_per_task: 7
   time: "00:30:00"
