@@ -1350,7 +1350,7 @@ class MegatronConfig(ConfigInterface):
     moe_router_padding_for_fp8: bool = False
 
     # Scaling coefficient for the aux loss: a starting value of 1e-2 is recommended.
-    moe_aux_loss_coeff: list[float] = 0.0
+    moe_aux_loss_coeff: float | list[float] = 0.0
 
     # Scaling coefficient for the z-loss: a starting value of 1e-3 is recommended.
     moe_z_loss_coeff: float | None = None
