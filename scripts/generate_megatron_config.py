@@ -10,13 +10,6 @@ from collections.abc import Iterable, Mapping
 
 from omegaconf import OmegaConf
 
-from oellm_autoexp.backends.megatron_args import (
-    MegatronArgMetadata,
-    extract_default_args,
-    get_arg_metadata,
-    get_megatron_parser,
-)
-
 import sys
 from unittest.mock import MagicMock
 
@@ -24,8 +17,19 @@ from unittest.mock import MagicMock
 te_mock = MagicMock()
 sys.modules["transformer_engine"] = te_mock
 sys.modules["transformer_engine.pytorch"] = MagicMock()
+sys.modules["transformer_engine.pytorch.cpp_extensions"] = MagicMock()
 sys.modules["transformer_engine.pytorch.distributed"] = MagicMock()
 sys.modules["transformer_engine.pytorch.tensor"] = MagicMock()
+sys.modules["transformer_engine.pytorch.float8_tensor"] = MagicMock()
+sys.modules["transformer_engine.pytorch.fp8"] = MagicMock()
+
+
+from oellm_autoexp.backends.megatron_args import (  # noqa: E402
+    MegatronArgMetadata,
+    extract_default_args,
+    get_arg_metadata,
+    get_megatron_parser,
+)
 
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
