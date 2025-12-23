@@ -21,11 +21,13 @@ slurm:
     nodes: 4
     time: 0-20:00:00
 
+
 backend:
   megatron:
     log_throughput: true
     log_interval: 1
     log_progress: true
+    moe_router_load_balancing_type: "global_aux_loss"
 
 
     # training schedule. Round numbers to avoid floating point issues
@@ -41,7 +43,7 @@ backend:
     save_interval: 10000
     wandb_save_dir: "${project.base_output_dir}/wandb"
     wandb_project: "${project.name}"
-    wandb_exp_name: "qwen3_0.6B_A100M_lr${.lr}_gbsz${.global_batch_size}_$SLURM_JOB_ID"
+    wandb_exp_name: "qwen3_global_aux_loss_0.6B_A100M_lr${.lr}_gbsz${.global_batch_size}_$SLURM_JOB_ID"
 
 
 

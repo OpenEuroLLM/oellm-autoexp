@@ -26,11 +26,22 @@ backend:
     log_throughput: true
     log_interval: 1
     log_progress: true
+    moe_layer_freq: "[0]*1+[1]*6"
+    moe_router_score_function: "sigmoid"
+    moe_router_pre_softmax: true
+    moe_router_topk_scaling_factor: 2.5
+    moe_router_enable_expert_bias: True
+    moe_router_bias_update_rate: 1e-3
+    moe_router_permute_fusion: True
+    mtp_num_layers: 1
+    mtp_loss_scaling_factor: 0.1
+    moe_router_load_balancing_type: "seq_aux_loss"
+    moe_aux_loss_coeff: 1e-4
 
 
     # training schedule. Round numbers to avoid floating point issues
     # set num_tokens to the formula
-    train_iters: ${oc.eval:'-(-30_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    train_iters: ${oc.eval:'-(-50_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
     lr_warmup_iters: ${oc.eval:'min(${.train_iters} // 10, 25000)'}
     lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
     lr_decay_iters: ${.train_iters}
@@ -41,7 +52,7 @@ backend:
     save_interval: 10000
     wandb_save_dir: "${project.base_output_dir}/wandb"
     wandb_project: "${project.name}"
-    wandb_exp_name: "qwen3_0.6B_A100M_lr${.lr}_gbsz${.global_batch_size}_$SLURM_JOB_ID"
+    wandb_exp_name: "deepseek_style_0.6B_A100M_lr${.lr}_gbsz${.global_batch_size}_$SLURM_JOB_ID"
 
 
 
