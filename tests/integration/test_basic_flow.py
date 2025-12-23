@@ -20,8 +20,8 @@ project:
   name: demo
   base_output_dir: {base_output}
 sweep:
-  axes:
-    lr: [0.1]
+  grids:
+    - backend.megatron.lr: [0.1]
 slurm:
   template_path: {template_path}
   script_dir: {script_dir}
@@ -55,8 +55,8 @@ project:
   name: demo
   base_output_dir: {base_output}
 sweep:
-  axes:
-    only: [0]
+  grids:
+    - backend.megatron.lr: [0.1]
 slurm:
   template_path: {template_path}
   script_dir: {script_dir}

@@ -58,7 +58,7 @@ project:
   name: reject
   base_output_dir: ./outputs
 sweep:
-  axes: {}
+  grids: []
 slurm:
   template_path: ./templates/train.sbatch
   script_dir: ./scripts

@@ -13,4 +13,5 @@ pwd: ${oc.env:PWD}
 env:
   CC: "gcc-12"
   CXX: "g++-12"
+  WANDB_MODE: "offline"
 python: "python"

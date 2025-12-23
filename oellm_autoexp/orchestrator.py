@@ -15,7 +15,7 @@ from compoconf import asdict
 
 from oellm_autoexp.backends.base import BackendJobSpec, LaunchCommand
 from oellm_autoexp.config.evaluator import RuntimeConfig, evaluate
-from oellm_autoexp.config.loader import load_config
+from oellm_autoexp.config.loader import load_config, load_config_reference
 from oellm_autoexp.config.schema import RootConfig, SlurmConfig
 from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
 from oellm_autoexp.persistence import MonitorStateStore, StoredJob
@@ -35,8 +35,17 @@ LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(kw_only=True)
+class ConfigSetup:
+    pwd: str
+    config_ref: str
+    config_dir: str
+    override: list[str] = field(default=list)
+
+
+@dataclass(kw_only=True)
 class ExecutionPlan:
     config: RootConfig = field(default_factory=MISSING)
+    config_setup: ConfigSetup = field(default_factory=MISSING)
     runtime: RuntimeConfig = field(default_factory=MISSING)
     sweep_points: list[SweepPoint] = field(default_factory=list)
     jobs: list[JobPlan] = field(default_factory=list)
@@ -70,25 +79,43 @@ class SubmissionResult:
 
 def build_execution_plan(
     config: str | RootConfig,
+    config_setup: ConfigSetup | None = None,
     subset_indices: set[int] | None = None,
 ) -> ExecutionPlan:
     if isinstance(config, (str, Path)):
         root = load_config(config)
+        # Create a minimal config_setup if not provided
+        if config_setup is None:
+            config_setup = ConfigSetup(
+                pwd=str(Path.cwd()),
+                config_ref=str(config),
+                config_dir=str(Path(config).parent),
+                override=[],
+            )
     else:
         root = config
+        # For RootConfig input, create a placeholder config_setup
+        if config_setup is None:
+            config_setup = ConfigSetup(
+                pwd=str(Path.cwd()),
+                config_ref="",
+                config_dir=str(Path.cwd()),
+                override=[],
+            )
     runtime = evaluate(root)
     points = expand_sweep(root.sweep)
     if subset_indices:
         points = [point for point in points if point.index in subset_indices]
         if not points:
             raise ValueError(f"No sweep points match indices: {sorted(subset_indices)}")
-    jobs = build_job_plans(root, points)
-    return ExecutionPlan(config=root, runtime=runtime, sweep_points=points, jobs=jobs)
+    jobs = build_job_plans(root, points=points)
+    return ExecutionPlan(
+        config=root, config_setup=config_setup, runtime=runtime, sweep_points=points, jobs=jobs
+    )
 
 
 def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
     template_path = Path(plan.config.slurm.template_path)
-    base_config = plan.config
     preferred_script_dir = Path(plan.config.slurm.script_dir)
     try:
         preferred_script_dir.mkdir(parents=True, exist_ok=True)
@@ -109,11 +136,46 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
     write_fallback_dir: str | None = None
 
     for job_it, job in enumerate(plan.jobs):
-        spec = BackendJobSpec(parameters=dict(job.parameters))
-        plan.runtime.backend.validate(spec)
-        launch_cmd = plan.runtime.backend.build_launch_command(spec)
+        # Try to apply job.parameters as Hydra overrides to get job-specific config
+        # If that fails (e.g., parameters don't correspond to config fields),
+        # fall back to passing parameters directly to the backend
+        job_runtime = plan.runtime
+        job_config = plan.config
 
-        replacements = _build_replacements(plan.runtime, job, launch_cmd, escape_str=True)
+        if job.parameters and plan.config_setup.config_ref:
+            try:
+                job_overrides = [f"{key}={value}" for key, value in job.parameters.items()]
+                combined_overrides = list(plan.config_setup.override) + job_overrides
+
+                # Reload config with job-specific overrides
+                job_config = load_config_reference(
+                    plan.config_setup.config_ref,
+                    plan.config_setup.config_dir,
+                    overrides=combined_overrides,
+                )
+
+                # Re-evaluate to get job-specific backend
+                job_runtime = evaluate(job_config)
+
+                # Parameters were applied to config, so don't pass them to spec
+                spec = BackendJobSpec(parameters={})
+            except Exception as exc:
+                # Fall back to old behavior: pass parameters directly to backend
+                LOGGER.debug(
+                    "Failed to apply job parameters as Hydra overrides for %s: %s. "
+                    "Falling back to passing parameters to backend spec.",
+                    job.name,
+                    exc,
+                )
+                spec = BackendJobSpec(parameters=dict(job.parameters))
+        else:
+            # No parameters or no config_ref, use old behavior
+            spec = BackendJobSpec(parameters=dict(job.parameters))
+
+        job_runtime.backend.validate(spec)
+        launch_cmd = job_runtime.backend.build_launch_command(spec)
+
+        replacements = _build_replacements(job_runtime, job, launch_cmd, escape_str=True)
         if not plan.config.slurm.array:
             script_path = script_dir / f"{job.name}_{job_it}.sbatch"
             try:
@@ -134,7 +196,7 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
             validate_job_script(rendered, job.name)
             job_scripts.append(str(script_path))
 
-        sweep_entries.append(_build_sweep_entry(job, base_config, launch_cmd))
+        sweep_entries.append(_build_sweep_entry(job, job_config, launch_cmd))
 
     sweep_path: str | None = None
     if plan.config.sweep.store_sweep_json or plan.config.slurm.array:

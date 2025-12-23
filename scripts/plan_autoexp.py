@@ -9,12 +9,13 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
+import os
 
 from compoconf import asdict
 from omegaconf import OmegaConf
 
 from oellm_autoexp.config.loader import load_config_reference
-from oellm_autoexp.orchestrator import build_execution_plan, render_scripts
+from oellm_autoexp.orchestrator import build_execution_plan, render_scripts, ConfigSetup
 from oellm_autoexp.workflow.manifest import write_manifest
 from oellm_autoexp.workflow.plan import create_manifest
 
@@ -114,7 +115,15 @@ def main(argv: list[str] | None = None) -> None:
     config_dir = Path(args.config_dir)
 
     root = load_config_reference(args.config_ref, config_dir, args.override)
-    plan = build_execution_plan(root)
+    plan = build_execution_plan(
+        root,
+        config_setup=ConfigSetup(
+            pwd=os.path.abspath(os.curdir),
+            config_ref=args.config_ref,
+            config_dir=config_dir,
+            override=args.override,
+        ),
+    )
 
     # Write provenance files for each job
     _write_job_provenance(

@@ -1,5 +1,6 @@
 image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining_aarch64_202510130949.sif
 runtime: apptainer
 bind: []
-env: {}
+env:
+  WANDB_MODE: "offline"
 python: "python"

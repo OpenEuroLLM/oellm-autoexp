@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, MISSING
 from pathlib import Path
-import re
 
+from compoconf import asdict
+from typing import Any
 from oellm_autoexp.config.schema import RootConfig
 from .expander import SweepPoint
 
@@ -26,6 +27,37 @@ class JobPlan:
     inactivity_threshold_seconds: int | None = None
 
 
+def flatten_config(config: RootConfig | dict[str, Any], connector: str = "."):
+    """
+    >>> flatten({"key": {"subkey": "val"}})
+    {"key.subkey": "val"}
+    """
+    if not isinstance(config, dict):
+        cfg_dict = asdict(config)
+    else:
+        cfg_dict = config
+
+    def _flat(d: tuple | list | dict | Any, prefix: str = ""):
+        res = {}
+        if isinstance(d, dict):
+            for key, val in d.items():
+                res.update(_flat(val, prefix=prefix + connector + key if prefix else key))
+        elif isinstance(d, (list, tuple)):
+            for idx, val in enumerate(cfg_dict):
+                res.update(_flat(val, prefix=prefix + connector + str(idx) if prefix else key))
+        else:
+            res = {prefix: d}
+        return res
+
+    return _flat(cfg_dict, prefix="")
+
+
+def simple_format(template_str: str, args: dict):
+    for key, val in args.items():
+        template_str = template_str.replace("{" + key + "}", str(val))
+    return template_str
+
+
 def build_job_plans(config: RootConfig, points: list[SweepPoint]) -> list[JobPlan]:
     base_output = Path(config.project.base_output_dir)
     project_name = config.project.name
@@ -36,16 +68,9 @@ def build_job_plans(config: RootConfig, points: list[SweepPoint]) -> list[JobPla
             "project": project_name,
             "index": str(point.index),
         }
-        # TODO: Enable sweeping based on global naming scheme, not just within backend.
-        context.update(
-            {key.replace(".", "___"): str(value) for key, value in point.parameters.items()}
-        )
-        job_name = config.sweep.name_template.format(**context)
-        t = config.sweep.name_template
-        m = re.search(r"\{([^\{]*)\.([^\}]*)\}", t)
-        while m:
-            t = t[: m.start()] + "{" + m.group(1) + "___" + m.group(2) + "}"
-            m = re.search(r"\{([^\{]*)\.([^\}]*)\}", t)
+        context.update(flatten_config(config))
+        context.update(point.parameters)
+        job_name = simple_format(config.sweep.name_template, context)
 
         output_dir = str(base_output / job_name)
         log_template = config.monitoring.log_path_template
@@ -142,3 +167,9 @@ def build_job_plans(config: RootConfig, points: list[SweepPoint]) -> list[JobPla
 
 
 __all__ = ["JobPlan", "build_job_plans"]
+
+
+if __name__ == "__main__":
+    import doctest
+
+    doctest.testmod(verbose=True)
