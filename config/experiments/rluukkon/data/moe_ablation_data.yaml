@@ -9,22 +9,13 @@ num_dataset_builder_threads: 7
 split: '99,1,0'
 create_attention_mask_in_dataloader: False
 # data_args_path: local/6040_datapath.txt
-data_path:
+data_path: 
   - /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/merged_all/high-all
-  # - /scratch/project_462000963/users/rluukkon/scripts/data_processing/merged/high-actual
-  # - /scratch/project_462000963/users/rluukkon/scripts/data_processing/merged/high-synthetic-distil
-  # - /scratch/project_462000963/users/rluukkon/scripts/data_processing/merged/high-synthetic-diverse_qa_pairs
-  # - /scratch/project_462000963/users/rluukkon/scripts/data_processing/merged/high-synthetic-extract_knowledge
-  # - /scratch/project_462000963/users/rluukkon/scripts/data_processing/merged/high-synthetic-knowledge_list
-  # - /scratch/project_462000963/users/rluukkon/scripts/data_processing/merged/high-synthetic-wrap_medium
-
 data_cache_path: /flash/project_462000353/rluukkon/cache
 
 # Tokenizer
 tokenizer_model: EleutherAI/gpt-neox-20b
 tokenizer_type: HuggingFaceTokenizer
-# tokenizer_model: google/gemma-3-27b-pt
-# tokenizer_type: HuggingFaceTokenizer
 
 # DATA
 micro_batch_size: 8
