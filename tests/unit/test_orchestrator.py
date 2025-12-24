@@ -16,8 +16,8 @@ project:
   name: demo
   base_output_dir: {base_output}
 sweep:
-  axes:
-    lr: [0.1, 0.01]
+  grids:
+    - backend.megatron.lr: [0.1, 0.01]
 slurm:
   template_path: {template_path}
   script_dir: {script_dir}
@@ -37,10 +37,10 @@ project:
   name: gate
   base_output_dir: {base_output}
 sweep:
-  axes:
-    job.start_condition_cmd: ["echo 1"]
-    job.start_condition_interval_seconds: [30]
-    monitoring.termination_string: ["Done"]
+  grids:
+    - job.start_condition_cmd: ["echo 1"]
+      job.start_condition_interval_seconds: [30]
+      monitoring.termination_string: ["Done"]
 slurm:
   template_path: {template_path}
   script_dir: {script_dir}
@@ -120,8 +120,8 @@ project:
   name: demo
   base_output_dir: {tmp_path / "outputs"}
 sweep:
-  axes:
-    lr: [0.1]
+  grids:
+    - backend.megatron.lr: [0.1]
 slurm:
   template_path: {template_path}
   script_dir: {script_dir}
@@ -212,8 +212,8 @@ project:
   name: demo
   base_output_dir: {base_output}
 sweep:
-  axes:
-    lr: [0.1, 0.01]
+  grids:
+    - backend.megatron.lr: [0.1, 0.01]
 slurm:
   template_path: {template_path}
   script_dir: {script_dir}
@@ -255,8 +255,8 @@ project:
   name: arr
   base_output_dir: {base_output}
 sweep:
-  axes:
-    lr: [0.1, 0.01]
+  grids:
+    - backend.megatron.lr: [0.1, 0.01]
 slurm:
   template_path: {template_path}
   script_dir: {script_dir}
@@ -341,3 +341,270 @@ def test_submit_jobs_persists_and_restores(tmp_path: Path) -> None:
 
     assert len(controller.jobs()) == len(plan.jobs)
     assert len(fake_client_restarted.squeue()) == len(plan.jobs)
+
+
+def test_hydra_group_overrides_in_sweep(tmp_path: Path) -> None:
+    """Test that sweep parameters can use Hydra group overrides.
+
+    This test demonstrates that job.parameters like "backend=variant1" are applied
+    as Hydra overrides, allowing sweeps over:
+    - Hydra group selections (e.g., backend: [variant1, variant2])
+    - Nested config values (e.g., backend.megatron.lr: [0.1, 0.01])
+    - Any other configuration parameter
+
+    Note on escaping:
+    - For values with special characters like brackets, use quotes in YAML:
+      backend.megatron: ["llama1_8b_qkln", "llama1_8b_qkln"]
+    - This naturally escapes the brackets for Hydra processing
+    """
+    from oellm_autoexp.orchestrator import ConfigSetup
+
+    # Set up a Hydra-style config directory structure
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+
+    # Create backend group directory
+    backend_dir = config_dir / "backend"
+    backend_dir.mkdir()
+
+    # Create different backend variants
+    base_backend = """
+base_command: ["echo", "base"]
+extra_cli_args: []
+env: {}
+"""
+    variant1_backend = """
+base_command: ["echo", "variant1"]
+extra_cli_args: ["--variant1"]
+env: {}
+"""
+    variant2_backend = """
+base_command: ["echo", "variant2"]
+extra_cli_args: ["--variant2", "--extra"]
+env: {}
+"""
+
+    (backend_dir / "base.yaml").write_text(base_backend)
+    (backend_dir / "variant1.yaml").write_text(variant1_backend)
+    (backend_dir / "variant2.yaml").write_text(variant2_backend)
+
+    # Create main config that uses defaults
+    template_path = tmp_path / "template.sbatch"
+    script_dir = tmp_path / "scripts"
+    log_dir = tmp_path / "logs"
+    base_output = tmp_path / "outputs"
+
+    template_path.write_text("#!/bin/bash\n{sbatch_directives}\n\nsrun {srun_opts}{launcher_cmd}\n")
+
+    main_config = f"""
+defaults:
+  - backend: base
+  - _self_
+
+project:
+  name: hydra_test
+  base_output_dir: {base_output}
+
+sweep:
+  grids:
+    - backend: [variant1, variant2]
+
+slurm:
+  template_path: {template_path}
+  script_dir: {script_dir}
+  log_dir: {log_dir}
+  client:
+    class_name: FakeSlurmClient
+
+monitoring:
+  implementation:
+    class_name: NullMonitor
+
+backend:
+  implementation:
+    class_name: NullBackend
+"""
+
+    config_path = config_dir / "test.yaml"
+    config_path.write_text(main_config)
+
+    # Build execution plan with ConfigSetup to enable Hydra override behavior
+    from oellm_autoexp.config.loader import load_config_reference
+
+    root = load_config_reference("test", config_dir, [])
+    plan = build_execution_plan(
+        root,
+        config_setup=ConfigSetup(
+            pwd=str(tmp_path),
+            config_ref="test",
+            config_dir=str(config_dir),
+            override=[],
+        ),
+    )
+
+    # Verify we have 2 jobs (one for each backend variant)
+    assert len(plan.jobs) == 2
+
+    # Render scripts to trigger the Hydra override application
+    artifacts = render_scripts(plan)
+
+    # Verify the artifacts were created
+    assert len(artifacts.job_scripts) == 2
+    assert len(artifacts.sweep_entries) == 2
+
+    # Check that the launch commands reflect the different backend variants
+    entry1 = artifacts.sweep_entries[0]
+    entry2 = artifacts.sweep_entries[1]
+
+    # Verify the launch commands are different and contain the expected variants
+    argv1 = entry1["launch"]["argv"]
+    argv2 = entry2["launch"]["argv"]
+
+    assert argv1 != argv2, "Launch commands should be different for different backend variants"
+
+    # Check that variant1 and variant2 commands are present
+    variant1_found = any("variant1" in " ".join(argv) for argv in [argv1, argv2])
+    variant2_found = any("variant2" in " ".join(argv) for argv in [argv1, argv2])
+
+    assert variant1_found, "Should find variant1 in one of the launch commands"
+    assert variant2_found, "Should find variant2 in one of the launch commands"
+
+    # Verify that the extra_cli_args are applied correctly
+    # variant2 should have both --variant2 and --extra
+    variant2_argv = argv2 if "variant2" in " ".join(argv2) else argv1
+    assert "--variant2" in variant2_argv, "variant2 should have --variant2 flag"
+    assert "--extra" in variant2_argv, "variant2 should have --extra flag"
+
+
+def test_hydra_multigroup_overrides_in_sweep(tmp_path: Path) -> None:
+    """Test that sweep parameters can use Hydra group overrides.
+
+    This test demonstrates that job.parameters like "backend=variant1" are applied
+    as Hydra overrides, allowing sweeps over:
+    - Hydra group selections (e.g., backend: [variant1, variant2])
+    - Nested config values (e.g., backend.megatron.lr: [0.1, 0.01])
+    - Any other configuration parameter
+
+    Note on escaping:
+    - For values with special characters like brackets, use quotes in YAML:
+      backend.megatron: ["llama1_8b_qkln", "llama1_8b_qkln"]
+    - This naturally escapes the brackets for Hydra processing
+    """
+    from oellm_autoexp.orchestrator import ConfigSetup
+
+    # Set up a Hydra-style config directory structure
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+
+    # Create backend group directory
+    backend_dir = config_dir / "backend"
+    backend_dir.mkdir()
+
+    # Create different backend variants
+    base_backend = """
+base_command: ["echo", "base"]
+extra_cli_args: []
+env: {}
+"""
+    variant1_backend = """
+base_command: ["echo", "variant1"]
+env: {"variant1_was_here": "1"}
+"""
+    variant2_backend = """
+base_command: ["echo", "variant2"]
+extra_cli_args: ["--variant2", "--extra"]
+env: {}
+"""
+
+    (backend_dir / "base.yaml").write_text(base_backend)
+    (backend_dir / "variant1.yaml").write_text(variant1_backend)
+    (backend_dir / "variant2.yaml").write_text(variant2_backend)
+
+    # Create main config that uses defaults
+    template_path = tmp_path / "template.sbatch"
+    script_dir = tmp_path / "scripts"
+    log_dir = tmp_path / "logs"
+    base_output = tmp_path / "outputs"
+
+    template_path.write_text("#!/bin/bash\n{sbatch_directives}\n\nsrun {srun_opts}{launcher_cmd}\n")
+
+    main_config = f"""
+defaults:
+  - backend: base
+  - _self_
+
+project:
+  name: hydra_test
+  base_output_dir: {base_output}
+
+sweep:
+  grids:
+    - backend: ["variant1", "[variant1,variant2]"]
+
+slurm:
+  template_path: {template_path}
+  script_dir: {script_dir}
+  log_dir: {log_dir}
+  client:
+    class_name: FakeSlurmClient
+
+monitoring:
+  implementation:
+    class_name: NullMonitor
+
+backend:
+  implementation:
+    class_name: NullBackend
+"""
+
+    config_path = config_dir / "test.yaml"
+    config_path.write_text(main_config)
+
+    # Build execution plan with ConfigSetup to enable Hydra override behavior
+    from oellm_autoexp.config.loader import load_config_reference
+
+    root = load_config_reference("test", config_dir, [])
+    plan = build_execution_plan(
+        root,
+        config_setup=ConfigSetup(
+            pwd=str(tmp_path),
+            config_ref="test",
+            config_dir=str(config_dir),
+            override=[],
+        ),
+    )
+
+    # Verify we have 2 jobs (one for each backend variant)
+    assert len(plan.jobs) == 2
+
+    # Render scripts to trigger the Hydra override application
+    artifacts = render_scripts(plan)
+
+    # Verify the artifacts were created
+    assert len(artifacts.job_scripts) == 2
+    assert len(artifacts.sweep_entries) == 2
+
+    # Check that the launch commands reflect the different backend variants
+    entry1 = artifacts.sweep_entries[0]
+    entry2 = artifacts.sweep_entries[1]
+
+    # Verify the launch commands are different and contain the expected variants
+    argv1 = entry1["launch"]["argv"]
+    argv2 = entry2["launch"]["argv"]
+
+    assert argv1 != argv2, "Launch commands should be different for different backend variants"
+
+    # Check that variant1 and variant2 commands are present
+    variant1_found = any("variant1" in " ".join(argv) for argv in [argv1, argv2])
+    variant2_found = any("variant2" in " ".join(argv) for argv in [argv1, argv2])
+
+    assert variant1_found, "Should find variant1 in one of the launch commands"
+    assert variant2_found, "Should find variant2 in one of the launch commands"
+
+    # Verify that the extra_cli_args are applied correctly
+    # variant2 should have both --variant2 and --extra
+    variant2_argv = argv2 if "variant2" in " ".join(argv2) else argv1
+    assert "--variant2" in variant2_argv, "variant2 should have --variant2 flag"
+    assert "--extra" in variant2_argv, "variant2 should have --extra flag"
+
+    assert "variant1_was_here" in entry2["base_config"]["backend"]["env"]

@@ -1,9 +1,9 @@
-axes:
-  tensor_model_parallel_size: [1, 2, 4, 8]
-  pipeline_model_parallel_size: [1, 2, 4, 8, 16]
-  expert_model_parallel_size: [1, 2, 4, 8]
-  context_parallel_size: [1, 2, 4]
-  expert_tensor_parallel_size: [1, 2, 4]
+grids:
+  - backend.megatron.tensor_model_parallel_size: [1, 2, 4, 8]
+    backend.megatron.pipeline_model_parallel_size: [1, 2, 4, 8, 16]
+    backend.megatron.expert_model_parallel_size: [1, 2, 4, 8]
+    backend.megatron.context_parallel_size: [1, 2, 4]
+    backend.megatron.expert_tensor_parallel_size: [1, 2, 4]
 base_values:
   run_name: megatron_parallelism_sweep
 name_template: "${project.name}_{run_name}_tp{tensor_model_parallel_size}_pp{pipeline_model_parallel_size}_ep{expert_model_parallel_size}_cp{context_parallel_size}_etp{expert_tensor_parallel_size}"

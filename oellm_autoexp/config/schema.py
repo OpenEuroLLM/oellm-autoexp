@@ -72,13 +72,13 @@ class ProjectConfig(ConfigInterface):
 class SweepConfig(ConfigInterface):
     """Sweep expansion settings.
 
-    ``axes`` holds the raw sweep definition (potentially nested Hydra-style
-    mappings). ``base_values`` contain default substitutions applied before the
+    ``grid`` holds the raw sweep definition as hydra override strings.
+    ``base_values`` contain default substitutions applied before the
     sweep is generated.
     """
 
     class_name: str = "Sweep"
-    axes: Any = field(default_factory=MISSING)
+    grids: list[dict[str, list[Any]]] | None = None
     base_values: dict[str, Any] = field(default_factory=dict)
     name_template: str = "{project}_{index}"
     store_sweep_json: bool = True

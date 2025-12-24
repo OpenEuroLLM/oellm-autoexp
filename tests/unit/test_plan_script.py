@@ -13,8 +13,7 @@ project:
   base_output_dir: ./outputs
   monitoring_state_dir: ./monitor
 sweep:
-  axes:
-    only: [1]
+  grids: []
 slurm:
   template_path: {template}
   script_dir: ./scripts

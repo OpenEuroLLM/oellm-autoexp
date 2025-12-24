@@ -19,7 +19,7 @@ from compoconf import asdict
 from omegaconf import OmegaConf
 
 from oellm_autoexp.config.loader import load_config_reference
-from oellm_autoexp.orchestrator import build_execution_plan, render_scripts
+from oellm_autoexp.orchestrator import build_execution_plan, render_scripts, ConfigSetup
 from oellm_autoexp.workflow.host import (
     build_host_runtime,
     instantiate_controller,
@@ -238,7 +238,16 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     try:
-        plan = build_execution_plan(root, subset_indices=subset_indices or None)
+        plan = build_execution_plan(
+            root,
+            config_setup=ConfigSetup(
+                pwd=os.path.abspath(os.curdir),
+                config_ref=args.config_ref,
+                config_dir=str(config_dir),
+                override=args.override,
+            ),
+            subset_indices=subset_indices or None,
+        )
     except ValueError as exc:
         print(f"Error while building execution plan: {exc}", file=sys.stderr)
         return

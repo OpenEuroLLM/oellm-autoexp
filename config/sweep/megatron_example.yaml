@@ -1,6 +1,6 @@
-axes:
-  micro_batch_size: [4, 8]
+grid:
+  - backend.megatron.micro_batch_size: [4, 8]
 base_values:
   run_name: megatron_sweep
-name_template: "${project.name}_{run_name}_m{micro_batch_size}_{index}"
+name_template: "${project.name}_{run_name}_m{backend.megatron.micro_batch_size}_{index}"
 store_sweep_json: true

@@ -1,5 +1,6 @@
 image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining_x86_64_202510011427.sif
 runtime: singularity
 bind: []
-env: {}
+env:
+  WANDB_MODE: "offline"
 python: "python"

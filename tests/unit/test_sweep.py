@@ -10,7 +10,7 @@ from oellm_autoexp.sweep.planner import build_job_plans
 def _basic_root() -> RootConfig:
     data = {
         "project": {"name": "demo", "base_output_dir": "./outputs"},
-        "sweep": {"axes": {"lr": [0.1, 0.01], "model": ["small", "large"]}},
+        "sweep": {"grids": [{"backend.megatron.lr": [0.1, 0.01]}]},
         "slurm": {
             "template_path": "template.sbatch",
             "script_dir": "./scripts",
@@ -26,19 +26,21 @@ def _basic_root() -> RootConfig:
 
 
 def test_expand_sweep_cartesian_product():
-    sweep_cfg = SweepConfig(axes={"lr": [0.1, 0.01], "layers": [8, 16]})
+    sweep_cfg = SweepConfig(
+        grids=[{"backend.megatron.lr": [0.1, 0.01], "backend.megatron.num_layers": [8, 16]}]
+    )
     points = expand_sweep(sweep_cfg)
     values = [p.parameters for p in points]
     assert len(values) == 4
-    assert values[0]["lr"] == 0.1
-    assert values[0]["layers"] == 8
+    assert values[0]["backend.megatron.lr"] == 0.1
+    assert values[0]["backend.megatron.num_layers"] == 8
 
 
 def test_build_job_plans_name_template():
     root = _basic_root()
     points = expand_sweep(root.sweep)
     jobs = build_job_plans(root, points)
-    assert len(jobs) == 4
+    assert len(jobs) == 2
     assert jobs[0].name.startswith("demo")
     assert Path(jobs[0].log_path).name == "slurm-%j.out"
 
@@ -49,13 +51,15 @@ def test_build_job_plans_extracts_lifecycle_fields():
     root.monitoring.termination_string = "all done"
     root.monitoring.inactivity_threshold_seconds = 123
     root.monitoring.start_condition_interval_seconds = 12
-    root.sweep.axes = {
-        "job.start_condition_cmd": ["echo 1"],
-        "monitoring.termination_string": ["Finished"],
-        "job.start_condition_interval_seconds": [30],
-        "job.inactivity_threshold_seconds": [45],
-        "lr": [0.1],
-    }
+    root.sweep.grids = [
+        {
+            "job.start_condition_cmd": ["echo 1"],
+            "monitoring.termination_string": ["Finished"],
+            "job.start_condition_interval_seconds": [30],
+            "job.inactivity_threshold_seconds": [45],
+            "lr": [0.1],
+        }
+    ]
 
     points = expand_sweep(root.sweep)
     jobs = build_job_plans(root, points)
@@ -72,14 +76,14 @@ def test_build_job_plans_extracts_lifecycle_fields():
 
 
 def test_expand_sweep_with_base_values():
-    sweep_cfg = SweepConfig(axes=None, base_values={"foo": "bar"})
+    sweep_cfg = SweepConfig(grids=[], base_values={"foo": "bar"})
     points = expand_sweep(sweep_cfg)
     assert len(points) == 1
     assert points[0].parameters["foo"] == "bar"
 
 
 def test_expand_sweep_scalars_and_lists():
-    sweep_cfg = SweepConfig(axes={"flags": ["a", "b", "c"], "nested": [{"x": [1, 2]}]})
+    sweep_cfg = SweepConfig(grids=[{"flags": ["a", "b", "c"], "nested.x": [1, 2]}])
     points = expand_sweep(sweep_cfg)
     values = [p.parameters for p in points]
     assert len(values) == 6
@@ -90,7 +94,7 @@ def test_expand_sweep_scalars_and_lists():
 def test_expand_sweep_filter_expression():
     # Only combinations where a * b <= 40 are kept
     sweep_cfg = SweepConfig(
-        axes={"a": [1, 2, 3], "b": [10, 20, 30]},
+        grids=[{"a": [1, 2, 3], "b": [10, 20, 30]}],
         filter="a * b <= 40",
     )
     points = expand_sweep(sweep_cfg)

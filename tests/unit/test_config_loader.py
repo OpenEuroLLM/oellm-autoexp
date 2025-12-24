@@ -57,7 +57,7 @@ project:
   name: hydra
   base_output_dir: ./outputs
 sweep:
-  axes: {}
+  grids: []
 slurm:
   template_path: ./templates/train.sbatch
   script_dir: ./scripts

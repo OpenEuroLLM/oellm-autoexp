@@ -13,8 +13,8 @@ project:
   base_output_dir: ./outputs
   monitoring_state_dir: ./monitor
 sweep:
-  axes:
-    lr: [0.1]
+  grids:
+    - backend.megatron.lr: [0.1]
 slurm:
   template_path: {template}
   script_dir: ./scripts
