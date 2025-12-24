@@ -1,7 +1,5 @@
 """Megatron-LM configuration schema (auto-generated)."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from compoconf import ConfigInterface
@@ -235,13 +233,14 @@ class MegatronConfig(ConfigInterface):
     recompute_num_layers: int | None = None
 
     # The submodules to recompute. choices: "core_attn", "moe_act", "layernorm",
-    # "mla_up_proj", "mlp", "moe". default: ["core_attn"]."core_attn": recompute the core
-    # attention part of the transformer layer. "moe_act": recompute the MoE MLP activation
-    # function. "layernorm": recompute the input_layernorm and pre_mlp_layernorm.
-    # "mla_up_proj": recompute the MLA up projection and RoPE applying parts."mlp": recompute
-    # the dense MLP layer."moe": recompute the MoE layer."moe_act", "layernorm", and
-    # "mla_up_proj" use output-discarding checkpointing, "core_attn", "mlp", and "moe" uses
-    # normal checkpointing.
+    # "mla_up_proj",          "mlp", "moe", "shared_experts". default:
+    # ["core_attn"]."core_attn": recompute the core attention part of the transformer layer.
+    # "moe_act": recompute the MoE MLP activation function. "layernorm": recompute the
+    # input_layernorm and pre_mlp_layernorm. "mla_up_proj": recompute the MLA up projection
+    # and RoPE applying parts."mlp": recompute the dense MLP layer."moe": recompute the MoE
+    # layer."shared_experts": recompute the shared experts in the MoE layer."moe_act",
+    # "layernorm", and "mla_up_proj" use output-discarding checkpointing, "core_attn", "mlp",
+    # "moe", and "shared_experts" use normal checkpointing.
     recompute_modules: list[str] | None = None
 
     # If not set, clone the output of the scatter in embedding layer to GC original tensor.
@@ -364,11 +363,18 @@ class MegatronConfig(ConfigInterface):
     # Disable bias and swiglu fusion, the fusion is available only when using megatron-core.
     bias_swiglu_fusion: bool = True
 
+    # Use fused weighted squared relu when using MoE.
+    use_fused_weighted_squared_relu: bool = False
+
     # Disable bias and dropout fusion.
     bias_dropout_fusion: bool = True
 
     # Disable rope fusion, the fusion is available only when using megatron-core.
     apply_rope_fusion: bool = True
+
+    # Type of rope to use. Note that MLA takes yarn by default, and common attention takes
+    # rope by default.
+    rope_type: Literal["rope", "yarn"] | None = None
 
     # Enabled fusion of cross entropy loss calculation.
     cross_entropy_loss_fusion: bool = False
@@ -466,6 +472,13 @@ class MegatronConfig(ConfigInterface):
     # Standard deviation of the zero mean normal distribution used for weight initialization.
     init_method_std: float = 0.02
 
+    # Standard deviation of the zero mean normal distribution used for embedding weight
+    # initialization. If unset, embeddings will be initialized the same way as other weights.
+    # Setting this to a value around 1.0 may avoid loss spikes in training. Setting this to
+    # any value will also skip applying weight decay on embedding weights to avoid shrinkage
+    # towards zero. See https://arxiv.org/abs/2312.16903 for more details.
+    embedding_init_method_std: float | None = None
+
     # Enable Xavier uniform parameter initialization
     init_method_xavier_uniform: bool = False
 
@@ -532,6 +545,10 @@ class MegatronConfig(ConfigInterface):
     # Number of iterations between persistent checkpoint saves.
     save_interval: int | None = None
 
+    # Number of iterations between retained checkpoints (othercheckpoints _except the last
+    # checkpoint_ are automatically deleted).
+    save_retain_interval: int | None = None
+
     # Do not save current optimizer.
     no_save_optim: bool | None = None
 
@@ -544,8 +561,14 @@ class MegatronConfig(ConfigInterface):
     # Do not load optimizer when loading checkpoint.
     no_load_optim: bool | None = None
 
+    # Load main parameters from checkpoint directly.
+    load_main_params_from_ckpt: bool | None = None
+
     # Do not load rng state when loading checkpoint.
     no_load_rng: bool | None = None
+
+    # Do not strict loading for fsdp_dtensor checkpoint format.
+    strict_fsdp_dtensor_load: bool = True
 
     # Number of iterations between non-persistent saves.
     non_persistent_save_interval: int | None = None
@@ -608,8 +631,9 @@ class MegatronConfig(ConfigInterface):
 
     # Checkpoint format to use. torch is the format used by torch.save/load. torch_dist is a
     # megatron built-in distributed checkpointing format. torch_dcp is the
-    # torch.distributed.checkpoint format.
-    ckpt_format: Literal["torch", "torch_dist", "zarr", "torch_dcp"] = "torch_dist"
+    # torch.distributed.checkpoint format. fsdp_dtensor is a torch DCP native, Megatron FSDP
+    # training-specific checkpoint format.
+    ckpt_format: Literal["torch", "torch_dist", "zarr", "torch_dcp", "fsdp_dtensor"] = "torch_dist"
 
     # Checkpoint format for conversion.
     ckpt_convert_format: Literal["torch", "torch_dist", "zarr"] | None = None
@@ -710,21 +734,8 @@ class MegatronConfig(ConfigInterface):
     # Degree of tensor model parallelism.
     tensor_model_parallel_size: int = 1
 
-    # DEPRECATED (will be removed in core_r0.14.0): Use orthotope parallelism management
-    # instead. Degree of tensor model parallelism for the encoder.
-    encoder_tensor_model_parallel_size: int = 0
-
     # Degree of pipeline model parallelism.
     pipeline_model_parallel_size: int = 1
-
-    # DEPRECATED (will be removed in core_r0.14.0): Use orthotope parallelism management
-    # instead. Degree of pipeline model parallelism in the encoder. This is independent of the
-    # amount of pipeline in the decoder.
-    encoder_pipeline_model_parallel_size: int = 0
-
-    # Rank where encoder and decoder should be split. Deprecated; use --encoder-pipeline-
-    # model-parallel-size instead.
-    pipeline_model_parallel_split_rank: int | None = None
 
     # The number of transformer layers on the first pipeline stage of the decoder. Default
     # None is even split of transformer layers across all pipeline stages
@@ -840,8 +851,12 @@ class MegatronConfig(ConfigInterface):
     # Required to enable SHARP communication.
     use_sharp: bool = False
 
+    # IB SHARP can be enabled from only one communication group. By default, it is enabled
+    # from dp group. Available options: [dp, dp_replica]
+    sharp_enabled_group: Literal["dp", "dp_replica"] | None = None
+
     # Use the Megatron FSDP code path in DDP.
-    use_custom_fsdp: bool = False
+    use_megatron_fsdp: bool = False
 
     init_model_with_meta_device: bool = False
 
@@ -853,7 +868,7 @@ class MegatronConfig(ConfigInterface):
     # If not set, fuse the division in gradient reduce.
     gradient_reduce_div_fusion: bool = True
 
-    # Enable double buffering for temporary memory needed for custom FSDP communications.
+    # Enable double buffering for temporary memory needed for Megatron FSDP communications.
     # Double-buffering the communication memory improves memory management efficiency by
     # reusing previously allocated buffers, rather than creating new buffers for each FSDP
     # communication. This is required for user buffer registration and is enabled by default
@@ -867,8 +882,11 @@ class MegatronConfig(ConfigInterface):
     # and performance requirements.
     suggested_communication_unit_size: int | None = None
 
-    # If set, keep the fp8 transpose cache when using custom FSDP.
-    keep_fp8_transpose_cache_when_using_custom_fsdp: bool = False
+    # If set, keep the fp8 transpose cache when using Megatron FSDP.
+    keep_fp8_transpose_cache: bool = False
+
+    # If set, enable full sharding in megatron-fsdp Hybrid Sharded Data Parallel (HSDP) mode.
+    enable_full_sharding_in_hsdp: bool = False
 
     # Number of Distributed Optimizer copies across Data Parallel domain.
     num_distributed_optimizer_instances: int = 1
@@ -916,6 +934,15 @@ class MegatronConfig(ConfigInterface):
 
     # Number of machines storing the replica of a given rank's data.
     replication_factor: int = 2
+
+    # If set, each time validation occurs it uses the full validation dataset(s). This
+    # currently only works for GPT datasets!
+    full_validation: bool = False
+
+    # If set, multiple datasets listed in the validation split are evaluated independently
+    # with a separate loss for each dataset in the list. This argument requires that no
+    # weights are included in the list
+    multiple_validation_sets: bool = False
 
     # Number of iterations to run for evaluationvalidation/test for.
     eval_iters: int = 100
@@ -1022,6 +1049,10 @@ class MegatronConfig(ConfigInterface):
 
     # Size of vocab before EOD or padding.
     vocab_size: int | None = None
+
+    # Vocabulary size of the model (padded to be divisible by tensor model parallel size). If
+    # not provided, it will be automatically calculated from vocab-size.
+    padded_vocab_size: int | None = None
 
     # Path to the vocab file.
     vocab_file: str | None = None
@@ -1263,6 +1294,10 @@ class MegatronConfig(ConfigInterface):
     # be negligible when used with permute fusion. None means no changes for dtype.
     moe_router_dtype: Literal["fp32", "fp64"] | None = None
 
+    # Enable fusion for MoE TopK routing and aux-loss computation. This is only supported in
+    # TransformerEngine 2.7.0 and above.
+    moe_router_fusion: bool = False
+
     # Score function for MoE TopK routing. Can be "softmax" or "sigmoid".
     moe_router_score_function: Literal["softmax", "sigmoid"] = "softmax"
 
@@ -1315,7 +1350,7 @@ class MegatronConfig(ConfigInterface):
     moe_router_padding_for_fp8: bool = False
 
     # Scaling coefficient for the aux loss: a starting value of 1e-2 is recommended.
-    moe_aux_loss_coeff: float = 0.0
+    moe_aux_loss_coeff: float | list[float] = 0.0
 
     # Scaling coefficient for the z-loss: a starting value of 1e-3 is recommended.
     moe_z_loss_coeff: float | None = None
@@ -1357,6 +1392,9 @@ class MegatronConfig(ConfigInterface):
     # Apply probs before mlp activation for moe routing.
     moe_apply_probs_on_input: bool = False
 
+    # Overlap the EP A2A communication by batch-level overlapping in 1f1b stage.
+    overlap_moe_expert_parallel_comm: bool = False
+
     # Delay the wgrad compute for batch-level overlapping
     delay_wgrad_compute: bool = False
 
@@ -1389,7 +1427,10 @@ class MegatronConfig(ConfigInterface):
     mscale: float = 1.0
 
     # Mscale all dimensions for YaRN RoPE in multi-latent attention.
-    mscale_all_dim: float = 1.0
+    mscale_all_dim: float = 0.0
+
+    # If set caches the mla down projected latents with mla flash decode.
+    cache_mla_latents: bool = False
 
     # Path to json file containing heterogeneous model configuration. Use the format of the
     # HuggingFace config files in llama nemotron models, e.g.
@@ -1439,7 +1480,7 @@ class MegatronConfig(ConfigInterface):
     # Report to tensorboard interval.
     tensorboard_log_interval: int = 1
 
-    # Size of the tensorboard queue for pending events and summaries before one of the ‘add’
+    # Size of the tensorboard queue for pending events and summaries before one of the "add"
     # calls forces a flush to disk.
     tensorboard_queue_size: int = 1000
 
@@ -1504,7 +1545,8 @@ class MegatronConfig(ConfigInterface):
     # Whether to use the flash decoding kernel.
     flash_decode: bool = False
 
-    # Use CUDA graph capture and replay.
+    # Use CUDA graph capture and replay. --cuda-graph-scope="full_iteration" enables whole
+    # iteration CUDA graph.
     enable_cuda_graph: bool = False
 
     # Number of CUDA graph warmup steps
@@ -1514,10 +1556,11 @@ class MegatronConfig(ConfigInterface):
     # script.
     external_cuda_graph: bool = False
 
-    # Determines the CUDA graphs capturing scope. Valid values are "full" and "attn". "Full"
-    # scope captures a whole Transformer layer. "Attn" scope only captures operations in
-    # TransformerLayer._forward_attention().
-    cuda_graph_scope: Literal["full", "attn"] = "full"
+    # Determines the CUDA graphs capturing scope. Valid values are "full", "attn" and
+    # "full_iteration". "Full" scope captures a whole Transformer layer. "Attn" scope only
+    # captures operations in TransformerLayer._forward_attention(). "ful_iteration" scope
+    # captures a whole iteration.
+    cuda_graph_scope: Literal["full", "attn", "full_iteration"] = "full"
 
     # Maximum number of requests for inference.
     inference_max_batch_size: int = 8
@@ -1551,6 +1594,12 @@ class MegatronConfig(ConfigInterface):
     # If set, this overrides the max tokens as computed from `--inference-dynamic-batching-
     # buffer-overflow-factor`.
     inference_dynamic_batching_max_tokens_override: int | None = None
+
+    # Maximum number of cuda graphs to capture, where the cuda graph batch sizes range from 1
+    # to `max_requests`. (See `dynamic_context.py` for details on how `max_requests` is
+    # computed). Due to rounding, the actual number of cuda graphs may not equal this
+    # argument.
+    inference_dynamic_batching_num_cuda_graphs: int = 16
 
     # What type of symmetric all reduce to use. The default is none which is no use of
     # symetric memory
@@ -1796,7 +1845,7 @@ class MegatronConfig(ConfigInterface):
 
     # Use re-run engine to validate results (default) or to emit stats on variability of
     # computations due to non-deterministic algorithms.
-    rerun_mode: Literal["disabled", "validate_results", "report_stats"] = "disabled"
+    rerun_mode: Literal["disabled", "validate_results", "report_stats"] = "validate_results"
 
     # Disable the usage of Multi-Storage Client (MSC) in Megatron Core.
     enable_msc: bool = True

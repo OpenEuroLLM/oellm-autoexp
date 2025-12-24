@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Generate a compoconf-compatible dataclass for Megatron-LM arguments."""
 
-from __future__ import annotations
-
 import argparse
 import importlib.metadata as importlib_metadata
 import keyword
@@ -20,6 +18,7 @@ sys.modules["transformer_engine.pytorch"] = MagicMock()
 sys.modules["transformer_engine.pytorch.distributed"] = MagicMock()
 sys.modules["transformer_engine.pytorch.tensor"] = MagicMock()
 sys.modules["transformer_engine.pytorch.float8_tensor"] = MagicMock()
+sys.modules["transformer_engine.pytorch.fp8"] = MagicMock()
 
 _ORIG_IMPORTLIB_VERSION = importlib_metadata.version
 
@@ -225,8 +224,6 @@ def generate_dataclass(
     header_lines = [
         '"""Megatron-LM configuration schema (auto-generated)."""',
         "",
-        "from __future__ import annotations",
-        "",
     ]
     dataclasses_import = "from dataclasses import dataclass"
     if needs_field:
@@ -332,8 +329,6 @@ def generate_cli_metadata(
     body = "\n".join(
         [
             '"""Megatron CLI metadata (auto-generated)."""',
-            "",
-            "from __future__ import annotations",
             "",
             "from dataclasses import dataclass",
             "from typing import Any, Mapping",

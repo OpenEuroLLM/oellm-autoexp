@@ -161,3 +161,9 @@ state_events:
 - Everything templated by way of `str.format` gets the merged metadata (`job_id`, `checkpoint_path`, etc.) so downstream automation stays simple.
 
 For more context (provenance capture, fake SLURM client, restart CLI), refer to `docs/` and the unit/integration tests—they mirror real-world usage.
+
+
+### Updating the Megatron-LM backend version
+For an update of the megatron backend, first check out the new submodule version. Then, create a new container. Within that container,
+run the script generation in `scripts/generate_megatron_config.py` and `scripts/generate_megatron_dataclass.py`. You might have to adapt the `transformer_engine` mocks in those scripts.
+Also, apparently some containers don't use the correct `C++` path, you might have to `export CXX=$(which clang++)`, for example on LUMI.
