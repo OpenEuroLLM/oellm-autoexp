@@ -3,4 +3,5 @@ runtime: apptainer
 bind: []
 env:
   WANDB_MODE: "offline"
+  PYTHONPATH: "."
 python: "python"

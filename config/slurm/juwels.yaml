@@ -28,6 +28,7 @@ env:
   NCCL_NET_GDR_READ: "1"
   HF_ALLOW_CODE_EVAL: "1"
   HF_DATASETS_OFFLINE: "1"
+  HF_HOME: ${oc.env:HF_HOME}
   TRANSFORMERS_OFFLINE: "1"
   MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1)i | \
     grep \"Address: \" | tail -n1 | awk '{print $2}')"
@@ -41,7 +42,7 @@ env:
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
 sbatch:
   nodes: 1
-  ntasks_per_node: 1
+  ntasks_per_node: ${.gpus_per_node}
   ntasks: ${.nodes}
   gpus_per_node: 4
   cpus_per_task: 8

@@ -12,7 +12,7 @@ from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
 from . import schema
-from .normalize import ensure_monitoring_state_dir, normalize_config_data
+from .normalize import ensure_monitoring_state_dir
 from .resolvers import register_default_resolvers
 
 
@@ -78,7 +78,6 @@ def load_config(path: str | Path) -> schema.RootConfig:
     if not isinstance(data, Mapping):
         raise ConfigLoaderError(f"Configuration root must be a mapping: {path}")
     _ensure_no_deprecated_monitoring_keys(data, source=str(path))
-    data = normalize_config_data(data)
     try:
         root = parse_config(schema.RootConfig, data)
     except Exception as exc:  # pragma: no cover - compoconf raises rich errors
@@ -111,45 +110,63 @@ def load_hydra_config(
     with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
         cfg = compose(config_name=config_name, overrides=overrides)
 
-    # Temporarily escape {{...}} placeholders so Hydra doesn't try to parse them
-    # These are meant for Python's str.format(), not Hydra interpolation
-    def escape_double_braces(obj):
-        """Recursively escape {{...}} in strings to prevent Hydra from parsing
-        them."""
+    # Escape placeholders that should not resolve during Hydra composition:
+    # - {{...}} are for Python's str.format(), not OmegaConf
+    # - \\${...} are escaped interpolations that resolve later (during DAG resolution)
+    #   This includes ANY escaped interpolation: \\${sibling.*}, \\${aux.*}, \\${slurm.*}, etc.
+    #   Generic approach: no need to know specific paths being escaped!
+    def escape_placeholders(obj):
+        """Recursively escape {{...}} and \\$ that should not resolve during
+        config loading.
+
+        This is FULLY GENERIC - works for ANY escaped interpolation, not just specific patterns.
+        """
         if isinstance(obj, str):
-            # Replace {{env_flags}} with a placeholder that Hydra won't touch
-            return obj.replace("{{env_flags}}", "__PLACEHOLDER_ENV_FLAGS__").replace(
+            # Replace {{env_flags}} with a placeholder (for Python's str.format())
+            result = obj.replace("{{env_flags}}", "__PLACEHOLDER_ENV_FLAGS__").replace(
                 "{{env_exports}}", "__PLACEHOLDER_ENV_EXPORTS__"
             )
+            # Generic: Replace ALL \\$ with placeholder
+            # This works for ANY escaped interpolation: \\${sibling.*}, \\${aux.*}, \\${slurm.*}, etc.
+            # No need to know what's being escaped!
+            result = result.replace("\\$", "__ESCAPED_DOLLAR__")
+            return result
         elif isinstance(obj, dict):
-            return {k: escape_double_braces(v) for k, v in obj.items()}
+            return {k: escape_placeholders(v) for k, v in obj.items()}
         elif isinstance(obj, list):
-            return [escape_double_braces(v) for v in obj]
+            return [escape_placeholders(v) for v in obj]
         return obj
 
-    def unescape_double_braces(obj):
-        """Recursively restore {{...}} placeholders."""
+    def unescape_placeholders(obj):
+        """Recursively restore {{...}} and escaped $ markers.
+
+        This is FULLY GENERIC - restores ANY escaped interpolation.
+        """
         if isinstance(obj, str):
-            return obj.replace("__PLACEHOLDER_ENV_FLAGS__", "{{env_flags}}").replace(
+            # Restore {{env_flags}}
+            result = obj.replace("__PLACEHOLDER_ENV_FLAGS__", "{{env_flags}}").replace(
                 "__PLACEHOLDER_ENV_EXPORTS__", "{{env_exports}}"
             )
+            # Generic: Restore ALL escaped dollars
+            result = result.replace("__ESCAPED_DOLLAR__", "$")
+            return result
         elif isinstance(obj, dict):
-            return {k: unescape_double_braces(v) for k, v in obj.items()}
+            return {k: unescape_placeholders(v) for k, v in obj.items()}
         elif isinstance(obj, list):
-            return [unescape_double_braces(v) for v in obj]
+            return [unescape_placeholders(v) for v in obj]
         return obj
 
-    # Get unresolved config, escape {{...}}, then resolve
+    # Get UNRESOLVED config, escape \\$, then resolve
+    # This ensures escaped interpolations (\\${...}) stay as literal strings during Hydra composition
+    # They will be unescaped later during sweep expansion/DAG resolution
     data_unresolved = OmegaConf.to_container(cfg, resolve=False)  # type: ignore[return-value]
-    data_escaped = escape_double_braces(data_unresolved)
+    data_escaped = escape_placeholders(data_unresolved)
     cfg_escaped = OmegaConf.create(data_escaped)
     data = OmegaConf.to_container(cfg_escaped, resolve=True)  # type: ignore[return-value]
-    data = unescape_double_braces(data)
     _ensure_registrations()
     if not isinstance(data, Mapping):
         raise ConfigLoaderError(f"Hydra config {config_name} did not produce a mapping")
     _ensure_no_deprecated_monitoring_keys(data, source=f"Hydra config {config_name}")
-    data = normalize_config_data(data)
     try:
         root = parse_config(schema.RootConfig, data)
     except Exception as exc:  # pragma: no cover
@@ -222,7 +239,6 @@ def load_config_reference(
             if not isinstance(data, Mapping):
                 raise ConfigLoaderError(f"Config file {path} did not produce a mapping")
             _ensure_no_deprecated_monitoring_keys(data, source=str(path))
-            data = normalize_config_data(data)
             try:
                 root = parse_config(schema.RootConfig, data)
             except Exception as exc:

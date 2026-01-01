@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "oellm-autoexp"
-version = "0.1.1"
+version = "0.1.2"
 description = "Unified orchestration for OELLM training sweeps and monitoring."
 readme = "README.md"
 authors = [
@@ -18,6 +18,7 @@ dependencies = [
   "omegaconf>=2.3",
   "pydantic>=2.0",
   "jsonschema>=4.17",
+  "networkx>=3.0",
 ]
 
 [project.optional-dependencies]

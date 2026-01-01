@@ -544,7 +544,7 @@ def build_job_plans(config: RootConfig, points: list[SweepPoint]) -> list[JobPla
     plans: list[JobPlan] = []
     for point in points:
         context: dict[str, str] = {
-            "project": project_name,
+            "project_name": project_name,
             "index": str(point.index),
         }
         context.update(

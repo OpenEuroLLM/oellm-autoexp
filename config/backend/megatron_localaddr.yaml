@@ -1,0 +1,9 @@
+defaults:
+  - megatron
+  - _self_
+
+
+torchrun_args:
+  local_addr: "$LOCAL_ADDR"
+env:
+  LOCAL_ADDR: "$LOCAL_ADDR"
