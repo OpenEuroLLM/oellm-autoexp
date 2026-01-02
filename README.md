@@ -109,6 +109,283 @@ python scripts/monitor_autoexp.py --manifest outputs/manifests/<plan>.json
 ```
 `run_autoexp_container.py` accepts `--no-submit`, `--no-monitor`, and `--monitor-only` so the same manifest feeds both automation and manual debugging.
 
+## Hyperparameter Sweeps
+
+OELLM Auto-Exp supports powerful sweeping capabilities for hyperparameter exploration, including multi-stage experiments with automatic dependency resolution.
+
+### Basic Sweeping (Grid Format)
+
+Define parameter grids in your config:
+
+```yaml
+sweep:
+  name_template: "experiment_{backend.megatron.lr}_{backend.megatron.global_batch_size}"
+  base_values:
+    backend.megatron.num_layers: 20
+    backend.megatron.hidden_size: 896
+  grids:
+    - backend.megatron.lr: [1e-4, 5e-4, 1e-3]
+      backend.megatron.global_batch_size: [64, 128, 256]
+```
+
+This creates 9 jobs (3 × 3 grid) with all combinations of learning rates and batch sizes.
+
+### Composable Sweeps (Groups Format)
+
+For complex experiments, use the composable groups format to combine different sweep strategies. Groups can use `type: product` (Cartesian product) or `type: list` (sequential concatenation):
+
+```yaml
+sweep:
+  name_template: "tuning_{backend.megatron.lr}_{backend.megatron.global_batch_size}_{stage}"
+  type: list  # Top-level: concatenate independent exploration strategies
+  groups:
+    # Strategy 1: Small batch exploration (product of LR × batch sizes)
+    - type: product
+      groups:
+        - params:
+            backend.megatron.lr: [1e-4, 5e-4, 1e-3]
+        - params:
+            backend.megatron.global_batch_size: [64, 128]
+      defaults:
+        stage: small_batch
+        backend.megatron.train_iters: 5000
+      # Result: 3 LRs × 2 batch sizes = 6 jobs
+
+    # Strategy 2: Large batch exploration (product of LR × batch sizes)
+    - type: product
+      groups:
+        - params:
+            backend.megatron.lr: [5e-4, 1e-3, 2e-3]
+        - params:
+            backend.megatron.global_batch_size: [256, 512]
+      defaults:
+        stage: large_batch
+        backend.megatron.train_iters: 5000
+      # Result: 3 LRs × 2 batch sizes = 6 jobs
+
+    # Strategy 3: Best configurations for production
+    - configs:
+        - stage: production
+          backend.megatron.lr: 5e-4
+          backend.megatron.global_batch_size: 256
+          backend.megatron.train_iters: 100000
+        - stage: production
+          backend.megatron.lr: 1e-3
+          backend.megatron.global_batch_size: 128
+          backend.megatron.train_iters: 100000
+      # Result: 2 jobs (hand-picked best configs)
+```
+
+**Total result:** 6 + 6 + 2 = **14 jobs** (independent strategies concatenated)
+
+**Composition modes:**
+- `type: product` → Creates Cartesian product **across** groups (multiply)
+  - Example: 3 LRs × 2 batch sizes = 6 jobs
+- `type: list` → Concatenates groups **sequentially** (add)
+  - Example: 6 + 6 + 2 = 14 jobs
+- `params:` → Creates grid sweeps **within** a group
+- `configs:` → Lists individual configurations
+- Groups can be **arbitrarily nested** with their own `type`
+
+### Multi-Stage Experiments with Sibling References
+
+For experiments that build on previous stages (for example, different training phases):
+
+```yaml
+sweep:
+  type: list
+  groups:
+    - params:
+        backend.megatron.lr: [2.5e-4, 5e-4, 1e-3]
+        backend.megatron.global_batch_size: [64, 128, 256]
+      defaults:
+        stage: stable
+        backend.megatron.train_iters: 18000
+
+    - params:
+        backend.megatron.lr: [2.5e-4, 5e-4, 1e-3]
+        backend.megatron.global_batch_size: [64, 128, 256]
+      defaults:
+        stage: decay6B
+        backend.megatron.train_iters: 36000
+        # Reference the stable stage sibling
+        backend.megatron.load: "\\${sibling.stable.output_dir}/checkpoints"
+
+      # Start conditions - only start when stable stage completes
+      job.start_conditions:
+        - class_name: FileExistsCondition
+          path: "\\${sibling.stable.output_dir}/checkpoints/done.txt"
+
+      # Cancel if stable stage fails
+      job.cancel_conditions:
+        - class_name: SlurmStateCondition
+          job_name: "\\${sibling.stable.name}"
+          state: FAILED
+```
+
+**Key points:**
+- Use `\\${sibling.STAGE.FIELD}` to reference sibling jobs (double-escaped in YAML)
+- Available fields: `name`, `output_dir`, `log_path`, `log_path_current`
+- Dependencies are automatically resolved by way of DAG
+- Jobs start only when their dependencies complete
+
+### Visualizing Your Sweep
+
+Before running, visualize the execution plan:
+
+```bash
+# Visualize the multi-stage DAG structure
+python scripts/visualize_plan.py --config-ref experiments/my_experiment
+
+# Limit jobs shown per stage
+python scripts/visualize_plan.py --config-ref experiments/my_experiment \
+    --max-jobs-per-stage 5
+
+# With Hydra overrides
+python scripts/visualize_plan.py --config-ref experiments/my_experiment \
+    backend.megatron.lr=1e-4
+```
+
+**Example output:**
+```
+======================================================================
+ Multi-Stage Experiment Plan: dense_300M_sweep
+======================================================================
+Total: 75 jobs across 5 stage(s)
+
+┌────────────────────────────────────────────────────────────────────┐
+│ Hyperparameter Sweep                                               │
+│ • lr: [2.5e-4, 5e-4, 1e-3, 2e-3]                                   │
+│ • global_batch_size: [64, 128, 256, 512, 1024]                     │
+│ Total combinations: 15                                             │
+└────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────┐
+│ Stage: stable (15 jobs)                                            │
+├────────────────────────────────────────────────────────────────────┤
+│ Start: Immediate                                                   │
+└────────────────────────────────────────────────────────────────────┘
+
+              │             │             │             │
+
+┌────────────────────────────────────────────────────────────────────┐
+│ Stage: decay6B (15 jobs)                                           │
+├────────────────────────────────────────────────────────────────────┤
+│ Start Conditions:                                                  │
+│   • FileExists: .../checkpoints/iter_18000/done.txt                │
+│ Cancel Conditions:                                                 │
+│   • SlurmState: stable_job = FAILED                                │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### Logging Control
+
+Control verbosity with the `OELLM_LOG_LEVEL` environment variable or command-line flags:
+
+```bash
+# Minimal output (warnings/errors only)
+python scripts/visualize_plan.py --config-ref my_experiment
+
+# INFO level logging (shows progress)
+OELLM_LOG_LEVEL=INFO python scripts/visualize_plan.py --config-ref my_experiment
+
+# Debug logging (detailed internal operations)
+OELLM_LOG_LEVEL=DEBUG python scripts/run_autoexp.py --config-ref my_experiment
+
+# Command-line flags override environment variable
+python scripts/visualize_plan.py --debug --config-ref my_experiment
+```
+
+**Log levels:** `DEBUG`, `INFO`, `WARNING` (default), `ERROR`, `CRITICAL`
+
+**Priority (highest to lowest):**
+1. Command-line flags (`--debug`, `--verbose`)
+2. `OELLM_LOG_LEVEL` environment variable
+3. Default (WARNING)
+
+### Advanced Sweep Features
+
+#### Filters
+
+Exclude specific combinations using Python expressions:
+
+```yaml
+sweep:
+  name_template: "experiment_{backend.megatron.lr}_{backend.megatron.global_batch_size}"
+  grids:
+    - backend.megatron.lr: [1e-4, 5e-4, 1e-3, 2e-3]
+      backend.megatron.global_batch_size: [64, 128, 256, 512, 1024]
+  # Exclude configurations where large LR + large batch size
+  filter: "not (backend.megatron.lr > 1e-3 and backend.megatron.global_batch_size > 256)"
+```
+
+**Result:** Filters out jobs where `lr=2e-3` and `batch_size ∈ {512, 1024}`, keeping only valid combinations.
+
+**Filter capabilities:**
+- Access flattened parameters by dotted path (for example, `backend.megatron.lr`)
+- Use Python operators: `>`, `<`, `==`, `!=`, `and`, `or`, `not`
+- Combine multiple conditions
+- Applied after sweep expansion but before job creation
+
+#### Adding Filters to Nested Groups
+
+Apply filters at any level to exclude unstable or redundant combinations. Building on the composable example above:
+
+```yaml
+sweep:
+  name_template: "tuning_{backend.megatron.lr}_{backend.megatron.global_batch_size}_{stage}"
+  type: list
+  groups:
+    # Strategy 1: Small batch exploration
+    - type: product
+      groups:
+        - params:
+            backend.megatron.lr: [1e-4, 5e-4, 1e-3, 2e-3]  # Added 2e-3
+        - params:
+            backend.megatron.global_batch_size: [64, 128]
+      defaults:
+        stage: small_batch
+      # Filter out aggressive LR (2e-3) to avoid instability
+      filter: "backend.megatron.lr <= 1e-3"
+      # Result: 3 LRs × 2 batch sizes = 6 jobs (2e-3 excluded)
+
+    # Strategy 2: Large batch exploration
+    - type: product
+      groups:
+        - params:
+            backend.megatron.lr: [5e-4, 1e-3, 2e-3, 5e-3]  # Wider range
+        - params:
+            backend.megatron.global_batch_size: [256, 512, 1024]  # Added 1024
+      defaults:
+        stage: large_batch
+      # Only test aggressive LR with smaller batches (not 1024)
+      filter: "not (backend.megatron.lr > 2e-3 and backend.megatron.global_batch_size > 512)"
+      # Result: 3×3 - 1 = 8 jobs (5e-3×1024 excluded)
+
+    # Strategy 3: Production (no filter needed)
+    - configs:
+        - stage: production
+          backend.megatron.lr: 5e-4
+          backend.megatron.global_batch_size: 256
+```
+
+**Result:** 6 + 8 + 1 = **15 jobs** (filters prevent unstable configurations)
+
+#### Other Features
+
+- **OmegaConf interpolations**: Use `${oc.eval:...}` for computed values
+  ```yaml
+  backend.megatron.train_iters: "${oc.eval:int(50e9 / ${backend.megatron.global_batch_size})}"
+  ```
+- **Group defaults**: Share common values within a group using `defaults:` block
+- **Validation**: The planner validates all sibling references and dependencies before submission
+
+For complete examples, see:
+- `config/experiments/korbi/dense_300M_50BT_pull.yaml` - Multi-stage sweep with 5 training phases
+- `config/experiments/korbi/repro_sweep_niccolo_small.yaml` - Large hyperparameter grid
+- `docs/multi_stage_design.md` - Design documentation
+- `docs/sweep_resolution_ordering.md` - Technical details on DAG resolution
+
 ## Monitoring configs (log/state events)
 Monitoring behavior lives entirely in YAML. Keep it small, keep it explicit:
 
