@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, MISSING
 from itertools import product
 from typing import Any
@@ -11,6 +12,8 @@ from collections.abc import Mapping
 from omegaconf import OmegaConf
 
 from oellm_autoexp.config.schema import SweepConfig
+
+LOGGER = logging.getLogger(__file__)
 
 
 @dataclass(frozen=True)
@@ -27,15 +30,21 @@ def expand_sweep(config: SweepConfig) -> list[SweepPoint]:
 
     Supports both legacy grid format and new composable groups format.
     """
+    LOGGER.debug("Starting sweep expansion")
 
     base_values = dict(config.base_values)
 
     # Check if using new composable format
     if config.groups is not None and config.type is not None:
-        return _expand_composable_sweep(config, base_values)
+        LOGGER.info("Using composable sweep format")
+        points = _expand_composable_sweep(config, base_values)
+    else:
+        # Legacy format
+        LOGGER.info("Using legacy sweep format")
+        points = _expand_legacy_sweep(config, base_values)
 
-    # Legacy format
-    return _expand_legacy_sweep(config, base_values)
+    LOGGER.info(f"Sweep expansion complete: {len(points)} points")
+    return points
 
 
 def _expand_legacy_sweep(config: SweepConfig, base_values: dict[str, Any]) -> list[SweepPoint]:
@@ -231,7 +240,7 @@ def _cartesian_product_groups(
 def _product_dict(cfg: dict[str, list]):
     """Generate cartesian product of dict values."""
     combinations = [dict(zip(cfg.keys(), comb)) for comb in product(*cfg.values())]
-    print(combinations)
+    LOGGER.debug(f"Generated {len(combinations)} combinations from {list(cfg.keys())}")
     return combinations
 
 

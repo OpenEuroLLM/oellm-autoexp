@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 from pathlib import Path
 
 from .planner import JobPlan
+
+LOGGER = logging.getLogger(__name__)
 
 
 # Pattern to match {sibling.PATTERN.ACCESSOR}
@@ -29,6 +32,7 @@ def resolve_sibling_references(jobs: list[JobPlan]) -> list[JobPlan]:
     Raises:
         ValueError: If sibling reference cannot be resolved
     """
+    LOGGER.info(f"Resolving sibling references for {len(jobs)} jobs")
     # First pass: extract sibling patterns and stage names
     jobs = _extract_metadata(jobs)
 

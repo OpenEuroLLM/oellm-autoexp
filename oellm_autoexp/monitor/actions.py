@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -20,6 +21,8 @@ from compoconf import (
 )
 
 from oellm_autoexp.monitor.events import EventRecord, EventStatus
+
+LOGGER = logging.getLogger(__name__)
 
 ActionStatus = Literal["success", "retry", "failed"]
 

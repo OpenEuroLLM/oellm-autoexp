@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from argparse import _StoreFalseAction, _StoreTrueAction
 from dataclasses import MISSING, dataclass, field
@@ -10,6 +11,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 from collections.abc import Iterable, Mapping
+
+LOGGER = logging.getLogger(__name__)
 
 _MegatronParser: argparse.ArgumentParser | None = None
 

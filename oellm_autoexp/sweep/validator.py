@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from .planner import JobPlan
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -45,6 +48,7 @@ def validate_execution_plan(jobs: list[JobPlan]) -> ValidationResult:
     Returns:
         ValidationResult with errors and warnings
     """
+    LOGGER.info(f"Validating execution plan with {len(jobs)} jobs")
     errors: list[str] = []
     warnings: list[str] = []
 

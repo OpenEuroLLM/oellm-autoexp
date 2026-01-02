@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 from collections.abc import Mapping, Sequence
@@ -9,6 +10,8 @@ from collections.abc import Mapping, Sequence
 from compoconf import ConfigInterface, register
 
 from oellm_autoexp.config.schema import BackendInterface
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(kw_only=True)

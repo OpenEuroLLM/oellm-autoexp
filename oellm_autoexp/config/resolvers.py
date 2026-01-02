@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from functools import lru_cache
 from math import sqrt as _sqrt
 from collections.abc import Mapping
 
 from omegaconf import ListConfig, OmegaConf
+
+LOGGER = logging.getLogger(__name__)
 
 
 _REGISTRATION_SENTINEL = {"registered": False}

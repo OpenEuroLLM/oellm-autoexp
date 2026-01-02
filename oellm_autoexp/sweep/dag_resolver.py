@@ -11,6 +11,7 @@ See docs/sweep_resolution_ordering.md for design rationale (Option 5).
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,8 @@ from omegaconf import OmegaConf
 from oellm_autoexp.config.schema import RootConfig
 from oellm_autoexp.sweep.expander import SweepPoint
 from oellm_autoexp.sweep.planner import JobPlan
+
+LOGGER = logging.getLogger(__file__)
 
 
 def _unescape_config_placeholders(obj: Any) -> Any:
@@ -112,6 +115,7 @@ def extract_sibling_patterns(parameters: dict[str, Any]) -> set[str]:
                 scan_value(item)
 
     scan_value(parameters)
+    LOGGER.debug(f"Extracted sibling patterns: {patterns}")
     return patterns
 
 
@@ -164,11 +168,13 @@ def find_sibling_by_group_path(
 
 def build_dependency_dag_from_points(points: list[SweepPoint]) -> nx.DiGraph:
     """Build dependency DAG from sweep points."""
+    LOGGER.debug(f"Building dependency DAG from {len(points)} points")
     dag = nx.DiGraph()
 
     for point in points:
         dag.add_node(point.index)
 
+    edges_added = 0
     for point in points:
         sibling_deps = extract_sibling_patterns(point.parameters)
 
@@ -176,9 +182,11 @@ def build_dependency_dag_from_points(points: list[SweepPoint]) -> nx.DiGraph:
             try:
                 sibling = find_sibling_by_group_path(point, points, stage_pattern)
                 dag.add_edge(sibling.index, point.index)
+                edges_added += 1
             except ValueError:
                 pass  # Root node, no dependencies
 
+    LOGGER.info(f"Built DAG with {len(points)} nodes and {edges_added} edges")
     return dag
 
 
@@ -217,14 +225,18 @@ def resolve_sweep_with_dag(config: RootConfig, points: list[SweepPoint]) -> list
     Returns:
         List of fully resolved JobPlans
     """
+    LOGGER.info(f"Starting DAG resolution for {len(points)} sweep points")
+
     # Build DAG and get resolution order
     dag = build_dependency_dag_from_points(points)
 
     if not nx.is_directed_acyclic_graph(dag):
         cycles = list(nx.simple_cycles(dag))
+        LOGGER.error(f"Circular dependencies detected: {cycles}")
         raise ValueError(f"Circular dependencies detected: {cycles}")
 
     ordered_indices = list(nx.topological_sort(dag))
+    LOGGER.debug(f"Topological order: {ordered_indices}")
 
     # Resolve in topological order
     resolved_jobs = {}

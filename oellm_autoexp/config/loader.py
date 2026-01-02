@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -12,8 +13,9 @@ from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
 from . import schema
-from .normalize import ensure_monitoring_state_dir
 from .resolvers import register_default_resolvers
+
+LOGGER = logging.getLogger(__file__)
 
 
 class ConfigLoaderError(RuntimeError):
@@ -22,6 +24,21 @@ class ConfigLoaderError(RuntimeError):
 
 _REGISTRY_SENTINEL = {"loaded": False}
 _DEPRECATED_MONITORING_KEYS = ("log_signals", "policies")
+
+
+def _ensure_monitoring_state_dir(root: schema.RootConfig) -> None:
+    """Assign a deterministic monitoring_state_dir when unspecified."""
+    if root.project.monitoring_state_dir is not None:
+        return
+
+    base = Path(root.project.base_output_dir)
+    stable_base = (
+        base.parent
+        if base.name.split("_")[-1].isdigit() and len(base.name.split("_")[-1]) >= 8
+        else base
+    )
+    root.project.monitoring_state_dir = stable_base / "monitoring_state"
+    LOGGER.debug(f"Auto-configured monitoring_state_dir: {root.project.monitoring_state_dir}")
 
 
 def _ensure_no_deprecated_monitoring_keys(data: Mapping[str, Any], source: str) -> None:
@@ -83,7 +100,7 @@ def load_config(path: str | Path) -> schema.RootConfig:
     except Exception as exc:  # pragma: no cover - compoconf raises rich errors
         raise ConfigLoaderError(f"Unable to parse config {path}: {exc}") from exc
 
-    ensure_monitoring_state_dir(root)
+    _ensure_monitoring_state_dir(root)
 
     return root
 
@@ -93,9 +110,12 @@ def load_hydra_config(
     config_dir: str | Path,
     overrides: Iterable[str] | None = None,
 ) -> schema.RootConfig:
+    LOGGER.info(f"Loading Hydra config: {config_name} from {config_dir}")
     register_default_resolvers()
 
     overrides = list(overrides or [])
+    if overrides:
+        LOGGER.debug(f"Applying {len(overrides)} overrides")
     overrides = [
         override.split("=")[0] + '="' + "=".join(override.split("=")[1:]) + '"'
         if "${" in override
@@ -172,7 +192,7 @@ def load_hydra_config(
     except Exception as exc:  # pragma: no cover
         raise ConfigLoaderError(f"Unable to parse Hydra config {config_name}: {exc}") from exc
 
-    ensure_monitoring_state_dir(root)
+    _ensure_monitoring_state_dir(root)
 
     return root
 
@@ -244,7 +264,7 @@ def load_config_reference(
             except Exception as exc:
                 raise ConfigLoaderError(f"Unable to parse config {path}: {exc}") from exc
 
-            ensure_monitoring_state_dir(root)
+            _ensure_monitoring_state_dir(root)
             return root
         else:
             # No overrides, use simple loader

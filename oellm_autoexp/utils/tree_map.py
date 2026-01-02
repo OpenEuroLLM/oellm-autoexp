@@ -1,5 +1,8 @@
+import logging
 from typing import Any
 from collections.abc import Callable
+
+LOGGER = logging.getLogger(__name__)
 
 
 def tree_map(f: Callable[[Any], Any], obj: Any, is_leaf: Callable[[Any], bool] | None = None):

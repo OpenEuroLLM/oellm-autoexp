@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, MISSING
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from omegaconf import OmegaConf
 from typing import Any
 from oellm_autoexp.config.schema import RootConfig
 from .expander import SweepPoint
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(kw_only=True)
@@ -189,11 +192,13 @@ def _resolve_conditions(
 
 
 def build_job_plans(config: RootConfig, points: list[SweepPoint]) -> list[JobPlan]:
+    LOGGER.info(f"Building job plans for {len(points)} sweep points")
     base_output = Path(config.project.base_output_dir)
     project_name = config.project.name
 
     plans: list[JobPlan] = []
     for point in points:
+        LOGGER.debug(f"Building plan for point {point.index}")
         context: dict[str, str] = {
             "project_name": project_name,
             "index": str(point.index),
@@ -336,6 +341,7 @@ def build_job_plans(config: RootConfig, points: list[SweepPoint]) -> list[JobPla
                 cancel_conditions=cancel_conditions,
             )
         )
+    LOGGER.info(f"Built {len(plans)} job plans")
     return plans
 
 
