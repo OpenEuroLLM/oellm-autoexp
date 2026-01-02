@@ -72,13 +72,25 @@ class ProjectConfig(ConfigInterface):
 class SweepConfig(ConfigInterface):
     """Sweep expansion settings.
 
-    ``grid`` holds the raw sweep definition as hydra override strings.
+    Supports both legacy grid format and new composable groups format:
+
+    Legacy format (backward compatible):
+        grids: list[dict[str, list[Any]]]
+
+    New composable format:
+        type: "product" | "list"
+        groups: list[dict with 'type' and 'params'/'configs']
+
     ``base_values`` contain default substitutions applied before the
     sweep is generated.
     """
 
     class_name: str = "Sweep"
+    # Legacy format
     grids: list[dict[str, list[Any]]] | None = None
+    # New composable format
+    type: str | None = None  # "product" or "list"
+    groups: list[dict[str, Any]] | None = None
     base_values: dict[str, Any] = field(default_factory=dict)
     name_template: str = "{project}_{index}"
     store_sweep_json: bool = True
@@ -159,3 +171,4 @@ class RootConfig(ConfigInterface):
     container: ContainerConfig | None = None
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     metadata: dict[str, Any] = field(default_factory=dict)
+    stage: str = ""

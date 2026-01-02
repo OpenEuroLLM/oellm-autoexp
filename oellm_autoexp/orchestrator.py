@@ -23,7 +23,9 @@ from oellm_autoexp.slurm.client import BaseSlurmClient
 from oellm_autoexp.slurm.template_renderer import render_template_file
 from oellm_autoexp.slurm.validator import validate_job_script
 from oellm_autoexp.sweep.expander import SweepPoint, expand_sweep
-from oellm_autoexp.sweep.planner import JobPlan, build_job_plans
+from oellm_autoexp.sweep.planner import JobPlan
+from oellm_autoexp.sweep.dag_resolver import resolve_sweep_with_dag
+from oellm_autoexp.sweep.validator import validate_execution_plan
 from oellm_autoexp.utils.start_condition import (
     resolve_start_condition_interval,
     wait_for_start_condition,
@@ -81,6 +83,7 @@ def build_execution_plan(
     config: str | RootConfig,
     config_setup: ConfigSetup | None = None,
     subset_indices: set[int] | None = None,
+    validate: bool = True,
 ) -> ExecutionPlan:
     if isinstance(config, (str, Path)):
         root = load_config(config)
@@ -108,7 +111,21 @@ def build_execution_plan(
         points = [point for point in points if point.index in subset_indices]
         if not points:
             raise ValueError(f"No sweep points match indices: {sorted(subset_indices)}")
-    jobs = build_job_plans(root, points=points)
+
+    # Unified DAG-based resolution (job planning + sibling resolution)
+    jobs = resolve_sweep_with_dag(root, points)
+
+    # Validate execution plan
+    if validate:
+        validation_result = validate_execution_plan(jobs)
+        if not validation_result.is_valid:
+            error_msg = f"Execution plan validation failed:\n{validation_result}"
+            LOGGER.error(error_msg)
+            raise ValueError(error_msg)
+        if validation_result.warnings:
+            for warning in validation_result.warnings:
+                LOGGER.warning(warning)
+
     return ExecutionPlan(
         config=root, config_setup=config_setup, runtime=runtime, sweep_points=points, jobs=jobs
     )
@@ -502,10 +519,20 @@ def _build_replacements(
     if srun_opts:
         srun_opts = f"{srun_opts} "
 
+    # Create symlink command for log_path_current
+    log_symlink_cmd = ""
+    if job.log_path_current:
+        log_filename = Path(job.log_path).name
+        # Command to create/update symlink: ln -sf slurm-${SLURM_JOB_ID}.out /path/to/current.log
+        # We use the actual SLURM_JOB_ID which is available at runtime in the job script
+        actual_log_name = log_filename.replace("%j", "${SLURM_JOB_ID}")
+        log_symlink_cmd = f'ln -sf "{actual_log_name}" "{job.log_path_current}"'
+
     repl = {
         "name": job.name,
         "output_dir": str(job.output_dir),
         "log_path": str(job.log_path),
+        "log_symlink_cmd": log_symlink_cmd,
         "launcher_cmd": launcher_cmd,
         "launcher": launcher,
         "launcher_env_flags": launcher_env_flags,
@@ -523,7 +550,7 @@ def _build_replacements(
     if job.inactivity_threshold_seconds is not None:
         repl["inactivity_threshold_seconds"] = str(job.inactivity_threshold_seconds)
     repl.update(job.parameters)
-    repl.update({"project": runtime.root.project.name})
+    repl.update({"project_name": runtime.root.project.name})
     return repl
 
 
@@ -560,7 +587,7 @@ def _write_sweep_json(plan: ExecutionPlan, entries: list[dict[str, Any]]) -> Pat
         sweep_dir = fallback_output
     sweep_path = sweep_dir / "sweep.json"
     payload = {
-        "project": plan.config.project.name,
+        "project_name": plan.config.project.name,
         "jobs": entries,
     }
     payload = tree_map(

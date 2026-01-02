@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,6 +13,7 @@ from typing import Any
 
 from compoconf import parse_config
 
+from oellm_autoexp.utils.logging_config import configure_logging
 from oellm_autoexp.workflow.host import (
     build_host_runtime,
     instantiate_controller,
@@ -22,19 +22,6 @@ from oellm_autoexp.workflow.host import (
 from oellm_autoexp.workflow.manifest import read_manifest
 from oellm_autoexp.monitor.action_queue import ActionQueue
 from oellm_autoexp.monitor.actions import ActionContext, BaseMonitorAction
-
-
-def _configure_logging(verbose: bool = False, debug: bool = False) -> None:
-    level = logging.WARNING
-    if debug:
-        level = logging.DEBUG
-    elif verbose:
-        level = logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -307,7 +294,7 @@ def _run_action_worker(runtime) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    _configure_logging(args.verbose, args.debug)
+    configure_logging(args.verbose, args.debug)
 
     manifest_path: Path
     if args.session:

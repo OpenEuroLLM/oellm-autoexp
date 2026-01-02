@@ -1,9 +1,12 @@
 """Utilities to render SBATCH scripts."""
 
 from __future__ import annotations
+import logging
 from pathlib import Path
 
 from collections.abc import Mapping
+
+LOGGER = logging.getLogger(__name__)
 
 
 class SbatchTemplateError(RuntimeError):

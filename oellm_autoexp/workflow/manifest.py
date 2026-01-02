@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field, MISSING
@@ -11,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from compoconf import parse_config
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _import_object(module: str, name: str) -> Any:

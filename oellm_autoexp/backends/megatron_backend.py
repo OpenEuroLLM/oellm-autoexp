@@ -30,6 +30,7 @@ In SLURM environments with containers:
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from typing import Any
@@ -44,6 +45,8 @@ from oellm_autoexp.backends.megatron.cli_metadata import (
 from oellm_autoexp.backends.megatron.config_schema import MegatronConfig
 
 from oellm_autoexp.backends.megatron_args import MegatronArgMetadata, build_cmdline_args
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(init=False)

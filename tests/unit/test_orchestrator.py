@@ -25,11 +25,9 @@ slurm:
   client:
     class_name: FakeSlurmClient
 monitoring:
-  implementation:
-    class_name: NullMonitor
+  class_name: NullMonitor
 backend:
-  implementation:
-    class_name: NullBackend
+  class_name: NullBackend
 """
 
 GATING_TEMPLATE = """
@@ -48,11 +46,9 @@ slurm:
   client:
     class_name: FakeSlurmClient
 monitoring:
-  implementation:
-    class_name: NullMonitor
+  class_name: NullMonitor
 backend:
-  implementation:
-    class_name: NullBackend
+  class_name: NullBackend
 """
 
 
@@ -137,11 +133,9 @@ slurm:
   client:
     class_name: FakeSlurmClient
 monitoring:
-  implementation:
-    class_name: NullMonitor
+  class_name: NullMonitor
 backend:
-  implementation:
-    class_name: NullBackend
+  class_name: NullBackend
 """
 
     config_path = tmp_path / "config.yaml"
@@ -237,7 +231,7 @@ backend:
     assert Path(artifacts.array_script).exists()
     assert artifacts.sweep_json is not None
     payload = json.loads(Path(artifacts.sweep_json).read_text())
-    assert payload["project"] == "demo"
+    assert payload["project_name"] == "demo"
     assert len(payload["jobs"]) == 2
     assert payload["jobs"][0]["launch"]["argv"]
 
@@ -417,12 +411,10 @@ slurm:
     class_name: FakeSlurmClient
 
 monitoring:
-  implementation:
-    class_name: NullMonitor
+  class_name: NullMonitor
 
 backend:
-  implementation:
-    class_name: NullBackend
+  class_name: NullBackend
 """
 
     config_path = config_dir / "test.yaml"
@@ -549,12 +541,10 @@ slurm:
     class_name: FakeSlurmClient
 
 monitoring:
-  implementation:
-    class_name: NullMonitor
+  class_name: NullMonitor
 
 backend:
-  implementation:
-    class_name: NullBackend
+  class_name: NullBackend
 """
 
     config_path = config_dir / "test.yaml"

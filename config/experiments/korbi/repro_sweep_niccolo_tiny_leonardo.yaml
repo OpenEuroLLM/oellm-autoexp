@@ -21,8 +21,9 @@ backend:
     wandb_project: oellm-train
 
     data_path:
-      - "/leonardo_scratch/large/userexternal/kpoeppel/data/cerebras-SlimPajama-627B/small"
-    data_cache_path: "/leonardo_scratch/large/userexternal/kpoeppel/data/megatron_cache"
+      - "${oc.env:DATA_DIR}/cerebras-SlimPajama-627B/small"
+    data_cache_path: ${oc.env:DATA_DIR}/megatron_cache
+
     seq_length: 4096
     max_position_embeddings: 4096
     tokenizer_model: EleutherAI/gpt-neox-20b
@@ -184,9 +185,6 @@ monitoring:
 sweep:
   name_template: dense_300M_01_lr{backend.megatron.lr}_gbsz{backend.megatron.global_batch_size}_beta2{backend.megatron.adam_beta2}
   grids:
-  - backend.megatron.lr: [2.5e-4, 5.e-4]
-    backend.megatron.global_batch_size: [64]
-
   - # 9 points
     backend.megatron.lr: [2.e-3]
-    backend.megatron.global_batch_size: [64, 32]
+    backend.megatron.global_batch_size: [32]

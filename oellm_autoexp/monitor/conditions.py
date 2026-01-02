@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -19,6 +20,8 @@ from compoconf import (
 )
 
 from oellm_autoexp.monitor.events import EventRecord
+
+LOGGER = logging.getLogger(__name__)
 
 ConditionStatus = Literal["pass", "fail", "waiting"]
 

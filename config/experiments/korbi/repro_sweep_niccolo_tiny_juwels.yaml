@@ -1,8 +1,8 @@
 # @package _global_
 defaults:
   - /backend: megatron_torchrun
-  - /container: leonardo
-  - /slurm: leonardo
+  - /container: juwels
+  - /slurm: juwels
   - /monitoring: megatron_basic
   - /project: default
   - /sweep: none
@@ -21,14 +21,15 @@ backend:
     wandb_project: oellm-train
 
     data_path:
-      - "/leonardo_scratch/large/userexternal/kpoeppel/data/cerebras-SlimPajama-627B/small"
-    data_cache_path: "/leonardo_scratch/large/userexternal/kpoeppel/data/megatron_cache"
+      - "/p/project1/projectnucleus/shared/data/cerebras-SlimPajama-627B/train/merged"
+    data_cache_path: /p/project1/projectnucleus/shared/data/megatron_cache
+
     seq_length: 4096
     max_position_embeddings: 4096
     tokenizer_model: EleutherAI/gpt-neox-20b
     tokenizer_type: HuggingFaceTokenizer
     num_workers: 8
-    num-dataset-builder-threads: 6 # lumi-specific
+    num_dataset_builder_threads: 6 # lumi-specific
     split: '99,1,0'
 
     # MODEL: 300M
@@ -37,7 +38,6 @@ backend:
     ffn_hidden_size: 3584
     num_attention_heads: 14
     num_query_groups: ${.num_attention_heads} # no gqa when NUM_QUERY_GROUPS==NUM_ATTENTION_HEADS TODO: check
-    group_query_attentions: False
     init_method_std: 0.02
     position_embedding_type: "rope"
     rotary_base: 10000
@@ -52,7 +52,7 @@ backend:
     untie_embeddings_and_output_weights: False
     use_flash_attn: True
     attention_softmax_in_fp32: False # OpenSci style
-    disable_bias_linear: False
+    add_bias_linear: true
 
     # TRAINING, PARALLELISM
     recompute_activations: False
@@ -102,12 +102,6 @@ backend:
     # Set CHECKPOINT_FORMAT
     ckpt_format: "torch" # "torch_dist" is bugged (on both lumi and leo) TODO: fix
     save_interval: 2000
-
-    # LUMI-specific configs
-    te-fallback-layernorm-linear: True
-    no-bias-swiglu-fusion: True
-    no-bias-dropout-fusion: True
-    no-gradient-accumulation-fusion: True
 
     # machine + model size specific
     global_batch_size: 16 # will be overridden!
@@ -184,9 +178,6 @@ monitoring:
 sweep:
   name_template: dense_300M_01_lr{backend.megatron.lr}_gbsz{backend.megatron.global_batch_size}_beta2{backend.megatron.adam_beta2}
   grids:
-  - backend.megatron.lr: [2.5e-4, 5.e-4]
-    backend.megatron.global_batch_size: [64]
-
   - # 9 points
     backend.megatron.lr: [2.e-3]
-    backend.megatron.global_batch_size: [64, 32]
+    backend.megatron.global_batch_size: [32]
