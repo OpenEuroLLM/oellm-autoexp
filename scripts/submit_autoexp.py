@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import sys
 from pathlib import Path
 
@@ -15,6 +14,7 @@ from oellm_autoexp.workflow.host import (
     submit_pending_jobs,
 )
 from oellm_autoexp.workflow.manifest import read_manifest
+from oellm_autoexp.utils.logging_config import configure_logging
 
 
 def _render_log_hint(log_template: str | Path, job_id: str) -> str:
@@ -26,19 +26,6 @@ def _render_log_hint(log_template: str | Path, job_id: str) -> str:
         log_str = log_str.replace("%a", array_idx)
     log_str = log_str.replace("%j", job_id)
     return log_str
-
-
-def _configure_logging(verbose: bool = False, debug: bool = False) -> None:
-    level = logging.WARNING
-    if debug:
-        level = logging.DEBUG
-    elif verbose:
-        level = logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -54,7 +41,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    _configure_logging(args.verbose, args.debug)
+    configure_logging(args.verbose, args.debug)
 
     manifest_path = Path(args.manifest).resolve()
     manifest = read_manifest(manifest_path)

@@ -1,8 +1,8 @@
 # @package _global_
 defaults:
   - /backend: megatron_torchrun
-  - /container: lumi
-  - /slurm: lumi
+  - /container: leonardo
+  - /slurm: leonardo
   - /monitoring: megatron_basic
   - /project: default
   - /sweep: none

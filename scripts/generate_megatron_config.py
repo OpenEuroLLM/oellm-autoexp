@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 te_mock = MagicMock()
 sys.modules["transformer_engine"] = te_mock
 sys.modules["transformer_engine.pytorch"] = MagicMock()
+sys.modules["transformer_engine.pytorch.router"] = MagicMock()
 sys.modules["transformer_engine.pytorch.cpp_extensions"] = MagicMock()
 sys.modules["transformer_engine.pytorch.distributed"] = MagicMock()
 sys.modules["transformer_engine.pytorch.tensor"] = MagicMock()

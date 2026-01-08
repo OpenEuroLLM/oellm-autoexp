@@ -180,7 +180,7 @@ def test_apply_monitor_overrides_sets_direct_key():
         "inactivity_threshold_seconds": 900,
         "termination_string": None,
         "termination_command": None,
-        "log_path_template": "{output_dir}/slurm.out",
+        "log_path": "{output_dir}/slurm.out",
         "output_paths": [],
         "start_condition_cmd": None,
         "start_condition_interval_seconds": None,

@@ -54,16 +54,20 @@ class ProjectConfig(ConfigInterface):
     Attributes:
         name: Project name used in job naming
         base_output_dir: Per-run output directory (may include timestamps for unique runs)
-        state_dir: [DEPRECATED] Use monitoring_state_dir instead
+        log_path: (str) path template as used in slurm (%a, %A etc.)
+        log_path_current: (str) path for a symlink to the latest log output - fixed
         monitoring_state_dir: Stable directory for monitoring sessions (NO timestamps).
             This directory persists across runs and enables --monitor-all to find sessions.
             Defaults to a stable location (strips timestamps from base_output_dir).
         resume: Whether to resume monitoring from persisted state
     """
 
-    class_name: str = "Project"
     name: str = ""
-    base_output_dir: str = ""
+    base_output_dir: str = field(default=MISSING)
+    log_path: str = field(default=MISSING)  # template as used by SLURM
+    log_path_current: str = field(
+        default=MISSING
+    )  # fixed path for a symlink to the latest log file, known before submission
     monitoring_state_dir: str | None = None  # Stable, cross-run monitoring state
     resume: bool = True
 
@@ -72,15 +76,26 @@ class ProjectConfig(ConfigInterface):
 class SweepConfig(ConfigInterface):
     """Sweep expansion settings.
 
-    ``grid`` holds the raw sweep definition as hydra override strings.
+    Supports both legacy grid format and new composable groups format:
+
+    Legacy format (backward compatible):
+        grids: list[dict[str, list[Any]]]
+
+    New composable format:
+        type: "product" | "list"
+        groups: list[dict with 'type' and 'params'/'configs']
+
     ``base_values`` contain default substitutions applied before the
     sweep is generated.
     """
 
     class_name: str = "Sweep"
+    # Legacy format
     grids: list[dict[str, list[Any]]] | None = None
+    # New composable format
+    type: str | None = None  # "product" or "list"
+    groups: list[dict[str, Any]] | None = None
     base_values: dict[str, Any] = field(default_factory=dict)
-    name_template: str = "{project}_{index}"
     store_sweep_json: bool = True
     filter: str | None = None
 
@@ -147,6 +162,17 @@ class SchedulerConfig(ConfigInterface):
 
 
 @dataclass(kw_only=True)
+class JobConfig(ConfigInterface):
+    """Per-job lifecycle configuration."""
+
+    start_condition_cmd: str | None = None
+    start_condition_interval_seconds: int | None = None
+    start_conditions: list[dict[str, Any]] = field(default_factory=list)
+    cancel_conditions: list[dict[str, Any]] = field(default_factory=list)
+    inactivity_threshold_seconds: int | None = None
+
+
+@dataclass(kw_only=True)
 class RootConfig(ConfigInterface):
     """Top-level configuration schema."""
 
@@ -155,7 +181,23 @@ class RootConfig(ConfigInterface):
     sweep: SweepConfig = field(default_factory=MISSING)
     slurm: SlurmConfig = field(default_factory=MISSING)
     monitoring: MonitorInterface.cfgtype = field(default_factory=MISSING)
+    job: JobConfig = field(default_factory=JobConfig)
     backend: BackendInterface.cfgtype = field(default_factory=MISSING)
     container: ContainerConfig | None = None
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     metadata: dict[str, Any] = field(default_factory=dict)
+    stage: str = ""
+    # these are usually set internally
+    sibling: dict[str, Any] = field(default_factory=dict)
+    index: int | tuple[int] = 0
+    project_name: str = ""
+    job_name: str = ""
+    output_dir: str = ""
+
+
+@dataclass(kw_only=True)
+class ConfigSetup:
+    pwd: str
+    config_ref: str
+    config_dir: str
+    override: list[str] = field(default=list)

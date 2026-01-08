@@ -260,7 +260,7 @@ def submit_test_job(
         f"project.name=restart_test_mbs{micro_batch_size}",
         "slurm.log_dir=logs",
         f"slurm.array={str(array_mode).lower()}",
-        f"monitoring.log_path_template='logs/{{name}}-%{'A_%a' if array_mode else 'j'}.out'",
+        "monitoring.log_path=${project.log_path_current}",
         "monitoring.poll_interval_seconds=10",
         "monitoring.check_interval_seconds=10",
     ] + overrides

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, MISSING
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from . import schema
 from ..backends.base import BaseBackend
 from ..monitor.watcher import BaseMonitor
 from ..slurm.client import BaseSlurmClient, SlurmClientConfig
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(kw_only=True)

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from compoconf import ConfigInterface, RegistrableConfigInterface, register, register_interface
+
+LOGGER = logging.getLogger(__name__)
 
 
 @register_interface

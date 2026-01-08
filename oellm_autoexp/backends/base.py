@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 from collections.abc import Mapping, Sequence
@@ -9,6 +10,8 @@ from collections.abc import Mapping, Sequence
 from compoconf import ConfigInterface, register
 
 from oellm_autoexp.config.schema import BackendInterface
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(kw_only=True)
@@ -46,9 +49,14 @@ class BaseBackend(BackendInterface):
 class NullBackendConfig(ConfigInterface):
     """Backend that echoes sweep parameters for testing."""
 
-    base_command: Sequence[str] = field(default_factory=lambda: ("echo",))
-    extra_cli_args: Sequence[str] = field(default_factory=tuple)
+    base_command: Sequence[str] = field(
+        default_factory=lambda: [
+            "echo",
+        ]
+    )
+    extra_cli_args: Sequence[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+    dummy: int = 0
 
 
 @register
@@ -60,8 +68,8 @@ class NullBackend(BaseBackend):
 
     def build_launch_command(self, spec: BackendJobSpec) -> LaunchCommand:
         argv: list[str] = [str(arg) for arg in self.config.base_command]
-        for key, value in sorted(spec.parameters.items()):
-            argv.extend([str(key), str(value)])
+        for arg in sorted(spec.parameters):
+            argv.append(str(arg))
         argv.extend(str(arg) for arg in self.config.extra_cli_args)
         env = dict(self.config.env)
         return LaunchCommand(argv=argv, env=env)

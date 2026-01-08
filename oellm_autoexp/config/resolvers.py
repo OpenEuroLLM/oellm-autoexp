@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from functools import lru_cache
 from math import sqrt as _sqrt
 from collections.abc import Mapping
 
 from omegaconf import ListConfig, OmegaConf
+
+LOGGER = logging.getLogger(__name__)
 
 
 _REGISTRATION_SENTINEL = {"registered": False}
@@ -138,11 +141,11 @@ def _timestring():
     return datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")[:-3]
 
 
-def oc_if(a: str, b: str, c: str):
-    if a:
-        return b
-    else:
+def oc_if(a: str | int | bool, b: str, c: str):
+    if (isinstance(a, str) and a.lower() == "false") or not a:
         return c
+    else:
+        return b
 
 
 def register_default_resolvers(force: bool = False) -> None:

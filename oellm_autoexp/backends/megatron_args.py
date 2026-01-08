@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from argparse import _StoreFalseAction, _StoreTrueAction
 from dataclasses import MISSING, dataclass, field
@@ -10,6 +11,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 from collections.abc import Iterable, Mapping
+
+LOGGER = logging.getLogger(__name__)
 
 _MegatronParser: argparse.ArgumentParser | None = None
 
@@ -165,7 +168,7 @@ def _coerce_arguments(
 def _coerce_value(value: Any, target_type: type | None) -> Any:
     if target_type is None or value is None:
         return value
-    origin = getattr(target_type, "__origin__", None)
+    origin = getattr(target_type, "__origin__", target_type)
     if origin is list:
         elem_type = target_type.__args__[0] if getattr(target_type, "__args__", None) else str
         if isinstance(value, str):
@@ -236,6 +239,8 @@ def _spec_to_cmdline(spec: MegatronActionSpec, argval: Any, skip_defaults: bool)
         if not argval:
             return []
         values = _ensure_iterable(argval)
+        if isinstance(argval, str):
+            argval = [argval]
         return [option, *[str(v) for v in values]]
 
     if skip_defaults and argval == spec.default:

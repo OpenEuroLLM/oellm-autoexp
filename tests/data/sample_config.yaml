@@ -1,6 +1,8 @@
 project:
   name: demo
   base_output_dir: ./outputs
+  log_path: ./logs/slurm-%j.out
+  log_path_current: ./logs/current.log
 sweep:
   grids: []
 slurm:
@@ -13,11 +15,11 @@ slurm:
     class_name: FakeSlurmClient
 monitoring:
   class_name: NullMonitor
+  log_path: ./logs/current.log
   poll_interval_seconds: 600
   inactivity_threshold_seconds: 900
   termination_string: null
   termination_command: null
-  log_path_template: "{output_dir}/slurm-%j.out"
 backend:
   class_name: NullBackend
   extra_cli_args: []

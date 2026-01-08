@@ -67,8 +67,9 @@ def _basic_state_events() -> list[StateEventConfig]:
     ]
 
 
-def _default_monitor_config(**overrides):
+def _default_monitor_config(tmp_path: Path, **overrides):
     cfg_kwargs = {
+        "log_path": tmp_path / "log.txt",
         "log_events": _basic_log_events(),
         "state_events": _basic_state_events(),
     }
@@ -76,9 +77,10 @@ def _default_monitor_config(**overrides):
     return SlurmLogMonitorConfig(**cfg_kwargs)
 
 
-def test_monitor_controller_restart_increments():
+def test_monitor_controller_restart_increments(tmp_path: Path):
     monitor = SlurmLogMonitor(
         SlurmLogMonitorConfig(
+            log_path=tmp_path / "log.txt",
             check_interval_seconds=1,
             inactivity_threshold_seconds=0,
             state_events=[
@@ -114,7 +116,9 @@ def test_monitor_controller_restart_increments():
 
 
 def test_slurm_log_monitor_detects_stall(tmp_path: Path) -> None:
-    config = SlurmLogMonitorConfig(inactivity_threshold_seconds=1, check_interval_seconds=1)
+    config = SlurmLogMonitorConfig(
+        log_path=tmp_path / "log.txt", inactivity_threshold_seconds=1, check_interval_seconds=1
+    )
     monitor = SlurmLogMonitor(config)
     log_path = tmp_path / "job.log"
     log_path.write_text("initial\n")
@@ -138,6 +142,7 @@ def test_slurm_log_monitor_detects_stall(tmp_path: Path) -> None:
 def test_monitor_controller_observe_restart(tmp_path: Path) -> None:
     monitor = SlurmLogMonitor(
         SlurmLogMonitorConfig(
+            log_path=tmp_path / "log.txt",
             inactivity_threshold_seconds=0,
             check_interval_seconds=1,
             state_events=[
@@ -179,8 +184,8 @@ def test_monitor_controller_observe_restart(tmp_path: Path) -> None:
     assert job_states[0].attempts == 2
 
 
-def test_slurm_monitor_defaults_populated():
-    monitor = SlurmLogMonitor(_default_monitor_config())
+def test_slurm_monitor_defaults_populated(tmp_path: Path):
+    monitor = SlurmLogMonitor(_default_monitor_config(tmp_path))
     names = {event.name for event in monitor.config.log_events}
     assert {"error", "checkpoint", "training_complete"}.issubset(names)
     defaults = _basic_log_events()
@@ -190,6 +195,7 @@ def test_slurm_monitor_defaults_populated():
 
 def test_monitor_signal_triggers_action(tmp_path: Path) -> None:
     config = SlurmLogMonitorConfig(
+        log_path=tmp_path / "log.txt",
         inactivity_threshold_seconds=0,
         check_interval_seconds=1,
         log_events=[
@@ -247,6 +253,7 @@ def test_monitor_signal_triggers_action(tmp_path: Path) -> None:
 
 def test_monitor_signal_triggers_restart(tmp_path: Path) -> None:
     config = SlurmLogMonitorConfig(
+        log_path=tmp_path / "log.txt",
         inactivity_threshold_seconds=0,
         check_interval_seconds=1,
         log_events=[
@@ -285,6 +292,7 @@ def test_monitor_signal_triggers_restart(tmp_path: Path) -> None:
 
 def test_inactivity_log_event_emitted(tmp_path: Path) -> None:
     config = SlurmLogMonitorConfig(
+        log_path=tmp_path / "log.txt",
         inactivity_threshold_seconds=1,
         check_interval_seconds=1,
         log_events=[
@@ -331,6 +339,7 @@ def test_output_file_emit_checkpoint_signal(tmp_path: Path) -> None:
     output_file.write_text("Checkpoint saved: /tmp/check.ckpt\n")
 
     config = SlurmLogMonitorConfig(
+        log_path=tmp_path / "log.txt",
         inactivity_threshold_seconds=0,
         check_interval_seconds=1,
         output_paths=[str(output_file)],
@@ -379,7 +388,7 @@ def test_output_file_emit_checkpoint_signal(tmp_path: Path) -> None:
 
 
 def test_slurm_state_transitions_emit_actions(tmp_path: Path) -> None:
-    monitor = SlurmLogMonitor(_default_monitor_config(check_interval_seconds=1))
+    monitor = SlurmLogMonitor(_default_monitor_config(tmp_path, check_interval_seconds=1))
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
     controller = MonitorController(monitor, slurm)
 
@@ -404,7 +413,7 @@ def test_slurm_state_transitions_emit_actions(tmp_path: Path) -> None:
 
 
 def test_log_completion_triggers_run_finished(tmp_path: Path) -> None:
-    monitor = SlurmLogMonitor(_default_monitor_config(check_interval_seconds=1))
+    monitor = SlurmLogMonitor(_default_monitor_config(tmp_path, check_interval_seconds=1))
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
     controller = MonitorController(monitor, slurm)
 
@@ -427,6 +436,7 @@ def test_cancelled_job_restarts_with_metadata_condition(tmp_path: Path) -> None:
     """Test that a CANCELLED job restarts when metadata condition allows it."""
     monitor = SlurmLogMonitor(
         SlurmLogMonitorConfig(
+            log_path=tmp_path / "log.txt",
             check_interval_seconds=1,
             state_events=[
                 StateEventConfig(
@@ -497,6 +507,7 @@ def test_cancelled_job_logging_visibility(tmp_path: Path) -> None:
     try:
         monitor = SlurmLogMonitor(
             SlurmLogMonitorConfig(
+                log_path=tmp_path / "log.txt",
                 check_interval_seconds=1,
                 state_events=[
                     StateEventConfig(

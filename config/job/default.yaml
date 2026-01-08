@@ -1,0 +1,5 @@
+start_condition_cmd: null
+start_condition_interval_seconds: null
+start_conditions: []
+cancel_conditions: []
+inactivity_threshold_seconds: null

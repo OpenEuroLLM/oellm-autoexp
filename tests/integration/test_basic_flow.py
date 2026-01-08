@@ -17,11 +17,13 @@ from oellm_autoexp.config.loader import load_config_reference
 
 CONFIG = """
 project:
-  name: demo
+  name: demo_${{index}}
   base_output_dir: {base_output}
+  log_path: {base_output}/slurm-%j.log
+  log_path_current: {base_output}/current.log
 sweep:
   grids:
-    - backend.megatron.lr: [0.1]
+    - backend.base_command: [["echo", "0"], ["echo", "1"]]
 slurm:
   template_path: {template_path}
   script_dir: {script_dir}
@@ -34,6 +36,7 @@ monitoring:
   class_name: SlurmLogMonitor
   poll_interval_seconds: 10
   check_interval_seconds: 10
+  log_path: ${{project.log_path_current}}
   state_events:
     - name: stall
       state:
@@ -48,15 +51,19 @@ monitoring:
         class_name: SuccessState
 backend:
   class_name: NullBackend
+  base_command: ["echo", "0"]
+index: 0
 """
 
 QUEUE_CONFIG = """
 project:
-  name: demo
+  name: demo_${{index}}
   base_output_dir: {base_output}
+  log_path: {base_output}/test-%j.log
+  log_path_current: {base_output}/test.log
 sweep:
   grids:
-    - backend.megatron.lr: [0.1]
+    - backend.base_command: [["echo", "0"], ["echo", "1"]]
 slurm:
   template_path: {template_path}
   script_dir: {script_dir}
@@ -69,7 +76,7 @@ monitoring:
   class_name: SlurmLogMonitor
   poll_interval_seconds: 5
   check_interval_seconds: 5
-  log_path_template: {log_dir}/queue-%j.log
+  log_path: ${{project.log_path_current}}
   log_events:
     - name: checkpoint_ready
       pattern: "CHECKPOINT (?P<ckpt>\\\\S+)"
@@ -93,6 +100,8 @@ monitoring:
         class_name: SuccessState
 backend:
   class_name: NullBackend
+  base_command: ["echo", "1"]
+index: 0
 """
 
 
@@ -157,7 +166,7 @@ def test_restart_on_cancelled_state(tmp_path: Path, monkeypatch) -> None:
         {
             "poll_interval_seconds": 5,
             "check_interval_seconds": 5,
-            "log_path_template": str(tmp_path / "logs" / "demo-%j.log"),
+            "log_path": str(tmp_path / "logs" / "demo.log"),
             "state_events": [
                 {
                     "name": "crash",
@@ -176,7 +185,7 @@ def test_restart_on_cancelled_state(tmp_path: Path, monkeypatch) -> None:
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
     controller = MonitorController(monitor, slurm)
 
-    log_path = tmp_path / "logs" / "demo-%j.log"
+    log_path = tmp_path / "logs" / "demo.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text("")
 
@@ -255,7 +264,7 @@ def test_run_autoexp_action_queue(tmp_path: Path, monkeypatch) -> None:
         name=job.name,
         script_path=artifacts.job_scripts[0],
         log_path=job.log_path,
-        metadata={"parameters": dict(job.parameters), "output_dir": job.output_dir},
+        metadata={"parameters": list(job.parameters), "output_dir": job.output_dir},
     )
     controller.register_job(job_id, registration)
     slurm.set_state(job_id, "RUNNING")

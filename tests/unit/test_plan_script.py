@@ -12,6 +12,8 @@ project:
   name: unit
   base_output_dir: ./outputs
   monitoring_state_dir: ./monitor
+  log_path: ./outputs/test-%j.txt
+  log_path_current: ./outputs/test.txt
 sweep:
   grids: []
 slurm:
@@ -24,6 +26,7 @@ slurm:
     class_name: FakeSlurmClient
 monitoring:
   class_name: NullMonitor
+  log_path: ${{project.log_path_current}}
 backend:
   class_name: NullBackend
 """

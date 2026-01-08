@@ -489,8 +489,6 @@ axes:
     - 256
     - 512
 
-# Stable experiment name (no timestamps/job IDs)
-name_template: "{model_size}_lr{learning_rate}_gbsz{global_batch_size}_stable"
 
 base_values:
   backend:
@@ -520,7 +518,7 @@ script_dir: ${project.base_output_dir}/{name}/scripts
 log_dir: ${project.base_output_dir}/{name}/logs
 
 # Log path includes SLURM job ID for uniqueness
-log_path_template: "{output_dir}/logs/slurm-${oc.if:${slurm.array},%A_%a,%j}.out"
+log_path: ${project.log_path_current}
 
 # SBATCH template should include unique job name
 sbatch_overrides:
@@ -544,7 +542,7 @@ def build_job_plans(config: RootConfig, points: list[SweepPoint]) -> list[JobPla
     plans: list[JobPlan] = []
     for point in points:
         context: dict[str, str] = {
-            "project": project_name,
+            "project_name": project_name,
             "index": str(point.index),
         }
         context.update(
@@ -618,7 +616,7 @@ poll_interval_seconds: 30
 inactivity_threshold_seconds: 1800
 
 # Log path uses SLURM job ID for uniqueness
-log_path_template: "{output_dir}/logs/slurm-${oc.if:${slurm.array},%A_%a,%j}.out"
+log_path: ${project.log_path_current}
 
 # Additional output paths for inactivity detection
 output_paths:

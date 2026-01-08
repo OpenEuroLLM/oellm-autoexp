@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from collections.abc import Iterable
 
 from compoconf import asdict
-
 
 from oellm_autoexp.persistence.state_store import _serialize_for_json
 from oellm_autoexp.workflow.manifest import (
@@ -17,6 +17,8 @@ from oellm_autoexp.workflow.manifest import (
     PlanManifest,
     RenderedArtifactsSpec,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 def create_manifest(
@@ -61,9 +63,10 @@ def create_manifest(
                 name=job.name,
                 script_path=str(script_path),
                 log_path=str(job.log_path),
+                log_path_current=str(job.log_path_current) if job.log_path_current else None,
                 output_dir=str(job.output_dir),
                 output_paths=[str(path) for path in job.output_paths],
-                parameters=dict(job.parameters),
+                parameters=list(job.parameters),
                 start_condition_cmd=job.start_condition_cmd,
                 start_condition_interval_seconds=job.start_condition_interval_seconds,
                 termination_string=job.termination_string,

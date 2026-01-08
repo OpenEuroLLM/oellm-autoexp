@@ -14,6 +14,10 @@ backend:
   megatron:
     train_iters: 500
 
+# at the moment this does not work!
+slurm:
+  nodes: 2
+
 project:
   name: megatron_juwels_speed_test
   resume: true

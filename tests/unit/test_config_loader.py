@@ -56,6 +56,8 @@ defaults:
 project:
   name: hydra
   base_output_dir: ./outputs
+  log_path: ./outputs/slurm-%j.log
+  log_path_current: ./outputs/slurm.log
 sweep:
   grids: []
 slurm:
@@ -68,6 +70,7 @@ slurm:
     class_name: FakeSlurmClient
 monitoring:
   class_name: NullMonitor
+  log_path: ${project.log_path_current}
   state_events:
     - class_name: StateEvent
       name: success

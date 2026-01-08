@@ -12,6 +12,7 @@ permissions:
 env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PYTHONDONTWRITEBYTECODE: "1"
+  HF_HOME: "."
 
 jobs:
   lint:
