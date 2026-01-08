@@ -20,9 +20,7 @@ sbatch:
   partition: ${oc.env:SLURM_PARTITION,"default"}
   gres: "gpu:1"
   gpus_per_node: 4
-  # output is set to null so orchestrator uses job.log_path
-  # job.log_path comes from monitoring.log_path_template (formatted with job details)
-  output: null
+  output: ${project.log_path}
 test_only: false
 client:
   class_name: FakeSlurmClient

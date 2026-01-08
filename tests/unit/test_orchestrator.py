@@ -13,11 +13,13 @@ from oellm_autoexp.utils.start_condition import StartConditionResult
 
 CONFIG_TEMPLATE = """
 project:
-  name: demo
+  name: demo_${{index}}
   base_output_dir: {base_output}
+  log_path: {log_dir}/slurm-%j.out
+  log_path_current: {log_dir}/current.log
 sweep:
   grids:
-    - backend.megatron.lr: [0.1, 0.01]
+    - backend.base_command: [["echo", "0"], ["echo", "1"]]
 slurm:
   template_path: {template_path}
   script_dir: {script_dir}
@@ -26,14 +28,19 @@ slurm:
     class_name: FakeSlurmClient
 monitoring:
   class_name: NullMonitor
+  log_path: {log_dir}/current.log
 backend:
   class_name: NullBackend
+  base_command: ["echo", "Hello"]
+index: 0  # will be replaced
 """
 
 GATING_TEMPLATE = """
 project:
-  name: gate
+  name: gate_${{index}}
   base_output_dir: {base_output}
+  log_path: {log_dir}/slurm-%j.out
+  log_path_current: {log_dir}/current.log
 sweep:
   grids:
     - job.start_condition_cmd: ["echo 1"]
@@ -47,8 +54,14 @@ slurm:
     class_name: FakeSlurmClient
 monitoring:
   class_name: NullMonitor
+  log_path: {log_dir}/current.log
+  termination_string: ""
+job:
+  start_condition_cmd: null
 backend:
   class_name: NullBackend
+
+index: 0 # will be replaced
 """
 
 
@@ -113,11 +126,13 @@ def test_render_scripts_with_custom_slurm(tmp_path: Path) -> None:
 
     config_text = f"""
 project:
-  name: demo
+  name: demo_${{index}}
   base_output_dir: {tmp_path / "outputs"}
+  log_path: {log_dir}/slurm-%j.out
+  log_path_current: {log_dir}/current.log
 sweep:
   grids:
-    - backend.megatron.lr: [0.1]
+    - backend.base_command: [["echo", "0"], ["echo", "1"]]
 slurm:
   template_path: {template_path}
   script_dir: {script_dir}
@@ -134,8 +149,11 @@ slurm:
     class_name: FakeSlurmClient
 monitoring:
   class_name: NullMonitor
+  log_path: {log_dir}/current.log
 backend:
   class_name: NullBackend
+  base_command: ["echo", "Hello"]
+index: 0
 """
 
     config_path = tmp_path / "config.yaml"
@@ -203,11 +221,13 @@ def test_render_scripts_creates_array_assets(tmp_path: Path) -> None:
 
     config_text = f"""
 project:
-  name: demo
+  name: demo_${{index}}
   base_output_dir: {base_output}
+  log_path: {log_dir}/slurm-%j.out
+  log_path_current: {log_dir}/current.log
 sweep:
   grids:
-    - backend.megatron.lr: [0.1, 0.01]
+    - backend.base_command: [["echo", "0"], ["echo", "1"]]
 slurm:
   template_path: {template_path}
   script_dir: {script_dir}
@@ -217,8 +237,11 @@ slurm:
     class_name: FakeSlurmClient
 monitoring:
   class_name: NullMonitor
+  log_path: {log_dir}/current.log
 backend:
   class_name: NullBackend
+  base_command: ["echo", "Hello"]
+index: 0
 """
 
     config_path = tmp_path / "config.yaml"
@@ -231,7 +254,7 @@ backend:
     assert Path(artifacts.array_script).exists()
     assert artifacts.sweep_json is not None
     payload = json.loads(Path(artifacts.sweep_json).read_text())
-    assert payload["project_name"] == "demo"
+    assert payload["project_name"] == "demo_0"
     assert len(payload["jobs"]) == 2
     assert payload["jobs"][0]["launch"]["argv"]
 
@@ -246,11 +269,13 @@ def test_submit_jobs_uses_array_submission(monkeypatch, tmp_path: Path) -> None:
 
     config_text = f"""
 project:
-  name: arr
+  name: arr_${{index}}
   base_output_dir: {base_output}
+  log_path: {log_dir}/slurm-%j.out
+  log_path_current: {log_dir}/current.log
 sweep:
   grids:
-    - backend.megatron.lr: [0.1, 0.01]
+    - backend.base_command: [["echo", "0"], ["echo", "1"]]
 slurm:
   template_path: {template_path}
   script_dir: {script_dir}
@@ -260,8 +285,12 @@ slurm:
     class_name: FakeSlurmClient
 monitoring:
   class_name: NullMonitor
+  log_path: {log_dir}/current.log
 backend:
   class_name: NullBackend
+  base_command: ["echo", "Hello"]
+
+index: 0
 """
 
     config_path = tmp_path / "config.yaml"
@@ -396,8 +425,10 @@ defaults:
   - _self_
 
 project:
-  name: hydra_test
+  name: hydra_test_${{index}}
   base_output_dir: {base_output}
+  log_path: {log_dir}/slurm-%j.out
+  log_path_current: {log_dir}/current.log
 
 sweep:
   grids:
@@ -412,9 +443,13 @@ slurm:
 
 monitoring:
   class_name: NullMonitor
+  log_path: {log_dir}/current.log
 
 backend:
   class_name: NullBackend
+  base_command: ["echo", "Hello"]
+
+index: 0
 """
 
     config_path = config_dir / "test.yaml"
@@ -526,8 +561,10 @@ defaults:
   - _self_
 
 project:
-  name: hydra_test
+  name: hydra_test_${{index}}
   base_output_dir: {base_output}
+  log_path: {log_dir}/slurm-%j.out
+  log_path_current: {log_dir}/current.log
 
 sweep:
   grids:
@@ -542,9 +579,13 @@ slurm:
 
 monitoring:
   class_name: NullMonitor
+  log_path: {log_dir}/current.log
 
 backend:
   class_name: NullBackend
+  base_command: ["echo", "Hello"]
+
+index: 0
 """
 
     config_path = config_dir / "test.yaml"
@@ -597,4 +638,5 @@ backend:
     assert "--variant2" in variant2_argv, "variant2 should have --variant2 flag"
     assert "--extra" in variant2_argv, "variant2 should have --extra flag"
 
-    assert "variant1_was_here" in entry2["base_config"]["backend"]["env"]
+    variant1_entry = entry1 if "variant1" in " ".join(argv1) else entry2
+    assert "variant1_was_here" in variant1_entry["base_config"]["backend"]["env"]

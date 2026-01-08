@@ -5,7 +5,7 @@ termination_string: null
 termination_command: null
 # SLURM variables: %j=job_id, %A=array_master_id, %a=array_task_id
 # For array jobs, use %A_%a to get unique logs per task
-log_path_template: "{output_dir}/slurm-${oc.if:${slurm.array},%A_%a,%j}.out"
+log_path: ${project.log_path_current}
 output_paths: []
 start_condition_cmd: null
 start_condition_interval_seconds: null

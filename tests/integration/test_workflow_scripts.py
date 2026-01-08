@@ -9,12 +9,14 @@ from scripts import monitor_autoexp, plan_autoexp, submit_autoexp
 
 CONFIG_TEMPLATE = """
 project:
-  name: integration
+  name: integration_${{index}}
   base_output_dir: ./outputs
   monitoring_state_dir: ./monitor
+  log_path: ./logs/slurm-%j.out
+  log_path_current: ./logs/current.log
 sweep:
   grids:
-    - backend.megatron.lr: [0.1]
+    - backend.base_command: [["echo", "0"], ["echo", "1"]]
 slurm:
   template_path: {template}
   script_dir: ./scripts
@@ -25,8 +27,11 @@ slurm:
     class_name: FakeSlurmClient
 monitoring:
   class_name: NullMonitor
+  log_path: ./logs/current.log
 backend:
   class_name: NullBackend
+  base_command: ["echo", "0"]
+index: 0
 """
 
 

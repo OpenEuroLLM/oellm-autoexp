@@ -176,7 +176,6 @@ Key parameters:
 **Solution:**
 - Wait longer before injecting errors (increase sleep time)
 - Check log directory: `ls logs/`
-- Verify `log_path_template` in monitoring config
 
 ## Manual Testing (Alternative)
 

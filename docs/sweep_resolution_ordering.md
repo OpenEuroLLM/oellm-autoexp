@@ -587,23 +587,6 @@ def expand_sweep(sweep_config):
         ))
     return points
 
-def build_job_plans(config, points):
-    """Merge configs without resolving."""
-    jobs = []
-    for point in points:
-        # Merge base config + point parameters (both OmegaConf)
-        merged = OmegaConf.merge(config, point.parameters)
-
-        # Extract what we need but keep interpolations
-        job = JobPlan(
-            name=OmegaConf.to_container(
-                merged.sweep.name_template, resolve=True
-            ),
-            parameters=merged,  # Still OmegaConf with interpolations!
-            ...
-        )
-        jobs.append(job)
-    return jobs
 
 def resolve_with_siblings(job, siblings):
     """Merge sibling configs and resolve."""

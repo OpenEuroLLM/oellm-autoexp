@@ -13,6 +13,8 @@ defaults:
   - /backend/megatron: base
   - _self_
 
+index: 0
+stage: ""
 
 project:
   base_output_dir: "dense_300M_sweep"
@@ -123,6 +125,8 @@ backend:
     aux:
       tokens: 50_000_000_000  # Default: 50B tokens
       decay_fraction: 0.0  # Default: no decay
+      start_iter: 0  # only used in decay
+      start_iter_round: 0 # only used in decay
 
 slurm:
   sbatch:
@@ -180,13 +184,13 @@ sweep:
             backend.megatron.aux.start_iter_round: "\\${oc.eval:int\\(\\(int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\(1-\\${backend.megatron.aux.decay_fraction}\\)\\)//\\${backend.megatron.save_interval}\\)*\\${backend.megatron.save_interval}\\)}"
 
             # Checkpoint loading configuration
-            backend.megatron.load: "\\${sibling.stable.output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}"
+            backend.megatron.load: "\\${sibling.stable.project.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}"
             backend.megatron.override_opt_param_scheduler: true
 
             # Start conditions: wait for stable to reach checkpoint (new async approach)
             job.start_conditions:
               - class_name: FileExistsCondition
-                path: "\\${sibling.stable.output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}/latest_checkpointed_iteration.txt"
+                path: "\\${sibling.stable.project.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}/latest_checkpointed_iteration.txt"
                 blocking: true
                 timeout_seconds: 7200
 

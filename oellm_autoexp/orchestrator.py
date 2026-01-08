@@ -16,7 +16,7 @@ from compoconf import asdict
 from oellm_autoexp.backends.base import BackendJobSpec, LaunchCommand
 from oellm_autoexp.config.evaluator import RuntimeConfig, evaluate
 from oellm_autoexp.config.loader import load_config, load_config_reference
-from oellm_autoexp.config.schema import RootConfig, SlurmConfig
+from oellm_autoexp.config.schema import RootConfig, SlurmConfig, ConfigSetup
 from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
 from oellm_autoexp.persistence import MonitorStateStore, StoredJob
 from oellm_autoexp.slurm.client import BaseSlurmClient
@@ -34,14 +34,6 @@ from oellm_autoexp.utils.tree_map import tree_map
 
 
 LOGGER = logging.getLogger(__name__)
-
-
-@dataclass(kw_only=True)
-class ConfigSetup:
-    pwd: str
-    config_ref: str
-    config_dir: str
-    override: list[str] = field(default=list)
 
 
 @dataclass(kw_only=True)
@@ -99,21 +91,25 @@ def build_execution_plan(
         root = config
         # For RootConfig input, create a placeholder config_setup
         if config_setup is None:
+            metadata = root.metadata or {}
+            config_ref = metadata.get("config_ref", "")
+            config_dir = metadata.get("config_dir", str(Path.cwd()))
             config_setup = ConfigSetup(
                 pwd=str(Path.cwd()),
-                config_ref="",
-                config_dir=str(Path.cwd()),
+                config_ref=str(config_ref),
+                config_dir=str(config_dir),
                 override=[],
             )
     runtime = evaluate(root)
     points = expand_sweep(root.sweep)
+    points = {point.index: point for point in points}
     if subset_indices:
-        points = [point for point in points if point.index in subset_indices]
+        points = {point.index: point for point in points.values() if point.index in subset_indices}
         if not points:
             raise ValueError(f"No sweep points match indices: {sorted(subset_indices)}")
 
     # Unified DAG-based resolution (job planning + sibling resolution)
-    jobs = resolve_sweep_with_dag(root, points)
+    jobs = resolve_sweep_with_dag(root, points, config_setup=config_setup)
 
     # Validate execution plan
     if validate:
@@ -161,7 +157,7 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
 
         if job.parameters and plan.config_setup.config_ref:
             try:
-                job_overrides = [f"{key}={value}" for key, value in job.parameters.items()]
+                job_overrides = job.parameters
                 combined_overrides = list(plan.config_setup.override) + job_overrides
 
                 # Reload config with job-specific overrides
@@ -184,10 +180,10 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
                     job.name,
                     exc,
                 )
-                spec = BackendJobSpec(parameters=dict(job.parameters))
+                spec = BackendJobSpec(parameters=list(job.parameters))
         else:
             # No parameters or no config_ref, use old behavior
-            spec = BackendJobSpec(parameters=dict(job.parameters))
+            spec = BackendJobSpec(parameters=list(job.parameters))
 
         job_runtime.backend.validate(spec)
         launch_cmd = job_runtime.backend.build_launch_command(spec)
@@ -335,10 +331,11 @@ def submit_jobs(
             raise RuntimeError("SLURM client returned mismatched job ids for array submission")
 
         for job_id, job in zip(job_ids, pending_jobs):
-            job_metadata: dict[str, Any] = {"parameters": dict(job.parameters)}
+            job_metadata: dict[str, Any] = {"parameters": list(job.parameters)}
             if job.inactivity_threshold_seconds is not None:
                 job_metadata["inactivity_threshold_seconds"] = job.inactivity_threshold_seconds
 
+            _create_current_log_symlink(job_id, str(job.log_path), job.log_path_current)
             registration = JobRegistration(
                 name=job.name,
                 script_path=artifacts.array_script,
@@ -373,7 +370,7 @@ def submit_jobs(
                 logger=LOGGER,
             )
         job_metadata: dict[str, Any] = {
-            "parameters": dict(job.parameters),
+            "parameters": job.parameters,
             "output_dir": job.output_dir,
         }
         if job.inactivity_threshold_seconds is not None:
@@ -381,6 +378,7 @@ def submit_jobs(
 
         last_submit_ts = _respect_submit_rate(last_submit_ts, rate_limit)
         job_id = client.submit(job.name, script, job.log_path)
+        _create_current_log_symlink(job_id, str(job.log_path), job.log_path_current)
         registration = JobRegistration(
             name=job.name,
             script_path=script,
@@ -549,7 +547,13 @@ def _build_replacements(
         repl["termination_command"] = job.termination_command
     if job.inactivity_threshold_seconds is not None:
         repl["inactivity_threshold_seconds"] = str(job.inactivity_threshold_seconds)
-    repl.update(job.parameters)
+    repl.update(
+        {
+            param.split("=")[0]: "=".join(param.split("=")[1:])
+            for param in job.parameters
+            if not param.startswith("+") and not param.startswith("~")
+        }
+    )
     repl.update({"project_name": runtime.root.project.name})
     return repl
 
@@ -562,7 +566,7 @@ def _build_sweep_entry(
         "output_dir": str(job.output_dir),
         "log_path": str(job.log_path),
         "base_config": asdict(base_config),
-        "parameters": dict(job.parameters),
+        "parameters": list(job.parameters),
         "launch": {
             "argv": list(launch_cmd.argv),
             "env": dict(launch_cmd.env),
@@ -667,6 +671,39 @@ def _format_env(base_env: Mapping[str, object]) -> str:
     return "\n".join(f"export {key}={value}" for key, value in base_env.items())
 
 
+def _expand_log_path_for_job(job_id: str, log_path: str) -> Path:
+    log_str = str(log_path)
+    if "_" in job_id:
+        base_id, array_idx = job_id.split("_")
+        log_str = log_str.replace("%A", str(base_id))
+        log_str = log_str.replace("%a", str(array_idx))
+    log_str = log_str.replace("%j", str(job_id))
+    return Path(log_str)
+
+
+def _create_current_log_symlink(job_id: str, log_path: str, log_path_current: str | None) -> None:
+    if not log_path_current:
+        return
+    resolved_log_path = _expand_log_path_for_job(job_id, log_path)
+    current_path = Path(log_path_current)
+    try:
+        current_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        LOGGER.warning("Unable to create log symlink parent %s: %s", current_path.parent, exc)
+        return
+    try:
+        if current_path.exists() or current_path.is_symlink():
+            current_path.unlink()
+        current_path.symlink_to(resolved_log_path)
+    except OSError as exc:
+        LOGGER.warning(
+            "Unable to create log symlink %s -> %s: %s",
+            current_path,
+            resolved_log_path,
+            exc,
+        )
+
+
 def _format_sbatch_directives(
     slurm_conf: SlurmConfig, job: JobPlan, sbatch_overrides: dict[str, str] = {}
 ) -> str:
@@ -750,7 +787,7 @@ def _render_array_script(
             fallback_output,
         )
         array_output_base = fallback_output
-    array_output_dir = array_output_base / f"{array_job_name}_%A_%a"
+    array_output_dir = array_output_base / f"{array_job_name}_%a"
 
     runner_script = Path("scripts/run_sweep_entry.py")
     launcher_cmd = LaunchCommand(
@@ -770,11 +807,14 @@ def _render_array_script(
     for job in plan.jobs:
         job.log_path = array_log_template
 
+    # For array jobs, log_path_current is not applicable (array jobs don't have a single "current" log)
+    # Use the array log path as both log_path and log_path_current
     synthetic_job = JobPlan(
         name=array_job_name,
-        parameters={},
+        parameters=[],
         output_dir=array_output_dir,
         log_path=array_log_path,
+        log_path_current=str(array_output_dir / "current.log"),  # Placeholder for array jobs
         output_paths=[],
     )
 

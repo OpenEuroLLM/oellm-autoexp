@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+import re
 
 from .planner import JobPlan
 
 LOGGER = logging.getLogger(__name__)
+_SIBLING_PATTERN = re.compile(r"\{sibling\.[^}]+\}")
 
 
 @dataclass
@@ -58,52 +60,15 @@ def validate_execution_plan(jobs: list[JobPlan]) -> ValidationResult:
     if duplicates:
         errors.append(f"Duplicate job names found: {set(duplicates)}")
 
-    # Check each job
-    for job in jobs:
-        # Check for unresolved sibling references in parameters
-        for key, value in job.parameters.items():
-            if isinstance(value, str) and "{sibling." in value:
-                errors.append(
-                    f"Unresolved sibling reference in job '{job.name}', parameter '{key}': {value}"
-                )
-
-        # Check for unresolved sibling references in start_condition_cmd
-        if job.start_condition_cmd and "{sibling." in job.start_condition_cmd:
-            errors.append(
-                f"Unresolved sibling reference in job '{job.name}', start_condition_cmd: {job.start_condition_cmd}"
-            )
-
-        # Check for unresolved sibling references in termination_command
-        if job.termination_command and "{sibling." in job.termination_command:
-            errors.append(
-                f"Unresolved sibling reference in job '{job.name}', termination_command: {job.termination_command}"
-            )
-
-        # Check for unresolved sibling references in cancel_conditions
-        for condition in job.cancel_conditions:
-            for key, value in condition.items():
-                if isinstance(value, str) and "{sibling." in value:
-                    errors.append(
-                        f"Unresolved sibling reference in job '{job.name}', cancel_condition '{key}': {value}"
-                    )
-
-        # Validate cancel_conditions structure
-        for idx, condition in enumerate(job.cancel_conditions):
-            if not isinstance(condition, dict):
-                errors.append(
-                    f"Invalid cancel_condition in job '{job.name}' at index {idx}: expected dict, got {type(condition)}"
-                )
-            elif "class_name" not in condition:
-                warnings.append(
-                    f"Cancel condition in job '{job.name}' at index {idx} missing 'class_name' field"
-                )
-
     # Check for circular dependencies (simplified check)
     # A job depends on another if it references it in start_condition_cmd or cancel_conditions
     dependency_graph = _build_dependency_graph(jobs)
     cycles = _find_cycles(dependency_graph)
     if cycles:
         errors.append(f"Circular dependencies detected: {cycles}")
+
+    for job in jobs:
+        warnings.extend(_validate_cancel_conditions(job))
 
     is_valid = len(errors) == 0
 
@@ -163,6 +128,38 @@ def _find_cycles(graph: dict[str, set[str]]) -> list[list[str]]:
             dfs(node, [])
 
     return cycles
+
+
+def _has_unresolved_sibling_reference(job: JobPlan) -> bool:
+    if _contains_unresolved_sibling(job.parameters):
+        return True
+    if job.start_condition_cmd and _SIBLING_PATTERN.search(job.start_condition_cmd):
+        return True
+    if job.termination_command and _SIBLING_PATTERN.search(job.termination_command):
+        return True
+    if _contains_unresolved_sibling(job.start_conditions):
+        return True
+    if _contains_unresolved_sibling(job.cancel_conditions):
+        return True
+    return False
+
+
+def _contains_unresolved_sibling(value: object) -> bool:
+    if isinstance(value, str):
+        return _SIBLING_PATTERN.search(value) is not None
+    if isinstance(value, dict):
+        return any(_contains_unresolved_sibling(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_contains_unresolved_sibling(v) for v in value)
+    return False
+
+
+def _validate_cancel_conditions(job: JobPlan) -> list[str]:
+    warnings: list[str] = []
+    for condition in job.cancel_conditions:
+        if isinstance(condition, dict) and "class_name" not in condition:
+            warnings.append(f"Cancel condition for {job.name} missing 'class_name'")
+    return warnings
 
 
 __all__ = [

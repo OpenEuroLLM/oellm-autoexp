@@ -1,3 +1,2 @@
 grids: []
 store_sweep_json: false
-name_template: "${project.name}"

@@ -47,9 +47,10 @@ class PlanJobSpec:
     name: str = field(default_factory=MISSING)
     script_path: str = field(default_factory=MISSING)
     log_path: str = field(default_factory=MISSING)
+    log_path_current: str | None = None
     output_dir: str = ""
     output_paths: list[str] = field(default_factory=list)
-    parameters: dict[str, Any] = field(default_factory=dict)
+    parameters: list[str] = field(default_factory=list)
     start_condition_cmd: str | None = None
     start_condition_interval_seconds: int | None = None
     termination_string: str | None = None
@@ -128,9 +129,10 @@ class PlanManifest:
                     "name": job.name,
                     "script_path": job.script_path,
                     "log_path": job.log_path,
+                    "log_path_current": job.log_path_current,
                     "output_dir": job.output_dir,
                     "output_paths": list(job.output_paths),
-                    "parameters": dict(job.parameters),
+                    "parameters": list(job.parameters),
                     "start_condition_cmd": job.start_condition_cmd,
                     "start_condition_interval_seconds": job.start_condition_interval_seconds,
                     "termination_string": job.termination_string,
@@ -177,9 +179,10 @@ class PlanManifest:
                 name=item["name"],
                 script_path=item["script_path"],
                 log_path=item["log_path"],
+                log_path_current=item.get("log_path_current"),
                 output_dir=item.get("output_dir", ""),
                 output_paths=list(item.get("output_paths", [])),
-                parameters=dict(item.get("parameters", {})),
+                parameters=list(item.get("parameters", {})),
                 start_condition_cmd=item.get("start_condition_cmd"),
                 start_condition_interval_seconds=item.get("start_condition_interval_seconds"),
                 termination_string=item.get("termination_string"),

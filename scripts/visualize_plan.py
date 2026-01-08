@@ -66,13 +66,20 @@ import argparse
 import json
 import logging
 import sys
+import os
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 from oellm_autoexp.config.loader import load_config_reference
+from oellm_autoexp.config.schema import ConfigSetup
 from oellm_autoexp.sweep.expander import expand_sweep
-from oellm_autoexp.sweep.dag_resolver import resolve_sweep_with_dag
+from oellm_autoexp.sweep.planner import JobPlan, flatten_config, simple_format
+from oellm_autoexp.sweep.dag_resolver import (
+    resolve_sweep_with_dag,
+    build_stage_dependencies,
+    param_to_cmdlines,
+)
 from oellm_autoexp.sweep.validator import validate_execution_plan
 from oellm_autoexp.utils.logging_config import configure_logging
 
@@ -97,78 +104,54 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=10,
         help="Maximum jobs to display per stage (default: 10)",
     )
+    parser.add_argument(
+        "--full-resolve",
+        action="store_true",
+        help="Resolve full job configs (slower for large sweeps)",
+    )
+    parser.add_argument("--visualize-keys", nargs="+", action="append", default=[])
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("override", nargs="*", default=[], help="Hydra-style overrides (key=value)")
     return parser.parse_args(argv)
 
 
-def group_jobs_by_stage(jobs: list) -> dict[str, list]:
+def _get_override_value(parameters: list[str], key: str) -> str | None:
+    for item in parameters:
+        if item.startswith("~"):
+            continue
+        stripped = item.lstrip("+")
+        if "=" not in stripped:
+            continue
+        param_key, value = stripped.split("=", 1)
+        if param_key == key:
+            return value
+    return None
+
+
+def group_jobs_by_stage(jobs: list[JobPlan]) -> dict[str, list[JobPlan]]:
     """Group jobs by their stage parameter."""
     LOGGER.debug(f"Grouping {len(jobs)} jobs by stage")
-    stages = defaultdict(list)
+    stages: dict[str, list[JobPlan]] = defaultdict(list)
     for job in jobs:
         # Use stage_name field if available, otherwise fall back to parameters
-        stage = job.stage_name or job.parameters.get("stage", "unknown")
+        stage = job.stage_name or _get_override_value(job.parameters, "stage") or "unknown"
         stages[stage].append(job)
     LOGGER.info(f"Found {len(stages)} stages: {list(stages.keys())}")
     return stages
 
 
-def build_stage_dependencies(jobs: list) -> dict[str, set[str]]:
-    """Build stage-level dependency graph from jobs.
-
-    Returns:
-        Dict mapping stage name to set of stages it depends on
-    """
-    LOGGER.debug("Building stage dependency graph")
-    dependencies = defaultdict(set)
-
-    for job in jobs:
-        stage = job.stage_name or job.parameters.get("stage", "unknown")
-
-        # Extract dependencies from start conditions
-        if job.start_conditions:
-            for cond in job.start_conditions:
-                if isinstance(cond, dict):
-                    # FileExistsCondition with sibling path
-                    if cond.get("class_name") == "FileExistsCondition":
-                        path = cond.get("path", "")
-                        # Extract stage from sibling references in path
-                        # e.g., "dense_300M_01_lr0.00025_gbsz64_beta20.95_stable/checkpoints/..."
-                        for s in ["stable", "decay6B", "decay12B", "decay30B", "decay50B"]:
-                            if f"_{s}/" in path:
-                                dependencies[stage].add(s)
-                                break
-                    # SlurmStateCondition with job_name
-                    elif cond.get("class_name") == "SlurmStateCondition":
-                        job_name = cond.get("job_name", "")
-                        for s in ["stable", "decay6B", "decay12B", "decay30B", "decay50B"]:
-                            if f"_{s}" in job_name:
-                                dependencies[stage].add(s)
-                                break
-
-    LOGGER.info(f"Stage dependencies: {dict(dependencies)}")
-    return dependencies
-
-
-def extract_hyperparameters(jobs: list) -> dict[str, set]:
+def extract_hyperparameters(jobs: list[JobPlan], visualize_keys: list[str]) -> dict[str, list[str]]:
     """Extract unique hyperparameter values across all jobs."""
-    hyperparams = defaultdict(set)
-
-    # Common hyperparameter keys to display
-    interesting_keys = {
-        "backend.megatron.lr",
-        "backend.megatron.global_batch_size",
-        "backend.megatron.num_layers",
-        "backend.megatron.hidden_size",
-        "backend.megatron.adam_beta2",
-    }
+    hyperparams: dict[str, set[str]] = defaultdict(set)
 
     for job in jobs:
-        for key, value in job.parameters.items():
-            if key in interesting_keys:
+        for key_value in job.parameters:
+            stripped = key_value.lstrip("+")
+            if stripped.startswith("~") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            if key in visualize_keys:
                 hyperparams[key].add(value)
-
     return {k: sorted(v) for k, v in hyperparams.items()}
 
 
@@ -197,8 +180,52 @@ def format_condition(condition: dict[str, Any]) -> str:
         return class_name
 
 
+def _build_visualization_jobs(config, points: list) -> list[JobPlan]:
+    base_flat = flatten_config(config)
+    jobs = []
+    for point in points:
+        stage = point.parameters.get("stage") or "unknown"
+        context = dict(base_flat)
+        context.update(point.parameters)
+        context.setdefault("stage", stage)
+        name = simple_format(config.project.name, context)
+        parameters = sum(
+            [param_to_cmdlines(key, value, prefix="") for key, value in point.parameters.items()],
+            start=[],
+        )
+        start_conditions = point.parameters.get("job.start_conditions", [])
+        cancel_conditions = point.parameters.get("job.cancel_conditions", [])
+        job = JobPlan(
+            name=name,
+            parameters=parameters,
+            output_dir=str(config.project.base_output_dir),
+            log_path=str(config.project.log_path),
+            log_path_current=str(config.project.log_path_current),
+            output_paths=[],
+            start_condition_cmd=point.parameters.get("job.start_condition_cmd"),
+            start_condition_interval_seconds=point.parameters.get(
+                "job.start_condition_interval_seconds"
+            ),
+            start_conditions=list(start_conditions) if isinstance(start_conditions, list) else [],
+            cancel_conditions=list(cancel_conditions)
+            if isinstance(cancel_conditions, list)
+            else [],
+            termination_string=config.monitoring.termination_string,
+            termination_command=config.monitoring.termination_command,
+            inactivity_threshold_seconds=point.parameters.get("job.inactivity_threshold_seconds"),
+            sibling_pattern=None,
+            stage_name=stage,
+        )
+        jobs.append(job)
+    return jobs
+
+
 def visualize_plan(
-    jobs: list, config_name: str = "Experiment", max_jobs_per_stage: int = 10
+    jobs: list,
+    config_name: str = "Experiment",
+    max_jobs_per_stage: int = 10,
+    visualize_keys: list[str] | None = None,
+    dependencies: dict[str, set[str]] | None = None,
 ) -> None:
     """Visualize the execution plan in ASCII format showing DAG structure."""
     LOGGER.info(f"Visualizing plan for {len(jobs)} jobs")
@@ -207,10 +234,13 @@ def visualize_plan(
     stages_dict = group_jobs_by_stage(jobs)
 
     # Build dependency graph
-    dependencies = build_stage_dependencies(jobs)
+    if dependencies is None:
+        dependencies = {}
 
     # Extract hyperparameters
-    hyperparams = extract_hyperparameters(jobs)
+    if visualize_keys is None:
+        visualize_keys = []
+    hyperparams = extract_hyperparameters(jobs, visualize_keys=visualize_keys)
 
     # Print header
     print()
@@ -256,7 +286,7 @@ def visualize_plan(
         # Render all stages at current level
         for stage in current_level:
             stage_jobs = stages_dict[stage]
-            _print_stage_box(stage, stage_jobs, max_jobs_per_stage)
+            _print_stage_box(stage, stage_jobs, max_jobs_per_stage, dependencies or {})
             rendered_stages.add(stage)
 
         # Find next level of stages (those that depend ONLY on already rendered stages)
@@ -302,10 +332,17 @@ def visualize_plan(
     print()
 
 
-def _print_stage_box(stage: str, stage_jobs: list, max_jobs_per_stage: int) -> None:
+def _print_stage_box(
+    stage: str,
+    stage_jobs: list,
+    max_jobs_per_stage: int,
+    dependencies: dict[str, set[str]],
+) -> None:
     """Print a box for a single stage."""
     print("┌" + "─" * 68 + "┐")
-    stage_header = f"Stage: {stage} ({len(stage_jobs)} jobs)"
+    deps = sorted(dependencies.get(stage, set()))
+    dep_text = "none" if not deps else ", ".join(deps)
+    stage_header = f"Stage: {stage} ({len(stage_jobs)} jobs, depends on: {dep_text})"
     print(f"│ {stage_header}".ljust(69) + "│")
     print("├" + "─" * 68 + "┤")
 
@@ -343,6 +380,7 @@ def _print_stage_box(stage: str, stage_jobs: list, max_jobs_per_stage: int) -> N
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    visualize_keys = [item for group in args.visualize_keys for item in group]
 
     # Configure logging with environment variable support
     # OELLM_LOG_LEVEL can be set to DEBUG, INFO, WARNING, ERROR, or CRITICAL
@@ -380,21 +418,40 @@ def main(argv: list[str] | None = None) -> int:
 
         # Expand sweep
         LOGGER.info("Expanding sweep")
-        points = expand_sweep(config.sweep)
+        points_list = expand_sweep(config.sweep)
+        points = {point.index: point for point in points_list}
         LOGGER.info(f"Expanded to {len(points)} sweep points")
 
         # Unified DAG-based resolution (job planning + sibling resolution)
-        LOGGER.info("Resolving sweep with DAG")
-        jobs = resolve_sweep_with_dag(config, points)
-        LOGGER.info(f"Resolved to {len(jobs)} jobs")
+        if args.full_resolve or len(points) <= 30:
+            LOGGER.info("Resolving sweep with DAG")
+            jobs = resolve_sweep_with_dag(
+                config,
+                points,
+                config_setup=ConfigSetup(
+                    config_dir=args.config_dir,
+                    config_ref=args.config_ref,
+                    override=args.override,
+                    pwd=os.curdir,
+                ),
+            )
+            LOGGER.info(f"Resolved to {len(jobs)} jobs")
+        else:
+            LOGGER.info("Skipping full resolution for large sweep; using fast visualization mode")
+            jobs = _build_visualization_jobs(config, points_list)
 
         # Validate
         LOGGER.info("Validating execution plan")
         validation = validate_execution_plan(jobs)
 
         # Visualize
+        deps = build_stage_dependencies(points)
         visualize_plan(
-            jobs, config_name=config.project.name, max_jobs_per_stage=args.max_jobs_per_stage
+            jobs,
+            config_name=config.project.name,
+            max_jobs_per_stage=args.max_jobs_per_stage,
+            visualize_keys=visualize_keys,
+            dependencies=deps,
         )
 
         # Print validation results

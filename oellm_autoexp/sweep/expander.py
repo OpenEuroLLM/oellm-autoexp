@@ -23,6 +23,7 @@ class SweepPoint:
     index: int = field(default_factory=MISSING)
     parameters: Mapping[str, Any]
     group_path: tuple[int, ...] = field(default_factory=tuple)  # Track group hierarchy
+    stage_path: tuple[bool, ...] = field(default_factory=tuple)  # Track group stage sweeps
 
 
 def expand_sweep(config: SweepConfig) -> list[SweepPoint]:
@@ -80,28 +81,32 @@ def _expand_composable_sweep(config: SweepConfig, base_values: dict[str, Any]) -
 
     # Expand all groups recursively
     group_combinations = _expand_group(
-        group_type=config.type or "product", groups=groups, base_values=base_values, group_path=()
+        group_type=config.type or "product",
+        groups=groups,
+        base_values=base_values,
+        group_path=(),
+        stage_path=(),
     )
 
     # Apply filter if specified
     if config.filter:
         filtered = []
-        for params, path in group_combinations:
+        for params, path, stage_path in group_combinations:
             try:
                 if eval(config.filter, {}, params):
-                    filtered.append((params, path))
+                    filtered.append((params, path, stage_path))
             except Exception as e:
                 raise ValueError(f"Error evaluating sweep filter '{config.filter}': {e}")
         group_combinations = filtered
 
     # Create SweepPoints with indices
     points = [
-        SweepPoint(index=idx, parameters=params, group_path=path)
-        for idx, (params, path) in enumerate(group_combinations)
+        SweepPoint(index=idx, parameters=params, group_path=path, stage_path=stage_path)
+        for idx, (params, path, stage_path) in enumerate(group_combinations)
     ]
 
     if not points:
-        points.append(SweepPoint(index=0, parameters=base_values, group_path=()))
+        points.append(SweepPoint(index=0, parameters=base_values, group_path=(), stage_path=()))
 
     return points
 
@@ -124,18 +129,22 @@ def _expand_group(
     groups: list[dict[str, Any]],
     base_values: dict[str, Any],
     group_path: tuple[int, ...],
-) -> list[tuple[dict[str, Any], tuple[int, ...]]]:
+    stage_path: tuple[bool, ...],
+    stage_str: str = "stage",
+) -> list[tuple[dict[str, Any], tuple[int, ...], tuple[bool, ...]]]:
     """Recursively expand a group with product or list composition.
 
     Supports 'defaults' field at group level that gets merged into all configs.
 
     Returns:
-        List of (parameters, group_path) tuples
+        List of (parameters, group_path, stage_path) tuples
     """
     if not groups:
-        return [(dict(base_values), group_path)]
+        return [
+            (dict(base_values), group_path + (0,), stage_path + ("stage" in list(base_values),))
+        ]
 
-    all_combinations: list[tuple[dict[str, Any], tuple[int, ...]]] = []
+    all_combinations: list[tuple[dict[str, Any], tuple[int, ...], tuple[bool, ...]]] = []
 
     for group_idx, group in enumerate(groups):
         current_path = group_path + (group_idx,)
@@ -157,6 +166,8 @@ def _expand_group(
                 groups=group["groups"],
                 base_values=group_base_values,
                 group_path=current_path,
+                stage_path=stage_path + (False,),
+                stage_str=stage_str,
             )
             all_combinations.append(nested_combinations)
         elif "params" in group:
@@ -166,10 +177,27 @@ def _expand_group(
             param_combinations = _product_dict(cfg)
 
             combinations = []
-            for combo in param_combinations:
+            for combo_idx, combo in enumerate(param_combinations):
                 full_params = dict(group_base_values)
                 full_params.update(combo)
-                combinations.append((full_params, current_path))
+                # Include combo_idx in group_path to distinguish different parameter combinations
+                combinations.append((full_params, current_path + (combo_idx,)))
+            if any(stage_str in list(comb[0]) for comb in combinations):
+                combinations = [
+                    (
+                        *comb,
+                        stage_path + (False, True),
+                    )
+                    for comb in combinations
+                ]
+            else:
+                combinations = [
+                    (
+                        *comb,
+                        stage_path + (False, False),
+                    )
+                    for comb in combinations
+                ]
             all_combinations.append(combinations)
         elif "configs" in group:
             # Leaf list group - each config is a separate point (no cross-product)
@@ -180,6 +208,13 @@ def _expand_group(
                 if isinstance(config_dict, dict) and (
                     "groups" in config_dict or "params" in config_dict or "configs" in config_dict
                 ):
+                    if stage_str in sum(
+                        [list(config_dict.get(key, [])) for key in ["groups", "params", "configs"]],
+                        start=[],
+                    ):
+                        stage_idx = True
+                    else:
+                        stage_idx = False
                     # Nested group - recursively expand
                     # Wrap as a single-element group list to process correctly
                     nested_combos = _expand_group(
@@ -187,13 +222,37 @@ def _expand_group(
                         groups=[config_dict],  # Wrap the config_dict as a group
                         base_values=group_base_values,
                         group_path=current_path + (config_idx,),
+                        stage_path=stage_path
+                        + (
+                            False,
+                            stage_idx,
+                        ),
+                        stage_str=stage_str,
                     )
                     combinations.extend(nested_combos)
                 else:
                     # Simple config dict
                     full_params = dict(group_base_values)
                     full_params.update(config_dict)
-                    combinations.append((full_params, current_path + (config_idx,)))
+                    if stage_str in list(full_params):
+                        stage_idx = True
+                    else:
+                        stage_idx = False
+                    combinations.append(
+                        (
+                            full_params,
+                            current_path + (config_idx,),
+                            stage_path
+                            + (
+                                False,
+                                stage_idx,
+                            ),
+                        )
+                    )
+            # if any(stage_str in list(comb[0]) for comb in combinations):
+            #     combinations = [(*comb, stage_path + (True,)) for comb in combinations]
+            # else:
+            #     combinations = [(*comb, stage_path + (False,)) for comb in combinations]
             all_combinations.append(combinations)
         else:
             raise ValueError(f"Group must have 'groups', 'params', or 'configs': {group}")
@@ -229,10 +288,12 @@ def _cartesian_product_groups(
         # Merge all parameters
         merged_params = {}
         merged_path = ()
-        for params, path in combination:
+        merged_stage_path = ()
+        for params, path, stage_path in combination:
             merged_params.update(params)
             merged_path = merged_path + path
-        result.append((merged_params, merged_path))
+            merged_stage_path = merged_stage_path + stage_path
+        result.append((merged_params, merged_path, merged_stage_path))
 
     return result
 

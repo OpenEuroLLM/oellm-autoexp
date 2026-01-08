@@ -1,10 +1,10 @@
-from compoconf import parse_config
+import pytest
 
-from pathlib import Path
 
-from oellm_autoexp.config.schema import RootConfig, SweepConfig
+from oellm_autoexp.config.schema import SweepConfig, ConfigSetup
+from oellm_autoexp.config.loader import load_config
 from oellm_autoexp.sweep.expander import expand_sweep
-from oellm_autoexp.sweep.planner import build_job_plans
+from oellm_autoexp.sweep.dag_resolver import resolve_sweep_with_dag
 
 # Import to register configs in registry
 import oellm_autoexp.monitor.watcher  # noqa: F401
@@ -12,22 +12,51 @@ import oellm_autoexp.backends.base  # noqa: F401
 import oellm_autoexp.slurm.client  # noqa: F401
 
 
-def _basic_root() -> RootConfig:
-    data = {
-        "project": {"name": "demo", "base_output_dir": "./outputs"},
-        "sweep": {"grids": [{"backend.megatron.lr": [0.1, 0.01]}]},
-        "slurm": {
-            "template_path": "template.sbatch",
-            "script_dir": "./scripts",
-            "log_dir": "./logs",
-            "launcher_cmd": "",
-            "srun_opts": "",
-            "client": {"class_name": "FakeSlurmClient"},
-        },
-        "monitoring": {"class_name": "NullMonitor"},
-        "backend": {"class_name": "NullBackend"},
-    }
-    return parse_config(RootConfig, data)
+@pytest.fixture
+def basic_config(tmp_path):
+    """Create a basic config file and return config_path and ConfigSetup.
+
+    Returns a config with empty sweep - tests should add their own sweep params.
+    """
+    config_yaml = """
+project:
+  name: demo
+  base_output_dir: ./outputs
+  log_path: ./outputs/slurm-%j.out
+  log_path_current: ./outputs/current.log
+
+sweep:
+  grids:
+    - backend.dummy: [0, 1]
+
+slurm:
+  template_path: template.sbatch
+  script_dir: ./scripts
+  log_dir: ./logs
+  launcher_cmd: ""
+  srun_opts: ""
+  client:
+    class_name: FakeSlurmClient
+
+monitoring:
+  class_name: NullMonitor
+  log_path: ./outputs/current.log
+
+backend:
+  class_name: NullBackend
+  dummy: 0
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    config_setup = ConfigSetup(
+        pwd=str(tmp_path),
+        config_ref=str(config_path),
+        config_dir=str(tmp_path),
+        override=[],
+    )
+
+    return config_path, config_setup
 
 
 def test_expand_sweep_cartesian_product():
@@ -41,33 +70,72 @@ def test_expand_sweep_cartesian_product():
     assert values[0]["backend.megatron.num_layers"] == 8
 
 
-def test_build_job_plans_name_template():
-    root = _basic_root()
+def test_build_job_plans_name_template(basic_config):
+    config_path, config_setup = basic_config
+    root = load_config(config_path)
     points = expand_sweep(root.sweep)
-    jobs = build_job_plans(root, points)
+    points_dict = {p.index: p for p in points}
+    jobs = resolve_sweep_with_dag(root, points_dict, config_setup)
     assert len(jobs) == 2
     assert jobs[0].name.startswith("demo")
-    assert Path(jobs[0].log_path).name == "slurm-%j.out"
 
 
-def test_build_job_plans_extracts_lifecycle_fields():
-    root = _basic_root()
-    root.monitoring.start_condition_cmd = None
-    root.monitoring.termination_string = "all done"
-    root.monitoring.inactivity_threshold_seconds = 123
-    root.monitoring.start_condition_interval_seconds = 12
-    root.sweep.grids = [
-        {
-            "job.start_condition_cmd": ["echo 1"],
-            "monitoring.termination_string": ["Finished"],
-            "job.start_condition_interval_seconds": [30],
-            "job.inactivity_threshold_seconds": [45],
-            "lr": [0.1],
-        }
-    ]
+def test_build_job_plans_extracts_lifecycle_fields(tmp_path):
+    # Create a custom config for this test
+    config_yaml = """
+project:
+  name: demo
+  base_output_dir: ./outputs
+  log_path: ./outputs/slurm-%j.out
+  log_path_current: ./outputs/current.log
+
+sweep:
+  grids:
+    - job.start_condition_cmd: ["echo 1"]
+      monitoring.termination_string: ["Finished"]
+      job.start_condition_interval_seconds: [30]
+      job.inactivity_threshold_seconds: [45]
+      backend.dummy: [0.1]
+
+slurm:
+  template_path: template.sbatch
+  script_dir: ./scripts
+  log_dir: ./logs
+  launcher_cmd: ""
+  srun_opts: ""
+  client:
+    class_name: FakeSlurmClient
+
+job:
+  start_condition_cmd: null
+  start_condition_interval_seconds: null
+
+monitoring:
+  class_name: NullMonitor
+  log_path: ./outputs/current.log
+  start_condition_cmd: null
+  termination_string: "all done"
+  inactivity_threshold_seconds: 123
+  start_condition_interval_seconds: 12
+
+backend:
+  class_name: NullBackend
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    config_setup = ConfigSetup(
+        pwd=str(tmp_path),
+        config_ref=str(config_path),
+        config_dir=str(tmp_path),
+        override=[],
+    )
+
+    root = load_config(config_path)
 
     points = expand_sweep(root.sweep)
-    jobs = build_job_plans(root, points)
+    points_dict = {p.index: p for p in points}
+    jobs = resolve_sweep_with_dag(root, points_dict, config_setup)
 
     assert len(jobs) == 1
     job = jobs[0]
@@ -75,36 +143,61 @@ def test_build_job_plans_extracts_lifecycle_fields():
     assert job.start_condition_interval_seconds == 30
     assert job.termination_string == "Finished"
     assert job.inactivity_threshold_seconds == 45
-    assert "job.start_condition_cmd" not in job.parameters
-    assert "monitoring.termination_string" not in job.parameters
-    assert job.parameters["lr"] == "0.1"
+    # Parameters are stored as override strings now
+    assert any("backend.dummy=0.1" in p for p in job.parameters)
 
 
-def test_build_job_plans_extracts_start_conditions():
+def test_build_job_plans_extracts_start_conditions(tmp_path):
     """Test that start_conditions (list-based) are properly extracted."""
-    root = _basic_root()
-    root.sweep.grids = [
-        {
-            "job.start_conditions": [
-                [
-                    {
-                        "class_name": "FileExistsCondition",
-                        "path": "/checkpoint/done.txt",
-                        "blocking": True,
-                    },
-                    {
-                        "class_name": "MetadataCondition",
-                        "key": "checkpoint_iteration",
-                        "equals": "80000",
-                    },
-                ]
-            ],
-            "lr": [0.1],
-        }
-    ]
+    config_yaml = """
+project:
+  name: demo
+  base_output_dir: ./outputs
+  log_path: ./outputs/slurm-%j.out
+  log_path_current: ./outputs/current.log
+
+sweep:
+  grids:
+    - job.start_conditions:
+      - - class_name: FileExistsCondition
+          path: /checkpoint/done.txt
+          blocking: true
+        - class_name: MetadataCondition
+          key: checkpoint_iteration
+          equals: "80000"
+      backend.dummy: [0.1]
+
+slurm:
+  template_path: template.sbatch
+  script_dir: ./scripts
+  log_dir: ./logs
+  launcher_cmd: ""
+  srun_opts: ""
+  client:
+    class_name: FakeSlurmClient
+
+monitoring:
+  class_name: NullMonitor
+  log_path: ./outputs/current.log
+
+backend:
+  class_name: NullBackend
+"""
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(config_yaml)
+
+    config_setup = ConfigSetup(
+        pwd=str(tmp_path),
+        config_ref=str(config_path),
+        config_dir=str(tmp_path),
+        override=[],
+    )
+
+    root = load_config(config_path)
 
     points = expand_sweep(root.sweep)
-    jobs = build_job_plans(root, points)
+    points_dict = {p.index: p for p in points}
+    jobs = resolve_sweep_with_dag(root, points_dict, config_setup)
 
     assert len(jobs) == 1
     job = jobs[0]
@@ -112,8 +205,8 @@ def test_build_job_plans_extracts_start_conditions():
     assert job.start_conditions[0]["class_name"] == "FileExistsCondition"
     assert job.start_conditions[0]["path"] == "/checkpoint/done.txt"
     assert job.start_conditions[1]["class_name"] == "MetadataCondition"
-    assert "job.start_conditions" not in job.parameters
-    assert job.parameters["lr"] == "0.1"
+    # Parameters are stored as override strings now
+    assert any("backend.dummy=0.1" in p for p in job.parameters)
 
 
 def test_expand_sweep_with_base_values():

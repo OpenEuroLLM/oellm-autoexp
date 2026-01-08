@@ -6,4 +6,9 @@ defaults:
   - monitoring: default
   - sweep: none
   - scheduler: default
+  - job: default
   - _self_
+
+
+index: 0   # will be replaced internally by overrides for a sweep
+stage: ""  # will be replaced internally by overrides for a sweep

@@ -21,7 +21,7 @@ from types import SimpleNamespace
 
 @pytest.fixture
 def controller(tmp_path: Path) -> MonitorController:
-    monitor = NullMonitor(NullMonitorConfig())
+    monitor = NullMonitor(NullMonitorConfig(log_path=tmp_path / "demo.log"))
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
     state_store = MonitorStateStore(tmp_path / "state")
     return MonitorController(monitor, slurm, state_store=state_store)
@@ -48,7 +48,7 @@ def test_stop_action_removed_from_monitoring(controller: MonitorController, tmp_
 
 
 def test_restore_jobs_re_registers_slurm_client(tmp_path: Path) -> None:
-    monitor = NullMonitor(NullMonitorConfig())
+    monitor = NullMonitor(NullMonitorConfig(log_path=tmp_path / "demo.log"))
     state_dir = tmp_path / "state"
     state_store = MonitorStateStore(state_dir)
     slurm = FakeSlurmClient(FakeSlurmClientConfig())
@@ -74,7 +74,7 @@ def test_restore_jobs_re_registers_slurm_client(tmp_path: Path) -> None:
     assert stored.resolved_log_path.endswith("demo_1.log")
 
     fresh_slurm = FakeSlurmClient(FakeSlurmClientConfig())
-    fresh_monitor = NullMonitor(NullMonitorConfig())
+    fresh_monitor = NullMonitor(NullMonitorConfig(log_path=tmp_path / "demo.log"))
     fresh_controller = MonitorController(
         fresh_monitor,
         fresh_slurm,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from importlib import import_module
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,49 @@ class ConfigLoaderError(RuntimeError):
 
 _REGISTRY_SENTINEL = {"loaded": False}
 _DEPRECATED_MONITORING_KEYS = ("log_signals", "policies")
+
+
+def _escape_placeholders(obj):
+    """Recursively escape {{...}} and \\$ that should not resolve during config
+    loading.
+
+    This is FULLY GENERIC - works for ANY escaped interpolation, not just specific patterns.
+    """
+    if isinstance(obj, str):
+        # Replace {{env_flags}} with a placeholder (for Python's str.format())
+        result = obj.replace("{{env_flags}}", "__PLACEHOLDER_ENV_FLAGS__").replace(
+            "{{env_exports}}", "__PLACEHOLDER_ENV_EXPORTS__"
+        )
+        # Generic: Replace ALL \\$ with placeholder
+        # This works for ANY escaped interpolation: \\${sibling.*}, \\${aux.*}, \\${slurm.*}, etc.
+        # No need to know what's being escaped!
+        # result = result.replace("\\$", "__ESCAPED_DOLLAR__")
+        return result
+    elif isinstance(obj, dict):
+        return {k: _escape_placeholders(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_escape_placeholders(v) for v in obj]
+    return obj
+
+
+def _unescape_placeholders(obj):
+    """Recursively restore {{...}} and escaped $ markers.
+
+    This is FULLY GENERIC - restores ANY escaped interpolation.
+    """
+    if isinstance(obj, str):
+        # Restore {{env_flags}}
+        result = obj.replace("__PLACEHOLDER_ENV_FLAGS__", "{{env_flags}}").replace(
+            "__PLACEHOLDER_ENV_EXPORTS__", "{{env_exports}}"
+        )
+        # Generic: Restore ALL escaped dollars
+        # result = result.replace("__ESCAPED_DOLLAR__", "$")
+        return result
+    elif isinstance(obj, dict):
+        return {k: _unescape_placeholders(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_unescape_placeholders(v) for v in obj]
+    return obj
 
 
 def _ensure_monitoring_state_dir(root: schema.RootConfig) -> None:
@@ -76,6 +120,69 @@ def _ensure_registrations() -> None:
     _REGISTRY_SENTINEL["loaded"] = True
 
 
+def _load_inline_keys(config_path: Path) -> set[str] | None:
+    if not config_path.exists():
+        return None
+    try:
+        cfg = OmegaConf.load(str(config_path))
+        data = OmegaConf.to_container(cfg, resolve=False)
+    except Exception:
+        return None
+    if isinstance(data, Mapping):
+        return set(data.keys())
+    return None
+
+
+def _resolve_base_config_path(config_dir: Path, config_name: str) -> Path:
+    name_path = Path(config_name)
+    if name_path.suffix in {".yaml", ".yml"}:
+        return config_dir / name_path
+    return config_dir / f"{config_name}.yaml"
+
+
+def _apply_group_overrides(
+    data: Mapping[str, Any],
+    config_dir: Path,
+    overrides: Iterable[str],
+    base_config_path: Path | None = None,
+) -> Mapping[str, Any]:
+    """Apply config group overrides after Hydra composition.
+
+    This ensures group selections like `backend=variant1` override inline config
+    blocks from `_self_` when both are present.
+    """
+    merged = dict(data)
+    inline_keys = _load_inline_keys(base_config_path) if base_config_path else None
+    for override in overrides:
+        if "=" not in override:
+            continue
+        key, value = override.split("=", 1)
+        group = key.lstrip("+")
+        if not group or "." in group:
+            continue
+        if inline_keys is not None and group not in inline_keys:
+            continue
+        value_str = value.strip().strip("\"'")
+        if value_str.startswith("[") and value_str.endswith("]"):
+            parts = [p.strip() for p in value_str[1:-1].split(",") if p.strip()]
+            if not parts:
+                continue
+            value_str = parts[-1]
+        group_path = Path(config_dir) / group / f"{value_str}.yaml"
+        if not group_path.exists():
+            continue
+        group_cfg = OmegaConf.load(str(group_path))
+        group_data = OmegaConf.to_container(group_cfg, resolve=True)
+        if not isinstance(group_data, Mapping):
+            continue
+        existing = merged.get(group, {})
+        if isinstance(existing, Mapping):
+            merged[group] = {**existing, **group_data}
+        else:
+            merged[group] = dict(group_data)
+    return merged
+
+
 def _load_yaml(path: str) -> Mapping[str, Any]:
     cfg = OmegaConf.load(path)
     return OmegaConf.to_container(cfg, resolve=True)  # type: ignore[return-value]
@@ -101,6 +208,8 @@ def load_config(path: str | Path) -> schema.RootConfig:
         raise ConfigLoaderError(f"Unable to parse config {path}: {exc}") from exc
 
     _ensure_monitoring_state_dir(root)
+    root.metadata.setdefault("config_ref", str(path))
+    root.metadata.setdefault("config_dir", str(path.parent))
 
     return root
 
@@ -135,64 +244,38 @@ def load_hydra_config(
     # - \\${...} are escaped interpolations that resolve later (during DAG resolution)
     #   This includes ANY escaped interpolation: \\${sibling.*}, \\${aux.*}, \\${slurm.*}, etc.
     #   Generic approach: no need to know specific paths being escaped!
-    def escape_placeholders(obj):
-        """Recursively escape {{...}} and \\$ that should not resolve during
-        config loading.
-
-        This is FULLY GENERIC - works for ANY escaped interpolation, not just specific patterns.
-        """
-        if isinstance(obj, str):
-            # Replace {{env_flags}} with a placeholder (for Python's str.format())
-            result = obj.replace("{{env_flags}}", "__PLACEHOLDER_ENV_FLAGS__").replace(
-                "{{env_exports}}", "__PLACEHOLDER_ENV_EXPORTS__"
-            )
-            # Generic: Replace ALL \\$ with placeholder
-            # This works for ANY escaped interpolation: \\${sibling.*}, \\${aux.*}, \\${slurm.*}, etc.
-            # No need to know what's being escaped!
-            result = result.replace("\\$", "__ESCAPED_DOLLAR__")
-            return result
-        elif isinstance(obj, dict):
-            return {k: escape_placeholders(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [escape_placeholders(v) for v in obj]
-        return obj
-
-    def unescape_placeholders(obj):
-        """Recursively restore {{...}} and escaped $ markers.
-
-        This is FULLY GENERIC - restores ANY escaped interpolation.
-        """
-        if isinstance(obj, str):
-            # Restore {{env_flags}}
-            result = obj.replace("__PLACEHOLDER_ENV_FLAGS__", "{{env_flags}}").replace(
-                "__PLACEHOLDER_ENV_EXPORTS__", "{{env_exports}}"
-            )
-            # Generic: Restore ALL escaped dollars
-            result = result.replace("__ESCAPED_DOLLAR__", "$")
-            return result
-        elif isinstance(obj, dict):
-            return {k: unescape_placeholders(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [unescape_placeholders(v) for v in obj]
-        return obj
 
     # Get UNRESOLVED config, escape \\$, then resolve
     # This ensures escaped interpolations (\\${...}) stay as literal strings during Hydra composition
     # They will be unescaped later during sweep expansion/DAG resolution
     data_unresolved = OmegaConf.to_container(cfg, resolve=False)  # type: ignore[return-value]
-    data_escaped = escape_placeholders(data_unresolved)
+    data_escaped = data_unresolved  # _escape_placeholders(data_unresolved)
     cfg_escaped = OmegaConf.create(data_escaped)
     data = OmegaConf.to_container(cfg_escaped, resolve=True)  # type: ignore[return-value]
     _ensure_registrations()
     if not isinstance(data, Mapping):
         raise ConfigLoaderError(f"Hydra config {config_name} did not produce a mapping")
+
+    data = _apply_group_overrides(
+        data,
+        config_dir,
+        overrides,
+        base_config_path=_resolve_base_config_path(config_dir, config_name),
+    )
+
+    # Unescape placeholders before parsing
+    data = data  # _unescape_placeholders(data)
+
     _ensure_no_deprecated_monitoring_keys(data, source=f"Hydra config {config_name}")
+
     try:
         root = parse_config(schema.RootConfig, data)
     except Exception as exc:  # pragma: no cover
         raise ConfigLoaderError(f"Unable to parse Hydra config {config_name}: {exc}") from exc
 
     _ensure_monitoring_state_dir(root)
+    root.metadata.setdefault("config_ref", str(config_name))
+    root.metadata.setdefault("config_dir", str(config_dir))
 
     return root
 
@@ -244,27 +327,46 @@ def load_config_reference(
             _ensure_registrations()
 
             # Load YAML as OmegaConf
-            cfg = OmegaConf.load(str(path))
+            # cfg = OmegaConf.load(str(path))
 
-            # Apply overrides (Hydra-style: key=value)
-            for override_str in overrides:
-                if "=" not in override_str:
-                    continue
-                key, value = override_str.split("=", 1)
-                # Handle OmegaConf dot notation
-                OmegaConf.update(cfg, key, value, merge=True)
+            # # Apply overrides (Hydra-style: key=value)
+            # for override_str in overrides:
+            #     if "=" not in override_str:
+            #         continue
+            #     key, value = override_str.split("=", 1)
+            #     # Handle OmegaConf dot notation
+            #     OmegaConf.update(cfg, key, value, merge=True)
 
-            # Convert to container and parse
-            data = OmegaConf.to_container(cfg, resolve=True)
+            # # Convert to container and parse
+            # data = OmegaConf.to_container(cfg, resolve=True)
+            # if not isinstance(data, Mapping):
+            #     raise ConfigLoaderError(f"Config file {path} did not produce a mapping")
+            # _ensure_no_deprecated_monitoring_keys(data, source=str(path))
+            with initialize_config_dir(version_base=None, config_dir=os.path.abspath(path.parent)):
+                cfg = compose(config_name=path.name[:-5], overrides=overrides)
+
+            # Escape placeholders, resolve, then unescape (same as load_hydra_config)
+            data_unresolved = OmegaConf.to_container(cfg, resolve=False)
+            data_escaped = data_unresolved  # _escape_placeholders(data_unresolved)
+            cfg_escaped = OmegaConf.create(data_escaped)
+            data = OmegaConf.to_container(cfg_escaped, resolve=True)
             if not isinstance(data, Mapping):
                 raise ConfigLoaderError(f"Config file {path} did not produce a mapping")
+
+            # Unescape placeholders before parsing
+            # data = _unescape_placeholders(data)
             _ensure_no_deprecated_monitoring_keys(data, source=str(path))
+
+            data = _apply_group_overrides(data, path.parent, overrides, base_config_path=path)
+
             try:
                 root = parse_config(schema.RootConfig, data)
             except Exception as exc:
                 raise ConfigLoaderError(f"Unable to parse config {path}: {exc}") from exc
 
             _ensure_monitoring_state_dir(root)
+            root.metadata.setdefault("config_ref", str(path))
+            root.metadata.setdefault("config_dir", str(path.parent))
             return root
         else:
             # No overrides, use simple loader

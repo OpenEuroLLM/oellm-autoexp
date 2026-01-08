@@ -51,6 +51,39 @@ def _flatten_config(config: dict[str, Any], parent_key: str = "", sep: str = "."
     return dict(items)
 
 
+def _expand_log_path_for_job(job_id: str, log_path: str) -> Path:
+    log_str = str(log_path)
+    if "_" in job_id:
+        base_id, array_idx = job_id.split("_")
+        log_str = log_str.replace("%A", str(base_id))
+        log_str = log_str.replace("%a", str(array_idx))
+    log_str = log_str.replace("%j", str(job_id))
+    return Path(log_str)
+
+
+def _create_current_log_symlink(job_id: str, log_path: str, log_path_current: str | None) -> None:
+    if not log_path_current:
+        return
+    resolved_log_path = _expand_log_path_for_job(job_id, log_path)
+    current_path = Path(log_path_current)
+    try:
+        current_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        LOGGER.warning("Unable to create log symlink parent %s: %s", current_path.parent, exc)
+        return
+    try:
+        if current_path.exists() or current_path.is_symlink():
+            current_path.unlink()
+        current_path.symlink_to(resolved_log_path)
+    except OSError as exc:
+        LOGGER.warning(
+            "Unable to create log symlink %s -> %s: %s",
+            current_path,
+            resolved_log_path,
+            exc,
+        )
+
+
 @dataclass(kw_only=True)
 class HostRuntime:
     manifest: PlanManifest = field(default_factory=MISSING)
@@ -381,7 +414,7 @@ def _register_job(
     attempts: int = 1,
     session_id: str | None = None,
 ) -> None:
-    metadata = {"parameters": dict(job.parameters), "output_dir": job.output_dir}
+    metadata = {"parameters": list(job.parameters), "output_dir": job.output_dir}
 
     # Add session_id to metadata so actions can reuse it for nested jobs
     if session_id:
@@ -451,6 +484,7 @@ def submit_pending_jobs(
                     config=runtime.manifest.config,
                     session_id=runtime.state_store.session_id,
                 )
+                _create_current_log_symlink(job_id, job.log_path, job.log_path_current)
                 submitted_job_ids.append(job_id)
         return submitted_job_ids
 
@@ -481,6 +515,7 @@ def submit_pending_jobs(
             config=runtime.manifest.config,
             session_id=runtime.state_store.session_id,
         )
+        _create_current_log_symlink(job_id, job.log_path, job.log_path_current)
         submitted_job_ids.append(job_id)
 
     return submitted_job_ids

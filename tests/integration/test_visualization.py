@@ -2,11 +2,16 @@
 
 from io import StringIO
 import sys
+from dataclasses import asdict
 
 from oellm_autoexp.sweep.expander import expand_sweep
 from oellm_autoexp.sweep.planner import JobPlan
-from oellm_autoexp.sweep.sibling_resolver import resolve_sibling_references
 from oellm_autoexp.config.schema import SweepConfig
+from oellm_autoexp.config.loader import load_config
+from oellm_autoexp.config.schema import ConfigSetup
+from oellm_autoexp.sweep.dag_resolver import resolve_sweep_with_dag, build_stage_dependencies
+
+import yaml
 
 # Import visualization function
 from scripts.visualize_plan import (
@@ -22,21 +27,27 @@ def test_group_jobs_by_stage():
     jobs = [
         JobPlan(
             name="job1_stable",
-            parameters={"stage": "stable"},
+            parameters=["stage=stable"],
             output_dir="/outputs/job1_stable",
             log_path="/logs/job1.out",
+            log_path_current="/logs/job1_stable/current.log",
+            stage_name="stable",
         ),
         JobPlan(
             name="job2_stable",
-            parameters={"stage": "stable"},
+            parameters=["stage=stable"],
             output_dir="/outputs/job2_stable",
             log_path="/logs/job2.out",
+            log_path_current="/logs/job2_stable/current.log",
+            stage_name="stable",
         ),
         JobPlan(
             name="job1_cooldown",
-            parameters={"stage": "cooldown"},
+            parameters=["stage=cooldown"],
             output_dir="/outputs/job1_cooldown",
             log_path="/logs/job1_cooldown.out",
+            log_path_current="/logs/job1_cooldown/current.log",
+            stage_name="cooldown",
         ),
     ]
 
@@ -52,32 +63,26 @@ def test_extract_hyperparameters():
     jobs = [
         JobPlan(
             name="job1",
-            parameters={
-                "backend.megatron.lr": 1e-4,
-                "backend.megatron.global_batch_size": 64,
-                "stage": "stable",
-            },
+            parameters=["backend.dummy=1", "stage=stable"],
             output_dir="/outputs/job1",
             log_path="/logs/job1.out",
+            log_path_current="/logs/job1/current.log",
+            stage_name="stable",
         ),
         JobPlan(
             name="job2",
-            parameters={
-                "backend.megatron.lr": 5e-4,
-                "backend.megatron.global_batch_size": 128,
-                "stage": "stable",
-            },
+            parameters=["backend.dummy=2", "stage=stable"],
             output_dir="/outputs/job2",
             log_path="/logs/job2.out",
+            log_path_current="/logs/job2/current.log",
+            stage_name="stable",
         ),
     ]
 
-    hyperparams = extract_hyperparameters(jobs)
+    hyperparams = extract_hyperparameters(jobs, visualize_keys=["backend.dummy"])
 
-    assert "backend.megatron.lr" in hyperparams
-    assert "backend.megatron.global_batch_size" in hyperparams
-    assert set(hyperparams["backend.megatron.lr"]) == {1e-4, 5e-4}
-    assert set(hyperparams["backend.megatron.global_batch_size"]) == {64, 128}
+    assert "backend.dummy" in hyperparams
+    assert set(hyperparams["backend.dummy"]) == {"1", "2"}
 
 
 def test_format_condition():
@@ -109,7 +114,7 @@ def test_format_condition():
     assert "ERROR" in format_condition(log_cond)
 
 
-def test_visualize_plan_output():
+def test_visualize_plan_output(tmp_path):
     """Test that visualize_plan produces expected output structure."""
     # Create a simple sweep config
     sweep_cfg = SweepConfig(
@@ -118,8 +123,7 @@ def test_visualize_plan_output():
             {
                 "type": "product",
                 "params": {
-                    "backend.megatron.lr": [1e-4, 5e-4],
-                    "backend.megatron.global_batch_size": [64, 128],
+                    "backend.dummy": [1, 2],
                 },
             },
             {
@@ -143,35 +147,62 @@ def test_visualize_plan_output():
         ],
     )
 
-    # Expand and build jobs
-    points = expand_sweep(sweep_cfg)
-    jobs = []
-    for point in points:
-        stage = point.parameters.get("stage", "unknown")
-        lr = point.parameters.get("backend.megatron.lr", 1e-4)
-        bsz = point.parameters.get("backend.megatron.global_batch_size", 64)
-        name = f"test_lr{lr}_bsz{bsz}_{stage}"
+    template_path = tmp_path / "template.sbatch"
+    template_path.write_text("#!/bin/bash\n{sbatch_directives}\n\nsrun {srun_opts}{launcher_cmd}\n")
 
-        jobs.append(
-            JobPlan(
-                name=name,
-                parameters=point.parameters,
-                output_dir=f"/outputs/{name}",
-                log_path=f"/logs/{name}/slurm-%j.out",
-                output_paths=[],
-                start_conditions=point.parameters.get("job.start_conditions", []),
-            )
-        )
+    output_dir = tmp_path / "outputs"
+    log_dir = tmp_path / "logs"
+    config_dict = {
+        "project": {
+            "name": "visualize_demo",
+            "base_output_dir": str(output_dir),
+            "log_path": str(log_dir / "slurm-%j.out"),
+            "log_path_current": str(log_dir / "current.log"),
+        },
+        "sweep": asdict(sweep_cfg),
+        "slurm": {
+            "template_path": str(template_path),
+            "script_dir": str(tmp_path / "scripts"),
+            "log_dir": str(log_dir),
+            "client": {"class_name": "FakeSlurmClient"},
+        },
+        "monitoring": {
+            "class_name": "NullMonitor",
+            "log_path": str(log_dir / "current.log"),
+        },
+        "backend": {"class_name": "NullBackend", "base_command": ["echo", "0"]},
+        "stage": "",
+        "index": 0,
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(config_dict, sort_keys=False))
 
-    # Resolve sibling references
-    resolved_jobs = resolve_sibling_references(jobs)
+    root = load_config(config_path)
+    points = expand_sweep(root.sweep)
+    points_dict = {p.index: p for p in points}
+    resolved_jobs = resolve_sweep_with_dag(
+        root,
+        points_dict,
+        ConfigSetup(
+            pwd=str(tmp_path),
+            config_ref=str(config_path),
+            config_dir=str(tmp_path),
+            override=[],
+        ),
+    )
 
     # Capture output
     old_stdout = sys.stdout
     sys.stdout = captured_output = StringIO()
 
     try:
-        visualize_plan(resolved_jobs, config_name="test_visualization", max_jobs_per_stage=10)
+        deps = build_stage_dependencies(points_dict)
+        visualize_plan(
+            resolved_jobs,
+            config_name="test_visualization",
+            max_jobs_per_stage=10,
+            dependencies=deps,
+        )
         output = captured_output.getvalue()
     finally:
         sys.stdout = old_stdout
@@ -179,8 +210,7 @@ def test_visualize_plan_output():
     # Verify output structure
     assert "Multi-Stage Experiment Plan" in output
     assert "test_visualization" in output
-    assert "Total: 8 jobs" in output  # 4 lr×bsz combos × 2 stages
-    assert "Hyperparameter Sweep" in output
+    assert "Total: 4 jobs" in output  # 2 dummy combos × 2 stages
     assert "Stage: stable" in output
     assert "Stage: cooldown" in output
     assert "Start Conditions:" in output
@@ -194,44 +224,39 @@ def test_multi_stage_visualization_with_conditions():
     jobs = [
         # Stable stage
         JobPlan(
-            name="lr1e-4_stable",
-            parameters={
-                "stage": "stable",
-                "backend.megatron.lr": 1e-4,
-                "backend.megatron.global_batch_size": 64,
-            },
-            output_dir="/outputs/lr1e-4_stable",
-            log_path="/logs/lr1e-4_stable/slurm-%j.out",
-            log_path_current="/logs/lr1e-4_stable/current.log",
+            name="dummy1_stable",
+            parameters=["stage=stable", "backend.dummy=1"],
+            output_dir="/outputs/dummy1_stable",
+            log_path="/logs/dummy1_stable/slurm-%j.out",
+            log_path_current="/logs/dummy1_stable/current.log",
             output_paths=[],
+            stage_name="stable",
         ),
         # Cooldown stage with conditions
         JobPlan(
-            name="lr1e-4_cooldown",
-            parameters={
-                "stage": "cooldown",
-                "backend.megatron.lr": 1e-4,
-                "backend.megatron.global_batch_size": 64,
-            },
-            output_dir="/outputs/lr1e-4_cooldown",
-            log_path="/logs/lr1e-4_cooldown/slurm-%j.out",
+            name="dummy1_cooldown",
+            parameters=["stage=cooldown", "backend.dummy=2"],
+            output_dir="/outputs/dummy1_cooldown",
+            log_path="/logs/dummy1_cooldown/slurm-%j.out",
+            log_path_current="/logs/dummy1_cooldown/current.log",
             output_paths=[],
+            stage_name="cooldown",
             start_conditions=[
                 {
                     "class_name": "FileExistsCondition",
-                    "path": "/outputs/lr1e-4_stable/checkpoint/done.txt",
+                    "path": "/outputs/dummy1_stable/checkpoint/done.txt",
                     "blocking": True,
                 }
             ],
             cancel_conditions=[
                 {
                     "class_name": "SlurmStateCondition",
-                    "job_name": "lr1e-4_stable",
+                    "job_name": "dummy1_stable",
                     "state": "FAILED",
                 },
                 {
                     "class_name": "LogPatternCondition",
-                    "log_path": "/logs/lr1e-4_stable/current.log",
+                    "log_path": "/logs/dummy1_stable/current.log",
                     "pattern": "FATAL ERROR",
                 },
             ],
@@ -265,9 +290,11 @@ def test_visualization_with_many_jobs():
     jobs = [
         JobPlan(
             name=f"job_{i}_stable",
-            parameters={"stage": "stable", "idx": i},
+            parameters=["stage=stable", f"idx={i}"],
             output_dir=f"/outputs/job_{i}_stable",
             log_path=f"/logs/job_{i}.out",
+            log_path_current=f"/logs/job_{i}_stable/current.log",
+            stage_name="stable",
         )
         for i in range(20)
     ]
@@ -277,7 +304,12 @@ def test_visualization_with_many_jobs():
     sys.stdout = captured_output = StringIO()
 
     try:
-        visualize_plan(jobs, config_name="many_jobs_test", max_jobs_per_stage=5)
+        visualize_plan(
+            jobs,
+            config_name="many_jobs_test",
+            max_jobs_per_stage=5,
+            visualize_keys=["backend.dummy", "stage"],
+        )
         output = captured_output.getvalue()
     finally:
         sys.stdout = old_stdout

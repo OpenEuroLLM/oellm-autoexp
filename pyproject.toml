@@ -48,7 +48,11 @@ packages = ["oellm_autoexp"]
 line-length = 100
 target-version = "py310"
 exclude = ["submodules"]
+ignore = ["E203"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=oellm_autoexp --cov-report=term-missing -q"
+
+[tool.flake8]
+ignore = "E203,W503"

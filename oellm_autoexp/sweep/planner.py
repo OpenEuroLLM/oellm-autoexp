@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field, MISSING
-from pathlib import Path
 
 from compoconf import asdict
 from omegaconf import OmegaConf
 from typing import Any
 from oellm_autoexp.config.schema import RootConfig
-from .expander import SweepPoint
 
 LOGGER = logging.getLogger(__name__)
 
@@ -20,10 +18,10 @@ class JobPlan:
     """Normalized job description used by downstream modules."""
 
     name: str = field(default_factory=MISSING)
-    parameters: dict[str, str] = field(default_factory=MISSING)
+    parameters: list[str] = field(default_factory=MISSING)  # hydra / omegaconf cmdline overrides
     output_dir: str = field(default_factory=MISSING)
     log_path: str = field(default_factory=MISSING)
-    log_path_current: str | None = None  # Symlink path for current.log
+    log_path_current: str = field(default_factory=MISSING)
     output_paths: list[str] = field(default_factory=list)
 
     # Start conditions (old blocking approach - DEPRECATED)
@@ -72,6 +70,17 @@ def flatten_config(config: RootConfig | dict[str, Any], connector: str = "."):
 
 
 def simple_format(template_str: str, args: dict):
+    """Format template string with dotted key support (e.g.,
+    {backend.megatron.lr}).
+
+    Args:
+        template_str: Template with placeholders like {key} or {nested.key}
+        args: Flat dict with dotted keys (e.g., {'backend.megatron.lr': '1e-4'})
+
+    Returns:
+        Formatted string with all placeholders replaced
+    """
+    # First try direct key replacement (flat keys)
     for key, val in args.items():
         template_str = template_str.replace("{" + key + "}", str(val))
     return template_str
@@ -191,161 +200,7 @@ def _resolve_conditions(
     return resolved_conditions
 
 
-def build_job_plans(config: RootConfig, points: list[SweepPoint]) -> list[JobPlan]:
-    LOGGER.info(f"Building job plans for {len(points)} sweep points")
-    base_output = Path(config.project.base_output_dir)
-    project_name = config.project.name
-
-    plans: list[JobPlan] = []
-    for point in points:
-        LOGGER.debug(f"Building plan for point {point.index}")
-        context: dict[str, str] = {
-            "project_name": project_name,
-            "index": str(point.index),
-        }
-        context.update(flatten_config(config))
-        context.update(point.parameters)
-        # Resolve any remaining OmegaConf interpolations (from escaped sweep defaults)
-        # This ensures interpolations use the merged config+parameter values
-        context = _resolve_omegaconf_strings(context)
-        job_name = simple_format(config.sweep.name_template, context)
-
-        output_dir = str(base_output / job_name)
-        log_template = config.monitoring.log_path_template
-        format_context = {**context, "output_dir": str(output_dir), "name": job_name}
-        log_path = log_template.format(**format_context)
-        monitoring_config = config.monitoring
-        output_templates = getattr(monitoring_config, "output_paths", [])
-        resolved_outputs: list[str] = []
-        for template in output_templates:
-            try:
-                resolved_outputs.append(template.format(**format_context))
-            except KeyError:
-                resolved_outputs.append(template)
-
-        start_condition_cmd = getattr(monitoring_config, "start_condition_cmd", None)
-        start_condition_interval = getattr(
-            monitoring_config,
-            "start_condition_interval_seconds",
-            None,
-        )
-        termination_string = getattr(monitoring_config, "termination_string", None)
-        termination_command = getattr(monitoring_config, "termination_command", None)
-        inactivity_threshold = getattr(
-            monitoring_config,
-            "inactivity_threshold_seconds",
-            None,
-        )
-
-        start_conditions = []
-        cancel_conditions = []
-
-        filtered_params: dict[str, str] = {}
-        for key, value in point.parameters.items():
-            if value is None:
-                continue
-            normalized = key.lower()
-            if normalized in {
-                "job.start_condition",
-                "job.start_condition_cmd",
-                "start_condition",
-                "start_condition_cmd",
-                "monitoring.start_condition_cmd",
-            }:
-                start_condition_cmd = str(value)
-                continue
-            if normalized in {
-                "job.start_condition_interval_seconds",
-                "start_condition_interval_seconds",
-                "monitoring.start_condition_interval_seconds",
-            }:
-                try:
-                    start_condition_interval = int(value)
-                except (TypeError, ValueError):
-                    start_condition_interval = None
-                continue
-            if normalized in {
-                "job.start_conditions",
-                "start_conditions",
-                "monitoring.start_conditions",
-            }:
-                # Extract start_conditions (expected to be a list of dicts)
-                # Don't resolve yet - will resolve after context is built
-                if OmegaConf.is_list(value) or isinstance(value, list):
-                    start_conditions = (
-                        OmegaConf.to_container(value, resolve=False)
-                        if OmegaConf.is_list(value)
-                        else value
-                    )
-                continue
-            if normalized in {
-                "job.termination_string",
-                "termination_string",
-                "monitoring.termination_string",
-            }:
-                termination_string = str(value)
-                continue
-            if normalized in {
-                "job.termination_command",
-                "termination_command",
-                "monitoring.termination_command",
-            }:
-                termination_command = str(value)
-                continue
-            if normalized in {
-                "job.inactivity_threshold_seconds",
-                "inactivity_threshold_seconds",
-                "monitoring.inactivity_threshold_seconds",
-            }:
-                try:
-                    inactivity_threshold = int(value)
-                except (TypeError, ValueError):
-                    inactivity_threshold = None
-                continue
-            if normalized in {
-                "job.cancel_conditions",
-                "cancel_conditions",
-                "monitoring.cancel_conditions",
-            }:
-                # Extract cancel_conditions (expected to be a list of dicts)
-                # Don't resolve yet - will resolve after context is built
-                if OmegaConf.is_list(value) or isinstance(value, list):
-                    cancel_conditions = (
-                        OmegaConf.to_container(value, resolve=False)
-                        if OmegaConf.is_list(value)
-                        else value
-                    )
-                continue
-            filtered_params[key] = str(value)
-
-        # Resolve start_conditions and cancel_conditions using the merged context
-        # This allows them to reference computed values like start_iter_round
-        if start_conditions:
-            start_conditions = _resolve_conditions(start_conditions, context)
-        if cancel_conditions:
-            cancel_conditions = _resolve_conditions(cancel_conditions, context)
-
-        plans.append(
-            JobPlan(
-                name=job_name,
-                parameters=filtered_params,
-                output_dir=output_dir,
-                log_path=log_path,
-                output_paths=resolved_outputs,
-                start_condition_cmd=start_condition_cmd,
-                start_condition_interval_seconds=start_condition_interval,
-                start_conditions=start_conditions,
-                termination_string=termination_string,
-                termination_command=termination_command,
-                inactivity_threshold_seconds=inactivity_threshold,
-                cancel_conditions=cancel_conditions,
-            )
-        )
-    LOGGER.info(f"Built {len(plans)} job plans")
-    return plans
-
-
-__all__ = ["JobPlan", "build_job_plans"]
+__all__ = ["JobPlan"]
 
 
 if __name__ == "__main__":

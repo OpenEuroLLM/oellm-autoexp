@@ -89,11 +89,11 @@ class NullMonitorConfig(ConfigInterface):
     """Monitor configuration that performs no observation."""
 
     class_name: str = "NullMonitor"
+    log_path: str = field(default_factory=MISSING)
     poll_interval_seconds: int = 600
     inactivity_threshold_seconds: int | None = 900
     termination_string: str | None = None
     termination_command: str | None = None
-    log_path_template: str = "{output_dir}/slurm-%j.out"
     output_paths: list[str] = field(default_factory=list)
     start_condition_cmd: str | None = None
     start_condition_interval_seconds: int | None = None

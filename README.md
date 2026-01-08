@@ -119,10 +119,10 @@ Define parameter grids in your config:
 
 ```yaml
 sweep:
-  name_template: "experiment_{backend.megatron.lr}_{backend.megatron.global_batch_size}"
   base_values:
     backend.megatron.num_layers: 20
     backend.megatron.hidden_size: 896
+    project.name: "experiment_\\${backend.megatron.lr}_\\${backend.megatron.global_batch_size}"
   grids:
     - backend.megatron.lr: [1e-4, 5e-4, 1e-3]
       backend.megatron.global_batch_size: [64, 128, 256]
@@ -136,8 +136,9 @@ For complex experiments, use the composable groups format to combine different s
 
 ```yaml
 sweep:
-  name_template: "tuning_{backend.megatron.lr}_{backend.megatron.global_batch_size}_{stage}"
   type: list  # Top-level: concatenate independent exploration strategies
+  defaults:
+    project.name: "tuning_\\${backend.megatron.lr}_\\${backend.megatron.global_batch_size}_\\${stage}"
   groups:
     # Strategy 1: Small batch exploration (product of LR × batch sizes)
     - type: product
@@ -226,8 +227,27 @@ sweep:
 **Key points:**
 - Use `\\${sibling.STAGE.FIELD}` to reference sibling jobs (double-escaped in YAML)
 - Available fields: `name`, `output_dir`, `log_path`, `log_path_current`
-- Dependencies are automatically resolved by way of DAG
+- Dependencies are automatically resolved by way of the DAG-based resolver
 - Jobs start only when their dependencies complete
+
+For SLURM arrays, `project.log_path_current` is resolved per index (default `current_${index}.log`); after submission a symlink is created once the SLURM ID is known, so `log_path_current` is stable for monitoring and tooling.
+
+### Job controls (declarative)
+Job gating lives in the `job` section and is fully parsed into the dataclasses (no extra overrides):
+
+```yaml
+job:
+  start_conditions:
+    - class_name: FileExistsCondition
+      path: "\\${sibling.stable.output_dir}/checkpoints/done.txt"
+  cancel_conditions:
+    - class_name: SlurmStateCondition
+      job_name: "\\${sibling.stable.name}"
+      state: FAILED
+  inactivity_threshold_seconds: 1800
+```
+
+In sweeps you can also use dotted keys (for example, `job.start_conditions`) to target the same fields.
 
 ### Visualizing Your Sweep
 
@@ -311,7 +331,8 @@ Exclude specific combinations using Python expressions:
 
 ```yaml
 sweep:
-  name_template: "experiment_{backend.megatron.lr}_{backend.megatron.global_batch_size}"
+  defaults:
+    project.name: "experiment_\\${backend.megatron.lr}_\\${backend.megatron.global_batch_size}"
   grids:
     - backend.megatron.lr: [1e-4, 5e-4, 1e-3, 2e-3]
       backend.megatron.global_batch_size: [64, 128, 256, 512, 1024]
@@ -333,7 +354,8 @@ Apply filters at any level to exclude unstable or redundant combinations. Buildi
 
 ```yaml
 sweep:
-  name_template: "tuning_{backend.megatron.lr}_{backend.megatron.global_batch_size}_{stage}"
+  defaults:
+    project.name: "tuning_\\${backend.megatron.lr}_\\${backend.megatron.global_batch_size}_\\${stage}"
   type: list
   groups:
     # Strategy 1: Small batch exploration
@@ -378,7 +400,7 @@ sweep:
   backend.megatron.train_iters: "${oc.eval:int(50e9 / ${backend.megatron.global_batch_size})}"
   ```
 - **Group defaults**: Share common values within a group using `defaults:` block
-- **Validation**: The planner validates all sibling references and dependencies before submission
+- **Validation**: The planner validates all sibling references and dependencies before submission (DAG-based resolution).
 
 For complete examples, see:
 - `config/experiments/korbi/dense_300M_50BT_pull.yaml` - Multi-stage sweep with 5 training phases
