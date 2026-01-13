@@ -24,6 +24,17 @@ Whenever you have `numpy>=2.0` in your system, apply the annoying `numpy.product
 bash ./apply_megatron_numpy_product_patch.sh
 ```
 
+### Environment variables
+The environment variables used in the `config/` here are:
+- $OUTPUT_DIR           : general output directory
+- $DATA_DIR             : general data directory
+- $PROJECT_DIR          : project directory (optional, . is an alternative usually)
+- $HOME                 : home sweet home
+- $SLURM_QOS            : default SLURM qos (or null)
+- $HF_HOME              : huggingface home
+- $SLURM_ACCOUNT        : default slurm account
+- $SLURM_PARTITION      : default slurm partition ($SLURM_PARITION_DEBUG can point to a debug partition)
+- $CONTAINER_CACHE_DIR  : directory containing container images
 
 
 ## Cluster setup: LUMI notes
