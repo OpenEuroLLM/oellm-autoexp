@@ -265,13 +265,15 @@ def config_to_cmdline(
                     dct = dct.replace("\\${", "${")
                 # escape {}
                 dct = re.sub(r"\$(?=[^\{])", r"\\$", dct)
-                dct = re.sub(r"\(", r"\\(", dct)
-                dct = re.sub(r"\)", r"\\)", dct)
                 dct = escape_braces_except_dollar(dct)
 
-                if " " in dct or "," in dct:
-                    dct = dct.replace('"', '\\"')
-                    dct = f'"{dct}"'
+                # if " " in dct or "," in dct:
+                # dct = re.sub(r"\(", r"\\(", dct)
+                # dct = re.sub(r"\)", r"\\)", dct)
+                # dct = re.sub(r"\]", r"\\]", dct)
+                # dct = re.sub(r"\[", r"\\[", dct)
+                dct = dct.replace('"', '\\"')
+                dct = f'"{dct}"'
             cmdlines.append(override + prefix + "=" + str(dct))
         return cmdlines
 
@@ -286,11 +288,11 @@ def param_to_cmdlines(
     if isinstance(val, str):
         if unescape_interpolations:
             val = val.replace("\\${", "${")
-        if " " in val or "," in val:
-            val = val.replace('"', '\\"')
-            return [f'{prefix}{key}="{val}"']
-        else:
-            return [f"{prefix}{key}={val}"]
+        # if " " in val or "," in val:
+        val = val.replace('"', '\\"')
+        return [f'{prefix}{key}="{val}"']
+        # else:
+        #     return [f"{prefix}{key}={val}"]
     else:
         return config_to_cmdline(
             val, override="++", prefix=key, unescape_interpolations=unescape_interpolations

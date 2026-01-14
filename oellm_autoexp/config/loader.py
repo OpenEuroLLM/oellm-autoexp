@@ -226,9 +226,9 @@ def load_hydra_config(
     if overrides:
         LOGGER.debug(f"Applying {len(overrides)} overrides")
     overrides = [
-        override.split("=")[0] + '="' + "=".join(override.split("=")[1:]) + '"'
-        if "${" in override
-        else override
+        override.split("=")[0]
+        + "="
+        + "=".join(override.split("=")[1:])  # + '"' if "${" in override else override
         for override in overrides
     ]
 
@@ -256,15 +256,15 @@ def load_hydra_config(
     if not isinstance(data, Mapping):
         raise ConfigLoaderError(f"Hydra config {config_name} did not produce a mapping")
 
-    data = _apply_group_overrides(
-        data,
-        config_dir,
-        overrides,
-        base_config_path=_resolve_base_config_path(config_dir, config_name),
-    )
+    # data = _apply_group_overrides(
+    #     data,
+    #     config_dir,
+    #     overrides,
+    #     base_config_path=_resolve_base_config_path(config_dir, config_name),
+    # )
 
     # Unescape placeholders before parsing
-    data = data  # _unescape_placeholders(data)
+    # data = data  # _unescape_placeholders(data)
 
     _ensure_no_deprecated_monitoring_keys(data, source=f"Hydra config {config_name}")
 

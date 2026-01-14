@@ -190,6 +190,7 @@ sweep:
 
             # Checkpoint loading configuration
             backend.megatron.load: "\\${sibling.stable.project.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}"
+            backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter_round}"
             backend.megatron.override_opt_param_scheduler: true
 
             # Start conditions: wait for stable to reach checkpoint (new async approach)
