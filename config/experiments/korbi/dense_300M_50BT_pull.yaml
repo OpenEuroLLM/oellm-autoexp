@@ -18,7 +18,7 @@ stage: ""
 
 project:
   base_output_dir: "dense_300M_sweep"
-  name: dense_300M_01_lr{backend.megatron.lr}_gbsz{backend.megatron.global_batch_size}_beta2{backend.megatron.adam_beta2}_{stage}
+  name: "dense_300M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
   resume: true
 
 
@@ -142,6 +142,10 @@ sweep:
     # GROUP 1: Hyperparameter configurations (list of two product grids)
     - type: list
       configs:
+        - project.name: "dense_300M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
+          backend.megatron.wandb_exp_name: "\\${project.name}"
+    - type: list
+      configs:
         # Grid 1: 6 configurations (3 lr × 2 batch sizes)
         - type: product
           params:
@@ -160,13 +164,14 @@ sweep:
       configs:
         # STABLE PHASE: Train for 50B tokens with no decay
         - stage: stable
+
           backend.megatron.aux.tokens: 50_000_000_000
           # Computed fields using ESCAPED OmegaConf interpolations (\\$ prevents early resolution)
           # These will be unescaped during sweep expansion and resolved with stage-specific values
           backend.megatron.train_iters: "\\${oc.eval:\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)}"
           backend.megatron.lr_wsd_decay_iters: 0  # No decay in stable phase
           backend.megatron.aux.start_iter: "\\${oc.eval:int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\(1-\\${backend.megatron.aux.decay_fraction}\\)\\)}"
-          backend.megatron.aux.start_iter_round: "\\${oc.eval:int\\(\\(int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\(1-\\${backend.megatron.aux.decay_fraction}\\)\\)//\\${backend.megatron.save_interval}\\)*\\${backend.megatron.save_interval}\\)}"
+          backend.megatron.aux.start_iter_round: "\\${oc.eval:int\\(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval}\\)*\\${backend.megatron.save_interval}}"
 
         # NESTED GROUP: Cooldown/decay stages with shared defaults
         # All decay stages share: 20% decay, checkpoint loading, start/cancel conditions
@@ -181,7 +186,7 @@ sweep:
             backend.megatron.train_iters: "\\${oc.eval:\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)}"
             backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\${backend.megatron.aux.decay_fraction}\\)}"
             backend.megatron.aux.start_iter: "\\${oc.eval:int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\(1-\\${backend.megatron.aux.decay_fraction}\\)\\)}"
-            backend.megatron.aux.start_iter_round: "\\${oc.eval:int\\(\\(int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\(1-\\${backend.megatron.aux.decay_fraction}\\)\\)//\\${backend.megatron.save_interval}\\)*\\${backend.megatron.save_interval}\\)}"
+            backend.megatron.aux.start_iter_round: "\\${oc.eval:int\\(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval}\\)*\\${backend.megatron.save_interval}}"
 
             # Checkpoint loading configuration
             backend.megatron.load: "\\${sibling.stable.project.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}"
@@ -197,10 +202,10 @@ sweep:
             # Cancel conditions: cancel if stable job fails
             job.cancel_conditions:
               - class_name: SlurmStateCondition
-                job_name: "\\${sibling.stable.name}"
+                job_name: "\\${sibling.stable.project.name}"
                 state: FAILED
               - class_name: LogPatternCondition
-                log_path: "\\${sibling.stable.log_path_current}"
+                log_path: "\\${sibling.stable.project.log_path_current}"
                 pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
           configs:
             # Each decay stage only needs to specify its unique stage and tokens
