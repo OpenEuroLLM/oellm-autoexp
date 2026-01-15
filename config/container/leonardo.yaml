@@ -1,6 +1,6 @@
 image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining_x86_64_202512291044.sif
 runtime: singularity
-bind: ["/leonardo_scratch"]
+bind: ["/leonardo_scratch", "/leonardo"]
 env:
   WANDB_MODE: "offline"
   PYTHONPATH: "."

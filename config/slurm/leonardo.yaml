@@ -7,9 +7,10 @@ launcher_cmd: "{{env_exports}} export LOCAL_ADDR=$(nslookup $(hostname) | grep '
 srun:
   exclusive: true
   wait: 60
-  cpus_per_task: 8
+  cpus_per_task: 32
+  jobid: "$SLURM_JOBID"
   threads_per_core: 1
-  gpu_bind: "none"
+  kill_on_bad_exit: 1
 launcher_env_passthrough: true
 env:
   MACHINE_NAME: LEONARDO
@@ -23,16 +24,18 @@ env:
   NUM_GPUS_PER_NODE: "4"
   NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
   ARCH: "$(uname -m)"
-  SLURM_CPUS_PER_TASK: "12"
+  SLURM_CPUS_PER_TASK: "32"
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
+  NCCL_IB_TIMEOUT: "120"
+  TRITON_LIBCUDA_PATH: "/usr/local/cuda/lib64/stubs"
+  OMP_NUM_THREADS: "1"
 sbatch:
   nodes: 1
   ntasks_per_node: 1
   ntasks: ${.nodes}
   gpus_per_node: 4
-  cpus_per_task: 16
+  cpus_per_task: 32
   gres: "gpu:4"
-  gpu_bind: "none"
   time: "12:00:00"
   qos: ${oc.env:SLURM_QOS,null}
 client:

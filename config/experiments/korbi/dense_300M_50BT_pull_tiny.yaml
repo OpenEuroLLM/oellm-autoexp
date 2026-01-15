@@ -139,11 +139,12 @@ sweep:
   type: product
 
   groups:
-    # GROUP 1: Hyperparameter configurations (list of two product grids)
     - type: list
       configs:
         - project.name: "dense_300M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
           backend.megatron.wandb_exp_name: "\\${project.name}"
+          project.base_output_dir: "${project.base_output_dir}/\\${project.name}"
+    # GROUP 1: Hyperparameter configurations (list of two product grids)
     - type: list
       configs:
         # Grid 1: 6 configurations (3 lr × 2 batch sizes)

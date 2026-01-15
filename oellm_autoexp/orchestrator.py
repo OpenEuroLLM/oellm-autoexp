@@ -482,13 +482,13 @@ def _build_replacements(
 
     if runtime.root.slurm.env or launch_cmd.env:
         environ = dict(**runtime.root.slurm.env)
-        environ.update(**launch_cmd.env)
-        env_flags = " ".join(f"--env {key}=${key}" for key in environ.keys())
         env_exports = "; ".join(f"export {key}='\"${key}\"'" for key in environ.keys())
-        if env_flags:
-            launcher_env_flags = f"{env_flags} "
         if env_exports:
             launcher_env_exports = f"{env_exports};"
+        environ = dict(**runtime.root.slurm.env, **launch_cmd.env)
+        env_flags = " ".join(f"--env {key}=${key}" for key in environ.keys())
+        if env_flags:
+            launcher_env_flags = f"{env_flags} "
 
     def escape_for_double_quotes(s: str) -> str:
         s = s.replace("\\", "\\\\")  # Backslash first!
