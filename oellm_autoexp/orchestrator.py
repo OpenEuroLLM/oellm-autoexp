@@ -485,7 +485,7 @@ def _build_replacements(
         env_exports = "; ".join(f"export {key}='\"${key}\"'" for key in environ.keys())
         if env_exports:
             launcher_env_exports = f"{env_exports};"
-        environ = dict(**runtime.root.slurm.env, **launch_cmd.env)
+        environ.update(**launch_cmd.env)
         env_flags = " ".join(f"--env {key}=${key}" for key in environ.keys())
         if env_flags:
             launcher_env_flags = f"{env_flags} "
