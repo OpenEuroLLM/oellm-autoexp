@@ -1,0 +1,12 @@
+image: ${oc.env:CONTAINER_CACHE_DIR}/primus_v25.9_gfx942.sif
+runtime: singularity
+bind:
+  [
+    "${oc.env:SCRATCH}",
+    "/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so"
+  ]
+pwd: ${oc.env:PWD}
+env:
+  WANDB_MODE: "offline"
+  PYTHONPATH: "."
+python: "python3"

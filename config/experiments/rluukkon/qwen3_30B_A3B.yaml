@@ -2,8 +2,8 @@
 defaults:
   - base
   - /backend: megatron
-  - /container: lumi
-  - /slurm: lumi
+  - /container: amd_mi325x_cloud
+  - /slurm: amd_mi325x_cloud
   - /monitoring: megatron_basic
   - /project: default
   - /sweep: none
@@ -16,8 +16,8 @@ project:
   
 slurm:
   sbatch:
-    partition: dev-g
-    nodes: 16
+    partition: amd-tw-verification
+    nodes: 1
     time: 0-00:30:00
 backend:
   megatron:
@@ -59,28 +59,25 @@ backend:
     max_position_embeddings: ${.seq_length}
     num_workers: 2
     split: '99,1,0'
-    data_path:
-      - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-actual
-      - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-distill
-      - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-diverse_qa_pairs
-      - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-extract_knowledge
-      - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-knowledge_list
-      - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-wrap_medium
-    data_cache_path: ${oc.env:WORK}/.cache
-    # Tokenizer configuration
+    # mock_data: true
+    data_path: 
+      - /shared_silo/scratch/rluukkon/oellm/oellm-autoexp/data/CC-MAIN-2020-high-actual/merged/CC-MAIN-2020-high-actual_merged
+    data_cache_path: /shared_silo/scratch/rluukkon/oellm/oellm-autoexp/data/CC-MAIN-2020-high-actual/merged/CC-MAIN-2020-high-actual_merged.cache
+    # tokenizer_model: Qwen/Qwen3-30B-A3B 
     tokenizer_model: EleutherAI/gpt-neox-20b
     tokenizer_type: HuggingFaceTokenizer
 
     micro_batch_size: 1
-    global_batch_size: 2048
+    global_batch_size: 128
+
     
     # MEMORY OPTIMIZATIONS
     recompute_activations: False
     use_torch_fsdp2: False # it's either this or the next 4 args
     tensor_model_parallel_size: 1
-    pipeline_model_parallel_size: 4
-    expert_model_parallel_size: 4
-    context_parallel_size: 2
+    pipeline_model_parallel_size: 1
+    expert_model_parallel_size: 8
+    context_parallel_size: 1
     sequence_parallel: True
     use_distributed_optimizer: True
     moe_token_dispatcher_type: "allgather"
@@ -113,15 +110,15 @@ backend:
     lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
     lr_decay_iters: ${.train_iters}
     ckpt_format: torch_dist
-    save_interval: 2
-    exit_interval: 3
+    save_interval: 1000
+    exit_interval: 2000
     save: ${project.base_output_dir}
-    load: ${project.base_output_dir}
+    load: /shared_silo/scratch/rluukkon/Megatron-Bridge/checkpoints/qwen3-30b-a3b-bridge-test
+    finetune: true
     tensorboard_dir: ${project.base_output_dir}/tensorboard
-    wandb: false 
-    wandb_save_dir: "${project.base_output_dir}/wandb"
-    wandb_project: "${project.name}"
-    wandb_exp_name: "qwen3_30B_A3B_$SLURM_JOB_ID"
+    # wandb_save_dir: "${project.base_output_dir}/wandb"
+    # wandb_project: "${project.name}"
+    # wandb_exp_name: "qwen3_30B_A3B_$SLURM_JOB_ID"
 
 
 

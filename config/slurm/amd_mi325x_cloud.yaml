@@ -1,0 +1,51 @@
+defaults:
+  - base
+  - _self_
+
+template_path: templates/amd_mi325x_cloud.sbatch
+launcher_cmd: "{{env_exports}} export MIOPEN_USER_DB_PATH=/tmp/$USER-miopen-cache-$SLURM_NODEID ; \
+   export MIOPEN_CUSTOM_CACHE_DIR=$MIOPEN_USER_DB_PATH ; export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; \
+  ${oc.select:container.runtime,singularity} exec --pwd ${container.pwd} \
+  {{bind_flags}}{{env_flags}} ${oc.select:container.image,container.sif}"
+srun:
+  exclusive: true
+  wait: 60
+  jobid: "$SLURM_JOB_ID"
+  network: "disable_rdzv_get"
+launcher_env_passthrough: true
+env:
+  MACHINE_NAME: AMD_MI325X_CLOUD_TENSORWAVE
+  MASTER_ADDR: '$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'
+  MASTER_PORT: "20074"
+  LOCAL_RANK: "0" # will be overridden
+  RANK: "0"  # will be overridden
+  WORLD_SIZE: ${oc.muli:${..sbatch.nodes},${..sbatch.ntasks_per_node}}
+  HSA_ENABLE_SDMA: 1
+  CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  RCCL_NET_GDR_LEVEL: "2"
+  RCCL_ENABLE_DIRECT_COPY: "1"
+  NCCL_BUFFSIZE: "16777216"
+  RCCL_MSCCL_ENABLE: "0"
+  RCCL_P2P_DISABLE: "0"
+  HSA_FORCE_FINE_GRAIN_PCIE: "1"
+  RCCL_MIN_NCHANNELS: "8"
+  RCCL_NCHANNELS: "8"
+  NCCL_NTHREADS: "512"
+  NCCL_NET_GDR_READ: "1"
+  RCCL_ENABLE_SMI_P2P: "1"
+  NCCL_SOCKET_IFNAME: "eno0"
+  GLOO_SOCKET_IFNAME: "eno0"
+  HSA_NO_SCRATCH_RECLAIM: "1"
+  NVTE_CK_USES_BWD_V3: "1"
+  NVTE_CK_IS_V3_ATOMIC_FP32: "1"
+
+sbatch:
+  nodes: 1
+  ntasks_per_node: 8
+  gpus_per_node: 8
+  mem: "0"
+  gres: "gpu:8"
+  cpus_per_task: 7
+  time: "00:30:00"
+client:
+  class_name: SlurmClient
