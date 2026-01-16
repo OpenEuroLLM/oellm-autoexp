@@ -192,6 +192,28 @@ class MonitorController:
         outcomes = self._monitor.watch_sync(monitored_jobs)
         slurm_snapshot = self._slurm.squeue()
 
+        # Build job name -> SLURM state mapping for cancel condition checks
+        job_states_by_name: dict[str, str] = {}
+        for job_state in self._jobs.values():
+            slurm_state = slurm_snapshot.get(job_state.job_id)
+            if slurm_state:
+                job_states_by_name[job_state.name] = slurm_state
+
+        # Check cancel conditions for all jobs
+        jobs_to_cancel: list[tuple[JobRuntimeState, str]] = []
+        for state in list(self._jobs.values()):
+            should_cancel, reason = self._check_cancel_conditions(
+                state, slurm_snapshot, job_states_by_name
+            )
+            if should_cancel:
+                jobs_to_cancel.append((state, reason))
+
+        # Cancel jobs that met cancel conditions
+        for state, reason in jobs_to_cancel:
+            LOGGER.warning(f"[job {state.job_id}] canceling due to cancel_condition: {reason}")
+            self._slurm.cancel(state.job_id)
+            self._finalize_job(state.job_id)
+
         cycle_result = MonitorCycleResult()
         for state in list(self._jobs.values()):
             outcome = outcomes.get(state.job_id)
@@ -305,6 +327,57 @@ class MonitorController:
         self._slurm.remove(job_id)
         if self._state_store:
             self._state_store.remove_job(job_id)
+
+    def _check_cancel_conditions(
+        self,
+        state: JobRuntimeState,
+        slurm_snapshot: dict[str, str],
+        job_states_by_name: dict[str, str],
+    ) -> tuple[bool, str]:
+        """Check if any cancel_conditions are met for a job.
+
+        Returns:
+            Tuple of (should_cancel, reason)
+        """
+        conditions = state.registration.cancel_conditions
+        if not conditions:
+            return False, ""
+
+        # Create context for condition evaluation
+        dummy_event = EventRecord(
+            event_id=f"cancel_condition:{state.job_id}",
+            name="cancel_condition_check",
+            source="controller",
+            payload={},
+            metadata={"job_id": state.job_id, "job_name": state.name},
+        )
+
+        context = ConditionContext(
+            event=dummy_event,
+            job_metadata=self._build_job_metadata(state),
+            attempts=state.attempts,
+            extra={
+                "slurm_snapshot": slurm_snapshot,
+                "job_states_by_name": job_states_by_name,
+            },
+        )
+
+        for cond_dict in conditions:
+            try:
+                cond_cfg = parse_config(MonitorConditionInterface.cfgtype, cond_dict)
+                condition = cond_cfg.instantiate(MonitorConditionInterface)
+                result = condition.check(context)
+                if result.passed:
+                    reason = (
+                        f"cancel condition '{cond_dict.get('class_name', 'unknown')}' "
+                        f"triggered: {result.message}"
+                    )
+                    LOGGER.info(f"[job {state.job_id}] {reason}")
+                    return True, reason
+            except Exception as exc:
+                LOGGER.warning(f"[job {state.job_id}] failed to evaluate cancel condition: {exc}")
+
+        return False, ""
 
     def _wait_for_start_conditions(
         self,

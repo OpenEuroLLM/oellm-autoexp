@@ -370,3 +370,87 @@ def test_restart_job_skips_start_conditions_when_empty(tmp_path: Path) -> None:
 
     # No sleep should have happened since no conditions to check
     assert len(sleep_calls) == 0
+
+
+def test_cancel_conditions_triggers_job_cancellation(tmp_path: Path) -> None:
+    """Test that jobs are canceled when cancel_conditions are met."""
+    monitor = NullMonitor(NullMonitorConfig(log_path=tmp_path / "demo.log"))
+    slurm = FakeSlurmClient(FakeSlurmClientConfig())
+    state_store = MonitorStateStore(tmp_path / "state")
+    ctrl = MonitorController(monitor, slurm, state_store=state_store)
+
+    script_path = tmp_path / "demo.sbatch"
+    script_path.write_text("#!/bin/bash\necho hello")
+    log_path = tmp_path / "demo.log"
+
+    # Create a log file with an error pattern
+    error_log = tmp_path / "error.log"
+    error_log.write_text("Some output\nFATAL ERROR: something went wrong\nMore output")
+
+    job_id = slurm.submit("demo", str(script_path), str(log_path))
+    ctrl.register_job(
+        job_id,
+        JobRegistration(
+            name="demo",
+            script_path=str(script_path),
+            log_path=str(log_path),
+            cancel_conditions=[
+                {
+                    "class_name": "LogPatternCondition",
+                    "log_path": str(error_log),
+                    "pattern": "FATAL ERROR",
+                },
+            ],
+        ),
+    )
+
+    # Should have 1 job before observe
+    assert len(list(ctrl.jobs())) == 1
+
+    # Run observe cycle - should detect cancel condition and cancel job
+    ctrl.observe_once_sync()
+
+    # Job should be removed after cancellation
+    assert len(list(ctrl.jobs())) == 0
+
+
+def test_cancel_conditions_does_not_trigger_when_not_met(tmp_path: Path) -> None:
+    """Test that jobs are NOT canceled when cancel_conditions are not met."""
+    monitor = NullMonitor(NullMonitorConfig(log_path=tmp_path / "demo.log"))
+    slurm = FakeSlurmClient(FakeSlurmClientConfig())
+    state_store = MonitorStateStore(tmp_path / "state")
+    ctrl = MonitorController(monitor, slurm, state_store=state_store)
+
+    script_path = tmp_path / "demo.sbatch"
+    script_path.write_text("#!/bin/bash\necho hello")
+    log_path = tmp_path / "demo.log"
+
+    # Create a log file WITHOUT error pattern
+    clean_log = tmp_path / "clean.log"
+    clean_log.write_text("Some output\nEverything is fine\nMore output")
+
+    job_id = slurm.submit("demo", str(script_path), str(log_path))
+    ctrl.register_job(
+        job_id,
+        JobRegistration(
+            name="demo",
+            script_path=str(script_path),
+            log_path=str(log_path),
+            cancel_conditions=[
+                {
+                    "class_name": "LogPatternCondition",
+                    "log_path": str(clean_log),
+                    "pattern": "FATAL ERROR",
+                },
+            ],
+        ),
+    )
+
+    # Should have 1 job before observe
+    assert len(list(ctrl.jobs())) == 1
+
+    # Run observe cycle - should NOT trigger cancel
+    ctrl.observe_once_sync()
+
+    # Job should still be there
+    assert len(list(ctrl.jobs())) == 1

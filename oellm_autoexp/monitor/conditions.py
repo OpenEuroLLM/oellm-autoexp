@@ -317,6 +317,119 @@ class MetadataCondition(BaseCondition):
         return ConditionResult(status="pass")
 
 
+@dataclass
+class SlurmStateConditionConfig(ConfigInterface):
+    """Check if a job (by name) is in a specific SLURM state.
+
+    Used for cancel_conditions to detect when a sibling job has failed.
+    Requires 'slurm_snapshot' in context.extra to check job states.
+    """
+
+    class_name: str = "SlurmStateCondition"
+    job_name: str = ""  # Name of the job to check (supports {var} interpolation)
+    state: str = "FAILED"  # SLURM state to match (FAILED, CANCELLED, TIMEOUT, etc.)
+
+
+@register
+class SlurmStateCondition(BaseCondition):
+    config: SlurmStateConditionConfig
+
+    def check(self, context: ConditionContext) -> ConditionResult:
+        if not self.config.job_name:
+            return ConditionResult(status="fail", message="job_name not specified")
+
+        rendered_name = context.render(self.config.job_name)
+        target_state = self.config.state.upper()
+
+        # Get SLURM snapshot from context.extra (must be provided by caller)
+        job_states = context.extra.get("job_states_by_name", {})
+
+        # Look up job state by name
+        job_state = job_states.get(rendered_name)
+        if job_state is None:
+            # Job not found in snapshot - could be completed/removed
+            # Check if we're looking for terminal states
+            if target_state in {"FAILED", "CANCELLED", "TIMEOUT", "COMPLETED"}:
+                # Job disappeared - might have failed, return waiting
+                return ConditionResult(
+                    status="waiting",
+                    message=f"job '{rendered_name}' not found in SLURM queue",
+                )
+            return ConditionResult(
+                status="fail",
+                message=f"job '{rendered_name}' not found",
+            )
+
+        if job_state == target_state:
+            return ConditionResult(
+                status="pass",
+                message=f"job '{rendered_name}' is in state {target_state}",
+            )
+
+        return ConditionResult(
+            status="fail",
+            message=f"job '{rendered_name}' is in state {job_state}, not {target_state}",
+        )
+
+
+@dataclass
+class LogPatternConditionConfig(ConfigInterface):
+    """Check if a log file contains a specific pattern (regex).
+
+    Used for cancel_conditions to detect errors in sibling job logs.
+    """
+
+    class_name: str = "LogPatternCondition"
+    log_path: str = ""  # Path to log file (supports {var} interpolation)
+    pattern: str = ""  # Regex pattern to search for
+    tail_lines: int = 1000  # Only check last N lines for efficiency
+
+
+@register
+class LogPatternCondition(BaseCondition):
+    config: LogPatternConditionConfig
+
+    def check(self, context: ConditionContext) -> ConditionResult:
+        if not self.config.log_path:
+            return ConditionResult(status="fail", message="log_path not specified")
+        if not self.config.pattern:
+            return ConditionResult(status="fail", message="pattern not specified")
+
+        rendered_path = context.render(self.config.log_path)
+        log_file = Path(rendered_path).expanduser()
+
+        if not log_file.exists():
+            return ConditionResult(
+                status="fail",
+                message=f"log file '{log_file}' does not exist",
+            )
+
+        try:
+            # Read last N lines efficiently
+            with open(log_file, encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+                tail = lines[-self.config.tail_lines :] if lines else []
+                content = "".join(tail)
+        except OSError as exc:
+            return ConditionResult(
+                status="fail",
+                message=f"failed to read log file: {exc}",
+            )
+
+        pattern = re.compile(self.config.pattern)
+        match = pattern.search(content)
+        if match:
+            return ConditionResult(
+                status="pass",
+                message=f"pattern '{self.config.pattern}' found in log: {match.group()[:100]}",
+            )
+
+        return ConditionResult(
+            status="fail",
+            message=f"pattern '{self.config.pattern}' not found in log",
+        )
+
+
 __all__ = [
     "MonitorConditionInterface",
     "ConditionContext",
@@ -330,4 +443,6 @@ __all__ = [
     "CommandCondition",
     "CompositeCondition",
     "MetadataCondition",
+    "SlurmStateCondition",
+    "LogPatternCondition",
 ]

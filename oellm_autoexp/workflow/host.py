@@ -25,9 +25,76 @@ from oellm_autoexp.utils.start_condition import (
     wait_for_start_condition,
 )
 from oellm_autoexp.config.schema import SlurmConfig
+from oellm_autoexp.monitor.conditions import (
+    ConditionContext,
+    MonitorConditionInterface,
+)
+from oellm_autoexp.monitor.events import EventRecord
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _wait_for_start_conditions(
+    job: PlanJobSpec,
+    interval_seconds: float,
+    config: dict[str, Any] | None = None,
+) -> None:
+    """Block until all start_conditions for a job pass.
+
+    Args:
+        job: The job spec with start_conditions to evaluate
+        interval_seconds: Seconds between condition checks
+        config: Optional config dict to add to condition context metadata
+    """
+    conditions = job.start_conditions
+    if not conditions:
+        return
+
+    # Create a minimal event record for condition context
+    dummy_event = EventRecord(
+        event_id=f"start_condition:{job.name}",
+        name="start_condition_check",
+        source="host",
+        payload={},
+        metadata={"job_name": job.name},
+    )
+
+    # Build job metadata from config if available
+    job_metadata: dict[str, Any] = {"job_name": job.name, "output_dir": job.output_dir}
+    if config:
+        job_metadata.update(_flatten_config(config))
+
+    context = ConditionContext(
+        event=dummy_event,
+        job_metadata=job_metadata,
+        attempts=0,
+    )
+
+    while True:
+        all_passed = True
+        for cond_dict in conditions:
+            try:
+                cond_cfg = parse_config(MonitorConditionInterface.cfgtype, cond_dict)
+                condition = cond_cfg.instantiate(MonitorConditionInterface)
+                result = condition.check(context)
+                if not result.passed:
+                    all_passed = False
+                    LOGGER.info(
+                        f"[job {job.name}] start condition '{cond_dict.get('class_name', 'unknown')}' "
+                        f"not met: {result.message}; retrying in {interval_seconds}s"
+                    )
+                    break
+            except Exception as exc:
+                LOGGER.warning(f"[job {job.name}] failed to evaluate start condition: {exc}")
+                all_passed = False
+                break
+
+        if all_passed:
+            LOGGER.info(f"[job {job.name}] all start conditions met")
+            return
+
+        time.sleep(interval_seconds)
 
 
 def _import_object(module: str, name: str) -> Any:
@@ -497,13 +564,24 @@ def submit_pending_jobs(
             interval = resolve_start_condition_interval(
                 job.start_condition_interval_seconds, monitor_config
             )
-            if not dry_run:
-                wait_for_start_condition(job.start_condition_cmd, interval_seconds=interval)
-            else:
-                print(
-                    "[dry-run] would wait for start condition command "
-                    f"{job.start_condition_cmd!r} (interval {interval}s)"
-                )
+            # Handle old-style command-based condition
+            if job.start_condition_cmd:
+                if not dry_run:
+                    wait_for_start_condition(job.start_condition_cmd, interval_seconds=interval)
+                else:
+                    print(
+                        "[dry-run] would wait for start condition command "
+                        f"{job.start_condition_cmd!r} (interval {interval}s)"
+                    )
+            # Handle new-style list-based conditions
+            if job.start_conditions:
+                if not dry_run:
+                    _wait_for_start_conditions(job, interval, config=runtime.manifest.config)
+                else:
+                    print(
+                        f"[dry-run] would wait for {len(job.start_conditions)} start condition(s) "
+                        f"(interval {interval}s)"
+                    )
 
         if dry_run:
             print(
