@@ -48,6 +48,8 @@ class StoredJob:
     inactivity_threshold_seconds: int | None = None
     start_condition_cmd: str | None = None
     start_condition_interval_seconds: int | None = None
+    start_conditions: list[dict[str, Any]] = field(default_factory=list)
+    cancel_conditions: list[dict[str, Any]] = field(default_factory=list)
     resolved_log_path: str | None = None
     last_monitor_state: str | None = None
     last_slurm_state: str | None = None
@@ -78,6 +80,8 @@ class StoredJob:
             inactivity_threshold_seconds=registration.inactivity_threshold_seconds,
             start_condition_cmd=registration.start_condition_cmd,
             start_condition_interval_seconds=registration.start_condition_interval_seconds,
+            start_conditions=list(getattr(registration, "start_conditions", []) or []),
+            cancel_conditions=list(getattr(registration, "cancel_conditions", []) or []),
             resolved_log_path=resolved_log_path,
             last_monitor_state=monitor_state,
             last_slurm_state=slurm_state,
@@ -159,6 +163,8 @@ class MonitorStateStore:
                     inactivity_threshold_seconds=raw.get("inactivity_threshold_seconds"),
                     start_condition_cmd=raw.get("start_condition_cmd"),
                     start_condition_interval_seconds=raw.get("start_condition_interval_seconds"),
+                    start_conditions=list(raw.get("start_conditions", [])),
+                    cancel_conditions=list(raw.get("cancel_conditions", [])),
                     resolved_log_path=raw.get("resolved_log_path") or raw.get("expanded_log_path"),
                     last_monitor_state=raw.get("last_monitor_state"),
                     last_slurm_state=raw.get("last_slurm_state"),

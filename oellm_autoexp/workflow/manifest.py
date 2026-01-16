@@ -53,6 +53,8 @@ class PlanJobSpec:
     parameters: list[str] = field(default_factory=list)
     start_condition_cmd: str | None = None
     start_condition_interval_seconds: int | None = None
+    start_conditions: list[dict[str, Any]] = field(default_factory=list)
+    cancel_conditions: list[dict[str, Any]] = field(default_factory=list)
     termination_string: str | None = None
     termination_command: str | None = None
     inactivity_threshold_seconds: int | None = None
@@ -135,6 +137,8 @@ class PlanManifest:
                     "parameters": list(job.parameters),
                     "start_condition_cmd": job.start_condition_cmd,
                     "start_condition_interval_seconds": job.start_condition_interval_seconds,
+                    "start_conditions": list(job.start_conditions),
+                    "cancel_conditions": list(job.cancel_conditions),
                     "termination_string": job.termination_string,
                     "termination_command": job.termination_command,
                     "inactivity_threshold_seconds": job.inactivity_threshold_seconds,
@@ -185,6 +189,8 @@ class PlanManifest:
                 parameters=list(item.get("parameters", {})),
                 start_condition_cmd=item.get("start_condition_cmd"),
                 start_condition_interval_seconds=item.get("start_condition_interval_seconds"),
+                start_conditions=list(item.get("start_conditions", [])),
+                cancel_conditions=list(item.get("cancel_conditions", [])),
                 termination_string=item.get("termination_string"),
                 termination_command=item.get("termination_command"),
                 inactivity_threshold_seconds=item.get("inactivity_threshold_seconds"),

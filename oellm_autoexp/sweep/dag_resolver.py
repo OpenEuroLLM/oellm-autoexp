@@ -29,43 +29,6 @@ from oellm_autoexp.sweep.planner import JobPlan
 LOGGER = logging.getLogger(__file__)
 
 
-def _unescape_config_placeholders(obj: Any) -> Any:
-    """Recursively restore {{...}} and unescape \\$ markers from YAML.
-
-    This is FULLY GENERIC - works for ANY escaped interpolation.
-    """
-
-    # First unescape OmegaConf $ markers (\\$ → $) from sweep defaults
-    # NOTE: Do NOT unescape \( and \) - per OmegaConf grammar, these must stay escaped
-    # for proper parsing of expressions in ${oc.eval:...} (they're OmegaConf escape sequences)
-    def unescape_dollar_only(o):
-        if isinstance(o, str):
-            return o.replace("\\$", "$")
-        elif isinstance(o, dict):
-            return {k: unescape_dollar_only(v) for k, v in o.items()}
-        elif isinstance(o, list):
-            return [unescape_dollar_only(v) for v in o]
-        return o
-
-    obj = unescape_dollar_only(obj)
-
-    # Then unescape our custom placeholders (generic, no pattern matching!)
-    if isinstance(obj, str):
-        # Restore {{env_flags}}
-        result = obj.replace("__PLACEHOLDER_ENV_FLAGS__", "{{env_flags}}").replace(
-            "__PLACEHOLDER_ENV_EXPORTS__", "{{env_exports}}"
-        )
-        # Generic: Restore ALL escaped dollars
-        # Works for ${sibling.*}, ${aux.*}, ${slurm.*}, or ANY other escaped interpolation
-        # result = result.replace("__ESCAPED_DOLLAR__", "$")
-        return result
-    elif isinstance(obj, dict):
-        return {k: _unescape_config_placeholders(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [_unescape_config_placeholders(v) for v in obj]
-    return obj
-
-
 def extract_sibling_patterns(parameters: dict[str, Any]) -> set[str]:
     """Extract stage patterns from escaped sibling references.
 
@@ -267,13 +230,13 @@ def config_to_cmdline(
                 dct = re.sub(r"\$(?=[^\{])", r"\\$", dct)
                 dct = escape_braces_except_dollar(dct)
 
-                # if " " in dct or "," in dct:
+                # if "" in dct or "," in dct:
                 # dct = re.sub(r"\(", r"\\(", dct)
                 # dct = re.sub(r"\)", r"\\)", dct)
                 # dct = re.sub(r"\]", r"\\]", dct)
                 # dct = re.sub(r"\[", r"\\[", dct)
-                dct = dct.replace('"', '\\"')
-                dct = f'"{dct}"'
+                dct = dct.replace("'", "\\'")
+                dct = f"'{dct}'"
             cmdlines.append(override + prefix + "=" + str(dct))
         return cmdlines
 
@@ -289,8 +252,8 @@ def param_to_cmdlines(
         if unescape_interpolations:
             val = val.replace("\\${", "${")
         # if " " in val or "," in val:
-        val = val.replace('"', '\\"')
-        return [f'{prefix}{key}="{val}"']
+        val = val.replace("'", "\\'")
+        return [f"{prefix}{key}='{val}'"]
         # else:
         #     return [f"{prefix}{key}={val}"]
     else:

@@ -28,14 +28,15 @@ backend:
     wandb_project: oellm-train
 
     # DATA
-    data_path: [
-      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-actual,
-      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-distill,
-      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-diverse_qa_pairs,
-      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-extract_knowledge,
-      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-knowledge_list,
-      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-wrap_medium
-    ]
+    data_path:
+     - /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged
+      # /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-actual,
+      # /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-distill,
+      # /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-diverse_qa_pairs,
+      # /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-extract_knowledge,
+      # /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-knowledge_list,
+      # /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-wrap_medium
+    # ]
     seq_length: 4096
     max_position_embeddings: 4096
     tokenizer_model: EleutherAI/gpt-neox-20b
@@ -112,6 +113,7 @@ backend:
     # CHECKPOINT FORMAT
     ckpt_format: "torch"
     save_interval: 2000
+    save: ${project.base_output_dir}
 
     # Base training configuration (for stable phase)
     micro_batch_size: 8
@@ -130,7 +132,7 @@ backend:
 
 slurm:
   sbatch:
-    nodes: "${oc.eval:${backend.megatron.global_batch_size}//\\(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}\\)}"
+    nodes: "${oc.eval:\"${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node})\"}"
 
 
 # COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE
@@ -153,12 +155,6 @@ sweep:
             backend.megatron.lr: [2.5e-4]
             backend.megatron.global_batch_size: [64]
 
-        # Grid 2: 9 configurations (3 lr × 3 batch sizes)
-        - type: product
-          params:
-            backend.megatron.lr: [5.e-4]
-            backend.megatron.global_batch_size: [256]
-
     # GROUP 2: Multi-stage training (stable + cooldown/decay)
     # Uses a nested structure with defaults for decay stages
     - type: list
@@ -169,10 +165,10 @@ sweep:
           backend.megatron.aux.tokens: 50_000_000_000
           # Computed fields using ESCAPED OmegaConf interpolations (\\$ prevents early resolution)
           # These will be unescaped during sweep expansion and resolved with stage-specific values
-          backend.megatron.train_iters: "\\${oc.eval:\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)}"
+          backend.megatron.train_iters: "\\${oc.eval:\"(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})\"}"
           backend.megatron.lr_wsd_decay_iters: 0  # No decay in stable phase
-          backend.megatron.aux.start_iter: "\\${oc.eval:int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\(1-\\${backend.megatron.aux.decay_fraction}\\)\\)}"
-          backend.megatron.aux.start_iter_round: "\\${oc.eval:int\\(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval}\\)*\\${backend.megatron.save_interval}}"
+          backend.megatron.aux.start_iter: "\\${oc.eval:\"int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))\"}"
+          backend.megatron.aux.start_iter_round: "\\${oc.eval:\"int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}\"}"
 
         # NESTED GROUP: Cooldown/decay stages with shared defaults
         # All decay stages share: 20% decay, checkpoint loading, start/cancel conditions
@@ -184,10 +180,12 @@ sweep:
             # Computed fields using ESCAPED OmegaConf interpolations (\\$ prevents early resolution)
             # These will be unescaped during sweep expansion and resolved with stage-specific values (6B, 12B, 30B, 50B)
             # Each computation is self-contained (doesn't reference other computed values) to avoid ordering issues
-            backend.megatron.train_iters: "\\${oc.eval:\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)}"
-            backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\${backend.megatron.aux.decay_fraction}\\)}"
-            backend.megatron.aux.start_iter: "\\${oc.eval:int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\(1-\\${backend.megatron.aux.decay_fraction}\\)\\)}"
-            backend.megatron.aux.start_iter_round: "\\${oc.eval:int\\(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval}\\)*\\${backend.megatron.save_interval}}"
+
+            #!!!
+            backend.megatron.train_iters: "\\${oc.eval:\"(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})\"}"
+            backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:\"int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})\"}"
+            backend.megatron.aux.start_iter: "\\${oc.eval:\"int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))\"}"
+            backend.megatron.aux.start_iter_round: "\\${oc.eval:\"int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}\"}"
 
             # Checkpoint loading configuration
             backend.megatron.load: "\\${sibling.stable.project.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}"

@@ -50,26 +50,6 @@ def _escape_placeholders(obj):
     return obj
 
 
-def _unescape_placeholders(obj):
-    """Recursively restore {{...}} and escaped $ markers.
-
-    This is FULLY GENERIC - restores ANY escaped interpolation.
-    """
-    if isinstance(obj, str):
-        # Restore {{env_flags}}
-        result = obj.replace("__PLACEHOLDER_ENV_FLAGS__", "{{env_flags}}").replace(
-            "__PLACEHOLDER_ENV_EXPORTS__", "{{env_exports}}"
-        )
-        # Generic: Restore ALL escaped dollars
-        # result = result.replace("__ESCAPED_DOLLAR__", "$")
-        return result
-    elif isinstance(obj, dict):
-        return {k: _unescape_placeholders(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [_unescape_placeholders(v) for v in obj]
-    return obj
-
-
 def _ensure_monitoring_state_dir(root: schema.RootConfig) -> None:
     """Assign a deterministic monitoring_state_dir when unspecified."""
     if root.project.monitoring_state_dir is not None:
@@ -225,12 +205,6 @@ def load_hydra_config(
     overrides = list(overrides or [])
     if overrides:
         LOGGER.debug(f"Applying {len(overrides)} overrides")
-    overrides = [
-        override.split("=")[0]
-        + "="
-        + "=".join(override.split("=")[1:])  # + '"' if "${" in override else override
-        for override in overrides
-    ]
 
     config_dir = Path(config_dir).resolve()
     if not config_dir.exists():
@@ -255,17 +229,6 @@ def load_hydra_config(
     _ensure_registrations()
     if not isinstance(data, Mapping):
         raise ConfigLoaderError(f"Hydra config {config_name} did not produce a mapping")
-
-    # data = _apply_group_overrides(
-    #     data,
-    #     config_dir,
-    #     overrides,
-    #     base_config_path=_resolve_base_config_path(config_dir, config_name),
-    # )
-
-    # Unescape placeholders before parsing
-    # data = data  # _unescape_placeholders(data)
-
     _ensure_no_deprecated_monitoring_keys(data, source=f"Hydra config {config_name}")
 
     try:
@@ -354,7 +317,6 @@ def load_config_reference(
                 raise ConfigLoaderError(f"Config file {path} did not produce a mapping")
 
             # Unescape placeholders before parsing
-            # data = _unescape_placeholders(data)
             _ensure_no_deprecated_monitoring_keys(data, source=str(path))
 
             data = _apply_group_overrides(data, path.parent, overrides, base_config_path=path)

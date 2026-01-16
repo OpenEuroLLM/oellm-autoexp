@@ -9,10 +9,15 @@ import time
 from typing import Any, Literal
 from collections.abc import Iterable
 
+from compoconf import parse_config
+
 from oellm_autoexp.monitor.action_queue import ActionQueue
 from oellm_autoexp.monitor.actions import ActionContext, ActionResult, BaseMonitorAction
 from oellm_autoexp.monitor.event_bindings import EventActionBinding, instantiate_bindings
-from oellm_autoexp.monitor.conditions import ConditionContext
+from oellm_autoexp.monitor.conditions import (
+    ConditionContext,
+    MonitorConditionInterface,
+)
 from oellm_autoexp.monitor.events import EventRecord, EventStatus
 from oellm_autoexp.monitor.states import (
     BaseMonitorState,
@@ -56,6 +61,9 @@ class JobRegistration:
     output_paths: list[str] = field(default_factory=list)
     start_condition_cmd: str | None = None
     start_condition_interval_seconds: int | None = None
+    # New async conditions (list of condition dicts with class_name, etc.)
+    start_conditions: list[dict[str, Any]] = field(default_factory=list)
+    cancel_conditions: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(kw_only=True)
@@ -298,6 +306,72 @@ class MonitorController:
         if self._state_store:
             self._state_store.remove_job(job_id)
 
+    def _wait_for_start_conditions(
+        self,
+        state: JobRuntimeState,
+        *,
+        poll_interval_seconds: float | None = None,
+        sleep_fn=time.sleep,
+    ) -> None:
+        """Block until all start_conditions pass.
+
+        Each condition in start_conditions is a dict with class_name
+        etc. that gets parsed and instantiated as a
+        MonitorConditionInterface.
+        """
+        conditions = state.registration.start_conditions
+        if not conditions:
+            return
+
+        interval = poll_interval_seconds
+        if interval is None:
+            interval = resolve_start_condition_interval(
+                state.registration.start_condition_interval_seconds,
+                self._monitor.config,
+            )
+
+        # Create a minimal event record for condition context
+        dummy_event = EventRecord(
+            event_id=f"start_condition:{state.job_id}",
+            name="start_condition_check",
+            source="controller",
+            payload={},
+            metadata={"job_id": state.job_id, "job_name": state.name},
+        )
+
+        context = ConditionContext(
+            event=dummy_event,
+            job_metadata=self._build_job_metadata(state),
+            attempts=state.attempts,
+        )
+
+        while True:
+            all_passed = True
+            for cond_dict in conditions:
+                try:
+                    cond_cfg = parse_config(MonitorConditionInterface.cfgtype, cond_dict)
+                    condition = cond_cfg.instantiate(MonitorConditionInterface)
+                    result = condition.check(context)
+                    if not result.passed:
+                        all_passed = False
+                        LOGGER.info(
+                            f"[job {state.job_id}] start condition '{cond_dict.get('class_name', 'unknown')}' "
+                            f"not met: {result.message}; retrying in {interval}s"
+                        )
+                        break
+                except Exception as exc:
+                    LOGGER.warning(
+                        f"[job {state.job_id}] failed to evaluate start condition: {exc}"
+                    )
+                    all_passed = False
+                    break
+
+            if all_passed:
+                LOGGER.info(f"[job {state.job_id}] all start conditions met")
+                return
+
+            sleep_fn(interval)
+
     def _restart_job(
         self,
         state: JobRuntimeState,
@@ -331,6 +405,10 @@ class MonitorController:
                 interval_seconds=interval,
                 logger=LOGGER,
             )
+
+        # Check new-style start_conditions (list of condition dicts)
+        if state.registration.start_conditions:
+            self._wait_for_start_conditions(state)
 
         self._slurm.cancel(old_job_id)
         self._slurm.remove(old_job_id)

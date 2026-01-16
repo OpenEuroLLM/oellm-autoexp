@@ -156,3 +156,217 @@ def test_monitor_loop_writes_single_action(tmp_path: Path, monkeypatch) -> None:
 
     files = list(tmp_path.glob("*.json"))
     assert len(files) == 1
+
+
+def test_restart_job_waits_for_start_condition(tmp_path: Path, monkeypatch) -> None:
+    """Test that _restart_job calls wait_for_start_condition when
+    start_condition_cmd is set."""
+    from oellm_autoexp.monitor import controller as controller_module
+
+    wait_calls: list[dict] = []
+
+    def mock_wait_for_start_condition(command, *, interval_seconds=None, logger=None):
+        from oellm_autoexp.utils.start_condition import StartConditionResult
+
+        wait_calls.append({"command": command, "interval_seconds": interval_seconds})
+        return StartConditionResult(success=True, stdout="1", stderr="", returncode=0)
+
+    monkeypatch.setattr(
+        controller_module, "wait_for_start_condition", mock_wait_for_start_condition
+    )
+
+    monitor = NullMonitor(NullMonitorConfig(log_path=tmp_path / "demo.log"))
+    slurm = FakeSlurmClient(FakeSlurmClientConfig())
+    state_store = MonitorStateStore(tmp_path / "state")
+    ctrl = MonitorController(monitor, slurm, state_store=state_store)
+
+    script_path = tmp_path / "demo.sbatch"
+    script_path.write_text("#!/bin/bash\necho hello")
+    log_path = tmp_path / "demo.log"
+
+    job_id = slurm.submit("demo", str(script_path), str(log_path))
+    ctrl.register_job(
+        job_id,
+        JobRegistration(
+            name="demo",
+            script_path=str(script_path),
+            log_path=str(log_path),
+            start_condition_cmd="test -f /tmp/ready",
+            start_condition_interval_seconds=5,
+        ),
+    )
+
+    # Trigger a restart via handle_state_change with a state that causes restart action
+    # We need to use _restart_job directly since handle_state_change doesn't trigger restarts
+    state = list(ctrl.jobs())[0]
+    new_job_id = ctrl._restart_job(state)
+
+    assert len(wait_calls) == 1
+    assert wait_calls[0]["command"] == "test -f /tmp/ready"
+    assert wait_calls[0]["interval_seconds"] == 5
+    assert new_job_id != job_id
+
+
+def test_restart_job_skips_start_condition_when_not_set(tmp_path: Path, monkeypatch) -> None:
+    """Test that _restart_job does NOT call wait_for_start_condition when
+    start_condition_cmd is not set."""
+    from oellm_autoexp.monitor import controller as controller_module
+
+    wait_calls: list[dict] = []
+
+    def mock_wait_for_start_condition(command, *, interval_seconds=None, logger=None):
+        from oellm_autoexp.utils.start_condition import StartConditionResult
+
+        wait_calls.append({"command": command, "interval_seconds": interval_seconds})
+        return StartConditionResult(success=True, stdout="1", stderr="", returncode=0)
+
+    monkeypatch.setattr(
+        controller_module, "wait_for_start_condition", mock_wait_for_start_condition
+    )
+
+    monitor = NullMonitor(NullMonitorConfig(log_path=tmp_path / "demo.log"))
+    slurm = FakeSlurmClient(FakeSlurmClientConfig())
+    state_store = MonitorStateStore(tmp_path / "state")
+    ctrl = MonitorController(monitor, slurm, state_store=state_store)
+
+    script_path = tmp_path / "demo.sbatch"
+    script_path.write_text("#!/bin/bash\necho hello")
+    log_path = tmp_path / "demo.log"
+
+    job_id = slurm.submit("demo", str(script_path), str(log_path))
+    ctrl.register_job(
+        job_id,
+        JobRegistration(
+            name="demo",
+            script_path=str(script_path),
+            log_path=str(log_path),
+            # No start_condition_cmd
+        ),
+    )
+
+    state = list(ctrl.jobs())[0]
+    new_job_id = ctrl._restart_job(state)
+
+    assert len(wait_calls) == 0
+    assert new_job_id != job_id
+
+
+def test_restart_job_evaluates_start_conditions_list(tmp_path: Path) -> None:
+    """Test that _restart_job evaluates start_conditions (list of condition
+    dicts).
+
+    Uses FileExistsCondition with a file that exists to verify
+    conditions are checked.
+    """
+    monitor = NullMonitor(NullMonitorConfig(log_path=tmp_path / "demo.log"))
+    slurm = FakeSlurmClient(FakeSlurmClientConfig())
+    state_store = MonitorStateStore(tmp_path / "state")
+    ctrl = MonitorController(monitor, slurm, state_store=state_store)
+
+    script_path = tmp_path / "demo.sbatch"
+    script_path.write_text("#!/bin/bash\necho hello")
+    log_path = tmp_path / "demo.log"
+
+    # Create a file that the condition will check for
+    ready_file = tmp_path / "ready_marker"
+    ready_file.write_text("ready")
+
+    job_id = slurm.submit("demo", str(script_path), str(log_path))
+    ctrl.register_job(
+        job_id,
+        JobRegistration(
+            name="demo",
+            script_path=str(script_path),
+            log_path=str(log_path),
+            start_conditions=[
+                {"class_name": "FileExistsCondition", "path": str(ready_file)},
+            ],
+            start_condition_interval_seconds=1,
+        ),
+    )
+
+    state = list(ctrl.jobs())[0]
+    sleep_calls = []
+
+    # Since the file exists, the condition should pass immediately with no sleep
+    ctrl._wait_for_start_conditions(state, sleep_fn=lambda s: sleep_calls.append(s))
+
+    # Should pass immediately with no sleep since file exists
+    assert len(sleep_calls) == 0
+
+
+def test_restart_job_waits_for_start_conditions_to_pass(tmp_path: Path) -> None:
+    """Test that _wait_for_start_conditions retries when condition not met."""
+    monitor = NullMonitor(NullMonitorConfig(log_path=tmp_path / "demo.log"))
+    slurm = FakeSlurmClient(FakeSlurmClientConfig())
+    state_store = MonitorStateStore(tmp_path / "state")
+    ctrl = MonitorController(monitor, slurm, state_store=state_store)
+
+    script_path = tmp_path / "demo.sbatch"
+    script_path.write_text("#!/bin/bash\necho hello")
+    log_path = tmp_path / "demo.log"
+
+    # File doesn't exist initially
+    ready_file = tmp_path / "ready_marker"
+
+    job_id = slurm.submit("demo", str(script_path), str(log_path))
+    ctrl.register_job(
+        job_id,
+        JobRegistration(
+            name="demo",
+            script_path=str(script_path),
+            log_path=str(log_path),
+            start_conditions=[
+                {"class_name": "FileExistsCondition", "path": str(ready_file)},
+            ],
+            start_condition_interval_seconds=1,
+        ),
+    )
+
+    state = list(ctrl.jobs())[0]
+    sleep_calls = []
+
+    def mock_sleep(seconds):
+        sleep_calls.append(seconds)
+        # Create the file after the first sleep to simulate condition becoming true
+        if len(sleep_calls) == 1:
+            ready_file.write_text("ready")
+
+    # Should wait and retry until file exists
+    ctrl._wait_for_start_conditions(state, sleep_fn=mock_sleep)
+
+    # Should have slept once before the file was created
+    assert len(sleep_calls) == 1
+
+
+def test_restart_job_skips_start_conditions_when_empty(tmp_path: Path) -> None:
+    """Test that _restart_job skips condition checking when start_conditions is
+    empty."""
+    monitor = NullMonitor(NullMonitorConfig(log_path=tmp_path / "demo.log"))
+    slurm = FakeSlurmClient(FakeSlurmClientConfig())
+    state_store = MonitorStateStore(tmp_path / "state")
+    ctrl = MonitorController(monitor, slurm, state_store=state_store)
+
+    script_path = tmp_path / "demo.sbatch"
+    script_path.write_text("#!/bin/bash\necho hello")
+    log_path = tmp_path / "demo.log"
+
+    job_id = slurm.submit("demo", str(script_path), str(log_path))
+    ctrl.register_job(
+        job_id,
+        JobRegistration(
+            name="demo",
+            script_path=str(script_path),
+            log_path=str(log_path),
+            start_conditions=[],  # Empty list
+        ),
+    )
+
+    state = list(ctrl.jobs())[0]
+
+    # This should return immediately without any condition checks
+    sleep_calls = []
+    ctrl._wait_for_start_conditions(state, sleep_fn=lambda s: sleep_calls.append(s))
+
+    # No sleep should have happened since no conditions to check
+    assert len(sleep_calls) == 0

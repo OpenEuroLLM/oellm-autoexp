@@ -383,6 +383,8 @@ def restore_jobs(
             output_paths=list(saved.output_paths),
             start_condition_cmd=saved.start_condition_cmd,
             start_condition_interval_seconds=saved.start_condition_interval_seconds,
+            start_conditions=list(saved.start_conditions),
+            cancel_conditions=list(saved.cancel_conditions),
         )
         if hasattr(runtime.slurm_client, "register_job"):
             log_path_for_client = saved.resolved_log_path or saved.log_path
@@ -436,6 +438,8 @@ def _register_job(
         output_paths=list(job.output_paths),
         start_condition_cmd=job.start_condition_cmd,
         start_condition_interval_seconds=job.start_condition_interval_seconds,
+        start_conditions=list(job.start_conditions),
+        cancel_conditions=list(job.cancel_conditions),
         termination_string=job.termination_string,
         termination_command=job.termination_command,
         inactivity_threshold_seconds=job.inactivity_threshold_seconds,
@@ -489,7 +493,7 @@ def submit_pending_jobs(
         return submitted_job_ids
 
     for job in pending_jobs:
-        if job.start_condition_cmd:
+        if job.start_condition_cmd or job.start_conditions:
             interval = resolve_start_condition_interval(
                 job.start_condition_interval_seconds, monitor_config
             )
