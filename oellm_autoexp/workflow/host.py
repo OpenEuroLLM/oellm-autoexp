@@ -20,10 +20,8 @@ from oellm_autoexp.persistence.state_store import MonitorStateStore, StoredJob, 
 from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig, BaseSlurmClient
 from oellm_autoexp.workflow.manifest import PlanJobSpec, PlanManifest
 from oellm_autoexp.monitor.watcher import BaseMonitor
-from oellm_autoexp.utils.start_condition import (
-    resolve_start_condition_interval,
-    wait_for_start_condition,
-)
+
+# Note: check_start_condition is imported locally where needed
 from oellm_autoexp.config.schema import SlurmConfig
 from oellm_autoexp.monitor.conditions import (
     ConditionContext,
@@ -35,66 +33,33 @@ from oellm_autoexp.monitor.events import EventRecord
 LOGGER = logging.getLogger(__name__)
 
 
-def _wait_for_start_conditions(
-    job: PlanJobSpec,
-    interval_seconds: float,
-    config: dict[str, Any] | None = None,
-) -> None:
-    """Block until all start_conditions for a job pass.
+def _check_start_conditions(job: PlanJobSpec, context: ConditionContext) -> bool:
+    """Check if all start_conditions for a job are satisfied.
 
-    Args:
-        job: The job spec with start_conditions to evaluate
-        interval_seconds: Seconds between condition checks
-        config: Optional config dict to add to condition context metadata
+    Returns:
+        True if all conditions pass, False otherwise.
     """
     conditions = job.start_conditions
     if not conditions:
-        return
+        return True
 
-    # Create a minimal event record for condition context
-    dummy_event = EventRecord(
-        event_id=f"start_condition:{job.name}",
-        name="start_condition_check",
-        source="host",
-        payload={},
-        metadata={"job_name": job.name},
-    )
+    for cond_dict in conditions:
+        try:
+            cond_cfg = parse_config(MonitorConditionInterface.cfgtype, cond_dict)
+            condition = cond_cfg.instantiate(MonitorConditionInterface)
+            result = condition.check(context)
+            if not result.passed:
+                LOGGER.debug(
+                    f"[job {job.name}] start condition '{cond_dict.get('class_name', 'unknown')}' "
+                    f"not met: {result.message}"
+                )
+                return False
+        except Exception as exc:
+            LOGGER.warning(f"[job {job.name}] failed to evaluate start condition: {exc}")
+            return False
 
-    # Build job metadata from config if available
-    job_metadata: dict[str, Any] = {"job_name": job.name, "output_dir": job.output_dir}
-    if config:
-        job_metadata.update(_flatten_config(config))
-
-    context = ConditionContext(
-        event=dummy_event,
-        job_metadata=job_metadata,
-        attempts=0,
-    )
-
-    while True:
-        all_passed = True
-        for cond_dict in conditions:
-            try:
-                cond_cfg = parse_config(MonitorConditionInterface.cfgtype, cond_dict)
-                condition = cond_cfg.instantiate(MonitorConditionInterface)
-                result = condition.check(context)
-                if not result.passed:
-                    all_passed = False
-                    LOGGER.info(
-                        f"[job {job.name}] start condition '{cond_dict.get('class_name', 'unknown')}' "
-                        f"not met: {result.message}; retrying in {interval_seconds}s"
-                    )
-                    break
-            except Exception as exc:
-                LOGGER.warning(f"[job {job.name}] failed to evaluate start condition: {exc}")
-                all_passed = False
-                break
-
-        if all_passed:
-            LOGGER.info(f"[job {job.name}] all start conditions met")
-            return
-
-        time.sleep(interval_seconds)
+    LOGGER.info(f"[job {job.name}] all start conditions met")
+    return True
 
 
 def _import_object(module: str, name: str) -> Any:
@@ -116,6 +81,84 @@ def _flatten_config(config: dict[str, Any], parent_key: str = "", sep: str = "."
         else:
             items.append((new_key, v))
     return dict(items)
+
+
+def _check_and_submit_pending_jobs(
+    runtime: HostRuntime,
+    controller: MonitorController,
+) -> list[str]:
+    """Check for jobs with unmet start conditions and submit them if now ready.
+
+    This function is called periodically from the monitor loop to handle jobs
+    whose start_conditions weren't met at initial submission time.
+
+    Returns:
+        List of newly submitted job IDs.
+    """
+    # Check if manifest has jobs attribute (may not in tests)
+    manifest_jobs = getattr(runtime.manifest, "jobs", None)
+    if not manifest_jobs:
+        return []
+
+    # Get names of jobs already registered/submitted
+    registered_names = {getattr(state, "name", None) for state in controller.jobs()}
+
+    # Find jobs from manifest that haven't been submitted yet
+    pending_jobs = [job for job in manifest_jobs if job.name not in registered_names]
+
+    if not pending_jobs:
+        return []
+
+    submitted_job_ids: list[str] = []
+
+    for job in pending_jobs:
+        # Create context for condition evaluation
+        dummy_event = EventRecord(
+            event_id=f"start_condition:{job.name}",
+            name="start_condition_check",
+            source="host",
+            payload={},
+            metadata={"job_name": job.name},
+        )
+        job_metadata: dict[str, Any] = {"job_name": job.name, "output_dir": job.output_dir}
+        if runtime.manifest.config:
+            job_metadata.update(_flatten_config(runtime.manifest.config))
+        context = ConditionContext(
+            event=dummy_event,
+            job_metadata=job_metadata,
+            attempts=0,
+        )
+
+        # Check old-style command-based condition
+        if job.start_condition_cmd:
+            from oellm_autoexp.utils.start_condition import check_start_condition
+
+            result = check_start_condition(job.start_condition_cmd)
+            if not result.success:
+                LOGGER.debug(f"[job {job.name}] start_condition_cmd still not met")
+                continue
+
+        # Check new-style list-based conditions
+        if job.start_conditions:
+            if not _check_start_conditions(job, context):
+                LOGGER.debug(f"[job {job.name}] start_conditions still not met")
+                continue
+
+        # All conditions met - submit the job
+        LOGGER.info(f"[job {job.name}] start conditions now met, submitting")
+        job_id = runtime.slurm_client.submit(job.name, job.script_path, job.log_path)
+        _register_job(
+            controller,
+            job_id,
+            job,
+            config=runtime.manifest.config,
+            session_id=runtime.state_store.session_id,
+        )
+        _create_current_log_symlink(job_id, job.log_path, job.log_path_current)
+        submitted_job_ids.append(job_id)
+        print(f"[monitor] Submitted pending job {job.name} (job_id={job_id})", flush=True)
+
+    return submitted_job_ids
 
 
 def _expand_log_path_for_job(job_id: str, log_path: str) -> Path:
@@ -254,6 +297,16 @@ def _process_action_queue(
     return processed
 
 
+def _has_pending_manifest_jobs(runtime: HostRuntime, controller: MonitorController) -> bool:
+    """Check if there are manifest jobs not yet submitted (waiting for start
+    conditions)."""
+    manifest_jobs = getattr(runtime.manifest, "jobs", None)
+    if not manifest_jobs:
+        return False
+    registered_names = {getattr(state, "name", None) for state in controller.jobs()}
+    return any(job.name not in registered_names for job in manifest_jobs)
+
+
 async def _monitor_loop(
     controller: MonitorController,
     monitor: BaseMonitor,
@@ -268,8 +321,15 @@ async def _monitor_loop(
     )
     sleep_seconds = max(1, int(interval))
 
-    while list(controller.jobs()):
+    # Continue while there are active jobs OR pending manifest jobs waiting for start conditions
+    while list(controller.jobs()) or _has_pending_manifest_jobs(runtime, controller):
         await asyncio.sleep(sleep_seconds)
+
+        # Check and submit any pending jobs whose start conditions are now met
+        newly_submitted = _check_and_submit_pending_jobs(runtime, controller)
+        if newly_submitted:
+            LOGGER.info(f"Submitted {len(newly_submitted)} pending job(s)")
+
         cycle = await controller.observe_once()
         records = controller.drain_events()
         if not records and cycle.events:
@@ -311,8 +371,15 @@ def _monitor_loop_sync(
     )
     sleep_seconds = max(1, int(interval))
 
-    while list(controller.jobs()):
+    # Continue while there are active jobs OR pending manifest jobs waiting for start conditions
+    while list(controller.jobs()) or _has_pending_manifest_jobs(runtime, controller):
         time.sleep(sleep_seconds)
+
+        # Check and submit any pending jobs whose start conditions are now met
+        newly_submitted = _check_and_submit_pending_jobs(runtime, controller)
+        if newly_submitted:
+            LOGGER.info(f"Submitted {len(newly_submitted)} pending job(s)")
+
         cycle = controller.observe_once_sync()
         records = controller.drain_events()
         if not records and cycle.events:
@@ -470,7 +537,12 @@ def restore_jobs(
                     saved.script_path,
                     saved.log_path,
                 )
-        controller.register_job(saved.job_id, registration, attempts=saved.attempts)
+        controller.register_job(
+            saved.job_id,
+            registration,
+            attempts=saved.attempts,
+            last_slurm_state=saved.last_slurm_state,
+        )
         restored_names.add(saved.name)
     return restored_names
 
@@ -528,8 +600,6 @@ def submit_pending_jobs(
     if not pending_jobs:
         return submitted_job_ids
 
-    monitor_config = runtime.monitor.config
-
     if runtime.manifest.rendered.array and getattr(slurm_client, "supports_array", False):
         array = runtime.manifest.rendered.array
         log_paths = [job.log_path for job in pending_jobs]
@@ -560,28 +630,43 @@ def submit_pending_jobs(
         return submitted_job_ids
 
     for job in pending_jobs:
+        # Check start conditions (non-blocking)
         if job.start_condition_cmd or job.start_conditions:
-            interval = resolve_start_condition_interval(
-                job.start_condition_interval_seconds, monitor_config
+            # Create context for condition evaluation
+            dummy_event = EventRecord(
+                event_id=f"start_condition:{job.name}",
+                name="start_condition_check",
+                source="host",
+                payload={},
+                metadata={"job_name": job.name},
             )
-            # Handle old-style command-based condition
+            job_metadata: dict[str, Any] = {"job_name": job.name, "output_dir": job.output_dir}
+            if runtime.manifest.config:
+                job_metadata.update(_flatten_config(runtime.manifest.config))
+            context = ConditionContext(
+                event=dummy_event,
+                job_metadata=job_metadata,
+                attempts=0,
+            )
+
+            # Handle old-style command-based condition (single check, non-blocking)
             if job.start_condition_cmd:
-                if not dry_run:
-                    wait_for_start_condition(job.start_condition_cmd, interval_seconds=interval)
-                else:
-                    print(
-                        "[dry-run] would wait for start condition command "
-                        f"{job.start_condition_cmd!r} (interval {interval}s)"
-                    )
-            # Handle new-style list-based conditions
+                from oellm_autoexp.utils.start_condition import check_start_condition
+
+                result = check_start_condition(job.start_condition_cmd)
+                if not result.success:
+                    LOGGER.debug(f"[job {job.name}] start_condition_cmd not met, skipping for now")
+                    if dry_run:
+                        print(f"[dry-run] job {job.name} start_condition_cmd not met, would skip")
+                    continue
+
+            # Handle new-style list-based conditions (single check, non-blocking)
             if job.start_conditions:
-                if not dry_run:
-                    _wait_for_start_conditions(job, interval, config=runtime.manifest.config)
-                else:
-                    print(
-                        f"[dry-run] would wait for {len(job.start_conditions)} start condition(s) "
-                        f"(interval {interval}s)"
-                    )
+                if not _check_start_conditions(job, context):
+                    LOGGER.debug(f"[job {job.name}] start_conditions not met, skipping for now")
+                    if dry_run:
+                        print(f"[dry-run] job {job.name} start_conditions not met, would skip")
+                    continue
 
         if dry_run:
             print(

@@ -632,6 +632,8 @@ def _restore_saved_jobs(
             inactivity_threshold_seconds=saved.inactivity_threshold_seconds,
             start_condition_cmd=saved.start_condition_cmd,
             start_condition_interval_seconds=saved.start_condition_interval_seconds,
+            start_conditions=list(saved.start_conditions),
+            cancel_conditions=list(saved.cancel_conditions),
         )
         if hasattr(slurm_client, "register_job"):
             log_path_for_client = saved.resolved_log_path or saved.log_path
@@ -650,7 +652,12 @@ def _restore_saved_jobs(
                     saved.script_path,
                     saved.log_path,
                 )
-        controller.register_job(saved.job_id, registration, attempts=saved.attempts)
+        controller.register_job(
+            saved.job_id,
+            registration,
+            attempts=saved.attempts,
+            last_slurm_state=saved.last_slurm_state,
+        )
         restored.add(saved.name)
     return restored
 

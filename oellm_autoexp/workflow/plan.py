@@ -68,8 +68,10 @@ def create_manifest(
                 output_paths=[str(path) for path in job.output_paths],
                 parameters=list(job.parameters),
                 start_condition_cmd=job.start_condition_cmd,
+                start_conditions=job.start_conditions,
                 start_condition_interval_seconds=job.start_condition_interval_seconds,
                 termination_string=job.termination_string,
+                cancel_conditions=job.cancel_conditions,
                 termination_command=job.termination_command,
                 inactivity_threshold_seconds=job.inactivity_threshold_seconds,
             )

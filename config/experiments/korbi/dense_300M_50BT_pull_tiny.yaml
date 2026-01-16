@@ -196,7 +196,6 @@ sweep:
             job.start_conditions:
               - class_name: FileExistsCondition
                 path: "\\${sibling.stable.project.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}/latest_checkpointed_iteration.txt"
-                blocking: true
                 timeout_seconds: 7200
 
             # Cancel conditions: cancel if stable job fails

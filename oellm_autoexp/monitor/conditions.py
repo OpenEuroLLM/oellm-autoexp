@@ -146,23 +146,14 @@ class CooldownCondition(BaseCondition):
         )
 
 
-def _wait_for_predicate(
+def _check_for_predicate(
     predicate,
     *,
-    blocking: bool,
-    timeout_seconds: float,
-    poll_interval_seconds: float,
     waiting_message: str,
 ) -> ConditionResult:
-    start = time.time()
-    while True:
-        if predicate():
-            return ConditionResult(status="pass")
-        if not blocking:
-            return ConditionResult(status="waiting", message=waiting_message)
-        if timeout_seconds and (time.time() - start) >= timeout_seconds:
-            return ConditionResult(status="fail", message=f"timeout waiting for {waiting_message}")
-        time.sleep(max(poll_interval_seconds, 0.1))
+    if predicate():
+        return ConditionResult(status="pass")
+    return ConditionResult(status="waiting", message=waiting_message)
 
 
 @dataclass
@@ -185,7 +176,7 @@ class FileExistsCondition(BaseCondition):
         def predicate() -> bool:
             return target.exists()
 
-        return _wait_for_predicate(
+        return _check_for_predicate(
             predicate,
             blocking=self.config.blocking,
             timeout_seconds=self.config.timeout_seconds,
@@ -215,11 +206,8 @@ class GlobExistsCondition(BaseCondition):
         def predicate() -> bool:
             return len(list(path.parent.glob(path.name))) >= self.config.min_matches
 
-        return _wait_for_predicate(
+        return _check_for_predicate(
             predicate,
-            blocking=self.config.blocking,
-            timeout_seconds=self.config.timeout_seconds,
-            poll_interval_seconds=self.config.poll_interval_seconds,
             waiting_message=f"glob {rendered} missing",
         )
 

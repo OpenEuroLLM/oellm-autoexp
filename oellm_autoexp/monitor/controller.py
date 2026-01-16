@@ -148,20 +148,22 @@ class MonitorController:
         registration: JobRegistration,
         attempts: int = 1,
         state: BaseMonitorState = PendingState(PendingStateConfig()),
+        last_slurm_state: str | None = None,
     ) -> None:
         job_key = str(job_id)
-        state = JobRuntimeState(
+        runtime_state = JobRuntimeState(
             job_id=job_key,
             registration=registration,
             attempts=max(1, attempts),
             state=state,
+            last_slurm_state=last_slurm_state,
         )
-        self._jobs[job_key] = state
+        self._jobs[job_key] = runtime_state
         LOGGER.info(
             f"[job {job_key}] registered for monitoring: name={registration.name}, "
             f"log_path={registration.log_path}, attempts={attempts}"
         )
-        self._persist_job(state)
+        self._persist_job(runtime_state)
 
     def jobs(self) -> Iterable[JobRuntimeState]:
         return list(self._jobs.values())
