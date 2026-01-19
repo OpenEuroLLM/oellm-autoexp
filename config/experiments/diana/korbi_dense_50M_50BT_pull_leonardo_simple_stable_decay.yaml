@@ -1,13 +1,13 @@
 # @package _global_
-#
-# Copied Korbinian's /korbi/dense_300M_50BT_pull.yaml file which worked well
-# for creating sbatch scripts. Modified as follows:
-# - adjusted defaults wrt machine: from lumi -> leonardo
-# - adjusted data path: from lumi -> leonardo
-# - removed tokenizer_type and tokenizer_model and added vocab_file and merge_file
+
 # 50M dense model training with pull-based multi-stage cooldown
 # Translation of dense_50M_50BT.yaml to new composable sweep system
-#
+
+# Diana's notes:
+# This config aims to test if the stable-decay stages work as expected.
+# Thus, the hyperparameters sweep have been simplified.
+
+
 defaults:
   - /backend: megatron_torchrun
   - /container: leonardo
@@ -22,10 +22,16 @@ index: 0
 stage: ""
 
 project:
-  base_output_dir: "dense_50M_sweep"
+  base_output_dir: "dense_50M_sweep_multi_stages"
   name: "dense_50M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
   resume: true
 
+container:
+  image: /leonardo_work/OELLM_prod2026/container_images/nemo_25.11.01.sif
+  bind: 
+    - "/leonardo_work/OELLM_prod2026/"
+    - "/leonardo_scratch"
+    - "/leonardo"
 
 backend:
   megatron:
@@ -41,6 +47,7 @@ backend:
       /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_4,
       /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_5  
     ]
+    data_cache_path: /leonardo_scratch/large/userexternal/donutu00/MEGATRON_CACHEDIR
     seq_length: 4096
     max_position_embeddings: 4096
     vocab_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/vocab.json
@@ -128,7 +135,7 @@ backend:
     # are defined in the sweep defaults alongside the tokens they depend on,
     # so they get resolved together with stage-specific values
     aux:
-      tokens: 50_000_000_000  # Default: 50B tokens
+      tokens: 50_000_000_000  # Default: 5B tokens
       decay_fraction: 0.0  # Default: no decay
       start_iter: 0  # only used in decay
       start_iter_round: 0 # only used in decay
@@ -149,20 +156,14 @@ sweep:
       configs:
         - project.name: "dense_50M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
           backend.megatron.wandb_exp_name: "\\${project.name}"
-    # - type: list
-    #   configs:
+          project.base_output_dir: "${project.base_output_dir}/\\${project.name}"
+          backend.megatron.wandb_save_dir: "\\${project.base_output_dir}"
 
-    # Grid 1: 6 configurations (3 lr × 2 batch sizes)
+    # Grid 1: 1 configuration (1 lr × 1 batch sizes)
     - type: product
       params:
-        backend.megatron.lr: [1.e-4]
-        backend.megatron.global_batch_size: [128, 256, 512, 1024]
-
-        # # Grid 2: 9 configurations (3 lr × 3 batch sizes)
-        # - type: product
-        #   params:
-        #     backend.megatron.lr: [5.e-4, 1.e-3, 2.e-3]
-        #     backend.megatron.global_batch_size: [256, 512, 1024]
+        backend.megatron.lr: [2.5e-4]
+        backend.megatron.global_batch_size: [32]
 
     # GROUP 2: Multi-stage training (stable + cooldown/decay)
     # Uses a nested structure with defaults for decay stages
@@ -214,33 +215,27 @@ sweep:
               - class_name: LogPatternCondition
                 log_path: "\\${sibling.stable.project.log_path_current}"
                 pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
-
           configs:
             # Each decay stage only needs to specify its unique stage and tokens
             - stage: decay6B
-              backend.megatron.aux.tokens: 6_000_000_000
+              backend.megatron.aux.tokens: 10_000_000_000
             - stage: decay12B
-              backend.megatron.aux.tokens: 12_000_000_000
-            - stage: decay30B
+              backend.megatron.aux.tokens: 20_000_000_000
+            - stage: decay0B
               backend.megatron.aux.tokens: 30_000_000_000
             - stage: decay50B
               backend.megatron.aux.tokens: 50_000_000_000
 
-  # Keep only configurations that evaluate true: lr_warmup_iters <= 0.3 * train_iters
-  filter: "\\${oc.eval:\"\\${backend.megatron.lr_warmup_iters}<=(0.3*((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})))\"}"
 
 # Summary of what this creates:
-# - GROUP 1: 15 hyperparameter configurations
-#   - Grid 1: 6 configs (3 lr × 2 batch sizes)
-#   - Grid 2: 9 configs (3 lr × 3 batch sizes)
-#   - Union (list mode): 6 + 9 = 15 configs
+# - GROUP 1: 1 hyperparameter configurations
 # - GROUP 2: 5 stages per config
 #   - Stable: 1 config
 #   - Nested group with defaults: 4 decay stages
 #     - Common config in 'defaults' (20% decay, checkpoint loading, conditions)
 #     - Each stage overrides only stage and tokens
 #   - Total: 1 + 4 = 5 stages
-# - Outer product: 15 hyperparameter configs × 5 stages = 75 total jobs
+# - Outer product: 1 hyperparameter configs × 5 stages = 5 total jobs
 #
 # Benefits of using group-level defaults:
 # 1. DRY (Don't Repeat Yourself) - common config defined once

@@ -25,12 +25,17 @@ git checkout exp_diana
 
 
 ## Run the experiments
-1. Ensure you have Python loaded, activated the virtual environment and are inside `oellm-autoexp`.
+Firstly, ensure you have Python loaded, activated the virtual environment and are inside `oellm-autoexp`.
 Experiments:
-- Generating sbatch scripts based on hyperparameter sweep and multi-stage. Tested only on generating scripts (doesn't run them):
+1. Generating sbatch scripts based on hyperparameter sweep and multi-stage. Tested only on generating scripts (doesn't run them):
 ```
 PYTHONPATH=. python scripts/run_autoexp.py --config-ref experiments/diana/korbi_dense_50M_50BT_pull_leonardo --dry-run
 ```
+2. Running the stable-decay stages. Simplified the hyperparameters configs. 
+```
+PYTHONPATH=. python scripts/run_autoexp.py --config-ref experiments/diana/korbi_dense_50M_50BT_pull_leonardo_simple_stable_decay --dry-run
+```
+3. Related to point (1, generating scripts), but with additional filtering of experiments. Still to be tested with the latest fixes.
 
 # The experiments  
 Use as a baseline `korbi/korbi_dense_50M_50BT_pull` and make the following adjustments:
