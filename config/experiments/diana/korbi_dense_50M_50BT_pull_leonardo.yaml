@@ -22,7 +22,7 @@ project:
   resume: true
 
 container:
-  image: /leonardo_work/OELLM_prod2026/container_images/pytorch-25.08.sif
+  image: /leonardo_work/OELLM_prod2026/container_images/nemo_25.11.01.sif
   bind: 
     - "/leonardo_work/OELLM_prod2026/"
     - "/leonardo_scratch"
@@ -30,8 +30,8 @@ container:
 
 backend:
   megatron:
-    # wandb_exp_name: "\\${project.name}"
-    # wandb_project: oellm-train
+    wandb_exp_name: "\\${project.name}"
+    wandb_project: oellm-train
 
     # DATA
     data_path: [
@@ -149,8 +149,9 @@ sweep:
     - type: list
       configs:
         - project.name: "dense_50M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
-          # backend.megatron.wandb_exp_name: "\\${project.name}"
+          backend.megatron.wandb_exp_name: "\\${project.name}"
           project.base_output_dir: "${project.base_output_dir}/\\${project.name}"
+          backend.megatron.wandb_save_dir: "\\${project.base_output_dir}"
     
 # GROUP 1: Hyperparameter configurations (list of two product grids)
     - type: list
