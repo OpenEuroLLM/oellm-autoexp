@@ -202,10 +202,10 @@ def load_config(path: str | Path) -> schema.RootConfig:
     if not isinstance(data, Mapping):
         raise ConfigLoaderError(f"Configuration root must be a mapping: {path}")
     _ensure_no_deprecated_monitoring_keys(data, source=str(path))
-    try:
-        root = parse_config(schema.RootConfig, data)
-    except Exception as exc:  # pragma: no cover - compoconf raises rich errors
-        raise ConfigLoaderError(f"Unable to parse config {path}: {exc}") from exc
+    # try:
+    root = parse_config(schema.RootConfig, data)
+    # except Exception as exc:  # pragma: no cover - compoconf raises rich errors
+    #     raise ConfigLoaderError(f"Unable to parse config {path}: {exc}") from exc
 
     _ensure_monitoring_state_dir(root)
     root.metadata.setdefault("config_ref", str(path))

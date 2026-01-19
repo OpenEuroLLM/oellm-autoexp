@@ -97,7 +97,7 @@ class SweepConfig(ConfigInterface):
     groups: list[dict[str, Any]] | None = None
     base_values: dict[str, Any] = field(default_factory=dict)
     store_sweep_json: bool = True
-    filter: str | None = None
+    filter: bool | str | None = None
 
 
 @dataclass(init=False)

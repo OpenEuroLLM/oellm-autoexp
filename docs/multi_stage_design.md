@@ -162,9 +162,11 @@ Computes **cartesian product** of all parameter combinations.
   params:
     backend.megatron.lr: [1e-4, 5e-4, 1e-3]
     backend.megatron.global_batch_size: [64, 128, 256]
-  filter: "backend.megatron.lr * backend.megatron.global_batch_size <= 256e-4"  # Optional pruning
+  filter: "\\${oc.eval:'\\${backend.megatron.lr} * \\${backend.megatron.global_batch_size} <= 256e-4'}"  # Optional pruning
   # Produces: 9 combinations → filtered → ~6 combinations
 ```
+
+Filters can only be applied at the top level because of hydra composition!
 
 **Use cases:**
 - Hyperparameter grid searches
@@ -218,25 +220,6 @@ sweep:
   # Total: 6 × 3 × 2 = 36 sweep points
 ```
 
-#### Filters at All Levels
-
-Filters can be applied at any level:
-
-```yaml
-sweep:
-  type: product
-  groups:
-    - type: product
-      params:
-        a: [1, 2, 3, 4]
-        b: [10, 20, 30]
-      filter: "a * b <= 60"  # Prune this group's combinations
-
-    - type: list
-      configs: [...]
-
-  filter: "not (a == 1 and stage == 'cooldown')"  # Prune final combinations
-```
 
 **Filter evaluation context:**
 - Has access to all parameters in current sweep point
@@ -498,8 +481,6 @@ def expand_sweep(sweep_config):
             # params = {"backend": ["v1", "v2"], "lr": [1e-4, 5e-4]}
             # → [{"backend": "v1", "lr": 1e-4}, {"backend": "v1", "lr": 5e-4}, ...]
             points = cartesian_product(group.params)
-            if group.filter:
-                points = [p for p in points if eval_filter(group.filter, p)]
 
         elif group.type == "list":
             # Each config is a separate point (no cross-product)

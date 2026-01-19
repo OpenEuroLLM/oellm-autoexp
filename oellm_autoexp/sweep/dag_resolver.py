@@ -19,7 +19,7 @@ from typing import Any
 
 import networkx as nx
 from compoconf import asdict, parse_config
-from omegaconf import DictConfig, ListConfig
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from oellm_autoexp.config.schema import RootConfig, ConfigSetup
 from oellm_autoexp.config.loader import load_config_reference
@@ -260,20 +260,22 @@ def config_to_cmdline(
             cmdlines.append(override + prefix + "=null")
         else:
             if isinstance(dct, str):
-                # unescape interpolations
-                if unescape_interpolations:
-                    dct = dct.replace("\\${", "${")
-                # escape {}
-                dct = re.sub(r"\$(?=[^\{])", r"\\$", dct)
-                dct = escape_braces_except_dollar(dct)
+                # special case of combining defaults lists / groups in hydra
+                if not re.match(r"\[[A-Za-z][A-Za-z0-9,]*\]", dct):
+                    # unescape interpolations
+                    if unescape_interpolations:
+                        dct = dct.replace("\\${", "${")
+                    # escape {}
+                    dct = re.sub(r"\$(?=[^\{])", r"\\$", dct)
+                    dct = escape_braces_except_dollar(dct)
 
-                # if " " in dct or "," in dct:
-                # dct = re.sub(r"\(", r"\\(", dct)
-                # dct = re.sub(r"\)", r"\\)", dct)
-                # dct = re.sub(r"\]", r"\\]", dct)
-                # dct = re.sub(r"\[", r"\\[", dct)
-                dct = dct.replace('"', '\\"')
-                dct = f'"{dct}"'
+                    # if " " in dct or "," in dct:
+                    # dct = re.sub(r"\(", r"\\(", dct)
+                    # dct = re.sub(r"\)", r"\\)", dct)
+                    # dct = re.sub(r"\]", r"\\]", dct)
+                    # dct = re.sub(r"\[", r"\\[", dct)
+                    dct = dct.replace('"', '\\"')
+                    dct = f'"{dct}"'
             cmdlines.append(override + prefix + "=" + str(dct))
         return cmdlines
 
@@ -286,6 +288,9 @@ def param_to_cmdlines(
     key: str, val: Any, prefix: str = "", unescape_interpolations: bool = True
 ) -> list[str]:
     if isinstance(val, str):
+        # special case of combining defaults lists / groups in hydra
+        if re.match(r"\[[A-Za-z][A-Za-z0-9,]*\]", val):
+            return [f"{prefix}{key}={val}"]
         if unescape_interpolations:
             val = val.replace("\\${", "${")
         # if " " in val or "," in val:
@@ -300,7 +305,10 @@ def param_to_cmdlines(
 
 
 def resolve_sweep_with_dag(
-    config: RootConfig, points: list[SweepPoint], config_setup: ConfigSetup
+    config: RootConfig,
+    points: list[SweepPoint],
+    config_setup: ConfigSetup,
+    subset_indices: list[int] | None = None,
 ) -> list[JobPlan]:
     """Pure OmegaConf resolution with DAG ordering.
 
@@ -404,6 +412,29 @@ def resolve_sweep_with_dag(
                 },
             )
         )
+        sweep_filter = resolved.get("sweep", None)
+        sweep_filter = sweep_filter.get("filter", None) if sweep_filter else None
+        if sweep_filter is not None:
+            if not isinstance(sweep_filter, bool) and isinstance(sweep_filter, str):
+                try:
+                    resolved_dict = asdict(resolved)
+                    filter_context = {
+                        k: v for k, v in resolved_dict.items() if k not in ("sweep", "sibling")
+                    }
+                    filter_context["sweep"] = {"filter": sweep_filter}
+                    resolved_data = OmegaConf.to_container(
+                        OmegaConf.create(filter_context), resolve=True
+                    )
+                    if isinstance(resolved_data, dict):
+                        sweep_filter = resolved_data.get("sweep", {}).get("filter", sweep_filter)
+                except Exception as exc:
+                    raise ValueError(f"sweep.filter must resolve to a bool: {exc}") from exc
+
+            if not isinstance(sweep_filter, bool):
+                raise ValueError("sweep.filter must resolve to a bool.")
+            if not sweep_filter:
+                LOGGER.info("Skipping point %s due to sweep.filter", point_idx)
+                continue
 
         # these are fixed from the config and not dependent on downstream data, exe
         job_name = resolved["project"]["name"]
@@ -451,7 +482,10 @@ def resolve_sweep_with_dag(
 
         resolved_jobs[point_idx] = job
 
-    return list(resolved_jobs.values())
+    if subset_indices is not None:
+        return [v for idx, v in enumerate(resolved_jobs.values()) if idx in subset_indices]
+    else:
+        return list(resolved_jobs.values())
 
 
 def _flatten_dict(

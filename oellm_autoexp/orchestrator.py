@@ -103,13 +103,11 @@ def build_execution_plan(
     runtime = evaluate(root)
     points = expand_sweep(root.sweep)
     points = {point.index: point for point in points}
-    if subset_indices:
-        points = {point.index: point for point in points.values() if point.index in subset_indices}
-        if not points:
-            raise ValueError(f"No sweep points match indices: {sorted(subset_indices)}")
 
     # Unified DAG-based resolution (job planning + sibling resolution)
-    jobs = resolve_sweep_with_dag(root, points, config_setup=config_setup)
+    jobs = resolve_sweep_with_dag(
+        root, points, config_setup=config_setup, subset_indices=subset_indices
+    )
 
     # Validate execution plan
     if validate:

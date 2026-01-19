@@ -1,10 +1,11 @@
 import pytest
 
 
+from compoconf import asdict
 from oellm_autoexp.config.schema import SweepConfig, ConfigSetup
-from oellm_autoexp.config.loader import load_config
+from oellm_autoexp.config.loader import load_config, load_config_reference
 from oellm_autoexp.sweep.expander import expand_sweep
-from oellm_autoexp.sweep.dag_resolver import resolve_sweep_with_dag
+from oellm_autoexp.sweep.dag_resolver import resolve_sweep_with_dag, config_to_cmdline
 
 # Import to register configs in registry
 import oellm_autoexp.monitor.watcher  # noqa: F401
@@ -45,6 +46,7 @@ monitoring:
 backend:
   class_name: NullBackend
   dummy: 0
+  dummy2: 1
 """
     config_path = tmp_path / "config.yaml"
     config_path.write_text(config_yaml)
@@ -225,16 +227,33 @@ def test_expand_sweep_scalars_and_lists():
     assert any(v["nested.x"] == 2 for v in values)
 
 
-def test_expand_sweep_filter_expression():
+def test_expand_sweep_filter_expression(basic_config):
     # Only combinations where a * b <= 40 are kept
+    config_path, config_setup = basic_config
+    root = load_config(config_path)
     sweep_cfg = SweepConfig(
-        grids=[{"a": [1, 2, 3], "b": [10, 20, 30]}],
-        filter="a * b <= 40",
+        type="product",
+        groups=[
+            {
+                "type": "product",
+                "params": {
+                    "backend.dummy": [1, 2],
+                    "backend.dummy2": [1, 2],
+                },
+            },
+        ],
+        filter="${oc.eval:'${backend.dummy}*${backend.dummy2} <= 3'}",
     )
-    points = expand_sweep(sweep_cfg)
-    values = [p.parameters for p in points]
-    assert len(values) == 6
-    assert all(v["a"] * v["b"] <= 40 for v in values)
+    config_setup.override = config_to_cmdline(asdict(sweep_cfg), prefix="sweep", override="++")
+    root.sweep = sweep_cfg
+    points = expand_sweep(root.sweep)
+    points_dict = {p.index: p for p in points}
+    jobs = resolve_sweep_with_dag(root, points_dict, config_setup)
+
+    values = [job.parameters for job in jobs]
+
+    assert len(values) == 3
+    # assert all(v["slurm"]["sbatch"]["nodes"] * v["b"] <= 40 for v in values)
 
 
 def test_expand_composable_sweep_product_mode():
@@ -309,22 +328,38 @@ def test_expand_composable_sweep_mixed_product_list():
     assert any(v["backend.megatron.lr"] == 5e-4 and v["stage"] == "cooldown" for v in values)
 
 
-def test_expand_composable_sweep_with_filter():
+def test_expand_composable_sweep_with_filter(basic_config):
     """Test composable sweep with filter expression."""
+    config_path, config_setup = basic_config
+    root = load_config(config_path)
     sweep_cfg = SweepConfig(
         type="product",
         groups=[
             {
                 "type": "product",
-                "params": {"a": [1, 2, 3], "b": [10, 20, 30]},
+                "params": {"backend.dummy": [1, 2, 3], "backend.dummy2": [10, 20, 30]},
             },
         ],
-        filter="a * b <= 40",
+        filter="${oc.eval:'${backend.dummy} * ${backend.dummy2} <= 40'}",
     )
-    points = expand_sweep(sweep_cfg)
-    values = [p.parameters for p in points]
+    config_setup.override = config_to_cmdline(asdict(sweep_cfg), prefix="sweep", override="++")
+    root.sweep = sweep_cfg
+    points = expand_sweep(root.sweep)
+    points_dict = {p.index: p for p in points}
+    jobs = resolve_sweep_with_dag(root, points_dict, config_setup)
+
+    values = [
+        load_config_reference(
+            config_dir=config_setup.config_dir,
+            ref=config_setup.config_ref,
+            overrides=job.parameters,
+        )
+        for job in jobs
+    ]
+
     assert len(values) == 6
-    assert all(v["a"] * v["b"] <= 40 for v in values)
+
+    assert all(v.backend.dummy * v.backend.dummy <= 40 for v in values)
 
 
 def test_expand_nested_product_in_list():

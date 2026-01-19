@@ -622,11 +622,13 @@ index: 0
     # Verify the launch commands are different and contain the expected variants
     argv1 = entry1["launch"]["argv"]
     argv2 = entry2["launch"]["argv"]
+    env1 = entry1["launch"]["env"]
+    env2 = entry2["launch"]["env"]
 
     assert argv1 != argv2, "Launch commands should be different for different backend variants"
 
     # Check that variant1 and variant2 commands are present
-    variant1_found = any("variant1" in " ".join(argv) for argv in [argv1, argv2])
+    variant1_found = any("variant1_was_here" in env for env in [env1, env2])
     variant2_found = any("variant2" in " ".join(argv) for argv in [argv1, argv2])
 
     assert variant1_found, "Should find variant1 in one of the launch commands"

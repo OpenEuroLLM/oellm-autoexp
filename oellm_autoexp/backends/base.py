@@ -57,6 +57,7 @@ class NullBackendConfig(ConfigInterface):
     extra_cli_args: Sequence[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     dummy: int = 0
+    dummy2: int = 0
 
 
 @register

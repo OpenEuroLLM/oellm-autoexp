@@ -348,7 +348,7 @@ sweep:
     - backend.megatron.lr: [1e-4, 5e-4, 1e-3, 2e-3]
       backend.megatron.global_batch_size: [64, 128, 256, 512, 1024]
   # Exclude configurations where large LR + large batch size
-  filter: "not (backend.megatron.lr > 1e-3 and backend.megatron.global_batch_size > 256)"
+  filter: "${oc.eval:'not (\\${backend.megatron.lr} > 1e-3 and \\${backend.megatron.global_batch_size} > 256)'}"
 ```
 
 **Result:** Filters out jobs where `lr=2e-3` and `batch_size ∈ {512, 1024}`, keeping only valid combinations.
@@ -379,7 +379,7 @@ sweep:
       defaults:
         stage: small_batch
       # Filter out aggressive LR (2e-3) to avoid instability
-      filter: "backend.megatron.lr <= 1e-3"
+      filter: "\\${oc.eval:'\\${backend.megatron.lr <= 1e-3'}"
       # Result: 3 LRs × 2 batch sizes = 6 jobs (2e-3 excluded)
 
     # Strategy 2: Large batch exploration
@@ -392,7 +392,7 @@ sweep:
       defaults:
         stage: large_batch
       # Only test aggressive LR with smaller batches (not 1024)
-      filter: "not (backend.megatron.lr > 2e-3 and backend.megatron.global_batch_size > 512)"
+      filter: "\\${oc.eval:'not (\\${backend.megatron.lr} > 2e-3 and \\${backend.megatron.global_batch_size} > 512)"
       # Result: 3×3 - 1 = 8 jobs (5e-3×1024 excluded)
 
     # Strategy 3: Production (no filter needed)

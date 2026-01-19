@@ -60,12 +60,12 @@ def _expand_legacy_sweep(config: SweepConfig, base_values: dict[str, Any]) -> li
             for key, value in combination.items():
                 flat[key] = value
             # Apply optional filter expression
-            if config.filter:
-                try:
-                    if not eval(config.filter, {}, flat):
-                        continue
-                except Exception as e:
-                    raise ValueError(f"Error evaluating sweep filter '{config.filter}': {e}")
+            # if config.filter:
+            #     try:
+            #         if not eval(config.filter, {}, flat):
+            #             continue
+            #     except Exception as e:
+            #         raise ValueError(f"Error evaluating sweep filter '{config.filter}': {e}")
             points.append(SweepPoint(index=len(points), parameters=flat))
 
     if not points:
@@ -89,15 +89,15 @@ def _expand_composable_sweep(config: SweepConfig, base_values: dict[str, Any]) -
     )
 
     # Apply filter if specified
-    if config.filter:
-        filtered = []
-        for params, path, stage_path in group_combinations:
-            try:
-                if eval(config.filter, {}, params):
-                    filtered.append((params, path, stage_path))
-            except Exception as e:
-                raise ValueError(f"Error evaluating sweep filter '{config.filter}': {e}")
-        group_combinations = filtered
+    # if config.filter:
+    #     filtered = []
+    #     for params, path, stage_path in group_combinations:
+    #         try:
+    #             if eval(config.filter, {}, params):
+    #                 filtered.append((params, path, stage_path))
+    #         except Exception as e:
+    #             raise ValueError(f"Error evaluating sweep filter '{config.filter}': {e}")
+    #     group_combinations = filtered
 
     # Create SweepPoints with indices
     points = [
