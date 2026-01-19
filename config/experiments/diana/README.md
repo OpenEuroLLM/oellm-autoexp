@@ -35,7 +35,10 @@ PYTHONPATH=. python scripts/run_autoexp.py --config-ref experiments/diana/korbi_
 ```
 PYTHONPATH=. python scripts/run_autoexp.py --config-ref experiments/diana/korbi_dense_50M_50BT_pull_leonardo_simple_stable_decay
 ```
-3. Related to point (1, generate scripts), but with additional filtering of experiments. To be tested with the latest fixes.
+3. Related to point (1, generate scripts), but with additional filtering of experiments. To be tested with the latest fixes:
+```
+PYTHONPATH=. python scripts/run_autoexp.py --config-ref experiments/diana/korbi_dense_50M_50BT_pull_leonardo_simple_filtering --dry-run
+```
 
 # The experiments  
 Use as a baseline `korbi/korbi_dense_50M_50BT_pull` and make the following adjustments:
