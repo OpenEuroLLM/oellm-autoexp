@@ -368,19 +368,17 @@ sweep:
   defaults:
     project.name: "tuning_\\${backend.megatron.lr}_\\${backend.megatron.global_batch_size}_\\${stage}"
   type: list
+  filter: "\\${oc.eval:'not (\\${backend.megatron.lr} > 2e-3 and \\${backend.megatron.global_batch_size} > 512)'}"
   groups:
     # Strategy 1: Small batch exploration
     - type: product
       groups:
         - params:
-            backend.megatron.lr: [1e-4, 5e-4, 1e-3, 2e-3]  # Added 2e-3
+            backend.megatron.lr: [1e-4, 5e-4, 1e-3]
         - params:
             backend.megatron.global_batch_size: [64, 128]
       defaults:
         stage: small_batch
-      # Filter out aggressive LR (2e-3) to avoid instability
-      filter: "\\${oc.eval:'\\${backend.megatron.lr <= 1e-3'}"
-      # Result: 3 LRs × 2 batch sizes = 6 jobs (2e-3 excluded)
 
     # Strategy 2: Large batch exploration
     - type: product
@@ -391,11 +389,8 @@ sweep:
             backend.megatron.global_batch_size: [256, 512, 1024]  # Added 1024
       defaults:
         stage: large_batch
-      # Only test aggressive LR with smaller batches (not 1024)
-      filter: "\\${oc.eval:'not (\\${backend.megatron.lr} > 2e-3 and \\${backend.megatron.global_batch_size} > 512)"
-      # Result: 3×3 - 1 = 8 jobs (5e-3×1024 excluded)
 
-    # Strategy 3: Production (no filter needed)
+    # Strategy 3: Production
     - configs:
         - stage: production
           backend.megatron.lr: 5e-4
