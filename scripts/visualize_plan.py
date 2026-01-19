@@ -105,9 +105,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Maximum jobs to display per stage (default: 10)",
     )
     parser.add_argument(
-        "--full-resolve",
+        "--non-full-resolve",
         action="store_true",
-        help="Resolve full job configs (slower for large sweeps)",
+        help="Don't resolve full job configs (slower for large sweeps)",
     )
     parser.add_argument("--visualize-keys", nargs="+", action="append", default=[])
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
@@ -423,7 +423,7 @@ def main(argv: list[str] | None = None) -> int:
         LOGGER.info(f"Expanded to {len(points)} sweep points")
 
         # Unified DAG-based resolution (job planning + sibling resolution)
-        if args.full_resolve or len(points) <= 30:
+        if not args.non_full_resolve:
             LOGGER.info("Resolving sweep with DAG")
             jobs = resolve_sweep_with_dag(
                 config,
