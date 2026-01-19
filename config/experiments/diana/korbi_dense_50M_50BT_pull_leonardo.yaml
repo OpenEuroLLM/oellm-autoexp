@@ -1,13 +1,8 @@
 # @package _global_
-#
-# Copied Korbinian's /korbi/dense_300M_50BT_pull.yaml file which worked well
-# for creating sbatch scripts. Modified as follows:
-# - adjusted defaults wrt machine: from lumi -> leonardo
-# - adjusted data path: from lumi -> leonardo
-# - removed tokenizer_type and tokenizer_model and added vocab_file and merge_file
+
 # 50M dense model training with pull-based multi-stage cooldown
 # Translation of dense_50M_50BT.yaml to new composable sweep system
-#
+
 defaults:
   - /backend: megatron_torchrun
   - /container: leonardo
@@ -26,11 +21,17 @@ project:
   name: "dense_50M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
   resume: true
 
+container:
+  image: /leonardo_work/OELLM_prod2026/container_images/pytorch-25.08.sif
+  bind: 
+    - "/leonardo_work/OELLM_prod2026/"
+    - "/leonardo_scratch"
+    - "/leonardo"
 
 backend:
   megatron:
-    wandb_exp_name: "\\${project.name}"
-    wandb_project: oellm-train
+    # wandb_exp_name: "\\${project.name}"
+    # wandb_project: oellm-train
 
     # DATA
     data_path: [
@@ -41,6 +42,7 @@ backend:
       /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_4,
       /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_5  
     ]
+    data_cache_path: /leonardo_scratch/large/userexternal/donutu00/MEGATRON_CACHEDIR
     seq_length: 4096
     max_position_embeddings: 4096
     vocab_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/vocab.json
@@ -144,25 +146,26 @@ sweep:
   type: product
 
   groups:
-    # GROUP 1: Hyperparameter configurations (list of two product grids)
     - type: list
       configs:
         - project.name: "dense_50M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
-          backend.megatron.wandb_exp_name: "\\${project.name}"
-    # - type: list
-    #   configs:
+          # backend.megatron.wandb_exp_name: "\\${project.name}"
+          project.base_output_dir: "${project.base_output_dir}/\\${project.name}"
+    
+# GROUP 1: Hyperparameter configurations (list of two product grids)
+    - type: list
+      configs:
+        # Grid 1: 6 configurations (3 lr × 2 batch sizes)
+        - type: product
+          params:
+            backend.megatron.lr: [2.5e-4, 5.e-4, 1.e-3]
+            backend.megatron.global_batch_size: [64, 128]
 
-    # Grid 1: 6 configurations (3 lr × 2 batch sizes)
-    - type: product
-      params:
-        backend.megatron.lr: [2.5e-4]
-        backend.megatron.global_batch_size: [32]
-
-        # # Grid 2: 9 configurations (3 lr × 3 batch sizes)
-        # - type: product
-        #   params:
-        #     backend.megatron.lr: [5.e-4, 1.e-3, 2.e-3]
-        #     backend.megatron.global_batch_size: [256, 512, 1024]
+        # Grid 2: 9 configurations (3 lr × 3 batch sizes)
+        - type: product
+          params:
+            backend.megatron.lr: [5.e-4, 1.e-3, 2.e-3]
+            backend.megatron.global_batch_size: [256, 512, 1024]
 
     # GROUP 2: Multi-stage training (stable + cooldown/decay)
     # Uses a nested structure with defaults for decay stages
