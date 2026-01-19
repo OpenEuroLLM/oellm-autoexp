@@ -39,12 +39,12 @@ PYTHONPATH=. python scripts/run_autoexp.py --config-ref experiments/diana/korbi_
 
 # The experiments  
 Use as a baseline `korbi/korbi_dense_50M_50BT_pull` and make the following adjustments:
+- in `config/slurm/leonardo.yaml` added `WANDB_MODE: "offline"`
 - adjusted defaults wrt machine: from lumi -> leonardo
-- added leonardo container settings. Container image: `nemo_25.11.01.sif`
-- adjusted data path to leonardo data path (this is the old, problematic data, to be changed for actual runs)
-- removed tokenizer_type and tokenizer_model and added vocab_file and merge_file paths
+- added leonardo container settings. Container image used: `nemo_25.11.01.sif`
+- adjusted `data_path` to leonardo data path (this is the old, problematic data. To be changed for actual runs)
+- removed `tokenizer_type` and `tokenizer_model` and added `vocab_file` and `merge_file` paths
 - added `data_cache_path` and `wandb_save_dir`
 - adjusted model from 300M -> 50M
-- adjusted hyperparameters with the latest design choices from xmas experiments: `adam_beta2: 0.99`, `min_lr: 1e-5`, `lr_warmup_iters: 2000`, `eval_interval: 3200`, `save_interval: 8000`
-- in `config/slurm/leonardo.yaml` added `WANDB_MODE: "offline"`.
+- adjusted hyperparameters with the latest design choices from xmas experiments: `adam_beta2: 0.99`, `min_lr: 1e-5`, `lr_warmup_iters: 2000`, `eval_interval: 3200`, `save_interval: 8000`.
 
