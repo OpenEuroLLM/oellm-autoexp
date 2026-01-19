@@ -434,6 +434,7 @@ def main(argv: list[str] | None = None) -> int:
                     override=args.override,
                     pwd=os.curdir,
                 ),
+                config_class=type(config),  # Pass RootConfig class
             )
             LOGGER.info(f"Resolved to {len(jobs)} jobs")
         else:

@@ -7,6 +7,7 @@ files.
 
 from __future__ import annotations
 
+from pathlib import Path
 from dataclasses import dataclass, field, MISSING
 from typing import Any
 
@@ -16,6 +17,9 @@ from compoconf import (
     register_interface,
     NonStrictDataclass,
 )
+
+# Import base classes from hydra_staged_sweep
+from hydra_staged_sweep.config.schema import StagedSweepRoot
 
 # ---------------------------------------------------------------------------
 # Core interfaces
@@ -72,32 +76,7 @@ class ProjectConfig(ConfigInterface):
     resume: bool = True
 
 
-@dataclass(kw_only=True)
-class SweepConfig(ConfigInterface):
-    """Sweep expansion settings.
-
-    Supports both legacy grid format and new composable groups format:
-
-    Legacy format (backward compatible):
-        grids: list[dict[str, list[Any]]]
-
-    New composable format:
-        type: "product" | "list"
-        groups: list[dict with 'type' and 'params'/'configs']
-
-    ``base_values`` contain default substitutions applied before the
-    sweep is generated.
-    """
-
-    class_name: str = "Sweep"
-    # Legacy format
-    grids: list[dict[str, list[Any]]] | None = None
-    # New composable format
-    type: str | None = None  # "product" or "list"
-    groups: list[dict[str, Any]] | None = None
-    base_values: dict[str, Any] = field(default_factory=dict)
-    store_sweep_json: bool = True
-    filter: str | None = None
+# SweepConfig imported from hydra_staged_sweep above
 
 
 @dataclass(init=False)
@@ -173,12 +152,21 @@ class JobConfig(ConfigInterface):
 
 
 @dataclass(kw_only=True)
-class RootConfig(ConfigInterface):
-    """Top-level configuration schema."""
+class RootConfig(StagedSweepRoot):
+    """Top-level configuration schema - extends hydra_staged_sweep with oellm-specific fields.
+
+    Base fields from StagedSweepRoot:
+        sweep: SweepConfig
+        stage: str
+        index: int | tuple[int]
+        sibling: dict[str, Any]
+
+    Additional oellm-specific fields below:
+    """
 
     class_name: str = "Root"
+    # oellm-specific configuration sections
     project: ProjectConfig = field(default_factory=MISSING)
-    sweep: SweepConfig = field(default_factory=MISSING)
     slurm: SlurmConfig = field(default_factory=MISSING)
     monitoring: MonitorInterface.cfgtype = field(default_factory=MISSING)
     job: JobConfig = field(default_factory=JobConfig)
@@ -186,18 +174,39 @@ class RootConfig(ConfigInterface):
     container: ContainerConfig | None = None
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     metadata: dict[str, Any] = field(default_factory=dict)
-    stage: str = ""
-    # these are usually set internally
-    sibling: dict[str, Any] = field(default_factory=dict)
-    index: int | tuple[int] = 0
+    # Runtime fields set during orchestration
     project_name: str = ""
     job_name: str = ""
     output_dir: str = ""
 
 
-@dataclass(kw_only=True)
+@dataclass
 class ConfigSetup:
+    """Config setup - compatible with hydra_staged_sweep.
+
+    Uses config_name/config_path like hydra_staged_sweep but maintains
+    config_ref as alias for backward compatibility.
+    """
+
     pwd: str
-    config_ref: str
-    config_dir: str
-    override: list[str] = field(default=list)
+    config_name: str | None = None
+    config_path: str | None = None
+    config_dir: str | None = None
+    override: list[str] = field(default_factory=list)
+    # Backward compatibility field
+    config_ref: str | None = field(default=None, init=True)
+
+    def __post_init__(self):
+        # Backward compatibility: convert config_ref to config_name/config_path
+        if self.config_ref is not None:
+            ref_path = Path(self.config_ref)
+            if ref_path.exists():
+                self.config_path = str(ref_path)
+                self.config_name = None
+            else:
+                self.config_name = self.config_ref
+                self.config_path = None
+
+        # Ensure at least one way to specify config is provided
+        if self.config_path is None and self.config_name is None:
+            raise ValueError("Either config_path, config_name, or config_ref must be specified")

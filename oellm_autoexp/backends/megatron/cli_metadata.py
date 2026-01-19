@@ -1,19 +1,8 @@
 """Megatron CLI metadata (auto-generated)."""
 
-from dataclasses import dataclass
-from typing import Any
 from collections.abc import Mapping
 
-from oellm_autoexp.backends.megatron_args import MegatronArgMetadata
-
-
-@dataclass(frozen=True)
-class MegatronActionSpec:
-    option_strings: tuple[str, ...]
-    action_type: str
-    nargs: int | str | None
-    const: Any
-    default: Any
+from oellm_autoexp.backends.megatron_args import MegatronArgMetadata, MegatronActionSpec
 
 
 MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {

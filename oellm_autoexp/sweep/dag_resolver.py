@@ -1,135 +1,157 @@
-"""Pure OmegaConf DAG-based sweep resolution.
+"""DAG resolution and sibling replacement - imports from hydra_staged_sweep with minimal wrapper."""
 
-This is the simplified v2 implementation that uses OmegaConf for ALL interpolations,
-including sibling references. No custom template resolution - just pure OmegaConf.
-
-Key insight: Use `${sibling.stable.output_dir}` syntax in YAML and add sibling data
-to the OmegaConf namespace during resolution. OmegaConf handles everything.
-
-See docs/sweep_resolution_ordering.md for design rationale (Option 5).
-"""
-
-from __future__ import annotations
-
-import logging
-import re
-from collections.abc import Mapping, Sequence
-from pathlib import Path
 from typing import Any
 
-import networkx as nx
-from compoconf import asdict, parse_config
-from omegaconf import DictConfig, ListConfig
+from hydra_staged_sweep.dag_resolver import (
+    resolve_sweep_with_dag as _hs_resolve_sweep_with_dag,
+    build_dependency_dag_from_points,
+    param_to_cmdlines,
+    config_to_cmdline,
+    extract_sibling_patterns,
+    find_sibling_by_group_path,
+)
+from hydra_staged_sweep.expander import SweepPoint
+from hydra_staged_sweep.planner import JobPlan as BaseJobPlan
+from hydra_staged_sweep.config.schema import ConfigSetup as HSConfigSetup
 
-from oellm_autoexp.config.schema import RootConfig, ConfigSetup
-from oellm_autoexp.config.loader import load_config_reference
-from oellm_autoexp.sweep.expander import SweepPoint
-from oellm_autoexp.sweep.planner import JobPlan
+__all__ = [
+    "resolve_sweep_with_dag",
+    "build_dependency_dag_from_points",
+    "param_to_cmdlines",
+    "config_to_cmdline",
+    "extract_sibling_patterns",
+    "find_sibling_by_group_path",
+    "build_stage_dependencies",
+]
 
-LOGGER = logging.getLogger(__file__)
 
+def _convert_to_extended_jobplan(base_job: BaseJobPlan) -> Any:
+    """Convert hydra_staged_sweep's minimal JobPlan to oellm's extended
+    JobPlan.
 
-def extract_sibling_patterns(parameters: dict[str, Any]) -> set[str]:
-    """Extract stage patterns from escaped sibling references.
-
-    Args:
-        parameters: Flattened parameter dict from a SweepPoint
-
-    Returns:
-        Set of stage patterns (e.g., {'stable', 'decay6B'})
+    Extracts oellm-specific fields from the resolved config.
     """
-    patterns = set()
+    from oellm_autoexp.sweep.planner import JobPlan
 
-    sibling_regex = re.compile(r"\$\{sibling\.([^.}]+)\.")
+    cfg = base_job.config
 
-    def scan_value(value: Any) -> None:
-        """Recursively scan value for sibling patterns."""
-        if isinstance(value, str):
-            for match in sibling_regex.finditer(value):
-                # Extract the stage name (first captured group)
-                stage = match.group(1)
-                patterns.add(stage)
-        elif isinstance(value, dict):
-            for v in value.values():
-                scan_value(v)
-        elif isinstance(value, list):
-            for item in value:
-                scan_value(item)
+    # Extract fields from resolved config
+    project_name = getattr(cfg.project, "name", "")
+    output_dir = getattr(cfg, "output_dir", "")
 
-    scan_value(parameters)
-    LOGGER.debug(f"Extracted sibling patterns: {patterns}")
-    return patterns
+    # Handle log paths
+    log_path = getattr(cfg.project, "log_path", "")
+    log_path_current = getattr(cfg.project, "log_path_current", "")
 
+    # Extract start/cancel conditions from job config
+    job_config = getattr(cfg, "job", None)
+    start_conditions = []
+    cancel_conditions = []
+    start_condition_cmd = None
+    start_condition_interval_seconds = None
+    termination_string = None
+    termination_command = None
+    inactivity_threshold_seconds = None
+    output_paths = []
 
-def find_sibling_by_group_path(
-    point: SweepPoint, all_points: list[SweepPoint], stage_pattern: str
-) -> SweepPoint | None:
-    """Find sibling with matching hyperparameters."""
+    if job_config:
+        start_conditions = getattr(job_config, "start_conditions", [])
+        cancel_conditions = getattr(job_config, "cancel_conditions", [])
+        start_condition_cmd = getattr(job_config, "start_condition_cmd", None)
+        start_condition_interval_seconds = getattr(
+            job_config, "start_condition_interval_seconds", None
+        )
+        termination_string = getattr(job_config, "termination_string", None)
+        termination_command = getattr(job_config, "termination_command", None)
+        inactivity_threshold_seconds = getattr(job_config, "inactivity_threshold_seconds", None)
+        output_paths = getattr(job_config, "output_paths", [])
 
-    own_stage: str | None = point.parameters.get("stage")
-    if not extract_sibling_patterns(point.parameters):
-        return []
-
-    siblings = []
-    point_filtered = list(zip(point.group_path, point.stage_path))
-
-    for potential_sibling in all_points.values():
-        sibling_filtered = list(zip(potential_sibling.group_path, potential_sibling.stage_path))
-        if (
-            all(
-                (gp == gs) or sp or ss
-                for ((gp, sp), (gs, ss)) in zip(point_filtered, sibling_filtered)
-            )
-            and point.group_path != potential_sibling.group_path
-        ):
-            # matching all non-sibling stages
-            siblings.append(potential_sibling)
-    LOGGER.debug(
-        f"Got siblings for own stage {own_stage}: {[s.parameters.get('stage', '') for s in siblings]}"
+    # Create extended JobPlan
+    return JobPlan(
+        config=cfg,
+        parameters=base_job.parameters,
+        sibling_pattern=base_job.sibling_pattern,
+        stage_name=base_job.stage_name,
+        name=project_name,
+        output_dir=output_dir,
+        log_path=log_path,
+        log_path_current=log_path_current,
+        output_paths=list(output_paths) if output_paths else [],
+        start_condition_cmd=start_condition_cmd,
+        start_condition_interval_seconds=start_condition_interval_seconds,
+        start_conditions=list(start_conditions) if start_conditions else [],
+        cancel_conditions=list(cancel_conditions) if cancel_conditions else [],
+        termination_string=termination_string,
+        termination_command=termination_command,
+        inactivity_threshold_seconds=inactivity_threshold_seconds,
     )
-    matched_sibling = [
-        sibling
-        for sibling in siblings
-        if re.match(stage_pattern, sibling.parameters.get("stage", ""))
-    ]
-    if matched_sibling:
-        if len(matched_sibling) > 1:
-            LOGGER.warning(f"Multiple matched siblings for {point}, {stage_pattern}")
-        return matched_sibling[0]
-    return None
 
 
-def build_dependency_dag_from_points(points: dict[int, SweepPoint]) -> nx.DiGraph:
-    """Build dependency DAG from sweep points."""
-    LOGGER.debug(f"Building dependency DAG from {len(points)} points")
-    dag = nx.DiGraph()
+def resolve_sweep_with_dag(
+    config: Any,
+    points: list[SweepPoint] | dict[int, SweepPoint],
+    config_setup: Any,
+    config_class: type | None = None,
+) -> list[Any]:
+    """Wrapper around hydra_staged_sweep resolve_sweep_with_dag that uses
+    oellm's config loader.
 
-    for point in points.values():
-        dag.add_node(point.index)
+    This ensures compatibility with oellm's RootConfig schema while
+    using the well-tested DAG resolution from hydra_staged_sweep.
+    Converts the minimal JobPlan to oellm's extended JobPlan with all
+    required fields.
+    """
+    # Import here to avoid circular dependency
+    from oellm_autoexp.config.loader import load_config_reference
+    from oellm_autoexp.config.schema import RootConfig
 
-    edges_added = 0
-    for point in points.values():
-        sibling_deps = extract_sibling_patterns(point.parameters)
+    # Use RootConfig if not specified
+    if config_class is None:
+        config_class = RootConfig
 
-        for stage_pattern in sibling_deps:
-            try:
-                sibling = find_sibling_by_group_path(point, points, stage_pattern)
-                if sibling:
-                    dag.add_edge(sibling.index, point.index)
-                else:
-                    LOGGER.warning(
-                        f"No sibling found for requested stage_pattern: {stage_pattern} of point {point}"
-                    )
-                edges_added += 1
-            except ValueError:
-                pass  # Root node, no dependencies
+    # Convert oellm ConfigSetup to hydra_staged_sweep ConfigSetup if needed
+    if hasattr(config_setup, "config_ref"):
+        hs_config_setup = HSConfigSetup(
+            pwd=config_setup.pwd,
+            config_name=config_setup.config_name,
+            config_path=config_setup.config_path,
+            config_dir=config_setup.config_dir,
+            override=config_setup.override,
+        )
+    else:
+        hs_config_setup = config_setup
 
-    LOGGER.info(f"Built DAG with {len(points)} nodes and {edges_added} edges")
-    return dag
+    # Monkeypatch the load_config_reference in hydra_staged_sweep temporarily
+    import hydra_staged_sweep.dag_resolver
+
+    orig_loader = hydra_staged_sweep.dag_resolver.load_config_reference
+
+    def patched_loader(
+        config_name=None, config_path=None, config_dir=None, overrides=None, config_class=RootConfig
+    ):
+        """Patched loader that uses oellm's loader."""
+        if config_path:
+            return load_config_reference(config_path, config_dir, overrides)
+        else:
+            return load_config_reference(config_name, config_dir, overrides)
+
+    try:
+        hydra_staged_sweep.dag_resolver.load_config_reference = patched_loader
+        base_jobs = _hs_resolve_sweep_with_dag(config, points, hs_config_setup, config_class)
+
+        # Convert minimal JobPlan to extended JobPlan
+        extended_jobs = [_convert_to_extended_jobplan(job) for job in base_jobs]
+        return extended_jobs
+    finally:
+        hydra_staged_sweep.dag_resolver.load_config_reference = orig_loader
 
 
 def build_stage_dependencies(points: dict[int, SweepPoint]) -> dict[str, set[str]]:
-    """Build stage-level dependency map from sweep points."""
+    """Build stage-level dependency map from sweep points.
+
+    Thin wrapper around build_dependency_dag_from_points that groups by
+    stage.
+    """
     dag = build_dependency_dag_from_points(points)
     stage_by_index = {
         idx: (point.parameters.get("stage") or "unknown") for idx, point in points.items()
@@ -142,304 +164,3 @@ def build_stage_dependencies(points: dict[int, SweepPoint]) -> dict[str, set[str
             if parent_stage != stage:
                 dependencies[stage].add(parent_stage)
     return dependencies
-
-
-def _unflatten_dict(flat_dict: dict[str, Any]) -> dict[str, Any]:
-    """Convert flattened dict with dotted keys to nested dict."""
-    nested = {}
-    for key, value in flat_dict.items():
-        parts = key.split(".")
-        current = nested
-        for part in parts[:-1]:
-            if part not in current:
-                current[part] = {}
-            elif not isinstance(current[part], dict):
-                break
-            current = current[part]
-        else:
-            if isinstance(current, dict):
-                current[parts[-1]] = value
-    return nested
-
-
-def escape_braces_except_dollar(s: str) -> str:
-    """
-    >>> escape_braces_except_dollar('{}')
-    '\\\\{\\\\}'
-    >>> escape_braces_except_dollar('123{}456')
-    '123\\\\{\\\\}456'
-    >>> escape_braces_except_dollar('{a}')
-    '\\\\{a\\\\}'
-    >>> escape_braces_except_dollar('${a}')
-    '${a}'
-    >>> escape_braces_except_dollar('${{}}')
-    '${\\\\{\\\\}}'
-    >>> escape_braces_except_dollar('{${}}')
-    '\\\\{${}\\\\}'
-    """
-    stack = []
-    res = ""
-    pos = 0
-
-    for mat in re.finditer(r"(\$\{|\{|\})", s):
-        if mat.group() == "${":
-            res += s[pos : mat.end()]
-            stack.append(False)
-        elif mat.group() == "{":
-            stack.append(True)
-            res += s[pos : mat.start()] + "\\{"
-        elif mat.group() == "}":
-            if stack[-1]:
-                res += s[pos : mat.start()] + "\\}"
-            else:
-                res += s[pos : mat.end()]
-            stack.pop(-1)
-        pos = mat.end()
-    res += s[pos:]
-    return res
-
-
-def config_to_cmdline(
-    cfg_dict: dict, override: str = "", prefix="", unescape_interpolations: bool = False
-) -> list[str]:
-    # override either "", "+", "++" see hydra
-    cmdline_opts = []
-
-    def dict_to_cmdlines(dct: dict | list | str | int | float, prefix: str = ""):
-        cmdlines = []
-
-        if isinstance(dct, (dict, DictConfig, Mapping)):
-            for sub_cfg in dct:
-                newprefix = (prefix + "." if prefix else "") + sub_cfg
-                cmdlines += dict_to_cmdlines(dct[sub_cfg], prefix=newprefix)
-        elif isinstance(dct, (list, ListConfig, Sequence)) and not isinstance(dct, (str, bytes)):
-            cmdlines.append(override + prefix + "=[" + ",".join(map(str, range(len(dct)))) + "]")
-            for n, sub_cfg in enumerate(dct):
-                cmdlines += dict_to_cmdlines(
-                    sub_cfg,
-                    prefix=(prefix + "." if prefix else "") + str(n),
-                )
-        elif dct is None:
-            cmdlines.append(override + prefix + "=null")
-        else:
-            if isinstance(dct, str):
-                # unescape interpolations
-                if unescape_interpolations:
-                    dct = dct.replace("\\${", "${")
-                # escape {}
-                dct = re.sub(r"\$(?=[^\{])", r"\\$", dct)
-                dct = escape_braces_except_dollar(dct)
-
-                # if "" in dct or "," in dct:
-                # dct = re.sub(r"\(", r"\\(", dct)
-                # dct = re.sub(r"\)", r"\\)", dct)
-                # dct = re.sub(r"\]", r"\\]", dct)
-                # dct = re.sub(r"\[", r"\\[", dct)
-                dct = dct.replace("'", "\\'")
-                dct = f"'{dct}'"
-            cmdlines.append(override + prefix + "=" + str(dct))
-        return cmdlines
-
-    cmdline_opts = dict_to_cmdlines(cfg_dict, prefix=prefix)
-    LOGGER.debug("GENERATED CMDLINE OPTS {config_yaml}, {cmdline_opts}")
-    return cmdline_opts
-
-
-def param_to_cmdlines(
-    key: str, val: Any, prefix: str = "", unescape_interpolations: bool = True
-) -> list[str]:
-    if isinstance(val, str):
-        if unescape_interpolations:
-            val = val.replace("\\${", "${")
-        # if " " in val or "," in val:
-        val = val.replace("'", "\\'")
-        return [f"{prefix}{key}='{val}'"]
-        # else:
-        #     return [f"{prefix}{key}={val}"]
-    else:
-        return config_to_cmdline(
-            val, override="++", prefix=key, unescape_interpolations=unescape_interpolations
-        )
-
-
-def resolve_sweep_with_dag(
-    config: RootConfig, points: list[SweepPoint], config_setup: ConfigSetup
-) -> list[JobPlan]:
-    """Pure OmegaConf resolution with DAG ordering.
-
-    This is the main entry point. It:
-    1. Builds dependency DAG
-    2. Topologically sorts jobs
-    3. For each job, creates OmegaConf config with sibling data
-    4. Lets OmegaConf resolve ALL interpolations (including ${sibling.*})
-    5. Creates JobPlan from resolved config
-
-    Args:
-        config: Root configuration
-        points: SweepPoints from expand_sweep()
-
-    Returns:
-        List of fully resolved JobPlans
-    """
-    LOGGER.info(f"Starting DAG resolution for {len(points)} sweep points")
-
-    # Build DAG and get resolution order
-    dag = build_dependency_dag_from_points(points)
-
-    if not nx.is_directed_acyclic_graph(dag):
-        cycles = list(nx.simple_cycles(dag))
-        LOGGER.error(f"Circular dependencies detected: {cycles}")
-        raise ValueError(f"Circular dependencies detected: {cycles}")
-
-    ordered_indices = list(nx.topological_sort(dag))
-    LOGGER.debug(f"Topological order: {ordered_indices}")
-
-    # Resolve in topological order
-    resolved_jobs = {}
-
-    for point_idx in ordered_indices:
-        point = points[point_idx]
-
-        # Find sibling dependencies
-        sibling_patterns = extract_sibling_patterns(point.parameters)
-
-        # Get already-resolved sibling jobs
-        sibling_jobs = {}
-        for pattern in sibling_patterns:
-            try:
-                sibling_point = find_sibling_by_group_path(point, points, pattern)
-                if sibling_point and sibling_point.index in resolved_jobs:
-                    sibling_jobs[pattern] = resolved_jobs[sibling_point.index]
-            except ValueError:
-                pass  # No sibling found
-
-        # Load sibling configs with their respective overrides
-        sibling_job_configs = {
-            sibling_pattern: asdict(
-                load_config_reference(
-                    config_dir=config_setup.config_dir,
-                    ref=config_setup.config_ref,
-                    overrides=list(config_setup.override) + sibling_job.parameters,
-                )
-            )
-            for sibling_pattern, sibling_job in sibling_jobs.items()
-        }
-
-        for sibling_pattern in sibling_job_configs:
-            # remove sweep for nested setup
-            del sibling_job_configs[sibling_pattern]["sweep"]
-
-        # Add sibling metadata for ${sibling.*} interpolations
-
-        cmdline_overrides_siblings = config_to_cmdline(
-            {
-                "sibling": {
-                    sibling_job["stage"]: sibling_job
-                    for sibling_job in sibling_job_configs.values()
-                }
-            },
-            override="++",
-        )
-
-        job_parameters = (
-            list(config_setup.override)
-            + cmdline_overrides_siblings
-            + [f"++index={point_idx}"]
-            + sum(
-                [
-                    param_to_cmdlines(key, value, prefix="")
-                    for key, value in point.parameters.items()
-                ],
-                start=[],
-            )
-        )
-        resolved = load_config_reference(
-            config_dir=config_setup.config_dir,
-            ref=config_setup.config_ref,
-            overrides=job_parameters,
-        )
-        resolved = asdict(
-            parse_config(
-                RootConfig,
-                {
-                    **asdict(resolved),
-                    "project_name": config.project.name,
-                },
-            )
-        )
-
-        # these are fixed from the config and not dependent on downstream data, exe
-        job_name = resolved["project"]["name"]
-        output_dir = str(Path(resolved["project"]["base_output_dir"]))
-        # this should not contain slurm template arguments
-        log_path_current = str(Path(resolved["project"]["log_path_current"]))
-
-        # this can include template arguments for slurm
-        log_path = str(Path(resolved["project"]["log_path"]))
-
-        job_config = resolved.get("job", {})
-
-        # Extract start/cancel conditions from resolved config
-        start_conditions = job_config.get("start_conditions", [])
-        cancel_conditions = job_config.get("cancel_conditions", [])
-
-        start_condition_cmd = job_config.get("start_condition_cmd")
-        start_condition_interval = job_config.get("start_condition_interval_seconds")
-        termination_string = resolved.get("monitoring", {}).get("termination_string")
-        termination_command = resolved.get("monitoring", {}).get("termination_command")
-        inactivity_threshold = job_config.get("inactivity_threshold_seconds")
-        if inactivity_threshold is None:
-            inactivity_threshold = resolved.get("monitoring", {}).get(
-                "inactivity_threshold_seconds"
-            )
-
-        # Create JobPlan
-        job = JobPlan(
-            name=job_name,
-            parameters=job_parameters,
-            output_dir=output_dir,
-            log_path=log_path,
-            log_path_current=log_path_current,
-            output_paths=[],
-            start_condition_cmd=start_condition_cmd,
-            start_condition_interval_seconds=start_condition_interval,
-            start_conditions=start_conditions,
-            cancel_conditions=cancel_conditions,
-            termination_string=termination_string,
-            termination_command=termination_command,
-            inactivity_threshold_seconds=inactivity_threshold,
-            sibling_pattern=None,
-            stage_name=resolved.get("stage"),
-        )
-
-        resolved_jobs[point_idx] = job
-
-    return list(resolved_jobs.values())
-
-
-def _flatten_dict(
-    nested_dict: dict[str, Any], parent_key: str = "", sep: str = "."
-) -> dict[str, Any]:
-    """Convert nested dict to flattened dict with dotted keys."""
-    items = []
-    for k, v in nested_dict.items():
-        new_key = f"{parent_key}{sep}{k}" if parent_key else k
-        if isinstance(v, dict):
-            items.extend(_flatten_dict(v, new_key, sep=sep).items())
-        else:
-            items.append((new_key, v))
-    return dict(items)
-
-
-__all__ = [
-    "extract_sibling_patterns",
-    "find_sibling_by_group_path",
-    "build_dependency_dag_from_points",
-    "resolve_sweep_with_dag",
-]
-
-
-if __name__ == "__main__":
-    import doctest
-
-    doctest.testmod(verbose=True)
