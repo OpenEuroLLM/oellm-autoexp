@@ -169,10 +169,10 @@ sweep:
           backend.megatron.aux.tokens: 50_000_000_000
           # Computed fields using ESCAPED OmegaConf interpolations (\\$ prevents early resolution)
           # These will be unescaped during sweep expansion and resolved with stage-specific values
-          backend.megatron.train_iters: "\\${oc.eval:\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)}"
+          backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
           backend.megatron.lr_wsd_decay_iters: 0  # No decay in stable phase
-          backend.megatron.aux.start_iter: "\\${oc.eval:int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\(1-\\${backend.megatron.aux.decay_fraction}\\)\\)}"
-          backend.megatron.aux.start_iter_round: "\\${oc.eval:int\\(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval}\\)*\\${backend.megatron.save_interval}}"
+          backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+          backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
 
         # NESTED GROUP: Cooldown/decay stages with shared defaults
         # All decay stages share: 20% decay, checkpoint loading, start/cancel conditions
@@ -184,10 +184,10 @@ sweep:
             # Computed fields using ESCAPED OmegaConf interpolations (\\$ prevents early resolution)
             # These will be unescaped during sweep expansion and resolved with stage-specific values (6B, 12B, 30B, 50B)
             # Each computation is self-contained (doesn't reference other computed values) to avoid ordering issues
-            backend.megatron.train_iters: "\\${oc.eval:\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)}"
-            backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\${backend.megatron.aux.decay_fraction}\\)}"
-            backend.megatron.aux.start_iter: "\\${oc.eval:int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\(1-\\${backend.megatron.aux.decay_fraction}\\)\\)}"
-            backend.megatron.aux.start_iter_round: "\\${oc.eval:int\\(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval}\\)*\\${backend.megatron.save_interval}}"
+            backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+            backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
+            backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+            backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
 
             # Checkpoint loading configuration
             backend.megatron.load: "\\${sibling.stable.project.base_output_dir}/checkpoints/"
