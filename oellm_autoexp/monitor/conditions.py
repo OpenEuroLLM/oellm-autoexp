@@ -1,163 +1,65 @@
-"""Conditions used to gate monitor actions."""
+"""Conditions used to gate monitor actions.
+
+This module now delegates to the 'monitor' library.
+"""
 
 from __future__ import annotations
 
 import logging
-import subprocess
-import time
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
-import re
-from collections.abc import Mapping
 
+from compoconf import register, ConfigInterface
 
-from compoconf import (
-    ConfigInterface,
-    RegistrableConfigInterface,
-    register,
-    register_interface,
+from monitor.conditions import (
+    AlwaysTrueCondition,
+    BaseCondition,
+    CommandCondition,
+    CompositeCondition,
+    ConditionContext,
+    ConditionResult,
+    CooldownCondition,
+    FileExistsCondition,
+    GlobExistsCondition,
+    MaxAttemptsCondition,
+    MetadataCondition,
+    MonitorConditionInterface,
 )
-
-from oellm_autoexp.monitor.events import EventRecord
 
 LOGGER = logging.getLogger(__name__)
 
-ConditionStatus = Literal["pass", "fail", "waiting"]
-
-
-_PATTERN = re.compile(r"(?<!\$)\{([^\{\}\$:]+)\}")
-
-
-def replace_braced_keys(s: str, values: Mapping[str, Any]) -> str:
-    def repl(m: re.Match[str]) -> str:
-        key = m.group(1)
-        return str(values[key]) if key in values else m.group(0)  # keep as-is if missing
-
-    return _PATTERN.sub(repl, s)
-
-
-@register_interface
-class MonitorConditionInterface(RegistrableConfigInterface):
-    """Registrable interface for monitor conditions."""
-
-
-@dataclass(kw_only=True)
-class ConditionResult:
-    status: ConditionStatus
-    message: str = ""
-
-    @property
-    def passed(self) -> bool:
-        return self.status == "pass"
-
-    @property
-    def waiting(self) -> bool:
-        return self.status == "waiting"
-
-
-@dataclass(kw_only=True)
-class ConditionContext:
-    event: EventRecord
-    job_metadata: dict[str, Any] = field(default_factory=dict)
-    attempts: int = 0
-    extra: dict[str, Any] = field(default_factory=dict)
-
-    @property
-    def variables(self) -> dict[str, Any]:
-        merged: dict[str, Any] = {}
-        merged.update(self.job_metadata)
-        merged.update(self.event.metadata)
-        merged.update(self.event.payload)
-        merged.setdefault("event_id", self.event.event_id)
-        merged.setdefault("event_name", self.event.name)
-        return merged
-
-    def render(self, template: str) -> str:
-        try:
-            return replace_braced_keys(template, self.variables)
-        except KeyError:
-            return template
-
-
-class BaseCondition(MonitorConditionInterface):
-    config: ConfigInterface
-
-    def __init__(self, config: ConfigInterface) -> None:
-        self.config = config
-
-    def check(self, context: ConditionContext) -> ConditionResult:  # pragma: no cover
-        raise NotImplementedError
+# Re-implement Condition Configs for accessibility
 
 
 @dataclass
-class AlwaysTrueConditionConfig(ConfigInterface):
+class ConditionConfigMixin:
+    persistent_pass: bool = False
+    persistent_fail: bool = False
+
+
+@dataclass
+class AlwaysTrueConditionConfig(ConditionConfigMixin, ConfigInterface):
     class_name: str = "AlwaysTrueCondition"
     message: str = ""
 
 
-@register
-class AlwaysTrueCondition(BaseCondition):
-    config: AlwaysTrueConditionConfig
-
-    def check(self, context: ConditionContext) -> ConditionResult:
-        return ConditionResult(status="pass", message=self.config.message)
-
-
 @dataclass
-class MaxAttemptsConditionConfig(ConfigInterface):
+class MaxAttemptsConditionConfig(ConditionConfigMixin, ConfigInterface):
     class_name: str = "MaxAttemptsCondition"
     max_attempts: int = 1
 
 
-@register
-class MaxAttemptsCondition(BaseCondition):
-    config: MaxAttemptsConditionConfig
-
-    def check(self, context: ConditionContext) -> ConditionResult:
-        if context.attempts < self.config.max_attempts:
-            return ConditionResult(status="pass")
-        return ConditionResult(
-            status="fail",
-            message=f"attempts {context.attempts} >= limit {self.config.max_attempts}",
-        )
-
-
 @dataclass
-class CooldownConditionConfig(ConfigInterface):
+class CooldownConditionConfig(ConditionConfigMixin, ConfigInterface):
     class_name: str = "CooldownCondition"
     cooldown_seconds: float = 60.0
     note: str | None = None
 
 
-@register
-class CooldownCondition(BaseCondition):
-    config: CooldownConditionConfig
-
-    def check(self, context: ConditionContext) -> ConditionResult:
-        last_ts = context.event.metadata.get("last_action_ts", context.event.last_seen_ts)
-        elapsed = time.time() - float(last_ts)
-        if elapsed >= self.config.cooldown_seconds:
-            return ConditionResult(status="pass")
-        remaining = self.config.cooldown_seconds - elapsed
-        return ConditionResult(
-            status="waiting",
-            message=f"cooldown {remaining:.1f}s remaining",
-        )
-
-
-def _check_for_predicate(
-    predicate,
-    *,
-    waiting_message: str,
-) -> ConditionResult:
-    if predicate():
-        return ConditionResult(status="pass")
-    return ConditionResult(status="waiting", message=waiting_message)
-
-
 @dataclass
-class FileExistsConditionConfig(ConfigInterface):
+class FileExistsConditionConfig(ConditionConfigMixin, ConfigInterface):
     class_name: str = "FileExistsCondition"
     path: str = ""
     blocking: bool = False
@@ -165,28 +67,8 @@ class FileExistsConditionConfig(ConfigInterface):
     poll_interval_seconds: float = 5.0
 
 
-@register
-class FileExistsCondition(BaseCondition):
-    config: FileExistsConditionConfig
-
-    def check(self, context: ConditionContext) -> ConditionResult:
-        rendered = context.render(self.config.path)
-        target = Path(rendered).expanduser()
-
-        def predicate() -> bool:
-            return target.exists()
-
-        return _check_for_predicate(
-            predicate,
-            blocking=self.config.blocking,
-            timeout_seconds=self.config.timeout_seconds,
-            poll_interval_seconds=self.config.poll_interval_seconds,
-            waiting_message=f"file {target} missing",
-        )
-
-
 @dataclass
-class GlobExistsConditionConfig(ConfigInterface):
+class GlobExistsConditionConfig(ConditionConfigMixin, ConfigInterface):
     class_name: str = "GlobExistsCondition"
     pattern: str = ""
     min_matches: int = 1
@@ -195,127 +77,35 @@ class GlobExistsConditionConfig(ConfigInterface):
     poll_interval_seconds: float = 5.0
 
 
-@register
-class GlobExistsCondition(BaseCondition):
-    config: GlobExistsConditionConfig
-
-    def check(self, context: ConditionContext) -> ConditionResult:
-        rendered = context.render(self.config.pattern)
-        path = Path(rendered).expanduser()
-
-        def predicate() -> bool:
-            return len(list(path.parent.glob(path.name))) >= self.config.min_matches
-
-        return _check_for_predicate(
-            predicate,
-            waiting_message=f"glob {rendered} missing",
-        )
-
-
 @dataclass
-class CommandConditionConfig(ConfigInterface):
+class CommandConditionConfig(ConditionConfigMixin, ConfigInterface):
     class_name: str = "CommandCondition"
     command: list[str] = field(default_factory=list)
 
 
-@register
-class CommandCondition(BaseCondition):
-    config: CommandConditionConfig
-
-    def check(self, context: ConditionContext) -> ConditionResult:
-        if not self.config.command:
-            return ConditionResult(status="fail", message="no command supplied")
-        rendered = [context.render(segment) for segment in self.config.command]
-        proc = subprocess.run(rendered, capture_output=True, text=True)
-        if proc.returncode == 0:
-            return ConditionResult(status="pass")
-        return ConditionResult(
-            status="fail",
-            message=f"command exited with {proc.returncode}: {proc.stderr.strip()}",
-        )
-
-
 @dataclass
-class CompositeConditionConfig(ConfigInterface):
+class CompositeConditionConfig(ConditionConfigMixin, ConfigInterface):
     class_name: str = "CompositeCondition"
     mode: Literal["all", "any"] = "all"
-    conditions: list[MonitorConditionInterface.cfgtype] = field(default_factory=list)
-
-
-@register
-class CompositeCondition(BaseCondition):
-    config: CompositeConditionConfig
-
-    def __init__(self, config: CompositeConditionConfig) -> None:
-        super().__init__(config)
-        self._children = [
-            condition.instantiate(MonitorConditionInterface) for condition in config.conditions
-        ]
-
-    def check(self, context: ConditionContext) -> ConditionResult:
-        results: list[ConditionResult] = [child.check(context) for child in self._children]
-        if self.config.mode == "all":
-            if all(result.passed for result in results):
-                return ConditionResult(status="pass")
-            waiting = next((r for r in results if r.waiting), None)
-            if waiting:
-                return waiting
-            failed = next((r for r in results if not r.passed), None)
-            return failed or ConditionResult(status="fail", message="unknown composite failure")
-
-        # mode == "any"
-        if any(result.passed for result in results):
-            return ConditionResult(status="pass")
-        waiting = next((r for r in results if r.waiting), None)
-        if waiting:
-            return waiting
-        return ConditionResult(status="fail", message="all child conditions failed")
+    conditions: list[Any] = field(default_factory=list)
 
 
 @dataclass
-class MetadataConditionConfig(ConfigInterface):
+class MetadataConditionConfig(ConditionConfigMixin, ConfigInterface):
     class_name: str = "MetadataCondition"
     key: str = ""
     equals: Any | None = None
     within: list[Any] | None = None
 
 
-@register
-class MetadataCondition(BaseCondition):
-    config: MetadataConditionConfig
-
-    def check(self, context: ConditionContext) -> ConditionResult:
-        if not self.config.key:
-            return ConditionResult(status="fail", message="metadata key missing")
-        value = context.event.metadata.get(self.config.key)
-        if value is None:
-            return ConditionResult(
-                status="fail", message=f"metadata key '{self.config.key}' not present"
-            )
-        if self.config.equals is not None and value != self.config.equals:
-            return ConditionResult(
-                status="fail",
-                message=f"metadata key '{self.config.key}' != {self.config.equals!r}",
-            )
-        if self.config.within is not None and value not in self.config.within:
-            return ConditionResult(
-                status="fail",
-                message=f"metadata key '{self.config.key}' not in {self.config.within!r}",
-            )
-        return ConditionResult(status="pass")
+# Re-implement SLURM-specific conditions
 
 
 @dataclass
-class SlurmStateConditionConfig(ConfigInterface):
-    """Check if a job (by name) is in a specific SLURM state.
-
-    Used for cancel_conditions to detect when a sibling job has failed.
-    Requires 'slurm_snapshot' in context.extra to check job states.
-    """
-
+class SlurmStateConditionConfig(ConditionConfigMixin, ConfigInterface):
     class_name: str = "SlurmStateCondition"
-    job_name: str = ""  # Name of the job to check (supports {var} interpolation)
-    state: str = "FAILED"  # SLURM state to match (FAILED, CANCELLED, TIMEOUT, etc.)
+    job_name: str = ""
+    state: str = "FAILED"
 
 
 @register
@@ -324,53 +114,48 @@ class SlurmStateCondition(BaseCondition):
 
     def check(self, context: ConditionContext) -> ConditionResult:
         if not self.config.job_name:
-            return ConditionResult(status="fail", message="job_name not specified")
+            return ConditionResult(passed=False, message="job_name not specified")
 
         rendered_name = context.render(self.config.job_name)
         target_state = self.config.state.upper()
 
-        # Get SLURM snapshot from context.extra (must be provided by caller)
+        # job_states_by_name passed in context.extra
         job_states = context.extra.get("job_states_by_name", {})
-
-        # Look up job state by name
         job_state = job_states.get(rendered_name)
+
         if job_state is None:
-            # Job not found in snapshot - could be completed/removed
-            # Check if we're looking for terminal states
+            # Job not found
             if target_state in {"FAILED", "CANCELLED", "TIMEOUT", "COMPLETED"}:
-                # Job disappeared - might have failed, return waiting
+                # If checking for terminal state, missing job is ambiguous (could be old)
+                # We treat it as not passed (waiting)
                 return ConditionResult(
-                    status="waiting",
+                    passed=False,
                     message=f"job '{rendered_name}' not found in SLURM queue",
                 )
+            # If checking for running state, missing means failed
             return ConditionResult(
-                status="fail",
+                passed=False,
                 message=f"job '{rendered_name}' not found",
             )
 
         if job_state == target_state:
             return ConditionResult(
-                status="pass",
+                passed=True,
                 message=f"job '{rendered_name}' is in state {target_state}",
             )
 
         return ConditionResult(
-            status="fail",
+            passed=False,
             message=f"job '{rendered_name}' is in state {job_state}, not {target_state}",
         )
 
 
 @dataclass
-class LogPatternConditionConfig(ConfigInterface):
-    """Check if a log file contains a specific pattern (regex).
-
-    Used for cancel_conditions to detect errors in sibling job logs.
-    """
-
+class LogPatternConditionConfig(ConditionConfigMixin, ConfigInterface):
     class_name: str = "LogPatternCondition"
-    log_path: str = ""  # Path to log file (supports {var} interpolation)
-    pattern: str = ""  # Regex pattern to search for
-    tail_lines: int = 1000  # Only check last N lines for efficiency
+    log_path: str = ""
+    pattern: str = ""
+    tail_lines: int = 1000
 
 
 @register
@@ -379,28 +164,28 @@ class LogPatternCondition(BaseCondition):
 
     def check(self, context: ConditionContext) -> ConditionResult:
         if not self.config.log_path:
-            return ConditionResult(status="fail", message="log_path not specified")
+            return ConditionResult(passed=False, message="log_path not specified")
         if not self.config.pattern:
-            return ConditionResult(status="fail", message="pattern not specified")
+            return ConditionResult(passed=False, message="pattern not specified")
 
         rendered_path = context.render(self.config.log_path)
         log_file = Path(rendered_path).expanduser()
 
         if not log_file.exists():
             return ConditionResult(
-                status="fail",
+                passed=False,
                 message=f"log file '{log_file}' does not exist",
             )
 
         try:
-            # Read last N lines efficiently
             with open(log_file, encoding="utf-8", errors="replace") as f:
+                # Efficiently read last N lines
                 lines = f.readlines()
                 tail = lines[-self.config.tail_lines :] if lines else []
                 content = "".join(tail)
         except OSError as exc:
             return ConditionResult(
-                status="fail",
+                passed=False,
                 message=f"failed to read log file: {exc}",
             )
 
@@ -408,29 +193,39 @@ class LogPatternCondition(BaseCondition):
         match = pattern.search(content)
         if match:
             return ConditionResult(
-                status="pass",
-                message=f"pattern '{self.config.pattern}' found in log: {match.group()[:100]}",
+                passed=True,
+                message=f"pattern '{self.config.pattern}' found in log",
             )
 
         return ConditionResult(
-            status="fail",
+            passed=False,
             message=f"pattern '{self.config.pattern}' not found in log",
         )
 
 
 __all__ = [
-    "MonitorConditionInterface",
+    "AlwaysTrueCondition",
+    "AlwaysTrueConditionConfig",
+    "BaseCondition",
+    "CommandCondition",
+    "CommandConditionConfig",
+    "CompositeCondition",
+    "CompositeConditionConfig",
     "ConditionContext",
     "ConditionResult",
-    "ConditionStatus",
-    "AlwaysTrueCondition",
-    "MaxAttemptsCondition",
     "CooldownCondition",
+    "CooldownConditionConfig",
     "FileExistsCondition",
+    "FileExistsConditionConfig",
     "GlobExistsCondition",
-    "CommandCondition",
-    "CompositeCondition",
-    "MetadataCondition",
-    "SlurmStateCondition",
+    "GlobExistsConditionConfig",
     "LogPatternCondition",
+    "LogPatternConditionConfig",
+    "MaxAttemptsCondition",
+    "MaxAttemptsConditionConfig",
+    "MetadataCondition",
+    "MetadataConditionConfig",
+    "MonitorConditionInterface",
+    "SlurmStateCondition",
+    "SlurmStateConditionConfig",
 ]

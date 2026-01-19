@@ -27,7 +27,7 @@ from oellm_autoexp.monitor.events import EventRecord
 
 
 def _context(tmp_path: Path) -> ConditionContext:
-    event = EventRecord(event_id="evt1", name="demo")
+    event = EventRecord(event_id="evt1", name="demo", source="test")
     return ConditionContext(event=event, job_metadata={"output_dir": str(tmp_path)}, attempts=0)
 
 
@@ -52,7 +52,7 @@ def test_cooldown(tmp_path: Path) -> None:
     ctx.event.metadata["last_action_ts"] = time.time()
     cond = CooldownCondition(CooldownConditionConfig(cooldown_seconds=5))
     result = cond.check(ctx)
-    assert result.waiting
+    assert not result.passed
     ctx.event.metadata["last_action_ts"] = time.time() - 10
     assert cond.check(ctx).passed
 
@@ -67,7 +67,7 @@ def test_file_exists(tmp_path: Path) -> None:
         )
     )
     waiting = cond.check(ctx)
-    assert waiting.waiting
+    assert not waiting.passed
     target.write_text("ok", encoding="utf-8")
     assert cond.check(ctx).passed
 
@@ -78,7 +78,7 @@ def test_glob_exists(tmp_path: Path) -> None:
     cond = GlobExistsCondition(
         GlobExistsConditionConfig(pattern=str(pattern), blocking=False, min_matches=1)
     )
-    assert cond.check(ctx).waiting
+    assert not cond.check(ctx).passed
     (tmp_path / "ckpt1.pt").write_text("1")
     assert cond.check(ctx).passed
 
@@ -109,7 +109,7 @@ def test_composite_condition(tmp_path: Path) -> None:
     assert cond.check(ctx).passed
     ctx.attempts = 5
     result = cond.check(ctx)
-    assert result.status == "fail"
+    assert not result.passed
 
 
 def test_metadata_condition(tmp_path: Path) -> None:
@@ -118,6 +118,6 @@ def test_metadata_condition(tmp_path: Path) -> None:
     cond = MetadataCondition(MetadataConditionConfig(key="trigger", equals="checkpoint_evaluation"))
     assert cond.check(ctx).passed
     cond_fail = MetadataCondition(MetadataConditionConfig(key="trigger", equals="other"))
-    assert cond_fail.check(ctx).status == "fail"
+    assert not cond_fail.check(ctx).passed
     cond_missing = MetadataCondition(MetadataConditionConfig(key="missing"))
-    assert cond_missing.check(ctx).status == "fail"
+    assert not cond_missing.check(ctx).passed

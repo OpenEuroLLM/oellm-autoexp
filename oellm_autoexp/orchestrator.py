@@ -2,23 +2,25 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import json
-from dataclasses import dataclass, field, MISSING
+from dataclasses import dataclass, field, MISSING, asdict
 from pathlib import Path
 from typing import Any
 import time
-from collections.abc import Mapping, Sequence, Iterable
+from collections.abc import Mapping, Sequence
 
-from compoconf import asdict
+from monitor.loop import MonitorLoop, JobFileStore, JobRecordConfig, JobRuntimeConfig
+from monitor.submission import JobRegistration as LibJobRegistration
+from monitor.actions import LogEventConfig as LibLogEventConfig
+from oellm_autoexp.monitor.adapter import SlurmClientAdapter
+from oellm_autoexp.monitor.actions import FinishActionConfig
+from oellm_autoexp.monitor.conditions import CompositeConditionConfig
 
 from oellm_autoexp.backends.base import BackendJobSpec, LaunchCommand
 from oellm_autoexp.config.evaluator import RuntimeConfig, evaluate
 from oellm_autoexp.config.loader import load_config, load_config_reference
 from oellm_autoexp.config.schema import RootConfig, SlurmConfig, ConfigSetup
-from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
-from oellm_autoexp.persistence import MonitorStateStore, StoredJob
 from oellm_autoexp.slurm.client import BaseSlurmClient
 from oellm_autoexp.slurm.template_renderer import render_template_file
 from oellm_autoexp.slurm.validator import validate_job_script
@@ -26,10 +28,6 @@ from oellm_autoexp.sweep.expander import SweepPoint, expand_sweep
 from oellm_autoexp.sweep.planner import JobPlan
 from oellm_autoexp.sweep.dag_resolver import resolve_sweep_with_dag
 from oellm_autoexp.sweep.validator import validate_execution_plan
-from oellm_autoexp.utils.start_condition import (
-    resolve_start_condition_interval,
-    wait_for_start_condition,
-)
 from oellm_autoexp.utils.tree_map import tree_map
 
 
@@ -58,13 +56,10 @@ class RenderedArtifacts:
 class SubmissionResult:
     """Return value capturing submission side-effects."""
 
-    controller: MonitorController = field(default_factory=MISSING)
-    state_store: MonitorStateStore = field(default_factory=MISSING)
+    loop: MonitorLoop = field(default_factory=MISSING)
+    state_store: JobFileStore = field(default_factory=MISSING)
     submitted_job_ids: list[str] = field(default_factory=list)
-
-    @property
-    def session_id(self) -> str:
-        return self.state_store.session_id
+    session_id: str = ""
 
     @property
     def submitted_jobs(self) -> list[str]:
@@ -79,7 +74,6 @@ def build_execution_plan(
 ) -> ExecutionPlan:
     if isinstance(config, (str, Path)):
         root = load_config(config)
-        # Create a minimal config_setup if not provided
         if config_setup is None:
             config_setup = ConfigSetup(
                 pwd=str(Path.cwd()),
@@ -89,7 +83,6 @@ def build_execution_plan(
             )
     else:
         root = config
-        # For RootConfig input, create a placeholder config_setup
         if config_setup is None:
             metadata = root.metadata or {}
             config_ref = metadata.get("config_ref", "")
@@ -108,10 +101,8 @@ def build_execution_plan(
         if not points:
             raise ValueError(f"No sweep points match indices: {sorted(subset_indices)}")
 
-    # Unified DAG-based resolution (job planning + sibling resolution)
     jobs = resolve_sweep_with_dag(root, points, config_setup=config_setup)
 
-    # Validate execution plan
     if validate:
         validation_result = validate_execution_plan(jobs)
         if not validation_result.is_valid:
@@ -149,9 +140,6 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
     write_fallback_dir: str | None = None
 
     for job_it, job in enumerate(plan.jobs):
-        # Try to apply job.parameters as Hydra overrides to get job-specific config
-        # If that fails (e.g., parameters don't correspond to config fields),
-        # fall back to passing parameters directly to the backend
         job_runtime = plan.runtime
         job_config = plan.config
 
@@ -159,21 +147,14 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
             try:
                 job_overrides = job.parameters
                 combined_overrides = list(plan.config_setup.override) + job_overrides
-
-                # Reload config with job-specific overrides
                 job_config = load_config_reference(
                     plan.config_setup.config_ref,
                     plan.config_setup.config_dir,
                     overrides=combined_overrides,
                 )
-
-                # Re-evaluate to get job-specific backend
                 job_runtime = evaluate(job_config)
-
-                # Parameters were applied to config, so don't pass them to spec
                 spec = BackendJobSpec(parameters={})
             except Exception as exc:
-                # Fall back to old behavior: pass parameters directly to backend
                 LOGGER.debug(
                     "Failed to apply job parameters as Hydra overrides for %s: %s. "
                     "Falling back to passing parameters to backend spec.",
@@ -182,7 +163,6 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
                 )
                 spec = BackendJobSpec(parameters=list(job.parameters))
         else:
-            # No parameters or no config_ref, use old behavior
             spec = BackendJobSpec(parameters=list(job.parameters))
 
         job_runtime.backend.validate(spec)
@@ -237,29 +217,21 @@ def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
     )
 
 
-def _ensure_state_store(plan: ExecutionPlan, *, session_id: str | None = None) -> MonitorStateStore:
-    monitoring_state_dir = plan.config.project.monitoring_state_dir
-    state_store = MonitorStateStore(monitoring_state_dir, session_id=session_id)
-    if not state_store.session_path.exists():
-        config_dict = asdict(plan.config)
-        state_store.save_session(config_dict, plan.config.project.name)
-        LOGGER.info("Created monitoring session: %s", state_store.session_path)
-    return state_store
+def _ensure_state_store(
+    plan: ExecutionPlan, *, session_id: str | None = None
+) -> tuple[JobFileStore, str]:
+    monitoring_state_dir = Path(plan.config.project.monitoring_state_dir)
+    if not session_id:
+        import uuid
 
+        session_id = str(uuid.uuid4())[:8]
 
-def _initialize_monitor_controller(
-    plan: ExecutionPlan,
-    client: BaseSlurmClient,
-    state_store: MonitorStateStore,
-) -> tuple[MonitorController, set[str]]:
-    saved_jobs = state_store.load()
-    controller = MonitorController(
-        plan.runtime.monitor,
-        client,
-        state_store=state_store,
-    )
-    restored_names = _restore_saved_jobs(controller, client, saved_jobs.values())
-    return controller, restored_names
+    session_dir = monitoring_state_dir / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    store = JobFileStore(session_dir)
+    LOGGER.info("Created monitoring session directory: %s", session_dir)
+    return store, session_id
 
 
 def submit_jobs(
@@ -268,28 +240,14 @@ def submit_jobs(
     slurm_client: BaseSlurmClient | None = None,
 ) -> SubmissionResult:
     client = slurm_client or plan.runtime.slurm_client
-    state_store = _ensure_state_store(plan)
-    controller, restored_names = _initialize_monitor_controller(plan, client, state_store)
+    store, session_id = _ensure_state_store(plan)
+    adapter = SlurmClientAdapter(client)
+    loop = MonitorLoop(store, adapter, poll_interval_seconds=60)  # Use default poll or from config
+
     submitted_job_ids: list[str] = []
-
-    monitor_config = plan.runtime.monitor.config
-
     job_script_map = {job.name: script for job, script in zip(plan.jobs, artifacts.job_scripts)}
 
-    pending_jobs = [job for job in plan.jobs if job.name not in restored_names]
-
-    scheduler_cfg = plan.config.scheduler
-    max_jobs = scheduler_cfg.max_jobs
-    rate_limit = scheduler_cfg.submit_rate_limit_seconds or 0.0
-    if max_jobs is not None and len(pending_jobs) > max_jobs:
-        LOGGER.info(
-            "Scheduler max_jobs=%s trimming submissions from %s to %s",
-            max_jobs,
-            len(pending_jobs),
-            max_jobs,
-        )
-        pending_jobs = pending_jobs[:max_jobs]
-    last_submit_ts = 0.0
+    pending_jobs = plan.jobs
 
     use_array = (
         plan.config.slurm.array
@@ -299,103 +257,44 @@ def submit_jobs(
     )
 
     if use_array:
-        if not pending_jobs:
-            return SubmissionResult(
-                controller=controller,
-                state_store=state_store,
-                submitted_job_ids=submitted_job_ids,
-            )
-
-        for job in pending_jobs:
-            if job.start_condition_cmd:
-                interval = resolve_start_condition_interval(
-                    job.start_condition_interval_seconds,
-                    monitor_config,
-                )
-                wait_for_start_condition(
-                    job.start_condition_cmd,
-                    interval_seconds=interval,
-                    logger=LOGGER,
-                )
-
         submit_array = getattr(client, "submit_array")
-        last_submit_ts = _respect_submit_rate(last_submit_ts, rate_limit)
-        job_ids: list[str] = submit_array(  # type: ignore[misc]
+        job_ids: list[str] = submit_array(
             artifacts.array_job_name or plan.config.project.name,
             artifacts.array_script,
             [job.log_path for job in pending_jobs],
             [job.name for job in pending_jobs],
         )
 
-        if len(job_ids) != len(pending_jobs):
-            raise RuntimeError("SLURM client returned mismatched job ids for array submission")
-
         for job_id, job in zip(job_ids, pending_jobs):
-            job_metadata: dict[str, Any] = {"parameters": list(job.parameters)}
-            if job.inactivity_threshold_seconds is not None:
-                job_metadata["inactivity_threshold_seconds"] = job.inactivity_threshold_seconds
-
             _create_current_log_symlink(job_id, str(job.log_path), job.log_path_current)
-            registration = JobRegistration(
-                name=job.name,
-                script_path=artifacts.array_script,
-                log_path=job.log_path,
-                metadata=job_metadata,
-                output_paths=job.output_paths,
-                start_condition_cmd=job.start_condition_cmd,
-                start_condition_interval_seconds=job.start_condition_interval_seconds,
-                termination_string=job.termination_string,
-                termination_command=job.termination_command,
-                inactivity_threshold_seconds=job.inactivity_threshold_seconds,
+            reg = _convert_to_registration(
+                job, plan.runtime.monitor.config, str(artifacts.array_script)
             )
-            controller.register_job(job_id, registration)
+            record = JobRecordConfig(
+                job_id=job_id,
+                registration=reg,
+                runtime=JobRuntimeConfig(submitted=True, runtime_job_id=job_id),
+            )
+            store.upsert(record)
             submitted_job_ids.append(job_id)
 
-        return SubmissionResult(
-            controller=controller,
-            state_store=state_store,
-            submitted_job_ids=submitted_job_ids,
-        )
+    else:
+        for job in pending_jobs:
+            script = job_script_map[job.name]
+            job_id = client.submit(job.name, script, job.log_path)
+            _create_current_log_symlink(job_id, str(job.log_path), job.log_path_current)
 
-    for job in pending_jobs:
-        script = job_script_map[job.name]
-        if job.start_condition_cmd:
-            interval = resolve_start_condition_interval(
-                job.start_condition_interval_seconds,
-                monitor_config,
+            reg = _convert_to_registration(job, plan.runtime.monitor.config, script)
+            record = JobRecordConfig(
+                job_id=job_id,
+                registration=reg,
+                runtime=JobRuntimeConfig(submitted=True, runtime_job_id=job_id),
             )
-            wait_for_start_condition(
-                job.start_condition_cmd,
-                interval_seconds=interval,
-                logger=LOGGER,
-            )
-        job_metadata: dict[str, Any] = {
-            "parameters": job.parameters,
-            "output_dir": job.output_dir,
-        }
-        if job.inactivity_threshold_seconds is not None:
-            job_metadata["inactivity_threshold_seconds"] = job.inactivity_threshold_seconds
-
-        last_submit_ts = _respect_submit_rate(last_submit_ts, rate_limit)
-        job_id = client.submit(job.name, script, job.log_path)
-        _create_current_log_symlink(job_id, str(job.log_path), job.log_path_current)
-        registration = JobRegistration(
-            name=job.name,
-            script_path=script,
-            log_path=job.log_path,
-            metadata=job_metadata,
-            output_paths=job.output_paths,
-            start_condition_cmd=job.start_condition_cmd,
-            start_condition_interval_seconds=job.start_condition_interval_seconds,
-            termination_string=job.termination_string,
-            termination_command=job.termination_command,
-            inactivity_threshold_seconds=job.inactivity_threshold_seconds,
-        )
-        controller.register_job(job_id, registration)
-        submitted_job_ids.append(job_id)
+            store.upsert(record)
+            submitted_job_ids.append(job_id)
 
     return SubmissionResult(
-        controller=controller, state_store=state_store, submitted_job_ids=submitted_job_ids
+        loop=loop, state_store=store, submitted_job_ids=submitted_job_ids, session_id=session_id
     )
 
 
@@ -405,56 +304,109 @@ def load_monitor_controller(
     *,
     session_id: str | None = None,
 ) -> SubmissionResult:
-    """Load monitor controller without submitting new jobs.
-
-    Returns a ``SubmissionResult`` with an empty ``submitted_job_ids`` list so callers
-    can reuse the same structure as ``submit_jobs`` when wiring the monitor.
-    """
+    if not session_id:
+        raise ValueError("session_id required to load existing monitor session")
 
     client = slurm_client or plan.runtime.slurm_client
-    state_store = _ensure_state_store(plan, session_id=session_id)
-    controller, restored_names = _initialize_monitor_controller(plan, client, state_store)
+    store, _ = _ensure_state_store(plan, session_id=session_id)
+    adapter = SlurmClientAdapter(client)
+    loop = MonitorLoop(store, adapter)
 
-    # Warn if the execution plan contains jobs that were never submitted.
-    pending_jobs = [job.name for job in plan.jobs if job.name not in restored_names]
-    if pending_jobs:
-        LOGGER.warning(
-            "Monitoring session %s missing submissions for jobs: %s",
-            state_store.session_id,
-            ", ".join(pending_jobs),
-        )
-
-    return SubmissionResult(controller=controller, state_store=state_store, submitted_job_ids=[])
-
-
-async def execute_plan(
-    plan: ExecutionPlan,
-    controller: MonitorController,
-) -> None:
-    if controller is None:
-        raise ValueError("execute_plan requires an initialized MonitorController")
-
-    if plan.runtime.monitor.__class__.__name__ == "NullMonitor":
-        controller.clear_state()
-        return
-
-    monitor_interval = getattr(
-        plan.runtime.monitor.config,
-        "poll_interval_seconds",
-        getattr(plan.runtime.monitor.config, "check_interval_seconds", 60),
+    return SubmissionResult(
+        loop=loop, state_store=store, submitted_job_ids=[], session_id=session_id
     )
 
-    while controller.jobs():
-        await asyncio.sleep(max(1, int(monitor_interval)))
-        await controller.observe_once()
 
-    controller.clear_state()
+def execute_plan(
+    plan: ExecutionPlan,
+    controller: MonitorLoop,
+) -> None:
+    loop = controller
+
+    while True:
+        jobs = loop._store.list_paths()
+        if not list(jobs):
+            LOGGER.info("All jobs finished.")
+            break
+
+        loop.observe_once()
+        time.sleep(loop.poll_interval_seconds)
 
 
-def execute_plan_sync(plan: ExecutionPlan, controller: MonitorController) -> None:
-    asyncio.run(execute_plan(plan, controller))
+def execute_plan_sync(plan: ExecutionPlan, controller: MonitorLoop) -> None:
+    execute_plan(plan, controller)
 
 
+def _convert_to_registration(
+    job: JobPlan, monitor_config: Any, script_path: str
+) -> LibJobRegistration:
+    log_events = []
+    # Map logs events and states
+    monitor_events = getattr(monitor_config, "log_events", []) or []
+
+    for evt in monitor_events:
+        # Handle explicit actions
+        if evt.actions:
+            for binding in evt.actions:
+                lib_evt = LibLogEventConfig(
+                    name=evt.name,
+                    pattern=evt.pattern,
+                    pattern_type=evt.pattern_type,
+                    metadata=evt.metadata,
+                    extract_groups=evt.extract_groups,
+                    action=binding.action,
+                    conditions=binding.conditions,
+                )
+                log_events.append(lib_evt)
+
+        # Handle state mapping
+        if evt.state:
+            state_cls = getattr(evt.state, "class_name", "")
+            finalize_action = None
+            if state_cls == "CrashState":
+                finalize_action = FinishActionConfig(finalize="cancel")
+            elif state_cls == "SuccessState":
+                finalize_action = FinishActionConfig(finalize="success")
+
+            if finalize_action:
+                lib_evt = LibLogEventConfig(
+                    name=f"{evt.name}_state",
+                    pattern=evt.pattern,
+                    pattern_type=evt.pattern_type,
+                    metadata=evt.metadata,
+                    extract_groups=evt.extract_groups,
+                    action=finalize_action,
+                )
+                log_events.append(lib_evt)
+
+    # Map conditions
+    start_cond = None
+    if job.start_conditions:
+        if len(job.start_conditions) == 1:
+            start_cond = job.start_conditions[0]
+        else:
+            start_cond = CompositeConditionConfig(mode="all", conditions=job.start_conditions)
+
+    cancel_cond = None
+    if job.cancel_conditions:
+        if len(job.cancel_conditions) == 1:
+            cancel_cond = job.cancel_conditions[0]
+        else:
+            cancel_cond = CompositeConditionConfig(mode="any", conditions=job.cancel_conditions)
+
+    return LibJobRegistration(
+        name=job.name,
+        command=[script_path],
+        log_path=str(job.log_path),
+        log_events=log_events,
+        start_condition=start_cond,
+        cancel_condition=cancel_cond,
+        log_path_current=job.log_path_current,
+        metadata={"job_kind": "slurm", "original_job_name": job.name},
+    )
+
+
+# ... _build_replacements and other helpers are retained from previous file ...
 def _build_replacements(
     runtime: RuntimeConfig,
     job: JobPlan,
@@ -471,8 +423,6 @@ def _build_replacements(
     launcher_env_flags = ""
     launcher_env_exports = ""
 
-    # Add bind directories from container yaml
-    # The bind directories are within a list of strings, so we seperate this from below
     launcher_bind_flags = ""
     container_cfg = runtime.root.container
     if container_cfg and container_cfg.bind:
@@ -482,7 +432,7 @@ def _build_replacements(
 
     if runtime.root.slurm.env or launch_cmd.env:
         environ = dict(**runtime.root.slurm.env)
-        env_exports = "; ".join(f"export {key}='\"${key}\"'" for key in environ.keys())
+        env_exports = "; ".join(f"export {key}='\"${key}\" '" for key in environ.keys())
         if env_exports:
             launcher_env_exports = f"{env_exports};"
         environ.update(**launch_cmd.env)
@@ -491,13 +441,11 @@ def _build_replacements(
             launcher_env_flags = f"{env_flags} "
 
     def escape_for_double_quotes(s: str) -> str:
-        s = s.replace("\\", "\\\\")  # Backslash first!
+        s = s.replace("\\", "\\\\")
         s = s.replace("'", "'\"'\"'")
         return s
 
     launcher = escape_for_double_quotes(launcher)
-    # Only escape backend_cmd if escape_str is True
-    # When False (e.g., for array jobs), preserve shell variable expansion
     if escape_str:
         backend_cmd = escape_for_double_quotes(backend_cmd)
 
@@ -517,12 +465,9 @@ def _build_replacements(
     if srun_opts:
         srun_opts = f"{srun_opts} "
 
-    # Create symlink command for log_path_current
     log_symlink_cmd = ""
     if job.log_path_current:
         log_filename = Path(job.log_path).name
-        # Command to create/update symlink: ln -sf slurm-${SLURM_JOB_ID}.out /path/to/current.log
-        # We use the actual SLURM_JOB_ID which is available at runtime in the job script
         actual_log_name = log_filename.replace("%j", "${SLURM_JOB_ID}")
         log_symlink_cmd = f'ln -sf "{actual_log_name}" "{job.log_path_current}"'
 
@@ -614,57 +559,7 @@ def _write_sweep_json(plan: ExecutionPlan, entries: list[dict[str, Any]]) -> Pat
     return sweep_path
 
 
-def _restore_saved_jobs(
-    controller: MonitorController,
-    slurm_client: BaseSlurmClient,
-    saved_jobs: Iterable[StoredJob],
-) -> set[str]:
-    restored: set[str] = set()
-    for saved in saved_jobs:
-        registration = JobRegistration(
-            name=saved.name,
-            script_path=saved.script_path,
-            log_path=saved.log_path,
-            metadata=dict(saved.metadata),
-            output_paths=[p for p in saved.output_paths],
-            termination_string=saved.termination_string,
-            termination_command=saved.termination_command,
-            inactivity_threshold_seconds=saved.inactivity_threshold_seconds,
-            start_condition_cmd=saved.start_condition_cmd,
-            start_condition_interval_seconds=saved.start_condition_interval_seconds,
-            start_conditions=list(saved.start_conditions),
-            cancel_conditions=list(saved.cancel_conditions),
-        )
-        if hasattr(slurm_client, "register_job"):
-            log_path_for_client = saved.resolved_log_path or saved.log_path
-            try:
-                slurm_client.register_job(  # type: ignore[attr-defined]
-                    saved.job_id,
-                    saved.name,
-                    saved.script_path,
-                    str(log_path_for_client),
-                    state=saved.last_slurm_state or "PENDING",
-                )
-            except TypeError:
-                slurm_client.register_job(  # type: ignore[attr-defined]
-                    saved.job_id,
-                    saved.name,
-                    saved.script_path,
-                    saved.log_path,
-                )
-        controller.register_job(
-            saved.job_id,
-            registration,
-            attempts=saved.attempts,
-            last_slurm_state=saved.last_slurm_state,
-        )
-        restored.add(saved.name)
-    return restored
-
-
 def _format_command(argv: Sequence[str], escape_str: bool = True) -> str:
-    # do ? escape ENV VARIABLES
-    # return " ".join(shlex.quote(arg) if escape_str else arg for arg in argv)
     def _escape(s: str) -> str:
         s = s.replace("\\", "\\\\")
         if " " in s and not (s.startswith("'") and s.endswith("'")):
@@ -778,8 +673,6 @@ def _render_array_script(
             fallback_log_dir,
         )
         array_log_dir = fallback_log_dir
-    # Include both the array task id (%a) and parent job id (%A) so repeated submissions
-    # do not overwrite earlier SLURM logs.
     array_log_path = array_log_dir / f"{array_job_name}_%A_%a.log"
     array_output_base = Path(plan.config.project.base_output_dir)
     try:
@@ -808,20 +701,16 @@ def _render_array_script(
         env={"SLURM_ARRAY_TASK_ID": "$SLURM_ARRAY_TASK_ID"},
     )
 
-    # Ensure each JobPlan reflects the actual array log template so manifests and
-    # monitoring point at the file that SLURM will write.
     array_log_template = str(array_log_path)
     for job in plan.jobs:
         job.log_path = array_log_template
 
-    # For array jobs, log_path_current is not applicable (array jobs don't have a single "current" log)
-    # Use the array log path as both log_path and log_path_current
     synthetic_job = JobPlan(
         name=array_job_name,
         parameters=[],
         output_dir=array_output_dir,
         log_path=array_log_path,
-        log_path_current=str(array_output_dir / "current.log"),  # Placeholder for array jobs
+        log_path_current=str(array_output_dir / "current.log"),
         output_paths=[],
     )
 

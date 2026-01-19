@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from oellm_autoexp.monitor.action_queue import ActionQueue
 from oellm_autoexp.monitor.actions import (
     ActionContext,
     LogAction,
@@ -21,7 +20,7 @@ from oellm_autoexp.monitor.events import EventRecord
 
 
 def _context(tmp_path: Path) -> ActionContext:
-    event = EventRecord(event_id="evt1", name="demo")
+    event = EventRecord(event_id="evt1", name="demo", source="test")
     return ActionContext(event=event, job_metadata={}, workspace=tmp_path)
 
 
@@ -63,31 +62,3 @@ def test_log_message_action_alias(tmp_path: Path) -> None:
     action = LogMessageAction(LogMessageActionConfig(message="legacy ok"))
     result = action.execute(ctx)
     assert result.status == "success"
-
-
-def test_action_queue_roundtrip(tmp_path: Path) -> None:
-    queue_dir = tmp_path / "actions"
-    queue = ActionQueue(queue_dir)
-    record = queue.enqueue("LogAction", {"message": "hi"}, event_id="evt", metadata={"k": "v"})
-    event_dir = queue_dir / "evt"
-    assert (event_dir / f"{record.queue_id}.json").exists()
-    listed = queue.list()
-    assert len(listed) == 1
-    assert listed[0].queue_id == record.queue_id
-    claimed = queue.claim_next()
-    assert claimed is not None
-    queue.mark_done(claimed.queue_id, status="done", result={"status": "ok"})
-    assert not event_dir.exists() or not any(event_dir.glob("*.json"))
-    assert not queue.list()
-
-
-def test_action_queue_retry(tmp_path: Path) -> None:
-    queue = ActionQueue(tmp_path)
-    record = queue.enqueue("LogAction", {"message": "hi"}, event_id="evt")
-    claimed = queue.claim_next()
-    assert claimed is not None
-    assert claimed.status == "running"
-    assert queue.retry(record.queue_id)
-    reloaded = queue.load(record.queue_id)
-    assert reloaded is not None
-    assert reloaded.status == "pending"

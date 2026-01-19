@@ -993,9 +993,6 @@ Available template variables:
 Instead of blocking orchestrator with `start_condition_cmd`:
 
 ```
-Old (blocking):
-  orchestrator.submit() → wait_for_start_condition() [BLOCKS] → slurm.submit()
-
 New (async):
   orchestrator.submit() → register job as "waiting"
   monitor loop → check start_conditions → slurm.submit() when ready
