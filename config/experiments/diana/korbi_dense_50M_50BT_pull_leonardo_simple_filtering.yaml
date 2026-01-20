@@ -149,7 +149,10 @@ slurm:
 sweep:
   # Outer level: product (combines hyperparameters × stages)
   type: product
-
+  # Test filter
+  filter: "\\${oc.eval:'not (\\${backend.megatron.lr} > 2e-3 and \\${backend.megatron.global_batch_size} > 512)'}"
+  # # Keep only configurations that evaluate true: lr_warmup_iters <= 0.3 * train_iters
+  # filter: "\\${oc.eval:\"\\${backend.megatron.lr_warmup_iters}<=(0.3*((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})))\"}"
   groups:
     # GROUP 1: Hyperparameter configurations (list of two product grids)
     - type: list
@@ -162,7 +165,7 @@ sweep:
     # Grid 1: 4 configurations (1 lr × 4 batch sizes)
     - type: product
       params:
-        backend.megatron.lr: [1.e-4]
+        backend.megatron.lr: [1.e-4, 5.e-3]
         backend.megatron.global_batch_size: [128, 256, 512, 1024]
 
     # GROUP 2: Multi-stage training (stable + cooldown/decay)
@@ -226,9 +229,6 @@ sweep:
               backend.megatron.aux.tokens: 30_000_000_000
             - stage: decay50B
               backend.megatron.aux.tokens: 50_000_000_000
-
-  # Keep only configurations that evaluate true: lr_warmup_iters <= 0.3 * train_iters
-  filter: "\\${oc.eval:\"\\${backend.megatron.lr_warmup_iters}<=(0.3*((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})))\"}"
 
 # Summary of what this creates:
 # - GROUP 1: 4 hyperparameter configurations
