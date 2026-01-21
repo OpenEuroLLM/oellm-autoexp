@@ -7,7 +7,9 @@ files.
 
 from __future__ import annotations
 
-from pathlib import Path
+# Setup library paths first
+import oellm_autoexp._libs  # noqa: F401
+
 from dataclasses import dataclass, field, MISSING
 from typing import Any
 
@@ -15,11 +17,13 @@ from compoconf import (
     ConfigInterface,
     RegistrableConfigInterface,
     register_interface,
-    NonStrictDataclass,
 )
 
 # Import base classes from hydra_staged_sweep
-from hydra_staged_sweep.config.schema import StagedSweepRoot
+from hydra_staged_sweep.config.schema import StagedSweepRoot, SweepConfig
+from monitor.submission import SlurmJobConfig, SlurmConfig
+from monitor.local_client import LocalCommandClientConfig
+from monitor.slurm_client import SlurmClientConfig
 
 # ---------------------------------------------------------------------------
 # Core interfaces
@@ -34,16 +38,6 @@ class BackendInterface(RegistrableConfigInterface):
     backend-specific validation. They receive a config dataclass defined via
     ``BackendInterface.cfgtype``.
     """
-
-
-@register_interface
-class MonitorInterface(RegistrableConfigInterface):
-    """Monitoring implementation responsible for observing job execution."""
-
-
-@register_interface
-class SlurmClientInterface(RegistrableConfigInterface):
-    """Abstraction layer over SLURM command interactions."""
 
 
 # ---------------------------------------------------------------------------
@@ -76,23 +70,6 @@ class ProjectConfig(ConfigInterface):
     resume: bool = True
 
 
-# SweepConfig imported from hydra_staged_sweep above
-
-
-@dataclass(init=False)
-class SrunConfig(NonStrictDataclass):
-    pass
-
-
-@dataclass(init=False)
-class SbatchConfig(NonStrictDataclass):
-    account: str | None = None
-    nodes: int | None = None
-    partition: str | None = None
-    qos: str | None = None
-    time: str = "0-01:00:00"
-
-
 @dataclass(kw_only=True)
 class ContainerConfig(ConfigInterface):
     """Container runtime configuration for reproducible execution."""
@@ -104,51 +81,6 @@ class ContainerConfig(ConfigInterface):
     env: dict[str, str] = field(default_factory=dict)
     pwd: str | None = None
     python: str = "python"
-
-
-@dataclass(kw_only=True)
-class SlurmConfig(ConfigInterface):
-    """Parameters for SBATCH rendering and submission."""
-
-    class_name: str = "Slurm"
-    template_path: str = field(default_factory=MISSING)
-    script_dir: str = field(default_factory=MISSING)
-    log_dir: str = field(default_factory=MISSING)
-    array: bool = True
-    submit_cmd: str = "sbatch"
-    squeue_cmd: str = "squeue"
-    cancel_cmd: str = "scancel"
-    sacct_cmd: str = "sacct"
-    launcher_cmd: str = ""
-    srun_opts: str = ""
-    launcher_env_passthrough: bool = False
-    env: dict[str, Any] = field(default_factory=dict)
-    srun: SrunConfig = field(default_factory=SrunConfig)
-    sbatch: SbatchConfig = field(default_factory=SbatchConfig)
-    sbatch_overrides: dict[str, Any] = field(default_factory=dict)
-    sbatch_extra_directives: list[str] = field(default_factory=list)
-    test_only: bool = False
-    client: SlurmClientInterface.cfgtype | None = None
-
-
-@dataclass(kw_only=True)
-class SchedulerConfig(ConfigInterface):
-    """Optional scheduler-level throttling and limits."""
-
-    class_name: str = "Scheduler"
-    max_jobs: int | None = None
-    submit_rate_limit_seconds: float | None = None
-
-
-@dataclass(kw_only=True)
-class JobConfig(ConfigInterface):
-    """Per-job lifecycle configuration."""
-
-    start_condition_cmd: str | None = None
-    start_condition_interval_seconds: int | None = None
-    start_conditions: list[dict[str, Any]] = field(default_factory=list)
-    cancel_conditions: list[dict[str, Any]] = field(default_factory=list)
-    inactivity_threshold_seconds: int | None = None
 
 
 @dataclass(kw_only=True)
@@ -164,20 +96,29 @@ class RootConfig(StagedSweepRoot):
     Additional oellm-specific fields below:
     """
 
-    class_name: str = "Root"
     # oellm-specific configuration sections
-    project: ProjectConfig = field(default_factory=MISSING)
-    slurm: SlurmConfig = field(default_factory=MISSING)
-    monitoring: MonitorInterface.cfgtype = field(default_factory=MISSING)
-    job: JobConfig = field(default_factory=JobConfig)
-    backend: BackendInterface.cfgtype = field(default_factory=MISSING)
-    container: ContainerConfig | None = None
-    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    project: ProjectConfig = field(
+        default_factory=MISSING
+    )  # defines project core parts (directories, name)
+    slurm: SlurmConfig = field(default_factory=MISSING)  # defines slurm setup
+    job: SlurmJobConfig = field(
+        default_factory=MISSING
+    )  # defines job interactions (when to start, cancel, finish)
+    backend: BackendInterface.cfgtype = field(
+        default_factory=MISSING
+    )  # defines what is actually running
+    container: ContainerConfig | None = None  # defines container setup
+    sweep: SweepConfig | None = (
+        None  # defines a surrounding sweep (already inherited from StagedSweepRoot)
+    )
+
     metadata: dict[str, Any] = field(default_factory=dict)
-    # Runtime fields set during orchestration
-    project_name: str = ""
-    job_name: str = ""
-    output_dir: str = ""
+
+
+@dataclass(kw_only=True)
+class RunEnvConfig:
+    slurm_client: SlurmClientConfig
+    local_client: LocalCommandClientConfig
 
 
 @dataclass
@@ -193,20 +134,8 @@ class ConfigSetup:
     config_path: str | None = None
     config_dir: str | None = None
     override: list[str] = field(default_factory=list)
-    # Backward compatibility field
-    config_ref: str | None = field(default=None, init=True)
 
     def __post_init__(self):
-        # Backward compatibility: convert config_ref to config_name/config_path
-        if self.config_ref is not None:
-            ref_path = Path(self.config_ref)
-            if ref_path.exists():
-                self.config_path = str(ref_path)
-                self.config_name = None
-            else:
-                self.config_name = self.config_ref
-                self.config_path = None
-
         # Ensure at least one way to specify config is provided
         if self.config_path is None and self.config_name is None:
-            raise ValueError("Either config_path, config_name, or config_ref must be specified")
+            raise ValueError("Either config_path or config_name must be specified")

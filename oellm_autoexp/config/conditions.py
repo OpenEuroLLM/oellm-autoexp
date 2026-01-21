@@ -40,41 +40,25 @@ class ConditionConfigMixin:
 
 
 @dataclass
-class AlwaysTrueConditionConfig(ConditionConfigMixin, ConfigInterface):
-    class_name: str = "AlwaysTrueCondition"
-    message: str = ""
-
-
-@dataclass
-class MaxAttemptsConditionConfig(ConditionConfigMixin, ConfigInterface):
-    class_name: str = "MaxAttemptsCondition"
-    max_attempts: int = 1
-
-
-@dataclass
-class CooldownConditionConfig(ConditionConfigMixin, ConfigInterface):
-    class_name: str = "CooldownCondition"
-    cooldown_seconds: float = 60.0
-    note: str | None = None
-
-
-@dataclass
-class FileExistsConditionConfig(ConditionConfigMixin, ConfigInterface):
-    class_name: str = "FileExistsCondition"
+class BlockingFileExistsConditionConfig(ConditionConfigMixin, ConfigInterface):
+    class_name: str = "BlockingFileExistsCondition"
     path: str = ""
-    blocking: bool = False
+    blocking: bool = True
     timeout_seconds: float = 600.0
     poll_interval_seconds: float = 5.0
 
 
-@dataclass
-class GlobExistsConditionConfig(ConditionConfigMixin, ConfigInterface):
-    class_name: str = "GlobExistsCondition"
-    pattern: str = ""
-    min_matches: int = 1
-    blocking: bool = False
-    timeout_seconds: float = 600.0
-    poll_interval_seconds: float = 5.0
+@register
+class BlockingFileExistsCondition(BaseCondition):
+    config: BlockingFileExistsConditionConfig
+
+    def check(self, context: ConditionContext) -> ConditionResult:
+        rendered = context.render(self.config.path)
+        target = Path(rendered).expanduser()
+
+        if target.exists():
+            return ConditionResult(passed=True)
+        return ConditionResult(passed=False, message=f"file {target} missing")
 
 
 @dataclass
@@ -205,8 +189,9 @@ class LogPatternCondition(BaseCondition):
 
 __all__ = [
     "AlwaysTrueCondition",
-    "AlwaysTrueConditionConfig",
     "BaseCondition",
+    "BlockingFileExistsCondition",
+    "BlockingFileExistsConditionConfig",
     "CommandCondition",
     "CommandConditionConfig",
     "CompositeCondition",
@@ -214,15 +199,11 @@ __all__ = [
     "ConditionContext",
     "ConditionResult",
     "CooldownCondition",
-    "CooldownConditionConfig",
     "FileExistsCondition",
-    "FileExistsConditionConfig",
     "GlobExistsCondition",
-    "GlobExistsConditionConfig",
     "LogPatternCondition",
     "LogPatternConditionConfig",
     "MaxAttemptsCondition",
-    "MaxAttemptsConditionConfig",
     "MetadataCondition",
     "MetadataConditionConfig",
     "MonitorConditionInterface",

@@ -3,7 +3,6 @@ defaults:
   - backend: megatron_torchrun
   - container: none
   - slurm: base
-  - monitoring: default
   - sweep: none
   - scheduler: default
   - job: default

@@ -4,7 +4,6 @@ from collections.abc import Mapping
 
 from oellm_autoexp.backends.megatron_args import MegatronArgMetadata, MegatronActionSpec
 
-
 MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "account_for_embedding_in_pipeline_split": MegatronArgMetadata(
         arg_type=bool,
@@ -1452,14 +1451,6 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help="learning rate multiplier for head during finetuning",
         choices=None,
         nargs=None,
-        element_type=None,
-    ),
-    "help": MegatronArgMetadata(
-        arg_type=None,
-        default=None,
-        help="show this help message and exit",
-        choices=None,
-        nargs=0,
         element_type=None,
     ),
     "heterogeneous_layers_config_encoded_json": MegatronArgMetadata(

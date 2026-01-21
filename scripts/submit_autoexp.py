@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> None:
     submitted_job_ids = submit_pending_jobs(runtime, controller, dry_run=args.dry_run)
 
     if submitted_job_ids:
-        jobs_by_id = {state.job_id: state for state in controller.jobs()}
+        jobs_by_id = {state.job_id: state for state in runtime.state_store.load_all()}
         for job_id in submitted_job_ids:
             state = jobs_by_id.get(job_id)
             job_name = state.name if state else "unknown"
@@ -66,18 +66,18 @@ def main(argv: list[str] | None = None) -> None:
     else:
         print("No new jobs submitted; monitoring session already contains all jobs.", flush=True)
 
-    print(f"Monitoring session: {runtime.state_store.session_id}", flush=True)
+    print(f"Monitoring session: {runtime.manifest.plan_id}", flush=True)
 
     if args.dry_run:
         return
 
     if args.no_monitor:
-        cmd = f"{sys.executable} scripts/monitor_autoexp.py --session {runtime.state_store.session_id}"
+        cmd = f"{sys.executable} scripts/monitor_autoexp.py --session {runtime.manifest.plan_id}"
         print("Skipping monitoring (--no-monitor).", flush=True)
         print(f"To monitor later run: {cmd}", flush=True)
         return
 
-    monitor_cmd = f"{sys.executable} scripts/monitor_autoexp.py --session {runtime.state_store.session_id} --verbose"
+    monitor_cmd = f"{sys.executable} scripts/monitor_autoexp.py --session {runtime.manifest.plan_id} --verbose"
 
     try:
         run_monitoring(runtime, controller)

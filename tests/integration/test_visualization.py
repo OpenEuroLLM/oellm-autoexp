@@ -26,6 +26,7 @@ def test_group_jobs_by_stage():
     """Test grouping jobs by stage parameter."""
     jobs = [
         JobPlan(
+            config=None,
             name="job1_stable",
             parameters=["stage=stable"],
             output_dir="/outputs/job1_stable",
@@ -34,6 +35,7 @@ def test_group_jobs_by_stage():
             stage_name="stable",
         ),
         JobPlan(
+            config=None,
             name="job2_stable",
             parameters=["stage=stable"],
             output_dir="/outputs/job2_stable",
@@ -42,6 +44,7 @@ def test_group_jobs_by_stage():
             stage_name="stable",
         ),
         JobPlan(
+            config=None,
             name="job1_cooldown",
             parameters=["stage=cooldown"],
             output_dir="/outputs/job1_cooldown",
@@ -62,6 +65,7 @@ def test_extract_hyperparameters():
     """Test extraction of hyperparameter values."""
     jobs = [
         JobPlan(
+            config=None,
             name="job1",
             parameters=["backend.dummy=1", "stage=stable"],
             output_dir="/outputs/job1",
@@ -70,6 +74,7 @@ def test_extract_hyperparameters():
             stage_name="stable",
         ),
         JobPlan(
+            config=None,
             name="job2",
             parameters=["backend.dummy=2", "stage=stable"],
             output_dir="/outputs/job2",
@@ -167,7 +172,7 @@ def test_visualize_plan_output(tmp_path):
             "client": {"class_name": "FakeSlurmClient"},
         },
         "monitoring": {
-            "class_name": "NullMonitor",
+            "class_name": "SlurmLogMonitor",
             "log_path": str(log_dir / "current.log"),
         },
         "backend": {"class_name": "NullBackend", "base_command": ["echo", "0"]},
@@ -224,6 +229,7 @@ def test_multi_stage_visualization_with_conditions():
     jobs = [
         # Stable stage
         JobPlan(
+            config=None,
             name="dummy1_stable",
             parameters=["stage=stable", "backend.dummy=1"],
             output_dir="/outputs/dummy1_stable",
@@ -234,6 +240,7 @@ def test_multi_stage_visualization_with_conditions():
         ),
         # Cooldown stage with conditions
         JobPlan(
+            config=None,
             name="dummy1_cooldown",
             parameters=["stage=cooldown", "backend.dummy=2"],
             output_dir="/outputs/dummy1_cooldown",
@@ -289,6 +296,7 @@ def test_visualization_with_many_jobs():
     # Create many jobs in one stage
     jobs = [
         JobPlan(
+            config=None,
             name=f"job_{i}_stable",
             parameters=["stage=stable", f"idx={i}"],
             output_dir=f"/outputs/job_{i}_stable",

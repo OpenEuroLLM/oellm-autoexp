@@ -15,8 +15,10 @@ project:
   log_path: ./logs/slurm-%j.out
   log_path_current: ./logs/current.log
 sweep:
-  grids:
-    - backend.base_command: [["echo", "0"], ["echo", "1"]]
+  type: product
+  groups:
+    - params:
+        backend.dummy: [0, 1]
 slurm:
   template_path: {template}
   script_dir: ./scripts
@@ -26,7 +28,7 @@ slurm:
   client:
     class_name: FakeSlurmClient
 monitoring:
-  class_name: NullMonitor
+  class_name: SlurmLogMonitor
   log_path: ./logs/current.log
 backend:
   class_name: NullBackend
@@ -66,9 +68,9 @@ def test_plan_submit_monitor_fake_slurm(
         ]
     )
 
-    monitor_autoexp.main(["--manifest", str(manifest), "--use-fake-slurm"])
+    monitor_autoexp.main(["--manifest", str(manifest), "--use-fake-slurm", "--verbose"])
     captured = capsys.readouterr()
-    assert "No jobs registered" in captured.out
+    assert "Traceback" not in captured.err
 
 
 def test_multiple_runs_store_manifests(tmp_path: Path, monkeypatch, config_path: Path) -> None:

@@ -27,29 +27,6 @@ _REGISTRY_SENTINEL = {"loaded": False}
 _DEPRECATED_MONITORING_KEYS = ("log_signals", "policies")
 
 
-def _escape_placeholders(obj):
-    """Recursively escape {{...}} and \\$ that should not resolve during config
-    loading.
-
-    This is FULLY GENERIC - works for ANY escaped interpolation, not just specific patterns.
-    """
-    if isinstance(obj, str):
-        # Replace {{env_flags}} with a placeholder (for Python's str.format())
-        result = obj.replace("{{env_flags}}", "__PLACEHOLDER_ENV_FLAGS__").replace(
-            "{{env_exports}}", "__PLACEHOLDER_ENV_EXPORTS__"
-        )
-        # Generic: Replace ALL \\$ with placeholder
-        # This works for ANY escaped interpolation: \\${sibling.*}, \\${aux.*}, \\${slurm.*}, etc.
-        # No need to know what's being escaped!
-        # result = result.replace("\\$", "__ESCAPED_DOLLAR__")
-        return result
-    elif isinstance(obj, dict):
-        return {k: _escape_placeholders(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [_escape_placeholders(v) for v in obj]
-    return obj
-
-
 def _ensure_monitoring_state_dir(root: schema.RootConfig) -> None:
     """Assign a deterministic monitoring_state_dir when unspecified."""
     if root.project.monitoring_state_dir is not None:
