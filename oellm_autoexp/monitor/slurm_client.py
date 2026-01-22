@@ -98,8 +98,7 @@ class SlurmClient(JobClientInterface):
             List of job_ids for submitted tasks
         """
         generate_script(job.slurm)
-        validate_job_script(job.slurm.name)
-        validate_job_script()
+        validate_job_script(job.slurm.script_path, job.slurm.name)
         job_ids = self._client.submit_array(job.slurm, indices)
         if job.log_path_current:
             for job_id in job_ids:

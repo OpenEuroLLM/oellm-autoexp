@@ -7,8 +7,8 @@ class_name: MegatronBackend
 python_cmd: "python"
 full_schema_validation: false
 launcher_script: "./submodules/Megatron-LM/pretrain_gpt.py"
-dist_cmd: "${.python_cmd} ${.launcher_script}"
-torchrun_args:
+dist_cmd: "${.launcher_script}"
+torchrun_args: {}
 
 env:
   PYTHONPATH: ".:submodules/Megatron-LM"

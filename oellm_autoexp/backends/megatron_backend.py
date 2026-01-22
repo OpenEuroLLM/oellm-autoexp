@@ -31,13 +31,12 @@ In SLURM environments with containers:
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass, field
 from typing import Any
 
-from compoconf import ConfigInterface, NonStrictDataclass, asdict, register
+from compoconf import NonStrictDataclass, asdict, register, MissingValue
 
-from oellm_autoexp.backends.base import BaseBackend, BackendJobSpec, LaunchCommand
+from oellm_autoexp.backends.base import BaseBackend, BaseBackendConfig
 from oellm_autoexp.backends.megatron.cli_metadata import (
     MEGATRON_ACTION_SPECS,
     MEGATRON_ARG_METADATA,
@@ -45,40 +44,52 @@ from oellm_autoexp.backends.megatron.cli_metadata import (
 from oellm_autoexp.backends.megatron.config_schema import MegatronConfig
 
 from oellm_autoexp.backends.megatron_args import MegatronArgMetadata, build_cmdline_args
+from oellm_autoexp.argparse_schema.resolver import register_argparse_resolver
+
 
 LOGGER = logging.getLogger(__name__)
 
+register_argparse_resolver(
+    "argsmegatron",
+    arg_metadata=dict(MEGATRON_ARG_METADATA),
+    action_specs=dict(MEGATRON_ACTION_SPECS),
+    skip_defaults=True,
+)
+
+register_argparse_resolver(
+    "cliargs",
+)
+
 
 @dataclass(init=False)
-class MegatronBackendConfig(NonStrictDataclass, ConfigInterface):
+class MegatronBackendConfig(NonStrictDataclass, BaseBackendConfig):
     """Configuration for the Megatron backend."""
 
     class_name: str = "MegatronBackend"
-    launcher_script: str = "scripts/run_megatron.sh"
+    launcher_script: str = "./submodules/Megatron-LM/pretrain_gpt.py"
     env: dict[str, str] = field(default_factory=dict)
-    extra_cli_args: list[str] = field(default_factory=list)
-    use_torchrun: bool = False
     full_schema_validation: bool = False
-    torchrun_args: dict[str, Any] = field(default_factory=dict)
+    torchrun_args: dict[str, str] = field(default_factory=dict)
+    dist_cmd: str
     megatron: MegatronConfig = field(default_factory=MegatronConfig)
-    differential_cmd: bool = True  # if to only pass non-default arguments
     python_cmd: str = "python"
+    full_cmd: str = MissingValue
+    aux: dict[str, Any] = field(default_factory=dict)  # to define convenience variables
 
-    def cli_arguments(self) -> dict[str, Any]:
-        """Return Megatron arguments from config and dynamic extras."""
-
-        args: dict[str, Any] = {}
-
-        if isinstance(self.megatron, MegatronConfig):
-            for key, value in asdict(self.megatron).items():
-                if value is not None:
-                    args[key] = value
-
-        for key, value in self._extras.items():  # type: ignore[attr-defined]
-            if value is not None:
-                args[key] = value
-
-        return args
+    def __post_init__(self):
+        # this should be set via the config
+        if self.full_cmd is MissingValue:
+            self.full_cmd = " ".join(
+                self.python_cmd,
+                *(() if not self.torchrun_args else self.torchrun_args),
+                self.launcher_script,
+                *build_cmdline_args(
+                    self.megatron,
+                    dict(MEGATRON_ARG_METADATA),
+                    dict(MEGATRON_ACTION_SPECS),
+                    skip_defaults=True,
+                ),
+            )
 
 
 @register
@@ -106,16 +117,16 @@ class MegatronBackend(BaseBackend):
             self._action_specs = get_action_specs(self._parser)
             self._schema_only = False
 
-    def validate(self, spec: BackendJobSpec) -> None:
+    def validate(self) -> None:
+        args = asdict(self.megatron)
+        args.remove("_non_strict")
         if self._schema_only:
             # Schema-only validation: basic type checking against MegatronConfig
-            merged_args = self._merge_args(spec)
-            self._validate_schema_only(merged_args)
+            self._validate_schema_only(args)
         else:
             # Full validation using Megatron parser
-            merged_args = self._merge_args(spec)
             cli_args = build_cmdline_args(
-                merged_args, self._arg_metadata, self._action_specs, skip_defaults=True
+                args, self._arg_metadata, self._action_specs, skip_defaults=True
             )
             try:
                 self._parser.parse_args(cli_args)
@@ -133,46 +144,8 @@ class MegatronBackend(BaseBackend):
                 # Allow unknown args in schema-only mode (they'll be validated in container)
                 pass
 
-    def build_launch_command(self, spec: BackendJobSpec) -> LaunchCommand:
-        merged_args = self._merge_args(spec)
-
-        cli_args = build_cmdline_args(
-            merged_args,
-            self._arg_metadata,
-            self._action_specs,
-            skip_defaults=self.config.differential_cmd,
-        )
-
-        argv = [*str(self.config.launcher_script).split(), *cli_args, *self.config.extra_cli_args]
-
-        # Prepend torchrun if enabled
-        if self.config.use_torchrun:
-            torchrun_argv = self._build_torchrun_args()
-            argv = [*torchrun_argv, *argv]
-
-        env = {**self.config.env}
-        return LaunchCommand(argv=argv, env=env)
-
-    def _build_torchrun_args(self) -> list[str]:
-        """Build torchrun command line arguments."""
-        args = [self.config.python_cmd, "-u", "-m", "torch.distributed.run"]
-
-        for key, value in self.config.torchrun_args.items():
-            key_formatted = key.replace("_", "-")
-            if isinstance(value, bool):
-                if value:
-                    args.append(f"--{key_formatted}")
-            elif value is not None:
-                args.append(f"--{key_formatted}")
-                args.append(str(value))
-
-        return args
-
-    def _merge_args(self, spec: BackendJobSpec) -> dict[str, Any]:
-        args: dict[str, Any] = {}
-        args.update(self._filter_megatron_args(self.config.cli_arguments()))
-        args.update(self._filter_megatron_args(spec.parameters))
-        return args
+    def build_launch_command(self) -> str:
+        return self.config.full_cmd
 
     def _filter_megatron_args(self, params: dict[str, Any]) -> dict[str, Any]:
         if self._schema_only:
@@ -201,50 +174,6 @@ class MegatronBackend(BaseBackend):
         return key
 
 
-@dataclass(init=False)
-class AutoMegatronBackendConfig(MegatronBackendConfig):
-    class_name: str = "AutoMegatronBackend"
-
-
-@register
-class AutoMegatronBackend(MegatronBackend):
-    config: AutoMegatronBackendConfig
-
-    def _merge_args(self, spec: BackendJobSpec) -> dict[str, Any]:
-        raw: dict[str, Any] = {}
-        raw.update(self.config.cli_arguments())
-        raw.update(spec.parameters)
-        normalized = {self._normalize_key(k): v for k, v in raw.items()}
-        converted = self._apply_convenience_arguments(normalized)
-        return self._filter_megatron_args(converted)
-
-    def _apply_convenience_arguments(self, args: dict[str, Any]) -> dict[str, Any]:
-        args = dict(args)
-
-        if "train_tokens" in args:
-            train_tokens = _normalize_int(args.pop("train_tokens"))
-            seq_length = _normalize_int(args.get("seq_length"))
-            global_batch = _normalize_int(args.get("global_batch_size"))
-            if seq_length and global_batch:
-                tokens_per_iter = seq_length * global_batch
-                if tokens_per_iter > 0:
-                    args["train_iters"] = math.ceil(train_tokens / tokens_per_iter)
-
-        if "lr_decay_fraction" in args:
-            fraction = float(args.pop("lr_decay_fraction"))
-            if "train_samples" in args:
-                args["lr_decay_samples"] = int(_normalize_int(args["train_samples"]) * fraction)
-            elif "train_iters" in args:
-                args["lr_decay_iters"] = int(_normalize_int(args["train_iters"]) * fraction)
-
-        if "lr_decay_iters" in args and "lr_wsd_decay_iters" not in args:
-            args["lr_wsd_decay_iters"] = args["lr_decay_iters"]
-        if "lr_decay_samples" in args and "lr_wsd_decay_samples" not in args:
-            args["lr_wsd_decay_samples"] = args["lr_decay_samples"]
-
-        return args
-
-
 def _normalize_int(value: Any) -> int:
     if value is None:
         return 0
@@ -260,6 +189,4 @@ def _normalize_int(value: Any) -> int:
 __all__ = [
     "MegatronBackendConfig",
     "MegatronBackend",
-    "AutoMegatronBackendConfig",
-    "AutoMegatronBackend",
 ]

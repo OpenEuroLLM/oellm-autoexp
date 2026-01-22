@@ -2,12 +2,8 @@ defaults:
   - base
   - _self_
 
-template_path: templates/juwels.sbatch
-launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \\\n\
- export LOCAL_ADDR=$(nslookup $(hostname | sed 's/.juwels//' )i \
-  | grep \"Address: \" | tail -n1 | awk '{print $2}') ; \
-  ${oc.select:container.runtime,apptainer} exec ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}}\
- --nv ${oc.select:container.image,container.sif}"
+template_path: templates/juwels_loop.sbatch
+launcher_cmd: "${oc.select:container.runtime,apptainer} exec --nv ${oc.select:container.image,container.sif}"
 srun:
   exclusive: true
   wait: 60

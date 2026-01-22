@@ -61,9 +61,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _default_manifest_path(base_output_dir: Path) -> Path:
+def _default_manifest_path(base_output_dir: str | Path) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    manifest_dir = base_output_dir / "manifests"
+    manifest_dir = Path(base_output_dir) / "manifests"
     manifest_dir.mkdir(parents=True, exist_ok=True)
     suffix = uuid4().hex[:6]
     return manifest_dir / f"plan_{timestamp}_{suffix}.json"
@@ -111,15 +111,15 @@ def _write_job_provenance(
     sanitized_env = _sanitize_env()
     base_payload = {
         "git": git_meta,
-        "command": args or sys.argv,
+        "command": {key: str(val) for key, val in vars(args).items()} or list(sys.argv),
         "overrides": overrides,
         "subset_indices": sorted(subset_indices),
         "plan": asdict(plan),
         "environment": sanitized_env,
     }
 
-    manifest_dir = _default_manifest_path(plan.config_setup.monitoring_state_dir)
-    with open(manifest_dir) as fp:
+    manifest_path = _default_manifest_path(plan.config_setup.monitoring_state_dir)
+    with open(manifest_path, "w") as fp:
         json.dump(base_payload, fp)
 
 
@@ -176,9 +176,9 @@ def main(argv: list[str] | None = None) -> None:
         overrides=args.overrides,
     )
 
-    submit_jobs(plan)
+    res = submit_jobs(plan)
 
-    execute_plan(plan)
+    execute_plan(plan, res.loop)
 
 
 if __name__ == "__main__":

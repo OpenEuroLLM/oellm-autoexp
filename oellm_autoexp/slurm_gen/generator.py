@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from compoconf import asdict
 from oellm_autoexp.slurm_gen.schema import SlurmConfig
 from oellm_autoexp.slurm_gen.template_renderer import render_template_file
 
@@ -13,6 +13,7 @@ from oellm_autoexp.slurm_gen.template_renderer import render_template_file
 def build_sbatch_directives(config: SlurmConfig) -> list[str]:
     directives: list[str] = []
     sbatch_values = asdict(config.sbatch)
+    del sbatch_values["_non_strict"]
     for key, value in sbatch_values.items():
         if value is None:
             continue

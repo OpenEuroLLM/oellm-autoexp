@@ -110,8 +110,8 @@ def extract_default_args(
 
 def build_cmdline_args(
     args: dict[str, Any],
-    metadata: Mapping[str, ArgMetadata],
-    action_specs: Mapping[str, ActionSpec],
+    metadata: Mapping[str, ArgMetadata] | None = None,
+    action_specs: Mapping[str, ActionSpec] | None = None,
     *,
     skip_defaults: bool = True,
     list_sep: str | None = None,
@@ -126,13 +126,26 @@ def build_cmdline_args(
         list_sep: If set, join list arguments with this separator into a single token.
                   If None (default), each list element becomes a separate token (space-separated).
     """
-    coerced = _coerce_arguments(args, metadata)
     cli_args: list[str] = []
-    for key, value in coerced.items():
-        spec = action_specs.get(key)
-        if not spec:
-            continue
-        cli_args.extend(_spec_to_cmdline(spec, value, skip_defaults, list_sep=list_sep))
+
+    if metadata is None:
+        for arg, argval in args.items():
+            arg = "--" + arg.replace("_", "-")
+            if isinstance(argval, bool) or argval is None:
+                if argval:
+                    cli_args.append(arg)
+            if list_sep:
+                cli_args.append(arg + list_sep + str(argval))
+            else:
+                cli_args.append(arg)
+                cli_args.append(str(argval))
+    else:
+        coerced = _coerce_arguments(args, metadata)
+        for key, value in coerced.items():
+            spec = action_specs.get(key)
+            if not spec:
+                continue
+            cli_args.extend(_spec_to_cmdline(spec, value, skip_defaults, list_sep=list_sep))
     return cli_args
 
 

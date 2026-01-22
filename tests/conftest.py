@@ -41,7 +41,7 @@ def ensure_megatron_stub(monkeypatch):
 @pytest.fixture(autouse=True)
 def patch_hydra_staged_sweep(monkeypatch):
     """Patch hydra_staged_sweep to fix list override syntax bug."""
-    import hydra_staged_sweep.dag_resolver as dag_resolver
+    import oellm_autoexp.hydra_staged_sweep.dag_resolver as dag_resolver
     from omegaconf import DictConfig, ListConfig
     from collections.abc import Mapping, Sequence
 

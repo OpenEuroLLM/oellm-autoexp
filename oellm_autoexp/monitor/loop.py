@@ -142,12 +142,14 @@ class MonitorLoop:
         slurm_client: JobClientProtocol | None = None,
         local_client: JobClientProtocol | None = None,
         poll_interval_seconds: float = 60.0,
+        show_poll_state: bool = True,
     ) -> None:
         _import_registry()
         self._store = store
         self._slurm_client = slurm_client
         self._local_client = local_client
         self.poll_interval_seconds = poll_interval_seconds
+        self.show_poll_state = show_poll_state
 
     def _get_client(self, job: JobRecordConfig) -> JobClientProtocol:
         """Get the appropriate client based on job configuration."""
@@ -231,6 +233,33 @@ class MonitorLoop:
                 continue
 
             self._store.upsert(job)
+
+        if self.show_poll_state:
+            statuses: dict[str, str] = {}
+            if self._slurm_client:
+                statuses.update(self._slurm_client.squeue())
+            if self._local_client:
+                statuses.update(self._local_client.squeue())
+
+            poll_state = {}
+            for job in self._store.load_all():
+                if self._check_finish(job):
+                    continue
+                runtime = job.runtime
+                if not runtime.submitted:
+                    poll_state[job.runtime.runtime_job_id] = {
+                        "state": "pending",
+                        "start_condition": job.definition.start_condition,
+                        "runtime": job.runtime,
+                    }
+                else:
+                    poll_state[job.runtime.runtime_job_id] = {
+                        "state": statuses.get(runtime_id),
+                        "cancel_condition": job.definition.cancel_condition,
+                        "runtime": job.runtime,
+                    }
+
+            LOGGER.info(f"[{time.time():0.6f}]" + f"Monitor Polling: {poll_state}")
 
     def _check_start(self, job: JobRecordConfig) -> bool:
         condition = job.definition.start_condition
@@ -625,6 +654,6 @@ def _apply_persistence(
 
 
 def _import_registry() -> None:
-    import monitor.actions  # noqa: F401
-    import monitor.conditions  # noqa: F401
-    import monitor.submission  # noqa: F401
+    import oellm_autoexp.monitor.actions  # noqa: F401
+    import oellm_autoexp.monitor.conditions  # noqa: F401
+    import oellm_autoexp.monitor.submission  # noqa: F401

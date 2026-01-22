@@ -16,7 +16,7 @@ from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
 from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
 from oellm_autoexp.monitor.submission import SlurmJobConfig
 
-from oellm_autoexp.backends.base import BackendJobSpec
+import oellm_autoexp.backends.megatron_backend  # noqa  - register
 from oellm_autoexp.config.schema import RootConfig, ConfigSetup, BackendInterface
 
 
@@ -152,28 +152,19 @@ def _build_job_record(plan: ExecutionPlan, job: JobPlan, session_id: str) -> Job
     if not isinstance(job.config, RootConfig):
         raise ValueError("JobPlan.config must be RootConfig")
 
-    point = plan.sweep_points.get(getattr(job.config, "index", None))
-    parameters = point.parameters if point else {}
-
     job_name = _resolve_job_name(job.config)
     job_id = job_name
 
     backend = job.config.backend.instantiate(BackendInterface)
-    spec = BackendJobSpec(parameters=parameters)
-    backend.validate(spec)
-    launch_cmd = backend.build_launch_command(spec)
-
-    merged_env = dict(job.config.slurm.env or {})
-    merged_env.update({str(k): str(v) for k, v in (launch_cmd.env or {}).items()})
-
+    launch_cmd = backend.build_launch_command()
     script_path = Path(job.config.slurm.script_dir) / f"{job_name}.sbatch"
     slurm_config = replace(
         job.config.slurm,
         name=job_name,
         script_path=str(script_path),
         log_path=str(job.config.job.log_path),
-        command=list(launch_cmd.argv),
-        env=merged_env,
+        command=[launch_cmd],
+        env=job.config.slurm.env,
     )
 
     base_job = job.config.job

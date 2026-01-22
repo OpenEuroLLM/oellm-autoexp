@@ -3,5 +3,6 @@ runtime: singularity
 bind: []
 env:
   WANDB_MODE: "offline"
+  MACHINE_NAME: "JUWELS"
   PYTHONPATH: "."
 python: "python"

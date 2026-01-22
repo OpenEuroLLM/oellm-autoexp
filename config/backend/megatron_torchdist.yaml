@@ -4,11 +4,11 @@ defaults:
 
 class_name: MegatronBackend
 
-python_cmd: "python"  # not used anyways
+python_cmd: ${container.python}
 full_schema_validation: false
 launcher_script: "./submodules/Megatron-LM/pretrain_gpt.py"
-dist_cmd: "torchrun ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n  %',' %',\
- ${oc.cliargs:${.torchrun_args}}}}\\\n   ${.launcher_script}"
+dist_cmd: "${.python_cmd} ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n  %',' %',\
+ ${oc.concat:['-u', '-m', 'torch.distributed.run'],${oc.cliargs:${.torchrun_args}}}}}\\\n   ${.launcher_script}"
 torchrun_args:
   nproc_per_node: ${slurm.sbatch.gpus_per_node}
   nnodes: ${slurm.sbatch.nodes}

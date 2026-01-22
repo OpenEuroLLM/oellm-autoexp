@@ -113,16 +113,16 @@ def build_loop(config: MonitorAppConfig) -> MonitorLoop:
 
 
 def _import_registry() -> None:
-    import monitor.actions  # noqa: F401
-    import monitor.conditions  # noqa: F401
-    import monitor.local_client  # noqa: F401
+    import oellm_autoexp.monitor.actions  # noqa: F401
+    import oellm_autoexp.monitor.conditions  # noqa: F401
+    import oellm_autoexp.monitor.local_client  # noqa: F401
 
     try:  # slurm_gen is optional
-        import monitor.slurm_client  # noqa: F401
+        import oellm_autoexp.monitor.slurm_client  # noqa: F401
     except ModuleNotFoundError as exc:  # pragma: no cover - depends on optional slurm_gen install
         if exc.name != "slurm_gen":
             raise
-    import monitor.submission  # noqa: F401
+    import oellm_autoexp.monitor.submission  # noqa: F401
 
 
 __all__ = [

@@ -21,3 +21,4 @@ sbatch:
   gres: "gpu:1"
   gpus_per_node: 4
   output: ${job.log_path}
+  job_name: ${job.name}

@@ -95,6 +95,10 @@ class RootConfig(StagedSweepRoot):
 
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self):
+        if self.container:
+            assert self.slurm.env["MACHINE_NAME"] == self.container.env["MACHINE_NAME"]
+
 
 @dataclass(kw_only=True)
 class RunEnvConfig:

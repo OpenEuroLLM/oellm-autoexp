@@ -15,7 +15,7 @@ ml ParaStationMPI/5.11.0-1
 ml ParaStationMPI/5.11.0-1-mt
 ml ScaLAPACK/2.2.0-fb
 
-echo "Launching {name} on JUWELS (Manual Loop)"
+echo "Launching {job_name} on JUWELS (Manual Loop)"
 
 # Get nodes and master IP
 # Use subshell to avoid polluting environment
@@ -26,8 +26,8 @@ echo "Master IP: $MASTER_IP"
 echo "Nodes: ${{nodes[@]}}"
 
 # Defaults if not provided in template
-MASTER_PORT={master_port}
-GPUS_PER_NODE={gpus_per_node}
+MASTER_PORT=$((12000+SLURM_JOBID))
+GPUS_PER_NODE=$SLURM_GPUS_PER_NODE
 
 # Loop over nodes to launch tasks explicitly
 for (( i=0; i<$SLURM_NNODES; i++ )); do
@@ -53,11 +53,11 @@ for (( i=0; i<$SLURM_NNODES; i++ )); do
 
     # Execute
     # We pass the launcher and command to the srun shell
-    srun $SRUN_ARGS bash -c "
-        export LOCAL_ADDR=$node_ip
-        {command_prefix}
-        exec $LAUNCHER {command}
-    " &
+    srun $SRUN_ARGS bash -c '
+        export LOCAL_ADDR='$node_ip'
+        {launcher_cmd}
+        exec '$LAUNCHER' {command}
+    ' &
 
     # Stagger start to ease load on master
     if [ $i -eq 0 ]; then
