@@ -4,7 +4,7 @@ defaults:
   - /container: leonardo
   - /slurm: leonardo
   - /monitoring: megatron_basic
-  - /project: default
+  - /job: default
   - /sweep: none
   - /backend/megatron: base
   - _self_
@@ -166,7 +166,7 @@ monitoring:
               # Absolute path for load (pinned to original checkpoint)
               - backend.megatron.load={checkpoint_path}
 
-              - "project.base_output_dir={project.base_output_dir}_decay{checkpoint_iteration}"
+              - "job.base_output_dir={job.base_output_dir}_decay{checkpoint_iteration}"
 
               # Update project name to avoid conflicts
               - project.name={project.name}_decay{checkpoint_iteration}

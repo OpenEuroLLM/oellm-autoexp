@@ -19,7 +19,6 @@ from monitor.actions import (
     ActionResult,
     BaseMonitorAction,
     EventRecord,
-    EventStatus,
     FinishAction,
     FinishActionConfig,
 )
@@ -85,7 +84,6 @@ __all__ = [
     "ActionResult",
     "BaseMonitorAction",
     "EventRecord",
-    "EventStatus",
     "FinishAction",
     "FinishActionConfig",
     "RunAutoexpAction",

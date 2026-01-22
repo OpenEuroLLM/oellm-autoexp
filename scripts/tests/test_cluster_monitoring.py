@@ -122,7 +122,7 @@ def parse_args() -> argparse.Namespace:
         help="Convenience shortcut for the common 'container=<name>' override (optional).",
     )
     parser.add_argument(
-        "--override",
+        "--overrides",
         action="append",
         default=[],
         help="OmegaConf override (repeatable). Example: --override slurm.partition=develbooster",
@@ -200,8 +200,8 @@ def main() -> None:
         run_cmd.append(f"container={args.container}")
     if args.run_arg:
         run_cmd.extend(args.run_arg)
-    if args.override:
-        run_cmd.extend(args.override)
+    if args.overrides:
+        run_cmd.extend(args.overrides)
 
     print(f"[run_autoexp_container] {' '.join(run_cmd)}")
     if args.dry_run:

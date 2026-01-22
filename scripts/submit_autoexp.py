@@ -13,7 +13,7 @@ from oellm_autoexp.workflow.host import (
     run_monitoring,
     submit_pending_jobs,
 )
-from oellm_autoexp.workflow.manifest import read_manifest
+from scripts.utils_plan import read_manifest
 from oellm_autoexp.utils.logging_config import configure_logging
 
 

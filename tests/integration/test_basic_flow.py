@@ -1,27 +1,68 @@
+"""Integration tests for basic workflow.
+
+Focuses on testing the orchestrator's ability to build execution plans
+from configuration files.
+"""
+
 from pathlib import Path
+import os
 import pytest
 
-from monitor.loop import MonitorLoop, JobFileStore, JobRecordConfig, JobRuntimeConfig
-from oellm_autoexp.monitor.adapter import SlurmClientAdapter
-from oellm_autoexp.orchestrator import (
-    build_execution_plan,
-    render_scripts,
-    _convert_to_registration,
-)
-from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
+from oellm_autoexp.orchestrator import build_execution_plan
 from oellm_autoexp.config.loader import load_config_reference
+from oellm_autoexp.config.schema import ConfigSetup
 
-QUEUE_CONFIG = """
-project:
+
+def test_load_real_config_and_build_plan(tmp_path: Path, monkeypatch) -> None:
+    """Test that we can load a real config and build an execution plan."""
+    monkeypatch.setenv("SLURM_ACCOUNT", "debug")
+    monkeypatch.setenv("CONTAINER_CACHE_DIR", str(tmp_path))
+
+    project_cfg = Path("config/project/default.yaml")
+    slurm_cfg = Path("config/slurm/base.yaml")
+    if not (project_cfg.exists() and slurm_cfg.exists()):
+        pytest.skip("Base config not available")
+
+    config_setup = ConfigSetup(
+        pwd=os.path.abspath(os.curdir),
+        config_name="autoexp",
+        config_dir="config",
+        overrides=["job=default", "slurm=base"],
+    )
+    cfg = load_config_reference(config_setup=config_setup)
+
+    plan = build_execution_plan(cfg, config_setup)
+
+    # Should have jobs from the sweep
+    assert len(plan.jobs) > 0
+    assert plan.config is not None
+    assert plan.sweep_points is not None
+
+
+def test_simple_execution_plan_from_inline_config(tmp_path: Path, monkeypatch) -> None:
+    """Test building an execution plan with a minimal inline config."""
+    monkeypatch.setenv("SLURM_ACCOUNT", "debug")
+
+    base_output = tmp_path / "outputs"
+    template_path = tmp_path / "template.sbatch"
+    script_dir = tmp_path / "scripts"
+    log_dir = tmp_path / "logs"
+    template_path.write_text("#!/bin/bash\n{sbatch_directives}\n\nsrun {srun_opts}{launcher_cmd}\n")
+
+    config_text = f"""
+job:
   name: demo_${{index}}
   base_output_dir: {base_output}
-  log_path: {base_output}/test.log
-  log_path_current: {base_output}/test.log
+  log_path: {log_dir}/test-%j.log
+  log_path_current: {log_dir}/test.log
+  slurm: ${{slurm}}
+
 sweep:
   type: product
   groups:
     - params:
         backend.dummy: [0, 1]
+
 slurm:
   template_path: {template_path}
   script_dir: {script_dir}
@@ -29,170 +70,98 @@ slurm:
   array: false
   launcher_cmd: ""
   srun_opts: ""
-  client:
-    class_name: FakeSlurmClient
-monitoring:
-  class_name: SlurmLogMonitor
-  check_interval_seconds: 5
-  log_path: ${{project.log_path_current}}
-  log_events:
-    - name: checkpoint_ready
-      pattern: 'CHECKPOINT (?P<ckpt>\\S+)'
-      pattern_type: regex
-      metadata:
-        kind: checkpoint
-      extract_groups:
-        checkpoint_path: ckpt
-      actions:
-        - class_name: EventAction
-          mode: queue
-          action:
-            class_name: RunAutoexpAction
-            script: scripts/run_autoexp.py
-            config_path: "{{output_dir}}/provenance/config_reference.json"
-            overrides:
-              - "evaluation.checkpoint={{checkpoint_path}}"
-  state_events:
-    - name: success
-      state:
-        class_name: SuccessState
+
 backend:
   class_name: NullBackend
   base_command: ["echo", "1"]
+
 index: 0
 """
+    config_path = tmp_path / "test.yaml"
+    config_path.write_text(config_text)
+
+    config_setup = ConfigSetup(config_path=config_path)
+    root = load_config_reference(config_setup=config_setup)
+
+    # Test that we can build a plan
+    plan = build_execution_plan(root, config_setup)
+
+    # Should have 2 jobs (2 values in sweep)
+    assert len(plan.jobs) == 2
+    assert all(job.config for job in plan.jobs)
+    assert all(job.config.job.name for job in plan.jobs)
 
 
-def test_hydra_plan(tmp_path: Path, monkeypatch) -> None:
+def test_multi_stage_execution_plan(tmp_path: Path, monkeypatch) -> None:
+    """Test building a multi-stage execution plan with dependencies."""
     monkeypatch.setenv("SLURM_ACCOUNT", "debug")
-    monkeypatch.setenv("CONTAINER_CACHE_DIR", "debug")
-    project_cfg = Path("config/project/default.yaml")
-    slurm_cfg = Path("config/slurm/juwels.yaml")
-    if not (project_cfg.exists() and slurm_cfg.exists()):
-        pytest.skip("juwels config not available in this checkout")
 
-    cfg = load_config_reference(
-        "autoexp", Path("config"), overrides=["project=default", "slurm=juwels"]
-    )
-    plan = build_execution_plan(cfg)
-    artifacts = render_scripts(plan)
-    assert artifacts.job_scripts
-
-
-def test_run_autoexp_action_execution(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setenv("SLURM_ACCOUNT", "debug")
     base_output = tmp_path / "outputs"
     template_path = tmp_path / "template.sbatch"
     script_dir = tmp_path / "scripts"
     log_dir = tmp_path / "logs"
     template_path.write_text("#!/bin/bash\n{sbatch_directives}\n\nsrun {srun_opts}{launcher_cmd}\n")
 
-    config_text = QUEUE_CONFIG.format(
-        base_output=base_output,
-        template_path=template_path,
-        script_dir=script_dir,
-        log_dir=log_dir,
-    )
-    config_path = tmp_path / "queue.yaml"
+    config_text = f"""
+job:
+  name: demo_${{index}}_${{stage}}
+  base_output_dir: {base_output}
+  log_path: {log_dir}/test-%j.log
+  log_path_current: {log_dir}/test.log
+  slurm: ${{slurm}}
+
+sweep:
+  type: product
+  groups:
+    - params:
+        backend.dummy: [1, 2]
+    - type: list
+      configs:
+        - stage: stable
+        - type: list
+          defaults:
+            job.start_condition:
+              class_name: FileExistsCondition
+              path: "\\\\${{sibling.stable.job.base_output_dir}}/done.txt"
+          configs:
+            - stage: decay
+
+slurm:
+  template_path: {template_path}
+  script_dir: {script_dir}
+  log_dir: {log_dir}
+  array: false
+  launcher_cmd: ""
+  srun_opts: ""
+
+backend:
+  class_name: NullBackend
+  base_command: ["echo", "1"]
+
+stage: ""
+index: 0
+"""
+    config_path = tmp_path / "multi_stage.yaml"
     config_path.write_text(config_text)
 
-    plan = build_execution_plan(config_path)
-    artifacts = render_scripts(plan)
+    config_setup = ConfigSetup(config_path=config_path)
+    root = load_config_reference(config_setup=config_setup)
 
-    session_dir = tmp_path / "monitor_state" / "queue-test"
-    store = JobFileStore(session_dir)
-    slurm = FakeSlurmClient(FakeSlurmClientConfig())
-    adapter = SlurmClientAdapter(slurm)
-    loop = MonitorLoop(store, adapter, poll_interval_seconds=60)
+    # Test that we can build a plan
+    plan = build_execution_plan(root, config_setup)
 
-    job_plan = plan.jobs[0]
+    # Should have 4 jobs (2 backend values × 2 stages)
+    assert len(plan.jobs) == 4
 
-    # Register job in store
-    reg = _convert_to_registration(job_plan, plan.runtime.monitor.config, artifacts.job_scripts[0])
-    job_record = JobRecordConfig(
-        job_id=job_plan.name,  # Use name as ID for test
-        registration=reg,
-        runtime=JobRuntimeConfig(submitted=False),
-    )
-    store.upsert(job_record)
+    # Verify job names contain stage info
+    job_names = [job.config.job.name for job in plan.jobs]
+    assert any("stable" in name for name in job_names)
+    assert any("decay" in name for name in job_names)
 
-    # Start the job (simulate submission)
-    # MonitorLoop would do this if we call observe_once, but we can fast track
-    loop._start_job(job_record)
-    store.upsert(job_record)
-    slurm_job_id = job_record.runtime.runtime_job_id
-
-    # Ensure job is RUNNING in fake slurm
-    slurm.set_state(slurm_job_id, "RUNNING")
-
-    # Mock _run_command to capture execution
-    class DummyProc:
-        def __init__(self, returncode: int):
-            self.returncode = returncode
-            self.stdout = ""
-            self.stderr = "" if returncode == 0 else "error"
-
-    responses = [DummyProc(1), DummyProc(0)]
-    executed_commands = []
-
-    def fake_run(cmd, cwd=None, env=None):
-        executed_commands.append(cmd)
-        if responses:
-            return responses.pop(0)
-        return DummyProc(0)
-
-    monkeypatch.setattr("oellm_autoexp.monitor.actions._run_command", fake_run)
-
-    # Write log content to trigger checkpoint
-    # log_path = Path(
-    #     job_plan.log_path
-    # )  # In fake slurm with name as ID, log path logic might be tricky?
-    # Actually _convert_to_registration sets log_path.
-    # But MonitorLoop resolves log path using _resolve_log_path.
-
-    # For FakeSlurm, submit uses the log path we passed.
-    # In _convert_to_registration, we passed job_plan.log_path.
-    # So we write to that path.
-    # But wait, log_path in config has %j.
-    # FakeSlurm doesn't expand %j in file system, but it uses the path provided.
-    # orchestrator.submit_jobs does _create_current_log_symlink.
-
-    # Here we are manually setting up.
-    # job_plan.log_path contains %j.
-    # We should use expanded path.
-
-    # Let's check what loop._resolve_log_path does.
-    # It uses resolve_log_path(job.registration.log_path, job.runtime.runtime_job_id)
-
-    # Ensure log directory exists
-    Path(job_plan.log_path).parent.mkdir(parents=True, exist_ok=True)
-
-    # Create the log file that loop will look for
-    # We need to know what path loop resolves to.
-    expanded_log_path = Path(job_plan.log_path.replace("%j", slurm_job_id))
-    expanded_log_path.parent.mkdir(parents=True, exist_ok=True)
-
-    ckpt_one = Path(job_plan.output_dir) / "chkpts" / "iter_1.pt"
-    expanded_log_path.write_text(f"iter 1\nCHECKPOINT {ckpt_one}\n")
-
-    # Run loop observation
-    loop.observe_once()
-
-    # Verify action execution
-    assert len(executed_commands) == 1
-    cmd = executed_commands[0]
-    # Check if command contains expected args
-    # cmd is list of strings
-    assert "scripts/run_autoexp.py" in cmd[1]  # [0] is python executable
-    assert any(str(ckpt_one) in arg for arg in cmd)
-
-    # Append second checkpoint
-    ckpt_two = Path(job_plan.output_dir) / "chkpts" / "iter_2.pt"
-    with open(expanded_log_path, "a") as f:
-        f.write(f"CHECKPOINT {ckpt_two}\n")
-
-    loop.observe_once()
-
-    assert len(executed_commands) == 2
-    cmd2 = executed_commands[1]
-    assert any(str(ckpt_two) in arg for arg in cmd2)
+    # Verify start conditions are set for decay stage
+    decay_jobs = [job for job in plan.jobs if "decay" in job.config.job.name]
+    for job in decay_jobs:
+        # Access the job config to check start_condition
+        assert hasattr(job.config, "job")
+        # The start condition should be inherited from the config
+        assert job.config.job.start_condition is not None

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import re
 import shlex
+import yaml
 from pathlib import Path
 
 from oellm_autoexp.utils.run import run_with_tee
@@ -48,7 +49,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         type=str,
     )
-    parser.add_argument("override", nargs="*", default=[], help="Configuration overrides")
+    parser.add_argument("overrides", nargs="*", default=[], help="Configuration overrides")
     return parser.parse_args(argv)
 
 
@@ -65,7 +66,9 @@ def _build_container_command(args: argparse.Namespace, inner: list[str]) -> list
     return command
 
 
-def _load_container_config(config_ref: str, config_dir: Path, overrides: list[str]) -> dict | None:
+def _load_container_config(
+    *, config_name: str, config_path: str | None, config_dir: Path, overrides: list[str]
+) -> dict | None:
     try:
         from hydra import compose, initialize_config_dir
         from omegaconf import OmegaConf
@@ -76,6 +79,12 @@ def _load_container_config(config_ref: str, config_dir: Path, overrides: list[st
     if not config_dir.exists():
         return None
 
+    if config_path:
+        with open(config_path) as fp:
+            cfg = yaml.safe_load(fp)
+            cfg_oc = OmegaConf.create(cfg)
+            container_cfg = OmegaConf.to_container(cfg_oc.get("container", None), resolve=True)
+            return container_cfg if container_cfg else None
     try:
         hydra_overrides = [
             override.split("=")[0] + '="' + "=".join(override.split("=")[1:]) + '"'
@@ -84,7 +93,7 @@ def _load_container_config(config_ref: str, config_dir: Path, overrides: list[st
             for override in overrides
         ]
         with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
-            cfg = compose(config_name=config_ref, overrides=list(hydra_overrides))
+            cfg = compose(config_name=config_name, overrides=list(hydra_overrides))
         container_cfg = OmegaConf.to_container(cfg.get("container", None), resolve=True)
         return container_cfg if container_cfg else None
     except Exception:
@@ -134,7 +143,7 @@ def main(argv: list[str] | None = None) -> None:
     container_runtime = args.apptainer_cmd
     container_python = "python"
 
-    cfg = _load_container_config(args.config_ref, args.config_dir, args.override)
+    cfg = _load_container_config(args.config_ref, args.config_dir, args.overrides)
     if cfg:
         container_image = cfg.get("image")
         if cfg.get("runtime"):
@@ -158,8 +167,10 @@ def main(argv: list[str] | None = None) -> None:
     plan_cmd = [
         container_python,
         str(plan_script),
-        "--config-ref",
-        args.config_ref,
+        "--config-name",
+        args.config_name,
+        "--config-path",
+        args.config_path,
         "-C",
         str(args.config_dir),
     ]
@@ -170,7 +181,7 @@ def main(argv: list[str] | None = None) -> None:
     if container_image:
         plan_cmd.extend(["--container-image", container_image])
         plan_cmd.extend(["--container-runtime", container_runtime])
-    plan_cmd.extend(args.override)
+    plan_cmd.extend(args.overrides)
 
     if container_image:
         args.image = container_image

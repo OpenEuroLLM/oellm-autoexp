@@ -5,7 +5,7 @@ defaults:
   - /container: leonardo
   - /slurm: leonardo
   - /monitoring: megatron_basic
-  - /project: default
+  - /job: default
   - /sweep: none
   - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_leonardo]
   - _self_

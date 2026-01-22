@@ -15,14 +15,14 @@ from compoconf import asdict
 from omegaconf import OmegaConf
 
 from oellm_autoexp.config.loader import load_config_reference
-from oellm_autoexp.orchestrator import build_execution_plan, render_scripts, ConfigSetup
-from oellm_autoexp.workflow.manifest import write_manifest
-from oellm_autoexp.workflow.plan import create_manifest
+from oellm_autoexp.orchestrator import build_execution_plan, ConfigSetup
+from scripts.utils_plan import render_scripts, create_manifest, write_manifest
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config-ref", default="autoexp")
+    parser.add_argument("--config-name", default="autoexp")
+    parser.add_argument("--config-path", default=None)
     parser.add_argument("-C", "--config-dir", type=Path, default=Path("config"))
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--plan-id", type=str, help="Explicit plan identifier for the manifest")
@@ -33,7 +33,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--container-runtime", type=str, help="Override container runtime recorded in manifest"
     )
     parser.add_argument(
-        "override", nargs="*", default=[], help="Hydra-style overrides (`key=value`)."
+        "overrides", nargs="*", default=[], help="Hydra-style overrides (`key=value`)."
     )
     return parser.parse_args(argv)
 
@@ -49,14 +49,16 @@ def _default_manifest_path(monitoring_state_dir: Path) -> Path:
 def _write_job_provenance(
     plan,
     *,
-    config_ref: str,
+    config_name: str | None,
+    config_path: str | None,
     config_dir: Path,
     overrides: list[str],
 ) -> None:
     """Write provenance files for each job in the plan."""
     resolved_config = asdict(plan.config)
     config_reference = {
-        "config_ref": config_ref,
+        "config_name": config_name,
+        "config_path": config_path,
         "config_dir": str(config_dir.resolve()),
         "overrides": overrides,
     }
@@ -79,7 +81,7 @@ def _write_job_provenance(
     cfg_omega = None
     try:
         with initialize_config_dir(version_base=None, config_dir=str(config_dir_resolved)):
-            cfg_omega = compose(config_name=config_ref, overrides=overrides)
+            cfg_omega = compose(config_name=config_name, overrides=overrides)
     except Exception as e:
         print(f"Warning: Could not generate unresolved config YAML: {e}", file=sys.stderr)
 
@@ -114,23 +116,31 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     config_dir = Path(args.config_dir)
 
-    root = load_config_reference(args.config_ref, config_dir, args.override)
+    config_setup = (
+        ConfigSetup(
+            pwd=os.path.abspath(os.curdir),
+            config_name=args.config_name,
+            config_path=args.config_path,
+            config_dir=config_dir,
+            overrides=args.overrides,
+        ),
+    )
+
+    root = load_config_reference(
+        config_setup=config_setup,
+    )
     plan = build_execution_plan(
         root,
-        config_setup=ConfigSetup(
-            pwd=os.path.abspath(os.curdir),
-            config_ref=args.config_ref,
-            config_dir=config_dir,
-            override=args.override,
-        ),
+        config_setup=config_setup,
     )
 
     # Write provenance files for each job
     _write_job_provenance(
         plan,
-        config_ref=args.config_ref,
+        config_name=args.config_name,
+        config_path=args.config_path,
         config_dir=config_dir,
-        overrides=args.override,
+        overrides=args.overrides,
     )
 
     artifacts = render_scripts(plan)
@@ -138,9 +148,10 @@ def main(argv: list[str] | None = None) -> None:
     manifest = create_manifest(
         plan,
         artifacts,
-        config_ref=args.config_ref,
+        config_name=args.config_name,
+        config_path=args.config_path,
         config_dir=config_dir,
-        overrides=args.override,
+        overrides=args.overrides,
         container_image=args.container_image,
         container_runtime=args.container_runtime,
         plan_id=args.plan_id,
@@ -149,7 +160,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.manifest is not None:
         manifest_path = Path(args.manifest)
     else:
-        monitoring_state_dir = Path(plan.config.project.monitoring_state_dir)
+        monitoring_state_dir = Path(plan.config.job.monitoring_state_dir)
         manifest_path = _default_manifest_path(monitoring_state_dir)
 
     manifest_path = manifest_path.resolve()

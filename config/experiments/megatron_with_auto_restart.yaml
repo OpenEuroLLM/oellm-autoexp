@@ -8,13 +8,14 @@ defaults:
   - /backend: megatron_torchrun
   - /container: juwels
   - /slurm: juwels
-  - /monitoring: megatron_production
-  - /project: default
+  - /monitoring@job: megatron_basic
+  - /job: default
+  - /job: default
   - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_juwels]
   - /sweep: none
   - _self_
 
-project:
+job:
   name: megatron_auto_restart_example
 
 # This experiment will:

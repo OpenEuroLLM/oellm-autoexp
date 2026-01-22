@@ -18,15 +18,15 @@ from compoconf import asdict
 from omegaconf import OmegaConf
 
 from oellm_autoexp.config.loader import load_config_reference
-from oellm_autoexp.orchestrator import build_execution_plan, render_scripts, ConfigSetup
+from oellm_autoexp.config.schema import ConfigSetup
+from oellm_autoexp.orchestrator import build_execution_plan
 from oellm_autoexp.workflow.host import (
     build_host_runtime,
     instantiate_controller,
     run_monitoring,
     submit_pending_jobs,
 )
-from oellm_autoexp.workflow.manifest import write_manifest
-from oellm_autoexp.workflow.plan import create_manifest
+from scripts.utils_plan import render_scripts, create_manifest, write_manifest
 from oellm_autoexp.utils.logging_config import configure_logging
 
 
@@ -35,7 +35,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config-ref", default="autoexp")
+    parser.add_argument("--config-name", default="autoexp")
+    parser.add_argument("--config-path", default=None)
     parser.add_argument("-C", "--config-dir", type=Path, default=Path("config"))
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--plan-id", type=str, help="Explicit plan identifier for the manifest")
@@ -58,7 +59,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Comma-separated sweep indices or ranges (e.g., '0,3-5') to rerun.",
     )
     parser.add_argument(
-        "override", nargs="*", default=[], help="Hydra-style overrides (`key=value`)."
+        "overrides", nargs="*", default=[], help="Hydra-style overrides (`key=value`)."
     )
     return parser.parse_args(argv)
 
@@ -218,7 +219,15 @@ def main(argv: list[str] | None = None) -> None:
     configure_logging(args.verbose, args.debug)
 
     config_dir = Path(args.config_dir)
-    root = load_config_reference(args.config_ref, config_dir, args.override)
+
+    config_setup = ConfigSetup(
+        pwd=os.path.abspath(os.curdir),
+        config_name=args.config_name,
+        config_dir=str(config_dir),
+        overrides=args.overrides,
+    )
+    root = load_config_reference(config_setup=config_setup)
+
     try:
         subset_indices = _parse_subset(args.array_subset)
     except ValueError as exc:
@@ -227,12 +236,7 @@ def main(argv: list[str] | None = None) -> None:
 
     plan = build_execution_plan(
         root,
-        config_setup=ConfigSetup(
-            pwd=os.path.abspath(os.curdir),
-            config_ref=args.config_ref,
-            config_dir=str(config_dir),
-            override=args.override,
-        ),
+        config_setup=config_setup,
         subset_indices=subset_indices or None,
     )
 
@@ -240,7 +244,7 @@ def main(argv: list[str] | None = None) -> None:
         plan,
         args=args,
         subset_indices=subset_indices,
-        overrides=args.override,
+        overrides=args.overrides,
     )
 
     artifacts = render_scripts(plan)
@@ -248,9 +252,9 @@ def main(argv: list[str] | None = None) -> None:
     manifest = create_manifest(
         plan,
         artifacts,
-        config_ref=args.config_ref,
-        config_dir=config_dir,
-        overrides=args.override,
+        config_setup=ConfigSetup(
+            config_name=args.config_name, config_path=args.config_path, config_dir=args.config_dir
+        ),
         container_image=args.container_image,
         container_runtime=args.container_runtime,
         plan_id=args.plan_id,
@@ -259,7 +263,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.manifest is not None:
         manifest_path = Path(args.manifest)
     else:
-        base_output = Path(plan.config.project.base_output_dir)
+        base_output = Path(plan.config.job.base_output_dir)
         manifest_path = _default_manifest_path(base_output)
 
     manifest_path = manifest_path.resolve()

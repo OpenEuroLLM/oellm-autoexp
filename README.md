@@ -66,10 +66,10 @@ Make sure also to have datasets and tokenizers downloaded before starting a job,
 ### Single job / Sweep debugging
 ```bash
 # Plan + submit + monitor in one go (manifest written to outputs/manifests/)
-python scripts/run_autoexp.py project=default
+python scripts/run_autoexp.py job=default
 
 # Prefer explicit plan/submit?
-python scripts/plan_autoexp.py --manifest outputs/manifests/demo.json project=default
+python scripts/plan_autoexp.py --manifest outputs/manifests/demo.json job=default
 python scripts/submit_autoexp.py --manifest outputs/manifests/demo.json
 
 # Probe a specific sweep entry

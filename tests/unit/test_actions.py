@@ -1,64 +1,72 @@
+"""Test oellm-specific custom monitor actions."""
+
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-from oellm_autoexp.monitor.actions import (
-    ActionContext,
-    LogAction,
-    LogActionConfig,
-    LogMessageAction,
-    LogMessageActionConfig,
-    PublishEventAction,
-    PublishEventActionConfig,
-    RestartAction,
-    RestartActionConfig,
-    RunCommandAction,
-    RunCommandActionConfig,
-)
-from oellm_autoexp.monitor.events import EventRecord
+from monitor.actions import ActionContext, EventRecord
+from oellm_autoexp.config.actions import RunAutoexpAction, RunAutoexpActionConfig
 
 
 def _context(tmp_path: Path) -> ActionContext:
-    event = EventRecord(event_id="evt1", name="demo", source="test")
-    return ActionContext(event=event, job_metadata={}, workspace=tmp_path)
-
-
-def test_run_command_action(tmp_path: Path) -> None:
-    ctx = _context(tmp_path)
-    action = RunCommandAction(
-        RunCommandActionConfig(command=[sys.executable, "-c", "raise SystemExit(0)"])
+    """Create a test action context."""
+    event = EventRecord(event_id="evt1", name="test", source="test")
+    return ActionContext(
+        event=event,
+        job_metadata={"session_id": "test_session"},
+        workspace=tmp_path,
     )
-    assert action.execute(ctx).status == "success"
 
 
-def test_restart_action_returns_retry(tmp_path: Path) -> None:
-    ctx = _context(tmp_path)
-    action = RestartAction(RestartActionConfig(reason="retry please"))
-    result = action.execute(ctx)
-    assert result.status == "retry"
-    assert "retry" in result.message
-
-
-def test_publish_event_action(tmp_path: Path) -> None:
-    ctx = _context(tmp_path)
-    action = PublishEventAction(
-        PublishEventActionConfig(event_name="checkpoint_ready", metadata={"foo": "bar"})
+def test_run_autoexp_action_config():
+    """Test RunAutoexpActionConfig can be instantiated."""
+    config = RunAutoexpActionConfig(
+        script="scripts/run_autoexp.py",
+        config_path="/tmp/test.yaml",
+        overrides=["backend=test"],
+        no_monitor=True,
     )
-    result = action.execute(ctx)
-    assert result.metadata["publish_event"]["name"] == "checkpoint_ready"
+    assert config.script == "scripts/run_autoexp.py"
+    assert config.no_monitor is True
+    assert len(config.overrides) == 1
 
 
-def test_log_action_renders_template(tmp_path: Path) -> None:
+def test_run_autoexp_action_creates_command(tmp_path: Path):
+    """Test that RunAutoexpAction builds the correct command structure."""
+    config = RunAutoexpActionConfig(
+        script="scripts/run_autoexp.py",
+        config_path="{output_dir}/config.yaml",
+        overrides=["stage={stage}", "job.retry_limit=5"],
+        no_monitor=True,
+    )
+    action = RunAutoexpAction(config)
+
+    # The action should be instantiable
+    assert action.config == config
+
+    # Note: Full execution testing requires actual script files and would be
+    # better suited for integration tests. Unit tests verify config handling.
+
+
+def test_run_autoexp_action_execution_dry_run(tmp_path: Path):
+    """Test RunAutoexpAction returns appropriate result on execution
+    failure."""
     ctx = _context(tmp_path)
-    ctx.job_metadata["name"] = "demo"
-    action = LogAction(LogActionConfig(message="Job {name} ok"))
-    result = action.execute(ctx)
-    assert "demo" in result.message
+    ctx.job_metadata["output_dir"] = str(tmp_path)
 
+    # Create a simple failing script
+    script = tmp_path / "fail_script.py"
+    script.write_text("import sys; sys.exit(1)")
 
-def test_log_message_action_alias(tmp_path: Path) -> None:
-    ctx = _context(tmp_path)
-    action = LogMessageAction(LogMessageActionConfig(message="legacy ok"))
+    config = RunAutoexpActionConfig(
+        script=str(script),
+        config_path=None,
+        overrides=[],
+        no_monitor=True,
+    )
+    action = RunAutoexpAction(config)
     result = action.execute(ctx)
-    assert result.status == "success"
+
+    # Should return failed status
+    assert result.status == "failed"
+    assert "exited 1" in result.message

@@ -5,7 +5,7 @@ defaults:
   - /container: marenostrum
   - /slurm: marenostrum
   - /monitoring: megatron_basic
-  - /project: default
+  - /job: default
   - /sweep: none
   - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_marenostrum]
   - _self_

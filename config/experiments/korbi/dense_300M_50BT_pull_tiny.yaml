@@ -5,10 +5,9 @@
 #
 defaults:
   - /backend: megatron_torchrun
-  - /container: lumi
-  - /slurm: lumi
-  - /monitoring: megatron_basic
-  - /project: default
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: default
   - /sweep: none
   - /backend/megatron: base
   - _self_
@@ -16,15 +15,14 @@ defaults:
 index: 0
 stage: ""
 
-project:
+job:
   base_output_dir: "dense_300M_sweep"
-  name: "dense_300M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
-  resume: true
+  name: "dense_300M_01_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_beta2${backend.megatron.adam_beta2}_${stage}"
 
 
 backend:
   megatron:
-    wandb_exp_name: "\\${project.name}"
+    wandb_exp_name: "${job.name}"
     wandb_project: oellm-train
 
     # DATA
@@ -113,7 +111,7 @@ backend:
     # CHECKPOINT FORMAT
     ckpt_format: "torch"
     save_interval: 2000
-    save: ${project.base_output_dir}
+    save: ${job.base_output_dir}
 
     # Base training configuration (for stable phase)
     micro_batch_size: 8
@@ -132,7 +130,7 @@ backend:
 
 slurm:
   sbatch:
-    nodes: "${oc.eval:\"${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node})\"}"
+    nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
 
 
 # COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE
@@ -143,9 +141,8 @@ sweep:
   groups:
     - type: list
       configs:
-        - project.name: "dense_300M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
-          backend.megatron.wandb_exp_name: "\\${project.name}"
-          project.base_output_dir: "${project.base_output_dir}/\\${project.name}"
+        - backend.megatron.wandb_exp_name: "${job.name}"
+          job.base_output_dir: "${job.base_output_dir}/${job.name}"
     # GROUP 1: Hyperparameter configurations (list of two product grids)
     - type: list
       configs:
@@ -165,10 +162,10 @@ sweep:
           backend.megatron.aux.tokens: 50_000_000_000
           # Computed fields using ESCAPED OmegaConf interpolations (\\$ prevents early resolution)
           # These will be unescaped during sweep expansion and resolved with stage-specific values
-          backend.megatron.train_iters: "\\${oc.eval:\"(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})\"}"
+          backend.megatron.train_iters: '${oc.eval:"int((${backend.megatron.aux.tokens}+${backend.megatron.seq_length}*${backend.megatron.global_batch_size}-1)//(${backend.megatron.seq_length}*${backend.megatron.global_batch_size}))"}'
           backend.megatron.lr_wsd_decay_iters: 0  # No decay in stable phase
-          backend.megatron.aux.start_iter: "\\${oc.eval:\"int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))\"}"
-          backend.megatron.aux.start_iter_round: "\\${oc.eval:\"int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}\"}"
+          backend.megatron.aux.start_iter: "${oc.eval:'int(((${backend.megatron.aux.tokens}+${backend.megatron.seq_length}*${backend.megatron.global_batch_size}-1)//(${backend.megatron.seq_length}*${backend.megatron.global_batch_size}))*(1-${backend.megatron.aux.decay_fraction}))'}"
+          backend.megatron.aux.start_iter_round: "${oc.eval:'int(${backend.megatron.aux.start_iter}//${backend.megatron.save_interval})*${backend.megatron.save_interval}'}"
 
         # NESTED GROUP: Cooldown/decay stages with shared defaults
         # All decay stages share: 20% decay, checkpoint loading, start/cancel conditions
@@ -177,35 +174,32 @@ sweep:
             # Common decay configuration
             backend.megatron.aux.decay_fraction: 0.2
 
-            # Computed fields using ESCAPED OmegaConf interpolations (\\$ prevents early resolution)
+            # Computed fields using ESCAPED OmegaConf interpolations ($ prevents early resolution)
             # These will be unescaped during sweep expansion and resolved with stage-specific values (6B, 12B, 30B, 50B)
             # Each computation is self-contained (doesn't reference other computed values) to avoid ordering issues
 
             #!!!
-            backend.megatron.train_iters: "\\${oc.eval:\"(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})\"}"
-            backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:\"int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})\"}"
-            backend.megatron.aux.start_iter: "\\${oc.eval:\"int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))\"}"
-            backend.megatron.aux.start_iter_round: "\\${oc.eval:\"int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}\"}"
+            # backend.megatron.train_iters: "${oc.eval:'(${backend.megatron.aux.tokens}+${backend.megatron.seq_length}*${backend.megatron.global_batch_size}-1)//(${backend.megatron.seq_length}*${backend.megatron.global_batch_size})'}"
+            # backend.megatron.lr_wsd_decay_iters: "${oc.eval:'int(((${backend.megatron.aux.tokens}+${backend.megatron.seq_length}*${backend.megatron.global_batch_size}-1)//(${backend.megatron.seq_length}*${backend.megatron.global_batch_size}))*${backend.megatron.aux.decay_fraction})'}"
+            # backend.megatron.aux.start_iter: "${oc.eval:'int(((${backend.megatron.aux.tokens}+${backend.megatron.seq_length}*${backend.megatron.global_batch_size}-1)//(${backend.megatron.seq_length}*${backend.megatron.global_batch_size}))*(1-${backend.megatron.aux.decay_fraction}))'}"
+            # backend.megatron.aux.start_iter_round: "${oc.eval:'int(${backend.megatron.aux.start_iter}//${backend.megatron.save_interval})*${backend.megatron.save_interval}'}"
 
             # Checkpoint loading configuration
-            backend.megatron.load: "\\${sibling.stable.project.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}"
+            backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}"
             backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter_round}"
             backend.megatron.override_opt_param_scheduler: true
 
             # Start conditions: wait for stable to reach checkpoint (new async approach)
-            job.start_conditions:
-              - class_name: FileExistsCondition
-                path: "\\${sibling.stable.project.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}/latest_checkpointed_iteration.txt"
-                timeout_seconds: 7200
+            # Start conditions: wait for stable to reach checkpoint (new async approach)
+            job.start_condition:
+              class_name: FileExistsCondition
+              path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}/latest_checkpointed_iteration.txt"
 
             # Cancel conditions: cancel if stable job fails
-            job.cancel_conditions:
-              - class_name: SlurmStateCondition
-                job_name: "\\${sibling.stable.project.name}"
-                state: FAILED
-              - class_name: LogPatternCondition
-                log_path: "\\${sibling.stable.project.log_path_current}"
-                pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+            job.cancel_condition:
+              class_name: LogPatternCondition
+              log_path: "\\${sibling.stable.job.log_path_current}"
+              pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
           configs:
             # Each decay stage only needs to specify its unique stage and tokens
             - stage: decay6B

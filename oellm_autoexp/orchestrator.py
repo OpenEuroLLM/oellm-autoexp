@@ -8,7 +8,6 @@ from dataclasses import dataclass, field, MISSING, replace
 from pathlib import Path
 
 from hydra_staged_sweep import expand_sweep, resolve_sweep_with_dag
-from hydra_staged_sweep.config.loader import load_config
 from hydra_staged_sweep.expander import SweepPoint
 from hydra_staged_sweep.planner import JobPlan
 
@@ -46,42 +45,11 @@ class SubmissionResult:
 
 
 def build_execution_plan(
-    config: str | Path | RootConfig,
-    config_setup: ConfigSetup | None = None,
+    config: RootConfig,
+    config_setup: ConfigSetup,
     subset_indices: set[int] | None = None,
 ) -> ExecutionPlan:
-    if isinstance(config, (str, Path)):
-        root = load_config(config, config_class=RootConfig)
-        if config_setup is None:
-            config_setup = ConfigSetup(
-                pwd=str(Path.cwd()),
-                config_path=str(config),
-                config_dir=str(Path(config).parent),
-                override=[],
-            )
-    else:
-        root = config
-        if config_setup is None:
-            metadata = root.metadata or {}
-            config_ref = metadata.get("config_ref")
-            config_dir = metadata.get("config_dir")
-            config_path = None
-            config_name = None
-            if config_ref:
-                ref_path = Path(str(config_ref))
-                if ref_path.suffix in {".yaml", ".yml"}:
-                    config_path = str(ref_path)
-                else:
-                    config_name = str(config_ref)
-            if config_name is None and config_path is None:
-                raise ValueError("config_setup is required when RootConfig lacks config metadata")
-            config_setup = ConfigSetup(
-                pwd=str(Path.cwd()),
-                config_name=config_name,
-                config_path=config_path,
-                config_dir=str(config_dir) if config_dir else None,
-                override=[],
-            )
+    root = config
 
     points = expand_sweep(root.sweep)
     points_by_idx = {point.index: point for point in points}
@@ -164,7 +132,7 @@ def execute_plan_sync(plan: ExecutionPlan, controller: MonitorLoop) -> None:
 def _ensure_state_store(
     plan: ExecutionPlan, *, session_id: str | None = None
 ) -> tuple[JobFileStore, str]:
-    monitoring_state_dir = Path(plan.config.project.monitoring_state_dir or "./monitoring_state")
+    monitoring_state_dir = Path(plan.config_setup.monitoring_state_dir)
     if not session_id:
         import uuid
 
@@ -200,7 +168,7 @@ def _build_job_record(plan: ExecutionPlan, job: JobPlan, session_id: str) -> Job
         job.config.slurm,
         name=job_name,
         script_path=str(script_path),
-        log_path=str(job.config.project.log_path),
+        log_path=str(job.config.job.log_path),
         command=list(launch_cmd.argv),
         env=merged_env,
     )
@@ -208,8 +176,8 @@ def _build_job_record(plan: ExecutionPlan, job: JobPlan, session_id: str) -> Job
     base_job = job.config.job
     definition = SlurmJobConfig(
         name=job_name,
-        log_path=str(job.config.project.log_path),
-        log_path_current=str(job.config.project.log_path_current),
+        log_path=str(job.config.job.log_path),
+        log_path_current=str(job.config.job.log_path_current),
         log_events=list(base_job.log_events),
         state_events=list(base_job.state_events),
         start_condition=base_job.start_condition,
@@ -232,14 +200,17 @@ def _build_job_record(plan: ExecutionPlan, job: JobPlan, session_id: str) -> Job
 
 
 def _resolve_job_name(config: RootConfig) -> str:
-    base_name = str(config.project.name or "job")
+    base_name = str(config.job.name or "job")
     index = getattr(config, "index", None)
     if index is None:
         return base_name
     index_str = str(index)
     if index_str in base_name:
         return base_name
-    return f"{base_name}_{index_str}"
+    if "%a" in base_name:
+        return base_name.replace("%a", index_str)
+    else:
+        return f"{base_name}_{index_str}"
 
 
 __all__ = [

@@ -1,0 +1,5 @@
+# Minimal monitoring configuration
+poll_interval_seconds: 30
+check_interval_seconds: 30
+log_events: []
+state_events: []

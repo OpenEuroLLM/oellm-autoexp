@@ -15,7 +15,7 @@ from oellm_autoexp.workflow.host import (
     instantiate_controller,
     run_monitoring,
 )
-from oellm_autoexp.workflow.manifest import read_manifest
+from scripts.utils_plan import read_manifest
 
 LOGGER = logging.getLogger(__name__)
 
