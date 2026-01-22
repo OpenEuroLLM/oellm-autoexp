@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from compoconf import register, ConfigInterface
 
-from monitor.conditions import (
+from oellm_autoexp.monitor.conditions import (
     AlwaysTrueCondition,
     BaseCondition,
     CommandCondition,

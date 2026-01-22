@@ -10,8 +10,8 @@ import logging
 from importlib import import_module
 from typing import TypeVar
 
-# Import from hydra_staged_sweep library
-from hydra_staged_sweep.config.loader import (
+# Import from oellm_autoexp.hydra_staged_sweep library
+from oellm_autoexp.hydra_staged_sweep.config.loader import (
     ConfigLoaderError,
     load_config_reference as _load_config_reference_base,
 )

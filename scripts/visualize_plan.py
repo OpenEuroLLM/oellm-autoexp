@@ -37,9 +37,9 @@ from oellm_autoexp.config.schema import ConfigSetup
 from oellm_autoexp.utils.logging_config import configure_logging
 
 # External libraries (extracted during refactoring)
-from hydra_staged_sweep.expander import expand_sweep
-from hydra_staged_sweep.planner import JobPlan
-from hydra_staged_sweep.dag_resolver import resolve_sweep_with_dag
+from oellm_autoexp.hydra_staged_sweep.expander import expand_sweep
+from oellm_autoexp.hydra_staged_sweep.planner import JobPlan
+from oellm_autoexp.hydra_staged_sweep.dag_resolver import resolve_sweep_with_dag
 
 
 def validate_execution_plan(jobs: list) -> Any:

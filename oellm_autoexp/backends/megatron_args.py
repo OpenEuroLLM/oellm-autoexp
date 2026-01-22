@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 
-from argparse_schema import (
+from oellm_autoexp.argparse_schema import (
     ActionSpec,
     ArgMetadata,
     build_cmdline_args,

@@ -25,7 +25,7 @@ Stage 1 runs → emits event → MonitorAction evaluates conditions → RunAutoe
 **Weaknesses:**
 - Hard to see full experiment pipeline in config (stages hidden in actions)
 - Debugging requires tracing through multiple monitoring sessions
-- `start_condition_cmd` is a separate mechanism from monitor conditions
+- `start_condition_cmd` is a separate mechanism from oellm_autoexp.monitor conditions
 - Pre-planned workflows require verbose action configurations
 
 ### Proposed Hybrid System (Push + Pull)
@@ -335,7 +335,7 @@ PATTERN:
 ACCESSOR:
   - output_dir, log_path, name - job attributes
   - param.backend.megatron.lr - job parameters
-  - metadata.checkpoint_iteration - runtime metadata (from monitoring)
+  - metadata.checkpoint_iteration - runtime metadata (from oellm_autoexp.monitoring)
 ```
 
 #### Option B: Use special parameter prefix `__ref_*`
@@ -465,7 +465,7 @@ backend.megatron.train_iters: "${.aux.target_iters}"
 {sibling.stable.backend.megatron.lr}            # Job parameter (dotted path)
 {sibling.stable.backend.megatron.train_iters}   # Job parameter
 
-{sibling.stable.metadata.checkpoint_iteration}  # Runtime metadata (from monitoring)
+{sibling.stable.metadata.checkpoint_iteration}  # Runtime metadata (from oellm_autoexp.monitoring)
 {sibling.stable.metadata.checkpoint_path}       # Runtime metadata
 ```
 
@@ -1711,7 +1711,7 @@ sweep:
 - ✅ Static start conditions (file paths, parameter matches)
 
 **What Must Be Delayed:**
-- ❌ Runtime metadata: `{sibling.stable.metadata.checkpoint_iteration}` (from monitoring)
+- ❌ Runtime metadata: `{sibling.stable.metadata.checkpoint_iteration}` (from oellm_autoexp.monitoring)
 
 **Proposed: Add Validation Phase**
 

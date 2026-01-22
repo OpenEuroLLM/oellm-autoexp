@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from monitor.conditions import ConditionContext
-from monitor.actions import EventRecord
+from oellm_autoexp.monitor.conditions import ConditionContext
+from oellm_autoexp.monitor.actions import EventRecord
 from oellm_autoexp.config.conditions import (
     BlockingFileExistsCondition,
     BlockingFileExistsConditionConfig,

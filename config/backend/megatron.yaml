@@ -6,7 +6,7 @@ class_name: AutoMegatronBackend
 launcher_script: "python ${.env.RUN_DIR}/pretrain_gpt.py"
 use_torchrun: false
 python_cmd: "python"
-full_validation: true
+full_schema_validation: false
 env:
   PYTHONPATH: ".:submodules/Megatron-LM"
   PROJECT_DIR: ${oc.env:PROJECT_DIR,"."}

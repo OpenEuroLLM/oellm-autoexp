@@ -14,7 +14,7 @@ from typing import Any
 
 from compoconf import register, ConfigInterface
 
-from monitor.actions import (
+from oellm_autoexp.monitor.actions import (
     ActionContext,
     ActionResult,
     BaseMonitorAction,

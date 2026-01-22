@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from monitor.actions import ActionContext, EventRecord
+from oellm_autoexp.monitor.actions import ActionContext, EventRecord
 from oellm_autoexp.config.actions import RunAutoexpAction, RunAutoexpActionConfig
 
 

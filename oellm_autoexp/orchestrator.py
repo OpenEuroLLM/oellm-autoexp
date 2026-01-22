@@ -7,13 +7,14 @@ import time
 from dataclasses import dataclass, field, MISSING, replace
 from pathlib import Path
 
-from hydra_staged_sweep import expand_sweep, resolve_sweep_with_dag
-from hydra_staged_sweep.expander import SweepPoint
-from hydra_staged_sweep.planner import JobPlan
+from oellm_autoexp.hydra_staged_sweep import expand_sweep, resolve_sweep_with_dag
+from oellm_autoexp.hydra_staged_sweep.expander import SweepPoint
+from oellm_autoexp.hydra_staged_sweep.planner import JobPlan
 
-from monitor.loop import MonitorLoop, JobFileStore, JobRecordConfig, JobRuntimeConfig
-from monitor.slurm_client import SlurmClient, SlurmClientConfig
-from monitor.submission import SlurmJobConfig
+from oellm_autoexp.monitor.loop import MonitorLoop, JobFileStore, JobRecordConfig, JobRuntimeConfig
+from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
+from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
+from oellm_autoexp.monitor.submission import SlurmJobConfig
 
 from oellm_autoexp.backends.base import BackendJobSpec
 from oellm_autoexp.config.schema import RootConfig, ConfigSetup, BackendInterface
@@ -80,7 +81,8 @@ def submit_jobs(
 ) -> SubmissionResult:
     store, session_id = _ensure_state_store(plan, session_id=session_id)
     client = slurm_client or SlurmClient(SlurmClientConfig())
-    loop = MonitorLoop(store, slurm_client=client)
+    local_client = LocalCommandClient(LocalCommandClientConfig())
+    loop = MonitorLoop(store, slurm_client=client, local_client=local_client)
 
     submitted_job_ids: list[str] = []
     for job in plan.jobs:
@@ -107,7 +109,8 @@ def load_monitor_controller(
 
     store, _ = _ensure_state_store(plan, session_id=session_id)
     client = slurm_client or SlurmClient(SlurmClientConfig())
-    loop = MonitorLoop(store, slurm_client=client)
+    local_client = LocalCommandClient(LocalCommandClientConfig())
+    loop = MonitorLoop(store, slurm_client=client, local_client=local_client)
 
     return SubmissionResult(
         loop=loop, state_store=store, session_id=session_id, submitted_job_ids=[]

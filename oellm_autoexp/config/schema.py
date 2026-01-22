@@ -19,15 +19,15 @@ from compoconf import (
     register_interface,
 )
 
-# Import base classes from hydra_staged_sweep
-from hydra_staged_sweep.config.schema import (
+# Import base classes from oellm_autoexp.hydra_staged_sweep
+from oellm_autoexp.hydra_staged_sweep.config.schema import (
     StagedSweepRoot,
     SweepConfig,
     ConfigSetup as BaseConfigSetup,
 )
-from monitor.submission import SlurmJobConfig as SlurmJobConfigBase, SlurmConfig
-from monitor.local_client import LocalCommandClientConfig
-from monitor.slurm_client import SlurmClientConfig
+from oellm_autoexp.monitor.submission import SlurmJobConfig as SlurmJobConfigBase, SlurmConfig
+from oellm_autoexp.monitor.local_client import LocalCommandClientConfig
+from oellm_autoexp.monitor.slurm_client import SlurmClientConfig
 
 # ---------------------------------------------------------------------------
 # Core interfaces

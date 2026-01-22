@@ -58,7 +58,7 @@ class MegatronBackendConfig(NonStrictDataclass, ConfigInterface):
     env: dict[str, str] = field(default_factory=dict)
     extra_cli_args: list[str] = field(default_factory=list)
     use_torchrun: bool = False
-    full_validation: bool = True
+    full_schema_validation: bool = False
     torchrun_args: dict[str, Any] = field(default_factory=dict)
     megatron: MegatronConfig = field(default_factory=MegatronConfig)
     differential_cmd: bool = True  # if to only pass non-default arguments
@@ -88,7 +88,7 @@ class MegatronBackend(BaseBackend):
     def __init__(self, config: MegatronBackendConfig) -> None:
         super().__init__(config)
         self.config = config
-        if not config.full_validation:
+        if not config.full_schema_validation:
             # Schema-only mode: skip parser initialization
             self._parser = None
             self._arg_metadata: dict[str, MegatronArgMetadata] = dict(MEGATRON_ARG_METADATA)
