@@ -1,0 +1,51 @@
+# @package _global_
+defaults:
+  - base
+  - /backend: megatron_torchrun
+  - /container: leonardo_aaron
+  - /slurm: leonardo
+  - /monitoring: megatron_basic
+  - /project: default
+  - /sweep: gbs-lr-sweep
+  - /experiments/exp_dalton/models: moe_0.6B_100M
+  - /experiments/exp_dalton/data: nemotron-cc-2020
+  - _self_
+
+project:
+  name: moe-hp-sweep
+  resume: true
+  
+slurm:
+  sbatch:
+    partition: boost_usr_prod
+    account: OELLM_prod2026
+    nodes: 1
+    # time: 0-20:00:00
+    time: 0-00:30:00
+
+backend:
+  megatron:
+    log_throughput: true
+    log_interval: 1
+    log_progress: true
+
+
+    # training schedule. Round numbers to avoid floating point issues
+    # set num_tokens to the formula
+    # train_iters: ${oc.eval:'-(-30_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    train_iters: 200
+    lr_warmup_iters: ${oc.eval:'min(${.train_iters} // 10, 25000)'}
+    lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
+    lr_decay_iters: ${.train_iters}
+    # exit_interval: 10000
+    save: ${project.base_output_dir}
+    load: ${project.base_output_dir}
+    tensorboard_dir: ${project.base_output_dir}/tensorboard
+    save_interval: 10000
+    wandb_save_dir: "${project.base_output_dir}/wandb"
+    wandb_project: "${project.name}"
+    wandb_exp_name: "qwen3_0.6B_A100M_lr${.lr}_gbsz${.global_batch_size}_$SLURM_JOB_ID"
+
+    distributed_backend: nccl
+    distributed_timeout_minutes: 10
+    use_distributed_optimizer: True
