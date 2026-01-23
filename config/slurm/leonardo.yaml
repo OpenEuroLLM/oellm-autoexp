@@ -16,7 +16,8 @@ env:
   HF_ALLOW_CODE_EVAL: "1"
   HF_DATASETS_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
-  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep 'Address: ' | sed 's/Address: //' | tail) "
+  # MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep 'Address: ' | sed 's/Address: //' | tail) "
+  MASTER_ADDR: '$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'
   MASTER_PORT: "20074"
   NUM_NODES: "$SLURM_JOB_NUM_NODES"
   GPUS_PER_NODE: "4"
@@ -25,6 +26,12 @@ env:
   ARCH: "$(uname -m)"
   SLURM_CPUS_PER_TASK: "12"
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
+  WANDB_MODE: "offline"
+  NCCL_SOCKET_IFNAME: ib0
+  GLOO_SOCKET_IFNAME: ib0
+  TP_SOCKET_IFNAME: ib0 
+  NCCL_IB_DISABLE: 0
+  NCCL_DEBUG: INFO
 sbatch:
   nodes: 1
   ntasks_per_node: 1

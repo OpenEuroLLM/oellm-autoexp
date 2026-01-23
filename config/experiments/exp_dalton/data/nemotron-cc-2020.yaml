@@ -1,0 +1,22 @@
+# @package backend.megatron
+# Data configuration
+global_batch_size: 1024
+seq_length: 4096
+
+max_position_embeddings: ${.seq_length}
+num_workers: 7
+num_dataset_builder_threads: 7
+split: '99,1,0'
+create_attention_mask_in_dataloader: False
+# data_args_path: local/6040_datapath.txt
+data_path: [ 
+  /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/Nemotron-cc-2020/CC-MAIN-2020-high-actual
+]
+data_cache_path: /leonardo_scratch/large/userexternal/dharmsen/megatron_cache
+
+# Tokenizer
+tokenizer_model: EleutherAI/gpt-neox-20b
+tokenizer_type: HuggingFaceTokenizer
+
+# DATA
+micro_batch_size: 8

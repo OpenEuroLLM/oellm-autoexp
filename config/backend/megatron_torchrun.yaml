@@ -12,6 +12,7 @@ torchrun_args:
   nnodes: ${slurm.sbatch.nodes}
   max_restarts: 0
   tee: 3
+  rdzv_id: "$SLURM_JOB_ID"
   rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
   rdzv_backend: static
   node_rank: "$SLURM_NODEID"

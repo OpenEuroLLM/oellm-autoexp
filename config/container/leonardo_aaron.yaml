@@ -1,0 +1,7 @@
+image: /leonardo_work/OELLM_prod2026/container_images/nemo_25.11.01.sif 
+runtime: singularity
+bind: ["/leonardo_scratch", "/leonardo_work/OELLM_prod2026"]
+env:
+  WANDB_MODE: "offline"
+  PYTHONPATH: "."
+python: "/usr/bin/python"

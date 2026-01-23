@@ -1,0 +1,5 @@
+base_values:
+  project.name: "moe_hp_sweep_lr_\\${backend.megatron.lr}_gbs_\\${backend.megatron.global_batch_size}"
+grids:
+  - backend.megatron.lr: [3e-5, 1e-4, 3e-4, 1e-3, 3e-3]
+    backend.megatron.global_batch_size: [64, 128, 256, 512]
