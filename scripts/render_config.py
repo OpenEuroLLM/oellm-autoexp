@@ -14,8 +14,8 @@ from oellm_autoexp.config.schema import ConfigSetup
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render autoexp config")
-    parser.add_argument("--config_name", default="autoexp")
-    parser.add_argument("--config_path", default=None)
+    parser.add_argument("--config-name", default="autoexp")
+    parser.add_argument("--config-path", default=None)
     parser.add_argument("-C", "--config-dir", default="config", type=Path)
     parser.add_argument("-o", "--overrides", action="append", default=[])
     return parser.parse_args()

@@ -22,7 +22,7 @@ from oellm_autoexp.orchestrator import (
     build_execution_plan,
     ExecutionPlan,
     submit_jobs,
-    execute_plan,
+    run_loop,
 )
 from oellm_autoexp.utils.logging_config import configure_logging
 
@@ -35,19 +35,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--config-name", default="autoexp")
     parser.add_argument("--config-path", default=None)
     parser.add_argument("-C", "--config-dir", type=Path, default=Path("config"))
-    parser.add_argument("--manifest", type=Path, default=None)
-    parser.add_argument("--plan-id", type=str, help="Explicit plan identifier for the manifest")
-    parser.add_argument(
-        "--container-image", type=str, help="Override container image recorded in manifest"
-    )
-    parser.add_argument(
-        "--container-runtime", type=str, help="Override container runtime recorded in manifest"
-    )
-    parser.add_argument("--use-fake-slurm", action="store_true", help="Use in-memory SLURM backend")
     parser.add_argument(
         "--dry-run", action="store_true", help="Plan and render without submitting jobs"
     )
     parser.add_argument("--no-monitor", action="store_true", help="Submit jobs but skip monitoring")
+    parser.add_argument("--monitor-state-dir", type=Path, help="Monitoring state directory")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument(
@@ -154,6 +146,7 @@ def main(argv: list[str] | None = None) -> None:
         config_name=args.config_name,
         config_dir=str(config_dir),
         overrides=args.overrides,
+        monitoring_state_dir=str(args.monitoring_state_dir),
     )
     root = load_config_reference(config_setup=config_setup)
 
@@ -169,6 +162,9 @@ def main(argv: list[str] | None = None) -> None:
         subset_indices=subset_indices or None,
     )
 
+    if not args.dry_run:
+        exit(0)
+
     _write_job_provenance(
         plan,
         args=args,
@@ -178,7 +174,10 @@ def main(argv: list[str] | None = None) -> None:
 
     res = submit_jobs(plan)
 
-    execute_plan(plan, res.loop)
+    if args.no_monitor:
+        exit(0)
+
+    run_loop(plan, res.loop)
 
 
 if __name__ == "__main__":

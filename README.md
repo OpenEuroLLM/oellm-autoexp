@@ -66,59 +66,20 @@ Make sure also to have datasets and tokenizers downloaded before starting a job,
 ### Single job / Sweep debugging
 ```bash
 # Plan + submit + monitor in one go (manifest written to outputs/manifests/)
-python scripts/run_autoexp.py job=default
+python scripts/run_autoexp.py --config-name experiments/default
 
 # Prefer explicit plan/submit?
-python scripts/plan_autoexp.py --manifest outputs/manifests/demo.json job=default
-python scripts/submit_autoexp.py --manifest outputs/manifests/demo.json
-
-# Probe a specific sweep entry
-python scripts/run_sweep_entry.py --sweep outputs/sweep.json --index 0 --dry-run
+python scripts/render_config.py  --config-name experiments/default
+python scripts/submit_autoexp.py  --config-name experiments/default
 ```
 
 ### Monitoring sessions
-- Every submission drops `<monitoring_state_dir>/<plan_id>.json`. Resuming is symmetric:
+- Every submission drops `<monitoring_state_dir>/<session_id>/<job_id>.json`. Resuming is symmetric:
 ```bash
-python scripts/monitor_autoexp.py --session <plan_id>
-# legacy path works too
-python scripts/monitor_autoexp.py --manifest outputs/manifests/<plan>.json
+python scripts/monitor_autoexp.py --session <session_id>
+python scripts/monitor_autoexp.py --session-dir monitor_state/<session_id>
 ```
-- The session file stores `resolved_log_path`, last SLURM state, per-event history, and the manifest path so you can crash/restart without guessing log names. `scripts/tests/test_monitor_resume.py` is the on-cluster smoke test that exercises plan → submit → interrupt → resume.
-- The action queue lives next to the session file (`<plan_id>.actions/`). Use the CLI to keep it short and readable:
-```bash
-# Summaries (optionally filter by event)
-python scripts/monitor_autoexp.py --session <plan_id> --cmd queue
-python scripts/monitor_autoexp.py --session <plan_id> --cmd queue --queue-event checkpoint_saved
-
-# Inspect or retry a specific entry
-python scripts/monitor_autoexp.py --session <plan_id> --cmd queue \
-    --queue-id <queue_uuid> --queue-show
-python scripts/monitor_autoexp.py --session <plan_id> --cmd queue \
-    --queue-id <queue_uuid> --queue-retry
-
-# Run the worker that executes queued actions (for example, RunAutoexpAction)
-python scripts/monitor_autoexp.py --session <plan_id> --cmd actions
-```
-Each entry is a single JSON file (`<event_id>/<queue_id>.json`) so manual inspection is always possible, but the CLI avoids editing files directly.
-
-### Container workflow (recommended for Megatron)
-```bash
-# Build once (see container/MegatronTraining*.def for examples)
-./container/build_container.sh --backend megatron --definition MegatronTraining --output ./artifacts
-# On LUMI or other clusters, where --fake-root for container builds is not available
-python ./container/build_container_user.py --backend megatron --definition MegatronTrainingLumi \
-    --requirements container/megatron/requirements_latest.txt \
-    --output ./artifacts
-
-# Plan inside the container, submit/monitor on host
-python scripts/run_autoexp_container.py \
-  --config-ref experiments/megatron_jupiter_speed_test \
-  container=juwels
-
-# Inspect or reuse the manifest later
-python scripts/monitor_autoexp.py --manifest outputs/manifests/<plan>.json
-```
-`run_autoexp_container.py` accepts `--no-submit`, `--no-monitor`, and `--monitor-only` so the same manifest feeds both automation and manual debugging.
+- The session file stores all the config, last SLURM state, per-event history, so you can crash/restart without guessing log names.
 
 ## Hyperparameter Sweeps
 
@@ -139,7 +100,7 @@ sweep:
       backend.megatron.global_batch_size: [64, 128, 256]
 ```
 
-This creates 9 jobs (3 × 3 grid) with all combinations of learning rates and batch sizes.
+This creates 9 jobs (3 × 3 grid) with all combinations of learning rates and batch sizes. Within sweep always escape omegaconf interpolations as `\\${...}`, as otherwise the value from outside the sweep will be taken (but this way you can reference those).
 
 ### Composable Sweeps (Groups Format)
 
@@ -338,28 +299,25 @@ python scripts/visualize_plan.py --debug --config-ref my_experiment
 
 #### Filters
 
-Exclude specific combinations using Python expressions:
+Exclude specific combinations using omegaconf interpolations:
 
 ```yaml
 sweep:
   defaults:
     project.name: "experiment_\\${backend.megatron.lr}_\\${backend.megatron.global_batch_size}"
-  grids:
+  type: 'product'
+  groups:
     - backend.megatron.lr: [1e-4, 5e-4, 1e-3, 2e-3]
-      backend.megatron.global_batch_size: [64, 128, 256, 512, 1024]
+    - backend.megatron.global_batch_size: [64, 128, 256, 512, 1024]
   # Exclude configurations where large LR + large batch size
-  filter: "not (backend.megatron.lr > 1e-3 and backend.megatron.global_batch_size > 256)"
+  filter: "\\${oc.eval:'not (\\${backend.megatron.lr} > 1e-3 and \\${backend.megatron.global_batch_size} > 256)'}"
 ```
 
 **Result:** Filters out jobs where `lr=2e-3` and `batch_size ∈ {512, 1024}`, keeping only valid combinations.
 
-**Filter capabilities:**
-- Access flattened parameters by dotted path (for example, `backend.megatron.lr`)
-- Use Python operators: `>`, `<`, `==`, `!=`, `and`, `or`, `not`
-- Combine multiple conditions
-- Applied after sweep expansion but before job creation
+This is applied after the first sweep expansion but before job creation, so siblings could be referenced as well.
 
-#### Adding Filters to Nested Groups
+#### Nested Sweeps
 
 Apply filters at any level to exclude unstable or redundant combinations. Building on the composable example above:
 
@@ -379,7 +337,7 @@ sweep:
       defaults:
         stage: small_batch
       # Filter out aggressive LR (2e-3) to avoid instability
-      filter: "backend.megatron.lr <= 1e-3"
+      filter: "\\${oc.eval:'\\${backend.megatron.lr} <= 1e-3'}"
       # Result: 3 LRs × 2 batch sizes = 6 jobs (2e-3 excluded)
 
     # Strategy 2: Large batch exploration
@@ -391,9 +349,6 @@ sweep:
             backend.megatron.global_batch_size: [256, 512, 1024]  # Added 1024
       defaults:
         stage: large_batch
-      # Only test aggressive LR with smaller batches (not 1024)
-      filter: "not (backend.megatron.lr > 2e-3 and backend.megatron.global_batch_size > 512)"
-      # Result: 3×3 - 1 = 8 jobs (5e-3×1024 excluded)
 
     # Strategy 3: Production (no filter needed)
     - configs:
@@ -402,75 +357,12 @@ sweep:
           backend.megatron.global_batch_size: 256
 ```
 
-**Result:** 6 + 8 + 1 = **15 jobs** (filters prevent unstable configurations)
 
-#### Other Features
-
-- **OmegaConf interpolations**: Use `${oc.eval:...}` for computed values
-  ```yaml
-  backend.megatron.train_iters: "${oc.eval:int(50e9 / ${backend.megatron.global_batch_size})}"
-  ```
-- **Group defaults**: Share common values within a group using `defaults:` block
-- **Validation**: The planner validates all sibling references and dependencies before submission (DAG-based resolution).
-
-For complete examples, see:
-- `config/experiments/korbi/dense_300M_50BT_pull.yaml` - Multi-stage sweep with 5 training phases
-- `config/experiments/korbi/repro_sweep_niccolo_small.yaml` - Large hyperparameter grid
-- `docs/multi_stage_design.md` - Design documentation
-- `docs/sweep_resolution_ordering.md` - Technical details on DAG resolution
-
-## Monitoring configs (log/state events)
-Monitoring behavior lives entirely in YAML. Keep it small, keep it explicit:
-
-```yaml
-# config/monitoring/megatron_checkpoint_eval.yaml
-log_events:
-  - name: checkpoint_saved
-    pattern: "saved checkpoint (?P<path>\\S+)"
-    pattern_type: regex
-    metadata:
-      kind: checkpoint
-    extract_groups:
-      checkpoint_path: path
-    actions:
-      - class_name: EventAction
-        mode: queue
-        conditions:
-          - class_name: FileExistsCondition
-            path: "{checkpoint_path}"
-            blocking: true
-        action:
-          class_name: RunCommandAction
-          # does not work yet
-          command: "python convert_checkpoint.py {checkpoint_path} {checkpoint_path}/../converted"
-
-state_events:
-  - name: stall
-    state:
-      class_name: StalledState
-    actions:
-      - class_name: EventAction
-        action:
-          class_name: RestartAction
-          reason: "retry stall"
-  - name: success
-    state:
-      class_name: SuccessState
-    actions:
-      - class_name: EventAction
-        action:
-          class_name: LogAction
-          message: "run_finished"
-```
-
-`log_events` describe detectors (regex/substring/inactivity). `state_events` wire SLURM transitions (`stall`, `timeout`, `success`, etc.) to actions. Because nothing is hidden in code, configs like `config/monitoring/megatron_basic.yaml` act as the canonical reference: fork it, add or remove events, and the controller will follow exactly what the YAML states.
-
-### Tips
-- Use `pattern_type: inactivity` to emit events when the log or additional output paths stop changing for `inactivity_threshold_seconds`.
-- Queue actions (`mode: queue`) for sidecar jobs or evaluations; inline actions are for immediate restarts/logging.
-- Everything templated by way of `str.format` gets the merged metadata (`job_id`, `checkpoint_path`, etc.) so downstream automation stays simple.
-
-For more context (provenance capture, fake SLURM client, restart CLI), refer to `docs/` and the unit/integration tests—they mirror real-world usage.
+## Start conditions and monitoring actions (log/state events)
+Monitoring behavior lives entirely in YAML. Keep it small, keep it explicit.
+`start_condition` describes a condition (or combination of conds.) that needs to be fulfilled before actual job submission
+`cancel_condition` describes a condition that causes a cancellation of the job (even before submission)
+`log_events` describe detectors (regex/substring/inactivity). `state_events` wire SLURM transitions (`pending`, `success`, etc.) to actions.
 
 
 ### Updating the Megatron-LM backend version

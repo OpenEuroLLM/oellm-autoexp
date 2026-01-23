@@ -117,7 +117,7 @@ def load_monitor_controller(
     )
 
 
-def execute_plan(plan: ExecutionPlan, controller: MonitorLoop) -> None:
+def run_loop(controller: MonitorLoop) -> None:
     loop = controller
     while True:
         active_jobs = list(loop._store.load_all())
@@ -128,8 +128,8 @@ def execute_plan(plan: ExecutionPlan, controller: MonitorLoop) -> None:
         time.sleep(loop.poll_interval_seconds)
 
 
-def execute_plan_sync(plan: ExecutionPlan, controller: MonitorLoop) -> None:
-    execute_plan(plan, controller)
+def run_loop_sync(controller: MonitorLoop) -> None:
+    run_loop(controller)
 
 
 def _ensure_state_store(
@@ -215,6 +215,6 @@ __all__ = [
     "build_execution_plan",
     "submit_jobs",
     "load_monitor_controller",
-    "execute_plan",
-    "execute_plan_sync",
+    "run_loop",
+    "run_loop_sync",
 ]
