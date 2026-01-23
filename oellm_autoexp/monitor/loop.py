@@ -6,7 +6,6 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field, MISSING
-import hashlib
 from pathlib import Path
 from typing import Any
 from collections.abc import Iterable
@@ -37,10 +36,6 @@ LOGGER = logging.getLogger(__name__)
 
 
 SCHEMA_VERSION = 1
-
-
-def stable_hash_hex(s: str) -> str:
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -97,7 +92,7 @@ class JobFileStore:
         return jobs
 
     def upsert(self, record: JobRecordConfig) -> None:
-        path = self.path_for(record.job_id, record.definition)
+        path = self.path_for(record.job_id)
         payload = asdict(record)
         payload.setdefault("schema_version", SCHEMA_VERSION)
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -133,10 +128,8 @@ class JobFileStore:
         except (OSError, json.JSONDecodeError, ValueError, KeyError):
             return None
 
-    def path_for(self, job_id: str, definition: Any) -> Path:
-        job_hash = stable_hash_hex(json.dumps(asdict(definition)))[:6]
-
-        return self.root / f"{job_id}_{job_hash}.job.json"
+    def path_for(self, job_id: str) -> Path:
+        return self.root / f"{job_id}.job.json"
 
 
 class MonitorLoop:

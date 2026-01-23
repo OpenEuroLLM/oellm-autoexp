@@ -5,7 +5,11 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field, MISSING, replace
+import hashlib
+import json
 from pathlib import Path
+
+from compoconf import asdict
 
 from oellm_autoexp.hydra_staged_sweep import expand_sweep, resolve_sweep_with_dag
 from oellm_autoexp.hydra_staged_sweep.expander import SweepPoint
@@ -21,6 +25,10 @@ from oellm_autoexp.config.schema import RootConfig, ConfigSetup, BackendInterfac
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+def stable_hash_hex(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
 @dataclass(kw_only=True)
@@ -153,7 +161,9 @@ def _build_job_record(plan: ExecutionPlan, job: JobPlan, session_id: str) -> Job
         raise ValueError("JobPlan.config must be RootConfig")
 
     job_name = _resolve_job_name(job.config)
-    job_id = job_name
+
+    job_hash = stable_hash_hex(json.dumps(asdict(job.config)))[:6]
+    job_id = f"{job_name}_{job_hash}"
 
     backend = job.config.backend.instantiate(BackendInterface)
     launch_cmd = backend.build_launch_command()
