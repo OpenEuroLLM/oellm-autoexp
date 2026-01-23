@@ -11,13 +11,9 @@ from __future__ import annotations
 import oellm_autoexp._libs  # noqa: F401
 
 from dataclasses import dataclass, field, MISSING
-from typing import Any
+from typing import Any, TypedDict
 
-from compoconf import (
-    ConfigInterface,
-    RegistrableConfigInterface,
-    register_interface,
-)
+from compoconf import ConfigInterface, RegistrableConfigInterface, register_interface
 
 # Import base classes from oellm_autoexp.hydra_staged_sweep
 from oellm_autoexp.hydra_staged_sweep.config.schema import (
@@ -32,6 +28,10 @@ from oellm_autoexp.monitor.slurm_client import SlurmClientConfig
 # ---------------------------------------------------------------------------
 # Core interfaces
 # ---------------------------------------------------------------------------
+
+
+class EmptyDict(TypedDict):
+    pass
 
 
 @register_interface
@@ -88,15 +88,18 @@ class RootConfig(StagedSweepRoot):
     backend: BackendInterface.cfgtype = field(
         default_factory=MISSING
     )  # defines what is actually running
-    container: ContainerConfig | None = None  # defines container setup
-    sweep: SweepConfig | None = (
-        None  # defines a surrounding sweep (already inherited from StagedSweepRoot)
-    )
+    container: EmptyDict | ContainerConfig = field(
+        default_factory=EmptyDict
+    )  # defines container setup
+    sweep: SweepConfig | None = field(
+        default_factory=dict()
+    )  # defines a surrounding sweep (already inherited from StagedSweepRoot)
 
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
-        if self.container:
+        if self.container and self.slurm:
+            print(self.container, self.slurm)
             assert self.slurm.env["MACHINE_NAME"] == self.container.env["MACHINE_NAME"]
 
 

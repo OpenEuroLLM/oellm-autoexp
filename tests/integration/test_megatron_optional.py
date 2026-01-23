@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from oellm_autoexp.backends.base import BackendJobSpec
 from oellm_autoexp.config.loader import load_config_reference
 from oellm_autoexp.config.schema import BackendInterface, ConfigSetup
 
@@ -30,6 +29,7 @@ def test_megatron_backend_builds_launch_command(monkeypatch, tmp_path):
             "backend/megatron=base",
             "job=default",
             "container=none",
+            "backend.megatron.micro_batch_size=4",
         ],
     )
     cfg = load_config_reference(config_setup=config_setup)
@@ -38,11 +38,10 @@ def test_megatron_backend_builds_launch_command(monkeypatch, tmp_path):
     backend = cfg.backend.instantiate(BackendInterface)
 
     # Build command with test parameters
-    spec = BackendJobSpec(parameters={"megatron.micro_batch_size": 4})
-    backend.validate(spec)
-    command = backend.build_launch_command(spec)
+    backend.validate()
+    command = backend.build_launch_command()
 
     # Verify command structure
-    assert command.argv[0].endswith("python")
-    assert command.argv[1].endswith("submodules/Megatron-LM/pretrain_gpt.py")
-    assert any(arg.startswith("--micro-batch-size") for arg in command.argv)
+    assert "python" in command
+    assert "submodules/Megatron-LM/pretrain_gpt.py" in command
+    assert "--micro-batch-size 4" in command

@@ -80,15 +80,17 @@ class MegatronBackendConfig(NonStrictDataclass, BaseBackendConfig):
         # this should be set via the config
         if self.full_cmd is MissingValue:
             self.full_cmd = " ".join(
-                self.python_cmd,
-                *(() if not self.torchrun_args else self.torchrun_args),
-                self.launcher_script,
-                *build_cmdline_args(
-                    self.megatron,
-                    dict(MEGATRON_ARG_METADATA),
-                    dict(MEGATRON_ACTION_SPECS),
-                    skip_defaults=True,
-                ),
+                [
+                    self.python_cmd,
+                    *(() if not self.torchrun_args else self.torchrun_args),
+                    self.launcher_script,
+                    *build_cmdline_args(
+                        asdict(self.megatron),
+                        dict(MEGATRON_ARG_METADATA),
+                        dict(MEGATRON_ACTION_SPECS),
+                        skip_defaults=True,
+                    ),
+                ]
             )
 
 
@@ -118,8 +120,10 @@ class MegatronBackend(BaseBackend):
             self._schema_only = False
 
     def validate(self) -> None:
-        args = asdict(self.megatron)
-        args.remove("_non_strict")
+        args = asdict(self.config.megatron)
+        # remove potential extension
+        if "_non_strict" in args:
+            args.remove("_non_strict")
         if self._schema_only:
             # Schema-only validation: basic type checking against MegatronConfig
             self._validate_schema_only(args)

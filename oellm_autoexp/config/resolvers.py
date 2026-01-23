@@ -35,7 +35,6 @@ def oc_split(inp: str, split: str) -> ListConfig:
 
 
 def oc_map_cond_template(cond: str, tmpl_if: str, tmpl_else: str, inps: list[str]) -> list[str]:
-    print(cond, inps)
     return [
         tmpl_if.replace("%", inp) if re.match(cond, inp) else tmpl_else.replace("%", inp)
         for inp in inps

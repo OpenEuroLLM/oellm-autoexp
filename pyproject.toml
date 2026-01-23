@@ -13,7 +13,7 @@ authors = [
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
-  "compoconf>=0.1.11",
+  "compoconf>=0.1.13",
   "hydra-core>=1.3",
   "omegaconf>=2.3",
   "pydantic>=2.0",
