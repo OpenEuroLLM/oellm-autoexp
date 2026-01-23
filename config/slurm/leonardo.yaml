@@ -7,7 +7,7 @@ defaults:
 # the third does the container binds
 template_path: "templates/base.sbatch"
 launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
-  export LOCAL_ADDR=$(nslookup $(hostname) | grep \\'Address: \\' | sed \\'s/Address: //\\' | tail) ; \\\n\
+  export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
   ${oc.select:container.runtime,apptainer} exec ${oc.join:' ',${oc.maptmpl:'--env %=$% \\\n',${oc.dict.keys:.env}}} \
   ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
   --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif}"
@@ -23,7 +23,7 @@ env:
   HF_ALLOW_CODE_EVAL: "1"
   HF_DATASETS_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
-  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep 'Address: ' | sed 's/Address: //' | tail) "
+  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep \"Address: \" | sed \"s/Address: //\" | tail) "
   MASTER_PORT: "20074"
   NUM_NODES: "$SLURM_JOB_NUM_NODES"
   GPUS_PER_NODE: "4"

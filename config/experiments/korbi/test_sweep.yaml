@@ -4,7 +4,7 @@
 # Translation of dense_300M_50BT.yaml to new composable sweep system
 #
 defaults:
-  - /backend: megatron
+  - /backend: megatron_torchdist
   - /container: leonardo
   - /slurm: leonardo
   - /job: default

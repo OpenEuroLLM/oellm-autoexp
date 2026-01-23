@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass, field, asdict, MISSING
+from dataclasses import dataclass, field, MISSING
+import hashlib
 from pathlib import Path
 from typing import Any
 from collections.abc import Iterable
 
-from compoconf import ConfigInterface, parse_config
+from compoconf import ConfigInterface, parse_config, asdict
 
 from oellm_autoexp.monitor.conditions import (
     ConditionContext,
@@ -36,6 +37,10 @@ LOGGER = logging.getLogger(__name__)
 
 
 SCHEMA_VERSION = 1
+
+
+def stable_hash_hex(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
 @dataclass
@@ -92,7 +97,7 @@ class JobFileStore:
         return jobs
 
     def upsert(self, record: JobRecordConfig) -> None:
-        path = self.path_for(record.job_id)
+        path = self.path_for(record.job_id, record.definition)
         payload = asdict(record)
         payload.setdefault("schema_version", SCHEMA_VERSION)
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -128,8 +133,10 @@ class JobFileStore:
         except (OSError, json.JSONDecodeError, ValueError, KeyError):
             return None
 
-    def path_for(self, job_id: str) -> Path:
-        return self.root / f"{job_id}.job.json"
+    def path_for(self, job_id: str, definition: Any) -> Path:
+        job_hash = stable_hash_hex(json.dumps(asdict(definition)))[:6]
+
+        return self.root / f"{job_id}_{job_hash}.job.json"
 
 
 class MonitorLoop:
@@ -293,10 +300,15 @@ class MonitorLoop:
             else:
                 runtime_job_id = job_ids[0]
         else:
-            runtime_job_id = client.submit(job.definition)
-        runtime.runtime_job_id = runtime_job_id
-        runtime.submitted = True
-        runtime.log_cursor = 0
+            try:
+                runtime_job_id = client.submit(job.definition)
+            except Exception as e:
+                LOGGER.error(f"Unable to submit {job.definition.name}: {e}")
+                runtime_job_id = None
+        if runtime_job_id is not None:
+            runtime.runtime_job_id = runtime_job_id
+            runtime.submitted = True
+            runtime.log_cursor = 0
 
     def _start_jobs(self, job: JobRecordConfig, indices: list[int] | None = None) -> None:
         definition = job.definition
@@ -313,7 +325,11 @@ class MonitorLoop:
         runtime.start_ts = time.time()
         client = self._get_client(job)
         indices = indices or list(range(array_len))
-        job_ids = client.submit_array(definition, indices)
+        try:
+            job_ids = client.submit_array(definition, indices)
+        except Exception as e:
+            LOGGER.error(f"Unable to submit {job.definition.name}: {e}")
+            job_ids = []
 
         for idx, runtime_job_id in zip(indices, job_ids):
             task_runtime = JobRuntimeConfig(
@@ -330,8 +346,8 @@ class MonitorLoop:
                 array_idx=idx,
             )
             self._store.upsert(task_record)
-
-        self._store.remove(job.job_id)
+        if job_ids:
+            self._store.remove(job.job_id)
 
     def _process_log_events(self, job: JobRecordConfig) -> str:
         """Process log events by checking patterns in new log content.

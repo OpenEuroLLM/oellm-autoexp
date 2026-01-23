@@ -2,7 +2,7 @@ defaults:
   - base
   - _self_
 
-launcher_cmd: "{{env_exports}} export LOCAL_ADDR=$(nslookup $(hostname) | grep 'Address: ' | sed 's/Address: //' | tail) ;"
+launcher_cmd: "{{env_exports}} export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ;"
 srun:
   exclusive: true
   wait: 60
@@ -19,7 +19,7 @@ env:
   HF_ALLOW_CODE_EVAL: "1"
   HF_DATASETS_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
-  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep 'Address: ' | sed 's/Address: //' | tail) "
+  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep \"Address: \" | sed \"s/Address: //\" | tail) "
   MASTER_PORT: "20074"
   NUM_NODES: "$SLURM_JOB_NUM_NODES"
   GPUS_PER_NODE: "4"

@@ -8,18 +8,14 @@ defaults:
   - /backend: megatron_torchrun
   - /container: juwels
   - /slurm: juwels
-  - /monitoring@job: megatron_basic
-  - /job: default
-  - /job: default
   - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_juwels]
   - /sweep: none
   - _self_
 
 job:
   name: megatron_auto_restart_example
-
-# This experiment will:
-# 1. Monitor for OOM, NCCL errors, hangs, stalls, and success
-# 2. Automatically restart on transient errors (hangs, NCCL, communication)
-# 3. Stop permanently on OOM or code bugs (requires human intervention)
-# 4. Restart up to 3 times on crashes, 2 times on stalls
+  state_events:
+  - class_name: StateEvent
+    transition: ["RUNNING", "FINISHED"]
+    action:
+      class_name: RestartAction

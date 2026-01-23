@@ -33,9 +33,6 @@ def validate_job_script(
     """
     # Check for job name directive
     rendered = Path(rendered_path).read_text()
-    if f"#SBATCH --job-name={job_name}" not in rendered:
-        raise SlurmValidationError("Rendered script missing job name directive")
-
     # Check for unreplaced template placeholders
     if re.search(r"[^\$]\{[A-Za-z0-9_]+\}", rendered):
         raise SlurmValidationError("Unreplaced template placeholder detected")

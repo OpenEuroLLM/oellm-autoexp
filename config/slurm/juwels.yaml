@@ -4,7 +4,7 @@ defaults:
 
 template_path: templates/juwels.sbatch
 launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \\\n\
- export LOCAL_ADDR=$(nslookup $(hostname | sed 's/.juwels//' )i \
+ export LOCAL_ADDR=$(nslookup $(hostname | sed \"s/.juwels//\" )i \
   | grep \"Address: \" | tail -n1 | awk '{print $2}') ; \
   ${oc.select:container.runtime,apptainer} exec ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}}\
  --nv ${oc.select:container.image,container.sif}"

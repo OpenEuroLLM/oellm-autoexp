@@ -34,6 +34,8 @@ def update_log_symlink(target: Path, symlink_path: Path) -> None:
     except OSError:  # pragma: no cover
         pass
     try:
+        target = target.absolute()
+        symlink_path = symlink_path.absolute()
         symlink_path.symlink_to(target)
     except OSError:  # pragma: no cover
         pass

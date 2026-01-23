@@ -137,9 +137,9 @@ def _ensure_state_store(
 ) -> tuple[JobFileStore, str]:
     monitoring_state_dir = Path(plan.config_setup.monitoring_state_dir)
     if not session_id:
-        import uuid
+        import time
 
-        session_id = str(uuid.uuid4())[:8]
+        session_id = str(int(time.time()))
 
     session_dir = monitoring_state_dir / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -157,7 +157,9 @@ def _build_job_record(plan: ExecutionPlan, job: JobPlan, session_id: str) -> Job
 
     backend = job.config.backend.instantiate(BackendInterface)
     launch_cmd = backend.build_launch_command()
-    script_path = Path(job.config.slurm.script_dir) / f"{job_name}.sbatch"
+    script_path = (
+        job.config.slurm.script_path or Path(job.config.slurm.script_dir) / f"{job_name}.sbatch"
+    )
     slurm_config = replace(
         job.config.slurm,
         name=job_name,

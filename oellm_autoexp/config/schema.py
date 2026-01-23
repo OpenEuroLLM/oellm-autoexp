@@ -99,7 +99,6 @@ class RootConfig(StagedSweepRoot):
 
     def __post_init__(self):
         if self.container and self.slurm:
-            print(self.container, self.slurm)
             assert self.slurm.env["MACHINE_NAME"] == self.container.env["MACHINE_NAME"]
 
 
