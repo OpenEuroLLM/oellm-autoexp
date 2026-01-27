@@ -55,6 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--append-date", action="store_true", help="Append UTC timestamp to the output image name."
     )
+    parser.add_argument("--additional_tag", default="", help="Add additional tag to name.")
     parser.add_argument(
         "--base-image",
         default=os.environ.get("BASE_IMAGE"),
@@ -253,7 +254,7 @@ def main() -> None:
 
     output_dir = Path(args.output).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    image_name = f"{args.definition}_{arch}{stamp}.sif"
+    image_name = f"{args.definition}{args.additional_tag}_{arch}{stamp}.sif"
     target_path = output_dir / image_name
 
     if target_path.exists():
