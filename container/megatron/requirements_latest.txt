@@ -18,7 +18,6 @@ python-etcd
 pudb
 pytest<=8.4.0
 pytest-cov
-pytest-pudb
 pre-commit
 lm_eval
 compoconf>=0.1.9
