@@ -61,6 +61,22 @@ For LEONARDO, all should work with a pre-built container image. To build a conta
 Otherwise, on the login node you run out of resources and get killed.
 Make sure also to have datasets and tokenizers downloaded before starting a job, as there is no web connection on the compute nodes.
 
+
+## Supercomputer setup: JUWELS Booster / JUPITER
+To be tested.
+See also the predecessors https://github.com/SLAMPAI/megatron-autoexp ([Notes](https://iffmd.fz-juelich.de/yAbNVj9eQz647elSwlyHXQ)) and https://github.com/SLAMPAI/autoexperiment for hints.
+Testing for JUPITER: see the [JUPITER Notes](https://iffmd.fz-juelich.de/BoygWCOZRciXluqqcDQ1oQ)
+Tokenization (tested at JSC, is generic): https://github.com/marianna13/megatron-lm-parallel-data
+Containers:
+- JUPITER `/p/data1/mmlaion/shared/containers/pytorch_24.09-py3_arm_transformers_latest.sif`
+- JUWELS/JURECA `/p/data1/mmlaion/shared/containers/pytorch_24.09-py3.sif ; pytorch_25.03-py3.sif`
+- inspect container:
+```bash
+CONTAINER_IMAGE="image"
+apptainer shell ${CONTAINER_IMAGE}
+```
+
+
 ## Quick Recipes
 
 ### Single job / Sweep debugging
