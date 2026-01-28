@@ -39,7 +39,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run", action="store_true", help="Plan and render without submitting jobs"
     )
     parser.add_argument("--no-monitor", action="store_true", help="Submit jobs but skip monitoring")
-    parser.add_argument("--monitor-state-dir", type=Path, help="Monitoring state directory")
+    parser.add_argument("--monitoring-state-dir", type=Path, help="Monitoring state directory")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument(
@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> None:
         config_name=args.config_name,
         config_dir=str(config_dir),
         overrides=args.overrides,
-        monitoring_state_dir=str(args.monitoring_state_dir),
+        monitor_state_dir=str(args.monitoring_state_dir),
     )
     root = load_config_reference(config_setup=config_setup)
 

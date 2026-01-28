@@ -120,7 +120,7 @@ class ConfigSetup(BaseConfigSetup):
     config_path: str | None = None
     config_dir: str | None = None
     overrides: list[str] = field(default_factory=list)
-    monitoring_state_dir: str = "./monitor_state"
+    monitor_state_dir: str = "./monitor_state"
 
     def __post_init__(self):
         # Ensure at least one way to specify config is provided
