@@ -1,70 +1,52 @@
-"""Orchestration utilities tying together configuration, sweeps, and SLURM."""
+"""Orchestration utilities for resolving sweeps and running monitor loops."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import json
-from dataclasses import dataclass, field, MISSING
-from pathlib import Path
-from typing import Any
 import time
-from collections.abc import Mapping, Sequence, Iterable
+from dataclasses import dataclass, field, MISSING, replace
+import hashlib
+import json
+from pathlib import Path
 
 from compoconf import asdict
 
-from oellm_autoexp.backends.base import BackendJobSpec, LaunchCommand
-from oellm_autoexp.config.evaluator import RuntimeConfig, evaluate
-from oellm_autoexp.config.loader import load_config, load_config_reference
-from oellm_autoexp.config.schema import RootConfig, SlurmConfig, ConfigSetup
-from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
-from oellm_autoexp.persistence import MonitorStateStore, StoredJob
-from oellm_autoexp.slurm.client import BaseSlurmClient
-from oellm_autoexp.slurm.template_renderer import render_template_file
-from oellm_autoexp.slurm.validator import validate_job_script
-from oellm_autoexp.sweep.expander import SweepPoint, expand_sweep
-from oellm_autoexp.sweep.planner import JobPlan
-from oellm_autoexp.sweep.dag_resolver import resolve_sweep_with_dag
-from oellm_autoexp.sweep.validator import validate_execution_plan
-from oellm_autoexp.utils.start_condition import (
-    resolve_start_condition_interval,
-    wait_for_start_condition,
-)
-from oellm_autoexp.utils.tree_map import tree_map
+from oellm_autoexp.hydra_staged_sweep import expand_sweep, resolve_sweep_with_dag
+from oellm_autoexp.hydra_staged_sweep.expander import SweepPoint
+from oellm_autoexp.hydra_staged_sweep.planner import JobPlan
+
+from oellm_autoexp.monitor.loop import MonitorLoop, JobFileStore, JobRecordConfig, JobRuntimeConfig
+from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
+from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
+from oellm_autoexp.monitor.submission import SlurmJobConfig
+
+import oellm_autoexp.backends.megatron_backend  # noqa  - register
+from oellm_autoexp.config.schema import RootConfig, ConfigSetup, BackendInterface
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+def stable_hash_hex(s: str) -> str:
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
 @dataclass(kw_only=True)
 class ExecutionPlan:
     config: RootConfig = field(default_factory=MISSING)
     config_setup: ConfigSetup = field(default_factory=MISSING)
-    runtime: RuntimeConfig = field(default_factory=MISSING)
-    sweep_points: list[SweepPoint] = field(default_factory=list)
+    sweep_points: dict[int, SweepPoint] = field(default_factory=dict)
     jobs: list[JobPlan] = field(default_factory=list)
 
 
 @dataclass(kw_only=True)
-class RenderedArtifacts:
-    job_scripts: list[str] = field(default_factory=list)
-    sweep_json: str | None = None
-    array_script: str | None = None
-    array_job_name: str | None = None
-    sweep_entries: list[dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass(kw_only=True)
 class SubmissionResult:
-    """Return value capturing submission side-effects."""
+    """Return value capturing monitoring setup."""
 
-    controller: MonitorController = field(default_factory=MISSING)
-    state_store: MonitorStateStore = field(default_factory=MISSING)
+    loop: MonitorLoop = field(default_factory=MISSING)
+    state_store: JobFileStore = field(default_factory=MISSING)
+    session_id: str = ""
     submitted_job_ids: list[str] = field(default_factory=list)
-
-    @property
-    def session_id(self) -> str:
-        return self.state_store.session_id
 
     @property
     def submitted_jobs(self) -> list[str]:
@@ -72,794 +54,177 @@ class SubmissionResult:
 
 
 def build_execution_plan(
-    config: str | RootConfig,
-    config_setup: ConfigSetup | None = None,
+    config: RootConfig,
+    config_setup: ConfigSetup,
     subset_indices: set[int] | None = None,
-    validate: bool = True,
 ) -> ExecutionPlan:
-    if isinstance(config, (str, Path)):
-        root = load_config(config)
-        # Create a minimal config_setup if not provided
-        if config_setup is None:
-            config_setup = ConfigSetup(
-                pwd=str(Path.cwd()),
-                config_ref=str(config),
-                config_dir=str(Path(config).parent),
-                override=[],
-            )
-    else:
-        root = config
-        # For RootConfig input, create a placeholder config_setup
-        if config_setup is None:
-            metadata = root.metadata or {}
-            config_ref = metadata.get("config_ref", "")
-            config_dir = metadata.get("config_dir", str(Path.cwd()))
-            config_setup = ConfigSetup(
-                pwd=str(Path.cwd()),
-                config_ref=str(config_ref),
-                config_dir=str(config_dir),
-                override=[],
-            )
-    runtime = evaluate(root)
+    root = config
+
     points = expand_sweep(root.sweep)
-    points = {point.index: point for point in points}
+    points_by_idx = {point.index: point for point in points}
+    if subset_indices:
+        points_by_idx = {
+            idx: point for idx, point in points_by_idx.items() if idx in subset_indices
+        }
+        if not points_by_idx:
+            raise ValueError(f"No sweep points match indices: {sorted(subset_indices)}")
 
-    # Unified DAG-based resolution (job planning + sibling resolution)
     jobs = resolve_sweep_with_dag(
-        root, points, config_setup=config_setup, subset_indices=subset_indices
+        root,
+        points_by_idx,
+        config_setup=config_setup,
+        config_class=RootConfig,
     )
-
-    # Validate execution plan
-    if validate:
-        validation_result = validate_execution_plan(jobs)
-        if not validation_result.is_valid:
-            error_msg = f"Execution plan validation failed:\n{validation_result}"
-            LOGGER.error(error_msg)
-            raise ValueError(error_msg)
-        if validation_result.warnings:
-            for warning in validation_result.warnings:
-                LOGGER.warning(warning)
 
     return ExecutionPlan(
-        config=root, config_setup=config_setup, runtime=runtime, sweep_points=points, jobs=jobs
+        config=root, config_setup=config_setup, sweep_points=points_by_idx, jobs=jobs
     )
-
-
-def render_scripts(plan: ExecutionPlan) -> RenderedArtifacts:
-    template_path = Path(plan.config.slurm.template_path)
-    preferred_script_dir = Path(plan.config.slurm.script_dir)
-    try:
-        preferred_script_dir.mkdir(parents=True, exist_ok=True)
-        script_dir = preferred_script_dir
-    except OSError as exc:
-        fallback_script_dir = Path.cwd() / ".oellm_autoexp" / "scripts"
-        fallback_script_dir.mkdir(parents=True, exist_ok=True)
-        LOGGER.warning(
-            "Unable to create script directory %s (%s); using fallback %s",
-            preferred_script_dir,
-            exc,
-            fallback_script_dir,
-        )
-        script_dir = fallback_script_dir
-
-    job_scripts: list[str] = []
-    sweep_entries: list[dict[str, Any]] = []
-    write_fallback_dir: str | None = None
-
-    for job_it, job in enumerate(plan.jobs):
-        # Try to apply job.parameters as Hydra overrides to get job-specific config
-        # If that fails (e.g., parameters don't correspond to config fields),
-        # fall back to passing parameters directly to the backend
-        job_runtime = plan.runtime
-        job_config = plan.config
-
-        if job.parameters and plan.config_setup.config_ref:
-            try:
-                job_overrides = job.parameters
-                combined_overrides = list(plan.config_setup.override) + job_overrides
-
-                # Reload config with job-specific overrides
-                job_config = load_config_reference(
-                    plan.config_setup.config_ref,
-                    plan.config_setup.config_dir,
-                    overrides=combined_overrides,
-                )
-
-                # Re-evaluate to get job-specific backend
-                job_runtime = evaluate(job_config)
-
-                # Parameters were applied to config, so don't pass them to spec
-                spec = BackendJobSpec(parameters={})
-            except Exception as exc:
-                # Fall back to old behavior: pass parameters directly to backend
-                LOGGER.debug(
-                    "Failed to apply job parameters as Hydra overrides for %s: %s. "
-                    "Falling back to passing parameters to backend spec.",
-                    job.name,
-                    exc,
-                )
-                spec = BackendJobSpec(parameters=list(job.parameters))
-        else:
-            # No parameters or no config_ref, use old behavior
-            spec = BackendJobSpec(parameters=list(job.parameters))
-
-        job_runtime.backend.validate(spec)
-        launch_cmd = job_runtime.backend.build_launch_command(spec)
-
-        replacements = _build_replacements(job_runtime, job, launch_cmd, escape_str=True)
-        if not plan.config.slurm.array:
-            script_path = script_dir / f"{job.name}_{job_it}.sbatch"
-            try:
-                rendered = render_template_file(template_path, script_path, replacements)
-            except OSError as exc:
-                if write_fallback_dir is None:
-                    write_fallback_dir = Path.cwd() / ".oellm_autoexp" / "scripts"
-                    write_fallback_dir.mkdir(parents=True, exist_ok=True)
-                fallback_path = write_fallback_dir / script_path.name
-                LOGGER.warning(
-                    "Unable to write script to %s (%s); using fallback %s",
-                    script_path,
-                    exc,
-                    fallback_path,
-                )
-                rendered = render_template_file(template_path, fallback_path, replacements)
-                script_path = fallback_path
-            validate_job_script(rendered, job.name)
-            job_scripts.append(str(script_path))
-
-        sweep_entries.append(_build_sweep_entry(job, job_config, launch_cmd))
-
-    sweep_path: str | None = None
-    if plan.config.sweep.store_sweep_json or plan.config.slurm.array:
-        sweep_path = _write_sweep_json(plan, sweep_entries)
-
-    array_script: str | None = None
-    array_job_name: str | None = None
-    if plan.config.slurm.array and plan.jobs:
-        array_job_name = f"{plan.config.project.name}-array"
-        array_script = _render_array_script(
-            plan,
-            script_dir,
-            template_path,
-            sweep_path,
-            array_job_name,
-        )
-        job_scripts = [str(array_script)] * len(plan.jobs)
-
-    return RenderedArtifacts(
-        job_scripts=job_scripts,
-        sweep_json=sweep_path,
-        array_script=array_script,
-        array_job_name=array_job_name,
-        sweep_entries=sweep_entries,
-    )
-
-
-def _ensure_state_store(plan: ExecutionPlan, *, session_id: str | None = None) -> MonitorStateStore:
-    monitoring_state_dir = plan.config.project.monitoring_state_dir
-    state_store = MonitorStateStore(monitoring_state_dir, session_id=session_id)
-    if not state_store.session_path.exists():
-        config_dict = asdict(plan.config)
-        state_store.save_session(config_dict, plan.config.project.name)
-        LOGGER.info("Created monitoring session: %s", state_store.session_path)
-    return state_store
-
-
-def _initialize_monitor_controller(
-    plan: ExecutionPlan,
-    client: BaseSlurmClient,
-    state_store: MonitorStateStore,
-) -> tuple[MonitorController, set[str]]:
-    saved_jobs = state_store.load()
-    controller = MonitorController(
-        plan.runtime.monitor,
-        client,
-        state_store=state_store,
-    )
-    restored_names = _restore_saved_jobs(controller, client, saved_jobs.values())
-    return controller, restored_names
 
 
 def submit_jobs(
     plan: ExecutionPlan,
-    artifacts: RenderedArtifacts,
-    slurm_client: BaseSlurmClient | None = None,
+    *,
+    slurm_client: SlurmClient | None = None,
+    session_id: str | None = None,
 ) -> SubmissionResult:
-    client = slurm_client or plan.runtime.slurm_client
-    state_store = _ensure_state_store(plan)
-    controller, restored_names = _initialize_monitor_controller(plan, client, state_store)
+    store, session_id = _ensure_state_store(plan, session_id=session_id)
+    client = slurm_client or SlurmClient(SlurmClientConfig())
+    local_client = LocalCommandClient(LocalCommandClientConfig())
+    loop = MonitorLoop(store, slurm_client=client, local_client=local_client)
+
     submitted_job_ids: list[str] = []
-
-    monitor_config = plan.runtime.monitor.config
-
-    job_script_map = {job.name: script for job, script in zip(plan.jobs, artifacts.job_scripts)}
-
-    pending_jobs = [job for job in plan.jobs if job.name not in restored_names]
-
-    scheduler_cfg = plan.config.scheduler
-    max_jobs = scheduler_cfg.max_jobs
-    rate_limit = scheduler_cfg.submit_rate_limit_seconds or 0.0
-    if max_jobs is not None and len(pending_jobs) > max_jobs:
-        LOGGER.info(
-            "Scheduler max_jobs=%s trimming submissions from %s to %s",
-            max_jobs,
-            len(pending_jobs),
-            max_jobs,
-        )
-        pending_jobs = pending_jobs[:max_jobs]
-    last_submit_ts = 0.0
-
-    use_array = (
-        plan.config.slurm.array
-        and artifacts.array_script is not None
-        and getattr(client, "supports_array", False)
-        and pending_jobs
-    )
-
-    if use_array:
-        if not pending_jobs:
-            return SubmissionResult(
-                controller=controller,
-                state_store=state_store,
-                submitted_job_ids=submitted_job_ids,
-            )
-
-        for job in pending_jobs:
-            if job.start_condition_cmd:
-                interval = resolve_start_condition_interval(
-                    job.start_condition_interval_seconds,
-                    monitor_config,
-                )
-                wait_for_start_condition(
-                    job.start_condition_cmd,
-                    interval_seconds=interval,
-                    logger=LOGGER,
-                )
-
-        submit_array = getattr(client, "submit_array")
-        last_submit_ts = _respect_submit_rate(last_submit_ts, rate_limit)
-        job_ids: list[str] = submit_array(  # type: ignore[misc]
-            artifacts.array_job_name or plan.config.project.name,
-            artifacts.array_script,
-            [job.log_path for job in pending_jobs],
-            [job.name for job in pending_jobs],
-        )
-
-        if len(job_ids) != len(pending_jobs):
-            raise RuntimeError("SLURM client returned mismatched job ids for array submission")
-
-        for job_id, job in zip(job_ids, pending_jobs):
-            job_metadata: dict[str, Any] = {"parameters": list(job.parameters)}
-            if job.inactivity_threshold_seconds is not None:
-                job_metadata["inactivity_threshold_seconds"] = job.inactivity_threshold_seconds
-
-            _create_current_log_symlink(job_id, str(job.log_path), job.log_path_current)
-            registration = JobRegistration(
-                name=job.name,
-                script_path=artifacts.array_script,
-                log_path=job.log_path,
-                metadata=job_metadata,
-                output_paths=job.output_paths,
-                start_condition_cmd=job.start_condition_cmd,
-                start_condition_interval_seconds=job.start_condition_interval_seconds,
-                termination_string=job.termination_string,
-                termination_command=job.termination_command,
-                inactivity_threshold_seconds=job.inactivity_threshold_seconds,
-            )
-            controller.register_job(job_id, registration)
-            submitted_job_ids.append(job_id)
-
-        return SubmissionResult(
-            controller=controller,
-            state_store=state_store,
-            submitted_job_ids=submitted_job_ids,
-        )
-
-    for job in pending_jobs:
-        script = job_script_map[job.name]
-        if job.start_condition_cmd:
-            interval = resolve_start_condition_interval(
-                job.start_condition_interval_seconds,
-                monitor_config,
-            )
-            wait_for_start_condition(
-                job.start_condition_cmd,
-                interval_seconds=interval,
-                logger=LOGGER,
-            )
-        job_metadata: dict[str, Any] = {
-            "parameters": job.parameters,
-            "output_dir": job.output_dir,
-        }
-        if job.inactivity_threshold_seconds is not None:
-            job_metadata["inactivity_threshold_seconds"] = job.inactivity_threshold_seconds
-
-        last_submit_ts = _respect_submit_rate(last_submit_ts, rate_limit)
-        job_id = client.submit(job.name, script, job.log_path)
-        _create_current_log_symlink(job_id, str(job.log_path), job.log_path_current)
-        registration = JobRegistration(
-            name=job.name,
-            script_path=script,
-            log_path=job.log_path,
-            metadata=job_metadata,
-            output_paths=job.output_paths,
-            start_condition_cmd=job.start_condition_cmd,
-            start_condition_interval_seconds=job.start_condition_interval_seconds,
-            termination_string=job.termination_string,
-            termination_command=job.termination_command,
-            inactivity_threshold_seconds=job.inactivity_threshold_seconds,
-        )
-        controller.register_job(job_id, registration)
-        submitted_job_ids.append(job_id)
+    for job in plan.jobs:
+        record = _build_job_record(plan, job, session_id)
+        store.upsert(record)
+        submitted_job_ids.append(record.job_id)
 
     return SubmissionResult(
-        controller=controller, state_store=state_store, submitted_job_ids=submitted_job_ids
+        loop=loop,
+        state_store=store,
+        session_id=session_id,
+        submitted_job_ids=submitted_job_ids,
     )
 
 
 def load_monitor_controller(
     plan: ExecutionPlan,
-    slurm_client: BaseSlurmClient | None = None,
     *,
+    slurm_client: SlurmClient | None = None,
     session_id: str | None = None,
 ) -> SubmissionResult:
-    """Load monitor controller without submitting new jobs.
+    if not session_id:
+        raise ValueError("session_id required to load existing monitor session")
 
-    Returns a ``SubmissionResult`` with an empty ``submitted_job_ids`` list so callers
-    can reuse the same structure as ``submit_jobs`` when wiring the monitor.
-    """
+    store, _ = _ensure_state_store(plan, session_id=session_id)
+    client = slurm_client or SlurmClient(SlurmClientConfig())
+    local_client = LocalCommandClient(LocalCommandClientConfig())
+    loop = MonitorLoop(store, slurm_client=client, local_client=local_client)
 
-    client = slurm_client or plan.runtime.slurm_client
-    state_store = _ensure_state_store(plan, session_id=session_id)
-    controller, restored_names = _initialize_monitor_controller(plan, client, state_store)
-
-    # Warn if the execution plan contains jobs that were never submitted.
-    pending_jobs = [job.name for job in plan.jobs if job.name not in restored_names]
-    if pending_jobs:
-        LOGGER.warning(
-            "Monitoring session %s missing submissions for jobs: %s",
-            state_store.session_id,
-            ", ".join(pending_jobs),
-        )
-
-    return SubmissionResult(controller=controller, state_store=state_store, submitted_job_ids=[])
-
-
-async def execute_plan(
-    plan: ExecutionPlan,
-    controller: MonitorController,
-) -> None:
-    if controller is None:
-        raise ValueError("execute_plan requires an initialized MonitorController")
-
-    if plan.runtime.monitor.__class__.__name__ == "NullMonitor":
-        controller.clear_state()
-        return
-
-    monitor_interval = getattr(
-        plan.runtime.monitor.config,
-        "poll_interval_seconds",
-        getattr(plan.runtime.monitor.config, "check_interval_seconds", 60),
+    return SubmissionResult(
+        loop=loop, state_store=store, session_id=session_id, submitted_job_ids=[]
     )
 
-    while controller.jobs():
-        await asyncio.sleep(max(1, int(monitor_interval)))
-        await controller.observe_once()
 
-    controller.clear_state()
+def run_loop(controller: MonitorLoop) -> None:
+    loop = controller
+    while True:
+        active_jobs = list(loop._store.load_all())
+        if not active_jobs:
+            LOGGER.info("All jobs finished.")
+            break
+        loop.observe_once()
+        time.sleep(loop.poll_interval_seconds)
 
 
-def execute_plan_sync(plan: ExecutionPlan, controller: MonitorController) -> None:
-    asyncio.run(execute_plan(plan, controller))
+def run_loop_sync(controller: MonitorLoop) -> None:
+    run_loop(controller)
 
 
-def _build_replacements(
-    runtime: RuntimeConfig,
-    job: JobPlan,
-    launch_cmd: LaunchCommand,
-    escape_str: bool = True,
-    sbatch_overrides: dict[str, str] = {},
-) -> dict[str, str]:
-    sbatch_directives = _format_sbatch_directives(
-        runtime.root.slurm, job, sbatch_overrides=sbatch_overrides
+def _ensure_state_store(
+    plan: ExecutionPlan, *, session_id: str | None = None
+) -> tuple[JobFileStore, str]:
+    monitoring_state_dir = Path(plan.config_setup.monitoring_state_dir)
+    if not session_id:
+        import time
+
+        session_id = str(int(time.time()))
+
+    session_dir = monitoring_state_dir / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+    store = JobFileStore(session_dir)
+    LOGGER.info("Created monitoring session directory: %s", session_dir)
+    return store, session_id
+
+
+def _build_job_record(plan: ExecutionPlan, job: JobPlan, session_id: str) -> JobRecordConfig:
+    if not isinstance(job.config, RootConfig):
+        raise ValueError("JobPlan.config must be RootConfig")
+
+    job_name = _resolve_job_name(job.config)
+
+    job_hash = stable_hash_hex(json.dumps(asdict(job.config)))[:6]
+    job_id = f"{job_name}_{job_hash}"
+
+    backend = job.config.backend.instantiate(BackendInterface)
+    launch_cmd = backend.build_launch_command()
+    script_path = (
+        job.config.slurm.script_path or Path(job.config.slurm.script_dir) / f"{job_name}.sbatch"
     )
-    backend_cmd = _format_command(launch_cmd.argv, escape_str=escape_str)
-    launcher_raw = runtime.root.slurm.launcher_cmd.strip()
-    launcher = f"{launcher_raw} " if launcher_raw else ""
-    launcher_env_flags = ""
-    launcher_env_exports = ""
-
-    # Add bind directories from container yaml
-    # The bind directories are within a list of strings, so we seperate this from below
-    launcher_bind_flags = ""
-    container_cfg = runtime.root.container
-    if container_cfg and container_cfg.bind:
-        bind_flags = " ".join(f"--bind {entry}" for entry in container_cfg.bind)
-        if bind_flags:
-            launcher_bind_flags = f"{bind_flags} "
-
-    if runtime.root.slurm.env or launch_cmd.env:
-        environ = dict(**runtime.root.slurm.env)
-        env_exports = "; ".join(f"export {key}='\"${key}\"'" for key in environ.keys())
-        if env_exports:
-            launcher_env_exports = f"{env_exports};"
-        environ.update(**launch_cmd.env)
-        env_flags = " ".join(f"--env {key}=${key}" for key in environ.keys())
-        if env_flags:
-            launcher_env_flags = f"{env_flags} "
-
-    def escape_for_double_quotes(s: str) -> str:
-        s = s.replace("\\", "\\\\")  # Backslash first!
-        s = s.replace("'", "'\"'\"'")
-        return s
-
-    launcher = escape_for_double_quotes(launcher)
-    # Only escape backend_cmd if escape_str is True
-    # When False (e.g., for array jobs), preserve shell variable expansion
-    if escape_str:
-        backend_cmd = escape_for_double_quotes(backend_cmd)
-
-    if "{{bind_flags}}" in launcher:
-        launcher = launcher.replace("{{bind_flags}}", launcher_bind_flags)
-    elif launcher_bind_flags:
-        launcher = f"{launcher_bind_flags}{launcher}"
-
-    if "{{env_flags}}" in launcher:
-        launcher = launcher.replace("{{env_flags}}", launcher_env_flags)
-    if "{{env_exports}}" in launcher:
-        launcher = launcher.replace("{{env_exports}}", launcher_env_exports)
-
-    launcher_cmd = f"{launcher}{backend_cmd}"
-    srun_extras = asdict(runtime.root.slurm.srun)
-    srun_opts = _format_srun_options(runtime.root.slurm.srun_opts, srun_extras)
-    if srun_opts:
-        srun_opts = f"{srun_opts} "
-
-    # Create symlink command for log_path_current
-    log_symlink_cmd = ""
-    if job.log_path_current:
-        log_filename = Path(job.log_path).name
-        # Command to create/update symlink: ln -sf slurm-${SLURM_JOB_ID}.out /path/to/current.log
-        # We use the actual SLURM_JOB_ID which is available at runtime in the job script
-        actual_log_name = log_filename.replace("%j", "${SLURM_JOB_ID}")
-        log_symlink_cmd = f'ln -sf "{actual_log_name}" "{job.log_path_current}"'
-
-    repl = {
-        "name": job.name,
-        "output_dir": str(job.output_dir),
-        "log_path": str(job.log_path),
-        "log_symlink_cmd": log_symlink_cmd,
-        "launcher_cmd": launcher_cmd,
-        "launcher": launcher,
-        "launcher_env_flags": launcher_env_flags,
-        "backend_cmd": backend_cmd,
-        "env_exports": _format_env(runtime.root.slurm.env),
-        "sbatch_directives": sbatch_directives,
-        "srun_opts": srun_opts,
-    }
-    if job.start_condition_cmd:
-        repl["start_condition_cmd"] = job.start_condition_cmd
-    if job.termination_string:
-        repl["termination_string"] = job.termination_string
-    if job.termination_command:
-        repl["termination_command"] = job.termination_command
-    if job.inactivity_threshold_seconds is not None:
-        repl["inactivity_threshold_seconds"] = str(job.inactivity_threshold_seconds)
-    repl.update(
-        {
-            param.split("=")[0]: "=".join(param.split("=")[1:])
-            for param in job.parameters
-            if not param.startswith("+") and not param.startswith("~")
-        }
+    slurm_config = replace(
+        job.config.slurm,
+        name=job_name,
+        script_path=str(script_path),
+        log_path=str(job.config.job.log_path),
+        command=[launch_cmd],
+        env=job.config.slurm.env,
     )
-    repl.update({"project_name": runtime.root.project.name})
-    return repl
 
-
-def _build_sweep_entry(
-    job: JobPlan, base_config: RootConfig, launch_cmd: LaunchCommand
-) -> dict[str, Any]:
-    return {
-        "name": job.name,
-        "output_dir": str(job.output_dir),
-        "log_path": str(job.log_path),
-        "base_config": asdict(base_config),
-        "parameters": list(job.parameters),
-        "launch": {
-            "argv": list(launch_cmd.argv),
-            "env": dict(launch_cmd.env),
+    base_job = job.config.job
+    definition = SlurmJobConfig(
+        name=job_name,
+        log_path=str(job.config.job.log_path),
+        log_path_current=str(job.config.job.log_path_current),
+        log_events=list(base_job.log_events),
+        state_events=list(base_job.state_events),
+        start_condition=base_job.start_condition,
+        cancel_condition=base_job.cancel_condition,
+        finish_condition=base_job.finish_condition,
+        metadata={
+            **dict(base_job.metadata),
+            "session_id": session_id,
+            "sweep_index": getattr(job.config, "index", None),
+            "stage": getattr(job.config, "stage", ""),
         },
-    }
-
-
-def _write_sweep_json(plan: ExecutionPlan, entries: list[dict[str, Any]]) -> Path:
-    base_output = Path(plan.config.project.base_output_dir)
-    try:
-        base_output.mkdir(parents=True, exist_ok=True)
-        sweep_dir = base_output
-    except OSError as exc:
-        fallback_output = Path.cwd() / ".oellm_autoexp" / "output"
-        fallback_output.mkdir(parents=True, exist_ok=True)
-        LOGGER.warning(
-            "Unable to create base output dir %s (%s); using fallback %s",
-            base_output,
-            exc,
-            fallback_output,
-        )
-        sweep_dir = fallback_output
-    sweep_path = sweep_dir / "sweep.json"
-    payload = {
-        "project_name": plan.config.project.name,
-        "jobs": entries,
-    }
-    payload = tree_map(
-        lambda path: str(path) if isinstance(path, Path) else path,
-        payload,
-    )
-    try:
-        sweep_path.write_text(json.dumps(payload, indent=2))
-    except OSError as exc:
-        fallback_output = Path.cwd() / ".oellm_autoexp" / "output"
-        fallback_output.mkdir(parents=True, exist_ok=True)
-        sweep_path = fallback_output / "sweep.json"
-        LOGGER.warning(
-            "Unable to write sweep metadata to %s (%s); using fallback %s",
-            sweep_dir / "sweep.json",
-            exc,
-            sweep_path,
-        )
-        sweep_path.write_text(json.dumps(payload, indent=2))
-    return sweep_path
-
-
-def _restore_saved_jobs(
-    controller: MonitorController,
-    slurm_client: BaseSlurmClient,
-    saved_jobs: Iterable[StoredJob],
-) -> set[str]:
-    restored: set[str] = set()
-    for saved in saved_jobs:
-        registration = JobRegistration(
-            name=saved.name,
-            script_path=saved.script_path,
-            log_path=saved.log_path,
-            metadata=dict(saved.metadata),
-            output_paths=[p for p in saved.output_paths],
-            termination_string=saved.termination_string,
-            termination_command=saved.termination_command,
-            inactivity_threshold_seconds=saved.inactivity_threshold_seconds,
-            start_condition_cmd=saved.start_condition_cmd,
-            start_condition_interval_seconds=saved.start_condition_interval_seconds,
-        )
-        if hasattr(slurm_client, "register_job"):
-            log_path_for_client = saved.resolved_log_path or saved.log_path
-            try:
-                slurm_client.register_job(  # type: ignore[attr-defined]
-                    saved.job_id,
-                    saved.name,
-                    saved.script_path,
-                    str(log_path_for_client),
-                    state=saved.last_slurm_state or "PENDING",
-                )
-            except TypeError:
-                slurm_client.register_job(  # type: ignore[attr-defined]
-                    saved.job_id,
-                    saved.name,
-                    saved.script_path,
-                    saved.log_path,
-                )
-        controller.register_job(saved.job_id, registration, attempts=saved.attempts)
-        restored.add(saved.name)
-    return restored
-
-
-def _format_command(argv: Sequence[str], escape_str: bool = True) -> str:
-    # do ? escape ENV VARIABLES
-    # return " ".join(shlex.quote(arg) if escape_str else arg for arg in argv)
-    def _escape(s: str) -> str:
-        s = s.replace("\\", "\\\\")
-        if " " in s and not (s.startswith("'") and s.endswith("'")):
-            s = "'" + s + "'"
-        return s
-
-    return " ".join(_escape(arg) if escape_str else arg for arg in argv)
-
-
-def _format_env(base_env: Mapping[str, object]) -> str:
-    return "\n".join(f"export {key}={value}" for key, value in base_env.items())
-
-
-def _expand_log_path_for_job(job_id: str, log_path: str) -> Path:
-    log_str = str(log_path)
-    if "_" in job_id:
-        base_id, array_idx = job_id.split("_")
-        log_str = log_str.replace("%A", str(base_id))
-        log_str = log_str.replace("%a", str(array_idx))
-    log_str = log_str.replace("%j", str(job_id))
-    return Path(log_str)
-
-
-def _create_current_log_symlink(job_id: str, log_path: str, log_path_current: str | None) -> None:
-    if not log_path_current:
-        return
-    resolved_log_path = _expand_log_path_for_job(job_id, log_path)
-    current_path = Path(log_path_current)
-    try:
-        current_path.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        LOGGER.warning("Unable to create log symlink parent %s: %s", current_path.parent, exc)
-        return
-    try:
-        if current_path.exists() or current_path.is_symlink():
-            current_path.unlink()
-        current_path.symlink_to(resolved_log_path)
-    except OSError as exc:
-        LOGGER.warning(
-            "Unable to create log symlink %s -> %s: %s",
-            current_path,
-            resolved_log_path,
-            exc,
-        )
-
-
-def _format_sbatch_directives(
-    slurm_conf: SlurmConfig, job: JobPlan, sbatch_overrides: dict[str, str] = {}
-) -> str:
-    sbatch_kwargs = asdict(slurm_conf.sbatch)
-    sbatch_kwargs.update(sbatch_overrides)
-    sbatch_values = {
-        k.replace("_", "-"): v
-        for k, v in sbatch_kwargs.items()
-        if v is not None and not k.startswith("_")
-    }
-    override_values = {
-        k.replace("_", "-"): v
-        for k, v in slurm_conf.sbatch_overrides.items()
-        if v is not None and not k.startswith("_")
-    }
-    sbatch_values.update(override_values)
-    sbatch_values.setdefault("job-name", job.name)
-    sbatch_values.setdefault("output", str(job.log_path))
-    lines = [
-        f"#SBATCH --{key}={value}" if value is not True else f"#SBATCH --{key}"
-        for key, value in sbatch_values.items()
-    ]
-    lines.extend(slurm_conf.sbatch_extra_directives)
-    return "\n".join(lines)
-
-
-def _format_srun_options(srun_opts: str, extras: Mapping[str, Any]) -> str:
-    options: list[str] = []
-    if extras:
-        for key, value in extras.items():
-            if key.startswith("_"):
-                continue
-            flag = f"--{key.replace('_', '-')}"
-            if isinstance(value, bool):
-                if value:
-                    options.append(flag)
-            else:
-                options.append(f"{flag}={value}")
-    srun_opts = srun_opts.strip()
-    if srun_opts:
-        options.append(srun_opts)
-    return " ".join(options).strip()
-
-
-def _render_array_script(
-    plan: ExecutionPlan,
-    script_dir: str,
-    template_path: str,
-    sweep_path: str | None,
-    array_job_name: str,
-) -> Path:
-    if sweep_path is None:
-        raise RuntimeError("sweep.json must be available for array submission")
-
-    array_log_dir = Path(plan.config.slurm.log_dir)
-    try:
-        array_log_dir.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        fallback_log_dir = Path.cwd() / ".oellm_autoexp" / "logs"
-        fallback_log_dir.mkdir(parents=True, exist_ok=True)
-        LOGGER.warning(
-            "Unable to create log directory %s (%s); using fallback %s",
-            array_log_dir,
-            exc,
-            fallback_log_dir,
-        )
-        array_log_dir = fallback_log_dir
-    # Include both the array task id (%a) and parent job id (%A) so repeated submissions
-    # do not overwrite earlier SLURM logs.
-    array_log_path = array_log_dir / f"{array_job_name}_%A_%a.log"
-    array_output_base = Path(plan.config.project.base_output_dir)
-    try:
-        array_output_base.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        fallback_output = Path.cwd() / ".oellm_autoexp" / "output"
-        fallback_output.mkdir(parents=True, exist_ok=True)
-        LOGGER.warning(
-            "Unable to create array output dir %s (%s); using fallback %s",
-            array_output_base,
-            exc,
-            fallback_output,
-        )
-        array_output_base = fallback_output
-    array_output_dir = array_output_base / f"{array_job_name}_%a"
-
-    runner_script = Path("scripts/run_sweep_entry.py")
-    launcher_cmd = LaunchCommand(
-        argv=[
-            str(runner_script),
-            "--sweep",
-            str(sweep_path),
-            "--index",
-            "$SLURM_ARRAY_TASK_ID",
-        ],
-        env={"SLURM_ARRAY_TASK_ID": "$SLURM_ARRAY_TASK_ID"},
+        slurm=slurm_config,
     )
 
-    # Ensure each JobPlan reflects the actual array log template so manifests and
-    # monitoring point at the file that SLURM will write.
-    array_log_template = str(array_log_path)
-    for job in plan.jobs:
-        job.log_path = array_log_template
-
-    # For array jobs, log_path_current is not applicable (array jobs don't have a single "current" log)
-    # Use the array log path as both log_path and log_path_current
-    synthetic_job = JobPlan(
-        name=array_job_name,
-        parameters=[],
-        output_dir=array_output_dir,
-        log_path=array_log_path,
-        log_path_current=str(array_output_dir / "current.log"),  # Placeholder for array jobs
-        output_paths=[],
+    return JobRecordConfig(
+        job_id=job_id,
+        definition=definition,
+        runtime=JobRuntimeConfig(submitted=False),
     )
 
-    replacements = _build_replacements(
-        plan.runtime,
-        synthetic_job,
-        launcher_cmd,
-        escape_str=False,
-        sbatch_overrides={"array": f"0-{len(plan.sweep_points) - 1}"},
-    )
-    script_path = script_dir / f"{array_job_name}.sbatch"
-    try:
-        rendered = render_template_file(template_path, script_path, replacements)
-    except OSError as exc:
-        fallback_script_dir = Path.cwd() / ".oellm_autoexp" / "scripts"
-        fallback_script_dir.mkdir(parents=True, exist_ok=True)
-        fallback_script_path = fallback_script_dir / f"{array_job_name}.sbatch"
-        LOGGER.warning(
-            "Unable to write array script to %s (%s); using fallback %s",
-            script_path,
-            exc,
-            fallback_script_path,
-        )
-        rendered = render_template_file(template_path, fallback_script_path, replacements)
-        script_path = fallback_script_path
-    validate_job_script(rendered, array_job_name)
-    return script_path
 
-
-def _respect_submit_rate(last_ts: float, rate_limit: float) -> float:
-    if rate_limit <= 0:
-        return time.monotonic()
-    if last_ts:
-        elapsed = time.monotonic() - last_ts
-        if elapsed < rate_limit:
-            time.sleep(rate_limit - elapsed)
-    return time.monotonic()
+def _resolve_job_name(config: RootConfig) -> str:
+    base_name = str(config.job.name or "job")
+    index = getattr(config, "index", None)
+    if index is None:
+        return base_name
+    index_str = str(index)
+    if index_str in base_name:
+        return base_name
+    if "%a" in base_name:
+        return base_name.replace("%a", index_str)
+    else:
+        return f"{base_name}_{index_str}"
 
 
 __all__ = [
     "ExecutionPlan",
-    "RenderedArtifacts",
     "SubmissionResult",
     "build_execution_plan",
-    "render_scripts",
     "submit_jobs",
     "load_monitor_controller",
-    "execute_plan",
-    "execute_plan_sync",
+    "run_loop",
+    "run_loop_sync",
 ]

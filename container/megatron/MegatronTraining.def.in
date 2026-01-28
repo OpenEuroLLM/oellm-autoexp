@@ -68,7 +68,7 @@ exec "$@"
 
 %test
 cd /workspace/oellm-autoexp
-python scripts/plan_autoexp.py --help >/dev/null
+python scripts/run_autoexp.py --help >/dev/null
 
 %help
     Build with container/build_container.sh and run via

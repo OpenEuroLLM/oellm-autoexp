@@ -23,7 +23,7 @@ def test_cluster_plan(tmp_path: Path) -> None:
       - AUTOEXP_MANIFEST_DIR (optional): directory to store the manifest
     """
 
-    config_ref = os.environ["AUTOEXP_CLUSTER_CONFIG"]
+    config_name = os.environ["AUTOEXP_CLUSTER_CONFIG"]
     manifest_dir = Path(os.getenv("AUTOEXP_MANIFEST_DIR", tmp_path))
     manifest_dir.mkdir(parents=True, exist_ok=True)
     manifest = manifest_dir / f"plan_{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.json"
@@ -31,8 +31,8 @@ def test_cluster_plan(tmp_path: Path) -> None:
     cmd = [
         "python",
         "scripts/plan_autoexp.py",
-        "--config-ref",
-        config_ref,
+        "--config-name",
+        config_name,
         "--manifest",
         str(manifest),
     ]

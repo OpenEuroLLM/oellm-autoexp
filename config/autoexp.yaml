@@ -1,13 +1,12 @@
 defaults:
-  - project: default
   - backend: megatron_torchrun
   - container: none
   - slurm: base
-  - monitoring: default
   - sweep: none
-  - scheduler: default
   - job: default
   - _self_
+
+# monitoring_state_dir: "./monitor"
 
 
 index: 0   # will be replaced internally by overrides for a sweep

@@ -1,13 +1,10 @@
 import importlib
 import sys
 import types
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+import oellm_autoexp._libs  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
@@ -39,3 +36,43 @@ def ensure_megatron_stub(monkeypatch):
         importlib.reload(megatron_args)
     else:
         yield
+
+
+@pytest.fixture(autouse=True)
+def patch_hydra_staged_sweep(monkeypatch):
+    """Patch hydra_staged_sweep to fix list override syntax bug."""
+    import oellm_autoexp.hydra_staged_sweep.dag_resolver as dag_resolver
+    from omegaconf import DictConfig, ListConfig
+    from collections.abc import Mapping, Sequence
+
+    def patched_config_to_cmdline(cfg_dict, override="", prefix=""):
+        # Re-implementation without the buggy list index line
+
+        def dict_to_cmdlines(dct, prefix=""):
+            lines = []
+            if isinstance(dct, (dict, DictConfig, Mapping)):
+                for sub_cfg in dct:
+                    newprefix = (prefix + "." if prefix else "") + sub_cfg
+                    lines += dict_to_cmdlines(dct[sub_cfg], prefix=newprefix)
+            elif isinstance(dct, (list, ListConfig, Sequence)) and not isinstance(
+                dct, (str, bytes)
+            ):
+                # FIXED: Do not emit key[0,1] syntax
+                for n, sub_cfg in enumerate(dct):
+                    lines += dict_to_cmdlines(
+                        sub_cfg,
+                        prefix=(prefix + "." if prefix else "") + str(n),
+                    )
+            elif dct is None:
+                lines.append(override + prefix + "=null")
+            else:
+                val = str(dct)
+                if isinstance(dct, str) and ("{" in dct or "(" in dct):
+                    val = f"'{dct}'"
+                lines.append(override + prefix + "=" + val)
+            return lines
+
+        return dict_to_cmdlines(cfg_dict, prefix=prefix)
+
+    monkeypatch.setattr(dag_resolver, "config_to_cmdline", patched_config_to_cmdline)
+    yield

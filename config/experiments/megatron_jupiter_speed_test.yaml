@@ -4,8 +4,6 @@ defaults:
   - /backend: megatron_torchrun_localaddr
   - /container: jupiter
   - /slurm: jupiter
-  - /monitoring: megatron_basic
-  - /project: default
   - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_jupiter]
   - /sweep: none
   - _self_
@@ -14,6 +12,5 @@ backend:
   megatron:
     train_iters: 500
 
-project:
+job:
   name: megatron_juwels_speed_test
-  resume: true

@@ -257,12 +257,9 @@ def submit_test_job(
         f"backend.megatron.micro_batch_size={micro_batch_size}",
         f"backend.megatron.train_iters={train_iters}",
         "slurm.sbatch.time=00:30:00",
-        f"project.name=restart_test_mbs{micro_batch_size}",
+        f"job.name=restart_test_mbs{micro_batch_size}",
         "slurm.log_dir=logs",
         f"slurm.array={str(array_mode).lower()}",
-        "monitoring.log_path=${project.log_path_current}",
-        "monitoring.poll_interval_seconds=10",
-        "monitoring.check_interval_seconds=10",
     ] + overrides
 
     manifest_path = Path("logs") / f"plan_mbs{micro_batch_size}.json"
@@ -730,7 +727,7 @@ def main() -> int:
         default=False,
         help="Use SLURM array job submission (default: single job mode)",
     )
-    parser.add_argument("override", nargs="*", default=[], help="Overrides")
+    parser.add_argument("overrides", nargs="*", default=[], help="Overrides")
 
     args = parser.parse_args()
 
@@ -760,16 +757,16 @@ def main() -> int:
     for scenario in scenarios:
         if scenario == "scancel":
             results[scenario] = test_scenario_scancel(
-                args.iterations, args.array_mode, overrides=args.override
+                args.iterations, args.array_mode, overrides=args.overrides
             )
         elif scenario == "hang":
-            results[scenario] = test_scenario_hang(args.array_mode, overrides=args.override)
+            results[scenario] = test_scenario_hang(args.array_mode, overrides=args.overrides)
         elif scenario == "nccl":
-            results[scenario] = test_scenario_nccl_error(args.array_mode, overrides=args.override)
+            results[scenario] = test_scenario_nccl_error(args.array_mode, overrides=args.overrides)
         elif scenario == "oom":
-            results[scenario] = test_scenario_oom(args.array_mode, overrides=args.override)
+            results[scenario] = test_scenario_oom(args.array_mode, overrides=args.overrides)
         elif scenario == "max_retries":
-            results[scenario] = test_scenario_max_retries(args.array_mode, overrides=args.override)
+            results[scenario] = test_scenario_max_retries(args.array_mode, overrides=args.overrides)
 
         # Wait between tests
         if len(scenarios) > 1:

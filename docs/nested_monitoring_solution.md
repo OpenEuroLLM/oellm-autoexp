@@ -228,7 +228,7 @@ This means:
 ```bash
 # Run a training job with cooldown monitoring
 python scripts/run_autoexp_container.py \
-  project=test_cooldown \
+  job=test_cooldown \
   backend=megatron \
   slurm=lumi \
   monitoring=megatron_cooldown_single \

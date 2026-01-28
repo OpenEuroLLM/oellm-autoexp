@@ -50,7 +50,7 @@ When `run_autoexp.py` executes, it writes to each job's `{output_dir}/provenance
    {
      "config_name": "autoexp",
      "config_dir": "/path/to/config",
-     "overrides": ["project=default", "backend=megatron"]
+     "overrides": ["job=default", "backend=megatron"]
    }
    ```
 
@@ -342,7 +342,7 @@ log_events:
 ```bash
 # Start original training run
 python scripts/run_autoexp.py \
-  project=my_training \
+  job=my_training \
   monitoring=megatron_cooldown_single \
   backend.args.train_iters=100000
 

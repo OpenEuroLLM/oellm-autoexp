@@ -3,5 +3,6 @@ runtime: apptainer
 bind: []
 env:
   WANDB_MODE: "offline"
+  MACHINE_NAME: "JUPITER"
   PYTHONPATH: "."
 python: "python"

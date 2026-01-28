@@ -1,8 +1,0 @@
-
-
-name: demo
-base_output_dir: ${oc.concat:${oc.env:OUTPUT_DIR,"./output"}/,${.name}${oc.if:${slurm.array}, "_${index}", ""}}
-log_path: ${.base_output_dir}/${oc.if:${slurm.array},slurm-%A_%a.log,slurm-%j.log}
-log_path_current: ${.base_output_dir}/current_${oc.if:${slurm.array}, "_${index}", ""}.log
-monitoring_state_dir: "./monitor"
-resume: true

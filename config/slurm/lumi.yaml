@@ -37,5 +37,3 @@ sbatch:
   gres: "gpu:8"
   cpus_per_task: 7
   time: "00:30:00"
-client:
-  class_name: SlurmClient

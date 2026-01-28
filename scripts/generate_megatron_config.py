@@ -53,7 +53,7 @@ def parse_args() -> argparse.Namespace:
         help="Comma separated list of Megatron arguments to omit from the generated output.",
     )
     parser.add_argument(
-        "--override",
+        "--overrides",
         action="append",
         default=[],
         metavar="ARG=VALUE",
@@ -148,7 +148,7 @@ def _annotate_yaml(
 def main() -> None:
     args = parse_args()
     excluded = _collect_exclusions(args.exclude)
-    overrides = dict(_parse_override(entry) for entry in args.override)
+    overrides = dict(_parse_override(entry) for entry in args.overrides)
 
     parser = get_megatron_parser()
     metadata = get_arg_metadata(parser)

@@ -193,7 +193,8 @@ def _ensure_resolved_paths(state_file: Path) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config-ref", default="autoexp")
+    parser.add_argument("--config-name", default="autoexp")
+    parser.add_argument("--config-path", default=None, type=str)
     parser.add_argument("--config-dir", type=Path, default=Path("config"))
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--plan-id", type=str, default="")

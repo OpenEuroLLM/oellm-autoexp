@@ -2,12 +2,20 @@ defaults:
   - megatron: base
   - _self_
 
-class_name: AutoMegatronBackend
-launcher_script: "python ${.env.RUN_DIR}/pretrain_gpt.py"
-use_torchrun: false
+class_name: MegatronBackend
+
 python_cmd: "python"
-full_validation: true
+full_schema_validation: false
+launcher_script: "./submodules/Megatron-LM/pretrain_gpt.py"
+dist_cmd: "${.python_cmd} ${.launcher_script}"
+torchrun_args: {}
+
 env:
   PYTHONPATH: ".:submodules/Megatron-LM"
   PROJECT_DIR: ${oc.env:PROJECT_DIR,"."}
   RUN_DIR: ${.PROJECT_DIR}/submodules/Megatron-LM
+  WORLD_SIZE: ${oc.muli:${slurm.sbatch.nodes},${slurm.sbatch.gpus_per_node}}
+  RANK: "$SLURM_RANK"
+
+# map megatron command to
+full_cmd: "${.dist_cmd} ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n   %',' %',${oc.argsmegatron:${backend.megatron}}}}"

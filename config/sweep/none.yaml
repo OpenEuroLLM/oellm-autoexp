@@ -1,2 +1,4 @@
-grids: []
+# No sweep - new composable format
+type: list
+groups: []
 store_sweep_json: false

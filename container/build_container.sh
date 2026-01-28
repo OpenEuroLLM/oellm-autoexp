@@ -40,6 +40,10 @@ while [[ $# -gt 0 ]]; do
       shift
       BACKEND="$1"
       ;;
+    --additional-tag)
+      shift
+      ADDITIONAL_TAG="$1"
+      ;;
     --requirements)
       shift
       export REQUIREMENTS_PATH="$1"
@@ -168,7 +172,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-IMAGE_NAME="${DEFINITION}_${ARCH}${STAMP}.sif"
+IMAGE_NAME="${DEFINITION}${ADDITIONAL_TAG}_${ARCH}${STAMP}.sif"
 TARGET_PATH="$OUTPUT_DIR/$IMAGE_NAME"
 
 mkdir -p "$OUTPUT_DIR"

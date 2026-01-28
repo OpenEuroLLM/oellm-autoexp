@@ -68,7 +68,7 @@ When a cooldown action uses `monitoring=megatron_basic`:
    {
      "config_ref": "autoexp",
      "config_dir": "/path/to/config",
-     "overrides": ["project=test", "monitoring=megatron_cooldown_single", ...]
+     "overrides": ["job=test", "monitoring=megatron_cooldown_single", ...]
    }
    ```
 
@@ -80,7 +80,7 @@ When a cooldown action uses `monitoring=megatron_basic`:
 
 3. **Combined overrides** (passed to Hydra compose):
    ```python
-   ["project=test", "monitoring=megatron_cooldown_single", ..., "monitoring=megatron_basic", "backend.megatron.load=/path/to/checkpoint"]
+   ["job=test", "monitoring=megatron_cooldown_single", ..., "monitoring=megatron_basic", "backend.megatron.load=/path/to/checkpoint"]
    ```
 
 4. **Result**: The later `monitoring=megatron_basic` override **replaces** the earlier `monitoring=megatron_cooldown_single` in the Hydra composition, giving the cooldown job the simplified monitoring config.
@@ -146,7 +146,7 @@ Expected output:
 ```bash
 # Test with actual container workflow
 python scripts/run_autoexp_container.py \
-  project=test_cooldown \
+  job=test_cooldown \
   backend=megatron \
   slurm=lumi \
   monitoring=megatron_cooldown_single \
