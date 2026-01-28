@@ -119,7 +119,7 @@ def _submit_jobs(manifest_path: Path, *, monitor: bool = False) -> None:
 
 
 def _resolve_state_file(manifest: dict) -> Path:
-    state_dir = Path(manifest["monitoring_state_dir"])
+    state_dir = Path(manifest["monitor_state_dir"])
     plan_id = manifest["plan_id"]
     state_file = state_dir / f"{plan_id}.json"
     return state_file

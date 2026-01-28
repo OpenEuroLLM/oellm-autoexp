@@ -143,13 +143,13 @@ def run_loop_sync(controller: MonitorLoop) -> None:
 def _ensure_state_store(
     plan: ExecutionPlan, *, session_id: str | None = None
 ) -> tuple[JobFileStore, str]:
-    monitoring_state_dir = Path(plan.config_setup.monitoring_state_dir)
+    monitor_state_dir = Path(plan.config_setup.monitor_state_dir)
     if not session_id:
         import time
 
         session_id = str(int(time.time()))
 
-    session_dir = monitoring_state_dir / session_id
+    session_dir = monitor_state_dir / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
     store = JobFileStore(session_dir)
     LOGGER.info("Created monitoring session directory: %s", session_dir)

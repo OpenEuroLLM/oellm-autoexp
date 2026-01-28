@@ -186,6 +186,10 @@ class MonitorLoop:
                     continue
                 if self._check_start(job):
                     self._start_jobs(job)
+
+                    if job.runtime.runtime_job_id is None:
+                        LOGGER.warning(f"Failed to start job: {job}")
+                        self._store.mark_finished(job.job_id, "cancelled")
                 else:
                     self._store.upsert(job)
                 continue
@@ -590,6 +594,9 @@ class MonitorLoop:
 
         # Restart the job
         self._start_job(job)
+        if job.runtime.runtime_job_id is None:
+            LOGGER.warning(f"Failed to re-start job: {job}")
+            self._store.mark_finished(job.job_id, "cancelled")
 
     def _submit_local_job(self, job_config: ConfigInterface) -> None:
         """Submit a new local job (fire-and-forget)."""
@@ -666,3 +673,4 @@ def _import_registry() -> None:
     import oellm_autoexp.monitor.actions  # noqa: F401
     import oellm_autoexp.monitor.conditions  # noqa: F401
     import oellm_autoexp.monitor.submission  # noqa: F401
+    import oellm_autoexp.config.conditions  # noqa: F401

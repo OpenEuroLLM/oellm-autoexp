@@ -212,10 +212,10 @@
 #         raise RuntimeError(f"Manifest not found at {manifest_path}")
 #     manifest = read_manifest(manifest_path)
 #     print(
-#         f"[manifest] plan_id={manifest.plan_id}, monitoring_state_dir={manifest.monitoring_state_dir}"
+#         f"[manifest] plan_id={manifest.plan_id}, monitor_state_dir={manifest.monitoring_state_dir}"
 #     )
 
-#     state_store = MonitorStateStore(manifest.monitoring_state_dir, session_id=manifest.plan_id)
+#     state_store = MonitorStateStore(manifest.monitor_state_dir, session_id=manifest.plan_id)
 
 #     jobs = state_store.load()
 #     if not jobs:

@@ -39,7 +39,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run", action="store_true", help="Plan and render without submitting jobs"
     )
     parser.add_argument("--no-monitor", action="store_true", help="Submit jobs but skip monitoring")
-    parser.add_argument("--monitoring-state-dir", type=Path, help="Monitoring state directory")
+    parser.add_argument("--monitor-state-dir", type=Path, help="Monitoring state directory")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument(
@@ -110,7 +110,7 @@ def _write_job_provenance(
         "environment": sanitized_env,
     }
 
-    manifest_path = _default_manifest_path(plan.config_setup.monitoring_state_dir)
+    manifest_path = _default_manifest_path(plan.config_setup.monitor_state_dir)
     with open(manifest_path, "w") as fp:
         json.dump(base_payload, fp)
 
@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> None:
         config_name=args.config_name,
         config_dir=str(config_dir),
         overrides=args.overrides,
-        monitor_state_dir=str(args.monitoring_state_dir),
+        monitor_state_dir=str(args.monitor_state_dir),
     )
     root = load_config_reference(config_setup=config_setup)
 
@@ -162,7 +162,7 @@ def main(argv: list[str] | None = None) -> None:
         subset_indices=subset_indices or None,
     )
 
-    if not args.dry_run:
+    if args.dry_run:
         exit(0)
 
     _write_job_provenance(
@@ -177,7 +177,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.no_monitor:
         exit(0)
 
-    run_loop(plan, res.loop)
+    run_loop(res.loop)
 
 
 if __name__ == "__main__":
