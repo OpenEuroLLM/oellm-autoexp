@@ -4,4 +4,5 @@ bind: ["/gpfs/projects"]
 env:
   WANDB_MODE: "offline"
   PYTHONPATH: "."
+  MACHINE_NAME: "MARENOSTRUM"
 python: "python"

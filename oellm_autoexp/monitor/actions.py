@@ -1,47 +1,96 @@
-"""Monitor actions triggered by monitor events."""
+"""Actions and event definitions for monitor."""
 
 from __future__ import annotations
 
-import logging
-import subprocess
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+import hashlib
+import json
+import logging
 import re
-from collections.abc import Mapping
-
+import time
+from typing import Any, Literal
 
 from compoconf import (
     ConfigInterface,
     RegistrableConfigInterface,
-    asdict,
     register,
     register_interface,
+    MissingValue,
 )
 
-from oellm_autoexp.monitor.events import EventRecord, EventStatus
+from oellm_autoexp.monitor.conditions import MonitorConditionInterface
+from oellm_autoexp.monitor.utils.template import replace_braced_keys
 
 LOGGER = logging.getLogger(__name__)
 
-ActionStatus = Literal["success", "retry", "failed"]
 
-_PATTERN = re.compile(r"(?<!\$)\{([^\{\}\$:]+)\}")
-
-
-def replace_braced_keys(s: str, values: Mapping[str, Any]) -> str:
-    def repl(m: re.Match[str]) -> str:
-        key = m.group(1)
-        return str(values[key]) if key in values else m.group(0)  # keep as-is if missing
-
-    return _PATTERN.sub(repl, s)
+@register_interface
+class JobInterface(RegistrableConfigInterface):
+    """Registrable interface for job configurations."""
 
 
 @dataclass(kw_only=True)
 class ActionResult:
-    status: ActionStatus
+    """Outcome of an action execution."""
+
+    special: Literal["cancel", "finish", "restart", "noop"] = "noop"
     message: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    status: str = "success"  # For tracking action execution status
+    action_config: BaseMonitorAction.cfgtype | None = (
+        None  # Reference to the action's config for typed access
+    )
+
+
+@dataclass(kw_only=True)
+class EventRecord:
+    """Persistent record of a detected event and its action history."""
+
+    event_id: str
+    name: str
+    source: str
+    count: int = 1
+    first_seen_ts: float = field(default_factory=time.time)
+    last_seen_ts: float = field(default_factory=time.time)
+    payload: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    history: list[dict[str, Any]] = field(default_factory=list)
+
+    def touch(self, *, payload: dict[str, Any] | None = None) -> None:
+        """Increment the occurrence counter and update timestamps."""
+        self.count += 1
+        self.last_seen_ts = time.time()
+        if payload:
+            self.payload.update(payload)
+
+    def set_status(self, *, note: str | None = None) -> None:
+        """Move event into a new lifecycle state and append optional note."""
+        self.last_seen_ts = time.time()
+        if note:
+            self.history.append({"ts": self.last_seen_ts, "note": note})  # pragma: no cover
+
+
+def event_key(
+    job_id: str, event_name: str, metadata: dict[str, Any] | None = None
+) -> tuple[str, str]:
+    h = hashlib.md5()
+    h.update(json.dumps(metadata).encode("utf8"))
+    h = str(h.digest())[:16]
+    return (str(job_id), event_name, h)
+
+
+def build_event_id(
+    job_id: str,
+    event_name: str,
+    metadata: dict[str, Any] | None = None,
+    *,
+    now_ms: int | None = None,
+) -> str:
+    timestamp = int(time.time() * 1000) if now_ms is None else now_ms
+    if metadata and "checkpoint_iteration" in metadata:
+        return f"{job_id}:{event_name}:{metadata['checkpoint_iteration']}:{timestamp}"
+    return f"{job_id}:{event_name}:{timestamp}"
 
 
 @dataclass(kw_only=True)
@@ -50,7 +99,6 @@ class ActionContext:
     job_metadata: dict[str, Any] = field(default_factory=dict)
     attempts: int = 0
     workspace: Path | None = None
-    env: dict[str, str] = field(default_factory=dict)
 
     @property
     def variables(self) -> dict[str, Any]:
@@ -60,12 +108,15 @@ class ActionContext:
         merged.update(self.event.payload)
         merged.setdefault("event_id", self.event.event_id)
         merged.setdefault("event_name", self.event.name)
+        merged.setdefault("attempts", self.attempts)
+        if self.workspace:
+            merged.setdefault("workspace", str(self.workspace))
         return merged
 
     def render(self, template: str) -> str:
         try:
             return replace_braced_keys(template, self.variables)
-        except KeyError:
+        except KeyError:  # pragma: no cover
             return template
 
 
@@ -76,130 +127,15 @@ class BaseMonitorAction(RegistrableConfigInterface):
     def __init__(self, config: ConfigInterface) -> None:
         self.config = config
 
-    def describe(self, job_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
-        payload = asdict(self.config)
-        payload.update({"type": self.kind})
-        return payload
-
     def execute(self, context: ActionContext) -> ActionResult:  # pragma: no cover
         raise NotImplementedError
-
-    def update_event(self, event: EventRecord, result: ActionResult) -> None:
-        if result.status == "success":
-            event.set_status(EventStatus.PROCESSED, note=result.message or self.kind)
-        elif result.status == "failed":
-            event.set_status(EventStatus.FAILED, note=result.message or self.kind)
-        else:
-            event.set_status(EventStatus.PENDING, note=result.message or self.kind)
-
-    @property
-    def kind(self) -> str:  # pragma: no cover - override in subclasses
-        return self.__class__.__name__
-
-
-def _run_command(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None):
-    print(f"RUNNING: {' '.join(command)}")
-    return subprocess.run(
-        command,
-        cwd=str(cwd) if cwd else None,
-        env=env,
-        text=True,
-        capture_output=True,
-    )
-
-
-@dataclass
-class RunCommandActionConfig(ConfigInterface):
-    class_name: str = "RunCommandAction"
-    command: list[str] = field(default_factory=list)
-    cwd: str | None = None
-
-
-@register
-class RunCommandAction(BaseMonitorAction):
-    config: RunCommandActionConfig
-
-    def execute(self, context: ActionContext) -> ActionResult:
-        if not self.config.command:
-            return ActionResult(status="failed", message="command is empty")
-        rendered = [context.render(segment) for segment in self.config.command]
-        cwd = Path(self.config.cwd).expanduser() if self.config.cwd else context.workspace
-        env = {**context.env} if context.env else None
-        proc = _run_command(rendered, cwd=cwd, env=env)
-        if proc.returncode == 0:
-            return ActionResult(
-                status="success",
-                message="command completed",
-                metadata={"stdout": proc.stdout.strip()},
-            )
-        return ActionResult(
-            status="failed",
-            message=f"command exited {proc.returncode}",
-            metadata={"stdout": proc.stdout.strip(), "stderr": proc.stderr.strip()},
-        )
-
-
-@dataclass
-class RestartActionConfig(ConfigInterface):
-    class_name: str = "RestartAction"
-    reason: str = "Restart requested"
-
-
-@register
-class RestartAction(BaseMonitorAction):
-    config: RestartActionConfig
-
-    def execute(self, context: ActionContext) -> ActionResult:
-        return ActionResult(status="retry", message=self.config.reason)
-
-
-@dataclass
-class RunAutoexpActionConfig(ConfigInterface):
-    class_name: str = "RunAutoexpAction"
-    script: str = "scripts/run_autoexp.py"
-    overrides: list[str] = field(default_factory=list)
-    config_path: str | None = None
-    no_monitor: bool = True  # Skip nested monitoring by default
-
-
-@register
-class RunAutoexpAction(BaseMonitorAction):
-    config: RunAutoexpActionConfig
-
-    def execute(self, context: ActionContext) -> ActionResult:
-        cmd = [sys.executable, self.config.script]
-        if self.config.config_path:
-            cmd.extend(["--config-ref", context.render(self.config.config_path)])
-        cmd.extend(context.render(arg) for arg in self.config.overrides)
-
-        # Pass --no-monitor flag to prevent nested monitoring loop
-        if self.config.no_monitor:
-            cmd.append("--no-monitor")
-
-        # Pass current session ID to reuse the same monitoring session
-        session_id = context.job_metadata.get("session_id")
-        if session_id:
-            cmd.extend(["--plan-id", session_id])
-
-        env = {**context.env} if context.env else None
-        proc = _run_command(cmd, cwd=context.workspace, env=env)
-        if proc.returncode == 0:
-            return ActionResult(
-                status="success",
-                message="run_autoexp completed",
-                metadata={"session_id": session_id},
-            )
-        return ActionResult(
-            status="failed",
-            message=f"run_autoexp exited {proc.returncode}",
-            metadata={"stderr": proc.stderr.strip()},
-        )
 
 
 @dataclass
 class LogActionConfig(ConfigInterface):
     class_name: str = "LogAction"
-    message: str = ""
+    message: str = "Event {event_name} triggered"
+    level: str = "info"
 
 
 @register
@@ -207,58 +143,217 @@ class LogAction(BaseMonitorAction):
     config: LogActionConfig
 
     def execute(self, context: ActionContext) -> ActionResult:
-        return ActionResult(status="success", message=context.render(self.config.message))
+        msg = context.render(self.config.message)
+        level = self.config.level.lower()
+        if level == "debug":
+            LOGGER.debug(msg)
+        elif level == "warning":
+            LOGGER.warning(msg)
+        elif level == "error":
+            LOGGER.error(msg)
+        else:
+            LOGGER.info(msg)
+        return ActionResult(message=msg)
 
 
 @dataclass
-class _LegacyLogMessageActionConfig(LogActionConfig):
-    class_name: str = "LogMessageAction"
+class NewJobActionConfig(ConfigInterface):
+    class_name: str = "NewJobAction"
+    job_config: JobInterface.cfgtype = field(default_factory=MissingValue)
 
 
 @register
-class LogMessageAction(LogAction):
-    config: _LegacyLogMessageActionConfig
-
-
-# Backwards compatibility alias for configs referenced in existing configs/tests.
-LogMessageActionConfig = _LegacyLogMessageActionConfig
-
-
-@dataclass
-class PublishEventActionConfig(ConfigInterface):
-    class_name: str = "PublishEventAction"
-    metadata: dict[str, Any] = field(default_factory=dict)
-    payload: dict[str, Any] = field(default_factory=dict)
-    event_name: str = ""
-
-
-@register
-class PublishEventAction(BaseMonitorAction):
-    config: PublishEventActionConfig
+class NewJobAction(BaseMonitorAction):
+    config: NewJobActionConfig
 
     def execute(self, context: ActionContext) -> ActionResult:
         return ActionResult(
             status="success",
-            message="event published",
-            metadata={
-                "publish_event": {
-                    "name": self.config.event_name,
-                    "metadata": self.config.metadata,
-                    "payload": self.config.payload,
-                }
-            },
+            message="Submitting local command job",
+            action_config=self.config,
         )
 
 
+@dataclass
+class RestartActionConfig(ConfigInterface):
+    class_name: str = "RestartAction"
+    reason: str = "restarting job"
+
+
+@register
+class RestartAction(BaseMonitorAction):
+    config: RestartActionConfig
+
+    def execute(self, context: ActionContext) -> ActionResult:
+        return ActionResult(
+            special="restart",
+            status="success",
+            message=self.config.reason,
+        )
+
+
+@dataclass
+class FinishActionConfig(ConfigInterface):
+    class_name: str = "FinishAction"
+    reason: str = "finished"
+
+
+@register
+class FinishAction(BaseMonitorAction):
+    config: FinishActionConfig
+
+    def execute(self, context: ActionContext) -> ActionResult:
+        return ActionResult(
+            special="finish",
+            status="success",
+            message=self.config.reason,
+        )
+
+
+@dataclass
+class CancelActionConfig(ConfigInterface):
+    class_name: str = "CancelAction"
+    reason: str = "cancelled"
+
+
+@register
+class CancelAction(BaseMonitorAction):
+    config: CancelActionConfig
+
+    def execute(self, context: ActionContext) -> ActionResult:
+        return ActionResult(
+            special="cancel",
+            status="success",
+            message=self.config.reason,
+        )
+
+
+@dataclass
+class EventConfig:
+    name: str = ""
+    action: BaseMonitorAction.cfgtype | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    condition: MonitorConditionInterface.cfgtype | None = None
+
+
+@dataclass
+class LogEventConfig(EventConfig):
+    """Configuration for a log-triggered event and action."""
+
+    pattern: str = ""
+    pattern_type: Literal["substring", "regex", "inactivity"] = "substring"
+    extract_groups: dict[str, int | str] = field(default_factory=dict)
+    match_once: bool = True
+
+
+@dataclass
+class StateEventConfig(EventConfig):
+    """Configuration for a state-triggered event and action."""
+
+    transition: tuple[str | None, str | None] = field(default_factory=MissingValue)
+
+    def __post_init__(self):
+        assert self.transition is not MissingValue
+
+
+class LogEvent:
+    """Handles log pattern matching and action execution."""
+
+    config: LogEventConfig
+
+    def __init__(self, config: LogEventConfig):
+        self.config = config
+
+    def check_triggers(self, log_text: str) -> list[dict[str, Any]]:
+        """Check if event triggers in the given log text, return metadata for
+        each match."""
+        triggers = []
+        if self.config.pattern_type == "inactivity":
+            if log_text == "":
+                metadata = dict(self.config.metadata)
+                metadata["inactive"]
+                triggers.append()
+        else:
+            for match in self._iter_matches(log_text):
+                metadata = self._build_metadata(match, log_text)
+                triggers.append(metadata)
+        if self.config.match_once:
+            triggers = triggers[:1]
+        return triggers
+
+    def _iter_matches(self, text: str) -> list:
+        """Find all pattern matches in text."""
+        if self.config.pattern_type == "regex":
+            pattern = re.compile(self.config.pattern, flags=re.MULTILINE)
+            return list(pattern.finditer(text))
+        escaped = re.escape(self.config.pattern)
+        pattern = re.compile(escaped, flags=re.MULTILINE)
+        return list(pattern.finditer(text))
+
+    def _build_metadata(self, match, text: str) -> dict[str, Any]:
+        """Build metadata from a pattern match."""
+        metadata = dict(self.config.metadata)
+        metadata["match"] = match.group(0)
+        metadata["line"] = match.string[match.start() : match.end()]
+
+        # Extract groups based on configuration
+        if self.config.extract_groups:
+            for key, group in self.config.extract_groups.items():
+                if isinstance(group, str) and group == "match":
+                    metadata[key] = match.group(0)
+                    continue
+                try:
+                    metadata[key] = match.group(group)
+                except (IndexError, KeyError):
+                    continue
+
+        return metadata
+
+
+class StateEvent:
+    """Handles state transition matching and action execution."""
+
+    config: StateEventConfig
+
+    def __init__(self, config: StateEventConfig):
+        self.config = config
+
+    def check_trigger(self, old_status: str | None, new_status: str | None) -> bool:
+        """Check if the state transition matches this event's transition."""
+        expected_old, expected_new = self.config.transition
+        # None in expected means "any state"
+        old_matches = expected_old is None or old_status == expected_old
+        new_matches = expected_new is None or new_status == expected_new
+        return old_matches and new_matches
+
+    def build_metadata(self, old_status: str | None, new_status: str | None) -> dict[str, Any]:
+        """Build metadata for the triggered event."""
+        metadata = dict(self.config.metadata)
+        metadata["old_status"] = old_status
+        metadata["new_status"] = new_status
+        metadata["transition"] = f"{old_status} -> {new_status}"
+        return metadata
+
+
 __all__ = [
-    "BaseMonitorAction",
-    "BaseMonitorAction",
-    "ActionContext",
+    "JobInterface",
+    "EventRecord",
     "ActionResult",
-    "RunCommandAction",
-    "RestartAction",
-    "RunAutoexpAction",
+    "event_key",
+    "build_event_id",
+    "ActionContext",
+    "BaseMonitorAction",
     "LogAction",
-    "LogMessageAction",
-    "PublishEventAction",
+    "NewJobAction",
+    "NewJobActionConfig",
+    "RestartActionConfig",
+    "RestartAction",
+    "FinishActionConfig",
+    "FinishAction",
+    "CancelActionConfig",
+    "CancelAction",
+    "LogEventConfig",
+    "LogEvent",
+    "StateEventConfig",
+    "StateEvent",
 ]

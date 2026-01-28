@@ -1,123 +1,180 @@
+"""Test oellm-specific custom monitor conditions."""
+
 from __future__ import annotations
 
-import sys
-import time
 from pathlib import Path
 
-from oellm_autoexp.monitor.conditions import (
-    AlwaysTrueCondition,
-    AlwaysTrueConditionConfig,
-    CommandCondition,
-    CommandConditionConfig,
-    CompositeCondition,
-    CompositeConditionConfig,
-    ConditionContext,
-    CooldownCondition,
-    CooldownConditionConfig,
-    FileExistsCondition,
-    FileExistsConditionConfig,
-    GlobExistsCondition,
-    GlobExistsConditionConfig,
-    MetadataCondition,
-    MetadataConditionConfig,
-    MaxAttemptsCondition,
-    MaxAttemptsConditionConfig,
+from oellm_autoexp.monitor.conditions import ConditionContext
+from oellm_autoexp.monitor.actions import EventRecord
+from oellm_autoexp.config.conditions import (
+    BlockingFileExistsCondition,
+    BlockingFileExistsConditionConfig,
+    SlurmStateCondition,
+    SlurmStateConditionConfig,
+    LogPatternCondition,
+    LogPatternConditionConfig,
 )
-from oellm_autoexp.monitor.events import EventRecord
 
 
-def _context(tmp_path: Path) -> ConditionContext:
-    event = EventRecord(event_id="evt1", name="demo")
-    return ConditionContext(event=event, job_metadata={"output_dir": str(tmp_path)}, attempts=0)
+def _context(tmp_path: Path, extra: dict | None = None) -> ConditionContext:
+    """Create a test condition context."""
+    event = EventRecord(event_id="evt1", name="test", source="test")
+    return ConditionContext(
+        event=event,
+        job_metadata={"output_dir": str(tmp_path)},
+        attempts=0,
+        extra=extra or {},
+    )
 
 
-def test_always_true(tmp_path: Path) -> None:
-    cond = AlwaysTrueCondition(AlwaysTrueConditionConfig(message="ok"))
-    result = cond.check(_context(tmp_path))
-    assert result.passed
-    assert result.message == "ok"
-
-
-def test_max_attempts(tmp_path: Path) -> None:
+def test_blocking_file_exists_condition(tmp_path: Path):
+    """Test BlockingFileExistsCondition checks for file existence."""
+    target = tmp_path / "checkpoint.txt"
     ctx = _context(tmp_path)
-    ctx.attempts = 1
-    cond = MaxAttemptsCondition(MaxAttemptsConditionConfig(max_attempts=2))
-    assert cond.check(ctx).passed
-    ctx.attempts = 3
-    assert not cond.check(ctx).passed
 
-
-def test_cooldown(tmp_path: Path) -> None:
-    ctx = _context(tmp_path)
-    ctx.event.metadata["last_action_ts"] = time.time()
-    cond = CooldownCondition(CooldownConditionConfig(cooldown_seconds=5))
-    result = cond.check(ctx)
-    assert result.waiting
-    ctx.event.metadata["last_action_ts"] = time.time() - 10
-    assert cond.check(ctx).passed
-
-
-def test_file_exists(tmp_path: Path) -> None:
-    target = tmp_path / "artifact.txt"
-    ctx = _context(tmp_path)
-    cond = FileExistsCondition(
-        FileExistsConditionConfig(
+    cond = BlockingFileExistsCondition(
+        BlockingFileExistsConditionConfig(
             path=str(target),
             blocking=False,
         )
     )
-    waiting = cond.check(ctx)
-    assert waiting.waiting
-    target.write_text("ok", encoding="utf-8")
-    assert cond.check(ctx).passed
+
+    # File doesn't exist yet
+    result = cond.check(ctx)
+    assert not result.passed
+    assert "missing" in result.message
+
+    # Create the file
+    target.write_text("checkpoint data")
+
+    # Now it should pass
+    result = cond.check(ctx)
+    assert result.passed
 
 
-def test_glob_exists(tmp_path: Path) -> None:
-    pattern = tmp_path / "ckpt*.pt"
-    ctx = _context(tmp_path)
-    cond = GlobExistsCondition(
-        GlobExistsConditionConfig(pattern=str(pattern), blocking=False, min_matches=1)
-    )
-    assert cond.check(ctx).waiting
-    (tmp_path / "ckpt1.pt").write_text("1")
-    assert cond.check(ctx).passed
+def test_slurm_state_condition_job_found(tmp_path: Path):
+    """Test SlurmStateCondition when job is found with matching state."""
+    ctx = _context(tmp_path, extra={"job_states_by_name": {"parent_job": "COMPLETED"}})
 
-
-def test_command_condition(tmp_path: Path) -> None:
-    ctx = _context(tmp_path)
-    cond = CommandCondition(
-        CommandConditionConfig(command=[sys.executable, "-c", "raise SystemExit(0)"])
-    )
-    assert cond.check(ctx).passed
-    bad = CommandCondition(
-        CommandConditionConfig(command=[sys.executable, "-c", "raise SystemExit(1)"])
-    )
-    assert not bad.check(ctx).passed
-
-
-def test_composite_condition(tmp_path: Path) -> None:
-    ctx = _context(tmp_path)
-    cond = CompositeCondition(
-        CompositeConditionConfig(
-            mode="all",
-            conditions=[
-                AlwaysTrueConditionConfig(),
-                MaxAttemptsConditionConfig(max_attempts=1),
-            ],
+    cond = SlurmStateCondition(
+        SlurmStateConditionConfig(
+            job_name="parent_job",
+            state="COMPLETED",
         )
     )
-    assert cond.check(ctx).passed
-    ctx.attempts = 5
+
     result = cond.check(ctx)
-    assert result.status == "fail"
+    assert result.passed
+    assert "parent_job" in result.message
+    assert "COMPLETED" in result.message
 
 
-def test_metadata_condition(tmp_path: Path) -> None:
+def test_slurm_state_condition_job_not_found(tmp_path: Path):
+    """Test SlurmStateCondition when job is not found."""
+    ctx = _context(tmp_path, extra={"job_states_by_name": {}})
+
+    cond = SlurmStateCondition(
+        SlurmStateConditionConfig(
+            job_name="missing_job",
+            state="COMPLETED",
+        )
+    )
+
+    result = cond.check(ctx)
+    assert not result.passed
+    assert "not found" in result.message
+
+
+def test_slurm_state_condition_wrong_state(tmp_path: Path):
+    """Test SlurmStateCondition when job is in wrong state."""
+    ctx = _context(tmp_path, extra={"job_states_by_name": {"parent_job": "RUNNING"}})
+
+    cond = SlurmStateCondition(
+        SlurmStateConditionConfig(
+            job_name="parent_job",
+            state="COMPLETED",
+        )
+    )
+
+    result = cond.check(ctx)
+    assert not result.passed
+    assert "RUNNING" in result.message
+    assert "COMPLETED" in result.message
+
+
+def test_log_pattern_condition_pattern_found(tmp_path: Path):
+    """Test LogPatternCondition when pattern is found in log."""
+    log_file = tmp_path / "train.log"
+    log_file.write_text("Starting training...\nCheckpoint saved\nTraining complete\n")
+
     ctx = _context(tmp_path)
-    ctx.event.metadata["trigger"] = "checkpoint_evaluation"
-    cond = MetadataCondition(MetadataConditionConfig(key="trigger", equals="checkpoint_evaluation"))
-    assert cond.check(ctx).passed
-    cond_fail = MetadataCondition(MetadataConditionConfig(key="trigger", equals="other"))
-    assert cond_fail.check(ctx).status == "fail"
-    cond_missing = MetadataCondition(MetadataConditionConfig(key="missing"))
-    assert cond_missing.check(ctx).status == "fail"
+
+    cond = LogPatternCondition(
+        LogPatternConditionConfig(
+            log_path=str(log_file),
+            pattern="Checkpoint saved",
+            tail_lines=1000,
+        )
+    )
+
+    result = cond.check(ctx)
+    assert result.passed
+    assert "pattern" in result.message.lower()
+    assert "found" in result.message.lower()
+
+
+def test_log_pattern_condition_pattern_not_found(tmp_path: Path):
+    """Test LogPatternCondition when pattern is not in log."""
+    log_file = tmp_path / "train.log"
+    log_file.write_text("Starting training...\nTraining in progress...\n")
+
+    ctx = _context(tmp_path)
+
+    cond = LogPatternCondition(
+        LogPatternConditionConfig(
+            log_path=str(log_file),
+            pattern="Checkpoint saved",
+            tail_lines=1000,
+        )
+    )
+
+    result = cond.check(ctx)
+    assert not result.passed
+    assert "not found" in result.message
+
+
+def test_log_pattern_condition_log_missing(tmp_path: Path):
+    """Test LogPatternCondition when log file doesn't exist."""
+    log_file = tmp_path / "missing.log"
+    ctx = _context(tmp_path)
+
+    cond = LogPatternCondition(
+        LogPatternConditionConfig(
+            log_path=str(log_file),
+            pattern="anything",
+            tail_lines=1000,
+        )
+    )
+
+    result = cond.check(ctx)
+    assert not result.passed
+    assert "does not exist" in result.message
+
+
+def test_log_pattern_condition_regex_pattern(tmp_path: Path):
+    """Test LogPatternCondition with regex pattern."""
+    log_file = tmp_path / "train.log"
+    log_file.write_text("Epoch 1 loss: 2.5\nEpoch 2 loss: 1.8\nEpoch 3 loss: 1.2\n")
+
+    ctx = _context(tmp_path)
+
+    cond = LogPatternCondition(
+        LogPatternConditionConfig(
+            log_path=str(log_file),
+            pattern=r"Epoch \d+ loss: [0-9.]+",
+            tail_lines=1000,
+        )
+    )
+
+    result = cond.check(ctx)
+    assert result.passed

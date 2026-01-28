@@ -41,7 +41,7 @@ Key features:
 ```bash
 # Start training with single cooldown monitoring
 python scripts/run_autoexp.py \
-  project=my_training \
+  job=my_training \
   monitoring=megatron_cooldown_single \
   backend.args.train_iters=100000 \
   backend.args.save_interval=5000
@@ -274,7 +274,7 @@ Key features:
 ```bash
 # Start training with multi-cooldown monitoring
 python scripts/run_autoexp.py \
-  project=scaling_study \
+  job=scaling_study \
   monitoring=megatron_cooldown_multi \
   backend.args.train_iters=150000 \
   backend.args.save_interval=5000
@@ -754,7 +754,7 @@ if __name__ == "__main__":
    ```bash
    # Test with short iteration counts
    python scripts/run_autoexp.py \
-     project=cooldown_test \
+     job=cooldown_test \
      monitoring=megatron_multi_cooldown \
      backend.args.train_iters=15000 \
      backend.args.save_interval=5000
@@ -770,7 +770,7 @@ if __name__ == "__main__":
 3. **Resume Testing**:
    ```bash
    # Start job, let it checkpoint, cancel it
-   python scripts/run_autoexp.py project=resume_test monitoring=megatron_auto_resume
+   python scripts/run_autoexp.py job=resume_test monitoring=megatron_auto_resume
    # Wait for first checkpoint, then:
    scancel <job_id>
    # Monitor should automatically restart and resume from checkpoint

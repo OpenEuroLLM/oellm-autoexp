@@ -3,5 +3,6 @@ runtime: singularity
 bind: ["/leonardo_scratch", "/leonardo"]
 env:
   WANDB_MODE: "offline"
+  MACHINE_NAME: "LEONARDO"
   PYTHONPATH: "."
 python: "/usr/bin/python"

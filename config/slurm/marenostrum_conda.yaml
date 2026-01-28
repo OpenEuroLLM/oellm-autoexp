@@ -1,0 +1,44 @@
+defaults:
+  - base
+  - _self_
+
+launcher_cmd: "{{env_exports}} export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ;"
+srun:
+  exclusive: true
+  wait: 60
+  cpus_per_task: 8
+  threads_per_core: 1
+  cpu_bind: "none"
+  gpu_bind: "none"
+  kill_on_bad_exit: 1
+  gpus_per_node: ${..sbatch.gpus_per_node}
+  ntasks_per_node: ${..sbatch.ntasks_per_node}
+launcher_env_passthrough: true
+env:
+  MACHINE_NAME: MARENOSTRUM
+  HF_ALLOW_CODE_EVAL: "1"
+  HF_DATASETS_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
+  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep \"Address: \" | sed \"s/Address: //\" | tail) "
+  MASTER_PORT: "20074"
+  NUM_NODES: "$SLURM_JOB_NUM_NODES"
+  GPUS_PER_NODE: "4"
+  NUM_GPUS_PER_NODE: "4"
+  NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
+  ARCH: "$(uname -m)"
+  SLURM_CPUS_PER_TASK: "12"
+  SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
+sbatch:
+  nodes: 1
+  ntasks_per_node: 1
+  ntasks: ${.nodes}
+  gpus_per_node: 4
+  cpus_per_task: 20
+  gres: "gpu:4"
+  gpu_bind: "none"
+  time: "12:00:00"
+  qos: ${oc.env:SLURM_QOS,null}
+  wait_all_nodes: 1
+  exclusive: true
+client:
+  class_name: SlurmClient

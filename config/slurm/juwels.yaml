@@ -3,9 +3,11 @@ defaults:
   - _self_
 
 template_path: templates/juwels.sbatch
-launcher_cmd: "{{env_exports}} export LOCAL_ADDR=$(nslookup $(hostname | sed 's/.juwels//' )i \
+launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \\\n\
+ export LOCAL_ADDR=$(nslookup $(hostname | sed \"s/.juwels//\" )i \
   | grep \"Address: \" | tail -n1 | awk '{print $2}') ; \
-  ${oc.select:container.runtime,apptainer} exec {{env_flags}} --nv ${oc.select:container.image,container.sif}"
+  ${oc.select:container.runtime,apptainer} exec ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}}\
+ --nv ${oc.select:container.image,container.sif}"
 srun:
   exclusive: true
   wait: 60
@@ -42,12 +44,10 @@ env:
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
 sbatch:
   nodes: 1
-  ntasks_per_node: ${.gpus_per_node}
+  ntasks_per_node: 1
   ntasks: ${.nodes}
   gpus_per_node: 4
-  cpus_per_task: 8
+  cpus_per_task: 32
   gres: "gpu:4"
   gpu_bind: "none"
   time: "12:00:00"
-client:
-  class_name: SlurmClient

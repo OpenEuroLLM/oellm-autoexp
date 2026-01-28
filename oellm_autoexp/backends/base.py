@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 
 from compoconf import ConfigInterface, register
 
@@ -14,34 +13,22 @@ from oellm_autoexp.config.schema import BackendInterface
 LOGGER = logging.getLogger(__name__)
 
 
-@dataclass(kw_only=True)
-class LaunchCommand:
-    """Concrete command to be executed on the cluster."""
-
-    argv: Sequence[str] = field(default_factory=list)
-    env: Mapping[str, str] = field(default_factory=dict)
-    cwd: str | None = None
-
-
-@dataclass(kw_only=True)
-class BackendJobSpec:
-    """Information needed to construct a launch command."""
-
-    parameters: dict[str, Any] = field(default_factory=dict)
+class BaseBackendConfig(ConfigInterface):
+    env: dict[str, str]
 
 
 class BaseBackend(BackendInterface):
     """Base class for backend adapters."""
 
-    config: ConfigInterface
+    config: BaseBackendConfig
 
-    def __init__(self, config: ConfigInterface) -> None:
+    def __init__(self, config: BaseBackendConfig) -> None:
         self.config = config
 
-    def validate(self, spec: BackendJobSpec) -> None:  # pragma: no cover - interface
+    def validate(self) -> None:  # pragma: no cover - interface
         raise NotImplementedError
 
-    def build_launch_command(self, spec: BackendJobSpec) -> LaunchCommand:  # pragma: no cover
+    def build_launch_command(self) -> str:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -57,23 +44,19 @@ class NullBackendConfig(ConfigInterface):
     extra_cli_args: Sequence[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     dummy: int = 0
-    dummy2: int = 0
 
 
 @register
 class NullBackend(BaseBackend):
     config: NullBackendConfig
 
-    def validate(self, spec: BackendJobSpec) -> None:  # pragma: no cover - trivial
-        _ = spec  # deliberate no-op to mirror interface
+    def validate(self) -> None:  # pragma: no cover - trivial
+        pass
 
-    def build_launch_command(self, spec: BackendJobSpec) -> LaunchCommand:
+    def build_launch_command(self) -> str:
         argv: list[str] = [str(arg) for arg in self.config.base_command]
-        for arg in sorted(spec.parameters):
-            argv.append(str(arg))
         argv.extend(str(arg) for arg in self.config.extra_cli_args)
-        env = dict(self.config.env)
-        return LaunchCommand(argv=argv, env=env)
+        return " ".join(argv)
 
 
-__all__ = ["BaseBackend", "BackendJobSpec", "LaunchCommand", "NullBackendConfig"]
+__all__ = ["BaseBackend", "NullBackendConfig"]

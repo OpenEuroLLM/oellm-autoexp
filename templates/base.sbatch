@@ -3,5 +3,5 @@
 
 {env_exports}
 
-echo "Launching job {name}"
-srun {srun_opts}bash -c '{launcher_cmd}'
+echo "Launching job {job_name}"
+srun {srun_opts}bash -c '{launcher_cmd} {command}'

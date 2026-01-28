@@ -25,7 +25,7 @@ Stage 1 runs → emits event → MonitorAction evaluates conditions → RunAutoe
 **Weaknesses:**
 - Hard to see full experiment pipeline in config (stages hidden in actions)
 - Debugging requires tracing through multiple monitoring sessions
-- `start_condition_cmd` is a separate mechanism from monitor conditions
+- `start_condition_cmd` is a separate mechanism from oellm_autoexp.monitor conditions
 - Pre-planned workflows require verbose action configurations
 
 ### Proposed Hybrid System (Push + Pull)
@@ -162,11 +162,9 @@ Computes **cartesian product** of all parameter combinations.
   params:
     backend.megatron.lr: [1e-4, 5e-4, 1e-3]
     backend.megatron.global_batch_size: [64, 128, 256]
-  filter: "\\${oc.eval:'\\${backend.megatron.lr} * \\${backend.megatron.global_batch_size} <= 256e-4'}"  # Optional pruning
+  filter: "backend.megatron.lr * backend.megatron.global_batch_size <= 256e-4"  # Optional pruning
   # Produces: 9 combinations → filtered → ~6 combinations
 ```
-
-Filters can only be applied at the top level because of hydra composition!
 
 **Use cases:**
 - Hyperparameter grid searches
@@ -220,6 +218,25 @@ sweep:
   # Total: 6 × 3 × 2 = 36 sweep points
 ```
 
+#### Filters at All Levels
+
+Filters can be applied at any level:
+
+```yaml
+sweep:
+  type: product
+  groups:
+    - type: product
+      params:
+        a: [1, 2, 3, 4]
+        b: [10, 20, 30]
+      filter: "a * b <= 60"  # Prune this group's combinations
+
+    - type: list
+      configs: [...]
+
+  filter: "not (a == 1 and stage == 'cooldown')"  # Prune final combinations
+```
 
 **Filter evaluation context:**
 - Has access to all parameters in current sweep point
@@ -318,7 +335,7 @@ PATTERN:
 ACCESSOR:
   - output_dir, log_path, name - job attributes
   - param.backend.megatron.lr - job parameters
-  - metadata.checkpoint_iteration - runtime metadata (from monitoring)
+  - metadata.checkpoint_iteration - runtime metadata (from oellm_autoexp.monitoring)
 ```
 
 #### Option B: Use special parameter prefix `__ref_*`
@@ -448,7 +465,7 @@ backend.megatron.train_iters: "${.aux.target_iters}"
 {sibling.stable.backend.megatron.lr}            # Job parameter (dotted path)
 {sibling.stable.backend.megatron.train_iters}   # Job parameter
 
-{sibling.stable.metadata.checkpoint_iteration}  # Runtime metadata (from monitoring)
+{sibling.stable.metadata.checkpoint_iteration}  # Runtime metadata (from oellm_autoexp.monitoring)
 {sibling.stable.metadata.checkpoint_path}       # Runtime metadata
 ```
 
@@ -481,6 +498,8 @@ def expand_sweep(sweep_config):
             # params = {"backend": ["v1", "v2"], "lr": [1e-4, 5e-4]}
             # → [{"backend": "v1", "lr": 1e-4}, {"backend": "v1", "lr": 5e-4}, ...]
             points = cartesian_product(group.params)
+            if group.filter:
+                points = [p for p in points if eval_filter(group.filter, p)]
 
         elif group.type == "list":
             # Each config is a separate point (no cross-product)
@@ -974,9 +993,6 @@ Available template variables:
 Instead of blocking orchestrator with `start_condition_cmd`:
 
 ```
-Old (blocking):
-  orchestrator.submit() → wait_for_start_condition() [BLOCKS] → slurm.submit()
-
 New (async):
   orchestrator.submit() → register job as "waiting"
   monitor loop → check start_conditions → slurm.submit() when ready
@@ -1695,7 +1711,7 @@ sweep:
 - ✅ Static start conditions (file paths, parameter matches)
 
 **What Must Be Delayed:**
-- ❌ Runtime metadata: `{sibling.stable.metadata.checkpoint_iteration}` (from monitoring)
+- ❌ Runtime metadata: `{sibling.stable.metadata.checkpoint_iteration}` (from oellm_autoexp.monitoring)
 
 **Proposed: Add Validation Phase**
 

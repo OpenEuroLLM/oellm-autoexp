@@ -1,4 +1,4 @@
-project:
+job:
   name: demo
   base_output_dir: ./outputs
   log_path: ./logs/slurm-%j.out
@@ -11,15 +11,6 @@ slurm:
   log_dir: ./logs
   launcher_cmd: ""
   srun_opts: ""
-  client:
-    class_name: FakeSlurmClient
-monitoring:
-  class_name: NullMonitor
-  log_path: ./logs/current.log
-  poll_interval_seconds: 600
-  inactivity_threshold_seconds: 900
-  termination_string: null
-  termination_command: null
 backend:
   class_name: NullBackend
   extra_cli_args: []

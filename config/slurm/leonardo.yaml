@@ -2,8 +2,15 @@ defaults:
   - base
   - _self_
 
-launcher_cmd: "{{env_exports}} export LOCAL_ADDR=$(nslookup $(hostname) | grep 'Address: ' | sed 's/Address: //' | tail) ; \
-  ${oc.select:container.runtime,apptainer} exec {{env_flags}} --nv {{bind_flags}} ${oc.select:container.image,container.sif}"
+# the first part does the env passthrough into bash srun
+# the second part does the env passthrough into the container
+# the third does the container binds
+template_path: "templates/base.sbatch"
+launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
+  export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
+  ${oc.select:container.runtime,apptainer} exec ${oc.join:' ',${oc.maptmpl:'--env %=$% \\\n',${oc.dict.keys:.env}}} \
+  ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
+  --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif}"
 srun:
   exclusive: true
   wait: 60
@@ -11,13 +18,12 @@ srun:
   jobid: "$SLURM_JOBID"
   threads_per_core: 1
   kill_on_bad_exit: 1
-launcher_env_passthrough: true
 env:
   MACHINE_NAME: LEONARDO
   HF_ALLOW_CODE_EVAL: "1"
   HF_DATASETS_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
-  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep 'Address: ' | sed 's/Address: //' | tail) "
+  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep \"Address: \" | sed \"s/Address: //\" | tail) "
   MASTER_PORT: "20074"
   NUM_NODES: "$SLURM_JOB_NUM_NODES"
   GPUS_PER_NODE: "4"
@@ -38,5 +44,3 @@ sbatch:
   gres: "gpu:4"
   time: "12:00:00"
   qos: ${oc.env:SLURM_QOS,null}
-client:
-  class_name: SlurmClient
