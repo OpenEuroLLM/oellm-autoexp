@@ -1,3 +1,4 @@
+class_name: Container
 image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining_x86_64_202512291044.sif
 runtime: singularity
 bind: ["/gpfs/projects"]
