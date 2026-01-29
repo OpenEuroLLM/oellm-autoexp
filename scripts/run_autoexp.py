@@ -39,7 +39,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run", action="store_true", help="Plan and render without submitting jobs"
     )
     parser.add_argument("--no-monitor", action="store_true", help="Submit jobs but skip monitoring")
-    parser.add_argument("--monitor-state-dir", type=Path, help="Monitoring state directory")
+    parser.add_argument(
+        "--monitor-state-dir",
+        default="./monitor_state",
+        type=Path,
+        help="Monitoring state directory",
+    )
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument(
