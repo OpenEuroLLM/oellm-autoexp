@@ -3,7 +3,7 @@ image: ${oc.env:CONTAINER_CACHE_DIR}/MegatronTrainingLumi_x86_64_202511090219.si
 runtime: singularity
 bind:
   [
-    "/boot/config-5.14.21-150500.55.49_13.0.56-cray_shasta_c",
+    "/boot/config-6.4.0-150600.23.73_15.0.14-cray_shasta_c",
     "/pfs/",
     "/scratch/",
     "/flash/",
