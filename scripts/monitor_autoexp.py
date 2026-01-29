@@ -25,7 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--monitoring-state-dir", default="./monitor_state", type=Path)
+    parser.add_argument("--monitor-state-dir", default="./monitor_state", type=Path)
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--session", default=None)
@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> None:
 
     slurm_client = SlurmClient(SlurmClientConfig())
     local_client = LocalCommandClient(LocalCommandClientConfig())
-    session_dir = Path(args.session_dir) or Path(args.monitoring_state_dir) / args.session
+    session_dir = Path(args.session_dir) or Path(args.monitor_state_dir) / args.session
     if not session_dir.exists():
         print(f"Session directory {session_dir} does not exist.")
     loop = MonitorLoop(

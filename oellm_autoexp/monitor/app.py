@@ -116,6 +116,7 @@ def _import_registry() -> None:
     import oellm_autoexp.monitor.actions  # noqa: F401
     import oellm_autoexp.monitor.conditions  # noqa: F401
     import oellm_autoexp.monitor.local_client  # noqa: F401
+    import oellm_autoexp.config.conditions  # noqa: F401
 
     try:  # slurm_gen is optional
         import oellm_autoexp.monitor.slurm_client  # noqa: F401
