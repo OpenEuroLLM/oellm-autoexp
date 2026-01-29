@@ -1,5 +1,5 @@
 class_name: Container
-image: ${oc.env:OELLM_CONTAINER_CACHE_DIR,.}/OELLM_autoexp_MegatronTrainingNoRoot_base2512_x86_64_202601281510.sif
+image: /leonardo_work/OELLM_prod2026/container_images/nemo_25.11.01.sif
 runtime: singularity
 bind: ["/leonardo_scratch", "/leonardo"]
 env:
