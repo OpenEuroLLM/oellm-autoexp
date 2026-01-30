@@ -1511,6 +1511,9 @@ class MegatronConfig(ConfigInterface):
     # Path to save the wandb results locally.
     wandb_save_dir: str = ""
 
+    # The wandb entity name.
+    wandb_entity: str = ""
+
     # Set default logging level
     logging_level: int | None = None
 

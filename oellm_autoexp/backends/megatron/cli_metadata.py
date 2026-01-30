@@ -4687,6 +4687,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "wandb_entity": MegatronArgMetadata(
+        arg_type=str,
+        default="",
+        help="The wandb entity name.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "wandb_exp_name": MegatronArgMetadata(
         arg_type=str,
         default="",
@@ -8059,6 +8067,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "vocab_size": MegatronActionSpec(
         option_strings=("--vocab-size",), action_type="store", nargs=None, const=None, default=None
+    ),
+    "wandb_entity": MegatronActionSpec(
+        option_strings=("--wandb-entity",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="",
     ),
     "wandb_exp_name": MegatronActionSpec(
         option_strings=("--wandb-exp-name",),

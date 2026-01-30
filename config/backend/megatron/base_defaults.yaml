@@ -506,6 +506,7 @@ vision_pretraining_type: classify  # choices: ['classify', 'inpaint', 'dino'] | 
 vocab_extra_ids: 0  # Number of additional vocabulary tokens. They are used for span masking in the T5 model
 vocab_file: null  # Path to the vocab file.
 vocab_size: null  # Size of vocab before EOD or padding.
+wandb_entity: ''  # The wandb entity name.
 wandb_exp_name: ''  # The wandb experiment name.
 wandb_project: ''  # The wandb project name. Ignore wandb by default.
 wandb_save_dir: ''  # Path to save the wandb results locally.
