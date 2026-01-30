@@ -211,6 +211,7 @@ kitchen_config_file: null  # Use the config .yaml file at the specified location
 kitchen_recipe_number: null  # Use a default kitchen recipe for all layers as defined by QAT_PARAMS index
 kv_channels: null  # Projection weights dimension in multi-head attention. This is set to    args.hidden_size // args.num_attention_heads if not provided.
 kv_lora_rank: 32  # Rank of Key and Value tensors' low rank representation.
+legacy_tokenizer: False  # To use Megatron-LM legacy tokenizer system.
 lazy_mpu_init: null  # If set to True, initialize_megatron() skips DDP initialization and returns function to complete it instead. Also turns on --use-cpu-initialization flag. This is for external DDP manager.
 load: null  # Directory containing a model checkpoint.
 load_main_params_from_ckpt: null  # Load main parameters from checkpoint directly.

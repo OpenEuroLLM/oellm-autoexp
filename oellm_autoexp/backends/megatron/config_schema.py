@@ -1085,6 +1085,9 @@ class MegatronConfig(ConfigInterface):
     # Sentencepiece tokenizer model.
     tokenizer_model: str | None = None
 
+    # Use Megatron-LM legacy tokenizer system (works offline without HuggingFace).
+    legacy_tokenizer: bool = False
+
     # Which tiktoken pattern to use. Options: [v1, v2]
     tiktoken_pattern: str | None = None
 

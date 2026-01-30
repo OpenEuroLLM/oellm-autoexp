@@ -4235,6 +4235,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "legacy_tokenizer": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Use Megatron-LM legacy tokenizer system (works offline without HuggingFace).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "tokenizer_type": MegatronArgMetadata(
         arg_type=str,
         default=None,
@@ -7724,6 +7732,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "legacy_tokenizer": MegatronActionSpec(
+        option_strings=("--legacy-tokenizer",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "tokenizer_type": MegatronActionSpec(
         option_strings=("--tokenizer-type",),
