@@ -7,8 +7,7 @@ defaults:
   - /backend: megatron_torchrun
   - /container: leonardo
   - /slurm: leonardo
-  - /monitoring: megatron_basic
-  - /project: default
+  - /job: default
   - /sweep: none
   - /backend/megatron: base
   - _self_
@@ -16,21 +15,15 @@ defaults:
 index: 0
 stage: ""
 
-project:
+job:
   base_output_dir: "dense_50M_sweep"
-  name: "dense_50M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
-  resume: true
+  name: "dense_50M_01_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_beta2${backend.megatron.adam_beta2}_${stage}"
+  # resume: true
 
-container:
-  image: /leonardo_work/OELLM_prod2026/container_images/nemo_25.11.01.sif
-  bind: 
-    - "/leonardo_work/OELLM_prod2026/"
-    - "/leonardo_scratch"
-    - "/leonardo"
 
 backend:
   megatron:
-    wandb_exp_name: "\\${project.name}"
+    wandb_exp_name: "${job.name}"
     wandb_project: oellm-train
 
     # DATA
@@ -49,6 +42,7 @@ backend:
     merge_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/merges.txt
     num_workers: 8
     split: '99,1,0'
+    legacy_tokenizer: True
 
     # MODEL: 50M
     num_layers: 12
@@ -137,7 +131,7 @@ backend:
 
 slurm:
   sbatch:
-    nodes: "${oc.eval:${backend.megatron.global_batch_size}//\\(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}\\)}"
+    nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
 
 
 # COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE
@@ -148,10 +142,10 @@ sweep:
   groups:
     - type: list
       configs:
-        - project.name: "dense_50M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
-          backend.megatron.wandb_exp_name: "\\${project.name}"
-          project.base_output_dir: "${project.base_output_dir}/\\${project.name}"
-          backend.megatron.wandb_save_dir: "\\${project.base_output_dir}"
+        - job.name: "dense_50M_01_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_beta2${backend.megatron.adam_beta2}_${stage}"
+          backend.megatron.wandb_exp_name: "${job.name}"
+          job.base_output_dir: "${job.base_output_dir}/${job.name}"
+          backend.megatron.wandb_save_dir: "${job.base_output_dir}"
     
 # GROUP 1: Hyperparameter configurations (list of two product grids)
     - type: list
@@ -199,25 +193,20 @@ sweep:
             backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
 
             # Checkpoint loading configuration
-            backend.megatron.load: "\\${sibling.stable.project.base_output_dir}/checkpoints/"
+            backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}"
             backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter_round}"
             backend.megatron.override_opt_param_scheduler: true
 
             # Start conditions: wait for stable to reach checkpoint (new async approach)
-            job.start_conditions:
-              - class_name: FileExistsCondition
-                path: "\\${sibling.stable.project.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}/latest_checkpointed_iteration.txt"
-                blocking: true
-                timeout_seconds: 7200
+            job.start_condition:
+              class_name: FileExistsCondition
+              path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}/latest_checkpointed_iteration.txt"
 
             # Cancel conditions: cancel if stable job fails
-            job.cancel_conditions:
-              - class_name: SlurmStateCondition
-                job_name: "\\${sibling.stable.project.name}"
-                state: FAILED
-              - class_name: LogPatternCondition
-                log_path: "\\${sibling.stable.project.log_path_current}"
-                pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+            job.cancel_condition:
+              class_name: LogPatternCondition
+              log_path: "\\${sibling.stable.job.log_path_current}"
+              pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
           configs:
             # Each decay stage only needs to specify its unique stage and tokens
             - stage: decay6B
