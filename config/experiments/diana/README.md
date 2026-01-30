@@ -37,7 +37,9 @@ Adjustments from the `main` branch:
 - add `legacy_tokenizer` and set it to `True` to support the old tokenizer system using the vocab and merges files
 - add `wandb_entity` and `tensorbard_dir` for wandb logging 
 - add `save` for checkpointing
-- start condition only checks if the checkpoint at the correct iteration has been created
+- remove the `iter_000XX` part from `load`, since this is specified in `ckpt_step` and otherwise it will try to find a checkpoint in `checkpoints/iter_000XXXX/iter_000XXXX`
+- add padding in start condition for checkpoint folder: check if folder `iter_000XXXX` exists instead of `iter_XXXX`
+- start condition only checks if the checkpoint at the correct iteration has been created and doesn't check for `latest_checkpointed_iteration.txt` since this file is by default saved in the parent directory of `checkpoints`, not inside each checkpoint folder
 - use `ckpt_format: torch_dist` instead of `ckpt_format: torch` because otherwise Megatron-LM will overwrite at loading time the `ckpt_step` with the last checkpoint from the `latest_checkpointed_iteration.txt` file. This happens because `ckpt_format:True` and `use_distributed_optimzier: True`. 
 - since this file is for debugging auto-cooldown purposes, the token budget, warmup_iters, save_interval, and hyperparameter sweeps have been significantly reduced
 
