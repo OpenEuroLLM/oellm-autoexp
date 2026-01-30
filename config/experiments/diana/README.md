@@ -26,28 +26,12 @@ git checkout exp_diana
 
 ## Run the experiments
 Firstly, ensure you have Python loaded, activated the virtual environment and are inside `oellm-autoexp`.
-Experiments:
-1. Generate sbatch scripts based on hyperparameter sweep and multi-stage. Tested only on generating scripts (doesn't run them):
-```
-PYTHONPATH=. python scripts/run_autoexp.py --config-ref experiments/diana/korbi_dense_50M_50BT_pull_leonardo --dry-run
-```
-2. Run the stable-decay stages. Simplified the hyperparameters configs. Generate and run the scripts (under testing): 
-```
-PYTHONPATH=. python scripts/run_autoexp.py --config-ref experiments/diana/korbi_dense_50M_50BT_pull_leonardo_simple_stable_decay
-```
-3. Related to point (1, generate scripts), but with additional filtering of experiments. To be tested with the latest fixes:
-```
-PYTHONPATH=. python scripts/run_autoexp.py --config-ref experiments/diana/korbi_dense_50M_50BT_pull_leonardo_simple_filtering --dry-run
-```
 
-# The experiments  
-Use as a baseline `korbi/korbi_dense_50M_50BT_pull` and make the following adjustments:
-- in `config/slurm/leonardo.yaml` added `WANDB_MODE: "offline"`
-- adjusted defaults wrt machine: from lumi -> leonardo
-- added leonardo container settings. Container image used: `nemo_25.11.01.sif`
-- adjusted `data_path` to leonardo data path (this is the old, problematic data. To be changed for actual runs)
-- removed `tokenizer_type` and `tokenizer_model` and added `vocab_file` and `merge_file` paths
-- added `data_cache_path` and `wandb_save_dir`
-- adjusted model from 300M -> 50M
-- adjusted hyperparameters with the latest design choices from xmas experiments: `adam_beta2: 0.99`, `min_lr: 1e-5`, `lr_warmup_iters: 2000`, `eval_interval: 3200`, `save_interval: 8000`.
+1. Simple check:`test1_dense_50M_200MT,yaml`. TO DO: check why the naming of the job output directory doesn't work with stages
+TO DO: Update with refactored configs.
 
+Adjustments:
+- add `legacy_tokenizer` to support old tokenizer system using the vocab and merges files
+- add `wandb-entity` and `tensorbard_dir` for wandb logging 
+- add `save` for checkpointing
+- since this file is for debugging autocooldown purposes, the token budget, warmup_iters, save_interval, and hyperparameter sweeps have been reduced
