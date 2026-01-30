@@ -27,11 +27,22 @@ git checkout exp_diana
 ## Run the experiments
 Firstly, ensure you have Python loaded, activated the virtual environment and are inside `oellm-autoexp`.
 
-1. Simple check:`test1_dense_50M_200MT,yaml`. TO DO: check why the naming of the job output directory doesn't work with stages
-TO DO: Update with refactored configs.
+1. Basic sanity check. Launch this experiment with `python scripts/run_autoexp.py --config-name experiments/diana/test_dense_50M_200MT`.
+
+It is a very small and short experiment, meant for debugging purposes. It will test the auto-cooldown. It will work well for the stable phase and crash at the decay phase because the qos is set to debugging which doesn't allow for multiple submissions at the same time. However, the sbatch script for decay will have been created. 
 
 Adjustments:
 - add `legacy_tokenizer` to support old tokenizer system using the vocab and merges files
 - add `wandb-entity` and `tensorbard_dir` for wandb logging 
 - add `save` for checkpointing
 - since this file is for debugging autocooldown purposes, the token budget, warmup_iters, save_interval, and hyperparameter sweeps have been reduced
+
+Notes:
+- the schema default for `eval_interval` is 1000. If you also set your configurations to the same value, then the `--eval-interval` flag is silently omitted from the generated sbatch command because the command builder at megatron_backend.py:91 calls `build_cmdline_args()` with `skip_defaults=True`. This hits the logic at converter.py:244:
+```
+if skip_defaults and argval == spec.default:
+    return []
+```
+Temporary fix, avoid `eval_inteval=1000`.
+
+TO DO: set `skip_defaults=False`
