@@ -17,7 +17,7 @@ stage: ""
 
 job:
   name: "dense_50M_01_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_beta2${backend.megatron.adam_beta2}_${stage}"
-  base_output_dir: "test3_dense_50M_200MT/${job.name}"
+  base_output_dir: "test1_dense_50M_200MT/${job.name}"
   # resume: true
 
 backend:
@@ -136,7 +136,7 @@ backend:
 slurm:
   sbatch:
     nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
-    qos: boost_qos_dbg
+    # qos: boost_qos_dbg
     time: "29:00"
 
 
