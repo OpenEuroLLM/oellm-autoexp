@@ -103,7 +103,7 @@ backend:
     profile_step_end: 12
 
     # EVALS
-    eval_interval: 200
+    eval_interval: 1000
     eval_iters: 100
 
     # LOGGING
