@@ -17,7 +17,7 @@ stage: ""
 
 job:
   name: "dense_50M_01_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_beta2${backend.megatron.adam_beta2}_${stage}"
-  base_output_dir: "test2_dense_50M_200MT/${job.name}"
+  base_output_dir: "test3_dense_50M_200MT/${job.name}"
   # resume: true
 
 backend:
@@ -114,7 +114,7 @@ backend:
     log_timers_to_tensorboard: True
 
     # CHECKPOINT FORMAT
-    ckpt_format: "torch"
+    ckpt_format: "torch_dist"
     save_interval: 500
     save: ${job.base_output_dir}/checkpoints
 
