@@ -145,9 +145,6 @@ backend:
 slurm:
   sbatch:
     nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
-    qos: boost_qos_dbg
-    time: "29:00"
-
 
 # COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE
 sweep:
