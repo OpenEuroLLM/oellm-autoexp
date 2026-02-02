@@ -651,17 +651,10 @@ vision_pretraining_type: classify  # choices: ['classify', 'inpaint', 'dino'] | 
 vocab_extra_ids: 0  # Number of additional vocabulary tokens. They are used for span masking in the T5 model
 vocab_file: null  # Path to the vocab file.
 vocab_size: null  # Size of vocab before EOD or padding.
-<<<<<<< HEAD
-wandb_entity: ''  # The wandb entity name.
-wandb_exp_name: ''  # The wandb experiment name.
-wandb_project: ''  # The wandb project name. Ignore wandb by default.
-wandb_save_dir: ''  # Path to save the wandb results locally.
-=======
 wandb_entity: null  # The wandb entity name. It is useful when there are multiple sub-projects in a project.
 wandb_exp_name: null  # The wandb experiment name.
 wandb_project: null  # The wandb project name. Ignore wandb by default.
 wandb_save_dir: null  # Path to save the wandb results locally.
->>>>>>> origin/main
 warmup: null  # Old lr warmup argument, do not use. Use one of the--lr-warmup-* arguments above
 weight_decay: 0.01  # Weight decay coefficient for L2 regularization.
 weight_decay_incr_style: constant  # choices: ['constant', 'linear', 'cosine'] | Weight decay increment function.
