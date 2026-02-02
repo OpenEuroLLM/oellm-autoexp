@@ -1,0 +1,2 @@
+data_path:
+ - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/gpt-neox-20b/HuggingFaceFW-fineweb-edu/train/merged
