@@ -5,5 +5,5 @@
 
 ml purge
 
-echo "Launching {name} on LUMI"
+echo "Launching {job_name} on LUMI"
 srun {srun_opts}bash -c '{launcher_cmd}'
