@@ -8,8 +8,6 @@ wandb_save_dir: "${job.base_output_dir}/wandb"
 tensorboard_dir: "${job.base_output_dir}/tensorboard"
 save: "${job.base_output_dir}"
 load: "${job.base_output_dir}"
-config_logger_dir: "${job.base_output_dir}"
-
 
 aux:  # auxiliary configuration arguments that are free and not typed
   model_name: ""
