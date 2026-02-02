@@ -19,7 +19,7 @@ class MegatronConfig(ConfigInterface):
     # Number of decoder transformer layers.
     decoder_num_layers: int | None = None
 
-    # Tansformer hidden size.
+    # Transformer hidden size.
     hidden_size: int | None = None
 
     # Transformer Feed-Forward Network hidden size. This is set to 4*hidden-size if not
@@ -40,6 +40,23 @@ class MegatronConfig(ConfigInterface):
     group_query_attention: bool = False
 
     num_query_groups: int = 1
+
+    # Whether to apply output gate to the attention.
+    attention_output_gate: bool = False
+
+    # Type of softmax to use for the attention. Supports both a fixed offset and learnable
+    # offset.
+    softmax_type: Literal["learnable", "vanilla", "off-by-one"] = "vanilla"
+
+    # Window size for window attention. If not provided, window attention will be disabled.
+    window_size: Any | None = None
+
+    # Frequency of layers to skip window attention. Accepts either: - An integer N: Represents
+    # a (N-1):1 ratio, meaning one full attention layer after (N-1) SWA layers. - A string
+    # containing a Python list expression that defines a custom pattern, e.g.: "[1,1,1,0]*3"
+    # evaluates to [1,1,1,0,1,1,1,0,1,1,1,0] where 1 indicates SWA and 0 indicates full
+    # attention.
+    window_attn_skip_freq: Any | None = None
 
     # Maximum number of position embeddings to use. This is the size of position embedding.
     max_position_embeddings: int | None = None
@@ -117,6 +134,17 @@ class MegatronConfig(ConfigInterface):
     # Use gated linear units and SiLU activation instead of default gelu
     swiglu: bool = False
 
+    # Use quick geglu activation instead of default gelu
+    quick_geglu: bool = False
+
+    # Clamp the output of the linear_fc1 in the activation function. Only used when
+    # activation_func is quick_gelu.
+    activation_func_clamp_value: float | None = None
+
+    # Offset term in the GLU activation function: activation_func(x[0]) * (x[1] + offset).
+    # Only used when gated_linear_unit is True
+    glu_linear_offset: float = 0.0
+
     # Use workarounds for known problems with Torch ONNX exporter
     onnx_safe: bool | None = None
 
@@ -139,6 +167,9 @@ class MegatronConfig(ConfigInterface):
     # loss, which serves as an additional training objective.
     mtp_loss_scaling_factor: float = 0.1
 
+    # Latent projection dimension for MoE. If None, MoE latent projections are not used.
+    moe_latent_size: int | None = None
+
     # Post attention dropout probability.
     attention_dropout: float = 0.1
 
@@ -148,14 +179,8 @@ class MegatronConfig(ConfigInterface):
     # Weight decay coefficient for L2 regularization.
     weight_decay: float = 0.01
 
-    # Initial weight decay coefficient for L2 regularization.
-    start_weight_decay: float | None = None
-
-    # End of run weight decay coefficient for L2 regularization.
-    end_weight_decay: float | None = None
-
-    # Weight decay increment function.
-    weight_decay_incr_style: Literal["constant", "linear", "cosine"] = "constant"
+    # Apply weight decay to qk layernorm as a special case.
+    apply_wd_to_qk_layernorm: bool = False
 
     # Gradient clipping based on global L2 norm.
     clip_grad: float = 1.0
@@ -172,31 +197,135 @@ class MegatronConfig(ConfigInterface):
     # Momentum factor for sgd
     sgd_momentum: float = 0.9
 
+    # Momentum factor for Muon optimizer
+    muon_momentum: float = 0.9
+
+    # Whether to split QKV parameters for Muon optimizer
+    muon_split_qkv: bool = True
+
+    # Whether to use Nesterov-style momentum in the internal SGD
+    muon_use_nesterov: bool = False
+
+    # Scale mode for Muon optimizer
+    muon_scale_mode: Literal["spectral", "unit_rms_norm", "shape_scaling"] = "spectral"
+
+    # FP32 matmul precision for Newton-Schulz iteration
+    muon_fp32_matmul_prec: Literal["low", "medium", "high"] = "medium"
+
+    # Number of Newton-Schulz steps for Muon optimizer
+    muon_num_ns_steps: int = 5
+
+    # How to perform NS calculation for tensor model parallel weights
+    muon_tp_mode: Literal["blockwise", "duplicated", "distributed"] = "blockwise"
+
+    # Additional scale factor for the muon update
+    muon_extra_scale_factor: float = 1.0
+
+    # Type of no weight decay condition. Choices: None (default): apply weight decay to 1D
+    # weights and biases."apply_wd_to_qk_layernorm": additionally apply weight decay to qk
+    # layernorm as a special case.DEPRECATED. Please use --apply-wd-to-qk-layernorm instead.
+    no_weight_decay_cond_type: Literal["apply_wd_to_qk_layernorm"] | None = None
+
+    # Enable nsys profiling. When using this option, nsys options should be specified in
+    # commandline. An example nsys commandline is `nsys profile -s none -t nvtx,cuda -o
+    # <path/to/output_file> --force-overwrite true --capture-range=cudaProfilerApi --capture-
+    # range-end=stop`.
+    profile: bool = False
+
+    # Global step to start profiling.
+    profile_step_start: int = 10
+
+    # Global step to stop profiling.
+    profile_step_end: int = 12
+
+    # Use the built-in pytorch profiler. Useful if you wish to view profiles in tensorboard.
+    use_pytorch_profiler: bool = False
+
+    # Global ranks to profile.
+    profile_ranks: list[int] = field(default_factory=lambda: [0])
+
+    # Record memory history in last rank.
+    record_memory_history: bool = False
+
+    # Specifies where to dump the memory history pickle.
+    memory_snapshot_path: str = "snapshot.pickle"
+
     # Batch size per model instance (local batch size). Global batch size is local batch size
     # times data parallel size times number of micro batches.
     micro_batch_size: int | None = None
-
-    # Old batch size parameter, do not use. Use --micro-batch-size instead
-    batch_size: int | None = None
 
     # Training batch size. If set, it should be a multiple of micro-batch-size times data-
     # parallel-size. If this value is None, then use micro-batch-size * data-parallel-size as
     # the global batch size. This choice will result in 1 for number of micro-batches.
     global_batch_size: int | None = None
 
-    # Batch size ramp up with the following values:  --rampup-batch-size <start batch size>
-    # <batch size incerement>                       <ramp-up samples> For example:   --rampup-
-    # batch-size 16 8 300000 \    --global-batch-size 1024will start with global batch size 16
-    # and over  (1024 - 16) / 8 = 126 intervals will increasethe batch size linearly to 1024.
-    # In each intervalwe will use approximately 300000 / 126 = 2380 samples.
-    rampup_batch_size: list[str] | None = None
+    # Batch size ramp up with the following values: <start batch size>, <batch size
+    # increment>, <ramp-up samples> For example: rampup-batch-size = [16, 8, 300000] global-
+    # batch-size 1024 will start with global batch size 16 and over (1024 - 16) / 8 = 126
+    # intervals will increase the batch size linearly to 1024. In each interval we will use
+    # approximately 300000 / 126 = 2380 samples.
+    rampup_batch_size: int | None = None
 
-    # If set, decrease batch size if microbatch_size * dp_sizedoes not divide batch_size.
-    # Useful for KSO (Keep Soldiering On)to continue making progress if number of healthy GPUs
-    # (andcorresponding dp_size) does not support current batch_size.Old batch_size will be
-    # restored if training is re-started withdp_size that divides batch_size //
-    # microbatch_size.
+    # If set, decrease batch size if microbatch_size * dp_size does not divide batch_size. Old
+    # batch_size will be restored if training is re-started with dp_size that divides
+    # batch_size // microbatch_size.
     decrease_batch_size_if_needed: bool = False
+
+    # Call torch.cuda.empty_cache() each iteration (training and eval), to reduce
+    # fragmentation. 0=off, 1=moderate, 2=aggressive.
+    empty_unused_memory_level: Literal[0, 1, 2] = 0
+
+    # Interval to check weight hashes are same across DP replicas. If not specified, weight
+    # hashes not checked.
+    check_weight_hash_across_dp_replicas_interval: int | None = None
+
+    # Training CPU-GPU synchronization interval, to ensure that CPU is not running too far
+    # ahead of GPU.
+    train_sync_interval: int | None = None
+
+    # Total number of iterations to train over all training runs. Note that either train_iters
+    # or train_samples should be provided.
+    train_iters: int | None = None
+
+    # Total number of samples to train over all training runs. Note that either train_iters or
+    # train_samples should be provided.
+    train_samples: int | None = None
+
+    # Exit the program after the iteration is divisible by this value.
+    exit_interval: int | None = None
+
+    # Exit the program after this many minutes.
+    exit_duration_in_mins: int | None = None
+
+    # Dynamically save the checkpoint and shutdown the training if SIGTERM is received
+    exit_signal_handler: bool = False
+
+    # Signal for the signal handler to detect.
+    exit_signal: str = "15"
+
+    # Use signal handler for dataloader workers
+    exit_signal_handler_for_dataloader: bool = False
+
+    # Disable the threshold-based default garbage collector and trigger the garbage collection
+    # manually. Manual garbage collection helps to align the timing of the collection across
+    # ranks which mitigates the impact of CPU-associated jitters. When the manual gc is
+    # enabled, garbage collection is performed only at the start and the end of the validation
+    # routine by default.
+    manual_gc: bool = False
+
+    # Training step interval to trigger manual garbage collection. Values > 0 will trigger
+    # garbage collections between training steps.
+    manual_gc_interval: int = 0
+
+    # When using manual garbage collection, this controls garbage collection at the start and
+    # the end of each evaluation run.
+    manual_gc_eval: bool = True
+
+    # List of iterations to skip during training, empty by default.
+    iterations_to_skip: list[int] = field(default_factory=lambda: [])
+
+    # Old batch size parameter, do not use. Use --micro-batch-size instead
+    batch_size: int | None = None
 
     # recompute activation to allow for training with larger models, sequences, and batch
     # sizes.
@@ -210,9 +339,6 @@ class MegatronConfig(ConfigInterface):
 
     # Check for NaNs in loss and grad
     check_for_nan_in_loss_and_grad: bool = True
-
-    # Check for spiky loss
-    check_for_spiky_loss: bool = False
 
     # Check for unexpectedly large grads
     check_for_large_grads: bool = False
@@ -243,41 +369,17 @@ class MegatronConfig(ConfigInterface):
     # "moe", and "shared_experts" use normal checkpointing.
     recompute_modules: list[str] | None = None
 
+    # The number of Transformer layers to offload to CPU.
+    cpu_offloading_num_layers: int = 0
+
     # If not set, clone the output of the scatter in embedding layer to GC original tensor.
     clone_scatter_output_in_embedding: bool = True
-
-    # Enable nsys profiling. When using this option, nsys options should be specified in
-    # commandline. An example nsys commandline is `nsys profile -s none -t nvtx,cuda -o
-    # <path/to/output_file> --force-overwrite true --capture-range=cudaProfilerApi --capture-
-    # range-end=stop`.
-    profile: bool = False
-
-    # Global step to start profiling.
-    profile_step_start: int = 10
-
-    # Global step to stop profiling.
-    profile_step_end: int = 12
-
-    # List of iterations to skip, empty by default.
-    iterations_to_skip: list[int] = field(default_factory=lambda: [])
 
     # Optional name of file tracking `result_rejected` events.
     result_rejected_tracker_filename: str | None = None
 
     # Disables creation and usage of Gloo process groups.
     enable_gloo_process_groups: bool = True
-
-    # Use the built-in pytorch profiler. Useful if you wish to view profiles in tensorboard.
-    use_pytorch_profiler: bool = False
-
-    # Global ranks to profile.
-    profile_ranks: list[int] = field(default_factory=lambda: [0])
-
-    # Record memory history in last rank.
-    record_memory_history: bool = False
-
-    # Specifies where to dump the memory history pickle.
-    memory_snapshot_path: str = "snapshot.pickle"
 
     # Enables the  overlap of Tensor parallel communication and GEMM kernels.
     tp_comm_overlap: bool = False
@@ -307,52 +409,17 @@ class MegatronConfig(ConfigInterface):
     # parallelism.
     use_cpu_initialization: bool | None = None
 
-    # Call torch.cuda.empty_cache() each iteration (training and eval), to reduce
-    # fragmentation.0=off, 1=moderate, 2=aggressive.
-    empty_unused_memory_level: Literal[0, 1, 2] = 0
-
     # Choose code that has deterministic execution. This usually means slower execution, but
     # is good for debugging and testing.
     deterministic_mode: bool = False
-
-    # Interval to check weight hashes are same across DP replicas. If not specified, weight
-    # hashes not checked.
-    check_weight_hash_across_dp_replicas_interval: int | None = None
 
     # Scale cross entropy loss by the number of non-padded tokens in the global batch, versus
     # the default behavior of assuming all tokens are non-padded.
     calculate_per_token_loss: bool = False
 
-    # Training CPU-GPU synchronization interval, to ensure that CPU is not running too far
-    # ahead of GPU.
-    train_sync_interval: int | None = None
-
     # Checkpoint activation to allow for training with larger models, sequences, and batch
     # sizes.
     checkpoint_activations: bool = False
-
-    # Total number of iterations to train over all training runs. Note that either train-iters
-    # or train-samples should be provided.
-    train_iters: int | None = None
-
-    # Total number of samples to train over all training runs. Note that either train-iters or
-    # train-samples should be provided.
-    train_samples: int | None = None
-
-    # Report loss and timing interval.
-    log_interval: int = 100
-
-    # Exit the program after the iteration is divisible by this value.
-    exit_interval: int | None = None
-
-    # Exit the program after this many minutes.
-    exit_duration_in_mins: int | None = None
-
-    # Dynamically save the checkpoint and shutdown the training if SIGTERM is received
-    exit_signal_handler: bool = False
-
-    # Write TensorBoard logs to this directory.
-    tensorboard_dir: str | None = None
 
     # Disable fusion of query_key_value scaling, masking, and softmax.
     masked_softmax_fusion: bool = True
@@ -391,8 +458,17 @@ class MegatronConfig(ConfigInterface):
     # Enable bias only in the QKV linear layers
     add_qkv_bias: bool = False
 
+    # Whether to use qk-clip for training stabilization, strongly recommended for Muon.
+    qk_clip: bool = False
+
+    # The balancing alpha for qk-clip.
+    qk_clip_alpha: float = 0.5
+
+    # The balancing threshold for qk-clip.
+    qk_clip_threshold: float = 100
+
     # Optimizer function
-    optimizer: Literal["adam", "sgd"] = "adam"
+    optimizer: Literal["adam", "sgd", "muon", "dist_muon"] = "adam"
 
     # Offload optimizer state to CPU
     optimizer_cpu_offload: bool = False
@@ -405,6 +481,10 @@ class MegatronConfig(ConfigInterface):
 
     # Overlap CPU optimizer step, gradients D2H and updated parameters H2D.
     overlap_cpu_optimizer_d2h_h2d: bool = False
+
+    # Path to a file containing parameter-to-parameter-group mapping. Provide a JSON file that
+    # specifies which parameters belong to which parameter group for global coordination.
+    dump_param_to_param_group_map: str | None = None
 
     # Disable pinning of CPU memory for gradients.
     pin_cpu_grads: bool = True
@@ -435,21 +515,6 @@ class MegatronConfig(ConfigInterface):
     # Use the legacy Megatron models, not Megatron-Core models.
     use_legacy_models: bool = False
 
-    # Disable the threshold-based default garbage collector and trigger the garbage collection
-    # manually. Manual garbage collection helps to align the timing of the collection across
-    # ranks which mitigates the impact of CPU-associated jitters. When the manual gc is
-    # enabled, garbage collection is performed only at the start and the end of the validation
-    # routine by default.
-    manual_gc: bool = False
-
-    # Training step interval to trigger manual garbage collection. When the value is set to 0,
-    # garbage collection is not triggered between training steps.
-    manual_gc_interval: int = 0
-
-    # When using manual garbage collection, disable garbage collection at the start and the
-    # end of each evaluation run.
-    manual_gc_eval: bool = True
-
     # Disables the All-Gather overlap with fprop GEMM.
     tp_comm_split_ag: bool = True
 
@@ -463,8 +528,172 @@ class MegatronConfig(ConfigInterface):
     # The communicator group names to use high priority streams.
     high_priority_stream_groups: list[str] = field(default_factory=lambda: [])
 
+    # Use activation function kernel from Transformer Engine in MLP module.
+    use_te_activation_func: bool = False
+
+    # Enable fine-grained activation offloading.
+    fine_grained_activation_offloading: bool = False
+
+    # The submodules to offload its input. Choices: "attn_norm", "qkv_linear", "core_attn",
+    # "attn_proj", "mlp_norm", "expert_fc1", "moe_act".
+    offload_modules: list[str] = field(default_factory=lambda: [])
+
+    # The minimum size of the tensor to be offloaded.
+    min_offloaded_tensor_size: int = 1048576
+
+    # Use batch-invariant kernels for deterministic forward execution regardless of batch
+    # size. Ensures bitwise identical results when the same inputs are processed in different
+    # batch configurations. This is more strict than deterministic-mode which only ensures
+    # bitwise identical results when the same inputs are processed in the same batch
+    # configuration. This will significantly affect speed of training and inference as the
+    # kernels are not full optimized.
+    batch_invariant_mode: bool = False
+
+    # Disable the JIT fuser.
+    disable_jit_fuser: bool = False
+
+    # Use the RL training step.
+    perform_rl_step: bool = False
+
+    # Number of prompts to evaluate for for each RL task.This evaluation can be very expensive
+    # when using environmentsthat evaluate pass@k so we default to a lower number.
+    rl_prompts_per_eval: int = 32
+
+    # Number of GRPO groups (G in the paper).
+    grpo_prompts_per_step: int = 32
+
+    # Number of samples per a GRPO group.
+    grpo_group_size: int = 2
+
+    # Number of iterations per a GRPO implementation.
+    grpo_iterations: int = 2
+
+    # Lower GRPO clipping bound.
+    grpo_clamp_eps_lower: float = 0.01
+
+    # Upper GRPO clipping bound. In vanilla implementation, equals to the lower one.
+    grpo_clamp_eps_upper: float = 0.01
+
+    # KL term weight in the GRPO loss.
+    grpo_kl_beta: float = 0.001
+
+    # Entropy term weight in GRPO loss.
+    grpo_entropy_term_weight: float = 0.0
+
+    # Filter groups with same reward.
+    grpo_filter_groups_with_same_reward: bool = False
+
+    # Type of inference server to use.
+    langrl_inference_server_type: Literal["inplace_megatron", "inplace_megatron_chat"] = (
+        "inplace_megatron"
+    )
+
+    # Conversation template, if using a chat server.
+    langrl_inference_server_conversation_template: str | None = None
+
+    langrl_external_server: bool = False
+
+    # Path to YAML config file for RL environment configuration.
+    langrl_env_config: str | None = None
+
+    # Default temperature for model inference.
+    rl_default_temperature: float = 1.0
+
+    # Default top-p for model inference.
+    rl_default_top_p: float = 0
+
+    # Default top-k for model inference.
+    rl_default_top_k: int = -1
+
+    # Offload optimizer state to CPU during inference/rollout to save GPU memory
+    rl_offload_optimizer_during_inference: bool = False
+
+    # Offload KV cache to CPU during training to save GPU memory
+    rl_offload_kv_cache_during_training: bool = False
+
+    # Remove KV cache during training to save GPU memory
+    rl_remove_kv_cache_during_training: bool = False
+
+    # Reset CUDA graphs between inference/training to save GPU memory
+    rl_reset_cuda_graphs: bool = False
+
+    # If set, use partial rollouts.
+    rl_partial_rollouts: bool = False
+
+    # If set, use inference logprobs in importance sampling correction of the loss.
+    rl_inference_logprobs_is_correction: bool = False
+
+    # If --inference-logprobs-is-correction is on and this coefficient is set, apply
+    # truncation for the IS correction at GRPO loss.
+    rl_importance_sampling_truncation_coef: float | None = None
+
+    # If set, calculate the intra-group similarity of rollouts.
+    rl_calculate_intra_group_similarity: bool = False
+
+    # Enable sequence packing
+    rl_use_sequence_packing: bool = False
+
+    # Maximum number of sequences that can be packed into a single bin.
+    rl_sequence_packing_max_sequences_per_bin: int = 50
+
+    # Algorithm for distributing packed bins across ranks. fifo: first-in-first-out sequential
+    # distribution, round-robin: distribute bins cyclically across ranks for better load
+    # balancing
+    rl_sequence_packing_algo: Literal["fifo", "round-robin"] = "fifo"
+
+    # If set, do not call `delete_cuda_graphs` or `toggle_cuda_graphs` when the inference
+    # engine is suspended. Use only when all training and inference cudagraphs and the KV
+    # cache fit on device.
+    rl_training_cuda_graphs: bool = False
+
+    # Degree of tensor model parallelism for inference for RL.
+    rl_inference_tensor_model_parallel_size: int | None = None
+
+    # Degree of pipeline model parallelism for inference for RL.
+    rl_inference_pipeline_model_parallel_size: int | None = None
+
+    # Degree of expert model parallelism for inference for RL.
+    rl_inference_expert_model_parallel_size: int | None = None
+
+    # Degree of expert tensor model parallelism for inference for RL. For MoE models, this
+    # controls the TP size for expert layers specifically. Defaults to training
+    # expert_tensor_parallel_size if not specified.
+    rl_inference_expert_tensor_model_parallel_size: int | None = None
+
+    # Allocate the separate RL inference model parameters from a unified virtual memory (UVM)
+    # CUDA mempool. Level 0 disables UVM (default). Level 1 enables UVM allocation so the
+    # inference model weights can be prefetched to CPU when idle while keeping CUDA-graph-safe
+    # device pointers.
+    rl_inference_model_unified_memory_level: Literal[0, 1] = 0
+
+    # When using a separate RL inference model with UVM-enabled parameters, prefetch its
+    # weights to CPU when not doing rollout inference, and prefetch back to GPU right before
+    # inference. Requires --rl-inference-model-unified-memory-level=1.
+    rl_offload_inference_model_weights_when_idle: bool = False
+
+    # Method to refit the model weights between training and inference models during RL. nccl:
+    # use NCCLCopyService to refit using NCCL; gloo: use GlooCopyService over CPU;
+    refit_method: Literal["nccl", "gloo"] = "gloo"
+
+    # If set, verify that the model weights were correctly transferred by comparing forward
+    # pass outputs onthe first swap of model weights.
+    rl_verify_model_weights_swap: bool = False
+
+    # Number of parallel generation tasks for RL inference.
+    rl_parallel_generation_tasks: int = 512
+
+    # Skip BOS token at the beginning of the sequences. Default is False.
+    rl_skip_bos_token: bool = False
+
     # Random seed used for python, numpy, pytorch, and cuda.
     seed: int = 1234
+
+    # Use the Transformer Engine version of the random number generator. Required for CUDA
+    # graphs support.
+    te_rng_tracker: bool = False
+
+    # Use a random number generator configured for inference.
+    inference_rng_tracker: bool = False
 
     # Enable random initialization of params across data parallel ranks
     data_parallel_random_init: bool = False
@@ -482,27 +711,23 @@ class MegatronConfig(ConfigInterface):
     # Enable Xavier uniform parameter initialization
     init_method_xavier_uniform: bool = False
 
-    # Initial learning rate. Depending on decay style and initial warmup, the learning rate at
-    # each iteration would be different.
-    lr: float | None = None
-
     # Learning rate decay function.
     lr_decay_style: Literal["constant", "linear", "cosine", "inverse-square-root", "WSD"] = "linear"
 
     # Decay style for the annealing phase of WSD
     lr_wsd_decay_style: Literal["exponential", "linear", "cosine", "minus_sqrt"] = "exponential"
 
-    # number of iterations to decay learning rate over, If None defaults to `--train-iters`
+    # number of iterations to decay learning rate over, If None defaults to train iters
     lr_decay_iters: int | None = None
 
-    # number of samples to decay learning rate over, If None defaults to `--train-samples`
+    # number of samples to decay learning rate over, If None defaults to train samples
     lr_decay_samples: int | None = None
-
-    # number of samples for the annealing phase in the wsd schedule
-    lr_wsd_decay_samples: int | None = None
 
     # number of iterations for the annealing phase in the wsd schedule
     lr_wsd_decay_iters: int | None = None
+
+    # number of samples for the annealing phase in the wsd schedule
+    lr_wsd_decay_samples: int | None = None
 
     # fraction of lr-warmup-(iters/samples) to use for warmup (as a float)
     lr_warmup_fraction: float | None = None
@@ -516,21 +741,34 @@ class MegatronConfig(ConfigInterface):
     # Initial value for learning rate warmup. The scheduler starts warmup from this value.
     lr_warmup_init: float = 0.0
 
+    # Reset the values of the scheduler (learning rate, warmup iterations, minimum learning
+    # rate, maximum number of iterations, and decay style) from input arguments and ignore
+    # values from checkpoints. Note that all the above values will be reset.
+    override_opt_param_scheduler: bool = False
+
+    # Use checkpoint to set the values of the scheduler (learning rate, warmup iterations,
+    # minimum learning rate, maximum number of iterations, and decay style) from checkpoint
+    # and ignore input arguments.
+    use_checkpoint_opt_param_scheduler: bool = False
+
+    # Initial weight decay coefficient for L2 regularization.
+    start_weight_decay: float | None = None
+
+    # End of run weight decay coefficient for L2 regularization.
+    end_weight_decay: float | None = None
+
+    # Weight decay increment function.
+    weight_decay_incr_style: Literal["constant", "linear", "cosine"] = "constant"
+
+    # Initial learning rate. Depending on decay style and initial warmup, the learning rate at
+    # each iteration would be different.
+    lr: float | None = None
+
     # Old lr warmup argument, do not use. Use one of the--lr-warmup-* arguments above
     warmup: int | None = None
 
     # Minimum value for learning rate. The schedulerclip values below this threshold.
     min_lr: float = 0.0
-
-    # Reset the values of the scheduler (learning rate,warmup iterations, minimum learning
-    # rate, maximum number of iterations, and decay style from input arguments and ignore
-    # values from checkpoints. Notethat all the above values will be reset.
-    override_opt_param_scheduler: bool = False
-
-    # Use checkpoint to set the values of the scheduler (learning rate, warmup iterations,
-    # minimum learning rate, maximum number of iterations, and decay style from checkpoint and
-    # ignore input arguments.
-    use_checkpoint_opt_param_scheduler: bool = False
 
     # Separate learning rate for the input and output layer
     decoupled_lr: float | None = None
@@ -545,39 +783,33 @@ class MegatronConfig(ConfigInterface):
     # Number of iterations between persistent checkpoint saves.
     save_interval: int | None = None
 
-    # Number of iterations between retained checkpoints (othercheckpoints _except the last
-    # checkpoint_ are automatically deleted).
+    # Number of iterations between wgrad (main_grad) saves.
+    save_wgrads_interval: int | None = None
+
+    # Number of iterations between dgrad saves.
+    save_dgrads_interval: int | None = None
+
+    # Number of iterations between retained checkpoints (other checkpoints except the last
+    # checkpoint are automatically deleted).
     save_retain_interval: int | None = None
-
-    # Do not save current optimizer.
-    no_save_optim: bool | None = None
-
-    # Do not save current rng state.
-    no_save_rng: bool | None = None
 
     # Directory containing a model checkpoint.
     load: str | None = None
 
-    # Do not load optimizer when loading checkpoint.
-    no_load_optim: bool | None = None
-
-    # Load main parameters from checkpoint directly.
-    load_main_params_from_ckpt: bool | None = None
-
-    # Do not load rng state when loading checkpoint.
-    no_load_rng: bool | None = None
-
-    # Do not strict loading for fsdp_dtensor checkpoint format.
-    strict_fsdp_dtensor_load: bool = True
+    # Load main parameters from checkpoint. When loading a model from a checkpoint without
+    # loading the optimizer, the model parameters are updated but for fp16 optimizer with main
+    # parameters, the main parameters need to also be updated.
+    load_main_params_from_ckpt: bool = False
 
     # Number of iterations between non-persistent saves.
     non_persistent_save_interval: int | None = None
 
     # Type of non-persistent model checkpoints. "global" - Saved as a standard checkpoint
-    # (e.g., on Lustre) with old checkpoints being removed. "local" - Each rank saves a
-    # portion of the checkpoint locally (e.g., on SSD/ramdisk). None - No non-persistent
+    # (e.g., on Lustre) with old checkpoints being removed. "local" - [TBD] Each rank saves a
+    # portion of the checkpoint locally (e.g., on SSD/ramdisk). "in_memory" - [TBD] A special
+    # kind of local checkpoint that avoids serialization. None - No non-persistent
     # checkpointing (default option).
-    non_persistent_ckpt_type: Literal["global", "local", "in_memory", None] = None
+    non_persistent_ckpt_type: Literal["global", "local", "in_memory"] | None = None
 
     # Directory containing global non-persistent model checkpoints.
     non_persistent_global_ckpt_dir: str | None = None
@@ -598,10 +830,6 @@ class MegatronConfig(ConfigInterface):
     # Checkpoint step to load model from.
     ckpt_step: int | None = None
 
-    # Do not perform initialization when building model, can reduce startup time when
-    # definitely loading from a checkpoint
-    perform_initialization: bool = True
-
     # Override model-related command-line arguments with arguments from checkpoint
     use_checkpoint_args: bool = False
 
@@ -611,59 +839,55 @@ class MegatronConfig(ConfigInterface):
     # If set, do not use tokenizer model path from checkpoint
     use_tokenizer_model_from_checkpoint_args: bool = True
 
-    # If '--load' is set, but checkpoint is not found (e.g., path typo), then exit instead of
+    # If 'load' is set, but checkpoint is not found (e.g., path typo), then exit instead of
     # random initialization.
     exit_on_missing_checkpoint: bool = False
 
-    # Deprecated: see --ckpt-format.
-    use_dist_ckpt_deprecated: bool = False
-
-    # Enables a persitent checkpoint worker for async save
-    use_persistent_ckpt_worker: bool = False
+    # Checkpoint format to use. torch is the format used by torch.save/load. torch_dist is a
+    # megatron built-in distributed checkpointing format. torch_dcp is the
+    # torch.distributed.checkpoint format. fsdp_dtensor is a torch DCP native, Megatron FSDP
+    # training-specific checkpoint format.
+    ckpt_format: Literal["torch", "torch_dist", "torch_dcp", "fsdp_dtensor"] = "torch_dist"
 
     # Determine if the checkpoint format is in legacy or distributed format. If False, expects
     # distributed checkpoint iff args.ckpt_format != "torch". Might slow down loading a bit
     # (double rank0 ckpt load).
     auto_detect_ckpt_format: bool = False
 
-    # Deprecated: see --ckpt-format.
-    dist_ckpt_format_deprecated: Any | None = None
-
-    # Checkpoint format to use. torch is the format used by torch.save/load. torch_dist is a
-    # megatron built-in distributed checkpointing format. torch_dcp is the
-    # torch.distributed.checkpoint format. fsdp_dtensor is a torch DCP native, Megatron FSDP
-    # training-specific checkpoint format.
-    ckpt_format: Literal["torch", "torch_dist", "zarr", "torch_dcp", "fsdp_dtensor"] = "torch_dist"
-
     # Checkpoint format for conversion.
-    ckpt_convert_format: Literal["torch", "torch_dist", "zarr"] | None = None
+    ckpt_convert_format: Literal["torch", "torch_dist"] | None = None
 
     # Save directory for converted checkpoint.
-    ckpt_convert_save: Any | None = None
+    ckpt_convert_save: str | None = None
 
     # When loading a checkpoint, update the legacy format for the distributed optimizer, which
     # previously used a merged param/grad buffer and a different bucket mapping. The legacy
     # format was deprecated on Feb 13, 2024.
     ckpt_convert_update_legacy_dist_opt_format: bool = False
 
-    # Deprecated: see --no-ckpt-fully-parallel-save.
-    ckpt_fully_parallel_save_deprecated: bool = False
-
     # Disable applying full save parallelization across DP for distributed checkpoints.
     # Depending on ckpt format might decrease the number of files in the checkpoint. Makes
     # DistributedOptimizer checkpoint non-reshardable.
     ckpt_fully_parallel_save: bool = True
 
-    # Apply async checkpointing save. Currently works only with`torch_dist` distributed
+    # Apply async checkpointing save. Currently works only with `torch_dist` distributed
     # checkpoint format.
-    async_save: bool | None = None
+    async_save: bool = False
+
+    # Use a persistent background worker for async checkpoint saves. When enabled, creates a
+    # dedicated worker thread/process for handling async saves. When disabled, uses temporal
+    # workers that are created and destroyed for each save operation.
+    use_persistent_ckpt_worker: bool = False
 
     # Apply full load parallelization across DP for distributed checkpoints.
     ckpt_fully_parallel_load: bool = False
 
-    # If the model and optimizer state dict structure isconstant throughout a *single training
-    # job*, it allows fordifferent checkpointing performance optimizations.
+    # Assume the checkpoint structure is constant across saves to enable optimizations.
     ckpt_assume_constant_structure: bool = False
+
+    # Whether to enforce strict loading for FSDP DTensor checkpoints. When False, allows
+    # partial loading.
+    strict_fsdp_dtensor_load: bool = True
 
     # Determine handling of key mismatch during checkpoint load. Check StrictHandling docs for
     # flags meaning. NOTE: This flag controls only distributed checkpoint load from storage,
@@ -679,9 +903,57 @@ class MegatronConfig(ConfigInterface):
         "ignore_all",
     ] = "assume_ok_unexpected"
 
-    # Load a checkpoint for TensorRT model optimizer (nvidia-modelopt).This function can also
-    # be used to load NeMo .nemo sharded checkpoints.
-    load_model_opt_format: bool = False
+    # Revert checkpointing simplifications introduced in Megatron-Core v0.14. This option
+    # affects only checkpoint saving format and will be removed soon (checkpoint load format
+    # is determined based on checkpoint metadata).
+    dist_ckpt_save_pre_mcore_014: bool = False
+
+    # Make optimizer distributed checkpoint fully reshardable (TP/PP/EP/DP) as opposed to
+    # plain DP reshardability.
+    dist_ckpt_optim_fully_reshardable: bool = False
+
+    # During distributed optimizer checkpoint save and load tries to use as little memory as
+    # possible by using Gloo (instead of NCCL) and only one rank for saving. Turn on only if
+    # experiencing host or device memory issues. Has affect only with
+    # `dist_ckpt_optim_fully_reshardable` flag.
+    distrib_optim_fully_reshardable_mem_efficient: bool = False
+
+    # If set, replication of local checkpoints is enabled. Needs to be enabled on all ranks.
+    replication: bool = False
+
+    # Specifies `J`, the spacing between ranks storing replicas of a given rank's data.
+    # Replicas for rank `n` may be on ranks `n+J`, `n+2J`, ..., or `n-J`, `n-2J`, etc. This
+    # flag has an effect only if --replication is used. and must be consistent across all
+    # ranks.
+    replication_jump: int | None = None
+
+    # Number of machines storing the replica of a given rank's data.
+    replication_factor: int = 2
+
+    # Do not save current optimizer.
+    no_save_optim: bool | None = None
+
+    # Do not save current rng state.
+    no_save_rng: bool | None = None
+
+    # Do not load optimizer when loading checkpoint.
+    no_load_optim: bool | None = None
+
+    # Do not load rng state when loading checkpoint.
+    no_load_rng: bool | None = None
+
+    # Do not perform initialization when building model, can reduce startup time when
+    # definitely loading from a checkpoint
+    perform_initialization: bool = True
+
+    # Deprecated: see --ckpt-format.
+    use_dist_ckpt_deprecated: bool = False
+
+    # Deprecated: see --ckpt-format.
+    dist_ckpt_format_deprecated: Any | None = None
+
+    # Deprecated: see --no-ckpt-fully-parallel-save.
+    ckpt_fully_parallel_save_deprecated: bool = False
 
     # Run model in fp16 mode.
     fp16: bool = False
@@ -773,8 +1045,12 @@ class MegatronConfig(ConfigInterface):
     # Which backend to use for distributed training.
     distributed_backend: Literal["nccl", "gloo"] = "nccl"
 
-    # Timeout minutes for torch.distributed.
+    # Default timeout minutes for torch.distributed.
     distributed_timeout_minutes: int = 10
+
+    # Timeout seconds for process groups after initialization.This timeout is applied to all
+    # process groups after initialization.
+    distributed_timeout_seconds_after_init: int | None = None
 
     # If set, overlap DDP grad reduce.
     overlap_grad_reduce: bool = False
@@ -803,6 +1079,11 @@ class MegatronConfig(ConfigInterface):
     # (which for ring algorithms is bucket_size / dp_size) apparently needs to be divisible by
     # a power of 2 for high busbw.
     ddp_pad_buckets_for_high_nccl_busbw: bool = False
+
+    # If set, use a reduce-scatter implementation which sends lower-precision values over the
+    # wire (using an all-to-all to keep total communication overhead in line with the standard
+    # ring implementation) but performs accumulation locally in FP32.
+    ddp_reduce_scatter_with_fp32_accumulation: bool = False
 
     # If set, average directly in data-parallel communication collective.
     ddp_average_in_collective: bool = False
@@ -848,12 +1129,24 @@ class MegatronConfig(ConfigInterface):
     # the overlapped computation.
     nccl_ub: bool = False
 
+    # Disable symmetric (window) registration for NCCL userbuffer registration.This option
+    # will force to use conventional (local) userbuffer registration when use-nccl-ub is set.
+    disable_symmetric_registration: bool = False
+
+    # Manually register the FSDP communication buffers to NCCL user buffer.This option is only
+    # effective when use-megatron-fsdp and use-nccl-ub is set.
+    fsdp_manual_registration: bool = False
+
     # Required to enable SHARP communication.
     use_sharp: bool = False
 
     # IB SHARP can be enabled from only one communication group. By default, it is enabled
     # from dp group. Available options: [dp, dp_replica]
     sharp_enabled_group: Literal["dp", "dp_replica"] | None = None
+
+    # Create a separate process group for all-gather operations to overlap reduce-scatter and
+    # all-gather operations.
+    create_all_gather_group: bool = False
 
     # Use the Megatron FSDP code path in DDP.
     use_megatron_fsdp: bool = False
@@ -864,6 +1157,13 @@ class MegatronConfig(ConfigInterface):
     data_parallel_sharding_strategy: Literal[
         "no_shard", "optim", "optim_grads", "optim_grads_params"
     ] = "no_shard"
+
+    # Sharding strategy for outer data parallel group in Hybrid Sharded Data Parallel (HSDP)
+    # mode. Valid values are "no_shard" (DP Replication) and "optim" (Optimizer State Hybrid
+    # Sharding). The "optim" option is only supported when --data-parallel-sharding-strategy
+    # is "optim_grads_params". This option is only effective when Hybrid FSDP is enabled
+    # (i.e., when dp_outer_dim is not None). Default: "no_shard".
+    outer_dp_sharding_strategy: Literal["no_shard", "optim"] = "no_shard"
 
     # If not set, fuse the division in gradient reduce.
     gradient_reduce_div_fusion: bool = True
@@ -914,6 +1214,15 @@ class MegatronConfig(ConfigInterface):
     # same odevity forms the second level of cp groups.
     hierarchical_context_parallel_sizes: list[int] | None = None
 
+    # Maximum sequence length per DPxCP rank. This is used to calculate the number of sub-
+    # samples assigned to each DPxCP rank when using Hybrid Context Parallel.
+    max_seqlen_per_dp_cp_rank: int | None = None
+
+    # Enables hybrid context parallel. This is used to balance the workload of each CP rank
+    # when we use packed samples with variable sequence lengths. Requires --max-seqlen-per-dp-
+    # cp-rank to be set.
+    hybrid_context_parallel: bool = False
+
     # Path to the yaml file with NCCL communicator configurations. The number of min/max
     # thread groups and thread group cluster size of each communicator can be configured by
     # setting `min_ctas`, `max_ctas`, and `cga_cluster_size`.
@@ -923,17 +1232,25 @@ class MegatronConfig(ConfigInterface):
     # pp-dp.
     use_tp_pp_dp_mapping: bool = False
 
-    # If set, replication of local checkpoints is enabled. Needs to be enabled on all ranks.
-    replication: bool = False
+    # If set, initialize with fake distributed process group and all distributed communication
+    # operations will be skipped.                        This is quite useful for profiling
+    # memory usage of distributed training with just one GPU.                        Setting
+    # WORLD_SIZE and RANK to the specific values for target distribtued scale.
+    fake_process_group: bool = False
 
-    # Specifies `J`, the spacing between ranks storing replicas of a given rank's data.
-    # Replicas for rank `n` may be on ranks `n+J`, `n+2J`, ..., or `n-J`, `n-2J`, etc. This
-    # flag has an effect only if --replication is used. and must be consistent across all
-    # ranks.
-    replication_jump: int | None = None
+    # Number of iterations to run for evaluation. Used for both validation and test. If not
+    # set, evaluation will not run.
+    eval_iters: int = 100
 
-    # Number of machines storing the replica of a given rank's data.
-    replication_factor: int = 2
+    # Interval between running evaluation on validation set. If not set, evaluation will not
+    # run during training.
+    eval_interval: int | None = None
+
+    # If set, bypass the training loop, perform evaluation for validation/test, and exit.
+    skip_train: bool = False
+
+    # Run all real-time test alongside the experiment.
+    test_mode: bool = False
 
     # If set, each time validation occurs it uses the full validation dataset(s). This
     # currently only works for GPT datasets!
@@ -941,21 +1258,8 @@ class MegatronConfig(ConfigInterface):
 
     # If set, multiple datasets listed in the validation split are evaluated independently
     # with a separate loss for each dataset in the list. This argument requires that no
-    # weights are included in the list
+    # weights are included in the list.
     multiple_validation_sets: bool = False
-
-    # Number of iterations to run for evaluationvalidation/test for.
-    eval_iters: int = 100
-
-    # Interval between running evaluation on validation set.
-    eval_interval: int = 1000
-
-    # Run all real-time test alongside the experiment.
-    test_mode: bool = False
-
-    # If set, bypass the training loop, optionally do evaluation for validation/test, and
-    # exit.
-    skip_train: bool = False
 
     # The weight and prefix list for a set of train, validation, and testdatasets which split
     # according to --split. The accepted formats are: (1) a single prefix, (2) a list of
@@ -963,6 +1267,10 @@ class MegatronConfig(ConfigInterface):
     # prefix1 prefix2. For (3), weights are inferred from the lengths of the contributing
     # datasets. This argument is exclusive to the other independent --*-data-path arguments.
     data_path: list[str] | None = None
+
+    # Comma-separated list of iterations where phase transitions occur. Requires fixed global
+    # batch size across phases. Does not support batch size ramp-up.
+    phase_transition_iterations: str | None = None
 
     # Comma-separated list of proportions for training, validation, and test split. For
     # example the split `90,5,5` will use 90%% of data for training, 5%% for validation and
@@ -991,6 +1299,18 @@ class MegatronConfig(ConfigInterface):
     # useful when the list of data is too big. Format is a json file with `train`, `valid,
     # `test` keys
     per_split_data_args_path: str | None = None
+
+    # Path to a json file with the sequences per dataset. Check the
+    # tools/build_sequences_per_dataset.py script to build this file.
+    per_dataset_sequences_path: Any | None = None
+
+    # Option to use the fast cache loading path when building the datasets. Requires all the
+    # dataset caches to be built and stored in --data-cache-path.
+    dataloader_fast_cache_load: bool = False
+
+    # Defer the mmap of the dataset indexes (.npy files) until the first access. Requires all
+    # the dataset caches to be built and stored in --data-cache-path.
+    dataloader_defer_npy_index_mmap: bool = False
 
     # Path to a directory to hold cached index files.
     data_cache_path: Any | None = None
@@ -1029,7 +1349,7 @@ class MegatronConfig(ConfigInterface):
     # Reset posistion ids after end-of-document token.
     reset_position_ids: bool = False
 
-    # Reset self attention maske after end-of-document token.
+    # Reset self attention mask after end-of-document token.
     reset_attention_mask: bool = False
 
     # Mask loss for the end of document tokens.
@@ -1046,6 +1366,51 @@ class MegatronConfig(ConfigInterface):
 
     # The sample surplus to build for the mid-level datasets(s)
     mid_level_dataset_surplus: float = 0.005
+
+    # Whether to prevent pad tokens already present in the dataset from being masked out when
+    # the pad token incorrectly shares the same id with other special tokens in the tokenizer.
+    # Note that this argument has no effect when the tokenizer correctly provides a unique id
+    # for the pad. Masking out such ambiguous pad tokens results in training instability. Such
+    # a scenario is best resolved by fixing the tokenizer; leaving this option as False
+    # provides a workaround. When left to the default of False, any token ids that collide
+    # with the pad token id - as provided by the tokenizer - will not be masked out of the
+    # loss calculation: it cannot be determined whether they are truly pad. If instead this
+    # argument is set, the training flow will treat all tokens that share the same id as the
+    # pad token as true pad tokens, potentially causing severe training instability.
+    allow_ambiguous_pad_tokens: bool = False
+
+    # Whether to use the FIM dataset.
+    fim_data: bool = False
+
+    # Probability to convert a training sample into a FIM format.
+    fim_rate: float = 0.5
+
+    # Probability that the a FIM sample uses the SPM format over the PSM format.
+    fim_spm_rate: float = 0.5
+
+    # String around which to split the sample for FIM.
+    fim_split_sample: str | None = None
+
+    # Rate of FIM on each fragment when --fim-split-sample is not None.
+    fim_fragment_rate: float | None = None
+
+    # Do not apply FIM to fragments that start with this prefix
+    fim_no_prefix: str | None = None
+
+    # FIM prefix token
+    fim_prefix_token: str = "<fim_prefix>"
+
+    # FIM middle token
+    fim_middle_token: str = "<fim_middle>"
+
+    # FIM suffix token
+    fim_suffix_token: str = "<fim_suffix>"
+
+    # FIM PAD token
+    fim_pad_token: str = "<fim_pad>"
+
+    # FIM EOD token
+    fim_eod_token: str = "<|endoftext|>"
 
     # Size of vocab before EOD or padding.
     vocab_size: int | None = None
@@ -1085,14 +1450,37 @@ class MegatronConfig(ConfigInterface):
     # Sentencepiece tokenizer model.
     tokenizer_model: str | None = None
 
+    # Path to tokenizer metadata in json format.
+    tokenizer_metadata: str | None = None
+
+    # List of special tokens. For TikTokenizer needs to have ["<unk>", "<s>", "</s>",
+    # "<mask>", "<pad>", "<cls>", "<sep>"]
+    tokenizer_special_tokens: list[str] | None = None
+
+    # To use Megatron-LM legacy tokenizer system.
+    legacy_tokenizer: bool = False
+
     # Which tiktoken pattern to use. Options: [v1, v2]
     tiktoken_pattern: str | None = None
 
     # Number of special tokens in tiktoken tokenizer
     tiktoken_num_special_tokens: int = 1000
 
-    # List of tiktoken special tokens, needs to have ["<unk>", "<s>", "</s>"]
+    # List of tiktoken special tokens, needs to have ["<unk>", "<s>", "</s>", "<mask>",
+    # "<pad>", "<cls>", "<sep>"]
     tiktoken_special_tokens: list[str] | None = None
+
+    # SentencePiece tokenizer wrapper legacy behavior. Allows special tokens usage.
+    tokenizer_sentencepiece_legacy: bool = False
+
+    # Whether to use fast HuggingFace tokenizer.
+    tokenizer_hf_use_fast: bool = False
+
+    # Converting text to ids will include special for HuggingFace tokenizer.
+    tokenizer_hf_include_special_tokens: bool = False
+
+    # Whether or not to allow PreTrainedTokenizer to execute remote code
+    trust_remote_code: bool = False
 
     # Enable autoresume on adlr cluster.
     adlr_autoresume: bool = False
@@ -1241,7 +1629,7 @@ class MegatronConfig(ConfigInterface):
     # containing a Python list expression that defines a custom pattern, e.g.:
     # "([1]*3+[0]*1)*3" evaluates to [1,1,1,0,1,1,1,0,1,1,1,0] where 1 indicates an expert
     # layer and 0 indicates a dense layer. Examples: "([0]+[1]*23)": 1 dense layer followed by
-    # 23 experts layers, "([1]*3+[0]*2)*2": Three expert layers followed by two dense layers,
+    # 23 expert layers, "([1]*3+[0]*2)*2": Three expert layers followed by two dense layers,
     # repeated twice.
     moe_layer_freq: Any = 1
 
@@ -1251,12 +1639,20 @@ class MegatronConfig(ConfigInterface):
 
     # Shared expert total ffn hidden size. It should be equal to "num_shared_experts *
     # ffn_size_of_each_shared_expert" if there are multiple shared experts. None means no
-    # shared expert.
+    # shared expert. By default, the shared experts execute before the router. However, when
+    # --moe-shared-expert-overlap or --overlap-moe-expert-parallel-comm is set, the shared
+    # experts execute after the router, before the routed experts. This makes the gradients
+    # from the router and the shared experts added in different orders to the hidden_states,
+    # causing minor numerical differences in the hidden_states gradient.
     moe_shared_expert_intermediate_size: int | None = None
 
+    # Enable gate for shared expert. Only effective when moe-shared-expert-intermediate-size
+    # is set.
+    moe_shared_expert_gate: bool = False
+
     # Enable overlapping between shared expert computations and dispatcher communications.
-    # Without this, the shared epxerts execute after the routed experts. Only effective when
-    # moe-shared-expert-intermediate-size is set.
+    # Without this, the shared experts execute before the router. Only effective when moe-
+    # shared-expert-intermediate-size is set.
     moe_shared_expert_overlap: bool = False
 
     # When there are multiple experts per rank, launch multiple local GEMM kernels in multiple
@@ -1285,9 +1681,9 @@ class MegatronConfig(ConfigInterface):
     # the load balancing loss used in DeepSeekV2, which computes the loss for each individual
     # sample; "sinkhorn" corresponds to the balancing algorithm used in S-BASE, and "none"
     # implies no load balancing. The default is "aux_loss".
-    moe_router_load_balancing_type: Literal["aux_loss", "seq_aux_loss", "sinkhorn", "none"] = (
-        "aux_loss"
-    )
+    moe_router_load_balancing_type: Literal[
+        "aux_loss", "seq_aux_loss", "global_aux_loss", "sinkhorn", "none"
+    ] = "aux_loss"
 
     # Data type for routing computation and expert output weighted averaging. Fp32/fp64
     # enhances numerical stability, especially with numerous experts. The perf impact should
@@ -1303,6 +1699,10 @@ class MegatronConfig(ConfigInterface):
 
     # Number of experts to route to for each token. The default is 2.
     moe_router_topk: int = 2
+
+    # Enable routing replay for MoE routers. When enabled, the router will use a pre-defined
+    # routing table instead of computing it on the fly.
+    moe_enable_routing_replay: bool = False
 
     # Enable pre-softmax routing for MoE, which means softmax is before the top-k selection.
     # By default, softmax is done after top-k.
@@ -1344,9 +1744,13 @@ class MegatronConfig(ConfigInterface):
     moe_router_force_load_balancing: bool = False
 
     # Pad the routing_map to make sure the number of tokens each expert received is a multiple
-    # of 16/32 for FP8 precision. It is suggested to enable this for dropless training with
-    # FP8 precision when num_local_experts > 1. This is a more efficient way to pad for FP8
-    # which eliminates the explicit padding in the GroupedMLP layer.
+    # of 16/32 for FP8/FP4 precision. It is suggested to enable this for dropless training
+    # with FP8/FP4 precision when num_local_experts > 1. This is a more efficient way to pad
+    # for FP8/FP4 which eliminates the explicit padding in the GroupedMLP layer.
+    moe_router_padding_for_quantization: bool = False
+
+    # [Compatibility alias for --moe-router-padding-for-quantization] Enabling this will also
+    # enable --moe-router-padding-for-quantization.
     moe_router_padding_for_fp8: bool = False
 
     # Scaling coefficient for the aux loss: a starting value of 1e-2 is recommended.
@@ -1366,13 +1770,18 @@ class MegatronConfig(ConfigInterface):
     # For more information, please refer to the documentation in core/moe/README.
     moe_token_dispatcher_type: Literal["allgather", "alltoall", "flex"] = "allgather"
 
-    # [Experimental] Enable DeepSeek/DeepEP for efficient token dispatching and combine in MoE
-    # models. Only works with flex token dispatcher by setting --moe-token-dispatcher-
-    # type=flex.
+    # DEPRECATED: Please use --moe-flex-dispatcher-backend=deepep instead.
     moe_enable_deepep: bool = False
+
+    # The backend to use for flex token dispatcher. The default is "deepep". Options are
+    # "deepep" and "hybridep".
+    moe_flex_dispatcher_backend: Literal["deepep", "hybridep"] = "deepep"
 
     # Number of SMs to use for DeepEP.
     moe_deepep_num_sms: int = 20
+
+    # Number of SMs to use for HybridEP.
+    moe_hybridep_num_sms: int = 16
 
     # Fuse token rearrangement ops during token dispatching.
     moe_permute_fusion: bool = False
@@ -1398,11 +1807,20 @@ class MegatronConfig(ConfigInterface):
     # Delay the wgrad compute for batch-level overlapping
     delay_wgrad_compute: bool = False
 
+    # Release the memory of the attention module early in EP overlap.
+    ep_overlap_early_attn_memory_release: bool = False
+
     # This param sepecifics how many times smaller is the expert hidden size compared with the
     # original dense FFN hidden size. For using granular upcycling strategy, please set this
     # param as a positive integer. If this param is set to 1, it means using the default
     # upcycling strategy.
     moe_upcycling_granularity: int = 1
+
+    # some MoE routers have a D2H sync that will break cuda graphs.  If this flag is set the
+    # router will switch to dropping and padding during decode time which does not have a D2H
+    # sync. The capacity factor is set to the max that an expert could see during inference so
+    # no tokens are actually dropped.
+    moe_pad_experts_for_cuda_graph_inference: bool = False
 
     # Rank of Query tensor's low rank representation.
     q_lora_rank: int | None = None
@@ -1432,6 +1850,50 @@ class MegatronConfig(ConfigInterface):
     # If set caches the mla down projected latents with mla flash decode.
     cache_mla_latents: bool = False
 
+    # Type of attention variant to use. Currently support gated_delta_net and dsa.
+    experimental_attention_variant: Literal["gated_delta_net", "dsa"] | None = None
+
+    # Number of indexer heads for sparse attention. If not set, defaults to num-attention-
+    # heads.
+    dsa_indexer_n_heads: int | None = None
+
+    # Dimension per indexer head for sparse attention. If not set, defaults to kv-channels.
+    dsa_indexer_head_dim: int | None = None
+
+    # Number of top-k tokens to select in sparse attention indexer.
+    dsa_indexer_topk: int | None = None
+
+    # Coefficient for the indexer KL divergence loss. Set to 0 to disable indexer loss.
+    dsa_indexer_loss_coeff: float | None = None
+
+    # Use sparse indexer loss. If set, the indexer loss will be computed using the top-k
+    # indices.
+    dsa_indexer_use_sparse_loss: bool = False
+
+    # Frequency between LA (linear attention) layers and SDPA (scaled dot-product attention)
+    # layers. Accepts either: - An integer N: Represents a (N-1):N ratio, meaning (N-1) LA
+    # layers for every 1 SDPA layer - A string containing a Python list expression that
+    # defines a custom pattern, e.g.: "([1]*3+[0]*1)*3" evaluates to [1,1,1,0,1,1,1,0,1,1,1,0]
+    # where 1 indicates an LA layer and 0 indicates a SDPA layer. Examples: "([0]+[1]*23)": 1
+    # SDPA layer followed by 23 LA layers, "([1]*3+[0]*2)*2": Three LA layers followed by two
+    # SDPA layers, repeated twice.
+    linear_attention_freq: Any | None = None
+
+    # Conv kernel dimension for the gated delta net.
+    linear_conv_kernel_dim: int = 4
+
+    # Query and key head dimension for the gated delta net.
+    linear_key_head_dim: int = 128
+
+    # Value and gate head dimension for the gated delta net.
+    linear_value_head_dim: int = 128
+
+    # Number of query and key heads for the gated delta net.
+    linear_num_key_heads: int = 16
+
+    # Number of value and gate heads for the gated delta net.
+    linear_num_value_heads: int = 32
+
     # Path to json file containing heterogeneous model configuration. Use the format of the
     # HuggingFace config files in llama nemotron models, e.g.
     # https://huggingface.co/nvidia/Llama-3_3-Nemotron-Super-49B-v1/resolve/main/config.json.
@@ -1444,11 +1906,11 @@ class MegatronConfig(ConfigInterface):
     # Super-49B-v1/resolve/main/config.json.
     heterogeneous_layers_config_encoded_json: str | None = None
 
+    # Report loss and timing interval.
+    log_interval: int = 100
+
     # If set, calculate and log parameters norm.
     log_params_norm: bool = False
-
-    # If set, calculate and log the number of zeros in gradient.
-    log_num_zeros_in_grad: bool = False
 
     # If set, calculate and log throughput per GPU.
     log_throughput: bool = False
@@ -1457,30 +1919,25 @@ class MegatronConfig(ConfigInterface):
     # point operations) to progress.txt file in checkpoint directory.
     log_progress: bool = False
 
-    # Granularity level to measure and report timing.    0: report only iteration time and
-    # make sure timing       does not introduce extra overhead.   1: report timing for
-    # operations that are executed       very limited times (basically once) during       each
-    # iteration (such as gradient all-reduce)    2: report timing for operations that migh be
-    # executed numerous times during each iteration. Note that setting the level to 1 or 2
-    # might cause increase in iteration time.
+    # Granularity level to measure and report timing. 0: report only iteration time and make
+    # sure timing does not introduce extra overhead. 1: report timing for operations that are
+    # executed very limited times (basically once) during each iteration (such as gradient
+    # all-reduce) 2: report timing for operations that migh be executed numerous times during
+    # each iteration. Note that setting the level to 1 or 2 might cause increase in iteration
+    # time.
     timing_log_level: Literal[0, 1, 2] = 0
 
-    # If set, log energy consumption (in Joules)
-    log_energy: bool = False
-
-    # If not set, use barrier with level 1 time measurements. Note that this is up to the user
-    # to make sure calling barrier with their timers will not result in hangs. This can happen
-    # if for example the user adds a level 1 timer that is not called by all ranks.
-    barrier_with_L1_time: bool = True
-
-    # Options for logging timing:  max: report the max timing across all ranks  minmax: report
-    # min and max timings across all ranks  all: report timings of all ranks.
+    # Options for logging timing: max: report the max timing across all ranks minmax: report
+    # min and max timings across all ranks all: report timings of all ranks.
     timing_log_option: Literal["max", "minmax", "all"] = "minmax"
+
+    # Write TensorBoard logs to this directory.
+    tensorboard_dir: str | None = None
 
     # Report to tensorboard interval.
     tensorboard_log_interval: int = 1
 
-    # Size of the tensorboard queue for pending events and summaries before one of the "add"
+    # Size of the tensorboard queue for pending events and summaries before one of the 'add'
     # calls forces a flush to disk.
     tensorboard_queue_size: int = 1000
 
@@ -1496,32 +1953,55 @@ class MegatronConfig(ConfigInterface):
     # Enable memory logging to tensorboard.
     log_memory_to_tensorboard: bool = False
 
+    # Report memory interval.
+    log_memory_interval: int | None = None
+
+    # Log device memory used (as reported by nvidia-smi).
+    log_device_memory_used: bool = False
+
+    # If set, calculate and log the number of zeros in gradient.
+    log_num_zeros_in_grad: bool = False
+
+    # Enable max attention logit logging to tensorboard.
+    log_max_attention_logit: bool = False
+
+    # If not disabled, use barrier with level 1 time measurements. Note that this is up to the
+    # user to make sure calling barrier with their timers will not result in hangs. This can
+    # happen if for example the user adds a level 1 timer that is not called by all ranks.
+    barrier_with_L1_time: bool = True
+
     # Enable world size logging to tensorboard.
     log_world_size_to_tensorboard: bool = False
 
     # The wandb project name. Ignore wandb by default.
-    wandb_project: str = ""
+    wandb_project: str | None = None
 
     # The wandb experiment name.
-    wandb_exp_name: str = ""
+    wandb_exp_name: str | None = None
 
     # Path to save the wandb results locally.
-    wandb_save_dir: str = ""
+    wandb_save_dir: str | None = None
+
+    # The wandb entity name. It is useful when there are multiple sub-projects in a project.
+    wandb_entity: str | None = None
 
     # Set default logging level
     logging_level: int | None = None
 
+    # If set, log energy consumption (in Joules).
+    log_energy: bool = False
+
     # If set, tracks and logs straggler per GPU.
     log_straggler: bool = False
-
-    # If set, StragglerDetector is disabled on startup.
-    disable_straggler_on_startup: bool = False
 
     # Port number to toggle StragglerDetector on/off at runtime
     straggler_ctrlr_port: int = 65535
 
     # Number of ranks to report with high/low estimated throughput
     straggler_minmax_count: int = 1
+
+    # If set, StragglerDetector is disabled on startup.
+    disable_straggler_on_startup: bool = False
 
     # If set, enables workload inspector server for on-demand profiling.
     run_workload_inspector_server: bool = False
@@ -1545,61 +2025,95 @@ class MegatronConfig(ConfigInterface):
     # Whether to use the flash decoding kernel.
     flash_decode: bool = False
 
-    # Use CUDA graph capture and replay. --cuda-graph-scope="full_iteration" enables whole
-    # iteration CUDA graph.
+    # Deprecated. Use --cuda-graph-impl=local instead. Use local implementation of CUDA graph
+    # capture and replay. --cuda-graph-scope="full_iteration" enables whole iteration CUDA
+    # graph.
     enable_cuda_graph: bool = False
 
     # Number of CUDA graph warmup steps
     cuda_graph_warmup_steps: int = 3
 
-    # Use CUDA graph capture and replay. The CUDA graphs aremanually captured in the training
-    # script.
+    # Deprecated. Use --cuda-graph-impl=transformer_engine instead. Use TE
+    # make_graphed_callables() to capture the CUDA graph. Use --cuda-graph-scope="attn",
+    # "mlp", "moe", "moe_router", "moe_preprocess", "mamba" for partial capture.
     external_cuda_graph: bool = False
 
-    # Determines the CUDA graphs capturing scope. Valid values are "full", "attn" and
-    # "full_iteration". "Full" scope captures a whole Transformer layer. "Attn" scope only
-    # captures operations in TransformerLayer._forward_attention(). "ful_iteration" scope
-    # captures a whole iteration.
-    cuda_graph_scope: Literal["full", "attn", "full_iteration"] = "full"
+    # Determines the CUDA graph capture implementation. "none": no CUDA graph. "local":
+    # capture the CUDA graph using MCore local implementation. --cuda-graph-
+    # scope="full_iteration" enables whole iteration CUDA graph. "transformer_engine": capture
+    # the CUDA graph using TE make_graphed_callables().
+    cuda_graph_impl: Literal["none", "local", "transformer_engine"] = "none"
 
-    # Maximum number of requests for inference.
+    # Determines the CUDA graphs capturing scope. choices: "attn", "mlp", "moe", "moe_router",
+    # "moe_preprocess", "mamba", "full_iteration". "attn": captures operations in
+    # TransformerLayer._forward_attention(). "mlp": captures operations in
+    # TransformerLayer._forward_mlp() for a dense layer. "moe": captures operations in
+    # TransformerLayer._forward_mlp() for a MoE layer. "moe_router": captures operations in
+    # TransformerLayer._forward_mlp() up to MoELayer.router(), including the shared experts if
+    # they are not overlapped with EP comm. "moe_preprocess": captures operations in
+    # MoELayer.preprocess(). Must be used together with "moe_router". "mamba": captures the
+    # mamba layer. "full_iteration": captures a whole iteration. full_iteration scope is only
+    # supported with --cuda-graph-impl=local, other scopes are only supported with --cuda-
+    # graph-impl=transformer_engine. If not specified, the default scope is to capture the
+    # whole Transformer layer. For backward compatibility, we still allow passing "full" to
+    # specify capturing the whole layer, and convert it to an empty list.
+    cuda_graph_scope: list[Any] = field(default_factory=lambda: [])
+
+    # Use legacy static engine. (Current static engine uses dynamic engine under the hood)
+    use_legacy_static_engine: bool = False
+
+    # Maximum batch size for inference.
     inference_max_batch_size: int = 8
 
     # Maximum sequence length expected for inference (prefill + decode).
     inference_max_seq_length: int = 2560
 
+    # Maximum batch size for inference.
+    inference_max_batch_size: int = 8
+
     # Enable dynamic batching mode.
     inference_dynamic_batching: bool = False
 
-    # Total buffer size (GB) allocated for the chunked KV memory.
+    # Amount of on-GPU memory allocated for the KV cache. The total amount of memory allocated
+    # for the KV cache (CPU + GPU memory) depends on the value set for the unified virtual
+    # memory (UVM) level (via `--inference-dynamic-batching-unified-memory-level`).If the UVM
+    # level is 0, then only GPU memory is used and the total memory equals `buffer_size_gb`.
+    # If the UVM level is 1, then additional memory is utilized on the CPU and the total
+    # memory equals `buffer_size_gb + paused_buffer_size_gb`.
     inference_dynamic_batching_buffer_size_gb: float = 40.0
 
-    # KV cache chunk size. It should be a multiple of 256
-    inference_dynamic_batching_chunk_size: int = 256
+    # Amount of memory reserved for paused requests in the dynamic inference context. Active
+    # requests are paused when there are not enough active blocks available to continue
+    # generating a request.
+    inference_dynamic_batching_paused_buffer_size_gb: float | None = None
 
-    # Space is reserved within the inference context memory buffer to guarantee that a minimum
-    # number of active requests will always be able to run to completion. This is to avoid the
-    # context being blocked by paused requests.
-    inference_dynamic_batching_buffer_guaranteed_fraction: float = 0.2
+    # KV cache block size. It should be a multiple of 256
+    inference_dynamic_batching_block_size: int = 256
 
-    # Scaling factor over the memory buffer size for auto computing `max_requests` and
-    # `max_tokens`. This scaling factor is used for fitting more requests and tokens in the
-    # memory buffer than it can safely hold, which in turn increases throughput.
-    inference_dynamic_batching_buffer_overflow_factor: float | None = None
+    # Override the inference context's `max_requests`. By default, `max_requests` is set to
+    # the number of blocks in the context's memory buffer.
+    inference_dynamic_batching_max_requests: int | None = None
 
-    # If set, this overrides the max requests as computed from `--inference-dynamic-batching-
-    # buffer-overflow-factor`.
-    inference_dynamic_batching_max_requests_override: int | None = None
-
-    # If set, this overrides the max tokens as computed from `--inference-dynamic-batching-
-    # buffer-overflow-factor`.
-    inference_dynamic_batching_max_tokens_override: int | None = None
+    # Override the inference context's default `max_tokens`.
+    inference_dynamic_batching_max_tokens: int | None = None
 
     # Maximum number of cuda graphs to capture, where the cuda graph batch sizes range from 1
     # to `max_requests`. (See `dynamic_context.py` for details on how `max_requests` is
     # computed). Due to rounding, the actual number of cuda graphs may not equal this
     # argument.
     inference_dynamic_batching_num_cuda_graphs: int = 16
+
+    # Track paused request ids by adding 'paused' events to each request's event history. This
+    # has a very minor impact on latency.
+    inference_dynamic_batching_track_paused_request_events: bool = False
+
+    # Only use cuda graphs for decode-only steps, not prefill and mixed steps.
+    decode_only_cuda_graphs: bool = False
+
+    # Set unified memory usage within the dynamic inference context. The levels are: 0) no
+    # unified memory, 1) allocate `memory_buffer` in unified memory. Eventually, additional
+    # levels will be included to control other tensors within the context.
+    inference_dynamic_batching_unified_memory_level: Literal[0, 1] = 0
 
     # What type of symmetric all reduce to use. The default is none which is no use of
     # symetric memory
@@ -1613,11 +2127,40 @@ class MegatronConfig(ConfigInterface):
     # Number of chunks along sequence dimension for MLP computation during prefill
     mlp_chunks_for_prefill: int = 1
 
+    # ==SUPPRESS==
+    disable_chunked_prefill: bool = True
+
+    # ==SUPPRESS==
+    disable_chunked_prefill: bool = True
+
+    # Maximum number of tokens to capture in a cuda graph.
+    inference_dynamic_batching_cuda_graph_max_tokens: int = 16384
+
+    # Number of mixed prefill requests to capture in a cuda graph.
+    inference_dynamic_batching_cuda_graph_mixed_prefill_count: int = 16
+
+    # Step interval for logging inference metrics. Default to 0 to disable inference logging.
+    inference_logging_step_interval: int = 0
+
+    # Enable inference wandb logging.
+    inference_wandb_logging: bool = False
+
+    # This port will be used to setup the inference coordinator on node-0
+    inference_coordinator_port: int = 12346
+
+    # Use the fused communication kernel for tensor parallelism during inference. This kernel
+    # fuses reduce-scatter + residual-add + rms-norm + all-gather into one operation.
+    inference_fuse_tp_communication: bool = False
+
     # Which fp8 format scheme to use for FP8 tensors in the forward and backward pass
     fp8: Literal["e4m3", "hybrid"] | None = None
 
     # Which fp8 recipe to use for FP8 tensors in the forward and backward pass
-    fp8_recipe: Literal["tensorwise", "delayed", "mxfp8", "blockwise"] = "delayed"
+    fp8_recipe: Literal["tensorwise", "delayed", "mxfp8", "blockwise", "custom"] = "delayed"
+
+    # Python import path to a callable quantizer factory, e.g.,
+    # package.module.quantizer_factory.
+    fp8_quantizer_factory: Any | None = None
 
     # Scaling margin for fp8
     fp8_margin: int = 0
@@ -1635,7 +2178,9 @@ class MegatronConfig(ConfigInterface):
     fp8_wgrad: bool = True
 
     # Which Transformer implementation to use.
-    transformer_impl: Literal["local", "transformer_engine"] = "transformer_engine"
+    transformer_impl: Literal["local", "transformer_engine", "inference_optimized"] = (
+        "transformer_engine"
+    )
 
     # Keep the compute param in fp8 (do not use any other intermediate dtype) and perform the
     # param all-gather in fp8.
@@ -1650,12 +2195,23 @@ class MegatronConfig(ConfigInterface):
     # Number of layers at end to construct in bf16 when --first-last-layers-bf16 is enabled.
     num_layers_at_end_in_bf16: int = 1
 
-    # Use the Transformer Engine version of the random number generator. Required for CUDA
-    # graphs support.
-    te_rng_tracker: bool = False
+    # Which nvfp4 format scheme to use for FP4 tensors in the forward and backward pass
+    fp4: Literal["e2m1"] | None = None
 
-    # Use a random number generator configured for inference.
-    inference_rng_tracker: bool = False
+    # Which fp4 recipe to use for FP4 tensors in the forward and backward pass
+    fp4_recipe: Literal["nvfp4", "custom"] = "nvfp4"
+
+    # Python import path to a callable quantizer factory, e.g.,
+    # package.module.quantizer_factory.
+    fp4_quantizer_factory: Any | None = None
+
+    # Keep the compute param in fp4 (do not use any other intermediate dtype) and perform the
+    # param all-gather in fp4.
+    fp4_param: bool = False
+
+    # Configuration file to select per-module precision overrides. See
+    # TransformerEngineMixedPrecision.md
+    te_precision_config_file: Any | None = None
 
     # Retro project directory, which contains the preprocessed data for pretraining. This
     # directory is built during preprocessing (see tools/retro/README.md), and contains
@@ -1831,6 +2387,12 @@ class MegatronConfig(ConfigInterface):
     # for Nvidia internal use only.
     calc_ft_timeouts: bool = False
 
+    # Number of warmup iterations before monitoring step section and out-of-section timeouts.
+    # The first N iterations are excluded from timeout monitoring as they can be significantly
+    # slower than steady-state. Default: 5. Note: This feature is for Nvidia internal use
+    # only.
+    ft_num_warmup_iters: int = 5
+
     # If set, will dump all configs to --config-logger-dir
     config_logger_dir: str = ""
 
@@ -1847,14 +2409,24 @@ class MegatronConfig(ConfigInterface):
     # computations due to non-deterministic algorithms.
     rerun_mode: Literal["disabled", "validate_results", "report_stats"] = "validate_results"
 
+    # Check for spiky loss.
+    check_for_spiky_loss: bool = False
+
     # Disable the usage of Multi-Storage Client (MSC) in Megatron Core.
     enable_msc: bool = True
 
     # Use the config .yaml file at the specified location to configure kitchen quantization.
     kitchen_config_file: str | None = None
 
-    # Use a default kitchen recipe for all layers as defined by QAT_PARAMS index
+    # Use a default kitchen recipe for all linear layers as defined by QAT_PARAMS index. The
+    # argument has no effect on attention layers.
     kitchen_recipe_number: int | None = None
+
+    # Have kitchen use its own attention with attention quantization recipe support.
+    use_kitchen_attention: bool = False
+
+    # The backend to use for kitchen attention. The default is 'fa'.
+    kitchen_attention_backend: Literal["fa", "sdpa"] = "sdpa"
 
     # Megatron SFT training
     sft: bool = False
