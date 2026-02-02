@@ -177,7 +177,7 @@ def main(argv: list[str] | None = None) -> None:
         overrides=args.overrides,
     )
 
-    res = submit_jobs(plan)
+    res = submit_jobs(plan, no_error_catching=args.debug)
 
     if args.no_monitor:
         exit(0)

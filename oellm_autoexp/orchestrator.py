@@ -86,11 +86,14 @@ def submit_jobs(
     *,
     slurm_client: SlurmClient | None = None,
     session_id: str | None = None,
+    no_error_catching: bool = False,
 ) -> SubmissionResult:
     store, session_id = _ensure_state_store(plan, session_id=session_id)
     client = slurm_client or SlurmClient(SlurmClientConfig())
     local_client = LocalCommandClient(LocalCommandClientConfig())
-    loop = MonitorLoop(store, slurm_client=client, local_client=local_client)
+    loop = MonitorLoop(
+        store, slurm_client=client, local_client=local_client, no_error_catching=no_error_catching
+    )
 
     submitted_job_ids: list[str] = []
     for job in plan.jobs:
