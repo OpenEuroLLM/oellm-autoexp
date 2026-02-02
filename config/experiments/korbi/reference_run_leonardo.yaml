@@ -9,7 +9,7 @@ defaults:
   - /slurm: leonardo
   - /job: default
   - /sweep: none
-  - /backend/megatron: base_reference
+  - override /backend/megatron: base_reference
   - _self_
 
 index: 0

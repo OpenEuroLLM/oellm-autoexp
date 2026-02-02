@@ -14,7 +14,6 @@ bias_dropout_fusion: false
 bias_gelu_fusion: false
 bias_swiglu_fusion: false
 ckpt_format: torch
-config_logger_dir: null
 dataloader_type: single
 encoder_num_layers: 12
 encoder_seq_length: 4096
