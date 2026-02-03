@@ -7,7 +7,7 @@ adam_beta2: 0.99
 adam_eps: 1e-08
 add_qkv_bias: true
 align_param_gather: false
-attention_backend: AttnBackend.auto
+attention_backend: auto
 attention_dropout: 0.0
 bf16: true
 bias_dropout_fusion: false
@@ -15,9 +15,6 @@ bias_gelu_fusion: false
 bias_swiglu_fusion: false
 ckpt_format: torch
 dataloader_type: single
-encoder_num_layers: 12
-encoder_seq_length: 4096
-end_weight_decay: 0.1
 eval_interval: 800
 expert_tensor_parallel_size: 1
 ffn_hidden_size: 1536
@@ -26,6 +23,7 @@ gradient_accumulation_fusion: false
 hidden_dropout: 0.0
 hidden_size: 384
 kv_channels: 64
+legacy_tokenizer: true
 log_interval: 10
 log_progress: true
 log_throughput: true
@@ -37,7 +35,7 @@ lr_wsd_decay_style: linear
 max_position_embeddings: 4096
 micro_batch_size: 16
 min_lr: 1e-05
-moe_ffn_hidden_size: 1536
+# moe_ffn_hidden_size: 1536
 norm_epsilon: 1e-05
 normalization: RMSNorm
 num_attention_heads: 6
@@ -53,7 +51,6 @@ rerun_mode: disabled
 save_interval: 2000
 seq_length: 4096
 split: 99,1,0
-start_weight_decay: 0.1
 swiglu: true
 tokenizer_model: EleutherAI/gpt-neox-20b
 tokenizer_type: HuggingFaceTokenizer
