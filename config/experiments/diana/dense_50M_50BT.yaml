@@ -17,7 +17,7 @@ stage: ""
 
 job:
   name: "dense_50M_01_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_beta2${backend.megatron.adam_beta2}_${stage}"
-  base_output_dir: "test1_dense_50M_200MT/${job.name}"
+  base_output_dir: "dense_50M_50BT/${job.name}"
   # resume: true
 
 backend:
@@ -37,15 +37,6 @@ backend:
       /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-knowledge_list,
       /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-wrap_medium
     ]
-
-    # [
-    #   /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_0,
-    #   /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_1,
-    #   /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_2,
-    #   /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_3,
-    #   /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_4,
-    #   /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_5  
-    # ]
     data_cache_path: /leonardo_scratch/large/userexternal/donutu00/MEGATRON_CACHEDIR
     seq_length: 4096
     max_position_embeddings: 4096
@@ -102,7 +93,7 @@ backend:
     min_lr: 1.e-05
     lr_decay_style: WSD
     lr_wsd_decay_style: linear
-    lr_warmup_iters: 200
+    lr_warmup_iters: 2000
 
     # PROFILE
     profile: False
@@ -112,7 +103,7 @@ backend:
     profile_step_end: 12
 
     # EVALS
-    eval_interval: 1100
+    eval_interval: 800
     eval_iters: 100
 
     # LOGGING
@@ -124,20 +115,20 @@ backend:
 
     # CHECKPOINT FORMAT
     ckpt_format: "torch_dist"
-    save_interval: 500
+    save_interval: 2000
     save: ${job.base_output_dir}/checkpoints
 
     # Base training configuration (for stable phase)
-    micro_batch_size: 8
-    global_batch_size: 32  # Will be overridden by sweep
-    lr: 2.5e-4  # Will be overridden by sweep
+    micro_batch_size: 16
+    global_batch_size: 256  # Will be overridden by sweep
+    lr: 1.e-3  # Will be overridden by sweep
 
     # Auxiliary computation variables
     # Note: Computed fields (train_iters, lr_wsd_decay_iters, start_iter, start_iter_round)
     # are defined in the sweep defaults alongside the tokens they depend on,
     # so they get resolved together with stage-specific values
     aux:
-      tokens: 200_000_000  # Default: 200M tokens
+      tokens: 50_000_000_000  # Default: 50B tokens
       decay_fraction: 0.0  # Default: no decay
       start_iter: 0  # only used in decay
       start_iter_round: 0 # only used in decay
@@ -145,6 +136,7 @@ backend:
 slurm:
   sbatch:
     nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
+    # qos: boost_qos_dbg
 
 # COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE
 sweep:
@@ -163,7 +155,7 @@ sweep:
         # STABLE PHASE: Train for 50B tokens with no decay
         - stage: stable
 
-          backend.megatron.aux.tokens: 200_000_000
+          backend.megatron.aux.tokens: 50_000_000_000
           # Computed fields using ESCAPED OmegaConf interpolations (\\$ prevents early resolution)
           # These will be unescaped during sweep expansion and resolved with stage-specific values
           backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
@@ -204,5 +196,5 @@ sweep:
               pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
           configs:
             # Each decay stage only needs to specify its unique stage and tokens
-            - stage: decay200MT
-              backend.megatron.aux.tokens: 200_000_000
+            - stage: decay50B
+              backend.megatron.aux.tokens: 50_000_000_000

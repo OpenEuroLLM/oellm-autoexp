@@ -3,10 +3,11 @@ defaults:
   - _self_
 
 template_path: templates/lumi.sbatch
-launcher_cmd: "{{env_exports}} export MIOPEN_USER_DB_PATH=/tmp/$USER-miopen-cache-$SLURM_NODEID ; \
-   export MIOPEN_CUSTOM_CACHE_DIR=$MIOPEN_USER_DB_PATH ; export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; \
-  ${oc.select:container.runtime,singularity} exec --pwd ${container.pwd} \
-  {{bind_flags}}{{env_flags}} ${oc.select:container.image,container.sif}"
+launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
+  export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
+  ${oc.select:container.runtime,apptainer} exec ${oc.join:' ',${oc.maptmpl:'--env %=$% \\\n',${oc.dict.keys:.env}}} \
+  ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
+  --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif}"
 srun:
   exclusive: true
   wait: 60

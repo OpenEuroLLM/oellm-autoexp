@@ -1,5 +1,6 @@
 """Megatron CLI metadata (auto-generated)."""
 
+from typing import Any
 from collections.abc import Mapping
 
 from oellm_autoexp.backends.megatron_args import MegatronArgMetadata, MegatronActionSpec
@@ -9,8 +10,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "If set, *input* embedding layer will be treated as a standard transformerlayer in the"
-            " context of partition and placement for pipeline parallelism."
+            "If set, *input* embedding layer will be treated as a standard"
+            " transformerlayer in the context of partition and placement for pipeline"
+            " parallelism."
         ),
         choices=None,
         nargs=0,
@@ -20,8 +22,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "If set, loss layer will be treated as a standard transformerlayer in the context of"
-            " partition and placement for pipeline parallelism."
+            "If set, loss layer will be treated as a standard transformerlayer in the"
+            " context of partition and placement for pipeline parallelism."
         ),
         choices=None,
         nargs=0,
@@ -35,10 +37,21 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "activation_func_clamp_value": MegatronArgMetadata(
+        arg_type=float,
+        default=None,
+        help=(
+            "Clamp the output of the linear_fc1 in the activation function. Only used"
+            " when activation_func is quick_gelu."
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "adam_beta1": MegatronArgMetadata(
         arg_type=float,
         default=0.9,
-        help="First coefficient for computing running averages of gradient and its square",
+        help=("First coefficient for computing running averages of gradient and its square"),
         choices=None,
         nargs=None,
         element_type=None,
@@ -46,7 +59,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "adam_beta2": MegatronArgMetadata(
         arg_type=float,
         default=0.999,
-        help="Second coefficient for computing running averages of gradient and its square",
+        help=("Second coefficient for computing running averages of gradient and its square"),
         choices=None,
         nargs=None,
         element_type=None,
@@ -103,8 +116,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=True,
         help=(
-            "If not set, all PP stages will launch gradient reduces simultaneously. Otherwise, each"
-            " PP stage will independently launch as needed."
+            "If not set, all PP stages will launch gradient reduces simultaneously."
+            " Otherwise, each PP stage will independently launch as needed."
         ),
         choices=None,
         nargs=0,
@@ -114,8 +127,29 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=True,
         help=(
-            "If not set, all PP stages will launch param all-gathers simultaneously. Otherwise,"
-            " each PP stage will independently launch as needed."
+            "If not set, all PP stages will launch param all-gathers simultaneously."
+            " Otherwise, each PP stage will independently launch as needed."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "allow_ambiguous_pad_tokens": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Whether to prevent pad tokens already present in the dataset from being"
+            " masked out when the pad token incorrectly shares the same id with other"
+            " special tokens in the tokenizer. Note that this argument has no effect"
+            " when the tokenizer correctly provides a unique id for the pad. Masking"
+            " out such ambiguous pad tokens results in training instability. Such a"
+            " scenario is best resolved by fixing the tokenizer; leaving this option as"
+            " False provides a workaround. When left to the default of False, any token"
+            " ids that collide with the pad token id - as provided by the tokenizer -"
+            " will not be masked out of the loss calculation: it cannot be determined"
+            " whether they are truly pad. If instead this argument is set, the training"
+            " flow will treat all tokens that share the same id as the pad token as"
+            " true pad tokens, potentially causing severe training instability."
         ),
         choices=None,
         nargs=0,
@@ -125,8 +159,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default=None,
         help=(
-            "Jobs belonging to same training run, suppose to have the same name. It will be used to"
-            " track progress of a training done over multiple different jobs"
+            "Jobs belonging to same training run, suppose to have the same name. It"
+            " will be used to track progress of a training done over multiple different"
+            " jobs"
         ),
         choices=None,
         nargs=None,
@@ -136,8 +171,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default="0.0.0",
         help=(
-            "The version of the training of which current job is part of. It will be used to track"
-            " the changes in the application side which might change the performance baseline"
+            "The version of the training of which current job is part of. It will be"
+            " used to track the changes in the application side which might change the"
+            " performance baseline"
         ),
         choices=None,
         nargs=None,
@@ -147,8 +183,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Adjust LayerNorm weights such that they are centered around zero. This improves"
-            " numerical stability."
+            "Adjust LayerNorm weights such that they are centered around zero. This"
+            " improves numerical stability."
         ),
         choices=None,
         nargs=0,
@@ -176,17 +212,25 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "apply_rope_fusion": MegatronArgMetadata(
         arg_type=bool,
         default=True,
-        help="Disable rope fusion, the fusion is available only when using megatron-core.",
+        help=("Disable rope fusion, the fusion is available only when using megatron-core."),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "apply_wd_to_qk_layernorm": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Apply weight decay to qk layernorm as a special case.",
         choices=None,
         nargs=0,
         element_type=None,
     ),
     "async_save": MegatronArgMetadata(
         arg_type=bool,
-        default=None,
+        default=False,
         help=(
-            "Apply async checkpointing save. Currently works only with`torch_dist` distributed"
-            " checkpoint format."
+            "Apply async checkpointing save. Currently works only with `torch_dist`"
+            " distributed checkpoint format."
         ),
         choices=None,
         nargs=0,
@@ -203,7 +247,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "attention_backend": MegatronArgMetadata(
         arg_type=None,
         default="auto",
-        help="Attention backend to use (flash,fused,unfused,local,auto). Defaults to auto",
+        help=("Attention backend to use (flash,fused,unfused,local,auto). Defaults to auto"),
         choices=(1, 2, 3, 4, 5),
         nargs=None,
         element_type=None,
@@ -214,6 +258,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help="Post attention dropout probability.",
         choices=None,
         nargs=None,
+        element_type=None,
+    ),
+    "attention_output_gate": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Whether to apply output gate to the attention.",
+        choices=None,
+        nargs=0,
         element_type=None,
     ),
     "attention_softmax_in_fp32": MegatronArgMetadata(
@@ -228,9 +280,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Determine if the checkpoint format is in legacy or distributed format. If False,"
-            ' expects distributed checkpoint iff args.ckpt_format != "torch". Might slow down'
-            " loading a bit (double rank0 ckpt load)."
+            "Determine if the checkpoint format is in legacy or distributed format. If"
+            ' False, expects distributed checkpoint iff args.ckpt_format != "torch".'
+            " Might slow down loading a bit (double rank0 ckpt load)."
         ),
         choices=None,
         nargs=0,
@@ -240,10 +292,26 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=True,
         help=(
-            "If not set, use barrier with level 1 time measurements. Note that this is up to the"
-            " user to make sure calling barrier with their timers will not result in hangs. This"
-            " can happen if for example the user adds a level 1 timer that is not called by all"
-            " ranks."
+            "If not disabled, use barrier with level 1 time measurements. Note that"
+            " this is up to the user to make sure calling barrier with their timers"
+            " will not result in hangs. This can happen if for example the user adds a"
+            " level 1 timer that is not called by all ranks."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "batch_invariant_mode": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Use batch-invariant kernels for deterministic forward execution regardless"
+            " of batch size. Ensures bitwise identical results when the same inputs are"
+            " processed in different batch configurations. This is more strict than"
+            " deterministic-mode which only ensures bitwise identical results when the"
+            " same inputs are processed in the same batch configuration. This will"
+            " significantly affect speed of training and inference as the kernels are"
+            " not full optimized."
         ),
         choices=None,
         nargs=0,
@@ -276,7 +344,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "bert_load": MegatronArgMetadata(
         arg_type=str,
         default=None,
-        help="Directory containing an BertModel checkpoint (needed to start ICT and REALM)",
+        help=("Directory containing an BertModel checkpoint (needed to start ICT and REALM)"),
         choices=None,
         nargs=None,
         element_type=None,
@@ -351,8 +419,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "If set, FT package will try to automatically compute the timeouts. Note: This feature"
-            " is for Nvidia internal use only."
+            "If set, FT package will try to automatically compute the timeouts. Note:"
+            " This feature is for Nvidia internal use only."
         ),
         choices=None,
         nargs=0,
@@ -362,8 +430,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Scale cross entropy loss by the number of non-padded tokens in the global batch,"
-            " versus the default behavior of assuming all tokens are non-padded."
+            "Scale cross entropy loss by the number of non-padded tokens in the global"
+            " batch, versus the default behavior of assuming all tokens are non-padded."
         ),
         choices=None,
         nargs=0,
@@ -388,7 +456,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "check_for_spiky_loss": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="Check for spiky loss",
+        help="Check for spiky loss.",
         choices=None,
         nargs=0,
         element_type=None,
@@ -397,8 +465,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "Interval to check weight hashes are same across DP replicas. If not specified, weight"
-            " hashes not checked."
+            "Interval to check weight hashes are same across DP replicas. If not"
+            " specified, weight hashes not checked."
         ),
         choices=None,
         nargs=None,
@@ -408,8 +476,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Checkpoint activation to allow for training with larger models, sequences, and batch"
-            " sizes."
+            "Checkpoint activation to allow for training with larger models, sequences,"
+            " and batch sizes."
         ),
         choices=None,
         nargs=0,
@@ -418,24 +486,21 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "ckpt_assume_constant_structure": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help=(
-            "If the model and optimizer state dict structure isconstant throughout a *single"
-            " training job*, it allows fordifferent checkpointing performance optimizations."
-        ),
+        help=("Assume the checkpoint structure is constant across saves to enable optimizations."),
         choices=None,
         nargs=0,
         element_type=None,
     ),
     "ckpt_convert_format": MegatronArgMetadata(
-        arg_type=None,
+        arg_type=str,
         default=None,
         help="Checkpoint format for conversion.",
-        choices=("torch", "torch_dist", "zarr"),
+        choices=("torch", "torch_dist"),
         nargs=None,
         element_type=None,
     ),
     "ckpt_convert_save": MegatronArgMetadata(
-        arg_type=None,
+        arg_type=str,
         default=None,
         help="Save directory for converted checkpoint.",
         choices=None,
@@ -446,24 +511,25 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "When loading a checkpoint, update the legacy format for the distributed optimizer,"
-            " which previously used a merged param/grad buffer and a different bucket mapping. The"
-            " legacy format was deprecated on Feb 13, 2024."
+            "When loading a checkpoint, update the legacy format for the distributed"
+            " optimizer, which previously used a merged param/grad buffer and a"
+            " different bucket mapping. The legacy format was deprecated on Feb 13,"
+            " 2024."
         ),
         choices=None,
         nargs=0,
         element_type=None,
     ),
     "ckpt_format": MegatronArgMetadata(
-        arg_type=None,
+        arg_type=str,
         default="torch_dist",
         help=(
-            "Checkpoint format to use. torch is the format used by torch.save/load. torch_dist is a"
-            " megatron built-in distributed checkpointing format. torch_dcp is the"
-            " torch.distributed.checkpoint format. fsdp_dtensor is a torch DCP native, Megatron"
-            " FSDP training-specific checkpoint format."
+            "Checkpoint format to use. torch is the format used by torch.save/load."
+            " torch_dist is a megatron built-in distributed checkpointing format."
+            " torch_dcp is the torch.distributed.checkpoint format. fsdp_dtensor is a"
+            " torch DCP native, Megatron FSDP training-specific checkpoint format."
         ),
-        choices=("torch", "torch_dist", "zarr", "torch_dcp", "fsdp_dtensor"),
+        choices=("torch", "torch_dist", "torch_dcp", "fsdp_dtensor"),
         nargs=None,
         element_type=None,
     ),
@@ -479,9 +545,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=True,
         help=(
-            "Disable applying full save parallelization across DP for distributed checkpoints."
-            " Depending on ckpt format might decrease the number of files in the checkpoint. Makes"
-            " DistributedOptimizer checkpoint non-reshardable."
+            "Disable applying full save parallelization across DP for distributed"
+            " checkpoints. Depending on ckpt format might decrease the number of files"
+            " in the checkpoint. Makes DistributedOptimizer checkpoint non-reshardable."
         ),
         choices=None,
         nargs=0,
@@ -549,14 +615,33 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=list,
         default=["p2p"],
         help=(
-            "Inter-gpu communication type for context parallelism: p2p, a2a, allgather or a2a+p2p."
-            " If a single string is provided, all layers will share the same communication type."
-            " Users can also specify separated types for each layer like --cp-comm-type p2p p2p a2a"
-            " a2a a2a+p2p a2a+p2p"
+            "Inter-gpu communication type for context parallelism: p2p, a2a, allgather"
+            " or a2a+p2p. If a single string is provided, all layers will share the"
+            " same communication type. Users can also specify separated types for each"
+            " layer like --cp-comm-type p2p p2p a2a a2a a2a+p2p a2a+p2p"
         ),
         choices=None,
         nargs="+",
         element_type=str,
+    ),
+    "cpu_offloading_num_layers": MegatronArgMetadata(
+        arg_type=int,
+        default=0,
+        help="The number of Transformer layers to offload to CPU.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "create_all_gather_group": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Create a separate process group for all-gather operations to overlap"
+            " reduce-scatter and all-gather operations."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
     ),
     "create_attention_mask_in_dataloader": MegatronArgMetadata(
         arg_type=bool,
@@ -582,18 +667,44 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
-    "cuda_graph_scope": MegatronArgMetadata(
+    "cuda_graph_impl": MegatronArgMetadata(
         arg_type=str,
-        default="full",
+        default="none",
         help=(
-            'Determines the CUDA graphs capturing scope. Valid values are "full", "attn" and'
-            ' "full_iteration". "Full" scope captures a whole Transformer layer. "Attn" scope only'
-            ' captures operations in TransformerLayer._forward_attention(). "ful_iteration" scope'
-            " captures a whole iteration."
+            'Determines the CUDA graph capture implementation. "none": no CUDA graph.'
+            ' "local": capture the CUDA graph using MCore local implementation.'
+            ' --cuda-graph-scope="full_iteration" enables whole iteration CUDA graph.'
+            ' "transformer_engine": capture the CUDA graph using TE'
+            " make_graphed_callables()."
         ),
-        choices=("full", "attn", "full_iteration"),
+        choices=("none", "local", "transformer_engine"),
         nargs=None,
         element_type=None,
+    ),
+    "cuda_graph_scope": MegatronArgMetadata(
+        arg_type=list,
+        default=[],
+        help=(
+            'Determines the CUDA graphs capturing scope. choices: "attn", "mlp", "moe",'
+            ' "moe_router", "moe_preprocess", "mamba", "full_iteration". "attn":'
+            ' captures operations in TransformerLayer._forward_attention(). "mlp":'
+            " captures operations in TransformerLayer._forward_mlp() for a dense layer."
+            ' "moe": captures operations in TransformerLayer._forward_mlp() for a MoE'
+            ' layer. "moe_router": captures operations in'
+            " TransformerLayer._forward_mlp() up to MoELayer.router(), including the"
+            ' shared experts if they are not overlapped with EP comm. "moe_preprocess":'
+            " captures operations in MoELayer.preprocess(). Must be used together with"
+            ' "moe_router". "mamba": captures the mamba layer. "full_iteration":'
+            " captures a whole iteration. full_iteration scope is only supported with"
+            " --cuda-graph-impl=local, other scopes are only supported with"
+            " --cuda-graph-impl=transformer_engine. If not specified, the default scope"
+            " is to capture the whole Transformer layer. For backward compatibility, we"
+            ' still allow passing "full" to specify capturing the whole layer, and'
+            " convert it to an empty list."
+        ),
+        choices=None,
+        nargs="+",
+        element_type=Any,
     ),
     "cuda_graph_warmup_steps": MegatronArgMetadata(
         arg_type=int,
@@ -607,9 +718,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default=None,
         help=(
-            "Path to data-args. Instead of feeding `--data-path` with weighted dataset, we pass in"
-            " a file path from which we read that argument. This is useful when the list of data is"
-            " too big."
+            "Path to data-args. Instead of feeding `--data-path` with weighted dataset,"
+            " we pass in a file path from which we read that argument. This is useful"
+            " when the list of data is too big."
         ),
         choices=None,
         nargs=None,
@@ -643,12 +754,13 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=list,
         default=None,
         help=(
-            "The weight and prefix list for a set of train, validation, and testdatasets which"
-            " split according to --split. The accepted formats are: (1) a single prefix, (2) a list"
-            " of weight prefix pairs e.g. weight1 prefix1 weight2 prefix2, (3) a list of prefixes"
-            " e.g. prefix1 prefix2. For (3), weights are inferred from the lengths of the"
-            " contributing datasets. This argument is exclusive to the other independent"
-            " --*-data-path arguments."
+            "The weight and prefix list for a set of train, validation, and"
+            " testdatasets which split according to --split. The accepted formats are:"
+            " (1) a single prefix, (2) a list of weight prefix pairs e.g. weight1"
+            " prefix1 weight2 prefix2, (3) a list of prefixes e.g. prefix1 prefix2. For"
+            " (3), weights are inferred from the lengths of the contributing datasets."
+            " This argument is exclusive to the other independent --*-data-path"
+            " arguments."
         ),
         choices=None,
         nargs="*",
@@ -666,6 +778,30 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=True,
         help="Disable data sharding.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "dataloader_defer_npy_index_mmap": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Defer the mmap of the dataset indexes (.npy files) until the first access."
+            " Requires all the dataset caches to be built and stored in"
+            " --data-cache-path."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "dataloader_fast_cache_load": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Option to use the fast cache loading path when building the datasets."
+            " Requires all the dataset caches to be built and stored in"
+            " --data-cache-path."
+        ),
         choices=None,
         nargs=0,
         element_type=None,
@@ -706,11 +842,33 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "If set, make sure the bucket size is divisible by a large power of 2 (2^16) to ensure"
-            " NCCL collectives have high bus bandwidth at large DP counts, since NCCL message size"
-            " (which for ring algorithms is bucket_size / dp_size) apparently needs to be divisible"
-            " by a power of 2 for high busbw."
+            "If set, make sure the bucket size is divisible by a large power of 2"
+            " (2^16) to ensure NCCL collectives have high bus bandwidth at large DP"
+            " counts, since NCCL message size (which for ring algorithms is bucket_size"
+            " / dp_size) apparently needs to be divisible by a power of 2 for high"
+            " busbw."
         ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "ddp_reduce_scatter_with_fp32_accumulation": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "If set, use a reduce-scatter implementation which sends lower-precision"
+            " values over the wire (using an all-to-all to keep total communication"
+            " overhead in line with the standard ring implementation) but performs"
+            " accumulation locally in FP32."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "decode_only_cuda_graphs": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Only use cuda graphs for decode-only steps, not prefill and mixed steps.",
         choices=None,
         nargs=0,
         element_type=None,
@@ -719,8 +877,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "The number of transformer layers on the first pipeline stage of the decoder. Default"
-            " None is even split of transformer layers across all pipeline stages"
+            "The number of transformer layers on the first pipeline stage of the"
+            " decoder. Default None is even split of transformer layers across all"
+            " pipeline stages"
         ),
         choices=None,
         nargs=None,
@@ -730,8 +889,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "The number of transformer layers on the last pipeline stage of the decoder. Default"
-            " None is even split of transformer layers across all pipeline stages"
+            "The number of transformer layers on the last pipeline stage of the"
+            " decoder. Default None is even split of transformer layers across all"
+            " pipeline stages"
         ),
         choices=None,
         nargs=None,
@@ -765,8 +925,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=float,
         default=None,
         help=(
-            "Minimum value for learning rate for the input and output layer. The schedulerclip"
-            " values below this threshold"
+            "Minimum value for learning rate for the input and output layer. The"
+            " schedulerclip values below this threshold"
         ),
         choices=None,
         nargs=None,
@@ -776,11 +936,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "If set, decrease batch size if microbatch_size * dp_sizedoes not divide batch_size."
-            " Useful for KSO (Keep Soldiering On)to continue making progress if number of healthy"
-            " GPUs (andcorresponding dp_size) does not support current batch_size.Old batch_size"
-            " will be restored if training is re-started withdp_size that divides batch_size //"
-            " microbatch_size."
+            "If set, decrease batch size if microbatch_size * dp_size does not divide"
+            " batch_size. Old batch_size will be restored if training is re-started"
+            " with dp_size that divides batch_size // microbatch_size."
         ),
         choices=None,
         nargs=0,
@@ -790,8 +948,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "If set, defers the vocabulary projection linear layer weightgradient compute to"
-            " pipeline flush."
+            "If set, defers the vocabulary projection linear layer weightgradient"
+            " compute to pipeline flush."
         ),
         choices=None,
         nargs=0,
@@ -809,8 +967,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "DEPRECATED. Use the implementation from megatron core.Now ignored and mcore models are"
-            " the default, use --use-legacy-models to not use core models."
+            "DEPRECATED. Use the implementation from megatron core.Now ignored and"
+            " mcore models are the default, use --use-legacy-models to not use core"
+            " models."
         ),
         choices=None,
         nargs=0,
@@ -820,8 +979,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Choose code that has deterministic execution. This usually means slower execution, but"
-            " is good for debugging and testing."
+            "Choose code that has deterministic execution. This usually means slower"
+            " execution, but is good for debugging and testing."
         ),
         choices=None,
         nargs=0,
@@ -903,9 +1062,27 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "If True, sets torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction=False"
-            " to prevent matmul from using reduced precision accumulation when using BF16."
+            "If True, sets"
+            " torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction=False"
+            " to prevent matmul from using reduced precision accumulation when using"
+            " BF16."
         ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "disable_chunked_prefill": MegatronArgMetadata(
+        arg_type=bool,
+        default=True,
+        help="==SUPPRESS==",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "disable_jit_fuser": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Disable the JIT fuser.",
         choices=None,
         nargs=0,
         element_type=None,
@@ -926,6 +1103,18 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "disable_symmetric_registration": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Disable symmetric (window) registration for NCCL userbuffer"
+            " registration.This option will force to use conventional (local)"
+            " userbuffer registration when use-nccl-ub is set."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "dist_ckpt_format_deprecated": MegatronArgMetadata(
         arg_type=None,
         default=None,
@@ -934,13 +1123,37 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "dist_ckpt_optim_fully_reshardable": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Make optimizer distributed checkpoint fully reshardable (TP/PP/EP/DP) as"
+            " opposed to plain DP reshardability."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "dist_ckpt_save_pre_mcore_014": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Revert checkpointing simplifications introduced in Megatron-Core v0.14."
+            " This option affects only checkpoint saving format and will be removed"
+            " soon (checkpoint load format is determined based on checkpoint metadata)."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "dist_ckpt_strictness": MegatronArgMetadata(
         arg_type=str,
         default="assume_ok_unexpected",
         help=(
-            "Determine handling of key mismatch during checkpoint load. Check StrictHandling docs"
-            " for flags meaning. NOTE: This flag controls only distributed checkpoint load from"
-            " storage, not loading state dict into the model."
+            "Determine handling of key mismatch during checkpoint load. Check"
+            " StrictHandling docs for flags meaning. NOTE: This flag controls only"
+            " distributed checkpoint load from storage, not loading state dict into the"
+            " model."
         ),
         choices=(
             "assume_ok_unexpected",
@@ -953,6 +1166,19 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
             "ignore_all",
         ),
         nargs=None,
+        element_type=None,
+    ),
+    "distrib_optim_fully_reshardable_mem_efficient": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "During distributed optimizer checkpoint save and load tries to use as"
+            " little memory as possible by using Gloo (instead of NCCL) and only one"
+            " rank for saving. Turn on only if experiencing host or device memory"
+            " issues. Has affect only with `dist_ckpt_optim_fully_reshardable` flag."
+        ),
+        choices=None,
+        nargs=0,
         element_type=None,
     ),
     "distribute_saved_activations": MegatronArgMetadata(
@@ -974,7 +1200,78 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "distributed_timeout_minutes": MegatronArgMetadata(
         arg_type=int,
         default=10,
-        help="Timeout minutes for torch.distributed.",
+        help="Default timeout minutes for torch.distributed.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "distributed_timeout_seconds_after_init": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help=(
+            "Timeout seconds for process groups after initialization.This timeout is"
+            " applied to all process groups after initialization."
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "dsa_indexer_head_dim": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help=(
+            "Dimension per indexer head for sparse attention. If not set, defaults to kv-channels."
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "dsa_indexer_loss_coeff": MegatronArgMetadata(
+        arg_type=float,
+        default=None,
+        help=("Coefficient for the indexer KL divergence loss. Set to 0 to disable indexer loss."),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "dsa_indexer_n_heads": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help=(
+            "Number of indexer heads for sparse attention. If not set, defaults to"
+            " num-attention-heads."
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "dsa_indexer_topk": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Number of top-k tokens to select in sparse attention indexer.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "dsa_indexer_use_sparse_loss": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Use sparse indexer loss. If set, the indexer loss will be computed using"
+            " the top-k indices."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "dump_param_to_param_group_map": MegatronArgMetadata(
+        arg_type=str,
+        default=None,
+        help=(
+            "Path to a file containing parameter-to-parameter-group mapping. Provide a"
+            " JSON file that specifies which parameters belong to which parameter group"
+            " for global coordination."
+        ),
         choices=None,
         nargs=None,
         element_type=None,
@@ -983,12 +1280,12 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=float,
         default=None,
         help=(
-            "Standard deviation of the zero mean normal distribution used for embedding weight"
-            " initialization. If unset, embeddings will be initialized the same way as other"
-            " weights. Setting this to a value around 1.0 may avoid loss spikes in training."
-            " Setting this to any value will also skip applying weight decay on embedding weights"
-            " to avoid shrinkage towards zero. See https://arxiv.org/abs/2312.16903 for more"
-            " details."
+            "Standard deviation of the zero mean normal distribution used for embedding"
+            " weight initialization. If unset, embeddings will be initialized the same"
+            " way as other weights. Setting this to a value around 1.0 may avoid loss"
+            " spikes in training. Setting this to any value will also skip applying"
+            " weight decay on embedding weights to avoid shrinkage towards zero. See"
+            " https://arxiv.org/abs/2312.16903 for more details."
         ),
         choices=None,
         nargs=None,
@@ -1006,8 +1303,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=0,
         help=(
-            "Call torch.cuda.empty_cache() each iteration (training and eval), to reduce"
-            " fragmentation.0=off, 1=moderate, 2=aggressive."
+            "Call torch.cuda.empty_cache() each iteration (training and eval), to"
+            " reduce fragmentation. 0=off, 1=moderate, 2=aggressive."
         ),
         choices=(0, 1, 2),
         nargs=None,
@@ -1017,8 +1314,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            'Use CUDA graph capture and replay. --cuda-graph-scope="full_iteration" enables whole'
-            " iteration CUDA graph. "
+            "Deprecated. Use --cuda-graph-impl=local instead. Use local implementation"
+            ' of CUDA graph capture and replay. --cuda-graph-scope="full_iteration"'
+            " enables whole iteration CUDA graph. "
         ),
         choices=None,
         nargs=0,
@@ -1036,8 +1334,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "If set, Fault Tolerance package is enabled. Note: This feature is for Nvidia internal"
-            " use only."
+            "If set, Fault Tolerance package is enabled. Note: This feature is for"
+            " Nvidia internal use only."
         ),
         choices=None,
         nargs=0,
@@ -1047,8 +1345,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "If set, enable full sharding in megatron-fsdp Hybrid Sharded Data Parallel (HSDP)"
-            " mode."
+            "If set, enable full sharding in megatron-fsdp Hybrid Sharded Data Parallel"
+            " (HSDP) mode."
         ),
         choices=None,
         nargs=0,
@@ -1074,9 +1372,11 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=True,
         help=(
-            "If set, disable using one_logger to track E2E metricsNote that one_logger is an"
-            " internal tool and not available externally. For installation, please go to"
-            " https://confluence.nvidia.com/display/MLWFO/Package+Repositoriesfor more details"
+            "If set, disable using one_logger to track E2E metricsNote that one_logger"
+            " is an internal tool and not available externally. For installation,"
+            " please go to"
+            " https://confluence.nvidia.com/display/MLWFO/Package+Repositoriesfor more"
+            " details"
         ),
         choices=None,
         nargs=0,
@@ -1093,7 +1393,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "encoder_seq_length": MegatronArgMetadata(
         arg_type=int,
         default=None,
-        help="Maximum encoder sequence length to process.This should be exclusive of --seq-length",
+        help=(
+            "Maximum encoder sequence length to process.This should be exclusive of --seq-length"
+        ),
         choices=None,
         nargs=None,
         element_type=None,
@@ -1114,12 +1416,20 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "ep_overlap_early_attn_memory_release": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Release the memory of the attention module early in EP overlap.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "error_injection_rate": MegatronArgMetadata(
         arg_type=int,
         default=0,
         help=(
-            "Rate at which to inject unexpected results, e.g. 1000 means once every 1000 result"
-            " validations"
+            "Rate at which to inject unexpected results, e.g. 1000 means once every"
+            " 1000 result validations"
         ),
         choices=None,
         nargs=None,
@@ -1128,15 +1438,18 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "error_injection_type": MegatronArgMetadata(
         arg_type=str,
         default="transient_error",
-        help="Type of error to inject. ",
+        help="Type of error to inject.",
         choices=("correct_result", "transient_error", "persistent_error"),
         nargs=None,
         element_type=None,
     ),
     "eval_interval": MegatronArgMetadata(
         arg_type=int,
-        default=1000,
-        help="Interval between running evaluation on validation set.",
+        default=None,
+        help=(
+            "Interval between running evaluation on validation set. If not set,"
+            " evaluation will not run during training."
+        ),
         choices=None,
         nargs=None,
         element_type=None,
@@ -1144,7 +1457,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "eval_iters": MegatronArgMetadata(
         arg_type=int,
         default=100,
-        help="Number of iterations to run for evaluationvalidation/test for.",
+        help=(
+            "Number of iterations to run for evaluation. Used for both validation and"
+            " test. If not set, evaluation will not run."
+        ),
         choices=None,
         nargs=None,
         element_type=None,
@@ -1177,17 +1493,67 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "If '--load' is set, but checkpoint is not found (e.g., path typo), then exit instead"
-            " of random initialization."
+            "If 'load' is set, but checkpoint is not found (e.g., path typo), then exit"
+            " instead of random initialization."
         ),
         choices=None,
         nargs=0,
         element_type=None,
     ),
+    "exit_signal": MegatronArgMetadata(
+        arg_type=None,
+        default="15",
+        help="Signal for the signal handler to detect.",
+        choices=(
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            34,
+            64,
+        ),
+        nargs=None,
+        element_type=None,
+    ),
     "exit_signal_handler": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="Dynamically save the checkpoint and shutdown the training if SIGTERM is received",
+        help=("Dynamically save the checkpoint and shutdown the training if SIGTERM is received"),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "exit_signal_handler_for_dataloader": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Use signal handler for dataloader workers",
         choices=None,
         nargs=0,
         element_type=None,
@@ -1197,8 +1563,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         default="fp32",
         help=(
             "Dtype of exp_avg (1st moment in adam optimizer) when enabling"
-            " precision-aware-optimizer. This dtype is used for storing the optimizer state in"
-            " memory during training but does not affect the precision in the kernel computation."
+            " precision-aware-optimizer. This dtype is used for storing the optimizer"
+            " state in memory during training but does not affect the precision in the"
+            " kernel computation."
         ),
         choices=("fp32", "fp16", "bf16", "fp8"),
         nargs=None,
@@ -1209,10 +1576,19 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         default="fp32",
         help=(
             "Dtype of exp_avg_sq (2nd moment in adam optimizer) when enabling"
-            " precision-aware-optimizer. This dtype is used for storing the optimizer state in"
-            " memory during training but does not affect the precision in the kernel computation."
+            " precision-aware-optimizer. This dtype is used for storing the optimizer"
+            " state in memory during training but does not affect the precision in the"
+            " kernel computation."
         ),
         choices=("fp32", "fp16", "bf16", "fp8"),
+        nargs=None,
+        element_type=None,
+    ),
+    "experimental_attention_variant": MegatronArgMetadata(
+        arg_type=str,
+        default=None,
+        help=("Type of attention variant to use. Currently support gated_delta_net and dsa."),
+        choices=("gated_delta_net", "dsa"),
         nargs=None,
         element_type=None,
     ),
@@ -1228,8 +1604,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "Degree of expert model parallelism. Default is None, which will be set to the value of"
-            " --tensor-model-paralle-size."
+            "Degree of expert model parallelism. Default is None, which will be set to"
+            " the value of --tensor-model-paralle-size."
         ),
         choices=None,
         nargs=None,
@@ -1239,8 +1615,24 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Use CUDA graph capture and replay. The CUDA graphs aremanually captured in the"
-            " training script."
+            "Deprecated. Use --cuda-graph-impl=transformer_engine instead. Use TE"
+            " make_graphed_callables() to capture the CUDA graph. Use"
+            ' --cuda-graph-scope="attn", "mlp", "moe", "moe_router", "moe_preprocess",'
+            ' "mamba" for partial capture. '
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "fake_process_group": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "If set, initialize with fake distributed process group and all distributed"
+            " communication operations will be skipped.                        This is"
+            " quite useful for profiling memory usage of distributed training with just"
+            " one GPU.                        Setting WORLD_SIZE and RANK to the"
+            " specific values for target distribtued scale."
         ),
         choices=None,
         nargs=0,
@@ -1250,19 +1642,116 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "Transformer Feed-Forward Network hidden size. This is set to 4*hidden-size if not"
-            " provided"
+            "Transformer Feed-Forward Network hidden size. This is set to 4*hidden-size"
+            " if not provided"
         ),
         choices=None,
         nargs=None,
+        element_type=None,
+    ),
+    "fim_data": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Whether to use the FIM dataset.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "fim_eod_token": MegatronArgMetadata(
+        arg_type=str,
+        default="<|endoftext|>",
+        help="FIM EOD token",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "fim_fragment_rate": MegatronArgMetadata(
+        arg_type=float,
+        default=None,
+        help="Rate of FIM on each fragment when --fim-split-sample is not None.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "fim_middle_token": MegatronArgMetadata(
+        arg_type=str,
+        default="<fim_middle>",
+        help="FIM middle token",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "fim_no_prefix": MegatronArgMetadata(
+        arg_type=str,
+        default=None,
+        help="Do not apply FIM to fragments that start with this prefix",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "fim_pad_token": MegatronArgMetadata(
+        arg_type=str,
+        default="<fim_pad>",
+        help="FIM PAD token",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "fim_prefix_token": MegatronArgMetadata(
+        arg_type=str,
+        default="<fim_prefix>",
+        help="FIM prefix token",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "fim_rate": MegatronArgMetadata(
+        arg_type=float,
+        default=0.5,
+        help="Probability to convert a training sample into a FIM format.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "fim_split_sample": MegatronArgMetadata(
+        arg_type=str,
+        default=None,
+        help="String around which to split the sample for FIM.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "fim_spm_rate": MegatronArgMetadata(
+        arg_type=float,
+        default=0.5,
+        help=("Probability that the a FIM sample uses the SPM format over the PSM format."),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "fim_suffix_token": MegatronArgMetadata(
+        arg_type=str,
+        default="<fim_suffix>",
+        help="FIM suffix token",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "fine_grained_activation_offloading": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Enable fine-grained activation offloading.",
+        choices=None,
+        nargs=0,
         element_type=None,
     ),
     "finetune": MegatronArgMetadata(
         arg_type=bool,
         default=False,
         help=(
-            "Load model for finetuning. Do not load optimizer or rng state from checkpoint and set"
-            " iteration to 0. Assumed when loading a release checkpoint."
+            "Load model for finetuning. Do not load optimizer or rng state from"
+            " checkpoint and set iteration to 0. Assumed when loading a release"
+            " checkpoint."
         ),
         choices=None,
         nargs=0,
@@ -1308,10 +1797,48 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "fp4": MegatronArgMetadata(
+        arg_type=None,
+        default=None,
+        help=("Which nvfp4 format scheme to use for FP4 tensors in the forward and backward pass"),
+        choices=("e2m1",),
+        nargs=None,
+        element_type=None,
+    ),
+    "fp4_param": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Keep the compute param in fp4 (do not use any other intermediate dtype)"
+            " and perform the param all-gather in fp4."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "fp4_quantizer_factory": MegatronArgMetadata(
+        arg_type=None,
+        default=None,
+        help=(
+            "Python import path to a callable quantizer factory, e.g.,"
+            " package.module.quantizer_factory."
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "fp4_recipe": MegatronArgMetadata(
+        arg_type=None,
+        default="nvfp4",
+        help="Which fp4 recipe to use for FP4 tensors in the forward and backward pass",
+        choices=("nvfp4", "custom"),
+        nargs=None,
+        element_type=None,
+    ),
     "fp8": MegatronArgMetadata(
         arg_type=None,
         default=None,
-        help="Which fp8 format scheme to use for FP8 tensors in the forward and backward pass",
+        help=("Which fp8 format scheme to use for FP8 tensors in the forward and backward pass"),
         choices=("e4m3", "hybrid"),
         nargs=None,
         element_type=None,
@@ -1352,18 +1879,29 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Keep the compute param in fp8 (do not use any other intermediate dtype) and perform"
-            " the param all-gather in fp8."
+            "Keep the compute param in fp8 (do not use any other intermediate dtype)"
+            " and perform the param all-gather in fp8."
         ),
         choices=None,
         nargs=0,
+        element_type=None,
+    ),
+    "fp8_quantizer_factory": MegatronArgMetadata(
+        arg_type=None,
+        default=None,
+        help=(
+            "Python import path to a callable quantizer factory, e.g.,"
+            " package.module.quantizer_factory."
+        ),
+        choices=None,
+        nargs=None,
         element_type=None,
     ),
     "fp8_recipe": MegatronArgMetadata(
         arg_type=None,
         default="delayed",
         help="Which fp8 recipe to use for FP8 tensors in the forward and backward pass",
-        choices=("tensorwise", "delayed", "mxfp8", "blockwise"),
+        choices=("tensorwise", "delayed", "mxfp8", "blockwise", "custom"),
         nargs=None,
         element_type=None,
     ),
@@ -1379,22 +1917,47 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Enable double buffering for temporary memory needed for Megatron FSDP communications."
-            " Double-buffering the communication memory improves memory management efficiency by"
-            " reusing previously allocated buffers, rather than creating new buffers for each FSDP"
-            " communication. This is required for user buffer registration and is enabled by"
-            " default when using NCCL user buffers."
+            "Enable double buffering for temporary memory needed for Megatron FSDP"
+            " communications. Double-buffering the communication memory improves memory"
+            " management efficiency by reusing previously allocated buffers, rather"
+            " than creating new buffers for each FSDP communication. This is required"
+            " for user buffer registration and is enabled by default when using NCCL"
+            " user buffers."
         ),
         choices=None,
         nargs=0,
+        element_type=None,
+    ),
+    "fsdp_manual_registration": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Manually register the FSDP communication buffers to NCCL user buffer.This"
+            " option is only effective when use-megatron-fsdp and use-nccl-ub is set."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "ft_num_warmup_iters": MegatronArgMetadata(
+        arg_type=int,
+        default=5,
+        help=(
+            "Number of warmup iterations before monitoring step section and"
+            " out-of-section timeouts. The first N iterations are excluded from timeout"
+            " monitoring as they can be significantly slower than steady-state."
+            " Default: 5. Note: This feature is for Nvidia internal use only."
+        ),
+        choices=None,
+        nargs=None,
         element_type=None,
     ),
     "full_validation": MegatronArgMetadata(
         arg_type=bool,
         default=False,
         help=(
-            "If set, each time validation occurs it uses the full validation dataset(s). This"
-            " currently only works for GPT datasets!"
+            "If set, each time validation occurs it uses the full validation"
+            " dataset(s). This currently only works for GPT datasets!"
         ),
         choices=None,
         nargs=0,
@@ -1404,10 +1967,21 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "Training batch size. If set, it should be a multiple of micro-batch-size times"
-            " data-parallel-size. If this value is None, then use micro-batch-size *"
-            " data-parallel-size as the global batch size. This choice will result in 1 for number"
-            " of micro-batches."
+            "Training batch size. If set, it should be a multiple of micro-batch-size"
+            " times data-parallel-size. If this value is None, then use"
+            " micro-batch-size * data-parallel-size as the global batch size. This"
+            " choice will result in 1 for number of micro-batches."
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "glu_linear_offset": MegatronArgMetadata(
+        arg_type=float,
+        default=0.0,
+        help=(
+            "Offset term in the GLU activation function: activation_func(x[0]) * (x[1]"
+            " + offset). Only used when gated_linear_unit is True"
         ),
         choices=None,
         nargs=None,
@@ -1424,7 +1998,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "gradient_accumulation_fusion": MegatronArgMetadata(
         arg_type=bool,
         default=True,
-        help="Disable fusing gradient accumulation to weight gradient computation of linear layers",
+        help=(
+            "Disable fusing gradient accumulation to weight gradient computation of linear layers"
+        ),
         choices=None,
         nargs=0,
         element_type=None,
@@ -1445,6 +2021,70 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "grpo_clamp_eps_lower": MegatronArgMetadata(
+        arg_type=float,
+        default=0.01,
+        help="Lower GRPO clipping bound.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "grpo_clamp_eps_upper": MegatronArgMetadata(
+        arg_type=float,
+        default=0.01,
+        help=("Upper GRPO clipping bound. In vanilla implementation, equals to the lower one."),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "grpo_entropy_term_weight": MegatronArgMetadata(
+        arg_type=float,
+        default=0.0,
+        help="Entropy term weight in GRPO loss.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "grpo_filter_groups_with_same_reward": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Filter groups with same reward.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "grpo_group_size": MegatronArgMetadata(
+        arg_type=int,
+        default=2,
+        help="Number of samples per a GRPO group.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "grpo_iterations": MegatronArgMetadata(
+        arg_type=int,
+        default=2,
+        help="Number of iterations per a GRPO implementation.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "grpo_kl_beta": MegatronArgMetadata(
+        arg_type=float,
+        default=0.001,
+        help="KL term weight in the GRPO loss.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "grpo_prompts_per_step": MegatronArgMetadata(
+        arg_type=int,
+        default=32,
+        help="Number of GRPO groups (G in the paper).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "head_lr_mult": MegatronArgMetadata(
         arg_type=float,
         default=1.0,
@@ -1457,10 +2097,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default=None,
         help=(
-            "This is encoded json string of the heterogeneous model configuration. Used to keep the"
-            " content of the heterogeneous model specification in args when the model is loaded"
-            " from a checkpoint. Use the format of the HuggingFace config files in llama nemotron"
-            " models, e.g."
+            "This is encoded json string of the heterogeneous model configuration. Used"
+            " to keep the content of the heterogeneous model specification in args when"
+            " the model is loaded from a checkpoint. Use the format of the HuggingFace"
+            " config files in llama nemotron models, e.g."
             " https://huggingface.co/nvidia/Llama-3_3-Nemotron-Super-49B-v1/resolve/main/config.json."
         ),
         choices=None,
@@ -1471,8 +2111,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default=None,
         help=(
-            "Path to json file containing heterogeneous model configuration. Use the format of the"
-            " HuggingFace config files in llama nemotron models, e.g."
+            "Path to json file containing heterogeneous model configuration. Use the"
+            " format of the HuggingFace config files in llama nemotron models, e.g."
             " https://huggingface.co/nvidia/Llama-3_3-Nemotron-Super-49B-v1/resolve/main/config.json."
         ),
         choices=None,
@@ -1490,7 +2130,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "hidden_size": MegatronArgMetadata(
         arg_type=int,
         default=None,
-        help="Tansformer hidden size.",
+        help="Transformer hidden size.",
         choices=None,
         nargs=None,
         element_type=None,
@@ -1499,10 +2139,11 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=list,
         default=None,
         help=(
-            "Degrees of the hierarchical context parallelism. Users should provide a list to"
-            " specify the sizes for different levels. --hierarchical-context-parallel-sizes 2 4"
-            " indicates every two adjacent gpus forms the first level of cp groups and the cp ranks"
-            " with the same odevity forms the second level of cp groups."
+            "Degrees of the hierarchical context parallelism. Users should provide a"
+            " list to specify the sizes for different levels."
+            " --hierarchical-context-parallel-sizes 2 4 indicates every two adjacent"
+            " gpus forms the first level of cp groups and the cp ranks with the same"
+            " odevity forms the second level of cp groups."
         ),
         choices=None,
         nargs="+",
@@ -1524,6 +2165,18 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "hybrid_context_parallel": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Enables hybrid context parallel. This is used to balance the workload of"
+            " each CP rank when we use packed samples with variable sequence lengths."
+            " Requires --max-seqlen-per-dp-cp-rank to be set."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "hybrid_mlp_ratio": MegatronArgMetadata(
         arg_type=float,
         default=0.0,
@@ -1536,10 +2189,11 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default=None,
         help=(
-            "Force a specific hybrid layer pattern. The valueshould be a string of characters"
-            " chosen fromcore.ssm.mamba_hybrid_layer_allocation.Symbols.If a value greater than 0.0"
-            " is supplied to any of the hybrid ratio arguments, then the number of each typeof"
-            " layer in the override pattern must match number inthe overidden pattern"
+            "Force a specific hybrid layer pattern. The valueshould be a string of"
+            " characters chosen fromcore.ssm.mamba_hybrid_layer_allocation.Symbols.If a"
+            " value greater than 0.0 is supplied to any of the hybrid ratio arguments,"
+            " then the number of each typeof layer in the override pattern must match"
+            " number inthe overidden pattern"
         ),
         choices=None,
         nargs=None,
@@ -1556,7 +2210,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "ict_head_size": MegatronArgMetadata(
         arg_type=int,
         default=None,
-        help="Size of block embeddings to be used in ICT and REALM (paper default: 128)",
+        help=("Size of block embeddings to be used in ICT and REALM (paper default: 128)"),
         choices=None,
         nargs=None,
         element_type=None,
@@ -1605,10 +2259,19 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=-1,
         help=(
-            "If (batch-size * sequence-length) is smaller than this thresholdthen batches will not"
-            " be split up for pipelining.Requires setting --pipeline-model-parallel-size >"
-            " 1.Setting this to -1 indicates that batch pipelining is not used."
+            "If (batch-size * sequence-length) is smaller than this thresholdthen"
+            " batches will not be split up for pipelining.Requires setting"
+            " --pipeline-model-parallel-size > 1.Setting this to -1 indicates that"
+            " batch pipelining is not used."
         ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "inference_coordinator_port": MegatronArgMetadata(
+        arg_type=int,
+        default=12346,
+        help="This port will be used to setup the inference coordinator on node-0",
         choices=None,
         nargs=None,
         element_type=None,
@@ -1621,26 +2284,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
-    "inference_dynamic_batching_buffer_guaranteed_fraction": MegatronArgMetadata(
-        arg_type=float,
-        default=0.2,
-        help=(
-            "Space is reserved within the inference context memory buffer to guarantee that a"
-            " minimum number of active requests will always be able to run to completion. This is"
-            " to avoid the context being blocked by paused requests."
-        ),
-        choices=None,
-        nargs=None,
-        element_type=None,
-    ),
-    "inference_dynamic_batching_buffer_overflow_factor": MegatronArgMetadata(
-        arg_type=float,
-        default=None,
-        help=(
-            "Scaling factor over the memory buffer size for auto computing `max_requests` and"
-            " `max_tokens`. This scaling factor is used for fitting more requests and tokens in the"
-            " memory buffer than it can safely hold, which in turn increases throughput."
-        ),
+    "inference_dynamic_batching_block_size": MegatronArgMetadata(
+        arg_type=int,
+        default=256,
+        help="KV cache block size. It should be a multiple of 256",
         choices=None,
         nargs=None,
         element_type=None,
@@ -1648,37 +2295,52 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "inference_dynamic_batching_buffer_size_gb": MegatronArgMetadata(
         arg_type=float,
         default=40.0,
-        help="Total buffer size (GB) allocated for the chunked KV memory.",
-        choices=None,
-        nargs=None,
-        element_type=None,
-    ),
-    "inference_dynamic_batching_chunk_size": MegatronArgMetadata(
-        arg_type=int,
-        default=256,
-        help="KV cache chunk size. It should be a multiple of 256",
-        choices=None,
-        nargs=None,
-        element_type=None,
-    ),
-    "inference_dynamic_batching_max_requests_override": MegatronArgMetadata(
-        arg_type=int,
-        default=None,
         help=(
-            "If set, this overrides the max requests as computed from"
-            " `--inference-dynamic-batching-buffer-overflow-factor`."
+            "Amount of on-GPU memory allocated for the KV cache. The total amount of"
+            " memory allocated for the KV cache (CPU + GPU memory) depends on the value"
+            " set for the unified virtual memory (UVM) level (via"
+            " `--inference-dynamic-batching-unified-memory-level`).If the UVM level is"
+            " 0, then only GPU memory is used and the total memory equals"
+            " `buffer_size_gb`. If the UVM level is 1, then additional memory is"
+            " utilized on the CPU and the total memory equals `buffer_size_gb +"
+            " paused_buffer_size_gb`."
         ),
         choices=None,
         nargs=None,
         element_type=None,
     ),
-    "inference_dynamic_batching_max_tokens_override": MegatronArgMetadata(
+    "inference_dynamic_batching_cuda_graph_max_tokens": MegatronArgMetadata(
+        arg_type=int,
+        default=16384,
+        help="Maximum number of tokens to capture in a cuda graph.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "inference_dynamic_batching_cuda_graph_mixed_prefill_count": MegatronArgMetadata(
+        arg_type=int,
+        default=16,
+        help="Number of mixed prefill requests to capture in a cuda graph.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "inference_dynamic_batching_max_requests": MegatronArgMetadata(
         arg_type=int,
         default=None,
         help=(
-            "If set, this overrides the max tokens as computed from"
-            " `--inference-dynamic-batching-buffer-overflow-factor`."
+            "Override the inference context's `max_requests`. By default,"
+            " `max_requests` is set to the number of blocks in the context's memory"
+            " buffer."
         ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "inference_dynamic_batching_max_tokens": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Override the inference context's default `max_tokens`.",
         choices=None,
         nargs=None,
         element_type=None,
@@ -1687,10 +2349,69 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=16,
         help=(
-            "Maximum number of cuda graphs to capture, where the cuda graph batch sizes range from"
-            " 1 to `max_requests`. (See `dynamic_context.py` for details on how `max_requests` is"
-            " computed). Due to rounding, the actual number of cuda graphs may not equal this"
-            " argument."
+            "Maximum number of cuda graphs to capture, where the cuda graph batch sizes"
+            " range from 1 to `max_requests`. (See `dynamic_context.py` for details on"
+            " how `max_requests` is computed). Due to rounding, the actual number of"
+            " cuda graphs may not equal this argument."
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "inference_dynamic_batching_paused_buffer_size_gb": MegatronArgMetadata(
+        arg_type=float,
+        default=None,
+        help=(
+            "Amount of memory reserved for paused requests in the dynamic inference"
+            " context. Active requests are paused when there are not enough active"
+            " blocks available to continue generating a request."
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "inference_dynamic_batching_track_paused_request_events": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Track paused request ids by adding 'paused' events to each request's event"
+            " history. This has a very minor impact on latency."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "inference_dynamic_batching_unified_memory_level": MegatronArgMetadata(
+        arg_type=int,
+        default=0,
+        help=(
+            "Set unified memory usage within the dynamic inference context. The levels"
+            " are: 0) no unified memory, 1) allocate `memory_buffer` in unified memory."
+            " Eventually, additional levels will be included to control other tensors"
+            " within the context."
+        ),
+        choices=(0, 1),
+        nargs=None,
+        element_type=None,
+    ),
+    "inference_fuse_tp_communication": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Use the fused communication kernel for tensor parallelism during"
+            " inference. This kernel fuses reduce-scatter + residual-add + rms-norm +"
+            " all-gather into one operation."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "inference_logging_step_interval": MegatronArgMetadata(
+        arg_type=int,
+        default=0,
+        help=(
+            "Step interval for logging inference metrics. Default to 0 to disable"
+            " inference logging."
         ),
         choices=None,
         nargs=None,
@@ -1699,7 +2420,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "inference_max_batch_size": MegatronArgMetadata(
         arg_type=int,
         default=8,
-        help="Maximum number of requests for inference.",
+        help="Maximum batch size for inference.",
         choices=None,
         nargs=None,
         element_type=None,
@@ -1716,6 +2437,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help="Use a random number generator configured for inference.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "inference_wandb_logging": MegatronArgMetadata(
+        arg_type=None,
+        default=False,
+        help="Enable inference wandb logging.",
         choices=None,
         nargs=0,
         element_type=None,
@@ -1740,7 +2469,12 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         element_type=None,
     ),
     "init_model_with_meta_device": MegatronArgMetadata(
-        arg_type=bool, default=False, help=None, choices=None, nargs=0, element_type=None
+        arg_type=bool,
+        default=False,
+        help=None,
+        choices=None,
+        nargs=0,
+        element_type=None,
     ),
     "initial_loss_scale": MegatronArgMetadata(
         arg_type=float,
@@ -1754,8 +2488,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=1,
         help=(
-            "The number of ranks initially executing the workload. The remaining ranks from the"
-            " allocation are set aside as warm reserve."
+            "The number of ranks initially executing the workload. The remaining ranks"
+            " from the allocation are set aside as warm reserve."
         ),
         choices=None,
         nargs=None,
@@ -1820,7 +2554,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "inprocess_last_call_wait": MegatronArgMetadata(
         arg_type=float,
         default=1,
-        help="Time interval (in seconds) for other ranks to report concurrent terminal failures.",
+        help=("Time interval (in seconds) for other ranks to report concurrent terminal failures."),
         choices=None,
         nargs=None,
         element_type=None,
@@ -1900,7 +2634,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "iterations_to_skip": MegatronArgMetadata(
         arg_type=list,
         default=[],
-        help="List of iterations to skip, empty by default.",
+        help="List of iterations to skip during training, empty by default.",
         choices=None,
         nargs="+",
         element_type=int,
@@ -1911,6 +2645,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help="If set, keep the fp8 transpose cache when using Megatron FSDP.",
         choices=None,
         nargs=0,
+        element_type=None,
+    ),
+    "kitchen_attention_backend": MegatronArgMetadata(
+        arg_type=str,
+        default="sdpa",
+        help="The backend to use for kitchen attention. The default is 'fa'.",
+        choices=("fa", "sdpa"),
+        nargs=None,
         element_type=None,
     ),
     "kitchen_config_file": MegatronArgMetadata(
@@ -1926,7 +2668,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "kitchen_recipe_number": MegatronArgMetadata(
         arg_type=int,
         default=None,
-        help="Use a default kitchen recipe for all layers as defined by QAT_PARAMS index",
+        help=(
+            "Use a default kitchen recipe for all linear layers as defined by"
+            " QAT_PARAMS index. The argument has no effect on attention layers."
+        ),
         choices=None,
         nargs=None,
         element_type=None,
@@ -1950,14 +2695,111 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "langrl_env_config": MegatronArgMetadata(
+        arg_type=str,
+        default=None,
+        help="Path to YAML config file for RL environment configuration.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "langrl_external_server": MegatronArgMetadata(
+        arg_type=None,
+        default=False,
+        help=None,
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "langrl_inference_server_conversation_template": MegatronArgMetadata(
+        arg_type=str,
+        default=None,
+        help="Conversation template, if using a chat server.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "langrl_inference_server_type": MegatronArgMetadata(
+        arg_type=str,
+        default="inplace_megatron",
+        help="Type of inference server to use.",
+        choices=("inplace_megatron", "inplace_megatron_chat"),
+        nargs=None,
+        element_type=None,
+    ),
     "lazy_mpu_init": MegatronArgMetadata(
         arg_type=bool,
         default=None,
         help=(
-            "If set to True, initialize_megatron() skips DDP initialization and returns function to"
-            " complete it instead. Also turns on --use-cpu-initialization flag. This is for"
-            " external DDP manager."
+            "If set to True, initialize_megatron() skips DDP initialization and returns"
+            " function to complete it instead. Also turns on --use-cpu-initialization"
+            " flag. This is for external DDP manager."
         ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "legacy_tokenizer": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="To use Megatron-LM legacy tokenizer system.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "linear_attention_freq": MegatronArgMetadata(
+        arg_type=None,
+        default=None,
+        help=(
+            "Frequency between LA (linear attention) layers and SDPA (scaled"
+            " dot-product attention) layers. Accepts either: - An integer N: Represents"
+            " a (N-1):N ratio, meaning (N-1) LA layers for every 1 SDPA layer - A"
+            " string containing a Python list expression that defines a custom pattern,"
+            ' e.g.: "([1]*3+[0]*1)*3" evaluates to [1,1,1,0,1,1,1,0,1,1,1,0] where 1'
+            " indicates an LA layer and 0 indicates a SDPA layer. Examples:"
+            ' "([0]+[1]*23)": 1 SDPA layer followed by 23 LA layers, "([1]*3+[0]*2)*2":'
+            " Three LA layers followed by two SDPA layers, repeated twice."
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "linear_conv_kernel_dim": MegatronArgMetadata(
+        arg_type=int,
+        default=4,
+        help="Conv kernel dimension for the gated delta net.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "linear_key_head_dim": MegatronArgMetadata(
+        arg_type=int,
+        default=128,
+        help="Query and key head dimension for the gated delta net.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "linear_num_key_heads": MegatronArgMetadata(
+        arg_type=int,
+        default=16,
+        help="Number of query and key heads for the gated delta net.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "linear_num_value_heads": MegatronArgMetadata(
+        arg_type=int,
+        default=32,
+        help="Number of value and gate heads for the gated delta net.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "linear_value_head_dim": MegatronArgMetadata(
+        arg_type=int,
+        default=128,
+        help="Value and gate head dimension for the gated delta net.",
         choices=None,
         nargs=None,
         element_type=None,
@@ -1972,18 +2814,12 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     ),
     "load_main_params_from_ckpt": MegatronArgMetadata(
         arg_type=bool,
-        default=None,
-        help="Load main parameters from checkpoint directly.",
-        choices=None,
-        nargs=0,
-        element_type=None,
-    ),
-    "load_model_opt_format": MegatronArgMetadata(
-        arg_type=bool,
         default=False,
         help=(
-            "Load a checkpoint for TensorRT model optimizer (nvidia-modelopt).This function can"
-            " also be used to load NeMo .nemo sharded checkpoints."
+            "Load main parameters from checkpoint. When loading a model from a"
+            " checkpoint without loading the optimizer, the model parameters are"
+            " updated but for fp16 optimizer with main parameters, the main parameters"
+            " need to also be updated."
         ),
         choices=None,
         nargs=0,
@@ -1997,10 +2833,18 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "log_device_memory_used": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Log device memory used (as reported by nvidia-smi).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "log_energy": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="If set, log energy consumption (in Joules)",
+        help="If set, log energy consumption (in Joules).",
         choices=None,
         nargs=0,
         element_type=None,
@@ -2019,6 +2863,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help="Disable loss-scale logging to tensorboard.",
         choices=None,
         nargs=0,
+        element_type=None,
+    ),
+    "log_max_attention_logit": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Enable max attention logit logging to tensorboard.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "log_memory_interval": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Report memory interval.",
+        choices=None,
+        nargs=None,
         element_type=None,
     ),
     "log_memory_to_tensorboard": MegatronArgMetadata(
@@ -2108,8 +2968,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=float,
         default=None,
         help=(
-            "Static loss scaling, positive power of 2 values can improve fp16 convergence. If None,"
-            " dynamicloss scaling is used."
+            "Static loss scaling, positive power of 2 values can improve fp16"
+            " convergence. If None, dynamicloss scaling is used."
         ),
         choices=None,
         nargs=None,
@@ -2127,8 +2987,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=float,
         default=None,
         help=(
-            "Initial learning rate. Depending on decay style and initial warmup, the learning rate"
-            " at each iteration would be different."
+            "Initial learning rate. Depending on decay style and initial warmup, the"
+            " learning rate at each iteration would be different."
         ),
         choices=None,
         nargs=None,
@@ -2137,9 +2997,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "lr_decay_iters": MegatronArgMetadata(
         arg_type=int,
         default=None,
-        help=(
-            "number of iterations to decay learning rate over, If None defaults to `--train-iters`"
-        ),
+        help=("number of iterations to decay learning rate over, If None defaults to train iters"),
         choices=None,
         nargs=None,
         element_type=None,
@@ -2147,7 +3005,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "lr_decay_samples": MegatronArgMetadata(
         arg_type=int,
         default=None,
-        help="number of samples to decay learning rate over, If None defaults to `--train-samples`",
+        help=("number of samples to decay learning rate over, If None defaults to train samples"),
         choices=None,
         nargs=None,
         element_type=None,
@@ -2171,7 +3029,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "lr_warmup_init": MegatronArgMetadata(
         arg_type=float,
         default=0.0,
-        help="Initial value for learning rate warmup. The scheduler starts warmup from this value.",
+        help=(
+            "Initial value for learning rate warmup. The scheduler starts warmup from this value."
+        ),
         choices=None,
         nargs=None,
         element_type=None,
@@ -2236,8 +3096,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=128,
         help=(
-            "Pad the vocab size to be divisible by this value.This is added for computational"
-            " efficieny reasons."
+            "Pad the vocab size to be divisible by this value.This is added for"
+            " computational efficieny reasons."
         ),
         choices=None,
         nargs=None,
@@ -2263,8 +3123,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "Number of heads for Mamba layers.If not set, then the number of heads will be"
-            " --hidden-size * expand // --mamba-head-dim"
+            "Number of heads for Mamba layers.If not set, then the number of heads will"
+            " be --hidden-size * expand // --mamba-head-dim"
         ),
         choices=None,
         nargs=None,
@@ -2282,11 +3142,12 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Disable the threshold-based default garbage collector and trigger the garbage"
-            " collection manually. Manual garbage collection helps to align the timing of the"
-            " collection across ranks which mitigates the impact of CPU-associated jitters. When"
-            " the manual gc is enabled, garbage collection is performed only at the start and the"
-            " end of the validation routine by default."
+            "Disable the threshold-based default garbage collector and trigger the"
+            " garbage collection manually. Manual garbage collection helps to align the"
+            " timing of the collection across ranks which mitigates the impact of"
+            " CPU-associated jitters. When the manual gc is enabled, garbage collection"
+            " is performed only at the start and the end of the validation routine by"
+            " default."
         ),
         choices=None,
         nargs=0,
@@ -2296,8 +3157,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=True,
         help=(
-            "When using manual garbage collection, disable garbage collection at the start and the"
-            " end of each evaluation run."
+            "When using manual garbage collection, this controls garbage collection at"
+            " the start and the end of each evaluation run."
         ),
         choices=None,
         nargs=0,
@@ -2307,8 +3168,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=0,
         help=(
-            "Training step interval to trigger manual garbage collection. When the value is set to"
-            " 0, garbage collection is not triggered between training steps."
+            "Training step interval to trigger manual garbage collection. Values > 0"
+            " will trigger garbage collections between training steps."
         ),
         choices=None,
         nargs=None,
@@ -2356,6 +3217,18 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "max_seqlen_per_dp_cp_rank": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help=(
+            "Maximum sequence length per DPxCP rank. This is used to calculate the"
+            " number of sub-samples assigned to each DPxCP rank when using Hybrid"
+            " Context Parallel."
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "max_tokens_to_oom": MegatronArgMetadata(
         arg_type=int,
         default=12000,
@@ -2387,8 +3260,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "Batch size per model instance (local batch size). Global batch size is local batch"
-            " size times data parallel size times number of micro batches."
+            "Batch size per model instance (local batch size). Global batch size is"
+            " local batch size times data parallel size times number of micro batches."
         ),
         choices=None,
         nargs=None,
@@ -2421,7 +3294,15 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "min_lr": MegatronArgMetadata(
         arg_type=float,
         default=0.0,
-        help="Minimum value for learning rate. The schedulerclip values below this threshold.",
+        help=("Minimum value for learning rate. The schedulerclip values below this threshold."),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "min_offloaded_tensor_size": MegatronArgMetadata(
+        arg_type=int,
+        default=1048576,
+        help="The minimum size of the tensor to be offloaded.",
         choices=None,
         nargs=None,
         element_type=None,
@@ -2429,7 +3310,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "mlp_chunks_for_prefill": MegatronArgMetadata(
         arg_type=int,
         default=1,
-        help="Number of chunks along sequence dimension for MLP computation during prefill",
+        help=("Number of chunks along sequence dimension for MLP computation during prefill"),
         choices=None,
         nargs=None,
         element_type=None,
@@ -2446,8 +3327,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Skip data loading and validation and opt for artificial generation of mock data when"
-            " an implementation is available."
+            "Skip data loading and validation and opt for artificial generation of mock"
+            " data when an implementation is available."
         ),
         choices=None,
         nargs=0,
@@ -2456,7 +3337,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "model_parallel_size": MegatronArgMetadata(
         arg_type=int,
         default=None,
-        help="Old model parallel argument, do not use. Use --tensor-model-parallel-size instead.",
+        help=("Old model parallel argument, do not use. Use --tensor-model-parallel-size instead."),
         choices=None,
         nargs=None,
         element_type=None,
@@ -2472,7 +3353,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "moe_aux_loss_coeff": MegatronArgMetadata(
         arg_type=list,
         default=0.0,
-        help="Scaling coefficient for the aux loss: a starting value of 1e-2 is recommended.",
+        help=("Scaling coefficient for the aux loss: a starting value of 1e-2 is recommended."),
         choices=None,
         nargs="+",
         element_type=float,
@@ -2488,10 +3369,17 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "moe_enable_deepep": MegatronArgMetadata(
         arg_type=bool,
         default=False,
+        help="DEPRECATED: Please use --moe-flex-dispatcher-backend=deepep instead.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "moe_enable_routing_replay": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
         help=(
-            "[Experimental] Enable DeepSeek/DeepEP for efficient token dispatching and combine in"
-            " MoE models. Only works with flex token dispatcher by setting"
-            " --moe-token-dispatcher-type=flex."
+            "Enable routing replay for MoE routers. When enabled, the router will use a"
+            " pre-defined routing table instead of computing it on the fly."
         ),
         choices=None,
         nargs=0,
@@ -2500,7 +3388,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "moe_expert_capacity_factor": MegatronArgMetadata(
         arg_type=float,
         default=None,
-        help="The capacity factor for each expert, None means no token will be dropped.",
+        help=("The capacity factor for each expert, None means no token will be dropped."),
         choices=None,
         nargs=None,
         element_type=None,
@@ -2517,10 +3405,21 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "The hidden size of each expert's feed-forward network (ffn). If not specified,"
-            " defaults to the ffn_hidden_size."
+            "The hidden size of each expert's feed-forward network (ffn). If not"
+            " specified, defaults to the ffn_hidden_size."
         ),
         choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "moe_flex_dispatcher_backend": MegatronArgMetadata(
+        arg_type=str,
+        default="deepep",
+        help=(
+            'The backend to use for flex token dispatcher. The default is "deepep".'
+            ' Options are "deepep" and "hybridep".'
+        ),
+        choices=("deepep", "hybridep"),
         nargs=None,
         element_type=None,
     ),
@@ -2528,18 +3427,34 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "When there are multiple experts per rank, launch multiple local GEMM kernels in"
-            " multiple streams to improve the utilization and performance with GroupedLinear in"
-            " TransformerEngine."
+            "When there are multiple experts per rank, launch multiple local GEMM"
+            " kernels in multiple streams to improve the utilization and performance"
+            " with GroupedLinear in TransformerEngine."
         ),
         choices=None,
         nargs=0,
         element_type=None,
     ),
+    "moe_hybridep_num_sms": MegatronArgMetadata(
+        arg_type=int,
+        default=16,
+        help="Number of SMs to use for HybridEP.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "moe_input_jitter_eps": MegatronArgMetadata(
         arg_type=float,
         default=None,
-        help="Add noise to the input tensor by applying jitter with a specified epsilon value.",
+        help=("Add noise to the input tensor by applying jitter with a specified epsilon value."),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "moe_latent_size": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help=("Latent projection dimension for MoE. If None, MoE latent projections are not used."),
         choices=None,
         nargs=None,
         element_type=None,
@@ -2548,13 +3463,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=None,
         default=1,
         help=(
-            "Frequency between MoE layers and Dense layers. Accepts either: - An integer N:"
-            " Represents a 1:N ratio, meaning one expert layer for every N-1 dense layers - A"
-            " string containing a Python list expression that defines a custom pattern, e.g.:"
-            ' "([1]*3+[0]*1)*3" evaluates to [1,1,1,0,1,1,1,0,1,1,1,0] where 1 indicates an expert'
-            ' layer and 0 indicates a dense layer. Examples: "([0]+[1]*23)": 1 dense layer followed'
-            ' by 23 experts layers, "([1]*3+[0]*2)*2": Three expert layers followed by two dense'
-            " layers, repeated twice."
+            "Frequency between MoE layers and Dense layers. Accepts either: - An"
+            " integer N: Represents a 1:N ratio, meaning one expert layer for every N-1"
+            " dense layers - A string containing a Python list expression that defines"
+            ' a custom pattern, e.g.: "([1]*3+[0]*1)*3" evaluates to'
+            " [1,1,1,0,1,1,1,0,1,1,1,0] where 1 indicates an expert layer and 0"
+            ' indicates a dense layer. Examples: "([0]+[1]*23)": 1 dense layer followed'
+            ' by 23 expert layers, "([1]*3+[0]*2)*2": Three expert layers followed by'
+            " two dense layers, repeated twice."
         ),
         choices=None,
         nargs=None,
@@ -2564,8 +3480,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Enable checkpointing for moe_layer, should be used when memory is not sufficient."
-            ' Deprecated. Use "--recompute-granularity selective --recompute-modules moe" instead.'
+            "Enable checkpointing for moe_layer, should be used when memory is not"
+            ' sufficient. Deprecated. Use "--recompute-granularity selective'
+            ' --recompute-modules moe" instead.'
         ),
         choices=None,
         nargs=0,
@@ -2575,8 +3492,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Pads the input for each expert to match the expert capacity length, effective only"
-            " after the --moe-expert-capacity-factor is set."
+            "Pads the input for each expert to match the expert capacity length,"
+            " effective only after the --moe-expert-capacity-factor is set."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "moe_pad_experts_for_cuda_graph_inference": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "some MoE routers have a D2H sync that will break cuda graphs.  If this"
+            " flag is set the router will switch to dropping and padding during decode"
+            " time which does not have a D2H sync. The capacity factor is set to the"
+            " max that an expert could see during inference so no tokens are actually"
+            " dropped."
         ),
         choices=None,
         nargs=0,
@@ -2585,7 +3516,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "moe_per_layer_logging": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="Enable per-layer logging for MoE, currently supports auxiliary loss and z loss.",
+        help=("Enable per-layer logging for MoE, currently supports auxiliary loss and z loss."),
         choices=None,
         nargs=0,
         element_type=None,
@@ -2602,11 +3533,12 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=float,
         default=0.001,
         help=(
-            "Expert bias update rate in the aux-loss-free load balancing strategy. The expert bias"
-            " is updated based on the number of assigned tokens to each expert in a global batch,"
-            " where the bias is increased for the experts with less assigned tokens and decreased"
-            " for the experts with more assigned tokens. The default value 1e-3 is same as that"
-            " used in DeepSeekV3."
+            "Expert bias update rate in the aux-loss-free load balancing strategy. The"
+            " expert bias is updated based on the number of assigned tokens to each"
+            " expert in a global batch, where the bias is increased for the experts"
+            " with less assigned tokens and decreased for the experts with more"
+            " assigned tokens. The default value 1e-3 is same as that used in"
+            " DeepSeekV3."
         ),
         choices=None,
         nargs=None,
@@ -2616,9 +3548,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default=None,
         help=(
-            "Data type for routing computation and expert output weighted averaging. Fp32/fp64"
-            " enhances numerical stability, especially with numerous experts. The perf impact"
-            " should be negligible when used with permute fusion. None means no changes for dtype."
+            "Data type for routing computation and expert output weighted averaging."
+            " Fp32/fp64 enhances numerical stability, especially with numerous experts."
+            " The perf impact should be negligible when used with permute fusion. None"
+            " means no changes for dtype."
         ),
         choices=("fp32", "fp64"),
         nargs=None,
@@ -2628,9 +3561,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "TopK routing with dynamic expert bias in the aux-loss-free load balancing strategy."
-            " The routing decision is based on the sum of the routing scores and the expert bias."
-            " See https://arxiv.org/abs/2408.15664 for details."
+            "TopK routing with dynamic expert bias in the aux-loss-free load balancing"
+            " strategy. The routing decision is based on the sum of the routing scores"
+            " and the expert bias. See https://arxiv.org/abs/2408.15664 for details."
         ),
         choices=None,
         nargs=0,
@@ -2640,9 +3573,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "[Experimental] Force override routing to balance token distribution using random"
-            " logits for MoE routers, supporting naive top-k and group-limited top-k. This"
-            " experimental feature is for benchmarking purposes only!"
+            "[Experimental] Force override routing to balance token distribution using"
+            " random logits for MoE routers, supporting naive top-k and group-limited"
+            " top-k. This experimental feature is for benchmarking purposes only!"
         ),
         choices=None,
         nargs=0,
@@ -2652,8 +3585,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Enable fusion for MoE TopK routing and aux-loss computation. This is only supported in"
-            " TransformerEngine 2.7.0 and above."
+            "Enable fusion for MoE TopK routing and aux-loss computation. This is only"
+            " supported in TransformerEngine 2.7.0 and above."
         ),
         choices=None,
         nargs=0,
@@ -2671,13 +3604,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=list,
         default="aux_loss",
         help=(
-            'Determines the load balancing strategy for the router. "aux_loss" corresponds to the'
-            ' load balancing loss used in GShard and SwitchTransformer; "seq_aux_loss" corresponds'
-            " to the load balancing loss used in DeepSeekV2, which computes the loss for each"
-            ' individual sample; "sinkhorn" corresponds to the balancing algorithm used in S-BASE,'
-            ' and "none" implies no load balancing. The default is "aux_loss".'
+            'Determines the load balancing strategy for the router. "aux_loss"'
+            " corresponds to the load balancing loss used in GShard and"
+            ' SwitchTransformer; "seq_aux_loss" corresponds to the load balancing loss'
+            " used in DeepSeekV2, which computes the loss for each individual sample;"
+            ' "sinkhorn" corresponds to the balancing algorithm used in S-BASE, and'
+            ' "none" implies no load balancing. The default is "aux_loss".'
         ),
-        choices=("aux_loss", "seq_aux_loss", "sinkhorn", "none"),
+        choices=("aux_loss", "seq_aux_loss", "global_aux_loss", "sinkhorn", "none"),
         nargs="+",
         element_type=str,
     ),
@@ -2685,15 +3619,16 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "Number of groups to divide experts into for group-limited routing. When using"
-            " group-limited routing: 1) Experts are divided into equal-sized groups, 2) For each"
-            " token, a subset of groups are selected based on routing scores (sum of top-2 expert"
-            " scores within each group), 3) From these selected groups, moe_router_topk experts are"
-            " chosen.Two common use cases: 1) Device-limited routing: Set equal to expert parallel"
-            " size (EP) to limit each token to experts on a subset of devices (See DeepSeek-V2:"
-            " https://arxiv.org/pdf/2405.04434) 2) Node-limited routing: Set equal to number of"
-            " nodes in EP group to limit each token to experts on a subset of nodes (See"
-            " DeepSeek-V3: https://arxiv.org/pdf/2412.19437)"
+            "Number of groups to divide experts into for group-limited routing. When"
+            " using group-limited routing: 1) Experts are divided into equal-sized"
+            " groups, 2) For each token, a subset of groups are selected based on"
+            " routing scores (sum of top-2 expert scores within each group), 3) From"
+            " these selected groups, moe_router_topk experts are chosen.Two common use"
+            " cases: 1) Device-limited routing: Set equal to expert parallel size (EP)"
+            " to limit each token to experts on a subset of devices (See DeepSeek-V2:"
+            " https://arxiv.org/pdf/2405.04434) 2) Node-limited routing: Set equal to"
+            " number of nodes in EP group to limit each token to experts on a subset of"
+            " nodes (See DeepSeek-V3: https://arxiv.org/pdf/2412.19437)"
         ),
         choices=None,
         nargs=None,
@@ -2703,10 +3638,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Pad the routing_map to make sure the number of tokens each expert received is a"
-            " multiple of 16/32 for FP8 precision. It is suggested to enable this for dropless"
-            " training with FP8 precision when num_local_experts > 1. This is a more efficient way"
-            " to pad for FP8 which eliminates the explicit padding in the GroupedMLP layer."
+            "[Compatibility alias for --moe-router-padding-for-quantization] Enabling"
+            " this will also enable --moe-router-padding-for-quantization."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "moe_router_padding_for_quantization": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Pad the routing_map to make sure the number of tokens each expert received"
+            " is a multiple of 16/32 for FP8/FP4 precision. It is suggested to enable"
+            " this for dropless training with FP8/FP4 precision when num_local_experts"
+            " > 1. This is a more efficient way to pad for FP8/FP4 which eliminates the"
+            " explicit padding in the GroupedMLP layer."
         ),
         choices=None,
         nargs=0,
@@ -2716,8 +3663,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Enable pre-softmax routing for MoE, which means softmax is before the top-k selection."
-            " By default, softmax is done after top-k."
+            "Enable pre-softmax routing for MoE, which means softmax is before the"
+            " top-k selection. By default, softmax is done after top-k."
         ),
         choices=None,
         nargs=0,
@@ -2744,19 +3691,37 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         default=None,
         help=(
             "Scaling factor for routing score in top-k selection, only works when"
-            " --moe-router-pre-softmax enabled. Defaults to None, which means no scaling."
+            " --moe-router-pre-softmax enabled. Defaults to None, which means no"
+            " scaling."
         ),
         choices=None,
         nargs=None,
+        element_type=None,
+    ),
+    "moe_shared_expert_gate": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Enable gate for shared expert. Only effective when"
+            " moe-shared-expert-intermediate-size is set."
+        ),
+        choices=None,
+        nargs=0,
         element_type=None,
     ),
     "moe_shared_expert_intermediate_size": MegatronArgMetadata(
         arg_type=int,
         default=None,
         help=(
-            'Shared expert total ffn hidden size. It should be equal to "num_shared_experts *'
-            ' ffn_size_of_each_shared_expert" if there are multiple shared experts. None means no'
-            " shared expert."
+            "Shared expert total ffn hidden size. It should be equal to"
+            ' "num_shared_experts * ffn_size_of_each_shared_expert" if there are'
+            " multiple shared experts. None means no shared expert. By default, the"
+            " shared experts execute before the router. However, when"
+            " --moe-shared-expert-overlap or --overlap-moe-expert-parallel-comm is set,"
+            " the shared experts execute after the router, before the routed experts."
+            " This makes the gradients from the router and the shared experts added in"
+            " different orders to the hidden_states, causing minor numerical"
+            " differences in the hidden_states gradient."
         ),
         choices=None,
         nargs=None,
@@ -2766,9 +3731,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Enable overlapping between shared expert computations and dispatcher communications."
-            " Without this, the shared epxerts execute after the routed experts. Only effective"
-            " when moe-shared-expert-intermediate-size is set."
+            "Enable overlapping between shared expert computations and dispatcher"
+            " communications. Without this, the shared experts execute before the"
+            " router. Only effective when moe-shared-expert-intermediate-size is set."
         ),
         choices=None,
         nargs=0,
@@ -2778,10 +3743,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default="allgather",
         help=(
-            "The type of token dispatcher to use. The default is 'allgather'. Options are"
-            " 'allgather', 'alltoall'. We recommend using 'alltoall' when applying expert"
-            " parallelism. For more information, please refer to the documentation in"
-            " core/moe/README."
+            "The type of token dispatcher to use. The default is 'allgather'. Options"
+            " are 'allgather', 'alltoall'. We recommend using 'alltoall' when applying"
+            " expert parallelism. For more information, please refer to the"
+            " documentation in core/moe/README."
         ),
         choices=("allgather", "alltoall", "flex"),
         nargs=None,
@@ -2791,9 +3756,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default="probs",
         help=(
-            'The policy to drop tokens. Can be either "probs" or "position". If "probs", the tokens'
-            ' with the lowest probabilities will be dropped. If "position", tokens at the end of'
-            " each batch will be dropped."
+            'The policy to drop tokens. Can be either "probs" or "position". If'
+            ' "probs", the tokens with the lowest probabilities will be dropped. If'
+            ' "position", tokens at the end of each batch will be dropped.'
         ),
         choices=("probs", "position"),
         nargs=None,
@@ -2803,10 +3768,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=1,
         help=(
-            "This param sepecifics how many times smaller is the expert hidden size compared with"
-            " the original dense FFN hidden size. For using granular upcycling strategy, please set"
-            " this param as a positive integer. If this param is set to 1, it means using the"
-            " default upcycling strategy."
+            "This param sepecifics how many times smaller is the expert hidden size"
+            " compared with the original dense FFN hidden size. For using granular"
+            " upcycling strategy, please set this param as a positive integer. If this"
+            " param is set to 1, it means using the default upcycling strategy."
         ),
         choices=None,
         nargs=None,
@@ -2816,8 +3781,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Use legacy GroupedMLP rather than TEGroupedMLP. Note: The legacy one will be"
-            " deprecated soon."
+            "Use legacy GroupedMLP rather than TEGroupedMLP. Note: The legacy one will"
+            " be deprecated soon."
         ),
         choices=None,
         nargs=0,
@@ -2827,10 +3792,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Load a checkpoint of a dense model, convert it into an MoE model, and save the"
-            " converted model to the path specified by --save. Upcycling is implemented on the top"
-            " of distributed checkpointing, so it supports parallel modes different from the dense"
-            " model."
+            "Load a checkpoint of a dense model, convert it into an MoE model, and save"
+            " the converted model to the path specified by --save. Upcycling is"
+            " implemented on the top of distributed checkpointing, so it supports"
+            " parallel modes different from the dense model."
         ),
         choices=None,
         nargs=0,
@@ -2839,7 +3804,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "moe_z_loss_coeff": MegatronArgMetadata(
         arg_type=float,
         default=None,
-        help="Scaling coefficient for the z-loss: a starting value of 1e-3 is recommended.",
+        help=("Scaling coefficient for the z-loss: a starting value of 1e-3 is recommended."),
         choices=None,
         nargs=None,
         element_type=None,
@@ -2872,9 +3837,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=float,
         default=0.1,
         help=(
-            "Scaling factor of Multi-Token Prediction (MTP) loss. We compute the average of the MTP"
-            " losses across all depths, and multiply it the scaling factor to obtain the overall"
-            " MTP loss, which serves as an additional training objective."
+            "Scaling factor of Multi-Token Prediction (MTP) loss. We compute the"
+            " average of the MTP losses across all depths, and multiply it the scaling"
+            " factor to obtain the overall MTP loss, which serves as an additional"
+            " training objective."
         ),
         choices=None,
         nargs=None,
@@ -2884,9 +3850,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "Number of Multi-Token Prediction (MTP) Layers.MTP extends the prediction scope to"
-            " multiple future tokens at each position.This MTP implementation sequentially predict"
-            " additional tokens by using D sequential modules to predict D additional tokens."
+            "Number of Multi-Token Prediction (MTP) Layers.MTP extends the prediction"
+            " scope to multiple future tokens at each position.This MTP implementation"
+            " sequentially predict additional tokens by using D sequential modules to"
+            " predict D additional tokens."
         ),
         choices=None,
         nargs=None,
@@ -2904,10 +3871,74 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "If set, multiple datasets listed in the validation split are evaluated independently"
-            " with a separate loss for each dataset in the list. This argument requires that no"
-            " weights are included in the list"
+            "If set, multiple datasets listed in the validation split are evaluated"
+            " independently with a separate loss for each dataset in the list. This"
+            " argument requires that no weights are included in the list."
         ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "muon_extra_scale_factor": MegatronArgMetadata(
+        arg_type=float,
+        default=1.0,
+        help="Additional scale factor for the muon update",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "muon_fp32_matmul_prec": MegatronArgMetadata(
+        arg_type=str,
+        default="medium",
+        help="FP32 matmul precision for Newton-Schulz iteration",
+        choices=("low", "medium", "high"),
+        nargs=None,
+        element_type=None,
+    ),
+    "muon_momentum": MegatronArgMetadata(
+        arg_type=float,
+        default=0.9,
+        help="Momentum factor for Muon optimizer",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "muon_num_ns_steps": MegatronArgMetadata(
+        arg_type=int,
+        default=5,
+        help="Number of Newton-Schulz steps for Muon optimizer",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "muon_scale_mode": MegatronArgMetadata(
+        arg_type=str,
+        default="spectral",
+        help="Scale mode for Muon optimizer",
+        choices=("spectral", "unit_rms_norm", "shape_scaling"),
+        nargs=None,
+        element_type=None,
+    ),
+    "muon_split_qkv": MegatronArgMetadata(
+        arg_type=bool,
+        default=True,
+        help="Whether to split QKV parameters for Muon optimizer",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "muon_tp_mode": MegatronArgMetadata(
+        arg_type=str,
+        default="blockwise",
+        help="How to perform NS calculation for tensor model parallel weights",
+        choices=("blockwise", "duplicated", "distributed"),
+        nargs=None,
+        element_type=None,
+    ),
+    "muon_use_nesterov": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Whether to use Nesterov-style momentum in the internal SGD",
         choices=None,
         nargs=0,
         element_type=None,
@@ -2916,9 +3947,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "When using symmeric all reduce kernels this will use regular nccl kernels for prefill."
-            " This can be more effecient when prefill is large as the nccl kernels can be more"
-            " bandwith optimized"
+            "When using symmeric all reduce kernels this will use regular nccl kernels"
+            " for prefill. This can be more effecient when prefill is large as the nccl"
+            " kernels can be more bandwith optimized"
         ),
         choices=None,
         nargs=0,
@@ -2928,9 +3959,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default=None,
         help=(
-            "Path to the yaml file with NCCL communicator configurations. The number of min/max"
-            " thread groups and thread group cluster size of each communicator can be configured by"
-            " setting `min_ctas`, `max_ctas`, and `cga_cluster_size`."
+            "Path to the yaml file with NCCL communicator configurations. The number of"
+            " min/max thread groups and thread group cluster size of each communicator"
+            " can be configured by setting `min_ctas`, `max_ctas`, and"
+            " `cga_cluster_size`."
         ),
         choices=None,
         nargs=None,
@@ -2940,9 +3972,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Use the userbuffer registration for DP/FSDP communication buffers.This option will"
-            " reduce GPU SM usage for the DP/FSDP communication,which is improving the performance"
-            " of the overlapped computation."
+            "Use the userbuffer registration for DP/FSDP communication buffers.This"
+            " option will reduce GPU SM usage for the DP/FSDP communication,which is"
+            " improving the performance of the overlapped computation."
         ),
         choices=None,
         nargs=0,
@@ -2968,8 +4000,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Disable using persistent fused layer norm kernel. This kernel supports only a set of"
-            " hidden sizes. Please check persist_ln_hidden_sizes if your hidden size is supported."
+            "Disable using persistent fused layer norm kernel. This kernel supports"
+            " only a set of hidden sizes. Please check persist_ln_hidden_sizes if your"
+            " hidden size is supported."
         ),
         choices=None,
         nargs=0,
@@ -2979,12 +4012,13 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=None,
         default=None,
         help=(
-            "Controls which layers to skip performing Rotary Position Embedding. Accepts either: -"
-            " An integer N: Represents a 1:N ratio, meaning RoPE is skipped every N-1 layers. - A"
-            " string containing a Python list expression that defines a custom pattern, e.g.:"
-            ' "([0]*3+[1]*1)*3" evaluates to [0,0,0,1,0,0,0,1,0,0,0,1] where 1 indicates no-rope'
-            " layer. This patten is equivalent to --no-rope-freq=4.By default this is disabled and"
-            " set to None, indicating RoPE will be performedon every layer."
+            "Controls which layers to skip performing Rotary Position Embedding."
+            " Accepts either: - An integer N: Represents a 1:N ratio, meaning RoPE is"
+            " skipped every N-1 layers. - A string containing a Python list expression"
+            ' that defines a custom pattern, e.g.: "([0]*3+[1]*1)*3" evaluates to'
+            " [0,0,0,1,0,0,0,1,0,0,0,1] where 1 indicates no-rope layer. This patten is"
+            " equivalent to --no-rope-freq=4.By default this is disabled and set to"
+            " None, indicating RoPE will be performedon every layer."
         ),
         choices=None,
         nargs=None,
@@ -3006,16 +4040,31 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "no_weight_decay_cond_type": MegatronArgMetadata(
+        arg_type=str,
+        default=None,
+        help=(
+            "Type of no weight decay condition. Choices: None (default): apply weight"
+            ' decay to 1D weights and biases."apply_wd_to_qk_layernorm": additionally'
+            " apply weight decay to qk layernorm as a special case.DEPRECATED. Please"
+            " use --apply-wd-to-qk-layernorm instead. "
+        ),
+        choices=("apply_wd_to_qk_layernorm",),
+        nargs=None,
+        element_type=None,
+    ),
     "non_persistent_ckpt_type": MegatronArgMetadata(
         arg_type=str,
         default=None,
         help=(
-            'Type of non-persistent model checkpoints. "global" - Saved as a standard checkpoint'
-            ' (e.g., on Lustre) with old checkpoints being removed. "local" - Each rank saves a'
-            " portion of the checkpoint locally (e.g., on SSD/ramdisk). None - No non-persistent"
-            " checkpointing (default option)."
+            'Type of non-persistent model checkpoints. "global" - Saved as a standard'
+            ' checkpoint (e.g., on Lustre) with old checkpoints being removed. "local"'
+            " - [TBD] Each rank saves a portion of the checkpoint locally (e.g., on"
+            ' SSD/ramdisk). "in_memory" - [TBD] A special kind of local checkpoint that'
+            " avoids serialization. None - No non-persistent checkpointing (default"
+            " option)."
         ),
-        choices=("global", "local", "in_memory", None),
+        choices=("global", "local", "in_memory"),
         nargs=None,
         element_type=None,
     ),
@@ -3137,8 +4186,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=1,
         help=(
-            "Number of layers at start to construct in bf16 when --first-last-layers-bf16 is"
-            " enabled."
+            "Number of layers at start to construct in bf16 when"
+            " --first-last-layers-bf16 is enabled."
         ),
         choices=None,
         nargs=None,
@@ -3179,6 +4228,17 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "offload_modules": MegatronArgMetadata(
+        arg_type=list,
+        default=[],
+        help=(
+            'The submodules to offload its input. Choices: "attn_norm", "qkv_linear",'
+            ' "core_attn", "attn_proj", "mlp_norm", "expert_fc1", "moe_act".'
+        ),
+        choices=None,
+        nargs="*",
+        element_type=str,
+    ),
     "one_logger_async": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -3215,8 +4275,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Use OpenAIs GeLU implementation. This optionshould not be used unless for backward"
-            " compatibilityreasons."
+            "Use OpenAIs GeLU implementation. This optionshould not be used unless for"
+            " backward compatibilityreasons."
         ),
         choices=None,
         nargs=0,
@@ -3226,7 +4286,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default="adam",
         help="Optimizer function",
-        choices=("adam", "sgd"),
+        choices=("adam", "sgd", "muon", "dist_muon"),
         nargs=None,
         element_type=None,
     ),
@@ -3246,12 +4306,27 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "outer_dp_sharding_strategy": MegatronArgMetadata(
+        arg_type=str,
+        default="no_shard",
+        help=(
+            "Sharding strategy for outer data parallel group in Hybrid Sharded Data"
+            ' Parallel (HSDP) mode. Valid values are "no_shard" (DP Replication) and'
+            ' "optim" (Optimizer State Hybrid Sharding). The "optim" option is only'
+            ' supported when --data-parallel-sharding-strategy is "optim_grads_params".'
+            " This option is only effective when Hybrid FSDP is enabled (i.e., when"
+            ' dp_outer_dim is not None). Default: "no_shard".'
+        ),
+        choices=("no_shard", "optim"),
+        nargs=None,
+        element_type=None,
+    ),
     "output_bert_embeddings": MegatronArgMetadata(
         arg_type=bool,
         default=False,
         help=(
-            "Output Bert embeddings (via mean pooling) from model, rather than its binary head"
-            " output or entire hidden batch."
+            "Output Bert embeddings (via mean pooling) from model, rather than its"
+            " binary head output or entire hidden batch."
         ),
         choices=None,
         nargs=0,
@@ -3276,7 +4351,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "overlap_moe_expert_parallel_comm": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="Overlap the EP A2A communication by batch-level overlapping in 1f1b stage.",
+        help=("Overlap the EP A2A communication by batch-level overlapping in 1f1b stage."),
         choices=None,
         nargs=0,
         element_type=None,
@@ -3284,7 +4359,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "overlap_p2p_comm": MegatronArgMetadata(
         arg_type=bool,
         default=True,
-        help="overlap pipeline parallel communication with forward and backward chunks in 1F1B",
+        help=("overlap pipeline parallel communication with forward and backward chunks in 1F1B"),
         choices=None,
         nargs=0,
         element_type=None,
@@ -3317,9 +4392,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Reset the values of the scheduler (learning rate,warmup iterations, minimum learning"
-            " rate, maximum number of iterations, and decay style from input arguments and ignore"
-            " values from checkpoints. Notethat all the above values will be reset."
+            "Reset the values of the scheduler (learning rate, warmup iterations,"
+            " minimum learning rate, maximum number of iterations, and decay style)"
+            " from input arguments and ignore values from checkpoints. Note that all"
+            " the above values will be reset."
         ),
         choices=None,
         nargs=0,
@@ -3329,8 +4405,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "Vocabulary size of the model (padded to be divisible by tensor model parallel size)."
-            " If not provided, it will be automatically calculated from vocab-size."
+            "Vocabulary size of the model (padded to be divisible by tensor model"
+            " parallel size). If not provided, it will be automatically calculated from"
+            " vocab-size."
         ),
         choices=None,
         nargs=None,
@@ -3344,14 +4421,25 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "per_dataset_sequences_path": MegatronArgMetadata(
+        arg_type=None,
+        default=None,
+        help=(
+            "Path to a json file with the sequences per dataset. Check the"
+            " tools/build_sequences_per_dataset.py script to build this file."
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "per_split_data_args_path": MegatronArgMetadata(
         arg_type=str,
         default=None,
         help=(
-            "Path to per-split-data-args. Instead of feeding `--(train|valid|test)-data-path` with"
-            " weighted dataset, we pass in a file path from which we read those arguments. This is"
-            " useful when the list of data is too big. Format is a json file with `train`, `valid,"
-            " `test` keys"
+            "Path to per-split-data-args. Instead of feeding"
+            " `--(train|valid|test)-data-path` with weighted dataset, we pass in a file"
+            " path from which we read those arguments. This is useful when the list of"
+            " data is too big. Format is a json file with `train`, `valid, `test` keys"
         ),
         choices=None,
         nargs=None,
@@ -3361,11 +4449,31 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=True,
         help=(
-            "Do not perform initialization when building model, can reduce startup time when"
-            " definitely loading from a checkpoint"
+            "Do not perform initialization when building model, can reduce startup time"
+            " when definitely loading from a checkpoint"
         ),
         choices=None,
         nargs=0,
+        element_type=None,
+    ),
+    "perform_rl_step": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Use the RL training step.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "phase_transition_iterations": MegatronArgMetadata(
+        arg_type=str,
+        default=None,
+        help=(
+            "Comma-separated list of iterations where phase transitions occur. Requires"
+            " fixed global batch size across phases. Does not support batch size"
+            " ramp-up."
+        ),
+        choices=None,
+        nargs=None,
         element_type=None,
     ),
     "pin_cpu_grads": MegatronArgMetadata(
@@ -3388,8 +4496,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default=None,
         help=(
-            "Select a communicator backend for pipeline parallel communication. If None, the"
-            " default backend will be used."
+            "Select a communicator backend for pipeline parallel communication. If"
+            " None, the default backend will be used."
         ),
         choices=("nccl", "ucc"),
         nargs=None,
@@ -3400,10 +4508,11 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         default=None,
         help=(
             "A string that describes a custom pipeline model parallel layout. e.g.,"
-            ' "E|(t|)*3,m|m||L". E, L, t, m denotes embedding, loss, transformer decoder layer, and'
-            ' mtp layer, respectively. Stages are split by "|". Replicated stages or layers can be'
-            " described with multiplication. Commas can be used cosmetically. Default None is not"
-            " using this argument to set the layout."
+            ' "E|(t|)*3,m|m||L". E, L, t, m denotes embedding, loss, transformer'
+            ' decoder layer, and mtp layer, respectively. Stages are split by "|".'
+            " Replicated stages or layers can be described with multiplication. Commas"
+            " can be used cosmetically. Default None is not using this argument to set"
+            " the layout."
         ),
         choices=None,
         nargs=None,
@@ -3437,10 +4546,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Enable nsys profiling. When using this option, nsys options should be specified in"
-            " commandline. An example nsys commandline is `nsys profile -s none -t nvtx,cuda -o"
-            " <path/to/output_file> --force-overwrite true --capture-range=cudaProfilerApi"
-            " --capture-range-end=stop`."
+            "Enable nsys profiling. When using this option, nsys options should be"
+            " specified in commandline. An example nsys commandline is `nsys profile -s"
+            " none -t nvtx,cuda -o <path/to/output_file> --force-overwrite true"
+            " --capture-range=cudaProfilerApi --capture-range-end=stop`."
         ),
         choices=None,
         nargs=0,
@@ -3474,6 +4583,30 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help="Rank of Query tensor's low rank representation.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "qk_clip": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=("Whether to use qk-clip for training stabilization, strongly recommended for Muon."),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "qk_clip_alpha": MegatronArgMetadata(
+        arg_type=float,
+        default=0.5,
+        help="The balancing alpha for qk-clip.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "qk_clip_threshold": MegatronArgMetadata(
+        arg_type=float,
+        default=100,
+        help="The balancing threshold for qk-clip.",
         choices=None,
         nargs=None,
         element_type=None,
@@ -3521,27 +4654,35 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "quick_geglu": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Use quick geglu activation instead of default gelu",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "rampup_batch_size": MegatronArgMetadata(
-        arg_type=list,
+        arg_type=int,
         default=None,
         help=(
-            "Batch size ramp up with the following values:  --rampup-batch-size <start batch size> "
-            "                      <batch size incerement>                       <ramp-up samples>"
-            " For example:   --rampup-batch-size 16 8 300000 \\    --global-batch-size 1024will"
-            " start with global batch size 16 and over  (1024 - 16) / 8 = 126 intervals will"
-            " increasethe batch size linearly to 1024. In each intervalwe will use approximately"
-            " 300000 / 126 = 2380 samples."
+            "Batch size ramp up with the following values: <start batch size>, <batch"
+            " size increment>, <ramp-up samples> For example: rampup-batch-size = [16,"
+            " 8, 300000] global-batch-size 1024 will start with global batch size 16"
+            " and over (1024 - 16) / 8 = 126 intervals will increase the batch size"
+            " linearly to 1024. In each interval we will use approximately 300000 / 126"
+            " = 2380 samples."
         ),
         choices=None,
-        nargs="*",
-        element_type=str,
+        nargs=3,
+        element_type=None,
     ),
     "recompute_activations": MegatronArgMetadata(
         arg_type=bool,
         default=False,
         help=(
-            "recompute activation to allow for training with larger models, sequences, and batch"
-            " sizes."
+            "recompute activation to allow for training with larger models, sequences,"
+            " and batch sizes."
         ),
         choices=None,
         nargs=0,
@@ -3551,10 +4692,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default=None,
         help=(
-            "Checkpoint activations to allow for training with larger models, sequences, and batch"
-            " sizes. It is supported at two granularities 1) full: whole transformer layer is"
-            " recomputed, 2) selective: submodules set in --recompute-modules are recomputed,"
-            " default is core_attn."
+            "Checkpoint activations to allow for training with larger models,"
+            " sequences, and batch sizes. It is supported at two granularities 1) full:"
+            " whole transformer layer is recomputed, 2) selective: submodules set in"
+            " --recompute-modules are recomputed, default is core_attn."
         ),
         choices=("full", "selective"),
         nargs=None,
@@ -3564,11 +4705,12 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default=None,
         help=(
-            "1) uniform: uniformly divide the total number of Transformer layers and recompute the"
-            " input activation of each divided chunk at specified granularity, 2) recompute the"
-            " input activations of only a set number of individual Transformer layers per pipeline"
-            " stage and do the rest without any recomputing at specified granularitydefault) do not"
-            " apply activations recompute to any layers"
+            "1) uniform: uniformly divide the total number of Transformer layers and"
+            " recompute the input activation of each divided chunk at specified"
+            " granularity, 2) recompute the input activations of only a set number of"
+            " individual Transformer layers per pipeline stage and do the rest without"
+            " any recomputing at specified granularitydefault) do not apply activations"
+            " recompute to any layers"
         ),
         choices=("uniform", "block"),
         nargs=None,
@@ -3580,13 +4722,15 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help=(
             'The submodules to recompute. choices: "core_attn", "moe_act", "layernorm",'
             ' "mla_up_proj",          "mlp", "moe", "shared_experts". default:'
-            ' ["core_attn"]."core_attn": recompute the core attention part of the transformer'
-            ' layer. "moe_act": recompute the MoE MLP activation function. "layernorm": recompute'
-            ' the input_layernorm and pre_mlp_layernorm. "mla_up_proj": recompute the MLA up'
-            ' projection and RoPE applying parts."mlp": recompute the dense MLP layer."moe":'
-            ' recompute the MoE layer."shared_experts": recompute the shared experts in the MoE'
-            ' layer."moe_act", "layernorm", and "mla_up_proj" use output-discarding checkpointing,'
-            ' "core_attn", "mlp", "moe", and "shared_experts" use normal checkpointing.'
+            ' ["core_attn"]."core_attn": recompute the core attention part of the'
+            ' transformer layer. "moe_act": recompute the MoE MLP activation function.'
+            ' "layernorm": recompute the input_layernorm and pre_mlp_layernorm.'
+            ' "mla_up_proj": recompute the MLA up projection and RoPE applying'
+            ' parts."mlp": recompute the dense MLP layer."moe": recompute the MoE'
+            ' layer."shared_experts": recompute the shared experts in the MoE'
+            ' layer."moe_act", "layernorm", and "mla_up_proj" use output-discarding'
+            ' checkpointing, "core_attn", "mlp", "moe", and "shared_experts" use normal'
+            " checkpointing."
         ),
         choices=None,
         nargs="*",
@@ -3596,9 +4740,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "1) uniform: the number of Transformer layers in each uniformly divided recompute unit,"
-            " 2) block: the number of individual Transformer layers to recompute within each"
-            " pipeline stage."
+            "1) uniform: the number of Transformer layers in each uniformly divided"
+            " recompute unit, 2) block: the number of individual Transformer layers to"
+            " recompute within each pipeline stage."
         ),
         choices=None,
         nargs=None,
@@ -3610,6 +4754,18 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help="Record memory history in last rank.",
         choices=None,
         nargs=0,
+        element_type=None,
+    ),
+    "refit_method": MegatronArgMetadata(
+        arg_type=str,
+        default="gloo",
+        help=(
+            "Method to refit the model weights between training and inference models"
+            " during RL. nccl: use NCCLCopyService to refit using NCCL; gloo: use"
+            " GlooCopyService over CPU; "
+        ),
+        choices=("nccl", "gloo"),
+        nargs=None,
         element_type=None,
     ),
     "relative_attention_max_distance": MegatronArgMetadata(
@@ -3650,10 +4806,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "Specifies `J`, the spacing between ranks storing replicas of a given rank's data."
-            " Replicas for rank `n` may be on ranks `n+J`, `n+2J`, ..., or `n-J`, `n-2J`, etc. This"
-            " flag has an effect only if --replication is used. and must be consistent across all"
-            " ranks."
+            "Specifies `J`, the spacing between ranks storing replicas of a given"
+            " rank's data. Replicas for rank `n` may be on ranks `n+J`, `n+2J`, ..., or"
+            " `n-J`, `n-2J`, etc. This flag has an effect only if --replication is"
+            " used. and must be consistent across all ranks."
         ),
         choices=None,
         nargs=None,
@@ -3663,8 +4819,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default="validate_results",
         help=(
-            "Use re-run engine to validate results (default) or to emit stats on variability of"
-            " computations due to non-deterministic algorithms."
+            "Use re-run engine to validate results (default) or to emit stats on"
+            " variability of computations due to non-deterministic algorithms."
         ),
         choices=("disabled", "validate_results", "report_stats"),
         nargs=None,
@@ -3673,7 +4829,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "reset_attention_mask": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="Reset self attention maske after end-of-document token.",
+        help="Reset self attention mask after end-of-document token.",
         choices=None,
         nargs=0,
         element_type=None,
@@ -3721,7 +4877,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "retro_add_retriever": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="Add a retriever to the transformer, for use in pretraining a Retro model.",
+        help=("Add a retriever to the transformer, for use in pretraining a Retro model."),
         choices=None,
         nargs=0,
         element_type=None,
@@ -3786,9 +4942,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=None,
         default=None,
         help=(
-            "Retro project directory, which contains the preprocessed data for pretraining. This"
-            " directory is built during preprocessing (see tools/retro/README.md), and contains"
-            " subdirectories for the chunk database and pretraining neighbors."
+            "Retro project directory, which contains the preprocessed data for"
+            " pretraining. This directory is built during preprocessing (see"
+            " tools/retro/README.md), and contains subdirectories for the chunk"
+            " database and pretraining neighbors."
         ),
         choices=None,
         nargs=None,
@@ -3810,6 +4967,238 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "rl_calculate_intra_group_similarity": MegatronArgMetadata(
+        arg_type=None,
+        default=False,
+        help="If set, calculate the intra-group similarity of rollouts.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "rl_default_temperature": MegatronArgMetadata(
+        arg_type=float,
+        default=1.0,
+        help="Default temperature for model inference.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "rl_default_top_k": MegatronArgMetadata(
+        arg_type=int,
+        default=-1,
+        help="Default top-k for model inference.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "rl_default_top_p": MegatronArgMetadata(
+        arg_type=float,
+        default=0,
+        help="Default top-p for model inference.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "rl_importance_sampling_truncation_coef": MegatronArgMetadata(
+        arg_type=float,
+        default=None,
+        help=(
+            "If --inference-logprobs-is-correction is on and this coefficient is set,"
+            " apply truncation for the IS correction at GRPO loss."
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "rl_inference_expert_model_parallel_size": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Degree of expert model parallelism for inference for RL.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "rl_inference_expert_tensor_model_parallel_size": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help=(
+            "Degree of expert tensor model parallelism for inference for RL. For MoE"
+            " models, this controls the TP size for expert layers specifically."
+            " Defaults to training expert_tensor_parallel_size if not specified."
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "rl_inference_logprobs_is_correction": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=("If set, use inference logprobs in importance sampling correction of the loss."),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "rl_inference_model_unified_memory_level": MegatronArgMetadata(
+        arg_type=int,
+        default=0,
+        help=(
+            "Allocate the separate RL inference model parameters from a unified virtual"
+            " memory (UVM) CUDA mempool. Level 0 disables UVM (default). Level 1"
+            " enables UVM allocation so the inference model weights can be prefetched"
+            " to CPU when idle while keeping CUDA-graph-safe device pointers."
+        ),
+        choices=(0, 1),
+        nargs=None,
+        element_type=None,
+    ),
+    "rl_inference_pipeline_model_parallel_size": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Degree of pipeline model parallelism for inference for RL.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "rl_inference_tensor_model_parallel_size": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Degree of tensor model parallelism for inference for RL.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "rl_offload_inference_model_weights_when_idle": MegatronArgMetadata(
+        arg_type=None,
+        default=False,
+        help=(
+            "When using a separate RL inference model with UVM-enabled parameters,"
+            " prefetch its weights to CPU when not doing rollout inference, and"
+            " prefetch back to GPU right before inference. Requires"
+            " --rl-inference-model-unified-memory-level=1."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "rl_offload_kv_cache_during_training": MegatronArgMetadata(
+        arg_type=None,
+        default=False,
+        help="Offload KV cache to CPU during training to save GPU memory",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "rl_offload_optimizer_during_inference": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=("Offload optimizer state to CPU during inference/rollout to save GPU memory"),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "rl_parallel_generation_tasks": MegatronArgMetadata(
+        arg_type=int,
+        default=512,
+        help="Number of parallel generation tasks for RL inference.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "rl_partial_rollouts": MegatronArgMetadata(
+        arg_type=None,
+        default=False,
+        help="If set, use partial rollouts.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "rl_prompts_per_eval": MegatronArgMetadata(
+        arg_type=int,
+        default=32,
+        help=(
+            "Number of prompts to evaluate for for each RL task.This evaluation can be"
+            " very expensive when using environmentsthat evaluate pass@k so we default"
+            " to a lower number."
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "rl_remove_kv_cache_during_training": MegatronArgMetadata(
+        arg_type=None,
+        default=False,
+        help="Remove KV cache during training to save GPU memory",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "rl_reset_cuda_graphs": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Reset CUDA graphs between inference/training to save GPU memory",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "rl_sequence_packing_algo": MegatronArgMetadata(
+        arg_type=str,
+        default="fifo",
+        help=(
+            "Algorithm for distributing packed bins across ranks. fifo:"
+            " first-in-first-out sequential distribution, round-robin: distribute bins"
+            " cyclically across ranks for better load balancing"
+        ),
+        choices=("fifo", "round-robin"),
+        nargs=None,
+        element_type=None,
+    ),
+    "rl_sequence_packing_max_sequences_per_bin": MegatronArgMetadata(
+        arg_type=int,
+        default=50,
+        help="Maximum number of sequences that can be packed into a single bin. ",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "rl_skip_bos_token": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Skip BOS token at the beginning of the sequences. Default is False.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "rl_training_cuda_graphs": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "If set, do not call `delete_cuda_graphs` or `toggle_cuda_graphs` when the"
+            " inference engine is suspended. Use only when all training and inference"
+            " cudagraphs and the KV cache fit on device."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "rl_use_sequence_packing": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Enable sequence packing",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "rl_verify_model_weights_swap": MegatronArgMetadata(
+        arg_type=None,
+        default=False,
+        help=(
+            "If set, verify that the model weights were correctly transferred by"
+            " comparing forward pass outputs onthe first swap of model weights."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "rope_scaling_factor": MegatronArgMetadata(
         arg_type=float,
         default=8.0,
@@ -3822,8 +5211,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default=None,
         help=(
-            "Type of rope to use. Note that MLA takes yarn by default, and common attention takes"
-            " rope by default."
+            "Type of rope to use. Note that MLA takes yarn by default, and common"
+            " attention takes rope by default."
         ),
         choices=("rope", "yarn"),
         nargs=None,
@@ -3893,6 +5282,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "save_dgrads_interval": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Number of iterations between dgrad saves.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "save_interval": MegatronArgMetadata(
         arg_type=int,
         default=None,
@@ -3905,9 +5302,17 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "Number of iterations between retained checkpoints (othercheckpoints _except the last"
-            " checkpoint_ are automatically deleted)."
+            "Number of iterations between retained checkpoints (other checkpoints"
+            " except the last checkpoint are automatically deleted)."
         ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "save_wgrads_interval": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Number of iterations between wgrad (main_grad) saves.",
         choices=None,
         nargs=None,
         element_type=None,
@@ -3915,7 +5320,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "scatter_gather_tensors_in_pipeline": MegatronArgMetadata(
         arg_type=bool,
         default=True,
-        help="If not set, use scatter/gather to optimize communication of tensors in pipeline.",
+        help=("If not set, use scatter/gather to optimize communication of tensors in pipeline."),
         choices=None,
         nargs=0,
         element_type=None,
@@ -3972,8 +5377,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default=None,
         help=(
-            "IB SHARP can be enabled from only one communication group. By default, it is enabled"
-            " from dp group. Available options: [dp, dp_replica]"
+            "IB SHARP can be enabled from only one communication group. By default, it"
+            " is enabled from dp group. Available options: [dp, dp_replica]"
         ),
         choices=("dp", "dp_replica"),
         nargs=None,
@@ -3991,21 +5396,32 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "If set, bypass the training loop, optionally do evaluation for validation/test, and"
-            " exit."
+            "If set, bypass the training loop, perform evaluation for validation/test, and exit."
         ),
         choices=None,
         nargs=0,
+        element_type=None,
+    ),
+    "softmax_type": MegatronArgMetadata(
+        arg_type=str,
+        default="vanilla",
+        help=(
+            "Type of softmax to use for the attention. Supports both a fixed offset and"
+            " learnable offset."
+        ),
+        choices=("learnable", "vanilla", "off-by-one"),
+        nargs=None,
         element_type=None,
     ),
     "spec": MegatronArgMetadata(
         arg_type=list,
         default=None,
         help=(
-            "Specify the <module_location function_name> pair that returns a spec to customize a"
-            " model, transformer block, or transformer layer, depending on the use case.To use"
-            " local spec specify local as the argument.For more details, see the model class,"
-            " `transformer_block.py`, or `transformer_layer.py`"
+            "Specify the <module_location function_name> pair that returns a spec to"
+            " customize a model, transformer block, or transformer layer, depending on"
+            " the use case.To use local spec specify local as the argument.For more"
+            " details, see the model class, `transformer_block.py`, or"
+            " `transformer_layer.py`"
         ),
         choices=None,
         nargs="*",
@@ -4015,9 +5431,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default=None,
         help=(
-            "Comma-separated list of proportions for training, validation, and test split. For"
-            " example the split `90,5,5` will use 90%% of data for training, 5%% for validation and"
-            " 5%% for test."
+            "Comma-separated list of proportions for training, validation, and test"
+            " split. For example the split `90,5,5` will use 90%% of data for training,"
+            " 5%% for validation and 5%% for test."
         ),
         choices=None,
         nargs=None,
@@ -4058,7 +5474,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "strict_fsdp_dtensor_load": MegatronArgMetadata(
         arg_type=bool,
         default=True,
-        help="Do not strict loading for fsdp_dtensor checkpoint format.",
+        help=(
+            "Whether to enforce strict loading for FSDP DTensor checkpoints. When"
+            " False, allows partial loading."
+        ),
         choices=None,
         nargs=0,
         element_type=None,
@@ -4067,11 +5486,12 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "Specifies the number of elements to communicate at once during FSDP (Fully Sharded"
-            " Data Parallel) operations. This flag also affects FSDP all-gather prefetch behavior."
-            " Setting a larger value increases the communication buffer size, while a smaller value"
-            " disables prefetching and may degrade performance. Adjust this value based on your"
-            " system's memory and performance requirements."
+            "Specifies the number of elements to communicate at once during FSDP (Fully"
+            " Sharded Data Parallel) operations. This flag also affects FSDP all-gather"
+            " prefetch behavior. Setting a larger value increases the communication"
+            " buffer size, while a smaller value disables prefetching and may degrade"
+            " performance. Adjust this value based on your system's memory and"
+            " performance requirements."
         ),
         choices=None,
         nargs=None,
@@ -4097,10 +5517,21 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default=None,
         help=(
-            "What type of symmetric all reduce to use. The default is none which is no use of"
-            " symetric memory"
+            "What type of symmetric all reduce to use. The default is none which is no"
+            " use of symetric memory"
         ),
         choices=("two_shot", "one_shot", "multimem_all_reduce", None),
+        nargs=None,
+        element_type=None,
+    ),
+    "te_precision_config_file": MegatronArgMetadata(
+        arg_type=None,
+        default=None,
+        help=(
+            "Configuration file to select per-module precision overrides. See"
+            " TransformerEngineMixedPrecision.md"
+        ),
+        choices=None,
         nargs=None,
         element_type=None,
     ),
@@ -4108,8 +5539,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Use the Transformer Engine version of the random number generator. Required for CUDA"
-            " graphs support."
+            "Use the Transformer Engine version of the random number generator."
+            " Required for CUDA graphs support."
         ),
         choices=None,
         nargs=0,
@@ -4143,8 +5574,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=1000,
         help=(
-            'Size of the tensorboard queue for pending events and summaries before one of the "add"'
-            " calls forces a flush to disk."
+            "Size of the tensorboard queue for pending events and summaries before one"
+            " of the 'add' calls forces a flush to disk."
         ),
         choices=None,
         nargs=None,
@@ -4154,8 +5585,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=list,
         default=None,
         help=(
-            "The weight and prefix list for an independent test dataset. Follows the same pattern"
-            " rules as --data-path."
+            "The weight and prefix list for an independent test dataset. Follows the"
+            " same pattern rules as --data-path."
         ),
         choices=None,
         nargs="*",
@@ -4188,7 +5619,10 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "tiktoken_special_tokens": MegatronArgMetadata(
         arg_type=list,
         default=None,
-        help='List of tiktoken special tokens, needs to have ["<unk>", "<s>", "</s>"]',
+        help=(
+            'List of tiktoken special tokens, needs to have ["<unk>", "<s>", "</s>",'
+            ' "<mask>", "<pad>", "<cls>", "<sep>"]'
+        ),
         choices=None,
         nargs="+",
         element_type=str,
@@ -4197,12 +5631,13 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=0,
         help=(
-            "Granularity level to measure and report timing.    0: report only iteration time and"
-            " make sure timing       does not introduce extra overhead.   1: report timing for"
-            " operations that are executed       very limited times (basically once) during      "
-            " each iteration (such as gradient all-reduce)    2: report timing for operations that"
-            " migh be       executed numerous times during each iteration. Note that setting the"
-            " level to 1 or 2 might cause increase in iteration time."
+            "Granularity level to measure and report timing. 0: report only iteration"
+            " time and make sure timing does not introduce extra overhead. 1: report"
+            " timing for operations that are executed very limited times (basically"
+            " once) during each iteration (such as gradient all-reduce) 2: report"
+            " timing for operations that migh be executed numerous times during each"
+            " iteration. Note that setting the level to 1 or 2 might cause increase in"
+            " iteration time."
         ),
         choices=(0, 1, 2),
         nargs=None,
@@ -4212,8 +5647,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default="minmax",
         help=(
-            "Options for logging timing:  max: report the max timing across all ranks  minmax:"
-            " report min and max timings across all ranks  all: report timings of all ranks."
+            "Options for logging timing: max: report the max timing across all ranks"
+            " minmax: report min and max timings across all ranks all: report timings"
+            " of all ranks."
         ),
         choices=("max", "minmax", "all"),
         nargs=None,
@@ -4227,6 +5663,30 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "tokenizer_hf_include_special_tokens": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Converting text to ids will include special for HuggingFace tokenizer.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "tokenizer_hf_use_fast": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Whether to use fast HuggingFace tokenizer.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "tokenizer_metadata": MegatronArgMetadata(
+        arg_type=str,
+        default=None,
+        help="Path to tokenizer metadata in json format.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "tokenizer_model": MegatronArgMetadata(
         arg_type=str,
         default=None,
@@ -4235,13 +5695,24 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
-    "legacy_tokenizer": MegatronArgMetadata(
+    "tokenizer_sentencepiece_legacy": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="Use Megatron-LM legacy tokenizer system (works offline without HuggingFace).",
+        help=("SentencePiece tokenizer wrapper legacy behavior. Allows special tokens usage."),
         choices=None,
         nargs=0,
         element_type=None,
+    ),
+    "tokenizer_special_tokens": MegatronArgMetadata(
+        arg_type=list,
+        default=None,
+        help=(
+            'List of special tokens. For TikTokenizer needs to have ["<unk>", "<s>",'
+            ' "</s>", "<mask>", "<pad>", "<cls>", "<sep>"]'
+        ),
+        choices=None,
+        nargs="+",
+        element_type=str,
     ),
     "tokenizer_type": MegatronArgMetadata(
         arg_type=str,
@@ -4268,8 +5739,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=True,
         help=(
-            "Whether to reshard weights after forward pass when using PyTorch FSDP2. Set to enable"
-            " FSDP ZeRO-2."
+            "Whether to reshard weights after forward pass when using PyTorch FSDP2."
+            " Set to enable FSDP ZeRO-2."
         ),
         choices=None,
         nargs=0,
@@ -4310,7 +5781,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "tp_comm_overlap_ag": MegatronArgMetadata(
         arg_type=bool,
         default=True,
-        help="Disables the All-Gather overlap with GEMM by pipelining the GEMM and All-Gather.",
+        help=("Disables the All-Gather overlap with GEMM by pipelining the GEMM and All-Gather."),
         choices=None,
         nargs=0,
         element_type=None,
@@ -4362,8 +5833,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=list,
         default=None,
         help=(
-            "The weight and prefix list for an independent train dataset. Follows the same pattern"
-            " rules as --data-path."
+            "The weight and prefix list for an independent train dataset. Follows the"
+            " same pattern rules as --data-path."
         ),
         choices=None,
         nargs="*",
@@ -4373,8 +5844,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "Total number of iterations to train over all training runs. Note that either"
-            " train-iters or train-samples should be provided."
+            "Total number of iterations to train over all training runs. Note that"
+            " either train_iters or train_samples should be provided."
         ),
         choices=None,
         nargs=None,
@@ -4384,8 +5855,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "Total number of samples to train over all training runs. Note that either train-iters"
-            " or train-samples should be provided."
+            "Total number of samples to train over all training runs. Note that either"
+            " train_iters or train_samples should be provided."
         ),
         choices=None,
         nargs=None,
@@ -4395,8 +5866,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=None,
         help=(
-            "Training CPU-GPU synchronization interval, to ensure that CPU is not running too far"
-            " ahead of GPU."
+            "Training CPU-GPU synchronization interval, to ensure that CPU is not"
+            " running too far ahead of GPU."
         ),
         choices=None,
         nargs=None,
@@ -4406,8 +5877,16 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=None,
         default="transformer_engine",
         help="Which Transformer implementation to use.",
-        choices=("local", "transformer_engine"),
+        choices=("local", "transformer_engine", "inference_optimized"),
         nargs=None,
+        element_type=None,
+    ),
+    "trust_remote_code": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Whether or not to allow PreTrainedTokenizer to execute remote code",
+        choices=None,
+        nargs=0,
         element_type=None,
     ),
     "untie_embeddings_and_output_weights": MegatronArgMetadata(
@@ -4421,7 +5900,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "use_checkpoint_args": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="Override model-related command-line arguments with arguments from checkpoint",
+        help=("Override model-related command-line arguments with arguments from checkpoint"),
         choices=None,
         nargs=0,
         element_type=None,
@@ -4430,9 +5909,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Use checkpoint to set the values of the scheduler (learning rate, warmup iterations,"
-            " minimum learning rate, maximum number of iterations, and decay style from checkpoint"
-            " and ignore input arguments."
+            "Use checkpoint to set the values of the scheduler (learning rate, warmup"
+            " iterations, minimum learning rate, maximum number of iterations, and"
+            " decay style) from checkpoint and ignore input arguments."
         ),
         choices=None,
         nargs=0,
@@ -4442,8 +5921,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=None,
         help=(
-            "If set, initialize weights on the CPU. This eliminates init differences based on"
-            " tensor parallelism."
+            "If set, initialize weights on the CPU. This eliminates init differences"
+            " based on tensor parallelism."
         ),
         choices=None,
         nargs=0,
@@ -4468,7 +5947,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "use_flash_attn": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="use FlashAttention implementation of attention. https://arxiv.org/abs/2205.14135",
+        help=("use FlashAttention implementation of attention. https://arxiv.org/abs/2205.14135"),
         choices=None,
         nargs=0,
         element_type=None,
@@ -4481,10 +5960,28 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "use_kitchen_attention": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=("Have kitchen use its own attention with attention quantization recipe support."),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "use_legacy_models": MegatronArgMetadata(
         arg_type=bool,
         default=False,
         help="Use the legacy Megatron models, not Megatron-Core models.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "use_legacy_static_engine": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Use legacy static engine. (Current static engine uses dynamic engine under the hood)"
+        ),
         choices=None,
         nargs=0,
         element_type=None,
@@ -4516,7 +6013,12 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "use_persistent_ckpt_worker": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="Enables a persitent checkpoint worker for async save",
+        help=(
+            "Use a persistent background worker for async checkpoint saves. When"
+            " enabled, creates a dedicated worker thread/process for handling async"
+            " saves. When disabled, uses temporal workers that are created and"
+            " destroyed for each save operation."
+        ),
         choices=None,
         nargs=0,
         element_type=None,
@@ -4525,8 +6027,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Use the precision-aware optimizer in TransformerEngine, which allows setting the main"
-            " params and optimizer states to lower precision, such as fp16, bf16 and fp8."
+            "Use the precision-aware optimizer in TransformerEngine, which allows"
+            " setting the main params and optimizer states to lower precision, such as"
+            " fp16, bf16 and fp8."
         ),
         choices=None,
         nargs=0,
@@ -4546,8 +6049,9 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "If set, use custom-built ring exchange for p2p communications. Note that this option"
-            " will require a custom built image that support ring-exchange p2p."
+            "If set, use custom-built ring exchange for p2p communications. Note that"
+            " this option will require a custom built image that support ring-exchange"
+            " p2p."
         ),
         choices=None,
         nargs=0,
@@ -4564,7 +6068,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "use_rotary_position_embeddings": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="Use rotary positional embeddings or not. Deprecated: use --position-embedding-type",
+        help=("Use rotary positional embeddings or not. Deprecated: use --position-embedding-type"),
         choices=None,
         nargs=0,
         element_type=None,
@@ -4573,6 +6077,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help="Required to enable SHARP communication.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "use_te_activation_func": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Use activation function kernel from Transformer Engine in MLP module.",
         choices=None,
         nargs=0,
         element_type=None,
@@ -4589,8 +6101,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Use the torch FSDP2 implementation. FSDP2 has not been tested with pipeline"
-            " parallelism, and may contain bugs."
+            "Use the torch FSDP2 implementation. FSDP2 has not been tested with"
+            " pipeline parallelism, and may contain bugs."
         ),
         choices=None,
         nargs=0,
@@ -4600,8 +6112,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "Use torch.optim.Optimizer instead of Megatron's optimizer in optimizer cpu offload"
-            " mode."
+            "Use torch.optim.Optimizer instead of Megatron's optimizer in optimizer cpu"
+            " offload mode."
         ),
         choices=None,
         nargs=0,
@@ -4611,8 +6123,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=False,
         help=(
-            "If set, distributed ranks initialize order is changed from tp-cp-ep-dp-pp to"
-            " tp-cp-ep-pp-dp."
+            "If set, distributed ranks initialize order is changed from tp-cp-ep-dp-pp"
+            " to tp-cp-ep-pp-dp."
         ),
         choices=None,
         nargs=0,
@@ -4630,8 +6142,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=list,
         default=None,
         help=(
-            "The weight and prefix list for an independent validation dataset. Follows the same"
-            " pattern rules as --data-path."
+            "The weight and prefix list for an independent validation dataset. Follows"
+            " the same pattern rules as --data-path."
         ),
         choices=None,
         nargs="*",
@@ -4689,15 +6201,17 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     ),
     "wandb_entity": MegatronArgMetadata(
         arg_type=str,
-        default="",
-        help="The wandb entity name.",
+        default=None,
+        help=(
+            "The wandb entity name. It is useful when there are multiple sub-projects in a project."
+        ),
         choices=None,
         nargs=None,
         element_type=None,
     ),
     "wandb_exp_name": MegatronArgMetadata(
         arg_type=str,
-        default="",
+        default=None,
         help="The wandb experiment name.",
         choices=None,
         nargs=None,
@@ -4705,7 +6219,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     ),
     "wandb_project": MegatronArgMetadata(
         arg_type=str,
-        default="",
+        default=None,
         help="The wandb project name. Ignore wandb by default.",
         choices=None,
         nargs=None,
@@ -4713,7 +6227,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     ),
     "wandb_save_dir": MegatronArgMetadata(
         arg_type=str,
-        default="",
+        default=None,
         help="Path to save the wandb results locally.",
         choices=None,
         nargs=None,
@@ -4722,7 +6236,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "warmup": MegatronArgMetadata(
         arg_type=int,
         default=None,
-        help="Old lr warmup argument, do not use. Use one of the--lr-warmup-* arguments above",
+        help=("Old lr warmup argument, do not use. Use one of the--lr-warmup-* arguments above"),
         choices=None,
         nargs=None,
         element_type=None,
@@ -4747,9 +6261,34 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=0,
         help=(
-            "Number of micro-batches for whichweight gradient computation of vocabulary projection"
-            " is deferred, defaults to 0 whichmeans all the micro-batches are deferred. Invalid if"
-            " `defer-embedding-wgrad-compute`is not set"
+            "Number of micro-batches for whichweight gradient computation of vocabulary"
+            " projection is deferred, defaults to 0 whichmeans all the micro-batches"
+            " are deferred. Invalid if `defer-embedding-wgrad-compute`is not set"
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "window_attn_skip_freq": MegatronArgMetadata(
+        arg_type=None,
+        default=None,
+        help=(
+            "Frequency of layers to skip window attention. Accepts either: - An integer"
+            " N: Represents a (N-1):1 ratio, meaning one full attention layer after"
+            " (N-1) SWA layers. - A string containing a Python list expression that"
+            ' defines a custom pattern, e.g.: "[1,1,1,0]*3" evaluates to'
+            " [1,1,1,0,1,1,1,0,1,1,1,0] where 1 indicates SWA and 0 indicates full"
+            " attention. "
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "window_size": MegatronArgMetadata(
+        arg_type=None,
+        default=None,
+        help=(
+            "Window size for window attention. If not provided, window attention will be disabled."
         ),
         choices=None,
         nargs=None,
@@ -4787,14 +6326,33 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "activation_func_clamp_value": MegatronActionSpec(
+        option_strings=("--activation-func-clamp-value",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
     "adam_beta1": MegatronActionSpec(
-        option_strings=("--adam-beta1",), action_type="store", nargs=None, const=None, default=0.9
+        option_strings=("--adam-beta1",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.9,
     ),
     "adam_beta2": MegatronActionSpec(
-        option_strings=("--adam-beta2",), action_type="store", nargs=None, const=None, default=0.999
+        option_strings=("--adam-beta2",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.999,
     ),
     "adam_eps": MegatronActionSpec(
-        option_strings=("--adam-eps",), action_type="store", nargs=None, const=None, default=1e-08
+        option_strings=("--adam-eps",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1e-08,
     ),
     "add_bias_linear": MegatronActionSpec(
         option_strings=("--disable-bias-linear",),
@@ -4845,6 +6403,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=False,
         default=True,
     ),
+    "allow_ambiguous_pad_tokens": MegatronActionSpec(
+        option_strings=("--allow-ambiguous-pad-tokens",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "app_tag_run_name": MegatronActionSpec(
         option_strings=("--app-tag-run-name",),
         action_type="store",
@@ -4887,12 +6452,19 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=False,
         default=True,
     ),
+    "apply_wd_to_qk_layernorm": MegatronActionSpec(
+        option_strings=("--apply-wd-to-qk-layernorm",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "async_save": MegatronActionSpec(
         option_strings=("--async-save",),
         action_type="store_true",
         nargs=0,
         const=True,
-        default=None,
+        default=False,
     ),
     "async_tensor_model_parallel_allreduce": MegatronActionSpec(
         option_strings=("--no-async-tensor-model-parallel-allreduce",),
@@ -4915,6 +6487,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=0.1,
     ),
+    "attention_output_gate": MegatronActionSpec(
+        option_strings=("--attention-output-gate",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "attention_softmax_in_fp32": MegatronActionSpec(
         option_strings=("--attention-softmax-in-fp32",),
         action_type="store_true",
@@ -4936,8 +6515,19 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=False,
         default=True,
     ),
+    "batch_invariant_mode": MegatronActionSpec(
+        option_strings=("--batch-invariant-mode",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "batch_size": MegatronActionSpec(
-        option_strings=("--batch-size",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--batch-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "bert_binary_head": MegatronActionSpec(
         option_strings=("--bert-no-binary-head",),
@@ -4954,10 +6544,18 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default="megatron",
     ),
     "bert_load": MegatronActionSpec(
-        option_strings=("--bert-load",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--bert-load",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "bf16": MegatronActionSpec(
-        option_strings=("--bf16",), action_type="store_true", nargs=0, const=True, default=False
+        option_strings=("--bf16",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "bias_dropout_fusion": MegatronActionSpec(
         option_strings=("--no-bias-dropout-fusion",),
@@ -5100,7 +6698,10 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=False,
     ),
     "ckpt_fully_parallel_save": MegatronActionSpec(
-        option_strings=("--no-ckpt-fully-parallel-save",),
+        option_strings=(
+            "--no-ckpt-fully-parallel-save",
+            "--disable-ckpt-fully-parallel-save",
+        ),
         action_type="store_false",
         nargs=0,
         const=False,
@@ -5114,7 +6715,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=False,
     ),
     "ckpt_step": MegatronActionSpec(
-        option_strings=("--ckpt-step",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--ckpt-step",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "classes_fraction": MegatronActionSpec(
         option_strings=("--classes-fraction",),
@@ -5124,7 +6729,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=1.0,
     ),
     "clip_grad": MegatronActionSpec(
-        option_strings=("--clip-grad",), action_type="store", nargs=None, const=None, default=1.0
+        option_strings=("--clip-grad",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
     ),
     "clone_scatter_output_in_embedding": MegatronActionSpec(
         option_strings=("--no-clone-scatter-output-in-embedding",),
@@ -5154,6 +6763,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=["p2p"],
     ),
+    "cpu_offloading_num_layers": MegatronActionSpec(
+        option_strings=("--cpu-offloading-num-layers",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
+    ),
+    "create_all_gather_group": MegatronActionSpec(
+        option_strings=("--create-all-gather-group",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "create_attention_mask_in_dataloader": MegatronActionSpec(
         option_strings=("--no-create-attention-mask-in-dataloader",),
         action_type="store_false",
@@ -5175,12 +6798,19 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
-    "cuda_graph_scope": MegatronActionSpec(
-        option_strings=("--cuda-graph-scope",),
+    "cuda_graph_impl": MegatronActionSpec(
+        option_strings=("--cuda-graph-impl",),
         action_type="store",
         nargs=None,
         const=None,
-        default="full",
+        default="none",
+    ),
+    "cuda_graph_scope": MegatronActionSpec(
+        option_strings=("--cuda-graph-scope",),
+        action_type="store",
+        nargs="+",
+        const=None,
+        default=[],
     ),
     "cuda_graph_warmup_steps": MegatronActionSpec(
         option_strings=("--cuda-graph-warmup-steps",),
@@ -5218,7 +6848,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default="no_shard",
     ),
     "data_path": MegatronActionSpec(
-        option_strings=("--data-path",), action_type="store", nargs="*", const=None, default=None
+        option_strings=("--data-path",),
+        action_type="store",
+        nargs="*",
+        const=None,
+        default=None,
     ),
     "data_per_class_fraction": MegatronActionSpec(
         option_strings=("--data-per-class-fraction",),
@@ -5233,6 +6867,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=False,
         default=True,
+    ),
+    "dataloader_defer_npy_index_mmap": MegatronActionSpec(
+        option_strings=("--dataloader-defer-npy-index-mmap",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "dataloader_fast_cache_load": MegatronActionSpec(
+        option_strings=("--dataloader-fast-cache-load",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "dataloader_type": MegatronActionSpec(
         option_strings=("--dataloader-type",),
@@ -5264,6 +6912,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "ddp_pad_buckets_for_high_nccl_busbw": MegatronActionSpec(
         option_strings=("--ddp-pad-buckets-for-high-nccl-busbw",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "ddp_reduce_scatter_with_fp32_accumulation": MegatronActionSpec(
+        option_strings=("--ddp-reduce-scatter-with-fp32-accumulation",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "decode_only_cuda_graphs": MegatronActionSpec(
+        option_strings=("--decode-only-cuda-graphs",),
         action_type="store_true",
         nargs=0,
         const=True,
@@ -5416,6 +7078,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "disable_chunked_prefill": MegatronActionSpec(
+        option_strings=("--enable-chunked-prefill",),
+        action_type="store_false",
+        nargs=0,
+        const=False,
+        default=True,
+    ),
+    "disable_jit_fuser": MegatronActionSpec(
+        option_strings=("--disable-jit-fuser",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "disable_mamba_mem_eff_path": MegatronActionSpec(
         option_strings=("--disable-mamba-mem-eff-path",),
         action_type="store_true",
@@ -5430,6 +7106,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "disable_symmetric_registration": MegatronActionSpec(
+        option_strings=("--disable-symmetric-registration",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "dist_ckpt_format_deprecated": MegatronActionSpec(
         option_strings=("--dist-ckpt-format",),
         action_type="store",
@@ -5437,12 +7120,33 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=None,
     ),
+    "dist_ckpt_optim_fully_reshardable": MegatronActionSpec(
+        option_strings=("--dist-ckpt-optim-fully-reshardable",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "dist_ckpt_save_pre_mcore_014": MegatronActionSpec(
+        option_strings=("--dist-ckpt-save-pre-mcore-014",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "dist_ckpt_strictness": MegatronActionSpec(
         option_strings=("--dist-ckpt-strictness",),
         action_type="store",
         nargs=None,
         const=None,
         default="assume_ok_unexpected",
+    ),
+    "distrib_optim_fully_reshardable_mem_efficient": MegatronActionSpec(
+        option_strings=("--distrib-optim-fully-reshardable-mem-efficient",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "distribute_saved_activations": MegatronActionSpec(
         option_strings=("--distribute-saved-activations",),
@@ -5464,6 +7168,55 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=10,
+    ),
+    "distributed_timeout_seconds_after_init": MegatronActionSpec(
+        option_strings=("--distributed-timeout-seconds-after-init",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "dsa_indexer_head_dim": MegatronActionSpec(
+        option_strings=("--dsa-indexer-head-dim",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "dsa_indexer_loss_coeff": MegatronActionSpec(
+        option_strings=("--dsa-indexer-loss-coeff",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "dsa_indexer_n_heads": MegatronActionSpec(
+        option_strings=("--dsa-indexer-n-heads",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "dsa_indexer_topk": MegatronActionSpec(
+        option_strings=("--dsa-indexer-topk",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "dsa_indexer_use_sparse_loss": MegatronActionSpec(
+        option_strings=("--dsa-indexer-use-sparse-loss",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "dump_param_to_param_group_map": MegatronActionSpec(
+        option_strings=("--dump-param-to-param-group-map",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "embedding_init_method_std": MegatronActionSpec(
         option_strings=("--embedding-init-method-std",),
@@ -5563,6 +7316,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "ep_overlap_early_attn_memory_release": MegatronActionSpec(
+        option_strings=("--ep-overlap-early-attn-memory-release",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "error_injection_rate": MegatronActionSpec(
         option_strings=("--error-injection-rate",),
         action_type="store",
@@ -5582,10 +7342,14 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         action_type="store",
         nargs=None,
         const=None,
-        default=1000,
+        default=None,
     ),
     "eval_iters": MegatronActionSpec(
-        option_strings=("--eval-iters",), action_type="store", nargs=None, const=None, default=100
+        option_strings=("--eval-iters",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=100,
     ),
     "evidence_data_path": MegatronActionSpec(
         option_strings=("--evidence-data-path",),
@@ -5615,8 +7379,22 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "exit_signal": MegatronActionSpec(
+        option_strings=("--exit-signal",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="15",
+    ),
     "exit_signal_handler": MegatronActionSpec(
         option_strings=("--exit-signal-handler",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "exit_signal_handler_for_dataloader": MegatronActionSpec(
+        option_strings=("--exit-signal-handler-for-dataloader",),
         action_type="store_true",
         nargs=0,
         const=True,
@@ -5635,6 +7413,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default="fp32",
+    ),
+    "experimental_attention_variant": MegatronActionSpec(
+        option_strings=("--experimental-attention-variant",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "expert_model_parallel_size": MegatronActionSpec(
         option_strings=("--expert-model-parallel-size",),
@@ -5657,6 +7442,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "fake_process_group": MegatronActionSpec(
+        option_strings=("--fake-process-group",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "ffn_hidden_size": MegatronActionSpec(
         option_strings=("--ffn-hidden-size",),
         action_type="store",
@@ -5664,8 +7456,96 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=None,
     ),
+    "fim_data": MegatronActionSpec(
+        option_strings=("--fim-data",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "fim_eod_token": MegatronActionSpec(
+        option_strings=("--fim-eod-token",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="<|endoftext|>",
+    ),
+    "fim_fragment_rate": MegatronActionSpec(
+        option_strings=("--fim-fragment-rate",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "fim_middle_token": MegatronActionSpec(
+        option_strings=("--fim-middle-token",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="<fim_middle>",
+    ),
+    "fim_no_prefix": MegatronActionSpec(
+        option_strings=("--fim-no-prefix",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "fim_pad_token": MegatronActionSpec(
+        option_strings=("--fim-pad-token",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="<fim_pad>",
+    ),
+    "fim_prefix_token": MegatronActionSpec(
+        option_strings=("--fim-prefix-token",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="<fim_prefix>",
+    ),
+    "fim_rate": MegatronActionSpec(
+        option_strings=("--fim-rate",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.5,
+    ),
+    "fim_split_sample": MegatronActionSpec(
+        option_strings=("--fim-split-sample",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "fim_spm_rate": MegatronActionSpec(
+        option_strings=("--fim-spm-rate",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.5,
+    ),
+    "fim_suffix_token": MegatronActionSpec(
+        option_strings=("--fim-suffix-token",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="<fim_suffix>",
+    ),
+    "fine_grained_activation_offloading": MegatronActionSpec(
+        option_strings=("--fine-grained-activation-offloading",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "finetune": MegatronActionSpec(
-        option_strings=("--finetune",), action_type="store_true", nargs=0, const=True, default=False
+        option_strings=("--finetune",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "first_last_layers_bf16": MegatronActionSpec(
         option_strings=("--first-last-layers-bf16",),
@@ -5682,7 +7562,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=False,
     ),
     "fp16": MegatronActionSpec(
-        option_strings=("--fp16",), action_type="store_true", nargs=0, const=True, default=False
+        option_strings=("--fp16",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "fp16_lm_cross_entropy": MegatronActionSpec(
         option_strings=("--fp16-lm-cross-entropy",),
@@ -5698,8 +7582,40 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "fp4": MegatronActionSpec(
+        option_strings=("--fp4-format",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "fp4_param": MegatronActionSpec(
+        option_strings=("--fp4-param-gather",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "fp4_quantizer_factory": MegatronActionSpec(
+        option_strings=("--fp4-quantizer-factory",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "fp4_recipe": MegatronActionSpec(
+        option_strings=("--fp4-recipe",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="nvfp4",
+    ),
     "fp8": MegatronActionSpec(
-        option_strings=("--fp8-format",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--fp8-format",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "fp8_amax_compute_algo": MegatronActionSpec(
         option_strings=("--fp8-amax-compute-algo",),
@@ -5716,10 +7632,18 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=1,
     ),
     "fp8_interval": MegatronActionSpec(
-        option_strings=("--fp8-interval",), action_type="store", nargs=None, const=None, default=1
+        option_strings=("--fp8-interval",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1,
     ),
     "fp8_margin": MegatronActionSpec(
-        option_strings=("--fp8-margin",), action_type="store", nargs=None, const=None, default=0
+        option_strings=("--fp8-margin",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
     ),
     "fp8_param_gather": MegatronActionSpec(
         option_strings=("--fp8-param-gather",),
@@ -5727,6 +7651,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "fp8_quantizer_factory": MegatronActionSpec(
+        option_strings=("--fp8-quantizer-factory",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "fp8_recipe": MegatronActionSpec(
         option_strings=("--fp8-recipe",),
@@ -5749,6 +7680,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "fsdp_manual_registration": MegatronActionSpec(
+        option_strings=("--fsdp-manual-registration",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "ft_num_warmup_iters": MegatronActionSpec(
+        option_strings=("--ft-num-warmup-iters",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=5,
+    ),
     "full_validation": MegatronActionSpec(
         option_strings=("--full-validation",),
         action_type="store_true",
@@ -5762,6 +7707,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "glu_linear_offset": MegatronActionSpec(
+        option_strings=("--glu-linear-offset",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.0,
     ),
     "grad_reduce_in_bf16": MegatronActionSpec(
         option_strings=("--grad-reduce-in-bf16",),
@@ -5791,8 +7743,68 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "grpo_clamp_eps_lower": MegatronActionSpec(
+        option_strings=("--grpo-clamp-eps-lower",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.01,
+    ),
+    "grpo_clamp_eps_upper": MegatronActionSpec(
+        option_strings=("--grpo-clamp-eps-upper",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.01,
+    ),
+    "grpo_entropy_term_weight": MegatronActionSpec(
+        option_strings=("--grpo-entropy-term-weight",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.0,
+    ),
+    "grpo_filter_groups_with_same_reward": MegatronActionSpec(
+        option_strings=("--grpo-filter-groups-with-same-reward",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "grpo_group_size": MegatronActionSpec(
+        option_strings=("--grpo-group-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=2,
+    ),
+    "grpo_iterations": MegatronActionSpec(
+        option_strings=("--grpo-iterations",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=2,
+    ),
+    "grpo_kl_beta": MegatronActionSpec(
+        option_strings=("--grpo-kl-beta",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.001,
+    ),
+    "grpo_prompts_per_step": MegatronActionSpec(
+        option_strings=("--grpo-prompts-per-step",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=32,
+    ),
     "head_lr_mult": MegatronActionSpec(
-        option_strings=("--head-lr-mult",), action_type="store", nargs=None, const=None, default=1.0
+        option_strings=("--head-lr-mult",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
     ),
     "heterogeneous_layers_config_encoded_json": MegatronActionSpec(
         option_strings=("--heterogeneous-layers-config-encoded-json",),
@@ -5816,7 +7828,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=0.1,
     ),
     "hidden_size": MegatronActionSpec(
-        option_strings=("--hidden-size",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--hidden-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "hierarchical_context_parallel_sizes": MegatronActionSpec(
         option_strings=("--hierarchical-context-parallel-sizes",),
@@ -5839,6 +7855,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=0.0,
     ),
+    "hybrid_context_parallel": MegatronActionSpec(
+        option_strings=("--hybrid-context-parallel",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "hybrid_mlp_ratio": MegatronActionSpec(
         option_strings=("--hybrid-mlp-ratio",),
         action_type="store",
@@ -5854,7 +7877,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=None,
     ),
     "hysteresis": MegatronActionSpec(
-        option_strings=("--hysteresis",), action_type="store", nargs=None, const=None, default=2
+        option_strings=("--hysteresis",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=2,
     ),
     "ict_head_size": MegatronActionSpec(
         option_strings=("--ict-head-size",),
@@ -5864,13 +7891,25 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=None,
     ),
     "ict_load": MegatronActionSpec(
-        option_strings=("--ict-load",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--ict-load",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "img_h": MegatronActionSpec(
-        option_strings=("--img-h",), action_type="store", nargs=None, const=None, default=224
+        option_strings=("--img-h",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=224,
     ),
     "img_w": MegatronActionSpec(
-        option_strings=("--img-w",), action_type="store", nargs=None, const=None, default=224
+        option_strings=("--img-w",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=224,
     ),
     "indexer_batch_size": MegatronActionSpec(
         option_strings=("--indexer-batch-size",),
@@ -5893,6 +7932,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=-1,
     ),
+    "inference_coordinator_port": MegatronActionSpec(
+        option_strings=("--inference-coordinator-port",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=12346,
+    ),
     "inference_dynamic_batching": MegatronActionSpec(
         option_strings=("--inference-dynamic-batching",),
         action_type="store_true",
@@ -5900,19 +7946,12 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
-    "inference_dynamic_batching_buffer_guaranteed_fraction": MegatronActionSpec(
-        option_strings=("--inference-dynamic-batching-buffer-guaranteed-fraction",),
+    "inference_dynamic_batching_block_size": MegatronActionSpec(
+        option_strings=("--inference-dynamic-batching-block-size",),
         action_type="store",
         nargs=None,
         const=None,
-        default=0.2,
-    ),
-    "inference_dynamic_batching_buffer_overflow_factor": MegatronActionSpec(
-        option_strings=("--inference-dynamic-batching-buffer-overflow-factor",),
-        action_type="store",
-        nargs=None,
-        const=None,
-        default=None,
+        default=256,
     ),
     "inference_dynamic_batching_buffer_size_gb": MegatronActionSpec(
         option_strings=("--inference-dynamic-batching-buffer-size-gb",),
@@ -5921,22 +7960,29 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=40.0,
     ),
-    "inference_dynamic_batching_chunk_size": MegatronActionSpec(
-        option_strings=("--inference-dynamic-batching-chunk-size",),
+    "inference_dynamic_batching_cuda_graph_max_tokens": MegatronActionSpec(
+        option_strings=("--inference-dynamic-batching-cuda-graph-max-tokens",),
         action_type="store",
         nargs=None,
         const=None,
-        default=256,
+        default=16384,
     ),
-    "inference_dynamic_batching_max_requests_override": MegatronActionSpec(
-        option_strings=("--inference-dynamic-batching-max-requests-override",),
+    "inference_dynamic_batching_cuda_graph_mixed_prefill_count": MegatronActionSpec(
+        option_strings=("--inference-dynamic-batching-cuda-graph-mixed-prefill-count",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=16,
+    ),
+    "inference_dynamic_batching_max_requests": MegatronActionSpec(
+        option_strings=("--inference-dynamic-batching-max-requests",),
         action_type="store",
         nargs=None,
         const=None,
         default=None,
     ),
-    "inference_dynamic_batching_max_tokens_override": MegatronActionSpec(
-        option_strings=("--inference-dynamic-batching-max-tokens-override",),
+    "inference_dynamic_batching_max_tokens": MegatronActionSpec(
+        option_strings=("--inference-dynamic-batching-max-tokens",),
         action_type="store",
         nargs=None,
         const=None,
@@ -5948,6 +7994,41 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=16,
+    ),
+    "inference_dynamic_batching_paused_buffer_size_gb": MegatronActionSpec(
+        option_strings=("--inference-dynamic-batching-paused-buffer-size-gb",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "inference_dynamic_batching_track_paused_request_events": MegatronActionSpec(
+        option_strings=("--inference-dynamic-batching-track-paused-request-events",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "inference_dynamic_batching_unified_memory_level": MegatronActionSpec(
+        option_strings=("--inference-dynamic-batching-unified-memory-level",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
+    ),
+    "inference_fuse_tp_communication": MegatronActionSpec(
+        option_strings=("--inference-fuse-tp-communication",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "inference_logging_step_interval": MegatronActionSpec(
+        option_strings=("--inference-logging-step-interval",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
     ),
     "inference_max_batch_size": MegatronActionSpec(
         option_strings=("--inference-max-requests",),
@@ -5968,6 +8049,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         action_type="store_true",
         nargs=0,
         const=True,
+        default=False,
+    ),
+    "inference_wandb_logging": MegatronActionSpec(
+        option_strings=("--inference-wandb-logging", "--no-inference-wandb-logging"),
+        action_type="store",
+        nargs=0,
+        const=None,
         default=False,
     ),
     "init_method_std": MegatronActionSpec(
@@ -6138,6 +8226,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "kitchen_attention_backend": MegatronActionSpec(
+        option_strings=("--kitchen-attention-backend",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="sdpa",
+    ),
     "kitchen_config_file": MegatronActionSpec(
         option_strings=("--kitchen-config-file",),
         action_type="store",
@@ -6153,10 +8248,46 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=None,
     ),
     "kv_channels": MegatronActionSpec(
-        option_strings=("--kv-channels",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--kv-channels",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "kv_lora_rank": MegatronActionSpec(
-        option_strings=("--kv-lora-rank",), action_type="store", nargs=None, const=None, default=32
+        option_strings=("--kv-lora-rank",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=32,
+    ),
+    "langrl_env_config": MegatronActionSpec(
+        option_strings=("--langrl-env-config",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "langrl_external_server": MegatronActionSpec(
+        option_strings=("--langrl-external-server", "--no-langrl-external-server"),
+        action_type="store",
+        nargs=0,
+        const=None,
+        default=False,
+    ),
+    "langrl_inference_server_conversation_template": MegatronActionSpec(
+        option_strings=("--langrl-inference-server-conversation-template",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "langrl_inference_server_type": MegatronActionSpec(
+        option_strings=("--langrl-inference-server-type",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="inplace_megatron",
     ),
     "lazy_mpu_init": MegatronActionSpec(
         option_strings=("--lazy-mpu-init",),
@@ -6165,25 +8296,82 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=None,
     ),
+    "legacy_tokenizer": MegatronActionSpec(
+        option_strings=("--legacy-tokenizer",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "linear_attention_freq": MegatronActionSpec(
+        option_strings=("--linear-attention-freq",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "linear_conv_kernel_dim": MegatronActionSpec(
+        option_strings=("--linear-conv-kernel-dim",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=4,
+    ),
+    "linear_key_head_dim": MegatronActionSpec(
+        option_strings=("--linear-key-head-dim",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=128,
+    ),
+    "linear_num_key_heads": MegatronActionSpec(
+        option_strings=("--linear-num-key-heads",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=16,
+    ),
+    "linear_num_value_heads": MegatronActionSpec(
+        option_strings=("--linear-num-value-heads",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=32,
+    ),
+    "linear_value_head_dim": MegatronActionSpec(
+        option_strings=("--linear-value-head-dim",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=128,
+    ),
     "load": MegatronActionSpec(
-        option_strings=("--load",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--load",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "load_main_params_from_ckpt": MegatronActionSpec(
         option_strings=("--load-main-params-from-ckpt",),
         action_type="store_true",
         nargs=0,
         const=True,
-        default=None,
+        default=False,
     ),
-    "load_model_opt_format": MegatronActionSpec(
-        option_strings=("--load-model-opt-format",),
+    "local_rank": MegatronActionSpec(
+        option_strings=("--local-rank",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
+    ),
+    "log_device_memory_used": MegatronActionSpec(
+        option_strings=("--log-device-memory-used",),
         action_type="store_true",
         nargs=0,
         const=True,
         default=False,
-    ),
-    "local_rank": MegatronActionSpec(
-        option_strings=("--local-rank",), action_type="store", nargs=None, const=None, default=0
     ),
     "log_energy": MegatronActionSpec(
         option_strings=("--log-energy",),
@@ -6193,14 +8381,35 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=False,
     ),
     "log_interval": MegatronActionSpec(
-        option_strings=("--log-interval",), action_type="store", nargs=None, const=None, default=100
+        option_strings=("--log-interval",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=100,
     ),
     "log_loss_scale_to_tensorboard": MegatronActionSpec(
-        option_strings=("--no-log-loss-scale-to-tensorboard",),
+        option_strings=(
+            "--no-log-loss-scale-to-tensorboard",
+            "--disable-log-loss-scale-to-tensorboard",
+        ),
         action_type="store_false",
         nargs=0,
         const=False,
         default=True,
+    ),
+    "log_max_attention_logit": MegatronActionSpec(
+        option_strings=("--log-max-attention-logit",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "log_memory_interval": MegatronActionSpec(
+        option_strings=("--log-memory-interval",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "log_memory_to_tensorboard": MegatronActionSpec(
         option_strings=("--log-memory-to-tensorboard",),
@@ -6273,7 +8482,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=None,
     ),
     "loss_scale": MegatronActionSpec(
-        option_strings=("--loss-scale",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--loss-scale",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "loss_scale_window": MegatronActionSpec(
         option_strings=("--loss-scale-window",),
@@ -6283,7 +8496,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=1000,
     ),
     "lr": MegatronActionSpec(
-        option_strings=("--lr",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--lr",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "lr_decay_iters": MegatronActionSpec(
         option_strings=("--lr-decay-iters",),
@@ -6412,7 +8629,7 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=False,
     ),
     "manual_gc_eval": MegatronActionSpec(
-        option_strings=("--no-manual-gc-eval",),
+        option_strings=("--no-manual-gc-eval", "--disable-manual-gc-eval"),
         action_type="store_false",
         nargs=0,
         const=False,
@@ -6426,10 +8643,18 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=0,
     ),
     "mask_factor": MegatronActionSpec(
-        option_strings=("--mask-factor",), action_type="store", nargs=None, const=None, default=1.0
+        option_strings=("--mask-factor",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
     ),
     "mask_prob": MegatronActionSpec(
-        option_strings=("--mask-prob",), action_type="store", nargs=None, const=None, default=0.15
+        option_strings=("--mask-prob",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.15,
     ),
     "mask_type": MegatronActionSpec(
         option_strings=("--mask-type",),
@@ -6452,6 +8677,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=None,
     ),
+    "max_seqlen_per_dp_cp_rank": MegatronActionSpec(
+        option_strings=("--max-seqlen-per-dp-cp-rank",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
     "max_tokens_to_oom": MegatronActionSpec(
         option_strings=("--max-tokens-to-oom",),
         action_type="store",
@@ -6467,7 +8699,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default="snapshot.pickle",
     ),
     "merge_file": MegatronActionSpec(
-        option_strings=("--merge-file",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--merge-file",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "micro_batch_size": MegatronActionSpec(
         option_strings=("--micro-batch-size",),
@@ -6498,7 +8734,18 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=1.0,
     ),
     "min_lr": MegatronActionSpec(
-        option_strings=("--min-lr",), action_type="store", nargs=None, const=None, default=0.0
+        option_strings=("--min-lr",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.0,
+    ),
+    "min_offloaded_tensor_size": MegatronActionSpec(
+        option_strings=("--min-offloaded-tensor-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1048576,
     ),
     "mlp_chunks_for_prefill": MegatronActionSpec(
         option_strings=("--mlp-chunks-for-prefill",),
@@ -6556,6 +8803,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "moe_enable_routing_replay": MegatronActionSpec(
+        option_strings=("--moe-enable-routing-replay",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "moe_expert_capacity_factor": MegatronActionSpec(
         option_strings=("--moe-expert-capacity-factor",),
         action_type="store",
@@ -6577,12 +8831,26 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=None,
     ),
+    "moe_flex_dispatcher_backend": MegatronActionSpec(
+        option_strings=("--moe-flex-dispatcher-backend",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="deepep",
+    ),
     "moe_grouped_gemm": MegatronActionSpec(
         option_strings=("--moe-grouped-gemm",),
         action_type="store_true",
         nargs=0,
         const=True,
         default=False,
+    ),
+    "moe_hybridep_num_sms": MegatronActionSpec(
+        option_strings=("--moe-hybridep-num-sms",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=16,
     ),
     "moe_input_jitter_eps": MegatronActionSpec(
         option_strings=("--moe-input-jitter-eps",),
@@ -6591,8 +8859,19 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=None,
     ),
+    "moe_latent_size": MegatronActionSpec(
+        option_strings=("--moe-latent-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
     "moe_layer_freq": MegatronActionSpec(
-        option_strings=("--moe-layer-freq",), action_type="store", nargs=None, const=None, default=1
+        option_strings=("--moe-layer-freq",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1,
     ),
     "moe_layer_recompute": MegatronActionSpec(
         option_strings=("--moe-layer-recompute",),
@@ -6603,6 +8882,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "moe_pad_expert_input_to_capacity": MegatronActionSpec(
         option_strings=("--moe-pad-expert-input-to-capacity",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "moe_pad_experts_for_cuda_graph_inference": MegatronActionSpec(
+        option_strings=("--moe-pad-experts-for-cuda-graph-inference",),
         action_type="store_true",
         nargs=0,
         const=True,
@@ -6685,6 +8971,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "moe_router_padding_for_quantization": MegatronActionSpec(
+        option_strings=("--moe-router-padding-for-quantization",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "moe_router_pre_softmax": MegatronActionSpec(
         option_strings=("--moe-router-pre-softmax",),
         action_type="store_true",
@@ -6712,6 +9005,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "moe_shared_expert_gate": MegatronActionSpec(
+        option_strings=("--moe-shared-expert-gate",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "moe_shared_expert_intermediate_size": MegatronActionSpec(
         option_strings=("--moe-shared-expert-intermediate-size",),
@@ -6777,7 +9077,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=None,
     ),
     "mscale": MegatronActionSpec(
-        option_strings=("--mscale",), action_type="store", nargs=None, const=None, default=1.0
+        option_strings=("--mscale",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
     ),
     "mscale_all_dim": MegatronActionSpec(
         option_strings=("--mscale-all-dim",),
@@ -6809,6 +9113,62 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "multiple_validation_sets": MegatronActionSpec(
         option_strings=("--multiple-validation-sets",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "muon_extra_scale_factor": MegatronActionSpec(
+        option_strings=("--muon-extra-scale-factor",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
+    ),
+    "muon_fp32_matmul_prec": MegatronActionSpec(
+        option_strings=("--muon-fp32-matmul-prec",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="medium",
+    ),
+    "muon_momentum": MegatronActionSpec(
+        option_strings=("--muon-momentum",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.9,
+    ),
+    "muon_num_ns_steps": MegatronActionSpec(
+        option_strings=("--muon-num-ns-steps",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=5,
+    ),
+    "muon_scale_mode": MegatronActionSpec(
+        option_strings=("--muon-scale-mode",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="spectral",
+    ),
+    "muon_split_qkv": MegatronActionSpec(
+        option_strings=("--muon-no-split-qkv",),
+        action_type="store_false",
+        nargs=0,
+        const=False,
+        default=True,
+    ),
+    "muon_tp_mode": MegatronActionSpec(
+        option_strings=("--muon-tp-mode",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="blockwise",
+    ),
+    "muon_use_nesterov": MegatronActionSpec(
+        option_strings=("--muon-use-nesterov",),
         action_type="store_true",
         nargs=0,
         const=True,
@@ -6877,6 +9237,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=None,
     ),
+    "no_weight_decay_cond_type": MegatronActionSpec(
+        option_strings=("--no-weight-decay-cond-type",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
     "non_persistent_ckpt_type": MegatronActionSpec(
         option_strings=("--non-persistent-ckpt-type",),
         action_type="store",
@@ -6934,10 +9301,18 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=None,
     ),
     "num_channels": MegatronActionSpec(
-        option_strings=("--num-channels",), action_type="store", nargs=None, const=None, default=3
+        option_strings=("--num-channels",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=3,
     ),
     "num_classes": MegatronActionSpec(
-        option_strings=("--num-classes",), action_type="store", nargs=None, const=None, default=1000
+        option_strings=("--num-classes",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1000,
     ),
     "num_dataset_builder_threads": MegatronActionSpec(
         option_strings=("--num-dataset-builder-threads",),
@@ -6954,10 +9329,18 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=1,
     ),
     "num_experts": MegatronActionSpec(
-        option_strings=("--num-experts",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--num-experts",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "num_layers": MegatronActionSpec(
-        option_strings=("--num-layers",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--num-layers",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "num_layers_at_end_in_bf16": MegatronActionSpec(
         option_strings=("--num-layers-at-end-in-bf16",),
@@ -6995,7 +9378,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=None,
     ),
     "num_workers": MegatronActionSpec(
-        option_strings=("--num-workers",), action_type="store", nargs=None, const=None, default=2
+        option_strings=("--num-workers",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=2,
     ),
     "object_storage_cache_path": MegatronActionSpec(
         option_strings=("--object-storage-cache-path",),
@@ -7003,6 +9390,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "offload_modules": MegatronActionSpec(
+        option_strings=("--offload-modules",),
+        action_type="store",
+        nargs="*",
+        const=None,
+        default=[],
     ),
     "one_logger_async": MegatronActionSpec(
         option_strings=("--one-logger-async",),
@@ -7026,7 +9420,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=None,
     ),
     "onnx_safe": MegatronActionSpec(
-        option_strings=("--onnx-safe",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--onnx-safe",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "openai_gelu": MegatronActionSpec(
         option_strings=("--openai-gelu",),
@@ -7036,7 +9434,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=False,
     ),
     "optimizer": MegatronActionSpec(
-        option_strings=("--optimizer",), action_type="store", nargs=None, const=None, default="adam"
+        option_strings=("--optimizer",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="adam",
     ),
     "optimizer_cpu_offload": MegatronActionSpec(
         option_strings=("--optimizer-cpu-offload",),
@@ -7051,6 +9453,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=1.0,
+    ),
+    "outer_dp_sharding_strategy": MegatronActionSpec(
+        option_strings=("--outer-dp-sharding-strategy",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="no_shard",
     ),
     "output_bert_embeddings": MegatronActionSpec(
         option_strings=("--output-bert-embeddings",),
@@ -7109,7 +9518,10 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=False,
     ),
     "override_opt_param_scheduler": MegatronActionSpec(
-        option_strings=("--override-opt_param-scheduler",),
+        option_strings=(
+            "--override-opt_param-scheduler",
+            "--override-opt-param-scheduler",
+        ),
         action_type="store_true",
         nargs=0,
         const=True,
@@ -7123,7 +9535,18 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=None,
     ),
     "patch_dim": MegatronActionSpec(
-        option_strings=("--patch-dim",), action_type="store", nargs=None, const=None, default=16
+        option_strings=("--patch-dim",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=16,
+    ),
+    "per_dataset_sequences_path": MegatronActionSpec(
+        option_strings=("--per-dataset-sequences-path",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "per_split_data_args_path": MegatronActionSpec(
         option_strings=("--per-split-data-args-path",),
@@ -7138,6 +9561,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=False,
         default=True,
+    ),
+    "perform_rl_step": MegatronActionSpec(
+        option_strings=("--perform-rl-step",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "phase_transition_iterations": MegatronActionSpec(
+        option_strings=("--phase-transition-iterations",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "pin_cpu_grads": MegatronActionSpec(
         option_strings=("--no-pin-cpu-grads",),
@@ -7189,10 +9626,18 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=None,
     ),
     "profile": MegatronActionSpec(
-        option_strings=("--profile",), action_type="store_true", nargs=0, const=True, default=False
+        option_strings=("--profile",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "profile_ranks": MegatronActionSpec(
-        option_strings=("--profile-ranks",), action_type="store", nargs="+", const=None, default=[0]
+        option_strings=("--profile-ranks",),
+        action_type="store",
+        nargs="+",
+        const=None,
+        default=[0],
     ),
     "profile_step_end": MegatronActionSpec(
         option_strings=("--profile-step-end",),
@@ -7209,10 +9654,39 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=10,
     ),
     "q_lora_rank": MegatronActionSpec(
-        option_strings=("--q-lora-rank",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--q-lora-rank",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "qk_clip": MegatronActionSpec(
+        option_strings=("--qk-clip",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "qk_clip_alpha": MegatronActionSpec(
+        option_strings=("--qk-clip-alpha",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.5,
+    ),
+    "qk_clip_threshold": MegatronActionSpec(
+        option_strings=("--qk-clip-threshold",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=100,
     ),
     "qk_head_dim": MegatronActionSpec(
-        option_strings=("--qk-head-dim",), action_type="store", nargs=None, const=None, default=128
+        option_strings=("--qk-head-dim",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=128,
     ),
     "qk_l2_norm": MegatronActionSpec(
         option_strings=("--qk-l2-norm",),
@@ -7242,10 +9716,17 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=0.1,
     ),
+    "quick_geglu": MegatronActionSpec(
+        option_strings=("--quick-geglu",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "rampup_batch_size": MegatronActionSpec(
         option_strings=("--rampup-batch-size",),
         action_type="store",
-        nargs="*",
+        nargs=3,
         const=None,
         default=None,
     ),
@@ -7290,6 +9771,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "refit_method": MegatronActionSpec(
+        option_strings=("--refit-method",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="gloo",
     ),
     "relative_attention_max_distance": MegatronActionSpec(
         option_strings=("--relative-attention-max-distance",),
@@ -7452,6 +9940,199 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "rl_calculate_intra_group_similarity": MegatronActionSpec(
+        option_strings=(
+            "--rl-calculate-intra-group-similarity",
+            "--no-rl-calculate-intra-group-similarity",
+        ),
+        action_type="store",
+        nargs=0,
+        const=None,
+        default=False,
+    ),
+    "rl_default_temperature": MegatronActionSpec(
+        option_strings=("--rl-default-temperature",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
+    ),
+    "rl_default_top_k": MegatronActionSpec(
+        option_strings=("--rl-default-top-k",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=-1,
+    ),
+    "rl_default_top_p": MegatronActionSpec(
+        option_strings=("--rl-default-top-p",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
+    ),
+    "rl_importance_sampling_truncation_coef": MegatronActionSpec(
+        option_strings=("--rl-importance-sampling-truncation-coef",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "rl_inference_expert_model_parallel_size": MegatronActionSpec(
+        option_strings=("--rl-inference-expert-model-parallel-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "rl_inference_expert_tensor_model_parallel_size": MegatronActionSpec(
+        option_strings=("--rl-inference-expert-tensor-model-parallel-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "rl_inference_logprobs_is_correction": MegatronActionSpec(
+        option_strings=(
+            "--rl-inference-logprobs-is-correction",
+            "--no-rl-inference-logprobs-is-correction",
+        ),
+        action_type="store",
+        nargs=0,
+        const=None,
+        default=False,
+    ),
+    "rl_inference_model_unified_memory_level": MegatronActionSpec(
+        option_strings=("--rl-inference-model-unified-memory-level",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
+    ),
+    "rl_inference_pipeline_model_parallel_size": MegatronActionSpec(
+        option_strings=("--rl-inference-pipeline-model-parallel-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "rl_inference_tensor_model_parallel_size": MegatronActionSpec(
+        option_strings=("--rl-inference-tensor-model-parallel-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "rl_offload_inference_model_weights_when_idle": MegatronActionSpec(
+        option_strings=(
+            "--rl-offload-inference-model-weights-when-idle",
+            "--no-rl-offload-inference-model-weights-when-idle",
+        ),
+        action_type="store",
+        nargs=0,
+        const=None,
+        default=False,
+    ),
+    "rl_offload_kv_cache_during_training": MegatronActionSpec(
+        option_strings=(
+            "--rl-offload-kv-cache-during-training",
+            "--no-rl-offload-kv-cache-during-training",
+        ),
+        action_type="store",
+        nargs=0,
+        const=None,
+        default=False,
+    ),
+    "rl_offload_optimizer_during_inference": MegatronActionSpec(
+        option_strings=("--rl-offload-optimizer-during-inference",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "rl_parallel_generation_tasks": MegatronActionSpec(
+        option_strings=("--rl-parallel-generation-tasks",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=512,
+    ),
+    "rl_partial_rollouts": MegatronActionSpec(
+        option_strings=("--rl-partial-rollouts", "--no-rl-partial-rollouts"),
+        action_type="store",
+        nargs=0,
+        const=None,
+        default=False,
+    ),
+    "rl_prompts_per_eval": MegatronActionSpec(
+        option_strings=("--rl-prompts-per-eval",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=32,
+    ),
+    "rl_remove_kv_cache_during_training": MegatronActionSpec(
+        option_strings=(
+            "--rl-remove-kv-cache-during-training",
+            "--no-rl-remove-kv-cache-during-training",
+        ),
+        action_type="store",
+        nargs=0,
+        const=None,
+        default=False,
+    ),
+    "rl_reset_cuda_graphs": MegatronActionSpec(
+        option_strings=("--rl-reset-cuda-graphs", "--no-rl-reset-cuda-graphs"),
+        action_type="store",
+        nargs=0,
+        const=None,
+        default=False,
+    ),
+    "rl_sequence_packing_algo": MegatronActionSpec(
+        option_strings=("--rl-sequence-packing-algo",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="fifo",
+    ),
+    "rl_sequence_packing_max_sequences_per_bin": MegatronActionSpec(
+        option_strings=("--rl-sequence-packing-max-sequences-per-bin",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=50,
+    ),
+    "rl_skip_bos_token": MegatronActionSpec(
+        option_strings=("--rl-skip-bos-token", "--no-rl-skip-bos-token"),
+        action_type="store",
+        nargs=0,
+        const=None,
+        default=False,
+    ),
+    "rl_training_cuda_graphs": MegatronActionSpec(
+        option_strings=("--rl-training-cuda-graphs", "--no-rl-training-cuda-graphs"),
+        action_type="store",
+        nargs=0,
+        const=None,
+        default=False,
+    ),
+    "rl_use_sequence_packing": MegatronActionSpec(
+        option_strings=("--rl-use-sequence-packing", "--no-rl-use-sequence-packing"),
+        action_type="store",
+        nargs=0,
+        const=None,
+        default=False,
+    ),
+    "rl_verify_model_weights_swap": MegatronActionSpec(
+        option_strings=(
+            "--rl-verify-model-weights-swap",
+            "--no-rl-verify-model-weights-swap",
+        ),
+        action_type="store",
+        nargs=0,
+        const=None,
+        default=False,
+    ),
     "rope_scaling_factor": MegatronActionSpec(
         option_strings=("--rope-scaling-factor",),
         action_type="store",
@@ -7460,7 +10141,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=8.0,
     ),
     "rope_type": MegatronActionSpec(
-        option_strings=("--rope-type",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--rope-type",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "rotary_base": MegatronActionSpec(
         option_strings=("--rotary-base",),
@@ -7505,10 +10190,25 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=False,
     ),
     "sample_rate": MegatronActionSpec(
-        option_strings=("--sample-rate",), action_type="store", nargs=None, const=None, default=1.0
+        option_strings=("--sample-rate",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
     ),
     "save": MegatronActionSpec(
-        option_strings=("--save",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--save",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "save_dgrads_interval": MegatronActionSpec(
+        option_strings=("--save-dgrads-interval",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "save_interval": MegatronActionSpec(
         option_strings=("--save-interval", "--persistent-save-interval"),
@@ -7524,6 +10224,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=None,
     ),
+    "save_wgrads_interval": MegatronActionSpec(
+        option_strings=("--save-wgrads-interval",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
     "scatter_gather_tensors_in_pipeline": MegatronActionSpec(
         option_strings=("--no-scatter-gather-tensors-in-pipeline",),
         action_type="store_false",
@@ -7532,10 +10239,18 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=True,
     ),
     "seed": MegatronActionSpec(
-        option_strings=("--seed",), action_type="store", nargs=None, const=None, default=1234
+        option_strings=("--seed",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1234,
     ),
     "seq_length": MegatronActionSpec(
-        option_strings=("--seq-length",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--seq-length",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "sequence_parallel": MegatronActionSpec(
         option_strings=("--sequence-parallel",),
@@ -7545,7 +10260,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=False,
     ),
     "sft": MegatronActionSpec(
-        option_strings=("--sft",), action_type="store_true", nargs=0, const=True, default=False
+        option_strings=("--sft",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "sft_tokenizer_prompt_format": MegatronActionSpec(
         option_strings=("--sft-tokenizer-prompt-format",),
@@ -7555,7 +10274,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default="nemotron-h-aligned",
     ),
     "sgd_momentum": MegatronActionSpec(
-        option_strings=("--sgd-momentum",), action_type="store", nargs=None, const=None, default=0.9
+        option_strings=("--sgd-momentum",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.9,
     ),
     "sharp_enabled_group": MegatronActionSpec(
         option_strings=("--sharp-enabled-group",),
@@ -7578,11 +10301,26 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "softmax_type": MegatronActionSpec(
+        option_strings=("--softmax-type",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="vanilla",
+    ),
     "spec": MegatronActionSpec(
-        option_strings=("--spec",), action_type="store", nargs="*", const=None, default=None
+        option_strings=("--spec",),
+        action_type="store",
+        nargs="*",
+        const=None,
+        default=None,
     ),
     "split": MegatronActionSpec(
-        option_strings=("--split",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--split",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "squared_relu": MegatronActionSpec(
         option_strings=("--squared-relu",),
@@ -7613,7 +10351,10 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=1,
     ),
     "strict_fsdp_dtensor_load": MegatronActionSpec(
-        option_strings=("--no-strict-fsdp-dtensor-load",),
+        option_strings=(
+            "--no-strict-fsdp-dtensor-load",
+            "--disable-strict-fsdp-dtensor-load",
+        ),
         action_type="store_false",
         nargs=0,
         const=False,
@@ -7627,7 +10368,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=None,
     ),
     "swiglu": MegatronActionSpec(
-        option_strings=("--swiglu",), action_type="store_true", nargs=0, const=True, default=False
+        option_strings=("--swiglu",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "swin_backbone_type": MegatronActionSpec(
         option_strings=("--swin-backbone-type",),
@@ -7638,6 +10383,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "symmetric_ar_type": MegatronActionSpec(
         option_strings=("--symmetric-ar-type",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "te_precision_config_file": MegatronActionSpec(
+        option_strings=("--te-precision-config-file",),
         action_type="store",
         nargs=None,
         const=None,
@@ -7734,6 +10486,27 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=None,
     ),
+    "tokenizer_hf_include_special_tokens": MegatronActionSpec(
+        option_strings=("--tokenizer-hf-include-special-tokens",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "tokenizer_hf_use_fast": MegatronActionSpec(
+        option_strings=("--tokenizer-hf-use-fast",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "tokenizer_metadata": MegatronActionSpec(
+        option_strings=("--tokenizer-metadata",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
     "tokenizer_model": MegatronActionSpec(
         option_strings=("--tokenizer-model",),
         action_type="store",
@@ -7741,12 +10514,19 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=None,
     ),
-    "legacy_tokenizer": MegatronActionSpec(
-        option_strings=("--legacy-tokenizer",),
+    "tokenizer_sentencepiece_legacy": MegatronActionSpec(
+        option_strings=("--tokenizer-sentencepiece-legacy",),
         action_type="store_true",
         nargs=0,
         const=True,
         default=False,
+    ),
+    "tokenizer_special_tokens": MegatronActionSpec(
+        option_strings=("--tokenizer-special-tokens",),
+        action_type="store",
+        nargs="+",
+        const=None,
+        default=None,
     ),
     "tokenizer_type": MegatronActionSpec(
         option_strings=("--tokenizer-type",),
@@ -7840,7 +10620,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=None,
     ),
     "train_iters": MegatronActionSpec(
-        option_strings=("--train-iters",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--train-iters",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "train_samples": MegatronActionSpec(
         option_strings=("--train-samples",),
@@ -7863,6 +10647,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default="transformer_engine",
     ),
+    "trust_remote_code": MegatronActionSpec(
+        option_strings=("--trust-remote-code",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "untie_embeddings_and_output_weights": MegatronActionSpec(
         option_strings=("--untie-embeddings-and-output-weights",),
         action_type="store_true",
@@ -7878,7 +10669,10 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=False,
     ),
     "use_checkpoint_opt_param_scheduler": MegatronActionSpec(
-        option_strings=("--use-checkpoint-opt_param-scheduler",),
+        option_strings=(
+            "--use-checkpoint-opt_param-scheduler",
+            "--use-checkpoint-opt-param-scheduler",
+        ),
         action_type="store_true",
         nargs=0,
         const=True,
@@ -7919,8 +10713,22 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "use_kitchen_attention": MegatronActionSpec(
+        option_strings=("--use-kitchen-attention",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "use_legacy_models": MegatronActionSpec(
         option_strings=("--use-legacy-models",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "use_legacy_static_engine": MegatronActionSpec(
+        option_strings=("--use-legacy-static-engine",),
         action_type="store_true",
         nargs=0,
         const=True,
@@ -7996,8 +10804,18 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "use_te_activation_func": MegatronActionSpec(
+        option_strings=("--use-te-activation-func",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "use_tokenizer_model_from_checkpoint_args": MegatronActionSpec(
-        option_strings=("--no-use-tokenizer-model-from-checkpoint-args",),
+        option_strings=(
+            "--no-use-tokenizer-model-from-checkpoint-args",
+            "--disable-use-tokenizer-model-from-checkpoint-args",
+        ),
         action_type="store_false",
         nargs=0,
         const=False,
@@ -8025,7 +10843,11 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=False,
     ),
     "v_head_dim": MegatronActionSpec(
-        option_strings=("--v-head-dim",), action_type="store", nargs=None, const=None, default=128
+        option_strings=("--v-head-dim",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=128,
     ),
     "valid_data_path": MegatronActionSpec(
         option_strings=("--valid-data-path",),
@@ -8063,10 +10885,25 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         default=0,
     ),
     "vocab_file": MegatronActionSpec(
-        option_strings=("--vocab-file",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--vocab-file",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "vocab_size": MegatronActionSpec(
-        option_strings=("--vocab-size",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--vocab-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "wandb_entity": MegatronActionSpec(
+        option_strings=("--wandb-entity",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "wandb_entity": MegatronActionSpec(
         option_strings=("--wandb-entity",),
@@ -8080,20 +10917,28 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         action_type="store",
         nargs=None,
         const=None,
-        default="",
+        default=None,
     ),
     "wandb_project": MegatronActionSpec(
-        option_strings=("--wandb-project",), action_type="store", nargs=None, const=None, default=""
+        option_strings=("--wandb-project",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "wandb_save_dir": MegatronActionSpec(
         option_strings=("--wandb-save-dir",),
         action_type="store",
         nargs=None,
         const=None,
-        default="",
+        default=None,
     ),
     "warmup": MegatronActionSpec(
-        option_strings=("--warmup",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--warmup",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "weight_decay": MegatronActionSpec(
         option_strings=("--weight-decay",),
@@ -8116,8 +10961,26 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=0,
     ),
+    "window_attn_skip_freq": MegatronActionSpec(
+        option_strings=("--window-attn-skip-freq",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "window_size": MegatronActionSpec(
+        option_strings=("--window-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
     "yaml_cfg": MegatronActionSpec(
-        option_strings=("--yaml-cfg",), action_type="store", nargs=None, const=None, default=None
+        option_strings=("--yaml-cfg",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
 }
 

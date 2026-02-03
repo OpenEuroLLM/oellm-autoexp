@@ -2,5 +2,12 @@ defaults:
   - base_defaults
   - _self_
 
+wandb_exp_name: "${job.name}"
+wandb_project: "sanity-checks"
+wandb_save_dir: "${job.base_output_dir}/wandb"
+tensorboard_dir: "${job.base_output_dir}/tensorboard"
+save: "${job.base_output_dir}"
+load: "${job.base_output_dir}"
+
 aux:  # auxiliary configuration arguments that are free and not typed
   model_name: ""

@@ -143,6 +143,7 @@ class MonitorLoop:
         local_client: JobClientProtocol | None = None,
         poll_interval_seconds: float = 60.0,
         show_poll_state: bool = True,
+        no_error_catching: bool = False,
     ) -> None:
         _import_registry()
         self._store = store
@@ -150,6 +151,7 @@ class MonitorLoop:
         self._local_client = local_client
         self.poll_interval_seconds = poll_interval_seconds
         self.show_poll_state = show_poll_state
+        self.no_error_catching = no_error_catching
 
     def _get_client(self, job: JobRecordConfig) -> JobClientProtocol:
         """Get the appropriate client based on job configuration."""
@@ -297,11 +299,14 @@ class MonitorLoop:
             else:
                 runtime_job_id = job_ids[0]
         else:
-            try:
+            if self.no_error_catching:
                 runtime_job_id = client.submit(job.definition)
-            except Exception as e:
-                LOGGER.error(f"Unable to submit {job.definition.name}: {e}")
-                runtime_job_id = None
+            else:
+                try:
+                    runtime_job_id = client.submit(job.definition)
+                except Exception as e:
+                    LOGGER.error(f"Unable to submit {job.definition.name}: {e}")
+                    runtime_job_id = None
         if runtime_job_id is not None:
             runtime.runtime_job_id = runtime_job_id
             runtime.submitted = True
