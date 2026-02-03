@@ -27,9 +27,9 @@ git checkout exp_diana
 ## Run the experiments
 Firstly, ensure you have Python loaded, activated the virtual environment and are inside `oellm-autoexp`. This branch uses this container: `/leonardo_work/OELLM_prod2026/container_images/nemo_25.11.01.sif`.
 
-1. **Quick experiments**
+### Quick experiments
 
-Quick experiment to check that the tool works with auto-cooldown. Launch it with `python scripts/run_autoexp.py --config-name experiments/diana/test_dense_50M_200MT`.
+Check that the tool works with auto-cooldown. Launch `python scripts/run_autoexp.py --config-name experiments/diana/test_dense_50M_200MT`.
 
 It is a very small and quick experiment, meant for testing auto-cooldown (it takes roughly 15 minutes to train up to 200M tokens). The workflow first generates and submits the sbatch script for the stable run. A background monitoring loop then checks when the start condition for the decay run is satisfied, after which it generates and submits the sbatch script for the decay run.
 
@@ -37,11 +37,12 @@ To test and debug the tool, launch it with `python scripts/run_autoexp.py --conf
 
 Since this experiment is meant for debugging auto-cooldown purposes, the token budget, warmup_iters, save_interval, and hyperparameter sweeps have been significantly reduced.
 
-2. **Reproduce Niccolo's experiments**
+### Reproduce Niccolo's experiments
+- 50M-20BT experiment: Launch `python scripts/run_autoexp.py --config-name experiments/diana/dense_50M_20BT`. This experiment runs one stable training job up to 20BT and 2 decay jobs at 12 and 20BT. The configurations are from [here](https://wandb.ai/openeurollm-project/dense_scaling/reports/Baseline-Runs-Check--VmlldzoxNTc5NDAxMQ). Results [here](https://wandb.ai/openeurollm-project/sanity-checks?nw=nwuserdianaonutu).
+- 50M-50BT experiment: Launch `python scripts/run_autoexp.py --config-name experiments/diana/dense_50M_50BT`. This experiment runs one stable training job up to 50BT and 1 decay job at 50BT. 
 
-Launch `python scripts/run_autoexp.py --config-name experiments/diana/dense_50M_20BT`. This experiment is meant to run one stable run up to 20BT and decay at 12 and 20BT. The configurations are from [here](https://wandb.ai/openeurollm-project/dense_scaling/reports/Baseline-Runs-Check--VmlldzoxNTc5NDAxMQ). Results [here](https://wandb.ai/openeurollm-project/sanity-checks?nw=nwuserdianaonutu).
 
-Adjustments from the `main` of the experiments configuration file:
+#### Important adjustments
 - add `legacy_tokenizer` and set it to `True` to support the old tokenizer system using the vocab and merges files
 - add `wandb_entity` and `tensorboard_dir` for wandb logging 
 - add `save` for checkpointing
