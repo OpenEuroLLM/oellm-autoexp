@@ -91,8 +91,8 @@ class RootConfig(StagedSweepRoot):
     container: EmptyDict | ContainerConfig = field(
         default_factory=EmptyDict
     )  # defines container setup
-    sweep: SweepConfig | None = field(
-        default_factory=dict()
+    sweep: EmptyDict | SweepConfig = field(
+        default_factory=EmptyDict
     )  # defines a surrounding sweep (already inherited from StagedSweepRoot)
 
     metadata: dict[str, Any] = field(default_factory=dict)
