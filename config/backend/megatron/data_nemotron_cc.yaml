@@ -5,3 +5,6 @@ data_path:
  - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-extract_knowledge
  - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-knowledge_list
  - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-wrap_medium
+
+aux:
+  dataset: nemotroncc
