@@ -17,16 +17,17 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import zip_longest
+from pathlib import Path
 from typing import Any
 
 import networkx as nx
 from compoconf import asdict
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
-from oellm_autoexp.hydra_staged_sweep.config.schema import StagedSweepRoot, ConfigSetup
-from oellm_autoexp.hydra_staged_sweep.config.loader import load_config_reference
-from oellm_autoexp.hydra_staged_sweep.expander import SweepPoint
-from oellm_autoexp.hydra_staged_sweep.planner import JobPlan
+from .config.schema import StagedSweepRoot, ConfigSetup
+from .config.loader import load_config_reference
+from .expander import SweepPoint
+from .planner import JobPlan
 
 LOGGER = logging.getLogger(__file__)
 
@@ -282,12 +283,53 @@ def config_to_cmdline(
     return cmdline_opts
 
 
-def param_to_cmdlines(key: str, val: Any, prefix: str = ""):
+def is_config_group(key: str, config_dir: str | Path | None) -> bool:
+    """Check if a parameter key refers to a Hydra config group.
+
+    A parameter is considered a config group if:
+    1. It contains '/' (e.g., "basic/subconfig") - explicit config group path
+    2. A directory with that name exists in config_dir
+
+    Args:
+        key: Parameter name
+        config_dir: Configuration directory path
+
+    Returns:
+        True if key refers to a config group, False otherwise
+    """
+    # If key contains '/', it's a config group path
+    if "/" in key:
+        return True
+
+    # Check if directory exists
+    if config_dir:
+        config_group_path = Path(config_dir) / key
+        return config_group_path.is_dir()
+
+    return False
+
+
+def param_to_cmdlines(key: str, val: Any, prefix: str = "", config_dir: str | Path | None = None):
+    """Convert a parameter to command-line overrides.
+
+    Args:
+        key: Parameter name
+        val: Parameter value
+        prefix: Override prefix (e.g., "++" for force-add, "" for regular override)
+        config_dir: Configuration directory for config group detection
+
+    Returns:
+        List of command-line override strings
+    """
     if isinstance(val, str):
         if re.match(r"\[[A-Za-z][A-Za-z0-9,]*\]", val):
             return [f"{prefix}{key}={val}"]
         val = val.replace('"', '\\"')
         return [f'{prefix}{key}="{val}"']
+    elif isinstance(val, list) and all(isinstance(item, str) for item in val):
+        # Format as Hydra config group list: subconfig=[a,b]
+        list_str = "[" + ",".join(val) + "]"
+        return [f"{prefix}{key}={list_str}"]
     else:
         return config_to_cmdline(
             val,
@@ -325,7 +367,32 @@ def resolve_sweep_with_dag(
     filtered_jobs = {}
     base_context = asdict(config)
     base_context = {k: v for k, v in base_context.items() if k not in ("sweep", "sibling")}
-    sweep_filter_expr = config.sweep.filter
+    sweep_filter_expr = config.sweep.filter if config.sweep else True
+
+    if config.sweep is None:
+        point = points_dict[list(points_dict)[0]]
+        resolved = load_config_reference(
+            config_dir=config_setup.config_dir,
+            config_path=config_setup.config_path,
+            config_name=config_setup.config_name,
+            overrides=point.parameters,
+            config_class=config_class,
+        )
+
+        resolved_dict = asdict(resolved)
+        context = {k: v for k, v in resolved_dict.items() if k not in ("sweep")}
+        skip_point = False
+
+        stage_name = getattr(resolved, "stage", None)
+
+        job = JobPlan(
+            config=resolved,
+            parameters=point,
+            sibling_pattern=None,
+            stage_name=stage_name,
+        )
+
+        return [job]
 
     for point_idx in ordered_indices:
         point = points_dict[point_idx]
@@ -372,17 +439,26 @@ def resolve_sweep_with_dag(
             override="++",
         )
 
+        # Generate parameter overrides with smart prefix selection
+        param_overrides = []
+        for key, value in point.parameters.items():
+            # Detect if this is a config group parameter
+            if is_config_group(key, config_setup.config_dir):
+                # Config group: use no prefix (regular override)
+                param_overrides.extend(
+                    param_to_cmdlines(key, value, prefix="", config_dir=config_setup.config_dir)
+                )
+            else:
+                # Regular parameter: use ++ prefix (force-add)
+                param_overrides.extend(
+                    param_to_cmdlines(key, value, prefix="++", config_dir=config_setup.config_dir)
+                )
+
         job_parameters = (
             list(config_setup.overrides)
             + cmdline_overrides_siblings
             + [f"++index={point_idx}"]
-            + sum(
-                [
-                    param_to_cmdlines(key, value, prefix="++")
-                    for key, value in point.parameters.items()
-                ],
-                start=[],
-            )
+            + param_overrides
         )
 
         resolved = load_config_reference(

@@ -24,6 +24,7 @@ class SweepConfig(ConfigInterface):
     base_values: dict[str, Any] = field(default_factory=dict)
     store_sweep_json: bool = True
     filter: bool | str | None = True
+    list_composition: list[str] = field(default_factory=list)  # Parameters to accumulate as lists
 
 
 @dataclass(kw_only=True)
