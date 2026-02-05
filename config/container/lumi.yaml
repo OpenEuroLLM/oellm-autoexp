@@ -1,5 +1,5 @@
 class_name: Container
-image: ${oc.env:CONTAINER_CACHE_DIR}/MegatronTrainingLumi_x86_64_202511090219.sif
+image: ${oc.env:CONTAINER_CACHE_DIR}/MegatronTrainingLumi_x86_64.sif
 runtime: singularity
 bind:
   [
