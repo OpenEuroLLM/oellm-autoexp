@@ -18,5 +18,5 @@ tokenizer_model: EleutherAI/gpt-neox-20b
 tokenizer_type: HuggingFaceTokenizer
 
 # DATA
-micro_batch_size: 8
+micro_batch_size: 8 
 

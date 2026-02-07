@@ -2,13 +2,13 @@
 defaults:
   - base
   - /backend: megatron
-  - /container: lumi
-  - /slurm: lumi
+  - /container: amd_mi325x_cloud
+  - /slurm: amd_mi325x_cloud
   - /monitoring: megatron_basic
   - /project: default
   - /sweep: none
   - /experiments/rluukkon/models: moe_2B_400M
-  - /experiments/rluukkon/data:   moe_ablation_data
+  - /experiments/rluukkon/data:   neox_50B_english
   - _self_
 
 project:
@@ -17,8 +17,8 @@ project:
   
 slurm:
   sbatch:
-    partition: standard-g
-    nodes: 4
+    partition: amd-tw-verification
+    nodes: 1
     time: 0-20:00:00
 
 backend:
@@ -26,6 +26,10 @@ backend:
     log_throughput: true
     log_interval: 1
     log_progress: true
+    micro_batch_size: 16
+    moe_token_dispatcher_type: "alltoall"
+    moe_router_fusion: True
+    expert_model_parallel_size: 1 # test deepep 
 
 
     # training schedule. Round numbers to avoid floating point issues
@@ -38,7 +42,8 @@ backend:
     save: ${project.base_output_dir}
     load: ${project.base_output_dir}
     tensorboard_dir: ${project.base_output_dir}/tensorboard
-    wandb: false 
+    save_interval: 10000
+    wandb_entity: "risto-m-luukkonen"
     wandb_save_dir: "${project.base_output_dir}/wandb"
     wandb_project: "${project.name}"
     wandb_exp_name: "qwen3_2B_A400M_lr${.lr}_gbsz${.global_batch_size}_$SLURM_JOB_ID"

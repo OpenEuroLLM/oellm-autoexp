@@ -6,8 +6,8 @@ defaults:
   - /slurm: amd_mi325x_cloud
   - /monitoring: megatron_basic
   - /project: default
-  - /sweep: none 
-  - /experiments/rluukkon/models: moe_0.6B_100M
+  - /sweep: none
+  - /experiments/rluukkon/moe_scaling_laws/models: moe_100M
   - /experiments/rluukkon/data:   neox_50B_english
   - _self_
 
@@ -26,6 +26,10 @@ backend:
     log_throughput: true
     log_interval: 1
     log_progress: true
+    micro_batch_size: 16
+    moe_token_dispatcher_type: "alltoall"
+    moe_router_fusion: True
+    expert_model_parallel_size: 1 # test deepep 
 
 
     # training schedule. Round numbers to avoid floating point issues
@@ -42,7 +46,4 @@ backend:
     wandb_entity: "risto-m-luukkonen"
     wandb_save_dir: "${project.base_output_dir}/wandb"
     wandb_project: "${project.name}"
-    wandb_exp_name: "qwen3_0.6B_A100M_lr${.lr}_gbsz${.global_batch_size}_$SLURM_JOB_ID"
-
-
-
+    wandb_exp_name: "moe_100M_lr${.lr}_gbsz${.global_batch_size}_$SLURM_JOB_ID"

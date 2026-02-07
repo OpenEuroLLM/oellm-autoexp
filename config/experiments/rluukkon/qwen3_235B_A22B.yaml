@@ -6,37 +6,30 @@ defaults:
   - /slurm: amd_mi325x_cloud
   - /monitoring: megatron_basic
   - /project: default
-  - /sweep: parallelism
+  - /sweep: none
   - /backend/megatron: base
   - /experiments/rluukkon/data: qwen_3_validation_sample
-  - /experiments/rluukkon/models: qwen3_30B_A3B
+  - /experiments/rluukkon/models: qwen3_235B_A22B
   - _self_
 
 project:
   name: qwen3_30B_a3B_validation
   resume: true
-  
+
 slurm:
   sbatch:
     partition: amd-tw-verification
-    nodes: 1
-    time: 0-00:30:00
+    nodes: 8
+    time: 0-00:20:00
 backend:
   megatron:
     # log_throughput: true
     # log_interval: 1
     # log_progress: true
-    # # moe_layer_freq: "[0]*1+[1]*6"
-    # # moe_router_score_function: "sigmoid"
-    # # moe_router_pre_softmax: true
-    # moe_router_topk_scaling_factor: 2.5
-    # moe_router_enable_expert_bias: True
-    # moe_router_bias_update_rate: 1e-3
-    # moe_router_permute_fusion: True
-    # mtp_num_layers: 1
-    # mtp_loss_scaling_factor: 0.1
-    # moe_router_load_balancing_type: "seq_aux_loss"
     # moe_aux_loss_coeff: 1e-4
+    global_batch_size: 64 
+    micro_batch_size: 1
+    seq_length: 2048
 
    
     # training schedule. Round numbers to avoid floating point issues

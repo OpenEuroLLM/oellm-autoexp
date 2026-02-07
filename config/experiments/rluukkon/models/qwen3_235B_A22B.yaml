@@ -5,23 +5,28 @@ log_interval: 1
 log_progress: true
 
 # MODEL
-num_layers: 48
-num_attention_heads: 32
+num_layers: 94
+num_attention_heads: 64
 num_query_groups: 4 # no gqa when NUM_QUERY_GROUPS==NUM_ATTENTION_HEADS TODO: check
 group_query_attention: True 
-hidden_size: 2048
-ffn_hidden_size: 6144 # not used in the current MoE 
-moe_ffn_hidden_size: 768 
+hidden_size: 4096
+ffn_hidden_size: 12288 # not used in the current MoE 
+moe_ffn_hidden_size: 1536 
 kv_channels: 128
 num_experts: 128
 moe_router_topk: 8
 moe_router_dtype: "fp32"
 moe_grouped_gemm: True 
-moe_aux_loss_coeff: 0.01
+moe_aux_loss_coeff: 0.001
+moe_router_pre_softmax: False
+moe_router_fusion: True
 init_method_std: 0.02
 position_embedding_type: "rope"
 rotary_base: 1000000
 rotary_percent: 1.0
+rotary_seq_len_interpolation_factor: 1
+max_position_embeddings: 40960
+make_vocab_size_divisible_by: 1187
 attention_dropout: 0.0
 hidden_dropout: 0.0
 normalization: RMSNorm
@@ -34,17 +39,23 @@ use_flash_attn: True
 attention_softmax_in_fp32: True
 
 # MEMORY OPTIMIZATIONS
-recompute_activations: False
+recompute_activations: True
+recompute_modules: ["core_attn"]
 use_torch_fsdp2: False # it's either this or the next 4 args
 tensor_model_parallel_size: 1
-pipeline_model_parallel_size: 1
-expert_model_parallel_size: 8
+# first and last pp stages have 23 stages, middle stages have 24 stages
+# make first and last layers 
+pipeline_model_parallel_size: 2
+# decoder_first_pipeline_num_layers: 23
+# decoder_last_pipeline_num_layers: 23
+expert_model_parallel_size: 16
 context_parallel_size: 1
 sequence_parallel: True
 use_distributed_optimizer: True
 
+moe_enable_deepep: True
 moe_router_load_balancing_type: "global_aux_loss"
-moe_token_dispatcher_type: "alltoall"
+moe_token_dispatcher_type: "flex"
 moe_permute_fusion: True
 
 # COMM OPTIONS
@@ -62,10 +73,10 @@ bias_dropout_fusion: False
 adam_beta1: 0.9
 adam_beta2: 0.95
 adam_eps: 1e-8
-lr: 3e-4
-min_lr: 0.0
+lr: 3.9e-6
+min_lr: 3.9e-7
+lr_warmup_init: 3.9e-7
 clip_grad: 1.0
-weight_decay: 0.05
-lr_decay_style: WSD
-lr_wsd_decay_style: linear
+weight_decay: 0.1
+lr_decay_style: cosine
  
