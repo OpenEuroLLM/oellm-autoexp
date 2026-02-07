@@ -14,4 +14,4 @@ data_path:
 data_cache_path: /shared_silo/scratch/rluukkon/megatron-workdir-lumi/wikipedia_20220301.en.valid.jsonl.preprocessed_text_document.cache
 tokenizer_model: Qwen/Qwen3-30B-A3B 
 tokenizer_type: HuggingFaceTokenizer
-micro_batch_size: 8
+micro_batch_size: 1

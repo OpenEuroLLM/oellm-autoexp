@@ -4,8 +4,8 @@ defaults:
 
 template_path: templates/amd_mi325x_cloud.sbatch
 launcher_cmd: "{{env_exports}} export MIOPEN_USER_DB_PATH=/tmp/$USER-miopen-cache-$SLURM_NODEID ; \
-   export MIOPEN_CUSTOM_CACHE_DIR=$MIOPEN_USER_DB_PATH ; export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; \
-  ${oc.select:container.runtime,singularity} exec --pwd ${container.pwd} \
+   export MIOPEN_CUSTOM_CACHE_DIR=$MIOPEN_USER_DB_PATH ;export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; \
+  ${oc.select:container.runtime,singularity} exec --overlay /shared_silo/scratch/rluukkon/overlays/meg_eval.img:ro --pwd ${container.pwd} \
   {{bind_flags}}{{env_flags}} ${oc.select:container.image,container.sif}"
 srun:
   exclusive: true

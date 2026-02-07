@@ -1,0 +1,60 @@
+# @package _global_
+defaults:
+  - base
+  - /backend: megatron
+  - /container: amd_mi325x_cloud
+  - /slurm: amd_mi325x_cloud
+  - /monitoring: megatron_basic
+  - /project: default
+  - /sweep: mbs 
+  - /experiments/rluukkon/models: dense_600M_ablation_model
+  - /experiments/rluukkon/data:   neox_50B_english
+  - _self_
+
+project:
+  name: dense-600M-ablation-model
+  resume: true
+  
+slurm:
+  sbatch:
+    partition: amd-tw-verification
+    nodes: 1
+    time: 0-00:60:00
+
+backend:
+  megatron:
+    log_throughput: true
+    log_interval: 1
+    log_progress: true
+    eval_interval: 1000
+    eval_iters: 100
+    ckpt_format: torch
+    save_interval: 1000
+    lr: 0.0027
+    train_iters: 143052
+    lr_wsd_decay_iters: 28610
+    lr_wsd_decay_style: linear
+    lr_warmup_iters: 2000
+
+
+    global_batch_size: 2048
+    seq_length: 2048
+    exit_interval: 150
+    profile: true
+    use_pytorch_profiler: true
+    profile_step_start: 10
+    profile_step_end: 12
+    profile_ranks: [0]
+
+
+ 
+
+    save: ${project.base_output_dir}
+    load: ${project.base_output_dir}
+    tensorboard_dir: ${project.base_output_dir}/tensorboard
+    # wandb_save_dir: "${project.base_output_dir}/wandb"
+    # wandb_project: "${project.name}"
+    # wandb_exp_name: "dense-600M-ablation-model_mbs${.micro_batch_size}_gbsz${.global_batch_size}_$SLURM_JOB_ID"
+
+
+
