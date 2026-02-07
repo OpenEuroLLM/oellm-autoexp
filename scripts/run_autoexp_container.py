@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> None:
 
     container_image = args.image
     container_runtime = args.apptainer_cmd
-    container_python = "python"
+    container_python = "python3"
 
     cfg = _load_container_config(args.config_ref, args.config_dir, args.override)
     if cfg:
@@ -181,7 +181,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     submit_cmd = [
-        "python",
+        "python3",
         "-u",
         str(submit_script),
         "--manifest",
