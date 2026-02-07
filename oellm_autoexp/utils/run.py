@@ -1,8 +1,11 @@
+import logging
 import signal
 import subprocess
 import sys
 import threading
 from collections.abc import Sequence
+
+LOGGER = logging.getLogger(__name__)
 
 try:  # pragma: no cover - pty only available on POSIX
     import os

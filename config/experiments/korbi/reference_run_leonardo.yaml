@@ -1,0 +1,33 @@
+# @package _global_
+#
+# 300M dense model training with pull-based multi-stage cooldown
+# Translation of dense_300M_50BT.yaml to new composable sweep system
+#
+defaults:
+  - /backend: megatron_torchdist
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: default
+  - /sweep: none
+  - override /backend/megatron: [base_reference,data_nemotron_cc]
+  - _self_
+
+index: 0
+stage: "all"
+
+job:
+  base_output_dir: "${.name}"
+  name: "reference_cl${oc.select:slurm.env.MACHINE_NAME,none}_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_beta2${backend.megatron.adam_beta2}_${stage}"
+
+backend:
+  megatron:
+    wandb_exp_name: "${job.name}"
+    wandb_project: oellm-train
+
+    # DATA
+    data_cache_path: ${oc.env:OELLM_CACHE_DIR,".cache"}
+
+
+slurm:
+  sbatch:
+    nodes: 1

@@ -1,5 +1,9 @@
-image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining_x86_64_202510130000.sif
+class_name: Container
+image: ${oc.env:OELLM_CONTAINERS_DIR,.}/OELLM_autoexp_MegatronTrainingNoRoot_base2512_x86_64_202601281510.sif
 runtime: singularity
-bind: ["/leonardo_scratch"]
-env: {}
+bind: ["/leonardo_scratch", "/leonardo", "/leonardo_work"]
+env:
+  WANDB_MODE: "offline"
+  MACHINE_NAME: "LEONARDO"
+  PYTHONPATH: "."
 python: "/usr/bin/python"

@@ -1,0 +1,7 @@
+num_layers: 22
+hidden_size: 512
+num_attention_heads: 8
+ffn_hidden_size: 2256
+
+aux:
+  model_name: "dense130M"

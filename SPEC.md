@@ -22,11 +22,13 @@ oellm-autoexp/
 │   │   └── resolvers.py              # hydra-style resolvers for derived params (optional)
 │   ├── sweep/
 │   │   ├── expander.py               # hydra-like sweep expansion
-│   │   └── planner.py                # builds job plan objects from sweeps
+│   │   ├── dag_resolver.py           # DAG-based resolution + sibling interpolation
+│   │   ├── planner.py                # job plan helpers
+│   │   └── validator.py              # plan validation (deps, interpolations)
 │   ├── slurm/
+│   │   ├── client.py                 # real/fake SLURM clients
 │   │   ├── template_renderer.py      # render sbatch scripts from templates + args
-│   │   ├── validator.py              # lint & dry-run templates, type-check sbatch args
-│   │   └── fake_sbatch.py            # mock sbatch/squeue/scancel used in tests
+│   │   └── validator.py              # lint & dry-run templates, type-check sbatch args
 │   ├── monitor/
 │   │   ├── watcher.py                # log/time-based detectors (SLURM + file polling)
 │   │   ├── controller.py             # orchestrates event emission, action execution, restarts
@@ -39,13 +41,15 @@ oellm-autoexp/
 │   ├── backends/
 │   │   ├── __init__.py
 │   │   ├── base.py                   # abstract interface (arg dataclasses, command builder)
-│   │   └── megatron.py               # concrete adapter + argument extraction by way of megatron parser
+│   │   └── megatron_backend.py       # concrete adapter + argument extraction by way of megatron parser
 │   ├── orchestrator.py               # glue: sweep → job plan → submission → monitoring loop
 │   ├── workflow/
 │   │   ├── manifest.py               # serialisable plan manifests shared between container and host
+│   │   ├── plan.py                   # plan serialization helpers
 │   │   └── host.py                   # host-side helpers for submission/monitoring from manifests
 │   ├── job_state.py                  # job model, enums for status/error type
 │   └── utils/
+│       ├── logging_config.py         # logging defaults + CLI flags
 │       └── shell.py                  # wrappers for invoking sbatch, squeue, etc.
 ├── submodules/
 │   └── megatron/                     # git submodule pointing to Megatron-LM
@@ -67,11 +71,12 @@ oellm-autoexp/
 *Note:* actual module naming can be adjusted, but keep the separation of concerns.
 
 ## Configuration Model
-- Hydra configuration tree under `config/` provides reusable defaults (`project`, `slurm`, `backend`, `monitoring`, `sweep`, `scheduler`). Top-level `autoexp.yaml` composes these by way of `group@key` syntax so the CLI can load configurations by name.
- - CLI still accepts plain YAML paths; Hydra references resolve by way of `load_config_reference`, which flattens nested structures (for example, nested `monitoring.log_events` defaults) before compoconf instantiation.
+- Hydra configuration tree under `config/` provides reusable defaults (`project`, `slurm`, `backend`, `monitoring`, `sweep`, `scheduler`, `job`). Top-level `autoexp.yaml` composes these by way of a `defaults` list so the CLI can load configurations by name.
+ - CLI still accepts plain YAML paths; Hydra references resolve by way of `load_config_reference`, which composes the config and applies overrides before compoconf instantiation.
 - Single YAML file consumed by the CLI, with named sections:
   - `project`: descriptive metadata, default output root, and optional persistent state location.
   - `sweep`: Hydra-compatible structure; support product & list semantics similar to `autoexperiment.product_recursive`.
+  - `job`: declarative start/cancel conditions, optional start command/interval, and inactivity thresholds (parsed directly into dataclasses; no extra overrides required).
   - `slurm`: defaults for template path, submission command, partition/account, SBATCH keyword args, launch wrappers, and cluster-level environment exports.
   - `launcher` settings split between `launch.env` (env exports) and `launcher_cmd` (prefix command, for example container exec).
   - `container`: optional container configuration specifying the image path and runtime (apptainer/singularity), enabling containerized execution that persists in config for reproducibility.
@@ -93,14 +98,14 @@ oellm-autoexp/
 
 ## Workflow Overview
 1. **Load + Validate Config**: `load_config_reference` hydrates YAML into compoconf-backed dataclasses. Evaluator objects remain lazy until instantiated during plan generation, allowing schema-only validation on hosts where heavy dependencies (Megatron/Torch) are unavailable.
-2. **Sweep Expansion**: Hydra-style expansion creates deterministic job parameter sets (`JobPlan`) with derived names and output paths. Optional `sweep.json` is still emitted for compatibility and tooling.
+2. **Sweep Expansion**: Hydra-style expansion creates deterministic job parameter sets (`JobPlan`) with derived names and output paths. Optional `sweep.json` is still emitted for compatibility and tooling. DAG-based sibling resolution is used for dependency ordering and interpolation.
 3. **Plan Generation & Rendering**: Inside the container (or host when dependencies are installed), `scripts/plan_autoexp.py` renders SBATCH scripts, sweep metadata, and a SLURM array wrapper when allowed. The step serialises a **plan manifest** (`oellm_autoexp/workflow/manifest.py`) capturing rendered artifacts, job metadata, instantiated monitor/slurm components, and the fully resolved config. By default manifests are written to `<project.base_output_dir>/manifests/plan_<timestamp>_<token>.json`, so concurrent runs do not clobber each other. (`scripts/run_autoexp.py` wraps steps 3–6 for the common single-shot workflow.)
 4. **Manifest Persistence**: The manifest is a JSON document shared between container and host. It includes:
    - job entries (script path, log path, start conditions, inactivity thresholds),
    - component specs (monitor implementation + event bindings, SLURM client config),
    - project/context metadata (base output dir, monitoring state dir, container image/runtime hints),
    - the resolved configuration (paths coerced to strings) for reproducibility and follow-up actions.
-5. **Host Submission**: `scripts/submit_autoexp.py --manifest …` consumes the manifest without re-instantiating the backend. It loads monitor/slurm components by way of the manifest specs, submits pending jobs (arrays or individual), and records session state in `<base_output_dir>/monitoring_state/<plan_id>.json`. Each `StoredJob` entry now includes the resolved log path (with `%j`/`%A_%a` expanded), `last_monitor_state`, `last_slurm_state`, and `last_updated` to simplify resume scenarios. Restart attempts reuse the stored script path; new actions can request fresh renders by calling the plan step again.
+5. **Host Submission**: `scripts/submit_autoexp.py --manifest …` consumes the manifest without re-instantiating the backend. It loads monitor/slurm components by way of the manifest specs, submits pending jobs (arrays or individual), and records session state in `<base_output_dir>/monitoring_state/<plan_id>.json`. Each `StoredJob` entry now includes the resolved log path (with `%j`/`%A_%a` expanded), `last_monitor_state`, `last_slurm_state`, and `last_updated` to simplify resume scenarios. Once a SLURM ID is known, `log_path_current` is updated by way of a symlink to the resolved log file so monitoring always follows the expected "current" path. Restart attempts reuse the stored script path; new actions can request fresh renders by calling the plan step again.
 6. **Monitoring Loop**: The same host runtime spins `MonitorController` from manifest data (`submit_autoexp.py` or `monitor_autoexp.py`).
    - Polls SLURM state and log/output timestamps.
    - Applies event bindings (event-driven restarts, command hooks, downstream automation).
@@ -214,7 +219,7 @@ _None. Add next items here._
 
 ### Backlog (Done / Deferred)
 - Improve provenance capture for container builds and job executions (commit hash, CLI args, git diff when dirty, resolved/unresolved configs, sanitized env). Stored inside container images and under each job's output directory. ✓ (`build_container_user.py` and `run_autoexp.py` now emit `_provenance` snapshots.)
-- Simplify configuration loading by moving Hydra/OmegaConf normalization into a single module so contributors only learn one pathway before compoconf parsing. ✓ (`oellm_autoexp/config/normalize.py` handles legacy sections + monitoring_state_dir defaults.)
+- Simplify configuration loading by moving Hydra/OmegaConf normalization into a single module so contributors only learn one pathway before compoconf parsing. ✓ (Merged into `oellm_autoexp/config/loader.py`.)
 - Extend the standalone `monitor` CLI with persisted state, real SLURM integration, and visibility into queued actions built from the primitives above. ✓ (Resume/tail/events/queue/actions subcommands + worker implemented.)
 - Extend integration tests to cover log-event driven actions/restarts, checkpoint-gated evaluations, and container provenance. (Unit coverage exists; SLURM integration run still on the roadmap.)
 - Add scheduler throttling (`max_jobs`, rate limits) and restart-policy variants expressed as actions (mutate launch args, swap checkpoints). ✓ (Submission throttling + restart adjustments implemented.)

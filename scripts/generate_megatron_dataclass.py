@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Generate a compoconf-compatible dataclass for Megatron-LM arguments."""
 
-from __future__ import annotations
-
 import argparse
 import importlib.metadata as importlib_metadata
 import keyword
@@ -17,9 +15,11 @@ from unittest.mock import MagicMock
 te_mock = MagicMock()
 sys.modules["transformer_engine"] = te_mock
 sys.modules["transformer_engine.pytorch"] = MagicMock()
+sys.modules["transformer_engine.pytorch.router"] = MagicMock()
 sys.modules["transformer_engine.pytorch.distributed"] = MagicMock()
 sys.modules["transformer_engine.pytorch.tensor"] = MagicMock()
 sys.modules["transformer_engine.pytorch.float8_tensor"] = MagicMock()
+sys.modules["transformer_engine.pytorch.fp8"] = MagicMock()
 
 _ORIG_IMPORTLIB_VERSION = importlib_metadata.version
 
@@ -108,6 +108,8 @@ def _type_name(value: Any, *, default: str = "None") -> str:
 def _type_repr(meta: MegatronArgMetadata, default: Any) -> tuple[str, set[str]]:
     imports: set[str] = set()
     base_type = meta.arg_type
+    if meta.default is not None and default is None:
+        default = meta.default
     if base_type is None and default is not None:
         base_type = type(default)
 
@@ -144,7 +146,10 @@ def _type_repr(meta: MegatronArgMetadata, default: Any) -> tuple[str, set[str]]:
         else:
             imports.add("Any")
             elem_repr = "Any"
-        type_repr = f"list[{elem_repr}]"
+        if default is not None and not isinstance(default, list):
+            type_repr = f"list[{elem_repr}] | {elem_repr}"
+        else:
+            type_repr = f"list[{elem_repr}]"
     else:
         imports.add("Any")
         type_repr = "Any"
@@ -224,8 +229,6 @@ def generate_dataclass(
         fields.append(f"    {key}: {str(val)}\n")
     header_lines = [
         '"""Megatron-LM configuration schema (auto-generated)."""',
-        "",
-        "from __future__ import annotations",
         "",
     ]
     dataclasses_import = "from dataclasses import dataclass"
@@ -333,20 +336,10 @@ def generate_cli_metadata(
         [
             '"""Megatron CLI metadata (auto-generated)."""',
             "",
-            "from __future__ import annotations",
-            "",
             "from dataclasses import dataclass",
             "from typing import Any, Mapping",
             "",
-            "from oellm_autoexp.backends.megatron_args import MegatronArgMetadata",
-            "",
-            "@dataclass(frozen=True)",
-            "class MegatronActionSpec:",
-            "    option_strings: tuple[str, ...]",
-            "    action_type: str",
-            "    nargs: int | str | None",
-            "    const: Any",
-            "    default: Any",
+            "from oellm_autoexp.backends.megatron_args import MegatronArgMetadata, MegatronActionSpec",
             "",
             "MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {",
             *metadata_lines,

@@ -41,7 +41,7 @@ Key features:
 ```bash
 # Start training with single cooldown monitoring
 python scripts/run_autoexp.py \
-  project=my_training \
+  job=my_training \
   monitoring=megatron_cooldown_single \
   backend.args.train_iters=100000 \
   backend.args.save_interval=5000
@@ -274,7 +274,7 @@ Key features:
 ```bash
 # Start training with multi-cooldown monitoring
 python scripts/run_autoexp.py \
-  project=scaling_study \
+  job=scaling_study \
   monitoring=megatron_cooldown_multi \
   backend.args.train_iters=150000 \
   backend.args.save_interval=5000
@@ -489,8 +489,6 @@ axes:
     - 256
     - 512
 
-# Stable experiment name (no timestamps/job IDs)
-name_template: "{model_size}_lr{learning_rate}_gbsz{global_batch_size}_stable"
 
 base_values:
   backend:
@@ -520,7 +518,7 @@ script_dir: ${project.base_output_dir}/{name}/scripts
 log_dir: ${project.base_output_dir}/{name}/logs
 
 # Log path includes SLURM job ID for uniqueness
-log_path_template: "{output_dir}/logs/slurm-${oc.if:${slurm.array},%A_%a,%j}.out"
+log_path: ${project.log_path_current}
 
 # SBATCH template should include unique job name
 sbatch_overrides:
@@ -544,7 +542,7 @@ def build_job_plans(config: RootConfig, points: list[SweepPoint]) -> list[JobPla
     plans: list[JobPlan] = []
     for point in points:
         context: dict[str, str] = {
-            "project": project_name,
+            "project_name": project_name,
             "index": str(point.index),
         }
         context.update(
@@ -618,7 +616,7 @@ poll_interval_seconds: 30
 inactivity_threshold_seconds: 1800
 
 # Log path uses SLURM job ID for uniqueness
-log_path_template: "{output_dir}/logs/slurm-${oc.if:${slurm.array},%A_%a,%j}.out"
+log_path: ${project.log_path_current}
 
 # Additional output paths for inactivity detection
 output_paths:
@@ -756,7 +754,7 @@ if __name__ == "__main__":
    ```bash
    # Test with short iteration counts
    python scripts/run_autoexp.py \
-     project=cooldown_test \
+     job=cooldown_test \
      monitoring=megatron_multi_cooldown \
      backend.args.train_iters=15000 \
      backend.args.save_interval=5000
@@ -772,7 +770,7 @@ if __name__ == "__main__":
 3. **Resume Testing**:
    ```bash
    # Start job, let it checkpoint, cancel it
-   python scripts/run_autoexp.py project=resume_test monitoring=megatron_auto_resume
+   python scripts/run_autoexp.py job=resume_test monitoring=megatron_auto_resume
    # Wait for first checkpoint, then:
    scancel <job_id>
    # Monitor should automatically restart and resume from checkpoint
