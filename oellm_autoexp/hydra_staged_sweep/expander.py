@@ -9,9 +9,9 @@ from typing import Any
 from collections.abc import Mapping
 
 
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, ListConfig, DictConfig
 
-from oellm_autoexp.hydra_staged_sweep.config.schema import SweepConfig
+from .config.schema import SweepConfig
 
 LOGGER = logging.getLogger(__file__)
 
@@ -31,13 +31,16 @@ def expand_sweep(config: SweepConfig) -> list[SweepPoint]:
 
     Supports composable groups format.
     """
+    if config is None:
+        points = [SweepPoint(index=0, parameters=[])]
+        return points
     LOGGER.debug("Starting sweep expansion")
-
     base_values = dict(config.base_values)
+    list_composition = set(config.list_composition or [])
 
     if config.groups is not None and config.type is not None:
         LOGGER.info("Using composable sweep format")
-        points = _expand_composable_sweep(config, base_values)
+        points = _expand_composable_sweep(config, base_values, list_composition)
     else:
         LOGGER.info("No sweep groups defined, returning base config")
         points = [SweepPoint(index=0, parameters=base_values)]
@@ -62,7 +65,9 @@ def _nested_has_stage_key(config_dict: Mapping[str, Any], stage_str: str) -> boo
     return False
 
 
-def _expand_composable_sweep(config: SweepConfig, base_values: dict[str, Any]) -> list[SweepPoint]:
+def _expand_composable_sweep(
+    config: SweepConfig, base_values: dict[str, Any], list_composition: set[str]
+) -> list[SweepPoint]:
     """New composable groups expansion with product/list modes."""
     groups = config.groups or []
     if not groups:
@@ -75,6 +80,7 @@ def _expand_composable_sweep(config: SweepConfig, base_values: dict[str, Any]) -
         base_values=base_values,
         group_path=(),
         stage_path=(),
+        list_composition=list_composition,
     )
 
     # Create SweepPoints with indices
@@ -95,6 +101,7 @@ def _expand_group(
     base_values: dict[str, Any],
     group_path: tuple[int, ...],
     stage_path: tuple[bool, ...],
+    list_composition: set[str],
     stage_str: str = "stage",
 ) -> list[tuple[dict[str, Any], tuple[int, ...], tuple[bool, ...]]]:
     """Recursively expand a group with product or list composition.
@@ -132,6 +139,7 @@ def _expand_group(
                 base_values=group_base_values,
                 group_path=current_path,
                 stage_path=stage_path + (False,),
+                list_composition=list_composition,
                 stage_str=stage_str,
             )
             all_combinations.append(nested_combinations)
@@ -186,6 +194,7 @@ def _expand_group(
                             False,
                             stage_idx,
                         ),
+                        list_composition=list_composition,
                         stage_str=stage_str,
                     )
                     combinations.extend(nested_combos)
@@ -216,7 +225,7 @@ def _expand_group(
     # Combine all group results based on composition mode
     if group_type == "product":
         # Cartesian product of all groups
-        return _cartesian_product_groups(all_combinations)
+        return _cartesian_product_groups(all_combinations, list_composition)
     elif group_type == "list":
         # No cross-product - just concatenate
         result = []
@@ -229,10 +238,13 @@ def _expand_group(
 
 def _cartesian_product_groups(
     groups: list[list[tuple[dict[str, Any], tuple[int, ...], tuple[bool, ...]]]],
+    list_composition: set[str],
 ) -> list[tuple[dict[str, Any], tuple[int, ...], tuple[bool, ...]]]:
     """Compute cartesian product of parameter groups.
 
-    Merges parameters from each group and combines group paths.
+    Merges parameters from each group and combines group paths. For
+    parameters in list_composition, accumulates values into lists
+    instead of overriding.
     """
     if not groups:
         return []
@@ -246,7 +258,32 @@ def _cartesian_product_groups(
         merged_path = ()
         merged_stage_path = ()
         for params, path, stage_path in combination:
-            merged_params.update(params)
+            for key, value in params.items():
+                if key in list_composition:
+                    # Accumulate into list
+                    if key not in merged_params:
+                        merged_params[key] = []
+
+                    # Convert OmegaConf containers to plain Python types
+                    if isinstance(value, (ListConfig, DictConfig)):
+                        value = OmegaConf.to_container(value, resolve=False)
+
+                    # Ensure we're working with a list
+                    if isinstance(merged_params[key], list):
+                        if isinstance(value, list):
+                            # Extend with the list elements
+                            merged_params[key].extend(value)
+                        else:
+                            # Append single value
+                            merged_params[key].append(value)
+                    else:  # pragma: no cover
+                        # Convert existing value to list
+                        # Note: This branch is defensive - it shouldn't be reached with current logic
+                        # since we always initialize as [] on line 260, but provides safety if code changes
+                        merged_params[key] = [merged_params[key], value]
+                else:
+                    # Normal override behavior
+                    merged_params[key] = value
             merged_path = merged_path + path
             merged_stage_path = merged_stage_path + stage_path
         result.append((merged_params, merged_path, merged_stage_path))
