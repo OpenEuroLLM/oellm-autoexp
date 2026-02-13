@@ -1,4 +1,4 @@
-"""Megatron backend adapter that mirrors megatron-train behaviour.
+"""Megatron backend adapter.
 
 Schema-Only Validation Mode
 ============================
@@ -11,7 +11,7 @@ The Megatron backend supports two validation modes:
    - Requires Megatron-LM to be installed or available in submodules/
    - Use this mode when running inside containers with Megatron available
 
-2. **Schema-only mode (set OELLM_MEGATRON_SCHEMA_ONLY=1)**:
+2. **Schema only validation (full_validation=False):
    - Uses pre-generated config_schema.py without importing Megatron-LM
    - Provides basic type checking and argument filtering
    - Does NOT require Megatron-LM to be importable
@@ -26,73 +26,72 @@ In SLURM environments with containers:
   - The login node may not have Megatron-LM installed
   - Schema-only mode allows job submission from login nodes
   - Full validation happens when the job runs inside the container
-
-Usage:
-------
-    # Enable schema-only mode (e.g., on login nodes)
-    export OELLM_MEGATRON_SCHEMA_ONLY=1
-    python scripts/run_autoexp.py ...
-
-    # Or set in Python before importing
-    import os
-    os.environ["OELLM_MEGATRON_SCHEMA_ONLY"] = "1"
-    from oellm_autoexp import ...
 """
 
 from __future__ import annotations
 
-import math
-import os
+import logging
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
-from compoconf import ConfigInterface, NonStrictDataclass, asdict, register
+from compoconf import NonStrictDataclass, asdict, register, MissingValue
 
-from oellm_autoexp.backends.base import BaseBackend, BackendJobSpec, LaunchCommand
+from oellm_autoexp.backends.base import BaseBackend, BaseBackendConfig
+from oellm_autoexp.backends.megatron.cli_metadata import (
+    MEGATRON_ACTION_SPECS,
+    MEGATRON_ARG_METADATA,
+)
 from oellm_autoexp.backends.megatron.config_schema import MegatronConfig
 
-# Schema-only mode: use pre-generated schema without importing Megatron-LM
-# This allows validation on login nodes without containers
-USE_SCHEMA_ONLY = os.environ.get("OELLM_MEGATRON_SCHEMA_ONLY", "0") == "1"
+from oellm_autoexp.backends.megatron_args import MegatronArgMetadata, build_cmdline_args
+from oellm_autoexp.argparse_schema.resolver import register_argparse_resolver
 
-if not USE_SCHEMA_ONLY:
-    from oellm_autoexp.backends.megatron_args import (
-        MegatronArgMetadata,
-        build_cmdline_args,
-        get_arg_metadata,
-        get_megatron_parser,
-    )
+
+LOGGER = logging.getLogger(__name__)
+
+register_argparse_resolver(
+    "argsmegatron",
+    arg_metadata=dict(MEGATRON_ARG_METADATA),
+    action_specs=dict(MEGATRON_ACTION_SPECS),
+    skip_defaults=True,
+)
+
+register_argparse_resolver(
+    "cliargs",
+)
 
 
 @dataclass(init=False)
-class MegatronBackendConfig(NonStrictDataclass, ConfigInterface):
+class MegatronBackendConfig(NonStrictDataclass, BaseBackendConfig):
     """Configuration for the Megatron backend."""
 
     class_name: str = "MegatronBackend"
-    launcher_script: Path = Path("scripts/run_megatron.sh")
-    env: Dict[str, str] = field(default_factory=dict)
-    extra_cli_args: list[str] = field(default_factory=list)
-    use_torchrun: bool = False
-    torchrun_args: Dict[str, Any] = field(default_factory=dict)
+    launcher_script: str = "./submodules/Megatron-LM/pretrain_gpt.py"
+    env: dict[str, str] = field(default_factory=dict)
+    full_schema_validation: bool = False
+    torchrun_args: dict[str, str] = field(default_factory=dict)
+    dist_cmd: str
     megatron: MegatronConfig = field(default_factory=MegatronConfig)
-    differential_cmd: bool = True  # if to only pass non-default arguments
+    python_cmd: str = "python"
+    full_cmd: str = MissingValue
+    aux: dict[str, Any] = field(default_factory=dict)  # to define convenience variables
 
-    def cli_arguments(self) -> Dict[str, Any]:
-        """Return Megatron arguments from config and dynamic extras."""
-
-        args: Dict[str, Any] = {}
-
-        if isinstance(self.megatron, MegatronConfig):
-            for key, value in asdict(self.megatron).items():
-                if value is not None:
-                    args[key] = value
-
-        for key, value in self._extras.items():  # type: ignore[attr-defined]
-            if value is not None:
-                args[key] = value
-
-        return args
+    def __post_init__(self):
+        # this should be set via the config
+        if self.full_cmd is MissingValue:
+            self.full_cmd = " ".join(
+                [
+                    self.python_cmd,
+                    *(() if not self.torchrun_args else self.torchrun_args),
+                    self.launcher_script,
+                    *build_cmdline_args(
+                        asdict(self.megatron),
+                        dict(MEGATRON_ARG_METADATA),
+                        dict(MEGATRON_ACTION_SPECS),
+                        skip_defaults=True,
+                    ),
+                ]
+            )
 
 
 @register
@@ -102,32 +101,45 @@ class MegatronBackend(BaseBackend):
     def __init__(self, config: MegatronBackendConfig) -> None:
         super().__init__(config)
         self.config = config
-        if USE_SCHEMA_ONLY:
+        if not config.full_schema_validation:
             # Schema-only mode: skip parser initialization
             self._parser = None
-            self._arg_metadata = {}
+            self._arg_metadata: dict[str, MegatronArgMetadata] = dict(MEGATRON_ARG_METADATA)
+            self._action_specs = dict(MEGATRON_ACTION_SPECS)
             self._schema_only = True
         else:
+            from oellm_autoexp.backends.megatron_args import (
+                get_action_specs,
+                get_arg_metadata,
+                get_megatron_parser,
+            )
+
             self._parser = get_megatron_parser()
-            self._arg_metadata: Dict[str, MegatronArgMetadata] = get_arg_metadata(self._parser)
+            self._arg_metadata: dict[str, MegatronArgMetadata] = get_arg_metadata(self._parser)
+            self._action_specs = get_action_specs(self._parser)
             self._schema_only = False
 
-    def validate(self, spec: BackendJobSpec) -> None:
+    def validate(self) -> None:
+        args = asdict(self.config.megatron)
+        # remove potential extension
+        if "_non_strict" in args:
+            args.remove("_non_strict")
         if self._schema_only:
             # Schema-only validation: basic type checking against MegatronConfig
-            merged_args = self._merge_args(spec)
-            self._validate_schema_only(merged_args)
+            self._validate_schema_only(args)
         else:
             # Full validation using Megatron parser
-            merged_args = self._merge_args(spec)
-            cli_args = build_cmdline_args(merged_args, self._parser, self._arg_metadata)
+            cli_args = build_cmdline_args(
+                args, self._arg_metadata, self._action_specs, skip_defaults=True
+            )
             try:
                 self._parser.parse_args(cli_args)
             except SystemExit as exc:  # pragma: no cover - argparse exits
                 raise ValueError("Invalid Megatron arguments") from exc
 
-    def _validate_schema_only(self, args: Dict[str, Any]) -> None:
-        """Lightweight validation using only the schema (no Megatron import)."""
+    def _validate_schema_only(self, args: dict[str, Any]) -> None:
+        """Lightweight validation using only the schema (no Megatron
+        import)."""
         # Check that all provided args are known fields in MegatronConfig
         schema_fields = {f.name for f in MegatronConfig.__dataclass_fields__.values()}
         for key in args.keys():
@@ -136,83 +148,14 @@ class MegatronBackend(BaseBackend):
                 # Allow unknown args in schema-only mode (they'll be validated in container)
                 pass
 
-    def build_launch_command(self, spec: BackendJobSpec) -> LaunchCommand:
-        merged_args = self._merge_args(spec)
+    def build_launch_command(self) -> str:
+        return self.config.full_cmd
 
-        if self._schema_only:
-            # Schema-only mode: build simple command line args
-            cli_args = self._build_simple_cmdline_args(merged_args)
-        else:
-            # Full mode: use megatron_args builder
-            cli_args = build_cmdline_args(merged_args, self._parser, self._arg_metadata)
-
-        argv = [str(self.config.launcher_script), *cli_args, *self.config.extra_cli_args]
-
-        if (
-            not self.config.use_torchrun
-            and self.config.launcher_script.suffix == ".py"
-        ):
-            argv = ["python", *argv]
-
-        # Prepend torchrun if enabled
-        if self.config.use_torchrun:
-            torchrun_argv = self._build_torchrun_args()
-            argv = [*torchrun_argv, *argv]
-
-        env = {**self.config.env}
-        return LaunchCommand(argv=argv, env=env)
-
-    def _build_simple_cmdline_args(self, args: Dict[str, Any]) -> list[str]:
-        """Build command line args without megatron_args (schema-only mode)."""
-        base_cfg = MegatronConfig()
-        cli_args = []
-        for key, value in args.items():
-            if value is None:
-                continue
-            if getattr(base_cfg, key) == value and self.config.differential_cmd:
-                continue
-
-            # Convert to CLI format
-            cli_key = key.replace("_", "-")
-
-            if isinstance(value, bool):
-                if value:
-                    cli_args.append(f"--{cli_key}")
-            elif isinstance(value, list):
-                cli_args.append(f"--{cli_key}")
-                cli_args.append(",".join(str(v) for v in value))
-            else:
-                cli_args.append(f"--{cli_key}")
-                cli_args.append(str(value))
-
-        return cli_args
-
-    def _build_torchrun_args(self) -> list[str]:
-        """Build torchrun command line arguments."""
-        args = ["python", "-u", "-m", "torch.distributed.run"]
-
-        for key, value in self.config.torchrun_args.items():
-            key_formatted = key.replace("_", "-")
-            if isinstance(value, bool):
-                if value:
-                    args.append(f"--{key_formatted}")
-            elif value is not None:
-                args.append(f"--{key_formatted}")
-                args.append(str(value))
-
-        return args
-
-    def _merge_args(self, spec: BackendJobSpec) -> Dict[str, Any]:
-        args: Dict[str, Any] = {}
-        args.update(self._filter_megatron_args(self.config.cli_arguments()))
-        args.update(self._filter_megatron_args(spec.parameters))
-        return args
-
-    def _filter_megatron_args(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _filter_megatron_args(self, params: dict[str, Any]) -> dict[str, Any]:
         if self._schema_only:
             # Schema-only mode: filter based on MegatronConfig fields
             schema_fields = {f.name for f in MegatronConfig.__dataclass_fields__.values()}
-            filtered: Dict[str, Any] = {}
+            filtered: dict[str, Any] = {}
             for key, value in params.items():
                 dest = self._normalize_key(key)
                 if dest in schema_fields:
@@ -220,7 +163,7 @@ class MegatronBackend(BaseBackend):
             return filtered
         else:
             # Full mode: filter based on parser metadata
-            filtered: Dict[str, Any] = {}
+            filtered: dict[str, Any] = {}
             for key, value in params.items():
                 dest = self._normalize_key(key)
                 if dest in self._arg_metadata:
@@ -233,50 +176,6 @@ class MegatronBackend(BaseBackend):
         if key.startswith("megatron."):
             key = key.split(".", 1)[1]
         return key
-
-
-@dataclass(init=False)
-class AutoMegatronBackendConfig(MegatronBackendConfig):
-    class_name: str = "AutoMegatronBackend"
-
-
-@register
-class AutoMegatronBackend(MegatronBackend):
-    config: AutoMegatronBackendConfig
-
-    def _merge_args(self, spec: BackendJobSpec) -> Dict[str, Any]:
-        raw: Dict[str, Any] = {}
-        raw.update(self.config.cli_arguments())
-        raw.update(spec.parameters)
-        normalized = {self._normalize_key(k): v for k, v in raw.items()}
-        converted = self._apply_convenience_arguments(normalized)
-        return self._filter_megatron_args(converted)
-
-    def _apply_convenience_arguments(self, args: Dict[str, Any]) -> Dict[str, Any]:
-        args = dict(args)
-
-        if "train_tokens" in args:
-            train_tokens = _normalize_int(args.pop("train_tokens"))
-            seq_length = _normalize_int(args.get("seq_length"))
-            global_batch = _normalize_int(args.get("global_batch_size"))
-            if seq_length and global_batch:
-                tokens_per_iter = seq_length * global_batch
-                if tokens_per_iter > 0:
-                    args["train_iters"] = math.ceil(train_tokens / tokens_per_iter)
-
-        if "lr_decay_fraction" in args:
-            fraction = float(args.pop("lr_decay_fraction"))
-            if "train_samples" in args:
-                args["lr_decay_samples"] = int(_normalize_int(args["train_samples"]) * fraction)
-            elif "train_iters" in args:
-                args["lr_decay_iters"] = int(_normalize_int(args["train_iters"]) * fraction)
-
-        if "lr_decay_iters" in args and "lr_wsd_decay_iters" not in args:
-            args["lr_wsd_decay_iters"] = args["lr_decay_iters"]
-        if "lr_decay_samples" in args and "lr_wsd_decay_samples" not in args:
-            args["lr_wsd_decay_samples"] = args["lr_decay_samples"]
-
-        return args
 
 
 def _normalize_int(value: Any) -> int:
@@ -294,6 +193,4 @@ def _normalize_int(value: Any) -> int:
 __all__ = [
     "MegatronBackendConfig",
     "MegatronBackend",
-    "AutoMegatronBackendConfig",
-    "AutoMegatronBackend",
 ]

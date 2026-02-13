@@ -14,5 +14,5 @@ ml ParaStationMPI/5.11.0-1
 ml ParaStationMPI/5.11.0-1-mt
 ml ScaLAPACK/2.2.0-fb
 
-echo "Launching {name} on JUWELS"
-srun {srun_opts}bash -c '{launcher_cmd}'
+echo "Launching {job_name} on JUWELS"
+srun {srun_opts}bash -c '{launcher_cmd} {command}'

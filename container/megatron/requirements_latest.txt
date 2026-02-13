@@ -16,9 +16,8 @@ mypy
 etcd3
 python-etcd
 pudb
-pytest<=8.3.0
+pytest<=8.4.0
 pytest-cov
-pytest-pudb
 pre-commit
 lm_eval
 compoconf>=0.1.9

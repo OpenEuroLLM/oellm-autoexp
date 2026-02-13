@@ -2,13 +2,14 @@ defaults:
   - _self_
 
 template_path: templates/base.sbatch
-script_dir: ${project.base_output_dir}
-log_dir: ./logs
-array: true
-submit_cmd: sbatch
+script_dir: ${job.base_output_dir}
+log_dir: ${job.base_output_dir}
+array: false
 launcher_cmd: "python"
 launcher_env_passthrough: false
-env: {}
+env:
+  HF_HOME: ${oc.env:HF_HOME}
+  WANDB_MODE: offline
 srun: {}
 sbatch:
   nodes: 1
@@ -17,11 +18,7 @@ sbatch:
   time: "01:00:00"
   account: ${oc.env:SLURM_ACCOUNT,"dev"}
   partition: ${oc.env:SLURM_PARTITION,"default"}
-  qos: ${oc.env:SLURM_QOS,"debug"}
   gres: "gpu:1"
-  # output is set to null so orchestrator uses job.log_path
-  # job.log_path comes from monitoring.log_path_template (formatted with job details)
-  output: null
-test_only: false
-client:
-  class_name: FakeSlurmClient
+  gpus_per_node: 4
+  output: ${job.log_path}
+  job_name: ${job.name}

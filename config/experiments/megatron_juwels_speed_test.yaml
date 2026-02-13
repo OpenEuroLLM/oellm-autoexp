@@ -1,0 +1,20 @@
+# @package _global_
+defaults:
+  - base
+  - /backend: megatron_torchrun_localaddr
+  - /container: juwels
+  - /slurm: juwels
+  - /sweep: none
+  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_juwels]
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 500
+
+# at the moment this does not work!
+slurm:
+  nodes: 2
+
+job:
+  name: megatron_juwels_speed_test

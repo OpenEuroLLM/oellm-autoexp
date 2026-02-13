@@ -1,4 +1,9 @@
-image: ${oc.env:CONTAINER_CACHE_DIR}/MegatronTraining_aarch64.sif
-runtime: singularity
+class_name: Container
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining_aarch64_202510130949.sif
+runtime: apptainer
 bind: []
-env: {}
+env:
+  WANDB_MODE: "offline"
+  MACHINE_NAME: "JUPITER"
+  PYTHONPATH: "."
+python: "python"

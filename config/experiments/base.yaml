@@ -1,10 +1,7 @@
 # @package _global_
 defaults:
-  - /project: default
-  - /backend: megatron
-  - /slurm: base
-  - /container: none
-  - /monitoring: default
-  - /sweep: none
-  - /restart: default
-  - /scheduler: default
+ - /job: default
+
+
+index: 0   # will be replaced internally by overrides for a sweep
+stage: ""  # will be replaced internally by overrides for a sweep

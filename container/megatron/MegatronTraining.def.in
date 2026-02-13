@@ -16,9 +16,11 @@ From: ${BASE_IMAGE}
 %files
     ${REPO_ROOT} /workspace/oellm-autoexp
     ${REQUIREMENTS_PATH} /workspace/${REQUIREMENTS_BASENAME}
+    ${PROVENANCE_PATH} /workspace/oellm-autoexp/provenance/container_provenance.json
 
 %post
 set -euo pipefail
+mkdir -p /workspace/oellm-autoexp/provenance
 mkdir -p /workspace/cache
 cd /workspace
 

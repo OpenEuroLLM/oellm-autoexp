@@ -1,0 +1,11 @@
+grids:
+  - backend.megatron.tensor_model_parallel_size: [1, 2, 4, 8]
+    backend.megatron.pipeline_model_parallel_size: [1, 2, 4, 8, 16]
+    backend.megatron.expert_model_parallel_size: [1, 2, 4, 8]
+    backend.megatron.context_parallel_size: [1, 2, 4]
+    backend.megatron.expert_tensor_parallel_size: [1, 2, 4]
+base_values:
+  run_name: megatron_parallelism_sweep
+  project.name: "megatron_{run_name}_tp\\${backend.megatron.tensor_model_parallel_size}_pp\\${backend.megatron.pipeline_model_parallel_size}_ep\\${backend.megatron.expert_model_parallel_size}_cp\\${backend.megatron.context_parallel_size}_etp\\${backend.megatron.expert_tensor_parallel_size}"
+store_sweep_json: true
+filter: "\\${backend.megatron.tensor_model_parallel_size} * \\${backend.megatron.pipeline_model_parallel_size} * \\${backend.megatron.expert_model_parallel_size} * \\${backend.megatron.context_parallel_size} * \\${backend.megatron.expert_tensor_parallel_size} <= \\${slurm.sbatch.gpus_per_node} * \\${slurm.sbatch.nodes}"

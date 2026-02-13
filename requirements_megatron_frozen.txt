@@ -1,0 +1,437 @@
+absl-py==2.3.1
+accelerate==1.10.1
+aiohappyeyeballs @ file:///rapids/aiohappyeyeballs-2.6.1-py3-none-any.whl#sha256=f349ba8f4b75cb25c99c5c2d84e997e485204d2902a9597802b0371f09331fb8
+aiohttp @ file:///rapids/aiohttp-3.12.14-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl#sha256=9888e60c2c54eaf56704b17feb558c7ed6b7439bca1e07d4818ab878f2083660
+aiosignal @ file:///rapids/aiosignal-1.4.0-py3-none-any.whl#sha256=053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e
+alabaster @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/alabaster/alabaster-0.7.16
+annotated-types==0.7.0
+antlr4-python3-runtime==4.9.3
+anyio==4.10.0
+apex @ file:///opt/pytorch/apex/dist/apex-0.1-cp312-cp312-linux_x86_64.whl#sha256=e38fb54b0afdaa913354eaf081332ecf86d293d274864bcd4914078f6102780d
+appdirs @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/appdirs/appdirs-1.4.4
+argon2-cffi==25.1.0
+argon2-cffi-bindings==25.1.0
+array_record==0.8.1
+arrow==1.3.0
+asciitree @ file:///rapids/asciitree-0.3.3-py3-none-any.whl#sha256=d53aee7040bab82041e65594c2bbe75721dae94e77fba069fed8fa52b58293ca
+asn1crypto @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/asn1crypto/asn1crypto-1.5.1
+asttokens==3.0.0
+astunparse==1.6.3
+async-lru==2.0.5
+atomicwrites @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/atomicwrites/atomicwrites-1.4.1
+attrs @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/attrs/attrs-23.2.0
+audioread==3.0.1
+Babel @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/Babel/babel-2.15.0
+backports.entry_points_selectable @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/backportsentrypointsselectable/backports.entry_points_selectable-1.3.0
+backports.functools_lru_cache @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/backportsfunctoolslrucache/backports.functools_lru_cache-2.0.0
+beautifulsoup4==4.13.4
+bitarray @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/bitarray/bitarray-2.9.2
+bitstring @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/bitstring/bitstring-4.2.3
+black==25.1.0
+bleach==6.2.0
+blist @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/blist/blist-1.3.6
+blobfile==3.1.0
+CacheControl @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/CacheControl/cachecontrol-0.14.0
+cachetools @ file:///rapids/cachetools-6.1.0-py3-none-any.whl#sha256=1c7bb3cf9193deaf3508b7c5f2a79986c13ea38965c5adcff1f84519cf39163e
+cachy @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/cachy/cachy-0.3.0
+certifi @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/certifi/certifi-2024.6.2
+cffi @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/cffi/cffi-1.16.0
+cfgv==3.4.0
+chardet @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/chardet/chardet-5.2.0
+charset-normalizer @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/charsetnormalizer/charset-normalizer-3.3.2
+cleo @ file:///p/data1/swmanage/EasyBuild/sources/p/Python-bundle-PyPI/extensions/cleo-2.1.0-py3-none-any.whl#sha256=4a31bd4dd45695a64ee3c4758f583f134267c2bc518d8ae9a29cf237d009b07e
+cloudpickle @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/cloudpickle/cloudpickle-3.0.0
+cmake==3.31.6
+colorama @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/colorama/colorama-0.4.6
+comm==0.2.3
+commonmark @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/commonmark/commonmark-0.9.1
+compoconf @ file:///p/home/jusers/poeppel1/juwels/compoconf
+contourpy==1.3.3
+coverage==7.10.7
+crashtest @ file:///p/data1/swmanage/EasyBuild/sources/p/Python-bundle-PyPI/extensions/crashtest-0.4.1-py3-none-any.whl#sha256=8d23eac5fa660409f57472e3851dab7ac18aba459a8d19cbbba86d3d5aecd2a5
+cryptography @ file:///dev/shm/swmanage/juwelsbooster/cryptography/42.0.8/GCCcore-13.3.0/cryptography-42.0.8
+cuda-bindings @ file:///rapids/cuda_bindings-13.0.0-cp312-cp312-linux_x86_64.whl#sha256=fdba51854674c4207839ef3c3f526b6a28902691478602be432ee44ae11f604d
+cuda-pathfinder @ file:///rapids/cuda_pathfinder-1.0.0-py3-none-any.whl#sha256=672cc49ce16cb10cb39a9fbcfbcac2cf4a3a22561adee9faeea48f20ce19401f
+cuda-python @ file:///rapids/cuda_python-13.0.0-py3-none-any.whl#sha256=5c77e4051334852ec3d13a800fb4c19d30a4a645ba37cf928d4b9c169fb2e39b
+cudf @ file:///rapids/cudf-25.6.0-cp312-cp312-linux_x86_64.whl#sha256=72a64f5ea0573832904efc62f210e16e84de36cc54995bd50bc038292af737cd
+cudf-polars @ file:///rapids/cudf_polars-25.6.0-py3-none-any.whl#sha256=066a51f15b675467d138cc2fcf32bcfa556bb8893c72ad9de30be39d13a32847
+cugraph @ file:///rapids/cugraph-25.6.0-cp312-cp312-linux_x86_64.whl#sha256=06083b61f57874022322813c6dda138ec1c0c939b93f35886446b8689db11ae0
+cugraph-service-client @ file:///rapids/cugraph_service_client-25.6.0-py3-none-any.whl#sha256=d25f1fa456102a97377c4498fdc7feb5260d7ec78b0e33a935ee14e973ab0c96
+cugraph-service-server @ file:///rapids/cugraph_service_server-25.6.0-py3-none-any.whl#sha256=f71a4ebadfcfa25ab96f9ee26f0463021d96339398a85495a0c2c9dee847a939
+cuml @ file:///rapids/cuml-25.6.0-cp312-cp312-linux_x86_64.whl#sha256=5fabc798ee5a7d65b61bd9d9c4b2bab5494dc2d053a108b8336ceebb447071b3
+cupy-cuda12x @ file:///rapids/cupy_cuda12x-13.3.0-cp312-cp312-linux_x86_64.whl#sha256=8b099632826d1ea6d40c22bf477c22eda3299b16d5132c92c0fd59d77b2668f8
+cuvs @ file:///rapids/cuvs-25.6.0-cp312-cp312-linux_x86_64.whl#sha256=89d8a250e3557d12405b58050b82bd01d64fc6dc20dfc5937a7fbcbef4adc90c
+cycler==0.12.1
+Cython @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/Cython/Cython-3.0.10
+dask @ file:///rapids/dask-2025.5.0-py3-none-any.whl#sha256=77e9a64bb09098515bc579477b7051b0909474cd7b3e0005e3d0968a70c84015
+dask-cuda @ file:///rapids/dask_cuda-25.6.0-py3-none-any.whl#sha256=539b499408bf78be5136fe5a61adc795caa4f92ea2d9ba21d1d86f6407412c86
+dask-cudf @ file:///rapids/dask_cudf-25.6.0-py3-none-any.whl#sha256=4c88e56fbfd292fbc78658028250814fb1dab3c593a7196e1d3ba7773b4bb91f
+DataProperty==1.1.0
+datasets==3.6.0
+debugpy==1.8.16
+decorator @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/decorator/decorator-5.1.1
+defusedxml==0.7.1
+dill==0.3.8
+distlib @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/distlib/distlib-0.3.8
+distributed @ file:///rapids/distributed-2025.5.0-py3-none-any.whl#sha256=374e3236b4945745b48cd821025f802095abb18fd6477123dd237905253bc60f
+distributed-ucxx @ file:///rapids/distributed_ucxx-0.44.0-py3-none-any.whl#sha256=9bf88b1e647f71a072e6c4acf7ce90e6994a3bd3e364fcf66376e53be38604c2
+distro @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/distro/distro-1.9.0
+dllist==2.0.0
+dm-tree==0.1.9
+dnspython==2.8.0
+docopt @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/docopt/docopt-0.6.2
+docutils @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/docutils/docutils-0.21.2
+doit @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/doit/doit-0.36.0
+dulwich @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/dulwich/dulwich-0.22.1
+ecdsa @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/ecdsa/ecdsa-0.19.0
+editables @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/editables/editables-0.5
+einops==0.8.1
+etcd3==0.12.0
+etils==1.13.0
+evaluate==0.4.6
+exceptiongroup @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/exceptiongroup/exceptiongroup-1.2.1
+execnet @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/execnet/execnet-2.1.1
+executing==2.2.0
+expecttest==0.3.0
+fasteners @ file:///rapids/fasteners-0.19-py3-none-any.whl#sha256=758819cb5d94cdedf4e836988b74de396ceacb8e2794d21f82d131fd9ee77237
+fastjsonschema==2.21.1
+fastrlock @ file:///rapids/fastrlock-0.8.3-cp312-cp312-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_28_x86_64.whl#sha256=5f13ec08f1adb1aa916c384b05ecb7dbebb8df9ea81abd045f60941c6283a670
+filelock @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/filelock/filelock-3.15.1
+flake8==7.3.0
+flash_attn @ file:///opt/pytorch/flash_attn-2.7.4.post1-cp312-cp312-linux_x86_64.whl#sha256=f90eb9caa81f00cbf9ee251b1884aae8b62229d2a0e33c93c1b7406c5323712e
+fonttools==4.59.0
+fqdn==1.5.1
+frozenlist @ file:///rapids/frozenlist-1.7.0-cp312-cp312-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl#sha256=488d0a7d6a0008ca0db273c542098a0fa9e7dfaa7e57f70acef43f32b3f69dca
+fsspec @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/fsspec/fsspec-2024.6.0
+future @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/future/future-1.0.0
+gast==0.6.0
+gitdb==4.0.12
+GitPython==3.1.45
+glob2 @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/glob2/glob2-0.7
+grpcio @ file:///rapids/grpcio-1.62.1-cp312-cp312-linux_x86_64.whl#sha256=88b5925c53177516143af77ec0e56ef8065b09b1026dea83c3cc7ea471c1eb55
+h11==0.16.0
+hf-xet==1.1.10
+html5lib @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/html5lib/html5lib-1.1
+httpcore==1.0.9
+httpx==0.28.1
+huggingface-hub==0.35.3
+hydra-core==1.3.2
+hypothesis==6.130.8
+identify==2.6.15
+idna @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/idna/idna-3.7
+imagesize @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/imagesize/imagesize-1.4.1
+importlib_metadata @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/importlibmetadata/importlib_metadata-7.1.0
+importlib_resources @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/importlibresources/importlib_resources-6.4.0
+iniconfig @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/iniconfig/iniconfig-2.0.0
+intel-openmp==2021.4.0
+intervaltree @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/intervaltree/intervaltree-3.1.0
+intreehooks @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/intreehooks/intreehooks-1.0
+ipaddress @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/ipaddress/ipaddress-1.0.23
+ipykernel==6.30.1
+ipython==9.4.0
+ipython_pygments_lexers==1.1.1
+isoduration==20.11.0
+isort==6.0.1
+jaraco.classes @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/jaracoclasses/jaraco.classes-3.4.0
+jaraco.context @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/jaracocontext/jaraco.context-5.3.0
+jedi==0.19.2
+jeepney @ file:///p/data1/swmanage/EasyBuild/sources/p/Python-bundle-PyPI/extensions/jeepney-0.8.0-py3-none-any.whl#sha256=c0a454ad016ca575060802ee4d590dd912e35c122fa04e70306de3d076cce755
+Jinja2 @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/Jinja2/jinja2-3.1.4
+joblib @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/joblib/joblib-1.4.2
+json5==0.12.0
+jsonlines==4.0.0
+jsonpointer==3.0.0
+jsonschema @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/jsonschema/jsonschema-4.22.0
+jsonschema-specifications @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/jsonschemaspecifications/jsonschema_specifications-2023.12.1
+jupyter-events==0.12.0
+jupyter-lsp==2.2.6
+jupyter_client==8.6.3
+jupyter_core==5.8.1
+jupyter_server==2.16.0
+jupyter_server_terminals==0.5.3
+jupyterlab==4.4.5
+jupyterlab_code_formatter==3.0.2
+jupyterlab_pygments==0.3.0
+jupyterlab_server==2.27.3
+jupyterlab_tensorboard_pro @ file:///builder/jupyterlab_tensorboard_pro-4.0.0-py2.py3-none-any.whl#sha256=46c17cf6894c10bc5b67d28216ba0a4c8983039fdd3d59b383f91f2347a48828
+jupytext==1.17.2
+keyring @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/keyring/keyring-24.3.1
+keyrings.alt @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/keyringsalt/keyrings.alt-5.0.1
+kiwisolver==1.4.8
+kvikio @ file:///rapids/kvikio-25.6.0-cp312-cp312-linux_x86_64.whl#sha256=512128ac129adfc6dc0ad37e53b59bfe39e2e7c408dc797270eeab5aea7d9c4b
+lark==1.2.2
+lazy_loader==0.4
+liac-arff @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/liacarff/liac-arff-2.5.0
+libcudf @ file:///rapids/libcudf-25.6.0-py3-none-linux_x86_64.whl#sha256=28cb871e022ea2346223a38e5bd9f66429db242d5423a0c70eb93c516f4bd6a5
+libcugraph @ file:///rapids/libcugraph-25.6.0-py3-none-linux_x86_64.whl#sha256=fa35758bd307838c524114f16542eb1b726278be0e645a11284dc0d34728333a
+libcuml @ file:///rapids/libcuml-25.6.0-py3-none-linux_x86_64.whl#sha256=266d1850afa1fe969ecad903bb6899bfe7380a31ca26c55d7fe4705be9893d9d
+libcuvs @ file:///rapids/libcuvs-25.6.0-py3-none-linux_x86_64.whl#sha256=4b145167d98926777dac461b37f42e9041396f1d72ce2783977de95afdbd01d0
+libkvikio @ file:///rapids/libkvikio-25.6.0-py3-none-linux_x86_64.whl#sha256=e3463a3441d46e89f6b704afcfc23d0550914fde08eb4f2011f2a2d31b1bca07
+libraft @ file:///rapids/libraft-25.6.0-py3-none-linux_x86_64.whl#sha256=bd19b7c4a601b666ed5e9aa6469c6afb31348f14a950e5a6efafb8f1de3b62d8
+librmm @ file:///rapids/librmm-25.6.0-py3-none-linux_x86_64.whl#sha256=e65b3d991dcae7ad9ee33b315fed84e676d3c1623de70659cd56ee7cea22367c
+librosa==0.11.0
+libucxx @ file:///rapids/libucxx-0.44.0-py3-none-linux_x86_64.whl#sha256=4152d878b60287b638c412bc73b39cbefc0f4ce6265a09ae69861c186338f275
+libwholegraph @ file:///rapids/libwholegraph-25.6.0-py3-none-linux_x86_64.whl#sha256=2d703ca8bcdc6b41d88ee26dfd894d0067c3c2796292f562bf96be9953022e56
+lightning-thunder @ file:///opt/pytorch/lightning-thunder
+lightning-utilities==0.15.2
+lintrunner==0.12.7
+llvmlite @ file:///rapids/llvmlite-0.42.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl#sha256=d47494552559e00d81bfb836cf1c4d5a5062e54102cc5767d5aa1e77ccd2505c
+lm_eval==0.4.9.1
+locket @ file:///rapids/locket-1.0.0-py2.py3-none-any.whl#sha256=b6c819a722f7b6bd955b80781788e4a66a55628b858d347536b7e81325a3a5e3
+lockfile @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/lockfile/lockfile-0.12.2
+looseversion==1.3.0
+lxml==6.0.2
+Markdown==3.8.2
+markdown-it-py @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/markdownitpy/markdown-it-py-3.0.0
+MarkupSafe @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/MarkupSafe/MarkupSafe-2.1.5
+matplotlib==3.10.5
+matplotlib-inline==0.1.7
+mbstrdecoder==1.1.4
+mccabe==0.7.0
+mdit-py-plugins==0.4.2
+mdurl @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/mdurl/mdurl-0.1.2
+mistune==3.1.3
+mkl==2021.1.1
+mkl-devel==2021.1.1
+mkl-include==2021.1.1
+mock @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/mock/mock-5.1.0
+more-itertools @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/moreitertools/more-itertools-10.3.0
+mpmath==1.3.0
+msgpack @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/msgpack/msgpack-1.0.8
+multidict @ file:///rapids/multidict-6.6.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl#sha256=8df25594989aebff8a130f7899fa03cbfcc5d2b5f4a461cf2518236fe6f15961
+multiprocess==0.70.16
+mypy==1.18.2
+mypy_extensions==1.1.0
+nbclient==0.10.2
+nbconvert==7.16.6
+nbformat==5.10.4
+nest-asyncio==1.6.0
+netaddr @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/netaddr/netaddr-1.3.0
+netifaces @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/netifaces/netifaces-0.11.0
+networkx==3.5
+ninja==1.11.1.4
+nltk==3.9.2
+nodeenv==1.9.1
+notebook==7.4.5
+notebook_shim==0.2.4
+numba @ file:///rapids/numba-0.59.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl#sha256=f7ad1d217773e89a9845886401eaaab0a156a90aa2f179fdc125261fd1105096
+numba-cuda @ file:///rapids/numba_cuda-0.11.0-py3-none-any.whl#sha256=e746340e02193cf8dd636e0b98d534d5156afcd012496a4851320f8e9acbabfb
+numcodecs @ file:///rapids/numcodecs-0.13.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl#sha256=da2230484e6102e5fa3cc1a5dd37ca1f92dfbd183d91662074d6f7574e3e8f53
+numexpr==2.13.1
+numpy==1.26.4
+nvdlfw_inspect @ git+https://github.com/NVIDIA/nvidia-dlfw-inspect.git@6b60eb0e675606fb2fbbfcb12667ecbec75eaf87
+nvfuser==0.2.27a0+1a27c18
+nvidia-cudnn-frontend @ file:///opt/pytorch/lightning-thunder/tmp/cudnn_frontend
+nvidia-dali-cuda130==1.51.2
+nvidia-ml-py @ file:///rapids/nvidia_ml_py-12.575.51-py3-none-any.whl#sha256=eb8641800d98ce40a22f479873f34b482e214a7e80349c63be51c3919845446e
+nvidia-modelopt==0.33.0
+nvidia-modelopt-core==0.33.0
+nvidia-nvcomp-cu13==5.0.0.6
+nvidia-nvimgcodec-cu13==0.6.0.32
+nvidia-nvjpeg-cu13==0.0.0a0
+nvidia-nvjpeg2k-cu13==0.9.0.43
+nvidia-nvtiff-cu13==0.5.1.75
+nvidia-resiliency-ext==0.4.1+cuda13
+nvtx @ file:///rapids/nvtx-0.2.11-cp312-cp312-linux_x86_64.whl#sha256=805a3a96e88622076fddbfcbe7ee42b1bc884bac63437b1a252690ff99fbaf3d
+nx-cugraph @ file:///rapids/nx_cugraph-25.6.0-py3-none-any.whl#sha256=80465a7a9919d9941eead9048ea285d3b7025737cc6cd6e8b30388b0b1f97866
+omegaconf==2.3.0
+onnx @ file:///opt/pytorch/pytorch/third_party/onnx
+opt_einsum==3.4.0
+optree==0.17.0
+overrides==7.7.0
+packaging @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/packaging/packaging-24.1
+pandas @ file:///rapids/pandas-2.2.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl#sha256=fffb8ae78d8af97f849404f21411c95062db1496aeb3e56f146f0355c9989319
+pandocfilters==1.5.1
+parso==0.8.5
+partd @ file:///rapids/partd-1.4.2-py3-none-any.whl#sha256=978e4ac767ec4ba5b86c6eaa52e5a2a3bc748a2ca839e8cc798f1cc6ce6efb0f
+pastel @ file:///p/data1/swmanage/EasyBuild/sources/p/Python-bundle-PyPI/extensions/pastel-0.2.1-py2.py3-none-any.whl#sha256=4349225fcdf6c2bb34d483e523475de5bb04a5c10ef711263452cb37d7dd4364
+pathlib2 @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pathlib2/pathlib2-2.3.7.post1
+pathspec @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pathspec/pathspec-0.12.1
+pathvalidate==3.3.1
+pbr @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pbr/pbr-6.0.0
+peft==0.17.1
+pexpect @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pexpect/pexpect-4.9.0
+pillow==11.3.0
+pkginfo @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pkginfo/pkginfo-1.11.1
+platformdirs @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/platformdirs/platformdirs-4.2.2
+pluggy @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pluggy/pluggy-1.5.0
+ply @ file:///rapids/ply-3.11-py2.py3-none-any.whl#sha256=096f9b8350b65ebd2fd1346b12452efe5b9607f7482813ffca50c22722a807ce
+polars @ file:///rapids/polars-1.28.1-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl#sha256=f37a14458a7336351ae32f199a566e784bd0b25895d0f83c6c02bd0f0c25c57d
+polygraphy==0.49.24
+pooch @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pooch/pooch-1.8.2
+portalocker==3.2.0
+pre_commit==4.3.0
+prometheus_client==0.22.1
+prompt_toolkit==3.0.51
+propcache @ file:///rapids/propcache-0.3.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl#sha256=ee6f22b6eaa39297c751d0e80c0d3a454f112f5c6481214fcf4c092074cecd67
+protobuf==6.31.1
+psutil @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/psutil/psutil-5.9.8
+ptyprocess @ file:///p/data1/swmanage/EasyBuild/sources/p/Python-bundle-PyPI/extensions/ptyprocess-0.7.0-py2.py3-none-any.whl#sha256=4b41f3967fce3af57cc7e94b888626c18bf37a083e3651ca8feeb66d492fef35
+pudb==2025.1
+PuLP==3.2.2
+pure_eval==0.2.3
+py @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/py/py-1.11.0
+py_expression_eval @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pyexpressioneval/py_expression_eval-0.3.14
+pyaml @ file:///dev/shm/swmanage/juwelsbooster/prettyyaml/24.7.0/GCCcore-13.3.0/pyaml-24.7.0
+pyarrow @ file:///rapids/pyarrow-19.0.1-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=b4c4156a625f1e35d6c0b2132635a237708944eb41df5fbe7d50f20d20c17832
+pyasn1 @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pyasn1/pyasn1-0.6.0
+pybind11==3.0.0
+pybind11-global==3.0.0
+pycocotools @ git+https://github.com/nvidia/cocoapi.git@08350a157b41f0755a536441b5abec89ab934c5b#subdirectory=PythonAPI
+pycodestyle==2.14.0
+pycparser @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pycparser/pycparser-2.22
+pycryptodome @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pycryptodome/pycryptodome-3.20.0
+pycryptodomex==3.23.0
+pydantic==2.11.7
+pydantic_core==2.33.2
+pydevtool @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pydevtool/pydevtool-0.3.0
+pyflakes==3.4.0
+Pygments @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/Pygments/pygments-2.18.0
+pylev @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pylev/pylev-1.4.0
+pylibcudf @ file:///rapids/pylibcudf-25.6.0-cp312-cp312-linux_x86_64.whl#sha256=f425b77db41f4cc3c59621a17d266d9ed7b421a257ec7ebb589db2d816e742b8
+pylibcugraph @ file:///rapids/pylibcugraph-25.6.0-cp312-cp312-linux_x86_64.whl#sha256=f6d42cb7a279f41209f25a0b935a8dd74deaeee7608103f6e13db65874f54f76
+pylibcugraphops @ file:///rapids/pylibcugraphops-25.6.0-cp312-cp312-linux_x86_64.whl#sha256=05ec906539503d31e39f5b3b337bd0229451d758839bfbcbbbd53360e9becc7b
+pylibraft @ file:///rapids/pylibraft-25.6.0-cp312-cp312-linux_x86_64.whl#sha256=87542a6d29d09f180262dce3f3d8b0a05869fcd8449d58524ac2e0f16d6b1768
+pylibwholegraph @ file:///rapids/pylibwholegraph-25.6.0-cp312-cp312-linux_x86_64.whl#sha256=c4bc0df125517e4a7eb189f27a6c51d3c90ec3954b07fe3e7e881dfe40b1cad9
+PyNaCl @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/PyNaCl/PyNaCl-1.5.0
+pynvjitlink @ file:///rapids/pynvjitlink-0.7.0-cp312-cp312-linux_x86_64.whl#sha256=c070e9206b478b841427824d4363dbf053f801d5a24d254799958b3b577701cd
+pynvml @ file:///rapids/pynvml-12.0.0-py3-none-any.whl#sha256=fdff84b62a27dbe98e08e1a647eb77342bef1aebe0878bcd15e99a83fcbecb9e
+pyparsing @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pyparsing/pyparsing-3.1.2
+pyrsistent @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pyrsistent/pyrsistent-0.20.0
+pytablewriter==1.2.1
+pytest @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pytest/pytest-8.2.2
+pytest-cov==7.0.0
+pytest-flakefinder==1.1.0
+pytest-pudb==0.7.0
+pytest-rerunfailures==15.1
+pytest-shard==0.1.2
+pytest-xdist @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pytestxdist/pytest_xdist-3.6.1
+python-dateutil @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pythondateutil/python-dateutil-2.9.0.post0
+python-etcd==0.4.5
+python-hostlist==2.2.2
+python-json-logger==3.3.0
+pytoml @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pytoml/pytoml-0.1.21
+pytorch-triton @ file:///tmp/dist/pytorch_triton-3.3.1%2Bgitc8757738-cp312-cp312-linux_x86_64.whl#sha256=784344c4927397805c0ef913be534012b2a86e56591f0c6155e4a2535bbe65be
+pytz @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/pytz/pytz-2024.1
+PyYAML @ file:///dev/shm/swmanage/juwelsbooster/PyYAML/6.0.2/GCCcore-13.3.0/pyyaml-6.0.2
+pyzmq==27.0.1
+raft-dask @ file:///rapids/raft_dask-25.6.0-cp312-cp312-linux_x86_64.whl#sha256=fe6a598b0d663859d51b13270d29c2634f466ab329b50ac762df5d37a14a719d
+rapidfuzz @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/rapidfuzz/rapidfuzz-3.9.3
+rapids-dask-dependency @ file:///rapids/rapids_dask_dependency-25.6.0a0-py3-none-any.whl#sha256=08fd969c6d972188b50862203b57900928bd52dbc6d2ff7fb57adb24143423c8
+rapids-logger @ file:///rapids/rapids_logger-0.1.19-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl#sha256=6797beb4a0d6874658944ddc38a1245059cd30ac6304f1e1f2b7d8c23db7dd18
+referencing @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/referencing/referencing-0.35.1
+regex @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/regex/regex-2024.5.15
+requests @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/requests/requests-2.32.3
+requests-toolbelt @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/requeststoolbelt/requests-toolbelt-1.0.0
+rfc3339-validator==0.1.4
+rfc3986-validator==0.1.1
+rfc3987-syntax==1.1.0
+rich @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/rich/rich-13.7.1
+rich-click @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/richclick/rich_click-1.8.3
+rmm @ file:///rapids/rmm-25.6.0-cp312-cp312-linux_x86_64.whl#sha256=67d46db9cc6e8292cfc8d7088db41fc896b915020827d5607f97086edf442ddc
+rouge_score==0.1.2
+rpds-py @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/rpdspy/rpds_py-0.18.1
+sacrebleu==2.5.1
+safetensors==0.6.2
+scandir @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/scandir/scandir-1.10.0
+scikit-learn @ file:///rapids/scikit_learn-1.6.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl#sha256=2e69fab4ebfc9c9b580a7a80111b43d214ab06250f8a7ef590a4edf72464dd86
+scipy @ file:///rapids/scipy-1.15.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl#sha256=271e3713e645149ea5ea3e97b57fdab61ce61333f97cfae392c28ba786f9bb49
+SecretStorage @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/SecretStorage/SecretStorage-3.3.3
+semantic_version @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/semanticversion/semantic_version-2.10.0
+semver @ file:///dev/shm/swmanage/juwelsbooster/ApptainerTools/2025/GCCcore-13.3.0/semver/semver-3.0.2
+Send2Trash==1.8.3
+sentry-sdk==2.41.0
+setuptools==80.9.0
+shellingham @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/shellingham/shellingham-1.5.4
+simplegeneric @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/simplegeneric/simplegeneric-0.8.1
+simplejson @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/simplejson/simplejson-3.19.2
+singularity-compose @ file:///dev/shm/swmanage/juwelsbooster/ApptainerTools/2025/GCCcore-13.3.0/singularitycompose/singularity-compose-0.1.19
+singularitydb_client @ file:///dev/shm/swmanage/juwelsbooster/ApptainerTools/2025/GCCcore-13.3.0/containerbuildsystemcli/container-build-system-cli-v0.1.1
+six @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/six/six-1.16.0
+smmap==5.0.2
+sniffio==1.3.1
+snowballstemmer @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/snowballstemmer/snowballstemmer-2.2.0
+sortedcontainers @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/sortedcontainers/sortedcontainers-2.4.0
+soundfile==0.13.1
+soupsieve==2.7
+soxr==0.5.0.post1
+Sphinx @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/Sphinx/sphinx-7.3.7
+sphinx-bootstrap-theme @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/sphinxbootstraptheme/sphinx-bootstrap-theme-0.8.1
+sphinxcontrib-applehelp @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/sphinxcontribapplehelp/sphinxcontrib_applehelp-1.0.8
+sphinxcontrib-devhelp @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/sphinxcontribdevhelp/sphinxcontrib_devhelp-1.0.6
+sphinxcontrib-htmlhelp @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/sphinxcontribhtmlhelp/sphinxcontrib_htmlhelp-2.0.5
+sphinxcontrib-jsmath @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/sphinxcontribjsmath/sphinxcontrib-jsmath-1.0.1
+sphinxcontrib-qthelp @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/sphinxcontribqthelp/sphinxcontrib_qthelp-1.0.7
+sphinxcontrib-serializinghtml @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/sphinxcontribserializinghtml/sphinxcontrib_serializinghtml-1.1.10
+sphinxcontrib-websupport @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/sphinxcontribwebsupport/sphinxcontrib_websupport-1.2.7
+spython @ file:///dev/shm/swmanage/juwelsbooster/ApptainerTools/2025/GCCcore-13.3.0/spython/spython-0.3.13
+sqlitedict==2.1.0
+stack-data==0.6.3
+sympy==1.14.0
+tabledata==1.3.4
+tabulate @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/tabulate/tabulate-0.9.0
+tbb==2021.13.1
+tblib @ file:///rapids/tblib-3.1.0-py3-none-any.whl#sha256=670bb4582578134b3d81a84afa1b016128b429f3d48e6cbbaecc9d15675e984e
+tcolorpy==0.1.7
+tenacity==9.1.2
+tensorboard==2.16.2
+tensorboard-data-server==0.7.2
+tensorrt @ file:///workspace/TensorRT-10.13.2.6/python/tensorrt-10.13.2.6-cp312-none-linux_x86_64.whl#sha256=604aca43c89423b96c4ffc20ede958d30332c68f33ea990ac8be78a112917905
+terminado==0.18.1
+threadpoolctl @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/threadpoolctl/threadpoolctl-3.5.0
+thriftpy2 @ file:///rapids/thriftpy2-0.5.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl#sha256=3c00c340114c3041961906a628e70e6b6b5805ee691e682c290cec3513e77efc
+tiktoken==0.12.0
+tinycss2==1.4.0
+tokenizers==0.22.1
+toml @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/toml/toml-0.10.2
+tomli @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/tomli/tomli-2.0.1
+tomli_w @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/tomliw/tomli_w-1.0.0
+tomlkit @ file:///p/data1/swmanage/EasyBuild/sources/p/Python-bundle-PyPI/extensions/tomlkit-0.12.5-py3-none-any.whl#sha256=af914f5a9c59ed9d0762c7b64d3b5d5df007448eb9cd2edc8a46b1eafead172f
+toolz @ file:///rapids/toolz-1.0.0-py3-none-any.whl#sha256=292c8f1c4e7516bf9086f8850935c799a874039c8bcf959d47b600e4c44a6236
+torch @ file:///opt/transfer/torch-2.8.0a0%2B34c6371d24.nv25.8-33012958-cp312-cp312-linux_x86_64.whl#sha256=1612e3d02dba364f652374d07b76b89cba2d8625f3b6c86f280ecab9e10352b2
+torch_tensorrt @ file:///opt/pytorch/torch_tensorrt/dist/torch_tensorrt-2.8.0a0-cp312-cp312-linux_x86_64.whl#sha256=48f61128c3d094803eaef59b0e2b4b7af0c325d06205ab59cc60624f8cbd4a6e
+torchao @ file:///opt/pytorch/ao
+torchdata==0.11.0
+torchprofile==0.0.4
+torchvision @ file:///opt/transfer/torchvision-0.23.0a0%2B428a54c9-33012958-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=85b84d6c9afdeb44f3daa1ccfdcd4fb4f9aeeeefa697bc0d05d493a5875bf20f
+tornado==6.5.1
+tqdm==4.67.1
+tqdm-multiprocess==0.0.11
+traitlets==5.14.3
+transformer_engine @ file:///workspace/TransformerEngine
+transformers==4.57.0
+treelite @ file:///rapids/treelite-4.4.1-py3-none-linux_x86_64.whl#sha256=174741724205540a1a5b37da81483aeff55d89548f42b3461cf07acac7ae96eb
+typepy==1.3.4
+types-dataclasses==0.6.6
+types-python-dateutil==2.9.0.20250708
+typing-inspection==0.4.1
+typing_extensions==4.14.1
+tzdata @ file:///rapids/tzdata-2025.2-py2.py3-none-any.whl#sha256=1a403fada01ff9221ca8044d701868fa132215d84beb92242d9acd2147f667a8
+ucx-py @ file:///rapids/ucx_py-0.44.0-cp312-cp312-linux_x86_64.whl#sha256=b8a371020c2505e33a76c448d2cdf7434fc81248baaa88b96d2af7b08cfd08b5
+ucxx @ file:///rapids/ucxx-0.44.0-cp312-cp312-linux_x86_64.whl#sha256=d7fdc44eeebeeca7e4f5f91ad722f5efe8a93de5a7810ab61c866060e5e15a3b
+ujson @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/ujson/ujson-5.10.0
+uri-template==1.3.0
+urllib3 @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/urllib3/urllib3-2.2.1
+urwid==3.0.2
+urwid_readline==0.15.1
+virtualenv @ file:///dev/shm/swmanage/juwelsbooster/virtualenv/20.26.2/GCCcore-13.3.0/virtualenv/virtualenv-20.26.2
+wandb==0.22.2
+wcwidth @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/wcwidth/wcwidth-0.2.13
+webcolors==24.11.1
+webencodings @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/webencodings/webencodings-0.5.1
+websocket-client==1.8.0
+Werkzeug==3.1.3
+wget==3.2
+wheel==0.45.1
+word2number==1.1
+wrapt==1.17.2
+xdoctest==1.0.2
+xgboost @ file:///rapids/xgboost-2.1.3-py3-none-manylinux_2_39_x86_64.whl#sha256=cc7346cdfa8142ee132278c90e22776ff120a3aac68c8b30c35ac2e4be025ece
+xlrd @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/xlrd/xlrd-2.0.1
+xxhash==3.6.0
+yarl @ file:///rapids/yarl-1.20.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl#sha256=a97d67108e79cfe22e2b430d80d7571ae57d19f17cda8bb967057ca8a7bf5bfd
+zarr @ file:///rapids/zarr-2.18.7-py3-none-any.whl#sha256=ac3dc4033e9ae4e9d7b5e27c97ea3eaf1003cc0a07f010bd83d5134bf8c4b223
+zict @ file:///rapids/zict-3.0.0-py2.py3-none-any.whl#sha256=5796e36bd0e0cc8cf0fbc1ace6a68912611c1dbd74750a3f3026b9b9d6a327ae
+zipfile36 @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/zipfile36/zipfile36-0.1.3
+zipp @ file:///dev/shm/swmanage/juwelsbooster/PythonbundlePyPI/2024.06/GCCcore-13.3.0/zipp/zipp-3.19.2
+zstandard==0.25.0

@@ -3,9 +3,11 @@ defaults:
   - _self_
 
 template_path: templates/juwels.sbatch
-launcher_cmd: "{{env_exports}} export LOCAL_ADDR=$(nslookup $(hostname | sed 's/.juwels//' )i \
+launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \\\n\
+ export LOCAL_ADDR=$(nslookup $(hostname | sed \"s/.juwels//\" )i \
   | grep \"Address: \" | tail -n1 | awk '{print $2}') ; \
-  singularity exec {{env_flags}} --nv ${oc.env:CONTAINER_CACHE_DIR}/MegatronTraining_x86_64_202510011427.sif"
+  ${oc.select:container.runtime,apptainer} exec ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}}\
+ --nv ${oc.select:container.image,container.sif}"
 srun:
   exclusive: true
   wait: 60
@@ -28,6 +30,7 @@ env:
   NCCL_NET_GDR_READ: "1"
   HF_ALLOW_CODE_EVAL: "1"
   HF_DATASETS_OFFLINE: "1"
+  HF_HOME: ${oc.env:HF_HOME}
   TRANSFORMERS_OFFLINE: "1"
   MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1)i | \
     grep \"Address: \" | tail -n1 | awk '{print $2}')"
@@ -44,9 +47,7 @@ sbatch:
   ntasks_per_node: 1
   ntasks: ${.nodes}
   gpus_per_node: 4
-  cpus_per_task: 8
+  cpus_per_task: 32
   gres: "gpu:4"
   gpu_bind: "none"
   time: "12:00:00"
-client:
-  class_name: SlurmClient

@@ -18,7 +18,7 @@ num_attention_heads: null
 tensor_model_parallel_size: 1
 sequence_parallel: true
 normalization: RMSNorm
-norm_epsilon: null
+norm_epsilon: 1e-6
 swiglu: true
 bf16: true
 use_flash_attn: true
@@ -55,4 +55,3 @@ overlap_grad_reduce: true
 untie_embeddings_and_output_weights: true
 add_bias_linear: false
 add_qkv_bias: false
-

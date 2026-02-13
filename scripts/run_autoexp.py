@@ -1,232 +1,188 @@
 #!/usr/bin/env python3
-"""Convenience wrapper around the oellm-autoexp CLI."""
+"""Convenience wrapper to plan, submit, and optionally monitor in one shot."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import logging
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Iterable
+from uuid import uuid4
 
-from compoconf import asdict, parse_config
+from compoconf import asdict
 
 from oellm_autoexp.config.loader import load_config_reference
-from oellm_autoexp.config.schema import RootConfig
+from oellm_autoexp.config.schema import ConfigSetup
 from oellm_autoexp.orchestrator import (
     build_execution_plan,
-    execute_plan_sync,
-    render_scripts,
+    ExecutionPlan,
     submit_jobs,
+    run_loop,
 )
-from oellm_autoexp.persistence import MonitorStateStore
-from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
+from oellm_autoexp.utils.logging_config import configure_logging
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run autoexp orchestration")
-    parser.add_argument("--config-ref", default="autoexp")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config-name", default="autoexp")
+    parser.add_argument("--config-path", default=None)
     parser.add_argument("-C", "--config-dir", type=Path, default=Path("config"))
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--use-fake-slurm", action="store_true", default=False)
     parser.add_argument(
-        "--no-submit",
-        action="store_true",
-        help="Generate scripts but output sbatch command instead of submitting",
+        "--dry-run", action="store_true", help="Plan and render without submitting jobs"
     )
+    parser.add_argument("--no-monitor", action="store_true", help="Submit jobs but skip monitoring")
     parser.add_argument(
-        "--no-monitor",
-        action="store_true",
-        help="Submit jobs but don't monitor them (return immediately)",
-    )
-    parser.add_argument(
-        "--monitor-session",
-        type=str,
-        help="Monitor a specific session by ID (reads from monitoring_state)",
-    )
-    parser.add_argument(
-        "--monitor-all",
-        action="store_true",
-        help="Monitor all active sessions in monitoring_state directory",
-    )
-    parser.add_argument(
-        "--monitoring-state-dir",
+        "--monitor-state-dir",
+        default="./monitor_state",
         type=Path,
-        help="Path to monitoring_state directory (default: output/monitoring_state)",
+        help="Monitoring state directory",
     )
-    parser.add_argument("--dump-config", type=Path, help="Dump resolved config to file and exit")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--debug", action="store_true")
     parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose logging (INFO level)"
+        "--array-subset",
+        type=str,
+        help="Comma-separated sweep indices or ranges (e.g., '0,3-5') to rerun.",
     )
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging (DEBUG level)")
-    parser.add_argument("override", nargs="*", default=[], help="Additional overrides.")
-    return parser.parse_args()
+    parser.add_argument(
+        "overrides", nargs="*", default=[], help="Hydra-style overrides (`key=value`)."
+    )
+    return parser.parse_args(argv)
 
 
-def monitor_from_session_file(session_path: Path, use_fake_slurm: bool = False) -> None:
-    """Monitor jobs from a session file."""
-    session_data = MonitorStateStore.load_session(session_path)
-    if not session_data:
-        print(f"Error: Could not load session from {session_path}")
+def _default_manifest_path(base_output_dir: str | Path) -> Path:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    manifest_dir = Path(base_output_dir) / "manifests"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    suffix = uuid4().hex[:6]
+    return manifest_dir / f"plan_{timestamp}_{suffix}.json"
+
+
+def _collect_git_metadata(repo_root: Path) -> dict[str, str | bool]:
+    def _run(cmd: Iterable[str]) -> str:
+        try:
+            result = subprocess.run(
+                list(cmd),
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return ""
+        return result.stdout.strip()
+
+    commit = _run(["git", "rev-parse", "HEAD"]) or "unknown"
+    status = _run(["git", "status", "--porcelain"])
+    dirty = bool(status)
+    diff = _run(["git", "diff"]) if dirty else ""
+    return {
+        "commit": commit,
+        "dirty": dirty,
+        "status": status,
+        "diff": diff,
+    }
+
+
+def _sanitize_env() -> dict[str, str]:
+    pattern = re.compile(r"(KEY|SECRET)", re.IGNORECASE)
+    return {key: value for key, value in os.environ.items() if not pattern.search(key)}
+
+
+def _write_job_provenance(
+    plan: ExecutionPlan,
+    *,
+    args: argparse.Namespace | None = None,
+    subset_indices: set[int] | None = None,
+    overrides: list[str] = (),
+) -> None:
+    git_meta = _collect_git_metadata(REPO_ROOT)
+    sanitized_env = _sanitize_env()
+    base_payload = {
+        "git": git_meta,
+        "command": {key: str(val) for key, val in vars(args).items()} or list(sys.argv),
+        "overrides": overrides,
+        "subset_indices": sorted(subset_indices),
+        "plan": asdict(plan),
+        "environment": sanitized_env,
+    }
+
+    manifest_path = _default_manifest_path(plan.config_setup.monitor_state_dir)
+    with open(manifest_path, "w") as fp:
+        json.dump(base_payload, fp)
+
+
+def _parse_subset(spec: str | None) -> set[int]:
+    indices: set[int] = set()
+    if not spec:
+        return indices
+    for token in spec.split(","):
+        part = token.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start_str, end_str = part.split("-", 1)
+            start = int(start_str)
+            end = int(end_str)
+            if end < start:
+                raise ValueError(f"invalid range '{part}'")
+            indices.update(range(start, end + 1))
+        else:
+            indices.add(int(part))
+    return indices
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    configure_logging(args.verbose, args.debug)
+
+    config_dir = Path(args.config_dir)
+
+    config_setup = ConfigSetup(
+        pwd=os.path.abspath(os.curdir),
+        config_name=args.config_name,
+        config_dir=str(config_dir),
+        overrides=args.overrides,
+        monitor_state_dir=str(args.monitor_state_dir),
+    )
+    root = load_config_reference(config_setup=config_setup)
+
+    try:
+        subset_indices = _parse_subset(args.array_subset)
+    except ValueError as exc:
+        print(f"Invalid --array-subset argument: {exc}", file=sys.stderr)
         return
 
-    # Reconstruct config from session
-    config_dict = session_data.get("config")
-    if not config_dict:
-        print(f"Error: No config found in session {session_path}")
-        return
-
-    root = parse_config(RootConfig, config_dict)
-    plan = build_execution_plan(root)
-
-    slurm_client = plan.runtime.slurm_client
-    if use_fake_slurm:
-        slurm_client = FakeSlurmClient(FakeSlurmClientConfig())
-        slurm_client.configure(plan.config.slurm)
-
-    # Load existing session with same ID
-    session_id = session_data.get("session_id", session_path.stem)
-    monitoring_state_dir = plan.config.project.monitoring_state_dir or plan.runtime.state_dir
-    # create monitor state store
-    MonitorStateStore(monitoring_state_dir, session_id=session_id)
-
-    print(f"Monitoring session: {session_id} ({session_data.get('project_name', 'unknown')})")
-
-    # Execute monitoring (this will load jobs from the session file)
-    execute_plan_sync(
-        plan,
-        slurm_client=slurm_client,
-        artifacts=None,
-        controller=None,
+    plan = build_execution_plan(
+        root,
+        config_setup=config_setup,
+        subset_indices=subset_indices or None,
     )
-
-
-def main() -> None:
-    args = parse_args()
-
-    # Configure logging based on verbosity flags
-    log_level = logging.WARNING
-    if args.debug:
-        log_level = logging.DEBUG
-    elif args.verbose:
-        log_level = logging.INFO
-
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    # Handle monitoring from session files
-    if args.monitor_session or args.monitor_all:
-        monitoring_state_dir = args.monitoring_state_dir or Path("output/monitoring_state")
-
-        if args.monitor_all:
-            sessions = MonitorStateStore.list_sessions(monitoring_state_dir)
-            if not sessions:
-                print(f"No monitoring sessions found in {monitoring_state_dir}")
-                return
-
-            print(f"Found {len(sessions)} session(s) to monitor:")
-            for session in sessions:
-                print(
-                    f"  - {session['session_id']}: {session['project_name']} ({session['job_count']} jobs)"
-                )
-
-            # Monitor all sessions (this could be enhanced to run in parallel)
-            for session in sessions:
-                session_path = Path(session["session_path"])
-                try:
-                    monitor_from_session_file(session_path, args.use_fake_slurm)
-                except Exception as e:
-                    print(f"Error monitoring session {session['session_id']}: {e}")
-                    continue
-            return
-
-        if args.monitor_session:
-            session_path = monitoring_state_dir / f"{args.monitor_session}.json"
-            if not session_path.exists():
-                print(f"Error: Session file not found: {session_path}")
-                print("Available sessions:")
-                sessions = MonitorStateStore.list_sessions(monitoring_state_dir)
-                for session in sessions:
-                    print(f"  - {session['session_id']}: {session['project_name']}")
-                return
-
-            monitor_from_session_file(session_path, args.use_fake_slurm)
-            return
-
-    root = load_config_reference(args.config_ref, args.config_dir, args.override)
-
-    # Dump config and exit if requested
-    if args.dump_config:
-        config_dict = asdict(root)
-        args.dump_config.parent.mkdir(parents=True, exist_ok=True)
-        args.dump_config.write_text(json.dumps(config_dict, indent=2), encoding="utf-8")
-        print(f"Config dumped to: {args.dump_config}")
-        return
-
-    plan = build_execution_plan(root)
-
-    # If --no-submit or --no-monitor is set, we need to render scripts for submission
-    if args.no_submit or args.no_monitor or args.dry_run:
-        artifacts = render_scripts(plan)
-    else:
-        # For monitoring-only (resume), we don't need to render scripts
-        # The state will be loaded from persisted state
-        artifacts = None
 
     if args.dry_run:
-        for script in artifacts.job_scripts:
-            print(f"Generated: {script}")
-        if artifacts.array_script:
-            print(f"Generated array script: {artifacts.array_script}")
-        if artifacts.sweep_json:
-            print(f"Sweep JSON: {artifacts.sweep_json}")
-        return
+        exit(0)
 
-    # When --no-submit is set, output the sbatch command for the host to execute
-    if args.no_submit:
-        if artifacts.array_script:
-            script_path = artifacts.array_script
-        elif artifacts.job_scripts:
-            script_path = artifacts.job_scripts[0]
-        else:
-            raise RuntimeError("No scripts generated to submit")
-
-        # Output in format expected by run_autoexp_container.py
-        print(f"Successful, to execute, run: sbatch {script_path}")
-        return
-
-    slurm_client = plan.runtime.slurm_client
-    if args.use_fake_slurm:
-        slurm_client = FakeSlurmClient(FakeSlurmClientConfig())
-        slurm_client.configure(plan.config.slurm)
-
-    # Only submit if --no-monitor is NOT set (i.e., we're doing submission)
-    # If --no-monitor is set, we submit and return
-    # If neither is set, we submit and monitor
-    if args.no_monitor:
-        # Submit and return without monitoring
-        artifacts = render_scripts(plan)
-        controller = submit_jobs(plan, artifacts, slurm_client)
-        for state in controller.jobs():
-            print(
-                f"submitted {state.name} -> job {state.job_id} -> log: {state.registration.log_path}"
-            )
-        return
-
-    # At this point, we're either:
-    # 1. Submitting and monitoring (artifacts exists from earlier, or will be created)
-    # 2. Monitoring only (artifacts is None, will be created if needed, but submit_jobs will restore state)
-
-    # execute_plan_sync handles both submission + monitoring and monitoring-only
-    # It will call submit_jobs if controller is None, which will restore state if jobs already exist
-    execute_plan_sync(
+    _write_job_provenance(
         plan,
-        slurm_client=slurm_client,
-        artifacts=artifacts,
-        controller=None,  # Let execute_plan_sync handle submission/restoration
+        args=args,
+        subset_indices=subset_indices,
+        overrides=args.overrides,
     )
+
+    res = submit_jobs(plan, no_error_catching=args.debug)
+
+    if args.no_monitor:
+        exit(0)
+
+    run_loop(res.loop)
 
 
 if __name__ == "__main__":

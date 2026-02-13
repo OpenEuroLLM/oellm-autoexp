@@ -1,0 +1,12 @@
+# Data inputs
+data_path:
+  - "/e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged"
+data_cache_path: /e/project1/projectnucleus/poeppel1/data
+split: "989,10,1"
+lr_warmup_iters: 0
+train_iters: 500
+save_interval: 1000000000
+save: ${job.base_output_dir}
+load: ${job.base_output_dir}
+tensorboard_dir: ${job.base_output_dir}/tensorboard
+log_interval: 10

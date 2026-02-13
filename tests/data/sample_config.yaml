@@ -1,27 +1,16 @@
-project:
+job:
   name: demo
   base_output_dir: ./outputs
+  log_path: ./logs/slurm-%j.out
+  log_path_current: ./logs/current.log
 sweep:
-  axes: {}
+  grids: []
 slurm:
   template_path: ./templates/train.sbatch
   script_dir: ./scripts
   log_dir: ./logs
   launcher_cmd: ""
   srun_opts: ""
-  client:
-    class_name: FakeSlurmClient
-monitoring:
-  class_name: NullMonitor
-  poll_interval_seconds: 600
-  inactivity_threshold_seconds: 900
-  termination_string: null
-  termination_command: null
-  log_path_template: "{output_dir}/slurm.out"
 backend:
   class_name: NullBackend
   extra_cli_args: []
-restart_policies:
-  - mode: success
-    implementation:
-      class_name: NoRestartPolicy

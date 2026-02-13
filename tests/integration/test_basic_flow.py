@@ -1,84 +1,167 @@
-from pathlib import Path
+"""Integration tests for basic workflow.
 
-from oellm_autoexp.monitor.controller import JobRegistration, MonitorController
-from oellm_autoexp.orchestrator import build_execution_plan, render_scripts
-from oellm_autoexp.slurm.client import FakeSlurmClient, FakeSlurmClientConfig
-from oellm_autoexp.config.loader import load_config_reference
-
-CONFIG = """
-project:
-  name: demo
-  base_output_dir: {base_output}
-sweep:
-  axes:
-    lr: [0.1]
-slurm:
-  template_path: {template_path}
-  script_dir: {script_dir}
-  log_dir: {log_dir}
-  launcher_cmd: ""
-  srun_opts: ""
-  client:
-    class_name: FakeSlurmClient
-monitoring:
-  class_name: NullMonitor
-backend:
-  class_name: NullBackend
-restart_policies:
-  - mode: stall
-    implementation:
-      class_name: AlwaysRestartPolicy
-      max_retries: 2
-  - mode: success
-    implementation:
-      class_name: NoRestartPolicy
+Focuses on testing the orchestrator's ability to build execution plans
+from configuration files.
 """
 
+from pathlib import Path
+import os
+import pytest
 
-def test_fake_slurm_monitoring_cycle(tmp_path: Path, monkeypatch) -> None:
+from oellm_autoexp.orchestrator import build_execution_plan
+from oellm_autoexp.config.loader import load_config_reference
+from oellm_autoexp.config.schema import ConfigSetup
+
+
+def test_load_real_config_and_build_plan(tmp_path: Path, monkeypatch) -> None:
+    """Test that we can load a real config and build an execution plan."""
     monkeypatch.setenv("SLURM_ACCOUNT", "debug")
+    monkeypatch.setenv("CONTAINER_CACHE_DIR", str(tmp_path))
+
+    project_cfg = Path("config/project/default.yaml")
+    slurm_cfg = Path("config/slurm/base.yaml")
+    if not (project_cfg.exists() and slurm_cfg.exists()):
+        pytest.skip("Base config not available")
+
+    config_setup = ConfigSetup(
+        pwd=os.path.abspath(os.curdir),
+        config_name="autoexp",
+        config_dir="config",
+        overrides=["job=default", "slurm=base"],
+    )
+    cfg = load_config_reference(config_setup=config_setup)
+
+    plan = build_execution_plan(cfg, config_setup)
+
+    # Should have jobs from the sweep
+    assert len(plan.jobs) > 0
+    assert plan.config is not None
+    assert plan.sweep_points is not None
+
+
+def test_simple_execution_plan_from_inline_config(tmp_path: Path, monkeypatch) -> None:
+    """Test building an execution plan with a minimal inline config."""
+    monkeypatch.setenv("SLURM_ACCOUNT", "debug")
+
     base_output = tmp_path / "outputs"
     template_path = tmp_path / "template.sbatch"
     script_dir = tmp_path / "scripts"
     log_dir = tmp_path / "logs"
     template_path.write_text("#!/bin/bash\n{sbatch_directives}\n\nsrun {srun_opts}{launcher_cmd}\n")
 
-    config_text = CONFIG.format(
-        base_output=base_output,
-        template_path=template_path,
-        script_dir=script_dir,
-        log_dir=log_dir,
-    )
-    config_path = tmp_path / "config.yaml"
+    config_text = f"""
+job:
+  name: demo_${{index}}
+  base_output_dir: {base_output}
+  log_path: {log_dir}/test-%j.log
+  log_path_current: {log_dir}/test.log
+  slurm: ${{slurm}}
+
+sweep:
+  type: product
+  groups:
+    - params:
+        backend.dummy: [0, 1]
+
+slurm:
+  template_path: {template_path}
+  script_dir: {script_dir}
+  log_dir: {log_dir}
+  array: false
+  launcher_cmd: ""
+  srun_opts: ""
+
+backend:
+  class_name: NullBackend
+  base_command: ["echo", "1"]
+
+index: 0
+"""
+    config_path = tmp_path / "test.yaml"
     config_path.write_text(config_text)
 
-    plan = build_execution_plan(config_path)
-    artifacts = render_scripts(plan)
+    config_setup = ConfigSetup(config_path=config_path)
+    root = load_config_reference(config_setup=config_setup)
 
-    slurm = FakeSlurmClient(FakeSlurmClientConfig())
-    controller = MonitorController(plan.runtime.monitor, slurm, plan.runtime.restart_policies)
+    # Test that we can build a plan
+    plan = build_execution_plan(root, config_setup)
 
-    job = plan.jobs[0]
-    job_id = slurm.submit(job.name, artifacts.job_scripts[0], job.log_path)
-    controller.register_job(
-        job_id,
-        JobRegistration(name=job.name, script_path=artifacts.job_scripts[0], log_path=job.log_path),
-    )
-
-    decision = controller.handle_state_change(job_id, "stall")
-    assert decision.action == "restart"
-
-    new_job_id = next(iter(controller.jobs())).job_id
-    decision = controller.handle_state_change(new_job_id, "success")
-    assert decision.action == "stop"
+    # Should have 2 jobs (2 values in sweep)
+    assert len(plan.jobs) == 2
+    assert all(job.config for job in plan.jobs)
+    assert all(job.config.job.name for job in plan.jobs)
 
 
-def test_hydra_plan(tmp_path: Path, monkeypatch) -> None:
+def test_multi_stage_execution_plan(tmp_path: Path, monkeypatch) -> None:
+    """Test building a multi-stage execution plan with dependencies."""
     monkeypatch.setenv("SLURM_ACCOUNT", "debug")
-    monkeypatch.setenv("CONTAINER_CACHE_DIR", "debug")
-    cfg = load_config_reference(
-        "autoexp", Path("config"), overrides=["project=juwels", "slurm=juwels"]
-    )
-    plan = build_execution_plan(cfg)
-    artifacts = render_scripts(plan)
-    assert artifacts.job_scripts
+
+    base_output = tmp_path / "outputs"
+    template_path = tmp_path / "template.sbatch"
+    script_dir = tmp_path / "scripts"
+    log_dir = tmp_path / "logs"
+    template_path.write_text("#!/bin/bash\n{sbatch_directives}\n\nsrun {srun_opts}{launcher_cmd}\n")
+
+    config_text = f"""
+job:
+  name: demo_${{index}}_${{stage}}
+  base_output_dir: {base_output}
+  log_path: {log_dir}/test-%j.log
+  log_path_current: {log_dir}/test.log
+  slurm: ${{slurm}}
+
+sweep:
+  type: product
+  groups:
+    - params:
+        backend.dummy: [1, 2]
+    - type: list
+      configs:
+        - stage: stable
+        - type: list
+          defaults:
+            job.start_condition:
+              class_name: FileExistsCondition
+              path: "\\\\${{sibling.stable.job.base_output_dir}}/done.txt"
+          configs:
+            - stage: decay
+
+slurm:
+  template_path: {template_path}
+  script_dir: {script_dir}
+  log_dir: {log_dir}
+  array: false
+  launcher_cmd: ""
+  srun_opts: ""
+
+backend:
+  class_name: NullBackend
+  base_command: ["echo", "1"]
+
+stage: ""
+index: 0
+"""
+    config_path = tmp_path / "multi_stage.yaml"
+    config_path.write_text(config_text)
+
+    config_setup = ConfigSetup(config_path=config_path)
+    root = load_config_reference(config_setup=config_setup)
+
+    # Test that we can build a plan
+    plan = build_execution_plan(root, config_setup)
+
+    # Should have 4 jobs (2 backend values × 2 stages)
+    assert len(plan.jobs) == 4
+
+    # Verify job names contain stage info
+    job_names = [job.config.job.name for job in plan.jobs]
+    assert any("stable" in name for name in job_names)
+    assert any("decay" in name for name in job_names)
+
+    # Verify start conditions are set for decay stage
+    decay_jobs = [job for job in plan.jobs if "decay" in job.config.job.name]
+    for job in decay_jobs:
+        # Access the job config to check start_condition
+        assert hasattr(job.config, "job")
+        # The start condition should be inherited from the config
+        assert job.config.job.start_condition is not None

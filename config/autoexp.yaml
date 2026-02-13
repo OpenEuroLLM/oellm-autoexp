@@ -1,11 +1,13 @@
 defaults:
-  - project: jupiter
-  - backend: megatron
-  - container: jupiter
-  - slurm: jupiter
-  - monitoring: default
-  - sweep: minimal
-  - restart: default
-  - scheduler: default
+  - backend: megatron_torchrun
+  - container: none
+  - slurm: base
+  - sweep: none
+  - job: default
   - _self_
 
+# monitoring_state_dir: "./monitor"
+
+
+index: 0   # will be replaced internally by overrides for a sweep
+stage: ""  # will be replaced internally by overrides for a sweep

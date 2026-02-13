@@ -1,0 +1,11 @@
+# Data inputs
+data_path:
+  - ${oc.env:DATA_DIR}/gpt-neox-20b/nemotron-cc/1.0/high-actual
+data_cache_path: ${oc.env:WORK}/.cache
+split: "989,10,1"
+lr_warmup_iters: 0
+train_iters: 500
+save_interval: 1000000000
+save: ${job.base_output_dir}
+load: ${job.base_output_dir}
+tensorboard_dir: ${job.base_output_dir}/tensorboard

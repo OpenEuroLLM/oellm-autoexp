@@ -2,8 +2,12 @@ defaults:
   - base
   - _self_
 
-template_path: templates/jupiter.sbatch
-launcher_cmd: 'singularity exec --nv --writable-tmpfs ${oc.env:CONTAINER_CACHE_DIR,:}/MegatronTraining_aarch64.sif python -u -m torch.distributed.run --rdzv-endpoint $MASTER_ADDR:$MASTER_PORT --rdzv-backend static --max_restarts 0 --tee 3 --node-rank $SLURM_PROCID'
+template_path: "templates/jupiter.sbatch"
+launcher_cmd: "\
+  export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ;\\\n \
+  ${oc.select:container.runtime,apptainer} exec \
+  ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
+  --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif} \\\n"
 srun:
   exclusive: true
   wait: 60
@@ -13,38 +17,24 @@ srun:
 launcher_env_passthrough: true
 env:
   MACHINE_NAME: JUPITER
-  NCCL_SOCKET_IFNAME: ib0
-  GLOO_SOCKET_IFNAME: ib0
-  NCCL_SOCKET_FAMILY: AF_INET
-  GLOO_SOCKET_FAMILY: AF_INET
-  TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
-  NCCL_IB_TIMEOUT: "18"
-  NCCL_IB_DISABLE: "0"
-  NCCL_IB_RETRY_CNT: "20"
-  NCCL_IB_HCA: mlx5_0,mlx5_1,mlx5_2,mlx5_3
-  NCCL_NET_GDR_LEVEL: "2"
-  NCCL_NET_GDR_READ: "1"
   HF_ALLOW_CODE_EVAL: "1"
   HF_DATASETS_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
-  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | \
-    grep \"Address: \" | tail -n1 | awk '{print $2}')"
+  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep \"Address: \" | sed \"s/Address: //\" | tail) "
   MASTER_PORT: "20074"
   NUM_NODES: "$SLURM_JOB_NUM_NODES"
   GPUS_PER_NODE: "4"
   NUM_GPUS_PER_NODE: "4"
   NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
   ARCH: "$(uname -m)"
-  SLURM_CPUS_PER_TASK: "8"
+  SLURM_CPUS_PER_TASK: "12"
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
 sbatch:
   nodes: 1
-  ntasks_per_node: 4
-  cpus_per_task: 8
+  ntasks_per_node: 1
+  ntasks: ${.nodes}
+  gpus_per_node: 4
+  cpus_per_task: 16
   gres: "gpu:4"
-  partition: booster
-  account: jureap59
-  qos: normal
-  time: "05:00:00"
-client:
-  class_name: SlurmClient
+  gpu_bind: "none"
+  time: "12:00:00"
