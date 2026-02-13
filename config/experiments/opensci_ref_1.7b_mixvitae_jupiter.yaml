@@ -1,0 +1,116 @@
+# @package _global_
+#
+# 1.7B dense model pretraining on MixtureVitae-v1-decontaminated (300B tokens)
+# 64 nodes (256 GH200 GPUs) on Jupiter
+
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: default
+  - /sweep: none
+  - override /backend/megatron: [base_reference, opensci_ref_1.7B, data_mixturevitae]
+  - _self_
+
+index: 0
+stage: "all"
+
+job:
+  name: "opensci-ref_1.7b_MixtureVitae_300B"
+  base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${.name}
+
+backend:
+  megatron:
+    # Training schedule (300B tokens)
+    lr: 0.004
+    global_batch_size: 1024
+    micro_batch_size: 4
+    train_iters: 71526           # ceil(300B / (4096 * 1024))
+    lr_warmup_iters: 25000
+    lr_decay_iters: 71526
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: 14305    # 1/5 of train_iters (cooldown)
+    min_lr: 0.0
+
+    # Optimizer
+    adam_beta2: 0.95
+    weight_decay: 0.05
+    init_method_std: 0.02
+    clip_grad: 1.0
+
+    # Override base_reference to match JUWELS baseline
+    add_qkv_bias: false
+    legacy_tokenizer: false
+    override_opt_param_scheduler: false
+
+    # Precision & Architecture
+    bf16: true
+    use_flash_attn: true
+    qk_layernorm: true
+    normalization: RMSNorm
+    norm_epsilon: 1.0e-05
+    swiglu: true
+    position_embedding_type: rope
+    rotary_base: 100000
+    rotary_percent: 1.0
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    seq_length: 4096
+    max_position_embeddings: 4096
+    vocab_size: 50304
+
+    # Parallelism
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: true
+
+    # Distributed Optimization
+    distributed_backend: nccl
+    use_distributed_optimizer: true
+    overlap_param_gather: true
+    overlap_grad_reduce: true
+    recompute_activations: true
+    ckpt_format: torch_dist
+
+    # Data
+    tokenizer_model: /e/scratch/jureap59/cache/tokenizer/gpt-neox-20b
+    tokenizer_type: HuggingFaceTokenizer
+    split: "989,10,1"
+    num_workers: 4
+
+    # Logging & Checkpointing
+    log_interval: 50
+    log_throughput: true
+    save_interval: 2000
+    save: ${job.base_output_dir}
+    load: ${job.base_output_dir}
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    eval_interval: 71526     
+    eval_iters: 1
+
+    aux:
+      model_name: "dense1.7B"
+      dataset: mixturevitae
+      tokens: 300_000_000_000
+
+slurm:
+  sbatch:
+    nodes: 64
+    time: "24:00:00"
+    account: jureap59
+    partition: booster
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    NCCL_SOCKET_IFNAME: ib0
+    GLOO_SOCKET_IFNAME: ib0
+    NCCL_SOCKET_FAMILY: AF_INET
+    GLOO_SOCKET_FAMILY: AF_INET
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+    NCCL_IB_TIMEOUT: "18"
+    NCCL_IB_DISABLE: "0"
+    NCCL_IB_RETRY_CNT: "20"
+    NCCL_IB_HCA: mlx5_0,mlx5_1,mlx5_2,mlx5_3
+    NCCL_NET_GDR_LEVEL: "2"
+    NCCL_NET_GDR_READ: "1"
