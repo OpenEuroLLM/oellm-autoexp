@@ -10,7 +10,10 @@ defaults:
 
 backend:
   megatron:
-    train_iters: 500
+    train_iters: 50
+    log_interval: 10
+    log_throughput: true
+    eval_iters: 1
 
 job:
   name: megatron_lumi_speed_test
