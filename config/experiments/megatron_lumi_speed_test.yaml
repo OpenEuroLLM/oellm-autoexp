@@ -1,15 +1,15 @@
 # @package _global_
 defaults:
   - base
-  - /backend: megatron_rocm
+  - /backend: megatron
   - /container: lumi
   - /slurm: lumi
   - /sweep: none
-  - /backend/megatron_rocm: [llama1_8b_qkln,megatron_fsdp,speed_test_lumi]
+  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_lumi]
   - _self_
 
 backend:
-  megatron_rocm:
+  megatron:
     train_iters: 500
 
 job:
