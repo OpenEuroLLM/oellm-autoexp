@@ -1,0 +1,5 @@
+data_path:
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/MixtureVitae-v1-decontaminated/GPT-NeoX/merged_0
+
+aux:
+  dataset: mixturevitae

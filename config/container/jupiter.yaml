@@ -1,5 +1,5 @@
 class_name: Container
-image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining_aarch64_202510130949.sif
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_aarch64.sif
 runtime: apptainer
 bind: []
 env:
