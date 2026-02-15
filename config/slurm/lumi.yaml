@@ -5,9 +5,9 @@ defaults:
 template_path: templates/lumi.sbatch
 launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
   export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
-  ${oc.select:container.runtime,apptainer} exec ${oc.join:' ',${oc.maptmpl:'--env %=$% \\\n',${oc.dict.keys:.env}}} \
-  ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
-  --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif}"
+  export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; export AITER_JIT_DIR=/tmp/$USER/aiter_jit_dir ; \\\n\
+  ${oc.select:container.runtime,singularity} exec \
+  ${oc.select:container.image,container.sif}"
 srun:
   exclusive: true
   wait: 60
@@ -18,19 +18,14 @@ env:
   MACHINE_NAME: LUMI
   MASTER_ADDR: '$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'
   MASTER_PORT: "20074"
-  LOCAL_RANK: "0" # will be overridden
-  RANK: "0"  # will be overridden
   WORLD_SIZE: ${oc.muli:${..sbatch.nodes},${..sbatch.ntasks_per_node}}
-  NCCL_TUNER_PLUGIN: "${oc.env:HOME}/rccl-tuner/librccl-tuner.so"
   HSA_ENABLE_SDMA: 0
   NCCL_SOCKET_IFNAME: "hsn0,hsn1,hsn2,hsn3"
   NCCL_NET_GDR_LEVEL: "PHB"
-  HSA_FORCE_FINE_GRAIN_PCIE: "1"
   NVTE_DEBUG: "0"
   NVTE_DEBUG_LEVEL: "0"
   CC: "gcc-12"
   CXX: "g++-12"
-  CUDA_DEVICE_MAX_CONNECTIONS: 1
 sbatch:
   nodes: 1
   ntasks_per_node: 8
@@ -38,3 +33,4 @@ sbatch:
   gres: "gpu:8"
   cpus_per_task: 7
   time: "00:30:00"
+  mem: "480G"
