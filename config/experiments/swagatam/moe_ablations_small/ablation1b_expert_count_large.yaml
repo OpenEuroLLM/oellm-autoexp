@@ -1,0 +1,177 @@
+# @package _global_
+# ==============================================================================
+# ABLATION 1b: Large Expert Count (requires expert parallelism)
+# Fixed: lr=0.007, global_batch_size=512, topk=2, moe_ffn_hidden=768
+# Uses expert_model_parallel_size to distribute experts across GPUs
+# Sweep: num_experts × seeds = 2 × 3 = 6 runs
+# ==============================================================================
+defaults:
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: ""
+
+job:
+  name: "moe_abl1b_experts${backend.megatron.num_experts}_ep${backend.megatron.expert_model_parallel_size}_seed${backend.megatron.seed}_aux_loss_coeff${backend.megatron.moe_aux_loss_coeff}"
+  base_output_dir: "results/moe_ablations_small/ablation1b_expert_count_large/${job.name}"
+
+slurm:
+  sbatch:
+    nodes: 4
+    time: "24:00:00"
+
+sweep:
+  type: product
+  groups:
+    # Large expert count variants (require expert parallelism)
+    - type: list
+      configs:
+        # num_experts: 64  | Total: ~706M  | Active: ~48M | EP=2 (32 experts/GPU)
+        - backend.megatron.num_experts: 64
+          backend.megatron.expert_model_parallel_size: 2
+        # num_experts: 128 | Total: ~1.39B | Active: ~48M | EP=8 (16 experts/GPU)
+        # Reduced micro_batch_size to 8 to fit in memory (activation memory pressure)
+        - backend.megatron.num_experts: 128
+          backend.megatron.expert_model_parallel_size: 8
+          backend.megatron.micro_batch_size: 8
+    
+    # Seeds
+    - type: list
+      configs:
+        # - backend.megatron.seed: 42
+        - backend.megatron.seed: 1234
+        - backend.megatron.seed: 5678
+
+backend:
+  megatron:
+    # MODEL ARCHITECTURE
+    num_layers: 12
+    hidden_size: 384
+    ffn_hidden_size: 1536  # unused for MoE
+    num_attention_heads: 6
+    num_query_groups: ${.num_attention_heads}
+    init_method_std: 0.02
+    position_embedding_type: "rope"
+    rotary_base: 10000
+    rotary_percent: 1.0
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    normalization: RMSNorm
+    norm_epsilon: 1.e-5
+    qk_layernorm: True
+    bf16: True
+    swiglu: True
+    untie_embeddings_and_output_weights: False
+    use_flash_attn: True
+    attention_softmax_in_fp32: False
+    add_bias_linear: True
+
+    # TRAINING, PARALLELISM
+    recompute_activations: False
+    use_torch_fsdp2: False
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: True
+    expert_model_parallel_size: 1  # overridden by sweep
+    distributed_backend: nccl
+
+    # DATA
+    seq_length: 4096
+    max_position_embeddings: 4096
+    num_workers: 8
+    split: '99,1,0'
+    legacy_tokenizer: True
+    data_path: [
+      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-actual,
+      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-distill,
+      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-diverse_qa_pairs,
+      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-extract_knowledge,
+      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-knowledge_list,
+      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-wrap_medium
+    ]
+
+    # DISTRIBUTED OPTIM
+    use_distributed_optimizer: True
+
+    # OPTIMIZER
+    optimizer: adam
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.e-8
+    clip_grad: 1.0
+    weight_decay: 0.1
+
+    # SCHEDULER
+    min_lr: 1.e-05
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+
+    # PROFILE
+    profile: False
+    use_pytorch_profiler: False
+    profile_ranks: [0]
+    profile_step_start: 5
+    profile_step_end: 12
+
+    # EVALS
+    eval_interval: 100
+    eval_iters: 100
+
+    # MoE PARAMETERS (baseline values, num_experts and EP overridden by sweep)
+    moe_ffn_hidden_size: 768
+    num_experts: 64
+    moe_router_topk: 2
+    moe_router_dtype: "fp32"
+    moe_grouped_gemm: True
+    moe_token_dispatcher_type: "alltoall"  # alltoall works better with expert parallelism
+    moe_router_load_balancing_type: "aux_loss"
+    moe_aux_loss_coeff: 1e-8 # 0.0 # 1e-3
+    moe_per_layer_logging: True
+
+    # TRAINING CONFIG (fixed for this ablation)
+    micro_batch_size: 16
+    global_batch_size: 512
+    lr: 0.007
+    seed: 1234  # overridden by sweep
+
+    # COMM OPTIONS
+    distributed_timeout_minutes: 120
+    overlap_param_gather: False
+    overlap_grad_reduce: True
+    gradient_accumulation_fusion: False
+    overlap_moe_expert_parallel_comm: False
+    bias_swiglu_fusion: False
+    bias_dropout_fusion: False
+
+    ckpt_format: torch_dist
+
+    log_throughput: true
+    log_interval: 1
+    log_progress: true
+    save: "${job.base_output_dir}/"
+    load: "${job.base_output_dir}/"
+    save_interval: 1000
+    data_cache_path: ${oc.env:OELLM_CACHE_DIR,".cache"}
+    vocab_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/vocab.json
+    merge_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/merges.txt
+
+    train_iters: ${oc.eval:'-(-10_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
+    lr_decay_iters: ${.train_iters}
+    lr_warmup_iters: ${oc.eval:'min(${.train_iters} // 10, 25000)'}
+
+    wandb_exp_name: "${job.name}"
+    wandb_project: moe-ablations
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+  torchrun_args:
+    rdzv_backend: c10d
