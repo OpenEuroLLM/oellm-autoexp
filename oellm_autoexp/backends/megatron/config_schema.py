@@ -455,6 +455,9 @@ class MegatronConfig(ConfigInterface):
     # Disable bias in the linear layers
     add_bias_linear: bool = True
 
+    # Disable bias in the linear layers (standalone flag).
+    disable_bias_linear: bool = False
+
     # Enable bias only in the QKV linear layers
     add_qkv_bias: bool = False
 
@@ -687,6 +690,9 @@ class MegatronConfig(ConfigInterface):
 
     # Random seed used for python, numpy, pytorch, and cuda.
     seed: int = 1234
+
+    # Use TransformerEngine fallback (non-fused) implementation for LayerNorm-Linear.
+    te_fallback_layernorm_linear: bool = False
 
     # Use the Transformer Engine version of the random number generator. Required for CUDA
     # graphs support.

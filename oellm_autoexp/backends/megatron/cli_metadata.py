@@ -1071,6 +1071,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "disable_bias_linear": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Disable bias in the linear layers (standalone flag).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "disable_chunked_prefill": MegatronArgMetadata(
         arg_type=bool,
         default=True,
@@ -5524,6 +5532,17 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "te_fallback_layernorm_linear": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Use TransformerEngine fallback (non-fused) implementation for"
+            " LayerNorm-Linear."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "te_precision_config_file": MegatronArgMetadata(
         arg_type=None,
         default=None,
@@ -7073,6 +7092,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "disable_bf16_reduced_precision_matmul": MegatronActionSpec(
         option_strings=("--disable-bf16-reduced-precision-matmul",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "disable_bias_linear": MegatronActionSpec(
+        option_strings=("--disable-bias-linear",),
         action_type="store_true",
         nargs=0,
         const=True,
@@ -10387,6 +10413,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "te_fallback_layernorm_linear": MegatronActionSpec(
+        option_strings=("--te-fallback-layernorm-linear",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "te_precision_config_file": MegatronActionSpec(
         option_strings=("--te-precision-config-file",),
