@@ -62,7 +62,9 @@ sweep:
     - type: list
       configs:
         - backend.megatron.aux.tokens: 1_000_000_000_000
+          backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
           backend.megatron.lr_warmup_iters: 25000
+          backend.megatron.seq_length: 4096
           backend.megatron.aux.global_batch_size_tokens: 4_120_000
           backend.megatron.lr_wsd_decay_iters: 48440
           backend.megatron.lr_decay_style: "WSD"

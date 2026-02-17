@@ -49,6 +49,7 @@ sweep:
       configs:
         - backend.megatron.global_batch_size: ${oc.eval:${backend.megatron.aux.global_batch_size_tokens}//${backend.megatron.seq_length}}
           slurm.sbatch.nodes: "\\${oc.eval:'${backend.megatron.global_batch_size}//${backend.megatron.micro_batch_size}//${slurm.sbatch.gpus_per_node}'}"
+          backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
           backend/megatron: [base_reference]
 
     # GROUP1 different model sizes / tokens
