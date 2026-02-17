@@ -13,7 +13,7 @@ bf16: true
 bias_dropout_fusion: false
 bias_gelu_fusion: false
 bias_swiglu_fusion: false
-ckpt_format: torch
+ckpt_format: torch_dist
 dataloader_type: single
 eval_interval: 800
 expert_tensor_parallel_size: 1

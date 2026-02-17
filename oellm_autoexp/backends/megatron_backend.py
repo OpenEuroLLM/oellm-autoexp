@@ -41,7 +41,7 @@ from oellm_autoexp.backends.megatron.cli_metadata import (
     MEGATRON_ACTION_SPECS,
     MEGATRON_ARG_METADATA,
 )
-from oellm_autoexp.backends.megatron.config_schema import MegatronConfig
+from oellm_autoexp.backends.megatron.config_schema import MegatronConfig as MegatronConfigBase
 
 from oellm_autoexp.backends.megatron_args import MegatronArgMetadata, build_cmdline_args
 from oellm_autoexp.argparse_schema.resolver import register_argparse_resolver
@@ -59,6 +59,13 @@ register_argparse_resolver(
 register_argparse_resolver(
     "cliargs",
 )
+
+
+@dataclass
+class MegatronConfig(MegatronConfigBase):
+    def __post_init__(self):
+        # this is for manual checks and must be updated with every new megatron version
+        assert self.eval_interval is not None, "Eval interval must be specified in the config"
 
 
 @dataclass(init=False)

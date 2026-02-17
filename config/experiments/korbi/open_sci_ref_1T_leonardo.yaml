@@ -1,0 +1,81 @@
+# @package _global_
+#
+# 300M dense model training with pull-based multi-stage cooldown
+# Translation of dense_300M_50BT.yaml to new composable sweep system
+#
+defaults:
+  - /backend: megatron_torchdist
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: default
+  - /sweep: none
+  - override /backend/megatron: base_reference
+  - _self_
+
+index: 0
+stage: "all"
+
+job:
+  base_output_dir: "${oc.env:OUTPUT_DIR,'.'}/${.name}"
+  name: "opensciref_cl${oc.select:slurm.env.MACHINE_NAME,none}_D${oc.select:backend.megatron.aux.dataset,''}_sched${backend.megatron.lr_decay_style}_m${backend.megatron.aux.model_name}_t${oc.divi:${backend.megatron.aux.tokens},1_000_000_000}B_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}"
+
+backend:
+  megatron:
+    wandb_exp_name: "${job.name}"
+    wandb_project: oellm-train
+
+    # DATA
+    data_cache_path: ${oc.env:OELLM_CACHE_DIR,".cache"}
+
+    # will be overridden
+    aux:
+      global_batch_size_tokens: 4194304
+      tokens: 1_000_000_000_000
+
+slurm:
+  sbatch:
+    nodes: 1
+
+
+sweep:
+  store_sweep_json: true
+  type: product
+  list_composition:
+    - backend/megatron
+
+  groups:
+    # GROUP0 default settings
+    - type: list
+      configs:
+        - backend.megatron.global_batch_size: ${oc.eval:${backend.megatron.aux.global_batch_size_tokens}//${backend.megatron.seq_length}}
+          slurm.sbatch.nodes: "\\${oc.eval:'\\${backend.megatron.global_batch_size}//\\${backend.megatron.micro_batch_size}//\\${slurm.sbatch.gpus_per_node}'}"
+          backend/megatron: [base_reference]
+
+    # GROUP1 different model sizes / tokens
+    - type: list
+      configs:
+        - backend/megatron: [opensci_ref_1.7B]
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.tensor_model_parallel_size: 4
+          slurm.env.CUDA_DEVICE_MAX_CONNECTIONS: 1
+    # GROUP2 different token budgets / warmup
+    - type: list
+      configs:
+        - backend.megatron.aux.tokens: 1_000_000_000_000
+          backend.megatron.lr_warmup_iters: 25000
+          backend.megatron.aux.global_batch_size_tokens: 4_120_000
+          backend.megatron.lr_wsd_decay_iters: 48440
+          backend.megatron.lr_decay_style: "WSD"
+
+    #GROUP 3: different context lengths
+    - type: list
+      configs:
+        - backend.megatron.seq_length: 4096
+
+    #GROUP 4: different datasets
+    - type: list
+      configs:
+        - backend/megatron: [data_dclm]
+        - backend/megatron: [data_nemotron_cc]
+        - backend/megatron: [data_slimpajama]
+        - backend/megatron: [data_fineweb]

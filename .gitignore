@@ -221,3 +221,9 @@ generated/
 monitor_state/
 
 results/
+# VsCode debugging and other stuff
+.vscode/
+
+# Personal helper scripts for launching etc
+
+helper_scripts/

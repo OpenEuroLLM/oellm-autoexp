@@ -24,9 +24,6 @@ backend:
     wandb_exp_name: "${job.name}"
     wandb_project: oellm-train
 
-    # DATA
-    data_cache_path: ${oc.env:OELLM_CACHE_DIR,".cache"}
-
 
 slurm:
   sbatch:
