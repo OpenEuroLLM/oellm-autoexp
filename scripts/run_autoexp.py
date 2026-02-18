@@ -45,7 +45,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         help="Monitoring state directory",
     )
-    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--no-verbose", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument(
         "--array-subset",
@@ -142,7 +142,7 @@ def _parse_subset(spec: str | None) -> set[int]:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    configure_logging(args.verbose, args.debug)
+    configure_logging(not args.no_verbose, args.debug)
 
     config_dir = Path(args.config_dir)
 
