@@ -7,7 +7,7 @@ defaults:
   - /backend: megatron_torchdist
   - /container: leonardo
   - /slurm: leonardo
-  - /job: default
+  - /job: auto_restart
   - /sweep: none
   - override /backend/megatron: base_reference
   - _self_
