@@ -322,8 +322,8 @@ class StateEvent:
         """Check if the state transition matches this event's transition."""
         expected_old, expected_new = self.config.transition
         # None in expected means "any state"
-        old_matches = expected_old is None or old_status == expected_old
-        new_matches = expected_new is None or new_status == expected_new
+        old_matches = expected_old is None or old_status.lower() == expected_old.lower()
+        new_matches = expected_new is None or new_status.lower() == expected_new.lower()
         return old_matches and new_matches
 
     def build_metadata(self, old_status: str | None, new_status: str | None) -> dict[str, Any]:
