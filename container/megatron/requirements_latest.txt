@@ -3,7 +3,7 @@ wget
 matplotlib
 tensorboard
 tqdm
-transformers
+transformers>=5.2
 pandas
 torchdata>=0.8.0
 tomli>=1.1.0
@@ -16,11 +16,9 @@ mypy
 etcd3
 python-etcd
 pudb
-pytest<=8.4.0
-pytest-cov
 pre-commit
 lm_eval
-compoconf>=0.1.9
+compoconf>=0.1.14
 scipy
 safetensors
 tabulate
