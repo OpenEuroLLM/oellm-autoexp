@@ -37,7 +37,7 @@ python3 -m pip install --upgrade pip setuptools packaging wheel
 
 python3 /workspace/oellm-autoexp/container/gen_constraints.py \
     --output /workspace/constraints.installed.txt \
-    --exclude pip setuptools wheel
+    --exclude pip setuptools wheel huggingface_hub
 
 if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
     python3 -m pip install --no-cache-dir \

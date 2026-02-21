@@ -28,7 +28,7 @@ conda activate pytorch
 
 python3 /workspace/oellm-autoexp/container/gen_constraints.py \
     --output /workspace/constraints.installed.txt \
-    --exclude pip setuptools wheel antlr4-python3-runtime omegaconf hydra-core
+    --exclude pip setuptools wheel antlr4-python3-runtime omegaconf hydra-core huggingface_hub
 
 if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
     python3 -m pip install --no-cache-dir \
