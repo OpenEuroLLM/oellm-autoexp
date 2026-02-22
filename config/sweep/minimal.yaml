@@ -1,6 +1,0 @@
-grids:
-  - backend.megatron.lr: [0.0001, 0.00005]
-base_values:
-  max_steps: 1000
-  project.name: "megatron_lr\\${backend.megatron.lr}_\\${index}"
-store_sweep_json: true
