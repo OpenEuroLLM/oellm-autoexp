@@ -80,6 +80,7 @@ class RouterMetricsCollector:
         name: str,
         routing_map: torch.Tensor,
         topk: int,
+        probs: Optional[torch.Tensor] = None,
         padding_mask: Optional[torch.Tensor] = None,
         reference_routing_map: Optional[torch.Tensor] = None,
     ) -> None:
@@ -87,6 +88,9 @@ class RouterMetricsCollector:
         if padding_mask is not None:
             padding_mask = padding_mask.reshape(-1)
             routing_map = routing_map[~padding_mask]
+            if probs is not None:
+                probs = probs.detach()
+                probs = probs[~padding_mask]
 
         routing_map = routing_map.float()
         tokens_per_expert = routing_map.sum(dim=0)
@@ -94,17 +98,51 @@ class RouterMetricsCollector:
 
         if topk > 1:
             num_experts = routing_map.shape[1]
-            co_occurrence = routing_map.t().matmul(routing_map)
-            expert_counts = torch.diagonal(co_occurrence)
+            if probs is None:
+                co_occurrence = routing_map.t().matmul(routing_map)
+                expert_counts = torch.diagonal(co_occurrence)
+                normalized = co_occurrence.float() / expert_counts.clamp(min=1.0).unsqueeze(
+                    1
+                )
+                off_diagonal = ~torch.eye(
+                    num_experts, dtype=torch.bool, device=normalized.device
+                )
+                coactivation_rate = normalized[off_diagonal].mean().item()
+            else:
+                topk_indices = torch.topk(probs, k=topk, dim=-1).indices
+                single_counts = torch.zeros(
+                    num_experts, device=topk_indices.device, dtype=torch.float32
+                )
+                pair_counts = torch.zeros(
+                    (num_experts, num_experts),
+                    device=topk_indices.device,
+                    dtype=torch.float32,
+                )
 
-            # OLMoE paper formula: co-activation(E_i, E_j) = N_{E_i, E_j} / N_{E_i}
-            normalized = co_occurrence.float() / expert_counts.clamp(min=1.0).unsqueeze(
-                1
-            )
-            off_diagonal = ~torch.eye(
-                num_experts, dtype=torch.bool, device=normalized.device
-            )
-            coactivation_rate = normalized[off_diagonal].mean().item()
+                single_counts.scatter_add_(
+                    0,
+                    topk_indices.reshape(-1),
+                    torch.ones_like(topk_indices.reshape(-1), dtype=torch.float32),
+                )
+
+                a = topk_indices[:, :-1].reshape(-1)
+                b = topk_indices[:, 1:].reshape(-1)
+                pair_counts.index_put_(
+                    (a, b),
+                    torch.ones_like(a, dtype=torch.float32),
+                    accumulate=True,
+                )
+                pair_counts.index_put_(
+                    (b, a),
+                    torch.ones_like(a, dtype=torch.float32),
+                    accumulate=True,
+                )
+
+                normalized = pair_counts / single_counts.clamp(min=1.0).unsqueeze(1)
+                off_diagonal = ~torch.eye(
+                    num_experts, dtype=torch.bool, device=normalized.device
+                )
+                coactivation_rate = normalized[off_diagonal].mean().item()
         else:
             coactivation_rate = 0.0
 
@@ -140,11 +178,8 @@ class RouterMetricsCollector:
             batches = max(vals["batches"], 1)
             compare_tokens = max(vals["compare_tokens"], 1)
             results[name] = {
-                "router_expert_utilization": vals["saturation_sum"] / batches,
                 "expert_coactivation": vals["coactivation_sum"] / batches,
                 "compare_saturation": vals["compare_saturation_sum"] / compare_tokens,
-                "batches": vals["batches"],
-                "compare_tokens": vals["compare_tokens"],
             }
         return results
 
@@ -482,6 +517,7 @@ def _compare_saturation_against_final(
                     layer_name,
                     routing_map,
                     topk_by_layer[layer_name],
+                    probs=_probs,
                     padding_mask=padding_mask,
                     reference_routing_map=reference,
                 )
