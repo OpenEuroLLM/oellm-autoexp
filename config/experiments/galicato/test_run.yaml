@@ -1,39 +1,45 @@
 # @package _global_
-#
-# 300M dense model training with pull-based multi-stage cooldown
-# Translation of dense_300M_50BT.yaml to new composable sweep system
-#
+
 defaults:
-  - /backend: megatron
+  - base
+  - /backend: megatron_rocm
   - /container: lumi
   - /slurm: lumi
-  - /job: default
+  - /monitoring: megatron_basic
+  - /project: default
   - /sweep: none
-  - /backend/megatron: base
+  - /backend/megatron_rocm: base
   - _self_
 
-index: 0
-stage: ""
+#job:
+#  base_output_dir: "test_job_galicato"
+#  name: "06B_100BT_ita_Latn_propella_edu"
+project:
+  name: 06B_100BT_propella_ita_Latn_edu
+  resume: true
 
-job:
-  base_output_dir: "test_job_galicato"
-  name: "06B_100BT_ita_Latn_propella_edu"
-
-
+slurm:
+  sbatch:
+    partition: standard-g
+    nodes: 16
+    time: 48:00:00
 backend:
-  megatron:
-    wandb_exp_name: "${job.name}"
-    wandb_project: openeurollm-project
+  megatron_rocm:
+    log_throughput: true
+    log_interval: 10
+    log_progress: true
 
     # DATA
     data_path:
       - "/scratch/project_462000963/preprocessed/gpt-oss/openeurollm/propella-annotations/ita_Latn/educational_value/ita_Latn_edu"
     seq_length: 4096
     max_position_embeddings: 4096
-    #vocab_file: "/leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/vocab.json"
-    #merge_file: "/leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/merges.txt"
     num_workers: 2
-    split: '99,1,0'
+    data_cache_path: ${oc.env:USER_FLASH}/.cache
+
+    # TOKENIZER
+    tokenizer_model: openai/gpt-oss-120b
+    tokenizer_type: HuggingFaceTokenizer
 
     # MODEL: 600M
     num_layers: 22
@@ -44,7 +50,7 @@ backend:
     init_method_std: 0.02
     position_embedding_type: "rope"
     rotary_base: 10000
-    #rotary_percent: 1.0   # Need to check this
+    rotary_percent: 1.0   # Need to check this
     attention_dropout: 0.0
     hidden_dropout: 0.0
     normalization: RMSNorm
@@ -64,6 +70,10 @@ backend:
     context_parallel_size: 1
     sequence_parallel: True
 
+    # COMM OPTIONS
+    overlap_grad_reduce: True
+    distributed_timeout_minutes: 120
+
     distributed_backend: nccl
     distributed_timeout_minutes: 30
 
@@ -71,7 +81,7 @@ backend:
     use_distributed_optimizer: True
 
     # OPTIMIZER
-    optimizer: adam
+    #optimizer: adam
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.e-8
@@ -82,7 +92,6 @@ backend:
     min_lr: 0.0
     lr_decay_style: WSD
     lr_wsd_decay_style: linear
-    lr_warmup_iters: 2384 # !!! CHECK !!!
 
     # PROFILE
     profile: False
@@ -101,129 +110,21 @@ backend:
     log_throughput: True
     tensorboard_queue_size: 5
 
-    # CHECKPOINT FORMAT
-    ckpt_format: "torch"
-    save_interval: 2000
-
     # Base training configuration (for stable phase)
     micro_batch_size: 4
     global_batch_size: 1024  # Will be overridden by sweep
     lr: 1e-3  # Will be overridden by sweep
 
-    # Auxiliary computation variables
-    # Note: Computed fields (train_iters, lr_wsd_decay_iters, start_iter, start_iter_round)
-    # are defined in the sweep defaults alongside the tokens they depend on,
-    # so they get resolved together with stage-specific values
-    aux:
-      tokens: 100_000_000_000  # Default: 50B tokens
-      decay_fraction: 0.05 # Default: no decay
-      start_iter: 0  # only used in decay # !!! Check
-      start_iter_round: 0 # only used in decay # !!! Check
+    # training schedule. Round numbers to avoid floating point issues
+    train_iters: ${oc.eval:'-(-100_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    lr_warmup_iters: ${oc.eval:'min(${.train_iters} // 10, 25000)'}
+    lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
+    lr_decay_iters: ${.train_iters}
 
-slurm:
-  sbatch:
-    nodes: "${oc.eval:${backend.megatron.global_batch_size}//\\(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}\\)}"
-
-
-# COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE
-sweep:
-  # Outer level: product (combines hyperparameters × stages)
-  type: product
-
-  groups:
-    # GROUP 1: Hyperparameter configurations (list of two product grids)
-    - type: list
-      configs:
-        # Grid 1: 6 configurations (3 lr × 2 batch sizes)
-        - type: product
-          params:
-            backend.megatron.lr: [2.5e-4]
-            backend.megatron.global_batch_size: [64]
-
-    # GROUP 2: Multi-stage training (stable + cooldown/decay)
-    # Uses a nested structure with defaults for decay stages
-    - type: list
-      configs:
-        # STABLE PHASE: Train for 50B tokens with no decay
-        - stage: stable
-          backend.megatron.aux.tokens: 50_000_000_000
-          # Computed fields using ESCAPED OmegaConf interpolations (\\$ prevents early resolution)
-          # These will be unescaped during sweep expansion and resolved with stage-specific values
-          backend.megatron.train_iters: "\\${oc.eval:\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)}"
-          backend.megatron.lr_wsd_decay_iters: 0  # No decay in stable phase
-          backend.megatron.aux.start_iter: "\\${oc.eval:int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\(1-\\${backend.megatron.aux.decay_fraction}\\)\\)}"
-          backend.megatron.aux.start_iter_round: "\\${oc.eval:int\\(\\(int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\(1-\\${backend.megatron.aux.decay_fraction}\\)\\)//\\${backend.megatron.save_interval}\\)*\\${backend.megatron.save_interval}\\)}"
-
-        # NESTED GROUP: Cooldown/decay stages with shared defaults
-        # All decay stages share: 20% decay, checkpoint loading, start/cancel conditions
-        - type: list
-          defaults:
-            # Common decay configuration
-            backend.megatron.aux.decay_fraction: 0.2
-
-            # Computed fields using ESCAPED OmegaConf interpolations (\\$ prevents early resolution)
-            # These will be unescaped during sweep expansion and resolved with stage-specific values (6B, 12B, 30B, 50B)
-            # Each computation is self-contained (doesn't reference other computed values) to avoid ordering issues
-            backend.megatron.train_iters: "\\${oc.eval:\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)}"
-            backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\${backend.megatron.aux.decay_fraction}\\)}"
-            backend.megatron.aux.start_iter: "\\${oc.eval:int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\(1-\\${backend.megatron.aux.decay_fraction}\\)\\)}"
-            backend.megatron.aux.start_iter_round: "\\${oc.eval:int\\(\\(int\\(\\(\\(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1\\)//\\(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}\\)\\)*\\(1-\\${backend.megatron.aux.decay_fraction}\\)\\)//\\${backend.megatron.save_interval}\\)*\\${backend.megatron.save_interval}\\)}"
-
-            # Checkpoint loading configuration
-            backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}"
-            backend.megatron.override_opt_param_scheduler: true
-
-            # Start conditions: wait for stable to reach checkpoint (new async approach)
-            job.start_condition:
-              class_name: FileExistsCondition
-              path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}/latest_checkpointed_iteration.txt"
-
-            # Cancel conditions: cancel if stable job fails
-            job.cancel_condition:
-              class_name: SlurmStateCondition
-              job_name: "\\${sibling.stable.job.name}"
-              state: FAILED
-          configs:
-            # Each decay stage only needs to specify its unique stage and tokens
-            - stage: decay6B
-              backend.megatron.aux.tokens: 6_000_000_000
-            - stage: decay12B
-              backend.megatron.aux.tokens: 12_000_000_000
-            - stage: decay30B
-              backend.megatron.aux.tokens: 30_000_000_000
-            - stage: decay50B
-              backend.megatron.aux.tokens: 50_000_000_000
-
-
-# Summary of what this creates:
-# - GROUP 1: 15 hyperparameter configurations
-#   - Grid 1: 6 configs (3 lr × 2 batch sizes)
-#   - Grid 2: 9 configs (3 lr × 3 batch sizes)
-#   - Union (list mode): 6 + 9 = 15 configs
-# - GROUP 2: 5 stages per config
-#   - Stable: 1 config
-#   - Nested group with defaults: 4 decay stages
-#     - Common config in 'defaults' (20% decay, checkpoint loading, conditions)
-#     - Each stage overrides only stage and tokens
-#   - Total: 1 + 4 = 5 stages
-# - Outer product: 15 hyperparameter configs × 5 stages = 75 total jobs
-#
-# Benefits of using group-level defaults:
-# 1. DRY (Don't Repeat Yourself) - common config defined once
-# 2. Easy to modify - change decay_fraction, start_conditions, etc. in one place
-# 3. Clear structure - defaults vs. stage-specific parameters
-# 4. No exotic YAML features (vs. anchors) - more maintainable
-#
-# OmegaConf interpolation strategy:
-# 1. Base config (backend.megatron.aux) defines interpolations for start_iter, start_iter_round
-# 2. Defaults override primitive values (decay_fraction, tokens)
-# 3. Interpolations in base config automatically pick up overridden values
-# 4. This ensures correct evaluation order: tokens → train_iters → start_iter → start_iter_round
-#
-# Pull-based advantages over push-based:
-# 1. All jobs planned upfront - full visibility
-# 2. No dynamic job creation during monitoring
-# 3. Cooldown jobs wait for checkpoints (start_conditions with FileExistsCondition)
-# 4. Automatic cancellation if stable job fails (cancel_conditions)
-# 5. Uses stable log symlink for reliable monitoring
-# 6. Unified condition system (same conditions for start gating and failure detection)
+    # CHECKPOINT FORMAT
+    ckpt_format: "torch"
+    save_interval: 2000
+    
+    save: ${project.base_output_dir}
+    load: ${project.base_output_dir}
+    tensorboard_dir: ${project.base_output_dir}/tensorboard
