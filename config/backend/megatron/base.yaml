@@ -13,6 +13,7 @@ data_cache_path: ${oc.env:OELLM_CACHE_DIR,".cache"}
 ckpt_format: torch_dist  # use default for distributed training
 save_interval: 5000
 eval_interval: 5000
+log_throughput: true
 
 aux:  # auxiliary configuration arguments that are free and not typed
   model_name: ""

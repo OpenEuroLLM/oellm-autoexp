@@ -13,6 +13,15 @@ backend:
     train_iters: 50
     log_interval: 10
     eval_interval: 1000
+    data_path:
+     - /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
+    data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
 
 job:
-  name: megatron_juwels_speed_test
+  name: megatron_jupiter_speed_test
