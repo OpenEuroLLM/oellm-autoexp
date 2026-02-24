@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
+import yaml
 import logging
 
 from compoconf import ConfigInterface, register
@@ -96,12 +97,23 @@ class LocalCommandClient(JobClientInterface):
         if job.log_to_file:
             timestamp = int(time.time())
             resolved_log_path = resolve_log_path(job.log_path, job_id=job_id, timestamp=timestamp)
+            if job.config_path:
+                resolved_config_path = resolve_log_path(
+                    job.config_path, job_id=job_id, timestamp=timestamp
+                )
+                LOGGER.info(f"Logging Config to: {resolved_config_path}")
+                with open(resolved_config_path, "w") as fp:
+                    yaml.dump(job.base_config, fp)
+                if job.config_path_current:
+                    config_path_obj = Path(resolved_config_path)
+                    update_log_symlink(config_path_obj, Path(job.config_path_current))
             log_path_obj = Path(resolved_log_path)
             log_path_obj.parent.mkdir(parents=True, exist_ok=True)
             log_file = open(log_path_obj, "w")
             stdout_target = log_file
             if job.log_path_current:
                 update_log_symlink(log_path_obj, Path(job.log_path_current))
+
         try:
             proc = subprocess.Popen(
                 [*job.command, *(job.extra_args or [])],
