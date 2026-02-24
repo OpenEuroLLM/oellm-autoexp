@@ -1,0 +1,17 @@
+# Origin:
+# - https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen/qwen3_moe.py,
+# - https://github.com/NVIDIA/Megatron-LM/blob/main/examples/rl/model_configs/qwen3_30b_a3b_moe.sh
+# Qwen3_30B_A3B
+
+defaults:
+  - qwen3_moe
+  - _self_
+
+# model setup - sizes/scale - Qwen3 30BA3B
+num_layers: 48
+hidden_size: 2048
+ffn_hidden_size: 6144
+num_attention_heads: 32
+kv_channels: 128
+max_position_embeddings: 8192
+num_query_groups: 4

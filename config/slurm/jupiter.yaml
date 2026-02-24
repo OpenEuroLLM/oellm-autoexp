@@ -29,6 +29,9 @@ env:
   ARCH: "$(uname -m)"
   SLURM_CPUS_PER_TASK: "16"
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
+  NCCL_NET_GDR_LEVEL: "0"
+  CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  TOKENIZERS_PARALLELISM: "false"
 sbatch:
   nodes: 1
   ntasks_per_node: 1
