@@ -26,7 +26,7 @@ slurm:
 backend:
   megatron_rocm:
     log_throughput: true
-    log_interval: 10
+    log_interval: 1
     log_progress: true
 
     # DATA
