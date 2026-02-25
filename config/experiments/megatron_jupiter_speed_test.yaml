@@ -4,7 +4,7 @@ defaults:
   - /backend: megatron_torchrun_localaddr
   - /container: jupiter
   - /slurm: jupiter
-  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_jupiter]
+  - /backend/megatron: [llama1_8b_qkln,speed_test_jupiter]
   - /sweep: none
   - _self_
 
@@ -18,6 +18,10 @@ backend:
     data_cache_path: /e/project1/projectnucleus/poeppel1/data/
     save: null
     load: null
+    # FSDP removed (megatron_fsdp config dropped) — use standard DDP
+    use_megatron_fsdp: false
+    use_distributed_optimizer: true
+    ckpt_format: torch_dist
   env:
     TOKENIZERS_PARALLELISM: "false"
     TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers

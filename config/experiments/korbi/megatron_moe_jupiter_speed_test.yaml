@@ -14,8 +14,8 @@ backend:
     global_batch_size: 64
     micro_batch_size: 2
     expert_model_parallel_size: 4
-    # pipeline_model_parallel_size: 2
-    # tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 2
+    tensor_model_parallel_size: 1
     eval_interval: 1000
     seq_length: 4096
     lr: 0.001
