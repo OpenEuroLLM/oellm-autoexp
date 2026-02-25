@@ -9,7 +9,7 @@ defaults:
   - /slurm: leonardo
   - /job: default
   - /sweep: none
-  - override /backend/megatron: base_reference
+  - override /backend/megatron: base_reference_base
   - _self_
 
 index: 0
@@ -90,30 +90,35 @@ sweep:
           backend.megatron.lr_warmup_iters: 6000
           backend.megatron.aux.global_batch_size_tokens: 2_650_000
           backend.megatron.lr_wsd_decay_iters: 3767
+          backend.megatron.lr: 2e-3
           backend.megatron.lr_decay_style: "WSD"
 
         - backend.megatron.aux.tokens: 50_000_000_000
           backend.megatron.lr_warmup_iters: 1000
           backend.megatron.aux.global_batch_size_tokens: 4_120_000
           backend.megatron.lr_wsd_decay_iters: 2384
+          backend.megatron.lr: 4e-3
           backend.megatron.lr_decay_style: "WSD"
 
         - backend.megatron.aux.tokens: 300_000_000_000
           backend.megatron.lr_warmup_iters: 5000
           backend.megatron.aux.global_batch_size_tokens: 2_090_000
           backend.megatron.lr_wsd_decay_iters: 28610
+          backend.megatron.lr: 1e-3
           backend.megatron.lr_decay_style: "WSD"
 
         - backend.megatron.aux.tokens: 300_000_000_000
           backend.megatron.lr_warmup_iters: 25000
           backend.megatron.aux.global_batch_size_tokens: 4_120_000
           backend.megatron.lr_wsd_decay_iters: 14532
+          backend.megatron.lr: 4e-3
           backend.megatron.lr_decay_style: "WSD"
 
         - backend.megatron.aux.tokens: 1_000_000_000_000
           backend.megatron.lr_warmup_iters: 25000
           backend.megatron.aux.global_batch_size_tokens: 4_120_000
           backend.megatron.lr_wsd_decay_iters: 48440
+          backend.megatron.lr: 4e-3
           backend.megatron.lr_decay_style: "WSD"
 
     #GROUP 3: different context lengths

@@ -16,7 +16,8 @@ backend:
     data_path:
      - /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
     data_cache_path: /e/project1/projectnucleus/poeppel1/data/
-
+    save: null
+    load: null
   env:
     TOKENIZERS_PARALLELISM: "false"
     TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers

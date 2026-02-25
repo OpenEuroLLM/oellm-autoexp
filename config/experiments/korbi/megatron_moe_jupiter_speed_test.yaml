@@ -10,10 +10,12 @@ defaults:
 
 backend:
   megatron:
-    train_iters: 50
-    global_batch_size: 8
+    train_iters: 100
+    global_batch_size: 64
     micro_batch_size: 2
     expert_model_parallel_size: 4
+    # pipeline_model_parallel_size: 2
+    # tensor_model_parallel_size: 1
     eval_interval: 1000
     seq_length: 4096
     lr: 0.001
@@ -21,14 +23,17 @@ backend:
 
     # from https://github.com/yanring/Megatron-MoE-ModelZoo/blob/main/sbatch_benchmarking.sh
     # https://github.com/yanring/Megatron-MoE-ModelZoo/blob/main/best_practice/Qwen3/run_30b.sh
-    moe_router_force_load_balancing: true
-    recompute_granularity: full
-    recompute_method: uniform
-    recompute_num_layers: 1
+    # moe_router_force_load_balancing: true
+    # recompute_granularity: full
+    # recompute_method: uniform
+    # recompute_num_layers: 1
     # recompute_modules: ["moe_act", "layernorm"]
     # tensor_model_parallel_size: 1
-
-
+    use_distributed_optimizer: true
+    save: null
+    load: null
+    ckpt_step: 0
+    moe_router_dtype: "fp32"
 
     data_path:
      - /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
@@ -44,11 +49,14 @@ backend:
     NCCL_NET_GDR_LEVEL: "0"
     NCCL_PROTO: "Simple"
     CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
 
 
 slurm:
   sbatch:
     nodes: 2
+    time: "00:15:00"
 
 job:
   name: megatron_moe_jupiter_speed_test

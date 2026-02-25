@@ -9,4 +9,4 @@ env:
   WANDB_MODE: "offline"
   MACHINE_NAME: "JUPITER"
   PYTHONPATH: "."
-python: "python"
+python: "/usr/bin/python"

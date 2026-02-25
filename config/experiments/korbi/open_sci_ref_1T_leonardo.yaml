@@ -9,7 +9,7 @@ defaults:
   - /slurm: leonardo
   - /job: auto_restart
   - /sweep: none
-  - override /backend/megatron: base_reference
+  - override /backend/megatron: base_reference_base
   - _self_
 
 index: 0
@@ -26,11 +26,22 @@ backend:
 
     # DATA
     data_cache_path: ${oc.env:OELLM_CACHE_DIR,".cache"}
+    eval_interval: 5000
+
+    seq_length: 4096
+    global_batch_size: ${oc.eval:${backend.megatron.aux.global_batch_size_tokens}//${backend.megatron.seq_length}}
+    max_position_embeddings: 10000
+
+    lr_warmup_iters: 25000
+    lr: 4e-3 # fixed!
+    lr_wsd_decay_iters: 48440
+    lr_decay_style: "WSD"
 
     # will be overridden
     aux:
-      global_batch_size_tokens: 4194304
+      global_batch_size_tokens: 4128768
       tokens: 1_000_000_000_000
+
 
 slurm:
   sbatch:
@@ -47,15 +58,14 @@ sweep:
     # GROUP0 default settings
     - type: list
       configs:
-        - backend.megatron.global_batch_size: ${oc.eval:${backend.megatron.aux.global_batch_size_tokens}//${backend.megatron.seq_length}}
-          slurm.sbatch.nodes: "\\${oc.eval:'\\${backend.megatron.global_batch_size}//\\${backend.megatron.micro_batch_size}//\\${slurm.sbatch.gpus_per_node}'}"
-          backend/megatron: [base_reference]
+        - slurm.sbatch.nodes: "\\${oc.eval:'\\${backend.megatron.global_batch_size}//\\${backend.megatron.micro_batch_size}//\\${slurm.sbatch.gpus_per_node}'}" # should be 63
+          backend/megatron: [base_reference_base]
 
     # GROUP1 different model sizes / tokens
     - type: list
       configs:
         - backend/megatron: [opensci_ref_1.7B]
-          backend.megatron.micro_batch_size: 8
+          backend.megatron.micro_batch_size: 4
           backend.megatron.tensor_model_parallel_size: 4
           slurm.env.CUDA_DEVICE_MAX_CONNECTIONS: 1
     # GROUP2 different token budgets / warmup
@@ -63,11 +73,6 @@ sweep:
       configs:
         - backend.megatron.aux.tokens: 1_000_000_000_000
           backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
-          backend.megatron.lr_warmup_iters: 25000
-          backend.megatron.seq_length: 4096
-          backend.megatron.aux.global_batch_size_tokens: 4_120_000
-          backend.megatron.lr_wsd_decay_iters: 48440
-          backend.megatron.lr_decay_style: "WSD"
 
     #GROUP 3: different context lengths
     - type: list
