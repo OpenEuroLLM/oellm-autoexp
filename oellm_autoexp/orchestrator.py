@@ -187,6 +187,8 @@ def _build_job_record(plan: ExecutionPlan, job: JobPlan, session_id: str) -> Job
         name=job_name,
         log_path=str(job.config.job.log_path),
         log_path_current=str(job.config.job.log_path_current),
+        config_path=str(job.config.job.config_path),
+        config_path_current=str(job.config.job.config_path_current),
         log_events=list(base_job.log_events),
         state_events=list(base_job.state_events),
         start_condition=base_job.start_condition,
@@ -199,6 +201,7 @@ def _build_job_record(plan: ExecutionPlan, job: JobPlan, session_id: str) -> Job
             "stage": getattr(job.config, "stage", ""),
         },
         slurm=slurm_config,
+        base_config=job,
     )
 
     return JobRecordConfig(

@@ -1,0 +1,91 @@
+# Origin:
+# - https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen/qwen3_moe.py,
+# - https://github.com/NVIDIA/Megatron-LM/blob/main/examples/rl/model_configs/qwen3_30b_a3b_moe.sh
+# Qwen3_30B_A3B
+
+
+# general setup
+seq_length: 4096
+encoder_seq_length: null  # must be null when seq_length is set (mutually exclusive in Megatron)
+attention_backend: flash
+transformer_impl: transformer_engine
+te_rng_tracker: true
+tokenizer_type: HuggingFaceTokenizer
+# tokenizer_model: Qwen/Qwen3_30B_A3B
+tokenizer_model: EleutherAI/gpt-neox-20b
+make_vocab_size_divisible_by: 128
+dist_ckpt_strictness: log_unexpected
+ckpt_format: torch_dist
+# vocab_size: 151936
+# vocab_size: 51384
+cross_entropy_loss_fusion: true
+manual_gc: true
+manual_gc_interval: 100
+cuda_graph_scope: []
+cuda_graph_impl: "none"
+cuda_graph_warmup_steps: 3
+cross_entropy_fusion_impl: "te"
+
+recompute_granularity: full
+recompute_method: uniform
+recompute_modules: null
+fine_grained_activation_offloading: false
+offload_modules: []
+recompute_num_layers: 1
+sequence_parallel: true
+use_flash_attn: true
+
+expert_model_parallel_size: 8
+tensor_model_parallel_size: 2
+
+# model setup
+bf16: true
+untie_embeddings_and_output_weights: True
+group_query_attention: true
+swiglu: true
+add_bias_linear: false
+rotary_percent: 1.0
+rotary_base: 1000000
+normalization: RMSNorm
+norm_epsilon: 1e-6
+position_embedding_type: rope
+use_rotary_position_embeddings: true
+attention_dropout: 0.0
+hidden_dropout: 0.0
+attention_softmax_in_fp32: true
+qk_layernorm: true
+
+# model setup - sizes/scale - Qwen3 30BA3B
+num_layers: 48
+hidden_size: 2048
+ffn_hidden_size: 6144
+num_attention_heads: 32
+kv_channels: 128
+max_position_embeddings: 8192
+num_query_groups: 4
+
+# moe setup
+num_experts: 128
+no_load_optim: true
+moe_router_topk: 8
+moe_ffn_hidden_size: 768
+moe_aux_loss_coeff: 0.001
+moe_router_fusion: False
+moe_router_load_balancing_type: aux_loss
+moe_layer_freq: 1
+moe_token_dispatcher_type: allgather
+moe_grouped_gemm: true
+moe_shared_expert_overlap: false
+moe_hybridep_num_sms: 0
+moe_router_padding_for_fp8: false
+
+# post-training - unnecessary
+# optimizer: adam
+# adam_beta1: 0.9
+# adam_beta2: 0.999
+# adam_eps: 1e_8
+# lr: 1e_6
+# min_lr: 1e_7
+# lr_warmup_samples: 0
+# clip_grad: 1.0
+# weight_decay: 0.01

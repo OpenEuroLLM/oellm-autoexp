@@ -227,3 +227,5 @@ results/
 # Personal helper scripts for launching etc
 
 helper_scripts/
+
+sync_to_jupiter.sh

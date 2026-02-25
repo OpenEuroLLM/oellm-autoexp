@@ -66,6 +66,7 @@ class MegatronConfig(MegatronConfigBase):
     def __post_init__(self):
         # this is for manual checks and must be updated with every new megatron version
         assert self.eval_interval is not None, "Eval interval must be specified in the config"
+        assert self.lr is not None, "Learning rate has to be set"
 
 
 @dataclass(init=False)

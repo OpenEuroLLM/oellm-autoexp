@@ -1,0 +1,54 @@
+# @package _global_
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base,qwen3_moe_30BA3B]
+  - /sweep: none
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 50
+    global_batch_size: 8
+    micro_batch_size: 2
+    expert_model_parallel_size: 4
+    eval_interval: 1000
+    seq_length: 4096
+    lr: 0.001
+    log_interval: 1
+
+    # from https://github.com/yanring/Megatron-MoE-ModelZoo/blob/main/sbatch_benchmarking.sh
+    # https://github.com/yanring/Megatron-MoE-ModelZoo/blob/main/best_practice/Qwen3/run_30b.sh
+    moe_router_force_load_balancing: true
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    # recompute_modules: ["moe_act", "layernorm"]
+    # tensor_model_parallel_size: 1
+
+
+
+    data_path:
+     - /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
+    data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+
+    # jupiter
+    # NCCL_DEBUG: "INFO"
+    NCCL_NET_GDR_LEVEL: "0"
+    NCCL_PROTO: "Simple"
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+
+
+slurm:
+  sbatch:
+    nodes: 2
+
+job:
+  name: megatron_moe_jupiter_speed_test

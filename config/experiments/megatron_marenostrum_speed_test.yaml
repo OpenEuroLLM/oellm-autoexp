@@ -11,6 +11,7 @@ defaults:
 backend:
   megatron:
     train_iters: 500
+    eval_interval: 1000
 
 job:
   name: megatron_marenostrum_speed_test

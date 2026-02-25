@@ -149,6 +149,30 @@ def oc_if(a: str | int | bool, b: str, c: str):
         return b
 
 
+def oc_eq(a: str | int | bool, b: str | int | bool):
+    return a == b
+
+
+def oc_neq(a: str | int | bool, b: str | int | bool):
+    return a != b
+
+
+def oc_gt(a: str | int | bool, b: str | int | bool):
+    return a > b
+
+
+def oc_lt(a: str | int | bool, b: str | int | bool):
+    return a < b
+
+
+def oc_geq(a: str | int | bool, b: str | int | bool):
+    return a >= b
+
+
+def oc_leq(a: str | int | bool, b: str | int | bool):
+    return a <= b
+
+
 def _validate_eval_expression(expr: str) -> None:
     normalized = expr.replace(" ", "")
     if any(token in normalized for token in _FORBIDDEN_EVAL_TOKENS):
@@ -184,6 +208,12 @@ def register_default_resolvers(force: bool = False) -> None:
     OmegaConf.register_new_resolver("oc.timestring", lambda: _timestring(), replace=True)
     OmegaConf.register_new_resolver("oc.len", len, replace=True)
     OmegaConf.register_new_resolver("oc.eval", _safe_eval, replace=True)  # noqa: S307
+    OmegaConf.register_new_resolver("oc.eq", oc_eq, replace=True)
+    OmegaConf.register_new_resolver("oc.neq", oc_neq, replace=True)
+    OmegaConf.register_new_resolver("oc.lt", oc_lt, replace=True)
+    OmegaConf.register_new_resolver("oc.gt", oc_gt, replace=True)
+    OmegaConf.register_new_resolver("oc.leq", oc_leq, replace=True)
+    OmegaConf.register_new_resolver("oc.geq", oc_geq, replace=True)
     OmegaConf.register_new_resolver("oc.if", oc_if, replace=True)
 
     _REGISTRATION_SENTINEL["registered"] = True

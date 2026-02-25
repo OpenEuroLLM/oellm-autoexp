@@ -214,10 +214,6 @@ def _expand_group(
                             ),
                         )
                     )
-            # if any(stage_str in list(comb[0]) for comb in combinations):
-            #     combinations = [(*comb, stage_path + (True,)) for comb in combinations]
-            # else:
-            #     combinations = [(*comb, stage_path + (False,)) for comb in combinations]
             all_combinations.append(combinations)
         else:
             raise ValueError(f"Group must have 'groups', 'params', or 'configs': {group}")

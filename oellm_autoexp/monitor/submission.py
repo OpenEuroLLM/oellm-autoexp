@@ -29,8 +29,11 @@ LOGGER = logging.getLogger(__name__)
 class BaseJob:
     # can be a slurm job name template with %i, %A, %a
     log_path: str = field(default=MISSING)
+    # config_path
     # should be a fixed name known at config time, should contain %a for array index
     log_path_current: str | None = None
+    config_path: str | None = None
+    config_path_current: str | None = None
     name: str = ""
     log_events: list[LogEventConfig] = field(default_factory=list)
     state_events: list[StateEventConfig] = field(default_factory=list)
@@ -39,6 +42,7 @@ class BaseJob:
     cancel_condition: MonitorConditionInterface.cfgtype | None = None
     finish_condition: MonitorConditionInterface.cfgtype | None = None
     array_len: int = 1
+    base_config: Any = field(default_factory=dict)
 
 
 @dataclass(kw_only=True)

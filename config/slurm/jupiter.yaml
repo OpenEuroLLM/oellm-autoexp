@@ -11,7 +11,7 @@ launcher_cmd: "\
 srun:
   exclusive: true
   wait: 60
-  cpus_per_task: 8
+  cpus_per_task: 16
   threads_per_core: 1
   gpu_bind: "none"
 launcher_env_passthrough: true
@@ -27,8 +27,11 @@ env:
   NUM_GPUS_PER_NODE: "4"
   NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
   ARCH: "$(uname -m)"
-  SLURM_CPUS_PER_TASK: "12"
+  SLURM_CPUS_PER_TASK: "16"
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
+  PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+  NCCL_SOCKET_IFNAME: ib0
+
 sbatch:
   nodes: 1
   ntasks_per_node: 1
