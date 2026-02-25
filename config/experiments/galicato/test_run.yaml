@@ -1,45 +1,31 @@
 # @package _global_
-
 defaults:
-  - base
-  - /backend: megatron_rocm
+  - /backend: megatron
   - /container: lumi
   - /slurm: lumi
-  - /monitoring: megatron_basic
-  - /project: default
+  - /job: default
   - /sweep: none
-  - /backend/megatron_rocm: base
+  - /backend/megatron: base
   - _self_
 
-#job:
-#  base_output_dir: "test_job_galicato"
-#  name: "06B_100BT_ita_Latn_propella_edu"
-project:
-  name: 06B_100BT_propella_ita_Latn_edu
-  resume: true
 
-slurm:
-  sbatch:
-    partition: standard-g
-    nodes: 16
-    time: 48:00:00
+index: 0
+stage: "all"
+
+job:
+  base_output_dir: /scratch/project_462000963/users/galicato/AutoExp/output/
+  name: "06B_100BT_propella_ita_Latn_edu"
+  log_path_current: /scratch/project_462000963/users/galicato/AutoExp/logs/latest.log
+  log_path: /scratch/project_462000963/users/galicato/AutoExp/logs/%x-%j.log
+
 backend:
-  megatron_rocm:
+  megatron:
+    wandb_exp_name: 06B_100BT_propella_ita_Latn_edu
+    wandb_project: openeurollm-project
+
     log_throughput: true
-    log_interval: 1
     log_progress: true
-
-    # DATA
-    data_path:
-      - "/scratch/project_462000963/preprocessed/gpt-oss/openeurollm/propella-annotations/ita_Latn/educational_value/ita_Latn_edu"
-    seq_length: 4096
-    max_position_embeddings: 4096
-    num_workers: 2
-    data_cache_path: ${oc.env:USER_FLASH}/.cache
-
-    # TOKENIZER
-    tokenizer_model: openai/gpt-oss-120b
-    tokenizer_type: HuggingFaceTokenizer
+    log_interval: 1
 
     # MODEL: 600M
     num_layers: 22
@@ -48,7 +34,7 @@ backend:
     num_attention_heads: 16
     num_query_groups: ${.num_attention_heads}
     init_method_std: 0.02
-    position_embedding_type: "rope"
+    position_embedding_type: rope
     rotary_base: 10000
     rotary_percent: 1.0   # Need to check this
     attention_dropout: 0.0
@@ -61,6 +47,26 @@ backend:
     untie_embeddings_and_output_weights: False
     use_flash_attn: True
     attention_softmax_in_fp32: True
+    add_bias_linear: false
+    add_qkv_bias: false
+    apply_rope_fusion: false
+    masked_softmax_fusion: false
+    gradient_accumulation_fusion: false
+    bias_dropout_fusion: false
+    async_tensor_model_parallel_allreduce: False
+
+    # DATA
+    data_path:
+      - "/scratch/project_462000963/preprocessed/gpt-oss/openeurollm/propella-annotations/ita_Latn/educational_value/ita_Latn_edu"
+    seq_length: 4096
+    max_position_embeddings: 4096
+    num_workers: 2
+    data_cache_path: /flash/project_462000963/users/galicato/megatron_cache
+
+    # TOKENIZER
+    tokenizer_model: openai/gpt-oss-120b
+    tokenizer_type: HuggingFaceTokenizer
+    make_vocab_size_divisible_by: 128
 
     # TRAINING, PARALLELISM
     recompute_activations: False
@@ -72,8 +78,6 @@ backend:
 
     # COMM OPTIONS
     overlap_grad_reduce: True
-    distributed_timeout_minutes: 120
-
     distributed_backend: nccl
     distributed_timeout_minutes: 30
 
@@ -81,7 +85,7 @@ backend:
     use_distributed_optimizer: True
 
     # OPTIMIZER
-    #optimizer: adam
+    optimizer: adam
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.e-8
@@ -105,15 +109,12 @@ backend:
     eval_iters: 100
 
     # LOGGING
-    log_interval: 1
-    log_progress: True
-    log_throughput: True
     tensorboard_queue_size: 5
 
     # Base training configuration (for stable phase)
     micro_batch_size: 4
-    global_batch_size: 1024  # Will be overridden by sweep
-    lr: 1e-3  # Will be overridden by sweep
+    global_batch_size: 1024  
+    lr: 1e-3  
 
     # training schedule. Round numbers to avoid floating point issues
     train_iters: ${oc.eval:'-(-100_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
@@ -125,6 +126,22 @@ backend:
     ckpt_format: "torch"
     save_interval: 2000
     
-    save: ${project.base_output_dir}
-    load: ${project.base_output_dir}
-    tensorboard_dir: ${project.base_output_dir}/tensorboard
+    # These paths can be set by ${project.base_output_dir} but for tests I decided to define them as absolute path
+    save: /scratch/project_462000963/users/galicato/mt_chpts/OELLM/ita_Latn/propella_edu 
+    load: /scratch/project_462000963/users/galicato/mt_chpts/OELLM/ita_Latn/propella_edu 
+    tensorboard_dir: /scratch/project_462000963/users/galicato/mt_chpts/OELLM/ita_Latn/propella_edu/tensorboard # e.g ${project.base_output_dir}/tensorboard
+
+slurm:
+  sbatch:
+    nodes: 16
+    cpus-per-task: 7
+    ntasks-per-node: 8
+    gpus-per-node: 8
+    time: "01:00:00"
+    mem: 480G
+    partition: dev-g
+    exclusive: True
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: 1
+    CC: gcc-12
+    CXX: g++-12
