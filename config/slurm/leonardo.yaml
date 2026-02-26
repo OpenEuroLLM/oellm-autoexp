@@ -42,5 +42,5 @@ sbatch:
   gpus_per_node: 4
   cpus_per_task: 32
   gres: "gpu:4"
-  time: "12:00:00"
+  time: "24:00:00"
   qos: ${oc.env:SLURM_QOS,null}

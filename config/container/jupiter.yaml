@@ -2,7 +2,9 @@ class_name: Container
 # image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining_pt2512_aarch64_202602222234.sif
 # image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2512_aarch64_202602230212.sif
 # image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2512_aarch64_202602231246.sif
-image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2512_aarch64_202602231438.sif
+# image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2512_aarch64_202602231438.sif
+# image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2512_aarch64_202602252238.sif
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2510_aarch64_202602262033.sif
 runtime: apptainer
 bind: []
 env:

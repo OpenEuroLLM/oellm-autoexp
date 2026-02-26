@@ -15,3 +15,6 @@ num_attention_heads: 32
 kv_channels: 128
 max_position_embeddings: 8192
 num_query_groups: 4
+
+aux:
+  model_name: "Qwen30B-A3B"

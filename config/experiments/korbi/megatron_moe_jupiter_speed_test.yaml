@@ -29,6 +29,7 @@ backend:
     # recompute_num_layers: 1
     # recompute_modules: ["moe_act", "layernorm"]
     # tensor_model_parallel_size: 1
+    # moe_flex_dispatcher_backend: deepep
     use_distributed_optimizer: true
     save: null
     load: null
