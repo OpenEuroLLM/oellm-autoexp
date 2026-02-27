@@ -14,34 +14,29 @@ stage: "all"
 
 job:
   base_output_dir: /scratch/project_462000963/users/galicato/AutoExp/output/
-  name: "06B_100BT_propella_ita_Latn_edu"
-  log_path_current: /scratch/project_462000963/users/galicato/AutoExp/logs/latest.log
+  name: "06B_100BT_propella_ita_Latn_edu_test"
+  log_path_current: /scratch/project_462000963/users/galicato/AutoExp/logs/latest2.log
   log_path: /scratch/project_462000963/users/galicato/AutoExp/logs/%x-%j.log
 
 backend:
   megatron:
-    wandb_exp_name: 06B_100BT_propella_ita_Latn_edu
+    wandb_exp_name: 06B_100BT_propella_ita_Latn_edu_test
     wandb_project: openeurollm-project
-
-    log_throughput: true
-    log_progress: true
-    log_interval: 1
 
     # MODEL: 600M
     num_layers: 22
     hidden_size: 1024
     ffn_hidden_size: 3840
     num_attention_heads: 16
-    num_query_groups: ${.num_attention_heads}
+    #num_query_groups: ${.num_attention_heads}
     init_method_std: 0.02
-    position_embedding_type: rope
+    seq_length: 4096
     rotary_base: 10000
-    rotary_percent: 1.0   # Need to check this
+    position_embedding_type: rope
+    rotary_percent: 1.0
     attention_dropout: 0.0
     hidden_dropout: 0.0
     normalization: RMSNorm
-    norm_epsilon: 1.e-5
-    qk_layernorm: True
     bf16: True
     swiglu: True
     untie_embeddings_and_output_weights: False
@@ -54,82 +49,80 @@ backend:
     gradient_accumulation_fusion: false
     bias_dropout_fusion: false
     async_tensor_model_parallel_allreduce: False
+    qk_layernorm: True
 
-    # DATA
-    data_path:
-      - "/scratch/project_462000963/preprocessed/gpt-oss/openeurollm/propella-annotations/ita_Latn/educational_value/ita_Latn_edu"
-    seq_length: 4096
-    max_position_embeddings: 4096
-    num_workers: 2
-    data_cache_path: /flash/project_462000963/users/galicato/megatron_cache
-
-    # TOKENIZER
-    tokenizer_model: openai/gpt-oss-120b
-    tokenizer_type: HuggingFaceTokenizer
-    make_vocab_size_divisible_by: 128
+    # PARALLEISM
+    pipeline_model_parallel_size: 1
+    tensor_model_parallel_size: 1
+    context_parallel_size: 1
+    #num_layers_per_virtual_pipeline_stage: 1 # ?
+    profile: False
+    use_pytorch_profiler: False
+    #profile_ranks: [0]
+    #profile_step_start: 5
+    #profile_step_end: 7
 
     # TRAINING, PARALLELISM
     recompute_activations: False
     use_torch_fsdp2: False
-    tensor_model_parallel_size: 1
-    pipeline_model_parallel_size: 1
-    context_parallel_size: 1
     sequence_parallel: True
-
-    # COMM OPTIONS
-    overlap_grad_reduce: True
-    distributed_backend: nccl
-    distributed_timeout_minutes: 30
-
-    # DISTRIBUTED OPTIM
-    use_distributed_optimizer: True
+    tensorboard_queue_size: 5
 
     # OPTIMIZER
     optimizer: adam
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.e-8
+    lr: 1e-3  
+    min_lr: 0.0
     clip_grad: 1.0
     weight_decay: 0.05
 
-    # SCHEDULER
-    min_lr: 0.0
-    lr_decay_style: WSD
-    lr_wsd_decay_style: linear
+    # TRAINING
+    global_batch_size: 1024  
+    micro_batch_size: 4
 
-    # PROFILE
-    profile: False
-    use_pytorch_profiler: False
-    profile_ranks: [0]
-    profile_step_start: 5
-    profile_step_end: 7
-
-    # EVALS
+    # SAVING AND EVALUATION
+    save_interval: 2000
     eval_interval: 5000
     eval_iters: 100
+    log_interval: 1
+    log_throughput: true
+    log_progress: true
 
-    # LOGGING
-    tensorboard_queue_size: 5
-
-    # Base training configuration (for stable phase)
-    micro_batch_size: 4
-    global_batch_size: 1024  
-    lr: 1e-3  
-
-    # training schedule. Round numbers to avoid floating point issues
+    # CALC TRAIN_ITERS, WARMUP_ITERS AND DECAY
     train_iters: ${oc.eval:'-(-100_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
     lr_warmup_iters: ${oc.eval:'min(${.train_iters} // 10, 25000)'}
     lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
     lr_decay_iters: ${.train_iters}
 
+    # DATA ARGS
+    data_path:
+      - "/scratch/project_462000963/preprocessed/gpt-oss/openeurollm/propella-annotations/ita_Latn/educational_value/ita_Latn_edu"
+    data_cache_path: /flash/project_462000963/users/galicato/megatron_cache
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openai/gpt-oss-120b
+    make_vocab_size_divisible_by: 128
+    max_position_embeddings: 4096
+    num_workers: 2
+    
+    # COMM OPTIONS
+    overlap_grad_reduce: True
+    distributed_backend: nccl
+    distributed_timeout_minutes: 30
+    use_distributed_optimizer: True
+
+    # SCHEDULER
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+
     # CHECKPOINT FORMAT
     ckpt_format: "torch"
-    save_interval: 2000
     
     # These paths can be set by ${project.base_output_dir} but for tests I decided to define them as absolute path
-    save: /scratch/project_462000963/users/galicato/mt_chpts/OELLM/ita_Latn/propella_edu 
-    load: /scratch/project_462000963/users/galicato/mt_chpts/OELLM/ita_Latn/propella_edu 
-    tensorboard_dir: /scratch/project_462000963/users/galicato/mt_chpts/OELLM/ita_Latn/propella_edu/tensorboard # e.g ${project.base_output_dir}/tensorboard
+    save: /scratch/project_462000963/users/galicato/mt_chpts/OELLM/ita_Latn/tests
+    load: /scratch/project_462000963/users/galicato/mt_chpts/OELLM/ita_Latn/tests
+    tensorboard_dir: /scratch/project_462000963/users/galicato/mt_chpts/OELLM/ita_Latn/tests/tensorboard # e.g ${project.base_output_dir}/tensorboard
 
 slurm:
   sbatch:
@@ -145,3 +138,4 @@ slurm:
     CUDA_DEVICE_MAX_CONNECTIONS: 1
     CC: gcc-12
     CXX: g++-12
+    OMP_NUM_THREADS: 2
