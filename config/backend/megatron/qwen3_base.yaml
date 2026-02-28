@@ -7,36 +7,33 @@
 # general setup
 seq_length: 4096
 encoder_seq_length: null  # must be null when seq_length is set (mutually exclusive in Megatron)
-attention_backend: flash
-transformer_impl: transformer_engine
-te_rng_tracker: true
+# attention_backend: flash
+# transformer_impl: transformer_engine
+# te_rng_tracker: true
 tokenizer_type: HuggingFaceTokenizer
 # tokenizer_model: Qwen/Qwen3_30B_A3B
 tokenizer_model: EleutherAI/gpt-neox-20b
 make_vocab_size_divisible_by: 128
 dist_ckpt_strictness: log_unexpected
 ckpt_format: torch_dist
-# vocab_size: 151936
-# vocab_size: 51384
-cross_entropy_loss_fusion: true
-manual_gc: true
-manual_gc_interval: 100
-cuda_graph_scope: []
-cuda_graph_impl: "none"
-cuda_graph_warmup_steps: 3
-cross_entropy_fusion_impl: "te"
+# # vocab_size: 151936
+# # vocab_size: 51384
+# cross_entropy_loss_fusion: true
+# manual_gc: true
+# manual_gc_interval: 100
+# cuda_graph_scope: []
+# cuda_graph_impl: "none"
+# cuda_graph_warmup_steps: 3
+# cross_entropy_fusion_impl: "te"
 
-recompute_granularity: full
-recompute_method: uniform
-recompute_modules: null
-fine_grained_activation_offloading: false
-offload_modules: []
-recompute_num_layers: 1
-sequence_parallel: true
-use_flash_attn: true
-
-expert_model_parallel_size: 8
-tensor_model_parallel_size: 2
+# recompute_granularity: full
+# recompute_method: uniform
+# recompute_modules: null
+# fine_grained_activation_offloading: false
+# offload_modules: []
+# recompute_num_layers: 1
+# sequence_parallel: true
+# use_flash_attn: true
 
 # model setup
 bf16: true
@@ -66,9 +63,9 @@ num_query_groups: 4
 
 # moe setup
 num_experts: null
-no_load_optim: true
 
 # post-training - unnecessary
+# no_load_optim: true
 # optimizer: adam
 # adam_beta1: 0.9
 # adam_beta2: 0.999
