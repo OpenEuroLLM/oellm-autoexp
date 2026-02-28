@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from typing import Any
+import os
 
 from compoconf import NonStrictDataclass, asdict, register, MissingValue
 
@@ -45,6 +46,8 @@ from oellm_autoexp.backends.megatron.config_schema import MegatronConfig as Mega
 
 from oellm_autoexp.backends.megatron_args import MegatronArgMetadata, build_cmdline_args
 from oellm_autoexp.argparse_schema.resolver import register_argparse_resolver
+
+from oellm_autoexp.data_integrity_check import check_integrity
 
 
 LOGGER = logging.getLogger(__name__)
@@ -82,6 +85,8 @@ class MegatronBackendConfig(NonStrictDataclass, BaseBackendConfig):
     megatron: MegatronConfig = field(default_factory=MegatronConfig)
     python_cmd: str = "python"
     full_cmd: str = MissingValue
+    data_integrity_check: bool = True
+    data_integrity_check_force_hash: bool = False
     aux: dict[str, Any] = field(default_factory=dict)  # to define convenience variables
 
     def __post_init__(self):
@@ -144,6 +149,15 @@ class MegatronBackend(BaseBackend):
                 self._parser.parse_args(cli_args)
             except SystemExit as exc:  # pragma: no cover - argparse exits
                 raise ValueError("Invalid Megatron arguments") from exc
+        if self.config.data_integrity_check:
+            paths = self.config.megatron.data_path
+            if self.config.megatron.valid_data_path:
+                paths += paths
+            parent = os.path.split(paths[0])[0]
+            integrity_result = check_integrity(
+                root=parent, targets=paths, force_hash=self.config.data_integrity_check_force_hash
+            )
+            LOGGER.info(f"Checked megatron data paths: {paths}: {integrity_result}")
 
     def _validate_schema_only(self, args: dict[str, Any]) -> None:
         """Lightweight validation using only the schema (no Megatron
