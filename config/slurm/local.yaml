@@ -1,0 +1,28 @@
+defaults:
+  - base
+  - _self_
+
+# No SLURM template — used only for torchrun arg resolution and env collection
+# when running with `--local`. sbatch.nodes / gpus_per_node drive nnodes /
+# nproc_per_node in the torchrun command.
+sbatch:
+  nodes: 1
+  gpus_per_node: 1
+  time: "24:00:00"
+  account: "local"
+  partition: "local"
+
+env:
+  HF_HOME: ${oc.env:HF_HOME,".cache/huggingface"}  # override base.yaml (no fallback there)
+  MACHINE_NAME: LOCAL
+  # Use system g++ (conda-forge g++ lacks C++ stdlib headers)
+  CXX: /usr/bin/g++
+  MASTER_ADDR: localhost
+  MASTER_PORT: "29500"
+  LOCAL_ADDR: localhost
+  NUM_NODES: "1"
+  GPUS_PER_NODE: "1"
+  NUM_GPUS_PER_NODE: "1"
+  NUM_GPUS: "1"
+  PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+  SLURM_ARRAY_TASK_ID: "0"

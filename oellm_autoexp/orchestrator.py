@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shlex
 import time
 from dataclasses import dataclass, field, MISSING, replace
 import hashlib
@@ -18,7 +19,7 @@ from oellm_autoexp.hydra_staged_sweep.planner import JobPlan
 from oellm_autoexp.monitor.loop import MonitorLoop, JobFileStore, JobRecordConfig, JobRuntimeConfig
 from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
 from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
-from oellm_autoexp.monitor.submission import SlurmJobConfig
+from oellm_autoexp.monitor.submission import SlurmJobConfig, LocalJobConfig
 
 import oellm_autoexp.backends.megatron_backend  # noqa  - register
 from oellm_autoexp.config.schema import RootConfig, ConfigSetup, BackendInterface
@@ -87,6 +88,7 @@ def submit_jobs(
     slurm_client: SlurmClient | None = None,
     session_id: str | None = None,
     no_error_catching: bool = False,
+    local_mode: bool = False,
 ) -> SubmissionResult:
     store, session_id = _ensure_state_store(plan, session_id=session_id)
     client = slurm_client or SlurmClient(SlurmClientConfig())
@@ -97,7 +99,7 @@ def submit_jobs(
 
     submitted_job_ids: list[str] = []
     for job in plan.jobs:
-        record = _build_job_record(plan, job, session_id)
+        record = _build_job_record(plan, job, session_id, local_mode=local_mode)
         store.upsert(record)
         submitted_job_ids.append(record.job_id)
 
@@ -159,7 +161,9 @@ def _ensure_state_store(
     return store, session_id
 
 
-def _build_job_record(plan: ExecutionPlan, job: JobPlan, session_id: str) -> JobRecordConfig:
+def _build_job_record(
+    plan: ExecutionPlan, job: JobPlan, session_id: str, *, local_mode: bool = False
+) -> JobRecordConfig:
     if not isinstance(job.config, RootConfig):
         raise ValueError("JobPlan.config must be RootConfig")
 
@@ -183,6 +187,43 @@ def _build_job_record(plan: ExecutionPlan, job: JobPlan, session_id: str) -> Job
     )
 
     base_job = job.config.job
+
+    if local_mode:
+        merged_env = {
+            **{k: str(v) for k, v in job.config.slurm.env.items()},
+            **{k: str(v) for k, v in job.config.backend.env.items()},
+            "MASTER_ADDR": "localhost",
+            "MASTER_PORT": str(job.config.slurm.env.get("MASTER_PORT", "29500")),
+            "LOCAL_ADDR": "localhost",
+            "SLURM_NODEID": "0",
+        }
+        env_str = " ".join(f"export {k}={shlex.quote(str(v))};" for k, v in merged_env.items())
+        definition = LocalJobConfig(
+            name=job_name,
+            command=["bash", "-c", f"{env_str} {launch_cmd}"],
+            log_path=str(job.config.job.log_path),
+            log_path_current=str(job.config.job.log_path_current),
+            config_path=str(job.config.job.config_path),
+            config_path_current=str(job.config.job.config_path_current),
+            log_events=list(base_job.log_events),
+            state_events=list(base_job.state_events),
+            start_condition=base_job.start_condition,
+            cancel_condition=base_job.cancel_condition,
+            finish_condition=base_job.finish_condition,
+            metadata={
+                **dict(base_job.metadata),
+                "session_id": session_id,
+                "sweep_index": getattr(job.config, "index", None),
+                "stage": getattr(job.config, "stage", ""),
+            },
+            base_config=job,
+        )
+        return JobRecordConfig(
+            job_id=job_id,
+            definition=definition,
+            runtime=JobRuntimeConfig(submitted=False),
+        )
+
     definition = SlurmJobConfig(
         name=job_name,
         log_path=str(job.config.job.log_path),

@@ -53,6 +53,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Comma-separated sweep indices or ranges (e.g., '0,3-5') to rerun.",
     )
     parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Run locally instead of submitting to SLURM (uses LocalCommandClient)",
+    )
+    parser.add_argument(
         "overrides", nargs="*", default=[], help="Hydra-style overrides (`key=value`)."
     )
     return parser.parse_args(argv)
@@ -146,11 +151,28 @@ def main(argv: list[str] | None = None) -> None:
 
     config_dir = Path(args.config_dir)
 
+    overrides = list(args.overrides)
+    if args.local:
+        # Force single-node torchrun
+        overrides = ["++slurm.sbatch.nodes=1"] + overrides
+        # Auto-detect GPU count unless already overridden
+        if not any("gpus_per_node" in o for o in overrides):
+            try:
+                import torch
+
+                n_gpus = torch.cuda.device_count() or 1
+            except Exception:
+                n_gpus = 1
+            overrides = [f"++slurm.sbatch.gpus_per_node={n_gpus}"] + overrides
+        # Default output to ./output unless already overridden
+        if not any("job.base_output_dir" in o for o in overrides):
+            overrides = ["++job.base_output_dir=./output"] + overrides
+
     config_setup = ConfigSetup(
         pwd=os.path.abspath(os.curdir),
         config_name=args.config_name,
         config_dir=str(config_dir),
-        overrides=args.overrides,
+        overrides=overrides,
         monitor_state_dir=str(args.monitor_state_dir),
     )
     root = load_config_reference(config_setup=config_setup)
@@ -177,7 +199,7 @@ def main(argv: list[str] | None = None) -> None:
         overrides=args.overrides,
     )
 
-    res = submit_jobs(plan, no_error_catching=args.debug)
+    res = submit_jobs(plan, no_error_catching=args.debug, local_mode=args.local)
 
     if args.no_monitor:
         exit(0)

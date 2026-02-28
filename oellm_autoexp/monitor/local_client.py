@@ -102,6 +102,7 @@ class LocalCommandClient(JobClientInterface):
                     job.config_path, job_id=job_id, timestamp=timestamp
                 )
                 LOGGER.info(f"Logging Config to: {resolved_config_path}")
+                Path(resolved_config_path).parent.mkdir(parents=True, exist_ok=True)
                 with open(resolved_config_path, "w") as fp:
                     yaml.dump(job.base_config, fp)
                 if job.config_path_current:
