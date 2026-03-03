@@ -13,6 +13,7 @@ def test_megatron_backend_builds_command():
         use_gpu=True,
         dist_cmd="",
         megatron=MegatronConfig(micro_batch_size=4, eval_interval=100, lr=0.001),
+        data_integrity_check=False,
     )
     backend = MegatronBackend(config)
 
