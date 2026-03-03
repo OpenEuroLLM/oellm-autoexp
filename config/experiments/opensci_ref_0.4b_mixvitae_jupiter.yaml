@@ -2,8 +2,7 @@
 #
 # 0.4B dense model pretraining on MixtureVitae-v1-decontaminated (300B tokens)
 # 32 nodes (128 GH200 GPUs) on Jupiter
-#
-# Reference: megatron_exp_data-PARAM_machine-JUWELS_modelscale-0.4b_rotary-PARAM_dist_ckpt_dataIter.sh
+
 defaults:
   - /backend: megatron_torchrun_localaddr
   - /container: jupiter
@@ -42,7 +41,7 @@ backend:
 
     add_qkv_bias: false
     legacy_tokenizer: false
-    override_opt_param_scheduler: false
+    override_opt_param_scheduler: true
 
     # Precision & Architecture 
     bf16: true
@@ -72,6 +71,8 @@ backend:
     overlap_grad_reduce: true
     recompute_activations: true
     ckpt_format: torch_dist
+    ckpt_fully_parallel_save: false
+    async_save: false
 
     # Data 
     tokenizer_model: /e/scratch/jureap59/cache/tokenizer/gpt-neox-20b

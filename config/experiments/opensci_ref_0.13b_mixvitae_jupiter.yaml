@@ -41,10 +41,9 @@ backend:
     init_method_std: 0.02
     clip_grad: 1.0
 
-    # Override base_reference to match JUWELS baseline
     add_qkv_bias: false
     legacy_tokenizer: false
-    override_opt_param_scheduler: false
+    override_opt_param_scheduler: true
 
     # Precision & Architecture 
     bf16: true
@@ -74,6 +73,8 @@ backend:
     overlap_grad_reduce: true
     recompute_activations: true
     ckpt_format: torch_dist
+    ckpt_fully_parallel_save: false
+    async_save: false
 
     # Data 
     tokenizer_model: /e/scratch/jureap59/cache/tokenizer/gpt-neox-20b
