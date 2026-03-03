@@ -33,7 +33,7 @@ backend:
     lr_wsd_decay_iters: 14305    # 1/5 of train_iters (cooldown)
     min_lr: 0.0
 
-    # Optimizer 
+    # Optimizer
     adam_beta2: 0.95
     weight_decay: 0.05
     init_method_std: 0.02
@@ -43,7 +43,7 @@ backend:
     legacy_tokenizer: false
     override_opt_param_scheduler: true
 
-    # Precision & Architecture 
+    # Precision & Architecture
     bf16: true
     use_flash_attn: true
     qk_layernorm: true
@@ -59,12 +59,12 @@ backend:
     max_position_embeddings: 4096
     vocab_size: 50304
 
-    # Parallelism 
+    # Parallelism
     tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
     sequence_parallel: true
 
-    # Distributed Optimization 
+    # Distributed Optimization
     distributed_backend: nccl
     use_distributed_optimizer: true
     overlap_param_gather: true
@@ -74,20 +74,20 @@ backend:
     ckpt_fully_parallel_save: false
     async_save: false
 
-    # Data 
-    tokenizer_model: /e/scratch/jureap59/cache/tokenizer/gpt-neox-20b
+    # Data
+    tokenizer_model: ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/tokenizer/gpt-neox-20b
     tokenizer_type: HuggingFaceTokenizer
     split: "989,10,1"
     num_workers: 4
 
-    # Logging & Checkpointing 
+    # Logging & Checkpointing
     log_interval: 50
     log_throughput: true
     save_interval: 2000
     save: ${job.base_output_dir}
     load: ${job.base_output_dir}
     tensorboard_dir: ${job.base_output_dir}/tensorboard
-    eval_interval: 71526          
+    eval_interval: 71526
     eval_iters: 1
 
     aux:
@@ -99,19 +99,3 @@ slurm:
   sbatch:
     nodes: 32
     time: "12:00:00"
-    account: jureap59
-    partition: booster
-  env:
-    CUDA_DEVICE_MAX_CONNECTIONS: "1"
-    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
-    NCCL_SOCKET_IFNAME: ib0
-    GLOO_SOCKET_IFNAME: ib0
-    NCCL_SOCKET_FAMILY: AF_INET
-    GLOO_SOCKET_FAMILY: AF_INET
-    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
-    NCCL_IB_TIMEOUT: "18"
-    NCCL_IB_DISABLE: "0"
-    NCCL_IB_RETRY_CNT: "20"
-    NCCL_IB_HCA: mlx5_0,mlx5_1,mlx5_2,mlx5_3
-    NCCL_NET_GDR_LEVEL: "2"
-    NCCL_NET_GDR_READ: "1"

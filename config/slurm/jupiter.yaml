@@ -30,11 +30,20 @@ env:
   SLURM_CPUS_PER_TASK: "16"
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
   PYTHONUNBUFFERED: "1"
+  CUDA_DEVICE_MAX_CONNECTIONS: "1"
   PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
   NCCL_SOCKET_IFNAME: ib0
-  NCCL_NET_GDR_LEVEL: "0"
+  NCCL_NET_GDR_LEVEL: "2"
+  NCCL_NET_GDR_READ: "1"
   NCCL_PROTO: "Simple"
-  CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  NCCL_SOCKET_FAMILY: AF_INET
+  NCCL_IB_TIMEOUT: "18"
+  NCCL_IB_DISABLE: "0"
+  NCCL_IB_RETRY_CNT: "20"
+  NCCL_IB_HCA: mlx5_0,mlx5_1,mlx5_2,mlx5_3
+  GLOO_SOCKET_IFNAME: ib0
+  GLOO_SOCKET_FAMILY: AF_INET
+  TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
 
 sbatch:
   nodes: 1
@@ -44,6 +53,6 @@ sbatch:
   cpus_per_task: 16
   gres: "gpu:4"
   gpu_bind: "none"
-  partition: booster
-  account: jureap59
+  partition: ${oc.env:SLURM_PARTITION,booster}
+  account: ${oc.env:SLURM_ACCOUNT,jureap59}
   time: "24:00:00"
