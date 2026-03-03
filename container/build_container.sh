@@ -14,9 +14,10 @@ Options:
   --definition NAME   Singularity definition template name inside the backend folder (default: MegatronTraining)
   --requirements PATH Optional requirements file copied into the container and
                       passed to pip install (default: container/megatron/requirements_latest.txt).
+  --additional-tag    Add an additional tag
   --output DIR        Directory to write the resulting .sif image (default: current dir).
   --append-date       Append a UTC timestamp to the generated image name.
-  --base-image IMAGE  Override the base image (default: nvcr.io/nvidia/pytorch:25.08-py3).
+  --base-image IMAGE  Override the base image (default: nvcr.io/nvidia/pytorch:25.10-py3), latest for current Megatron version.
   --container-cmd CONTAINER_RUNTIME   Override container command (default: singularity).
 USAGE
 }
@@ -27,7 +28,7 @@ DEFINITION="MegatronTraining"
 export REQUIREMENTS_PATH="${SPEC_ROOT}/${BACKEND}/requirements_latest.txt"
 OUTPUT_DIR="${CONTAINER_CACHE_DIR:-$(pwd)}"
 APPEND_DATE=false
-BASE_IMAGE=${BASE_IMAGE:-nvcr.io/nvidia/pytorch:25.08-py3}
+BASE_IMAGE=${BASE_IMAGE:-nvcr.io/nvidia/pytorch:25.10-py3}
 CONTAINER_RUNTIME="singularity"
 
 while [[ $# -gt 0 ]]; do

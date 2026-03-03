@@ -321,6 +321,10 @@ class StateEvent:
     def check_trigger(self, old_status: str | None, new_status: str | None) -> bool:
         """Check if the state transition matches this event's transition."""
         expected_old, expected_new = self.config.transition
+        old_status = old_status.lower() if old_status is not None else None
+        new_status = new_status.lower() if new_status is not None else None
+        expected_old = expected_old.lower() if expected_old is not None else None
+        expected_new = expected_new.lower() if expected_new is not None else None
         # None in expected means "any state"
         old_matches = expected_old is None or old_status == expected_old
         new_matches = expected_new is None or new_status == expected_new

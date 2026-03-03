@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--monitor-state-dir", default="./monitor_state", type=Path)
-    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--no-verbose", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--session", default=None)
     parser.add_argument("--session-dir", default=None)
@@ -99,7 +99,7 @@ def _parse_subset(spec: str | None) -> set[int]:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    configure_logging(args.verbose, args.debug)
+    configure_logging(not args.no_verbose, args.debug)
 
     slurm_client = SlurmClient(SlurmClientConfig())
     local_client = LocalCommandClient(LocalCommandClientConfig())

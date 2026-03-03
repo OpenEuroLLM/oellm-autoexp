@@ -19,26 +19,15 @@ From: ${BASE_IMAGE}
     ${PROVENANCE_PATH} /workspace/oellm-autoexp/provenance/container_provenance.json
 
 %post
-set -euo pipefail
 mkdir -p /workspace/oellm-autoexp/provenance
 mkdir -p /workspace/cache
 cd /workspace
-
-apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    tmux \
-    build-essential \
-    python3-dev \
-    libopenmpi-dev \
-    openssh-client \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
 
 python3 -m pip install --upgrade pip setuptools packaging wheel
 
 python3 /workspace/oellm-autoexp/container/gen_constraints.py \
     --output /workspace/constraints.installed.txt \
-    --exclude pip setuptools wheel
+    --exclude pip setuptools wheel huggingface_hub
 
 if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
     python3 -m pip install --no-cache-dir \
