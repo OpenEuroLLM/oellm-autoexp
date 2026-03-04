@@ -1,0 +1,136 @@
+# @package _global_
+
+# 50M dense model training with pull-based multi-stage cooldown
+# Translation of dense_50M_50BT.yaml to new composable sweep system
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: ""
+
+job:
+  name: "dense_600M_100BT_multilingual"
+  base_output_dir: "results/dense_600M_100BT_multilingual/${job.name}"
+  # resume: true
+
+backend:
+  megatron:
+    wandb_exp_name: "${job.name}"
+    wandb_project: sanity-checks
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    # DATA
+    # data_path: "$(cat datamix-option2.txt)"
+    data_cache_path: /leonardo_scratch/large/userexternal/donutu00/MEGATRON_CACHEDIR
+    seq_length: 4096
+    max_position_embeddings: 4096
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: "/leonardo_work/OELLM_prod2026/users/fvitiugi/hf_cache/hub/models--openai--gpt-oss-120b/snapshots/b5c939de8f754692c1647ca79fbf85e8c1e70f8a"
+    make_vocab_size_divisible_by: 128
+    dataloader_type: single
+    num_workers: 2
+
+    # MODEL: 600M
+    num_layers: 22
+    hidden_size: 1024
+    ffn_hidden_size: 3840
+    num_attention_heads: 16
+    num_query_groups: ${.num_attention_heads}
+    init_method_std: 0.02
+    position_embedding_type: "rope"
+    rotary_base: 10000
+    rotary_percent: 1.0
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    normalization: RMSNorm
+    norm_epsilon: 1.e-5
+    qk_layernorm: True
+    bf16: True
+    swiglu: True
+    untie_embeddings_and_output_weights: False
+    use_flash_attn: True
+    attention_softmax_in_fp32: True
+    disable_bias_linear: True
+
+    # TRAINING, PARALLELISM
+    recompute_activations: False
+    use_torch_fsdp2: False
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: True
+
+    distributed_backend: nccl
+    distributed_timeout_minutes: 10
+
+    # DISTRIBUTED OPTIM
+    use_distributed_optimizer: True
+
+    # OPTIMIZER
+    optimizer: adam
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.e-8
+    lr: 1.e-3 
+    clip_grad: 1.0
+    weight_decay: 0.05
+
+    # SCHEDULER
+    min_lr: 0
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+
+    # PROFILE
+    profile: False
+    use_pytorch_profiler: False
+    profile_ranks: [0]
+    profile_step_start: 5
+    profile_step_end: 12
+
+    # EVALS
+    eval_interval: 5000
+    eval_iters: 100
+
+    # LOGGING
+    log_interval: 1
+    log_progress: True
+    log_throughput: True
+    tensorboard_queue_size: 5
+    log_timers_to_tensorboard: True
+
+    # CHECKPOINT FORMAT
+    ckpt_format: "torch_dist"
+    save_interval: 1000
+    save: ${job.base_output_dir}/checkpoints
+
+    micro_batch_size: 4
+    global_batch_size: 1024 
+
+
+    # Auxiliary computation variables
+    # Note: Computed fields (train_iters, lr_wsd_decay_iters, start_iter, start_iter_round)
+    # are defined in the sweep defaults alongside the tokens they depend on,
+    # so they get resolved together with stage-specific values
+    aux:
+      tokens: 100_000_000_000 
+      warmup_fraction: 1/10
+      cooldown_fraction: 1/5 
+
+    train_iters: "${oc.eval: '(${backend.megatron.aux.tokens}+${backend.megatron.seq_length}*${backend.megatron.global_batch_size}-1)//(${backend.megatron.seq_length}*${backend.megatron.global_batch_size})'}"
+    lr_warmup_iters: "${oc.eval: 'min(int(${backend.megatron.train_iters}*${backend.megatron.aux.warmup_fraction}), 250000)'}"
+    lr_decay_iters: ${backend.megatron.train_iters}
+    lr_wsd_decay_iters: "${oc.eval: 'int(${backend.megatron.train_iters}*${backend.megatron.aux.cooldown_fraction})'}"
+    
+slurm:
+  sbatch:
+    nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
+    # qos: boost_qos_dbg

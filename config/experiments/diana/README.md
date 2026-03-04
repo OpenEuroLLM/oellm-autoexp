@@ -27,7 +27,7 @@ git checkout exp_diana
 ## Run the experiments
 Firstly, ensure you have Python loaded, activated the virtual environment and are inside `oellm-autoexp`. This branch uses this container: `/leonardo_work/OELLM_prod2026/container_images/nemo_25.11.01.sif`.
 
-### Quick experiments
+### 1. Quick experiments
 
 Check that the tool works with auto-cooldown. Launch `python scripts/run_autoexp.py --config-name experiments/diana/test_dense_50M_200MT`.
 
@@ -37,9 +37,9 @@ To test and debug the tool, launch it with `python scripts/run_autoexp.py --conf
 
 Since this experiment is meant for debugging auto-cooldown purposes, the token budget, warmup_iters, save_interval, and hyperparameter sweeps have been significantly reduced.
 
-### Reproduce Niccolo's experiments
+### 2. Reproduce Niccolo's experiments
 - 50M-20BT experiment: Launch `python scripts/run_autoexp.py --config-name experiments/diana/dense_50M_20BT`. This experiment runs one stable training job up to 20BT and 2 decay jobs at 12 and 20BT. The configurations are from [here](https://wandb.ai/openeurollm-project/dense_scaling/reports/Baseline-Runs-Check--VmlldzoxNTc5NDAxMQ). Results [here](https://wandb.ai/openeurollm-project/sanity-checks?nw=nwuserdianaonutu).
-- 50M-50BT experiment: Launch `python scripts/run_autoexp.py --config-name experiments/diana/dense_50M_50BT`. This experiment runs one stable training job up to 50BT and 1 decay job at 50BT. 
+- 50M-50BT experiment: Launch `python scripts/run_autoexp.py --config-name experiments/diana/dense_50M_50BT`. This experiment runs one stable training job up to 50BT and 1 decay job at 50BT. Stable run is [here](https://wandb.ai/openeurollm-project/sanity-checks/runs/9egk7g5a?nw=nwuserdianaonutu) and decay run is [here](https://wandb.ai/openeurollm-project/sanity-checks/runs/v15z746d?nw=nwuserdianaonutu).
 
 
 #### Important adjustments
@@ -50,6 +50,10 @@ Since this experiment is meant for debugging auto-cooldown purposes, the token b
 - add padding in start condition for checkpoint folder: check if folder `iter_000XXXX` exists instead of `iter_XXXX`
 - start condition only checks if the checkpoint at the correct iteration has been created and doesn't check for `latest_checkpointed_iteration.txt` since this file is by default saved in the parent directory of `checkpoints`, not inside each checkpoint folder
 - use `ckpt_format: torch_dist` instead of `ckpt_format: torch` because otherwise Megatron-LM will overwrite at loading time the `ckpt_step` with the last checkpoint from the `latest_checkpointed_iteration.txt` file. This happens because `ckpt_format:True` and `use_distributed_optimzier: True`. 
+
+### 3. Reproduce multilingual experiment
+Reproduce multilingual experiments: 600M model on 100B tokens using data mix option 4 (near natural distribution). Launch `python scripts/run_autoexp.py --config-name experiments/diana/dense_600M_100BT_multilingual "backend.megatron.data_path=[$(cat /leonardo_work/OELL
+M_prod2026/users/fvitiugi/training/datamix-option2.txt | tr ' \n' ',,')]" `. Results [here](https://wandb.ai/openeurollm-project/sanity-checks/runs/jaquzvof) and original run [here](https://wandb.ai/openeurollm-project/1TTest/runs/mghf79yo?nw=nwuserdianaonutu). There is a small discrepancy. Namely, my run had used biases and it shouldn't have: `disable_bias_linear: True`, however, it should have been `disable_bias_linear: False`.
 
 ## Open TO DOs
 - implement saving and loading the precise checkpoints at which decay should start
