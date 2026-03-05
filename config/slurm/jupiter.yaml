@@ -31,6 +31,9 @@ env:
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
   PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
   NCCL_SOCKET_IFNAME: ib0
+  NCCL_NET_GDR_LEVEL: "0"
+  NCCL_PROTO: "Simple"
+  CUDA_DEVICE_MAX_CONNECTIONS: "1"
 
 sbatch:
   nodes: 1
