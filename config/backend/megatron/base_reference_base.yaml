@@ -14,7 +14,7 @@ bias_dropout_fusion: false
 bias_gelu_fusion: false
 bias_swiglu_fusion: false
 ckpt_format: torch_dist
-dataloader_type: single
+dataloader_type: cyclic
 gradient_accumulation_fusion: false
 hidden_dropout: 0.0
 legacy_tokenizer: true
