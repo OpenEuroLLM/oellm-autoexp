@@ -103,7 +103,7 @@ backend:
     profile_step_end: 12
 
     # EVALS
-    eval_interval: 800
+    eval_interval: 800 # bsz dependent
     eval_iters: 100
 
     # LOGGING
@@ -115,7 +115,7 @@ backend:
 
     # CHECKPOINT FORMAT
     ckpt_format: "torch_dist"
-    save_interval: 2000
+    save_interval: 2000 # bsz dependent
     save: ${job.base_output_dir}/checkpoints
 
     # Base training configuration (for stable phase)
