@@ -1,6 +1,6 @@
 class_name: Container
 # image: ${oc.env:OELLM_CONTAINERS_DIR,.}/OELLM_autoexp_MegatronTrainingNoRoot_base2512_x86_64_202601281510.sif
-image: ${oc.env:OELLM_CONTAINERS_DIR,.}/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif
+image: ${oc.env:OELLM_CONTAINERS_DIR,.}/titan_user_0.2.1_x86_64_202603061451.sif
 runtime: singularity
 bind: ["/leonardo_scratch", "/leonardo", "/leonardo_work"]
 env:
@@ -8,3 +8,4 @@ env:
   MACHINE_NAME: "LEONARDO"
   PYTHONPATH: "."
 python: "/usr/bin/python"
+

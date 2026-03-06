@@ -2,7 +2,7 @@
 defaults:
   - base
   - /backend: titan
-  - /container: leonardo
+  - /container: leonardo_titan
   - /slurm: leonardo
   - /sweep: none
   - _self_

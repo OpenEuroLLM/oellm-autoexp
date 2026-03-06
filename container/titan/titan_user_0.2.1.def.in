@@ -1,0 +1,78 @@
+Bootstrap: docker
+From: ${BASE_IMAGE}
+
+
+%arguments
+    PYTHON_VERSION=3.12.3
+    Base ${BASE_IMAGE}
+
+%files
+    ${REPO_ROOT}/submodules/titan-oellm/setup.py /opt/titan-oellm/setup.py
+    ${REPO_ROOT}/submodules/titan-oellm/titan_oellm /opt/titan-oellm/
+    ${REPO_ROOT}/submodules/titan-oellm/torchtitan /opt/titan-oellm/
+    ${REPO_ROOT} /workspace/oellm-autoexp
+    ${REQUIREMENTS_PATH} /workspace/${REQUIREMENTS_BASENAME}
+
+%environment
+    export USER=torchtitan
+    export HOME=/workspace
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/aarch64-linux-gnu:/opt/hpcx/nccl_rdma_sharp_plugin/lib:/opt/hpcx/nccl_rdma_sharp_plugin/lib
+
+%post
+
+    pip install --no-cache-dir --upgrade pip
+    pip install --no-cache-dir setuptools wheel cmake ninja packaging
+    pip install --no-cache-dir sentencepiece pytest-cov pre-commit
+    pip install --no-cache-dir einops pillow tensorboard tabulate wandb fsspec tyro safetensors
+    pip install --no-cache-dir expecttest==0.1.6
+    pip install --no-cache-dir pytest==7.3.2
+    pip install --no-cache-dir pyrefly==0.45.1
+    pip install --no-cache-dir tomli-w>=1.1.0
+    pip install --no-cache-dir transformers>=4.57.1
+    pip install --no-cache-dir torchdata>=0.8.0
+    pip install --no-cache-dir datasets>=3.6.0
+    pip install --no-cache-dir tokenizers>=0.15.0
+    pip install --no-cache-dir array-record black flake8 mypy etcd3 python-etcd torchelastic
+    pip install --no-cache-dir liger-kernel
+    pip install --no-cache-dir hydra-core omegaconf compoconf networkx tyro
+    
+    if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
+    python3 -m pip install --no-cache-dir \
+        -r "/workspace/${REQUIREMENTS_BASENAME}"
+    fi
+
+    # Create lib -> lib.real symlink for Triton 3.4+ compatibility
+    # NVIDIA containers store CUDA compat libraries in lib.real/ but Triton expects lib/
+    if [ -d /usr/local/cuda/compat/lib.real ] && [ ! -e /usr/local/cuda/compat/lib ]; then
+        ln -s lib.real /usr/local/cuda/compat/lib
+        echo "Created symlink: /usr/local/cuda/compat/lib -> lib.real"
+    fi
+
+    cd /opt/titan-oellm/torchtitan
+    pip install -e .
+
+    cd /opt/titan-oellm
+    pip install -e .
+
+    mkdir -p /workspace
+    chmod 777 /workspace
+
+    mkdir -p /home/torchtitan
+    chmod 777 /home/torchtitan
+
+
+%labels
+    Author Joerg Franke
+    Version 0.2.1
+    Base nvcr.io/nvidia/pytorch:26.01-py3
+    PyTorch nightly 2.10 (CUDA 13.0)
+    Description Titan-OELLM container for TorchTitan 0.2.1
+
+
+
+
+
+
+
+
+

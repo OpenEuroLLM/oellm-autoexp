@@ -2,7 +2,7 @@
 defaults:
   - base
   - /backend: titan
-  - /container: jupiter
+  - /container: jupiter_titan
   - /slurm: jupiter
   - /sweep: none
   - _self_
