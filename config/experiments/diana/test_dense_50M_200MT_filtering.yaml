@@ -18,7 +18,7 @@ stage: ""
 
 job:
   name: "dense_50M_01_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_beta2${backend.megatron.adam_beta2}_${stage}"
-  base_output_dir: "results/tests//filtering/${job.name}"
+  base_output_dir: "results/tests/filtering/${job.name}"
   # resume: true
 
 backend:
@@ -118,9 +118,7 @@ backend:
 
     # CHECKPOINT FORMAT
     ckpt_format: "torch_dist"
-    # Checkpoint interval scales inversely with global batch size,
-    # calibrated so that gbsz=1024 saves every 500 iterations.
-    save_interval: "${oc.eval:'int(512000 // ${backend.megatron.global_batch_size})'}"
+    save_interval: 100
     save: ${job.base_output_dir}/checkpoints
 
     # Base training configuration (for stable phase)
