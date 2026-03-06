@@ -29,7 +29,6 @@ backend:
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
     # DATA
-    # data_path: "$(cat datamix-option2.txt)"
     data_cache_path: /leonardo_scratch/large/userexternal/donutu00/MEGATRON_CACHEDIR
     seq_length: 4096
     max_position_embeddings: 4096
@@ -59,7 +58,7 @@ backend:
     untie_embeddings_and_output_weights: False
     use_flash_attn: True
     attention_softmax_in_fp32: True
-    disable_bias_linear: True
+    disable_bias_linear: True ### This should have been set to False to reproduce Fedor's experiment
 
     # TRAINING, PARALLELISM
     recompute_activations: False
