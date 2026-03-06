@@ -53,7 +53,7 @@ Launch `python scripts/run_autoexp.py --config-name experiments/diana/test_dense
 - remove the `iter_000XX` part from `load`, since this is specified in `ckpt_step`. Otherwise it will try to find a checkpoint in `checkpoints/iter_000XXXX/iter_000XXXX`
 - add padding in start condition for checkpoint folder: check if folder `iter_000XXXX` exists instead of `iter_XXXX`
 - start condition only checks if the checkpoint at the correct iteration has been created and doesn't check for `latest_checkpointed_iteration.txt` since this file is by default saved in the parent directory of `checkpoints`, not inside each checkpoint folder
-- use `ckpt_format: torch_dist` instead of `ckpt_format: torch` because otherwise Megatron-LM will overwrite at loading time the `ckpt_step` with the last checkpoint from the `latest_checkpointed_iteration.txt` file. This happens because `ckpt_format:True` and `use_distributed_optimzier: True`. 
+- use `ckpt_format: torch_dist` instead of `ckpt_format: torch` because otherwise Megatron-LM will overwrite at loading time the `ckpt_step` with the last checkpoint from the `latest_checkpointed_iteration.txt` file. This happens because `ckpt_format: torch` and `use_distributed_optimzier: True`. 
 
 ### 3. Reproduce multilingual experiment
 Reproduce multilingual experiments: 600M model on 100B tokens using data mix option 4 (near natural distribution). Launch `python scripts/run_autoexp.py --config-name experiments/diana/dense_600M_100BT_multilingual "backend.megatron.data_path=[$(cat /leonardo_work/OELL
