@@ -230,8 +230,8 @@ sweep:
 # - 1 decay50MT x 1 GBSZ (32) = 1 script
 
 ### Expected filtered out scripts/configs because of small gbsz and large D (too many training iters): 
-# - 1 deccay200MT x1 GBSZ (1) = 1 script
+# - 1 decay200MT x1 GBSZ (1) = 1 script
 
 ### Total expected filtered out scripts: 4 + 2 + 1 + 1 = 8 scripts
 
-### Total expected generated scripts/configurations = 16 - 8 = 337
+### Total expected generated scripts/configurations = 16 - 8 = 8
