@@ -6,7 +6,7 @@ class_name: Container
 # image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2512_aarch64_202602252238.sif
 image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2510_aarch64_202602262033.sif
 runtime: apptainer
-bind: []
+bind: ['/e']
 env:
   WANDB_MODE: "offline"
   MACHINE_NAME: "JUPITER"

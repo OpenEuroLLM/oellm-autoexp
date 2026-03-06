@@ -1,0 +1,2 @@
+tensor_parallel_degree: 1
+pipeline_parallel_degree: 1

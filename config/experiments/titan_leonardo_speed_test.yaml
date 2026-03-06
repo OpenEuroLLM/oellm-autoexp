@@ -1,0 +1,55 @@
+# @package _global_
+defaults:
+  - base
+  - /backend: titan
+  - /container: leonardo
+  - /slurm: leonardo
+  - /sweep: none
+  - _self_
+
+backend:
+  titan:
+    model:
+      name: gpt_plus_custom
+      flavor: custom
+      hidden_dim: 2048
+      head_dim: 64
+      num_layers: 24
+      num_attention_heads: 32
+      ffn_hidden_size: 8192
+      hf_assets_path: ""
+      tokenizer_path: ${oc.env:DATA_DIR}/tokenizer/neox
+    training:
+      steps: 500
+      local_batch_size: 2
+      seq_len: 4096
+    metrics:
+      log_freq: 10
+    parallelism:
+      tensor_parallel_degree: 1
+      pipeline_parallel_degree: 1
+      data_parallel_replicate_degree: 4
+      data_parallel_shard_degree: 1
+      context_parallel_degree: 1
+    data:
+      data_prefix: ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/gpt-neox-20b/cerebras-SlimPajama-627B/train/merged
+      chunks_dir: ""
+      dataloader: MMapDataset
+      min_doc_len: 10
+    benchmarks:
+      wikitext2_path: ${oc.env:DATA_DIR}/benchmarks/neox/wikitext2/wikitext2
+      wikitext103_path: /${oc.env:DATA_DIR}/benchmarks/neox/wikitext103/wikitext103
+      lambada_path: ${oc.env:DATA_DIR}/data/benchmarks/neox/lambada/lambada
+    experimental:
+      custom_import: oellm_autoexp.titan_custom_train_spec
+  env:
+    PYTHONPATH: "./submodules/titan-oellm:./submodules/titan-oellm/torchtitan:."
+    NCCL_SOCKET_TIMEOUT: 60000
+    NCCL_TIMEOUT: 1800
+    NCCL_IB_TIMEOUT: 100
+    NCCL_IB_RETRY_CNT: 20
+    NCCL_ALGO: Ring
+
+
+job:
+  name: titan_leonardo_speed_test

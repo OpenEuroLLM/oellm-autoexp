@@ -1,0 +1,51 @@
+defaults:
+  - titan/model: default
+  - titan/data: default
+  - titan/training: default
+  - titan/parallelism: default
+  - _self_
+
+class_name: TitanBackend
+
+# Use Titan-OELLM config extension (adds data/benchmarks/sci_tokenizer fields)
+# plus custom sizing fields for gpt_plus_custom.
+custom_config_module: "oellm_autoexp.titan_custom_config"
+require_custom_module: false
+
+launcher_module: "torchtitan.train"
+
+torchrun_args:
+  nproc_per_node: ${slurm.sbatch.gpus_per_node}
+  nnodes: ${slurm.sbatch.nodes}
+  rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
+  rdzv_backend: "static"
+  node_rank: "$SLURM_NODEID"
+  master_addr: "$MASTER_ADDR"
+  master_port: "$MASTER_PORT"
+
+# Write TOML for TorchTitan to consume
+# This file is generated during backend initialization
+# and used as --job.config_file=...
+toml_output_path: ${job.base_output_dir}/config.titan.toml
+
+# Optional cluster args resolution (Titan-OELLM helper)
+cluster_args_source: "none"  # none | titan_oellm
+validate_cluster_paths: false
+dataset: "slimpajama_627b"
+tokenizer: "neox"
+cluster: null
+config_file: "base_plus.toml"
+project_root: "."
+cluster_args: ""
+cluster_args_overrides: {}
+
+# Optional full validation via TorchTitan ConfigManager
+full_schema_validation: false
+
+# Minimal env defaults
+env:
+  PYTHONPATH: ".:submodules/titan-oellm:submodules/titan-oellm/torchtitan"
+
+# Job config tree (defaults come from generated schema)
+titan:
+  class_name: TitanJobConfig
