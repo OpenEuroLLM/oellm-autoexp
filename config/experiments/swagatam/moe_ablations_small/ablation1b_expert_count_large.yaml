@@ -18,7 +18,7 @@ index: 0
 stage: ""
 
 job:
-  name: "moe_abl1b_experts${backend.megatron.num_experts}_ep${backend.megatron.expert_model_parallel_size}_seed${backend.megatron.seed}_aux_loss_coeff${backend.megatron.moe_aux_loss_coeff}"
+  name: "moe_abl_nexp_${backend.megatron.num_experts}_topk_${backend.megatron.moe_router_topk}_ep${backend.megatron.expert_model_parallel_size}_seed${backend.megatron.seed}"
   base_output_dir: "results/moe_ablations_small/ablation1b_expert_count_large/${job.name}"
 
 slurm:
@@ -34,19 +34,20 @@ sweep:
       configs:
         # num_experts: 64  | Total: ~706M  | Active: ~48M | EP=2 (32 experts/GPU)
         - backend.megatron.num_experts: 64
-          backend.megatron.expert_model_parallel_size: 2
+          backend.megatron.expert_model_parallel_size: 8 # for topk: 4 (8 experts/GPU)
+          backend.megatron.micro_batch_size: 8 # for topk: 4
         # num_experts: 128 | Total: ~1.39B | Active: ~48M | EP=8 (16 experts/GPU)
         # Reduced micro_batch_size to 8 to fit in memory (activation memory pressure)
-        - backend.megatron.num_experts: 128
-          backend.megatron.expert_model_parallel_size: 8
-          backend.megatron.micro_batch_size: 8
+        # - backend.megatron.num_experts: 128
+        #   backend.megatron.expert_model_parallel_size: 8
+        #   backend.megatron.micro_batch_size: 8
     
     # Seeds
     - type: list
       configs:
-        # - backend.megatron.seed: 42
+        - backend.megatron.seed: 42
         - backend.megatron.seed: 1234
-        - backend.megatron.seed: 5678
+        # - backend.megatron.seed: 5678
 
 backend:
   megatron:
@@ -127,12 +128,12 @@ backend:
     # MoE PARAMETERS (baseline values, num_experts and EP overridden by sweep)
     moe_ffn_hidden_size: 768
     num_experts: 64
-    moe_router_topk: 2
+    moe_router_topk: 4
     moe_router_dtype: "fp32"
     moe_grouped_gemm: True
     moe_token_dispatcher_type: "alltoall"  # alltoall works better with expert parallelism
     moe_router_load_balancing_type: "aux_loss"
-    moe_aux_loss_coeff: 1e-8 # 0.0 # 1e-3
+    moe_aux_loss_coeff: 1e-3 # 0.0 # 1e-3 # 1e-8 for no aux loss but keep it for logging
     moe_per_layer_logging: True
 
     # TRAINING CONFIG (fixed for this ablation)

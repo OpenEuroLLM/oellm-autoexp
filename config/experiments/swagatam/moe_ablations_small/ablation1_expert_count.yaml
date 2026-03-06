@@ -18,7 +18,7 @@ index: 0
 stage: ""
 
 job:
-  name: "moe_abl1_experts${backend.megatron.num_experts}_seed${backend.megatron.seed}"
+  name: "moe_abl_nexp_${backend.megatron.num_experts}_topk_${backend.megatron.moe_router_topk}_seed${backend.megatron.seed}"
   base_output_dir: "results/moe_ablations_small/ablation1_expert_count/${job.name}"
 
 slurm:
@@ -44,7 +44,7 @@ sweep:
       configs:
         - backend.megatron.seed: 42
         - backend.megatron.seed: 1234
-        - backend.megatron.seed: 5678
+        # - backend.megatron.seed: 5678
 
 backend:
   megatron:
@@ -125,7 +125,7 @@ backend:
     # MoE PARAMETERS (baseline values, num_experts overridden by sweep)
     moe_ffn_hidden_size: 768
     num_experts: 16
-    moe_router_topk: 2
+    moe_router_topk: 4 # 2 default
     moe_router_dtype: "fp32"
     moe_grouped_gemm: True
     moe_token_dispatcher_type: "allgather"
