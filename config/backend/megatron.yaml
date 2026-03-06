@@ -14,8 +14,6 @@ env:
   PYTHONPATH: ".:submodules/Megatron-LM"
   PROJECT_DIR: ${oc.env:PROJECT_DIR,"."}
   RUN_DIR: ${.PROJECT_DIR}/submodules/Megatron-LM
-  WORLD_SIZE: ${oc.muli:${slurm.sbatch.nodes},${slurm.sbatch.gpus_per_node}}
-  RANK: "$SLURM_RANK"
 
 # map megatron command to
 full_cmd: "${.dist_cmd} ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n   %',' %',${oc.argsmegatron:${backend.megatron}}}}"
