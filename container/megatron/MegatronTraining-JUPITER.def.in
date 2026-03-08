@@ -10,7 +10,7 @@ From: ${BASE_IMAGE}
 %environment
     export PYTHONNOUSERSITE=1
     export CUDA_HOME=/usr/local/cuda
-    export PATH=$CUDA_HOME/bin:$PATH
+    export PATH=/usr/bin:$CUDA_HOME/bin:$PATH
     export PYTHONPATH=/workspace/oellm-autoexp/submodules/Megatron-LM:/workspace/oellm-autoexp:${PYTHONPATH}
     export OELLM_AUTOEXP_CACHE=/workspace/cache
     export HF_HOME=/workspace/cache/hf
@@ -30,7 +30,7 @@ pip install --upgrade pip setuptools wheel
 
 python3 /workspace/oellm-autoexp/container/gen_constraints.py \
     --output /workspace/constraints.installed.txt \
-    --exclude pip setuptools wheel huggingface_hub
+    --exclude pip setuptools wheel huggingface_hub numpy
 
 if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
     python3 -m pip install --no-cache-dir \

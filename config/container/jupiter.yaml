@@ -11,5 +11,6 @@ bind:
 env:
   WANDB_MODE: "offline"
   MACHINE_NAME: "JUPITER"
-  PYTHONPATH: "."
+  PYTHONPATH: ".:submodules/Megatron-LM"
+  HF_HOME: ${oc.env:HF_HOME}
 python: "/usr/bin/python"

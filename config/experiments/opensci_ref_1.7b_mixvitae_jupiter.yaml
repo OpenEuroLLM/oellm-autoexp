@@ -2,6 +2,8 @@
 #
 # 1.7B dense model pretraining on MixtureVitae-v1-decontaminated (300B tokens)
 # 64 nodes (256 GH200 GPUs) on Jupiter
+#
+# After training completes, runs checkpoint conversion (dist->torch->HF).
 
 defaults:
   - /backend: megatron_torchrun_localaddr
@@ -9,7 +11,8 @@ defaults:
   - /slurm: jupiter
   - /job: default
   - /sweep: none
-  - override /backend/megatron: [base_reference, opensci_ref_1.7B, data_mixturevitae]
+  - /backend/megatron: [base_reference, opensci_ref_1.7B, data_mixturevitae]
+  - /postprocess: [ckpt_dist_to_torch_opensci, ckpt_convert_opensci, eval_opensci]
   - _self_
 
 index: 0
@@ -71,11 +74,12 @@ backend:
     overlap_grad_reduce: true
     recompute_activations: true
     ckpt_format: torch_dist
+    ckpt_convert_format: torch
+    ckpt_convert_save: ${job.base_output_dir}
     ckpt_fully_parallel_save: false
     async_save: false
 
     # Data
-    tokenizer_model: ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/tokenizer/gpt-neox-20b
     tokenizer_type: HuggingFaceTokenizer
     split: "989,10,1"
     num_workers: 4
@@ -89,6 +93,7 @@ backend:
     tensorboard_dir: ${job.base_output_dir}/tensorboard
     eval_interval: 71526
     eval_iters: 1
+    ckpt_step: ${backend.megatron.train_iters}
 
     aux:
       model_name: "dense1.7B"

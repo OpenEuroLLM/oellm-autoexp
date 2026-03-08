@@ -127,6 +127,11 @@ def _int_cast(value):
         return int(bool(value))
 
 
+def _pad_iter(step):
+    """Format a checkpoint step as Megatron's zero-padded directory name."""
+    return f"iter_{int(step):07d}"
+
+
 def _dict_merge(*mappings):
     merged = {}
     for mapping in mappings:
@@ -215,6 +220,7 @@ def register_default_resolvers(force: bool = False) -> None:
     OmegaConf.register_new_resolver("oc.leq", oc_leq, replace=True)
     OmegaConf.register_new_resolver("oc.geq", oc_geq, replace=True)
     OmegaConf.register_new_resolver("oc.if", oc_if, replace=True)
+    OmegaConf.register_new_resolver("oc.pad_iter", _pad_iter, replace=True)
 
     _REGISTRATION_SENTINEL["registered"] = True
 

@@ -17,6 +17,7 @@ srun:
 launcher_env_passthrough: true
 env:
   MACHINE_NAME: JUPITER
+  HF_HOME: ${oc.env:HF_HOME}
   HF_ALLOW_CODE_EVAL: "1"
   HF_DATASETS_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"

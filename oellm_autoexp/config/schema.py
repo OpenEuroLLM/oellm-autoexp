@@ -15,6 +15,8 @@ from typing import Any, TypedDict
 
 from compoconf import ConfigInterface, RegistrableConfigInterface, register_interface
 
+from oellm_autoexp.postprocess import PostProcessStepInterface
+
 # Import base classes from oellm_autoexp.hydra_staged_sweep
 from oellm_autoexp.hydra_staged_sweep.config.schema import (
     StagedSweepRoot,
@@ -94,6 +96,10 @@ class RootConfig(StagedSweepRoot):
     sweep: EmptyDict | SweepConfig = field(
         default_factory=EmptyDict
     )  # defines a surrounding sweep (already inherited from StagedSweepRoot)
+
+    postprocess: dict[str, PostProcessStepInterface.cfgtype] = field(
+        default_factory=dict
+    )  # optional post-processing steps (e.g. ckpt conversion, eval)
 
     metadata: dict[str, Any] = field(default_factory=dict)
 

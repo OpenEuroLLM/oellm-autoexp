@@ -1,0 +1,11 @@
+# @package _global_
+#
+# Run oellm-cli evaluation on dclm-core-22 task group.
+# Spawns a new SLURM job (via oellm schedule-eval).
+
+postprocess:
+  eval:
+    class_name: OELLMEvalStep
+    model_path: ${job.base_output_dir}/hf/${oc.pad_iter:${backend.megatron.ckpt_step}}
+    task_groups:
+      - dclm-core-22
