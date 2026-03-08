@@ -20,6 +20,7 @@ from oellm_autoexp.monitor.loop import MonitorLoop, JobFileStore, JobRecordConfi
 from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
 from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
 from oellm_autoexp.monitor.submission import SlurmJobConfig, LocalJobConfig
+from oellm_autoexp.slurm_gen import generate_script
 
 import oellm_autoexp.backends.megatron_backend  # noqa  - register
 from oellm_autoexp.config.schema import RootConfig, ConfigSetup, BackendInterface
@@ -109,6 +110,18 @@ def submit_jobs(
         session_id=session_id,
         submitted_job_ids=submitted_job_ids,
     )
+
+
+def generate_scripts(plan: ExecutionPlan) -> list[Path]:
+    """Generate sbatch scripts for all jobs in the plan without submitting."""
+    paths: list[Path] = []
+    for job in plan.jobs:
+        record = _build_job_record(plan, job, session_id="no-submit", local_mode=False)
+        slurm_cfg = record.definition.slurm
+        path = generate_script(slurm_cfg)
+        LOGGER.info("Generated script: %s", path)
+        paths.append(Path(path))
+    return paths
 
 
 def load_monitor_controller(
@@ -270,6 +283,7 @@ __all__ = [
     "ExecutionPlan",
     "SubmissionResult",
     "build_execution_plan",
+    "generate_scripts",
     "submit_jobs",
     "load_monitor_controller",
     "run_loop",

@@ -219,6 +219,8 @@ __marimo__/
 generated/
 
 monitor_state/
+
+results/
 # VsCode debugging and other stuff
 .vscode/
 

@@ -1,7 +1,8 @@
 # @package _global_
 
-# 50M dense model training with pull-based multi-stage cooldown
-# Translation of dense_50M_50BT.yaml to new composable sweep system
+# 50M dense model training with pull-based multi-stage cooldown on Leonardo
+# Translation of dense_xmas_50M.yaml (https://github.com/Niccolo-Ajroldi/autoexperiment/blob/oellm/scripts/dense/xmas/50M.yaml) 
+# to new composable sweep system
 
 defaults:
   - /backend: megatron_torchrun
@@ -16,24 +17,26 @@ index: 0
 stage: ""
 
 job:
-  base_output_dir: "dense_50M_sweep"
   name: "dense_50M_01_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_beta2${backend.megatron.adam_beta2}_${stage}"
+  base_output_dir: "results/tests/filtering/${job.name}"
   # resume: true
-
 
 backend:
   megatron:
     wandb_exp_name: "${job.name}"
-    wandb_project: oellm-train
+    wandb_project: sanity-checks
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
     # DATA
     data_path: [
-      /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_0,
-      /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_1,
-      /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_2,
-      /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_3,
-      /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_4,
-      /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_5  
+      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-actual,
+      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-distill,
+      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-diverse_qa_pairs,
+      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-extract_knowledge,
+      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-knowledge_list,
+      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-wrap_medium
     ]
     data_cache_path: /leonardo_scratch/large/userexternal/donutu00/MEGATRON_CACHEDIR
     seq_length: 4096
@@ -49,7 +52,7 @@ backend:
     hidden_size: 384
     ffn_hidden_size: 1536
     num_attention_heads: 6
-    num_query_groups: ${.num_attention_heads}
+    num_query_groups: ${.num_attention_heads} # no gqa when NUM_QUERY_GROUPS==NUM_ATTENTION_HEADS
     init_method_std: 0.02
     position_embedding_type: "rope"
     rotary_base: 10000
@@ -57,17 +60,17 @@ backend:
     attention_dropout: 0.0
     hidden_dropout: 0.0
     normalization: RMSNorm
-    norm_epsilon: 1.e-5
-    qk_layernorm: True
+    norm_epsilon: 1.e-5 # rmsnorm epsilon
+    qk_layernorm: True # enable qk-norm
     bf16: True
     swiglu: True
     untie_embeddings_and_output_weights: False
     use_flash_attn: True
-    attention_softmax_in_fp32: False
+    attention_softmax_in_fp32: False # OpenSci style
 
     # TRAINING, PARALLELISM
     recompute_activations: False
-    use_torch_fsdp2: False
+    use_torch_fsdp2: False # it's either this or the next 4 args
     tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
     context_parallel_size: 1
@@ -82,7 +85,7 @@ backend:
     # OPTIMIZER
     optimizer: adam
     adam_beta1: 0.9
-    adam_beta2: 0.99
+    adam_beta2: 0.99 # 0.99 for models up to 130M, then 0.95
     adam_eps: 1.e-8
     clip_grad: 1.0
     weight_decay: 0.1
@@ -91,7 +94,7 @@ backend:
     min_lr: 1.e-05
     lr_decay_style: WSD
     lr_wsd_decay_style: linear
-    lr_warmup_iters: 2000
+    lr_warmup_iters: 200 # Fixed for all. Decreased for debugging purposes
 
     # PROFILE
     profile: False
@@ -101,7 +104,9 @@ backend:
     profile_step_end: 12
 
     # EVALS
-    eval_interval: 3200
+    # Eval interval scales inversely with global batch size,
+    # calibrated so that gbsz=1024 evals every 200 iterations.
+    eval_interval: "${oc.eval:'int(204800 // ${backend.megatron.global_batch_size})'}"
     eval_iters: 100
 
     # LOGGING
@@ -109,22 +114,24 @@ backend:
     log_progress: True
     log_throughput: True
     tensorboard_queue_size: 5
+    log_timers_to_tensorboard: True
 
     # CHECKPOINT FORMAT
-    ckpt_format: "torch"
-    save_interval: 8000
+    ckpt_format: "torch_dist"
+    save_interval: 100
+    save: ${job.base_output_dir}/checkpoints
 
     # Base training configuration (for stable phase)
-    micro_batch_size: 8
+    micro_batch_size: 4
     global_batch_size: 64  # Will be overridden by sweep
-    lr: 1e-4  # Will be overridden by sweep
+    lr: 5.e-4  # Will be overridden by sweep
 
     # Auxiliary computation variables
     # Note: Computed fields (train_iters, lr_wsd_decay_iters, start_iter, start_iter_round)
     # are defined in the sweep defaults alongside the tokens they depend on,
     # so they get resolved together with stage-specific values
     aux:
-      tokens: 50_000_000_000  # Default: 50B tokens
+      tokens: 200_000_000  # Default: 200M tokens for debugging purposes
       decay_fraction: 0.0  # Default: no decay
       start_iter: 0  # only used in decay
       start_iter_round: 0 # only used in decay
@@ -132,7 +139,6 @@ backend:
 slurm:
   sbatch:
     nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
-
 
 # COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE
 sweep:
@@ -142,34 +148,26 @@ sweep:
   groups:
     - type: list
       configs:
-        - job.name: "dense_50M_01_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_beta2${backend.megatron.adam_beta2}_${stage}"
-          backend.megatron.wandb_exp_name: "${job.name}"
-          job.base_output_dir: "${job.base_output_dir}/${job.name}"
-          backend.megatron.wandb_save_dir: "${job.base_output_dir}"
+        - job.name: "dense_50M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
+          backend.megatron.wandb_exp_name: "\\${job.name}"
     
-# GROUP 1: Hyperparameter configurations (list of two product grids)
+    # GROUP 1: Hyperparameter configurations (list of two product grids)
     - type: list
       configs:
-        # Grid 1: 6 configurations (3 lr × 2 batch sizes)
+        # Grid 1: 35 configurations (1 lr × 3 batch sizes)
         - type: product
           params:
-            backend.megatron.lr: [2.5e-4, 5.e-4, 1.e-3]
-            backend.megatron.global_batch_size: [64, 128]
-
-        # Grid 2: 9 configurations (3 lr × 3 batch sizes)
-        - type: product
-          params:
-            backend.megatron.lr: [5.e-4, 1.e-3, 2.e-3]
-            backend.megatron.global_batch_size: [256, 512, 1024]
+            backend.megatron.lr: [5.e-4] # Reduced the options for debugging purposes
+            backend.megatron.global_batch_size: [16, 32, 64, 128]
 
     # GROUP 2: Multi-stage training (stable + cooldown/decay)
     # Uses a nested structure with defaults for decay stages
     - type: list
       configs:
-        # STABLE PHASE: Train for 50B tokens with no decay
+        # STABLE PHASE: Train for 200M tokens (reduced for debugging purposes) with no decay
         - stage: stable
 
-          backend.megatron.aux.tokens: 50_000_000_000
+          backend.megatron.aux.tokens: 200_000_000
           # Computed fields using ESCAPED OmegaConf interpolations (\\$ prevents early resolution)
           # These will be unescaped during sweep expansion and resolved with stage-specific values
           backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
@@ -193,14 +191,15 @@ sweep:
             backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
 
             # Checkpoint loading configuration
-            backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}"
+            backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/checkpoints"
             backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter_round}"
             backend.megatron.override_opt_param_scheduler: true
 
             # Start conditions: wait for stable to reach checkpoint (new async approach)
             job.start_condition:
               class_name: FileExistsCondition
-              path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}/latest_checkpointed_iteration.txt"
+              # path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}"
+              path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(\\${backend.megatron.aux.start_iter_round}).zfill(7)'}"
 
             # Cancel conditions: cancel if stable job fails
             job.cancel_condition:
@@ -209,45 +208,30 @@ sweep:
               pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
           configs:
             # Each decay stage only needs to specify its unique stage and tokens
-            - stage: decay6B
-              backend.megatron.aux.tokens: 6_000_000_000
-            - stage: decay12B
-              backend.megatron.aux.tokens: 12_000_000_000
-            - stage: decay30B
-              backend.megatron.aux.tokens: 30_000_000_000
-            - stage: decay50B
-              backend.megatron.aux.tokens: 50_000_000_000
+            - stage: decay50MT
+              backend.megatron.aux.tokens: 50_000_000
+            - stage: decay100MT
+              backend.megatron.aux.tokens: 100_000_000
+            - stage: decay200MT
+              backend.megatron.aux.tokens: 200_000_000
+  
+  # Filter out runs in which the warmup iters take more than 30% of total training iterations & explore 
+  # small gbsz (16) only up to and incl. 100MT.
+  # The stable stage is always kept (when warmup check passes) because decay stages depend on it.
+  filter: "\\${oc.eval:'\\${backend.megatron.lr_warmup_iters} / \\${backend.megatron.train_iters} < 0.3 and (\"\\${stage}\" == \"stable\" or \\${backend.megatron.aux.tokens} <= 100_000_000 or \\${backend.megatron.global_batch_size} >= 32)'}"
 
 
-# Summary of what this creates:
-# - GROUP 1: 15 hyperparameter configurations
-#   - Grid 1: 6 configs (3 lr × 2 batch sizes)
-#   - Grid 2: 9 configs (3 lr × 3 batch sizes)
-#   - Union (list mode): 6 + 9 = 15 configs
-# - GROUP 2: 5 stages per config
-#   - Stable: 1 config
-#   - Nested group with defaults: 4 decay stages
-#     - Common config in 'defaults' (20% decay, checkpoint loading, conditions)
-#     - Each stage overrides only stage and tokens
-#   - Total: 1 + 4 = 5 stages
-# - Outer product: 15 hyperparameter configs × 5 stages = 75 total jobs
-#
-# Benefits of using group-level defaults:
-# 1. DRY (Don't Repeat Yourself) - common config defined once
-# 2. Easy to modify - change decay_fraction, start_conditions, etc. in one place
-# 3. Clear structure - defaults vs. stage-specific parameters
-# 4. No exotic YAML features (vs. anchors) - more maintainable
-#
-# OmegaConf interpolation strategy:
-# 1. Base config (backend.megatron.aux) defines interpolations for start_iter, start_iter_round
-# 2. Defaults override primitive values (decay_fraction, tokens)
-# 3. Interpolations in base config automatically pick up overridden values
-# 4. This ensures correct evaluation order: tokens → train_iters → start_iter → start_iter_round
-#
-# Pull-based advantages over push-based:
-# 1. All jobs planned upfront - full visibility
-# 2. No dynamic job creation during monitoring
-# 3. Cooldown jobs wait for checkpoints (start_conditions with FileExistsCondition)
-# 4. Automatic cancellation if stable job fails (cancel_conditions)
-# 5. Uses stable log symlink for reliable monitoring
-# 6. Unified condition system (same conditions for start gating and failure detection)
+### Initial number of scripts/configurations
+# 1 lr 4 batch sizes x (1 stable + 3 decay) = 16 scripts
+
+### Expected filtered out scripts/configs because of warmup iters > 30% of total iters: 
+# - (1 stable (200MT) + 3 decay (50MT, 100MT, 200MT)) x 1 GBSZ (128) = 4 scripts
+# - 2 decay (50MT, 100MT) x 1 GBSZ (64) = 2 scripts
+# - 1 decay50MT x 1 GBSZ (32) = 1 script
+
+### Expected filtered out scripts/configs because of small gbsz and large D (too many training iters): 
+# - 1 decay200MT x1 GBSZ (1) = 1 script
+
+### Total expected filtered out scripts: 4 + 2 + 1 + 1 = 8 scripts
+
+### Total expected generated scripts/configurations = 16 - 8 = 8

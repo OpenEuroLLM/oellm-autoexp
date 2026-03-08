@@ -109,6 +109,7 @@ dino_teacher_temp: 0.07  # teacher temperature
 dino_warmup_teacher_temp: 0.04  # warump teacher temperature
 dino_warmup_teacher_temp_epochs: 30  # warmup teacher temperaure epochs
 disable_bf16_reduced_precision_matmul: false  # If True, sets torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction=False to prevent matmul from using reduced precision accumulation when using BF16.
+disable_bias_linear: false  # Disable bias in the linear layers (standalone flag, equivalent to setting add_bias_linear: false).
 disable_chunked_prefill: true  # ==SUPPRESS==
 disable_jit_fuser: false  # Disable the JIT fuser.
 disable_mamba_mem_eff_path: false  # Disable Mamba efficient path.
@@ -579,6 +580,7 @@ suggested_communication_unit_size: null  # Specifies the number of elements to c
 swiglu: false  # Use gated linear units and SiLU activation instead of default gelu
 swin_backbone_type: tiny  # choices: ['tiny', 'base', 'h3'] | pretraining objectives
 symmetric_ar_type: null  # choices: ['two_shot', 'one_shot', 'multimem_all_reduce', None] | What type of symmetric all reduce to use. The default is none which is no use of symetric memory
+te_fallback_layernorm_linear: false  # Use TransformerEngine fallback (non-fused) implementation for LayerNorm-Linear.
 te_precision_config_file: null  # Configuration file to select per-module precision overrides. See TransformerEngineMixedPrecision.md
 te_rng_tracker: false  # Use the Transformer Engine version of the random number generator. Required for CUDA graphs support.
 tensor_model_parallel_size: 1  # Degree of tensor model parallelism.
