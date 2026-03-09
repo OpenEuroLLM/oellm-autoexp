@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import shlex
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 from compoconf import ConfigInterface, register

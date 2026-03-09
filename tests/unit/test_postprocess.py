@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from oellm_autoexp.postprocess.base import PostProcessStepInterface
 from oellm_autoexp.postprocess.megatron_to_hf import MegatronToHFStep, MegatronToHFStepConfig
