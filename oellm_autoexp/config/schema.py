@@ -82,19 +82,13 @@ class RootConfig(StagedSweepRoot):
 
     # oellm-specific configuration sections
     slurm: SlurmConfig = field(default_factory=MISSING)  # defines slurm setup
-    job: SlurmJobConfig = field(
-        default_factory=MISSING
-    )  # defines job interactions (when to start, cancel, finish)
-    backend: BackendInterface.cfgtype = field(
-        default_factory=MISSING
-    )  # defines what is actually running
-    container: EmptyDict | ContainerConfig = field(
-        default_factory=EmptyDict
-    )  # defines container setup
+    job: SlurmJobConfig = field(default_factory=MISSING)  # defines job interactions (when to start, cancel, finish)
+    backend: BackendInterface.cfgtype = field(default_factory=MISSING)  # defines what is actually running
+    container: EmptyDict | ContainerConfig = field(default_factory=EmptyDict)  # defines container setup
     sweep: EmptyDict | SweepConfig = field(
         default_factory=EmptyDict
     )  # defines a surrounding sweep (already inherited from StagedSweepRoot)
-
+    aux: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
