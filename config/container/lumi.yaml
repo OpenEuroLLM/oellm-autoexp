@@ -1,6 +1,5 @@
 class_name: Container
-# image: ${oc.env:CONTAINER_CACHE_DIR}/MegatronTrainingLumi_x86_64.sif
-image: /scratch/project_462000963/user/korbi/container_cache/MegatronTrainingLumi_x86_64_202603261427.sif
+image: ${oc.env:CONTAINER_CACHE_DIR}/untested/MegatronTrainingLumi_x86_64.sif
 runtime: singularity
 bind:
   [
@@ -13,9 +12,6 @@ bind:
   ]
 pwd: ${oc.env:PWD}
 env:
-  CC: "gcc-12"
-  CXX: "g++-12"
-  WANDB_MODE: "offline"
   MACHINE_NAME: "LUMI"
   PYTHONPATH: "."
 python: "python3"

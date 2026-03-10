@@ -2,8 +2,8 @@ defaults:
   - _self_
 
 template_path: templates/base.sbatch
-script_dir: ${job.base_output_dir}
-log_dir: ${job.base_output_dir}
+script_dir: ${job.base_output_dir}/${job.name}/scripts
+log_dir: ${job.base_output_dir}/${job.name}/logs
 array: false
 launcher_cmd: "python"
 launcher_env_passthrough: false

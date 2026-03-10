@@ -12,7 +12,6 @@ srun:
   exclusive: true
   wait: 60
   jobid: "$SLURM_JOB_ID"
-  network: "disable_rdzv_get"
 launcher_env_passthrough: true
 env:
   MACHINE_NAME: LUMI
@@ -22,10 +21,6 @@ env:
   HSA_ENABLE_SDMA: 0
   NCCL_SOCKET_IFNAME: "hsn0,hsn1,hsn2,hsn3"
   NCCL_NET_GDR_LEVEL: "PHB"
-  NVTE_DEBUG: "0"
-  NVTE_DEBUG_LEVEL: "0"
-  CC: "gcc-12"
-  CXX: "g++-12"
 sbatch:
   nodes: 1
   ntasks_per_node: 8
