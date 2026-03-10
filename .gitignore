@@ -229,3 +229,6 @@ results/
 helper_scripts/
 
 sync_to_jupiter.sh
+
+logs/
+output/
