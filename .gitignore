@@ -230,3 +230,5 @@ sync_to_jupiter.sh
 sync_to_leonardo.sh
 slurm_jupiter.sh
 slurm_juwels.sh
+logs/
+output/
