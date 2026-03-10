@@ -25,7 +25,7 @@ slurm:
 
 
 aux:
-  cooldown_tokens: [10_000_000_000, 50_000_000_000, 70_000_000_000, 100_000_000_000, 130_000_000_000, 200_000_000_000] 
+  cooldown_tokens: [10_000_000_000, 50_000_000_000, 70_000_000_000, 100_000_000_000, 130_000_000_000, 200_000_000_000]
   seq_len: ${backend.megatron.seq_length}
   gbsz: ${backend.megatron.global_batch_size}
   cooldown_fraction: 0.1
