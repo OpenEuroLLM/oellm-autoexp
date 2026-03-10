@@ -1,14 +1,14 @@
 # Plan: Integrate Titan-OELLM / TorchTitan Backend
 
 ## Goals
-- Add a new backend adapter that can launch TorchTitan/Titan-OELLM runs via the `submodules/titan-oellm` subtree.
+- Add a new backend adapter that can launch TorchTitan/Titan-OELLM runs by way of the `submodules/titan-oellm` subtree.
 - Provide Hydra config defaults for the new backend.
 - Ensure backend registration is wired into config loading and orchestration.
 - Add minimal tests to validate command construction and optional cluster-args resolution.
 
 ## Scope & Assumptions
 - TorchTitan training entry point is `torchrun -m torchtitan.train`.
-- Titan-OELLM provides CLI args via `titan_oellm.cluster_config.get_cli_args(...)` and expects `--key=value` formatting.
+- Titan-OELLM provides CLI args by way of `titan_oellm.cluster_config.get_cli_args(...)` and expects `--key=value` formatting.
 - Planning/launch may happen on hosts without Titan-OELLM deps; backend should allow skipping live cluster-path validation and/or using explicit `cluster_args`.
 
 ## Implementation Steps
@@ -24,7 +24,7 @@
    - Ensure optional imports are guarded with a clear error if resolution is requested but the module is unavailable.
 
 2. **Registry Wiring**
-   - Register the backend via `@register` (compoconf).
+   - Register the backend by way of `@register` (compoconf).
    - Update `oellm_autoexp/config/loader.py` and `oellm_autoexp/orchestrator.py` to import the new backend for registration side effects.
 
 3. **Hydra Config**
@@ -38,10 +38,10 @@
    - Add unit tests for `TitanBackend` command construction:
      - With explicit `cluster_args` (no import needed).
      - With `resolve_cluster_args=True` using a monkeypatched `titan_oellm.cluster_config.get_cli_args`.
-   - Confirm registry instantiation via config loader if applicable.
+   - Confirm registry instantiation by way of config loader if applicable.
 
 5. **Docs (Optional but Recommended)**
-   - Brief README note on selecting the new backend and required environment variables (e.g., `TITAN_USER`).
+   - Brief README note on selecting the new backend and required environment variables (for example, `TITAN_USER`).
 
 ## Deliverables
 - New backend module and config.

@@ -65,7 +65,9 @@ def build_execution_plan(
     points = expand_sweep(root.sweep)
     points_by_idx = {point.index: point for point in points}
     if subset_indices:
-        points_by_idx = {idx: point for idx, point in points_by_idx.items() if idx in subset_indices}
+        points_by_idx = {
+            idx: point for idx, point in points_by_idx.items() if idx in subset_indices
+        }
         if not points_by_idx:
             raise ValueError(f"No sweep points match indices: {sorted(subset_indices)}")
 
@@ -76,7 +78,9 @@ def build_execution_plan(
         config_class=RootConfig,
     )
 
-    return ExecutionPlan(config=root, config_setup=config_setup, sweep_points=points_by_idx, jobs=jobs)
+    return ExecutionPlan(
+        config=root, config_setup=config_setup, sweep_points=points_by_idx, jobs=jobs
+    )
 
 
 def submit_jobs(
@@ -90,7 +94,9 @@ def submit_jobs(
     store, session_id = _ensure_state_store(plan, session_id=session_id)
     client = slurm_client or SlurmClient(SlurmClientConfig())
     local_client = LocalCommandClient(LocalCommandClientConfig())
-    loop = MonitorLoop(store, slurm_client=client, local_client=local_client, no_error_catching=no_error_catching)
+    loop = MonitorLoop(
+        store, slurm_client=client, local_client=local_client, no_error_catching=no_error_catching
+    )
 
     submitted_job_ids: list[str] = []
     for job in plan.jobs:
@@ -120,7 +126,9 @@ def load_monitor_controller(
     local_client = LocalCommandClient(LocalCommandClientConfig())
     loop = MonitorLoop(store, slurm_client=client, local_client=local_client)
 
-    return SubmissionResult(loop=loop, state_store=store, session_id=session_id, submitted_job_ids=[])
+    return SubmissionResult(
+        loop=loop, state_store=store, session_id=session_id, submitted_job_ids=[]
+    )
 
 
 def run_loop(controller: MonitorLoop) -> None:
@@ -138,7 +146,9 @@ def run_loop_sync(controller: MonitorLoop) -> None:
     run_loop(controller)
 
 
-def _ensure_state_store(plan: ExecutionPlan, *, session_id: str | None = None) -> tuple[JobFileStore, str]:
+def _ensure_state_store(
+    plan: ExecutionPlan, *, session_id: str | None = None
+) -> tuple[JobFileStore, str]:
     monitor_state_dir = Path(plan.config_setup.monitor_state_dir)
     if not session_id:
         import time
@@ -165,7 +175,9 @@ def _build_job_record(
 
     backend = job.config.backend.instantiate(BackendInterface)
     launch_cmd = backend.build_launch_command()
-    script_path = job.config.slurm.script_path or Path(job.config.slurm.script_dir) / f"{job_name}.sbatch"
+    script_path = (
+        job.config.slurm.script_path or Path(job.config.slurm.script_dir) / f"{job_name}.sbatch"
+    )
     slurm_config = replace(
         job.config.slurm,
         name=job_name,

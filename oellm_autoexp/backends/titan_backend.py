@@ -32,7 +32,9 @@ class TitanBackendConfig(NonStrictDataclass, BaseBackendConfig):
     env: dict[str, str] = field(default_factory=dict)
 
     # Job configuration (strict schema by default)
-    titan: TitanJobConfigStrict | TitanJobConfigGeneric = field(default_factory=TitanJobConfigStrict)
+    titan: TitanJobConfigStrict | TitanJobConfigGeneric = field(
+        default_factory=TitanJobConfigStrict
+    )
 
     # Optional extension hooks
     custom_config_module: str = ""
@@ -203,7 +205,9 @@ class TitanBackend(BaseBackend):
             module = importlib.import_module(self.config.custom_config_module)
         except Exception as exc:
             if self.config.require_custom_module:
-                raise RuntimeError(f"custom_config_module not importable: {self.config.custom_config_module}") from exc
+                raise RuntimeError(
+                    f"custom_config_module not importable: {self.config.custom_config_module}"
+                ) from exc
             LOGGER.warning(
                 "custom_config_module not importable (%s); skipping schema merge.",
                 self.config.custom_config_module,
@@ -213,7 +217,9 @@ class TitanBackend(BaseBackend):
         custom_cls = getattr(module, "JobConfig", None)
         if custom_cls is None:
             if self.config.require_custom_module:
-                raise RuntimeError(f"custom_config_module missing JobConfig: {self.config.custom_config_module}")
+                raise RuntimeError(
+                    f"custom_config_module missing JobConfig: {self.config.custom_config_module}"
+                )
             LOGGER.warning("custom_config_module missing JobConfig; skipping schema merge.")
             return None
 

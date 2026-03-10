@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""
-Generate a compoconf-compatible dataclass snapshot for TorchTitan/Titan-OELLM. Use as:
-PYTHONPATH=. python3 scripts/generate_titan_dataclass.py --help --custom-module oellm_autoexp.titan_custom_config:JobConfig
+"""Generate a compoconf-compatible dataclass snapshot for TorchTitan/Titan-
+OELLM.
+
+Use as:
+PYTHONPATH=. python3 scripts/generate_titan_dataclass.py --custom-module oellm_autoexp.titan_custom_config:JobConfig
 """
 
 from __future__ import annotations
@@ -65,7 +67,8 @@ def _import_symbol(path: str):
 
 
 def _merge_configs(base, custom):
-    """Merge dataclass definitions (mirrors torchtitan ConfigManager._merge_configs)."""
+    """Merge dataclass definitions (mirrors torchtitan
+    ConfigManager._merge_configs)."""
     from dataclasses import field, fields, is_dataclass, make_dataclass
 
     result = []
@@ -73,11 +76,7 @@ def _merge_configs(base, custom):
     c_map = {f.name: f for f in fields(custom)}
 
     for name, f in b_map.items():
-        if (
-            name in c_map
-            and is_dataclass(f.type)
-            and is_dataclass(c_map[name].type)
-        ):
+        if name in c_map and is_dataclass(f.type) and is_dataclass(c_map[name].type):
             m_type = _merge_configs(f.type, c_map[name].type)
             result.append((name, m_type, field(default_factory=m_type)))
         elif name in c_map:
@@ -233,7 +232,7 @@ def generate_schema(output: Path, base_cls: type, custom_cls: type | None) -> No
         cls_name = "JobConfig" if cls is root_cls else cls.__name__
         lines.append(f"class {cls_name}:")
         if cls is root_cls:
-            lines.append("    class_name: str = \"TitanJobConfig\"")
+            lines.append('    class_name: str = "TitanJobConfig"')
         for f in dataclasses.fields(cls):
             if cls is root_cls and f.name == "class_name":
                 continue

@@ -1,6 +1,6 @@
 # Titan/TorchTitan Backend (YAML-First)
 
-This repo now supports a TorchTitan/Titan‑OELLM backend where **the YAML config is the single source of truth**. The backend generates a TorchTitan TOML on the fly and launches `torchtitan.train` via `torchrun`.
+This repository now supports a TorchTitan/Titan‑OELLM backend where **the YAML config is the single source of truth**. The backend generates a TorchTitan TOML on the fly and launches `torchtitan.train` by way of `torchrun`.
 
 ## How It Works
 

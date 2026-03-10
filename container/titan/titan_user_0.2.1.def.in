@@ -35,7 +35,7 @@ From: ${BASE_IMAGE}
     pip install --no-cache-dir array-record black flake8 mypy etcd3 python-etcd torchelastic
     pip install --no-cache-dir liger-kernel
     pip install --no-cache-dir hydra-core omegaconf compoconf networkx tyro
-    
+
     if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
     python3 -m pip install --no-cache-dir \
         -r "/workspace/${REQUIREMENTS_BASENAME}"
@@ -67,12 +67,3 @@ From: ${BASE_IMAGE}
     Base nvcr.io/nvidia/pytorch:26.01-py3
     PyTorch nightly 2.10 (CUDA 13.0)
     Description Titan-OELLM container for TorchTitan 0.2.1
-
-
-
-
-
-
-
-
-

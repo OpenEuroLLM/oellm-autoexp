@@ -8,17 +8,17 @@ Make a single YAML config (Hydra/compoconf) the source of truth for TorchTitan/T
 - **Schema parity**: TorchTitan config structure is represented as nested dataclasses in compoconf.
 - **Schema-only vs full validation**: can plan without Titan deps, but optionally validate against TorchTitan when available.
 - **Extensibility**: user extensions are first-class, not an afterthought.
-- **Disambiguation via Union + class_name**: compoconf uses `class_name` to select strict vs generic schema.
+- **Disambiguation by way of Union + class_name**: compoconf uses `class_name` to select strict vs generic schema.
 
 ## Design Overview
 
 ### 1) Schema Source
 - Use TorchTitan’s nested dataclasses as the “ground truth” schema:
-  - `torchtitan.config.JobConfig` (and Titan‑OELLM extensions, e.g. `titan_oellm.configs.sci_job_config.JobConfig`).
+  - `torchtitan.config.JobConfig` (and Titan‑OELLM extensions, for example `titan_oellm.configs.sci_job_config.JobConfig`).
 - Provide a **generated snapshot** in `oellm_autoexp/backends/titan/config_schema.py` to enable schema-only mode.
 
 ### 2) Handling User-Extended Config Classes
-TorchTitan already supports user extensions via `job.custom_config_module` and a merge routine (`ConfigManager._merge_configs`). We can emulate that.
+TorchTitan already supports user extensions by way of `job.custom_config_module` and a merge routine (`ConfigManager._merge_configs`). We can emulate that.
 
 **Proposed mechanism**
 - YAML exposes:
@@ -72,7 +72,7 @@ This mirrors TorchTitan behavior while allowing planning on login nodes.
      - Fields for `custom_config_module`, `require_custom_module`, `full_schema_validation`.
      - `validate()` in two modes:
        - Schema-only (generated snapshot).
-       - Full validation via TorchTitan `ConfigManager` if available.
+       - Full validation by way of TorchTitan `ConfigManager` if available.
 
 3. **Custom config merge helper**
    - Implement a small helper that mirrors TorchTitan’s `_merge_configs` logic (reuse code with attribution or call into TorchTitan when available).
@@ -93,10 +93,9 @@ This mirrors TorchTitan behavior while allowing planning on login nodes.
 
 ## User Experience
 - Users write a **single YAML** config.
-- Optional custom config modules are set via `backend.titan.custom_config_module`.
-- All overrides and sweeps are done via Hydra overrides.
+- Optional custom config modules are set by way of `backend.titan.custom_config_module`.
+- All overrides and sweeps are done by way of Hydra overrides.
 - The backend emits the correct TorchTitan/Titan‑OELLM CLI, using YAML as the canonical config.
 
 ## Open Questions
 - Should the generator accept multiple extension modules and merge them in order? (TorchTitan currently supports only one.)
-

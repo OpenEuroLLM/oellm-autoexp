@@ -1,7 +1,8 @@
 """Custom TorchTitan/Titan-OELLM model overrides.
 
-This module is imported via torchtitan's experimental.custom_import hook.
-It registers additional gpt_plus flavors without modifying submodules.
+This module is imported via torchtitan's experimental.custom_import
+hook. It registers additional gpt_plus flavors without modifying
+submodules.
 """
 
 from titan_oellm.models import gpt_plus

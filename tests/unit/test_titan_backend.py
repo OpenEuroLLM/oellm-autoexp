@@ -41,6 +41,6 @@ def test_titan_backend_applies_cluster_args(tmp_path, monkeypatch):
 
     text = (tmp_path / "config.titan.toml").read_text()
     assert "[model]" in text
-    assert "flavor = '1B'" in text or "flavor = \"1B\"" in text
+    assert "flavor = '1B'" in text or 'flavor = "1B"' in text
     assert "[training]" in text
     assert "steps = 123" in text

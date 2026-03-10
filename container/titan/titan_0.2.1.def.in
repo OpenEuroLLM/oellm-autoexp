@@ -32,7 +32,7 @@ From: nvcr.io/nvidia/pytorch:26.01-py3
     pip install --no-cache-dir array-record black flake8 mypy etcd3 python-etcd torchelastic
     pip install --no-cache-dir liger-kernel
     pip install --no-cache-dir hydra-core omegaconf compoconf networkx tyro
-    
+
 
     # Create lib -> lib.real symlink for Triton 3.4+ compatibility
     # NVIDIA containers store CUDA compat libraries in lib.real/ but Triton expects lib/
@@ -60,12 +60,3 @@ From: nvcr.io/nvidia/pytorch:26.01-py3
     Base nvcr.io/nvidia/pytorch:26.01-py3
     PyTorch nightly 2.10 (CUDA 13.0)
     Description Titan-OELLM container for TorchTitan 0.2.1
-
-
-
-
-
-
-
-
-
