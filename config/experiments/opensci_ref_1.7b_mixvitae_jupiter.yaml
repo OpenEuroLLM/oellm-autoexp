@@ -101,6 +101,8 @@ backend:
       tokens: 300_000_000_000
 
 slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
   sbatch:
     nodes: 64
     time: "12:00:00"
