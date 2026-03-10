@@ -1,6 +1,6 @@
 # @package _global_
 #
-# Qwen3-235B scaling
+# Qwen3-like 10B / 1.7B MoE
 
 defaults:
   - /backend: megatron
@@ -11,72 +11,66 @@ defaults:
   - /backend/megatron: base
   - _self_
 
+index: 0
+stage: "all"
+
 job:
   base_output_dir: "${oc.concat:${oc.env:OUTPUT_DIR},/distributed-training-benchmarking}"
-  name: "LUMI_qwen3_235B_nodes${slurm.sbatch.nodes}_gbsz${backend.megatron.global_batch_size}"
-  log_path: ${.base_output_dir}/${.name}/logs/%x-%j.log
+  name: "LUMI_qwen3_like_10B_1.7B_nodes${slurm.sbatch.nodes}_gbsz${backend.megatron.global_batch_size}"
   log_path_current: ${.base_output_dir}/${.name}/logs/latest.log
+  log_path: ${.base_output_dir}/${.name}/logs/%x-%j.log
 
 backend:
   megatron:
-    wandb_exp_name: ${job.name}
+    wandb_exp_name: "${job.name}"
     wandb_project: distributed-training-benchmarking
-    wandb_save_dir: ${job.base_output_dir}/${job.name}
-    tensorboard_dir: ${job.base_output_dir}/${job.name}/tensorboard
 
     # MODEL ARCHITECTURE
-    num_layers: 94
-    hidden_size: 4096
-    ffn_hidden_size: 12288
-    num_attention_heads: 64
-    num_query_groups: 4
+    use_mcore_models: true
+    num_layers: 18
+    hidden_size: 2048
+    moe_ffn_hidden_size: 1408
+    num_attention_heads: 16
     kv_channels: 128
-    group_query_attention: true
     seq_length: 4096
     max_position_embeddings: 32768
-    
+
     # EMBEDDING & NORMALIZATION
     untie_embeddings_and_output_weights: true
     add_bias_linear: false
+    add_position_embedding: false
     normalization: RMSNorm
     norm_epsilon: 1.0e-6
     qk_layernorm: true
-    
+
     # POSITION ENCODING
     position_embedding_type: rope
     rotary_base: 1000000
-    
+
     # ACTIVATION & INITIALIZATION
     swiglu: true
     init_method_std: 0.02
-    
+
     # DROPOUT
     attention_dropout: 0.0
     hidden_dropout: 0.0
-    
+
     # ATTENTION
     use_flash_attn: true
     attention_softmax_in_fp32: true
     masked_softmax_fusion: false
-    
-    # TOKENIZER
-    tokenizer_model: openeurollm/tokenizer-256k
-    tokenizer_type: HuggingFaceTokenizer
-    vocab_size: 256000
 
-    # DATA
-    data_path:
-      - /scratch/project_462000963/users/vitiugin/data_tok/openeurollm-256k/nemotron-cc-high-actual/merged_batch_001_text_document
-    data_cache_path: /flash/project_462000963/users/villekom/megatron_cache
-    num_workers: 4
+    # TOKENIZER
+    tokenizer_model: EleutherAI/gpt-neox-20b
+    tokenizer_type: HuggingFaceTokenizer
+    make_vocab_size_divisible_by: 128
 
     # TRAINING
     micro_batch_size: 1
-    global_batch_size: 2048
-    train_iters: 50  # Adjust as needed
-    lr_decay_iters: 50 # This needs to be set as well for whatever stupid reason, normally it adjusts automatically to train-iters
+    global_batch_size: 1024
+    train_samples: 85449218
     bf16: true
-    
+
     # OPTIMIZER
     optimizer: adam
     adam_beta1: 0.9
@@ -84,77 +78,58 @@ backend:
     adam_eps: 1.0e-8
     clip_grad: 1.0
     weight_decay: 0.1
-    
+
     # LEARNING RATE SCHEDULER
     lr: 3.0e-4
     min_lr: 3.0e-5
     lr_decay_style: cosine
-    
+    lr_warmup_samples: 512000
+    lr_decay_samples: 85449218
+
     # PARALLELISM
-    pipeline_model_parallel_size: 16
+    pipeline_model_parallel_size: 1
     expert_model_parallel_size: 8
-    decoder_first_pipeline_num_layers: 5
-    decoder_last_pipeline_num_layers: 5
     use_distributed_optimizer: true
     sequence_parallel: true
-    context_parallel_size: 2
-    
+    context_parallel_size: 1
+
     # DISTRIBUTED TRAINING
     distributed_timeout_minutes: 30
     overlap_grad_reduce: true
     overlap_param_gather: true
     enable_gloo_process_groups: false
-    
+
     # MOE SETTINGS
-    moe_ffn_hidden_size: 1536
     num_experts: 64
     moe_router_topk: 8
-    moe_router_dtype: fp64  # fp64 avoids faulty TE kernel on LUMI
+    moe_router_dtype: fp64
     moe_router_load_balancing_type: aux_loss
     moe_aux_loss_coeff: 0.001
     moe_grouped_gemm: true
-    moe_token_dispatcher_type: allgather
-    moe_router_force_load_balancing: true  # WARNING: Testing only! Remove for real training
-    
+    moe_token_dispatcher_type: alltoall
+    moe_router_force_load_balancing: true
+
     # FUSION FLAGS
     gradient_accumulation_fusion: false
     bias_dropout_fusion: false
     apply_rope_fusion: false
 
     # EVALUATION & LOGGING
-    eval_interval: 50
-    eval_iters: 1
+    eval_interval: 5000
+    eval_iters: 100
     log_interval: 1
+    log_progress: true
     log_throughput: true
-    log_timers_to_tensorboard: true
-    log_memory_to_tensorboard: true
-    log_world_size_to_tensorboard: true
-    enable_one_logger: false
-    
-    # CHECKPOINT
-    save_interval: null
-    save: null
-    load: null
-
-    # STATE MACHINE
-    rerun_mode: disabled
+    tensorboard_queue_size: 5
 
 slurm:
   sbatch:
-    nodes: 1  # Override in sweep
+    nodes: 8
     ntasks_per_node: 8
     cpus_per_task: 7
     gpus_per_node: 8
-    time: "03:00:00"
+    time: "10:00"
     exclusive: true
-    partition: standard-g
+    partition: dev-g
   env:
     CUDA_DEVICE_MAX_CONNECTIONS: 1
-    TOKENIZERS_PARALLELISM: false
-    WANDB_MODE: online
-
-sweep:
-  type: list
-  groups:
-    - params:
-        slurm.sbatch.nodes: [32, 64, 128, 512, 1024]

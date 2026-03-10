@@ -1,6 +1,6 @@
 # @package _global_
 #
-# Qwen3-235B scaling
+# Qwen3-30B scaling
 
 defaults:
   - /backend: megatron
@@ -13,7 +13,7 @@ defaults:
 
 job:
   base_output_dir: "${oc.concat:${oc.env:OUTPUT_DIR},/distributed-training-benchmarking}"
-  name: "LUMI_qwen3_235B_nodes${slurm.sbatch.nodes}_gbsz${backend.megatron.global_batch_size}"
+  name: "LUMI_qwen3_30B_nodes${slurm.sbatch.nodes}_gbsz${backend.megatron.global_batch_size}"
   log_path: ${.base_output_dir}/${.name}/logs/%x-%j.log
   log_path_current: ${.base_output_dir}/${.name}/logs/latest.log
 
@@ -25,10 +25,10 @@ backend:
     tensorboard_dir: ${job.base_output_dir}/${job.name}/tensorboard
 
     # MODEL ARCHITECTURE
-    num_layers: 94
-    hidden_size: 4096
-    ffn_hidden_size: 12288
-    num_attention_heads: 64
+    num_layers: 48
+    hidden_size: 2048
+    ffn_hidden_size: 6144
+    num_attention_heads: 32
     num_query_groups: 4
     kv_channels: 128
     group_query_attention: true
@@ -91,13 +91,11 @@ backend:
     lr_decay_style: cosine
     
     # PARALLELISM
-    pipeline_model_parallel_size: 16
+    pipeline_model_parallel_size: 2
     expert_model_parallel_size: 8
-    decoder_first_pipeline_num_layers: 5
-    decoder_last_pipeline_num_layers: 5
     use_distributed_optimizer: true
     sequence_parallel: true
-    context_parallel_size: 2
+    context_parallel_size: 1
     
     # DISTRIBUTED TRAINING
     distributed_timeout_minutes: 30
@@ -106,8 +104,8 @@ backend:
     enable_gloo_process_groups: false
     
     # MOE SETTINGS
-    moe_ffn_hidden_size: 1536
-    num_experts: 64
+    moe_ffn_hidden_size: 768
+    num_experts: 128
     moe_router_topk: 8
     moe_router_dtype: fp64  # fp64 avoids faulty TE kernel on LUMI
     moe_router_load_balancing_type: aux_loss
@@ -151,10 +149,13 @@ slurm:
   env:
     CUDA_DEVICE_MAX_CONNECTIONS: 1
     TOKENIZERS_PARALLELISM: false
+    NCCL_DEBUG: INFO
+    NCCL_DEBUG_SUBSYS: INIT
+    NCCL_DEBUG_FILE: ${job.base_output_dir}/${job.name}/logs/nccl.log
     WANDB_MODE: online
 
 sweep:
   type: list
   groups:
     - params:
-        slurm.sbatch.nodes: [32, 64, 128, 512, 1024]
+        slurm.sbatch.nodes: [4, 8, 16, 32, 64, 128, 512, 1024]

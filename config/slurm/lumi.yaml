@@ -6,13 +6,14 @@ template_path: templates/lumi.sbatch
 launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
   export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
   export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; export AITER_JIT_DIR=/tmp/$USER/aiter_jit_dir ; \\\n\
+  export ROCM_ROOT=/opt/rocm ; export LD_LIBRARY_PATH=$ROCM_ROOT/lib:/usr/lib:$LD_LIBRARY_PATH ; \\\n\
+  export SINGULARITYENV_LD_PRELOAD=$ROCM_ROOT/lib/librccl.so:/usr/lib/libfabric.so:/usr/lib/libcxi.so:$LD_PRELOAD ; \\\n\
   ${oc.select:container.runtime,singularity} exec \
   ${oc.select:container.image,container.sif}"
 srun:
   exclusive: true
   wait: 60
   jobid: "$SLURM_JOB_ID"
-  network: "disable_rdzv_get"
 launcher_env_passthrough: true
 env:
   MACHINE_NAME: LUMI
@@ -22,10 +23,6 @@ env:
   HSA_ENABLE_SDMA: 0
   NCCL_SOCKET_IFNAME: "hsn0,hsn1,hsn2,hsn3"
   NCCL_NET_GDR_LEVEL: "PHB"
-  NVTE_DEBUG: "0"
-  NVTE_DEBUG_LEVEL: "0"
-  CC: "gcc-12"
-  CXX: "g++-12"
 sbatch:
   nodes: 1
   ntasks_per_node: 8
