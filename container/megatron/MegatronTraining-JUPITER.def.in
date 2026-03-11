@@ -10,7 +10,7 @@ From: ${BASE_IMAGE}
 %environment
     export PYTHONNOUSERSITE=1
     export CUDA_HOME=/usr/local/cuda
-    export PATH=/usr/bin:$CUDA_HOME/bin:$PATH
+    export PATH=/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/usr/local/cuda/bin
     export PYTHONPATH=/workspace/oellm-autoexp/submodules/Megatron-LM:/workspace/oellm-autoexp:${PYTHONPATH}
     export OELLM_AUTOEXP_CACHE=/workspace/cache
     export HF_HOME=/workspace/cache/hf
