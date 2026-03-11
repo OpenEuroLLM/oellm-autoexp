@@ -92,7 +92,7 @@ backend:
     use_torch_fsdp2: False # it's either this or the next 4 args
     tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
-    expert-model-parallel-size: 4
+    expert_model_parallel_size: 1
     context_parallel_size: 1
     sequence_parallel: True
 
@@ -125,8 +125,8 @@ backend:
 
     # EVALS
     # Eval interval scales inversely with global batch size,
-    # calibrated so that gbsz=1024 evals every 200 iterations.
-    eval_interval: "${oc.eval:'int(204800 // ${backend.megatron.global_batch_size})'}"
+    # calibrated so that gbsz=1024 evals every 100 iterations.
+    eval_interval: "${oc.eval:'int(102400 // ${backend.megatron.global_batch_size})'}"
     eval_iters: 100
 
     # LOGGING
@@ -144,10 +144,8 @@ backend:
     # save_interval: "${oc.eval:'512000 // ${backend.megatron.global_batch_size}'}"
     save: ${job.base_output_dir}/checkpoints
 
-    # Save exact checkpoints at each decay branching point (start_iter for each decay token budget)
+    # Save exact checkpoint at the decay130BT branching point (= stable train_iters, also saved at end of training)
     save_extra_steps:
-      - "${oc.eval:'int(((50_000_000_000 + ${backend.megatron.seq_length}*${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length}*${backend.megatron.global_batch_size})) * (1 - ${backend.megatron.aux.cooldown_decay_fraction}))'}"
-      - "${oc.eval:'int(((100_000_000_000 + ${backend.megatron.seq_length}*${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length}*${backend.megatron.global_batch_size})) * (1 - ${backend.megatron.aux.cooldown_decay_fraction}))'}"
       - "${oc.eval:'int(((130_000_000_000 + ${backend.megatron.seq_length}*${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length}*${backend.megatron.global_batch_size})) * (1 - ${backend.megatron.aux.cooldown_decay_fraction}))'}"
 
     # Base training configuration (for stable phase)
@@ -161,6 +159,7 @@ backend:
     # so they get resolved together with stage-specific values
     aux:
       tokens: 300_000_000_000  # Default: 300B tokens
+      max_decay_tokens: 130_000_000_000  # largest decay budget; stable phase stops at this branching point
       decay_fraction: 0.0  # Default: no decay (overridden to cooldown_decay_fraction in decay stages)
       cooldown_decay_fraction: 0.2  # fraction of iters spent in LR decay during cooldown
       start_iter: 0  # only used in decay
@@ -170,6 +169,7 @@ backend:
 slurm:
   sbatch:
     nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
+    # time: "48:00:00"
 
 # COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE
 sweep:
@@ -205,14 +205,15 @@ sweep:
     # Uses a nested structure with defaults for decay stages
     - type: list
       configs:
-        # STABLE PHASE: Train for 300B tokens with no decay
+        # STABLE PHASE: Configured for full 300B tokens but exits early at the decay130BT branching point.
+        # To resume training beyond 130BT, remove/increase exit_interval and resubmit.
         - stage: stable
 
           backend.megatron.aux.tokens: 300_000_000_000
-          # Computed fields using ESCAPED OmegaConf interpolations (\\$ prevents early resolution)
-          # These will be unescaped during sweep expansion and resolved with stage-specific values
           backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
           backend.megatron.lr_wsd_decay_iters: 0  # No decay in stable phase
+          # Exit early at the decay130BT branching point = int(ceil(130B / (seq*gbsz)) * 0.8)
+          backend.megatron.exit_interval: "\\${oc.eval:'int(((\\${backend.megatron.aux.max_decay_tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.cooldown_decay_fraction}))'}"
           backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
           backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
 
@@ -247,11 +248,6 @@ sweep:
               log_path: "\\${sibling.stable.job.log_path_current}"
               pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
           configs:
-            # Each decay stage only needs to specify its unique stage and tokens
-            - stage: decay50BT
-              backend.megatron.aux.tokens: 50_000_000_000
-            - stage: decay100BT
-              backend.megatron.aux.tokens: 100_000_000_000
             - stage: decay130BT
               backend.megatron.aux.tokens: 130_000_000_000
   
@@ -262,8 +258,12 @@ sweep:
 
 
 ### Initial number of scripts/configurations
-# 5 lr × 5 batch sizes × 4 num_experts × (1 stable + 3 decay) = 400 scripts (before filtering)
+# 5 lr × 5 batch sizes × 4 num_experts × (1 stable + 1 decay) = 200 scripts (before filtering)
 #
-# With lr_warmup_iters=2000 and token budgets ≥ 50B, the worst case is
-# decay50BT with gbsz=1024: train_iters=11,921 → 2000/11921=0.168 < 0.3 → passes.
-# So no configs are filtered with the current settings → 400 total.
+# Stable phase is configured for the full 300B tokens but exits early via exit_interval
+# at the decay130BT branching point. To resume training past 130BT, remove exit_interval.
+# E.g. gbsz=64: train_iters=1,144,410 (300B), exit_interval=396,728 (130BT branch)
+#      gbsz=1024: train_iters=71,526 (300B), exit_interval=24,796 (130BT branch)
+#
+# With lr_warmup_iters=2000, the worst case is decay130BT with gbsz=1024:
+# train_iters=30,995 → 2000/30995=0.065 < 0.3 → passes. No configs are filtered → 200 total.
