@@ -151,6 +151,7 @@ backend:
     # Auxiliary computation variables
     aux:
       tokens: 200_000_000  # Default: 200M tokens
+      max_decay_tokens: 200_000_000  # largest decay budget; stable phase exits at this branching point
       decay_fraction: 0.0  # Default: no decay (overridden to cooldown_decay_fraction in decay stages)
       cooldown_decay_fraction: 0.2  # fraction of iters spent in LR decay during cooldown
       start_iter: 0
@@ -186,13 +187,16 @@ sweep:
     # GROUP 3: Multi-stage training (stable + cooldown/decay)
     - type: list
       configs:
-        # STABLE PHASE: Train for 200M tokens with no decay
+        # STABLE PHASE: Configured for full 200M tokens but exits early at the decay200MT branching point.
+        # To resume training beyond that, remove/increase exit_interval and resubmit.
         - stage: stable
 
           backend.megatron.aux.tokens: 200_000_000
           backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
           backend.megatron.lr_wsd_decay_iters: 0
           backend.megatron.lr_warmup_iters: "\\${oc.eval:'int(0.1 * ((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})))'}"
+          # Exit early at the decay200MT branching point = int(ceil(200M / (seq*gbsz)) * 0.8)
+          backend.megatron.exit_interval: "\\${oc.eval:'int(((\\${backend.megatron.aux.max_decay_tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.cooldown_decay_fraction}))'}"
           backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
           backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
 
@@ -243,7 +247,11 @@ sweep:
 ### Initial number of scripts/configurations
 # 1 lr × 1 batch size × 1 num_experts × (1 stable + 6 decay) = 1 × 7 = 7 scripts (before filtering)
 #
+# Stable phase is configured for the full 200M tokens but exits early via exit_interval
+# at the decay200MT branching point. To resume training past that, remove exit_interval.
+#
 # Warmup is 10% of train_iters → ratio is always 0.1 < 0.3 → no filtering → 7 total.
 #
 # Concrete values (gbsz=128, 200M tokens):
-#   train_iters=382, warmup=38, save_extra_steps at [16, 76, 107, 152, 198, 305]
+#   train_iters=382, warmup=38, exit_interval=305 (decay200MT branch)
+#   save_extra_steps at [16, 76, 107, 152, 198, 305]
