@@ -1,0 +1,18 @@
+# @package _global_
+defaults:
+  - base
+  - /backend: megatron_torchrun
+  - /container: snellius
+  - /slurm: snellius
+  - /sweep: none
+  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_snellius]
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 50
+    eval_interval: 1000
+    log_throughput: true
+
+job:
+  name: megatron_snellius_speed_test

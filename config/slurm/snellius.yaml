@@ -1,0 +1,37 @@
+defaults:
+  - base
+  - _self_
+
+template_path: templates/snellius.sbatch
+env:
+  MACHINE_NAME: SNELLIUS
+  HF_HOME: /scratch-shared/${oc.env:USER}/hf
+  WANDB_MODE: online
+  NUM_NODES: "$SLURM_JOB_NUM_NODES"
+  GPUS_PER_NODE: "1"
+  NUM_GPUS_PER_NODE: "1"
+  NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
+  PYTHONUNBUFFERED: "1"
+  OMP_NUM_THREADS: "16"
+  NCCL_SOCKET_IFNAME: "eno2np0" 
+  MASTER_ADDR: '$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'
+  MASTER_PORT: "20074"
+launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
+  export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
+  export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; \\\n\
+  ${oc.select:container.runtime,singularity} exec --nv \
+  ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} \
+  ${oc.select:container.image,container.sif}"
+srun:
+  exclusive: true
+  wait: 60
+sbatch:
+  nodes: 8
+  ntasks_per_node: 1
+  ntasks: ${.nodes}
+  gpus_per_node: 4
+  gres: null
+  cpus_per_task: 64
+  time: "1:00:00"
+  exclusive: true
+  account: null
