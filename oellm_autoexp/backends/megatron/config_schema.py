@@ -783,6 +783,9 @@ class MegatronConfig(ConfigInterface):
     # Number of iterations between persistent checkpoint saves.
     save_interval: int | None = None
 
+    # Specific training iterations at which to save checkpoints.
+    save_extra_steps: list[int] = field(default_factory=list)
+
     # Number of iterations between wgrad (main_grad) saves.
     save_wgrads_interval: int | None = None
 
