@@ -288,6 +288,20 @@ class MergedExperimental:
 
 
 @dataclass
+class ValidationDataset:
+    name: str = ""
+    data_prefix: Any = None
+    local_batch_size: Any = None
+    max_eval_samples: Any = None
+    dataloader: Any = None
+    data_source: Any = None
+    split_samples: Any = None
+    eval_mode: Any = None
+    steps: Any = None
+    best_fit_buffer_size: int = 500
+
+
+@dataclass
 class MergedValidation:
     enable: bool = False
     freq: int = 100
@@ -300,6 +314,7 @@ class MergedValidation:
     split_samples: int = 0
     split_seed: int = 42
     eval_mode: str = "concatenated"
+    datasets: list[ValidationDataset] = field(default_factory=list)
 
 
 @dataclass
