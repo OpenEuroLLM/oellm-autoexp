@@ -66,7 +66,10 @@ M_prod2026/users/fvitiugi/training/datamix-option2.txt | tr ' \n' ',,')]" `. Res
 
 For reproducing Niccolo's English dense scaling runs launch `python scripts/run_autoexp.py --config-name experiments/diana/dense_50M`. It contains the full sweep, including filtering conditions for runs in which the warmup iters exceed 30% of the total training iters and for runs in which the global batch size is very small (16, 32) and token budget large (> 50BT).
 
+### 5. Qwen-like architecture
+
+`python scripts/run_autoexp.py --config-name experiments/diana/dense_qwen_150M`. To be adjusted: data path, tokenizer path, optimal hparams, checkpoint saving. 
+
 ## Open TO DOs
 - change Megatron to save checkpoints right before the LR decay phase
 - adjust the experiment config to use the checkpoints before LR decay phase
-- run an experiment with the subsample data from LUMI
