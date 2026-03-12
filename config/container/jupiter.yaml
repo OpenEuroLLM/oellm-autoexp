@@ -4,7 +4,7 @@ class_name: Container
 # image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2512_aarch64_202602231246.sif
 # image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2512_aarch64_202602231438.sif
 # image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2512_aarch64_202602252238.sif
-image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2510_aarch64_202602262033.sif
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_aarch64_202603120039.sif
 runtime: apptainer
 bind:
   - "/dev/shm"

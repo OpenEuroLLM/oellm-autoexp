@@ -48,6 +48,13 @@ backend:
     legacy_tokenizer: false
     override_opt_param_scheduler: true
 
+    # Fusions
+    bias_swiglu_fusion: true
+    bias_gelu_fusion: true
+    bias_dropout_fusion: true
+    gradient_accumulation_fusion: true
+    accumulate_allreduce_grads_in_fp32: false
+
     # Precision & Architecture
     bf16: true
     use_flash_attn: true
