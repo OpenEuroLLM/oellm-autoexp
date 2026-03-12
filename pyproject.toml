@@ -19,6 +19,7 @@ dependencies = [
   "pydantic>=2.0",
   "jsonschema>=4.17",
   "networkx>=3.0",
+  "tyro>=1.0.8",
 ]
 
 [project.optional-dependencies]

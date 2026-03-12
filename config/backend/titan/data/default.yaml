@@ -1,0 +1,4 @@
+data_prefix: ""
+chunks_dir: ""
+dataloader: "MMapDataset"
+min_doc_len: 10
