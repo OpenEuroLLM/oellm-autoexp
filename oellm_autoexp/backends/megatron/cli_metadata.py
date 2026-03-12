@@ -5298,6 +5298,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "save_extra_steps": MegatronArgMetadata(
+        arg_type=int,
+        default=[],
+        help="Specific training iterations at which to save checkpoints.",
+        choices=None,
+        nargs="*",
+        element_type=int,
+    ),
     "save_interval": MegatronArgMetadata(
         arg_type=int,
         default=None,
@@ -10235,6 +10243,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "save_extra_steps": MegatronActionSpec(
+        option_strings=("--save-extra-steps",),
+        action_type="store",
+        nargs="*",
+        const=None,
+        default=[],
     ),
     "save_interval": MegatronActionSpec(
         option_strings=("--save-interval", "--persistent-save-interval"),

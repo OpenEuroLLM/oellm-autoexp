@@ -30,6 +30,9 @@ def test_megatron_backend_builds_launch_command(monkeypatch, tmp_path):
             "job=default",
             "container=none",
             "backend.megatron.micro_batch_size=4",
+            "backend.megatron.eval_interval=100",
+            "backend.megatron.lr=0.001",
+            "++backend.data_integrity_check=false",
         ],
     )
     cfg = load_config_reference(config_setup=config_setup)

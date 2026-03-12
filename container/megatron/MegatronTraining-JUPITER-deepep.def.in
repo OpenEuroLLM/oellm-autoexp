@@ -18,10 +18,9 @@ From: ${BASE_IMAGE}
 %files
     ${REPO_ROOT} /workspace/oellm-autoexp
     ${REQUIREMENTS_PATH} /workspace/${REQUIREMENTS_BASENAME}
-
+    /e/software/default/stages/2026/software/NVSHMEM/3.5.21-gompi-2025b-CUDA-13/ /opt/nvshmem/
 %post
 ln -sf /usr/local/cuda/compat/lib.real /usr/local/cuda/compat/lib
-
 
 mkdir -p /workspace/cache
 cd /workspace
@@ -50,6 +49,21 @@ python3 -m pip install --no-cache-dir \
 
 python3 -m pip uninstall -y megatron-core || true
 
+# load NVSHMEM on JUPITER before
+# module load Stages/2026
+# module load GCC/14.3.0
+# module load OpenMPI/5.0.8
+# module load NVSHMEM/3.5.21-CUDA-13
+export NVSHMEM_DIR=/opt/nvshmem
+export CPATH=/usr/local/cuda-13.0/targets/sbsa-linux/include/cccl:$CPATH
+export CXXFLAGS="-I/usr/local/cuda-13.0/targets/sbsa-linux/include/cccl $CXXFLAGS"
+export CPLUS_INCLUDE_PATH=/usr/local/cuda-13.0/targets/sbsa-linux/include/cccl:$CPLUS_INCLUDE_PATH
+
+# install deepep
+git clone https://github.com/deepseek-ai/deepep.git
+export TORCH_CUDA_ARCH_LIST="9.0" # later versions not needed on JUPITER: 10.0 11.0 12.0+PTX
+pip install --no-build-isolation ./deepep
+
 
 cd oellm-autoexp
 pip install -e .[dev]
@@ -69,7 +83,6 @@ fi
 export LD_LIBRARY_PATH=/.singularity.d/libs:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
 EOFENV
 chmod +x /.singularity.d/env/99-cuda-fix.sh
-
 
 
 %runscript

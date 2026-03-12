@@ -50,6 +50,29 @@ class BackendInterface(RegistrableConfigInterface):
 
 
 @dataclass(kw_only=True)
+class CondaConfig(ConfigInterface):
+    """Conda runtime configuration for local/host execution."""
+
+    class_name: str = "Conda"
+    env_name: str = "base"
+    conda_prefix: str | None = None
+    activate_script: str | None = None
+    env: dict[str, str] = field(default_factory=dict)
+    python: str = "python"
+
+
+@dataclass(kw_only=True)
+class VenvConfig(ConfigInterface):
+    """Virtualenv runtime configuration for local/host execution."""
+
+    class_name: str = "Venv"
+    venv_path: str = ".venv"
+    activate_script: str | None = None
+    env: dict[str, str] = field(default_factory=dict)
+    python: str = "python"
+
+
+@dataclass(kw_only=True)
 class ContainerConfig(ConfigInterface):
     """Container runtime configuration for reproducible execution."""
 
@@ -88,13 +111,13 @@ class RootConfig(StagedSweepRoot):
     backend: BackendInterface.cfgtype = field(
         default_factory=MISSING
     )  # defines what is actually running
-    container: EmptyDict | ContainerConfig = field(
+    container: EmptyDict | ContainerConfig | CondaConfig | VenvConfig = field(
         default_factory=EmptyDict
     )  # defines container setup
     sweep: EmptyDict | SweepConfig = field(
         default_factory=EmptyDict
     )  # defines a surrounding sweep (already inherited from StagedSweepRoot)
-
+    aux: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):

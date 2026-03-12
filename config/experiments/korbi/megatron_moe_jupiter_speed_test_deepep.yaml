@@ -2,7 +2,7 @@
 defaults:
   - ../base
   - /backend: megatron_torchrun_localaddr
-  - /container: jupiter
+  - /container: jupiter_deepep
   - /slurm: jupiter
   - /backend/megatron: [base,qwen3_moe_30BA3B]
   - /sweep: none
@@ -12,7 +12,7 @@ backend:
   megatron:
     train_iters: 100
     global_batch_size: 64
-    micro_batch_size: 4
+    micro_batch_size: 2
     expert_model_parallel_size: 4
     pipeline_model_parallel_size: 2
     tensor_model_parallel_size: 1
@@ -35,6 +35,11 @@ backend:
     load: null
     ckpt_step: 0
     moe_router_dtype: "fp32"
+    # deepep tests
+    moe_token_dispatcher_type: flex
+    moe_enable_deepep: true
+    moe_flex_dispatcher_backend: deepep
+    moe_grouped_gemm: true
 
     data_path:
      - /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
@@ -50,8 +55,8 @@ backend:
     # NCCL_NET_GDR_LEVEL: "0"
     # NCCL_PROTO: "Simple"
     # CUDA_DEVICE_MAX_CONNECTIONS: "1"
-    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
-    PYTHONWARNINGS: "ignore::UserWarning"
+    # PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    # PYTHONWARNINGS: "ignore::UserWarning"
 
 
 slurm:
