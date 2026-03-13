@@ -45,6 +45,11 @@ def oc_map_eval(inps: ListConfig) -> ListConfig:
     return ListConfig([_safe_eval(inp) for inp in inps])
 
 
+def _pad_iter(step):
+    """Format a checkpoint step as Megatron's zero-padded directory name."""
+    return f"iter_{int(step):07d}"
+
+
 OmegaConf.register_new_resolver("oc.join", oc_join)
 OmegaConf.register_new_resolver("oc.maptmpl", oc_map_template)
 OmegaConf.register_new_resolver("oc.mapkeyvaltmpl", oc_kvmap_template)
@@ -53,6 +58,8 @@ OmegaConf.register_new_resolver("oc.mapcondtmpl", oc_map_cond_template)
 OmegaConf.register_new_resolver("oc.mapeval", oc_map_eval)
 OmegaConf.register_new_resolver("oc.tmpl", oc_template)
 OmegaConf.register_new_resolver("oc.split", oc_split)
+
+OmegaConf.register_new_resolver("oc.pad_iter", _pad_iter, replace=True)
 
 
 __all__ = ["register_default_resolvers"]
