@@ -163,8 +163,8 @@ slurm:
   sbatch:
     nodes: 4
     # nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
-    # time: "24:00:00"
-    time: "00:30:00"
+    time: "24:00:00"
+    # time: "00:30:00"
 
 # COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE
 sweep:
@@ -182,8 +182,8 @@ sweep:
       configs:
         - type: product
           params:
-            backend.megatron.lr: [4.e-3]                #[5.e-4, 1.e-3, 2.e-3, 4.e-3, 8.e-3]
-            backend.megatron.global_batch_size: [1024]  #[64, 128, 256, 512, 1024]
+            backend.megatron.lr: [5.e-4, 1.e-3, 2.e-3, 4.e-3, 8.e-3] # [4.e-3]
+            backend.megatron.global_batch_size: [1024]  #[64, 128, 256, 512, 1024] 1024, 512 works
 
     # GROUP 2: Sparsity / num_experts
     # Each entry can carry per-expert overrides (e.g. higher expert parallelism) 4 values
