@@ -1,6 +1,4 @@
-# error: argument --ckpt-format: invalid choice: 'fsdp_dtensor' (choose from 'torch', 'torch_dist', 'zarr', 'torch_dcp')
-ckpt_format: torch # torch_dist uses async writes that can corrupt on GPFS/Lustre
-use_megatron_fsdp: false # error: argument --ckpt-format: invalid choice: 'fsdp_dtensor' (choose from 'torch', 'torch_dist', 'zarr', 'torch_dcp')
+ckpt_format: torch # torch_dist uses async writes that can corrupt on GPFS
 
 # Data inputs
 data_path:
@@ -9,7 +7,7 @@ data_cache_path: /scratch-shared/${oc.env:USER}/cache
 split: "989,10,1"
 lr_warmup_iters: 0
 train_iters: 500
-save_interval: 1000000000
+save_interval: null
 save: /scratch-shared/${oc.env:USER}/megatron-lm/out/
 load: /scratch-shared/${oc.env:USER}/megatron-lm/out/
 tensorboard_dir: ${job.base_output_dir}/tensorboard

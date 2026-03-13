@@ -13,6 +13,8 @@ backend:
     train_iters: 50
     eval_interval: 1000
     log_throughput: true
+    save: null
+    load: null
 
 job:
   name: megatron_snellius_speed_test
