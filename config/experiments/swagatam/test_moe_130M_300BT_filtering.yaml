@@ -266,7 +266,7 @@ sweep:
 #
 # save_extra_steps at 80BT and 120BT branching points:
 #   gbsz=64:   [244,140 (80BT), 366,211 (120BT)]
-#   gbsz=1024: [15,258 (80BT),  22,888 (120BT)]
+#   gbsz=1024: [15,259 (80BT),  22,888 (120BT)]
 #
 # With lr_warmup_iters=2000, the worst case is decay80BT with gbsz=1024:
 # train_iters=19,074 → 2000/19074=0.105 < 0.3 → passes. No configs are filtered → 300 total.
