@@ -258,15 +258,21 @@ sweep:
 
 ### Initial number of scripts/configurations
 # 5 lr × 5 batch sizes × 4 num_experts × (1 stable + 2 decay) = 300 scripts (before filtering)
-#
 # Stable phase is configured for the full 300B tokens but exits early via exit_interval
 # at the decay120BT branching point. To resume training past 120BT, remove exit_interval.
 # E.g. gbsz=64:   train_iters=1,144,410 (300B), exit_interval=366,211 (120BT branch)
 #      gbsz=1024:  train_iters=71,526 (300B),     exit_interval=22,888 (120BT branch)
+# Formulae (seq_length=4096, cooldown_decay_fraction=0.2):
+#   train_iters = ceil(tokens / (seq*gbsz))
+#   exit_interval = ceil(120B / (seq*gbsz)) * 0.8  (stable exits at 120BT branching point)
+#   save_extra_steps = [ceil(80B/(seq*gbsz))*0.8, ceil(120B/(seq*gbsz))*0.8]
 #
-# save_extra_steps at 80BT and 120BT branching points:
-#   gbsz=64:   [244,140 (80BT), 366,211 (120BT)]
-#   gbsz=1024: [15,259 (80BT),  22,888 (120BT)]
+# train_iters (300B) and save_extra_steps [80BT, 120BT] by batch size:
+#   gbsz=64:   train_iters=1,144,410  exit_interval=366,211  save_extra_steps=[244,140, 366,211]
+#   gbsz=128:  train_iters=572,205    exit_interval=183,105  save_extra_steps=[122,070, 183,105]
+#   gbsz=256:  train_iters=286,103    exit_interval=91,552   save_extra_steps=[61,035,  91,552]
+#   gbsz=512:  train_iters=143,051    exit_interval=45,776   save_extra_steps=[30,517,  45,776]
+#   gbsz=1024: train_iters=71,526     exit_interval=22,888   save_extra_steps=[15,259,  22,888]
 #
 # With lr_warmup_iters=2000, the worst case is decay80BT with gbsz=1024:
 # train_iters=19,074 → 2000/19074=0.105 < 0.3 → passes. No configs are filtered → 300 total.
