@@ -1,57 +1,192 @@
-#!/usr/bin/env python3
 """Post-hoc MoE router metrics from a Megatron checkpoint.
 
-Computes expert utilization, co-activation rates (per OLMoE paper), and saturation metrics
-across checkpoint iterations. Supports comparison against multiple earlier checkpoints.
+Computes expert utilization, co-activation rates (per OLMoE paper), and saturation
+metrics across checkpoint iterations. Supports comparison against multiple earlier
+checkpoints to track how routing behaviour evolves during training.
 
-Usage:
-    python compute_moe_metrics.py \\
-      --tensor-model-parallel-size 1 \\
-      --pipeline-model-parallel-size 1 \\
-      --load <checkpoint_directory> \\
-      --use-checkpoint-args \\
-      --ckpt-format torch_dist \\
-      --vocab-file <path_to_vocab_file> \\
-      --merge-file <path_to_merges_file> \\
-      --legacy-tokenizer \\
-      --no-bias-dropout-fusion \\
-      --moe-data-type hf_dataset \\
-      --moe-dataset-name wikitext \\ 
-      --moe-dataset-config wikitext-2-raw-v1 \\
-      --moe-dataset-split test \\
-      --moe-dataset-percentage 100.0 \\
-      --moe-dataset-cache-dir <path_to_cache> \\
-      --moe-compare-ckpts 500,2000,3500,4500 \\
-      --moe-output-json saturation_results.json \\
-      --moe-coactivation-output coactivation_results.json \\
-      --moe-plot \\
-      --moe-plot-dir <output_plot_directory>
+===============================================================================
+USAGE EXAMPLE (with experiment YAML config)
+===============================================================================
 
-Data type options:
-    - random: Generate random token inputs (no tokenizer needed, fastest)
-    - hf_dataset: Load from HuggingFace datasets (wikitext, openwebtext, etc.)
-    - prompts: Load text prompts from file (--moe-prompts-file <path>)
+    python scripts/moe/compute_moe_metrics.py \\
+        --load <checkpoint_directory> \\
+        --moe-experiment-config moe_config.yaml \\
+        --moe-data-type hf_dataset \\
+        --moe-dataset-name wikitext \\
+        --moe-dataset-config wikitext-2-raw-v1 \\
+        --moe-dataset-split test \\
+        --moe-num-batches 2000 \\
+        --moe-seq-length 2048 \\
+        --moe-compare-ckpts 500,2000,3500,4500 \\
+        --moe-output-json saturation_results.json \\
+        --moe-coactivation-output coactivation_results.json \\
+        --moe-plot \\
+        --moe-plot-dir plots/
 
-Output:
-    - saturation_results.json: Router saturation metrics per checkpoint comparison
-    - coactivation_results.json: Co-activation matrices for top-N experts per layer
-    - router_saturation_vs_final.png: Saturation evolution plot
-    - coactivation_*.png: Co-activation heatmaps for each layer
+With color output preserved in a log file:
+
+    python scripts/moe/compute_moe_metrics.py ... --moe-force-color 2>&1 | tee run.log
+    less -R run.log
+
+Re-enable verbose Megatron output for debugging:
+
+    ... --no-moe-quiet-init --no-moe-suppress-warnings --no-moe-silence-megatron-logging
+
+===============================================================================
+ARGUMENTS REFERENCE
+===============================================================================
+
+--- Experiment config (YAML) ------------------------------------------------
+
+  --moe-experiment-config PATH
+        Path to the experiment YAML file (e.g. moe_config.yaml).
+        Values under the `backend.megatron` key are used as defaults for
+        Megatron model arguments and evaluated-before initialization.
+        Explicit CLI flags always take priority over YAML values.
+        Hydra-style `${.key}` self-references within that section are resolved.
+
+--- Data source --------------------------------------------------------------
+
+  --moe-data-type {random,prompts,hf_dataset}   [default: random]
+        How to produce token batches for the forward passes.
+          random      – generate random token IDs (no tokenizer needed, fastest)
+          prompts     – read plain-text lines from --moe-prompts-file
+          hf_dataset  – fetch from a HuggingFace dataset
+
+  --moe-prompts-file PATH
+        Path to a plain-text file; one prompt per line.
+        Required when --moe-data-type prompts.
+
+  --moe-dataset-name NAME                       [default: None]
+        HuggingFace dataset name (e.g. "wikitext", "openwebtext",
+        "allenai/c4").  Required when --moe-data-type hf_dataset.
+
+  --moe-dataset-config NAME                     [default: None]
+        Dataset configuration (e.g. "wikitext-2-raw-v1", "en").
+
+  --moe-dataset-split NAME                      [default: validation]
+        Dataset split to use: "train", "validation", "test", etc.
+
+  --moe-dataset-text-field FIELD                [default: text]
+        Name of the string field that contains the document text.
+
+  --moe-dataset-percentage FLOAT                [default: 0.5]
+        Percentage of the dataset to sample (0–100).
+
+  --moe-dataset-cache-dir PATH                  [default: None]
+        Local directory for HuggingFace dataset / model cache.
+
+--- Evaluation config --------------------------------------------------------
+
+  --moe-batch-size INT                          [default: 1]
+        Number of sequences per forward-pass batch.
+
+  --moe-num-batches INT                         [default: 10]
+        Total number of batches to run; determines evaluation coverage.
+
+  --moe-seq-length INT                          [default: None → from checkpoint]
+        Sequence length used for tokenization and padding.
+        Defaults to the value stored in the checkpoint args.
+
+  --moe-seed INT                                [default: 1234]
+        Random seed for batch generation and dataset sampling.
+
+--- Checkpoint comparison ----------------------------------------------------
+
+  --moe-compare-ckpts STEPS                     [default: None]
+        Comma-separated list of earlier checkpoint iteration numbers
+        (e.g. "500,2000,3500") to compare routing saturation against the
+        final checkpoint.  The final checkpoint is always evaluated first.
+
+--- Output files -------------------------------------------------------------
+
+  --moe-output-json PATH                        [default: None]
+        File path for saturation metrics JSON output.
+        Contains per-layer, per-step saturation and co-activation values.
+
+  --moe-coactivation-output PATH                [default: None]
+        File path for co-activation summary JSON for the final checkpoint.
+        Stores the top-N expert pairwise co-activation rates per layer.
+
+  --moe-coactivation-top-n INT                  [default: 32]
+        Number of experts to include in the top-N co-activation summary.
+
+  --moe-plot                                    [default: off]
+        Save saturation-evolution and co-activation heatmap plots.
+
+  --moe-plot-dir PATH                           [default: same as output JSON]
+        Directory where plots are written.
+        Generated files:
+          router_saturation_vs_final.png     – saturation over training steps
+          coactivation_layer_<N>.png         – co-activation heatmap per layer
+
+--- Noise suppression (all default ON) --------------------------------------
+
+  --moe-quiet-init / --no-moe-quiet-init        [default: True]
+        Suppress stdout/stderr during Megatron initialization and checkpoint
+        loading.  Use --no-moe-quiet-init to see full Megatron startup logs.
+
+  --moe-suppress-warnings / --no-moe-suppress-warnings   [default: True]
+        Suppress Python `warnings` module output during execution.
+
+  --moe-silence-megatron-logging / --no-moe-silence-megatron-logging
+                                                [default: True]
+        Set all loggers under the `megatron.*` namespace to CRITICAL level,
+        eliminating RNG, tensor-parallel, and other routine log lines.
+
+--- Display / console output -------------------------------------------------
+
+  --moe-color-output / --no-moe-color-output    [default: True]
+        Use ANSI colour codes for stage banners and log lines.
+        Automatically disabled when stdout is not a TTY (e.g. log files),
+        unless --moe-force-color is also set.
+
+  --moe-force-color / --no-moe-force-color      [default: False]
+        Force ANSI colour codes even when stdout is redirected.
+        Useful when piping with `tee` and viewing with `less -R`.
+
+  --moe-print-json / --no-moe-print-json        [default: False]
+        Print the full saturation JSON to stdout after evaluation.
+        Can be very verbose for large models with many compare steps.
+
+===============================================================================
+OUTPUTS
+===============================================================================
+
+  saturation_results.json
+      Per-step, per-layer routing saturation and co-activation averages.
+      Also contains an "args" block summarising the run configuration.
+
+  coactivation_results.json
+      Top-N expert co-activation rates for the final checkpoint,
+      one entry per layer with expert indices and conditional rates.
+
+  router_saturation_vs_final.png
+      Line plot of mean routing saturation across layers vs. training step.
+
+  coactivation_layer_<N>.png
+      Heatmap of top-N expert co-activation for each MoE layer.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import logging
+import os
+import re
 import sys
+import warnings
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import torch
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from tqdm.auto import tqdm
+REPO_ROOT = Path(__file__).resolve().parents[2]
 MEGATRON_ROOT = REPO_ROOT / "submodules" / "Megatron-LM"
 sys.path.append(str(MEGATRON_ROOT))
 
@@ -71,6 +206,57 @@ from megatron.training.initialize import initialize_megatron  # noqa: E402
 from megatron.training.utils import get_ltor_masks_and_position_ids  # noqa: E402
 
 
+# -----------------------------------------------------------------------------
+# Console / log presentation helpers
+# -----------------------------------------------------------------------------
+_MOE_COLOR_OUTPUT = True
+_MOE_FORCE_COLOR = False
+
+
+def _colorize(text: str, color: str) -> str:
+    # Keep log formatting deterministic when color is disabled or output is redirected.
+    if not _MOE_COLOR_OUTPUT:
+        return text
+    if os.getenv("NO_COLOR") and not _MOE_FORCE_COLOR:
+        return text
+    if not _MOE_FORCE_COLOR and not sys.stdout.isatty():
+        return text
+    colors = {
+        "cyan": "\033[36m",
+        "green": "\033[32m",
+        "yellow": "\033[33m",
+        "blue": "\033[34m",
+        "reset": "\033[0m",
+    }
+    return f"{colors.get(color, '')}{text}{colors['reset']}"
+
+
+def _log_stage(title: str) -> None:
+    banner = f"===== {title} ====="
+    print_rank_0(_colorize(banner, "blue"))
+
+
+def _log_info(message: str) -> None:
+    print_rank_0(_colorize(f"[INFO] {message}", "cyan"))
+
+
+def _log_warn(message: str) -> None:
+    print_rank_0(_colorize(f"[WARN] {message}", "yellow"))
+
+
+def _log_success(message: str) -> None:
+    print_rank_0(_colorize(f"[OK] {message}", "green"))
+
+
+# -----------------------------------------------------------------------------
+# Metrics collection
+# -----------------------------------------------------------------------------
+def _off_diagonal_mean(matrix: torch.Tensor) -> float:
+    num_experts = matrix.shape[0]
+    mask = ~torch.eye(num_experts, dtype=torch.bool, device=matrix.device)
+    return matrix[mask].mean().item()
+
+
 class RouterMetricsCollector:
     def __init__(self) -> None:
         self.totals = {}
@@ -84,6 +270,7 @@ class RouterMetricsCollector:
         padding_mask: Optional[torch.Tensor] = None,
         reference_routing_map: Optional[torch.Tensor] = None,
     ) -> None:
+        # Remove padding positions before any metric computation so all rates are token-valid.
         routing_map = routing_map.detach()
         if padding_mask is not None:
             padding_mask = padding_mask.reshape(-1)
@@ -93,22 +280,22 @@ class RouterMetricsCollector:
                 probs = probs[~padding_mask]
 
         routing_map = routing_map.float()
+        # Saturation is the fraction of experts that received at least one token in this batch.
         tokens_per_expert = routing_map.sum(dim=0)
         saturation = (tokens_per_expert > 0).float().mean().item()
 
         if topk > 1:
             num_experts = routing_map.shape[1]
             if probs is None:
+                # Fallback path: infer co-activation from routing map overlap only.
                 co_occurrence = routing_map.t().matmul(routing_map)
                 expert_counts = torch.diagonal(co_occurrence)
                 normalized = co_occurrence.float() / expert_counts.clamp(min=1.0).unsqueeze(
                     1
                 )
-                off_diagonal = ~torch.eye(
-                    num_experts, dtype=torch.bool, device=normalized.device
-                )
-                coactivation_rate = normalized[off_diagonal].mean().item()
+                coactivation_rate = _off_diagonal_mean(normalized)
             else:
+                # Main path: use ordered top-k experts to build OLMoE-style adjacent pair counts.
                 topk_indices = torch.topk(probs, k=topk, dim=-1).indices
                 single_counts = torch.zeros(
                     num_experts, device=topk_indices.device, dtype=torch.float32
@@ -139,10 +326,7 @@ class RouterMetricsCollector:
                 )
 
                 normalized = pair_counts / single_counts.clamp(min=1.0).unsqueeze(1)
-                off_diagonal = ~torch.eye(
-                    num_experts, dtype=torch.bool, device=normalized.device
-                )
-                coactivation_rate = normalized[off_diagonal].mean().item()
+                coactivation_rate = _off_diagonal_mean(normalized)
         else:
             coactivation_rate = 0.0
 
@@ -166,6 +350,7 @@ class RouterMetricsCollector:
                     f"{routing_map.shape} vs {reference_routing_map.shape}."
                 )
             routing_bool = routing_map.bool()
+            # Compare saturation against final checkpoint by per-token top-k overlap.
             intersection = (routing_bool & reference_routing_map).sum(dim=1).float()
             denom = max(topk, 1)
             overlap = intersection / denom
@@ -184,8 +369,26 @@ class RouterMetricsCollector:
         return results
 
 
+# -----------------------------------------------------------------------------
+# Argument parsing
+# -----------------------------------------------------------------------------
+def _progress_iter(items, description: str):
+    # Single wrapper so progress behavior can be adjusted in one place.
+    return tqdm(items, desc=description, leave=False)
+
+
 def add_metrics_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     group = parser.add_argument_group(title="MoE metrics")
+    group.add_argument(
+        "--moe-experiment-config",
+        type=str,
+        default=None,
+        help=(
+            "Path to experiment YAML (for example moe_config.yaml). "
+            "Values under backend.megatron are used as defaults for this script. "
+            "Explicit CLI flags still take precedence."
+        ),
+    )
     group.add_argument(
         "--moe-data-type",
         type=str,
@@ -265,9 +468,79 @@ def add_metrics_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser
         help="Directory to write plots (defaults next to output JSON).",
     )
     group.add_argument("--moe-seed", type=int, default=1234)
+    group.add_argument(
+        "--moe-quiet-init",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Suppress stdout/stderr noise during Megatron initialization and checkpoint loading.",
+    )
+    group.add_argument(
+        "--moe-suppress-warnings",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Suppress Python warnings during script execution.",
+    )
+    group.add_argument(
+        "--moe-silence-megatron-logging",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Silence loggers under the megatron.* namespace.",
+    )
+    group.add_argument(
+        "--moe-color-output",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use ANSI colors for script stage logs.",
+    )
+    group.add_argument(
+        "--moe-print-json",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Print full saturation JSON to stdout (can be very verbose).",
+    )
+    group.add_argument(
+        "--moe-force-color",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Force ANSI colors even when stdout is redirected (useful with tee/log files).",
+    )
     return parser
 
 
+@contextlib.contextmanager
+def _suppress_output(enabled: bool):
+    if not enabled:
+        yield
+        return
+
+    with open(Path("/dev/null"), "w", encoding="utf-8") as sink:
+        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+            yield
+
+
+def _configure_logging_suppression(enabled: bool) -> None:
+    if not enabled:
+        return
+
+    # Keep non-megatron loggers untouched and silence only megatron namespaces.
+    megatron_logger = logging.getLogger("megatron")
+    megatron_logger.handlers = [logging.NullHandler()]
+    megatron_logger.setLevel(logging.CRITICAL)
+    megatron_logger.propagate = False
+
+    # Clamp existing megatron child loggers that may already be instantiated.
+    for name, obj in logging.Logger.manager.loggerDict.items():
+        if not isinstance(obj, logging.Logger):
+            continue
+        if name == "megatron" or name.startswith("megatron."):
+            obj.handlers = [logging.NullHandler()]
+            obj.setLevel(logging.CRITICAL)
+            obj.propagate = False
+
+
+# -----------------------------------------------------------------------------
+# Data loading
+# -----------------------------------------------------------------------------
 def _load_prompts(path: Optional[str]) -> List[str]:
     if not path:
         return []
@@ -296,8 +569,8 @@ def _load_hf_dataset_texts(
             "datasets library required. Install with: pip install datasets"
         )
 
-    print_rank_0(
-        f"Loading {dataset_name} ({dataset_config or 'default'}) {split} ({percentage}%)..."
+    _log_info(
+        f"Loading dataset={dataset_name} config={dataset_config or 'default'} split={split} percentage={percentage}%"
     )
 
     load_kwargs = {"path": dataset_name, "split": split, "cache_dir": cache_dir}
@@ -307,24 +580,23 @@ def _load_hf_dataset_texts(
     # Try loading from internet first
     try:
         dataset = load_dataset(**load_kwargs)
-        print_rank_0(f"Loaded {dataset_name} successfully.")
+        _log_success(f"Loaded {dataset_name} successfully")
     except Exception as e:
-        # Fall back to cache-only mode
-        print_rank_0(f"Internet load failed ({type(e).__name__}). Trying cache-only...")
+        # Fall back to cache-only mode for offline/limited-network environments.
+        _log_warn(f"Internet load failed ({type(e).__name__}); trying cache-only")
         try:
             load_kwargs_offline = load_kwargs.copy()
             load_kwargs_offline["download_mode"] = (
                 "force_redownload" if cache_dir else "reuse_cache_if_exists"
             )
             dataset = load_dataset(**load_kwargs_offline)
-            print_rank_0(f"Loaded {dataset_name} from cache.")
+            _log_success(f"Loaded {dataset_name} from cache")
         except Exception as e2:
-            print_rank_0(
-                f"Cache load failed ({type(e2).__name__}). Falling back to random inputs."
-            )
+            _log_warn(f"Cache load failed ({type(e2).__name__}); falling back to random inputs")
             return []
 
     sample_fraction = percentage / 100.0
+    # Respect percentage but guarantee enough samples to fill planned evaluation batches.
     sample_size = min(
         max(int(len(dataset) * sample_fraction), num_samples), len(dataset)
     )
@@ -343,7 +615,7 @@ def _load_hf_dataset_texts(
             elif isinstance(text, list):
                 texts.extend([t for t in text if isinstance(t, str)])
 
-    print_rank_0(f"Loaded {len(texts)} texts")
+    _log_info(f"Loaded {len(texts)} text entries")
     return texts
 
 
@@ -390,6 +662,211 @@ def _get_final_checkpoint_step(load_dir: str) -> Tuple[Optional[int], bool]:
     return iteration, release
 
 
+# -----------------------------------------------------------------------------
+# Experiment-config parsing and defaults
+# -----------------------------------------------------------------------------
+def _load_yaml_file(path: str) -> Dict[str, Any]:
+    config_path = Path(path)
+    if not config_path.is_file():
+        raise FileNotFoundError(f"Config file not found: {path}")
+
+    try:
+        import yaml  # type: ignore
+    except ImportError as exc:
+        raise ImportError("Could not load YAML config. Install pyyaml.") from exc
+
+    with config_path.open("r", encoding="utf-8") as handle:
+        loaded = yaml.safe_load(handle) or {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"YAML config must be a mapping at top-level: {path}")
+    return loaded
+
+
+def _deep_get(data: Dict[str, Any], path: List[str]) -> Any:
+    cur: Any = data
+    for key in path:
+        if not isinstance(cur, dict) or key not in cur:
+            return None
+        cur = cur[key]
+    return cur
+
+
+def _collect_cli_flags(argv: List[str]) -> Set[str]:
+    flags: Set[str] = set()
+    for token in argv:
+        if token.startswith("--"):
+            flags.add(token.split("=", 1)[0])
+    return flags
+
+
+def _preparse_bool_flag(
+    argv: List[str],
+    positive_flag: str,
+    negative_flag: str,
+    default: bool,
+) -> bool:
+    if negative_flag in argv:
+        return False
+    if positive_flag in argv:
+        return True
+    return default
+
+
+def _extract_flag_value(argv: List[str], flag: str) -> Optional[str]:
+    for idx, token in enumerate(argv):
+        if token == flag and idx + 1 < len(argv):
+            return argv[idx + 1]
+        if token.startswith(flag + "="):
+            return token.split("=", 1)[1]
+    return None
+
+
+_LOCAL_REF_RE = re.compile(r"^\$\{\.([A-Za-z0-9_]+)\}$")
+
+
+def _resolve_backend_value(value: Any, backend: Dict[str, Any], max_depth: int = 16) -> Any:
+    """Resolve simple local Hydra-style references like ${.num_attention_heads}."""
+    current = value
+    for _ in range(max_depth):
+        if not isinstance(current, str):
+            return current
+        match = _LOCAL_REF_RE.match(current.strip())
+        if not match:
+            return current
+        ref_key = match.group(1)
+        if ref_key not in backend:
+            return current
+        current = backend[ref_key]
+    return current
+
+
+def _build_preinit_defaults_from_experiment_config() -> Dict[str, Any]:
+    config_path = _extract_flag_value(sys.argv[1:], "--moe-experiment-config")
+    if not config_path:
+        return {}
+    cli_flags = _collect_cli_flags(sys.argv[1:])
+
+    config = _load_yaml_file(config_path)
+    backend = _deep_get(config, ["backend", "megatron"])
+    if not isinstance(backend, dict):
+        raise ValueError(
+            "Expected backend.megatron mapping in --moe-experiment-config YAML"
+        )
+
+    defaults: Dict[str, Any] = {}
+
+    def add_default(arg_name: str, key: str, transform=None) -> None:
+        # Normalize interpolations before coercion so values like ${.num_attention_heads} work.
+        value = backend.get(key)
+        if value is None:
+            return
+        value = _resolve_backend_value(value, backend)
+        defaults[arg_name] = transform(value) if transform else value
+
+    # Core model args required by Megatron validation.
+    # Do not set both num_layers and encoder_num_layers together.
+    if "--encoder-num-layers" in cli_flags:
+        # Respect explicit CLI choice; avoid injecting the conflicting counterpart.
+        pass
+    elif backend.get("num_layers") is not None:
+        add_default("num_layers", "num_layers", int)
+    elif backend.get("encoder_num_layers") is not None and "--num-layers" not in cli_flags:
+        add_default("encoder_num_layers", "encoder_num_layers", int)
+
+    for key in [
+        "hidden_size",
+        "ffn_hidden_size",
+        "num_attention_heads",
+        "num_query_groups",
+        "max_position_embeddings",
+        "seq_length",
+    ]:
+        add_default(key, key, int)
+
+    # Runtime/tokenizer/checkpoint defaults commonly needed for this tool.
+    for key in [
+        "tensor_model_parallel_size",
+        "pipeline_model_parallel_size",
+    ]:
+        add_default(key, key, int)
+    for key in ["vocab_file", "merge_file", "ckpt_format"]:
+        add_default(key, key, str)
+    for key in [
+        "legacy_tokenizer",
+        "bias_dropout_fusion",
+        "use_cpu_initialization",
+        "standalone_embedding_stage",
+        "enable_msc",
+        "no_load_rng",
+        "no_load_optim",
+    ]:
+        add_default(key, key, bool)
+
+    return defaults
+
+
+def _apply_experiment_config_defaults(args) -> None:
+    config_path = getattr(args, "moe_experiment_config", None)
+    if not config_path:
+        return
+
+    config = _load_yaml_file(config_path)
+    backend = _deep_get(config, ["backend", "megatron"])
+    if not isinstance(backend, dict):
+        raise ValueError(
+            "Expected backend.megatron mapping in --moe-experiment-config YAML"
+        )
+
+    cli_flags = _collect_cli_flags(sys.argv[1:])
+
+    def maybe_set(flag: str, attr: str, value: Any, transform=None) -> None:
+        # CLI wins over YAML so users can override any config field per run.
+        if value is None or flag in cli_flags:
+            return
+        value = _resolve_backend_value(value, backend)
+        if transform is not None:
+            value = transform(value)
+        setattr(args, attr, value)
+
+    maybe_set(
+        "--tensor-model-parallel-size",
+        "tensor_model_parallel_size",
+        backend.get("tensor_model_parallel_size"),
+        int,
+    )
+    maybe_set(
+        "--pipeline-model-parallel-size",
+        "pipeline_model_parallel_size",
+        backend.get("pipeline_model_parallel_size"),
+        int,
+    )
+    maybe_set("--ckpt-format", "ckpt_format", backend.get("ckpt_format"), str)
+    maybe_set("--vocab-file", "vocab_file", backend.get("vocab_file"), str)
+    maybe_set("--merge-file", "merge_file", backend.get("merge_file"), str)
+    maybe_set("--moe-seq-length", "moe_seq_length", backend.get("seq_length"), int)
+
+    # Map config booleans to megatron args while respecting explicit CLI flags.
+    bool_overrides = [
+        ("--legacy-tokenizer", "legacy_tokenizer", "legacy_tokenizer"),
+        ("--no-bias-dropout-fusion", "bias_dropout_fusion", "bias_dropout_fusion"),
+        ("--enable-msc", "enable_msc", "enable_msc"),
+        ("--use-cpu-initialization", "use_cpu_initialization", "use_cpu_initialization"),
+        ("--standalone-embedding-stage", "standalone_embedding_stage", "standalone_embedding_stage"),
+        ("--no-load-rng", "no_load_rng", "no_load_rng"),
+        ("--no-load-optim", "no_load_optim", "no_load_optim"),
+    ]
+    for flag, attr, key in bool_overrides:
+        if flag not in cli_flags and backend.get(key) is not None:
+            setattr(args, attr, bool(_resolve_backend_value(backend.get(key), backend)))
+
+    # Convenience: when an experiment config is provided, default to checkpoint args unless explicit.
+    if "--use-checkpoint-args" not in cli_flags:
+        args.use_checkpoint_args = True
+
+
+# -----------------------------------------------------------------------------
+# Batch prep and co-activation post-processing
+# -----------------------------------------------------------------------------
 def _build_token_batches(
     prompts: List[str],
     tokenizer,
@@ -402,6 +879,7 @@ def _build_token_batches(
     device: torch.device,
     seed: int,
 ) -> List[torch.Tensor]:
+    # Prebuild token batches once so all checkpoints are evaluated on identical inputs.
     generator = torch.Generator(device=device)
     generator.manual_seed(seed)
     return list(
@@ -420,6 +898,57 @@ def _build_token_batches(
     )
 
 
+def _normalize_coactivation_matrix(
+    matrix: torch.Tensor,
+    single_counts: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Normalize co-activation counts to conditional rates."""
+    matrix = matrix.clone().float()
+    if single_counts is None:
+        raise ValueError(
+            "single_counts must be provided for pairwise-adjacent co-activation"
+        )
+    matrix_normalized = matrix / single_counts.clamp(min=1.0).unsqueeze(1)
+    # Drop diagonal to focus on cross-expert interactions only.
+    matrix_normalized = matrix_normalized - torch.diag(torch.diagonal(matrix_normalized))
+    return matrix_normalized
+
+
+def _select_top_experts_pairwise(matrix_normalized: torch.Tensor, top_n: int) -> List[int]:
+    """Select top experts using the original OLMoE pair-priority strategy."""
+    num_experts = matrix_normalized.shape[0]
+    if num_experts <= top_n:
+        return list(range(num_experts))
+
+    selected = []
+    flat = matrix_normalized.clone()
+    flat.fill_diagonal_(0.0)
+    values, indices = torch.sort(flat.reshape(-1), descending=True)
+
+    for value, flat_idx in zip(values.tolist(), indices.tolist()):
+        # Greedy pair-first fill: add both endpoints of the strongest pair.
+        if value <= 0:
+            break
+        a = flat_idx // num_experts
+        b = flat_idx % num_experts
+        if a not in selected:
+            selected.append(a)
+        if b not in selected:
+            selected.append(b)
+        if len(selected) >= top_n:
+            return selected[:top_n]
+
+    max_per_expert = matrix_normalized.max(dim=1).values
+    # If pairs are exhausted, backfill by strongest remaining single-expert association.
+    fill_order = torch.argsort(max_per_expert, descending=True).tolist()
+    for expert in fill_order:
+        if expert not in selected:
+            selected.append(expert)
+        if len(selected) >= top_n:
+            break
+    return selected[:top_n]
+
+
 def _collect_final_routing_and_coactivation(
     model,
     token_batches: List[torch.Tensor],
@@ -429,11 +958,18 @@ def _collect_final_routing_and_coactivation(
     reset_attention_mask: bool,
     eod_mask_loss: bool,
     pad_mask_loss: bool,
-) -> Tuple[Dict[str, List[torch.Tensor]], Dict[str, torch.Tensor], Dict[str, int]]:
+) -> Tuple[
+    Dict[str, List[torch.Tensor]],
+    Dict[str, torch.Tensor],
+    Dict[str, torch.Tensor],
+    Dict[str, int],
+]:
     routing_maps: Dict[str, List[torch.Tensor]] = {}
     coactivation_sums: Dict[str, torch.Tensor] = {}
+    single_counts_sums: Dict[str, torch.Tensor] = {}
     topk_by_layer: Dict[str, int] = {}
 
+    # Hook every TopK router once and accumulate final-checkpoint routing/co-activation stats.
     hooks = []
     for name, module in model.named_modules():
         if isinstance(module, TopKRouter):
@@ -445,25 +981,55 @@ def _collect_final_routing_and_coactivation(
                 if len(_inputs) > 1:
                     padding_mask = _inputs[1]
                 routing_map = routing_map.detach()
+                _probs = _probs.detach()
                 if padding_mask is not None:
                     padding_mask = padding_mask.reshape(-1)
                     routing_map = routing_map[~padding_mask]
+                    _probs = _probs[~padding_mask]
                 topk_by_layer[layer_name] = mod.topk
                 routing_maps[layer_name].append(
                     routing_map.to(dtype=torch.bool, device="cpu")
                 )
 
-                routing_float = routing_map.float()
-                coactivation = routing_float.t().matmul(routing_float)
-                if layer_name not in coactivation_sums:
-                    coactivation_sums[layer_name] = coactivation.detach().cpu()
+                num_experts = _probs.shape[-1]
+                topk = min(mod.topk, num_experts)
+                if topk > 1:
+                    # OLMoE-style adjacent pair counting from ordered top-k indices.
+                    topk_indices = torch.topk(_probs, k=topk, dim=-1).indices
+                    single_counts = torch.bincount(
+                        topk_indices.reshape(-1), minlength=num_experts
+                    ).float()
+                    a = topk_indices[:, :-1].reshape(-1)
+                    b = topk_indices[:, 1:].reshape(-1)
+                    coactivation = torch.zeros(
+                        (num_experts, num_experts),
+                        device=topk_indices.device,
+                        dtype=torch.float32,
+                    )
+                    ones = torch.ones_like(a, dtype=torch.float32)
+                    coactivation.index_put_((a, b), ones, accumulate=True)
+                    coactivation.index_put_((b, a), ones, accumulate=True)
                 else:
+                    single_counts = routing_map.float().sum(dim=0)
+                    coactivation = torch.zeros(
+                        (num_experts, num_experts),
+                        device=routing_map.device,
+                        dtype=torch.float32,
+                    )
+
+                if layer_name not in coactivation_sums:
+                    # First batch initializes layer accumulators.
+                    coactivation_sums[layer_name] = coactivation.detach().cpu()
+                    single_counts_sums[layer_name] = single_counts.detach().cpu()
+                else:
+                    # Subsequent batches are additive.
                     coactivation_sums[layer_name] += coactivation.detach().cpu()
+                    single_counts_sums[layer_name] += single_counts.detach().cpu()
 
             hooks.append(module.register_forward_hook(_hook))
 
     with torch.no_grad():
-        for tokens in token_batches:
+        for tokens in _progress_iter(token_batches, "Evaluating final checkpoint"):
             attention_mask, _loss_mask, position_ids = get_ltor_masks_and_position_ids(
                 tokens,
                 eod_token,
@@ -484,7 +1050,7 @@ def _collect_final_routing_and_coactivation(
     for handle in hooks:
         handle.remove()
 
-    return routing_maps, coactivation_sums, topk_by_layer
+    return routing_maps, coactivation_sums, single_counts_sums, topk_by_layer
 
 
 def _compare_saturation_against_final(
@@ -500,6 +1066,7 @@ def _compare_saturation_against_final(
     topk_by_layer: Dict[str, int],
 ) -> dict:
     collector = RouterMetricsCollector()
+    # Mutable index shared with hooks to align current batch against final-routing reference.
     batch_index = {"value": 0}
 
     hooks = []
@@ -525,7 +1092,7 @@ def _compare_saturation_against_final(
             hooks.append(module.register_forward_hook(_hook))
 
     with torch.no_grad():
-        for tokens in token_batches:
+        for tokens in _progress_iter(token_batches, "Comparing checkpoint"):
             attention_mask, _loss_mask, position_ids = get_ltor_masks_and_position_ids(
                 tokens,
                 eod_token,
@@ -550,21 +1117,61 @@ def _compare_saturation_against_final(
     return collector.finalize()
 
 
+# -----------------------------------------------------------------------------
+# Main pipeline
+# -----------------------------------------------------------------------------
 def main() -> None:
-    initialize_megatron(
-        extra_args_provider=add_metrics_args,
-        args_defaults={
-            # Change these defaults if necessary
-            "no_load_rng": True,
-            "no_load_optim": True,
-            "micro_batch_size": 1,
-            "exit_on_missing_checkpoint": True,
-            "enable_msc": False,
-            "use_cpu_initialization": True,
-            "standalone_embedding_stage": False,
-        },
+    global _MOE_COLOR_OUTPUT, _MOE_FORCE_COLOR
+    raw_argv = sys.argv[1:]
+    quiet_init = _preparse_bool_flag(
+        raw_argv,
+        "--moe-quiet-init",
+        "--no-moe-quiet-init",
+        default=True,
     )
+    suppress_warnings = _preparse_bool_flag(
+        raw_argv,
+        "--moe-suppress-warnings",
+        "--no-moe-suppress-warnings",
+        default=True,
+    )
+    silence_megatron_logging = _preparse_bool_flag(
+        raw_argv,
+        "--moe-silence-megatron-logging",
+        "--no-moe-silence-megatron-logging",
+        default=True,
+    )
+    if suppress_warnings:
+        warnings.filterwarnings("ignore")
+    _configure_logging_suppression(silence_megatron_logging)
+
+    # Safe defaults for a metrics-only run (no optimizer/rng restoration required).
+    init_defaults = {
+        # Change these defaults if necessary
+        "no_load_rng": True,
+        "no_load_optim": True,
+        "micro_batch_size": 1,
+        "exit_on_missing_checkpoint": True,
+        "enable_msc": False,
+        "use_cpu_initialization": True,
+        "standalone_embedding_stage": False,
+    }
+    init_defaults.update(_build_preinit_defaults_from_experiment_config())
+
+    with _suppress_output(quiet_init):
+        initialize_megatron(
+            extra_args_provider=add_metrics_args,
+            args_defaults=init_defaults,
+        )
     args = get_args()
+    _MOE_COLOR_OUTPUT = args.moe_color_output
+    _MOE_FORCE_COLOR = args.moe_force_color
+    _apply_experiment_config_defaults(args)
+
+    _log_stage("Configuration")
+    _log_info(
+        f"data_type={args.moe_data_type} batches={args.moe_num_batches} batch_size={args.moe_batch_size}"
+    )
 
     if args.pipeline_model_parallel_size > 1:
         raise RuntimeError("Pipeline parallelism >1 is not supported in this script.")
@@ -575,11 +1182,13 @@ def main() -> None:
             "No checkpoint found. Provide --load pointing to a valid checkpoint directory."
         )
 
+    # Build model in eval mode once; checkpoints are swapped into this model in-place.
     ddp_model = get_model(partial(model_provider, gpt_builder), wrap_with_ddp=False)
     model = ddp_model[0]
     model.eval()
+    _log_success("Model initialized")
 
-    # Determine if we need a tokenizer
+    # Tokenizer is only needed for prompt/HF dataset modes.
     use_random = args.moe_data_type == "random"
 
     if use_random:
@@ -598,20 +1207,18 @@ def main() -> None:
     if seq_length is None:
         raise ValueError("Specify --seq-length or --max-position-embeddings.")
 
-    # Determine data source and load prompts
+    # Resolve text source according to mode and fallback rules.
     prompts = []
 
     if args.moe_data_type == "prompts" or (args.moe_prompts_file and not use_random):
         prompts = _load_prompts(args.moe_prompts_file)
         if not prompts:
-            print_rank_0("No prompts loaded. Falling back to random inputs.")
+            _log_warn("No prompts loaded; falling back to random inputs")
             use_random = True
 
     if args.moe_data_type == "hf_dataset" and not use_random:
         if not args.moe_dataset_name:
-            print_rank_0(
-                "ERROR: --moe-dataset-name is required when using --moe-data-type hf_dataset"
-            )
+            _log_warn("--moe-dataset-name is required for --moe-data-type hf_dataset")
             use_random = True
         else:
             prompts = _load_hf_dataset_texts(
@@ -632,9 +1239,7 @@ def main() -> None:
     if use_random:
         eod_token = 0
         vocab_size = args.padded_vocab_size
-        print_rank_0(
-            "Using random inputs (set --moe-data-type c4 or --moe-prompts-file for real data)"
-        )
+        _log_info("Using random inputs")
     else:
         eod_token = tokenizer.eod
         vocab_size = args.padded_vocab_size or tokenizer.vocab_size
@@ -652,6 +1257,7 @@ def main() -> None:
             "Could not determine final checkpoint from latest_checkpointed_iteration.txt"
         )
 
+    # Build once so all compared checkpoints see exactly the same token inputs.
     token_batches = _build_token_batches(
         prompts,
         tokenizer,
@@ -664,10 +1270,13 @@ def main() -> None:
         device,
         args.moe_seed,
     )
+    _log_info(f"Prepared {len(token_batches)} token batches (seq_length={seq_length})")
 
     args.ckpt_step = None if is_release else final_step
-    load_checkpoint(ddp_model, None, None, strict=False)
-    final_routing_maps, coactivation_sums, topk_by_layer = (
+    _log_stage("Final Checkpoint Evaluation")
+    with _suppress_output(args.moe_quiet_init):
+        load_checkpoint(ddp_model, None, None, strict=False)
+    final_routing_maps, coactivation_sums, single_counts_sums, topk_by_layer = (
         _collect_final_routing_and_coactivation(
             model,
             token_batches,
@@ -680,14 +1289,17 @@ def main() -> None:
         )
     )
 
+    # Compare each requested checkpoint against routing captured from the final checkpoint.
     saturation_results = {
         "final_checkpoint": "release" if is_release else final_step,
         "compare_steps": compare_steps,
         "layers": {},
     }
-    for step in compare_steps:
+    _log_stage("Checkpoint Comparisons")
+    for step in _progress_iter(compare_steps, "Checkpoint comparisons"):
         args.ckpt_step = step
-        load_checkpoint(ddp_model, None, None, strict=False)
+        with _suppress_output(args.moe_quiet_init):
+            load_checkpoint(ddp_model, None, None, strict=False)
         saturation_results["layers"][str(step)] = _compare_saturation_against_final(
             model,
             token_batches,
@@ -704,42 +1316,42 @@ def main() -> None:
         if torch.distributed.get_rank() != 0:
             return
 
-    print_rank_0(json.dumps(saturation_results, indent=2, sort_keys=True))
+    _log_stage("Results")
+    if args.moe_print_json:
+        print_rank_0(json.dumps(saturation_results, indent=2, sort_keys=True))
+    else:
+        _log_info(
+            f"Computed saturation comparisons for {len(saturation_results['layers'])} checkpoint(s)"
+        )
+    # Persist saturation summary.
     if args.moe_output_json:
         output_path = Path(args.moe_output_json)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(saturation_results, indent=2, sort_keys=True))
+        _log_success(f"Wrote saturation JSON: {output_path}")
         default_plot_dir = output_path.parent
     else:
         default_plot_dir = Path.cwd()
 
+    # Persist co-activation matrices for selected experts.
     if args.moe_coactivation_output:
         top_n = max(args.moe_coactivation_top_n, 1)
         coactivation_summary = {
             "final_checkpoint": "release" if is_release else final_step,
+            "coactivation_mode": "pairwise-adjacent",
             "layers": {},
         }
         for layer_name, matrix in coactivation_sums.items():
-            matrix = matrix.clone().float()
-            diag = torch.diagonal(matrix)  # N_Ei: total activations per expert
-            # Normalize by expert activation counts to match paper formula:
-            # Expert co-activation(E_i, E_j) = N_{E_i, E_j} / N_{E_i}
-            diag_safe = diag.clamp(min=1.0)  # Avoid division by zero
-            matrix_normalized = matrix / diag_safe.unsqueeze(1)
-            # Zero out diagonal (self-activation rates are not meaningful)
-            matrix_normalized = matrix_normalized - torch.diag(
-                torch.diagonal(matrix_normalized)
+            matrix_normalized = _normalize_coactivation_matrix(
+                matrix,
+                single_counts_sums.get(layer_name),
             )
-            # Select top-N experts with highest maximum co-activation rates
-            max_per_expert = matrix_normalized.max(dim=1).values
-            top_indices = torch.topk(
-                max_per_expert, k=min(top_n, matrix_normalized.shape[0])
-            ).indices
-            top_indices = top_indices.sort().values
+
+            top_indices = _select_top_experts_pairwise(matrix_normalized, top_n)
             submatrix = matrix_normalized[top_indices][:, top_indices]
             coactivation_summary["layers"][layer_name] = {
-                "experts": top_indices.tolist(),
-                "matrix": submatrix.tolist(),
+                "experts": top_indices,
+                "matrix": (submatrix * 100.0).tolist(),
             }
 
         output_path = Path(args.moe_coactivation_output)
@@ -747,7 +1359,9 @@ def main() -> None:
         output_path.write_text(
             json.dumps(coactivation_summary, indent=2, sort_keys=True)
         )
+        _log_success(f"Wrote coactivation JSON: {output_path}")
 
+    # Optional plotting for both checkpoint-comparison curves and co-activation heatmaps.
     if args.moe_plot:
         if plt is None:
             raise RuntimeError(
@@ -807,20 +1421,27 @@ def main() -> None:
             plt.tight_layout()
             plt.savefig(plot_dir / "router_saturation_vs_final.png", dpi=200)
             plt.close()
+            _log_success(f"Wrote plot: {plot_dir / 'router_saturation_vs_final.png'}")
 
         if args.moe_coactivation_output:
             for layer_name, layer_info in coactivation_summary["layers"].items():
                 matrix = torch.tensor(layer_info["matrix"], dtype=torch.float32)
+                experts = layer_info.get("experts", list(range(matrix.shape[0])))
                 plt.figure(figsize=(5, 4))
-                plt.imshow(matrix, cmap="RdPu", aspect="auto")
-                plt.colorbar()
+                plt.imshow(matrix, cmap="RdPu", aspect="auto", vmin=0, vmax=60)
+                plt.colorbar(ticks=[0, 15, 30, 45, 60])
                 plt.title(f"Co-activation: {layer_name}")
                 plt.xlabel("Expert")
                 plt.ylabel("Expert")
+                tick_positions = list(range(len(experts)))
+                tick_labels = [str(idx) for idx in experts]
+                plt.xticks(tick_positions, tick_labels, rotation=90)
+                plt.yticks(tick_positions, tick_labels)
                 plt.tight_layout()
                 safe_name = layer_name.replace("/", "_")
                 plt.savefig(plot_dir / f"coactivation_{safe_name}.png", dpi=200)
                 plt.close()
+            _log_success(f"Wrote coactivation plots in: {plot_dir}")
 
 
 if __name__ == "__main__":
