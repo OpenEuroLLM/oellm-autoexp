@@ -7,20 +7,40 @@ checkpoints to track how routing behaviour evolves during training.
 ===============================================================================
 USAGE EXAMPLE (with experiment YAML config)
 ===============================================================================
-
-    python scripts/moe/compute_moe_metrics.py \\
-        --load <checkpoint_directory> \\
-        --moe-experiment-config moe_config.yaml \\
-        --moe-data-type hf_dataset \\
-        --moe-dataset-name wikitext \\
-        --moe-dataset-config wikitext-2-raw-v1 \\
-        --moe-dataset-split test \\
-        --moe-num-batches 2000 \\
-        --moe-seq-length 2048 \\
-        --moe-compare-ckpts 500,2000,3500,4500 \\
-        --moe-output-json saturation_results.json \\
-        --moe-coactivation-output coactivation_results.json \\
-        --moe-plot \\
+    We are loading the dataset from a local folder here:
+    python scripts/moe/compute_moe_metrics.py \
+        --load chkpt_folder \
+        --use-checkpoint-args \
+        --moe-experiment-config moe_config.yaml \
+        --moe-data-type hf_dataset \
+        --moe-dataset-path c4 \
+        --moe-dataset-config en \
+        --moe-dataset-split validation \
+        --moe-dataset-percentage 0.5 \
+        --moe-seq-length 2048 \
+        --moe-batch-size 1 \
+        --moe-compare-ckpts 500,2000,3500,4500 \
+        --moe-output-json saturation_results.json \
+        --moe-coactivation-output coactivation_results.json \
+        --moe-plot \
+        --moe-plot-dir plots/
+    
+    For running with a HF dataset (wikitext here):
+    python scripts/moe/compute_moe_metrics.py \
+        --load chkpt_folder \
+        --use-checkpoint-args \
+        --moe-experiment-config moe_config.yaml \
+        --moe-data-type hf_dataset \
+        --moe-dataset-name wikitext \
+        --moe-dataset-config wikitext-2-raw-v1\
+        --moe-dataset-split test \
+        --moe-num-batches 2000 \
+        --moe-seq-length 2048 \
+        --moe-batch-size 1 \
+        --moe-compare-ckpts 500,2000,3500,4500 \
+        --moe-output-json saturation_results.json \
+        --moe-coactivation-output coactivation_results.json \
+        --moe-plot \
         --moe-plot-dir plots/
 
 With color output preserved in a log file:
@@ -59,7 +79,14 @@ ARGUMENTS REFERENCE
 
   --moe-dataset-name NAME                       [default: None]
         HuggingFace dataset name (e.g. "wikitext", "openwebtext",
-        "allenai/c4").  Required when --moe-data-type hf_dataset.
+      "allenai/c4").  Required when --moe-data-type hf_dataset unless
+      --moe-dataset-path is provided.
+
+  --moe-dataset-path PATH                       [default: None]
+      Path to a HuggingFace dataset saved on local disk
+      (created with datasets.Dataset.save_to_disk).
+      When provided, this is loaded with load_from_disk and uses the
+      same split/text-field/percentage settings as remote datasets.
 
   --moe-dataset-config NAME                     [default: None]
         Dataset configuration (e.g. "wikitext-2-raw-v1", "en").
@@ -401,7 +428,13 @@ def add_metrics_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser
         "--moe-dataset-name",
         type=str,
         default=None,
-        help="HuggingFace dataset name (e.g., 'allenai/c4', 'wikitext', 'openwebtext').",
+        help="HuggingFace dataset name (e.g., 'allenai/c4', 'wikitext', 'openwebtext'). Optional if --moe-dataset-path is used.",
+    )
+    group.add_argument(
+        "--moe-dataset-path",
+        type=str,
+        default=None,
+        help="Local path to a HuggingFace dataset saved with save_to_disk.",
     )
     group.add_argument(
         "--moe-dataset-config",
@@ -434,7 +467,15 @@ def add_metrics_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser
         help="Cache directory for HuggingFace datasets.",
     )
     group.add_argument("--moe-batch-size", type=int, default=1)
-    group.add_argument("--moe-num-batches", type=int, default=10)
+    group.add_argument(
+        "--moe-num-batches",
+        type=int,
+        default=None,
+        help=(
+            "Total number of batches to run. If omitted for --moe-data-type hf_dataset, "
+            "the script infers it from sampled texts and --moe-batch-size."
+        ),
+    )
     group.add_argument("--moe-seq-length", type=int, default=None)
     group.add_argument("--moe-output-json", type=str, default=None)
     group.add_argument(
@@ -544,12 +585,14 @@ def _configure_logging_suppression(enabled: bool) -> None:
 def _load_prompts(path: Optional[str]) -> List[str]:
     if not path:
         return []
-    with open(path, "r", encoding="utf-8") as handle:
+    prompts_path = Path(path).expanduser()
+    with prompts_path.open("r", encoding="utf-8") as handle:
         return [line.strip() for line in handle if line.strip()]
 
 
 def _load_hf_dataset_texts(
-    dataset_name: str,
+    dataset_path: Optional[str],
+    dataset_name: Optional[str],
     dataset_config: Optional[str],
     split: str,
     text_field: str,
@@ -560,39 +603,126 @@ def _load_hf_dataset_texts(
 ) -> List[str]:
     """Load texts from any HuggingFace dataset.
 
-    Tries internet first, falls back to cache, then returns empty list if both fail.
+    For remote datasets, performs a single load_dataset call and returns empty
+    list on failure.
     """
     try:
-        from datasets import load_dataset
+        from datasets import Dataset, DatasetDict, load_dataset, load_from_disk
     except ImportError:
         raise ImportError(
             "datasets library required. Install with: pip install datasets"
         )
 
-    _log_info(
-        f"Loading dataset={dataset_name} config={dataset_config or 'default'} split={split} percentage={percentage}%"
-    )
-
-    load_kwargs = {"path": dataset_name, "split": split, "cache_dir": cache_dir}
-    if dataset_config:
-        load_kwargs["name"] = dataset_config
-
-    # Try loading from internet first
-    try:
-        dataset = load_dataset(**load_kwargs)
-        _log_success(f"Loaded {dataset_name} successfully")
-    except Exception as e:
-        # Fall back to cache-only mode for offline/limited-network environments.
-        _log_warn(f"Internet load failed ({type(e).__name__}); trying cache-only")
-        try:
-            load_kwargs_offline = load_kwargs.copy()
-            load_kwargs_offline["download_mode"] = (
-                "force_redownload" if cache_dir else "reuse_cache_if_exists"
+    if dataset_path:
+        dataset_path_obj = Path(dataset_path).expanduser()
+        _log_info(
+            f"Loading local dataset from path={dataset_path_obj} split={split} percentage={percentage}%"
+        )
+        if not dataset_path_obj.exists():
+            _log_warn(
+                f"Local dataset path not found: {dataset_path_obj} (cwd={Path.cwd()}); falling back to random inputs"
             )
-            dataset = load_dataset(**load_kwargs_offline)
-            _log_success(f"Loaded {dataset_name} from cache")
-        except Exception as e2:
-            _log_warn(f"Cache load failed ({type(e2).__name__}); falling back to random inputs")
+            return []
+        try:
+            dataset_obj = load_from_disk(str(dataset_path_obj))
+        except Exception as exc:
+            # Non-save_to_disk layouts (for example C4 json.gz shards) are common on HPC storage.
+            _log_warn(
+                f"load_from_disk failed ({type(exc).__name__}); trying local shard files"
+            )
+
+            shard_dir = dataset_path_obj
+            if dataset_config:
+                config_subdir = shard_dir / dataset_config
+                if config_subdir.is_dir():
+                    shard_dir = config_subdir
+                else:
+                    _log_warn(
+                        f"Configured subdir not found under dataset path: {config_subdir}; using {shard_dir}"
+                    )
+
+            split_aliases = [split]
+            if split == "validation":
+                split_aliases.append("valid")
+            elif split == "valid":
+                split_aliases.append("validation")
+
+            shard_files: List[Path] = []
+            for alias in split_aliases:
+                shard_files.extend(sorted(shard_dir.glob(f"*{alias}*.json")))
+                shard_files.extend(sorted(shard_dir.glob(f"*{alias}*.json.gz")))
+
+            # If split-specific discovery fails, allow loading all json shards in the chosen directory.
+            if not shard_files:
+                shard_files.extend(sorted(shard_dir.glob("*.json")))
+                shard_files.extend(sorted(shard_dir.glob("*.json.gz")))
+
+            # Preserve order while removing duplicates.
+            deduped_files: List[str] = []
+            seen: Set[str] = set()
+            for file_path in shard_files:
+                key = str(file_path)
+                if key not in seen:
+                    seen.add(key)
+                    deduped_files.append(key)
+
+            if not deduped_files:
+                _log_warn(
+                    f"No local json/json.gz shards found in {shard_dir}; falling back to random inputs"
+                )
+                return []
+
+            _log_info(
+                f"Loading {len(deduped_files)} local shard file(s) from {shard_dir}"
+            )
+            try:
+                dataset = load_dataset(
+                    "json",
+                    data_files=deduped_files,
+                    split="train",
+                    cache_dir=cache_dir,
+                )
+                _log_success(f"Loaded local shard dataset from {shard_dir}")
+            except Exception as shard_exc:
+                _log_warn(
+                    f"Local shard load failed ({type(shard_exc).__name__}); falling back to random inputs"
+                )
+                return []
+
+        else:
+            if isinstance(dataset_obj, DatasetDict):
+                if split not in dataset_obj:
+                    _log_warn(
+                        f"Split '{split}' not found in local dataset. Available: {list(dataset_obj.keys())}. Falling back to random inputs"
+                    )
+                    return []
+                dataset = dataset_obj[split]
+            elif isinstance(dataset_obj, Dataset):
+                dataset = dataset_obj
+            else:
+                _log_warn(
+                    f"Unsupported local dataset type: {type(dataset_obj).__name__}; falling back to random inputs"
+                )
+                return []
+
+            _log_success(f"Loaded local dataset from {dataset_path_obj}")
+    else:
+        _log_info(
+            f"Loading dataset={dataset_name} config={dataset_config or 'default'} split={split} percentage={percentage}%"
+        )
+
+        load_kwargs = {"path": dataset_name, "split": split, "cache_dir": cache_dir}
+        if dataset_config:
+            load_kwargs["name"] = dataset_config
+
+        # Single remote-load attempt. Offline/caching policy should be controlled externally.
+        try:
+            dataset = load_dataset(**load_kwargs)
+            _log_success(f"Loaded {dataset_name} successfully")
+        except Exception as e:
+            _log_warn(
+                f"Dataset load failed ({type(e).__name__}); falling back to random inputs"
+            )
             return []
 
     sample_fraction = percentage / 100.0
@@ -600,6 +730,9 @@ def _load_hf_dataset_texts(
     sample_size = min(
         max(int(len(dataset) * sample_fraction), num_samples), len(dataset)
     )
+    _log_info(f"Sampling {sample_size} entries ({percentage}%) from dataset with {len(dataset)} total entries")
+
+
 
     indices = torch.randperm(
         len(dataset), generator=torch.Generator().manual_seed(seed)
@@ -666,7 +799,7 @@ def _get_final_checkpoint_step(load_dir: str) -> Tuple[Optional[int], bool]:
 # Experiment-config parsing and defaults
 # -----------------------------------------------------------------------------
 def _load_yaml_file(path: str) -> Dict[str, Any]:
-    config_path = Path(path)
+    config_path = Path(path).expanduser()
     if not config_path.is_file():
         raise FileNotFoundError(f"Config file not found: {path}")
 
@@ -740,7 +873,24 @@ def _resolve_backend_value(value: Any, backend: Dict[str, Any], max_depth: int =
     return current
 
 
+def _infer_tokenizer_type(backend: Dict[str, Any]) -> Optional[str]:
+    """Infer tokenizer_type from YAML fields when it is not explicitly set."""
+    explicit = backend.get("tokenizer_type")
+    if explicit:
+        return str(explicit)
+    # GPT-2 BPE tokenizer is uniquely identified by the presence of both vocab and merge files.
+    if backend.get("vocab_file") and backend.get("merge_file"):
+        return "GPT2BPETokenizer"
+    return None
+
+
 def _build_preinit_defaults_from_experiment_config() -> Dict[str, Any]:
+    """Load the minimal set of YAML fields needed before initialize_megatron.
+
+    Architecture args come from the checkpoint via use_checkpoint_args.
+    Only the fields below are pulled from the experiment config:
+      ckpt_format, vocab_file, merge_file, legacy_tokenizer, bias_dropout_fusion.
+    """
     config_path = _extract_flag_value(sys.argv[1:], "--moe-experiment-config")
     if not config_path:
         return {}
@@ -756,56 +906,33 @@ def _build_preinit_defaults_from_experiment_config() -> Dict[str, Any]:
     defaults: Dict[str, Any] = {}
 
     def add_default(arg_name: str, key: str, transform=None) -> None:
-        # Normalize interpolations before coercion so values like ${.num_attention_heads} work.
         value = backend.get(key)
         if value is None:
             return
         value = _resolve_backend_value(value, backend)
         defaults[arg_name] = transform(value) if transform else value
 
-    # Core model args required by Megatron validation.
-    # Do not set both num_layers and encoder_num_layers together.
-    if "--encoder-num-layers" in cli_flags:
-        # Respect explicit CLI choice; avoid injecting the conflicting counterpart.
-        pass
-    elif backend.get("num_layers") is not None:
-        add_default("num_layers", "num_layers", int)
-    elif backend.get("encoder_num_layers") is not None and "--num-layers" not in cli_flags:
-        add_default("encoder_num_layers", "encoder_num_layers", int)
-
-    for key in [
-        "hidden_size",
-        "ffn_hidden_size",
-        "num_attention_heads",
-        "num_query_groups",
-        "max_position_embeddings",
-        "seq_length",
-    ]:
-        add_default(key, key, int)
-
-    # Runtime/tokenizer/checkpoint defaults commonly needed for this tool.
-    for key in [
-        "tensor_model_parallel_size",
-        "pipeline_model_parallel_size",
-    ]:
-        add_default(key, key, int)
     for key in ["vocab_file", "merge_file", "ckpt_format"]:
         add_default(key, key, str)
-    for key in [
-        "legacy_tokenizer",
-        "bias_dropout_fusion",
-        "use_cpu_initialization",
-        "standalone_embedding_stage",
-        "enable_msc",
-        "no_load_rng",
-        "no_load_optim",
-    ]:
+    for key in ["legacy_tokenizer", "bias_dropout_fusion"]:
         add_default(key, key, bool)
+
+    # Infer tokenizer_type from vocab/merge files when not explicitly set.
+    if "--tokenizer-type" not in cli_flags and backend.get("tokenizer_type") is None:
+        inferred = _infer_tokenizer_type(defaults)
+        if inferred:
+            defaults["tokenizer_type"] = inferred
 
     return defaults
 
 
 def _apply_experiment_config_defaults(args) -> None:
+    """Apply post-init YAML defaults.
+
+    Only the same minimal fields set during pre-init are reapplied here (in
+    case use_checkpoint_args overwrote them), plus enabling use_checkpoint_args
+    so all architecture fields are sourced from the checkpoint.
+    """
     config_path = getattr(args, "moe_experiment_config", None)
     if not config_path:
         return
@@ -820,7 +947,6 @@ def _apply_experiment_config_defaults(args) -> None:
     cli_flags = _collect_cli_flags(sys.argv[1:])
 
     def maybe_set(flag: str, attr: str, value: Any, transform=None) -> None:
-        # CLI wins over YAML so users can override any config field per run.
         if value is None or flag in cli_flags:
             return
         value = _resolve_backend_value(value, backend)
@@ -828,38 +954,16 @@ def _apply_experiment_config_defaults(args) -> None:
             value = transform(value)
         setattr(args, attr, value)
 
-    maybe_set(
-        "--tensor-model-parallel-size",
-        "tensor_model_parallel_size",
-        backend.get("tensor_model_parallel_size"),
-        int,
-    )
-    maybe_set(
-        "--pipeline-model-parallel-size",
-        "pipeline_model_parallel_size",
-        backend.get("pipeline_model_parallel_size"),
-        int,
-    )
     maybe_set("--ckpt-format", "ckpt_format", backend.get("ckpt_format"), str)
     maybe_set("--vocab-file", "vocab_file", backend.get("vocab_file"), str)
     maybe_set("--merge-file", "merge_file", backend.get("merge_file"), str)
-    maybe_set("--moe-seq-length", "moe_seq_length", backend.get("seq_length"), int)
 
-    # Map config booleans to megatron args while respecting explicit CLI flags.
-    bool_overrides = [
-        ("--legacy-tokenizer", "legacy_tokenizer", "legacy_tokenizer"),
-        ("--no-bias-dropout-fusion", "bias_dropout_fusion", "bias_dropout_fusion"),
-        ("--enable-msc", "enable_msc", "enable_msc"),
-        ("--use-cpu-initialization", "use_cpu_initialization", "use_cpu_initialization"),
-        ("--standalone-embedding-stage", "standalone_embedding_stage", "standalone_embedding_stage"),
-        ("--no-load-rng", "no_load_rng", "no_load_rng"),
-        ("--no-load-optim", "no_load_optim", "no_load_optim"),
-    ]
-    for flag, attr, key in bool_overrides:
-        if flag not in cli_flags and backend.get(key) is not None:
-            setattr(args, attr, bool(_resolve_backend_value(backend.get(key), backend)))
+    if "--legacy-tokenizer" not in cli_flags and backend.get("legacy_tokenizer") is not None:
+        args.legacy_tokenizer = bool(_resolve_backend_value(backend.get("legacy_tokenizer"), backend))
+    if "--no-bias-dropout-fusion" not in cli_flags and backend.get("bias_dropout_fusion") is not None:
+        args.bias_dropout_fusion = bool(_resolve_backend_value(backend.get("bias_dropout_fusion"), backend))
 
-    # Convenience: when an experiment config is provided, default to checkpoint args unless explicit.
+    # Architecture comes from checkpoint; enable unless caller already set this.
     if "--use-checkpoint-args" not in cli_flags:
         args.use_checkpoint_args = True
 
@@ -1169,6 +1273,14 @@ def main() -> None:
     _apply_experiment_config_defaults(args)
 
     _log_stage("Configuration")
+    cli_flags = _collect_cli_flags(raw_argv)
+    num_batches_provided = "--moe-num-batches" in cli_flags
+
+    if args.moe_batch_size <= 0:
+        raise ValueError("--moe-batch-size must be > 0")
+    if num_batches_provided and (args.moe_num_batches is None or args.moe_num_batches <= 0):
+        raise ValueError("--moe-num-batches must be > 0 when provided")
+
     _log_info(
         f"data_type={args.moe_data_type} batches={args.moe_num_batches} batch_size={args.moe_batch_size}"
     )
@@ -1217,22 +1329,50 @@ def main() -> None:
             use_random = True
 
     if args.moe_data_type == "hf_dataset" and not use_random:
-        if not args.moe_dataset_name:
-            _log_warn("--moe-dataset-name is required for --moe-data-type hf_dataset")
+        if not args.moe_dataset_name and not args.moe_dataset_path:
+            _log_warn(
+                "Either --moe-dataset-name or --moe-dataset-path is required for --moe-data-type hf_dataset"
+            )
             use_random = True
         else:
+            planned_samples = (
+                args.moe_num_batches * args.moe_batch_size
+                if num_batches_provided
+                else 1
+            )
             prompts = _load_hf_dataset_texts(
+                dataset_path=args.moe_dataset_path,
                 dataset_name=args.moe_dataset_name,
                 dataset_config=args.moe_dataset_config,
                 split=args.moe_dataset_split,
                 text_field=args.moe_dataset_text_field,
                 percentage=args.moe_dataset_percentage,
                 cache_dir=args.moe_dataset_cache_dir,
-                num_samples=args.moe_num_batches * args.moe_batch_size * 2,
+                num_samples=planned_samples,
                 seed=args.moe_seed,
             )
             if not prompts:
                 use_random = True
+
+    if use_random:
+        if args.moe_num_batches is None:
+            raise ValueError(
+                "Provide --moe-num-batches when using random/prompt fallback inputs. "
+                "Automatic inference only applies to successfully loaded hf_dataset texts."
+            )
+        effective_num_batches = args.moe_num_batches
+    elif args.moe_data_type == "hf_dataset" and not num_batches_provided:
+        inferred = len(prompts) // args.moe_batch_size
+        if inferred <= 0:
+            raise ValueError(
+                "Not enough sampled texts to form one batch. Increase --moe-dataset-percentage or reduce --moe-batch-size."
+            )
+        effective_num_batches = inferred
+        _log_info(
+            f"Inferred moe_num_batches={effective_num_batches} from sampled texts={len(prompts)} and batch_size={args.moe_batch_size}"
+        )
+    else:
+        effective_num_batches = args.moe_num_batches
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -1265,7 +1405,7 @@ def main() -> None:
         seq_length,
         pad_id,
         vocab_size,
-        args.moe_num_batches,
+        effective_num_batches,
         use_random,
         device,
         args.moe_seed,
