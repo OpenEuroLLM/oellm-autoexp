@@ -30,7 +30,7 @@ env:
   SLURM_CPUS_PER_TASK: "16"
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
   PYTHONUNBUFFERED: "1"
-  CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  # CUDA_DEVICE_MAX_CONNECTIONS: "1"
   PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
   NCCL_SOCKET_IFNAME: ib0
   NCCL_NET_GDR_LEVEL: "2"
@@ -55,4 +55,4 @@ sbatch:
   gpu_bind: "none"
   partition: ${oc.env:SLURM_PARTITION,booster}
   account: ${oc.env:SLURM_ACCOUNT,jureap59}
-  time: "24:00:00"
+  time: "12:00:00"

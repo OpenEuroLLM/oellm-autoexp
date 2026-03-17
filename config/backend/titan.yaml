@@ -1,8 +1,5 @@
 defaults:
-  - titan/model: default
-  - titan/data: default
-  - titan/training: default
-  - titan/parallelism: default
+  - titan: base
   - _self_
 
 class_name: TitanBackend

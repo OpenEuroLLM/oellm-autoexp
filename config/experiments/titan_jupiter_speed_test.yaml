@@ -5,6 +5,7 @@ defaults:
   - /container: jupiter_titan
   - /slurm: jupiter
   - /sweep: none
+  - override /backend/titan/data: nemotron_cc_jupiter
   - _self_
 
 backend:
@@ -31,11 +32,11 @@ backend:
       data_parallel_replicate_degree: 4
       data_parallel_shard_degree: 1
       context_parallel_degree: 1
-    data:
-      data_prefix: /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
-      chunks_dir: ""
-      dataloader: MMapDataset
-      min_doc_len: 10
+    # data:
+    #   data_prefix: /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
+    #   chunks_dir: ""
+    #   dataloader: MMapDataset
+    #   min_doc_len: 10
     benchmarks:
       wikitext2_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext2/wikitext2
       wikitext103_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext103/wikitext103
@@ -62,8 +63,8 @@ backend:
     TORCHINDUCTOR_AUTOGRAD_CACHE: ${oc.env:TORCHINDUCTOR_AUTOGRAD_CACHE,"/tmp/torchinductor_autograd_cache"}
     TORCH_INDUCTOR_CUDAGRAPH_DISABLE: ${oc.env:TORCH_INDUCTOR_CUDAGRAPH_DISABLE,"1"}
     PYTORCH_CUDA_ALLOC_CONF: ${oc.env:PYTORCH_CUDA_ALLOC_CONF,"expandable_segments:True"}
-    LD_LIBRARY_PATH: "/opt/nvidia/lib:/usr/local/cuda/lib64"
-    LIBRARY_PATH: "/opt/nvidia/lib:/usr/local/cuda/lib64"
+    # LD_LIBRARY_PATH: "/opt/nvidia/lib:/usr/local/cuda/lib64"
+    # LIBRARY_PATH: "/opt/nvidia/lib:/usr/local/cuda/lib64"
     TRITON_LIBCUDA_PATH: "/opt/nvidia/lib/libcuda.so.1"
 
   torchrun_args:

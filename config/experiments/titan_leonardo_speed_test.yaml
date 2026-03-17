@@ -31,11 +31,11 @@ backend:
       data_parallel_replicate_degree: 4
       data_parallel_shard_degree: 1
       context_parallel_degree: 1
-    data:
-      data_prefix: ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/gpt-neox-20b/cerebras-SlimPajama-627B/train/merged
-      chunks_dir: ""
-      dataloader: MMapDataset
-      min_doc_len: 10
+    # data:
+    #   data_prefix: ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/gpt-neox-20b/cerebras-SlimPajama-627B/train/merged
+    #   chunks_dir: ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/gpt-neox-20b/cerebras-SlimPajama-627B/train/
+    #   dataloader: DeterministicPackedDataset
+    #   min_doc_len: 10
     benchmarks:
       wikitext2_path: ${oc.env:DATA_DIR}/benchmarks/neox/wikitext2/wikitext2
       wikitext103_path: /${oc.env:DATA_DIR}/benchmarks/neox/wikitext103/wikitext103
