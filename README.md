@@ -62,6 +62,13 @@ Otherwise, on the login node you run out of resources and get killed.
 Make sure also to have datasets and tokenizers downloaded before starting a job, as there is no web connection on the compute nodes.
 
 
+## Cluster setup: Snellius notes
+For Snellius, all should work with a pre-built container image. To build a container image on Snellius, please run these commands:
+- Download the pytorch base image from nvcr.io: `singularity build --fix-perms --force $CONTAINER_CACHE_DIR/pytorch-25.10.sif docker://nvcr.io/nvidia/pytorch:25.10-py3`
+- Build the user-base container (in `container`), but from a compute node: `python build_container_user.py --backend megatron --definition MegatronTrainingNoRoot --append-date --container-cmd singularity --base-image $CONTAINER_CACHE_DIR/pytorch-25.10.sif`
+Otherwise, on the login node you run out of resources and get killed.
+
+
 ## Supercomputer setup: JUWELS Booster / JUPITER
 To be tested.
 See also the predecessors https://github.com/SLAMPAI/megatron-autoexp ([Notes](https://iffmd.fz-juelich.de/yAbNVj9eQz647elSwlyHXQ)) and https://github.com/SLAMPAI/autoexperiment for hints.
