@@ -63,10 +63,18 @@ Make sure also to have datasets and tokenizers downloaded before starting a job,
 
 
 ## Cluster setup: Snellius notes
-For Snellius, all should work with a pre-built container image. To build a container image on Snellius, please run these commands:
-- Download the pytorch base image from nvcr.io: `singularity build --fix-perms --force $CONTAINER_CACHE_DIR/pytorch-25.10.sif docker://nvcr.io/nvidia/pytorch:25.10-py3`
-- Build the user-base container (in `container`), but from a compute node: `python build_container_user.py --backend megatron --definition MegatronTrainingNoRoot --append-date --container-cmd singularity --base-image $CONTAINER_CACHE_DIR/pytorch-25.10.sif`
-Otherwise, on the login node you run out of resources and get killed.
+For Snellius, all should work with a pre-built container image. Build the container on a compute node:
+```bash
+export APPTAINER_TMPDIR=/dev/shm/$USER && mkdir -p /dev/shm/$USER/
+export APPTAINER_CACHEDIR=/scratch-shared/$USER/apptainer
+python container/build_container_user.py \
+  --backend megatron \
+  --definition MegatronTrainingSnellius \
+  --base-image nvcr.io/nvidia/pytorch:25.10-py3 \
+  --container-cmd apptainer \
+  --output /projects/0/prjs1874/containers/pytorch-25.10-transformers-py3.sif \
+  --no-sandbox
+```
 
 
 ## Supercomputer setup: JUWELS Booster / JUPITER

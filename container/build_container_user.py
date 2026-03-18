@@ -86,6 +86,15 @@ def parse_args() -> argparse.Namespace:
         default="oellm_sandbox",
         type=str,
     )
+    parser.add_argument(
+        "--no-sandbox",
+        action="store_true",
+        help=(
+            "Build directly from the rendered .def file instead of using a sandbox. "
+            "Use on systems where 'apptainer build' works without root (e.g. Snellius). "
+            "Skips the sandbox and user-level post-install steps."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -280,6 +289,26 @@ def main() -> None:
 
     template_text = definition_template.read_text()
     rendered_definition = substitute_env_vars(template_text, substitutions)
+
+    if args.no_sandbox:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".def", prefix="oellm_", delete=False
+        ) as tmp_def:
+            tmp_def.write(rendered_definition)
+            tmp_def_path = tmp_def.name
+
+        try:
+            build_cmd = [container_cmd, "build"]
+            if args.force:
+                build_cmd.append("--force")
+            build_cmd += [str(target_path), tmp_def_path]
+            run_command(build_cmd)
+        finally:
+            os.unlink(tmp_def_path)
+
+        print(f"[+] Image written to {target_path}")
+        return
+
     sections = parse_definition_sections(rendered_definition)
     post_script = sections.get("post", "")
     files_entries = parse_files_entries(sections.get("files", ""))
