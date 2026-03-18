@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default=os.environ.get("CONTAINER_CACHE_DIR", os.getcwd()),
-        help="Directory for the resulting .sif image.",
+        help="Output path for the .sif image. If it ends in '.sif', used as the full file path; otherwise treated as a directory with an auto-generated filename.",
     )
     parser.add_argument(
         "--append-date", action="store_true", help="Append UTC timestamp to the output image name."
@@ -261,10 +261,14 @@ def main() -> None:
     if args.append_date:
         stamp = f"_{subprocess.check_output(['date', '-u', '+%Y%m%d%H%M']).decode().strip()}"
 
-    output_dir = Path(args.output).expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    image_name = f"{args.definition}{args.additional_tag}_{arch}{stamp}.sif"
-    target_path = output_dir / image_name
+    output_path = Path(args.output).expanduser().resolve()
+    if output_path.suffix == ".sif":
+        target_path = output_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        output_path.mkdir(parents=True, exist_ok=True)
+        image_name = f"{args.definition}{args.additional_tag}_{arch}{stamp}.sif"
+        target_path = output_path / image_name
 
     if target_path.exists():
         if args.force:

@@ -12,4 +12,3 @@ save: /scratch-shared/${oc.env:USER}/megatron-lm/out/
 load: /scratch-shared/${oc.env:USER}/megatron-lm/out/
 tensorboard_dir: ${job.base_output_dir}/tensorboard
 log_interval: 10
-
