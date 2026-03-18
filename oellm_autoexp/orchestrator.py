@@ -63,10 +63,11 @@ def build_execution_plan(
     root = config
 
     points = expand_sweep(root.sweep)
-    points_by_idx = {point.index: point for point in points}
+    all_points_by_idx = {point.index: point for point in points}
+    points_by_idx = all_points_by_idx
     if subset_indices:
         points_by_idx = {
-            idx: point for idx, point in points_by_idx.items() if idx in subset_indices
+            idx: point for idx, point in all_points_by_idx.items() if idx in subset_indices
         }
         if not points_by_idx:
             raise ValueError(f"No sweep points match indices: {sorted(subset_indices)}")
@@ -76,6 +77,7 @@ def build_execution_plan(
         points_by_idx,
         config_setup=config_setup,
         config_class=RootConfig,
+        full_points_by_idx=all_points_by_idx,
     )
 
     return ExecutionPlan(

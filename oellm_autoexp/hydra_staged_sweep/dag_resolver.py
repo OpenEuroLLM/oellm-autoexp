@@ -214,11 +214,13 @@ def find_sibling_by_group_path(
 def build_dependency_dag_from_points(
     points: dict[int, SweepPoint],
     sibling_index: SiblingIndex | None = None,
+    lookup_points: dict[int, SweepPoint] | None = None,
 ) -> nx.DiGraph:
     """Build dependency DAG from sweep points."""
     LOGGER.debug(f"Building dependency DAG from {len(points)} points")
     dag = nx.DiGraph()
     index = sibling_index or _build_sibling_index(points)
+    lookup = lookup_points if lookup_points is not None else points
 
     for point in points.values():
         dag.add_node(point.index)
@@ -230,7 +232,7 @@ def build_dependency_dag_from_points(
         for stage_pattern in sibling_deps:
             try:
                 sibling = find_sibling_by_group_path(
-                    point, points, stage_pattern, sibling_index=index
+                    point, lookup, stage_pattern, sibling_index=index
                 )
                 if sibling:
                     dag.add_edge(sibling.index, point.index)
@@ -343,8 +345,13 @@ def resolve_sweep_with_dag(
     points: list[SweepPoint] | dict[int, SweepPoint],
     config_setup: ConfigSetup,
     config_class: type = StagedSweepRoot,
+    full_points_by_idx: dict[int, SweepPoint] | None = None,
 ) -> list[JobPlan]:
-    """Pure OmegaConf resolution with DAG ordering."""
+    """Pure OmegaConf resolution with DAG ordering.
+
+    When subset_indices is used, full_points_by_idx should contain all sweep points
+    so sibling configs (e.g. stable for decay jobs) can be resolved for interpolation.
+    """
     LOGGER.info(f"Starting DAG resolution for {len(points)} sweep points")
 
     if isinstance(points, list):
@@ -352,16 +359,22 @@ def resolve_sweep_with_dag(
     else:
         points_dict = points
 
-    sibling_index = _build_sibling_index(points_dict)
-    dag = build_dependency_dag_from_points(points_dict, sibling_index=sibling_index)
+    # Use full points for sibling index and lookup so we can find siblings even when running a subset
+    lookup_points = full_points_by_idx if full_points_by_idx is not None else points_dict
+    sibling_index = _build_sibling_index(lookup_points)
+    dag = build_dependency_dag_from_points(
+        points_dict, sibling_index=sibling_index, lookup_points=lookup_points
+    )
 
     if not nx.is_directed_acyclic_graph(dag):
         cycles = list(nx.simple_cycles(dag))
         LOGGER.error(f"Circular dependencies detected: {cycles}")
         raise ValueError(f"Circular dependencies detected: {cycles}")
 
-    ordered_indices = list(nx.topological_sort(dag))
-    LOGGER.debug(f"Topological order: {ordered_indices}")
+    full_ordered = list(nx.topological_sort(dag))
+    # When using a subset, only process indices that are in points_dict
+    ordered_indices = [i for i in full_ordered if i in points_dict]
+    LOGGER.debug(f"Topological order (filtered): {ordered_indices}")
 
     resolved_jobs = {}
     filtered_jobs = {}
@@ -407,21 +420,41 @@ def resolve_sweep_with_dag(
         sibling_jobs = {}
         for pattern in sibling_patterns:
             sibling_point = find_sibling_by_group_path(
-                point, points_dict, pattern, sibling_index=sibling_index
+                point, lookup_points, pattern, sibling_index=sibling_index
             )
             if sibling_point and sibling_point.index in resolved_jobs:
                 sibling_jobs[pattern] = resolved_jobs[sibling_point.index]
-
-        sibling_job_configs = {
-            sibling_pattern: asdict(
-                load_config_reference(
+            elif sibling_point and full_points_by_idx is not None:
+                # Sibling not in plan (e.g. decay run in isolation); resolve from point params
+                sibling_param_overrides = []
+                for key, value in sibling_point.parameters.items():
+                    if is_config_group(key, config_setup.config_dir):
+                        sibling_param_overrides.extend(
+                            param_to_cmdlines(key, value, prefix="", config_dir=config_setup.config_dir)
+                        )
+                    else:
+                        sibling_param_overrides.extend(
+                            param_to_cmdlines(key, value, prefix="++", config_dir=config_setup.config_dir)
+                        )
+                sibling_overrides = (
+                    list(config_setup.overrides)
+                    + [f"++index={sibling_point.index}"]
+                    + sibling_param_overrides
+                )
+                sibling_resolved = load_config_reference(
                     config_dir=config_setup.config_dir,
                     config_path=config_setup.config_path,
                     config_name=config_setup.config_name,
-                    overrides=list(config_setup.overrides) + sibling_job.parameters,
+                    overrides=sibling_overrides,
                     config_class=config_class,
                 )
-            )
+                sibling_jobs[pattern] = sibling_resolved
+
+        def _sibling_to_dict(sj):
+            return asdict(sj.config) if hasattr(sj, "config") else asdict(sj)
+
+        sibling_job_configs = {
+            sibling_pattern: _sibling_to_dict(sibling_job)
             for sibling_pattern, sibling_job in sibling_jobs.items()
         }
 
@@ -454,11 +487,12 @@ def resolve_sweep_with_dag(
                     param_to_cmdlines(key, value, prefix="++", config_dir=config_setup.config_dir)
                 )
 
+        # User overrides last so they take precedence over sweep params (e.g. ++backend.megatron.load for decay resume)
         job_parameters = (
-            list(config_setup.overrides)
-            + cmdline_overrides_siblings
+            cmdline_overrides_siblings
             + [f"++index={point_idx}"]
             + param_overrides
+            + list(config_setup.overrides)
         )
 
         resolved = load_config_reference(
