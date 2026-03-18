@@ -55,4 +55,4 @@ sbatch:
   gpu_bind: "none"
   partition: ${oc.env:SLURM_PARTITION,booster}
   account: ${oc.env:SLURM_ACCOUNT,jureap59}
-  time: "24:00:00"
+  time: "12:00:00"
