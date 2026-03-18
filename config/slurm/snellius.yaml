@@ -13,7 +13,7 @@ env:
   NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
   PYTHONUNBUFFERED: "1"
   OMP_NUM_THREADS: "16"
-  NCCL_SOCKET_IFNAME: "eno2np0" 
+  NCCL_SOCKET_IFNAME: "eno2np0"
   MASTER_ADDR: '$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'
   MASTER_PORT: "20074"
 launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
