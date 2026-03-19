@@ -20,7 +20,7 @@ stage: "" # overridden by sweep
 # the name contains only the sweep variables
 job:
   name: "moe_abl_nexp_${backend.megatron.num_experts}_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_seed${backend.megatron.seed}_${stage}"
-  base_output_dir: "results/moe_bsz_lr_sparsity_grid_A130M_120BT/${job.name}"
+  base_output_dir: "results/moe_bsz${backend.megatron.global_batch_size}_lr_sparsity_grid_A130M_120BT/${job.name}"
 
 backend:
   megatron:
@@ -116,10 +116,11 @@ backend:
     profile_step_end: 12
 
     # EVALS
-    # Eval interval scales inversely with global batch size,
-    # calibrated so that gbsz=1024 evals every 100 iterations.
+    # Eval interval scales inversely with global batch size, calibrated so that gbsz=1024 evals every 100 iterations.
+    # here we eval after every ~419M tokens (eval_interval), also on ~419M tokens (eval_iters)
+    # eval tokens: 1024 gbsz: 100 iters x (1024 x 4096) = 419,430,400 tokens
     eval_interval: "${oc.eval:'int(102400 // ${backend.megatron.global_batch_size})'}"
-    eval_iters: 100
+    eval_iters: "${oc.eval:'int(102400 // ${backend.megatron.global_batch_size})'}"
 
     # LOGGING
     log_interval: 10
@@ -132,13 +133,16 @@ backend:
     ckpt_format: "torch_dist"
     # Checkpoint interval scales inversely with global batch size, calibrated so that gbsz=1024 saves every 500 iterations.
     # checkpoints are saved at a fixed token frequency (~2.1B tokens) regardless of batch size.
+    # gbsz=512 => 1000, gbsz=256 => 2000, gbsz=128 => 4000, gbsz=64 => 8000
     save_interval: "${oc.eval:'512000 // ${backend.megatron.global_batch_size}'}"
     save: ${job.base_output_dir}/checkpoints
 
-    # Save exact checkpoints at each decay branching point (start_iter for 80BT and 120BT)
+    # Save checkpoints at decay branching points (start of decay) and decay end points (final iter)
     save_extra_steps:
       - "${oc.eval:'int(((80_000_000_000 + ${backend.megatron.seq_length}*${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length}*${backend.megatron.global_batch_size})) * (1 - ${backend.megatron.aux.cooldown_decay_fraction}))'}"
       - "${oc.eval:'int(((120_000_000_000 + ${backend.megatron.seq_length}*${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length}*${backend.megatron.global_batch_size})) * (1 - ${backend.megatron.aux.cooldown_decay_fraction}))'}"
+      - "${oc.eval:'(80_000_000_000 + ${backend.megatron.seq_length}*${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length}*${backend.megatron.global_batch_size})'}"
+      - "${oc.eval:'(120_000_000_000 + ${backend.megatron.seq_length}*${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length}*${backend.megatron.global_batch_size})'}"
 
     # Base training configuration (for stable phase)
     micro_batch_size: 16
@@ -152,7 +156,7 @@ backend:
     # so they get resolved together with stage-specific values
     aux:
       tokens: 300_000_000_000  # Default: 300B tokens
-      max_decay_tokens: 120_000_000_000  # largest decay budget; stable phase exits at this branching point
+      max_decay_tokens: 120_000_000_000  # largest decay budget; stable phase runs until end of this decay phase
       decay_fraction: 0.0  # Default: no decay (overridden to cooldown_decay_fraction in decay stages)
       cooldown_decay_fraction: 0.2  # fraction of iters spent in LR decay during cooldown
       start_iter: 0  # only used in decay
@@ -202,15 +206,15 @@ sweep:
     # Uses a nested structure with defaults for decay stages
     - type: list
       configs:
-        # STABLE PHASE: Configured for full 300B tokens but exits early at the decay120BT branching point.
-        # To resume training beyond 120BT, remove/increase exit_interval and resubmit.
+        # STABLE PHASE: Configured for full 300B tokens but exits at the end of the longest
+        # decay phase (120BT) via exit_interval, so that stable-LR checkpoints exist at every decay endpoint.
         - stage: stable
 
           backend.megatron.aux.tokens: 300_000_000_000
           backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
           backend.megatron.lr_wsd_decay_iters: 0  # No decay in stable phase
-          # Exit early at the decay120BT branching point = int(ceil(120B / (seq*gbsz)) * 0.8)
-          backend.megatron.exit_interval: "\\${oc.eval:'int(((\\${backend.megatron.aux.max_decay_tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+          # Exit at the end of the longest decay phase (120BT) = ceil(120B / (seq*gbsz))
+          backend.megatron.exit_interval: "\\${oc.eval:'(\\${backend.megatron.aux.max_decay_tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
           backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
           backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
 
@@ -257,22 +261,24 @@ sweep:
 
 
 ### Initial number of scripts/configurations
-# 5 lr × 5 batch sizes × 4 num_experts × (1 stable + 2 decay) = 300 scripts (before filtering)
-# Stable phase is configured for the full 300B tokens but exits early via exit_interval
-# at the decay120BT branching point. To resume training past 120BT, remove exit_interval.
-# E.g. gbsz=64:   train_iters=1,144,410 (300B), exit_interval=366,211 (120BT branch)
-#      gbsz=1024:  train_iters=71,526 (300B),     exit_interval=22,888 (120BT branch)
+# 5 lr × 1 batch size (512) × 4 num_experts × (1 stable + 2 decay) = 60 scripts (before filtering)
+# Stable phase is configured for 300B tokens but exits at the end of the longest decay phase
+# (120BT) via exit_interval, so that stable-LR checkpoints exist at every decay endpoint.
+#
 # Formulae (seq_length=4096, cooldown_decay_fraction=0.2):
-#   train_iters = ceil(tokens / (seq*gbsz))
-#   exit_interval = ceil(120B / (seq*gbsz)) * 0.8  (stable exits at 120BT branching point)
-#   save_extra_steps = [ceil(80B/(seq*gbsz))*0.8, ceil(120B/(seq*gbsz))*0.8]
+#   train_iters    = ceil(tokens / (seq*gbsz))
+#   exit_interval  = ceil(120B / (seq*gbsz))       (stable runs until end of 120BT decay)
+#   save_extra_steps = [ceil(80B/(seq*gbsz))*0.8,   ceil(120B/(seq*gbsz))*0.8,
+#                       ceil(80B/(seq*gbsz)),        ceil(120B/(seq*gbsz))]
+#                       ^^ branching points ^^       ^^ decay end points ^^
 #
-# train_iters (300B) and save_extra_steps [80BT, 120BT] by batch size:
-#   gbsz=64:   train_iters=1,144,410  exit_interval=366,211  save_extra_steps=[244,140, 366,211]
-#   gbsz=128:  train_iters=572,205    exit_interval=183,105  save_extra_steps=[122,070, 183,105]
-#   gbsz=256:  train_iters=286,103    exit_interval=91,552   save_extra_steps=[61,035,  91,552]
-#   gbsz=512:  train_iters=143,051    exit_interval=45,776   save_extra_steps=[30,517,  45,776]
-#   gbsz=1024: train_iters=71,526     exit_interval=22,888   save_extra_steps=[15,259,  22,888]
+# Values by batch size:
+#   gbsz   train_iters  exit_interval  save_extra_steps [80BT_br, 120BT_br, 80BT_end, 120BT_end]
+#     64   1,144,410      457,764      [244,140,  366,211,  305,176,  457,764]
+#    128     572,205      228,882      [122,070,  183,105,  152,588,  228,882]
+#    256     286,103      114,441      [ 61,035,   91,552,   76,294,  114,441]
+#    512     143,052       57,221      [ 30,517,   45,776,   38,147,   57,221]  ← this config
+#   1024      71,526       28,611      [ 15,259,   22,888,   19,074,   28,611]
 #
-# With lr_warmup_iters=2000, the worst case is decay80BT with gbsz=1024:
-# train_iters=19,074 → 2000/19074=0.105 < 0.3 → passes. No configs are filtered → 300 total.
+# With lr_warmup_iters=2000, worst case in this config is decay80BT with gbsz=512:
+# train_iters=38,147 → 2000/38147=0.052 < 0.3 → passes. No configs are filtered → 60 total.
