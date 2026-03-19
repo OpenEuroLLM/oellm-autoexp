@@ -1,7 +1,7 @@
 # @package _global_
 
-# 600M dense Qwen3 model training with pull-based multi-stage cooldown on Leonardo
-# Configuration from 600M (gpt-oss reduced): https://docs.google.com/spreadsheets/d/129mvSQ2K3m_hLaH2zk8R2Zr1-RsFyhTphXyN_ErSWFs/edit?gid=1329178961#gid=1329178961
+# 1B dense Qwen3 model training with pull-based multi-stage cooldown on Leonardo
+# Configuration from 1B (gpt-oss reduced): https://docs.google.com/spreadsheets/d/129mvSQ2K3m_hLaH2zk8R2Zr1-RsFyhTphXyN_ErSWFs/edit?gid=1329178961#gid=1329178961
 
 defaults:
   - /backend: megatron_torchrun
@@ -16,8 +16,8 @@ index: 0
 stage: ""
 
 job:
-  name: "dense_qwen3_600M_gpt_neox_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_beta2${backend.megatron.adam_beta2}_${stage}"
-  base_output_dir: "results/qwen3_600M_gpt_neox/${job.name}"
+  name: "dense_qwen3_1B_gpt_neox_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_beta2${backend.megatron.adam_beta2}_${stage}"
+  base_output_dir: "results/qwen3_1B_gpt_neox/${job.name}"
 
 backend:
   megatron:
@@ -46,7 +46,7 @@ backend:
     split: '99,1,0'
     legacy_tokenizer: True
 
-    # MODEL: 600M
+    # MODEL: 1B
     num_layers: 28
     hidden_size: 1536
     ffn_hidden_size: 4608
