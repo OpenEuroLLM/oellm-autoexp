@@ -138,7 +138,7 @@ backend:
       - "${backend.megatron.aux.save_step_6}"
 
     # Base training configuration (for stable phase)
-    micro_batch_size: 8
+    micro_batch_size: 4
     global_batch_size: 64  # Will be overridden by sweep
     lr: 5.e-4  # Will be overridden by sweep
 
