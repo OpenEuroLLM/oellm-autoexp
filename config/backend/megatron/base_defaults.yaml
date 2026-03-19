@@ -512,11 +512,6 @@ suggested_communication_unit_size: null  # Specifies the number of elements to c
 swiglu: false  # Use gated linear units and SiLU activation instead of default gelu
 swin_backbone_type: tiny  # choices: ['tiny', 'base', 'h3'] | pretraining objectives
 symmetric_ar_type: null  # choices: ['two_shot', 'one_shot', 'multimem_all_reduce', None] | What type of symmetric all reduce to use. The default is none which is no use of symetric memory
-<<<<<<< HEAD
-te_fallback_layernorm_linear: false  # Use TransformerEngine fallback (non-fused) implementation for LayerNorm-Linear.
-te_precision_config_file: null  # Configuration file to select per-module precision overrides. See TransformerEngineMixedPrecision.md
-=======
->>>>>>> main
 te_rng_tracker: false  # Use the Transformer Engine version of the random number generator. Required for CUDA graphs support.
 tensor_model_parallel_size: 1  # Degree of tensor model parallelism.
 tensorboard_dir: null  # Write TensorBoard logs to this directory.
