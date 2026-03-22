@@ -93,7 +93,7 @@ class Optimizer:
 
 @dataclass
 class LRScheduler:
-    warmup_steps: int = 200
+    warmup_steps: Any = None
     decay_ratio: Any = None
     decay_type: Literal["linear", "sqrt", "cosine"] = "linear"
     min_lr_factor: float = 0.0
@@ -172,7 +172,6 @@ class Checkpoint:
     enable_ft_dataloader_checkpoints: bool = True
     folder: str = "checkpoint"
     interval: int = 500
-    extra_steps: list[int] = field(default_factory=list)
     initial_load_path: Any = None
     initial_load_model_only: bool = True
     initial_load_in_hf: bool = False
@@ -187,6 +186,7 @@ class Checkpoint:
     enable_first_step_checkpoint: bool = False
     create_seed_checkpoint: bool = False
     load_only: bool = False
+    extra_steps: list[int] = field(default_factory=list)
 
 
 @dataclass
