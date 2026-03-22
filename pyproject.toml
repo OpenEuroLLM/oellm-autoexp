@@ -20,6 +20,7 @@ dependencies = [
   "jsonschema>=4.17",
   "networkx>=3.0",
   "tyro>=1.0.8",
+  "tqdm>=4.65.0",
 ]
 
 [project.optional-dependencies]
