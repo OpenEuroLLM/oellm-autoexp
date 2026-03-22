@@ -30,9 +30,12 @@ jobs:
           GH_TOKEN: ${{ secrets.TITAN_OELLM_PAT }}
         run: |
           sed -i 's,git@github.com:,https://github.com/,g' .gitmodules
+          git submodule sync --recursive
           cat .git/config
           cat .gitmodules
-          printf "https://x-access-token:${GH_PAT}@github.com\n" > ~/.git-credentials
+          git config --global credential.helper store
+          printf "https://x-access-token:%s@github.com\n" "$GH_PAT" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
           git submodule status --recursive
           git submodule update --init --recursive
 
@@ -96,9 +99,12 @@ jobs:
           GH_TOKEN: ${{ secrets.TITAN_OELLM_PAT }}
         run: |
           sed -i 's,git@github.com:,https://github.com/,g' .gitmodules
+          git submodule sync --recursive
           cat .git/config
           cat .gitmodules
-          printf "https://x-access-token:${GH_PAT}@github.com\n" > ~/.git-credentials
+          git config --global credential.helper store
+          printf "https://x-access-token:%s@github.com\n" "$GH_PAT" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
           git submodule status --recursive
           git submodule update --init --recursive
 
