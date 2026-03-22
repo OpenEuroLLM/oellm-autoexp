@@ -29,9 +29,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.TITAN_OELLM_PAT }}
         run: |
-          sed -i 's,git@github.com:,https://x-access-token:${GH_TOKEN}@github.com/,' .git/config
-          sed -i 's,git@github.com:,https://x-access-token:${GH_TOKEN}@github.com/,' .gitmodules
+          sed -i 's,git@github.com:,https://github.com/,g' .git/config
+          sed -i 's,git@github.com:,https://github.com/,g' .gitmodules
           git submodule status --recursive
+          printf "https://x-access-token:${GH_PAT}@github.com\n" > ~/.git-credentials
           git submodule update --init --recursive
 
       - name: Set up Python
@@ -93,9 +94,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.TITAN_OELLM_PAT }}
         run: |
-          sed -i 's,git@github.com:,https://x-access-token:${GH_TOKEN}@github.com/,' .git/config
-          sed -i 's,git@github.com:,https://x-access-token:${GH_TOKEN}@github.com/,' .gitmodules
+          sed -i 's,git@github.com:,https://github.com/,g' .git/config
+          sed -i 's,git@github.com:,https://github.com/,g' .gitmodules
           git submodule status --recursive
+          printf "https://x-access-token:${GH_PAT}@github.com\n" > ~/.git-credentials
           git submodule update --init --recursive
 
 
