@@ -34,7 +34,7 @@ jobs:
           cat .git/config
           cat .gitmodules
           git config --global credential.helper store
-          printf "https://x-access-token:%s@github.com\n" "$GH_PAT" > ~/.git-credentials
+          printf "https://x-access-token:%s@github.com\n" "$GH_TOKEN" > ~/.git-credentials
           chmod 600 ~/.git-credentials
           git submodule status --recursive
           git submodule update --init --recursive
@@ -103,7 +103,7 @@ jobs:
           cat .git/config
           cat .gitmodules
           git config --global credential.helper store
-          printf "https://x-access-token:%s@github.com\n" "$GH_PAT" > ~/.git-credentials
+          printf "https://x-access-token:%s@github.com\n" "$GH_TOKEN" > ~/.git-credentials
           chmod 600 ~/.git-credentials
           git submodule status --recursive
           git submodule update --init --recursive
