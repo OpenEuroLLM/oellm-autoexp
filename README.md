@@ -382,6 +382,9 @@ Monitoring behavior lives entirely in YAML. Keep it small, keep it explicit.
 
 
 ### Updating the Megatron-LM backend version
-For an update of the megatron backend, first check out the new submodule version. Then, create a new container. Within that container,
-run the script generation in `scripts/generate_megatron_config.py` and `scripts/generate_megatron_dataclass.py`. You might have to adapt the `transformer_engine` mocks in those scripts.
+For an update of the megatron backend, first check out the new submodule version. Then, create a new container. Within that container, run the script generation in `scripts/generate_megatron_config.py` and `scripts/generate_megatron_dataclass.py`. You might have to adapt the `transformer_engine` mocks in those scripts.
 Also, apparently some containers don't use the correct `C++` path, you might have to `export CXX=$(which clang++)`, for example on LUMI.
+Afterwards, make sure that the generated files conform the linter standard by applying:
+```bash
+black --preview --enable-unstable-feature string_processing oellm_autoexp/backends/megatron/*
+```
