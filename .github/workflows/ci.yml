@@ -35,6 +35,7 @@ jobs:
           GH_TOKEN: ${{ secrets.TITAN_OELLM_PAT }}
         run: |
           git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git submodule sync --recursive
           git submodule update --init --recursive
 
       - name: Set up Python
