@@ -22,6 +22,7 @@ from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandC
 from oellm_autoexp.monitor.submission import SlurmJobConfig, LocalJobConfig
 
 import oellm_autoexp.backends.megatron_backend  # noqa  - register
+import oellm_autoexp.backends.titan_backend  # noqa  - register
 from oellm_autoexp.config.schema import RootConfig, ConfigSetup, BackendInterface
 
 
