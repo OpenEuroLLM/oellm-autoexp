@@ -37,7 +37,8 @@ jobs:
           git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
           git submodule sync --recursive
           git submodule status --recursive
-          git submodule foreach git config remote.origin.url
+          cat .git/config
+          cat .gitmodules
           git submodule update --init --recursive
 
       - name: Set up Python
@@ -107,7 +108,8 @@ jobs:
           git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
           git submodule sync --recursive
           git submodule status --recursive
-          git submodule foreach git config remote.origin.url
+          cat .git/config
+          cat .gitmodules
           git submodule update --init --recursive
 
 
