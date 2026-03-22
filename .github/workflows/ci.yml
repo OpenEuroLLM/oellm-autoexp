@@ -25,20 +25,13 @@ jobs:
         with:
           submodules: false
 
-      - name: Rewrite submodule URLs to HTTPS for CI
-        run: |
-          git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git submodule sync --recursive
-
       - name: Checkout submodules
         env:
           GH_TOKEN: ${{ secrets.TITAN_OELLM_PAT }}
         run: |
-          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
-          git submodule sync --recursive
+          sed -i 's,git@github.com:,https://x-access-token:${GH_TOKEN}@github.com/,' .git/config
+          sed -i 's,git@github.com:,https://x-access-token:${GH_TOKEN}@github.com/,' .gitmodules
           git submodule status --recursive
-          cat .git/config
-          cat .gitmodules
           git submodule update --init --recursive
 
       - name: Set up Python
@@ -96,20 +89,13 @@ jobs:
         with:
           submodules: false
 
-      - name: Rewrite submodule URLs to HTTPS for CI
-        run: |
-          git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git submodule sync --recursive
-
       - name: Checkout submodules
         env:
           GH_TOKEN: ${{ secrets.TITAN_OELLM_PAT }}
         run: |
-          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
-          git submodule sync --recursive
+          sed -i 's,git@github.com:,https://x-access-token:${GH_TOKEN}@github.com/,' .git/config
+          sed -i 's,git@github.com:,https://x-access-token:${GH_TOKEN}@github.com/,' .gitmodules
           git submodule status --recursive
-          cat .git/config
-          cat .gitmodules
           git submodule update --init --recursive
 
 
