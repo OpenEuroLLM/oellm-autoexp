@@ -42,6 +42,7 @@ full_schema_validation: false
 # Minimal env defaults
 env:
   PYTHONPATH: ".:submodules/titan-oellm:submodules/titan-oellm/torchtitan"
+  TITAN_USER: default
 
 # Job config tree (defaults come from generated schema)
 titan:
