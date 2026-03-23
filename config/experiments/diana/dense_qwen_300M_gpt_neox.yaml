@@ -7,7 +7,7 @@ defaults:
   - /backend: megatron_torchrun
   - /container: leonardo
   - /slurm: leonardo
-  - /job: default
+  - /job: auto_restart
   - /sweep: none
   - /backend/megatron: base
   - _self_
