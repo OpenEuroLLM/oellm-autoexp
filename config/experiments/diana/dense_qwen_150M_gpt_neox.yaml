@@ -184,7 +184,7 @@ sweep:
         # ============================================================
 
         # STABLE PHASE: Train for 12B tokens (max of this group) with no decay
-        - stage: stable_12BT
+        - stage: stable12BT
           backend.megatron.global_batch_size: 32
           backend.megatron.lr: 1.e-3
           backend.megatron.aux.tokens: 12_000_000_000
@@ -197,7 +197,7 @@ sweep:
           backend.megatron.aux.save_step_0: "\\${oc.eval:'int(((6_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
           backend.megatron.aux.save_step_1: "\\${oc.eval:'int(((12_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
 
-        # DECAY STAGES: Cooldown at 6B / 12B, both branching from stable_12BT
+        # DECAY STAGES: Cooldown at 6B / 12B, both branching from stable12BT
         - type: list
           defaults:
             backend.megatron.aux.decay_fraction: 0.2
@@ -208,18 +208,18 @@ sweep:
             backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
             backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
             backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
-            # Checkpoint loading from stable_12BT
-            backend.megatron.load: "\\${sibling.stable_12BT.job.base_output_dir}/checkpoints"
+            # Checkpoint loading from stable12BT
+            backend.megatron.load: "\\${sibling.stable12BT.job.base_output_dir}/checkpoints"
             backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter}"
             backend.megatron.override_opt_param_scheduler: true
-            # Start conditions: wait for stable_12BT to reach the branching checkpoint
+            # Start conditions: wait for stable12BT to reach the branching checkpoint
             job.start_condition:
               class_name: FileExistsCondition
-              path: "\\${sibling.stable_12BT.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(\\${backend.megatron.aux.start_iter}).zfill(7)'}"
-            # Cancel conditions: cancel if stable_12BT job fails
+              path: "\\${sibling.stable12BT.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(\\${backend.megatron.aux.start_iter}).zfill(7)'}"
+            # Cancel conditions: cancel if stable12BT job fails
             job.cancel_condition:
               class_name: LogPatternCondition
-              log_path: "\\${sibling.stable_12BT.job.log_path_current}"
+              log_path: "\\${sibling.stable12BT.job.log_path_current}"
               pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
           configs:
             - stage: decay6BT
@@ -232,7 +232,7 @@ sweep:
         # ============================================================
 
         # STABLE PHASE: Train for 80B tokens (max of this group) with no decay
-        - stage: stable_80BT
+        - stage: stable80BT
           backend.megatron.global_batch_size: 128
           backend.megatron.lr: 2.e-3
           backend.megatron.aux.tokens: 80_000_000_000
@@ -246,7 +246,7 @@ sweep:
           backend.megatron.aux.save_step_2: "\\${oc.eval:'int(((50_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
           backend.megatron.aux.save_step_3: "\\${oc.eval:'int(((80_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
 
-        # DECAY STAGES: Cooldown at 20B / 30B / 50B / 80B, all branching from stable_80BT
+        # DECAY STAGES: Cooldown at 20B / 30B / 50B / 80B, all branching from stable80BT
         - type: list
           defaults:
             backend.megatron.aux.decay_fraction: 0.2
@@ -257,18 +257,18 @@ sweep:
             backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
             backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
             backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
-            # Checkpoint loading from stable_80BT
-            backend.megatron.load: "\\${sibling.stable_80BT.job.base_output_dir}/checkpoints"
+            # Checkpoint loading from stable80BT
+            backend.megatron.load: "\\${sibling.stable80BT.job.base_output_dir}/checkpoints"
             backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter}"
             backend.megatron.override_opt_param_scheduler: true
-            # Start conditions: wait for stable_80BT to reach the branching checkpoint
+            # Start conditions: wait for stable80BT to reach the branching checkpoint
             job.start_condition:
               class_name: FileExistsCondition
-              path: "\\${sibling.stable_80BT.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(\\${backend.megatron.aux.start_iter}).zfill(7)'}"
-            # Cancel conditions: cancel if stable_80BT job fails
+              path: "\\${sibling.stable80BT.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(\\${backend.megatron.aux.start_iter}).zfill(7)'}"
+            # Cancel conditions: cancel if stable80BT job fails
             job.cancel_condition:
               class_name: LogPatternCondition
-              log_path: "\\${sibling.stable_80BT.job.log_path_current}"
+              log_path: "\\${sibling.stable80BT.job.log_path_current}"
               pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
           configs:
             - stage: decay20BT
@@ -285,7 +285,7 @@ sweep:
         # ============================================================
 
         # STABLE PHASE: Train for 300B tokens (max of this group) with no decay
-        - stage: stable_300BT
+        - stage: stable300BT
           backend.megatron.global_batch_size: 256
           backend.megatron.lr: 2.e-3
           backend.megatron.aux.tokens: 300_000_000_000
@@ -298,7 +298,7 @@ sweep:
           backend.megatron.aux.save_step_1: "\\${oc.eval:'int(((200_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
           backend.megatron.aux.save_step_2: "\\${oc.eval:'int(((300_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
 
-        # DECAY STAGES: Cooldown at 120B / 200B / 300B, all branching from stable_300BT
+        # DECAY STAGES: Cooldown at 120B / 200B / 300B, all branching from stable300BT
         - type: list
           defaults:
             backend.megatron.aux.decay_fraction: 0.2
@@ -309,18 +309,18 @@ sweep:
             backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
             backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
             backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
-            # Checkpoint loading from stable_300BT
-            backend.megatron.load: "\\${sibling.stable_300BT.job.base_output_dir}/checkpoints"
+            # Checkpoint loading from stable300BT
+            backend.megatron.load: "\\${sibling.stable300BT.job.base_output_dir}/checkpoints"
             backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter}"
             backend.megatron.override_opt_param_scheduler: true
-            # Start conditions: wait for stable_300BT to reach the branching checkpoint
+            # Start conditions: wait for stable300BT to reach the branching checkpoint
             job.start_condition:
               class_name: FileExistsCondition
-              path: "\\${sibling.stable_300BT.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(\\${backend.megatron.aux.start_iter}).zfill(7)'}"
-            # Cancel conditions: cancel if stable_300BT job fails
+              path: "\\${sibling.stable300BT.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(\\${backend.megatron.aux.start_iter}).zfill(7)'}"
+            # Cancel conditions: cancel if stable300BT job fails
             job.cancel_condition:
               class_name: LogPatternCondition
-              log_path: "\\${sibling.stable_300BT.job.log_path_current}"
+              log_path: "\\${sibling.stable300BT.job.log_path_current}"
               pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
           configs:
             - stage: decay120BT
