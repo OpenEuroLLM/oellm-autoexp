@@ -169,6 +169,7 @@ slurm:
     # nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
     time: "24:00:00"
     # time: "00:30:00"
+    # switches: "1@15:00"
 
 # COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE
 sweep:
