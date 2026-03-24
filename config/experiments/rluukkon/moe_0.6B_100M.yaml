@@ -30,7 +30,7 @@ backend:
 
     # training schedule. Round numbers to avoid floating point issues
     # set num_tokens to the formula
-    train_iters: ${oc.eval:'-(-30_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    train_iters: ${oc.eval:'-(-50_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
     lr_warmup_iters: ${oc.eval:'min(${.train_iters} // 10, 25000)'}
     lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
     lr_decay_iters: ${.train_iters}
