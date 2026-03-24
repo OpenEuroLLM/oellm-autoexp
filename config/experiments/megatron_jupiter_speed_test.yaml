@@ -4,7 +4,7 @@ defaults:
   - /backend: megatron_torchrun_localaddr
   - /container: jupiter
   - /slurm: jupiter
-  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_jupiter]
+  - /backend/megatron: [llama1_8b_qkln,speed_test_jupiter]
   - /sweep: none
   - _self_
 
