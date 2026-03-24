@@ -62,6 +62,21 @@ Otherwise, on the login node you run out of resources and get killed.
 Make sure also to have datasets and tokenizers downloaded before starting a job, as there is no web connection on the compute nodes.
 
 
+## Cluster setup: Snellius notes
+For Snellius, all should work with a pre-built container image. Build the container on a compute node:
+```bash
+export APPTAINER_TMPDIR=/dev/shm/$USER && mkdir -p /dev/shm/$USER/
+export APPTAINER_CACHEDIR=/scratch-shared/$USER/apptainer
+python container/build_container_user.py \
+  --backend megatron \
+  --definition MegatronTrainingSnellius \
+  --base-image nvcr.io/nvidia/pytorch:25.10-py3 \
+  --container-cmd apptainer \
+  --output .../containers/ \
+  --no-sandbox
+```
+
+
 ## Supercomputer setup: JUWELS Booster / JUPITER
 To be tested.
 See also the predecessors https://github.com/SLAMPAI/megatron-autoexp ([Notes](https://iffmd.fz-juelich.de/yAbNVj9eQz647elSwlyHXQ)) and https://github.com/SLAMPAI/autoexperiment for hints.
