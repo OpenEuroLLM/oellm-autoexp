@@ -27,8 +27,8 @@ def _slice_bounds(n: int, workers: int, wid: int) -> tuple[int, int]:
     end = start + base + (1 if wid < rem else 0)
     return start, end
 
-
-def _worker(wid: int, workers: int, path: str, ratio: float, out_prefix: str, seed: int, num_samples: int) -> tuple[int, int, str]:
+# Exit after iteration if exit_after_iteration is set
+def _worker(wid: int, workers: int, path: str, ratio: float, out_prefix: str, seed: int, num_samples: int, exit_after_iteration: int = None) -> tuple[int, int, str]:
     start, end = _slice_bounds(num_samples, workers, wid)
 
     dataset = IndexedDataset(path)  # per-thread handle
@@ -37,6 +37,8 @@ def _worker(wid: int, workers: int, path: str, ratio: float, out_prefix: str, se
 
     kept = 0
     for i in tqdm(range(start, end), position=wid, leave=False, desc=f"shard {wid}"):
+        if exit_after_iteration is not None and i >= exit_after_iteration:
+            break
         if _u01_from_seed_and_index(seed, i) < ratio:
             builder.add_item(torch.tensor(dataset[i]))
             kept += 1
@@ -52,6 +54,7 @@ def main() -> None:
     p.add_argument("--out-prefix", default="data_sample_out_shuffled-downsampled")
     p.add_argument("--workers", type=int, default=min(8, (os.cpu_count() or 1)))
     p.add_argument("--seed", type=int, default=1234)
+    p.add_argument("--exit-after-iteration", type=int, default=None)
     args = p.parse_args()
 
     dataset = IndexedDataset(args.path)
@@ -70,7 +73,7 @@ def main() -> None:
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futs = [
-            ex.submit(_worker, wid, workers, args.path, args.ratio, out_prefix, args.seed, num_samples)
+            ex.submit(_worker, wid, workers, args.path, args.ratio, out_prefix, args.seed, num_samples, args.exit_after_iteration)
             for wid in range(workers)
         ]
         for fut in as_completed(futs):
