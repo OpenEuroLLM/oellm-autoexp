@@ -72,7 +72,7 @@ python container/build_container_user.py \
   --definition MegatronTrainingSnellius \
   --base-image nvcr.io/nvidia/pytorch:25.10-py3 \
   --container-cmd apptainer \
-  --output /projects/0/prjs1874/containers/ \
+  --output .../containers/ \
   --no-sandbox
 ```
 

@@ -1,3 +1,6 @@
 [submodule "submodules/Megatron-LM"]
 	path = submodules/Megatron-LM
 	url = https://github.com/OpenEuroLLM/NVIDIA-Megatron-LM.git
+[submodule "submodules/titan-oellm"]
+	path = submodules/titan-oellm
+	url = git@github.com:OpenEuroLLM/titan-oellm.git
