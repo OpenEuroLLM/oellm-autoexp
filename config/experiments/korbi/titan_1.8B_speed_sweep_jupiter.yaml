@@ -1,13 +1,27 @@
 # @package _global_
+# Speed optimization sweep for Titan qwen3_custom 1.82B on JUPITER
+# Baseline: 281 TFLOPS @ full AC, batch=4, no compile
+#
+# Sweep axes:
+#   - activation_checkpoint.mode: full, selective, none
+#   - local_batch_size: 4, 6, 8
+#   - compile: yes (default, no TORCHDYNAMO_DISABLE) vs no (TORCHDYNAMO_DISABLE=1)
+#
+# Note: batch=8 no-AC is borderline (~90 GiB est.), include to measure OOM boundary.
 defaults:
-  - base
+  - ../base
   - /backend: titan
   - /container: jupiter_titan
   - /slurm: jupiter
   - /sweep: none
   - override /backend/titan/data: nemonicco_jupiter
   - override /backend/titan/model: qwen3_base
+  - override /job: default
   - _self_
+
+aux:
+  experiment_group: "titan_1.8B_speed_sweep"
+  compile_tag: "nocompile"  # overridden per sweep config
 
 backend:
   titan:
@@ -24,7 +38,7 @@ backend:
       tokenizer_path: /e/project1/projectnucleus/franke5/workspace/titan-train/torchtitan/assets/tokenizer/gpt-neox-20b
     training:
       steps: 100
-      local_batch_size: 8
+      local_batch_size: 4
       seq_len: 4096
       dtype: bfloat16
     metrics:
@@ -39,9 +53,11 @@ backend:
       wikitext2_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext2/wikitext2
       wikitext103_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext103/wikitext103
       lambada_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/lambada/lambada
-    # activation_checkpoint.mode: "none" (default from backend/titan/base.yaml) — no override
-    # compile.enable: true (default from backend/titan/base.yaml) — no override
+    # activation_checkpoint.mode: "none" is the default from backend/titan/base.yaml
+    # compile.enable: true is the default from backend/titan/base.yaml
+
   env:
+    # TORCHDYNAMO_DISABLE not set → compile.enable=true takes effect (torch.compile active)
     PYTHONPATH: .:./submodules/titan-oellm:./submodules/titan-oellm/torchtitan
     NCCL_SOCKET_FAMILY: "AF_INET"
     GLOO_SOCKET_FAMILY: "AF_INET"
@@ -61,14 +77,12 @@ backend:
     TORCHINDUCTOR_AUTOGRAD_CACHE: ${oc.env:TORCHINDUCTOR_AUTOGRAD_CACHE,"/tmp/torchinductor_autograd_cache"}
     TORCH_INDUCTOR_CUDAGRAPH_DISABLE: ${oc.env:TORCH_INDUCTOR_CUDAGRAPH_DISABLE,"1"}
     PYTORCH_CUDA_ALLOC_CONF: ${oc.env:PYTORCH_CUDA_ALLOC_CONF,"expandable_segments:True"}
-    # LD_LIBRARY_PATH: "/opt/nvidia/lib:/usr/local/cuda/lib64"
-    # LIBRARY_PATH: "/opt/nvidia/lib:/usr/local/cuda/lib64"
     TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
 
   torchrun_args:
     nproc_per_node: ${slurm.sbatch.gpus_per_node}
     nnodes: ${slurm.sbatch.nodes}
-    max_restarts: 3
+    max_restarts: 0
     rdzv_backend: "c10d"
     rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
     node_rank: "$SLURM_PROCID"
@@ -77,7 +91,8 @@ backend:
 
 
 job:
-  name: titan_jupiter_speed_test
+  name: titan_1.8B_spd_ac${backend.titan.activation_checkpoint.mode}_bs${backend.titan.training.local_batch_size}_${aux.compile_tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
 
 container:
   bind:
@@ -97,7 +112,7 @@ slurm:
     threads_per_core: 1
     account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
     partition: booster
-    time: "1:00:00"
+    time: "00:30:00"
   srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
   env:
     MASTER_ADDR: "127.0.0.1"
@@ -107,3 +122,31 @@ slurm:
     NUM_GPUS_PER_NODE: "4"
     NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
     SLURM_CPUS_PER_TASK: "72"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ── Selective AC + compile, push to memory limit ──────────────────────
+        - aux.compile_tag: compile
+          backend.titan.activation_checkpoint.mode: selective
+          backend.titan.training.local_batch_size: 16
+
+        - aux.compile_tag: compile
+          backend.titan.activation_checkpoint.mode: selective
+          backend.titan.training.local_batch_size: 20
+
+        # ── Full AC + compile, very large batches (20 GiB headroom at bs=4) ──
+        - aux.compile_tag: compile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 8
+
+        - aux.compile_tag: compile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 16
+
+        - aux.compile_tag: compile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 32

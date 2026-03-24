@@ -1,4 +1,7 @@
 # @package _global_
+# LLaMA 1.8B QK-LN, JUPITER (1 node, 4x GH200), ~408 TFLOPS (40.8% MFU)
+# Settings: TP=1, PP=1, DP=4, MBS=6, no recompute, no sequence_parallel
+# Note: no CUDA graphs (simpler, reproducible). For +1% add cuda_graph_impl: local.
 defaults:
   - base
   - /backend: megatron_torchrun_localaddr
@@ -10,7 +13,7 @@ defaults:
 
 backend:
   megatron:
-    train_iters: 50
+    train_iters: 100
     log_interval: 10
     eval_interval: 1000
     data_path:
@@ -20,15 +23,14 @@ backend:
     load: null
     lr: 1e-3
     lr_warmup_iters: 0
-    # Throughput optimizations (~40% MFU on GH200, single node):
-    micro_batch_size: 4           # optimal MBS for 1.8B on GH200 (65% GPU memory usage)
-    recompute_activations: false  # flash-attn handles backward efficiently; no extra recompute needed
-    recompute_granularity: null   # must be null when recompute_activations=false
+    # Throughput settings:
+    micro_batch_size: 6
+    recompute_activations: false
+    recompute_granularity: null
+    cross_entropy_loss_fusion: true
+    sequence_parallel: false       # TP=1: sequence_parallel=true adds useless all-gathers
   env:
     TOKENIZERS_PARALLELISM: "false"
-    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
-    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
-    HF_HOME: ${oc.env:HF_HOME}
 
 job:
-  name: megatron_jupiter_speed_test
+  name: llama1_8b_tp1_mbs6_nosp

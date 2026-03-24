@@ -1,0 +1,40 @@
+# @package _global_
+# LLaMA 1.8B QK-LN, JUPITER (1 node, 4x GH200), ~412.5 TFLOPS (41.3% MFU)
+# Settings: TP=1, PP=1, DP=4, MBS=6, no recompute, no sequence_parallel, CUDA graphs
+# CUDA graphs require: check_for_nan=false, PYTORCH_CUDA_ALLOC_CONF != expandable_segments
+defaults:
+  - base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [llama1_8b_qkln,speed_test_jupiter]
+  - /sweep: none
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 100
+    log_interval: 10
+    eval_interval: 1000
+    data_path:
+     - /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
+    data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+    save: null
+    load: null
+    lr: 1e-3
+    lr_warmup_iters: 0
+    # Throughput settings:
+    micro_batch_size: 6
+    recompute_activations: false
+    recompute_granularity: null
+    cross_entropy_loss_fusion: true
+    sequence_parallel: false       # TP=1: sequence_parallel=true adds useless all-gathers
+    cuda_graph_impl: local         # CUDA graphs: reduces kernel launch overhead
+    cuda_graph_scope: full         # layer-level scope
+    check_for_nan_in_loss_and_grad: false  # required for cuda_graph_scope=full
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    PYTORCH_CUDA_ALLOC_CONF: "garbage_collection_threshold:0.8"  # expandable_segments incompatible with CUDA graphs
+
+job:
+  name: llama1_8b_tp1_mbs6_nosp_cg
