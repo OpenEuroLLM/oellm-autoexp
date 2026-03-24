@@ -9,6 +9,7 @@ full_schema_validation: false
 launcher_script: "./submodules/Megatron-LM/pretrain_gpt.py"
 dist_cmd: "${.python_cmd} ${.launcher_script}"
 torchrun_args: {}
+data_integrity_check: true
 
 env:
   PYTHONPATH: ".:submodules/Megatron-LM"

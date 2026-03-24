@@ -7,6 +7,7 @@ class_name: Container
 image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2510_aarch64_202602262033.sif
 runtime: apptainer
 bind:
+  - "/e"
   - "/dev/shm"
 env:
   WANDB_MODE: "offline"

@@ -1,0 +1,8 @@
+name: qwen3_custom
+flavor: 235BA22B
+
+# Architecture set by flavor (matches Megatron qwen3_moe_235BA22B.yaml):
+#   dim=4096, 94 layers, 64 heads, 4 kv_heads (GQA), head_dim=128
+#   128 experts, top_k=8, moe_inter_dim=1536, rope_theta=5000000
+#
+# vocab_size is overridden in the experiment config to match the dataset tokenizer.
