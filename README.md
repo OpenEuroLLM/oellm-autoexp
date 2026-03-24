@@ -403,3 +403,22 @@ Afterwards, make sure that the generated files conform the linter standard by ap
 ```bash
 black --preview --enable-unstable-feature string_processing oellm_autoexp/backends/megatron/*
 ```
+
+### Updating the titan_oellm backend version
+Please run:
+```bash
+python scripts/generate_titan_dataclass.py
+```
+
+
+## Contribution
+
+You may merge personal configuration directly into main - if they ONLY affect `config/experiments/YOURNAME`!
+
+Please install/run before you commit:
+```
+pre-commit install
+```
+This helps keeping the format clean.
+
+If you touch the backend submodule versions, please make sure you re-generate the dataclasses / configs. If you are very eager, and have spare time, you could integrate this re-generation even into the pre-commit config - so that we are on the safe side always.
