@@ -11,8 +11,9 @@ attention_backend: flash
 transformer_impl: transformer_engine
 te_rng_tracker: true
 tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: EleutherAI/gpt-neox-20b
 # tokenizer_model: Qwen/Qwen3_30B_A3B
-tokenizer_model: /e/project1/projectnucleus/shared/models/EleutherAI/gpt-neox-20b
+# tokenizer_model: /e/project1/projectnucleus/shared/models/EleutherAI/gpt-neox-20b
 make_vocab_size_divisible_by: 128
 dist_ckpt_strictness: log_unexpected
 ckpt_format: torch_dist
@@ -73,8 +74,8 @@ moe_router_load_balancing_type: aux_loss
 moe_layer_freq: 1
 moe_token_dispatcher_type: allgather
 moe_grouped_gemm: true
-moe_shared_expert_overlap: false
 moe_hybridep_num_sms: 0
+moe_shared_expert_overlap: false
 moe_router_padding_for_fp8: false
 
 # post-training - unnecessary

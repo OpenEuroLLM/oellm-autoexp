@@ -1,0 +1,76 @@
+# @package _global_
+#
+# Qwen3 30B-A3B MoE speed sweep on Snellius 4xH100 94GiB HBM2e with 4x IB NDR200
+# Based on korbi/megatron_moe_qwen30BA3_jupiter_speed_sweep.yaml
+# nodes=2, gbs=64, mbs=4, ep=4, pp=2, tp=1, hybridep = 155 Tflops/GPU and 7k tokens/GPU
+# pip list below config
+
+defaults:
+  - base
+  - /backend: megatron_torchrun
+  - /container: snellius
+  - /slurm: snellius
+  - /backend/megatron: [base,qwen3_moe_30BA3B]
+  - /sweep: none
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 100
+    global_batch_size: 64
+    micro_batch_size: 4
+    expert_model_parallel_size: 4
+    pipeline_model_parallel_size: 2
+    tensor_model_parallel_size: 1
+    use_distributed_optimizer: true
+    eval_interval: 1000
+    seq_length: 4096
+    lr: 0.001
+    log_interval: 1
+    ckpt_format: torch
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: hybridep
+    moe_hybridep_num_sms: 16 # HybridEP requires > 0
+    moe_router_dtype: fp32
+    data_path:
+      - ${oc.env:DATA_DIR}/fineweb-10BT_text_document
+    data_cache_path: /scratch-shared/${oc.env:USER}/cache
+    save: /scratch-shared/${oc.env:USER}/megatron-lm/out/
+    load: null
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HOME: ${oc.env:HF_HOME}
+
+container:
+  image: ${oc.env:CONTAINER_CACHE_DIR}/pytorch-25.10-transformers-py3-hybridep.sif
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  sbatch:
+    nodes: 2
+
+job:
+  name: megatron_moe_qwen30BA3B_snellius_speed_n${slurm.sbatch.nodes}
+  base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${.name}
+
+# sweep:
+#   store_sweep_json: true
+#   groups:
+#     - type: "product"
+#       params:
+#         slurm.sbatch.nodes: [2, 4, 8, 16]
+#         backend.megatron.global_batch_size: "\\${oc.eval:'\\${slurm.sbatch.nodes} * 4}"
+
+
+
+# pip list from nvcr.io/pytorch-25.10
+# deep_ep                    1.2.1+7febc6e
+# flash_attn                 2.7.4.post1+25.10          36764868
+# torch                      2.9.0a0+145a3a7bda.nv25.10
+# torch_tensorrt             2.9.0a0
+# torchao                    0.14.0+git
+# torchprofile               0.0.4
+# torchvision                0.24.0a0+094e7af5
+# transformer_engine         2.8.0+40c69e75
