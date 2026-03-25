@@ -268,6 +268,12 @@ class MegatronConfig(ConfigInterface):
     # "moe", and "shared_experts" use normal checkpointing.
     recompute_modules: list[str] | None = None
 
+    # Enable fine-grained activation offloading to CPU.
+    fine_grained_activation_offloading: bool = False
+
+    # Modules to offload activations for.
+    offload_modules: list[str] | None = None
+
     # The number of Transformer layers to offload to CPU.
     cpu_offloading_num_layers: int = 0
 
@@ -1804,7 +1810,7 @@ class MegatronConfig(ConfigInterface):
     # captures operations in TransformerLayer._forward_attention(). "ful_iteration" scope
     # captures a whole iteration. full_iteration scope is only supported with --cuda-graph-
     # impl=local, attn scope is only supported with --cuda-graph-impl=transformer_engine.
-    cuda_graph_scope: Literal["full", "attn", "full_iteration"] = "full"
+    cuda_graph_scope: Literal["full", "attn", "full_iteration"] | None = "full"
 
     # Use legacy static engine. (Current static engine uses dynamic engine under the hood)
     use_legacy_static_engine: bool = False

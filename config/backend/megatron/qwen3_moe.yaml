@@ -12,6 +12,7 @@ transformer_impl: transformer_engine
 te_rng_tracker: true
 tokenizer_type: HuggingFaceTokenizer
 tokenizer_model: EleutherAI/gpt-neox-20b
+tokenizer_model: EleutherAI/gpt-neox-20b
 # tokenizer_model: Qwen/Qwen3_30B_A3B
 # tokenizer_model: /e/project1/projectnucleus/shared/models/EleutherAI/gpt-neox-20b
 make_vocab_size_divisible_by: 128

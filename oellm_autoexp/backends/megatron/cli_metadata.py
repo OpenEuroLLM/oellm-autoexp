@@ -7839,13 +7839,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
-    "moe_hybridep_num_sms": MegatronActionSpec(
-        option_strings=("--moe-hybridep-num-sms",),
-        action_type="store",
-        nargs=None,
-        const=None,
-        default=16,
-    ),
+    # "moe_hybridep_num_sms": MegatronActionSpec(
+    #     option_strings=("--moe-hybridep-num-sms",),
+    #     action_type="store",
+    #     nargs=None,
+    #     const=None,
+    #     default=16,
+    # ),
     "moe_input_jitter_eps": MegatronActionSpec(
         option_strings=("--moe-input-jitter-eps",),
         action_type="store",
