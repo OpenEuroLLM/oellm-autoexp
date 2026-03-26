@@ -57,7 +57,7 @@ python scripts/gpu_hours.py results/qwen3_600M_gpt_neox/
 
 Use the debug QoS for shorter queue times:
 ```
-python scripts/run_autoexp.py --config-name experiments/diana/test_dense_50M_200MT \
+python scripts/run_autoexp.py --config-name experiments/diana/testing/test_dense_50M_200MT_autocooldown \
     slurm.sbatch.qos=boost_qos_dbg slurm.sbatch.time="29:00"
 ```
 

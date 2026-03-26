@@ -59,6 +59,6 @@ python scripts/run_autoexp.py --config-name experiments/diana/replication/dense_
 > Note: small discrepancy — `disable_bias_linear` was incorrectly set to `True` (biases were used); it should have been `False`.
 
 ```bash
-python scripts/run_autoexp.py --config-name experiments/diana/dense_600M_100BT_multilingual_option2 \
+python scripts/run_autoexp.py --config-name experiments/diana/replication/dense_600M_100BT_multilingual_option2 \
   "backend.megatron.data_path=[$(cat /leonardo_work/OELLM_prod2026/users/fvitiugi/training/datamix-option2.txt | tr ' \n' ',,')]"
 ```
