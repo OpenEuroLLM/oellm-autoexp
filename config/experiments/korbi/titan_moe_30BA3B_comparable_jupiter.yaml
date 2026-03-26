@@ -4,25 +4,48 @@
 # Goal: eliminate confounding factors (batch size, FSDP, TP/PP) to isolate
 #       framework overhead between Titan and Megatron on equal footing.
 #
-# Design choices:
-#   EP=8, dp_shard=8, efsdp=1 → no expert FSDP (each EP rank owns its experts fully)
+# Design choices (EP=8):
+#   EP=8, dp_shard=8, dp_replicate=1, efsdp=1 → no expert FSDP
 #   bs=1 → same effective tokens/step as Megatron mbs=1 GBS=8
-#   dp_replicate=1 → no DDP replication
 #
-# Note: attention params are still FSDP-sharded 8-way (unavoidable in Titan when EP=8;
-#   EP is carved from dp_shard, which requires dp_shard ≥ EP = 8).
-#   efsdp = dp_shard×tp/(etp×ep) = 8×1/(1×8) = 1 → zero extra FSDP for experts.
+# Design choices (EP=4):
+#   EP=4, dp_shard=4, dp_replicate=2, efsdp=4×1/(1×4)=1 → still no expert FSDP
+#   bs=1 → GBS = dp_replicate×dp_shard×bs = 2×4×1 = 8 (same total tokens/step)
+#   32 experts/GPU (vs 16 for EP=8); attention FSDP sharded 4-way (vs 8-way)
+#
+# Note: EP is carved from dp_shard → dp_shard ≥ EP required. With EP=4, filling
+#   8 GPUs requires dp_replicate=2 (DDP), but efsdp=1 still achievable.
+#
+# Memory note: Titan logs memory as max_reserved_bytes.all.peak since last
+#   reset_peak_memory_stats() (per-step window only). Model params + optimizer
+#   states are allocated before the reset → NOT counted. Reported values (~4-6 GiB)
+#   reflect activation + allgather transients only; true GPU footprint ≈ 77 GiB.
 #
 # Comparable Megatron config: megatron_moe_30BA3B_comparable_jupiter.yaml
-#   (EP=8, PP=1, TP=1, mbs=1, GBS=8, full_recompute)
 #
-# ── Results (2 nodes, 8×GH200, EP=8, dp_shard=8, bs=1) ─────────────────────
-#   nocompile, full AC,  bs=1 → 56.4 TFLOPS, 3.95 GiB (4%)  (job 309056)
-#   compile,   full AC,  bs=1 → 55.4 TFLOPS, 3.95 GiB (4%)  (job 309066)
-#   nocompile, no AC,    bs=1 → 79.7 TFLOPS, 5.71 GiB (6%)  (job 309058)  ← no-AC BEST
-#   compile,   no AC,    bs=1 → 78.8 TFLOPS, 5.71 GiB (6%)  (job 309055)
+# ── Results (2 nodes, 8×GH200, bs=1) ────────────────────────────────────────
+# EP=8 (dp_shard=8, dp_replicate=1, efsdp=1):
+#   nocompile, full AC → 56.9 TFLOPS,  41,720 TPS/GPU, 3.95 GiB (4%)  (job 309056)
+#   compile,   full AC → 55.5 TFLOPS,  40,642 TPS/GPU, 3.95 GiB (4%)  (job 309066)
+#   nocompile, no AC   → 79.7 TFLOPS,  58,408 TPS/GPU, 5.71 GiB (6%)  (job 309058)  ← EP=8 BEST
+#   compile,   no AC   → 78.4 TFLOPS,  57,490 TPS/GPU, 5.71 GiB (6%)  (job 309055)
+# EP=4 (dp_shard=4, dp_replicate=2, efsdp=1):
+#   nocompile, full AC → 56.3 TFLOPS,  41,245 TPS/GPU, 4.57 GiB (5%)  (job 309630)
+#   compile,   full AC → 54.3 TFLOPS,  39,799 TPS/GPU, 4.57 GiB (5%)  (job 309627)
+#   nocompile, no AC   → 77.3 TFLOPS,  56,672 TPS/GPU, 6.33 GiB (7%)  (job 309629)
+#   compile,   no AC   → 75.8 TFLOPS,  55,552 TPS/GPU, 6.33 GiB (7%)  (job 309628)
+#   EP=4 is ~3-5% slower than EP=8 at bs=1 (DDP replica allreduce overhead)
 #
-# Key finding: compile barely helps at bs=1 (~1-2% diff). Full AC costs ~30%.
+# ── Results (2 nodes, 8×GH200, EP=8, larger bs) ─────────────────────────────
+# nocompile, no AC:    bs=2  → 151.7 TFLOPS, 111,201 TPS/GPU, 10.2 GiB (11%)  (job 311767)
+#                      bs=4  → 226.5 TFLOPS, 165,983 TPS/GPU, 19.3 GiB (20%)  (job 311763)
+#                      bs=8  → 249.5 TFLOPS, 182,858 TPS/GPU, 37.4 GiB (39%)  (job 311766)
+#                      bs=16 → 270.5 TFLOPS, 198,262 TPS/GPU, 74.0 GiB (78%)  (job 311765) ← BEST
+# nocompile, full AC:  bs=2  → 112.6 TFLOPS,  82,524 TPS/GPU,  6.7 GiB  (7%)  (job 311768)
+#                      bs=4  → 181.5 TFLOPS, 133,010 TPS/GPU, 12.3 GiB (13%)  (job 311764)
+#                      bs=8  → 208.9 TFLOPS, 153,134 TPS/GPU, 23.4 GiB (25%)  (job 311762)
+#
+# Key finding (EP=8): compile barely helps at bs=1 (~1-2% diff). Full AC costs ~30%.
 #
 defaults:
   - ../base
@@ -38,6 +61,7 @@ defaults:
 aux:
   experiment_group: "titan_moe_30BA3B_comparable"
   compile_tag: "nocompile"
+  ep_tag: "ep8"
 
 backend:
   titan:
@@ -104,7 +128,7 @@ backend:
     master_port: "$MASTER_PORT"
 
 job:
-  name: titan_moe_30BA3B_ep8_${aux.compile_tag}_ac${backend.titan.activation_checkpoint.mode}_bs${backend.titan.training.local_batch_size}
+  name: titan_moe_30BA3B_${aux.ep_tag}_${aux.compile_tag}_ac${backend.titan.activation_checkpoint.mode}_bs${backend.titan.training.local_batch_size}
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
 
 container:
@@ -145,21 +169,106 @@ sweep:
           backend.titan.activation_checkpoint.mode: full
           backend.titan.training.local_batch_size: 1
           backend.env.TORCHDYNAMO_DISABLE: "1"
-          # Result: 56.4 TFLOPS, 3.95 GiB (4%) (job 309056)
+          # Result: 56.9 TFLOPS, 41,720 TPS/GPU, 3.95 GiB (4%) (job 309056)
 
         - aux.compile_tag: nocompile
           backend.titan.activation_checkpoint.mode: none
           backend.titan.training.local_batch_size: 1
           backend.env.TORCHDYNAMO_DISABLE: "1"
-          # Result: 79.7 TFLOPS, 5.71 GiB (6%) (job 309058) ← no-AC BEST
+          # Result: 79.7 TFLOPS, 58,408 TPS/GPU, 5.71 GiB (6%) (job 309058) ← no-AC BEST
 
         # ── compile ───────────────────────────────────────────────────────────
         - aux.compile_tag: compile
           backend.titan.activation_checkpoint.mode: full
           backend.titan.training.local_batch_size: 1
-          # Result: 55.4 TFLOPS, 3.95 GiB (4%) (job 309066)
+          # Result: 55.5 TFLOPS, 40,642 TPS/GPU, 3.95 GiB (4%) (job 309066)
 
         - aux.compile_tag: compile
           backend.titan.activation_checkpoint.mode: none
           backend.titan.training.local_batch_size: 1
-          # Result: 78.8 TFLOPS, 5.71 GiB (6%) (job 309055)
+          # Result: 78.4 TFLOPS, 57,490 TPS/GPU, 5.71 GiB (6%) (job 309055)
+
+        # ── EP=4 (dp_shard=4, dp_replicate=2, efsdp=1; 32 experts/GPU) ──────
+        # GBS = dp_replicate×dp_shard×bs = 2×4×1 = 8 (same total tokens/step)
+        - aux.ep_tag: ep4
+          aux.compile_tag: nocompile
+          backend.titan.parallelism.expert_parallel_degree: 4
+          backend.titan.parallelism.data_parallel_shard_degree: 4
+          backend.titan.parallelism.data_parallel_replicate_degree: 2
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 1
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 56.3 TFLOPS, 41,245 TPS/GPU, 4.57 GiB (5%) (job 309630)
+
+        - aux.ep_tag: ep4
+          aux.compile_tag: nocompile
+          backend.titan.parallelism.expert_parallel_degree: 4
+          backend.titan.parallelism.data_parallel_shard_degree: 4
+          backend.titan.parallelism.data_parallel_replicate_degree: 2
+          backend.titan.activation_checkpoint.mode: none
+          backend.titan.training.local_batch_size: 1
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 77.3 TFLOPS, 56,672 TPS/GPU, 6.33 GiB (7%) (job 309629)
+
+        - aux.ep_tag: ep4
+          aux.compile_tag: compile
+          backend.titan.parallelism.expert_parallel_degree: 4
+          backend.titan.parallelism.data_parallel_shard_degree: 4
+          backend.titan.parallelism.data_parallel_replicate_degree: 2
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 1
+          # Result: 54.3 TFLOPS, 39,799 TPS/GPU, 4.57 GiB (5%) (job 309627)
+
+        - aux.ep_tag: ep4
+          aux.compile_tag: compile
+          backend.titan.parallelism.expert_parallel_degree: 4
+          backend.titan.parallelism.data_parallel_shard_degree: 4
+          backend.titan.parallelism.data_parallel_replicate_degree: 2
+          backend.titan.activation_checkpoint.mode: none
+          backend.titan.training.local_batch_size: 1
+          # Result: 75.8 TFLOPS, 55,552 TPS/GPU, 6.33 GiB (7%) (job 309628)
+
+        # ── EP=8 larger batch sizes (nocompile, no AC — best config) ─────────
+        # GBS = dp_shard × bs = 8 × bs; equivalent to Megatron mbs=bs, GBS=8×bs
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: none
+          backend.titan.training.local_batch_size: 2
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 151.7 TFLOPS, 111,201 TPS/GPU, 10.2 GiB (11%) (job 311767)
+
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: none
+          backend.titan.training.local_batch_size: 4
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 226.5 TFLOPS, 165,983 TPS/GPU, 19.3 GiB (20%) (job 311763)
+
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: none
+          backend.titan.training.local_batch_size: 8
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 249.5 TFLOPS, 182,858 TPS/GPU, 37.4 GiB (39%) (job 311766)
+
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: none
+          backend.titan.training.local_batch_size: 16
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 270.5 TFLOPS, 198,262 TPS/GPU, 74.0 GiB (78%) (job 311765) ← BEST
+
+        # ── EP=8 larger batch sizes (nocompile, full AC — Megatron-comparable) ─
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 2
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 112.6 TFLOPS, 82,524 TPS/GPU, 6.7 GiB (7%) (job 311768)
+
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 4
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 181.5 TFLOPS, 133,010 TPS/GPU, 12.3 GiB (13%) (job 311764)
+
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 8
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 208.9 TFLOPS, 153,134 TPS/GPU, 23.4 GiB (25%) (job 311762)

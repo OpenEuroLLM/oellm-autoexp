@@ -4,26 +4,34 @@
 # Goal: eliminate confounding factors (batch size, TP/PP overhead) to isolate
 #       framework overhead between Megatron and Titan on equal footing.
 #
-# Design choices:
-#   EP=8, PP=1, TP=1 → no pipeline or tensor parallelism overhead
-#   DP = world_size / (TP×PP) = 8/(1×1) = 8  → distributed optimizer shards 8-way
-#   mbs=1, GBS=8 → one microbatch per DP rank; same tokens/step as Titan bs=1
-#   full_recompute → analogous to Titan activation_checkpoint.mode=full
+# Design choices (EP=8):
+#   EP=8, PP=1, TP=1; DP = 8/(1×1) = 8 → distributed optimizer shards 8-way
+#   mbs=1, GBS=8 (DP=8 × mbs=1); full_recompute → analogous to Titan AC=full
+#
+# Design choices (EP=4):
+#   EP=4, PP=1, TP=1; DP = 8/(1×1) = 8 (unchanged) → optimizer still shards 8-way
+#   mbs=1, GBS=8 (unchanged); 32 experts/GPU (vs 16 for EP=8)
+#   EP=4 ≤ DP=8 ✓; 2 independent EP groups of 4 within DP=8
+#   Expert grad buffer ≈ 32 experts × 48 layers × 3×768×2048 ≈ 14.5 GiB (fits)
 #
 # Comparable Titan config: titan_moe_30BA3B_comparable_jupiter.yaml
-#   (EP=8, dp_shard=8, efsdp=1, bs=1)
 #
-# Memory note: EP=8+PP=1+mbs=4 (existing sweep) used 95% memory.
-#   With mbs=1 full_recompute activations are minimal, so memory ≈ params-dominated.
-#   Expect similar memory usage; fits but tight.
-#
-# ── Results (2 nodes, 8×GH200, EP=8, PP=1, TP=1, GBS=8) ────────────────────
-#   mbs=1, full_recompute → 57.6-58.5 TFLOPS, 77.2 GiB (81%) (job 309061) ← OPTIMAL
+# ── Results (2 nodes, 8×GH200, PP=1, TP=1, GBS=8) ──────────────────────────
+# EP=8:
+#   mbs=1, full_recompute → 56.2 TFLOPS,  2,583 TPS/GPU, 81.3% mem (job 309061) ← EP=8 BEST
 #   mbs=1, no_recompute   → OOM at iter 2 (94.75 GiB in use) (job 309060)
+#   mbs=2, full_recompute → 64.3 TFLOPS,  2,954 TPS/GPU, 85.3% mem (job 311769)
+#   mbs=4, full_recompute → 65.9 TFLOPS,  3,030 TPS/GPU, 94.9% mem (job 311770) ← mbs max
+# EP=4:
+#   mbs=1, full_recompute → OOM (NCCL calloc 4 bytes: 0 free GPU mem after init) (job 309632)
+#   mbs=1, no_recompute   → OOM (same; 2× expert params fills GPU) (job 309631)
+#   Root cause: 32 experts/GPU × 48 layers ≈ 14.5 GiB extra params vs EP=8 (7.24 GiB)
 #
-# Key finding: At bs=1+full_AC, Titan (56-57 TFLOPS) ≈ Megatron (58 TFLOPS).
-#   The 2.2× Titan advantage in unconstrained sweep comes from larger batches
-#   (bs=16 vs mbs=4) and avoiding full recompute — not framework overhead.
+# Key finding (EP=8): At bs=1+full_AC, Titan (56.9 TFLOPS, 41,720 TPS/GPU) ≈ Megatron in TFLOPS
+#   but Titan is 16× faster in TPS/GPU (41,720 vs 2,583) due to different FLOPs/token accounting.
+# At larger mbs: Megatron memory-limited (mbs=4 max, 94.9%); only 17% gain mbs=1→4.
+# Titan full_AC TPS/GPU: bs=1→41,720; bs=2→82,524; bs=4→133,010; bs=8→153,134.
+# At mbs=4 (equal batch): Titan 133,010 vs Megatron 3,030 TPS/GPU → Titan 44× faster in TPS.
 #
 defaults:
   - ../base
@@ -37,6 +45,7 @@ defaults:
 aux:
   experiment_group: "megatron_moe_30BA3B_comparable"
   recompute_tag: "full_recompute"
+  ep_tag: "ep8"
 
 backend:
   megatron:
@@ -77,7 +86,7 @@ backend:
     NCCL_NET_GDR_LEVEL: "0"  # keep for safety; PP=1 has no P2P but harmless
 
 job:
-  name: meg_moe_30BA3B_ep8_pp1_mbs${backend.megatron.micro_batch_size}_${aux.recompute_tag}
+  name: meg_moe_30BA3B_${aux.ep_tag}_pp1_mbs${backend.megatron.micro_batch_size}_${aux.recompute_tag}
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
 
 slurm:
@@ -96,7 +105,7 @@ sweep:
           backend.megatron.micro_batch_size: 1
           backend.megatron.recompute_granularity: full
           backend.megatron.recompute_num_layers: 1
-          # Result: 57.6-58.5 TFLOPS, 77.2 GiB (81%) (job 309061) ← OPTIMAL
+          # Result: 56.2 TFLOPS, 2,583 TPS/GPU, 81.3% mem (job 309061) ← OPTIMAL
 
         # ── no recompute (analogous to Titan AC=none; may fit at mbs=1) ──────
         - aux.recompute_tag: no_recompute
@@ -105,3 +114,38 @@ sweep:
           backend.megatron.recompute_method: null
           backend.megatron.recompute_num_layers: null
           # Result: OOM at iter 2 (94.75 GiB, alloc failed for 196 MiB in expert fc1) (job 309060)
+
+        # ── EP=4 (32 experts/GPU; DP=8 unchanged, 2 EP groups of 4) ─────────
+        # Expert grad buffer ≈ 14.5 GiB; EP=4 halves EP comm, more expert compute
+        - aux.ep_tag: ep4
+          aux.recompute_tag: full_recompute
+          backend.megatron.expert_model_parallel_size: 4
+          backend.megatron.micro_batch_size: 1
+          backend.megatron.recompute_granularity: full
+          backend.megatron.recompute_num_layers: 1
+          # Result: OOM — NCCL calloc 4 bytes fails (0 free GPU mem after init) (job 309632)
+
+        - aux.ep_tag: ep4
+          aux.recompute_tag: no_recompute
+          backend.megatron.expert_model_parallel_size: 4
+          backend.megatron.micro_batch_size: 1
+          backend.megatron.recompute_granularity: null
+          backend.megatron.recompute_method: null
+          backend.megatron.recompute_num_layers: null
+          # Result: OOM — same (2× expert params vs EP=8 exceeds 95 GiB) (job 309631)
+
+        # ── EP=8 larger mbs (full_recompute only; no_recompute OOMs at mbs=1) ─
+        # mbs=1 used 81.3% mem; mbs=4 squeezes in at 94.9% (barely fits!)
+        - aux.recompute_tag: full_recompute
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.global_batch_size: 16  # DP=8 × mbs=2
+          backend.megatron.recompute_granularity: full
+          backend.megatron.recompute_num_layers: 1
+          # Result: 64.3 TFLOPS, 2,954 TPS/GPU, 85.3% mem (job 311769)
+
+        - aux.recompute_tag: full_recompute
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.global_batch_size: 32  # DP=8 × mbs=4
+          backend.megatron.recompute_granularity: full
+          backend.megatron.recompute_num_layers: 1
+          # Result: 65.9 TFLOPS, 3,030 TPS/GPU, 94.9% mem (job 311770) ← barely fits; mbs=8 will OOM

@@ -5,9 +5,9 @@ bind:
   [
     "/boot/config-6.4.0-150600.23.73_15.0.14-cray_shasta_c",
     "/pfs/",
+    "${oc.env:PWD}",
     "/scratch/",
     "/flash/",
-    "${oc.env:PWD}",
     "/opt/cray/pe/lmod/"
   ]
 pwd: ${oc.env:PWD}
