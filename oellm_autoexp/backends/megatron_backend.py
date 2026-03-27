@@ -181,7 +181,10 @@ class MegatronBackend(BaseBackend):
         megatron_dict = asdict(self.config.megatron)
         training_dict = {k: v for k, v in megatron_dict.items() if k not in _CONVERT_KEYS}
         training_args = build_cmdline_args(
-            training_dict, dict(MEGATRON_ARG_METADATA), dict(MEGATRON_ACTION_SPECS), skip_defaults=True
+            training_dict,
+            dict(MEGATRON_ARG_METADATA),
+            dict(MEGATRON_ACTION_SPECS),
+            skip_defaults=True,
         )
         return f"{self.config.dist_cmd} {' '.join(training_args)}"
 

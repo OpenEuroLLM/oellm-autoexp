@@ -49,9 +49,7 @@ def get_megatron_sharded_states(args, tp_size, pp_size, pp_rank):
     for tp_index in range(tp_size):
         sub_dir_name = get_checkpoint_sub_dir_name(tp_index, pp_rank, pp_size)
         logging.info("Loading %s...", sub_dir_name)
-        checkpoint_path = os.path.join(
-            args.load_path, sub_dir_name, "model_optim_rng.pt"
-        )
+        checkpoint_path = os.path.join(args.load_path, sub_dir_name, "model_optim_rng.pt")
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(
                 f"Could not find model_optim_rng.pt in {os.path.join(args.load_path, sub_dir_name)}. "
@@ -65,9 +63,11 @@ def get_megatron_sharded_states(args, tp_size, pp_size, pp_rank):
 def megatron_to_transformers_fix_query_key_value_ordering(
     param, checkpoint_version, num_splits, num_heads, hidden_size
 ):
-    """Permute QKV layout for compatibility with Megatron-LM checkpoint versions.
+    """Permute QKV layout for compatibility with Megatron-LM checkpoint
+    versions.
 
-    See https://github.com/NVIDIA/Megatron-LM/blob/v2.4/megatron/checkpointing.py#L209
+    See
+    https://github.com/NVIDIA/Megatron-LM/blob/v2.4/megatron/checkpointing.py#L209
     """
     input_shape = param.size()
     if checkpoint_version == 1.0:
@@ -89,7 +89,6 @@ def get_element_from_dict_by_path(d, path):
     return d[path]
 
 
-
 def _find_rank0_checkpoint(load_path):
     if not os.path.exists(load_path):
         raise FileNotFoundError(f"Checkpoint load_path does not exist: {load_path}")
@@ -104,8 +103,7 @@ def _find_rank0_checkpoint(load_path):
         if sub_dir in state_dirs:
             return os.path.join(load_path, sub_dir, "model_optim_rng.pt")
     raise FileNotFoundError(
-        f"Could not find any of {possible_sub_dirs} in {load_path}. "
-        f"Available: {state_dirs}"
+        f"Could not find any of {possible_sub_dirs} in {load_path}. Available: {state_dirs}"
     )
 
 
@@ -154,9 +152,7 @@ def _build_hf_config(args, megatron_args, tokenizer):
     config.qk_layernorm = megatron_args.qk_layernorm
     config.rms_norm_eps = megatron_args.norm_epsilon
     config.rope_scaling = (
-        None
-        if megatron_args.use_rope_scaling is False
-        else megatron_args.use_rope_scaling
+        None if megatron_args.use_rope_scaling is False else megatron_args.use_rope_scaling
     )
     config.rope_theta = megatron_args.rotary_base
     config.tie_word_embeddings = not megatron_args.untie_embeddings_and_output_weights
@@ -172,11 +168,14 @@ def _convert_embeddings(tp_state_dicts, tp_size, dtype):
     return torch.cat(word_embeddings, dim=0).to(dtype)
 
 
-def _convert_mlp_params(key, val, tp_state_dicts, tp_size, path, dtype, layer_id, output_state_dict):
+def _convert_mlp_params(
+    key, val, tp_state_dicts, tp_size, path, dtype, layer_id, output_state_dict
+):
     if "weight" in key:
         dim = 1 if "linear_fc2" in key else 0
         params = torch.cat(
-            [val] + [
+            [val]
+            + [
                 get_element_from_dict_by_path(tp_state_dicts[tp_rank], path)[key]
                 for tp_rank in range(1, tp_size)
             ],
@@ -187,12 +186,17 @@ def _convert_mlp_params(key, val, tp_state_dicts, tp_size, path, dtype, layer_id
             output_state_dict[f"model.layers.{layer_id}.mlp.down_proj.weight"] = params
         else:
             params_split = [torch.chunk(i, 2, 0) for i in torch.chunk(params, tp_size, 0)]
-            output_state_dict[f"model.layers.{layer_id}.mlp.gate_proj.weight"] = torch.cat([i[0] for i in params_split])
-            output_state_dict[f"model.layers.{layer_id}.mlp.up_proj.weight"] = torch.cat([i[1] for i in params_split])
+            output_state_dict[f"model.layers.{layer_id}.mlp.gate_proj.weight"] = torch.cat(
+                [i[0] for i in params_split]
+            )
+            output_state_dict[f"model.layers.{layer_id}.mlp.up_proj.weight"] = torch.cat(
+                [i[1] for i in params_split]
+            )
 
     elif "bias" in key:
         params = torch.cat(
-            [val] + [
+            [val]
+            + [
                 get_element_from_dict_by_path(tp_state_dicts[tp_rank], path)[key]
                 for tp_rank in range(1, tp_size)
             ],
@@ -203,13 +207,24 @@ def _convert_mlp_params(key, val, tp_state_dicts, tp_size, path, dtype, layer_id
             output_state_dict[f"model.layers.{layer_id}.mlp.down_proj.bias"] = params
         else:
             params_split = [torch.chunk(i, 2, 0) for i in torch.chunk(params, tp_size, 0)]
-            output_state_dict[f"model.layers.{layer_id}.mlp.gate_proj.bias"] = torch.cat([i[0] for i in params_split])
-            output_state_dict[f"model.layers.{layer_id}.mlp.up_proj.bias"] = torch.cat([i[1] for i in params_split])
+            output_state_dict[f"model.layers.{layer_id}.mlp.gate_proj.bias"] = torch.cat(
+                [i[0] for i in params_split]
+            )
+            output_state_dict[f"model.layers.{layer_id}.mlp.up_proj.bias"] = torch.cat(
+                [i[1] for i in params_split]
+            )
 
 
 def _convert_attention_params(
-    op_name, weight_or_bias, params, layer_name,
-    heads, num_groups, hidden_size, hidden_size_per_head, tp_size,
+    op_name,
+    weight_or_bias,
+    params,
+    layer_name,
+    heads,
+    num_groups,
+    hidden_size,
+    hidden_size_per_head,
+    tp_size,
     output_state_dict,
 ):
     if "q_layernorm" in op_name:
@@ -220,11 +235,30 @@ def _convert_attention_params(
         if "qkv" in op_name:
             output_state_dict[f"{layer_name}.input_layernorm.{weight_or_bias}"] = params.clone()
         elif "mlp.linear_fc1" in op_name:
-            output_state_dict[f"{layer_name}.post_attention_layernorm.{weight_or_bias}"] = params.clone()
-    elif op_name in ("attention.linear_qkv", "self_attention.linear_qkv") and weight_or_bias == "weight":
-        _convert_qkv_weight(params, layer_name, heads, num_groups, hidden_size, hidden_size_per_head, tp_size, output_state_dict)
-    elif op_name in ("attention.linear_qkv", "self_attention.linear_qkv") and weight_or_bias == "bias":
-        _convert_qkv_bias(params, layer_name, heads, num_groups, hidden_size_per_head, tp_size, output_state_dict)
+            output_state_dict[f"{layer_name}.post_attention_layernorm.{weight_or_bias}"] = (
+                params.clone()
+            )
+    elif (
+        op_name in ("attention.linear_qkv", "self_attention.linear_qkv")
+        and weight_or_bias == "weight"
+    ):
+        _convert_qkv_weight(
+            params,
+            layer_name,
+            heads,
+            num_groups,
+            hidden_size,
+            hidden_size_per_head,
+            tp_size,
+            output_state_dict,
+        )
+    elif (
+        op_name in ("attention.linear_qkv", "self_attention.linear_qkv")
+        and weight_or_bias == "bias"
+    ):
+        _convert_qkv_bias(
+            params, layer_name, heads, num_groups, hidden_size_per_head, tp_size, output_state_dict
+        )
     elif weight_or_bias == "weight":
         out_name = megatron_to_transformers[op_name]
         output_state_dict[f"{layer_name}.{out_name}.weight"] = params.clone()
@@ -233,7 +267,16 @@ def _convert_attention_params(
         output_state_dict[f"{layer_name}.{out_name}.bias"] = params.clone()
 
 
-def _convert_qkv_weight(params, layer_name, heads, num_groups, hidden_size, hidden_size_per_head, tp_size, output_state_dict):
+def _convert_qkv_weight(
+    params,
+    layer_name,
+    heads,
+    num_groups,
+    hidden_size,
+    hidden_size_per_head,
+    tp_size,
+    output_state_dict,
+):
     all_qkvs = [
         i.reshape(
             num_groups // tp_size,
@@ -260,7 +303,9 @@ def _convert_qkv_weight(params, layer_name, heads, num_groups, hidden_size, hidd
     output_state_dict[f"{layer_name}.self_attn.v_proj.weight"] = out_kv[1].clone()
 
 
-def _convert_qkv_bias(params, layer_name, heads, num_groups, hidden_size_per_head, tp_size, output_state_dict):
+def _convert_qkv_bias(
+    params, layer_name, heads, num_groups, hidden_size_per_head, tp_size, output_state_dict
+):
     all_qkv_biases = [
         i.reshape(
             num_groups // tp_size,
@@ -274,10 +319,18 @@ def _convert_qkv_bias(params, layer_name, heads, num_groups, hidden_size_per_hea
 
     checkpoint_version = 3.0
     out_q_bias = megatron_to_transformers_fix_query_key_value_ordering(
-        all_q_biases.unsqueeze(-1), checkpoint_version, 1, heads, hidden_size_per_head,
+        all_q_biases.unsqueeze(-1),
+        checkpoint_version,
+        1,
+        heads,
+        hidden_size_per_head,
     ).squeeze(-1)
     out_kv_bias = megatron_to_transformers_fix_query_key_value_ordering(
-        all_kv_biases.unsqueeze(-1), checkpoint_version, 2, num_groups, hidden_size_per_head,
+        all_kv_biases.unsqueeze(-1),
+        checkpoint_version,
+        2,
+        num_groups,
+        hidden_size_per_head,
     ).squeeze(-1)
     out_kv_bias = torch.chunk(out_kv_bias, 2)
 
@@ -297,15 +350,18 @@ def _convert_final_layernorm(tp_state_dicts, path, dtype):
 
 def _convert_lm_head(tp_state_dicts, tp_size, dtype):
     logging.info("Converting LM head")
-    params = torch.cat([
-        get_element_from_dict_by_path(tp_state_dicts[i]["model"], "output_layer.weight")
-        for i in range(tp_size)
-    ])
+    params = torch.cat(
+        [
+            get_element_from_dict_by_path(tp_state_dicts[i]["model"], "output_layer.weight")
+            for i in range(tp_size)
+        ]
+    )
     return params.to(dtype).clone()
 
 
 def convert_checkpoint_from_megatron_to_transformers(args):
-    """Convert NVIDIA Megatron-LM checkpoint to HuggingFace Transformers checkpoint."""
+    """Convert NVIDIA Megatron-LM checkpoint to HuggingFace Transformers
+    checkpoint."""
     if args.megatron_path is not None:
         sys.path.insert(0, args.megatron_path)
 
@@ -349,7 +405,9 @@ def convert_checkpoint_from_megatron_to_transformers(args):
             # MLP params (linear_fc) handled separately
             if "layer_norm_weight" not in key and "linear_fc" in key:
                 layer_id = int(key.split(".")[2]) + pp_rank * num_layers
-                _convert_mlp_params(key, val, tp_state_dicts, tp_size, path, dtype, layer_id, output_state_dict)
+                _convert_mlp_params(
+                    key, val, tp_state_dicts, tp_size, path, dtype, layer_id, output_state_dict
+                )
                 continue
 
             new_key = key.replace("decoder.", "")
@@ -367,9 +425,14 @@ def convert_checkpoint_from_megatron_to_transformers(args):
             if op_name + "." + weight_or_bias not in tensor_parallel_params_mg:
                 params = val.to(dtype)
             else:
-                dim = (1 if op_name in column_split_tensor_parallel_params_mg else 0) if weight_or_bias == "weight" else 0
+                dim = (
+                    (1 if op_name in column_split_tensor_parallel_params_mg else 0)
+                    if weight_or_bias == "weight"
+                    else 0
+                )
                 params = torch.cat(
-                    [val] + [
+                    [val]
+                    + [
                         get_element_from_dict_by_path(tp_state_dicts[tp_rank], path)[key]
                         for tp_rank in range(1, tp_size)
                     ],
@@ -377,8 +440,15 @@ def convert_checkpoint_from_megatron_to_transformers(args):
                 ).to(dtype)
 
             _convert_attention_params(
-                op_name, weight_or_bias, params, layer_name,
-                heads, num_groups, hidden_size, hidden_size_per_head, tp_size,
+                op_name,
+                weight_or_bias,
+                params,
+                layer_name,
+                heads,
+                num_groups,
+                hidden_size,
+                hidden_size_per_head,
+                tp_size,
                 output_state_dict,
             )
 
@@ -416,8 +486,12 @@ def main():
     parser.add_argument("--architecture", type=str, default="OpenSciForCausalLM")
     parser.add_argument("--model_type", type=str, default="opensci")
     parser.add_argument("--tokenizer_name", type=str, default="EleutherAI/gpt-neox-20b")
-    parser.add_argument("--prepare_resources", type=str, default=None,
-                        help="Copy HF template files for this architecture to --save_path")
+    parser.add_argument(
+        "--prepare_resources",
+        type=str,
+        default=None,
+        help="Copy HF template files for this architecture to --save_path",
+    )
     args = parser.parse_args()
 
     if args.prepare_resources and args.save_path:

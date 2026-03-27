@@ -6,9 +6,9 @@ from pathlib import Path
 
 
 def prepare_resources(architecture: str, output_dir: str) -> None:
-    """Copy architecture-specific HF template files (config, tokenizer, modeling)
-    to *output_dir* so that ``AutoConfig.from_pretrained`` can load them.
-    """
+    """Copy architecture-specific HF template files (config, tokenizer,
+    modeling) to *output_dir* so that ``AutoConfig.from_pretrained`` can load
+    them."""
     resource_root = pkg_resources.files("oellm_autoexp.postprocess.resources") / architecture
     dest = Path(output_dir)
     dest.mkdir(parents=True, exist_ok=True)

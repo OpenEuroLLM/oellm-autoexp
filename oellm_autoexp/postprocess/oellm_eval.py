@@ -1,4 +1,4 @@
-"""oellm-cli evaluation step (submits eval as a separate SLURM job)."""
+"""Oellm-cli evaluation step (submits eval as a separate SLURM job)."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ class OELLMEvalStep(PostProcessStepInterface):
 
     def build_command(self) -> str:
         cfg = self.config
-        task_groups_args = " ".join(shlex.quote(tg) for tg in cfg.task_groups)
+        task_groups_args = shlex.join(cfg.task_groups)
 
         parts = [
             "oellm schedule-eval",
