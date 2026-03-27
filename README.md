@@ -62,6 +62,21 @@ Otherwise, on the login node you run out of resources and get killed.
 Make sure also to have datasets and tokenizers downloaded before starting a job, as there is no web connection on the compute nodes.
 
 
+## Cluster setup: Snellius notes
+For Snellius, all should work with a pre-built container image. Build the container on a compute node:
+```bash
+export APPTAINER_TMPDIR=/dev/shm/$USER && mkdir -p /dev/shm/$USER/
+export APPTAINER_CACHEDIR=/scratch-shared/$USER/apptainer
+python container/build_container_user.py \
+  --backend megatron \
+  --definition MegatronTrainingSnellius \
+  --base-image nvcr.io/nvidia/pytorch:25.10-py3 \
+  --container-cmd apptainer \
+  --output .../containers/ \
+  --no-sandbox
+```
+
+
 ## Supercomputer setup: JUWELS Booster / JUPITER
 To be tested.
 See also the predecessors https://github.com/SLAMPAI/megatron-autoexp ([Notes](https://iffmd.fz-juelich.de/yAbNVj9eQz647elSwlyHXQ)) and https://github.com/SLAMPAI/autoexperiment for hints.
@@ -382,6 +397,28 @@ Monitoring behavior lives entirely in YAML. Keep it small, keep it explicit.
 
 
 ### Updating the Megatron-LM backend version
-For an update of the megatron backend, first check out the new submodule version. Then, create a new container. Within that container,
-run the script generation in `scripts/generate_megatron_config.py` and `scripts/generate_megatron_dataclass.py`. You might have to adapt the `transformer_engine` mocks in those scripts.
+For an update of the megatron backend, first check out the new submodule version. Then, create a new container. Within that container, run the script generation in `scripts/generate_megatron_config.py` and `scripts/generate_megatron_dataclass.py`. You might have to adapt the `transformer_engine` mocks in those scripts.
 Also, apparently some containers don't use the correct `C++` path, you might have to `export CXX=$(which clang++)`, for example on LUMI.
+Afterwards, make sure that the generated files conform the linter standard by applying:
+```bash
+black --preview --enable-unstable-feature string_processing oellm_autoexp/backends/megatron/*
+```
+
+### Updating the titan_oellm backend version
+Please run:
+```bash
+python scripts/generate_titan_dataclass.py
+```
+
+
+## Contribution
+
+You may merge personal configuration directly into main - if they ONLY affect `config/experiments/YOURNAME`!
+
+Please install/run before you commit:
+```
+pre-commit install
+```
+This helps keeping the format clean.
+
+If you touch the backend submodule versions, please make sure you re-generate the dataclasses / configs. If you are very eager, and have spare time, you could integrate this re-generation even into the pre-commit config - so that we are on the safe side always.

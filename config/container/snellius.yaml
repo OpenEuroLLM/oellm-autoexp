@@ -1,0 +1,14 @@
+class_name: Container
+image: ${oc.env:CONTAINER_CACHE_DIR}/pytorch-25.10-transformers-py3.sif
+runtime: singularity
+bind:
+  [
+    "/scratch-shared/",
+    "/scratch-local/",
+    "/projects/",
+  ]
+pwd: ${oc.env:PWD}
+env:
+  PYTHONPATH: "."
+  MACHINE_NAME: "SNELLIUS"
+python: "python"

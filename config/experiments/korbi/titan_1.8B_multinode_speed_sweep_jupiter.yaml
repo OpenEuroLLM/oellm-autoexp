@@ -1,0 +1,182 @@
+# @package _global_
+# Multi-node speed sweep for Titan qwen3_custom 1.82B on JUPITER (2 nodes, 8 GPUs)
+# Baseline comparison: 476 TFLOPS @ 1 node, no AC, compile, bs=8
+#
+# Sweep axes:
+#   - parallelism: DDP (replicate=8) vs HSDP (replicate=2, shard=4)
+#   - local_batch_size: 4, 8, 16, 32
+#   - compile: yes (default) vs no (TORCHDYNAMO_DISABLE=1)
+#
+# DDP (replicate=8, shard=1): direct 2-node scale of 1-node optimal config.
+#   Memory per GPU unchanged (~29 GiB static + activations). Grad allreduce across 2 nodes.
+#
+# HSDP (replicate=2, shard=4): shard params within each node, replicate across nodes.
+#   Params per GPU: 1/4 model (~0.91 GiB) → much more headroom for large batches.
+#   Intra-node: FSDP all-gather (fast NVLink). Inter-node: grad allreduce only.
+#
+# ── Measured results (2 nodes, 8×GH200, compile unless noted) ────────────────
+#   DDP rep=8 sh=1, bs=4, nocompile → 354.76 TFLOPS,  63.76 GiB (67%)  (−25% vs compile)
+#   DDP rep=8 sh=1, bs=4, compile   → 447.82 TFLOPS,  50.21 GiB (53%)
+#   DDP rep=8 sh=1, bs=8, compile   → 469.15 TFLOPS,  86.36 GiB (91%)  ← OPTIMAL (−1.4% vs 1-node)
+#   HSDP rep=2 sh=4, bs=8, compile  → 422.53 TFLOPS,  79.91 GiB (84%)  (−10% vs DDP bs=8)
+#   HSDP rep=2 sh=4, bs=16         → OOM (94.76 GiB used — activation memory too large)
+#   HSDP rep=2 sh=4, bs=32         → OOM (93.77 GiB used)
+# Optimal 2-node config: DDP rep=8, bs=8, compile → 469.15 TFLOPS (same as 1-node optimal)
+defaults:
+  - ../base
+  - /backend: titan
+  - /container: jupiter_titan
+  - /slurm: jupiter
+  - /sweep: none
+  - override /backend/titan/data: nemonicco_jupiter
+  - override /backend/titan/model: qwen3_base
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: "titan_1.8B_multinode_speed_sweep"
+  compile_tag: "compile"  # overridden per sweep config
+
+backend:
+  titan:
+    model:
+      name: qwen3_custom
+      vocab_size: 50304
+      dim: 2048
+      head_dim: 64
+      n_layers: 24
+      n_heads: 32
+      n_kv_heads: 32
+      hidden_dim: 8192
+      hf_assets_path: ""
+      tokenizer_path: /e/project1/projectnucleus/franke5/workspace/titan-train/torchtitan/assets/tokenizer/gpt-neox-20b
+    training:
+      steps: 100
+      local_batch_size: 8
+      seq_len: 4096
+      dtype: bfloat16
+    metrics:
+      log_freq: 10
+    parallelism:
+      tensor_parallel_degree: 1
+      pipeline_parallel_degree: 1
+      data_parallel_replicate_degree: 8
+      data_parallel_shard_degree: 1
+      context_parallel_degree: 1
+    benchmarks:
+      wikitext2_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext2/wikitext2
+      wikitext103_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext103/wikitext103
+      lambada_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/lambada/lambada
+    # activation_checkpoint.mode: "none" (default) — no override
+    # compile.enable: true (default) — no override
+
+  env:
+    PYTHONPATH: .:./submodules/titan-oellm:./submodules/titan-oellm/torchtitan
+    NCCL_SOCKET_FAMILY: "AF_INET"
+    GLOO_SOCKET_FAMILY: "AF_INET"
+    NCCL_SOCKET_IFNAME: "ib0"
+    GLOO_SOCKET_IFNAME: "ib0"
+    NCCL_SOCKET_TIMEOUT: "60000"
+    NCCL_TIMEOUT: "1800"
+    NCCL_IB_TIMEOUT: "100"
+    NCCL_IB_RETRY_CNT: "20"
+    NCCL_ALGO: "Ring"
+    HF_ALLOW_CODE_EVAL: "1"
+    TORCH_HOME: ${oc.env:TORCH_HOME,"/tmp/torch_home"}
+    PYTORCH_KERNEL_CACHE_PATH: ${oc.env:PYTORCH_KERNEL_CACHE_PATH,"/tmp/torch_home/kernels"}
+    TRITON_CACHE_DIR: ${oc.env:TRITON_CACHE_DIR,"/tmp/triton_cache"}
+    TORCHINDUCTOR_CACHE_DIR: ${oc.env:TORCHINDUCTOR_CACHE_DIR,"/tmp/torchinductor_cache"}
+    TORCHINDUCTOR_FX_GRAPH_CACHE: ${oc.env:TORCHINDUCTOR_FX_GRAPH_CACHE,"/tmp/torchinductor_fx_cache"}
+    TORCHINDUCTOR_AUTOGRAD_CACHE: ${oc.env:TORCHINDUCTOR_AUTOGRAD_CACHE,"/tmp/torchinductor_autograd_cache"}
+    TORCH_INDUCTOR_CUDAGRAPH_DISABLE: ${oc.env:TORCH_INDUCTOR_CUDAGRAPH_DISABLE,"1"}
+    PYTORCH_CUDA_ALLOC_CONF: ${oc.env:PYTORCH_CUDA_ALLOC_CONF,"expandable_segments:True"}
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+
+  torchrun_args:
+    nproc_per_node: ${slurm.sbatch.gpus_per_node}
+    nnodes: ${slurm.sbatch.nodes}
+    max_restarts: 0
+    rdzv_backend: "c10d"
+    rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
+    node_rank: "$SLURM_PROCID"
+    master_addr: "$MASTER_ADDR"
+    master_port: "$MASTER_PORT"
+
+
+job:
+  name: titan_1.8B_2node_rep${backend.titan.parallelism.data_parallel_replicate_degree}sh${backend.titan.parallelism.data_parallel_shard_degree}_bs${backend.titan.training.local_batch_size}_${aux.compile_tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+container:
+  bind:
+    - /e/
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+slurm:
+  template_path: "templates/jupiter_mod.sbatch"
+  sbatch:
+    nodes: 2
+    gpus_per_node: 4
+    gres: "gpu:4"
+    cpus_per_task: 72
+    threads_per_core: 1
+    account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
+    partition: booster
+    time: "00:30:00"
+  srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
+  env:
+    # MASTER_ADDR intentionally omitted: inherited from slurm/jupiter.yaml base which
+    # computes it via nslookup from SLURM_JOB_NODELIST (required for multi-node)
+    NUM_NODES: "$SLURM_JOB_NUM_NODES"
+    GPUS_PER_NODE: "4"
+    NUM_GPUS_PER_NODE: "4"
+    NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
+    SLURM_CPUS_PER_TASK: "72"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ── DDP (replicate=8): direct 2-node scale of 1-node optimal ──────────
+        - aux.compile_tag: nocompile
+          backend.titan.parallelism.data_parallel_replicate_degree: 8
+          backend.titan.parallelism.data_parallel_shard_degree: 1
+          backend.titan.training.local_batch_size: 4
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 354.76 TFLOPS, 63.76 GiB (67%) (job 304618)
+
+        - aux.compile_tag: compile
+          backend.titan.parallelism.data_parallel_replicate_degree: 8
+          backend.titan.parallelism.data_parallel_shard_degree: 1
+          backend.titan.training.local_batch_size: 4
+          # Result: 447.82 TFLOPS, 50.21 GiB (53%) (job 304619)
+
+        - aux.compile_tag: compile
+          backend.titan.parallelism.data_parallel_replicate_degree: 8
+          backend.titan.parallelism.data_parallel_shard_degree: 1
+          backend.titan.training.local_batch_size: 8
+          # Result: 469.15 TFLOPS, 86.36 GiB (91%) (job 304617) ← OPTIMAL
+
+        # ── HSDP (replicate=2, shard=4): node-local FSDP, inter-node allreduce ─
+        - aux.compile_tag: compile
+          backend.titan.parallelism.data_parallel_replicate_degree: 2
+          backend.titan.parallelism.data_parallel_shard_degree: 4
+          backend.titan.training.local_batch_size: 8
+          # Result: 422.53 TFLOPS, 79.91 GiB (84%) (job 304616) — −10% vs DDP bs=8
+
+        - aux.compile_tag: compile
+          backend.titan.parallelism.data_parallel_replicate_degree: 2
+          backend.titan.parallelism.data_parallel_shard_degree: 4
+          backend.titan.training.local_batch_size: 16
+          # Result: OOM — 94.76 GiB used (activation memory too large) (job 304620)
+
+        - aux.compile_tag: compile
+          backend.titan.parallelism.data_parallel_replicate_degree: 2
+          backend.titan.parallelism.data_parallel_shard_degree: 4
+          backend.titan.training.local_batch_size: 32
+          # Result: OOM — 93.77 GiB used (job 304615)

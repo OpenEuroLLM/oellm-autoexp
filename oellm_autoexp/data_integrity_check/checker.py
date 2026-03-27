@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 from collections.abc import Iterable, Sequence
+from tqdm import tqdm
 
 
 DEFAULT_EXCLUDE_PATTERNS = (r".*\\.hash$",)
@@ -174,10 +175,12 @@ def _collect_files(
     return [unique[k] for k in sorted(unique.keys())]
 
 
-def _file_hash(path: Path, algorithm: str, chunk_size: int = 1024 * 1024) -> str:
+def _file_hash(path: Path, algorithm: str, chunk_size: int = 1024 * 1024 * 256) -> str:
     h = hashlib.new(algorithm)
+    statinfo = os.stat(path)
+    print(f"HASHING file: {path}")
     with path.open("rb") as f:
-        while True:
+        for _ in tqdm(range(1 << 30), total=int(statinfo.st_size / (1024 * 1024 * 256)) + 1):
             chunk = f.read(chunk_size)
             if not chunk:
                 break

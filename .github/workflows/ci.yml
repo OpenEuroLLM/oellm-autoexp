@@ -20,8 +20,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout main repo
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Checkout submodules
+        env:
+          GH_TOKEN: ${{ secrets.TITAN_OELLM_PAT }}
+        run: |
+          sed -i 's,git@github.com:,https://github.com/,g' .gitmodules
+          git submodule sync --recursive
+          cat .git/config
+          cat .gitmodules
+          git config --global credential.helper store
+          printf "https://x-access-token:%s@github.com\n" "$GH_TOKEN" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          git submodule status --recursive
+          git submodule update --init --recursive
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -73,10 +89,25 @@ jobs:
       fail-fast: false
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout main repo
+        uses: actions/checkout@v6
         with:
-          submodules: ${{ matrix.checkout_submodules }}
+          submodules: false
+
+      - name: Checkout submodules
+        env:
+          GH_TOKEN: ${{ secrets.TITAN_OELLM_PAT }}
+        run: |
+          sed -i 's,git@github.com:,https://github.com/,g' .gitmodules
+          git submodule sync --recursive
+          cat .git/config
+          cat .gitmodules
+          git config --global credential.helper store
+          printf "https://x-access-token:%s@github.com\n" "$GH_TOKEN" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          git submodule status --recursive
+          git submodule update --init --recursive
+
 
       - name: Set up Python
         uses: actions/setup-python@v5
