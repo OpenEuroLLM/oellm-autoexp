@@ -235,7 +235,8 @@ class MonitorLoop:
                 if runtime_id:
                     client = self._get_client(job)
                     client.remove(runtime_id)
-                self._store.mark_finished(job.job_id, "finished")
+                terminal = "finished" if runtime.last_status == "COMPLETED" else "cancelled"
+                self._store.mark_finished(job.job_id, terminal)
                 continue
 
             self._store.upsert(job)
