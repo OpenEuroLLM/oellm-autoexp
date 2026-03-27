@@ -1,7 +1,7 @@
 # Data inputs
 data_path:
   - /flash/project_462000963/users/niccolo/copy_nemotron_downsampled_15p/high-all
-data_cache_path: ${oc.env:DATA_DIR}/.cache
+data_cache_path: /scratch/project_462000963/user/korbi/data/.cache
 split: "989,10,1"
 lr_warmup_iters: 0
 train_iters: 500
