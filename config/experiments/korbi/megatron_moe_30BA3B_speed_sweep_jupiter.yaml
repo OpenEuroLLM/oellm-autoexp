@@ -14,7 +14,7 @@
 #   - EP/PP layout: EP=4+PP=2 (intra-node EP) vs EP=8+PP=1 (inter-node EP)
 #
 # ── Measured results (2 nodes, 8×GH200, EP=4+PP=2) ──────────────────────────
-#   EP=4+PP=2, mbs4, full_recompute    → 118.4 TFLOPS, 85% mem  ← OPTIMAL
+#   EP=4+PP=2, mbs4, full_recompute    → 118.4 TFLOPS, 85% mem  ← OPTIMAL - 2331 TOK/s/GPU
 #   EP=4+PP=2, mbs4, selective_recompute → OOM (94.6 GiB / 95 GiB)
 #   EP=4+PP=2, mbs4, no_recompute       → OOM (94.7 GiB / 95 GiB)
 #   EP=4+PP=2, mbs8, full_recompute    → 101.9 TFLOPS, 96% mem  (mbs4 faster)
@@ -48,6 +48,7 @@ backend:
     load: null
     ckpt_step: 0
     lr: 0.001
+    log_throughput: true
 
     global_batch_size: 64
     micro_batch_size: 4

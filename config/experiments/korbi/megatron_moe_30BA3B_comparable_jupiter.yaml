@@ -56,6 +56,7 @@ backend:
     load: null
     ckpt_step: 0
     lr: 0.001
+    log_throughput: true
 
     global_batch_size: 8   # DP=8 × mbs=1 × 1 microbatch/step
     micro_batch_size: 1

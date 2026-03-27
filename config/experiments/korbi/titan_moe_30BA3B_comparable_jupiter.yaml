@@ -25,25 +25,25 @@
 #
 # ── Results (2 nodes, 8×GH200, bs=1) ────────────────────────────────────────
 # EP=8 (dp_shard=8, dp_replicate=1, efsdp=1):
-#   nocompile, full AC → 56.9 TFLOPS,  41,720 TPS/GPU, 3.95 GiB (4%)  (job 309056)
-#   compile,   full AC → 55.5 TFLOPS,  40,642 TPS/GPU, 3.95 GiB (4%)  (job 309066)
-#   nocompile, no AC   → 79.7 TFLOPS,  58,408 TPS/GPU, 5.71 GiB (6%)  (job 309058)  ← EP=8 BEST
-#   compile,   no AC   → 78.4 TFLOPS,  57,490 TPS/GPU, 5.71 GiB (6%)  (job 309055)
+#   nocompile, full AC → 56.9 TFLOPS, 3.95 GiB (4%)  (job 309056)
+#   compile,   full AC → 55.5 TFLOPS, 3.95 GiB (4%)  (job 309066)
+#   nocompile, no AC   → 79.7 TFLOPS, 5.71 GiB (6%)  (job 309058)  ← EP=8 BEST
+#   compile,   no AC   → 78.4 TFLOPS, 5.71 GiB (6%)  (job 309055)
 # EP=4 (dp_shard=4, dp_replicate=2, efsdp=1):
-#   nocompile, full AC → 56.3 TFLOPS,  41,245 TPS/GPU, 4.57 GiB (5%)  (job 309630)
-#   compile,   full AC → 54.3 TFLOPS,  39,799 TPS/GPU, 4.57 GiB (5%)  (job 309627)
-#   nocompile, no AC   → 77.3 TFLOPS,  56,672 TPS/GPU, 6.33 GiB (7%)  (job 309629)
-#   compile,   no AC   → 75.8 TFLOPS,  55,552 TPS/GPU, 6.33 GiB (7%)  (job 309628)
+#   nocompile, full AC → 56.3 TFLOPS, 4.57 GiB (5%)  (job 309630)
+#   compile,   full AC → 54.3 TFLOPS, 4.57 GiB (5%)  (job 309627)
+#   nocompile, no AC   → 77.3 TFLOPS, 6.33 GiB (7%)  (job 309629)
+#   compile,   no AC   → 75.8 TFLOPS, 6.33 GiB (7%)  (job 309628)
 #   EP=4 is ~3-5% slower than EP=8 at bs=1 (DDP replica allreduce overhead)
 #
 # ── Results (2 nodes, 8×GH200, EP=8, larger bs) ─────────────────────────────
-# nocompile, no AC:    bs=2  → 151.7 TFLOPS, 111,201 TPS/GPU, 10.2 GiB (11%)  (job 311767)
-#                      bs=4  → 226.5 TFLOPS, 165,983 TPS/GPU, 19.3 GiB (20%)  (job 311763)
-#                      bs=8  → 249.5 TFLOPS, 182,858 TPS/GPU, 37.4 GiB (39%)  (job 311766)
-#                      bs=16 → 270.5 TFLOPS, 198,262 TPS/GPU, 74.0 GiB (78%)  (job 311765) ← BEST
-# nocompile, full AC:  bs=2  → 112.6 TFLOPS,  82,524 TPS/GPU,  6.7 GiB  (7%)  (job 311768)
-#                      bs=4  → 181.5 TFLOPS, 133,010 TPS/GPU, 12.3 GiB (13%)  (job 311764)
-#                      bs=8  → 208.9 TFLOPS, 153,134 TPS/GPU, 23.4 GiB (25%)  (job 311762)
+# nocompile, no AC:    bs=2  → 151.7 TFLOPS,  10.2 GiB (11%)  (job 311767)
+#                      bs=4  → 226.5 TFLOPS,  19.3 GiB (20%)  (job 311763)
+#                      bs=8  → 249.5 TFLOPS,  37.4 GiB (39%)  (job 311766)
+#                      bs=16 → 270.5 TFLOPS,  74.0 GiB (78%)  (job 311765) ← BEST
+# nocompile, full AC:  bs=2  → 112.6 TFLOPS,    6.7 GiB  (7%)  (job 311768)
+#                      bs=4  → 181.5 TFLOPS,  12.3 GiB (13%)  (job 311764)
+#                      bs=8  → 208.9 TFLOPS,  23.4 GiB (25%)  (job 311762)
 #
 # Key finding (EP=8): compile barely helps at bs=1 (~1-2% diff). Full AC costs ~30%.
 #

@@ -19,6 +19,11 @@ import statistics
 import sys
 from pathlib import Path
 
+try:
+    import yaml
+except ImportError:
+    yaml = None  # type: ignore[assignment]
+
 # GH200 SXM BF16 peak TFLOPs — derived from Titan logs (tflops / mfu_frac).
 GH200_PEAK_TFLOPS = 989.4
 
@@ -49,11 +54,78 @@ OOM_RE = re.compile(
     re.IGNORECASE,
 )
 
-# ── config parsing from directory name ───────────────────────────────────────
+# ── config parsing ────────────────────────────────────────────────────────────
 
 
-def parse_config(name: str) -> dict:
-    """Extract config fields from job directory name."""
+def parse_config(name: str, yaml_path: "Path | None" = None) -> dict:
+    """Extract config fields from a saved config YAML, falling back to the
+    directory name."""
+    if yaml_path is not None and yaml_path.exists() and yaml is not None:
+        try:
+            return _parse_config_from_yaml(name, yaml_path)
+        except Exception as e:
+            print(f"[WARN] Could not parse {yaml_path}: {e}", file=sys.stderr)
+    return _parse_config_from_name(name)
+
+
+def _parse_config_from_yaml(name: str, yaml_path: Path) -> dict:
+    """Read a saved config-{job_id}.yaml and extract parallelism / training
+    fields."""
+    with open(yaml_path) as f:
+        data = yaml.safe_load(f)
+
+    # The file is always wrapped under a top-level "config" key.
+    conf = data.get("config", data)
+    backend_cfg = conf.get("backend", {})
+
+    cfg: dict = {"name": name}
+
+    if "titan" in backend_cfg:
+        cfg["backend"] = "titan"
+        titan = backend_cfg["titan"]
+        par = titan.get("parallelism", {})
+        cfg["ep"] = par.get("expert_parallel_degree")
+        cfg["pp"] = par.get("pipeline_parallel_degree")
+        cfg["tp"] = par.get("tensor_parallel_degree")
+        cfg["bs"] = titan.get("training", {}).get("local_batch_size")
+        cfg["ac"] = titan.get("activation_checkpoint", {}).get("mode")  # "full" / "none"
+
+        # TORCHDYNAMO_DISABLE=1 in the env overrides compile.enable at runtime.
+        env = backend_cfg.get("env", {})
+        if str(env.get("TORCHDYNAMO_DISABLE", "0")) == "1":
+            cfg["compile"] = "no"
+        elif titan.get("compile", {}).get("enable"):
+            cfg["compile"] = "yes"
+        else:
+            cfg["compile"] = None
+
+    elif "megatron" in backend_cfg:
+        cfg["backend"] = "megatron"
+        meg = backend_cfg["megatron"]
+        cfg["ep"] = meg.get("expert_model_parallel_size")
+        cfg["pp"] = meg.get("pipeline_model_parallel_size")
+        cfg["tp"] = meg.get("tensor_model_parallel_size")
+        cfg["bs"] = meg.get("micro_batch_size")
+
+        granularity = meg.get("recompute_granularity")
+        if granularity == "full":
+            cfg["ac"] = "full"
+        elif granularity == "selective":
+            cfg["ac"] = "selective"
+        else:
+            cfg["ac"] = "none"
+
+        cfg["compile"] = None  # Megatron does not use torch.compile in our configs
+
+    else:
+        cfg["backend"] = "unknown"
+        cfg["ep"] = cfg["pp"] = cfg["tp"] = cfg["bs"] = cfg["ac"] = cfg["compile"] = None
+
+    return cfg
+
+
+def _parse_config_from_name(name: str) -> dict:
+    """Fallback: extract config fields by pattern-matching the job directory name."""
     cfg = {"name": name}
 
     m = re.search(r"_ep(\d+)", name)
@@ -145,10 +217,20 @@ def parse_log(log_path: Path, backend: str, warmup: int) -> dict:
     return result
 
 
-def find_log(job_dir: Path, backend: str) -> Path | None:
+def find_log(job_dir: Path) -> Path | None:
     """Find the most recent slurm log in a job directory."""
     logs = sorted(job_dir.glob("slurm-*.log"), key=lambda p: p.stat().st_mtime)
     return logs[-1] if logs else None
+
+
+def find_config_yaml(log: Path) -> "Path | None":
+    """Return the config-{job_id}.yaml saved alongside a slurm log, if
+    present."""
+    m = re.search(r"slurm-(\d+)", log.name)
+    if not m:
+        return None
+    candidate = log.parent / f"config-{m.group(1)}.yaml"
+    return candidate if candidate.exists() else None
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -159,10 +241,17 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
+        "--log-file",
+        nargs="+",
+        default=[],
+        metavar="FILE",
+        help="Log files",
+    )
+    parser.add_argument(
         "--base-dirs",
         nargs="+",
-        required=True,
         metavar="DIR",
+        default=[],
         help="Output directories to scan (one or more)",
     )
     parser.add_argument(
@@ -188,16 +277,23 @@ def main():
         for job_dir in sorted(base_path.iterdir()):
             if not job_dir.is_dir():
                 continue
-            cfg = parse_config(job_dir.name)
-            log = find_log(job_dir, cfg["backend"])
+            log = find_log(job_dir)
+            cfg = parse_config(job_dir.name, find_config_yaml(log) if log else None)
             if log is None:
                 metrics = {"status": "no_log"}
             else:
+                m = re.search(r"slurm-(\d+)", log.name)
+                cfg["job_id"] = m.group(1) if m else ""
                 metrics = parse_log(log, cfg["backend"], args.warmup)
-                # Attach job id from log filename
-                cfg["job_id"] = re.search(r"slurm-(\d+)", log.name)
-                cfg["job_id"] = cfg["job_id"].group(1) if cfg["job_id"] else ""
             rows.append({**cfg, **metrics})
+
+    for fname in args.log_file:
+        log = Path(fname)
+        cfg = parse_config(log.name, find_config_yaml(log))
+        m = re.search(r"slurm-(\d+)", log.name)
+        cfg["job_id"] = m.group(1) if m else ""
+        metrics = parse_log(log, cfg["backend"], args.warmup)
+        rows.append({**cfg, **metrics})
 
     # Sort
     sort_key = {

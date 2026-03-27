@@ -9,3 +9,9 @@ save_interval: 1000000000
 save: ${job.base_output_dir}
 load: ${job.base_output_dir}
 tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+# need to be set on lumi for ROCm based models to work
+add_bias_linear: false
+bias_dropout_fusion: false
+gradient_accumulation_fusion: false
+masked_softmax_fusion: false
