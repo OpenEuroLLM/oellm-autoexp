@@ -34,7 +34,7 @@
 # At mbs=4 (equal batch): Titan 133,010 vs Megatron 3,030 TPS/GPU → Titan 44× faster in TPS.
 #
 defaults:
-  - ../base
+  - ../../base
   - /backend: megatron_torchrun_localaddr
   - /container: jupiter
   - /slurm: jupiter

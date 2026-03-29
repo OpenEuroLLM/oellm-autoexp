@@ -27,7 +27,7 @@
 #   - NCCL_NET_GDR_LEVEL=0 required: PP=2 inter-node P2P hangs without it
 #   - vs Titan backend: Titan optimal (263 TFLOPS) is 2.2× faster than Megatron (118 TFLOPS)
 defaults:
-  - ../base
+  - ../../base
   - /backend: megatron_torchrun_localaddr
   - /container: jupiter
   - /slurm: jupiter

@@ -48,7 +48,7 @@
 # Key finding (EP=8): compile barely helps at bs=1 (~1-2% diff). Full AC costs ~30%.
 #
 defaults:
-  - ../base
+  - ../../base
   - /backend: titan
   - /container: jupiter_titan
   - /slurm: jupiter

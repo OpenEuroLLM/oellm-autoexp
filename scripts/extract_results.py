@@ -17,6 +17,7 @@ import argparse
 import re
 import statistics
 import sys
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -54,6 +55,12 @@ OOM_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Titan timestamp + step (used to derive step time independently of reported tps/tflops).
+# Example: "0: [titan] 2026-03-25 13:37:04,721 - root - INFO - step: 90  loss: ..."
+TITAN_STEP_TS_RE = re.compile(
+    r"^0:.*\[titan\]\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d+).*step:\s*(\d+)"
+)
+
 # ── config parsing ────────────────────────────────────────────────────────────
 
 
@@ -80,6 +87,12 @@ def _parse_config_from_yaml(name: str, yaml_path: Path) -> dict:
 
     cfg: dict = {"name": name}
 
+    # n_gpus from slurm config (nodes × gpus_per_node).
+    sbatch = conf.get("slurm", {}).get("sbatch", {})
+    nodes = sbatch.get("nodes", 1)
+    gpus_per_node = sbatch.get("gpus_per_node", 1)
+    cfg["n_gpus"] = nodes * gpus_per_node
+
     if "titan" in backend_cfg:
         cfg["backend"] = "titan"
         titan = backend_cfg["titan"]
@@ -87,8 +100,11 @@ def _parse_config_from_yaml(name: str, yaml_path: Path) -> dict:
         cfg["ep"] = par.get("expert_parallel_degree")
         cfg["pp"] = par.get("pipeline_parallel_degree")
         cfg["tp"] = par.get("tensor_parallel_degree")
+        cfg["dp_shard"] = par.get("data_parallel_shard_degree")
         cfg["bs"] = titan.get("training", {}).get("local_batch_size")
         cfg["ac"] = titan.get("activation_checkpoint", {}).get("mode")  # "full" / "none"
+
+        cfg["seq_len"] = titan.get("training", {}).get("seq_len")
 
         # TORCHDYNAMO_DISABLE=1 in the env overrides compile.enable at runtime.
         env = backend_cfg.get("env", {})
@@ -105,7 +121,10 @@ def _parse_config_from_yaml(name: str, yaml_path: Path) -> dict:
         cfg["ep"] = meg.get("expert_model_parallel_size")
         cfg["pp"] = meg.get("pipeline_model_parallel_size")
         cfg["tp"] = meg.get("tensor_model_parallel_size")
+        cfg["dp_shard"] = None
         cfg["bs"] = meg.get("micro_batch_size")
+
+        cfg["seq_len"] = meg.get("seq_length")
 
         granularity = meg.get("recompute_granularity")
         if granularity == "full":
@@ -119,14 +138,16 @@ def _parse_config_from_yaml(name: str, yaml_path: Path) -> dict:
 
     else:
         cfg["backend"] = "unknown"
-        cfg["ep"] = cfg["pp"] = cfg["tp"] = cfg["bs"] = cfg["ac"] = cfg["compile"] = None
+        cfg["ep"] = cfg["pp"] = cfg["tp"] = cfg["dp_shard"] = cfg["bs"] = cfg["ac"] = cfg[
+            "compile"
+        ] = None
 
     return cfg
 
 
 def _parse_config_from_name(name: str) -> dict:
     """Fallback: extract config fields by pattern-matching the job directory name."""
-    cfg = {"name": name}
+    cfg = {"name": name, "n_gpus": None, "seq_len": None, "dp_shard": None}
 
     m = re.search(r"_ep(\d+)", name)
     cfg["ep"] = int(m.group(1)) if m else None
@@ -167,12 +188,18 @@ def _parse_config_from_name(name: str) -> dict:
 # ── log parsing ───────────────────────────────────────────────────────────────
 
 
+_TITAN_TS_FMT = "%Y-%m-%d %H:%M:%S,%f"
+
+
 def parse_log(log_path: Path, backend: str, warmup: int) -> dict:
     """Parse a single log file.
 
-    Returns a metrics dict.
+    Returns a metrics dict including step_time_ms derived from log
+    timestamps (Titan) or the elapsed-time field (Megatron), independent
+    of framework TFLOPS.
     """
-    tflops, tps, mfu, mem_gib, mem_pct = [], [], [], [], []
+    tflops, tps, mfu, mem_gib, mem_pct, elapsed_ms = [], [], [], [], [], []
+    titan_steps: list[tuple[int, datetime]] = []  # (step, timestamp) for Titan
     oom = False
 
     pattern = TITAN_RE if backend == "titan" else MEGATRON_RE
@@ -181,6 +208,19 @@ def parse_log(log_path: Path, backend: str, warmup: int) -> dict:
         for line in f:
             if OOM_RE.search(line):
                 oom = True
+
+            # Collect Titan timestamps for independent step-time derivation.
+            if backend == "titan":
+                ts_m = TITAN_STEP_TS_RE.match(line)
+                if ts_m:
+                    step = int(ts_m.group(2))
+                    if step > warmup:
+                        try:
+                            ts = datetime.strptime(ts_m.group(1), _TITAN_TS_FMT)
+                            titan_steps.append((step, ts))
+                        except ValueError:
+                            pass
+
             m = pattern.search(line)
             if not m:
                 continue
@@ -195,7 +235,7 @@ def parse_log(log_path: Path, backend: str, warmup: int) -> dict:
                 tflops.append(float(m.group(5)))
                 mfu.append(float(m.group(6)))
             else:  # megatron
-                # m.group(2) = elapsed_ms (unused here)
+                elapsed_ms.append(float(m.group(2)))
                 mem_pct.append(float(m.group(3)) * 100.0)
                 tflops.append(float(m.group(4)))
                 tps.append(float(m.group(5)))
@@ -203,12 +243,29 @@ def parse_log(log_path: Path, backend: str, warmup: int) -> dict:
     if not tflops:
         return {"status": "oom" if oom else "no_data"}
 
+    # Compute step_time_ms from timestamps / elapsed field.
+    step_time_ms: float | None = None
+    if backend == "megatron" and elapsed_ms:
+        step_time_ms = statistics.median(elapsed_ms)
+    elif backend == "titan" and len(titan_steps) >= 2:
+        # Use consecutive logged entries; each pair spans (step_b - step_a) steps.
+        diffs_ms = []
+        for (step_a, t_a), (step_b, t_b) in zip(titan_steps, titan_steps[1:]):
+            dt = (t_b - t_a).total_seconds() * 1000  # ms
+            n = step_b - step_a
+            if n > 0 and dt > 0:
+                diffs_ms.append(dt / n)
+        if diffs_ms:
+            step_time_ms = statistics.median(diffs_ms)
+
     med_tflops = statistics.median(tflops)
-    med_tps = statistics.median(tps)
+    med_tps = statistics.median(tps) if tps else None
     result = {
         "status": "oom" if oom else "ok",
         "tflops": med_tflops,
-        "tps": med_tps,
+        # Both Titan and Megatron report tok/s/GPU directly in logs — use as-is.
+        "tok_per_s_per_gpu": med_tps,
+        "step_time_ms": step_time_ms,
         "mfu_pct": statistics.median(mfu) if mfu else med_tflops / GH200_PEAK_TFLOPS * 100,
         "mem_gib": statistics.median(mem_gib) if mem_gib else None,
         "mem_pct": statistics.median(mem_pct) if mem_pct else None,
@@ -231,6 +288,20 @@ def find_config_yaml(log: Path) -> "Path | None":
         return None
     candidate = log.parent / f"config-{m.group(1)}.yaml"
     return candidate if candidate.exists() else None
+
+
+def _maybe_compute_tok_per_s_per_gpu(cfg: dict, metrics: dict) -> dict:
+    """Fallback: compute tok_per_s_per_gpu from step_time if not already set."""
+    if metrics.get("tok_per_s_per_gpu") is not None:
+        return metrics
+    step_time_ms = metrics.get("step_time_ms")
+    bs = cfg.get("bs")
+    seq_len = cfg.get("seq_len")
+    n_gpus = cfg.get("n_gpus")
+    if step_time_ms and bs and seq_len and n_gpus and step_time_ms > 0:
+        tok_per_s_per_gpu = bs * seq_len / (step_time_ms / 1000.0) / n_gpus
+        metrics = {**metrics, "tok_per_s_per_gpu": tok_per_s_per_gpu}
+    return metrics
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -263,7 +334,7 @@ def main():
     parser.add_argument(
         "--sort",
         default="name",
-        choices=["tflops", "tps", "mfu", "name"],
+        choices=["tflops", "tok_per_s_per_gpu", "mfu", "name"],
         help="Sort column (default: name)",
     )
     args = parser.parse_args()
@@ -285,7 +356,7 @@ def main():
                 m = re.search(r"slurm-(\d+)", log.name)
                 cfg["job_id"] = m.group(1) if m else ""
                 metrics = parse_log(log, cfg["backend"], args.warmup)
-            rows.append({**cfg, **metrics})
+            rows.append({**cfg, **_maybe_compute_tok_per_s_per_gpu(cfg, metrics)})
 
     for fname in args.log_file:
         log = Path(fname)
@@ -293,12 +364,12 @@ def main():
         m = re.search(r"slurm-(\d+)", log.name)
         cfg["job_id"] = m.group(1) if m else ""
         metrics = parse_log(log, cfg["backend"], args.warmup)
-        rows.append({**cfg, **metrics})
+        rows.append({**cfg, **_maybe_compute_tok_per_s_per_gpu(cfg, metrics)})
 
     # Sort
     sort_key = {
         "tflops": lambda r: -(r.get("tflops") or 0),
-        "tps": lambda r: -(r.get("tps") or 0),
+        "tok_per_s_per_gpu": lambda r: -(r.get("tok_per_s_per_gpu") or 0),
         "mfu": lambda r: -(r.get("mfu_pct") or 0),
         "name": lambda r: r["name"],
     }[args.sort]
@@ -325,12 +396,13 @@ def _print_table(rows):
         ("compile", 8, "compile"),
         ("ac", 6, "AC"),
         ("bs", 4, "BS"),
+        ("n_gpus", 6, "nGPUs"),
         ("status", 8, "status"),
+        ("tok_per_s_per_gpu", 14, "tok/s/GPU"),
         ("tflops", 10, "TFLOPS/GPU"),
-        ("mfu_pct", 10, "MFU%"),
-        ("tps", 12, "TPS/GPU"),
+        ("mfu_pct", 8, "MFU%"),
         ("mem_gib", 10, "Mem(GiB)"),
-        ("mem_pct", 10, "Mem%"),
+        ("mem_pct", 8, "Mem%"),
         ("n_iters", 7, "iters"),
         ("job_id", 10, "job_id"),
     ]
@@ -345,6 +417,7 @@ def _print_table(rows):
         def g(k):
             return r.get(k)
 
+        na = "OOM" if g("status") == "oom" else "—"
         vals = [
             f"{g('backend') or '':8}",
             f"{str(g('ep') or ''):4}",
@@ -352,12 +425,13 @@ def _print_table(rows):
             f"{g('compile') or '':8}",
             f"{g('ac') or '':6}",
             f"{str(g('bs') or ''):4}",
+            f"{str(g('n_gpus') or ''):6}",
             f"{g('status') or '':8}",
-            _fmt(g("tflops"), ".1f", "", "OOM" if g("status") == "oom" else "—").rjust(10),
-            _fmt(g("mfu_pct"), ".2f", "%", "OOM" if g("status") == "oom" else "—").rjust(10),
-            _fmt(g("tps"), ",.0f", "", "OOM" if g("status") == "oom" else "—").rjust(12),
-            _fmt(g("mem_gib"), ".2f", " GiB", "—").rjust(10),
-            _fmt(g("mem_pct"), ".1f", "%", "—").rjust(10),
+            _fmt(g("tok_per_s_per_gpu"), ",.0f", "", na).rjust(14),
+            _fmt(g("tflops"), ".1f", "", na).rjust(10),
+            _fmt(g("mfu_pct"), ".1f", "%", na).rjust(8),
+            _fmt(g("mem_gib"), ".1f", " GiB", "—").rjust(10),
+            _fmt(g("mem_pct"), ".1f", "%", "—").rjust(8),
             f"{str(g('n_iters') or ''):7}",
             f"{g('job_id') or '':10}",
         ]
@@ -375,10 +449,13 @@ def _print_csv(rows):
         "compile",
         "ac",
         "bs",
+        "seq_len",
+        "n_gpus",
         "status",
+        "tok_per_s_per_gpu",
         "tflops",
         "mfu_pct",
-        "tps",
+        "step_time_ms",
         "mem_gib",
         "mem_pct",
         "n_iters",

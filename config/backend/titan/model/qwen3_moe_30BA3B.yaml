@@ -2,7 +2,30 @@ name: qwen3_custom
 flavor: 30BA3B
 
 # Architecture set by flavor (matches Megatron qwen3_moe_30BA3B.yaml):
-#   dim=2048, 48 layers, 32 heads, 4 kv_heads (GQA), head_dim=128
-#   128 experts, top_k=8, moe_inter_dim=768
+#   dim: 2048, 48 layers, 32 heads, 4 kv_heads (GQA), head_dim: 128
+#   128 experts, top_k: 8, moe_inter_dim: 768
 #
 # vocab_size is overridden in the experiment config to match the dataset tokenizer.
+
+dim: 2048
+n_layers: 48
+n_heads: 32
+n_kv_heads: 4          # GQA: 4 KV heads (num_query_groups: 4)
+head_dim: 128          # kv_channels: 128
+hidden_dim: 6144       # dense FFN size (not used when moe_enabled: True)
+vocab_size: 151936     # Qwen3 vocab; override to 50304 for GPT-NeoX data
+norm_eps: 1e-6
+rope_theta: 1000000
+qk_norm: True
+max_seq_len: 4096
+depth_init: True
+moe_enabled: True
+moe_inter_dim: 768     # moe_ffn_hidden_size: 768 per expert (matches Megatron qwen3_moe.yaml)
+moe_num_experts: 128
+moe_top_k: 8
+
+moe_num_shared_experts: 0  # no shared experts, double check
+moe_score_func: "softmax"  # need double check
+moe_route_norm: True
+moe_route_scale: 1.0  # not needed, need double check
+moe_score_before_experts: False
