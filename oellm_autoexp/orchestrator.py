@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import shlex
+import subprocess
 import time
 from dataclasses import dataclass, field, MISSING, replace
 import hashlib
@@ -22,14 +23,23 @@ from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandC
 from oellm_autoexp.monitor.submission import SlurmJobConfig, LocalJobConfig
 
 import oellm_autoexp.backends.megatron_backend  # noqa  - register
+import oellm_autoexp.postprocess.megatron_dist_to_torch  # noqa  - register
+import oellm_autoexp.postprocess.megatron_to_hf  # noqa  - register
+import oellm_autoexp.postprocess.oellm_eval  # noqa  - register
 import oellm_autoexp.backends.titan_backend  # noqa  - register
-from oellm_autoexp.config.schema import RootConfig, ConfigSetup, BackendInterface
+from oellm_autoexp.config.schema import (
+    RootConfig,
+    ConfigSetup,
+    BackendInterface,
+    PostProcessStepInterface,
+    ContainerConfig,
+)
 
 
 LOGGER = logging.getLogger(__name__)
 
 
-def stable_hash_hex(s: str) -> str:
+def _stable_hash_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
@@ -140,6 +150,27 @@ def run_loop(controller: MonitorLoop) -> None:
             break
         loop.observe_once()
         time.sleep(loop.poll_interval_seconds)
+    _run_post_job_commands(loop._store)
+
+
+def _run_post_job_commands(store: JobFileStore) -> None:
+    """Run new_job postprocess commands for successfully completed jobs."""
+    for job in store.load_all(include_finished=True):
+        post_cmds = (job.definition.metadata or {}).get("post_job_commands", [])
+        if not post_cmds:
+            continue
+        if job.runtime.final_state != "finished":
+            LOGGER.info(
+                "Skipping post-job commands for %s (final state: %s)",
+                job.job_id,
+                job.runtime.final_state,
+            )
+            continue
+        for cmd in post_cmds:
+            LOGGER.info("Running post-job command: %s", cmd)
+            result = subprocess.run(cmd, shell=True)
+            if result.returncode != 0:
+                LOGGER.warning("Post-job command exited with code %d: %s", result.returncode, cmd)
 
 
 def run_loop_sync(controller: MonitorLoop) -> None:
@@ -151,8 +182,6 @@ def _ensure_state_store(
 ) -> tuple[JobFileStore, str]:
     monitor_state_dir = Path(plan.config_setup.monitor_state_dir)
     if not session_id:
-        import time
-
         session_id = str(int(time.time()))
 
     session_dir = monitor_state_dir / session_id
@@ -170,11 +199,31 @@ def _build_job_record(
 
     job_name = _resolve_job_name(job.config)
 
-    job_hash = stable_hash_hex(json.dumps(asdict(job.config)))[:6]
+    job_hash = _stable_hash_hex(json.dumps(asdict(job.config)))[:6]
     job_id = f"{job_name}_{job_hash}"
 
     backend = job.config.backend.instantiate(BackendInterface)
     launch_cmd = backend.build_launch_command()
+
+    container = job.config.container if isinstance(job.config.container, ContainerConfig) else None
+
+    # Process postprocess steps: same_job → appended to launch command, new_job → run after completion.
+    post_job_commands: list[str] = []
+    for step_name, step_cfg in job.config.postprocess.items():
+        step = step_cfg.instantiate(PostProcessStepInterface)
+        run_mode = step.get_run_mode()
+        if run_mode == "same_job":
+            LOGGER.info("Appending postprocess step '%s' to launch command", step_name)
+            cmd = step.build_command()
+            if container and container.image:
+                cmd = _build_container_exec_prefix(container) + " \\\n    " + cmd
+            launch_cmd = launch_cmd + " && \\\n" + cmd
+        elif run_mode == "new_job":
+            LOGGER.info("Scheduling post-job step '%s' to run after job completes", step_name)
+            post_job_commands.append(step.build_command())
+        else:
+            raise ValueError(f"Unknown run_mode '{run_mode}' for postprocess step '{step_name}'")
+
     script_path = (
         job.config.slurm.script_path or Path(job.config.slurm.script_dir) / f"{job_name}.sbatch"
     )
@@ -216,6 +265,7 @@ def _build_job_record(
                 "session_id": session_id,
                 "sweep_index": getattr(job.config, "index", None),
                 "stage": getattr(job.config, "stage", ""),
+                "post_job_commands": post_job_commands,
             },
             base_config=job,
         )
@@ -241,6 +291,7 @@ def _build_job_record(
             "session_id": session_id,
             "sweep_index": getattr(job.config, "index", None),
             "stage": getattr(job.config, "stage", ""),
+            "post_job_commands": post_job_commands,
         },
         slurm=slurm_config,
         base_config=job,
@@ -251,6 +302,17 @@ def _build_job_record(
         definition=definition,
         runtime=JobRuntimeConfig(submitted=False),
     )
+
+
+def _build_container_exec_prefix(container: ContainerConfig) -> str:
+    parts = [container.runtime, "exec"]
+    for k, v in container.env.items():
+        parts.append(f"--env {shlex.quote(f'{k}={v}')}")
+    parts += ["--nv", "--writable-tmpfs"]
+    for bind in container.bind:
+        parts.append(f"--bind {bind}")
+    parts.append(shlex.quote(container.image))
+    return " \\\n    ".join(parts)
 
 
 def _resolve_job_name(config: RootConfig) -> str:

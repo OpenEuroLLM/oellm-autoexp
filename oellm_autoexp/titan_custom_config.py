@@ -2,18 +2,20 @@
 
 from dataclasses import dataclass, field
 
-from titan_oellm.configs.sci_job_config import JobConfig as BaseJobConfig
-from titan_oellm.configs.sci_job_config import Model as BaseModel
+from titan_oellm.configs.oellm_job_config import JobConfig as BaseJobConfig
+from titan_oellm.configs.oellm_job_config import Model as BaseModel
 
 
 @dataclass
 class Model(BaseModel):
-    """Extend Titan-OELLM Model config with explicit sizing fields."""
+    """Extend Titan-OELLM Model config.
 
-    num_layers: int = 24
-    num_attention_heads: int = 32
-    ffn_hidden_size: int = 8192
-    n_kv_heads: int | None = None
+    oellm_job_config.Model already provides all MoE fields
+    (moe_num_experts, moe_top_k, moe_score_func, moe_route_norm,
+    moe_route_scale, moe_score_before_experts, moe_num_shared_experts)
+    and attn_gate_* fields. Only add fields not present in the base.
+    """
+
     ffn_dim_multiplier: float | None = None
     multiple_of: int = 256
 

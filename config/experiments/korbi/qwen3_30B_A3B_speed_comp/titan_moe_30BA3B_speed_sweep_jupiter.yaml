@@ -21,7 +21,7 @@
 #   compile,   no AC,    bs=16 → 263.11 TFLOPS,  74.03 GiB (78%)  ← OPTIMAL (+3.3% vs bs=8)
 #   compile,   no AC,    bs=32 → OOM (73 GiB used + 24.56 GiB needed > 95 GiB)
 defaults:
-  - ../base
+  - ../../base
   - /backend: titan
   - /container: jupiter_titan
   - /slurm: jupiter

@@ -1,31 +1,19 @@
 # @package _global_
-# Qwen3 30BA3B "maximally comparable" Titan config for direct Megatron comparison.
+# Titan MoE 30BA3B — profiling run to identify bottlenecks
 #
-# Goal: eliminate confounding factors (batch size, FSDP, TP/PP) to isolate
-#       framework overhead between Titan and Megatron on equal footing.
+# Captures PyTorch profiler trace for 1 step (after 3 warmup steps).
+# Saves trace to: ${job.base_output_dir}/profile_traces/
+#   i.e. /e/scratch/projectnucleus/poeppel1/output/titan_moe_30BA3B_profile_pp2ep4/...
 #
-# Design choices:
-#   EP=8, dp_shard=8, efsdp=1 → no expert FSDP (each EP rank owns its experts fully)
-#   bs=1 → same effective tokens/step as Megatron mbs=1 GBS=8
-#   dp_replicate=1 → no DDP replication
+# Profiling schedule: warmup=3, active=1, freq=10
+#   → profile window: steps 3-4 (first cycle)
+#   → run for 15 steps total to capture first window + a few more
 #
-# Note: attention params are still FSDP-sharded 8-way (unavoidable in Titan when EP=8;
-#   EP is carved from dp_shard, which requires dp_shard ≥ EP = 8).
-#   efsdp = dp_shard×tp/(etp×ep) = 8×1/(1×8) = 1 → zero extra FSDP for experts.
-#
-# Comparable Megatron config: megatron_moe_30BA3B_comparable_jupiter.yaml
-#   (EP=8, PP=1, TP=1, mbs=1, GBS=8, full_recompute)
-#
-# ── Results (2 nodes, 8×GH200, EP=8, dp_shard=8, bs=1) ─────────────────────
-#   nocompile, full AC,  bs=1 → 56.4 TFLOPS, 3.95 GiB (4%)  (job 309056)
-#   compile,   full AC,  bs=1 → 55.4 TFLOPS, 3.95 GiB (4%)  (job 309066)
-#   nocompile, no AC,    bs=1 → 79.7 TFLOPS, 5.71 GiB (6%)  (job 309058)  ← no-AC BEST
-#   compile,   no AC,    bs=1 → 78.8 TFLOPS, 5.71 GiB (6%)  (job 309055)
-#
-# Key finding: compile barely helps at bs=1 (~1-2% diff). Full AC costs ~30%.
-#
+# Baseline config: compile + opt4 + bs=64 + PP=2 + EP=4 (current best)
+# Goal: identify whether EP AllToAll, PP P2P, or compute is the main bottleneck
+
 defaults:
-  - ../base
+  - ../../base
   - /backend: titan
   - /container: jupiter_titan
   - /slurm: jupiter
@@ -36,8 +24,7 @@ defaults:
   - _self_
 
 aux:
-  experiment_group: "titan_moe_30BA3B_comparable"
-  compile_tag: "nocompile"
+  experiment_group: "titan_moe_30BA3B_profile_pp2ep4"
 
 backend:
   titan:
@@ -46,24 +33,32 @@ backend:
       tokenizer_path: /e/project1/projectnucleus/franke5/workspace/titan-train/torchtitan/assets/tokenizer/gpt-neox-20b
 
     training:
-      steps: 100
-      local_batch_size: 1
+      steps: 15
+      local_batch_size: 64
       seq_len: 4096
       dtype: bfloat16
 
     metrics:
-      log_freq: 10
+      log_freq: 5
 
     parallelism:
       tensor_parallel_degree: 1
-      pipeline_parallel_degree: 1
-      expert_parallel_degree: 8
+      pipeline_parallel_degree: 2
+      expert_parallel_degree: 4
       data_parallel_replicate_degree: 1
-      data_parallel_shard_degree: 8   # minimum for EP=8; efsdp=8*1/(1*8)=1 → no expert FSDP
+      data_parallel_shard_degree: 4
       context_parallel_degree: 1
 
     activation_checkpoint:
-      mode: full
+      mode: selective
+      selective_ac_option: "4"
+
+    profiling:
+      enable_profiling: true
+      profile_freq: 10
+      profiler_warmup: 3
+      profiler_active: 1
+      save_traces_folder: "profile_traces"
 
     benchmarks:
       wikitext2_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext2/wikitext2
@@ -71,7 +66,7 @@ backend:
       lambada_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/lambada/lambada
 
   env:
-    TORCHDYNAMO_DISABLE: "1"
+    TORCHDYNAMO_DISABLE: "0"
     PYTHONPATH: .:./submodules/titan-oellm:./submodules/titan-oellm/torchtitan
     NCCL_SOCKET_FAMILY: "AF_INET"
     GLOO_SOCKET_FAMILY: "AF_INET"
@@ -81,7 +76,7 @@ backend:
     NCCL_TIMEOUT: "1800"
     NCCL_IB_TIMEOUT: "100"
     NCCL_IB_RETRY_CNT: "20"
-    NCCL_ALGO: "Ring"
+    NCCL_NET_GDR_LEVEL: "0"
     HF_ALLOW_CODE_EVAL: "1"
     TORCH_HOME: ${oc.env:TORCH_HOME,"/tmp/torch_home"}
     PYTORCH_KERNEL_CACHE_PATH: ${oc.env:PYTORCH_KERNEL_CACHE_PATH,"/tmp/torch_home/kernels"}
@@ -104,7 +99,7 @@ backend:
     master_port: "$MASTER_PORT"
 
 job:
-  name: titan_moe_30BA3B_ep8_${aux.compile_tag}_ac${backend.titan.activation_checkpoint.mode}_bs${backend.titan.training.local_batch_size}
+  name: titan_moe_30BA3B_ep4pp2_compile_acselective_opt4_bs64_profile
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
 
 container:
@@ -125,7 +120,7 @@ slurm:
     threads_per_core: 1
     account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
     partition: booster
-    time: "00:30:00"
+    time: "00:20:00"
   srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
   env:
     NUM_NODES: "$SLURM_JOB_NUM_NODES"
@@ -133,33 +128,3 @@ slurm:
     NUM_GPUS_PER_NODE: "4"
     NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
     SLURM_CPUS_PER_TASK: "72"
-
-sweep:
-  type: list
-  store_sweep_json: true
-  groups:
-    - type: list
-      configs:
-        # ── nocompile (raw framework overhead, no torch.compile) ──────────────
-        - aux.compile_tag: nocompile
-          backend.titan.activation_checkpoint.mode: full
-          backend.titan.training.local_batch_size: 1
-          backend.env.TORCHDYNAMO_DISABLE: "1"
-          # Result: 56.4 TFLOPS, 3.95 GiB (4%) (job 309056)
-
-        - aux.compile_tag: nocompile
-          backend.titan.activation_checkpoint.mode: none
-          backend.titan.training.local_batch_size: 1
-          backend.env.TORCHDYNAMO_DISABLE: "1"
-          # Result: 79.7 TFLOPS, 5.71 GiB (6%) (job 309058) ← no-AC BEST
-
-        # ── compile ───────────────────────────────────────────────────────────
-        - aux.compile_tag: compile
-          backend.titan.activation_checkpoint.mode: full
-          backend.titan.training.local_batch_size: 1
-          # Result: 55.4 TFLOPS, 3.95 GiB (4%) (job 309066)
-
-        - aux.compile_tag: compile
-          backend.titan.activation_checkpoint.mode: none
-          backend.titan.training.local_batch_size: 1
-          # Result: 78.8 TFLOPS, 5.71 GiB (6%) (job 309055)
