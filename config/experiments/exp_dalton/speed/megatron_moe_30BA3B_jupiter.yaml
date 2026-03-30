@@ -1,0 +1,88 @@
+# @package _global_
+# Based on `config/experiments/korbi/megatron_moe_30BA3B_comparable_jupiter.yaml`
+# Speed experiment on Qwen 30BA3B model.
+# Design choices:
+#   EP=4, PP=2, TP=1 → Intra-node expert sharding, inter-node pipeline
+#     parallelism, tensor parallelism not neede as 2048 hidden fits in memory
+#   DP = world_size / (TP×PP) = 8/(1×1) = 8  → distributed optimizer shards 8-way
+#   mbs=2, GBS=64 → maximum mbs to fill up GPU memory (~98% memory utilized),
+#     GBS=8*n_gpus=64 for sensible token GBS scaling to larger node numbers
+#   full_recompute → analogous to Titan activation_checkpoint.mode=full
+#
+# Results (from WandB logs):
+#   TFLOPS                      132.11835
+#   Tokens per second per GPU   6072.33313
+#   batch-size                  64
+#   grad-norm                   0.18546
+#   iteration-time              5.39628
+#   lm loss                     7.64428
+#   lm loss validation          7.68087
+#   load_balancing_loss         1.00044
+defaults:
+  - ../../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe_30BA3B]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "megatron_moe_30BA3B_comparable_speed_deepep_fineweb_gpt2"
+
+backend:
+  megatron:
+    train_iters: 100
+    log_interval: 1
+    eval_interval: 1000
+    save: null
+    load: null
+    ckpt_step: 0
+    lr: 0.001
+
+    # global_batch_size: 8   # DP=8 × mbs=1 × 1 microbatch/step
+    global_batch_size: 64 # CHANGED: for correct token gbs when scaled up
+    micro_batch_size: 2
+    expert_model_parallel_size: 4
+    pipeline_model_parallel_size: 2
+    tensor_model_parallel_size: 1
+
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    recompute_modules: null
+
+    use_distributed_optimizer: true
+    moe_router_dtype: "fp32"
+    moe_router_force_load_balancing: true
+    moe_token_dispatcher_type: allgather
+    # moe_token_dispatcher_type: flex
+    # moe_flex_dispatcher_backend: deepep
+
+    data_path:
+      - /e/project1/e-sta-openeurollm/harmsen1/datasets/FineWeb/fineweb-10BT_text_document
+    data_cache_path: /e/scratch/e-sta-openeurollm/harmsen1/data
+    # mock_data: true
+    tokenizer_model: /e/scratch/e-sta-openeurollm/harmsen1/hf_home/hub/models--openai-community--gpt2/snapshots/607a30d783dfa663caf39e06633721c8d4cfcd7e
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+    NCCL_NET_GDR_LEVEL: "0"  # keep for safety; PP=1 has no P2P but harmless
+    HF_HUB_OFFLINE: 1
+
+job:
+  name: ${aux.experiment_group}_ep${backend.megatron.expert_model_parallel_size}_pp${backend.megatron.pipeline_model_parallel_size}_mbs${backend.megatron.micro_batch_size}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+slurm:
+  sbatch:
+    nodes: 2
+    time: "00:30:00"
+
+container:
+  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deepep_pt2510_aarch64_202603032309.sif
