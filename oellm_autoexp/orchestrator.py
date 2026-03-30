@@ -309,6 +309,8 @@ def _build_container_exec_prefix(container: ContainerConfig) -> str:
     for k, v in container.env.items():
         parts.append(f"--env {shlex.quote(f'{k}={v}')}")
     parts += ["--nv", "--writable-tmpfs"]
+    if container.pwd:
+        parts.append(f"--pwd {shlex.quote(container.pwd)}")
     for bind in container.bind:
         parts.append(f"--bind {bind}")
     parts.append(shlex.quote(container.image))

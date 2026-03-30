@@ -30,6 +30,10 @@ megatron = [
   "six"
 ]
 
+titan = [
+  "torch",
+]
+
 dev = [
   "pytest>=7.4",
   "pytest-asyncio>=0.21",

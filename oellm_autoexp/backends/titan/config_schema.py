@@ -89,8 +89,8 @@ class MergedModel:
     moe_num_shared_experts: int = 0
     qkv_bias: bool = False
     mlp_bias: bool = False
-    ffn_dim_multiplier: Any = None
-    multiple_of: int = 256
+    ffn_dim_multiplier: float | None = None
+    multiple_of: int | None = 256
 
 
 @dataclass
