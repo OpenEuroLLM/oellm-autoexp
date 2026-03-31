@@ -140,6 +140,7 @@ def main() -> None:
         for idx, out_dir in sorted(stable_jobs, key=lambda x: x[0]):
             name = Path(out_dir).name if out_dir else ""
             print(f"  {idx}: {name}")
+        print(f"indices: {','.join(str(idx) for idx, _ in stable_jobs)}")
         return
 
     if args.list_decay:
@@ -166,6 +167,7 @@ def main() -> None:
         for idx, out_dir in sorted(decay_jobs, key=lambda x: x[0]):
             name = Path(out_dir).name if out_dir else ""
             print(f"  {idx}: {name}")
+        print(f"indices: {','.join(str(idx) for idx, _ in decay_jobs)}")
         return
 
     try:
