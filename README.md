@@ -75,7 +75,9 @@ python container/build_container_user.py \
 ## Supercomputer setup: JUWELS Booster / JUPITER
 Build Jupiter apptainer from NGC PyTorch container with pinned numpy==1.26.1, transformers==4.57.2 and wandb
 ```
-python3 container/build_container_user.py   --backend megatron   --definition MegatronTraining-JUPITER-hybridep  --base-image nvcr.io/nvidia/pytorch:25.10-py3   --container-cmd apptainer   --output $CONTAINER_CACHE_DIR/  --no-sandbox
+export APPTAINER_TMPDIR=/dev/shm/$USER && mkdir -p /dev/shm/$USER/
+export APPTAINER_CACHEDIR=/e/scratch/e-sta-openeurollm/$USER/apptainer
+python3 container/build_container_user.py   --backend megatron   --definition MegatronTraining-JUPITER-deep-hybridep  --base-image nvcr.io/nvidia/pytorch:26.02-py3   --container-cmd apptainer   --output $CONTAINER_CACHE_DIR/  --no-sandbox
 ```
 ============================================================================
 
