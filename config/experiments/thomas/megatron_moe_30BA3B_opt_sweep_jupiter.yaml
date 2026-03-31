@@ -51,10 +51,22 @@ backend:
     # recompute_method: null
     # recompute_num_layers: null
     # recompute_modules: null
-
-    moe_token_dispatcher_type: flex
-    moe_flex_dispatcher_backend: hybridep # or allgather
     moe_hybridep_num_sms: 16 # HybridEP requires > 0
+
+    # All-to-all
+    #moe_token_dispatcher_type: alltoall
+
+    # All-to-gather
+    #moe_token_dispatcher_type: allgather
+
+    # DeepEP
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: deepep
+    moe_enable_deepep: true
+
+    # HybridEP:
+    #moe_token_dispatcher_type: flex
+    #moe_flex_dispatcher_backend: hybridep
 
     use_distributed_optimizer: true
     moe_router_dtype: "fp32"
@@ -76,7 +88,7 @@ backend:
     #CUDA_DEVICE_MAX_CONNECTIONS: 1 only for TP
 
 container:
-  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTrainingJupiter_aarch64.sif
+  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deep-hybridep_aarch64.sif
 job:
   name: meg_moe_30BA3B_ep${backend.megatron.expert_model_parallel_size}_pp${backend.megatron.pipeline_model_parallel_size}_mbs${backend.megatron.micro_batch_size}_${aux.recompute_tag}_${aux.dispatcher_tag}
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"

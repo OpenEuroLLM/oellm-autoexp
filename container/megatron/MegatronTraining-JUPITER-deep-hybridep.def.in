@@ -1,0 +1,75 @@
+Bootstrap: docker
+From: ${BASE_IMAGE}
+
+%labels
+    Author tvosch
+    Version 0.1.0
+    Base ${BASE_IMAGE}
+    Description Megatron container for Jupiter (NVIDIA PyTorch + uv-based installs + cuda-compat workaround)
+
+%post
+    # Triton uses ldconfig -p to find libcuda.so.1. Use a custom path to avoid
+    # conflicting with /usr/local/cuda/compat/lib which CUDA/Apptainer --nv may
+    # manage as a symlink (rm + ln -s) at runtime, failing if it's a directory.
+    mkdir -p /usr/local/lib/cuda-compat/
+    ln -sf /.singularity.d/libs/libcuda.so.1 /usr/local/lib/cuda-compat/libcuda.so.1
+    ln -sf /.singularity.d/libs/libcuda.so.1 /usr/local/lib/cuda-compat/libcuda.so
+    echo "/usr/local/lib/cuda-compat" > /etc/ld.so.conf.d/cuda-compat.conf
+    ldconfig
+
+    # Freeze torch family so uv can never replace it
+    python -m pip freeze | grep -E "^(torch|nvidia|triton|cuda|xformers)" \
+        | sed 's/+.*//' > /tmp/torch-overrides.txt
+
+    # Apply overrides to every uv call and install to system python (no venv)
+    export UV_BREAK_SYSTEM_PACKAGES=1
+    export UV_OVERRIDE=/tmp/torch-overrides.txt
+    export UV_SYSTEM_PYTHON=1
+
+    uv pip install numpy==1.26.4
+    uv pip install transformers==4.57.1
+    uv pip install datasets==4.4.1
+    uv pip install nltk==3.9.2
+    uv pip install wandb==0.22.3
+
+    export TORCH_CUDA_ARCH_LIST="9.0a" #GH200
+
+
+    # For DeepEP:
+    # Install NVSHMEM (sbsa = aarch64/GH200, cuda12-compatible)
+    wget -q https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/linux-sbsa/libnvshmem-linux-sbsa-3.5.21_cuda12-archive.tar.xz -O /tmp/nvshmem.tar.xz
+    export NVSHMEM_DIR=/opt/nvshmem
+    mkdir -p /opt/nvshmem
+    tar -xf /tmp/nvshmem.tar.xz --strip-components=1 -C /opt/nvshmem
+    rm /tmp/nvshmem.tar.xz
+    # Copy headers into /usr/local/cuda/include — nvcc always searches this path,
+    # regardless of env vars (CPATH is ignored by nvcc's device pass; NVCC_PREPEND_FLAGS
+    # breaks nvcc --version checks in setuptools).
+    # Literal paths used intentionally: envsubst (run by build_container.sh) would silently
+    # substitute shell variables like ${CCCL_INCLUDE} as empty string.
+    cp -r /opt/nvshmem/include/. /usr/local/cuda/include/
+    # Copy CCCL (libcudacxx) headers into the main cuda include path.
+    # Needed by NVSHMEM headers (cuda/std/tuple). CCCL lives under targets/sbsa-linux/include/cccl
+    # but NOT under /usr/local/cuda/include where nvcc searches by default.
+    # The exact cuda minor version varies (13.0 vs 13.1); find it at build time.
+    # Note: no ${VAR} syntax here — envsubst (called by build_container.sh) would replace them.
+    cp -r $(find /usr/local/cuda* -name "cccl" -type d -path "*/include/cccl" 2>/dev/null | head -1)/. /usr/local/cuda/include/
+
+    rm -rf /tmp/deepep
+    git clone https://github.com/deepseek-ai/DeepEP /tmp/deepep
+    git -C /tmp/deepep checkout 7febc6e  # known-good: deep_ep 1.2.1+7febc6e (Snellius verified)
+    # nvshmemi_ibgda_device_state_d is defined both in deep_ep.o (via NVSHMEM headers) and in
+    # libnvshmem_device.a — allow the duplicate so the host linker doesn't error out.
+    export LDFLAGS="-Wl,--allow-multiple-definition"
+    uv pip install --no-build-isolation /tmp/deepep
+    rm -rf /tmp/deepep
+
+
+%environment
+    export CUDA_HOME=/usr/local/cuda
+    export NVSHMEM_DIR=/opt/nvshmem
+    # Preserve LD_LIBRARY_PATH set by Apptainer --nv (which injects libcuda into /.singularity.d/libs/)
+    # and add /usr/local/lib/cuda-compat where Triton's ldconfig fallback finds libcuda.so.1
+    export LD_LIBRARY_PATH=/opt/nvshmem/lib:/usr/local/cuda/lib64:/usr/local/lib/cuda-compat${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+    export PYTHONNOUSERSITE=1
+    export LD_PRELOAD=
