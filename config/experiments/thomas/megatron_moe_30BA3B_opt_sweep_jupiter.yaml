@@ -33,6 +33,8 @@ backend:
     lr: 0.001
     log_throughput: true
 
+    vocab_size: 262144
+    padded_vocab_size: 262144
     global_batch_size: 64
     micro_batch_size: 4
     expert_model_parallel_size: 4
@@ -71,7 +73,7 @@ backend:
     PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
     PYTHONWARNINGS: "ignore::UserWarning"
     NCCL_NET_GDR_LEVEL: "0"  # disable GDRDMA — required for PP=2 inter-node P2P
-    #CUDA_DEVICE_MAX_CONNECTIONS: 1
+    #CUDA_DEVICE_MAX_CONNECTIONS: 1 only for TP
 
 container:
   image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTrainingJupiter_aarch64.sif
