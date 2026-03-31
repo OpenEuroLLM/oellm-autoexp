@@ -73,6 +73,12 @@ python container/build_container_user.py \
 
 
 ## Supercomputer setup: JUWELS Booster / JUPITER
+Build Jupiter apptainer from NGC PyTorch container with pinned numpy==1.26.1, transformers==4.57.2 and wandb
+```
+python3 container/build_container_user.py   --backend megatron   --definition MegatronTraining-JUPITER-hybridep  --base-image nvcr.io/nvidia/pytorch:25.10-py3   --container-cmd apptainer   --output $CONTAINER_CACHE_DIR/  --no-sandbox
+```
+============================================================================
+
 To be tested.
 See also the predecessors https://github.com/SLAMPAI/megatron-autoexp ([Notes](https://iffmd.fz-juelich.de/yAbNVj9eQz647elSwlyHXQ)) and https://github.com/SLAMPAI/autoexperiment for hints.
 Testing for JUPITER: see the [JUPITER Notes](https://iffmd.fz-juelich.de/BoygWCOZRciXluqqcDQ1oQ)
