@@ -50,8 +50,6 @@ log_events:
       class_name: RestartAction
       reason: ""
 
-Application launch failed: Communication connection failure
-
 state_events:
   - name: "failed"
     transition: ["RUNNING", "FAILED"]
