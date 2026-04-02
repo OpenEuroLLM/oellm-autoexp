@@ -29,12 +29,7 @@ backend:
 
     # DATA
     data_path: [
-      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-actual,
-      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-distill,
-      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-diverse_qa_pairs,
-      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-extract_knowledge,
-      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-knowledge_list,
-      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-wrap_medium
+      /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-LUMI-sample-318BT/high-all,
     ]
     data_cache_path: /leonardo_scratch/large/userexternal/donutu00/MEGATRON_CACHEDIR
     seq_length: 4096
@@ -52,6 +47,7 @@ backend:
     ffn_hidden_size: 3072
     num_attention_heads: 16
     num_query_groups: 8
+    group_query_attention: True
     init_method_std: 0.02
     position_embedding_type: "rope"
     rotary_base: 10000
