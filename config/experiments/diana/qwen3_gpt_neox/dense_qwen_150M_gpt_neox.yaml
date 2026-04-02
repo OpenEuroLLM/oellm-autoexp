@@ -140,14 +140,13 @@ backend:
     lr: 5.e-4  # Will be overridden by sweep
 
     # Auxiliary computation variables
-    # Note: Computed fields (train_iters, lr_wsd_decay_iters, start_iter, start_iter_round)
+    # Note: Computed fields (train_iters, lr_wsd_decay_iters, start_iter)
     # are defined in the sweep defaults alongside the tokens they depend on,
     # so they get resolved together with stage-specific values
     aux:
       tokens: 300_000_000_000  # Default: 300B tokens
       decay_fraction: 0.0  # Default: no decay
       start_iter: 0  # only used in decay
-      start_iter_round: 0 # only used in decay
       cooldown_decay_fraction: 0.2  # fraction of iters spent in LR decay during cooldown
       # Decay branching checkpoints: overridden per stable phase in the sweep.
       # Sentinel 999_999_999 is never reached, so unused slots produce no extra saves.
@@ -192,7 +191,6 @@ sweep:
           backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
           backend.megatron.lr_wsd_decay_iters: 0  # No decay in stable phase
           backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
-          backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
           # Save checkpoints at the two decay branching points (6B, 12B)
           backend.megatron.aux.save_step_0: "\\${oc.eval:'int(((6_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
           backend.megatron.aux.save_step_1: "\\${oc.eval:'int(((12_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
@@ -207,7 +205,6 @@ sweep:
             backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
             backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
             backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
-            backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
             # Checkpoint loading from stable12BT
             backend.megatron.load: "\\${sibling.stable12BT.job.base_output_dir}/checkpoints"
             backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter}"
@@ -239,7 +236,6 @@ sweep:
           backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
           backend.megatron.lr_wsd_decay_iters: 0  # No decay in stable phase
           backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
-          backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
           # Save checkpoints at the four decay branching points (20B, 30B, 50B, 80B)
           backend.megatron.aux.save_step_0: "\\${oc.eval:'int(((20_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
           backend.megatron.aux.save_step_1: "\\${oc.eval:'int(((30_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
@@ -256,7 +252,6 @@ sweep:
             backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
             backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
             backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
-            backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
             # Checkpoint loading from stable80BT
             backend.megatron.load: "\\${sibling.stable80BT.job.base_output_dir}/checkpoints"
             backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter}"
@@ -292,7 +287,6 @@ sweep:
           backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
           backend.megatron.lr_wsd_decay_iters: 0  # No decay in stable phase
           backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
-          backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
           # Save checkpoints at the three decay branching points (120B, 200B, 300B; save_step_3 stays at sentinel)
           backend.megatron.aux.save_step_0: "\\${oc.eval:'int(((120_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
           backend.megatron.aux.save_step_1: "\\${oc.eval:'int(((200_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
@@ -308,7 +302,6 @@ sweep:
             backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
             backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
             backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
-            backend.megatron.aux.start_iter_round: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter}//\\${backend.megatron.save_interval})*\\${backend.megatron.save_interval}'}"
             # Checkpoint loading from stable300BT
             backend.megatron.load: "\\${sibling.stable300BT.job.base_output_dir}/checkpoints"
             backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter}"
