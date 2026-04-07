@@ -9,9 +9,6 @@ From: ${BASE_IMAGE}
 
 %environment
     export PYTHONUNBUFFERED=1
-    export PYTHONPATH=/workspace/oellm-autoexp:${PYTHONPATH}
-    export OELLM_AUTOEXP_CACHE=/workspace/cache
-    export HF_HOME=/workspace/cache/hf
 
 %files
     ${REPO_ROOT} /workspace/oellm-autoexp
@@ -23,11 +20,11 @@ mkdir -p /workspace/oellm-autoexp/provenance
 mkdir -p /workspace/cache
 cd /workspace
 
-python3 -m pip install --upgrade pip setuptools packaging wheel
+pip install --upgrade pip setuptools wheel
 
 python3 /workspace/oellm-autoexp/container/gen_constraints.py \
     --output /workspace/constraints.installed.txt \
-    --exclude pip setuptools wheel huggingface_hub
+    --exclude pip setuptools wheel huggingface_hub numpy
 
 if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
     python3 -m pip install --no-cache-dir \
