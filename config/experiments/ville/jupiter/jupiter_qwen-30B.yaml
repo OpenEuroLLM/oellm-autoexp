@@ -11,7 +11,6 @@ defaults:
 
 aux:
   experiment_group: "distributed-training-benchmark"
-  recompute_tag: "full_recompute"
 
 backend:
   megatron:
@@ -99,9 +98,7 @@ backend:
     save: null
     load: null
 
-
 job:
-  name: "JUPITER_qwen3_30B_nodes${slurm.sbatch.nodes}_gbsz_${backend.megatron.global_batch_size}_${aux.recompute_tag}"
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
 
 slurm:
@@ -116,9 +113,10 @@ sweep:
   type: list
   store_sweep_json: true
   groups:
+    #recomputation
     - type: list
+      job.name: "JUPITER_qwen3_30B_nodes${slurm.sbatch.nodes}_gbsz_${backend.megatron.global_batch_size}_${aux.recompute_tag}"
       configs:
-        # ── Baseline: full-recompute mbs=4 allgather (current best, sanity check) ──
         - aux.recompute_tag: full_recompute
           backend.megatron.recompute_granularity: full
           backend.megatron.recompute_method: uniform
@@ -127,3 +125,14 @@ sweep:
         - aux.recompute_tag: selective-recompute
           backend.megatron.recompute_granularity: selective
           backend.megatron.recompute_modules: ['core_attn','mlp','moe']
+    # Virtual pipeline - effect on pipeline bubble      
+    - type: list
+      job.name: "JUPITER_qwen3_30B_nodes${slurm.sbatch.nodes}_gbsz_${backend.megatron.global_batch_size}_${backend.megatron.num_layers_per_virtual_pipeline_stage}"
+      configs:
+        - backend.megatron.num_layers_per_virtual_pipeline_stage: [1, 2, 4, 6]
+    
+    # Fused vs Flash attention
+    - type: list
+      job.name: "JUPITER_qwen3_30B_nodes${slurm.sbatch.nodes}_gbsz_${backend.megatron.global_batch_size}_${backend.megatron.attention_backend}"
+      configs:
+        backend.megatron.attention_backend: ['fused','flash']
