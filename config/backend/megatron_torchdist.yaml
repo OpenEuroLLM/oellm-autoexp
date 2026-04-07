@@ -15,10 +15,8 @@ torchrun_args:
   max_restarts: 0
   tee: 3
   rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
-  rdzv_backend: "static"
+  rdzv_backend: "c10d"
   node_rank: "$SLURM_NODEID"
-  master_addr: "$MASTER_ADDR"
-  master_port: "$MASTER_PORT"
 env:
   PYTHONPATH: ".:submodules/Megatron-LM"
   RUN_DIR: ${.PROJECT_DIR}/submodules/Megatron-LM
