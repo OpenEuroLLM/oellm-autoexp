@@ -8,7 +8,7 @@ from pathlib import Path
 import os
 import pytest
 
-from oellm_autoexp.orchestrator import build_execution_plan
+from oellm_autoexp.orchestrator import build_execution_plan, render_scripts
 from oellm_autoexp.config.loader import load_config_reference
 from oellm_autoexp.config.schema import ConfigSetup
 
@@ -165,3 +165,58 @@ index: 0
         assert hasattr(job.config, "job")
         # The start condition should be inherited from the config
         assert job.config.job.start_condition is not None
+
+
+def test_render_scripts_dry_run(tmp_path: Path, monkeypatch) -> None:
+    """Test that render_scripts generates .sbatch files without submitting."""
+    monkeypatch.setenv("SLURM_ACCOUNT", "debug")
+
+    base_output = tmp_path / "outputs"
+    template_path = tmp_path / "template.sbatch"
+    script_dir = tmp_path / "scripts"
+    log_dir = tmp_path / "logs"
+    template_path.write_text("#!/bin/bash\n{sbatch_directives}\n\nsrun {srun_opts}{launcher_cmd}\n")
+
+    config_text = f"""
+job:
+  name: dryrun_${{index}}
+  base_output_dir: {base_output}
+  log_path: {log_dir}/test-%j.log
+  log_path_current: {log_dir}/test.log
+  slurm: ${{slurm}}
+
+sweep:
+  type: product
+  groups:
+    - params:
+        backend.dummy: [0, 1]
+
+slurm:
+  template_path: {template_path}
+  script_dir: {script_dir}
+  log_dir: {log_dir}
+  array: false
+  launcher_cmd: ""
+  srun_opts: ""
+
+backend:
+  class_name: NullBackend
+  base_command: ["echo", "hello"]
+
+index: 0
+"""
+    config_path = tmp_path / "dryrun.yaml"
+    config_path.write_text(config_text)
+
+    config_setup = ConfigSetup(config_path=config_path)
+    root = load_config_reference(config_setup=config_setup)
+    plan = build_execution_plan(root, config_setup)
+
+    # render_scripts should produce one .sbatch file per job
+    paths = render_scripts(plan)
+
+    assert len(paths) == 2
+    for p in paths:
+        assert Path(p).exists(), f"Expected script file to exist: {p}"
+        content = Path(p).read_text()
+        assert "#!/bin/bash" in content

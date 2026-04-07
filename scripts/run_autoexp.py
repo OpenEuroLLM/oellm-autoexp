@@ -21,6 +21,7 @@ from oellm_autoexp.config.schema import ConfigSetup
 from oellm_autoexp.orchestrator import (
     build_execution_plan,
     ExecutionPlan,
+    render_scripts,
     submit_jobs,
     run_loop,
 )
@@ -195,6 +196,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     if args.dry_run:
+        render_scripts(plan)
         exit(0)
 
     _write_job_provenance(
