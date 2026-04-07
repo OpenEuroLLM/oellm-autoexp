@@ -10,19 +10,53 @@ tensor in the on-disk HF model.  Two comparison modes are supported:
 
 Usage
 -----
-Single-GPU sanity check with default tolerances::
+# Weight comparison only (default tolerances)
+python verify_megatron_hf_export.py \
+    --hf-path      ./exports/my_model_hf \
+    --megatron-path ./checkpoints/my_model
 
-    python scripts/verify_megatron_hf_export.py \\
-        --hf-path      exports/my_qwen3_moe_hf \\
-        --megatron-path /path/to/megatron/checkpoint
+# Strict bitwise weight check
+python verify_megatron_hf_export.py \
+    --hf-path      ./exports/my_model_hf \
+    --megatron-path ./checkpoints/my_model \
+    --exact-match
 
-Strict bitwise check with an interactive debug shell::
+# HF forward pass only (uses tokenizer.json bundled in the HF export folder)
+python verify_megatron_hf_export.py \
+    --hf-path      ./exports/my_model_hf \
+    --megatron-path ./checkpoints/my_model \
+    --forward-pass \
+    --device cuda \
+    --forward-pass-prompt "The quick brown fox"
 
-    python scripts/verify_megatron_hf_export.py \\
-        --hf-path      exports/my_qwen3_moe_hf \\
-        --megatron-path /path/to/megatron/checkpoint \\
-        --exact-match  \\
-        --debug-interact
+# Full verification: weight comparison + tokenizer comparison + HF and Megatron
+# forward passes + logit comparison
+# (HF tokenizer loaded from --hf-path; Megatron tokenizer built from vocab/merges)
+python verify_megatron_hf_export.py \
+    --hf-path      ./exports/my_model_hf \
+    --megatron-path ./checkpoints/my_model \
+    --compare-logits \
+    --tokenizer-vocab-file /path/to/vocab.json \
+    --tokenizer-merges-file /path/to/merges.txt \
+    --forward-pass-prompt "The quick brown fox" \
+    --device cuda
+
+# Generate tokens after the forward pass
+python verify_megatron_hf_export.py \
+    --hf-path      ./exports/my_model_hf \
+    --megatron-path ./checkpoints/my_model \
+    --compare-logits \
+    --tokenizer-vocab-file /path/to/vocab.json \
+    --tokenizer-merges-file /path/to/merges.txt \
+    --forward-pass-prompt "The quick brown fox" \
+    --device cuda \
+    --generate-tokens 20
+
+# Interactive debug shell (drops into Python with both models loaded)
+python verify_megatron_hf_export.py \
+    --hf-path      ./exports/my_model_hf \
+    --megatron-path ./checkpoints/my_model \
+    --debug-interact
 """
 
 from __future__ import annotations
@@ -164,6 +198,65 @@ def _parse_args() -> argparse.Namespace:
             "Open an interactive Python shell on rank 0 after both models are loaded. "
             "Other ranks wait at a barrier until you exit with Ctrl-D."
         ),
+    )
+
+    # Forward pass options
+    fwd = p.add_argument_group("Forward Pass Options")
+    fwd.add_argument(
+        "--forward-pass", action="store_true",
+        help="Run a forward pass on the exported HF model to verify it produces valid logits.",
+    )
+    fwd.add_argument(
+        "--compare-logits", action="store_true",
+        help=(
+            "Run forward passes on BOTH the HF model and the loaded Megatron model with the "
+            "same token IDs and compare their logits. Implies --forward-pass."
+        ),
+    )
+    fwd.add_argument(
+        "--forward-pass-prompt", type=str,
+        default="The quick brown fox jumps over the lazy dog.",
+        help="Input text to use for the forward pass.",
+    )
+    fwd.add_argument(
+        "--device", type=str, default="cpu",
+        help="Device for the HF forward pass (e.g. cpu, cuda, cuda:0).",
+    )
+    fwd.add_argument(
+        "--generate-tokens", type=int, default=0,
+        help="If > 0, generate this many new tokens after the forward pass and print them.",
+    )
+    fwd.add_argument(
+        "--forward-pass-dtype", type=str, default="bfloat16",
+        choices=["float32", "float16", "bfloat16"],
+        help="dtype to load the model in for the forward pass.",
+    )
+
+    # Megatron tokenizer (for tokenizer comparison and Megatron forward pass)
+    tok = p.add_argument_group(
+        "Megatron Tokenizer Options "
+        "(provide vocab+merges to build the Megatron-side tokenizer; "
+        "HF side always uses tokenizer.json from --hf-path)"
+    )
+    tok.add_argument(
+        "--tokenizer-vocab-file", type=str, default=None,
+        help="Path to vocab.json for the Megatron BPE tokenizer.",
+    )
+    tok.add_argument(
+        "--tokenizer-merges-file", type=str, default=None,
+        help="Path to merges.txt for the Megatron BPE tokenizer.",
+    )
+    tok.add_argument(
+        "--tokenizer-eos-token", type=str, default="<|endoftext|>",
+        help="EOS token string for the Megatron tokenizer (default: <|endoftext|>).",
+    )
+    tok.add_argument(
+        "--tokenizer-bos-token", type=str, default="<|endoftext|>",
+        help="BOS token string for the Megatron tokenizer (default: <|endoftext|>).",
+    )
+    tok.add_argument(
+        "--tokenizer-pad-token", type=str, default=None,
+        help="PAD token string for the Megatron tokenizer (optional).",
     )
 
     return p.parse_args()
@@ -532,6 +625,311 @@ def _print_report(summary: CompareSummary, samples: list[str]) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Tokenizer helpers
+# ---------------------------------------------------------------------------
+
+def _load_megatron_tokenizer(
+    vocab_file: str,
+    merges_file: str,
+    eos_token: str = "<|endoftext|>",
+    bos_token: str = "<|endoftext|>",
+    pad_token: str | None = None,
+):
+    """Build a PreTrainedTokenizerFast from raw vocab.json + merges.txt files."""
+    from tokenizers import ByteLevelBPETokenizer
+    from transformers import PreTrainedTokenizerFast
+
+    fast_tok = ByteLevelBPETokenizer(vocab=vocab_file, merges=merges_file)
+    special_tokens = {"eos_token": eos_token, "bos_token": bos_token}
+    if pad_token is not None:
+        special_tokens["pad_token"] = pad_token
+    return PreTrainedTokenizerFast(tokenizer_object=fast_tok, **special_tokens)
+
+
+def _show_tokenizer_comparison(
+    prompt: str,
+    hf_tokenizer,
+    meg_tokenizer,
+) -> tuple[torch.Tensor, bool]:
+    """Tokenize *prompt* with both tokenizers, print a comparison table, return
+    (input_ids to use for forward passes, ids_match).
+
+    If the token IDs match, the shared IDs are returned.  If they differ, the
+    HF IDs are returned (HF model is the ground truth for the forward pass).
+    """
+    sep = "-" * 60
+    print(f"\n{sep}")
+    print("  Tokenizer Comparison")
+    print(sep)
+
+    hf_ids  = hf_tokenizer(prompt,  return_tensors="pt")["input_ids"][0].tolist()
+    meg_ids = meg_tokenizer(prompt, return_tensors="pt")["input_ids"][0].tolist()
+
+    print(f"  Prompt : {prompt!r}")
+    print(f"  HF  tokens ({len(hf_ids):3d}) : {hf_ids}")
+    print(f"  Meg tokens ({len(meg_ids):3d}) : {meg_ids}")
+
+    ids_match = hf_ids == meg_ids
+    if ids_match:
+        print("  Token IDs : MATCH ✓")
+    else:
+        print("  Token IDs : MISMATCH ✗")
+        # Show first differing position
+        for i, (h, m) in enumerate(zip(hf_ids, meg_ids)):
+            if h != m:
+                print(f"  First diff at position {i}: HF={h!r}  Meg={m!r}")
+                break
+        if len(hf_ids) != len(meg_ids):
+            print(f"  Length diff: HF={len(hf_ids)}  Meg={len(meg_ids)}")
+
+    # Decode individual tokens for readability
+    print(f"\n  HF  decoded pieces : {[hf_tokenizer.decode([i]) for i in hf_ids]}")
+    print(f"  Meg decoded pieces : {[meg_tokenizer.decode([i]) for i in meg_ids]}")
+    print(sep)
+
+    input_ids = torch.tensor([hf_ids], dtype=torch.long)
+    return input_ids, ids_match
+
+
+# ---------------------------------------------------------------------------
+# Megatron forward pass
+# ---------------------------------------------------------------------------
+
+def _megatron_forward_pass(
+    megatron_model: list,
+    input_ids: torch.Tensor,  # [1, seq_len]
+) -> torch.Tensor | None:
+    """Run a forward pass through the loaded Megatron GPTModel.
+
+    Returns logits [1, seq_len, vocab_size] on success, None on failure.
+    """
+    model = megatron_model[0]
+    model.eval()
+
+    seq_len = input_ids.shape[1]
+    position_ids = torch.arange(seq_len, dtype=torch.long).unsqueeze(0)
+
+    # Megatron fused kernels require CUDA even when weights were loaded on CPU.
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"  Moving Megatron model to {device} for forward pass …")
+    model = model.to(device)
+    input_ids    = input_ids.to(device)
+    position_ids = position_ids.to(device)
+
+    try:
+        with torch.inference_mode():
+            # GPTModel handles causal masking internally when attention_mask=None.
+            out = model(input_ids, position_ids, None)
+        if isinstance(out, torch.Tensor) and out.dim() == 3:
+            return out.detach().cpu()
+        if isinstance(out, (tuple, list)) and isinstance(out[0], torch.Tensor) and out[0].dim() == 3:
+            return out[0].detach().cpu()
+        print(f"  WARN  Unexpected output type from Megatron model: {type(out).__name__}")
+    except Exception as exc:
+        print(f"  FAIL  Megatron forward pass raised: {type(exc).__name__}: {exc}")
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Logit comparison
+# ---------------------------------------------------------------------------
+
+def _compare_logits_report(
+    hf_logits: torch.Tensor,
+    meg_logits: torch.Tensor,
+    atol: float,
+    rtol: float,
+) -> bool:
+    """Compare HF and Megatron logits and print a detailed report. Returns True on PASS."""
+    sep = "=" * 60
+    print(f"\n{sep}")
+    print("  HF vs Megatron Logit Comparison")
+    print(sep)
+
+    if hf_logits.shape != meg_logits.shape:
+        print(f"  FAIL  Shape mismatch: HF={tuple(hf_logits.shape)}  Meg={tuple(meg_logits.shape)}")
+        return False
+
+    hf  = hf_logits.float()
+    meg = meg_logits.float()
+    diff = (hf - meg).abs()
+
+    max_diff  = diff.max().item()
+    mean_diff = diff.mean().item()
+    passed    = torch.allclose(hf, meg, atol=atol, rtol=rtol)
+
+    print(f"  Shape           : {tuple(hf_logits.shape)}")
+    print(f"  Max  |HF - Meg| : {max_diff:.6e}")
+    print(f"  Mean |HF - Meg| : {mean_diff:.6e}")
+    print(f"  allclose (atol={atol}, rtol={rtol}) : {'PASS ✓' if passed else 'FAIL ✗'}")
+
+    # Per-token worst position
+    per_token_max = diff[0].max(dim=-1).values  # [seq_len]
+    worst_pos = int(per_token_max.argmax().item())
+    print(f"  Worst token pos : {worst_pos}  (max diff {per_token_max[worst_pos]:.6e})")
+
+    # Top-1 prediction agreement
+    hf_top1  = hf[0].argmax(dim=-1)   # [seq_len]
+    meg_top1 = meg[0].argmax(dim=-1)
+    agree    = (hf_top1 == meg_top1).float().mean().item()
+    print(f"  Top-1 agreement : {agree * 100:.1f}%  ({int(agree * hf_top1.shape[0])}/{hf_top1.shape[0]} tokens)")
+
+    print(sep)
+    return passed
+
+
+# ---------------------------------------------------------------------------
+# Forward pass verification
+# ---------------------------------------------------------------------------
+
+_DTYPE_MAP = {
+    "float32": torch.float32,
+    "float16": torch.float16,
+    "bfloat16": torch.bfloat16,
+}
+
+
+def _run_forward_pass(
+    hf_path: str,
+    *,
+    prompt: str,
+    device: str,
+    dtype_str: str,
+    generate_tokens: int,
+    local_files_only: bool,
+    tokenizer=None,
+    input_ids: torch.Tensor | None = None,
+) -> tuple[bool, torch.Tensor | None]:
+    """Load the exported HF model and run a forward pass.
+
+    Checks:
+      - logits shape is [1, seq_len, vocab_size]
+      - no NaN or Inf values in logits
+      - (optional) greedy generation of *generate_tokens* new tokens
+
+    *tokenizer*  — pass a pre-built tokenizer to skip loading from hf_path.
+    *input_ids*  — pass pre-tokenized IDs to skip tokenization entirely
+                   (used when you want both models to run on the exact same tokens).
+
+    Returns (success, logits_tensor).  logits_tensor is None on failure.
+    """
+    from transformers import AutoTokenizer, Qwen3MoeForCausalLM
+
+    sep = "=" * 60
+    print(f"\n{sep}")
+    print("  HF Forward Pass Verification")
+    print(sep)
+    print(f"  HF path : {hf_path}")
+    print(f"  Device  : {device}")
+    print(f"  dtype   : {dtype_str}")
+    print(f"  Prompt  : {prompt!r}")
+    print(sep)
+
+    dtype = _DTYPE_MAP[dtype_str]
+
+    # ------------------------------------------------------------------ #
+    # 1. Load tokenizer (from HF folder unless caller provided one)
+    # ------------------------------------------------------------------ #
+    print("  [1/3] Loading HF tokenizer from export folder …")
+    if tokenizer is None:
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(
+                hf_path,
+                local_files_only=local_files_only,
+            )
+        except Exception as exc:
+            print(f"  FAIL  Could not load tokenizer: {exc}")
+            return False, None
+
+    # ------------------------------------------------------------------ #
+    # 2. Load model
+    # ------------------------------------------------------------------ #
+    print("  [2/3] Loading model …")
+    try:
+        model = Qwen3MoeForCausalLM.from_pretrained(
+            hf_path,
+            torch_dtype=dtype,
+            device_map=device,
+            local_files_only=local_files_only,
+        )
+        model.eval()
+        num_params = sum(p.numel() for p in model.parameters())
+        print(f"        Parameters : {num_params / 1e9:.3f}B")
+        print(f"        Layers     : {model.config.num_hidden_layers}")
+        print(f"        Hidden     : {model.config.hidden_size}")
+        print(f"        Experts    : {model.config.num_experts}  (top-{model.config.num_experts_per_tok})")
+    except Exception as exc:
+        print(f"  FAIL  Could not load model: {exc}")
+        return False, None
+
+    # ------------------------------------------------------------------ #
+    # 3. Forward pass — use caller-supplied input_ids if provided,
+    #    otherwise tokenize the prompt with the HF tokenizer.
+    # ------------------------------------------------------------------ #
+    print("  [3/3] Running forward pass …")
+    if input_ids is not None:
+        ids_on_device = input_ids.to(device)
+        inputs = {"input_ids": ids_on_device}
+        seq_len = ids_on_device.shape[1]
+        print(f"        Using pre-tokenized input_ids (len={seq_len})")
+    else:
+        enc = tokenizer(prompt, return_tensors="pt").to(device)
+        inputs = dict(enc)
+        seq_len = inputs["input_ids"].shape[1]
+
+    vocab_size = model.config.vocab_size
+
+    try:
+        with torch.inference_mode():
+            outputs = model(**inputs)
+    except Exception as exc:
+        print(f"  FAIL  Forward pass raised an exception: {exc}")
+        return False, None
+
+    logits = outputs.logits  # expected shape: [1, seq_len, vocab_size]
+
+    # Shape check
+    expected_shape = (1, seq_len, vocab_size)
+    if tuple(logits.shape) != expected_shape:
+        print(f"  FAIL  Unexpected logits shape: got {tuple(logits.shape)}, expected {expected_shape}")
+        return False, None
+    print(f"        Logits shape : {tuple(logits.shape)}  ✓")
+
+    # NaN / Inf check
+    has_nan = torch.isnan(logits).any().item()
+    has_inf = torch.isinf(logits).any().item()
+    if has_nan or has_inf:
+        print(f"  FAIL  Logits contain {'NaN' if has_nan else ''}{'Inf' if has_inf else ''} values.")
+        return False, None
+    print(f"        NaN / Inf    : none  ✓")
+
+    # Summary stats
+    lf = logits.float()
+    print(f"        Logits stats : min={lf.min().item():.3f}  max={lf.max().item():.3f}  "
+          f"mean={lf.mean().item():.3f}  std={lf.std().item():.3f}")
+
+    # Optional generation
+    if generate_tokens > 0:
+        print(f"        Generating {generate_tokens} tokens …")
+        try:
+            with torch.inference_mode():
+                generated = model.generate(
+                    **inputs,
+                    max_new_tokens=generate_tokens,
+                    do_sample=False,
+                )
+            new_ids = generated[0][seq_len:]
+            generated_text = tokenizer.decode(new_ids, skip_special_tokens=True)
+            print(f"        Generated    : {generated_text!r}")
+        except Exception as exc:
+            print(f"  WARN  Generation failed (model still passed forward pass): {exc}")
+
+    print(f"\n  PASS — forward pass succeeded.\n{sep}")
+    return True, logits.detach().cpu()
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -621,7 +1019,92 @@ def main() -> int:
                     max_report=args.max_report,
                 )
 
-    return _print_report(summary, samples)
+        # Run Megatron forward pass inside the distributed context while the
+        # model is still loaded.  Save logits to CPU so they survive context exit.
+        meg_logits_for_compare: torch.Tensor | None = None
+        if args.compare_logits and args.tokenizer_vocab_file and args.tokenizer_merges_file:
+            print("\nRunning Megatron forward pass (inside distributed context) …")
+            meg_tokenizer_tmp = _load_megatron_tokenizer(
+                vocab_file=args.tokenizer_vocab_file,
+                merges_file=args.tokenizer_merges_file,
+                eos_token=args.tokenizer_eos_token,
+                bos_token=args.tokenizer_bos_token,
+                pad_token=args.tokenizer_pad_token,
+            )
+            meg_input_ids = meg_tokenizer_tmp(
+                args.forward_pass_prompt, return_tensors="pt"
+            )["input_ids"]
+            raw = _megatron_forward_pass(megatron_model, meg_input_ids)
+            if raw is not None:
+                meg_logits_for_compare = raw
+                print(f"  Megatron logits shape : {tuple(meg_logits_for_compare.shape)}")
+            else:
+                print(
+                    "  WARN  Megatron forward pass failed — "
+                    "forward signature may differ from expected GPT conventions."
+                )
+
+    exit_code = _print_report(summary, samples)
+
+    # ------------------------------------------------------------------
+    # Phase 4 — HF forward pass and optional logit comparison.
+    # ------------------------------------------------------------------
+    run_fwd = args.forward_pass or args.compare_logits
+    if run_fwd:
+        from transformers import AutoTokenizer
+
+        hf_tokenizer = AutoTokenizer.from_pretrained(
+            args.hf_path, local_files_only=args.local_files_only
+        )
+
+        # If Megatron tokenizer files were provided, compare tokenizations first.
+        shared_input_ids: torch.Tensor | None = None
+        if args.tokenizer_vocab_file and args.tokenizer_merges_file:
+            meg_tokenizer = _load_megatron_tokenizer(
+                vocab_file=args.tokenizer_vocab_file,
+                merges_file=args.tokenizer_merges_file,
+                eos_token=args.tokenizer_eos_token,
+                bos_token=args.tokenizer_bos_token,
+                pad_token=args.tokenizer_pad_token,
+            )
+            shared_input_ids, ids_match = _show_tokenizer_comparison(
+                args.forward_pass_prompt, hf_tokenizer, meg_tokenizer
+            )
+            if not ids_match:
+                print(
+                    "  WARNING: tokenizers produce different IDs — "
+                    "HF forward pass will use HF token IDs."
+                )
+
+        fwd_ok, hf_logits = _run_forward_pass(
+            args.hf_path,
+            prompt=args.forward_pass_prompt,
+            device=args.device,
+            dtype_str=args.forward_pass_dtype,
+            generate_tokens=args.generate_tokens,
+            local_files_only=args.local_files_only,
+            tokenizer=hf_tokenizer,
+            input_ids=shared_input_ids,
+        )
+        if not fwd_ok:
+            exit_code = 1
+
+        # Compare HF logits against Megatron logits saved earlier.
+        if args.compare_logits and fwd_ok and hf_logits is not None:
+            if meg_logits_for_compare is None:
+                print(
+                    "\n  SKIP  Logit comparison skipped — "
+                    "Megatron forward pass did not produce output."
+                )
+                exit_code = 1
+            else:
+                logit_ok = _compare_logits_report(
+                    hf_logits, meg_logits_for_compare, atol=args.atol, rtol=args.rtol
+                )
+                if not logit_ok:
+                    exit_code = 1
+
+    return exit_code
 
 
 if __name__ == "__main__":

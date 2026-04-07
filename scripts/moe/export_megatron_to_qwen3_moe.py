@@ -2,31 +2,55 @@
 """
 Export Megatron checkpoint to HuggingFace Qwen3 MoE format.
 
-This script converts a Megatron-LM checkpoint (with custom config) to 
+This script converts a Megatron-LM checkpoint (with custom config) to
 HuggingFace Qwen3 MoE format that can be loaded with transformers.
 
 The script auto-detects your model configuration from the Megatron checkpoint
 and displays it before export. You provide a reference Qwen3 MoE model (or use
-the default) for tokenizer and structure, but the actual architecture comes from
-your checkpoint.
+the default) for HF config structure, but the actual architecture dimensions
+come from your checkpoint.
 
-Usage:
-    # Simplest - uses default reference model, auto-detects your config
-    python export_megatron_to_qwen3_moe.py \
-        --megatron-path ./checkpoints/my_qwen3_moe \
-        --hf-output-path ./exports/my_qwen3_moe_hf
-    
-    # Specify reference model explicitly (for tokenizer/structure)
-    python export_megatron_to_qwen3_moe.py \
-        --megatron-path ./checkpoints/my_qwen3_moe \
-        --hf-output-path ./exports/my_qwen3_moe_hf \
-        --reference-model Qwen/Qwen3-30B-A3B
-    
-    # Or use a predefined provider for a specific model
-    python export_megatron_to_qwen3_moe.py \
-        --megatron-path ./checkpoints/my_qwen3_moe \
-        --hf-output-path ./exports/my_qwen3_moe_hf \
-        --model-provider qwen3_moe_30b
+Usage
+-----
+# Minimal — auto-detects config, uses default Qwen3-30B-A3B as structure reference
+python export_megatron_to_qwen3_moe.py \
+    --megatron-path ./checkpoints/my_model \
+    --hf-output-path ./exports/my_model_hf
+
+# With your own BPE tokenizer (vocab + merges) instead of the reference model tokenizer
+python export_megatron_to_qwen3_moe.py \
+    --megatron-path ./checkpoints/my_model \
+    --hf-output-path ./exports/my_model_hf \
+    --tokenizer-vocab-file /path/to/vocab.json \
+    --tokenizer-merges-file /path/to/merges.txt
+
+# Custom tokenizer with non-default special tokens
+python export_megatron_to_qwen3_moe.py \
+    --megatron-path ./checkpoints/my_model \
+    --hf-output-path ./exports/my_model_hf \
+    --tokenizer-vocab-file /path/to/vocab.json \
+    --tokenizer-merges-file /path/to/merges.txt \
+    --tokenizer-eos-token "<|endoftext|>" \
+    --tokenizer-bos-token "<|endoftext|>" \
+    --tokenizer-pad-token "<|padding|>"
+
+# Explicit reference model + offline mode (no internet)
+python export_megatron_to_qwen3_moe.py \
+    --megatron-path ./checkpoints/my_model \
+    --hf-output-path ./exports/my_model_hf \
+    --reference-model Qwen/Qwen3-30B-A3B \
+    --offline \
+    --hf-cache-dir /path/to/hf_cache
+
+# Strict weight matching + save log
+python export_megatron_to_qwen3_moe.py \
+    --megatron-path ./checkpoints/my_model \
+    --hf-output-path ./exports/my_model_hf \
+    --tokenizer-vocab-file /path/to/vocab.json \
+    --tokenizer-merges-file /path/to/merges.txt \
+    --strict \
+    --exact-config-match \
+    --log-file ./export.log
 """
 
 import argparse
@@ -118,8 +142,6 @@ def _to_bool(value):
     return bool(value)
 
 
-# Validate that checkpoint fields needed by Qwen3-MoE export are present and sane
-# before any model construction starts.
 def validate_checkpoint_config_for_qwen3_moe(cfg: dict) -> tuple[list[str], list[str]]:
     """Validate checkpoint config has required Qwen3-MoE fields."""
     errors: list[str] = []
@@ -159,8 +181,6 @@ def validate_checkpoint_config_for_qwen3_moe(cfg: dict) -> tuple[list[str], list
     return errors, warnings
 
 
-# Copy architecture-defining values from checkpoint config into HF config using a
-# stable key mapping, including derived fields like head_dim when needed.
 def sync_hf_config_from_checkpoint(hf_config, cfg: dict) -> list[str]:
     """Apply checkpoint architecture values onto HF config and return change log."""
     mapping = {
@@ -190,6 +210,7 @@ def sync_hf_config_from_checkpoint(hf_config, cfg: dict) -> list[str]:
             "hidden_size",
             "num_attention_heads",
             "num_query_groups",
+            "kv_channels",
             "ffn_hidden_size",
             "moe_ffn_hidden_size",
             "num_moe_experts",
@@ -197,8 +218,6 @@ def sync_hf_config_from_checkpoint(hf_config, cfg: dict) -> list[str]:
             "vocab_size",
             "max_position_embeddings",
         }:
-            new_value = _to_int(raw_value)
-        elif ckpt_key == "kv_channels":
             new_value = _to_int(raw_value)
         else:
             new_value = _to_float(raw_value)
@@ -241,8 +260,6 @@ def sync_hf_config_from_checkpoint(hf_config, cfg: dict) -> list[str]:
     return changes
 
 
-# Apply mapped architecture values and preserve raw checkpoint config in the output
-# config for reproducibility and debugging.
 def apply_full_checkpoint_config_to_hf(hf_config, cfg: dict) -> tuple[list[str], int]:
     """
     Apply checkpoint config comprehensively to HF config.
@@ -264,8 +281,6 @@ def apply_full_checkpoint_config_to_hf(hf_config, cfg: dict) -> tuple[list[str],
     return changes, len(cfg)
 
 
-# Compare exported HF config with checkpoint config over mapped fields to catch
-# accidental drift when exact matching is requested.
 def find_hf_checkpoint_config_mismatches(hf_cfg: dict, ckpt_cfg: dict) -> list[str]:
     """Return a list of config mismatches between exported HF config and Megatron checkpoint config."""
     mapping = {
@@ -322,8 +337,6 @@ def find_hf_checkpoint_config_mismatches(hf_cfg: dict, ckpt_cfg: dict) -> list[s
     return mismatches
 
 
-# Resolve model ID to a concrete local path in offline/local-only mode, preferring
-# local cache snapshots to avoid network metadata calls.
 def _resolve_reference_model_path(
     reference_model: str,
     hf_cache_dir: str | None,
@@ -388,20 +401,23 @@ def _resolve_reference_model_path(
         ) from e
 
 
-# Create a temporary local HF template with checkpoint-sized architecture so bridge
-# export uses the intended target layout (instead of reference-model full-size layout).
 def _build_checkpoint_sized_reference_template(
     reference_model_or_path: str,
     checkpoint_config: dict,
     hf_cache_dir: str | None,
     local_files_only: bool,
+    tokenizer_vocab_file: str | None = None,
+    tokenizer_merges_file: str | None = None,
+    tokenizer_eos_token: str = "<|endoftext|>",
+    tokenizer_bos_token: str = "<|endoftext|>",
+    tokenizer_pad_token: str | None = None,
 ) -> str:
     """Create a local HF reference model with checkpoint-matched architecture.
 
     This prevents export from inheriting the original reference model shard/key map
     (e.g., 48 layers / 128 experts) when the checkpoint has a smaller shape.
     """
-    from transformers import AutoConfig, AutoTokenizer, GenerationConfig, Qwen3MoeForCausalLM
+    from transformers import AutoConfig, AutoTokenizer, GenerationConfig, PreTrainedTokenizerFast, Qwen3MoeForCausalLM
 
     resolved_reference = _resolve_reference_model_path(reference_model_or_path, hf_cache_dir, local_files_only)
     base_config = AutoConfig.from_pretrained(
@@ -427,12 +443,32 @@ def _build_checkpoint_sized_reference_template(
     del template_model
 
     try:
-        tokenizer = AutoTokenizer.from_pretrained(
-            resolved_reference,
-            trust_remote_code=True,
-            local_files_only=local_files_only,
-            cache_dir=hf_cache_dir,
-        )
+        if tokenizer_vocab_file and tokenizer_merges_file:
+            # Build tokenizer from raw vocab/merges files (e.g. GPT-NeoX BPE tokenizer).
+            from tokenizers import ByteLevelBPETokenizer
+
+            fast_tok = ByteLevelBPETokenizer(
+                vocab=tokenizer_vocab_file,
+                merges=tokenizer_merges_file,
+            )
+            special_tokens = {
+                "eos_token": tokenizer_eos_token,
+                "bos_token": tokenizer_bos_token,
+            }
+            if tokenizer_pad_token is not None:
+                special_tokens["pad_token"] = tokenizer_pad_token
+            tokenizer = PreTrainedTokenizerFast(
+                tokenizer_object=fast_tok,
+                **special_tokens,
+            )
+            console.print(f"[green]✓[/green] Built tokenizer from vocab/merges files")
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(
+                resolved_reference,
+                trust_remote_code=True,
+                local_files_only=local_files_only,
+                cache_dir=hf_cache_dir,
+            )
         tokenizer.save_pretrained(template_dir)
     except Exception as e:
         console.print(f"[yellow]⚠[/yellow] Could not copy tokenizer into template: {e}")
@@ -452,25 +488,14 @@ def _build_checkpoint_sized_reference_template(
     return str(template_dir)
 
 
-# Discover and load checkpoint-side YAML config from top-level or latest iter_* dir.
 def load_megatron_config(megatron_path: Path) -> dict:
-    """
-    Load model configuration from Megatron checkpoint.
-    
-    Args:
-        megatron_path: Path to Megatron checkpoint directory
-        
-    Returns:
-        dict: Parsed configuration
-    """
-    # Look for config files
+    """Load model configuration YAML from a Megatron checkpoint directory."""
     config_files = [
         megatron_path / "modelopt_run_config.yaml",
         megatron_path / "run_config.yaml",
         megatron_path / "config.yaml",
     ]
-    
-    # Also check in iter_* subdirectories
+
     iter_dirs = sorted([d for d in megatron_path.iterdir() if d.is_dir() and d.name.startswith("iter_")])
     if iter_dirs:
         latest_iter = iter_dirs[-1]
@@ -506,6 +531,11 @@ def export_megatron_to_qwen3_moe(
     strict: bool = False,
     exact_config_match: bool = False,
     use_checkpoint_sized_reference_template: bool = True,
+    tokenizer_vocab_file: str | None = None,
+    tokenizer_merges_file: str | None = None,
+    tokenizer_eos_token: str = "<|endoftext|>",
+    tokenizer_bos_token: str = "<|endoftext|>",
+    tokenizer_pad_token: str | None = None,
 ) -> None:
     """
     Export Megatron checkpoint to HuggingFace Qwen3 MoE format.
@@ -528,18 +558,15 @@ def export_megatron_to_qwen3_moe(
     console.print("\n[bold cyan]Exporting Megatron → HuggingFace Qwen3 MoE[/bold cyan]")
     console.print(f"Source: {megatron_path}")
     console.print(f"Target: {hf_output_path}")
-    
-    # Validate megatron path exists
+
     megatron_path_obj = Path(megatron_path)
     if not megatron_path_obj.exists():
         console.print(f"[red]Error:[/red] Megatron path does not exist: {megatron_path}")
         sys.exit(1)
-    
-    # Create output directory
+
     hf_output_path_obj = Path(hf_output_path)
     hf_output_path_obj.mkdir(parents=True, exist_ok=True)
 
-    # Configure explicit HuggingFace cache paths when provided.
     if hf_cache_dir:
         cache_path = Path(hf_cache_dir)
         # Accept both HF_HOME-style and direct hub cache paths.
@@ -597,6 +624,11 @@ def export_megatron_to_qwen3_moe(
                 checkpoint_config=checkpoint_config,
                 hf_cache_dir=hf_cache_dir,
                 local_files_only=local_files_only,
+                tokenizer_vocab_file=tokenizer_vocab_file,
+                tokenizer_merges_file=tokenizer_merges_file,
+                tokenizer_eos_token=tokenizer_eos_token,
+                tokenizer_bos_token=tokenizer_bos_token,
+                tokenizer_pad_token=tokenizer_pad_token,
             )
             bridge_source_path = template_reference_path
         except Exception as e:
@@ -854,6 +886,41 @@ def main():
         help="Predefined model provider to use",
     )
     
+    # Tokenizer options
+    tok_group = parser.add_argument_group(
+        "Tokenizer Options (provide vocab+merges to use a custom BPE tokenizer instead of the reference model's)"
+    )
+    tok_group.add_argument(
+        "--tokenizer-vocab-file",
+        type=str,
+        default=None,
+        help="Path to vocab.json for a BPE tokenizer (must be paired with --tokenizer-merges-file)",
+    )
+    tok_group.add_argument(
+        "--tokenizer-merges-file",
+        type=str,
+        default=None,
+        help="Path to merges.txt for a BPE tokenizer (must be paired with --tokenizer-vocab-file)",
+    )
+    tok_group.add_argument(
+        "--tokenizer-eos-token",
+        type=str,
+        default="<|endoftext|>",
+        help="EOS token for the custom tokenizer (default: <|endoftext|>)",
+    )
+    tok_group.add_argument(
+        "--tokenizer-bos-token",
+        type=str,
+        default="<|endoftext|>",
+        help="BOS token for the custom tokenizer (default: <|endoftext|>)",
+    )
+    tok_group.add_argument(
+        "--tokenizer-pad-token",
+        type=str,
+        default=None,
+        help="PAD token for the custom tokenizer (optional; defaults to EOS if not set)",
+    )
+
     # Export options
     export_group = parser.add_argument_group("Export Options")
     export_group.add_argument(
@@ -910,7 +977,6 @@ def main():
         console = Console()
         console.print(f"[cyan]Logging stdout/stderr to:[/cyan] {args.log_file}")
     
-    # Auto-detect and display config from checkpoint
     megatron_config = None
     if args.megatron_path:
         try:
@@ -932,16 +998,15 @@ def main():
         except Exception as e:
             console.print(f"[yellow]⚠[/yellow] Could not auto-detect config: {e}\n")
 
-    # Determine reference model to use
     reference_model_to_use = args.reference_model
-    
-    # Default to Qwen3-30B-A3B if no source specified
     if not reference_model_to_use and not args.model_provider:
         console.print("[cyan]No --reference-model specified. Using Qwen/Qwen3-30B-A3B for tokenizer/config structure.[/cyan]")
         console.print("[cyan](The actual model dimensions are determined by your checkpoint)[/cyan]\n")
         reference_model_to_use = "Qwen/Qwen3-30B-A3B"
     
-    # Use the standard export path with reference model
+    if bool(args.tokenizer_vocab_file) != bool(args.tokenizer_merges_file):
+        parser.error("--tokenizer-vocab-file and --tokenizer-merges-file must be provided together")
+
     export_megatron_to_qwen3_moe(
         megatron_path=args.megatron_path,
         hf_output_path=args.hf_output_path,
@@ -955,6 +1020,11 @@ def main():
         strict=args.strict,
         exact_config_match=args.exact_config_match,
         use_checkpoint_sized_reference_template=not args.no_checkpoint_sized_reference_template,
+        tokenizer_vocab_file=args.tokenizer_vocab_file,
+        tokenizer_merges_file=args.tokenizer_merges_file,
+        tokenizer_eos_token=args.tokenizer_eos_token,
+        tokenizer_bos_token=args.tokenizer_bos_token,
+        tokenizer_pad_token=args.tokenizer_pad_token,
     )
 
 
