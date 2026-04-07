@@ -1,8 +1,8 @@
-#!/bin/bash
-module load cray-python/3.11.7
-source /scratch/project_462000963/users/rluukkon/git/oellm-autoexp/.venv/bin/activate
-source helper_scripts/set_env.sh
-export PYTHONPATH=$PYTHONPATH:$pwd
+set -eo pipefail
+module purge
+module load Stages/2026
+module load GCCcore/14.3.0
+module load Python/3.13.5
+source /e/project1/e-sta-openeurollm/komulainen1_jupiter/oellm-autoexp/.venv/bin/activate
 export WANDB_ENTITY=openeurollm-project
-export WANDB_MODE=online
-python3 scripts/run_autoexp.py --config-name experiments/ville/qwen3_30B_A3B.yaml --debug $@
+python3 scripts/run_autoexp.py --submit-and-exit --config-name experiments/ville/jupiter/jupiter_qwen-30B.yaml --debug $@
