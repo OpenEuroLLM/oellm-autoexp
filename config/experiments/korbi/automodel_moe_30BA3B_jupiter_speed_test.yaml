@@ -1,0 +1,98 @@
+# @package _global_
+# NeMo Automodel MoE 30BA3B speed test on JUPITER (2 nodes, 8x GH200)
+#
+# Goal: Compare NeMo Automodel throughput against Megatron (118 TFLOPS)
+#       and Titan (145 TFLOPS) for the same Qwen3 30BA3B MoE model.
+#
+# Config mirrors the NVIDIA blog benchmark (qwen3_moe_30b_te_deepep.yaml)
+# but adapted for JUPITER's 4 GPU/node topology:
+#   - EP=4 (intra-node), PP=2 (inter-node), instead of EP=8+PP=1
+#   - MockIterableDataset (no real data needed for speed test)
+#   - fake_balanced_gate: false (real routing for fair comparison)
+
+defaults:
+  - ../base
+  - /backend: automodel
+  - /container: jupiter_automodel
+  - /slurm: jupiter
+  - /sweep: none
+  - override /backend/automodel/model: qwen3_moe_30BA3B
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: "automodel_moe_speed"
+
+backend:
+  automodel:
+    benchmark:
+      peak_tflops: 989
+      num_nodes: 2
+
+    distributed:
+      strategy: fsdp2
+      tp_size: 1
+      cp_size: 1
+      ep_size: 4
+      pp_size: 2
+      sequence_parallel: false
+      activation_checkpointing: true
+      pipeline:
+        pp_schedule: interleaved1f1b
+        pp_microbatch_size: 2
+        layers_per_stage: 12
+
+    step_scheduler:
+      global_batch_size: 64
+      local_batch_size: 8
+      max_steps: 50
+
+    dist_env:
+      backend: nccl
+      timeout_minutes: 30
+
+  env:
+    NCCL_NET_GDR_LEVEL: "0"
+    NCCL_SOCKET_FAMILY: "AF_INET"
+    GLOO_SOCKET_FAMILY: "AF_INET"
+    NCCL_SOCKET_IFNAME: "ib0"
+    GLOO_SOCKET_IFNAME: "ib0"
+    NCCL_SOCKET_TIMEOUT: "60000"
+    NCCL_TIMEOUT: "1800"
+    NCCL_IB_TIMEOUT: "100"
+    NCCL_IB_RETRY_CNT: "20"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    TORCH_NCCL_AVOID_RECORD_STREAMS: "1"
+    HF_DATASETS_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+
+  torchrun_args:
+    nproc_per_node: ${slurm.sbatch.gpus_per_node}
+    nnodes: ${slurm.sbatch.nodes}
+    max_restarts: 0
+    rdzv_backend: "c10d"
+    rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
+    node_rank: "$SLURM_PROCID"
+    master_addr: "$MASTER_ADDR"
+    master_port: "$MASTER_PORT"
+
+container:
+  bind:
+    - /e/
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+slurm:
+  sbatch:
+    nodes: 2
+    time: "00:30:00"
+  env:
+    NCCL_NET_GDR_LEVEL: "0"
+
+job:
+  name: automodel_moe_30BA3B_ep4pp2_speed_test
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"

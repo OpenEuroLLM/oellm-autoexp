@@ -1,0 +1,19 @@
+# Qwen3 MoE 30B-A3B model config for NeMo Automodel.
+# Uses _target_ pattern for NeMo Automodel's instantiation system.
+_target_: nemo_automodel.NeMoAutoModelForCausalLM.from_config
+config:
+  _target_: transformers.AutoConfig.from_pretrained
+  # Use local cache (JUPITER compute nodes are offline)
+  pretrained_model_name_or_path: ${oc.env:HF_CACHE_DIR,/e/home/jusers/poeppel1/jupiter/work/hf_cache}/Qwen3-30B-A3B
+trust_remote_code: true
+backend:
+  _target_: nemo_automodel.components.models.common.BackendConfig
+  attn: te
+  linear: te
+  rms_norm: te
+  rope_fusion: true
+  experts: torch_mm
+  dispatcher: alltoall
+  fake_balanced_gate: false
+  enable_hf_state_dict_adapter: true
+  enable_fsdp_optimizations: true

@@ -1,0 +1,13 @@
+# NeMo Automodel container requirements
+# Most dependencies are handled in the .def.in directly
+sentencepiece
+wandb
+safetensors
+tabulate
+transformers>=4.57.1
+datasets>=3.6.0
+tokenizers>=0.15.0
+hydra-core
+omegaconf
+compoconf
+liger-kernel

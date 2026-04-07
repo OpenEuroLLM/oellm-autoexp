@@ -1,0 +1,4 @@
+# MaxText additional dependencies (beyond requirements.txt in MaxText repo)
+orbax-checkpoint
+grain
+wandb

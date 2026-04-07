@@ -1,0 +1,110 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/pytorch:26.01-py3
+
+# NeMo Automodel + DeepEP + grouped_gemm container for JUPITER (GH200 aarch64)
+#
+# Extends automodel_jupiter with:
+#   - NVSHMEM 3.5.21 (needed to compile deepep)
+#   - deepep (standard build, TORCH_CUDA_ARCH_LIST=9.0 for GH200)
+#   - grouped_gemm v1.1.4 (for experts: gmm backend)
+#   - 99-cuda-fix.sh startup script (CUDA symlink fix for Triton/deepep at runtime)
+#
+# Build:
+#   ./container/build_container.sh \
+#       --backend automodel \
+#       --definition automodel_jupiter_deepep \
+#       --append-date
+#
+# Config flags:
+#   backend.automodel.model.backend.experts: gmm
+#   backend.automodel.model.backend.dispatcher: deepep
+
+%arguments
+    PYTHON_VERSION=3.12.3
+
+%files
+    ${REPO_ROOT}/submodules/Automodel /opt/Automodel
+
+%environment
+    export USER=automodel
+    export HOME=/workspace
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/aarch64-linux-gnu:/opt/hpcx/nccl_rdma_sharp_plugin/lib:/opt/hpcx/nccl_rdma_sharp_plugin/lib
+
+%post
+
+    pip install --no-cache-dir --upgrade pip
+    pip install --no-cache-dir setuptools wheel cmake ninja packaging
+    pip install --no-cache-dir sentencepiece wandb safetensors tabulate
+    pip install --no-cache-dir transformers>=4.57.1
+    pip install --no-cache-dir datasets>=3.6.0
+    pip install --no-cache-dir tokenizers>=0.15.0
+    pip install --no-cache-dir hydra-core omegaconf compoconf
+    pip install --no-cache-dir liger-kernel
+
+    # Create lib -> lib.real symlink for Triton 3.4+ compatibility
+    ln -sf /usr/local/cuda/compat/lib.real /usr/local/cuda/compat/lib || true
+
+    cd /opt/Automodel
+    pip install -e .
+
+    mkdir -p /workspace
+    chmod 777 /workspace
+
+    mkdir -p /home/automodel
+    chmod 777 /home/automodel
+
+    # ── grouped_gemm (for experts: gmm backend) ─────────────────────────────────
+    export TORCH_CUDA_ARCH_LIST="9.0"  # GH200
+    pip install --no-build-isolation git+https://github.com/fanshiqing/grouped_gemm@v1.1.4
+
+    # ── NVSHMEM (required to compile deepep) ─────────────────────────────────────
+    # All paths/URLs are inlined to avoid envsubst expansion in build_container.sh
+    cd /tmp
+    wget "https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/linux-sbsa/libnvshmem-linux-sbsa-3.5.21_cuda12-archive.tar.xz"
+    xz -d libnvshmem-linux-sbsa-3.5.21_cuda12-archive.tar.xz
+    mkdir -p /opt/nvshmem
+    tar -xvf libnvshmem-linux-sbsa-3.5.21_cuda12-archive.tar --strip-components 1 -C /opt/nvshmem
+    rm -f /tmp/libnvshmem-linux-sbsa-3.5.21_cuda12-archive.tar
+    export NVSHMEM_DIR=/opt/nvshmem
+
+    # ── deepep (standard GitHub build, EP=4 intra-node NVLink) ───────────────────
+    # NVSHMEM 3.5.21's nvshmem_tensor.h includes "cuda/std/tuple" from CCCL headers.
+    # torch's cpp_extension.py ignores CPATH/CXXFLAGS, so we create a symlink in
+    # /opt/nvshmem/include (which IS in -I flags) so the host compiler finds it.
+    # Note: base image has CUDA 13.1, not 13.0.
+    ln -sf /usr/local/cuda/include/cccl/cuda /opt/nvshmem/include/cuda
+
+    git clone https://github.com/deepseek-ai/deepep.git /opt/deepep
+    export TORCH_CUDA_ARCH_LIST="9.0"  # GH200 (compute capability 9.0) only
+    pip install --no-build-isolation /opt/deepep
+
+    # ── CUDA symlink fix startup script (runtime fix for Triton + deepep) ────────
+    mkdir -p /.singularity.d/env
+    cat > /.singularity.d/env/99-cuda-fix.sh << 'EOFENV'
+#!/bin/bash
+# Fix CUDA symlinks for Triton when --nv is used
+if [ -f /.singularity.d/libs/libcuda.so.1 ]; then
+    mkdir -p /usr/local/cuda/lib64 /usr/local/cuda/compat/lib 2>/dev/null
+    ln -sf /.singularity.d/libs/libcuda.so.1 /usr/local/cuda/lib64/libcuda.so.1 2>/dev/null
+    ln -sf /usr/local/cuda/lib64/libcuda.so.1 /usr/local/cuda/lib64/libcuda.so 2>/dev/null
+    ln -sf /.singularity.d/libs/libcuda.so.1 /usr/local/cuda/compat/lib/libcuda.so.1 2>/dev/null
+    ln -sf /usr/local/cuda/compat/lib/libcuda.so.1 /usr/local/cuda/compat/lib/libcuda.so 2>/dev/null
+fi
+export LD_LIBRARY_PATH=/.singularity.d/libs:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+EOFENV
+    chmod +x /.singularity.d/env/99-cuda-fix.sh
+
+
+%labels
+    Author Korbi Poeppel
+    Version 0.1.0-deepep
+    Base nvcr.io/nvidia/pytorch:26.01-py3
+    DeepEP standard build (NUM_MAX_NVL_PEERS=8, EP=4 intra-node)
+    NVSHMEM 3.5.21 (compile-time only for EP=4)
+    grouped_gemm v1.1.4
+    Description NeMo Automodel + DeepEP + grouped_gemm for JUPITER (GH200 aarch64)
+
+%help
+    NeMo Automodel training container with DeepEP and grouped_gemm.
+    Build with: container/build_container.sh --backend automodel --definition automodel_jupiter_deepep
+    Run via: apptainer exec <image>.sif torchrun ...

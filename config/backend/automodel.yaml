@@ -1,0 +1,26 @@
+defaults:
+  - automodel: base
+  - _self_
+
+class_name: AutomodelBackend
+
+launcher_script: "-m nemo_automodel.cli.app"
+
+torchrun_args:
+  nproc_per_node: ${slurm.sbatch.gpus_per_node}
+  nnodes: ${slurm.sbatch.nodes}
+  rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
+  rdzv_backend: "static"
+  node_rank: "$SLURM_NODEID"
+  master_addr: "$MASTER_ADDR"
+  master_port: "$MASTER_PORT"
+
+yaml_output_path: ${job.base_output_dir}/config.automodel.yaml
+
+full_schema_validation: false
+
+env:
+  PYTHONPATH: ".:submodules/Automodel"
+
+automodel:
+  class_name: AutomodelJobConfig

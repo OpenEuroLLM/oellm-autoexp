@@ -1,0 +1,18 @@
+class_name: Container
+# Titan-OELLM container with DeepEP built-in.
+# Built from container/titan/titan_0.2.1_deepep.def.in
+# Build command:
+#   ./container/build_container.sh \
+#       --backend titan \
+#       --definition titan_0.2.1_deepep \
+#       --base-image nvcr.io/nvidia/pytorch:26.01-py3 \
+#       --append-date \
+#       --output ${CONTAINER_CACHE_DIR}
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/titan_0.2.1_deepep_aarch64.sif
+runtime: apptainer
+bind: ['/e']
+env:
+  WANDB_MODE: "offline"
+  MACHINE_NAME: "JUPITER"
+  PYTHONPATH: "."
+python: "/usr/bin/python"

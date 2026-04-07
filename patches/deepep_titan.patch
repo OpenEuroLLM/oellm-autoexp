@@ -1,0 +1,95 @@
+diff --git a/titan_oellm/models/qwen3_custom/infra/parallelize.py b/titan_oellm/models/qwen3_custom/infra/parallelize.py
+index 4a5548e..140d15f 100644
+--- a/titan_oellm/models/qwen3_custom/infra/parallelize.py
++++ b/titan_oellm/models/qwen3_custom/infra/parallelize.py
+@@ -99,6 +99,24 @@ def parallelize_qwen3_custom(
+             enable_async_tp=job_config.parallelism.enable_async_tensor_parallel,
+         )
+
++    # Check if using DeepEP for MoE communication
++    if job_config.parallelism.expert_parallel_comm_backend == "deepep":
++        if not parallel_dims.ep_enabled:
++            raise ValueError(
++                "DeepEP requires expert parallelism (ep_degree > 1). "
++                "Please set expert_parallel_degree > 1 or use standard communication backend."
++            )
++        if parallel_dims.etp_enabled:
++            raise NotImplementedError(
++                "DeepEP with Expert Tensor Parallelism (ETP) is not supported yet."
++            )
++        use_deepep = True
++        import torchtitan.distributed.deepep  # noqa: F401 - registers torch.ops.deepep
++        _op_sac_save_list.add(torch.ops.deepep.dispatch.default)
++        _op_sac_save_list.add(torch.ops.deepep.combine.default)
++    else:
++        use_deepep = False
++
+     if parallel_dims.tp_enabled or parallel_dims.ep_enabled:
+         dual_pipe_v = get_dual_pipe_v_flag(job_config, parallel_dims)
+
+@@ -110,6 +128,7 @@ def parallelize_qwen3_custom(
+             etp_mesh=parallel_dims.get_optional_mesh("etp"),
+             ep_etp_mesh=parallel_dims.get_optional_mesh(["ep", "etp"]),
+             dual_pipe_v=dual_pipe_v,
++            use_deepep=use_deepep,
+         )
+
+     if job_config.activation_checkpoint.mode != "none":
+diff --git a/titan_oellm/models/qwen3_custom/model/args.py b/titan_oellm/models/qwen3_custom/model/args.py
+index 1c7d4a1..34cc758 100644
+--- a/titan_oellm/models/qwen3_custom/model/args.py
++++ b/titan_oellm/models/qwen3_custom/model/args.py
+@@ -59,6 +59,7 @@ class Qwen3CustomModelArgs(BaseModelArgs):
+     moe_enabled: bool = False
+     moe_inter_dim: int = 768
+     moe_args: MoEArgs = field(default_factory=MoEArgs)
++    moe_impl: str = "standard"  # "standard" or "deepep"
+
+     def update_from_config(self, job_config: JobConfig, **kwargs) -> None:
+         if hasattr(job_config.model, "max_seq_len") and job_config.model.max_seq_len:
+@@ -98,7 +99,7 @@ class Qwen3CustomModelArgs(BaseModelArgs):
+         if hasattr(job_config.model, "moe_route_scale"):
+             self.moe_args.route_scale = job_config.model.moe_route_scale
+         if hasattr(job_config.model, "moe_score_before_experts"):
+-            self.moe_args.scale_before_experts = job_config.model.moe_score_before_experts
++            self.moe_args.score_before_experts = job_config.model.moe_score_before_experts
+
+
+
+@@ -126,6 +127,9 @@ class Qwen3CustomModelArgs(BaseModelArgs):
+             job_config.debug.moe_force_load_balance
+         )
+
++        # Configure expert parallel communication backend from config
++        self.moe_impl = job_config.parallelism.expert_parallel_comm_backend
++
+         # Compatibility checks
+         if job_config.activation_checkpoint.mode == "selective" and self.use_flex_attn:
+             raise ValueError(
+diff --git a/titan_oellm/models/qwen3_custom/model/model.py b/titan_oellm/models/qwen3_custom/model/model.py
+index 0e3a16a..c6ea81a 100644
+--- a/titan_oellm/models/qwen3_custom/model/model.py
++++ b/titan_oellm/models/qwen3_custom/model/model.py
+@@ -23,7 +23,7 @@ from torchtitan.models.attention import (
+     VarlenAttentionWrapper,
+     VarlenMetadata,
+ )
+-from torchtitan.models.moe import MoE
++from torchtitan.models.moe import build_moe
+ from torchtitan.protocols.model import AttentionMasksType
+ from torchtitan.protocols.train_spec import ModelProtocol
+
+@@ -410,10 +410,11 @@ class TransformerBlock(nn.Module):
+
+         self.moe_enabled = model_args.moe_enabled
+         if self.moe_enabled:
+-            self.moe = MoE(
+-                model_args.moe_args,
++            self.moe = build_moe(
++                args=model_args.moe_args,
+                 dim=model_args.dim,
+                 hidden_dim=model_args.moe_inter_dim,
++                moe_impl=model_args.moe_impl,
+             )
+         else:
+             self.feed_forward = FeedForward(

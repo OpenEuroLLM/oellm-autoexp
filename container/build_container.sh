@@ -161,10 +161,16 @@ payload = {
 provenance_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 PY
 
+echo "CLEANING"
+
+set +e
+module --force purge
+deactivate
+set -e
 
 
 export REQUIREMENTS_BASENAME=$(echo $REQUIREMENTS_PATH | grep -o -e '[^/]*$')
-envsubst < "$DEFINITION_TEMPLATE" > "$TMP_DEF"
+envsubst '${BASE_IMAGE} ${REPO_ROOT} ${REQUIREMENTS_PATH} ${REQUIREMENTS_BASENAME}' < "$DEFINITION_TEMPLATE" > "$TMP_DEF"
 
 cat $TMP_DEF
 

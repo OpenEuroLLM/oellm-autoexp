@@ -1,0 +1,52 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/jax:25.01-py3
+
+
+%arguments
+    PYTHON_VERSION=3.12
+
+%files
+    ${REPO_ROOT}/submodules/MaxText /opt/MaxText
+
+%environment
+    export USER=maxtext
+    export HOME=/workspace
+    export PYTHONPATH=/opt/MaxText:$PYTHONPATH
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/aarch64-linux-gnu:/opt/hpcx/nccl_rdma_sharp_plugin/lib
+
+%post
+
+    pip install --no-cache-dir --upgrade pip
+    pip install --no-cache-dir setuptools wheel cmake ninja packaging
+
+    # Install MaxText dependencies from requirements.txt
+    # Skip: git+https deps, mlperf-logging, pathwaysutils (TPU), protobuf==3.20.3 pin (causes backtracking)
+    cd /opt/MaxText
+    grep -v 'git+https\|git@\|mlperf-logging\|pathwaysutils\|protobuf==\|sentencepiece==0.1.97\|google-cloud-aiplatform\|google-cloud-monitoring\|google-jetstream\|pytype\|pylint\|pyink\|pre-commit' requirements.txt > /tmp/requirements_filtered.txt
+    pip install --no-cache-dir -r /tmp/requirements_filtered.txt || true
+    rm /tmp/requirements_filtered.txt
+
+    # Keep orbax-checkpoint 0.10.2 (pre-installed, compatible with JAX 0.4.38)
+    # MaxText code is patched to handle missing cloud_logger/emergency APIs
+
+    # Install additional deps
+    pip install --no-cache-dir wandb sentencepiece protobuf
+
+    # Create lib -> lib.real symlink for Triton 3.4+ compatibility
+    if [ -d /usr/local/cuda/compat/lib.real ] && [ ! -e /usr/local/cuda/compat/lib ]; then
+        ln -s lib.real /usr/local/cuda/compat/lib
+        echo "Created symlink: /usr/local/cuda/compat/lib -> lib.real"
+    fi
+
+    mkdir -p /workspace
+    chmod 777 /workspace
+
+    mkdir -p /home/maxtext
+    chmod 777 /home/maxtext
+
+
+%labels
+    Author Korbi Poeppel
+    Version 0.1.0
+    Base nvcr.io/nvidia/jax:25.01-py3
+    Description MaxText (JAX) container for JUPITER (GH200 aarch64)

@@ -1,0 +1,30 @@
+# MaxText base config — flat keys matching MaxText CLI flags
+run_name: "maxtext_run"
+steps: 100
+enable_checkpointing: false
+base_output_directory: "/tmp/maxtext_output"
+dataset_type: synthetic
+per_device_batch_size: 4
+max_target_length: 4096
+dtype: bfloat16
+profiler: ""
+skip_first_n_steps_for_profiler: 5
+profiler_steps: 3
+# Parallelism (ICI = intra-node, DCN = inter-node)
+ici_data_parallelism: 1
+ici_fsdp_parallelism: 1
+ici_tensor_parallelism: 1
+ici_expert_parallelism: -1
+dcn_data_parallelism: 1
+dcn_fsdp_parallelism: 1
+dcn_expert_parallelism: 1
+# Optimizer
+learning_rate: 1e-4
+adam_b1: 0.9
+adam_b2: 0.95
+adam_weight_decay: 0.1
+warmup_steps_fraction: 0.1
+# Hardware (default is 'tpu', must be 'gpu' for NVIDIA GPUs)
+hardware: gpu
+# Remat (activation checkpointing)
+remat_policy: full

@@ -1,0 +1,61 @@
+diff --git a/megatron/core/transformer/moe/fused_a2a.py b/megatron/core/transformer/moe/fused_a2a.py
+index 60b0b11a3..fcacb7799 100644
+--- a/megatron/core/transformer/moe/fused_a2a.py
++++ b/megatron/core/transformer/moe/fused_a2a.py
+@@ -12,6 +12,7 @@ try:
+ except ImportError:
+     HAVE_DEEP_EP = False
+
++import os
+ import torch
+
+ _buffer = None
+@@ -53,6 +54,14 @@ def get_buffer(group: torch.distributed.ProcessGroup, hidden_bytes: int):
+             config.get_rdma_buffer_size_hint(hidden_bytes, group.size()), num_rdma_bytes
+         )
+
++    # DEEPEP_DISABLE_NVL=1: force num_nvl_bytes=0 to skip CUDA IPC / NVLink path.
++    # Required for cross-node EP groups on IB-only clusters (e.g. JUPITER) where
++    # cudaIpcOpenMemHandle fails for remote GPUs. DeepEP then uses RDMA-only via
++    # NVSHMEM for all AllToAll communication. See DeepEP readme: "For clusters
++    # without NVLink, set num_nvl_bytes=0 to use RDMA-only mode."
++    if os.environ.get("DEEPEP_DISABLE_NVL", "0") == "1":
++        num_nvl_bytes = 0
++
+     # Allocate buffer if not existed or not enough buffer
+     # NOTES: the adaptive routing configuration of the network **must be off**
+     if (
+@@ -61,7 +70,13 @@ def get_buffer(group: torch.distributed.ProcessGroup, hidden_bytes: int):
+         or _buffer.num_nvl_bytes < num_nvl_bytes
+         or _buffer.num_rdma_bytes < num_rdma_bytes
+     ):
+-        _buffer = Buffer(group, num_nvl_bytes, num_rdma_bytes)
++        _buffer = Buffer(
++            group,
++            num_nvl_bytes,
++            num_rdma_bytes,
++            use_fabric=os.environ.get("DEEPEP_USE_FABRIC", "0") == "1",
++            allow_mnnvl=os.environ.get("DEEPEP_ALLOW_MNNVL", "0") == "1",
++        )
+     return _buffer
+
+
+diff --git a/megatron/training/training.py b/megatron/training/training.py
+index 247288fa4..ed6e5ecc3 100644
+--- a/megatron/training/training.py
++++ b/megatron/training/training.py
+@@ -2487,6 +2487,14 @@ def train(
+                 continue
+             if param_group['default_config']:
+                 learning_rate = param_group['lr']
++        # Release PyTorch's cached memory before training_log, which performs
++        # NCCL all_reduce for MoE metrics.  Without this, the allocator holds
++        # ~2 GiB of reserved-but-unused segments and NCCL's cudaMallocAsync
++        # fails to grab even a few bytes on memory-tight configs (e.g. PP=1
++        # with EP-sharded MoE on 95 GiB GH200).
++        if args.empty_unused_memory_level >= 2:
++            torch.cuda.empty_cache()
++
+         report_memory_flag = training_log(
+             loss_dict,
+             total_loss_dict,

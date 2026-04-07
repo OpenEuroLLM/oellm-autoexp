@@ -1,0 +1,9 @@
+class_name: Container
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/maxtext_jupiter_aarch64_202604061604.sif
+runtime: apptainer
+bind: ['/e']
+env:
+  WANDB_MODE: "offline"
+  MACHINE_NAME: "JUPITER"
+  PYTHONPATH: ".:submodules/MaxText"
+python: "/usr/bin/python"

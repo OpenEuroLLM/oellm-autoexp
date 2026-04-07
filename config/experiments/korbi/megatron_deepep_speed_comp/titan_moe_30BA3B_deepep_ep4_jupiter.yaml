@@ -1,0 +1,197 @@
+# @package _global_
+# Titan Qwen3 30BA3B with DeepEP EP=4 intra-node on JUPITER
+#
+# ── What changed in parallelize.py ──────────────────────────────────────────
+#   Added DeepEP detection block to parallelize_qwen3_custom():
+#     if job_config.parallelism.expert_parallel_comm_backend == "deepep":
+#         use_deepep = True
+#         import torchtitan.distributed.deepep  # registers torch.ops.deepep
+#         _op_sac_save_list.add(torch.ops.deepep.dispatch.default)
+#         _op_sac_save_list.add(torch.ops.deepep.combine.default)
+#   apply_moe_ep_tp() now receives use_deepep=use_deepep → picks DeepEPExpertParallel
+#   instead of ExpertParallel for the MoE expert weights.
+#
+# ── Container ────────────────────────────────────────────────────────────────
+#   Uses the dedicated Titan+DeepEP container (jupiter_titan_deepep).
+#   Build: ./container/build_container.sh --backend titan \
+#          --definition titan_0.2.1_deepep --base-image nvcr.io/nvidia/pytorch:26.01-py3 \
+#          --append-date --output ${CONTAINER_CACHE_DIR}
+#   Definition: container/titan/titan_0.2.1_deepep.def.in
+#   deepep is pip-installed into site-packages; no special PYTHONPATH entry needed.
+#
+# ── Parallelism ─────────────────────────────────────────────────────────────
+#   EP=4 (intra-node NVLink) — same as best Megatron DeepEP config
+#   PP=2 (inter-node IB P2P) — same as best Megatron DeepEP config
+#   TP=1, dp_shard=4, dp_replicate=1 → 2 nodes × 4 GPUs = 8 GPUs total
+#
+# ── Reference ───────────────────────────────────────────────────────────────
+#   Best Titan (standard, PP=2+EP=4+compile+selective-AC opt=4): ~145 TFLOPS, 5,496 tok/s/GPU
+#   Best Megatron DeepEP (PP=2+EP=4+VPP=2+mbs=4+full-AC): ~128 TFLOPS, 5,860 tok/s/GPU
+#   Goal: can DeepEP AllToAll improve Titan's EP communication overhead?
+
+defaults:
+  - ../../base
+  - /backend: titan
+  - /container: jupiter_titan_deepep
+  - /slurm: jupiter
+  - /sweep: none
+  - override /backend/titan/data: nemonicco_jupiter
+  - override /backend/titan/model: qwen3_moe_30BA3B
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: "titan_moe_30BA3B_deepep_ep4"
+  compile_tag: "compile"
+  ac_opt_tag: "opt4"
+
+backend:
+  titan:
+    model:
+      vocab_size: 50304
+      tokenizer_path: /e/project1/projectnucleus/franke5/workspace/titan-train/torchtitan/assets/tokenizer/gpt-neox-20b
+
+    training:
+      steps: 100
+      local_batch_size: 64
+      seq_len: 4096
+      dtype: bfloat16
+
+    metrics:
+      log_freq: 10
+
+    parallelism:
+      tensor_parallel_degree: 1
+      pipeline_parallel_degree: 2
+      expert_parallel_degree: 4
+      data_parallel_replicate_degree: 1
+      data_parallel_shard_degree: 4
+      context_parallel_degree: 1
+      expert_parallel_comm_backend: deepep  # ← key: activates DeepEPExpertParallel
+
+    activation_checkpoint:
+      mode: selective
+      selective_ac_option: "4"
+
+    benchmarks:
+      wikitext2_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext2/wikitext2
+      wikitext103_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext103/wikitext103
+      lambada_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/lambada/lambada
+
+  env:
+    TORCHDYNAMO_DISABLE: "0"
+    # deepep is pip-installed into site-packages in the container; no special path needed
+    PYTHONPATH: ".:./submodules/titan-oellm:./submodules/titan-oellm/torchtitan"
+    NCCL_SOCKET_FAMILY: "AF_INET"
+    GLOO_SOCKET_FAMILY: "AF_INET"
+    NCCL_SOCKET_IFNAME: "ib0"
+    GLOO_SOCKET_IFNAME: "ib0"
+    NCCL_SOCKET_TIMEOUT: "60000"
+    NCCL_TIMEOUT: "1800"
+    NCCL_IB_TIMEOUT: "100"
+    NCCL_IB_RETRY_CNT: "20"
+    NCCL_NET_GDR_LEVEL: "0"   # required for PP=2 inter-node P2P
+    HF_ALLOW_CODE_EVAL: "1"
+    TORCH_HOME: ${oc.env:TORCH_HOME,"/tmp/torch_home"}
+    PYTORCH_KERNEL_CACHE_PATH: ${oc.env:PYTORCH_KERNEL_CACHE_PATH,"/tmp/torch_home/kernels"}
+    TRITON_CACHE_DIR: ${oc.env:TRITON_CACHE_DIR,"/tmp/triton_cache"}
+    TORCHINDUCTOR_CACHE_DIR: ${oc.env:TORCHINDUCTOR_CACHE_DIR,"/tmp/torchinductor_cache"}
+    TORCHINDUCTOR_FX_GRAPH_CACHE: ${oc.env:TORCHINDUCTOR_FX_GRAPH_CACHE,"/tmp/torchinductor_fx_cache"}
+    TORCHINDUCTOR_AUTOGRAD_CACHE: ${oc.env:TORCHINDUCTOR_AUTOGRAD_CACHE,"/tmp/torchinductor_autograd_cache"}
+    TORCH_INDUCTOR_CUDAGRAPH_DISABLE: ${oc.env:TORCH_INDUCTOR_CUDAGRAPH_DISABLE,"1"}
+    PYTORCH_CUDA_ALLOC_CONF: ${oc.env:PYTORCH_CUDA_ALLOC_CONF,"expandable_segments:True"}
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+
+  torchrun_args:
+    nproc_per_node: ${slurm.sbatch.gpus_per_node}
+    nnodes: ${slurm.sbatch.nodes}
+    max_restarts: 0
+    rdzv_backend: "c10d"
+    rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
+    node_rank: "$SLURM_PROCID"
+    master_addr: "$MASTER_ADDR"
+    master_port: "$MASTER_PORT"
+
+container:
+  bind:
+    - /e/
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+job:
+  name: titan_moe_30BA3B_deepep_ep4pp2_${aux.compile_tag}_acselective_${aux.ac_opt_tag}_bs${backend.titan.training.local_batch_size}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+slurm:
+  template_path: "templates/jupiter_mod.sbatch"
+  sbatch:
+    nodes: 2
+    gpus_per_node: 4
+    gres: "gpu:4"
+    cpus_per_task: 72
+    threads_per_core: 1
+    account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
+    partition: booster
+    time: "00:30:00"
+  srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
+  env:
+    NUM_NODES: "$SLURM_JOB_NUM_NODES"
+    GPUS_PER_NODE: "4"
+    NUM_GPUS_PER_NODE: "4"
+    NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
+    SLURM_CPUS_PER_TASK: "72"
+    PYTORCH_CUDA_ALLOC_CONF: ""
+    UB_SKIPMC: "1"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+
+        # ── 1. BASELINE: same config as best Titan (no DeepEP), for direct comparison ──
+        # Serves as control to isolate DeepEP overhead/gain vs standard AllToAll.
+        # Expected: ~145 TFLOPS / 5,496 tok/s/GPU (if container is compatible).
+        - aux.compile_tag: compile
+          aux.ac_opt_tag: opt4
+          backend.titan.parallelism.expert_parallel_comm_backend: standard
+          backend.titan.activation_checkpoint.selective_ac_option: "4"
+          backend.titan.training.local_batch_size: 64
+          backend.env.TORCHDYNAMO_DISABLE: "0"
+
+        # ── 2. DeepEP, compile, selective-AC opt=4, bs=64 ────────────────────────────
+        # KEY TEST: replaces standard AllToAll with DeepEP dispatch/combine kernels.
+        # DeepEP uses CUDA IPC (NVLink) for intra-node EP=4. No NVSHMEM needed.
+        # Expected gain over standard: DeepEP reduces AllToAll overhead via direct
+        # NVLink transfers bypassing NCCL. With NCCL_ALGO=Ring, EP AllToAll is already
+        # NVLink-accelerated, so gain may be small (~5-10%) vs large in cross-node case.
+        - aux.compile_tag: compile_deepep
+          aux.ac_opt_tag: opt4
+          backend.titan.parallelism.expert_parallel_comm_backend: deepep
+          backend.titan.activation_checkpoint.selective_ac_option: "4"
+          backend.titan.training.local_batch_size: 64
+          backend.env.TORCHDYNAMO_DISABLE: "0"
+
+        # ── 3. DeepEP, nocompile, selective-AC opt=4, bs=64 ─────────────────────────
+        # nocompile reference: isolates DeepEP gain from torch.compile interaction.
+        # If compile+deepep has issues (graph breaks on dispatch/combine custom ops),
+        # this config provides a fallback measurement.
+        - aux.compile_tag: nocompile_deepep
+          aux.ac_opt_tag: opt4
+          backend.titan.parallelism.expert_parallel_comm_backend: deepep
+          backend.titan.activation_checkpoint.selective_ac_option: "4"
+          backend.titan.training.local_batch_size: 64
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+
+        # ── 4. DeepEP, compile, full-AC, bs=64 ──────────────────────────────────────
+        # Full AC: lowest memory. Megatron DeepEP best config used full-AC (mbs=4).
+        # Provides Megatron-comparable data point for DeepEP efficiency.
+        - aux.compile_tag: compile_deepep
+          aux.ac_opt_tag: fullac
+          backend.titan.parallelism.expert_parallel_comm_backend: deepep
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 64
+          backend.env.TORCHDYNAMO_DISABLE: "0"

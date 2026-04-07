@@ -1,6 +1,13 @@
 # @package _global_
-# Titan 235BA22B PP=2 debug — NCCL hang investigation
-# Short 10-min job with NCCL_DEBUG=WARN and 2-min NCCL timeout to fail fast.
+# Titan 235BA22B PP=2 debug — verify both PP+FSDP reshard fixes work (no OOM)
+# Fix 1 (backward): backward_maybe_with_nosync set reshard_after_backward=False always
+# → all 47 layers' unsharded params accumulated in memory during backward.
+# Fix: monkey-patch in titan_custom_config.py sets reshard_after_backward=True.
+# Fix 2 (forward): fsdp_reshard_after_forward='default' → False when PP enabled
+# → all 47 layers' AllGather buffers (~35 GiB) accumulate during forward.
+# Fix: set fsdp_reshard_after_forward: always in parallelism config.
+# Job 324626 OOM'd at 89.69 GiB in forward (MoE AllToAll token combine).
+# Expected memory with both fixes: ~50-55 GiB (fits within 95 GiB).
 
 defaults:
   - ../../base
@@ -26,7 +33,7 @@ backend:
       multiple_of: null
 
     training:
-      steps: 5
+      steps: 15
       local_batch_size: 4
       seq_len: 4096
       dtype: bfloat16
@@ -41,6 +48,7 @@ backend:
       data_parallel_replicate_degree: 1
       data_parallel_shard_degree: 32
       context_parallel_degree: 1
+      fsdp_reshard_after_forward: always  # Fix: default=False with PP, causes ~35 GiB AllGather buffer accumulation
 
     activation_checkpoint:
       mode: full
@@ -62,8 +70,7 @@ backend:
     NCCL_IB_TIMEOUT: "100"
     NCCL_IB_RETRY_CNT: "20"
     NCCL_NET_GDR_LEVEL: "0"        # REQUIRED: PP inter-node P2P hangs with GDR_LEVEL=2
-    NCCL_DEBUG: "INFO"             # Show NCCL info to diagnose hang
-    TORCH_DISTRIBUTED_DEBUG: "DETAIL"  # Show all dist ops being called
+    NCCL_DEBUG: "WARN"             # Basic NCCL warnings only
     HF_ALLOW_CODE_EVAL: "1"
     TORCH_HOME: ${oc.env:TORCH_HOME,"/tmp/torch_home"}
     PYTORCH_KERNEL_CACHE_PATH: ${oc.env:PYTORCH_KERNEL_CACHE_PATH,"/tmp/torch_home/kernels"}
@@ -107,7 +114,8 @@ slurm:
     threads_per_core: 1
     account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
     partition: booster
-    time: "00:10:00"
+    time: "00:30:00"
+    exclude: "jpbo-070-17,jpbo-070-18,jpbo-070-19,jpbo-070-20,jpbo-070-21,jpbo-070-22,jpbo-070-23,jpbo-070-25,jpbo-070-26,jpbo-070-29,jpbo-070-30,jpbo-070-31,jpbo-070-32,jpbo-070-33,jpbo-070-34,jpbo-070-35,jpbo-070-36,jpbo-070-39,jpbo-070-40,jpbo-070-41,jpbo-070-42,jpbo-070-43,jpbo-070-44,jpbo-070-45,jpbo-070-46,jpbo-070-47,jpbo-070-48,jpbo-093-33,jpbo-093-34,jpbo-093-35,jpbo-093-37,jpbo-093-39,jpbo-093-41,jpbo-093-43,jpbo-093-44,jpbo-093-45,jpbo-093-47,jpbo-093-48,jpbo-097-01,jpbo-097-02,jpbo-097-03,jpbo-097-04,jpbo-097-05,jpbo-097-06,jpbo-097-07,jpbo-097-08,jpbo-097-09,jpbo-097-10,jpbo-097-11,jpbo-097-12,jpbo-097-13,jpbo-097-14,jpbo-097-15,jpbo-097-16,jpbo-097-17,jpbo-097-19,jpbo-097-20,jpbo-097-21,jpbo-097-22,jpbo-097-23,jpbo-097-24,jpbo-097-25,jpbo-097-26,jpbo-097-27,jpbo-097-28,jpbo-097-32,jpbo-097-33,jpbo-097-34,jpbo-097-35,jpbo-097-36,jpbo-097-37,jpbo-097-38,jpbo-097-39,jpbo-097-40,jpbo-097-41,jpbo-097-42,jpbo-097-43,jpbo-097-44,jpbo-097-45,jpbo-097-46,jpbo-097-47,jpbo-097-48,jpbo-100-01,jpbo-100-02,jpbo-100-03,jpbo-100-04,jpbo-100-05,jpbo-100-06,jpbo-100-09,jpbo-100-10,jpbo-100-11,jpbo-100-12,jpbo-100-13,jpbo-100-14,jpbo-100-15,jpbo-100-16,jpbo-100-17,jpbo-100-18,jpbo-100-19,jpbo-100-20,jpbo-100-23,jpbo-100-24,jpbo-100-25,jpbo-100-26,jpbo-100-27,jpbo-100-28,jpbo-100-29,jpbo-100-30,jpbo-100-31,jpbo-100-32,jpbo-100-34,jpbo-100-35,jpbo-100-36,jpbo-100-37,jpbo-100-38,jpbo-100-39,jpbo-100-40,jpbo-100-41,jpbo-100-42,jpbo-100-43,jpbo-100-44,jpbo-100-45,jpbo-100-46,jpbo-100-47,jpbo-100-48"
   srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
   env:
     NUM_NODES: "$SLURM_JOB_NUM_NODES"

@@ -1,0 +1,17 @@
+defaults:
+  - maxtext: base
+  - _self_
+
+class_name: MaxTextBackend
+
+launcher_script: "./submodules/MaxText/MaxText/train.py"
+base_config_path: "./submodules/MaxText/MaxText/configs/base.yml"
+extra_cli_args: []
+
+full_schema_validation: false
+
+env:
+  PYTHONPATH: ".:submodules/MaxText"
+
+maxtext:
+  class_name: MaxTextJobConfig

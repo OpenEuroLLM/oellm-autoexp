@@ -4,3 +4,9 @@
 [submodule "submodules/titan-oellm"]
 	path = submodules/titan-oellm
 	url = git@github.com:OpenEuroLLM/titan-oellm.git
+[submodule "submodules/Automodel"]
+	path = submodules/Automodel
+	url = https://github.com/NVIDIA-NeMo/Automodel.git
+[submodule "submodules/MaxText"]
+	path = submodules/MaxText
+	url = https://github.com/AI-Hypercomputer/maxtext.git

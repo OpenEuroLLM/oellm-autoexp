@@ -1,0 +1,150 @@
+diff --git a/MaxText/checkpointing.py b/MaxText/checkpointing.py
+index aff173c23..70656a6d7 100644
+--- a/MaxText/checkpointing.py
++++ b/MaxText/checkpointing.py
+@@ -26,19 +26,27 @@ import max_logging
+ from multihost_dataloading import MultiHostDataLoadIterator
+ import numpy as np
+ import orbax.checkpoint as ocp
+-import orbax.checkpoint.experimental.emergency.checkpoint_manager as emergency_checkpoint_manager
+-import orbax.checkpoint.experimental.emergency.replicator_checkpoint_manager as emergency_replicator_checkpoint_manager
++try:
++  import orbax.checkpoint.experimental.emergency.checkpoint_manager as emergency_checkpoint_manager
++  import orbax.checkpoint.experimental.emergency.replicator_checkpoint_manager as emergency_replicator_checkpoint_manager
++except (ImportError, AttributeError):
++  emergency_checkpoint_manager = None
++  emergency_replicator_checkpoint_manager = None
+
+ # pylint: disable=too-many-positional-arguments
+
+ CheckpointManager = ocp.CheckpointManager
+ CheckpointManagerOptions = ocp.CheckpointManagerOptions
+ PyTreeCheckpointHandler = ocp.PyTreeCheckpointHandler
+-LocalCheckpointOptions = emergency_checkpoint_manager.LocalCheckpointOptions
+-PersistentCheckpointOptions = emergency_checkpoint_manager.PersistentCheckpointOptions
++if emergency_checkpoint_manager is not None:
++  LocalCheckpointOptions = emergency_checkpoint_manager.LocalCheckpointOptions
++  PersistentCheckpointOptions = emergency_checkpoint_manager.PersistentCheckpointOptions
++else:
++  LocalCheckpointOptions = None
++  PersistentCheckpointOptions = None
+
+-abstract_logger = ocp.logging.abstract_logger
+-cloud_logger = ocp.logging.cloud_logger
++abstract_logger = getattr(ocp.logging, "abstract_logger", None)
++cloud_logger = getattr(ocp.logging, "cloud_logger", None)
+
+
+ def create_orbax_checkpoint_manager(
+@@ -290,7 +298,7 @@ def load_state_if_possible(
+     return None, None
+
+
+-def setup_checkpoint_logger(config) -> cloud_logger.CloudLogger | None:
++def setup_checkpoint_logger(config):
+   """Setup checkpoint logger.
+   Args:
+     config
+diff --git a/MaxText/max_utils.py b/MaxText/max_utils.py
+index 04504f78e..45bbfb5fb 100644
+--- a/MaxText/max_utils.py
++++ b/MaxText/max_utils.py
+@@ -290,10 +290,20 @@ def initialize_jax_for_gpu(raw_keys):
+   if os.environ.get("JAX_COORDINATOR_IP") is not None:
+     coordinator_ip = str(os.getenv("JAX_COORDINATOR_IP"))
+     coordinator_port = str(os.getenv("JAX_COORDINATOR_PORT"))
++    # On multi-node GPU clusters (e.g. SLURM), JAX may auto-detect only 1 GPU
++    # per process. Explicitly pass local_device_ids from CUDA_VISIBLE_DEVICES
++    # or GPUS_PER_NODE to ensure all local GPUs are used.
++    local_device_ids = None
++    cuda_vis = os.environ.get("CUDA_VISIBLE_DEVICES")
++    if cuda_vis:
++      local_device_ids = list(range(len(cuda_vis.split(","))))
++    elif os.environ.get("GPUS_PER_NODE"):
++      local_device_ids = list(range(int(os.environ["GPUS_PER_NODE"])))
+     jax.distributed.initialize(
+         coordinator_address=f"{coordinator_ip}:{coordinator_port}",
+         num_processes=int(os.getenv("NNODES")),
+         process_id=int(os.getenv("NODE_RANK")),
++        local_device_ids=local_device_ids,
+         initialization_timeout=raw_keys["jax_distributed_initialization_timeout"],
+     )
+     max_logging.log(f"JAX global devices: {jax.devices()}")
+@@ -409,7 +419,11 @@ def get_num_slices(raw_keys):
+     try:
+       return 1 + max(d.slice_index for d in devices)
+     except (ValueError, AttributeError):
+-      return 1
++      # GPU multi-node: check NNODES or JAX_PROCESS_COUNT
++      num_slices = int(os.environ.get("NNODES", os.environ.get("JAX_PROCESS_COUNT", "1")))
++      if num_slices > 1:
++        max_logging.log(f" GPU multi-node: setting num_slices={num_slices} from env")
++      return num_slices
+
+
+ def is_cpu_backend(raw_keys):
+diff --git a/MaxText/train.py b/MaxText/train.py
+index cc151b129..445d50732 100644
+--- a/MaxText/train.py
++++ b/MaxText/train.py
+@@ -35,7 +35,10 @@ import grain.python as grain
+ import jax
+ import numpy as np
+ import orbax.checkpoint
+-import orbax.checkpoint.experimental.emergency.checkpoint_manager as emergency_checkpoint_manager
++try:
++  import orbax.checkpoint.experimental.emergency.checkpoint_manager as emergency_checkpoint_manager
++except (ImportError, AttributeError):
++  emergency_checkpoint_manager = None
+
+ import checkpointing
+ import max_utils
+@@ -45,9 +48,15 @@ import optimizers
+ import profiler
+ import pyconfig
+ import pathwaysutils  # pylint: disable=unused-import
+-import tensorflow as tf
+-
+-from vertex_tensorboard import VertexTensorboardManager
++try:
++  import tensorflow as tf
++except ImportError:
++  tf = None
++
++try:
++  from vertex_tensorboard import VertexTensorboardManager
++except ImportError:
++  VertexTensorboardManager = None
+ # Placeholder: internal
+
+ from input_pipeline.input_pipeline_interface import create_data_iterator
+@@ -220,7 +229,7 @@ def save_checkpoint(
+     chunk_byte_size = config.checkpoint_storage_target_data_file_size_bytes
+   save_args = jax.tree.map(lambda _: orbax.checkpoint.SaveArgs(chunk_byte_size=chunk_byte_size), state)
+
+-  if isinstance(checkpoint_manager, emergency_checkpoint_manager.CheckpointManager):
++  if emergency_checkpoint_manager is not None and isinstance(checkpoint_manager, emergency_checkpoint_manager.CheckpointManager):
+     return checkpoint_manager.save(
+         step,
+         args=orbax.checkpoint.args.PyTreeSave(item=state, save_args=save_args, ocdbt_target_data_file_size=chunk_byte_size),
+@@ -990,7 +999,8 @@ def main(argv: Sequence[str]) -> None:
+   jax.config.update("jax_default_prng_impl", "unsafe_rbg")
+   # TF allocates extraneous GPU memory when using TFDS data
+   # this leads to CUDA OOMs. WAR for now is to hide GPUs from TF
+-  tf.config.set_visible_devices([], "GPU")
++  if tf is not None:
++    tf.config.set_visible_devices([], "GPU")
+   os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
+   if "xla_tpu_spmd_rng_bit_generator_unsafe" not in os.environ.get("LIBTPU_INIT_ARGS", ""):
+     os.environ["LIBTPU_INIT_ARGS"] = os.environ.get("LIBTPU_INIT_ARGS", "") + " --xla_tpu_spmd_rng_bit_generator_unsafe=true"
+@@ -999,8 +1009,8 @@ def main(argv: Sequence[str]) -> None:
+   max_utils.print_system_information()
+   validate_train_config(config)
+   os.environ["TFDS_DATA_DIR"] = config.dataset_path
+-  vertex_tensorboard_manager = VertexTensorboardManager()
+-  if config.use_vertex_tensorboard or os.environ.get("UPLOAD_DATA_TO_TENSORBOARD"):
++  vertex_tensorboard_manager = VertexTensorboardManager() if VertexTensorboardManager is not None else None
++  if vertex_tensorboard_manager and (config.use_vertex_tensorboard or os.environ.get("UPLOAD_DATA_TO_TENSORBOARD")):
+     vertex_tensorboard_manager.configure_vertex_tensorboard(config)
+
+   if config.monitor_goodput and jax.process_index() == 0:

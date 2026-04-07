@@ -1,0 +1,47 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/pytorch:26.01-py3
+
+
+%arguments
+    PYTHON_VERSION=3.12.3
+
+%files
+    ${REPO_ROOT}/submodules/Automodel /opt/Automodel
+
+%environment
+    export USER=automodel
+    export HOME=/workspace
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/aarch64-linux-gnu:/opt/hpcx/nccl_rdma_sharp_plugin/lib:/opt/hpcx/nccl_rdma_sharp_plugin/lib
+
+%post
+
+    pip install --no-cache-dir --upgrade pip
+    pip install --no-cache-dir setuptools wheel cmake ninja packaging
+    pip install --no-cache-dir sentencepiece wandb safetensors tabulate
+    pip install --no-cache-dir transformers>=4.57.1
+    pip install --no-cache-dir datasets>=3.6.0
+    pip install --no-cache-dir tokenizers>=0.15.0
+    pip install --no-cache-dir hydra-core omegaconf compoconf
+    pip install --no-cache-dir liger-kernel
+
+    # Create lib -> lib.real symlink for Triton 3.4+ compatibility
+    if [ -d /usr/local/cuda/compat/lib.real ] && [ ! -e /usr/local/cuda/compat/lib ]; then
+        ln -s lib.real /usr/local/cuda/compat/lib
+        echo "Created symlink: /usr/local/cuda/compat/lib -> lib.real"
+    fi
+
+    cd /opt/Automodel
+    pip install -e .
+
+    mkdir -p /workspace
+    chmod 777 /workspace
+
+    mkdir -p /home/automodel
+    chmod 777 /home/automodel
+
+
+%labels
+    Author Korbi Poeppel
+    Version 0.1.0
+    Base nvcr.io/nvidia/pytorch:26.01-py3
+    Description NeMo Automodel container for JUPITER (GH200 aarch64)

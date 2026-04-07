@@ -1,0 +1,141 @@
+Bootstrap: docker
+From: ${BASE_IMAGE}
+
+# Titan-OELLM + DeepEP container
+#
+# Extends titan_user_0.2.1 with:
+#   - NVSHMEM 3.5.21 (needed to compile deepep, even for EP=4 intra-node)
+#   - deepep (standard GitHub build, TORCH_CUDA_ARCH_LIST=9.0 for JUPITER GH200)
+#   - 99-cuda-fix.sh startup script (CUDA symlink fix for Triton/deepep at runtime)
+#
+# Build:
+#   ./container/build_container.sh \
+#       --backend titan \
+#       --definition titan_0.2.1_deepep \
+#       --base-image nvcr.io/nvidia/pytorch:26.01-py3 \
+#       --append-date \
+#       --output /path/to/output
+#
+# Activation config flag:
+#   backend.titan.parallelism.expert_parallel_comm_backend: deepep
+#
+# Note on EP=8 cross-node RDMA:
+#   The standard deepep build (NUM_MAX_NVL_PEERS=8) routes all 8 EP ranks as NVLink
+#   peers, which crashes on JUPITER (4 GPUs/node) for cross-node EP. EP=4 intra-node
+#   works fine. For EP=8 RDMA, a custom deepep build (NUM_MAX_NVL_PEERS=4, patchelf
+#   rpath to NVSHMEM 3.4.5) is required — see scripts/build_deepep_jupiter4gpu.sh.
+
+%arguments
+    PYTHON_VERSION=3.12.3
+    Base ${BASE_IMAGE}
+
+%files
+    ${REPO_ROOT}/submodules/titan-oellm/setup.py /opt/titan-oellm/setup.py
+    ${REPO_ROOT}/submodules/titan-oellm/titan_oellm /opt/titan-oellm/
+    ${REPO_ROOT}/submodules/titan-oellm/torchtitan /opt/titan-oellm/
+    ${REQUIREMENTS_PATH} /workspace/${REQUIREMENTS_BASENAME}
+
+%environment
+    export USER=torchtitan
+    export HOME=/workspace
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/aarch64-linux-gnu:/opt/hpcx/nccl_rdma_sharp_plugin/lib:/opt/hpcx/nccl_rdma_sharp_plugin/lib
+
+%post
+
+    pip install --no-cache-dir --upgrade pip
+    pip install --no-cache-dir setuptools wheel cmake ninja packaging
+    pip install --no-cache-dir sentencepiece pytest-cov pre-commit
+    pip install --no-cache-dir einops pillow tensorboard tabulate wandb fsspec tyro safetensors
+    pip install --no-cache-dir expecttest==0.1.6
+    pip install --no-cache-dir pytest==7.3.2
+    pip install --no-cache-dir pyrefly==0.45.1
+    pip install --no-cache-dir tomli-w>=1.1.0
+    pip install --no-cache-dir transformers>=4.57.1
+    pip install --no-cache-dir torchdata>=0.8.0
+    pip install --no-cache-dir datasets>=3.6.0
+    pip install --no-cache-dir tokenizers>=0.15.0
+    pip install --no-cache-dir array-record black flake8 mypy etcd3 python-etcd torchelastic
+    pip install --no-cache-dir liger-kernel
+    pip install --no-cache-dir hydra-core omegaconf compoconf networkx tyro
+
+    if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
+        python3 -m pip install --no-cache-dir \
+            -r "/workspace/${REQUIREMENTS_BASENAME}"
+    fi
+
+    # Create lib -> lib.real symlink for Triton 3.4+ compatibility
+    # NVIDIA containers store CUDA compat libraries in lib.real/ but Triton expects lib/
+    ln -sf /usr/local/cuda/compat/lib.real /usr/local/cuda/compat/lib || true
+
+    cd /opt/titan-oellm/torchtitan
+    pip install -e .
+
+    cd /opt/titan-oellm
+    pip install -e .
+
+    mkdir -p /workspace
+    chmod 777 /workspace
+
+    mkdir -p /home/torchtitan
+    chmod 777 /home/torchtitan
+
+    # ── NVSHMEM (required to compile deepep; device/host mismatch in 3.5.21 is ──
+    # ── benign for EP=4 intra-node since NVSHMEM is never called at runtime)    ──
+    export NVSHMEM_VERSION=libnvshmem-linux-sbsa-3.5.21_cuda12-archive
+    cd /tmp
+    wget https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/linux-sbsa/${NVSHMEM_VERSION}.tar.xz
+    xz -d ${NVSHMEM_VERSION}.tar.xz
+    mkdir -p /opt/nvshmem
+    tar -xvf ${NVSHMEM_VERSION}.tar --strip-components 1 -C /opt/nvshmem
+    rm -f /tmp/${NVSHMEM_VERSION}.tar
+    export NVSHMEM_DIR=/opt/nvshmem
+
+    # ── deepep (standard GitHub build, EP=4 intra-node NVLink) ──────────────────
+    # CCCL headers fix: nvshmem.h includes cuda/std/tuple from CCCL headers.
+    # deepep's build system ignores CXXFLAGS/CPLUS_INCLUDE_PATH, only uses its own
+    # -I flags (csrc/ and nvshmem/include). Symlink CCCL into nvshmem include dir
+    # so -I/opt/nvshmem/include resolves cuda/std/tuple via the symlink.
+    ln -sf /usr/local/cuda-13.1/targets/sbsa-linux/include/cccl/cuda /opt/nvshmem/include/cuda
+
+    git clone https://github.com/deepseek-ai/deepep.git /opt/deepep
+    export TORCH_CUDA_ARCH_LIST="9.0"  # GH200 (compute capability 9.0) only; no +PTX needed
+    pip install --no-build-isolation /opt/deepep
+
+    # ── CUDA symlink fix startup script (runtime fix for Triton + deepep) ───────
+    mkdir -p /.singularity.d/env
+    cat > /.singularity.d/env/99-cuda-fix.sh << 'EOFENV'
+#!/bin/bash
+# Fix CUDA symlinks for Triton when --nv is used
+if [ -f /.singularity.d/libs/libcuda.so.1 ]; then
+    mkdir -p /usr/local/cuda/lib64 /usr/local/cuda/compat/lib 2>/dev/null
+    ln -sf /.singularity.d/libs/libcuda.so.1 /usr/local/cuda/lib64/libcuda.so.1 2>/dev/null
+    ln -sf /usr/local/cuda/lib64/libcuda.so.1 /usr/local/cuda/lib64/libcuda.so 2>/dev/null
+    ln -sf /.singularity.d/libs/libcuda.so.1 /usr/local/cuda/compat/lib/libcuda.so.1 2>/dev/null
+    ln -sf /usr/local/cuda/compat/lib/libcuda.so.1 /usr/local/cuda/compat/lib/libcuda.so 2>/dev/null
+fi
+export LD_LIBRARY_PATH=/.singularity.d/libs:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+EOFENV
+    chmod +x /.singularity.d/env/99-cuda-fix.sh
+
+
+%runscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%startscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%labels
+    Author OpenSci / OpenEuroLLM
+    Version 0.2.1-deepep
+    Base ${BASE_IMAGE}
+    PyTorch nightly 2.10 (CUDA 13.0)
+    DeepEP standard build (NUM_MAX_NVL_PEERS=8, EP=4 intra-node)
+    NVSHMEM 3.5.21 (compile-time only for EP=4; EP=8 RDMA requires patched build)
+    Description Titan-OELLM container with DeepEP for TorchTitan 0.2.1
+
+%help
+    Titan-OELLM training container with DeepEP support.
+    Build with container/build_container.sh --backend titan --definition titan_0.2.1_deepep
+    and run via apptainer exec <image>.sif torchrun ...

@@ -1,0 +1,9 @@
+class_name: Container
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/automodel_jupiter_deepep_aarch64.sif
+runtime: apptainer
+bind: ['/e']
+env:
+  WANDB_MODE: "offline"
+  MACHINE_NAME: "JUPITER"
+  PYTHONPATH: ".:submodules/Automodel"
+python: "/usr/bin/python"
