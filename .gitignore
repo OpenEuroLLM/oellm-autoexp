@@ -220,6 +220,7 @@ generated/
 
 monitor_state/
 
+figures/
 results/
 # VsCode debugging and other stuff
 .vscode/
