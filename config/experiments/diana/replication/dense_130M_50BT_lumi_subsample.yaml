@@ -1,6 +1,6 @@
 # @package _global_
 
-# 1300M dense model training with pull-based multi-stage cooldown
+# 130M dense model training with pull-based multi-stage cooldown
 # Translation of dense_130M_50BT.yaml to new composable sweep system
 
 defaults:
