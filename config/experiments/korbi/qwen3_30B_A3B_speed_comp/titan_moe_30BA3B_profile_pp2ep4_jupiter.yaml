@@ -1,32 +1,19 @@
 # @package _global_
-# Titan qwen3_custom 30BA3B MoE speed test on JUPITER (2 nodes, 8 GPUs)
-# Mirrors config/experiments/korbi/megatron_moe_jupiter_speed_test.yaml for cross-backend comparison.
+# Titan MoE 30BA3B — profiling run to identify bottlenecks
 #
-# Architecture: 48 layers, dim=2048, 32 heads, 4 KV heads (GQA), 128 experts, topk=8, expert_dim=768
+# Captures PyTorch profiler trace for 1 step (after 3 warmup steps).
+# Saves trace to: ${job.base_output_dir}/profile_traces/
+#   i.e. /e/scratch/projectnucleus/poeppel1/output/titan_moe_30BA3B_profile_pp2ep4/...
 #
-# Parallelism: EP=8, DP=1, TP=1, PP=1
-#   Megatron uses EP=4+PP=2 (PP halves layers per GPU). Titan has no PP for qwen3_custom
-#   (pipelining_fn=None), so EP=8 is used instead to achieve the same per-GPU parameter count.
+# Profiling schedule: warmup=3, active=1, freq=10
+#   → profile window: steps 3-4 (first cycle)
+#   → run for 15 steps total to capture first window + a few more
 #
-#   EP is carved from dp_shard: dp_shard=8 gives efsdp = dp_shard*tp/(etp*ep) = 8*1/(1*8) = 1.
-#   dp_replicate * dp_shard * tp * pp = 1*8*1*1 = 8 = world_size (required by ParallelDims validation).
-#   EP=8, dp_shard=8: 16 experts per GPU; attention params FSDP-sharded across 8 GPUs.
-#   EP=8 with DP_replicate=2 would require ~98 GiB/GPU (expert optimizer = 58 GiB alone) → OOM.
-#   EP=8, dp_shard=8: expert optimizer ≈ 43 GiB, attention (FSDP) ≈ 1.5 GiB → total ~54 GiB → fits.
-#
-# Memory estimate per GPU (BF16, EP=8, full AC):
-#   Expert params: 16 experts × (768×2048×3) × 48 layers × 2B  ≈  7.25 GiB
-#   Expert Adam fp32 optimizer (master + mom + var):             ≈ 43.5 GiB
-#   Attention params (replicated) + optimizer:                   ≈  9.9 GiB
-#   Expert grads (BF16):                                         ≈  7.25 GiB
-#   Full AC activations:                                         ≈  2.0 GiB
-#   Total:                                                       ≈ 70 GiB  (fits in 95 GiB)
-#
-# Note: compile.enable is True by default in base.yaml.
-#       Start with TORCHDYNAMO_DISABLE=1 (no compile) for first run — EP+compile
-#       is more complex and compile adds ~5min warmup; validate correctness first.
+# Baseline config: compile + opt4 + bs=64 + PP=2 + EP=4 (current best)
+# Goal: identify whether EP AllToAll, PP P2P, or compute is the main bottleneck
+
 defaults:
-  - ../base
+  - ../../base
   - /backend: titan
   - /container: jupiter_titan
   - /slurm: jupiter
@@ -37,34 +24,41 @@ defaults:
   - _self_
 
 aux:
-  experiment_group: "titan_moe_30BA3B_speed_test"
+  experiment_group: "titan_moe_30BA3B_profile_pp2ep4"
 
 backend:
   titan:
     model:
-      # Override vocab to match nemonicco_jupiter (GPT-NeoX tokenizer, 50277 tokens)
       vocab_size: 50304
       tokenizer_path: /e/project1/projectnucleus/franke5/workspace/titan-train/torchtitan/assets/tokenizer/gpt-neox-20b
 
     training:
-      steps: 100
-      local_batch_size: 4
+      steps: 15
+      local_batch_size: 64
       seq_len: 4096
       dtype: bfloat16
 
     metrics:
-      log_freq: 10
+      log_freq: 5
 
     parallelism:
       tensor_parallel_degree: 1
-      pipeline_parallel_degree: 1
-      expert_parallel_degree: 8       # 128 experts / 8 → 16 experts per GPU; EP spans 2 nodes
-      data_parallel_replicate_degree: 1  # No DP replicas (single replica, EP uses all 8 GPUs)
-      data_parallel_shard_degree: 8   # EP is carved from dp_shard: efsdp = dp_shard*tp/(etp*ep) = 8*1/(1*8) = 1
+      pipeline_parallel_degree: 2
+      expert_parallel_degree: 4
+      data_parallel_replicate_degree: 1
+      data_parallel_shard_degree: 4
       context_parallel_degree: 1
 
     activation_checkpoint:
-      mode: full   # required: 30BA3B does not fit without recompute
+      mode: selective
+      selective_ac_option: "4"
+
+    profiling:
+      enable_profiling: true
+      profile_freq: 10
+      profiler_warmup: 3
+      profiler_active: 1
+      save_traces_folder: "profile_traces"
 
     benchmarks:
       wikitext2_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext2/wikitext2
@@ -72,9 +66,7 @@ backend:
       lambada_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/lambada/lambada
 
   env:
-    # Disable compile for initial correctness check (EP+compile is supported but adds warmup)
-    # Remove TORCHDYNAMO_DISABLE once baseline is confirmed working.
-    TORCHDYNAMO_DISABLE: "1"
+    TORCHDYNAMO_DISABLE: "0"
     PYTHONPATH: .:./submodules/titan-oellm:./submodules/titan-oellm/torchtitan
     NCCL_SOCKET_FAMILY: "AF_INET"
     GLOO_SOCKET_FAMILY: "AF_INET"
@@ -84,7 +76,7 @@ backend:
     NCCL_TIMEOUT: "1800"
     NCCL_IB_TIMEOUT: "100"
     NCCL_IB_RETRY_CNT: "20"
-    NCCL_ALGO: "Ring"
+    NCCL_NET_GDR_LEVEL: "0"
     HF_ALLOW_CODE_EVAL: "1"
     TORCH_HOME: ${oc.env:TORCH_HOME,"/tmp/torch_home"}
     PYTORCH_KERNEL_CACHE_PATH: ${oc.env:PYTORCH_KERNEL_CACHE_PATH,"/tmp/torch_home/kernels"}
@@ -106,9 +98,8 @@ backend:
     master_addr: "$MASTER_ADDR"
     master_port: "$MASTER_PORT"
 
-
 job:
-  name: titan_moe_30BA3B_jupiter_speed_test
+  name: titan_moe_30BA3B_ep4pp2_compile_acselective_opt4_bs64_profile
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
 
 container:
@@ -129,10 +120,9 @@ slurm:
     threads_per_core: 1
     account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
     partition: booster
-    time: "00:30:00"
+    time: "00:20:00"
   srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
   env:
-    # MASTER_ADDR intentionally omitted: inherited from slurm/jupiter.yaml base
     NUM_NODES: "$SLURM_JOB_NUM_NODES"
     GPUS_PER_NODE: "4"
     NUM_GPUS_PER_NODE: "4"

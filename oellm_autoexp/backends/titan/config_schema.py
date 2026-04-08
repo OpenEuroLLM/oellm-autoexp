@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 
 @dataclass
-class Job:
+class MergedJob:
     config_file: Any = None
     dump_folder: str = "./outputs"
     description: str = "default job"
@@ -20,7 +20,7 @@ class Job:
 
 
 @dataclass
-class Profiling:
+class MergedProfiling:
     enable_profiling: bool = False
     save_traces_folder: str = "profile_traces"
     profile_freq: int = 10
@@ -31,7 +31,7 @@ class Profiling:
 
 
 @dataclass
-class Metrics:
+class MergedMetrics:
     log_freq: int = 10
     enable_tensorboard: bool = False
     disable_color_printing: bool = False
@@ -41,14 +41,14 @@ class Metrics:
 
 
 @dataclass
-class Model:
+class MergedModel:
     name: str = "llama3"
     flavor: str = "debugmodel"
     hf_assets_path: str = "./tests/assets/tokenizer"
     tokenizer_path: str = ""
     converters: list[str] = field(default_factory=list)
     print_after_conversion: bool = False
-    vocab_size: int = 50432
+    vocab_size: Any = None
     mlp_layers: int = 2
     mlp_activation: str = "swiglu"
     qk_norm_type: str = "QKNormPlus"
@@ -56,31 +56,45 @@ class Model:
     tie_embedding: bool = False
     use_flex_attn: bool = False
     attn_mask_type: str = "causal"
-    use_flash_attn: bool = False
-    qk_norm: bool = True
-    rope_theta: float = 1000000
+    attn_gate_type: str = "none"
+    attn_gate_input: str = "x"
+    attn_gate_activation: str = "sigmoid"
+    attn_gate_lowrank_dim: int = 64
+    attn_gate_bias: bool = True
+    qk_norm: Any = None
+    rope_theta: Any = None
     rope_scaling_factor: float = 8.0
     rope_low_freq_factor: float = 1.0
     rope_high_freq_factor: float = 4.0
     rope_original_max_position_embeddings: int = 8192
-    head_dim: int = 128
-    hidden_dim: int = 3072
-    norm_eps: float = 1e-06
-    depth_init: bool = True
-    enable_weight_tying: bool = False
-    moe_enabled: bool = False
-    moe_inter_dim: int = 768
-    dim: int = 768
-    n_layers: int = 12
-    n_heads: int = 6
-    n_kv_heads: int = 6
-    max_seq_len: int = 100000
+    head_dim: Any = None
+    hidden_dim: Any = None
+    norm_eps: Any = None
+    depth_init: Any = None
+    enable_weight_tying: Any = None
+    use_complex_rope: Any = None
+    moe_enabled: Any = None
+    moe_inter_dim: Any = None
+    dim: Any = None
+    n_layers: Any = None
+    n_heads: Any = None
+    n_kv_heads: Any = None
+    max_seq_len: Any = None
+    moe_num_experts: int = 32
+    moe_top_k: int = 8
+    moe_score_func: str = "softmax"
+    moe_route_norm: bool = True
+    moe_route_scale: float = 1.0
+    moe_score_before_experts: bool = False
+    moe_num_shared_experts: int = 0
     qkv_bias: bool = False
     mlp_bias: bool = False
+    ffn_dim_multiplier: float | None = None
+    multiple_of: int | None = 256
 
 
 @dataclass
-class Optimizer:
+class MergedOptimizer:
     name: str = "AdamW"
     lr: float = 0.0008
     beta1: float = 0.9
@@ -92,7 +106,7 @@ class Optimizer:
 
 
 @dataclass
-class LRScheduler:
+class MergedLRScheduler:
     warmup_steps: Any = None
     decay_ratio: Any = None
     decay_type: Literal["linear", "sqrt", "cosine"] = "linear"
@@ -115,7 +129,7 @@ class LRScheduler:
 
 
 @dataclass
-class DataLoader:
+class MergedDataLoader:
     num_workers: int = 0
     persistent_workers: bool = False
     pin_memory: bool = False
@@ -123,7 +137,7 @@ class DataLoader:
 
 
 @dataclass
-class Training:
+class MergedTraining:
     dataset: str = "c4_test"
     dataset_path: Any = None
     local_batch_size: int = 8
@@ -137,12 +151,12 @@ class Training:
     mixed_precision_reduce: Literal["float32"] = "float32"
     gc_freq: int = 50
     gc_debug: bool = False
-    dataloader: DataLoader = field(default_factory=DataLoader)
+    dataloader: MergedDataLoader = field(default_factory=MergedDataLoader)
     debug_moe_force_load_balance: bool = False
 
 
 @dataclass
-class Parallelism:
+class MergedParallelism:
     data_parallel_replicate_degree: int = 1
     data_parallel_shard_degree: int = -1
     fsdp_reshard_after_forward: Literal["default", "always", "never"] = "default"
@@ -167,7 +181,7 @@ class Parallelism:
 
 
 @dataclass
-class Checkpoint:
+class MergedCheckpoint:
     enable: bool = False
     enable_ft_dataloader_checkpoints: bool = True
     folder: str = "checkpoint"
@@ -190,7 +204,7 @@ class Checkpoint:
 
 
 @dataclass
-class ActivationCheckpoint:
+class MergedActivationCheckpoint:
     mode: Literal["selective", "full", "memory_budget", "none"] = "selective"
     selective_ac_option: str = "2"
     per_op_sac_force_recompute_mm_shapes_by_fqns: list[str] = field(
@@ -205,7 +219,7 @@ class ActivationCheckpoint:
 
 
 @dataclass
-class Compile:
+class MergedCompile:
     enable: bool = False
     components: list[str] = field(default_factory=lambda: ["model", "loss"])
     backend: str = "inductor"
@@ -213,7 +227,7 @@ class Compile:
 
 
 @dataclass
-class Float8Linear:
+class MergedFloat8Linear:
     enable_fsdp_float8_all_gather: bool = False
     precompute_float8_dynamic_scale_for_fsdp: bool = False
     recipe_name: Literal["tensorwise", "rowwise", "rowwise_with_gw_hp"] | None = None
@@ -222,43 +236,43 @@ class Float8Linear:
 
 
 @dataclass
-class MXLinear:
+class MergedMXLinear:
     mxfp8_dim1_cast_kernel_choice: Literal["triton", "cuda", "torch"] = "triton"
     recipe_name: str = "mxfp8_cublas"
     filter_fqns: list[str] = field(default_factory=lambda: ["output"])
 
 
 @dataclass
-class QuantizedLinear:
-    float8: Float8Linear = field(default_factory=Float8Linear)
-    mx: MXLinear = field(default_factory=MXLinear)
+class MergedQuantizedLinear:
+    float8: MergedFloat8Linear = field(default_factory=MergedFloat8Linear)
+    mx: MergedMXLinear = field(default_factory=MergedMXLinear)
 
 
 @dataclass
-class Float8GroupedMM:
+class MergedFloat8GroupedMM:
     fqns: Any = field(default_factory=list)
 
 
 @dataclass
-class MXGroupedMM:
+class MergedMXGroupedMM:
     recipe_name: Literal["mxfp8"] = "mxfp8"
     fqns: Any = field(default_factory=list)
 
 
 @dataclass
-class QuantizedGroupedMM:
-    float8: Float8GroupedMM = field(default_factory=Float8GroupedMM)
-    mx: MXGroupedMM = field(default_factory=MXGroupedMM)
+class MergedQuantizedGroupedMM:
+    float8: MergedFloat8GroupedMM = field(default_factory=MergedFloat8GroupedMM)
+    mx: MergedMXGroupedMM = field(default_factory=MergedMXGroupedMM)
 
 
 @dataclass
-class Quantize:
-    linear: QuantizedLinear = field(default_factory=QuantizedLinear)
-    grouped_mm: QuantizedGroupedMM = field(default_factory=QuantizedGroupedMM)
+class MergedQuantize:
+    linear: MergedQuantizedLinear = field(default_factory=MergedQuantizedLinear)
+    grouped_mm: MergedQuantizedGroupedMM = field(default_factory=MergedQuantizedGroupedMM)
 
 
 @dataclass
-class Comm:
+class MergedComm:
     init_timeout_seconds: int = 300
     train_timeout_seconds: int = 100
     trace_buf_size: int = 20000
@@ -268,13 +282,13 @@ class Comm:
 
 
 @dataclass
-class MemoryEstimation:
+class MergedMemoryEstimation:
     enable: bool = False
     disable_fake_mode: bool = False
 
 
 @dataclass
-class FaultTolerance:
+class MergedFaultTolerance:
     enable: bool = False
     process_group: str = "gloo"
     process_group_timeout_ms: int = 10000
@@ -285,7 +299,7 @@ class FaultTolerance:
 
 
 @dataclass
-class Experimental:
+class MergedExperimental:
     custom_import: str = ""
     custom_args_module: str = ""
 
@@ -305,7 +319,7 @@ class ValidationDataset:
 
 
 @dataclass
-class Validation:
+class MergedValidation:
     enable: bool = False
     freq: int = 100
     steps: int = -1
@@ -321,7 +335,7 @@ class Validation:
 
 
 @dataclass
-class Debug:
+class MergedDebug:
     seed: Any = None
     deterministic: bool = False
     deterministic_warn_only: bool = False
@@ -329,7 +343,7 @@ class Debug:
 
 
 @dataclass
-class SciData:
+class MergedSciData:
     local_batch_size: int = 8
     seq_len: int = 2048
     min_doc_len: int = 10
@@ -338,10 +352,11 @@ class SciData:
     dataloader: str = "MMapDataset"
     seed: int = 42
     mask_eot_loss: bool = False
+    eos_id: Any = -1
 
 
 @dataclass
-class SciTokenizer:
+class MergedSciTokenizer:
     default_add_bos: bool = True
     default_add_eos: bool = False
     override_hf_bos_behavior: bool = False
@@ -349,7 +364,7 @@ class SciTokenizer:
 
 
 @dataclass
-class ParameterLogging:
+class MergedParameterLogging:
     enabled: bool = False
     log_interval: int = 100
     log_parameters: bool = True
@@ -361,7 +376,7 @@ class ParameterLogging:
 
 
 @dataclass
-class Benchmarks:
+class MergedBenchmarks:
     enable: bool = True
     wikitext2_path: str = ""
     wikitext103_path: str = ""
@@ -372,25 +387,27 @@ class Benchmarks:
 @dataclass
 class JobConfig:
     class_name: str = "TitanJobConfig"
-    job: Job = field(default_factory=Job)
-    profiling: Profiling = field(default_factory=Profiling)
-    metrics: Metrics = field(default_factory=Metrics)
-    model: Model = field(default_factory=Model)
-    optimizer: Optimizer = field(default_factory=Optimizer)
-    lr_scheduler: LRScheduler = field(default_factory=LRScheduler)
-    training: Training = field(default_factory=Training)
-    parallelism: Parallelism = field(default_factory=Parallelism)
-    checkpoint: Checkpoint = field(default_factory=Checkpoint)
-    activation_checkpoint: ActivationCheckpoint = field(default_factory=ActivationCheckpoint)
-    compile: Compile = field(default_factory=Compile)
-    quantize: Quantize = field(default_factory=Quantize)
-    comm: Comm = field(default_factory=Comm)
-    memory_estimation: MemoryEstimation = field(default_factory=MemoryEstimation)
-    fault_tolerance: FaultTolerance = field(default_factory=FaultTolerance)
-    experimental: Experimental = field(default_factory=Experimental)
-    validation: Validation = field(default_factory=Validation)
-    debug: Debug = field(default_factory=Debug)
-    data: SciData = field(default_factory=SciData)
-    sci_tokenizer: SciTokenizer = field(default_factory=SciTokenizer)
-    parameter_logging: ParameterLogging = field(default_factory=ParameterLogging)
-    benchmarks: Benchmarks = field(default_factory=Benchmarks)
+    job: MergedJob = field(default_factory=MergedJob)
+    profiling: MergedProfiling = field(default_factory=MergedProfiling)
+    metrics: MergedMetrics = field(default_factory=MergedMetrics)
+    model: MergedModel = field(default_factory=MergedModel)
+    optimizer: MergedOptimizer = field(default_factory=MergedOptimizer)
+    lr_scheduler: MergedLRScheduler = field(default_factory=MergedLRScheduler)
+    training: MergedTraining = field(default_factory=MergedTraining)
+    parallelism: MergedParallelism = field(default_factory=MergedParallelism)
+    checkpoint: MergedCheckpoint = field(default_factory=MergedCheckpoint)
+    activation_checkpoint: MergedActivationCheckpoint = field(
+        default_factory=MergedActivationCheckpoint
+    )
+    compile: MergedCompile = field(default_factory=MergedCompile)
+    quantize: MergedQuantize = field(default_factory=MergedQuantize)
+    comm: MergedComm = field(default_factory=MergedComm)
+    memory_estimation: MergedMemoryEstimation = field(default_factory=MergedMemoryEstimation)
+    fault_tolerance: MergedFaultTolerance = field(default_factory=MergedFaultTolerance)
+    experimental: MergedExperimental = field(default_factory=MergedExperimental)
+    validation: MergedValidation = field(default_factory=MergedValidation)
+    debug: MergedDebug = field(default_factory=MergedDebug)
+    data: MergedSciData = field(default_factory=MergedSciData)
+    sci_tokenizer: MergedSciTokenizer = field(default_factory=MergedSciTokenizer)
+    parameter_logging: MergedParameterLogging = field(default_factory=MergedParameterLogging)
+    benchmarks: MergedBenchmarks = field(default_factory=MergedBenchmarks)

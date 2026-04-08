@@ -1,49 +1,44 @@
 # @package _global_
-# MoE speed sweep for Titan Qwen3 30BA3B on JUPITER (2 nodes, 8 GPUs)
+# Titan 235BA22B full-AC batch-size sweep
 #
-# Architecture: 48 layers, dim=2048, 32 heads, 4 KV heads (GQA), 128 experts, topk=8
-# Parallelism: EP=8, dp_shard=8 (FSDP for attention; efsdp=1 for experts)
-#   EP is carved from dp_shard: dp_replicate(1)*dp_shard(8)*tp(1)*pp(1) = 8 = world_size
-#   efsdp = dp_shard*tp/(etp*ep) = 8*1/(1*8) = 1 → no expert FSDP; experts fully on owning GPU
+# Key finding from no-AC sweep (jobs 323676-323684, 2026-03-30):
+#   ALL no-AC configs OOM — even nocompile+no-AC+bs=1 hits 95 GiB.
+#   No-AC is infeasible for 235BA22B on 64×GH200 (95 GiB/GPU) with FSDP.
+#   Memory breakdown: optimizer states (~35 GiB) + params (~7 GiB) + FSDP buffers (~10 GiB)
+#   + no-AC activations (94 layers × ~200 MB ≈ 19 GiB) = ~71 GiB baseline + any alloc → OOM.
 #
-# Baseline (nocompile, full AC, bs=4): 179.72 TFLOPS, 12.25 GiB (13%)
-#   → Very low memory: experts+attention FSDP-sharded across 8 GPUs, full AC discards activations.
-#   → Huge headroom: ~80 GiB free — try compile, no/selective AC, larger batches.
+# Full-AC baseline (jobs 323666, 323682):
+#   nocompile+full-AC+bs=1: 38-41 GiB (41%), ~31 TFLOPS
+#   compile+full-AC+bs=1:   38-40 GiB (41%), ~31 TFLOPS  ← compile ~0% gain for MoE
 #
-# ── Measured results (2 nodes, 8×GH200, EP=8, dp_shard=8) ───────────────────
-#   nocompile, full AC,  bs=4  → 180.04 TFLOPS,  12.25 GiB (13%)  (baseline)
-#   compile,   full AC,  bs=4  → 179.83 TFLOPS,  12.25 GiB (13%)  (~same as nocompile — compile barely helps for MoE)
-#   compile,   full AC,  bs=8  → 203.12 TFLOPS,  23.35 GiB (25%)
-#   nocompile, no AC,    bs=4  → 224.37 TFLOPS,  19.29 GiB (20%)  (+25% vs full AC)
-#   compile,   no AC,    bs=4  → 226.94 TFLOPS,  19.29 GiB (20%)
-#   compile,   no AC,    bs=8  → 254.74 TFLOPS,  37.43 GiB (39%)
-#   nocompile, no AC,    bs=16 → 262.61 TFLOPS,  74.03 GiB (78%)
-#   compile,   no AC,    bs=16 → 263.11 TFLOPS,  74.03 GiB (78%)  ← OPTIMAL (+3.3% vs bs=8)
-#   compile,   no AC,    bs=32 → OOM (73 GiB used + 24.56 GiB needed > 95 GiB)
+# Strategy: full-AC keeps activation memory ~0 (recomputed on-demand), so
+#   memory should be roughly flat with batch size → push to large bs for throughput.
+#
 defaults:
-  - ../base
+  - ../../base
   - /backend: titan
   - /container: jupiter_titan
   - /slurm: jupiter
   - /sweep: none
   - override /backend/titan/data: nemonicco_jupiter
-  - override /backend/titan/model: qwen3_moe_30BA3B
+  - override /backend/titan/model: qwen3_moe_235BA22B
   - override /job: default
   - _self_
 
 aux:
-  experiment_group: "titan_moe_30BA3B_speed_sweep"
-  compile_tag: "compile"
+  experiment_group: "titan_moe_235BA22B_fullac_bs_sweep"
+  compile_tag: "nocompile"
 
 backend:
   titan:
     model:
       vocab_size: 50304
       tokenizer_path: /e/project1/projectnucleus/franke5/workspace/titan-train/torchtitan/assets/tokenizer/gpt-neox-20b
+      multiple_of: null
 
     training:
       steps: 100
-      local_batch_size: 4
+      local_batch_size: 8
       seq_len: 4096
       dtype: bfloat16
 
@@ -55,7 +50,7 @@ backend:
       pipeline_parallel_degree: 1
       expert_parallel_degree: 8
       data_parallel_replicate_degree: 1
-      data_parallel_shard_degree: 8
+      data_parallel_shard_degree: 64
       context_parallel_degree: 1
 
     activation_checkpoint:
@@ -68,7 +63,7 @@ backend:
 
   env:
     TORCHDYNAMO_DISABLE: "1"
-    PYTHONPATH: .:./submodules/titan-oellm:./submodules/titan-oellm/torchtitan
+    PYTHONPATH: "${oc.env:HOME}/work/Projects/oellm-autoexp:${oc.env:HOME}/work/Projects/oellm-autoexp/submodules/titan-oellm:${oc.env:HOME}/work/Projects/oellm-autoexp/submodules/titan-oellm/torchtitan"
     NCCL_SOCKET_FAMILY: "AF_INET"
     GLOO_SOCKET_FAMILY: "AF_INET"
     NCCL_SOCKET_IFNAME: "ib0"
@@ -100,7 +95,7 @@ backend:
     master_port: "$MASTER_PORT"
 
 job:
-  name: titan_moe_30BA3B_ep8_${aux.compile_tag}_ac${backend.titan.activation_checkpoint.mode}_bs${backend.titan.training.local_batch_size}
+  name: titan_moe_235BA22B_ep8_${aux.compile_tag}_acfull_bs${backend.titan.training.local_batch_size}
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
 
 container:
@@ -114,14 +109,14 @@ container:
 slurm:
   template_path: "templates/jupiter_mod.sbatch"
   sbatch:
-    nodes: 2
+    nodes: 16
     gpus_per_node: 4
     gres: "gpu:4"
     cpus_per_task: 72
     threads_per_core: 1
     account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
     partition: booster
-    time: "00:30:00"
+    time: "00:45:00"
   srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
   env:
     NUM_NODES: "$SLURM_JOB_NUM_NODES"
@@ -136,54 +131,50 @@ sweep:
   groups:
     - type: list
       configs:
-        # ── nocompile baseline ────────────────────────────────────────────────
+        # ── CONFIRMED RESULTS (nocompile+full-AC) ──────────────────────────────
+        # bs=1 (323666/323680): 38-41 GiB (41%), ~31 TFLOPS
+        # bs=2 (323730): 49-51 GiB (52%), ~39 TFLOPS  [step 20]
+        # bs=4 (323729): 64-74 GiB (68-77%), ~46 TFLOPS  [step 10]
+        # bs=8,16,32,64: failed (stale file handle bad nodes or OOM)
+        # bs=32 confirmed OOM at ~88-89 GiB (job 323734)
+        #
+        # ── nocompile + full-AC, sweep bs ──────────────────────────────────────
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 2
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+
         - aux.compile_tag: nocompile
           backend.titan.activation_checkpoint.mode: full
           backend.titan.training.local_batch_size: 4
           backend.env.TORCHDYNAMO_DISABLE: "1"
-          # Result: 180.04 TFLOPS, 12.25 GiB (13%) (job 305636) — baseline
 
-        # ── compile (barely helps for MoE: EP routing overhead dominates) ────
-        - aux.compile_tag: compile
+        - aux.compile_tag: nocompile
           backend.titan.activation_checkpoint.mode: full
-          backend.titan.training.local_batch_size: 4
-          # Result: 179.83 TFLOPS, 12.25 GiB (13%) (job 305639) — ~same as nocompile
+          backend.titan.training.local_batch_size: 5
+          backend.env.TORCHDYNAMO_DISABLE: "1"
 
-        - aux.compile_tag: compile
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 6
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+
+        - aux.compile_tag: nocompile
           backend.titan.activation_checkpoint.mode: full
           backend.titan.training.local_batch_size: 8
-          # Result: 203.12 TFLOPS, 23.35 GiB (25%) (job 305641)
-
-        # ── no AC (19 GiB at bs=4, 37 GiB at bs=8, 74 GiB at bs=16) ────────
-        - aux.compile_tag: nocompile
-          backend.titan.activation_checkpoint.mode: none
-          backend.titan.training.local_batch_size: 4
           backend.env.TORCHDYNAMO_DISABLE: "1"
-          # Result: 224.37 TFLOPS, 19.29 GiB (20%) (job 305637)
 
-        - aux.compile_tag: compile
-          backend.titan.activation_checkpoint.mode: none
-          backend.titan.training.local_batch_size: 4
-          # Result: 226.94 TFLOPS, 19.29 GiB (20%) (job 305634)
-
-        - aux.compile_tag: compile
-          backend.titan.activation_checkpoint.mode: none
-          backend.titan.training.local_batch_size: 8
-          # Result: 254.74 TFLOPS, 37.43 GiB (39%) (job 305635)
-
-        # ── larger batches ────────────────────────────────────────────────────
         - aux.compile_tag: nocompile
-          backend.titan.activation_checkpoint.mode: none
+          backend.titan.activation_checkpoint.mode: full
           backend.titan.training.local_batch_size: 16
           backend.env.TORCHDYNAMO_DISABLE: "1"
-          # Result: 262.61 TFLOPS, 74.03 GiB (78%) (job 305633)
 
-        - aux.compile_tag: compile
-          backend.titan.activation_checkpoint.mode: none
-          backend.titan.training.local_batch_size: 16
-          # Result: 263.11 TFLOPS, 74.03 GiB (78%) (job 305638) ← OPTIMAL
-
-        - aux.compile_tag: compile
-          backend.titan.activation_checkpoint.mode: none
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: full
           backend.titan.training.local_batch_size: 32
-          # Result: OOM — 73 GiB in use + 24.56 GiB needed > 95 GiB (job 305640)
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 64
+          backend.env.TORCHDYNAMO_DISABLE: "1"
