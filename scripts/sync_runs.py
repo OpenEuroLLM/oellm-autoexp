@@ -5,15 +5,18 @@ Sync wandb offline runs to the cloud.
 Usage:
     # Sync all runs in a folder
     python sync_runs.py --folder moe_200MA50M_10BT
-    
+
     # Sync a specific run
     python sync_runs.py --rundir moe_200MA50M_10BT/moe_200MA50M_10BT_schedWSD_lr0.001_gbsz512_beta20.95
-    
+
     # Dry run (just print commands)
     python sync_runs.py --folder moe_200MA50M_10BT --dry-run
-    
+
     # Specify results directory
     python sync_runs.py --folder moe_200MA50M_10BT --results-dir /path/to/results
+
+    # Upload to a specific wandb project
+    python sync_runs.py --folder moe_200MA50M_10BT --project my-project
 """
 
 import argparse
@@ -49,12 +52,14 @@ def find_offline_runs(base_path: Path, include_synced: bool = False) -> tuple[li
     return sorted(offline_runs), skipped
 
 
-def sync_run(offline_run_path: Path, dry_run: bool = False) -> bool:
+def sync_run(offline_run_path: Path, dry_run: bool = False, project: str | None = None) -> bool:
     """Sync a single wandb offline run."""
     # Remove trailing slash to avoid wandb CLI bug
     path_str = str(offline_run_path).rstrip("/")
-    
+
     cmd = ["wandb", "sync", path_str]
+    if project:
+        cmd += ["--project", project]
     
     if dry_run:
         print(f"[DRY RUN] Would execute: {' '.join(cmd)}")
@@ -112,6 +117,11 @@ def main():
         action="store_true",
         help="Re-sync runs even if they were already synced"
     )
+    parser.add_argument(
+        "--project", "-p",
+        default=None,
+        help="wandb project to upload runs to (e.g., my-project)"
+    )
     
     args = parser.parse_args()
     
@@ -162,7 +172,7 @@ def main():
     fail_count = 0
     
     for offline_run in offline_runs:
-        success = sync_run(offline_run, dry_run=args.dry_run)
+        success = sync_run(offline_run, dry_run=args.dry_run, project=args.project)
         if success:
             success_count += 1
         else:
