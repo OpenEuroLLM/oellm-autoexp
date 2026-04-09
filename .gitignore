@@ -219,4 +219,18 @@ __marimo__/
 generated/
 
 monitor_state/
-output
+# VsCode debugging and other stuff
+.vscode/
+
+# Personal helper scripts for launching etc
+
+helper_scripts/
+
+sync_to_jupiter.sh
+sync_to_leonardo.sh
+slurm_jupiter.sh
+slurm_juwels.sh
+logs/
+output/
+
+local/  
