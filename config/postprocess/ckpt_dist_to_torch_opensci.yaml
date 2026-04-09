@@ -2,9 +2,15 @@
 #
 # Megatron torch_dist → torch checkpoint conversion.
 # Runs inside the container (same_job) after training, before HF conversion.
-# Uses backend.full_cmd which already contains --ckpt-convert-format torch.
+# For each checkpoint step, writes the step number to
+# latest_checkpointed_iteration.txt (load_dir) so Megatron loads the correct
+# torch_dist checkpoint, then runs the conversion command.
 
 postprocess:
   dist_to_torch:
     class_name: MegatronDistToTorchStep
     cmd: "${backend.full_cmd}"
+    load_dir: ${backend.megatron.load}
+    ckpt_step: ${backend.megatron.ckpt_step}
+    save_interval: ${backend.megatron.save_interval}
+    train_iters: ${backend.megatron.train_iters}

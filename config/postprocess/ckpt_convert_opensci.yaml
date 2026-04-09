@@ -2,13 +2,14 @@
 #
 # Megatron distributed checkpoint -> HuggingFace conversion for OpenSci models.
 # Runs in the same SLURM job after the dist->torch conversion.
+# Base dirs have no iter suffix; build_commands appends iter_XXXXXXX per step.
 
 postprocess:
   convert_hf:
     class_name: MegatronToHFStep
     architecture: opensci
-    torch_ckpt_dir: ${job.base_output_dir}/torch/${oc.pad_iter:${backend.megatron.ckpt_step}}
-    hf_output_dir: ${job.base_output_dir}/hf/${oc.pad_iter:${backend.megatron.ckpt_step}}
+    torch_ckpt_base_dir: ${job.base_output_dir}/torch
+    hf_output_base_dir: ${job.base_output_dir}/hf
     target_tensor_parallel_size: 1
     target_pipeline_parallel_size: 1
     target_params_dtype: bf16
@@ -16,3 +17,6 @@ postprocess:
     model_type: opensci
     architecture_class: OpensciForCausalLM
     tokenizer_name: EleutherAI/gpt-neox-20b
+    ckpt_step: ${backend.megatron.ckpt_step}
+    save_interval: ${backend.megatron.save_interval}
+    train_iters: ${backend.megatron.train_iters}

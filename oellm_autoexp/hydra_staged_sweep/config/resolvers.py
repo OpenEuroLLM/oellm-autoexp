@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, UTC
+from datetime import datetime, timezone
+UTC = timezone.utc
 from functools import lru_cache
 from math import sqrt as _sqrt
 from collections.abc import Mapping

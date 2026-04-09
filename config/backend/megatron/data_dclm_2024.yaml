@@ -1,0 +1,11 @@
+data_path:
+  - /e/data1/datasets/products/mmlaion/language/tokenized/DCLM-baseline-1.0/GPT-NeoX/merged_0
+  - /e/data1/datasets/products/mmlaion/language/tokenized/DCLM-baseline-1.0/GPT-NeoX/merged_1
+  - /e/data1/datasets/products/mmlaion/language/tokenized/DCLM-baseline-1.0/GPT-NeoX/merged_2
+  - /e/data1/datasets/products/mmlaion/language/tokenized/DCLM-baseline-1.0/GPT-NeoX/merged_3
+  - /e/data1/datasets/products/mmlaion/language/tokenized/DCLM-baseline-1.0/GPT-NeoX/merged_4
+  - /e/data1/datasets/products/mmlaion/language/tokenized/DCLM-baseline-1.0/GPT-NeoX/merged_5
+  - /e/data1/datasets/products/mmlaion/language/tokenized/DCLM-baseline-1.0/GPT-NeoX/merged_6
+
+aux:
+  dataset: dclm2024

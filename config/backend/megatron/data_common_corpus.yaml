@@ -1,0 +1,5 @@
+data_path:
+  - /e/data1/datasets/products/mmlaion/language/tokenized/PleIAs-common_corpus-2.0/GPT-NeoX/merged
+
+aux:
+  dataset: common_corpus

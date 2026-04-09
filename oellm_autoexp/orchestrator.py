@@ -214,13 +214,14 @@ def _build_job_record(
         run_mode = step.get_run_mode()
         if run_mode == "same_job":
             LOGGER.info("Appending postprocess step '%s' to launch command", step_name)
-            cmd = step.build_command()
+            cmds = step.build_commands()
             if container and container.image:
-                cmd = _build_container_exec_prefix(container) + " \\\n    " + cmd
-            launch_cmd = launch_cmd + " && \\\n" + cmd
+                prefix = _build_container_exec_prefix(container) + " \\\n    "
+                cmds = [prefix + cmd for cmd in cmds]
+            launch_cmd = launch_cmd + " && \\\n" + " && \\\n".join(cmds)
         elif run_mode == "new_job":
             LOGGER.info("Scheduling post-job step '%s' to run after job completes", step_name)
-            post_job_commands.append(step.build_command())
+            post_job_commands.extend(step.build_commands())
         else:
             raise ValueError(f"Unknown run_mode '{run_mode}' for postprocess step '{step_name}'")
 

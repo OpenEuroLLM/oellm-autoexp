@@ -1,0 +1,10 @@
+data_path:
+  - /e/data1/datasets/products/mmlaion/language/tokenized/HPLT-3.0-en-HQ-300B/GPT-NeoX/data_shard_00000
+  - /e/data1/datasets/products/mmlaion/language/tokenized/HPLT-3.0-en-HQ-300B/GPT-NeoX/data_shard_00001
+  - /e/data1/datasets/products/mmlaion/language/tokenized/HPLT-3.0-en-HQ-300B/GPT-NeoX/data_shard_00002
+  - /e/data1/datasets/products/mmlaion/language/tokenized/HPLT-3.0-en-HQ-300B/GPT-NeoX/data_shard_00003
+  - /e/data1/datasets/products/mmlaion/language/tokenized/HPLT-3.0-en-HQ-300B/GPT-NeoX/data_shard_00004
+  - /e/data1/datasets/products/mmlaion/language/tokenized/HPLT-3.0-en-HQ-300B/GPT-NeoX/data_shard_00005
+
+aux:
+  dataset: hplt3enhq

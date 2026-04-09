@@ -1,0 +1,5 @@
+data_path:
+  - /e/data1/datasets/products/mmlaion/language/tokenized/FineWeb-edu-1.0/train/GPT-NeoX/merged
+
+aux:
+  dataset: fineweb_edu

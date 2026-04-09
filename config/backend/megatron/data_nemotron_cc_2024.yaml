@@ -1,0 +1,10 @@
+data_path:
+  - /e/data1/datasets/products/mmlaion/language/tokenized/Nemotron-cc-2024/GPT-NeoX/quality-high_kind-actual/merged_0
+  - /e/data1/datasets/products/mmlaion/language/tokenized/Nemotron-cc-2024/GPT-NeoX/quality-high_kind-actual/merged_1
+  - /e/data1/datasets/products/mmlaion/language/tokenized/Nemotron-cc-2024/GPT-NeoX/quality-high_kind-synthetic/merged_0
+  - /e/data1/datasets/products/mmlaion/language/tokenized/Nemotron-cc-2024/GPT-NeoX/quality-high_kind-synthetic/merged_1
+  - /e/data1/datasets/products/mmlaion/language/tokenized/Nemotron-cc-2024/GPT-NeoX/quality-high_kind-synthetic/merged_2
+  - /e/data1/datasets/products/mmlaion/language/tokenized/Nemotron-cc-2024/GPT-NeoX/quality-high_kind-synthetic/merged_3
+
+aux:
+  dataset: nemotroncc2024

@@ -1,0 +1,5 @@
+data_path:
+  - /e/data1/datasets/products/mmlaion/language/tokenized/pile/train/GPT-NeoX/merged
+
+aux:
+  dataset: pile

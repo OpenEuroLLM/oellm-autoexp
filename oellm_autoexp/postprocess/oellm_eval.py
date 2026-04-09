@@ -29,7 +29,7 @@ class OELLMEvalStep(PostProcessStepInterface):
     def get_run_mode(self) -> Literal["same_job", "new_job"]:
         return "new_job"
 
-    def build_command(self) -> str:
+    def build_commands(self) -> list[str]:
         cfg = self.config
         task_groups_args = shlex.join(cfg.task_groups)
 
@@ -41,7 +41,7 @@ class OELLMEvalStep(PostProcessStepInterface):
         if cfg.dry_run:
             parts.append("--dry_run true")
 
-        return " ".join(parts)
+        return [" ".join(parts)]
 
 
 __all__ = ["OELLMEvalStep", "OELLMEvalStepConfig"]

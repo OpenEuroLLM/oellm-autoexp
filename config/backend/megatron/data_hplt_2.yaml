@@ -1,0 +1,12 @@
+data_path:
+  - /e/data1/datasets/products/mmlaion/language/tokenized/HPLT-2.0/GPT-NeoX/merged_0
+  - /e/data1/datasets/products/mmlaion/language/tokenized/HPLT-2.0/GPT-NeoX/merged_1
+  - /e/data1/datasets/products/mmlaion/language/tokenized/HPLT-2.0/GPT-NeoX/merged_2
+  - /e/data1/datasets/products/mmlaion/language/tokenized/HPLT-2.0/GPT-NeoX/merged_3
+  - /e/data1/datasets/products/mmlaion/language/tokenized/HPLT-2.0/GPT-NeoX/merged_4
+  - /e/data1/datasets/products/mmlaion/language/tokenized/HPLT-2.0/GPT-NeoX/merged_5
+  - /e/data1/datasets/products/mmlaion/language/tokenized/HPLT-2.0/GPT-NeoX/merged_6
+  - /e/data1/datasets/products/mmlaion/language/tokenized/HPLT-2.0/GPT-NeoX/merged_7
+
+aux:
+  dataset: hplt2

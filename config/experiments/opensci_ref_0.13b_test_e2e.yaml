@@ -23,12 +23,14 @@ job:
 backend:
   megatron:
     legacy_tokenizer: false
-    train_iters: 5
+    train_iters: 20
     lr_warmup_iters: 2
     lr_decay_iters: 5
     lr_wsd_decay_iters: 1
     save_interval: 5
     eval_interval: 5
+    overlap_param_gather: true
+    overlap_grad_reduce: true
     ckpt_convert_format: torch
     ckpt_convert_save: ${job.base_output_dir}
     ckpt_step: ${backend.megatron.train_iters}

@@ -12,7 +12,7 @@ from compoconf import RegistrableConfigInterface, register_interface
 class PostProcessStepInterface(RegistrableConfigInterface):
     """Translates post-processing config into shell commands.
 
-    Subclasses must implement ``build_command`` and ``get_run_mode``.
+    Subclasses must implement ``build_commands`` and ``get_run_mode``.
     """
 
     config: Any
@@ -21,8 +21,8 @@ class PostProcessStepInterface(RegistrableConfigInterface):
         self.config = config
 
     @abstractmethod
-    def build_command(self) -> str:
-        """Return the shell command string for this step."""
+    def build_commands(self) -> list[str]:
+        """Return the shell commands for this step (one element per logical command)."""
         ...
 
     @abstractmethod
@@ -31,4 +31,12 @@ class PostProcessStepInterface(RegistrableConfigInterface):
         ...
 
 
-__all__ = ["PostProcessStepInterface"]
+def _all_ckpt_steps(save_interval: int, train_iters: int) -> list[int]:
+    """Return every checkpoint step: [save_interval, 2*save_interval, ..., train_iters]."""
+    steps = list(range(save_interval, train_iters, save_interval))
+    if not steps or steps[-1] != train_iters:
+        steps.append(train_iters)
+    return steps
+
+
+__all__ = ["PostProcessStepInterface", "_all_ckpt_steps"]

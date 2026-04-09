@@ -30,7 +30,7 @@ pip install --upgrade pip setuptools wheel
 
 python3 /workspace/oellm-autoexp/container/gen_constraints.py \
     --output /workspace/constraints.installed.txt \
-    --exclude pip setuptools wheel huggingface_hub numpy
+    --exclude pip setuptools wheel huggingface_hub numpy megatron-core
 
 if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
     python3 -m pip install --no-cache-dir \
@@ -39,8 +39,7 @@ if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
 fi
 
 if [ -d "/workspace/oellm-autoexp/submodules/Megatron-LM" ]; then
-    python3 -m pip install --no-cache-dir \
-        -c /workspace/constraints.installed.txt \
+    python3 -m pip install --no-cache-dir --no-deps \
         -e /workspace/oellm-autoexp/submodules/Megatron-LM
 fi
 
