@@ -1,0 +1,105 @@
+# @package _global_
+defaults:
+  - base
+  - /backend: megatron
+  - /container: mi325x
+  - /slurm: mi325x
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 2384 # 
+    log_interval: 10
+    log_throughput: true
+    log_progress: true
+    log_timers_to_tensorboard: true
+    tensorboard_queue_size: 5
+    eval_iters: 100
+    eval_interval: 100
+    save_interval: 10000000
+    save: null
+    load: null
+
+    mock_data: true
+    # data_path:
+    #   - /scratch/project_462000963/preprocessed/oellm-v1-256k/catalogue/nemotron-cc/1.0/20p-sample/high-actual-20p
+    data_cache_path: ${job.base_output_dir}/cache
+    dataloader_type: single
+    num_workers: 2
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: EleutherAI/gpt-neox-20b
+    make_vocab_size_divisible_by: 128
+
+    num_layers: 28
+    hidden_size: 1024
+    ffn_hidden_size: 3072
+    num_attention_heads: 16
+    group_query_attention: true
+    num_query_groups: 8
+    untie_embeddings_and_output_weights: false
+    init_method_std: 0.02
+    seq_length: 4096
+    encoder_seq_length: null
+    max_position_embeddings: 4096
+    position_embedding_type: rope
+    use_rotary_position_embeddings: true
+    rotary_base: 10000
+    rotary_percent: 1.0
+    kv_channels: 128
+    normalization: RMSNorm
+    qk_layernorm: true
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    attention_softmax_in_fp32: true
+    use_flash_attn: true
+    swiglu: true
+    bf16: true
+    add_bias_linear: false
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: true
+    use_distributed_optimizer: true
+    async_tensor_model_parallel_allreduce: false
+    masked_softmax_fusion: false
+    gradient_accumulation_fusion: false
+    bias_dropout_fusion: false
+    apply_rope_fusion: false
+    distributed_timeout_minutes: 10
+    overlap_grad_reduce: true
+
+    micro_batch_size: 2
+    global_batch_size: 512
+
+    recompute_activations: false
+
+    optimizer: adam
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    lr: 0.002
+    min_lr: 0.0
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_warmup_iters: ${oc.divi:${.train_iters},10}
+    lr_decay_iters: ${.train_iters}
+    lr_wsd_decay_iters: ${oc.divi:${.train_iters},5}
+    clip_grad: 1.0
+    weight_decay: 0.05
+
+    ckpt_format: torch_dist
+
+    wandb_project: sanity-checks
+    wandb_exp_name: ${job.name}
+    wandb_save_dir: ${job.base_output_dir}/wandb
+
+slurm:
+  env:
+    # Override in your experiment or shell if datasets live elsewhere.
+    HF_HOME: /shared_silo/scratch/${oc.env:USER}/huggingface
+
+job:
+  name: megatron_sanity_check

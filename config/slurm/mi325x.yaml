@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 template_path: templates/mi325x.sbatch
-# One SLURM task per GPU; each runs apptainer exec with ROCm (no overlay).
+# One SLURM task per GPU; each runs apptainer exec with ROCm 
 launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
   export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
   export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; export AITER_JIT_DIR=/tmp/$USER/aiter_jit_dir ; \\\n\
@@ -20,9 +20,38 @@ env:
   MASTER_ADDR: '$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'
   MASTER_PORT: "9999"
   WORLD_SIZE: ${oc.muli:${..sbatch.nodes},${..sbatch.ntasks_per_node}}
-  HSA_ENABLE_SDMA: 0
   NVTE_DEBUG: "0"
   NVTE_DEBUG_LEVEL: "0"
+
+  OMP_NUM_THREADS: "1"
+  CUDA_DEVICE_MAX_CONNECTIONS: "1"
+
+  RCCL_NET_GDR_LEVEL: "2"
+  RCCL_ENABLE_DIRECT_COPY: "1"
+  NCCL_BUFFSIZE: "8388608"
+  RCCL_MSCCL_ENABLE: "0"
+  HSA_ENABLE_SDMA: "1"
+  RCCL_P2P_DISABLE: "0"
+  HSA_FORCE_FINE_GRAIN_PCIE: "1"
+  RCCL_MIN_NCHANNELS: "8"
+  RCCL_NCHANNELS: "8"
+  NCCL_NTHREADS: "512"
+  NCCL_NET_GDR_READ: "1"
+  RCCL_ENABLE_SMI_P2P: "1"
+  NCCL_SOCKET_IFNAME: "eno0"
+  GLOO_SOCKET_IFNAME: "eno0"
+
+  HSA_NO_SCRATCH_RECLAIM: "1"
+  NVTE_CK_USES_BWD_V3: "1"
+  NVTE_CK_IS_V3_ATOMIC_FP32: "1"
+
+  USE_ROCM_AITER_ROPE_BACKEND: "0"
+
+  SLURM_PARTITION: ${oc.env:SLURM_PARTITION,"amd-tw-verification"}
+
+  # Quoted value: commas in bind list; $${...} -> ${...} in the batch script for runtime expansion.
+  APPTAINER_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,$${SCRATCH},$${PWD}"'
+  SINGULARITY_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,$${SCRATCH},$${PWD}"'
 sbatch:
   partition: ${oc.env:SLURM_PARTITION,"amd-tw-verification"}
   nodes: 1

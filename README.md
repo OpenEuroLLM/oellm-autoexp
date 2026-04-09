@@ -38,6 +38,7 @@ The environment variables used in the `config/` here are:
 - Build the Megatron container from the provided defs (see `container/megatron/MegatronTrainingLumi.def.in`) so the correct ROCm + network tuning ends up inside the image.
 - Export the usual SLURM/paths (at a minimum `SLURM_ACCOUNT`, `SLURM_PARTITION[_DEBUG]`, `CONTAINER_CACHE_DIR`, `OUTPUT_DIR`) in your profile—scripts read them automatically.
 
+
 ## Cluster setup: MARENOSTRUM notes
 You need to install oellm-autoexp or its requirements in a conda environment to run it on MARENOSTRUM. To do this:
 - Install conda-pack with: `conda install conda-pack` on your local machine
