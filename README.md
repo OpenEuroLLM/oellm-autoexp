@@ -19,10 +19,6 @@ Then, install it to have the basic requirements installed:
 ```bash
 pip install -e .
 ```
-Whenever you have `numpy>=2.0` in your system, apply the annoying `numpy.product` error patch:
-```bash
-bash ./apply_megatron_numpy_product_patch.sh
-```
 
 ### Environment variables
 The environment variables used in the `config/` here are:
@@ -41,7 +37,14 @@ The environment variables used in the `config/` here are:
 - Install prerequisites outside the container (rccl-tuner, cray-python, etc.) following the LUMI docs. (SEE: https://github.com/sfantao/rccl-tuner.git)
 - Build the Megatron container from the provided defs (see `container/megatron/MegatronTrainingLumi.def.in`) so the correct ROCm + network tuning ends up inside the image.
 - Export the usual SLURM/paths (at a minimum `SLURM_ACCOUNT`, `SLURM_PARTITION[_DEBUG]`, `CONTAINER_CACHE_DIR`, `OUTPUT_DIR`) in your profile—scripts read them automatically.
-- Apply the numpy patch, as the container numpy version is too new for `np.product` to be supported still
+### Quickstart using pre-configured enviroment and default values,
+
+    git clone https://github.com/OpenEuroLLM/oellm-autoexp.git --recurse-submodules
+    # using uv
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    # uv creates a python virtual environment matching pyproject.toml-file on the fly. inode-count for env ~2k.
+    SLURM_ACCOUNT=project_462000963 SLURM_PARTITION=dev-g uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/megatron_lumi_speed_test.yaml  
+    
 
 ## Cluster setup: MARENOSTRUM notes
 You need to install oellm-autoexp or its requirements in a conda environment to run it on MARENOSTRUM. To do this:
@@ -60,6 +63,21 @@ For LEONARDO, all should work with a pre-built container image. To build a conta
 - Build the user-base container (in `container`), but from a compute node: `python build_container_user.py --backend megatron --definition MegatronTrainingNoRoot --append-date --container-cmd singularity --base-image $CONTAINER_CACHE_DIR/pytorch__25.10-py3_sandbox`
 Otherwise, on the login node you run out of resources and get killed.
 Make sure also to have datasets and tokenizers downloaded before starting a job, as there is no web connection on the compute nodes.
+
+
+## Cluster setup: Snellius notes
+For Snellius, all should work with a pre-built container image. Build the container on a compute node:
+```bash
+export APPTAINER_TMPDIR=/dev/shm/$USER && mkdir -p /dev/shm/$USER/
+export APPTAINER_CACHEDIR=/scratch-shared/$USER/apptainer
+python container/build_container_user.py \
+  --backend megatron \
+  --definition MegatronTrainingSnellius \
+  --base-image nvcr.io/nvidia/pytorch:25.10-py3 \
+  --container-cmd apptainer \
+  --output .../containers/ \
+  --no-sandbox
+```
 
 
 ## Supercomputer setup: JUWELS Booster / JUPITER
@@ -382,6 +400,28 @@ Monitoring behavior lives entirely in YAML. Keep it small, keep it explicit.
 
 
 ### Updating the Megatron-LM backend version
-For an update of the megatron backend, first check out the new submodule version. Then, create a new container. Within that container,
-run the script generation in `scripts/generate_megatron_config.py` and `scripts/generate_megatron_dataclass.py`. You might have to adapt the `transformer_engine` mocks in those scripts.
+For an update of the megatron backend, first check out the new submodule version. Then, create a new container. Within that container, run the script generation in `scripts/generate_megatron_config.py` and `scripts/generate_megatron_dataclass.py`. You might have to adapt the `transformer_engine` mocks in those scripts.
 Also, apparently some containers don't use the correct `C++` path, you might have to `export CXX=$(which clang++)`, for example on LUMI.
+Afterwards, make sure that the generated files conform the linter standard by applying:
+```bash
+black --preview --enable-unstable-feature string_processing oellm_autoexp/backends/megatron/*
+```
+
+### Updating the titan_oellm backend version
+Please run:
+```bash
+python scripts/generate_titan_dataclass.py
+```
+
+
+## Contribution
+
+You may merge personal configuration directly into main - if they ONLY affect `config/experiments/YOURNAME`!
+
+Please install/run before you commit:
+```
+pre-commit install
+```
+This helps keeping the format clean.
+
+If you touch the backend submodule versions, please make sure you re-generate the dataclasses / configs. If you are very eager, and have spare time, you could integrate this re-generation even into the pre-commit config - so that we are on the safe side always.

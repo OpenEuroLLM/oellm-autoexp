@@ -1,0 +1,185 @@
+# @package _global_
+# Titan MoE 30BA3B — PP=1, EP=4 (intra-node), DPr=2 (2-node DDP)
+#
+# Motivation from profiling (pp2ep4_profile, step 4):
+#   GEMM:     61.1% (22.1s) — dominant compute
+#   PP P2P:   25.1%  (9.1s) — ncclDevKernel_SendRecv + cudaMemcpyAsync over IB
+#   AllToAll: 11.5%  (4.2s) — EP communication (intra-node NVLink)
+#   Attention: 2.2%  (0.8s)
+#
+# PP=1 eliminates the 25% PP P2P communication entirely.
+# AllToAll (EP) stays intra-node (NVLink, fast).
+# DP gradient sync (DPr=2 allreduce) replaces PP — can overlap with backward.
+#
+# Parallelism (8 GPUs):
+#   PP=1, EP=4, DP_shard=4, DP_replicate=2, TP=1, CP=1
+#   Check: dp_replicate(2) × dp_shard(4) × cp(1) × tp(1) × pp(1) = 8 ✓
+#   efsdp = fsdp × tp // (etp × ep) = (4×1)×1 // (1×4) = 1 ✓
+#   Node 0 = DPr replica 1 (4 GPUs, EP group)
+#   Node 1 = DPr replica 2 (4 GPUs, EP group)
+#
+# Memory concern: PP=2 1F1B bounded activations to 1 micro-batch in-flight.
+#   PP=1 needs selective AC + small BS to fit.
+#   With PP=2+opt4+bs=64: ~85 GiB. PP=1 changes activation memory profile.
+#   Testing bs=8,16,32 to find the memory bound.
+#
+# Throughput estimate (from profile):
+#   Removing 9.1s PP overhead from 36.2s step → 27.1s → 36.2/27.1 = +34%
+#   145 TFLOPS × 1.34 = ~194 TFLOPS
+#   (Optimistic: doesn't account for activation memory increase or DDP overhead)
+#
+# NOTE: TFLOPS is BF16 matmul TFLOPS — directly comparable to baseline.
+
+defaults:
+  - ../../base
+  - /backend: titan
+  - /container: jupiter_titan
+  - /slurm: jupiter
+  - /sweep: none
+  - override /backend/titan/data: nemonicco_jupiter
+  - override /backend/titan/model: qwen3_moe_30BA3B
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: "titan_moe_30BA3B_pp1ep4_bf16"
+  compile_tag: "compile"
+  ac_opt_tag: "opt4"
+
+backend:
+  titan:
+    model:
+      vocab_size: 50304
+      tokenizer_path: /e/project1/projectnucleus/franke5/workspace/titan-train/torchtitan/assets/tokenizer/gpt-neox-20b
+
+    training:
+      steps: 100
+      local_batch_size: 32
+      seq_len: 4096
+      dtype: bfloat16
+
+    metrics:
+      log_freq: 10
+
+    parallelism:
+      tensor_parallel_degree: 1
+      pipeline_parallel_degree: 1
+      expert_parallel_degree: 4
+      data_parallel_replicate_degree: 2
+      data_parallel_shard_degree: 4
+      context_parallel_degree: 1
+
+    activation_checkpoint:
+      mode: selective
+      selective_ac_option: "4"
+
+    benchmarks:
+      wikitext2_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext2/wikitext2
+      wikitext103_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext103/wikitext103
+      lambada_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/lambada/lambada
+
+  env:
+    TORCHDYNAMO_DISABLE: "0"
+    PYTHONPATH: .:./submodules/titan-oellm:./submodules/titan-oellm/torchtitan
+    NCCL_SOCKET_FAMILY: "AF_INET"
+    GLOO_SOCKET_FAMILY: "AF_INET"
+    NCCL_SOCKET_IFNAME: "ib0"
+    GLOO_SOCKET_IFNAME: "ib0"
+    NCCL_SOCKET_TIMEOUT: "60000"
+    NCCL_TIMEOUT: "1800"
+    NCCL_IB_TIMEOUT: "100"
+    NCCL_IB_RETRY_CNT: "20"
+    NCCL_NET_GDR_LEVEL: "0"
+    HF_ALLOW_CODE_EVAL: "1"
+    TORCH_HOME: ${oc.env:TORCH_HOME,"/tmp/torch_home"}
+    PYTORCH_KERNEL_CACHE_PATH: ${oc.env:PYTORCH_KERNEL_CACHE_PATH,"/tmp/torch_home/kernels"}
+    TRITON_CACHE_DIR: ${oc.env:TRITON_CACHE_DIR,"/tmp/triton_cache"}
+    TORCHINDUCTOR_CACHE_DIR: ${oc.env:TORCHINDUCTOR_CACHE_DIR,"/tmp/torchinductor_cache"}
+    TORCHINDUCTOR_FX_GRAPH_CACHE: ${oc.env:TORCHINDUCTOR_FX_GRAPH_CACHE,"/tmp/torchinductor_fx_cache"}
+    TORCHINDUCTOR_AUTOGRAD_CACHE: ${oc.env:TORCHINDUCTOR_AUTOGRAD_CACHE,"/tmp/torchinductor_autograd_cache"}
+    TORCH_INDUCTOR_CUDAGRAPH_DISABLE: ${oc.env:TORCH_INDUCTOR_CUDAGRAPH_DISABLE,"1"}
+    PYTORCH_CUDA_ALLOC_CONF: ${oc.env:PYTORCH_CUDA_ALLOC_CONF,"expandable_segments:True"}
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+
+  torchrun_args:
+    nproc_per_node: ${slurm.sbatch.gpus_per_node}
+    nnodes: ${slurm.sbatch.nodes}
+    max_restarts: 0
+    rdzv_backend: "c10d"
+    rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
+    node_rank: "$SLURM_PROCID"
+    master_addr: "$MASTER_ADDR"
+    master_port: "$MASTER_PORT"
+
+job:
+  name: titan_moe_30BA3B_ep4pp1_${aux.compile_tag}_acselective_${aux.ac_opt_tag}_bs${backend.titan.training.local_batch_size}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+container:
+  bind:
+    - /e/
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+slurm:
+  template_path: "templates/jupiter_mod.sbatch"
+  sbatch:
+    nodes: 2
+    gpus_per_node: 4
+    gres: "gpu:4"
+    cpus_per_task: 72
+    threads_per_core: 1
+    account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
+    partition: booster
+    time: "01:00:00"
+  srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
+  env:
+    NUM_NODES: "$SLURM_JOB_NUM_NODES"
+    GPUS_PER_NODE: "4"
+    NUM_GPUS_PER_NODE: "4"
+    NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
+    SLURM_CPUS_PER_TASK: "72"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ── Config 0: compile + opt4 + bs=32 (PP=1) ─────────────────────────
+        # Memory: PP=1 removes 1F1B schedule. With opt=4+bs=32: estimated ~65-80 GiB.
+        # Profile predicted: -25% PP overhead → ~+34% TFLOPS.
+        # TPS is normalized per-GPU. TFLOPS directly comparable to PP=2 baseline.
+        - aux.compile_tag: compile
+          aux.ac_opt_tag: opt4
+          backend.titan.activation_checkpoint.selective_ac_option: "4"
+          backend.titan.training.local_batch_size: 32
+          backend.env.TORCHDYNAMO_DISABLE: "0"
+
+        # ── Config 1: compile + opt4 + bs=64 (PP=1) ─────────────────────────
+        # Same as config 0 but larger batch. Memory check: might OOM.
+        # If PP=2+bs=64 = 85 GiB, PP=1+bs=64 with different schedule might be similar.
+        - aux.compile_tag: compile
+          aux.ac_opt_tag: opt4
+          backend.titan.activation_checkpoint.selective_ac_option: "4"
+          backend.titan.training.local_batch_size: 64
+          backend.env.TORCHDYNAMO_DISABLE: "0"
+
+        # ── Config 2: compile + opt2 + bs=64 (PP=1) ─────────────────────────
+        # More aggressive recompute (opt=2 = 50% layers recomputed) to reduce activation memory.
+        # Allows larger BS if opt=4+bs=64 OOMs. Trade speed (more recompute) for memory.
+        - aux.compile_tag: compile
+          aux.ac_opt_tag: opt2
+          backend.titan.activation_checkpoint.selective_ac_option: "2"
+          backend.titan.training.local_batch_size: 64
+          backend.env.TORCHDYNAMO_DISABLE: "0"
+
+        # ── Config 3: nocompile + opt4 + bs=32 (PP=1) ───────────────────────
+        # PP=1 without compile — baseline for compile gain at PP=1.
+        - aux.compile_tag: nocompile
+          aux.ac_opt_tag: opt4
+          backend.titan.activation_checkpoint.selective_ac_option: "4"
+          backend.titan.training.local_batch_size: 32
+          backend.env.TORCHDYNAMO_DISABLE: "1"

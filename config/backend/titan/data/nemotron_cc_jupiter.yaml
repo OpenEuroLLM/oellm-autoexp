@@ -1,0 +1,5 @@
+dataloader: "DeterministicPackedDataset"
+min_doc_len: 10
+
+chunks_dir:
+ - /e/project1/projectnucleus/franke5/data/datasets/nemotron_neomotron_cc_v1

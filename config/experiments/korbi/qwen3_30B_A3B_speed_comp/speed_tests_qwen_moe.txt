@@ -1,0 +1,53 @@
+Qwen 30B-A3B speed experiments on JUPITER
+
+Megatron
+
+# ── Measured results (2 nodes, 8×GH200, EP=4+PP=2) ──────────────────────────
+#   EP=4+PP=2, mbs4, full_recompute    → 118.4 TFLOPS, 85% mem  ← OPTIMAL
+#   EP=4+PP=2, mbs4, selective_recompute → OOM (94.6 GiB / 95 GiB)
+#   EP=4+PP=2, mbs4, no_recompute       → OOM (94.7 GiB / 95 GiB)
+#   EP=4+PP=2, mbs8, full_recompute    → 101.9 TFLOPS, 96% mem  (mbs4 faster)
+#   EP=8+PP=1, mbs4, full_recompute    →  74.5 TFLOPS, 95% mem  (inter-node EP ~37% slower)
+
+TorchTitan
+
+# ── Measured results (2 nodes, 8×GH200, EP=8, dp_shard=8) ───────────────────
+#   nocompile, full AC,  bs=4  → 180.04 TFLOPS,  12.25 GiB (13%)  (baseline)
+#   compile,   full AC,  bs=4  → 179.83 TFLOPS,  12.25 GiB (13%)  (~same as nocompile — compile barely helps for MoE)
+#   compile,   full AC,  bs=8  → 203.12 TFLOPS,  23.35 GiB (25%)
+#   nocompile, no AC,    bs=4  → 224.37 TFLOPS,  19.29 GiB (20%)  (+25% vs full AC)
+#   compile,   no AC,    bs=4  → 226.94 TFLOPS,  19.29 GiB (20%)
+#   compile,   no AC,    bs=8  → 254.74 TFLOPS,  37.43 GiB (39%)
+#   nocompile, no AC,    bs=16 → 262.61 TFLOPS,  74.03 GiB (78%)
+#   compile,   no AC,    bs=16 → 263.11 TFLOPS,  74.03 GiB (78%)  ← OPTIMAL (+3.3% vs bs=8)
+#   compile,   no AC,    bs=32 → OOM (73 GiB used + 24.56 GiB needed > 95 GiB)
+
+
+Qwen 235B-A22B speed experiments on JUPITER
+
+Megatron
+# Phase 1: TP=4+PP=2+EP=8
+#   mbs=1, full_recompute → 27.5 TFLOPS, 75.3 GiB (79%)  ← Phase-1 OPTIMAL
+#   mbs=2, full_recompute → 27.2 TFLOPS, 80.0 GiB (84%)
+#   mbs=4, full_recompute → 23.1 TFLOPS, 89.5 GiB (94%)  (timed out at iter 94)
+#   mbs=1, no_recompute   → OOM (94.6 GiB / 95 GiB)
+#
+# Phase 2: EP=4 / PP=1 variants
+#   A: TP=4, PP=1, EP=8 → OOM (94.97 GiB) — PP=1 doubles all 94 layers, fills GPU
+#   B: TP=4, PP=2, EP=4 → OOM after 1 iter (11.7 TFLOPS, 96.1% / 91.3 GiB) — worse
+#   C: TP=4, PP=1, EP=4 → OOM at init (52.88 GiB grad buffer: 32 experts × 47 layers)
+#   D: TP=2, PP=2, EP=4 → OOM at init (same 52.88 GiB grad buffer)
+#   E: TP=2, PP=1, EP=4 → OOM at init (same 52.88 GiB grad buffer)
+
+TorchTitan
+
+# ── Measured results (16 nodes, 64×GH200, EP=8, dp_shard=64) ───────────────
+#   nocompile, full AC,  bs=1  →  52.88 TFLOPS,  3.80 GiB  ( 4%)
+#   compile,   full AC,  bs=1  →  54.63 TFLOPS,  3.80 GiB  ( 4%)  (+3% vs nocompile)
+#   nocompile, no AC,    bs=1  →  75.74 TFLOPS,  5.57 GiB  ( 6%)  (+43% vs full AC)
+#   compile,   no AC,    bs=1  →  71.18 TFLOPS,  5.57 GiB  ( 6%)  (compile slower here)
+#   compile,   no AC,    bs=2  → 122.37 TFLOPS, 10.10 GiB  (11%)
+#   compile,   no AC,    bs=4  → 192.59 TFLOPS, 19.15 GiB  (20%)
+#   compile,   no AC,    bs=8  → 216.50 TFLOPS, 37.31 GiB  (39%)
+#   compile,   no AC,    bs=16 → 251.95 TFLOPS, 73.91 GiB  (78%)  ← OPTIMAL
+#   compile,   no AC,    bs=32 → OOM

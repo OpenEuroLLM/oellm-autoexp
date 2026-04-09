@@ -17,6 +17,7 @@ srun:
 launcher_env_passthrough: true
 env:
   MACHINE_NAME: JUPITER
+  HF_HOME: ${oc.env:HF_HOME}
   HF_ALLOW_CODE_EVAL: "1"
   HF_DATASETS_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
@@ -30,8 +31,8 @@ env:
   SLURM_CPUS_PER_TASK: "16"
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
   PYTHONUNBUFFERED: "1"
-  CUDA_DEVICE_MAX_CONNECTIONS: "1"
   PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+  PYTORCH_ALLOC_CONF: "expandable_segments:True"
   NCCL_SOCKET_IFNAME: ib0
   NCCL_NET_GDR_LEVEL: "2"
   NCCL_NET_GDR_READ: "1"
@@ -55,4 +56,4 @@ sbatch:
   gpu_bind: "none"
   partition: ${oc.env:SLURM_PARTITION,booster}
   account: ${oc.env:SLURM_ACCOUNT,jureap59}
-  time: "24:00:00"
+  time: "12:00:00"

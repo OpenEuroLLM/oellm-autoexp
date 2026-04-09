@@ -3,7 +3,11 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .checker import DEFAULT_HASH_ALGORITHM, IntegrityError, check_integrity
+from oellm_autoexp.data_integrity_check.checker import (
+    DEFAULT_HASH_ALGORITHM,
+    IntegrityError,
+    check_integrity,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:

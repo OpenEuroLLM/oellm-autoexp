@@ -5,13 +5,15 @@ defaults:
   - /container: leonardo
   - /slurm: leonardo
   - /sweep: none
-  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_leonardo]
+  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_leonardo,data_slimpajama]
   - _self_
 
 backend:
   megatron:
     train_iters: 500
     eval_interval: 1000
+    save: null
+    load: null
 
 job:
   name: megatron_leonardo_speed_test

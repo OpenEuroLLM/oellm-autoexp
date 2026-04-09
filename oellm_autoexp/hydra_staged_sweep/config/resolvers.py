@@ -180,7 +180,12 @@ def _validate_eval_expression(expr: str) -> None:
 
 
 def _safe_eval(expr: str):
-    _validate_eval_expression(expr)
+    expr = str(expr)
+    try:
+        _validate_eval_expression(expr)
+    except Exception as e:
+        print(expr)
+        raise e
     return eval(expr)
 
 

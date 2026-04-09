@@ -23,6 +23,7 @@ env:
   PYTHONPATH: ".:submodules/Megatron-LM"
   RUN_DIR: ${.PROJECT_DIR}/submodules/Megatron-LM
   PROJECT_DIR: ${oc.env:PROJECT_DIR,.}
+  HF_HOME: ${oc.env:HF_HOME}
 
 # map megatron command to
 full_cmd: "${.dist_cmd} ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n   %',' %',${oc.argsmegatron:${backend.megatron}}}}"

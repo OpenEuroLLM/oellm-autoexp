@@ -1,0 +1,274 @@
+# @package _global_
+# Qwen3 30BA3B "maximally comparable" Titan config for direct Megatron comparison.
+#
+# Goal: eliminate confounding factors (batch size, FSDP, TP/PP) to isolate
+#       framework overhead between Titan and Megatron on equal footing.
+#
+# Design choices (EP=8):
+#   EP=8, dp_shard=8, dp_replicate=1, efsdp=1 → no expert FSDP
+#   bs=1 → same effective tokens/step as Megatron mbs=1 GBS=8
+#
+# Design choices (EP=4):
+#   EP=4, dp_shard=4, dp_replicate=2, efsdp=4×1/(1×4)=1 → still no expert FSDP
+#   bs=1 → GBS = dp_replicate×dp_shard×bs = 2×4×1 = 8 (same total tokens/step)
+#   32 experts/GPU (vs 16 for EP=8); attention FSDP sharded 4-way (vs 8-way)
+#
+# Note: EP is carved from dp_shard → dp_shard ≥ EP required. With EP=4, filling
+#   8 GPUs requires dp_replicate=2 (DDP), but efsdp=1 still achievable.
+#
+# Memory note: Titan logs memory as max_reserved_bytes.all.peak since last
+#   reset_peak_memory_stats() (per-step window only). Model params + optimizer
+#   states are allocated before the reset → NOT counted. Reported values (~4-6 GiB)
+#   reflect activation + allgather transients only; true GPU footprint ≈ 77 GiB.
+#
+# Comparable Megatron config: megatron_moe_30BA3B_comparable_jupiter.yaml
+#
+# ── Results (2 nodes, 8×GH200, bs=1) ────────────────────────────────────────
+# EP=8 (dp_shard=8, dp_replicate=1, efsdp=1):
+#   nocompile, full AC → 56.9 TFLOPS, 3.95 GiB (4%)  (job 309056)
+#   compile,   full AC → 55.5 TFLOPS, 3.95 GiB (4%)  (job 309066)
+#   nocompile, no AC   → 79.7 TFLOPS, 5.71 GiB (6%)  (job 309058)  ← EP=8 BEST
+#   compile,   no AC   → 78.4 TFLOPS, 5.71 GiB (6%)  (job 309055)
+# EP=4 (dp_shard=4, dp_replicate=2, efsdp=1):
+#   nocompile, full AC → 56.3 TFLOPS, 4.57 GiB (5%)  (job 309630)
+#   compile,   full AC → 54.3 TFLOPS, 4.57 GiB (5%)  (job 309627)
+#   nocompile, no AC   → 77.3 TFLOPS, 6.33 GiB (7%)  (job 309629)
+#   compile,   no AC   → 75.8 TFLOPS, 6.33 GiB (7%)  (job 309628)
+#   EP=4 is ~3-5% slower than EP=8 at bs=1 (DDP replica allreduce overhead)
+#
+# ── Results (2 nodes, 8×GH200, EP=8, larger bs) ─────────────────────────────
+# nocompile, no AC:    bs=2  → 151.7 TFLOPS,  10.2 GiB (11%)  (job 311767)
+#                      bs=4  → 226.5 TFLOPS,  19.3 GiB (20%)  (job 311763)
+#                      bs=8  → 249.5 TFLOPS,  37.4 GiB (39%)  (job 311766)
+#                      bs=16 → 270.5 TFLOPS,  74.0 GiB (78%)  (job 311765) ← BEST
+# nocompile, full AC:  bs=2  → 112.6 TFLOPS,    6.7 GiB  (7%)  (job 311768)
+#                      bs=4  → 181.5 TFLOPS,  12.3 GiB (13%)  (job 311764)
+#                      bs=8  → 208.9 TFLOPS,  23.4 GiB (25%)  (job 311762)
+#
+# Key finding (EP=8): compile barely helps at bs=1 (~1-2% diff). Full AC costs ~30%.
+#
+defaults:
+  - ../../base
+  - /backend: titan
+  - /container: jupiter_titan
+  - /slurm: jupiter
+  - /sweep: none
+  - override /backend/titan/data: nemonicco_jupiter
+  - override /backend/titan/model: qwen3_moe_30BA3B
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: "titan_moe_30BA3B_comparable"
+  compile_tag: "nocompile"
+  ep_tag: "ep8"
+
+backend:
+  titan:
+    model:
+      vocab_size: 50304
+      tokenizer_path: /e/project1/projectnucleus/franke5/workspace/titan-train/torchtitan/assets/tokenizer/gpt-neox-20b
+
+    training:
+      steps: 100
+      local_batch_size: 1
+      seq_len: 4096
+      dtype: bfloat16
+
+    metrics:
+      log_freq: 10
+
+    parallelism:
+      tensor_parallel_degree: 1
+      pipeline_parallel_degree: 1
+      expert_parallel_degree: 8
+      data_parallel_replicate_degree: 1
+      data_parallel_shard_degree: 8   # minimum for EP=8; efsdp=8*1/(1*8)=1 → no expert FSDP
+      context_parallel_degree: 1
+
+    activation_checkpoint:
+      mode: full
+
+    benchmarks:
+      wikitext2_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext2/wikitext2
+      wikitext103_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext103/wikitext103
+      lambada_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/lambada/lambada
+
+  env:
+    TORCHDYNAMO_DISABLE: "1"
+    PYTHONPATH: .:./submodules/titan-oellm:./submodules/titan-oellm/torchtitan
+    NCCL_SOCKET_FAMILY: "AF_INET"
+    GLOO_SOCKET_FAMILY: "AF_INET"
+    NCCL_SOCKET_IFNAME: "ib0"
+    GLOO_SOCKET_IFNAME: "ib0"
+    NCCL_SOCKET_TIMEOUT: "60000"
+    NCCL_TIMEOUT: "1800"
+    NCCL_IB_TIMEOUT: "100"
+    NCCL_IB_RETRY_CNT: "20"
+    NCCL_ALGO: "Ring"
+    HF_ALLOW_CODE_EVAL: "1"
+    TORCH_HOME: ${oc.env:TORCH_HOME,"/tmp/torch_home"}
+    PYTORCH_KERNEL_CACHE_PATH: ${oc.env:PYTORCH_KERNEL_CACHE_PATH,"/tmp/torch_home/kernels"}
+    TRITON_CACHE_DIR: ${oc.env:TRITON_CACHE_DIR,"/tmp/triton_cache"}
+    TORCHINDUCTOR_CACHE_DIR: ${oc.env:TORCHINDUCTOR_CACHE_DIR,"/tmp/torchinductor_cache"}
+    TORCHINDUCTOR_FX_GRAPH_CACHE: ${oc.env:TORCHINDUCTOR_FX_GRAPH_CACHE,"/tmp/torchinductor_fx_cache"}
+    TORCHINDUCTOR_AUTOGRAD_CACHE: ${oc.env:TORCHINDUCTOR_AUTOGRAD_CACHE,"/tmp/torchinductor_autograd_cache"}
+    TORCH_INDUCTOR_CUDAGRAPH_DISABLE: ${oc.env:TORCH_INDUCTOR_CUDAGRAPH_DISABLE,"1"}
+    PYTORCH_CUDA_ALLOC_CONF: ${oc.env:PYTORCH_CUDA_ALLOC_CONF,"expandable_segments:True"}
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+
+  torchrun_args:
+    nproc_per_node: ${slurm.sbatch.gpus_per_node}
+    nnodes: ${slurm.sbatch.nodes}
+    max_restarts: 0
+    rdzv_backend: "c10d"
+    rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
+    node_rank: "$SLURM_PROCID"
+    master_addr: "$MASTER_ADDR"
+    master_port: "$MASTER_PORT"
+
+job:
+  name: titan_moe_30BA3B_${aux.ep_tag}_${aux.compile_tag}_ac${backend.titan.activation_checkpoint.mode}_bs${backend.titan.training.local_batch_size}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+container:
+  bind:
+    - /e/
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+slurm:
+  template_path: "templates/jupiter_mod.sbatch"
+  sbatch:
+    nodes: 2
+    gpus_per_node: 4
+    gres: "gpu:4"
+    cpus_per_task: 72
+    threads_per_core: 1
+    account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
+    partition: booster
+    time: "00:30:00"
+  srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
+  env:
+    NUM_NODES: "$SLURM_JOB_NUM_NODES"
+    GPUS_PER_NODE: "4"
+    NUM_GPUS_PER_NODE: "4"
+    NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
+    SLURM_CPUS_PER_TASK: "72"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ── nocompile (raw framework overhead, no torch.compile) ──────────────
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 1
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 56.9 TFLOPS, 41,720 TPS/GPU, 3.95 GiB (4%) (job 309056)
+
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: none
+          backend.titan.training.local_batch_size: 1
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 79.7 TFLOPS, 58,408 TPS/GPU, 5.71 GiB (6%) (job 309058) ← no-AC BEST
+
+        # ── compile ───────────────────────────────────────────────────────────
+        - aux.compile_tag: compile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 1
+          # Result: 55.5 TFLOPS, 40,642 TPS/GPU, 3.95 GiB (4%) (job 309066)
+
+        - aux.compile_tag: compile
+          backend.titan.activation_checkpoint.mode: none
+          backend.titan.training.local_batch_size: 1
+          # Result: 78.4 TFLOPS, 57,490 TPS/GPU, 5.71 GiB (6%) (job 309055)
+
+        # ── EP=4 (dp_shard=4, dp_replicate=2, efsdp=1; 32 experts/GPU) ──────
+        # GBS = dp_replicate×dp_shard×bs = 2×4×1 = 8 (same total tokens/step)
+        - aux.ep_tag: ep4
+          aux.compile_tag: nocompile
+          backend.titan.parallelism.expert_parallel_degree: 4
+          backend.titan.parallelism.data_parallel_shard_degree: 4
+          backend.titan.parallelism.data_parallel_replicate_degree: 2
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 1
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 56.3 TFLOPS, 41,245 TPS/GPU, 4.57 GiB (5%) (job 309630)
+
+        - aux.ep_tag: ep4
+          aux.compile_tag: nocompile
+          backend.titan.parallelism.expert_parallel_degree: 4
+          backend.titan.parallelism.data_parallel_shard_degree: 4
+          backend.titan.parallelism.data_parallel_replicate_degree: 2
+          backend.titan.activation_checkpoint.mode: none
+          backend.titan.training.local_batch_size: 1
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 77.3 TFLOPS, 56,672 TPS/GPU, 6.33 GiB (7%) (job 309629)
+
+        - aux.ep_tag: ep4
+          aux.compile_tag: compile
+          backend.titan.parallelism.expert_parallel_degree: 4
+          backend.titan.parallelism.data_parallel_shard_degree: 4
+          backend.titan.parallelism.data_parallel_replicate_degree: 2
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 1
+          # Result: 54.3 TFLOPS, 39,799 TPS/GPU, 4.57 GiB (5%) (job 309627)
+
+        - aux.ep_tag: ep4
+          aux.compile_tag: compile
+          backend.titan.parallelism.expert_parallel_degree: 4
+          backend.titan.parallelism.data_parallel_shard_degree: 4
+          backend.titan.parallelism.data_parallel_replicate_degree: 2
+          backend.titan.activation_checkpoint.mode: none
+          backend.titan.training.local_batch_size: 1
+          # Result: 75.8 TFLOPS, 55,552 TPS/GPU, 6.33 GiB (7%) (job 309628)
+
+        # ── EP=8 larger batch sizes (nocompile, no AC — best config) ─────────
+        # GBS = dp_shard × bs = 8 × bs; equivalent to Megatron mbs=bs, GBS=8×bs
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: none
+          backend.titan.training.local_batch_size: 2
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 151.7 TFLOPS, 111,201 TPS/GPU, 10.2 GiB (11%) (job 311767)
+
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: none
+          backend.titan.training.local_batch_size: 4
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 226.5 TFLOPS, 165,983 TPS/GPU, 19.3 GiB (20%) (job 311763)
+
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: none
+          backend.titan.training.local_batch_size: 8
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 249.5 TFLOPS, 182,858 TPS/GPU, 37.4 GiB (39%) (job 311766)
+
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: none
+          backend.titan.training.local_batch_size: 16
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 270.5 TFLOPS, 198,262 TPS/GPU, 74.0 GiB (78%) (job 311765) ← BEST
+
+        # ── EP=8 larger batch sizes (nocompile, full AC — Megatron-comparable) ─
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 2
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 112.6 TFLOPS, 82,524 TPS/GPU, 6.7 GiB (7%) (job 311768)
+
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 4
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 181.5 TFLOPS, 133,010 TPS/GPU, 12.3 GiB (13%) (job 311764)
+
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 8
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Result: 208.9 TFLOPS, 153,134 TPS/GPU, 23.4 GiB (25%) (job 311762)

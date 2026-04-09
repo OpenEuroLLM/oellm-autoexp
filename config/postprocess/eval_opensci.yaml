@@ -1,0 +1,10 @@
+# @package _global_
+#
+# Run oellm-cli on open-sci-0.01 task group.
+
+postprocess:
+  eval:
+    class_name: OELLMEvalStep
+    model_path: ${job.base_output_dir}/hf/${oc.pad_iter:${backend.megatron.ckpt_step}}
+    task_groups:
+      - open-sci-0.01

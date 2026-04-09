@@ -1,0 +1,10 @@
+# @package _global_
+#
+# Megatron torch_dist → torch checkpoint conversion.
+# Runs inside the container (same_job) after training, before HF conversion.
+# Uses backend.full_cmd which already contains --ckpt-convert-format torch.
+
+postprocess:
+  dist_to_torch:
+    class_name: MegatronDistToTorchStep
+    cmd: "${backend.full_cmd}"

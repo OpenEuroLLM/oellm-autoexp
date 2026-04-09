@@ -52,6 +52,9 @@ from oellm_autoexp.data_integrity_check import check_integrity
 
 LOGGER = logging.getLogger(__name__)
 
+# These megatron args trigger post-training checkpoint conversion
+_CONVERT_KEYS: frozenset[str] = frozenset({"ckpt_convert_format", "ckpt_convert_save", "ckpt_step"})
+
 register_argparse_resolver(
     "argsmegatron",
     arg_metadata=dict(MEGATRON_ARG_METADATA),
@@ -171,7 +174,19 @@ class MegatronBackend(BaseBackend):
                 pass
 
     def build_launch_command(self) -> str:
-        return self.config.full_cmd
+        ckpt_convert_format = getattr(self.config.megatron, "ckpt_convert_format", None)
+        if not ckpt_convert_format:
+            return self.config.full_cmd
+
+        megatron_dict = asdict(self.config.megatron)
+        training_dict = {k: v for k, v in megatron_dict.items() if k not in _CONVERT_KEYS}
+        training_args = build_cmdline_args(
+            training_dict,
+            dict(MEGATRON_ARG_METADATA),
+            dict(MEGATRON_ACTION_SPECS),
+            skip_defaults=True,
+        )
+        return f"{self.config.dist_cmd} {' '.join(training_args)}"
 
     def _filter_megatron_args(self, params: dict[str, Any]) -> dict[str, Any]:
         if self._schema_only:

@@ -1,0 +1,10 @@
+defaults:
+ - qwen3_base
+
+num_layers: 16
+hidden_size: 512
+ffn_hidden_size: 2048
+num_attention_heads: 4
+num_query_groups: 4
+kv_channels: 128
+untie_embeddings_and_output_weights: False

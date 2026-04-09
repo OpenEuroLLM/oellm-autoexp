@@ -30,6 +30,7 @@ OUTPUT_DIR="${CONTAINER_CACHE_DIR:-$(pwd)}"
 APPEND_DATE=false
 BASE_IMAGE=${BASE_IMAGE:-nvcr.io/nvidia/pytorch:25.10-py3}
 CONTAINER_RUNTIME="singularity"
+ADDITIONAL_TAG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

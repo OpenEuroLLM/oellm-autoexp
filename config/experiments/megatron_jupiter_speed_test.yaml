@@ -4,7 +4,7 @@ defaults:
   - /backend: megatron_torchrun_localaddr
   - /container: jupiter
   - /slurm: jupiter
-  - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_jupiter]
+  - /backend/megatron: [llama1_8b_qkln,speed_test_jupiter]
   - /sweep: none
   - _self_
 
@@ -20,6 +20,10 @@ backend:
     load: null
     lr: 1e-3
     lr_warmup_iters: 0
+    # Throughput optimizations (~40% MFU on GH200, single node):
+    micro_batch_size: 4           # optimal MBS for 1.8B on GH200 (65% GPU memory usage)
+    recompute_activations: false  # flash-attn handles backward efficiently; no extra recompute needed
+    recompute_granularity: null   # must be null when recompute_activations=false
   env:
     TOKENIZERS_PARALLELISM: "false"
     TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers

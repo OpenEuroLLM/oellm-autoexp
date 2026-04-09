@@ -15,7 +15,8 @@ backend:
 
 # at the moment this does not work!
 slurm:
-  nodes: 2
+  sbatch:
+    nodes: 2
 
 job:
   name: megatron_juwels_speed_test

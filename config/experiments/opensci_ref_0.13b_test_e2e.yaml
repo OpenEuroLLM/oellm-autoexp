@@ -1,0 +1,41 @@
+# @package _global_
+#
+# Reproducible test config: 5-iter train -> torch_dist -> torch -> HF -> eval
+# Used to verify the checkpoint conversion pipeline end-to-end.
+
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: [base_reference, opensci_ref_130M, data_mixturevitae]
+  - /postprocess: [ckpt_dist_to_torch_opensci, ckpt_convert_opensci, eval_opensci]
+  - _self_
+
+index: 0
+stage: "all"
+
+job:
+  name: "opensci-ref_0.13b_test_e2e"
+  base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${.name}
+
+backend:
+  megatron:
+    legacy_tokenizer: false
+    train_iters: 5
+    lr_warmup_iters: 2
+    lr_decay_iters: 5
+    lr_wsd_decay_iters: 1
+    save_interval: 5
+    eval_interval: 5
+    ckpt_convert_format: torch
+    ckpt_convert_save: ${job.base_output_dir}
+    ckpt_step: ${backend.megatron.train_iters}
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  sbatch:
+    nodes: 1
+    time: "00:30:00"

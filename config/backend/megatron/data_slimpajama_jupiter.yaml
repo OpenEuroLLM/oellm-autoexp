@@ -1,0 +1,6 @@
+data_path:
+  - /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
+data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+
+aux:
+  dataset: spaj

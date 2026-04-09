@@ -12,7 +12,7 @@ transformer_impl: transformer_engine
 te_rng_tracker: true
 tokenizer_type: HuggingFaceTokenizer
 # tokenizer_model: Qwen/Qwen3_30B_A3B
-tokenizer_model: EleutherAI/gpt-neox-20b
+tokenizer_model: /e/project1/projectnucleus/shared/models/EleutherAI/gpt-neox-20b
 make_vocab_size_divisible_by: 128
 dist_ckpt_strictness: log_unexpected
 ckpt_format: torch_dist
@@ -21,7 +21,7 @@ ckpt_format: torch_dist
 cross_entropy_loss_fusion: true
 manual_gc: true
 manual_gc_interval: 100
-cuda_graph_scope: []
+cuda_graph_scope: "full"  # value irrelevant; cuda_graph_impl=none disables graphs entirely
 cuda_graph_impl: "none"
 cuda_graph_warmup_steps: 3
 cross_entropy_fusion_impl: "te"
@@ -29,8 +29,6 @@ cross_entropy_fusion_impl: "te"
 recompute_granularity: full
 recompute_method: uniform
 recompute_modules: null
-fine_grained_activation_offloading: false
-offload_modules: []
 recompute_num_layers: 1
 sequence_parallel: true
 use_flash_attn: true

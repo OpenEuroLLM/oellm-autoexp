@@ -1,0 +1,115 @@
+# @package _global_
+#
+# Performance test: 1.7B dense, JUPITER, 32 nodes (128 GPUs)
+# Megatron: main@31a29b87 (fast version, ~370+ TFLOP/s/GPU)
+#
+# Changes vs opensci_ref_1.7b_mixvitae_jupiter.yaml (production):
+#   (2) Fusions enabled: bias_swiglu, bias_gelu, bias_dropout, gradient_accumulation
+#   (3) Pure MHA: num_query_groups=32 (= num_attention_heads, no GQA)
+#   (4) micro_batch_size=4 (mbs=8 OOMs with old Megatron in pt2510 container)
+#   (5) 32 nodes / 128 GPUs (production uses 64 nodes / 256 GPUs)
+#
+# Short run (300 iters) — no checkpoint save/load.
+
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: [base_reference, opensci_ref_1.7B, data_mixturevitae]
+  - /postprocess: none
+  - _self_
+
+index: 0
+stage: "train"
+
+job:
+  name: "opensci-perf-test_1.7b_jupiter"
+  base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${.name}
+
+backend:
+  megatron:
+    # Short perf test
+    train_iters: 300
+    lr_warmup_iters: 0
+    lr_decay_iters: 300
+    lr_wsd_decay_iters: 60
+    save_interval: 999999999
+    eval_interval: 999999999
+    eval_iters: 0
+    log_interval: 10
+    save: null
+    load: null
+
+    # Training schedule
+    lr: 0.004
+    global_batch_size: 1024
+    micro_batch_size: 4    # mbs=8 OOMs; 128 GPUs * 4 = 512 → 2 grad-accum steps
+    min_lr: 0.0
+    adam_beta2: 0.95
+    weight_decay: 0.05
+    init_method_std: 0.02
+    clip_grad: 1.0
+    add_qkv_bias: false
+    legacy_tokenizer: false
+    override_opt_param_scheduler: true
+
+    # (2) Enable all fusions
+    bias_swiglu_fusion: true
+    bias_gelu_fusion: true
+    bias_dropout_fusion: true
+    gradient_accumulation_fusion: true
+    accumulate_allreduce_grads_in_fp32: false
+
+    # (3) Pure MHA
+    num_query_groups: 32
+
+    # Architecture
+    bf16: true
+    use_flash_attn: true
+    qk_layernorm: true
+    normalization: RMSNorm
+    norm_epsilon: 1.0e-05
+    swiglu: true
+    position_embedding_type: rope
+    rotary_base: 100000
+    rotary_percent: 1.0
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    seq_length: 4096
+    max_position_embeddings: 4096
+    vocab_size: 50304
+
+    # Parallelism
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: true
+
+    # Distributed optimization
+    distributed_backend: nccl
+    use_distributed_optimizer: true
+    overlap_param_gather: true
+    overlap_grad_reduce: true
+    recompute_activations: true
+    ckpt_format: torch_dist
+    async_save: false
+
+    # Data
+    tokenizer_type: HuggingFaceTokenizer
+    split: "989,10,1"
+    num_workers: 4
+
+    log_throughput: true
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+    aux:
+      model_name: "dense1.7B"
+      dataset: mixturevitae
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  sbatch:
+    nodes: 32    # (5) 32 nodes * 4 GPUs = 128 GPUs
+    time: "00:30:00"

@@ -1,0 +1,17 @@
+name: qwen3_custom
+flavor: debugmodel
+
+# Qwen3-specific parameters
+qk_norm: true  # Enable QK normalization in attention
+rope_theta: 1000000  # RoPE theta value for rotary embeddings
+head_dim: 128  # Dimension per attention head
+hidden_dim: 3072  # FFN hidden dimension
+norm_eps: 1e-6  # Layer normalization epsilon
+depth_init: true  # Use depth-dependent initialization
+enable_weight_tying: false  # Tie embedding and output head weights (reduces params)
+
+n_heads: 4
+n_layers: 18
+n_kv_heads: 1
+max_seq_len: 8192
+dim: 512

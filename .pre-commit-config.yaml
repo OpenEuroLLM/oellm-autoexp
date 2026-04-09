@@ -63,9 +63,3 @@ repos:
 #   hooks:
 #     - id: interrogate
 #       args: [tests]
-- repo: https://github.com/pycqa/flake8
-  rev: 7.3.0
-  hooks:
-    - id: flake8
-      additional_dependencies: [Flake8-pyproject]
-      args: [ --max-line-length=120 ]

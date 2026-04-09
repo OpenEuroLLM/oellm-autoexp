@@ -40,6 +40,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--no-monitor", action="store_true", help="Submit jobs but skip monitoring")
     parser.add_argument(
+        "--submit-and-exit",
+        action="store_true",
+        help="Submit jobs to SLURM then exit immediately (no monitoring loop)",
+    )
+    parser.add_argument(
         "--monitor-state-dir",
         default="./monitor_state",
         type=Path,
@@ -202,6 +207,10 @@ def main(argv: list[str] | None = None) -> None:
     res = submit_jobs(plan, no_error_catching=args.debug, local_mode=args.local)
 
     if args.no_monitor:
+        exit(0)
+
+    if args.submit_and_exit:
+        res.loop.observe_once()
         exit(0)
 
     run_loop(res.loop)
