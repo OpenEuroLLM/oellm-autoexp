@@ -12,6 +12,7 @@ srun:
   exclusive: true
   wait: 60
   cpus_per_task: 16
+  mpi: "none"
   threads_per_core: 1
   gpu_bind: "none"
 launcher_env_passthrough: true
