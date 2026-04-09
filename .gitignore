@@ -232,3 +232,5 @@ slurm_jupiter.sh
 slurm_juwels.sh
 logs/
 output/
+
+local/  
