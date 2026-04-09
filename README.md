@@ -37,6 +37,14 @@ The environment variables used in the `config/` here are:
 - Install prerequisites outside the container (rccl-tuner, cray-python, etc.) following the LUMI docs. (SEE: https://github.com/sfantao/rccl-tuner.git)
 - Build the Megatron container from the provided defs (see `container/megatron/MegatronTrainingLumi.def.in`) so the correct ROCm + network tuning ends up inside the image.
 - Export the usual SLURM/paths (at a minimum `SLURM_ACCOUNT`, `SLURM_PARTITION[_DEBUG]`, `CONTAINER_CACHE_DIR`, `OUTPUT_DIR`) in your profile—scripts read them automatically.
+### Quickstart using pre-configured enviroment and default values,
+    ```
+    git clone https://github.com/OpenEuroLLM/oellm-autoexp.git --recurse-submodules
+    # using uv
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    # uv creates a python virtual environment matching pyproject.toml-file on the fly. inode-count for env ~2k.
+    SLURM_ACCOUNT=project_462000963 SLURM_PARTITION=dev-g uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/megatron_lumi_speed_test.yaml  
+    ```
 
 ## Cluster setup: MARENOSTRUM notes
 You need to install oellm-autoexp or its requirements in a conda environment to run it on MARENOSTRUM. To do this:
