@@ -1,0 +1,98 @@
+# @package _global_
+# MaxText (JAX) MoE 235BA22B speed test on JUPITER (16 nodes, 64x GH200)
+#
+# MaxText uses JAX distributed (not torchrun). srun launches one process per
+# node; MaxText's GPU init uses JAX_COORDINATOR_IP/PORT + NNODES/NODE_RANK.
+#
+# Architecture: 94 layers, dim=4096, 64 query heads, 4 KV heads (GQA),
+#               head_dim=128, 128 experts, topk=8, moe_inter_dim=1536
+#
+# NOTE: MaxText on GPU is 3-6x slower than PyTorch backends due to:
+#   - No megablox on GPU (falls back to dense_matmul or ragged_dot)
+#   - XLA involuntary rematerialization of MoE expert weights
+#   - TPU-optimized sharding strategies
+# This config is primarily for completeness in framework comparison.
+#
+# Starting with reduced layers (16) — full 94 layers will OOM due to XLA
+# involuntary rematerialization (30BA3B needed 24/48 layers on 2 nodes).
+# With 16 nodes (8x more GPUs), we may fit more layers via wider FSDP.
+#
+# Parallelism: ICI EP=4 (intra-node NVLink), DCN FSDP=16 (inter-node IB)
+# Memory: 4096 hidden is 4x larger → more aggressive sharding needed
+#
+# ── Results ──────────────────────────────────────────────────────────────────
+# (to be filled in after jobs complete)
+
+defaults:
+  - ../../base
+  - /backend: maxtext
+  - /container: jupiter_maxtext
+  - /slurm: jupiter
+  - /sweep: none
+  - override /backend/maxtext: [base, qwen3_moe_235BA22B]
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: "maxtext_moe_235BA22B_speed"
+
+backend:
+  maxtext:
+    run_name: "maxtext_moe_235BA22B_speed"
+    attention: dot_product
+    megablox: false
+    sparse_matmul: true
+    steps: 50
+    per_device_batch_size: 1
+    dataset_type: synthetic
+    remat_policy: full
+    enable_checkpointing: false
+    scan_layers: false
+    max_target_length: 2048
+    # Start with 16 layers — full 94 layers will OOM.
+    # 30BA3B fit 24/48 layers on 8 GPUs; 235BA22B is 4x wider (dim=4096).
+    # With 64 GPUs (8x more FSDP sharding), try 16 layers first.
+    base_num_decoder_layers: 16
+    monitor_goodput: false
+    enable_goodput_recording: false
+    base_output_directory: "${job.base_output_dir}"
+    # Parallelism: ICI EP=4 (intra-node NVLink), DCN FSDP=16 (inter-node IB)
+    # Total sharding: FSDP(16) * EP(4) = 64-way
+    ici_fsdp_parallelism: 1
+    ici_fsdp_transpose_parallelism: 2
+    ici_expert_parallelism: 2
+    ici_tensor_parallelism: 1
+    ici_data_parallelism: 1
+    dcn_data_parallelism: 1
+    dcn_fsdp_parallelism: 16
+    dcn_expert_parallelism: 1
+
+  env:
+    PYTHONPATH: ".:submodules/MaxText:stubs"
+    XLA_FLAGS: "--xla_gpu_enable_command_buffer="
+    XLA_PYTHON_CLIENT_MEM_FRACTION: "0.95"
+    NNODES: "$SLURM_NNODES"
+    NODE_RANK: "$SLURM_NODEID"
+    JAX_COORDINATOR_PORT: "1234"
+
+container:
+  bind:
+    - /e/
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+slurm:
+  srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
+  sbatch:
+    nodes: 16
+    time: "00:45:00"
+    cpus_per_task: 72
+  env:
+    JAX_COORDINATOR_IP: "$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n1)"
+    NCCL_NET_GDR_LEVEL: "0"
+
+job:
+  name: maxtext_moe_235BA22B_16node_speed
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"

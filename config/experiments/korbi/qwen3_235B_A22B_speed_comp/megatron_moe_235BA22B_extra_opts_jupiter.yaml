@@ -1,0 +1,112 @@
+# @package _global_
+# Megatron 235BA22B extra optimization tests — sequence_parallel & grouped_gemm
+#
+# Architecture: 94 layers, hidden=4096, TP=4, PP=2, EP=8 (only viable config)
+#   DP = world_size / (TP×PP) = 64 / (4×2) = 8
+#
+# Baseline (from prior sweep): allgather, mbs=1, full-recompute
+#   → 27.5 TFLOPS, 75.3 GiB (79%)  (job 307427)
+#
+# Tests:
+#   1. sequence_parallel=false: Removes SP all-gather/reduce-scatter at TP=4.
+#      At TP=4, sequence_parallel adds comm overhead for activation memory savings.
+#      For full-recompute (which already saves activation memory), SP may be net negative.
+#   2. moe_grouped_gemm=false: Disables grouped GEMM for MoE experts.
+#      Grouped GEMM batches expert computations but may have overhead for 128 experts.
+#
+# Expected: marginal gains; Megatron is TP=4-bottlenecked.
+#
+# ── Results ──────────────────────────────────────────────────────────────────
+# (to be filled in after jobs complete)
+
+defaults:
+  - ../../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe_235BA22B]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "megatron_moe_235BA22B_extra_opts"
+  opt_tag: "baseline"
+
+backend:
+  megatron:
+    train_iters: 100
+    log_interval: 1
+    eval_interval: 1000
+    save: null
+    load: null
+    ckpt_step: 0
+    lr: 0.001
+
+    global_batch_size: 64
+    micro_batch_size: 1
+    expert_model_parallel_size: 8
+    pipeline_model_parallel_size: 2
+    tensor_model_parallel_size: 4
+
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    recompute_modules: null
+
+    use_distributed_optimizer: true
+    moe_router_dtype: "fp32"
+    moe_token_dispatcher_type: allgather
+
+    data_path:
+      - /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
+    data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+    NCCL_NET_GDR_LEVEL: "0"
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+
+# Override broken container.yaml
+container:
+  image: /e/scratch/projectnucleus/poeppel1/container_cache/MegatronTraining-JUPITER_pt2510_aarch64_202602262033.sif
+
+job:
+  name: meg_moe_235BA22B_tp4ep8pp2_mbs1_${aux.opt_tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+slurm:
+  sbatch:
+    nodes: 16
+    time: "00:45:00"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ── Config 0: baseline (re-confirm) ──────────────────────────────────────
+        - aux.opt_tag: baseline_sp_ggmm
+          # sequence_parallel: true (default from base), moe_grouped_gemm: true (default)
+
+        # ── Config 1: sequence_parallel=false ────────────────────────────────────
+        # TP=4 with SP adds 2 all-gather + 2 reduce-scatter per layer.
+        # Full recompute already saves activation memory → SP savings less valuable.
+        - aux.opt_tag: no_sp
+          backend.megatron.sequence_parallel: false
+
+        # ── Config 2: moe_grouped_gemm=false ─────────────────────────────────────
+        # Disable grouped GEMM; use individual expert GEMM ops.
+        # May be faster for 128 experts if grouped GEMM kernel has high launch overhead.
+        - aux.opt_tag: no_ggmm
+          backend.megatron.moe_grouped_gemm: false
+
+        # ── Config 3: both disabled ──────────────────────────────────────────────
+        - aux.opt_tag: no_sp_no_ggmm
+          backend.megatron.sequence_parallel: false
+          backend.megatron.moe_grouped_gemm: false

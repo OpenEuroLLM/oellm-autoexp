@@ -1,0 +1,113 @@
+# @package _global_
+# Megatron 235BA22B scaling sweep — 32 nodes (128 GPUs) on JUPITER
+#
+# Architecture: 94 layers, hidden=4096, TP=4, PP=2, 128 experts, topk=8
+# Fixed parallelism: TP=4, PP=2 (only viable for 235BA22B)
+#   DP = 128 / (4×2) = 16
+#
+# Sweep axes:
+#   - EP: {8, 16} — expert parallelism degree
+#   - dispatcher: {allgather, alltoall}
+#
+# EP=8:  expert groups span 2 nodes (same as 16-node config)
+# EP=16: expert groups span 4 nodes (wider EP, less expert per GPU)
+#
+# GBS scales with nodes: 128 (vs 64 at 16 nodes) to keep per-GPU batch constant
+#
+# ── Results ──────────────────────────────────────────────────────────────────
+# (to be filled in after jobs complete)
+
+defaults:
+  - ../../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe_235BA22B]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "megatron_moe_235BA22B_32node_sweep"
+  dispatcher_tag: "allgather"
+  ep_tag: "ep8"
+
+backend:
+  megatron:
+    train_iters: 100
+    log_interval: 1
+    eval_interval: 1000
+    save: null
+    load: null
+    ckpt_step: 0
+    lr: 0.001
+
+    global_batch_size: 128
+    micro_batch_size: 1
+    expert_model_parallel_size: 8
+    pipeline_model_parallel_size: 2
+    tensor_model_parallel_size: 4
+
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    recompute_modules: null
+
+    use_distributed_optimizer: true
+    moe_router_dtype: "fp32"
+    moe_token_dispatcher_type: allgather
+
+    data_path:
+      - /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
+    data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+    NCCL_NET_GDR_LEVEL: "0"
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+
+container:
+  image: /e/scratch/projectnucleus/poeppel1/container_cache/MegatronTraining-JUPITER_pt2510_aarch64_202602262033.sif
+
+job:
+  name: meg_moe_235BA22B_32node_${aux.ep_tag}_${aux.dispatcher_tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+slurm:
+  sbatch:
+    nodes: 32
+    time: "00:45:00"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ── EP=8 + allgather ─────────────────────────────────────────────────────
+        - aux.ep_tag: ep8
+          aux.dispatcher_tag: allgather
+          backend.megatron.expert_model_parallel_size: 8
+          backend.megatron.moe_token_dispatcher_type: allgather
+
+        # ── EP=8 + alltoall ──────────────────────────────────────────────────────
+        - aux.ep_tag: ep8
+          aux.dispatcher_tag: alltoall
+          backend.megatron.expert_model_parallel_size: 8
+          backend.megatron.moe_token_dispatcher_type: alltoall
+
+        # ── EP=16 + allgather ────────────────────────────────────────────────────
+        - aux.ep_tag: ep16
+          aux.dispatcher_tag: allgather
+          backend.megatron.expert_model_parallel_size: 16
+          backend.megatron.moe_token_dispatcher_type: allgather
+
+        # ── EP=16 + alltoall ─────────────────────────────────────────────────────
+        - aux.ep_tag: ep16
+          aux.dispatcher_tag: alltoall
+          backend.megatron.expert_model_parallel_size: 16
+          backend.megatron.moe_token_dispatcher_type: alltoall
