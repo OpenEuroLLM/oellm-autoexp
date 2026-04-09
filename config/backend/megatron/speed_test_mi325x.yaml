@@ -1,0 +1,18 @@
+# Megatron data + ROCm-oriented defaults for MI325X (adjust paths to your dataset layout).
+# data_path:
+  # - /shared_silo/scratch/rluukkon/megatron-data/train
+mock_data: true
+data_cache_path: /shared_silo/scratch/rluukkon/data/.cache
+split: "989,10,1"
+lr_warmup_iters: 0
+train_iters: 500
+save_interval: 1000000000
+save: ${job.base_output_dir}
+load: ${job.base_output_dir}
+tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+# Required on ROCm for many Megatron-LM builds (same idea as LUMI).
+add_bias_linear: false
+bias_dropout_fusion: false
+gradient_accumulation_fusion: false
+masked_softmax_fusion: false
