@@ -49,9 +49,9 @@ env:
 
   SLURM_PARTITION: ${oc.env:SLURM_PARTITION,"amd-tw-verification"}
 
-  # Quoted value: commas in bind list; $${...} -> ${...} in the batch script for runtime expansion.
-  APPTAINER_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,$${SCRATCH},$${PWD}"'
-  SINGULARITY_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,$${SCRATCH},$${PWD}"'
+  # Quoted for shell commas. \${VAR} is OmegaConf escape so ${VAR} is left for bash at job runtime (not config interpolation).
+  APPTAINER_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,\${SCRATCH},\${PWD}"'
+  SINGULARITY_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,\${SCRATCH},\${PWD}"'
 sbatch:
   partition: ${oc.env:SLURM_PARTITION,"amd-tw-verification"}
   nodes: 1
