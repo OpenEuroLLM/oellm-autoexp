@@ -1,0 +1,28 @@
+# @package _global_
+defaults:
+  - base
+  - /backend: megatron
+  - /container: mi325x
+  - /slurm: mi325x
+  - /sweep: none
+  - /backend/megatron: [llama1_8b_qkln, speed_test_mi325x]
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 50
+    log_interval: 10
+    log_throughput: true
+    eval_iters: 1
+    eval_interval: 1000
+    save_interval: 10000000
+    save: null
+    load: null
+
+slurm:
+  env:
+    # Override in your experiment or shell if datasets live elsewhere.
+    HF_HOME: /shared_silo/scratch/${oc.env:USER}/huggingface
+
+job:
+  name: megatron_mi325x_speed_test

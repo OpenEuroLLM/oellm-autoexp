@@ -1,0 +1,14 @@
+class_name: Container
+# For basic Megatron-LM training, use the ROCm Primus image. This one is an extension with linear_flash_attention and a few other packages.
+image: /shared_silo/scratch/containers/rocm_primus_v25.11_transformers-4.5.7_linear_FA.sif
+runtime: apptainer
+
+bind:
+  - "/shared_silo/scratch"
+  - "${oc.env:PWD}"
+pwd: ${oc.env:PWD}
+env:
+  WANDB_MODE: "offline"
+  MACHINE_NAME: "MI325X"
+  PYTHONPATH: "."
+python: "python3"

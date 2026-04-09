@@ -1,0 +1,35 @@
+defaults:
+  - base
+  - _self_
+
+template_path: templates/mi325x.sbatch
+# One SLURM task per GPU; each runs apptainer exec with ROCm (no overlay).
+launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
+  export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
+  export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; export AITER_JIT_DIR=/tmp/$USER/aiter_jit_dir ; \\\n\
+  ${oc.select:container.runtime,apptainer} exec --rocm ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} \
+  ${oc.select:container.image,container.sif}"
+srun:
+  exclusive: true
+  wait: 60
+  jobid: "$SLURM_JOB_ID"
+  network: "disable_rdzv_get"
+launcher_env_passthrough: true
+env:
+  MACHINE_NAME: MI325X
+  MASTER_ADDR: '$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'
+  MASTER_PORT: "9999"
+  WORLD_SIZE: ${oc.muli:${..sbatch.nodes},${..sbatch.ntasks_per_node}}
+  HSA_ENABLE_SDMA: 0
+  NVTE_DEBUG: "0"
+  NVTE_DEBUG_LEVEL: "0"
+sbatch:
+  partition: ${oc.env:SLURM_PARTITION,"amd-tw-verification"}
+  nodes: 1
+  ntasks_per_node: 8
+  gpus_per_node: 8
+  gres: "gpu:8"
+  cpus_per_task: 7
+  time: "00:30:00"
+  mem: "480G"
+  exclusive: true
