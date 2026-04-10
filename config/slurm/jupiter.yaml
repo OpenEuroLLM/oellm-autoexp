@@ -15,6 +15,7 @@ srun:
   mpi: "none"
   threads_per_core: 1
   gpu_bind: "none"
+srun_opts: "--mpi=none "
 launcher_env_passthrough: true
 env:
   MACHINE_NAME: JUPITER
