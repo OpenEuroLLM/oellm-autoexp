@@ -1,12 +1,10 @@
 # @package _global_
-# Megatron 30BA3B optimization sweep — JUPITER (2 nodes, 4xGH200, EP=4+PP=2)
-# Keep EP intra-node (max 4)
+# Megatron 235BA22B JUPITER 
 # Use num_layers_per_virtual_pipeline_stage to fill PP bubble
 # Bubble is = (PP−1) / (PP−1 + GA×VP)
 # VP = num_layers / (PP × num_layers_per_virtual_pipeline_stage)
 # Gradient accumulation is calculated as GA = GBS / (MBS × DP)
 # DP = world_size / (TP × PP × CP)
-# Best config: GBS=64, MBS=4, EP=4, PP=2, TP=1, num_VP=6, dispatcher=HybridEP
 
 defaults:
   - base
@@ -19,7 +17,7 @@ defaults:
 
 aux:
   experiment_group: "megatron_qwen3_moe_235BA22B_jupiter"
-  dispatcher_tag: "hybridep"
+  dispatcher_tag: "hybridep_fp8_overlap"
 
 backend:
   megatron:
@@ -35,14 +33,14 @@ backend:
     ckpt_step: 0
 
     # Distributed
-    expert_model_parallel_size: 32
-    pipeline_model_parallel_size: 2
     tensor_model_parallel_size: 2
-    num_layers_per_virtual_pipeline_stage: 1
+    pipeline_model_parallel_size: 4
+    expert_model_parallel_size: 16
+    num_layers_per_virtual_pipeline_stage: 3  # 96/(4×8)=3
 
     # Batch sizes
     global_batch_size: 2048
-    micro_batch_size: 1
+    micro_batch_size: 4
 
     # Optimizer
     lr: 0.001
@@ -51,40 +49,39 @@ backend:
     # Model
     attention_backend: auto
     padded_vocab_size: 262144
+    account_for_embedding_in_pipeline_split: true
+    account_for_loss_in_pipeline_split: true
     #vocab_size: 262144 does not do anything?
 
     # Precision / FP8
     fp8: hybrid
-    # fp8_amax_history_len: 16
-    # fp8_amax_compute_algo: max
+    fp8_amax_history_len: 16
+    fp8_amax_compute_algo: max
     fp8_param_gather: true
     moe_router_dtype: "fp32" # FP8?
 
     # MoE Token Dispatcher
-    # All-to-all
-    # moe_token_dispatcher_type: alltoall
-    # All-to-gather
-    # moe_token_dispatcher_type: allgather
-    # DeepEP
-    # moe_token_dispatcher_type: flex
-    # moe_flex_dispatcher_backend: deepep
-    # moe_enable_deepep: true
-    # HybridEP (active):
+    # deepep: Buffer() patched with allow_nvlink_for_normal_mode=False in
+    #   submodules/Megatron-LM/megatron/core/transformer/moe/fused_a2a.py
+    #   to bypass pynvml NVLink P2P check (GH200: torchrun sets CUDA_VISIBLE_DEVICES
+    #   per worker, so pynvml sees all GPUs as "GPU 0" → assertion fails without patch)
+    # hybridep: HybridEPBuffer does NOT accept allow_nvlink_for_normal_mode → unusable on GH200
     moe_token_dispatcher_type: flex
     moe_flex_dispatcher_backend: hybridep
-    moe_hybridep_num_sms: 16 # HybridEP requires > 0
+    moe_hybridep_num_sms: 16
+    #moe_enable_deepep: true
 
 
     # Comms / Overlap
     overlap_p2p_comm: true
     # overlap_grad_reduce: true # DP=1 no DP peers to overlap
-    # overlap_moe_expert_parallel_comm: true AssertionError: overlap_moe_expert_parallel_comm is supported with alltoall/flex token dispatcher
+    #overlap_moe_expert_parallel_comm: true  # flex dispatcher supports this
 
     # Activation Recompute
     # recompute_granularity: selective # then recompute_method: null must be set
+    # recompute_modules: [moe_act layernorm]
     # recompute_method: null
     # recompute_num_layers: null
-    # recompute_modules: null
 
     # Data
     data_path:
@@ -100,7 +97,7 @@ backend:
     PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
     PYTHONWARNINGS: "ignore::UserWarning"
     NCCL_NET_GDR_LEVEL: "0"  # disable GDRDMA — required for PP=2 inter-node P2P
-    CUDA_DEVICE_MAX_CONNECTIONS: 1 only for TP
+    CUDA_DEVICE_MAX_CONNECTIONS: 1 # only for TP
 
 container:
   image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deep-hybridep_aarch64.sif
