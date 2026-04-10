@@ -41,8 +41,8 @@ backend:
     num_layers_per_virtual_pipeline_stage: 4  # VPP=4 (ref); 96/(PP=8 × 4)=3 VP stages; EP×PP×TP=8×8×2=128=world_size (32 nodes × 4 GPUs)
 
     # Batch sizes
-    global_batch_size: 2048
-    micro_batch_size: 1
+    global_batch_size: 2048 # 4096
+    micro_batch_size: 1 # 4 fits?
 
     # Optimizer
     lr: 0.001
@@ -54,6 +54,7 @@ backend:
     padded_vocab_size: 151936 # Qwen 3 vocab size
     account_for_embedding_in_pipeline_split: true
     account_for_loss_in_pipeline_split: true
+    #vocab_size: 262144 does not do anything?
 
     # Precision / FP8
     fp8: hybrid
@@ -119,3 +120,18 @@ slurm:
   sbatch:
     nodes: 64
     time: "00:50:00"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - slurm.sbatch.nodes: 64
+          backend.megatron.global_batch_size: 2048
+        - slurm.sbatch.nodes: 128
+          backend.megatron.global_batch_size: 4096
+        - slurm.sbatch.nodes: 256
+          backend.megatron.global_batch_size: 8192
+        - slurm.sbatch.nodes: 512
+          backend.megatron.global_batch_size: 16384
