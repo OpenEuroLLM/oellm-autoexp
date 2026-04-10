@@ -1,0 +1,132 @@
+# @package _global_
+
+defaults:
+  - /experiments: base
+  - /backend: megatron_torchdist_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: base
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "distributed-training-benchmarking"
+  recompute_tag: "full_recompute"
+  job_name_base: "JUPITER_qwen3_30B_nodes${slurm.sbatch.nodes}_gbsz_${backend.megatron.global_batch_size}"
+  job_name_suffix: ""
+
+
+backend:
+  megatron:
+
+    # Optimizer
+    lr: 0.001
+    optimizer: adam
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1e-08
+    weight_decay: 0.1
+    clip_grad: 1.0
+
+    # Data
+    data_cache_path: /e/project1/e-sta-openeurollm/komulainen1_jupiter/data/cache
+    data_path: 
+    tokenizer_type: HuggingFaceTokenizer
+    vocab_size: 262000
+
+    # Train
+    init_method_std: 0.02
+    add_bias_linear: false
+    global_batch_size: 2048
+    micro_batch_size: 2
+    bf16: true
+    train_iters: 50
+    eval_iters: 1
+    rerun_mode: disabled
+    distributed_timeout_minutes: 5
+    attention_backend: fused
+    use_flash_attn: false
+
+    # Paralellism
+    expert_model_parallel_size: 4
+    pipeline_model_parallel_size: 2
+    tensor_model_parallel_size: 1
+    use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+
+    # MoE
+    moe_ffn_hidden_size: 768
+    moe_router_load_balancing_type: aux_loss
+    moe_aux_loss_coeff: 0.001
+    moe_grouped_gemm: true
+    moe_router_force_load_balancing: true
+    num_experts: 128
+    moe_router_topk: 8
+    moe_router_dtype: fp32
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: deepep
+
+    # Fused kernels
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: "te"
+    moe_router_fusion: true
+    moe_permute_fusion: true
+
+    # Recomputation
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+
+    # Model args
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    qk_layernorm: true
+    normalization: RMSNorm
+    norm_epsilon: 1e-6
+    position_embedding_type: rope
+    swiglu: true
+    group_query_attention: true
+    rotary_base: 1000000
+    num_query_groups: 4
+    kv_channels: 128
+    num_layers: 48
+    ffn_hidden_size: 6144
+    hidden_size: 2048
+    num_attention_heads: 32
+    seq_length: 4096
+    max_position_embeddings: 4096
+    untie_embeddings_and_output_weights: true
+
+    # Logging
+    log_throughput: true
+    log_interval: 1
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+    wandb_save_dir: "${job.base_output_dir}"
+    wandb_project: "distributed-training-benchmarking"
+    wandb_entity: "openeurollm-project"
+    wandb_exp_name: "${job.name}"
+
+    # Checkpoints
+    ckpt_format: torch_dist
+    save: null
+    load: null
+
+job:
+  name: "${aux.job_name_base}${aux.job_name_suffix}"
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+slurm:
+  sbatch:
+    nodes: 4
+    time: "01:30:00"
+
+container:
+  image: /e/project1/e-sta-openeurollm/komulainen1_jupiter/MegatronTraining_aarch64.sif
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+    

@@ -10,7 +10,11 @@ defaults:
   - _self_
 
 aux:
-  experiment_group: "distributed-training-benchmark"
+  experiment_group: "distributed-training-benchmarking"
+  recompute_tag: "full_recompute"
+  job_name_base: "JUPITER_qwen3_30B_nodes${slurm.sbatch.nodes}_gbsz_${backend.megatron.global_batch_size}"
+  job_name_suffix: ""
+
 
 backend:
   megatron:
@@ -40,12 +44,16 @@ backend:
     eval_iters: 1
     rerun_mode: disabled
     distributed_timeout_minutes: 5
+    attention_backend: fused
+    use_flash_attn: false
 
     # Paralellism
     expert_model_parallel_size: 4
     pipeline_model_parallel_size: 2
     tensor_model_parallel_size: 1
     use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
 
     # MoE
     moe_ffn_hidden_size: 768
@@ -62,6 +70,8 @@ backend:
     # Fused kernels
     cross_entropy_loss_fusion: true
     cross_entropy_fusion_impl: "te"
+    moe_router_fusion: true
+    moe_permute_fusion: true
 
     # Recomputation
     recompute_granularity: full
@@ -92,6 +102,10 @@ backend:
     log_throughput: true
     log_interval: 1
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
+    wandb_save_dir: "${job.base_output_dir}"
+    wandb_project: "distributed-training-benchmarking"
+    wandb_entity: "openeurollm-project"
+    wandb_exp_name: "${job.name}"
 
     # Checkpoints
     ckpt_format: torch_dist
@@ -99,12 +113,13 @@ backend:
     load: null
 
 job:
+  name: "${aux.job_name_base}${aux.job_name_suffix}"
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
 
 slurm:
   sbatch:
     nodes: 4
-    time: "00:30:00"
+    time: "01:30:00"
 
 container:
   image: /e/project1/e-sta-openeurollm/komulainen1_jupiter/MegatronTraining_aarch64.sif
@@ -113,26 +128,36 @@ sweep:
   type: list
   store_sweep_json: true
   groups:
-    #recomputation
     - type: list
-      job.name: "JUPITER_qwen3_30B_nodes${slurm.sbatch.nodes}_gbsz_${backend.megatron.global_batch_size}_${aux.recompute_tag}"
       configs:
-        - aux.recompute_tag: full_recompute
+        - aux.job_name_suffix: "_recompute_full"
+          aux.recompute_tag: full_recompute
           backend.megatron.recompute_granularity: full
           backend.megatron.recompute_method: uniform
           backend.megatron.recompute_num_layers: 1
-
-        - aux.recompute_tag: selective-recompute
+        - aux.job_name_suffix: "_recompute_selective"
+          aux.recompute_tag: selective-recompute
           backend.megatron.recompute_granularity: selective
-          backend.megatron.recompute_modules: ['core_attn','mlp','moe']
-    # Virtual pipeline - effect on pipeline bubble      
+          backend.megatron.recompute_activations: true 
+          backend.megatron.recompute_method: null
+          backend.megatron.recompute_modules: ["core_attn", "mlp", "moe"]
+
     - type: list
-      job.name: "JUPITER_qwen3_30B_nodes${slurm.sbatch.nodes}_gbsz_${backend.megatron.global_batch_size}_${backend.megatron.num_layers_per_virtual_pipeline_stage}"
       configs:
-        - backend.megatron.num_layers_per_virtual_pipeline_stage: [1, 2, 4, 6]
-    
-    # Fused vs Flash attention
+        - aux.job_name_suffix: "_vpp_1"
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 1
+        - aux.job_name_suffix: "_vpp_2"
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 2
+        - aux.job_name_suffix: "_vpp_4"
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 4
+        - aux.job_name_suffix: "_vpp_6"
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 6
+
     - type: list
-      job.name: "JUPITER_qwen3_30B_nodes${slurm.sbatch.nodes}_gbsz_${backend.megatron.global_batch_size}_${backend.megatron.attention_backend}"
       configs:
-        backend.megatron.attention_backend: ['fused','flash']
+        - aux.job_name_suffix: "_attn_fused"
+          backend.megatron.attention_backend: fused
+          backend.megatron.use_flash_attn: false
+        - aux.job_name_suffix: "_attn_flash"
+          backend.megatron.attention_backend: flash
+          backend.megatron.use_flash_attn: true

@@ -121,51 +121,74 @@ def _resolve_filter_from_context(filter_expr: Any, context: Mapping[str, Any]) -
     return result
 
 
+# dag_resolver.py
+
 def _collect_group_filters(
-    groups: list[dict[str, Any]] | None, group_path: tuple[int, ...]
+    groups: list[dict[str, Any]] | None,
+    group_path: tuple[int, ...],
+    composition_type: str = "product",
 ) -> list[Any]:
     if not groups:
         return []
 
-    filters: list[Any] = []
     cursor = 0
+    filters: list[Any] = []
 
-    def walk(group_list: list[dict[str, Any]]) -> None:
-        nonlocal cursor, filters  # noqa: F824
-        for group_idx, group in enumerate(group_list):
+    def walk(node_groups: list[dict[str, Any]], node_comp_type: str) -> None:
+        nonlocal cursor, filters
+
+        if node_comp_type == "product":
+            # In product mode, every sibling contributes to the path.
+            for group_idx, group in enumerate(node_groups):
+                if cursor >= len(group_path) or group_path[cursor] != group_idx:
+                    raise ValueError("Group path does not match sweep groups.")
+                cursor += 1
+                consume_group(group)
+        elif node_comp_type == "list":
+            # In list mode, exactly one sibling is selected.
             if cursor >= len(group_path):
                 raise ValueError("Group path does not match sweep groups.")
-            if group_path[cursor] != group_idx:
+            selected_idx = group_path[cursor]
+            cursor += 1
+            if selected_idx >= len(node_groups):
+                raise ValueError("Group path does not match sweep groups.")
+            consume_group(node_groups[selected_idx])
+        else:
+            raise ValueError(f"Unknown group type: {node_comp_type}")
+
+    def consume_group(group: dict[str, Any]) -> None:
+        nonlocal cursor, filters
+
+        group_type = group.get("type", "product")
+        if group_type == "product" and "filter" in group:
+            filters.append(group.get("filter"))
+
+        if "groups" in group:
+            walk(group["groups"], group_type)
+        elif "params" in group:
+            if cursor >= len(group_path):
                 raise ValueError("Group path does not match sweep groups.")
             cursor += 1
+        elif "configs" in group:
+            if cursor >= len(group_path):
+                raise ValueError("Group path does not match sweep groups.")
+            config_idx = group_path[cursor]
+            cursor += 1
+            configs = group["configs"]
+            if not isinstance(configs, list) or config_idx >= len(configs):
+                raise ValueError("Group path does not match sweep groups.")
+            config_dict = configs[config_idx]
+            if isinstance(config_dict, dict) and (
+                "groups" in config_dict or "params" in config_dict or "configs" in config_dict
+            ):
+                # Mirrors expander behavior: nested config under configs is wrapped
+                # as a single-element list group with list composition.
+                walk([config_dict], "list")
+        else:
+            raise ValueError("Group must have 'groups', 'params', or 'configs'.")
 
-            group_type = group.get("type", "product")
-            if group_type == "product" and "filter" in group:
-                filters.append(group.get("filter"))
+    walk(groups, composition_type)
 
-            if "groups" in group:
-                walk(group["groups"])
-            elif "params" in group:
-                if cursor >= len(group_path):
-                    raise ValueError("Group path does not match sweep groups.")
-                cursor += 1
-            elif "configs" in group:
-                if cursor >= len(group_path):
-                    raise ValueError("Group path does not match sweep groups.")
-                config_idx = group_path[cursor]
-                cursor += 1
-                configs = group["configs"]
-                if not isinstance(configs, list) or config_idx >= len(configs):
-                    raise ValueError("Group path does not match sweep groups.")
-                config_dict = configs[config_idx]
-                if isinstance(config_dict, dict) and (
-                    "groups" in config_dict or "params" in config_dict or "configs" in config_dict
-                ):
-                    walk([config_dict])
-            else:
-                raise ValueError("Group must have 'groups', 'params', or 'configs'.")
-
-    walk(groups)
     if cursor != len(group_path):
         raise ValueError("Group path does not match sweep groups.")
     return filters
@@ -397,7 +420,11 @@ def resolve_sweep_with_dag(
     for point_idx in ordered_indices:
         point = points_dict[point_idx]
         try:
-            group_filters = _collect_group_filters(config.sweep.groups, point.group_path)
+            group_filters = _collect_group_filters(
+                config.sweep.groups,
+                point.group_path,
+                config.sweep.type or "product",
+            )
         except ValueError as exc:
             raise ValueError(f"Unable to match group_path for filtering: {exc}") from exc
 
