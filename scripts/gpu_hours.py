@@ -10,6 +10,8 @@ Usage:
 Defaults to the current directory if no argument is given.
 """
 
+import argparse
+import csv
 import os
 import re
 import sys
@@ -82,8 +84,14 @@ def query_sacct(job_ids):
 
 
 def main():
-    results_dir = sys.argv[1] if len(sys.argv) > 1 else "."
-    results_dir = os.path.abspath(results_dir)
+    parser = argparse.ArgumentParser(description="Calculate GPU hours for all experiments in a results directory.")
+    parser.add_argument("results_dir", nargs="?", default=".",
+                        help="Directory containing experiment subdirectories (default: current directory)")
+    parser.add_argument("--output", "-o", default=None,
+                        help="Output CSV file (default: <results_dir>/gpu_hours.csv)")
+    args = parser.parse_args()
+
+    results_dir = os.path.abspath(args.results_dir)
 
     if not os.path.isdir(results_dir):
         print(f"Directory not found: {results_dir}", file=sys.stderr)
@@ -100,7 +108,7 @@ def main():
     # ---- per-job table ----
     col_exp   = max(len(e) for e in experiments) + 2
     col_job   = 12
-    col_state = 12
+    col_state = 20
     col_ela   = 14
     col_gpu   = 6
     col_gpuh  = 8
@@ -120,9 +128,11 @@ def main():
 
     grand_total = 0.0
     exp_totals = {}
+    csv_rows = []
 
     for exp_name, job_ids in experiments.items():
         exp_total = 0.0
+        display_name = exp_name  # blanked out after first row for the terminal table only
         for job_id in job_ids:
             if job_id not in sacct_info:
                 print(
@@ -135,15 +145,23 @@ def main():
             hours = parse_elapsed(d["elapsed"])
             gpu_h = hours * d["gpus"]
             exp_total += gpu_h
+            csv_rows.append({
+                "experiment": exp_name,
+                "job_id": job_id,
+                "state": d["state"],
+                "elapsed": d["elapsed"],
+                "gpus": d["gpus"],
+                "gpu_hours": round(gpu_h, 1),
+            })
             print(
-                f"{exp_name:<{col_exp}}  "
+                f"{display_name:<{col_exp}}  "
                 f"{job_id:>{col_job}}  "
                 f"{d['state']:>{col_state}}  "
                 f"{d['elapsed']:>{col_ela}}  "
                 f"{d['gpus']:>{col_gpu}}  "
                 f"{gpu_h:>{col_gpuh}.1f}"
             )
-            exp_name = ""  # only print name on first row of each experiment
+            display_name = ""  # only print name on first row of each experiment
 
         exp_totals[exp_name] = exp_total
         grand_total += exp_total
@@ -162,6 +180,22 @@ def main():
     print(sep)
     print(f"  {'TOTAL':<{col_exp - 2}}  {grand_total:>8.1f} GPU-h")
     print(sep)
+
+    # ---- save to CSV ----
+    csv_rows.append({
+        "experiment": "TOTAL",
+        "job_id": "",
+        "state": "",
+        "elapsed": "",
+        "gpus": "",
+        "gpu_hours": round(grand_total, 1),
+    })
+    output_csv = args.output if args.output else os.path.join(results_dir, "gpu_hours.csv")
+    with open(output_csv, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["experiment", "job_id", "state", "elapsed", "gpus", "gpu_hours"])
+        writer.writeheader()
+        writer.writerows(csv_rows)
+    print(f"\nWrote {len(csv_rows) - 1} job rows (+1 total) to {output_csv}")
 
 
 if __name__ == "__main__":
