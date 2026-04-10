@@ -41,8 +41,8 @@ backend:
     num_layers_per_virtual_pipeline_stage: 4  # VPP=4 (ref); 96/(PP=8 × 4)=3 VP stages; EP×PP×TP=8×8×2=128=world_size (32 nodes × 4 GPUs)
 
     # Batch sizes
-    global_batch_size: 2048 # 4096
-    micro_batch_size: 1 # 4 fits?
+    global_batch_size: 2048
+    micro_batch_size: 1 
 
     # Optimizer
     lr: 0.001
@@ -69,7 +69,7 @@ backend:
 
     moe_token_dispatcher_type: flex
     moe_flex_dispatcher_backend: hybridep
-    moe_hybridep_num_sms: 24
+    moe_hybridep_num_sms: 8
     #moe_enable_deepep: true
 
 
