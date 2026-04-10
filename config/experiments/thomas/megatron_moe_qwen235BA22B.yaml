@@ -34,13 +34,13 @@ backend:
 
     # Distributed
     tensor_model_parallel_size: 2
-    pipeline_model_parallel_size: 4
-    expert_model_parallel_size: 16
-    num_layers_per_virtual_pipeline_stage: 3  # 96/(4×8)=3
+    pipeline_model_parallel_size: 8
+    expert_model_parallel_size: 8
+    num_layers_per_virtual_pipeline_stage: 4  # VPP=4 (ref); 96/(PP=8 × 4)=3 VP stages; EP×PP×TP=8×8×2=128=world_size
 
     # Batch sizes
     global_batch_size: 2048
-    micro_batch_size: 4
+    micro_batch_size: 1 # 4 fits?
 
     # Optimizer
     lr: 0.001
@@ -54,11 +54,12 @@ backend:
     #vocab_size: 262144 does not do anything?
 
     # Precision / FP8
-    fp8: hybrid
-    fp8_amax_history_len: 16
-    fp8_amax_compute_algo: max
-    fp8_param_gather: true
-    moe_router_dtype: "fp32" # FP8?
+    #fp8: hybrid
+    #fp8_amax_history_len: 16
+    #fp8_amax_compute_algo: max
+    #fp8_param_gather: true
+    moe_router_dtype: "fp32"
+    moe_router_force_load_balancing: true
 
     # MoE Token Dispatcher
     # deepep: Buffer() patched with allow_nvlink_for_normal_mode=False in
@@ -74,14 +75,14 @@ backend:
 
     # Comms / Overlap
     overlap_p2p_comm: true
-    # overlap_grad_reduce: true # DP=1 no DP peers to overlap
-    #overlap_moe_expert_parallel_comm: true  # flex dispatcher supports this
+    overlap_grad_reduce: true # DP=1 no DP peers to overlap
+    overlap_moe_expert_parallel_comm: true  # flex dispatcher supports this
 
     # Activation Recompute
-    # recompute_granularity: selective # then recompute_method: null must be set
-    # recompute_modules: [moe_act layernorm]
-    # recompute_method: null
-    # recompute_num_layers: null
+    recompute_granularity: selective # then recompute_method: null must be set
+    recompute_modules: [moe_act layernorm]
+    recompute_method: null
+    recompute_num_layers: null
 
     # Data
     data_path:
@@ -98,6 +99,7 @@ backend:
     PYTHONWARNINGS: "ignore::UserWarning"
     NCCL_NET_GDR_LEVEL: "0"  # disable GDRDMA — required for PP=2 inter-node P2P
     CUDA_DEVICE_MAX_CONNECTIONS: 1 # only for TP
+    A2A_OVERLAP: 1
 
 container:
   image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deep-hybridep_aarch64.sif
