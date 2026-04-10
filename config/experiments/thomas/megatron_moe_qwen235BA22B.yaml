@@ -1,0 +1,105 @@
+# @package _global_
+# Megatron 30BA3B optimization sweep — JUPITER (2 nodes, 4xGH200, EP=4+PP=2)
+# Keep EP intra-node (max 4)
+# Use num_layers_per_virtual_pipeline_stage to fill PP bubble
+# Bubble is = (PP−1) / (PP−1 + GA×VP)
+# VP = num_layers / (PP × num_layers_per_virtual_pipeline_stage)
+# Gradient accumulation is calculated as GA = GBS / (MBS × DP)
+# DP = world_size / (TP × PP × CP)
+# Best config: GBS=64, MBS=4, EP=4, PP=2, TP=1, num_VP=6, dispatcher=HybridEP
+
+defaults:
+  - base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe_235BA22B]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "megatron_qwen3_moe_235BA22B_jupiter"
+  dispatcher_tag: "hybridep"
+
+backend:
+  megatron:
+    train_iters: 100
+    log_interval: 1
+    eval_interval: 999
+    attention_backend: auto
+    save: null
+    load: null
+    ckpt_step: 0
+    lr: 0.001
+    log_throughput: true
+
+    #vocab_size: 262144 does not do anything?
+    padded_vocab_size: 262144
+    global_batch_size: 2048
+    micro_batch_size: 1
+    expert_model_parallel_size: 32
+    pipeline_model_parallel_size: 8
+    tensor_model_parallel_size: 2
+
+    #FP8
+    fp8: hybrid
+    # fp8_amax_history_len: 16
+    #fp8_amax_compute_algo: max
+    fp8_param_gather: true
+
+    overlap_p2p_comm: true
+    # overlap_grad_reduce: true # DP=1 no DP peers to overlap
+    num_layers_per_virtual_pipeline_stage: 6
+    # overlap_moe_expert_parallel_comm: true AssertionError: overlap_moe_expert_parallel_comm is supported with alltoall/flex token dispatcher
+
+
+    # recompute_granularity: selective # then recompute_method: null must be set
+    # recompute_method: null
+    # recompute_num_layers: null
+    # recompute_modules: null
+    moe_hybridep_num_sms: 16 # HybridEP requires > 0
+
+    # All-to-all
+    #moe_token_dispatcher_type: alltoall
+
+    # All-to-gather
+    #moe_token_dispatcher_type: allgather
+
+    # DeepEP
+    # moe_token_dispatcher_type: flex
+    # moe_flex_dispatcher_backend: deepep
+    # moe_enable_deepep: true
+
+    # HybridEP:
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: hybridep
+
+    use_distributed_optimizer: true
+    moe_router_dtype: "fp32"
+
+    data_path:
+      - /e/project1/e-sta-openeurollm/harmsen1/datasets/FineWeb/fineweb-10BT_text_document
+    data_cache_path: /e/scratch/e-sta-openeurollm/${oc.env:USER}/data
+
+    tokenizer_model: /e/scratch/e-sta-openeurollm/harmsen1/hf_home/hub/models--openai-community--gpt2/snapshots/607a30d783dfa663caf39e06633721c8d4cfcd7e
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+    NCCL_NET_GDR_LEVEL: "0"  # disable GDRDMA — required for PP=2 inter-node P2P
+    #CUDA_DEVICE_MAX_CONNECTIONS: 1 only for TP
+
+container:
+  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deep-hybridep_aarch64.sif
+job:
+  name: meg_moe_30BA3B_n${slurm.sbatch.nodes}_ep${backend.megatron.expert_model_parallel_size}_pp${backend.megatron.pipeline_model_parallel_size}_tp${backend.megatron.tensor_model_parallel_size}_mbs${backend.megatron.micro_batch_size}_gbs${backend.megatron.global_batch_size}_vp${backend.megatron.num_layers_per_virtual_pipeline_stage}_${aux.dispatcher_tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+slurm:
+  sbatch:
+    nodes: 32
+    time: "00:20:00"
