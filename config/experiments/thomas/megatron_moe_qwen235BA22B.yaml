@@ -22,9 +22,10 @@ aux:
 backend:
   megatron:
     # Training
-    train_iters: 100
+    train_iters: 20
     log_interval: 1
     eval_interval: 999
+    eval_iters: 0
     log_throughput: true
 
     # Checkpointing
@@ -35,11 +36,12 @@ backend:
     # Distributed
     tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 8
-    expert_model_parallel_size: 8
-    num_layers_per_virtual_pipeline_stage: 4  # VPP=4 (ref); 96/(PP=8 × 4)=3 VP stages; EP×PP×TP=8×8×2=128=world_size
+    expert_model_parallel_size: 16
+    expert_tensor_parallel_size: 1
+    num_layers_per_virtual_pipeline_stage: 4  # VPP=4 (ref); 96/(PP=8 × 4)=3 VP stages; EP×PP×TP=8×8×2=128=world_size (32 nodes × 4 GPUs)
 
     # Batch sizes
-    global_batch_size: 2048
+    global_batch_size: 4096 # 4096
     micro_batch_size: 1 # 4 fits?
 
     # Optimizer
@@ -48,16 +50,18 @@ backend:
 
     # Model
     attention_backend: auto
-    padded_vocab_size: 262144
+    #padded_vocab_size: 262144
+    padded_vocab_size: 151936 # Qwen 3 vocab size
     account_for_embedding_in_pipeline_split: true
     account_for_loss_in_pipeline_split: true
     #vocab_size: 262144 does not do anything?
 
     # Precision / FP8
-    #fp8: hybrid
+    fp8: hybrid
+    fp8_recipe: blockwise
     #fp8_amax_history_len: 16
     #fp8_amax_compute_algo: max
-    #fp8_param_gather: true
+    fp8_param_gather: true
     moe_router_dtype: "fp32"
     moe_router_force_load_balancing: true
 
@@ -69,14 +73,20 @@ backend:
     # hybridep: HybridEPBuffer does NOT accept allow_nvlink_for_normal_mode → unusable on GH200
     moe_token_dispatcher_type: flex
     moe_flex_dispatcher_backend: hybridep
-    moe_hybridep_num_sms: 16
+    moe_hybridep_num_sms: 24
     #moe_enable_deepep: true
 
 
     # Comms / Overlap
     overlap_p2p_comm: true
+    overlap_param_gather: true
     overlap_grad_reduce: true # DP=1 no DP peers to overlap
-    overlap_moe_expert_parallel_comm: true  # flex dispatcher supports this
+
+#   [default1]:[rank5]:   File "/usr/local/lib/python3.12/dist-packages/deep_ep/utils.py", line 98, in check_nvlink_connections
+#   [default1]:[rank5]:     assert status == pynvml.NVML_P2P_STATUS_OK, \
+#   [default1]:[rank5]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#   [default1]:[rank5]: AssertionError: No NVLink connection between GPU 0 and GPU 0, but allow_nvlink_for_normal_mode=True
+    #overlap_moe_expert_parallel_comm: true # if enabled with only flex or with hybridEP
 
     # Activation Recompute
     recompute_granularity: selective # then recompute_method: null must be set
@@ -99,7 +109,7 @@ backend:
     PYTHONWARNINGS: "ignore::UserWarning"
     NCCL_NET_GDR_LEVEL: "0"  # disable GDRDMA — required for PP=2 inter-node P2P
     CUDA_DEVICE_MAX_CONNECTIONS: 1 # only for TP
-    A2A_OVERLAP: 1
+    # A2A_OVERLAP: 1
 
 container:
   image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deep-hybridep_aarch64.sif
@@ -109,5 +119,5 @@ job:
 
 slurm:
   sbatch:
-    nodes: 32
-    time: "00:20:00"
+    nodes: 64
+    time: "00:30:00"
