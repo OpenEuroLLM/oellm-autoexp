@@ -12,6 +12,7 @@ permissions:
 env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PYTHONDONTWRITEBYTECODE: "1"
+  HF_HOME: "."
 
 jobs:
   lint:
@@ -19,8 +20,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout main repo
+        uses: actions/checkout@v6
+        with:
+          submodules: false
+
+      - name: Checkout submodules
+        env:
+          GH_TOKEN: ${{ secrets.TITAN_OELLM_PAT }}
+        run: |
+          sed -i 's,git@github.com:,https://github.com/,g' .gitmodules
+          git submodule sync --recursive
+          cat .git/config
+          cat .gitmodules
+          git config --global credential.helper store
+          printf "https://x-access-token:%s@github.com\n" "$GH_TOKEN" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          git submodule status --recursive
+          git submodule update --init --recursive
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -62,20 +79,43 @@ jobs:
             python: '3.11'
             extras: 'dev'
             checkout_submodules: 'false'
+            extra_pip_args: ''
             pytest_args: ''
           - name: megatron-extras
             python: '3.11'
             extras: 'dev,megatron'
             checkout_submodules: 'recursive'
-            schema_only: '1'
+            extra_pip_args: ''
             pytest_args: 'tests/unit/test_megatron_backend.py tests/integration/test_megatron_optional.py'
+          - name: titan-extras
+            python: '3.11'
+            extras: 'dev,titan'
+            checkout_submodules: 'recursive'
+            extra_pip_args: '-e submodules/titan-oellm/torchtitan -e submodules/titan-oellm'
+            pytest_args: 'tests/unit/test_titan_backend.py tests/unit/test_titan_config_consistency.py'
       fail-fast: false
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout main repo
+        uses: actions/checkout@v6
         with:
-          submodules: ${{ matrix.checkout_submodules }}
+          submodules: false
+
+      - name: Checkout submodules
+        if: matrix.checkout_submodules == 'recursive'
+        env:
+          GH_TOKEN: ${{ secrets.TITAN_OELLM_PAT }}
+        run: |
+          sed -i 's,git@github.com:,https://github.com/,g' .gitmodules
+          git submodule sync --recursive
+          cat .git/config
+          cat .gitmodules
+          git config --global credential.helper store
+          printf "https://x-access-token:%s@github.com\n" "$GH_TOKEN" > ~/.git-credentials
+          chmod 600 ~/.git-credentials
+          git submodule status --recursive
+          git submodule update --init --recursive
+
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -103,6 +143,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[${{ matrix.extras }}]"
+          if [ -n "${{ matrix.extra_pip_args }}" ]; then
+            pip install ${{ matrix.extra_pip_args }}
+          fi
 
       - name: Run pytest
         run: |

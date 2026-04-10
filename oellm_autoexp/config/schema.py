@@ -7,19 +7,33 @@ files.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, MISSING
-from typing import Any
+# Setup library paths first
+import oellm_autoexp._libs  # noqa: F401
 
-from compoconf import (
-    ConfigInterface,
-    RegistrableConfigInterface,
-    register_interface,
-    NonStrictDataclass,
+from dataclasses import dataclass, field, MISSING
+from typing import Any, TypedDict
+
+from compoconf import ConfigInterface, RegistrableConfigInterface, register_interface
+
+from oellm_autoexp.postprocess import PostProcessStepInterface
+
+# Import base classes from oellm_autoexp.hydra_staged_sweep
+from oellm_autoexp.hydra_staged_sweep.config.schema import (
+    StagedSweepRoot,
+    SweepConfig,
+    ConfigSetup as BaseConfigSetup,
 )
+from oellm_autoexp.monitor.submission import SlurmJobConfig as SlurmJobConfigBase, SlurmConfig
+from oellm_autoexp.monitor.local_client import LocalCommandClientConfig
+from oellm_autoexp.monitor.slurm_client import SlurmClientConfig
 
 # ---------------------------------------------------------------------------
 # Core interfaces
 # ---------------------------------------------------------------------------
+
+
+class EmptyDict(TypedDict):
+    pass
 
 
 @register_interface
@@ -32,71 +46,32 @@ class BackendInterface(RegistrableConfigInterface):
     """
 
 
-@register_interface
-class MonitorInterface(RegistrableConfigInterface):
-    """Monitoring implementation responsible for observing job execution."""
-
-
-@register_interface
-class SlurmClientInterface(RegistrableConfigInterface):
-    """Abstraction layer over SLURM command interactions."""
-
-
 # ---------------------------------------------------------------------------
 # Config dataclasses
 # ---------------------------------------------------------------------------
 
 
 @dataclass(kw_only=True)
-class ProjectConfig(ConfigInterface):
-    """Project-level metadata and defaults.
+class CondaConfig(ConfigInterface):
+    """Conda runtime configuration for local/host execution."""
 
-    Attributes:
-        name: Project name used in job naming
-        base_output_dir: Per-run output directory (may include timestamps for unique runs)
-        state_dir: [DEPRECATED] Use monitoring_state_dir instead
-        monitoring_state_dir: Stable directory for monitoring sessions (NO timestamps).
-            This directory persists across runs and enables --monitor-all to find sessions.
-            Defaults to a stable location (strips timestamps from base_output_dir).
-        resume: Whether to resume monitoring from persisted state
-    """
-
-    class_name: str = "Project"
-    name: str = ""
-    base_output_dir: str = ""
-    monitoring_state_dir: str | None = None  # Stable, cross-run monitoring state
-    resume: bool = True
+    class_name: str = "Conda"
+    env_name: str = "base"
+    conda_prefix: str | None = None
+    activate_script: str | None = None
+    env: dict[str, str] = field(default_factory=dict)
+    python: str = "python"
 
 
 @dataclass(kw_only=True)
-class SweepConfig(ConfigInterface):
-    """Sweep expansion settings.
+class VenvConfig(ConfigInterface):
+    """Virtualenv runtime configuration for local/host execution."""
 
-    ``axes`` holds the raw sweep definition (potentially nested Hydra-style
-    mappings). ``base_values`` contain default substitutions applied before the
-    sweep is generated.
-    """
-
-    class_name: str = "Sweep"
-    axes: Any = field(default_factory=MISSING)
-    base_values: dict[str, Any] = field(default_factory=dict)
-    name_template: str = "{project}_{index}"
-    store_sweep_json: bool = True
-    filter: str | None = None
-
-
-@dataclass(init=False)
-class SrunConfig(NonStrictDataclass):
-    pass
-
-
-@dataclass(init=False)
-class SbatchConfig(NonStrictDataclass):
-    account: str | None = None
-    nodes: int | None = None
-    partition: str | None = None
-    qos: str | None = None
-    time: str = "0-01:00:00"
+    class_name: str = "Venv"
+    venv_path: str = ".venv"
+    activate_script: str | None = None
+    env: dict[str, str] = field(default_factory=dict)
+    python: str = "python"
 
 
 @dataclass(kw_only=True)
@@ -113,49 +88,71 @@ class ContainerConfig(ConfigInterface):
 
 
 @dataclass(kw_only=True)
-class SlurmConfig(ConfigInterface):
-    """Parameters for SBATCH rendering and submission."""
-
-    class_name: str = "Slurm"
-    template_path: str = field(default_factory=MISSING)
-    script_dir: str = field(default_factory=MISSING)
-    log_dir: str = field(default_factory=MISSING)
-    array: bool = True
-    submit_cmd: str = "sbatch"
-    squeue_cmd: str = "squeue"
-    cancel_cmd: str = "scancel"
-    sacct_cmd: str = "sacct"
-    launcher_cmd: str = ""
-    srun_opts: str = ""
-    launcher_env_passthrough: bool = False
-    env: dict[str, Any] = field(default_factory=dict)
-    srun: SrunConfig = field(default_factory=SrunConfig)
-    sbatch: SbatchConfig = field(default_factory=SbatchConfig)
-    sbatch_overrides: dict[str, Any] = field(default_factory=dict)
-    sbatch_extra_directives: list[str] = field(default_factory=list)
-    test_only: bool = False
-    client: SlurmClientInterface.cfgtype | None = None
+class SlurmJobConfig(SlurmJobConfigBase):
+    base_output_dir: str = field(default_factory=MISSING)
 
 
 @dataclass(kw_only=True)
-class SchedulerConfig(ConfigInterface):
-    """Optional scheduler-level throttling and limits."""
+class RootConfig(StagedSweepRoot):
+    """Top-level configuration schema - extends hydra_staged_sweep with oellm-specific fields.
 
-    class_name: str = "Scheduler"
-    max_jobs: int | None = None
-    submit_rate_limit_seconds: float | None = None
+    Base fields from StagedSweepRoot:
+        sweep: SweepConfig
+        stage: str
+        index: int | tuple[int]
+        sibling: dict[str, Any]
 
+    Additional oellm-specific fields below:
+    """
 
-@dataclass(kw_only=True)
-class RootConfig(ConfigInterface):
-    """Top-level configuration schema."""
+    # oellm-specific configuration sections
+    slurm: SlurmConfig = field(default_factory=MISSING)  # defines slurm setup
+    job: SlurmJobConfig = field(
+        default_factory=MISSING
+    )  # defines job interactions (when to start, cancel, finish)
+    backend: BackendInterface.cfgtype = field(
+        default_factory=MISSING
+    )  # defines what is actually running
+    container: EmptyDict | ContainerConfig | CondaConfig | VenvConfig = field(
+        default_factory=EmptyDict
+    )  # defines container setup
+    sweep: EmptyDict | SweepConfig = field(
+        default_factory=EmptyDict
+    )  # defines a surrounding sweep (already inherited from StagedSweepRoot)
 
-    class_name: str = "Root"
-    project: ProjectConfig = field(default_factory=MISSING)
-    sweep: SweepConfig = field(default_factory=MISSING)
-    slurm: SlurmConfig = field(default_factory=MISSING)
-    monitoring: MonitorInterface.cfgtype = field(default_factory=MISSING)
-    backend: BackendInterface.cfgtype = field(default_factory=MISSING)
-    container: ContainerConfig | None = None
-    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
+    postprocess: dict[str, PostProcessStepInterface.cfgtype] = field(
+        default_factory=dict
+    )  # optional post-processing steps (e.g. ckpt conversion, eval)
+
+    aux: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if self.container and self.slurm:
+            assert self.slurm.env["MACHINE_NAME"] == self.container.env["MACHINE_NAME"]
+
+
+@dataclass(kw_only=True)
+class RunEnvConfig:
+    slurm_client: SlurmClientConfig
+    local_client: LocalCommandClientConfig
+
+
+@dataclass(kw_only=True)
+class ConfigSetup(BaseConfigSetup):
+    """Config setup - compatible with hydra_staged_sweep.
+
+    Uses config_name/config_path like hydra_staged_sweep but maintains
+    """
+
+    pwd: str | None = None
+    config_name: str | None = None
+    config_path: str | None = None
+    config_dir: str | None = None
+    overrides: list[str] = field(default_factory=list)
+    monitor_state_dir: str = "./monitor_state"
+
+    def __post_init__(self):
+        # Ensure at least one way to specify config is provided
+        if self.config_path is None and self.config_name is None:
+            raise ValueError("Either config_path or config_name must be specified")

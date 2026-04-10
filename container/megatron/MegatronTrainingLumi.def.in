@@ -28,7 +28,7 @@ conda activate pytorch
 
 python3 /workspace/oellm-autoexp/container/gen_constraints.py \
     --output /workspace/constraints.installed.txt \
-    --exclude pip setuptools wheel antlr4-python3-runtime omegaconf hydra-core
+    --exclude pip setuptools wheel antlr4-python3-runtime omegaconf hydra-core huggingface_hub typing_extensions transformers
 
 if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
     python3 -m pip install --no-cache-dir \
@@ -36,10 +36,10 @@ if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
         -r "/workspace/${REQUIREMENTS_BASENAME}"
 fi
 
-if [ -d "/workspace/oellm-autoexp/submodules/ROCm-Megatron-LM" ]; then
+if [ -d "/workspace/oellm-autoexp/submodules/Megatron-LM" ]; then
     python3 -m pip install --no-cache-dir \
         -c /workspace/constraints.installed.txt \
-        -e /workspace/oellm-autoexp/submodules/ROCm-Megatron-LM
+        -e /workspace/oellm-autoexp/submodules/Megatron-LM
 fi
 
 python3 -m pip install --no-cache-dir \
@@ -58,7 +58,7 @@ exec "$@"
 
 %test
 cd /workspace/oellm-autoexp
-python scripts/plan_autoexp.py --help >/dev/null
+python scripts/run_autoexp.py --help >/dev/null
 
 %help
     Build with container/build_container.sh and run via

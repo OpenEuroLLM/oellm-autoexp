@@ -1,0 +1,71 @@
+# @package backend.megatron
+
+log_throughput: true
+log_interval: 1
+log_progress: true
+
+# MODEL
+num_layers: 48
+num_attention_heads: 32
+num_query_groups: 4 # no gqa when NUM_QUERY_GROUPS==NUM_ATTENTION_HEADS TODO: check
+group_query_attention: True 
+hidden_size: 2048
+ffn_hidden_size: 6144 # not used in the current MoE 
+moe_ffn_hidden_size: 768 
+kv_channels: 128
+num_experts: 128
+moe_router_topk: 8
+moe_router_dtype: "fp32"
+moe_grouped_gemm: True 
+moe_aux_loss_coeff: 0.01
+init_method_std: 0.02
+position_embedding_type: "rope"
+rotary_base: 1000000
+rotary_percent: 1.0
+attention_dropout: 0.0
+hidden_dropout: 0.0
+normalization: RMSNorm
+norm_epsilon: 1.e-6 # rmsnorm epsilon
+qk_layernorm: true # potentially enable qk-norm
+bf16: True
+swiglu: True
+untie_embeddings_and_output_weights: True
+use_flash_attn: True
+attention_softmax_in_fp32: True
+
+# MEMORY OPTIMIZATIONS
+recompute_activations: False
+use_torch_fsdp2: False # it's either this or the next 4 args
+tensor_model_parallel_size: 1
+pipeline_model_parallel_size: 1
+expert_model_parallel_size: 8
+context_parallel_size: 1
+sequence_parallel: True
+use_distributed_optimizer: True
+
+moe_router_load_balancing_type: "global_aux_loss"
+moe_token_dispatcher_type: "alltoall"
+moe_permute_fusion: True
+
+# COMM OPTIONS
+distributed_timeout_minutes: 120
+overlap_param_gather: True
+overlap_grad_reduce: True
+gradient_accumulation_fusion: False
+overlap_moe_expert_parallel_comm: True
+disable_bias_linear: true
+bias_swiglu_fusion: False
+add_bias_linear: False
+bias_dropout_fusion: False
+
+# OPTIMIZER
+adam_beta1: 0.9
+adam_beta2: 0.95
+adam_eps: 1e-8
+lr: 3e-4
+min_lr: 0.0
+clip_grad: 1.0
+weight_decay: 0.05
+lr_decay_style: WSD
+lr_wsd_decay_style: linear
+ 

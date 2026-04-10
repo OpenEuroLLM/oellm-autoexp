@@ -14,9 +14,10 @@ Options:
   --definition NAME   Singularity definition template name inside the backend folder (default: MegatronTraining)
   --requirements PATH Optional requirements file copied into the container and
                       passed to pip install (default: container/megatron/requirements_latest.txt).
+  --additional-tag    Add an additional tag
   --output DIR        Directory to write the resulting .sif image (default: current dir).
   --append-date       Append a UTC timestamp to the generated image name.
-  --base-image IMAGE  Override the base image (default: nvcr.io/nvidia/pytorch:25.08-py3).
+  --base-image IMAGE  Override the base image (default: nvcr.io/nvidia/pytorch:25.10-py3), latest for current Megatron version.
   --container-cmd CONTAINER_RUNTIME   Override container command (default: singularity).
 USAGE
 }
@@ -24,11 +25,12 @@ USAGE
 SPEC_ROOT="$(dirname "$0")"
 BACKEND="megatron"
 DEFINITION="MegatronTraining"
-REQUIREMENTS_FILE="${SPEC_ROOT}/${BACKEND}/requirements_latest.txt"
+export REQUIREMENTS_PATH="${SPEC_ROOT}/${BACKEND}/requirements_latest.txt"
 OUTPUT_DIR="${CONTAINER_CACHE_DIR:-$(pwd)}"
 APPEND_DATE=false
-BASE_IMAGE=${BASE_IMAGE:-nvcr.io/nvidia/pytorch:25.08-py3}
+BASE_IMAGE=${BASE_IMAGE:-nvcr.io/nvidia/pytorch:25.10-py3}
 CONTAINER_RUNTIME="singularity"
+ADDITIONAL_TAG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,9 +42,13 @@ while [[ $# -gt 0 ]]; do
       shift
       BACKEND="$1"
       ;;
+    --additional-tag)
+      shift
+      ADDITIONAL_TAG="$1"
+      ;;
     --requirements)
       shift
-      REQUIREMENTS_FILE="$1"
+      export REQUIREMENTS_PATH="$1"
       ;;
     --output)
       shift
@@ -80,14 +86,15 @@ if [[ ! -f "$DEFINITION_TEMPLATE" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$REQUIREMENTS_FILE" ]]; then
-  echo "Requirements file $REQUIREMENTS_FILE not found" >&2
+if [[ ! -f "$REQUIREMENTS_PATH" ]]; then
+  echo "Requirements file $REQUIREMENTS_PATH not found" >&2
   exit 1
 fi
 
-if [[ $REQUIREMENTS_FILE != /* ]]; then
-  REQUIREMENTS_FILE="$(cd "$(dirname "$REQUIREMENTS_FILE")" && pwd)/$(basename "$REQUIREMENTS_FILE")"
+if [[ $REQUIREMENTS_PATH != /* ]]; then
+  export REQUIREMENTS_PATH="$(cd "$(dirname "$REQUIREMENTS_PATH")" && pwd)/$(basename "$REQUIREMENTS_PATH")"
 fi
+
 
 export ARCH=$(uname -m)
 STAMP=""
@@ -147,14 +154,19 @@ payload = {
     "build_command": os.environ.get("BUILD_COMMAND", ""),
     "backend": os.environ.get("BACKEND"),
     "definition": os.environ.get("DEFINITION"),
-    "requirements_file": os.environ.get("REQUIREMENTS_PATH"),
+    "requirements_path": os.environ.get("REQUIREMENTS_PATH"),
     "base_image": os.environ.get("BASE_IMAGE"),
     "container_runtime": os.environ.get("CONTAINER_RUNTIME"),
 }
 provenance_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 PY
 
+
+
+export REQUIREMENTS_BASENAME=$(echo $REQUIREMENTS_PATH | grep -o -e '[^/]*$')
 envsubst < "$DEFINITION_TEMPLATE" > "$TMP_DEF"
+
+cat $TMP_DEF
 
 cleanup() {
   rm -f "$TMP_DEF"
@@ -162,7 +174,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-IMAGE_NAME="${DEFINITION}_${ARCH}${STAMP}.sif"
+IMAGE_NAME="${DEFINITION}${ADDITIONAL_TAG}_${ARCH}${STAMP}.sif"
 TARGET_PATH="$OUTPUT_DIR/$IMAGE_NAME"
 
 mkdir -p "$OUTPUT_DIR"

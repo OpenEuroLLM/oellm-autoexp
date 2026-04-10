@@ -50,11 +50,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default=os.environ.get("CONTAINER_CACHE_DIR", os.getcwd()),
-        help="Directory for the resulting .sif image.",
+        help="Output path for the .sif image. If it ends in '.sif', used as the full file path; otherwise treated as a directory with an auto-generated filename.",
     )
     parser.add_argument(
         "--append-date", action="store_true", help="Append UTC timestamp to the output image name."
     )
+    parser.add_argument("--additional-tag", default="", help="Add additional tag to name.")
     parser.add_argument(
         "--base-image",
         default=os.environ.get("BASE_IMAGE"),
@@ -84,6 +85,15 @@ def parse_args() -> argparse.Namespace:
         "--tempdir-prefix",
         default="oellm_sandbox",
         type=str,
+    )
+    parser.add_argument(
+        "--no-sandbox",
+        action="store_true",
+        help=(
+            "Build directly from the rendered .def file instead of using a sandbox. "
+            "Use on systems where 'apptainer build' works without root (e.g. Snellius). "
+            "Skips the sandbox and user-level post-install steps."
+        ),
     )
     return parser.parse_args()
 
@@ -251,10 +261,14 @@ def main() -> None:
     if args.append_date:
         stamp = f"_{subprocess.check_output(['date', '-u', '+%Y%m%d%H%M']).decode().strip()}"
 
-    output_dir = Path(args.output).expanduser().resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    image_name = f"{args.definition}_{arch}{stamp}.sif"
-    target_path = output_dir / image_name
+    output_path = Path(args.output).expanduser().resolve()
+    if output_path.suffix == ".sif":
+        target_path = output_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        output_path.mkdir(parents=True, exist_ok=True)
+        image_name = f"{args.definition}{args.additional_tag}_{arch}{stamp}.sif"
+        target_path = output_path / image_name
 
     if target_path.exists():
         if args.force:
@@ -279,6 +293,26 @@ def main() -> None:
 
     template_text = definition_template.read_text()
     rendered_definition = substitute_env_vars(template_text, substitutions)
+
+    if args.no_sandbox:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".def", prefix="oellm_", delete=False
+        ) as tmp_def:
+            tmp_def.write(rendered_definition)
+            tmp_def_path = tmp_def.name
+
+        try:
+            build_cmd = [container_cmd, "build"]
+            if args.force:
+                build_cmd.append("--force")
+            build_cmd += [str(target_path), tmp_def_path]
+            run_command(build_cmd)
+        finally:
+            os.unlink(tmp_def_path)
+
+        print(f"[+] Image written to {target_path}")
+        return
+
     sections = parse_definition_sections(rendered_definition)
     post_script = sections.get("post", "")
     files_entries = parse_files_entries(sections.get("files", ""))

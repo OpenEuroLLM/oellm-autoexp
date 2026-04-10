@@ -4,8 +4,6 @@ defaults:
   - /backend: megatron_torchrun_localaddr
   - /container: juwels
   - /slurm: juwels
-  - /monitoring: megatron_basic
-  - /project: default
   - /sweep: none
   - /backend/megatron: [llama1_8b_qkln,megatron_fsdp,speed_test_juwels]
   - _self_
@@ -13,7 +11,12 @@ defaults:
 backend:
   megatron:
     train_iters: 500
+    eval_interval: 1000
 
-project:
+# at the moment this does not work!
+slurm:
+  sbatch:
+    nodes: 2
+
+job:
   name: megatron_juwels_speed_test
-  resume: true

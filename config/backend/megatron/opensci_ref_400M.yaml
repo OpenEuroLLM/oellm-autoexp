@@ -1,0 +1,7 @@
+num_layers: 22
+hidden_size: 1024
+num_attention_heads: 16
+ffn_hidden_size: 3840
+
+aux:
+  model_name: "dense400M"

@@ -1,0 +1,45 @@
+defaults:
+ - default
+
+log_events:
+  - name: finished_training
+    pattern: "[after training is done]"
+    pattern_type: substring
+    action:
+      class_name: FinishAction
+      reason: "Training finished"
+  - name: finish
+    pattern: ".*validation loss.*on test set.*"
+    pattern_type: regex
+    action:
+      class_name: FinishAction
+      reason: "Test Evaluation Finished"
+  - name: error
+    pattern: "Exited with exit code 1"
+    pattern_type: substring
+    action:
+      class_name: RestartAction
+      reason: ""
+  - name: time_limit
+    pattern: "DUE TO TIME LIMIT"
+    pattern_type: substring
+    action:
+      class_name: RestartAction
+      reason: ""
+  - name: inactive
+    pattern_type: inactivity
+    action:
+      class_name: RestartAction
+      reason: "Inactive Log"
+
+state_events:
+  - name: "failed"
+    transition: ["RUNNING", "FAILED"]
+    action:
+      class_name: RestartAction
+      reason: "Inactive Log"
+  - name: "cancelled"
+    transition: ["RUNNING", "CANCELLED"]
+    action:
+      class_name: RestartAction
+      reason: "Inactive Log"

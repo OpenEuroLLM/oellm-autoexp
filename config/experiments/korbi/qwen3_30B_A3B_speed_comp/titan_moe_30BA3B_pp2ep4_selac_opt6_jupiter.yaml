@@ -1,0 +1,170 @@
+# @package _global_
+# Titan MoE 30BA3B PP=2 EP=4 — selective-AC option=6 and higher push
+#
+# Recompute fractions (24 layers per PP stage):
+#   opt=2: 12/24 = 50% recomputed → 77 GiB → 129 TFLOPS
+#   opt=3:  8/24 = 33% recomputed → 82 GiB → 135 TFLOPS
+#   opt=4:  6/24 = 25% recomputed → 85 GiB → ~145 TFLOPS (pending confirmation)
+#   opt=6:  4/24 = 17% recomputed → est ~88-90 GiB → est ~148-150 TFLOPS
+#   opt=8:  3/24 = 12.5% recomputed → est ~90-92 GiB → est ~150-152 TFLOPS
+#   no-AC:  0/24 = 0% recomputed  → OOM
+#
+# 1F1B memory model: only 1 microbatch activations in-flight.
+# Memory increase per opt level: ~+3-5 GiB per step down in recompute fraction.
+# At 95 GiB total: opt=4 at 85 GiB leaves 10 GiB headroom for opt=6/8.
+#
+# Memory bounds:
+#   opt=6: ~88-90 GiB (93-95%) — expected to fit
+#   opt=8: ~90-93 GiB (95-98%) — borderline, likely to fit
+#   opt=12: ~91-94 GiB (96-99%) — risky, may OOM
+#
+# NOTE: After opt=4 confirms ~145 TFLOPS, opt=6 should give ~+3% → ~149 TFLOPS.
+# The diminishing returns are clear: opt2→3 (+5%), opt3→4 (+7%), opt4→6 (+3%?).
+
+defaults:
+  - ../../base
+  - /backend: titan
+  - /container: jupiter_titan
+  - /slurm: jupiter
+  - /sweep: none
+  - override /backend/titan/data: nemonicco_jupiter
+  - override /backend/titan/model: qwen3_moe_30BA3B
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: "titan_moe_30BA3B_pp2ep4_selac_opt6"
+  compile_tag: "compile"
+  ac_opt_tag: "opt4"
+
+backend:
+  titan:
+    model:
+      vocab_size: 50304
+      tokenizer_path: /e/project1/projectnucleus/franke5/workspace/titan-train/torchtitan/assets/tokenizer/gpt-neox-20b
+
+    training:
+      steps: 100
+      local_batch_size: 64
+      seq_len: 4096
+      dtype: bfloat16
+
+    metrics:
+      log_freq: 10
+
+    parallelism:
+      tensor_parallel_degree: 1
+      pipeline_parallel_degree: 2
+      expert_parallel_degree: 4
+      data_parallel_replicate_degree: 1
+      data_parallel_shard_degree: 4
+      context_parallel_degree: 1
+
+    activation_checkpoint:
+      mode: selective
+      selective_ac_option: "4"
+
+    benchmarks:
+      wikitext2_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext2/wikitext2
+      wikitext103_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext103/wikitext103
+      lambada_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/lambada/lambada
+
+  env:
+    TORCHDYNAMO_DISABLE: "0"
+    PYTHONPATH: .:./submodules/titan-oellm:./submodules/titan-oellm/torchtitan
+    NCCL_SOCKET_FAMILY: "AF_INET"
+    GLOO_SOCKET_FAMILY: "AF_INET"
+    NCCL_SOCKET_IFNAME: "ib0"
+    GLOO_SOCKET_IFNAME: "ib0"
+    NCCL_SOCKET_TIMEOUT: "60000"
+    NCCL_TIMEOUT: "1800"
+    NCCL_IB_TIMEOUT: "100"
+    NCCL_IB_RETRY_CNT: "20"
+    NCCL_NET_GDR_LEVEL: "0"
+    HF_ALLOW_CODE_EVAL: "1"
+    TORCH_HOME: ${oc.env:TORCH_HOME,"/tmp/torch_home"}
+    PYTORCH_KERNEL_CACHE_PATH: ${oc.env:PYTORCH_KERNEL_CACHE_PATH,"/tmp/torch_home/kernels"}
+    TRITON_CACHE_DIR: ${oc.env:TRITON_CACHE_DIR,"/tmp/triton_cache"}
+    TORCHINDUCTOR_CACHE_DIR: ${oc.env:TORCHINDUCTOR_CACHE_DIR,"/tmp/torchinductor_cache"}
+    TORCHINDUCTOR_FX_GRAPH_CACHE: ${oc.env:TORCHINDUCTOR_FX_GRAPH_CACHE,"/tmp/torchinductor_fx_cache"}
+    TORCHINDUCTOR_AUTOGRAD_CACHE: ${oc.env:TORCHINDUCTOR_AUTOGRAD_CACHE,"/tmp/torchinductor_autograd_cache"}
+    TORCH_INDUCTOR_CUDAGRAPH_DISABLE: ${oc.env:TORCH_INDUCTOR_CUDAGRAPH_DISABLE,"1"}
+    PYTORCH_CUDA_ALLOC_CONF: ${oc.env:PYTORCH_CUDA_ALLOC_CONF,"expandable_segments:True"}
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+
+  torchrun_args:
+    nproc_per_node: ${slurm.sbatch.gpus_per_node}
+    nnodes: ${slurm.sbatch.nodes}
+    max_restarts: 0
+    rdzv_backend: "c10d"
+    rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
+    node_rank: "$SLURM_PROCID"
+    master_addr: "$MASTER_ADDR"
+    master_port: "$MASTER_PORT"
+
+job:
+  name: titan_moe_30BA3B_ep4pp2_${aux.compile_tag}_acselective_${aux.ac_opt_tag}_bs${backend.titan.training.local_batch_size}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+container:
+  bind:
+    - /e/
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+slurm:
+  template_path: "templates/jupiter_mod.sbatch"
+  sbatch:
+    nodes: 2
+    gpus_per_node: 4
+    gres: "gpu:4"
+    cpus_per_task: 72
+    threads_per_core: 1
+    account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
+    partition: booster
+    time: "01:00:00"
+  srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
+  env:
+    NUM_NODES: "$SLURM_JOB_NUM_NODES"
+    GPUS_PER_NODE: "4"
+    NUM_GPUS_PER_NODE: "4"
+    NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
+    SLURM_CPUS_PER_TASK: "72"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ── Config 0: compile + selective-AC option=6 + bs=64 ──────────────────
+        # opt=6: checkpoint every 6th layer (recompute only 4/24 = 17% of layers).
+        # opt=4 → 145 TFLOPS at 85 GiB (89%). opt=4→opt=6: -8pp recompute.
+        # Expected: +3-4% → ~148-150 TFLOPS. Memory: ~88-90 GiB (93-95%).
+        - aux.compile_tag: compile
+          aux.ac_opt_tag: opt6
+          backend.titan.activation_checkpoint.selective_ac_option: "6"
+          backend.titan.training.local_batch_size: 64
+          backend.env.TORCHDYNAMO_DISABLE: "0"
+
+        # ── Config 1: nocompile + selective-AC option=6 + bs=64 ────────────────
+        # Baseline without compile.
+        # Expected: ~136-138 TFLOPS. Memory: ~88-90 GiB (93-95%).
+        - aux.compile_tag: nocompile
+          aux.ac_opt_tag: opt6
+          backend.titan.activation_checkpoint.selective_ac_option: "6"
+          backend.titan.training.local_batch_size: 64
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+
+        # ── Config 2: compile + selective-AC option=8 + bs=64 ──────────────────
+        # opt=8: checkpoint every 8th layer (recompute only 3/24 = 12.5% of layers).
+        # Expected: ~+2% over opt=6 → ~151-153 TFLOPS if opt=6 confirms ~150.
+        # Memory: ~90-93 GiB (95-98%) — borderline, may OOM.
+        # Including to find the actual OOM boundary.
+        - aux.compile_tag: compile
+          aux.ac_opt_tag: opt8
+          backend.titan.activation_checkpoint.selective_ac_option: "8"
+          backend.titan.training.local_batch_size: 64
+          backend.env.TORCHDYNAMO_DISABLE: "0"

@@ -1,0 +1,2 @@
+launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
+  export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; ${container.activate_script} ${container.env_name} ; \\\n"

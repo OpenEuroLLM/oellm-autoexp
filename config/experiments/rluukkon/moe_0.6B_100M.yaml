@@ -2,13 +2,13 @@
 defaults:
   - base
   - /backend: megatron
-  - /container: lumi
-  - /slurm: lumi
+  - /container: amd_mi325x_cloud
+  - /slurm: amd_mi325x_cloud
   - /monitoring: megatron_basic
   - /project: default
   - /sweep: none 
   - /experiments/rluukkon/models: moe_0.6B_100M
-  - /experiments/rluukkon/data:   moe_ablation_data
+  - /experiments/rluukkon/data:   neox_50B_english
   - _self_
 
 project:
@@ -17,8 +17,8 @@ project:
   
 slurm:
   sbatch:
-    partition: standard-g
-    nodes: 4
+    partition: amd-tw-verification
+    nodes: 1
     time: 0-20:00:00
 
 backend:
@@ -39,6 +39,7 @@ backend:
     load: ${project.base_output_dir}
     tensorboard_dir: ${project.base_output_dir}/tensorboard
     save_interval: 10000
+    wandb_entity: "risto-m-luukkonen"
     wandb_save_dir: "${project.base_output_dir}/wandb"
     wandb_project: "${project.name}"
     wandb_exp_name: "qwen3_0.6B_A100M_lr${.lr}_gbsz${.global_batch_size}_$SLURM_JOB_ID"

@@ -35,8 +35,6 @@ python scripts/run_autoexp_container.py \
   project.name=scancel_test \
   slurm.log_dir=logs \
   slurm.array=false \
-  monitoring.poll_interval_seconds=5 \
-  monitoring.check_interval_seconds=5 \
   > logs/run_autoexp_submit.log 2>&1
 
 echo "   Submission complete"

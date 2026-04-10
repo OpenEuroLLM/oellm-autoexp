@@ -1,0 +1,177 @@
+# @package _global_
+# Titan translation of megatron_niccolo_130M_scaling_jupiter.yaml
+#
+# Architecture differences vs megatron:
+#   - add_qkv_bias / mlp_bias are now supported in qwen3_custom
+#   - Multi-stage sweep: stable (300B, no decay) + cooldown branches at multiple token budgets
+#     Titan equivalent of override_opt_param_scheduler: exclude_from_loading: [lr_scheduler]
+#
+# Model: ~130M params, 576d / 18L / 9H / ffn=2304 / head_dim=64
+#   GBS=128, LBS=16 → data_parallel=8 → 2 Jupiter nodes
+defaults:
+  - ../base
+  - /backend: titan
+  - /container: jupiter_titan
+  - /slurm: jupiter
+  - /sweep: none
+  - override /backend/titan/model: qwen3_base
+  - override /backend/titan/data: nemonicco_jupiter
+  - override /job: auto_restart
+  - _self_
+
+aux:
+  experiment_group: "niccolo_scaling_repro"
+
+  tokens: 300_000_000_000
+  seq_len: 4096
+  gbs: 128
+  decay_fraction: 0.2
+  extra_steps: "${oc.mapeval:${oc.maptmpl:'int((((% + ${aux.seq_len}*${aux.gbs})-1)//(${aux.seq_len}*${aux.gbs}))*(1-${aux.decay_fraction}))',${oc.mapextractkey:aux.tokens,${sweep.groups.0.configs.1.configs}}}}"
+
+stage: stable   # overridden by sweep
+
+backend:
+  titan:
+    training:
+      steps: "${oc.eval:'(${aux.tokens}+${aux.seq_len}*${aux.gbs}-1)//(${aux.seq_len}*${aux.gbs})'}"
+      global_batch_size: ${aux.gbs}
+      local_batch_size: 16
+      seq_len: ${aux.seq_len}
+      max_norm: 1.0
+      dtype: bfloat16
+      dataset: ""
+
+    model:
+      name: qwen3_custom
+      tokenizer_path: /e/project1/projectnucleus/franke5/workspace/titan-train/torchtitan/assets/tokenizer/gpt-neox-20b
+      vocab_size: 50304
+
+      dim: 576
+      n_layers: 18
+      n_heads: 9
+      n_kv_heads: 9       # full MHA (no GQA), matches num_query_groups=9
+      hidden_dim: 2304    # ffn_hidden_size
+      head_dim: 64        # kv_channels
+      qk_norm: true       # qk_layernorm
+      enable_weight_tying: true   # untie_embeddings_and_output_weights: False
+      qkv_bias: true
+      mlp_bias: true
+
+    optimizer:
+      lr: 0.002
+      beta1: 0.9
+      beta2: 0.99         # adam_beta2
+      weight_decay: 0.1
+      eps: 1.0e-8
+
+    validation:
+      enable: true
+      freq: 1000
+      steps: 100
+      local_batch_size: -1
+      max_eval_samples: -1
+
+    lr_scheduler:
+      scheduler_type: wsd
+      warm_steps: 2000  # never use warmup_steps, use warm_steps
+      warm_ratio: 0.
+      decay_ratio: ${aux.decay_fraction}
+      decay_type: linear
+      # min_lr: 1e-5 → min_lr_factor = 1e-5 / 0.002 = 0.005
+      min_lr_factor: 0.005
+
+    checkpoint:
+      enable: true
+      interval: 4000
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    TORCHDYNAMO_DISABLE: "1"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONPATH: "./submodules/titan-oellm:./submodules/titan-oellm/torchtitan:."
+    NCCL_SOCKET_TIMEOUT: 60000
+    NCCL_TIMEOUT: 1800
+    NCCL_IB_TIMEOUT: 100
+    NCCL_IB_RETRY_CNT: 20
+    NCCL_ALGO: Ring
+
+slurm:
+  sbatch:
+    nodes: 2
+
+job:
+  name: ti_dense_50M_02_lr${backend.titan.optimizer.lr}_gbsz${aux.gbs}_beta2${backend.titan.optimizer.beta2}_${stage}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+
+# COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE (mirrors megatron_niccolo_130M_scaling_jupiter.yaml)
+sweep:
+  type: product
+
+  groups:
+    - type: list
+      configs:
+        # STABLE PHASE: Train for 300B tokens with no decay
+        - stage: stable
+
+          aux.tokens: 300_000_000_000
+          # No override needed for LR: universal scheduler uses cooldown_ratio (default 0),
+          # so the stable run is purely warmup (warm_steps=2000) + constant main phase.
+
+          # Save checkpoints at each cooldown branch's start_step so they can load from stable
+          backend.titan.checkpoint.extra_steps: ${aux.extra_steps}
+
+        # NESTED GROUP: Cooldown/decay stages with shared defaults
+        - type: list
+          defaults:
+            # Step in the stable run from which this cooldown branch starts
+            aux.start_step: "\\${oc.eval:'int(((\\${aux.tokens}+\\${aux.seq_len}*\\${aux.gbs}-1)//(\\${aux.seq_len}*\\${aux.gbs}))*(1-\\${aux.decay_fraction}))'}"
+
+            # training.steps is left at its top-level value = total_steps for this token budget.
+            # With train_state loaded (self.step = start_step), the loop runs for
+            # total_steps - start_step = decay_steps iterations automatically.
+            #
+            # lr_steps = decay_steps tells the LR scheduler to plan for exactly decay_steps,
+            # so with cooldown_ratio=1.0 the LR decays fully from max_lr to min_lr. ✓
+            backend.titan.lr_scheduler.lr_steps: "\\${oc.eval:'(\\${aux.tokens}+\\${aux.seq_len}*\\${aux.gbs}-1)//(\\${aux.seq_len}*\\${aux.gbs}) - int(((\\${aux.tokens}+\\${aux.seq_len}*\\${aux.gbs}-1)//(\\${aux.seq_len}*\\${aux.gbs}))*(1-\\${aux.decay_fraction}))'}"
+
+            # Load model + optimizer + train_state from stable checkpoint.
+            # Exclude lr_scheduler so it is re-built fresh from config (decay over lr_steps).
+            # train_state is loaded so self.step = start_step (preserves step counter / logging).
+            backend.titan.checkpoint.initial_load_path: "\\${sibling.stable.job.base_output_dir}/checkpoint/step-\\${aux.start_step}"
+            backend.titan.checkpoint.initial_load_model_only: false
+            backend.titan.checkpoint.exclude_from_loading: [lr_scheduler]
+
+            # Universal scheduler: no warmup, entire run is the cooldown/decay phase.
+            # build_lr_schedulers receives lr_steps=decay_steps and cooldown_ratio=1.0,
+            # so actual_cooldown_steps=decay_steps and LR decays from max_lr to min_lr. ✓
+            backend.titan.lr_scheduler.warm_steps: 0
+            backend.titan.lr_scheduler.warm_ratio: 0
+            backend.titan.lr_scheduler.cooldown_ratio: 1.0
+            backend.titan.lr_scheduler.cooldown_type: linear
+
+            stage: "decay_step\\${aux.start_step}"
+
+            # Start condition: wait for stable to save the required checkpoint
+            job.start_condition:
+              class_name: FileExistsCondition
+              path: "\\${sibling.stable.job.base_output_dir}/checkpoint/step-\\${aux.start_step}"
+
+            # Cancel condition: abort if stable job crashes
+            job.cancel_condition:
+              class_name: LogPatternCondition
+              log_path: "\\${sibling.stable.job.log_path_current}"
+              pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+
+          configs:
+            - aux.tokens: 6_000_000_000
+            - aux.tokens: 12_000_000_000
+            - aux.tokens: 20_000_000_000
+            - aux.tokens: 30_000_000_000
+            - aux.tokens: 50_000_000_000
+            - aux.tokens: 80_000_000_000
+            - aux.tokens: 120_000_000_000
+            - aux.tokens: 200_000_000_000

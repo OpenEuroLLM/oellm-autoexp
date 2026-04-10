@@ -119,7 +119,7 @@ def _submit_jobs(manifest_path: Path, *, monitor: bool = False) -> None:
 
 
 def _resolve_state_file(manifest: dict) -> Path:
-    state_dir = Path(manifest["monitoring_state_dir"])
+    state_dir = Path(manifest["monitor_state_dir"])
     plan_id = manifest["plan_id"]
     state_file = state_dir / f"{plan_id}.json"
     return state_file
@@ -193,7 +193,8 @@ def _ensure_resolved_paths(state_file: Path) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config-ref", default="autoexp")
+    parser.add_argument("--config-name", default="autoexp")
+    parser.add_argument("--config-path", default=None, type=str)
     parser.add_argument("--config-dir", type=Path, default=Path("config"))
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--plan-id", type=str, default="")
