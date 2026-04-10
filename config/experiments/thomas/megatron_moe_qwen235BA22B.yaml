@@ -68,7 +68,7 @@ backend:
 
     moe_token_dispatcher_type: flex
     moe_flex_dispatcher_backend: hybridep
-    moe_hybridep_num_sms: 24
+    moe_hybridep_num_sms: 8 # more compute-bound on powercapped GH200 so relatively low SM
     #moe_enable_deepep: true
 
 
@@ -118,4 +118,4 @@ job:
 slurm:
   sbatch:
     nodes: 64
-    time: "00:50:00"
+    time: "00:20:00"

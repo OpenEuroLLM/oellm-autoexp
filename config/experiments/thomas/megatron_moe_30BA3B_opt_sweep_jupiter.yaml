@@ -42,9 +42,9 @@ backend:
     pipeline_model_parallel_size: 2
     tensor_model_parallel_size: 1
 
-    overlap_p2p_comm: true
+    #overlap_p2p_comm: true
     # overlap_grad_reduce: true # DP=1 no DP peers to overlap
-    num_layers_per_virtual_pipeline_stage: 6
+    #num_layers_per_virtual_pipeline_stage: 6
     # overlap_moe_expert_parallel_comm: true AssertionError: overlap_moe_expert_parallel_comm is supported with alltoall/flex token dispatcher
 
 
@@ -61,13 +61,13 @@ backend:
     #moe_token_dispatcher_type: allgather
 
     # DeepEP
-    # moe_token_dispatcher_type: flex
-    # moe_flex_dispatcher_backend: deepep
-    # moe_enable_deepep: true
-
-    # HybridEP:
     moe_token_dispatcher_type: flex
     moe_flex_dispatcher_backend: hybridep
+    #moe_enable_deepep: true
+
+    # HybridEP:
+    # moe_token_dispatcher_type: flex
+    # moe_flex_dispatcher_backend: hybridep
 
     use_distributed_optimizer: true
     moe_router_dtype: "fp32"
@@ -86,7 +86,7 @@ backend:
     PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
     PYTHONWARNINGS: "ignore::UserWarning"
     NCCL_NET_GDR_LEVEL: "0"  # disable GDRDMA — required for PP=2 inter-node P2P
-    #CUDA_DEVICE_MAX_CONNECTIONS: 1 only for TP
+    CUDA_DEVICE_MAX_CONNECTIONS: 1  # only for TP
 
 container:
   image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deep-hybridep_aarch64.sif
