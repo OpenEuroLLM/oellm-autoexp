@@ -9,8 +9,11 @@ Catches three classes of bug:
 from __future__ import annotations
 
 import dataclasses
+import importlib
+import importlib.util
 import re
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -22,17 +25,103 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _TITAN_ROOT = _REPO_ROOT / "submodules" / "titan-oellm"
 _TORCHTITAN_ROOT = _TITAN_ROOT / "torchtitan"
+_TITAN_PKG_ROOT = _TITAN_ROOT / "titan_oellm"
+_TORCHTITAN_PKG_ROOT = _TORCHTITAN_ROOT / "torchtitan"
 
 for _p in (_REPO_ROOT, _TITAN_ROOT, _TORCHTITAN_ROOT):
     if str(_p) not in sys.path and _p.is_dir():
         sys.path.insert(0, str(_p))
 
 _SUBMODULES_AVAILABLE = (_TITAN_ROOT / "titan_oellm").is_dir()
+_OPTIONAL_TITAN_RUNTIME_ROOTS = {
+    "PIL",
+    "datasets",
+    "einops",
+    "fsspec",
+    "tensorboard",
+    "tokenizers",
+    "torch",
+    "torchao",
+    "torchdata",
+    "wandb",
+}
 
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
+
+
+def _reset_titan_modules(monkeypatch: pytest.MonkeyPatch) -> None:
+    prefixes = ("torch", "torchtitan", "titan_oellm", "oellm_autoexp.titan_custom_config")
+    for name in list(sys.modules):
+        if any(name == prefix or name.startswith(f"{prefix}.") for prefix in prefixes):
+            monkeypatch.delitem(sys.modules, name, raising=False)
+
+
+def _install_package_stub(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    name: str,
+    package_root: Path,
+) -> None:
+    module = types.ModuleType(name)
+    module.__path__ = [str(package_root)]
+    monkeypatch.setitem(sys.modules, name, module)
+
+
+def _install_torch_stub(monkeypatch: pytest.MonkeyPatch) -> None:
+    if importlib.util.find_spec("torch") is not None:
+        return
+
+    module = types.ModuleType("torch")
+    module.float16 = object()
+    module.float32 = object()
+    module.bfloat16 = object()
+    monkeypatch.setitem(sys.modules, "torch", module)
+
+
+def _should_fallback_to_lightweight_import(exc: Exception) -> bool:
+    if isinstance(exc, ModuleNotFoundError):
+        root = (exc.name or "").split(".", 1)[0]
+        return root in _OPTIONAL_TITAN_RUNTIME_ROOTS
+    return isinstance(exc, KeyError) and exc.args == ("torchtitan",)
+
+
+def _enable_lightweight_titan_imports(monkeypatch: pytest.MonkeyPatch) -> None:
+    _reset_titan_modules(monkeypatch)
+    _install_torch_stub(monkeypatch)
+    _install_package_stub(monkeypatch, name="torchtitan", package_root=_TORCHTITAN_PKG_ROOT)
+    _install_package_stub(monkeypatch, name="titan_oellm", package_root=_TITAN_PKG_ROOT)
+    importlib.invalidate_caches()
+
+
+@pytest.fixture
+def titan_config_modules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[object, type, type]:
+    """Import Titan config modules, falling back to lightweight package stubs.
+
+    The config consistency checks only need the torchtitan/titan_oellm config
+    modules, not the heavyweight training runtime imported from package
+    ``__init__`` files.
+    """
+    if not _SUBMODULES_AVAILABLE:
+        pytest.skip("titan-oellm submodule not checked out")
+
+    try:
+        custom_mod = importlib.import_module("oellm_autoexp.titan_custom_config")
+        torch_titan_job_config = importlib.import_module("torchtitan.config.job_config").JobConfig
+        config_manager = importlib.import_module("torchtitan.config.manager").ConfigManager
+    except Exception as exc:
+        if not _should_fallback_to_lightweight_import(exc):
+            raise
+        _enable_lightweight_titan_imports(monkeypatch)
+        custom_mod = importlib.import_module("oellm_autoexp.titan_custom_config")
+        torch_titan_job_config = importlib.import_module("torchtitan.config.job_config").JobConfig
+        config_manager = importlib.import_module("torchtitan.config.manager").ConfigManager
+
+    return custom_mod, torch_titan_job_config, config_manager
 
 
 @pytest.fixture(scope="module")
@@ -57,25 +146,24 @@ def schema_model_fields() -> set[str]:
 
 
 @pytest.mark.skipif(not _SUBMODULES_AVAILABLE, reason="titan-oellm submodule not checked out")
-def test_titan_custom_config_importable():
+def test_titan_custom_config_importable(titan_config_modules):
     """titan_custom_config must import cleanly.
 
     Previously failed because it imported from
     titan_oellm.configs.sci_job_config which does not exist (the real
     module is oellm_job_config).
     """
-    import importlib
-
-    mod = importlib.import_module("oellm_autoexp.titan_custom_config")
+    mod, _, _ = titan_config_modules
     assert hasattr(mod, "JobConfig"), "titan_custom_config must expose JobConfig"
     assert hasattr(mod, "Model"), "titan_custom_config must expose Model"
 
 
 @pytest.mark.skipif(not _SUBMODULES_AVAILABLE, reason="titan-oellm submodule not checked out")
-def test_titan_custom_config_model_has_moe_fields():
+def test_titan_custom_config_model_has_moe_fields(titan_config_modules):
     """Custom Model must expose the MoE fields needed by qwen3_custom model
     configs."""
-    from oellm_autoexp.titan_custom_config import Model
+    mod, _, _ = titan_config_modules
+    Model = mod.Model
 
     field_names = {f.name for f in dataclasses.fields(Model)}
     required = {
@@ -104,7 +192,7 @@ def test_titan_custom_config_model_has_moe_fields():
 
 
 @pytest.mark.skipif(not _SUBMODULES_AVAILABLE, reason="titan-oellm submodule not checked out")
-def test_merged_model_accepts_all_schema_fields(schema_model_fields):
+def test_merged_model_accepts_all_schema_fields(schema_model_fields, titan_config_modules):
     """Every field in config_schema.Model must exist in ConfigManager's
     MergedModel.
 
@@ -112,11 +200,10 @@ def test_merged_model_accepts_all_schema_fields(schema_model_fields):
         ValueError: Invalid field names in <MergedModel> data: {...}
     at the start of every training job.
     """
-    from torchtitan.config.job_config import JobConfig as TorchTitanJobConfig
-    from torchtitan.config.manager import ConfigManager
-    from oellm_autoexp.titan_custom_config import JobConfig as CustomJobConfig
+    custom_mod, torch_titan_job_config, config_manager = titan_config_modules
+    CustomJobConfig = custom_mod.JobConfig
 
-    merged_cls = ConfigManager._merge_configs(TorchTitanJobConfig, CustomJobConfig)
+    merged_cls = config_manager._merge_configs(torch_titan_job_config, CustomJobConfig)
     merged_model_type = next(f.type for f in dataclasses.fields(merged_cls) if f.name == "model")
     merged_fields = {f.name for f in dataclasses.fields(merged_model_type)}
 
