@@ -12,7 +12,6 @@ import matplotlib.gridspec as gridspec
 from matplotlib.ticker import FuncFormatter
 from pathlib import Path
 
-# ─── User configuration ────────────────────────────────────────────────────────
 
 GPUS_PER_NODE = 4
 
@@ -37,13 +36,6 @@ OUTPUT_FILE = "qwen3_235B-A22B_jupiter_scaling.png"
 # Title for the top (token throughput) bar chart.
 PLOT_TITLE = "Token Throughput Megatron Qwen 3 235B A22B (TP 2, PP 8, EP 16, VP 4, GAS 128, MBS 1)"
 
-# ─── Parsing ───────────────────────────────────────────────────────────────────
-
-# Matches the wandb Run summary block, e.g.:
-#  [default3]:wandb:                    TFLOPS 170.24533
-#  [default3]:wandb: Tokens per second per GPU 1150.03574
-#  [default3]:wandb:                batch-size 16384
-#  [default3]:wandb:            iteration-time 56.98606
 _TFLOPS_RE    = re.compile(r"wandb:\s+TFLOPS\s+([\d.]+)")
 _TOK_GPU_RE   = re.compile(r"wandb:\s+Tokens per second per GPU\s+([\d.]+)")
 _BS_RE        = re.compile(r"wandb:\s+batch-size\s+(\d+)")
@@ -85,9 +77,6 @@ def parse_log(path: str) -> dict:
         "tok_per_s":         tok_per_s_per_gpu * world_size if world_size else None,
     }
 
-
-# ─── Main ──────────────────────────────────────────────────────────────────────
-
 def main():
     gpu_counts = sorted(EXPERIMENTS.keys())
     records = {}
@@ -97,7 +86,6 @@ def main():
         rec = parse_log(log_path)
         records[n_gpus] = rec
 
-    # ── Table ──────────────────────────────────────────────────────────────────
 
     # Baseline for efficiency: smallest GPU count
     baseline_gpus  = gpu_counts[0]
@@ -138,8 +126,6 @@ def main():
         )
     print(sep)
 
-    # ── Plots ──────────────────────────────────────────────────────────────────
-
     n_gpus_arr     = np.array([tr["n_gpus"]         for tr in table_rows])
     tflops_arr     = np.array([tr["tflops_per_gpu"]  for tr in table_rows])
     tok_s_arr      = np.array([tr["tok_per_s"]       for tr in table_rows])
@@ -154,7 +140,6 @@ def main():
     fig = plt.figure(figsize=(14, 10))
     gs  = gridspec.GridSpec(2, 1, figure=fig, hspace=0.5)
 
-    # ── Token throughput bar + scaling efficiency overlay ──────────────────────
     ax1 = fig.add_subplot(gs[0])
     bars1 = ax1.bar(x_pos, tok_s_arr, color="#AED6F1", edgecolor="white", width=0.6,
                     label="_nolegend_")
@@ -187,7 +172,7 @@ def main():
     ax1.legend(lines1 + lines1r, labels1 + labels1r, loc="upper left", fontsize=9,
                bbox_to_anchor=(0.0, 0.88))
 
-    # ── Bar plot: TFLOPs/s/GPU vs GPUs ────────────────────────────────────────
+    # Bar plot
     ax2 = fig.add_subplot(gs[1])
     bars2 = ax2.bar(x_pos, tflops_arr, color="#228B22", edgecolor="white", width=0.6)
     ax2.bar_label(bars2, fmt="%.1f", padding=3, fontsize=9, color="black")
