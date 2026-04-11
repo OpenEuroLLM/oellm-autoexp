@@ -4,15 +4,15 @@
 # MaxText on GPU is 3-6x slower than PyTorch backends. Completeness sweep.
 #
 # Architecture: 94 layers, dim=4096, 128 experts, topk=8
-# Parallelism: ICI EP=4 (intra-node NVLink), DCN FSDP=64 (inter-node IB)
+# Parallelism: ICI EP=2+FSDP_T=2 (intra-node), DCN FSDP=64 (inter-node)
+#   Total: EP=2 × FSDP_T=2 × DCN_FSDP=64 = 256-way
 #
-# With 256-way FSDP, param shards are tiny → try more layers:
-#   16 layers: safe baseline
-#   24 layers: moderate
-#   48 layers: ambitious (half model)
+# scan_layers=true: XLA reuses activation buffers across layers via nn.scan.
+# With 256-way sharding + scan, full 94L should fit easily.
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (2026-04-10) ────────────────────────────────────────────────────
+# 48L scan → 67.6 tps/dev, 5.24 TFLOP/s, loss=10.3 ← COMPLETED
+# 94L scan → 33.1 tps/dev, 4.91 TFLOP/s, loss=10.0 ← COMPLETED (FULL MODEL!)
 
 defaults:
   - ../../base
@@ -25,8 +25,8 @@ defaults:
   - _self_
 
 aux:
-  experiment_group: "maxtext_moe_235BA22B_64node_sweep"
-  layers_tag: "16L"
+  experiment_group: "maxtext_moe_235BA22B_64node_v2"
+  layers_tag: "94L"
 
 backend:
   maxtext:
@@ -34,17 +34,20 @@ backend:
     attention: dot_product
     megablox: false
     sparse_matmul: true
-    steps: 50
+    steps: 30
     per_device_batch_size: 1
     dataset_type: synthetic
     remat_policy: full
     enable_checkpointing: false
-    scan_layers: false
+    scan_layers: true
     max_target_length: 2048
-    base_num_decoder_layers: 16
+    base_num_decoder_layers: 94
     monitor_goodput: false
     enable_goodput_recording: false
     base_output_directory: "${job.base_output_dir}"
+    # ICI (intra-node, NVLink): EP=2 + FSDP_T=2 (proven working for 30BA3B+235B)
+    # DCN (inter-node, IB): FSDP=64
+    # Total: EP=2 × FSDP_T=2 × DCN_FSDP=64 = 256-way
     ici_fsdp_parallelism: 1
     ici_fsdp_transpose_parallelism: 2
     ici_expert_parallelism: 2
@@ -57,10 +60,11 @@ backend:
   env:
     PYTHONPATH: ".:submodules/MaxText:stubs"
     XLA_FLAGS: "--xla_gpu_enable_command_buffer="
-    XLA_PYTHON_CLIENT_MEM_FRACTION: "0.95"
+    XLA_PYTHON_CLIENT_MEM_FRACTION: "0.90"
     NNODES: "$SLURM_NNODES"
     NODE_RANK: "$SLURM_NODEID"
     JAX_COORDINATOR_PORT: "1234"
+    GPUS_PER_NODE: "4"
 
 container:
   bind:
@@ -71,7 +75,7 @@ container:
     - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
 
 slurm:
-  srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
+  srun_opts: "--mpi=none --nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
   sbatch:
     nodes: 64
     time: "00:45:00"
@@ -90,15 +94,13 @@ sweep:
   groups:
     - type: list
       configs:
-        # ── 16 layers (safe baseline) ────────────────────────────────────────
-        - aux.layers_tag: 16L
-          backend.maxtext.base_num_decoder_layers: 16
+        # ── All use scan_layers=true (set in backend defaults above) ────────
 
-        # ── 24 layers (moderate) ─────────────────────────────────────────────
-        - aux.layers_tag: 24L
-          backend.maxtext.base_num_decoder_layers: 24
+        # ── 94 layers (full model) ──────────────────────────────────────────
+        # With 256-way sharding + scan_layers, should fit comfortably.
+        - aux.layers_tag: 94L_scan
+          backend.maxtext.base_num_decoder_layers: 94
 
-        # ── 48 layers (ambitious, half model) ────────────────────────────────
-        # With 256-way FSDP, param shards are ~0.6 GiB/GPU. May fit.
-        - aux.layers_tag: 48L
+        # ── 48 layers (fallback if 94L OOMs) ────────────────────────────────
+        - aux.layers_tag: 48L_scan
           backend.maxtext.base_num_decoder_layers: 48

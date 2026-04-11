@@ -1,0 +1,165 @@
+# @package _global_
+# Megatron 235BA22B — ModelZoo-reference parallelism on JUPITER (64 nodes, 256 GPUs)
+#
+# Scaling the GB200 reference to 64 nodes (256 GPUs, 4 GPUs/node)
+#
+# Parallelism options at 256 GPUs:
+#   A) TP=1, PP=4, EP=32: DP=64, EP=32 → DP_no_ep=2. GBS=2048.
+#   B) TP=1, PP=4, EP=64: DP=64, EP=64 → DP_no_ep=1. GBS=1024.
+#   C) TP=2, PP=4, EP=32: DP=32, EP=32 → DP_no_ep=1. GBS=1024.
+#
+# With 96 effective layers, PP=4 → 24/stage.
+# VPP: 12 virtual stages/rank → 2 layers/virtual stage.
+#
+# ── Results ──────────────────────────────────────────────────────────────────
+# (to be filled in after jobs complete)
+
+defaults:
+  - ../../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe_235BA22B]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "megatron_moe_235BA22B_modelzoo_64node"
+  tag: "ep32_deepep_selrecomp"
+
+backend:
+  megatron:
+    train_iters: 50
+    log_interval: 1
+    eval_interval: 1000
+    save: null
+    load: null
+    ckpt_step: 0
+    lr: 0.001
+    log_throughput: true
+
+    # Base parallelism: TP=1, PP=4, EP=32 (DP_no_ep=2)
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 4
+    expert_model_parallel_size: 32
+    global_batch_size: 2048
+    micro_batch_size: 1
+
+    account_for_embedding_in_pipeline_split: true
+    account_for_loss_in_pipeline_split: true
+    num_virtual_stages_per_pipeline_rank: 12
+
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: deepep
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_router_fusion: true
+
+    recompute_granularity: selective
+    recompute_modules:
+      - moe_act
+      - layernorm
+    recompute_method: null
+    recompute_num_layers: null
+
+    sequence_parallel: false
+
+    use_distributed_optimizer: true
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: te
+    enable_experimental: true
+    moe_router_dtype: fp32
+    moe_router_load_balancing_type: aux_loss
+    manual_gc: true
+    manual_gc_interval: 5
+    seq_length: 4096
+
+    cuda_graph_impl: "none"
+    cuda_graph_scope: "full"
+    te_rng_tracker: true
+
+    data_path:
+      - /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
+    data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    PYTHONPATH: ".:submodules/Megatron-LM:/opt/"
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+    PATH: "/usr/local/bin:/usr/bin:/bin"
+    CUDNN_PATH: "/usr/lib/aarch64-linux-gnu"
+    NCCL_NET_GDR_LEVEL: "0"
+    PYTHONWARNINGS: "ignore::UserWarning"
+
+container:
+  image: /e/scratch/projectnucleus/poeppel1/container_cache/MegatronTraining-JUPITER-deepep-nvshmem_base2510_aarch64_202603312032.sif
+  bind:
+    - /e
+    - /dev/shm
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+slurm:
+  sbatch:
+    nodes: 64
+    time: "00:30:00"
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: ""
+    UB_SKIPMC: "1"
+    NCCL_NET_GDR_LEVEL: "0"
+
+job:
+  name: meg_modelzoo_235BA22B_64n_${aux.tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ═══════════════════════════════════════════════════════════════════════
+        # Option A: TP=1, PP=4, EP=32, DP_no_ep=2
+        # More data parallelism → better gradient averaging, lower GBS per DP rank
+        # ═══════════════════════════════════════════════════════════════════════
+
+        - aux.tag: ep32_deepep_selrecomp
+          backend.megatron.expert_model_parallel_size: 32
+          backend.megatron.global_batch_size: 2048
+          backend.megatron.moe_flex_dispatcher_backend: deepep
+
+        - aux.tag: ep32_deepep_selrecomp_overlap
+          backend.megatron.expert_model_parallel_size: 32
+          backend.megatron.global_batch_size: 2048
+          backend.megatron.moe_flex_dispatcher_backend: deepep
+          backend.megatron.overlap_moe_expert_parallel_comm: true
+          backend.megatron.delay_wgrad_compute: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: "32"
+          backend.env.NVTE_FWD_LAYERNORM_SM_MARGIN: "24"
+          backend.env.NVTE_BWD_LAYERNORM_SM_MARGIN: "24"
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # Option B: TP=1, PP=4, EP=64, DP_no_ep=1
+        # Maximum expert distribution — 2 experts/GPU (vs 4 at EP=32)
+        # ═══════════════════════════════════════════════════════════════════════
+
+        - aux.tag: ep64_deepep_selrecomp
+          backend.megatron.expert_model_parallel_size: 64
+          backend.megatron.global_batch_size: 1024
+          backend.megatron.moe_flex_dispatcher_backend: deepep
+
+        - aux.tag: ep64_deepep_selrecomp_overlap
+          backend.megatron.expert_model_parallel_size: 64
+          backend.megatron.global_batch_size: 1024
+          backend.megatron.moe_flex_dispatcher_backend: deepep
+          backend.megatron.overlap_moe_expert_parallel_comm: true
+          backend.megatron.delay_wgrad_compute: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: "32"
+          backend.env.NVTE_FWD_LAYERNORM_SM_MARGIN: "24"
+          backend.env.NVTE_BWD_LAYERNORM_SM_MARGIN: "24"

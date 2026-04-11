@@ -126,7 +126,7 @@ slurm:
     account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
     partition: booster
     time: "00:30:00"
-  srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
+  srun_opts: "--mpi=none --nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
   env:
     # MASTER_ADDR intentionally omitted: inherited from slurm/jupiter.yaml base which
     # computes it via nslookup from SLURM_JOB_NODELIST (required for multi-node)

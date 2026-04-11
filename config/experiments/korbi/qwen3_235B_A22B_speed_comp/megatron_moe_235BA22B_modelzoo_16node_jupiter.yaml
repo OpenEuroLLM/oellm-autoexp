@@ -1,0 +1,202 @@
+# @package _global_
+# Megatron 235BA22B — ModelZoo-reference parallelism on JUPITER (16 nodes, 64 GPUs)
+#
+# Reference: https://github.com/yanring/Megatron-MoE-ModelZoo (GB200 EP32 config)
+# Key change from prior TP=4+PP=2+EP=8 (27.5 TFLOPS):
+#   → TP=1, PP=4, EP=16, VPP=12 virtual stages per rank
+#   → Eliminates TP comm, uses interleaved 1F1B for pipeline fill
+#   → Selective recompute instead of full (less compute overhead)
+#   → DeepEP flex dispatcher (NVSHMEM cross-node optimization)
+#
+# Architecture: 94 layers, hidden=4096, 128 experts, topk=8
+# Parallelism: TP=1, PP=4, EP=16
+#   DP = 64 / (1×4) = 16.  EP=16 ≤ DP → DP_no_ep = 1.
+#   With account-for-embedding+loss: 96 effective layers → 24/stage.
+#   VPP: 12 virtual stages per rank → 2 layers per virtual stage.
+#   Min microbatches: PP × virtual_chunks = 4 × 2 = 8.
+#   GBS = MBS × DP × num_micro = 1 × 16 × num_micro.
+#   GBS=512 → 32 microbatches. Good pipeline utilization.
+#
+# Memory estimate (per GPU, 24 layers/stage, EP=16 → 8 experts/GPU):
+#   Expert params: 8 × 3 × 4096 × 1536 bf16 ≈ 302 MB
+#   Attention+LN per layer: ~50 MB (TP=1, full hidden)
+#   24 layers model: ~1.5 GB (attention) + 7.3 GB (8 experts × 24 layers) ≈ 8.8 GB
+#   Optimizer (distributed): ~17.6 GB
+#   Activations (selective recompute): ~20-30 GB
+#   Total: ~50-60 GiB (well within 95 GiB)
+#
+# Container: DeepEP+NVSHMEM container (has deep_ep package at /opt/)
+# Requires: /dev/shm bind, PYTHONPATH includes /opt/, no expandable_segments
+#
+# ── Results ──────────────────────────────────────────────────────────────────
+# (to be filled in after jobs complete)
+
+defaults:
+  - ../../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe_235BA22B]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "megatron_moe_235BA22B_modelzoo_16node"
+  tag: "deepep_selrecomp"
+
+backend:
+  megatron:
+    train_iters: 50
+    log_interval: 1
+    eval_interval: 1000
+    save: null
+    load: null
+    ckpt_step: 0
+    lr: 0.001
+    log_throughput: true
+
+    # Parallelism: TP=1, PP=4, EP=16 (fundamentally different from prior TP=4+PP=2+EP=8)
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 4
+    expert_model_parallel_size: 16
+    global_batch_size: 512
+    micro_batch_size: 1
+
+    # Virtual Pipeline Parallelism — key enabler for PP=4
+    # 94 layers + embedding + loss = 96 effective → 24 per stage → 12 VPP → 2 layers/virtual
+    account_for_embedding_in_pipeline_split: true
+    account_for_loss_in_pipeline_split: true
+    num_virtual_stages_per_pipeline_rank: 12
+
+    # Flex dispatcher — DeepEP backend (NVSHMEM cross-node optimization)
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: deepep
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_router_fusion: true
+
+    # Selective recompute (vs full recompute in prior config — less compute overhead)
+    recompute_granularity: selective
+    recompute_modules:
+      - moe_act
+      - layernorm
+    recompute_method: null
+    recompute_num_layers: null
+
+    # TP=1 → sequence_parallel not needed (requires TP≥2)
+    sequence_parallel: false
+
+    # Optimizations from ModelZoo reference
+    use_distributed_optimizer: true
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: te
+    enable_experimental: true
+    moe_router_dtype: fp32
+    moe_router_load_balancing_type: aux_loss
+    manual_gc: true
+    manual_gc_interval: 5
+    # NOTE: moe_router_force_load_balancing caused hangs on JUPITER before — DISABLED
+    # moe_router_force_load_balancing: true
+    seq_length: 4096
+
+    # CUDA graphs — attn scope with TE implementation (from GB200 reference)
+    # NOTE: May not work with DeepEP; test without first, enable in sweep
+    cuda_graph_impl: "none"
+    cuda_graph_scope: "full"
+    te_rng_tracker: true
+
+    data_path:
+      - /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
+    data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    # TP=1: CUDA_DEVICE_MAX_CONNECTIONS=1 not required but harmless
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    PYTHONPATH: ".:submodules/Megatron-LM:/opt/"
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+    PATH: "/usr/local/bin:/usr/bin:/bin"
+    CUDNN_PATH: "/usr/lib/aarch64-linux-gnu"
+    NCCL_NET_GDR_LEVEL: "0"
+    PYTHONWARNINGS: "ignore::UserWarning"
+
+# Use DeepEP container with NVSHMEM
+container:
+  image: /e/scratch/projectnucleus/poeppel1/container_cache/MegatronTraining-JUPITER-deepep-nvshmem_base2510_aarch64_202603312032.sif
+  bind:
+    - /e
+    - /dev/shm
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+slurm:
+  sbatch:
+    nodes: 16
+    time: "00:30:00"
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: ""   # NVSHMEM conflicts with expandable_segments
+    UB_SKIPMC: "1"
+    NCCL_NET_GDR_LEVEL: "0"
+
+job:
+  name: meg_modelzoo_235BA22B_${aux.tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ═══════════════════════════════════════════════════════════════════════
+        # Core configs: TP=1, PP=4, EP=16, VPP=12
+        # ═══════════════════════════════════════════════════════════════════════
+
+        # ── DeepEP, selective recompute (ModelZoo reference) ───────────────
+        - aux.tag: deepep_selrecomp
+          backend.megatron.moe_flex_dispatcher_backend: deepep
+          backend.megatron.recompute_granularity: selective
+
+        # ── DeepEP, full recompute (memory/perf comparison) ───────────────
+        - aux.tag: deepep_fullrecomp
+          backend.megatron.moe_flex_dispatcher_backend: deepep
+          backend.megatron.recompute_granularity: full
+          backend.megatron.recompute_method: uniform
+          backend.megatron.recompute_num_layers: 1
+          backend.megatron.recompute_modules: null
+
+        # ── DeepEP, selective recompute + A2A overlap ─────────────────────
+        # Overlaps MoE A2A comm with next microbatch compute
+        # Requires CUDA_DEVICE_MAX_CONNECTIONS=32 for concurrent kernel streams
+        - aux.tag: deepep_selrecomp_overlap
+          backend.megatron.moe_flex_dispatcher_backend: deepep
+          backend.megatron.recompute_granularity: selective
+          backend.megatron.overlap_moe_expert_parallel_comm: true
+          backend.megatron.delay_wgrad_compute: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: "32"
+          backend.env.NVTE_FWD_LAYERNORM_SM_MARGIN: "24"
+          backend.env.NVTE_BWD_LAYERNORM_SM_MARGIN: "24"
+
+        # ── HybridEP, selective recompute ─────────────────────────────────
+        # NVLink-optimized fused dispatch/combine (may help intra-node EP)
+        - aux.tag: hybridep_selrecomp
+          backend.megatron.moe_flex_dispatcher_backend: hybridep
+          backend.megatron.moe_hybridep_num_sms: 32
+          backend.megatron.recompute_granularity: selective
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # EP=8 comparison (same EP size as prior TP=4+PP=2 config, but TP=1)
+        # ═══════════════════════════════════════════════════════════════════════
+
+        # ── EP=8, DeepEP, selective recompute ─────────────────────────────
+        # DP = 64/(1×4) = 16. EP=8 → DP_no_ep = 2. More data parallelism.
+        # GBS=512 → num_micro = 512/(1×16) = 32. Fine.
+        - aux.tag: ep8_deepep_selrecomp
+          backend.megatron.expert_model_parallel_size: 8
+          backend.megatron.moe_flex_dispatcher_backend: deepep
+          backend.megatron.recompute_granularity: selective

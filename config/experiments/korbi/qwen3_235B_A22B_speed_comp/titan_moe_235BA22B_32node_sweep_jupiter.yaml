@@ -46,13 +46,13 @@ backend:
       multiple_of: null
 
     training:
-      steps: 100
+      steps: 50
       local_batch_size: 4
       seq_len: 4096
       dtype: bfloat16
 
     metrics:
-      log_freq: 10
+      log_freq: 1
 
     parallelism:
       tensor_parallel_degree: 1
@@ -127,7 +127,7 @@ slurm:
     account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
     partition: booster
     time: "00:45:00"
-  srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
+  srun_opts: "--mpi=none --nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
   env:
     NUM_NODES: "$SLURM_JOB_NUM_NODES"
     GPUS_PER_NODE: "4"
@@ -178,78 +178,13 @@ sweep:
           backend.titan.training.local_batch_size: 4
           backend.env.TORCHDYNAMO_DISABLE: "1"
 
-        # ── PP=1, EP=8, selective-AC opt=4, bs=4 (test if sel-AC fits) ───────
-        - aux.pp_tag: pp1
-          aux.ac_tag: selac_opt4
-          aux.compile_tag: nocompile
-          backend.titan.parallelism.pipeline_parallel_degree: 1
-          backend.titan.parallelism.expert_parallel_degree: 8
-          backend.titan.parallelism.data_parallel_shard_degree: 128
-          backend.titan.activation_checkpoint.mode: selective
-          backend.titan.activation_checkpoint.selective_ac_option: "4"
-          backend.titan.training.local_batch_size: 4
-          backend.env.TORCHDYNAMO_DISABLE: "1"
-
-        # ── PP=1, EP=8, no-AC, bs=1 (test if no-AC fits with 2x FSDP) ──────
-        - aux.pp_tag: pp1
-          aux.ac_tag: noac
-          aux.compile_tag: nocompile
-          backend.titan.parallelism.pipeline_parallel_degree: 1
-          backend.titan.parallelism.expert_parallel_degree: 8
-          backend.titan.parallelism.data_parallel_shard_degree: 128
-          backend.titan.activation_checkpoint.mode: none
-          backend.titan.training.local_batch_size: 1
-          backend.env.TORCHDYNAMO_DISABLE: "1"
-
         # ═══════════════════════════════════════════════════════════════════════
-        # PP=2 configs (FSDP=64, 47 layers/stage)
+        # FAILED CONFIGS — documented for reference, do NOT re-enable
         # ═══════════════════════════════════════════════════════════════════════
-
-        # ── PP=2, EP=8, no-AC, bs=4 ─────────────────────────────────────────
-        - aux.pp_tag: pp2
-          aux.ac_tag: noac
-          aux.compile_tag: nocompile
-          backend.titan.parallelism.pipeline_parallel_degree: 2
-          backend.titan.parallelism.expert_parallel_degree: 8
-          backend.titan.parallelism.data_parallel_shard_degree: 64
-          backend.titan.parallelism.fsdp_reshard_after_forward: always
-          backend.titan.activation_checkpoint.mode: none
-          backend.titan.training.local_batch_size: 4
-          backend.env.TORCHDYNAMO_DISABLE: "1"
-
-        # ── PP=2, EP=8, no-AC, bs=64 (high throughput) ──────────────────────
-        - aux.pp_tag: pp2
-          aux.ac_tag: noac
-          aux.compile_tag: nocompile
-          backend.titan.parallelism.pipeline_parallel_degree: 2
-          backend.titan.parallelism.expert_parallel_degree: 8
-          backend.titan.parallelism.data_parallel_shard_degree: 64
-          backend.titan.parallelism.fsdp_reshard_after_forward: always
-          backend.titan.activation_checkpoint.mode: none
-          backend.titan.training.local_batch_size: 64
-          backend.env.TORCHDYNAMO_DISABLE: "1"
-
-        # ── PP=2, EP=16, no-AC, bs=64 ───────────────────────────────────────
-        - aux.pp_tag: pp2
-          aux.ac_tag: noac
-          aux.compile_tag: nocompile
-          backend.titan.parallelism.pipeline_parallel_degree: 2
-          backend.titan.parallelism.expert_parallel_degree: 16
-          backend.titan.parallelism.data_parallel_shard_degree: 64
-          backend.titan.parallelism.fsdp_reshard_after_forward: always
-          backend.titan.activation_checkpoint.mode: none
-          backend.titan.training.local_batch_size: 64
-          backend.env.TORCHDYNAMO_DISABLE: "1"
-
-        # ── PP=2, EP=8, selective-AC opt=4, bs=64 ───────────────────────────
-        - aux.pp_tag: pp2
-          aux.ac_tag: selac_opt4
-          aux.compile_tag: nocompile
-          backend.titan.parallelism.pipeline_parallel_degree: 2
-          backend.titan.parallelism.expert_parallel_degree: 8
-          backend.titan.parallelism.data_parallel_shard_degree: 64
-          backend.titan.parallelism.fsdp_reshard_after_forward: always
-          backend.titan.activation_checkpoint.mode: selective
-          backend.titan.activation_checkpoint.selective_ac_option: "4"
-          backend.titan.training.local_batch_size: 64
-          backend.env.TORCHDYNAMO_DISABLE: "1"
+        #
+        # PP=1, EP=8, selective-AC opt=4, bs=4 → OOM (92 GiB PyTorch, +1.5 GiB needed)
+        # PP=1, EP=8, no-AC, bs=1 → OOM (94.8 GiB in use, +262 MiB needed)
+        # PP=2, EP=8, no-AC, bs=4 → NCCL hang → SIGTERM
+        # PP=2, EP=8, no-AC, bs=64 → OOM (92 GiB PyTorch)
+        # PP=2, EP=16, no-AC, bs=64 → OOM (92 GiB PyTorch)
+        # PP=2, EP=8, selective-AC opt=4, bs=64 → NCCL hang → SIGTERM

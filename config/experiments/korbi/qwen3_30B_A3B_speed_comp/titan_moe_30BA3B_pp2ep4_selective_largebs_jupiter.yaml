@@ -119,7 +119,7 @@ slurm:
     account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
     partition: booster
     time: "01:00:00"
-  srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
+  srun_opts: "--mpi=none --nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
   env:
     NUM_NODES: "$SLURM_JOB_NUM_NODES"
     GPUS_PER_NODE: "4"

@@ -8,11 +8,11 @@
 #   → 27.5 TFLOPS, 75.3 GiB (79%)  (job 307427)
 #
 # Tests:
-#   1. sequence_parallel=false: Removes SP all-gather/reduce-scatter at TP=4.
-#      At TP=4, sequence_parallel adds comm overhead for activation memory savings.
-#      For full-recompute (which already saves activation memory), SP may be net negative.
-#   2. moe_grouped_gemm=false: Disables grouped GEMM for MoE experts.
+#   1. moe_grouped_gemm=false: Disables grouped GEMM for MoE experts.
 #      Grouped GEMM batches expert computations but may have overhead for 128 experts.
+#
+# NOTE: sequence_parallel=false is NOT tested because Megatron raises a hard error
+# when MoE + TP are enabled without SP ("performance may degrade" ValueError).
 #
 # Expected: marginal gains; Megatron is TP=4-bottlenecked.
 #
@@ -94,19 +94,8 @@ sweep:
         - aux.opt_tag: baseline_sp_ggmm
           # sequence_parallel: true (default from base), moe_grouped_gemm: true (default)
 
-        # ── Config 1: sequence_parallel=false ────────────────────────────────────
-        # TP=4 with SP adds 2 all-gather + 2 reduce-scatter per layer.
-        # Full recompute already saves activation memory → SP savings less valuable.
-        - aux.opt_tag: no_sp
-          backend.megatron.sequence_parallel: false
-
-        # ── Config 2: moe_grouped_gemm=false ─────────────────────────────────────
+        # ── Config 1: moe_grouped_gemm=false ─────────────────────────────────────
         # Disable grouped GEMM; use individual expert GEMM ops.
         # May be faster for 128 experts if grouped GEMM kernel has high launch overhead.
         - aux.opt_tag: no_ggmm
-          backend.megatron.moe_grouped_gemm: false
-
-        # ── Config 3: both disabled ──────────────────────────────────────────────
-        - aux.opt_tag: no_sp_no_ggmm
-          backend.megatron.sequence_parallel: false
           backend.megatron.moe_grouped_gemm: false

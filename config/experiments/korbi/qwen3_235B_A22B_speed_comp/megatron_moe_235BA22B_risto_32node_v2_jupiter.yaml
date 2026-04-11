@@ -1,0 +1,165 @@
+# @package _global_
+# Megatron 235BA22B — Risto's H100 parallelism adapted for JUPITER 32N (128 GPUs)
+#
+# v2: Uses allgather/alltoall dispatchers (flex/DeepEP broken on JUPITER GH200)
+#
+# Original H100: TP=2, PP=8, VPP=4, EP=32 on 256 GPUs
+# JUPITER 32N adaptation: EP reduced 32→16 (max with TP=2+PP=8 on 128 GPUs)
+#   DP = 128 / (2×8) = 8. EP=16 → expert_dp = 128/(1×16×8) = 1.
+#   GBS=2048, MBS=1: num_micro = 2048/8 = 256 >> min(PP×VPP_chunks=8×4=32). Excellent.
+#   VPP=4: 96/8 = 12/stage, 12/4 = 3 layers/virtual stage
+#
+# Key optimizations from Risto reference (H100 245-276 TFLOPS):
+#   - Selective recompute (moe_act + layernorm)
+#   - All grad/param overlaps
+#   - attention_backend: fused (TE FusedAttention)
+#   - CUDA_DEVICE_MAX_CONNECTIONS=32 for concurrent streams
+#   - mock_data for pure compute benchmark
+#
+# ── Results ──────────────────────────────────────────────────────────────────
+# (to be filled in after jobs complete)
+
+defaults:
+  - ../../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe_235BA22B]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "megatron_moe_235BA22B_risto_32node_v2"
+  tag: "allgather_ep16"
+
+backend:
+  megatron:
+    train_iters: 50
+    log_interval: 1
+    eval_interval: 1000
+    save: null
+    load: null
+    ckpt_step: 0
+    log_throughput: true
+    exit_interval: 50
+
+    # ═══ Risto parallelism (EP reduced 32→16 for 128 GPUs) ═══
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 8
+    expert_model_parallel_size: 16
+    expert_tensor_parallel_size: 1
+    context_parallel_size: 1
+    global_batch_size: 2048
+    micro_batch_size: 1
+
+    account_for_embedding_in_pipeline_split: true
+    account_for_loss_in_pipeline_split: true
+    num_virtual_stages_per_pipeline_rank: 4
+
+    # ═══ Dispatcher: allgather (working on JUPITER) ═══
+    moe_token_dispatcher_type: allgather
+    moe_grouped_gemm: true
+
+    # ═══ Full recompute (default — selective may OOM at EP=8) ═══
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    recompute_modules: null
+
+    # ═══ Communication overlaps ═══
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+
+    # ═══ Attention + compute ═══
+    attention_backend: fused
+    sequence_parallel: true
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: te
+    enable_experimental: true
+    create_attention_mask_in_dataloader: false
+
+    # ═══ Router ═══
+    moe_router_dtype: fp32
+    moe_router_load_balancing_type: aux_loss
+    moe_aux_loss_coeff: 0.001
+    moe_z_loss_coeff: 1e-4
+
+    # ═══ Optimizer ═══
+    use_distributed_optimizer: true
+    lr: 3e-4
+    min_lr: 0
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+
+    # ═══ Memory ═══
+    manual_gc: true
+    manual_gc_interval: 5
+
+    # ═══ Data — mock ═══
+    mock_data: true
+    seq_length: 4096
+    max_position_embeddings: 4096
+
+    # ═══ Misc ═══
+    te_rng_tracker: true
+    cuda_graph_impl: "none"
+    cuda_graph_scope: "full"
+    make_vocab_size_divisible_by: 256
+    dataloader_type: single
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"   # TP=2 requires =1 (Megatron assertion)
+    NCCL_NVLS_ENABLE: "1"
+    NVTE_ALLOW_NONDETERMINISTIC_ALGO: "1"
+    PYTHONPATH: ".:submodules/Megatron-LM:/opt/"
+    NCCL_NET_GDR_LEVEL: "0"
+    PYTHONWARNINGS: "ignore::UserWarning"
+
+container:
+  image: /e/scratch/projectnucleus/poeppel1/container_cache/MegatronTraining-JUPITER_pt2510_aarch64_202602262033.sif
+
+slurm:
+  sbatch:
+    nodes: 32
+    time: "00:30:00"
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    UB_SKIPMC: "1"
+    NCCL_NET_GDR_LEVEL: "0"
+
+job:
+  name: meg_risto_235BA22B_32n_v2_${aux.tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ═══════════════════════════════════════════════════════════════════════
+        # TP=2, PP=8, EP=16, VPP=4 — full recompute
+        # ═══════════════════════════════════════════════════════════════════════
+
+        # ── allgather, EP=16, full recompute ──────────────────────────────
+        - aux.tag: allgather_ep16_fullrecomp
+          backend.megatron.moe_token_dispatcher_type: allgather
+
+        # ── alltoall, EP=16, full recompute ───────────────────────────────
+        - aux.tag: alltoall_ep16_fullrecomp
+          backend.megatron.moe_token_dispatcher_type: alltoall
+
+        # ── allgather, EP=16, selective recompute (marginal) ──────────────
+        # Previously ran at ~70 GiB with selective — try it in sweep too
+        - aux.tag: allgather_ep16_selrecomp
+          backend.megatron.moe_token_dispatcher_type: allgather
+          backend.megatron.recompute_granularity: selective
+          backend.megatron.recompute_modules:
+            - moe_act
+            - layernorm
+          backend.megatron.recompute_method: null
+          backend.megatron.recompute_num_layers: null

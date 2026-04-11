@@ -3,6 +3,7 @@ defaults:
   - _self_
 
 template_path: "templates/jupiter.sbatch"
+srun_opts: "--mpi=none "
 launcher_cmd: "\
   export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ;\\\n \
   ${oc.select:container.runtime,apptainer} exec \

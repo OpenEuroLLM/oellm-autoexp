@@ -1,0 +1,215 @@
+# @package _global_
+# Megatron 235BA22B — Risto's H100 reference adapted for JUPITER (32 nodes, 128 GPUs)
+#
+# Source: risto_qwen3_235BA22B_config.sh (ModelZoo H100 baseline)
+# Original: TP=2, PP=8, VPP=4, EP=32 on 256 GPUs (32×H100 8-GPU nodes)
+#
+# JUPITER adaptation (4 GPUs/node, 32 nodes = 128 GPUs):
+#   EP constraint: expert_dp = world_size / (EP_TP × EP × PP) must be integer ≥ 1
+#   128 / (1 × EP × 8) → EP must divide 16. Max EP=16.
+#   → TP=2, PP=8, EP=16, VPP=4 (reduce EP from 32 to 16)
+#   DP = 128 / (2×8) = 8. expert_dp = 128 / (1×16×8) = 1.
+#   GBS=2048, MBS=1: num_micro = 2048/8 = 256.
+#   VPP=4: 96 layers (94+embed+loss) / 8 = 12/stage, 12/3 = 4 virtual stages of 3 layers each.
+#   Min microbatches: max(PP=8, VPP=4) = 8. 256 >> 8. Excellent pipeline utilization.
+#
+# Key optimizations from Risto's config:
+#   - HybridEP flex dispatcher (NVLink-optimized fused dispatch/combine)
+#   - Selective recompute (moe_act + layernorm only)
+#   - overlap_grad_reduce + overlap_param_gather + overlap_moe_expert_parallel_comm
+#   - attention_backend: fused (TE FusedAttention, not FlashAttention)
+#   - cross_entropy_loss_fusion + te impl
+#   - CUDA_DEVICE_MAX_CONNECTIONS=32 (for concurrent A2A + compute streams)
+#   - moe_router_force_load_balancing (WARNING: caused hangs before — sweep with/without)
+#   - mock_data for pure compute benchmarking
+#
+# JUPITER-specific notes:
+#   - tp_comm_overlap DISABLED (TE Userbuffers unreliable on GH200)
+#   - NCCL_NET_GDR_LEVEL=0 (required for inter-node PP P2P)
+#   - NVSHMEM container + /dev/shm bind
+#   - PYTORCH_CUDA_ALLOC_CONF="" (NVSHMEM conflicts with expandable_segments)
+#
+# ── Results ──────────────────────────────────────────────────────────────────
+# (to be filled in after jobs complete)
+
+defaults:
+  - ../../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe_235BA22B]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "megatron_moe_235BA22B_risto_32node"
+  tag: "hybridep_ep16"
+
+backend:
+  megatron:
+    train_iters: 50
+    log_interval: 1
+    eval_interval: 1000
+    save: null
+    load: null
+    ckpt_step: 0
+    log_throughput: true
+    exit_interval: 50
+
+    # ═══ Parallelism (faithful to Risto, EP reduced 32→16 for 128 GPUs) ═══
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 8
+    expert_model_parallel_size: 16
+    expert_tensor_parallel_size: 1
+    context_parallel_size: 1
+    global_batch_size: 2048
+    micro_batch_size: 1
+
+    # VPP: 96 layers / PP=8 = 12/stage, VPP=4 → 3 layers/virtual stage
+    account_for_embedding_in_pipeline_split: true
+    account_for_loss_in_pipeline_split: true
+    num_virtual_stages_per_pipeline_rank: 4
+
+    # ═══ Flex dispatcher — HybridEP (NVLink-optimized) ═══
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: hybridep
+    moe_hybridep_num_sms: 16
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_router_fusion: true
+
+    # ═══ Selective recompute ═══
+    recompute_granularity: selective
+    recompute_modules:
+      - moe_act
+      - layernorm
+    recompute_method: null
+    recompute_num_layers: null
+
+    # ═══ Communication overlap (all three from Risto's config) ═══
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    overlap_moe_expert_parallel_comm: true
+    # NOTE: tp_comm_overlap disabled — TE Userbuffers unreliable on GH200
+    # NOTE: delay_wgrad_compute only with USE_DELAY_WGRAD=1 in Risto's script
+
+    # ═══ Attention + compute optimizations ═══
+    attention_backend: fused
+    sequence_parallel: true   # TP=2 → SP meaningful
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: te
+    enable_experimental: true
+    create_attention_mask_in_dataloader: false
+
+    # ═══ Router ═══
+    moe_router_dtype: fp32
+    moe_router_load_balancing_type: aux_loss
+    moe_aux_loss_coeff: 0.001
+    moe_z_loss_coeff: 1e-4
+    # moe_router_force_load_balancing disabled by default (caused hangs on JUPITER)
+    # Tested as sweep variant below
+
+    # ═══ Optimizer (from Risto's script, not critical for speed test) ═══
+    use_distributed_optimizer: true
+    lr: 3e-4
+    min_lr: 0
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+
+    # ═══ Memory management ═══
+    manual_gc: true
+    manual_gc_interval: 5
+
+    # ═══ Data — mock for pure compute benchmark ═══
+    mock_data: true
+    seq_length: 4096
+    max_position_embeddings: 4096
+
+    # ═══ Misc ═══
+    te_rng_tracker: true
+    cuda_graph_impl: "none"
+    cuda_graph_scope: "full"
+    make_vocab_size_divisible_by: 256
+    dataloader_type: single
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    # CUDA_DEVICE_MAX_CONNECTIONS=32 for concurrent A2A + compute (from Risto's script)
+    # (tp_comm_overlap disabled, so =32 is safe even with TP=2)
+    CUDA_DEVICE_MAX_CONNECTIONS: "32"
+    NVTE_FWD_LAYERNORM_SM_MARGIN: "24"
+    NVTE_BWD_LAYERNORM_SM_MARGIN: "24"
+    NCCL_NVLS_ENABLE: "1"
+    NVTE_ALLOW_NONDETERMINISTIC_ALGO: "1"
+    PYTHONPATH: ".:submodules/Megatron-LM:/opt/"
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+    PATH: "/usr/local/bin:/usr/bin:/bin"
+    CUDNN_PATH: "/usr/lib/aarch64-linux-gnu"
+    NCCL_NET_GDR_LEVEL: "0"
+    PYTHONWARNINGS: "ignore::UserWarning"
+
+# DeepEP+NVSHMEM container (has hybridep at /opt/)
+container:
+  image: /e/scratch/projectnucleus/poeppel1/container_cache/MegatronTraining-JUPITER-deepep-nvshmem_base2510_aarch64_202603312032.sif
+  bind:
+    - /e
+    - /dev/shm
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+slurm:
+  sbatch:
+    nodes: 32
+    time: "00:30:00"
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: ""   # NVSHMEM conflicts with expandable_segments
+    UB_SKIPMC: "1"
+    NCCL_NET_GDR_LEVEL: "0"
+
+job:
+  name: meg_risto_235BA22B_32n_${aux.tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ═══════════════════════════════════════════════════════════════════════
+        # HybridEP (Risto's default dispatcher)
+        # ═══════════════════════════════════════════════════════════════════════
+
+        # ── HybridEP, EP=16, all overlaps (faithful translation) ──────────
+        - aux.tag: hybridep_ep16
+          backend.megatron.moe_flex_dispatcher_backend: hybridep
+
+        # ── HybridEP, EP=8 (more expert_dp, less EP comm) ────────────────
+        - aux.tag: hybridep_ep8
+          backend.megatron.expert_model_parallel_size: 8
+          backend.megatron.moe_flex_dispatcher_backend: hybridep
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # DeepEP comparison (NVSHMEM-optimized for cross-node)
+        # ═══════════════════════════════════════════════════════════════════════
+
+        # ── DeepEP, EP=16 ─────────────────────────────────────────────────
+        - aux.tag: deepep_ep16
+          backend.megatron.moe_flex_dispatcher_backend: deepep
+
+        # ═══════════════════════════════════════════════════════════════════════
+        # Risky flags test (may hang on JUPITER)
+        # ═══════════════════════════════════════════════════════════════════════
+
+        # ── HybridEP, EP=16, + moe_router_force_load_balancing ───────────
+        # WARNING: moe_router_force_load_balancing caused mid-training hangs
+        # on JUPITER before (MEMORY.md item #6). Test here in case it was
+        # related to the old allgather dispatcher, not a general JUPITER issue.
+        - aux.tag: hybridep_ep16_forcebal
+          backend.megatron.moe_flex_dispatcher_backend: hybridep
+          backend.megatron.moe_router_force_load_balancing: true

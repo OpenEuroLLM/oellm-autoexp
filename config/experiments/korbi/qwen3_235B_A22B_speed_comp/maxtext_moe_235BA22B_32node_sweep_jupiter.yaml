@@ -5,14 +5,15 @@
 # involuntary rematerialization). This sweep is for completeness.
 #
 # Architecture: 94 layers, dim=4096, 128 experts, topk=8
-# Parallelism: ICI EP=4 (intra-node NVLink), DCN FSDP=32 (inter-node IB)
+# Parallelism: ICI EP=2+FSDP_T=2 (intra-node), DCN FSDP=32 (inter-node)
+#   Total: EP=2 × FSDP_T=2 × DCN_FSDP=32 = 128-way
 #
-# Sweep: layer count (start conservative due to OOM history)
-#   16 layers: safe baseline (worked on 16-node)
-#   24 layers: moderate (worked for 30BA3B on 2-node)
+# scan_layers=true: XLA reuses activation buffers across layers via nn.scan.
+# Without it, even 16L OOMs (95 GB). With scan, full 94L may fit.
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (2026-04-10) ────────────────────────────────────────────────────
+# 48L scan → 68.5 tps/dev, 5.31 TFLOP/s, loss=9.71 ← COMPLETED
+# 94L scan → OOM 86.4 GB (model too large for 128-way, needs 256-way)
 
 defaults:
   - ../../base
@@ -25,8 +26,8 @@ defaults:
   - _self_
 
 aux:
-  experiment_group: "maxtext_moe_235BA22B_32node_sweep"
-  layers_tag: "16L"
+  experiment_group: "maxtext_moe_235BA22B_32node_v2"
+  layers_tag: "48L"
 
 backend:
   maxtext:
@@ -34,17 +35,20 @@ backend:
     attention: dot_product
     megablox: false
     sparse_matmul: true
-    steps: 50
+    steps: 30
     per_device_batch_size: 1
     dataset_type: synthetic
     remat_policy: full
     enable_checkpointing: false
-    scan_layers: false
+    scan_layers: true
     max_target_length: 2048
-    base_num_decoder_layers: 16
+    base_num_decoder_layers: 48
     monitor_goodput: false
     enable_goodput_recording: false
     base_output_directory: "${job.base_output_dir}"
+    # ICI (intra-node, NVLink): EP=2 + FSDP_T=2 (proven working for 30BA3B+235B)
+    # DCN (inter-node, IB): FSDP=32
+    # Total: EP=2 × FSDP_T=2 × DCN_FSDP=32 = 128-way
     ici_fsdp_parallelism: 1
     ici_fsdp_transpose_parallelism: 2
     ici_expert_parallelism: 2
@@ -57,10 +61,11 @@ backend:
   env:
     PYTHONPATH: ".:submodules/MaxText:stubs"
     XLA_FLAGS: "--xla_gpu_enable_command_buffer="
-    XLA_PYTHON_CLIENT_MEM_FRACTION: "0.95"
+    XLA_PYTHON_CLIENT_MEM_FRACTION: "0.90"
     NNODES: "$SLURM_NNODES"
     NODE_RANK: "$SLURM_NODEID"
     JAX_COORDINATOR_PORT: "1234"
+    GPUS_PER_NODE: "4"
 
 container:
   bind:
@@ -71,7 +76,7 @@ container:
     - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
 
 slurm:
-  srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
+  srun_opts: "--mpi=none --nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
   sbatch:
     nodes: 32
     time: "00:45:00"
@@ -90,10 +95,18 @@ sweep:
   groups:
     - type: list
       configs:
-        # ── 16 layers (safe baseline) ────────────────────────────────────────
-        - aux.layers_tag: 16L
-          backend.maxtext.base_num_decoder_layers: 16
+        # ── All use scan_layers=true (set in backend defaults above) ────────
 
-        # ── 24 layers (moderate) ─────────────────────────────────────────────
-        - aux.layers_tag: 24L
-          backend.maxtext.base_num_decoder_layers: 24
+        # ── 48 layers (half model) ──────────────────────────────────────────
+        - aux.layers_tag: 48L_scan
+          backend.maxtext.base_num_decoder_layers: 48
+
+        # ── 94 layers (full model) ──────────────────────────────────────────
+        - aux.layers_tag: 94L_scan
+          backend.maxtext.base_num_decoder_layers: 94
+
+        # ═════════════════════════════════════════════════════════════════════
+        # FAILED CONFIGS (scan_layers=false, ICI FSDP=4) — for reference
+        # ═════════════════════════════════════════════════════════════════════
+        # These used the old ICI strategy (FSDP=4) without scan_layers.
+        # All OOMed at 16+ layers on 16-node; would be worse here.

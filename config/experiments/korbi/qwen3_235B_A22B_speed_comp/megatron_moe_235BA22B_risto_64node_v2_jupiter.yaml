@@ -1,0 +1,153 @@
+# @package _global_
+# Megatron 235BA22B — Risto's H100 reference EXACT on JUPITER 64N (256 GPUs)
+#
+# v2: Uses allgather/alltoall dispatchers (flex/DeepEP broken on JUPITER GH200)
+#
+# EXACT match to H100 reference: TP=2, PP=8, VPP=4, EP=32 on 256 GPUs
+#   DP = 256 / (2×8) = 16. expert_dp = 256 / (1×32×8) = 1.
+#   GBS=2048, MBS=1: num_micro = 2048/16 = 128 >> min(32). Excellent.
+#
+# H100 reference: 245-276 TFLOPS (245 base, 276 with 1F1B overlap)
+#
+# ── Results ──────────────────────────────────────────────────────────────────
+# (to be filled in after jobs complete)
+
+defaults:
+  - ../../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe_235BA22B]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "megatron_moe_235BA22B_risto_64node_v2"
+  tag: "allgather_ep32"
+
+backend:
+  megatron:
+    train_iters: 50
+    log_interval: 1
+    eval_interval: 1000
+    save: null
+    load: null
+    ckpt_step: 0
+    log_throughput: true
+    exit_interval: 50
+
+    # ═══ EXACT Risto parallelism ═══
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 8
+    expert_model_parallel_size: 32
+    expert_tensor_parallel_size: 1
+    context_parallel_size: 1
+    global_batch_size: 2048
+    micro_batch_size: 1
+
+    account_for_embedding_in_pipeline_split: true
+    account_for_loss_in_pipeline_split: true
+    num_virtual_stages_per_pipeline_rank: 4
+
+    # ═══ Dispatcher: allgather (working) ═══
+    moe_token_dispatcher_type: allgather
+    moe_grouped_gemm: true
+
+    # ═══ Full recompute (selective OOMs at 64N scale) ═══
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    recompute_modules: null
+
+    # ═══ Communication overlaps ═══
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+
+    # ═══ Attention + compute ═══
+    attention_backend: fused
+    sequence_parallel: true
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: te
+    enable_experimental: true
+    create_attention_mask_in_dataloader: false
+
+    # ═══ Router ═══
+    moe_router_dtype: fp32
+    moe_router_load_balancing_type: aux_loss
+    moe_aux_loss_coeff: 0.001
+    moe_z_loss_coeff: 1e-4
+
+    # ═══ Optimizer ═══
+    use_distributed_optimizer: true
+    lr: 3e-4
+    min_lr: 0
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+
+    # ═══ Memory ═══
+    manual_gc: true
+    manual_gc_interval: 5
+
+    # ═══ Data — mock ═══
+    mock_data: true
+    seq_length: 4096
+    max_position_embeddings: 4096
+
+    # ═══ Misc ═══
+    te_rng_tracker: true
+    cuda_graph_impl: "none"
+    cuda_graph_scope: "full"
+    make_vocab_size_divisible_by: 256
+    dataloader_type: single
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"   # TP=2 requires =1 (Megatron assertion)
+    NCCL_NVLS_ENABLE: "1"
+    NVTE_ALLOW_NONDETERMINISTIC_ALGO: "1"
+    PYTHONPATH: ".:submodules/Megatron-LM:/opt/"
+    NCCL_NET_GDR_LEVEL: "0"
+    PYTHONWARNINGS: "ignore::UserWarning"
+
+container:
+  image: /e/scratch/projectnucleus/poeppel1/container_cache/MegatronTraining-JUPITER_pt2510_aarch64_202602262033.sif
+
+slurm:
+  sbatch:
+    nodes: 64
+    time: "00:30:00"
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    UB_SKIPMC: "1"
+    NCCL_NET_GDR_LEVEL: "0"
+
+job:
+  name: meg_risto_235BA22B_64n_v2_${aux.tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ═══════════════════════════════════════════════════════════════════════
+        # TP=2, PP=8, EP=32, VPP=4 — full recompute (selective OOMs)
+        # ═══════════════════════════════════════════════════════════════════════
+
+        # ── allgather, EP=32, full recompute ──────────────────────────────
+        - aux.tag: allgather_ep32_fullrecomp
+          backend.megatron.moe_token_dispatcher_type: allgather
+
+        # ── alltoall, EP=32, full recompute ───────────────────────────────
+        - aux.tag: alltoall_ep32_fullrecomp
+          backend.megatron.moe_token_dispatcher_type: alltoall
+
+        # ── allgather, EP=16, full recompute ──────────────────────────────
+        # expert_dp = 256/(1×16×8) = 2
+        - aux.tag: allgather_ep16_fullrecomp
+          backend.megatron.expert_model_parallel_size: 16
+          backend.megatron.moe_token_dispatcher_type: allgather

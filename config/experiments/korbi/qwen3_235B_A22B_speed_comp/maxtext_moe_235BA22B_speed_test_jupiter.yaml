@@ -13,15 +13,32 @@
 #   - TPU-optimized sharding strategies
 # This config is primarily for completeness in framework comparison.
 #
-# Starting with reduced layers (16) — full 94 layers will OOM due to XLA
-# involuntary rematerialization (30BA3B needed 24/48 layers on 2 nodes).
-# With 16 nodes (8x more GPUs), we may fit more layers via wider FSDP.
+# Parallelism: With GPU multinode patch, JAX sees 4 GPUs/node.
+#   ICI (intra-node NVLink): EP=2 + FSDP_T=2 (same as working 30BA3B)
+#   DCN (inter-node IB): FSDP=16
+# Memory: 4096 hidden is 4x larger → need aggressive FSDP sharding
 #
-# Parallelism: ICI EP=4 (intra-node NVLink), DCN FSDP=16 (inter-node IB)
-# Memory: 4096 hidden is 4x larger → more aggressive sharding needed
+# scan_layers=true lets XLA reuse activation buffers across layers (nn.scan).
+# Without it, XLA builds separate computation graphs for every layer → OOM.
+# With scan, memory is O(1) in num_layers for activations.
 #
 # ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# scan_layers=false, ICI EP=2+FSDP_T=2:
+#   4L  → 790 tps/dev, 7.8 TFLOP/s (loss=NaN)
+#   8L  → 366 tps/dev, 5.87 TFLOP/s (loss=12.4, valid)
+#   12L → 260 tps/dev, 5.81 TFLOP/s (loss=NaN)
+#   16L → OOM 95.19 GB (2026-04-10)
+# scan_layers=false, ICI FSDP=4:
+#   16L → OOM 98 GB/dev (2026-04-09)
+#   24L → OOM ~150 GB/dev
+#   48L → OOM ~257 GB/dev
+#
+# scan_layers=true, ICI EP=2+FSDP_T=2 (2026-04-10):
+#   24L → 139 tps/dev, 5.66 TFLOP/s (loss=10.2, valid!) ← COMPLETED
+#   48L → OOM (cancelled after ~2 min, compilation phase)
+#   94L → OOM 86.4 GB allocation (model too large for 64-way sharding)
+#
+# ── Active sweep: scan_layers=true, layer count ─────────────────────────────
 
 defaults:
   - ../../base
@@ -34,7 +51,8 @@ defaults:
   - _self_
 
 aux:
-  experiment_group: "maxtext_moe_235BA22B_speed"
+  experiment_group: "maxtext_moe_235BA22B_speed_v2"
+  layers_tag: "24L"
 
 backend:
   maxtext:
@@ -42,22 +60,20 @@ backend:
     attention: dot_product
     megablox: false
     sparse_matmul: true
-    steps: 50
+    steps: 30
     per_device_batch_size: 1
     dataset_type: synthetic
     remat_policy: full
     enable_checkpointing: false
-    scan_layers: false
+    scan_layers: true
     max_target_length: 2048
-    # Start with 16 layers — full 94 layers will OOM.
-    # 30BA3B fit 24/48 layers on 8 GPUs; 235BA22B is 4x wider (dim=4096).
-    # With 64 GPUs (8x more FSDP sharding), try 16 layers first.
-    base_num_decoder_layers: 16
+    base_num_decoder_layers: 24
     monitor_goodput: false
     enable_goodput_recording: false
     base_output_directory: "${job.base_output_dir}"
-    # Parallelism: ICI EP=4 (intra-node NVLink), DCN FSDP=16 (inter-node IB)
-    # Total sharding: FSDP(16) * EP(4) = 64-way
+    # ICI (intra-node, NVLink): EP=2 + FSDP_T=2 (same strategy as working 30BA3B)
+    # DCN (inter-node, IB): FSDP=16 across nodes
+    # Total sharding: EP=2 × FSDP_T=2 × DCN_FSDP=16 = 64-way
     ici_fsdp_parallelism: 1
     ici_fsdp_transpose_parallelism: 2
     ici_expert_parallelism: 2
@@ -70,10 +86,11 @@ backend:
   env:
     PYTHONPATH: ".:submodules/MaxText:stubs"
     XLA_FLAGS: "--xla_gpu_enable_command_buffer="
-    XLA_PYTHON_CLIENT_MEM_FRACTION: "0.95"
+    XLA_PYTHON_CLIENT_MEM_FRACTION: "0.90"
     NNODES: "$SLURM_NNODES"
     NODE_RANK: "$SLURM_NODEID"
     JAX_COORDINATOR_PORT: "1234"
+    GPUS_PER_NODE: "4"
 
 container:
   bind:
@@ -84,15 +101,47 @@ container:
     - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
 
 slurm:
-  srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
+  srun_opts: "--mpi=none --nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
   sbatch:
     nodes: 16
-    time: "00:45:00"
+    time: "00:30:00"
     cpus_per_task: 72
   env:
     JAX_COORDINATOR_IP: "$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n1)"
     NCCL_NET_GDR_LEVEL: "0"
 
 job:
-  name: maxtext_moe_235BA22B_16node_speed
+  name: maxtext_moe_235BA22B_16node_${aux.layers_tag}
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ── All configs below use scan_layers=true (nn.scan) ────────────────
+        # scan_layers reuses activation buffers across layers → O(1) memory
+        # in num_layers, so full 94L may now fit where 16L OOMed before.
+
+        # ── 24 layers (conservative with scan) ──────────────────────────────
+        - aux.layers_tag: 24L_scan
+          backend.maxtext.base_num_decoder_layers: 24
+
+        # ── 48 layers (half model) ──────────────────────────────────────────
+        - aux.layers_tag: 48L_scan
+          backend.maxtext.base_num_decoder_layers: 48
+
+        # ── 94 layers (full model!) ─────────────────────────────────────────
+        - aux.layers_tag: 94L_scan
+          backend.maxtext.base_num_decoder_layers: 94
+
+        # ═════════════════════════════════════════════════════════════════════
+        # FAILED CONFIGS — documented for reference
+        # ═════════════════════════════════════════════════════════════════════
+        #
+        # scan_layers=false (XLA builds separate graph per layer → OOM):
+        # 16L, ICI EP=2+FSDP_T=2, DCN FSDP=16 → OOM 95.19 GB (2026-04-10)
+        # 16L, ICI FSDP=4, DCN FSDP=16 → OOM 98 GB (2026-04-09)
+        # 24L, ICI FSDP=4, DCN FSDP=16 → OOM ~150 GB (2026-04-09)
+        # 48L, ICI FSDP=4, DCN FSDP=16 → OOM ~257 GB (2026-04-09)
