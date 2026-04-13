@@ -1,0 +1,53 @@
+defaults:
+ - qwen3_base
+ - _self_ # order matters -- default values are overridden by _self_ only if _self_ is last
+
+num_layers: 16
+hidden_size: 512
+ffn_hidden_size: 2048
+num_attention_heads: 4
+num_query_groups: 4
+kv_channels: 128
+untie_embeddings_and_output_weights: False
+
+attention_backend: auto
+init_method_std: 0.02
+
+### DATA
+global_batch_size: 512 
+data_path:
+  - ${oc.env:DATA_DIR}/preprocessed/gpt-neox-20b/wikipesto/wikipesto
+data_cache_path: ${job.base_output_dir}/cache
+dataloader_type: single
+num_workers: 7
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: EleutherAI/gpt-neox-20b
+make_vocab_size_divisible_by: 128
+train_iters: 2384 # 
+log_interval: 10
+log_throughput: true
+log_progress: true
+log_timers_to_tensorboard: true
+tensorboard_queue_size: 5
+eval_iters: 100
+eval_interval: 500
+save_interval: 10000000
+save: null
+load: null
+
+
+
+### OPTIMIZER
+optimizer: adam
+adam_beta1: 0.9
+adam_beta2: 0.95
+adam_eps: 1.0e-8
+lr: 0.002
+min_lr: 0.0
+lr_decay_style: WSD
+lr_wsd_decay_style: linear
+lr_warmup_iters: ${oc.divi:${.train_iters},10}
+lr_decay_iters: ${.train_iters}
+lr_wsd_decay_iters: ${oc.divi:${.train_iters},5}
+clip_grad: 1.0
+weight_decay: 0.05

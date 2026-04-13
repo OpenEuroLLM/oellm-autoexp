@@ -1,0 +1,17 @@
+# @package backend.megatron
+# Data configuration
+global_batch_size: 1024
+seq_length: 4096
+
+max_position_embeddings: ${.seq_length}
+num_workers: 7
+num_dataset_builder_threads: 7
+split: '99,1,0'
+create_attention_mask_in_dataloader: False
+# data_args_path: local/6040_datapath.txt
+data_path: 
+  - /shared_silo/scratch/rluukkon/megatron-workdir-lumi/wikipedia_20220301.en.valid.jsonl.preprocessed_text_document
+data_cache_path: /shared_silo/scratch/rluukkon/megatron-workdir-lumi/wikipedia_20220301.en.valid.jsonl.preprocessed_text_document.cache
+tokenizer_model: Qwen/Qwen3-30B-A3B 
+tokenizer_type: HuggingFaceTokenizer
+micro_batch_size: 1

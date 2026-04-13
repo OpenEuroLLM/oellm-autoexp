@@ -1,0 +1,122 @@
+# @package _global_
+defaults:
+  - base
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /monitoring: megatron_basic
+  - /project: default
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+project:
+  name: megatron_9B_sparse_comparison
+  resume: true
+  
+slurm:
+  sbatch:
+    partition: dev-g
+    nodes: 2
+    time: 0-00:15:00
+backend:
+  megatron:
+    log_throughput: true
+    log_interval: 10
+    log_progress: true
+
+    # MODEL
+    num_layers: 16
+    hidden_size: 2048
+    ffn_hidden_size: 14336 # not used in the current MoE 
+    moe_ffn_hidden_size: 1280
+    kv_channels: 128
+    num_experts: 64
+    moe_router_topk: 8
+    moe_router_dtype: "fp32"
+    moe_grouped_gemm: True 
+    moe_aux_loss_coeff: 0.01
+    num_attention_heads: 16
+    init_method_std: 0.02
+    position_embedding_type: "rope"
+    rotary_base: 10000
+    rotary_percent: 1.0
+    num_query_groups: 16 # no gqa when NUM_QUERY_GROUPS==NUM_ATTENTION_HEADS TODO: check
+    group_query_attention: False
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    normalization: RMSNorm
+    norm_epsilon: 1.e-5 # rmsnorm epsilon
+    qk_layernorm: False # potentially enable qk-norm
+    bf16: True
+    swiglu: True
+    untie_embeddings_and_output_weights: False
+    use_flash_attn: True
+    attention_softmax_in_fp32: True
+
+    # Data configuration
+    seq_length: 2048
+    max_position_embeddings: 2048
+    num_workers: 2
+    split: '969,30,1'
+    mock_data: true
+    # data_args_path: local/6040_datapath.txt
+    # data_cache_path: ${oc.env:USER_FLASH}/.cache
+
+    # Tokenizer configuration
+    tokenizer_model: google/gemma-3-27b-pt
+    tokenizer_type: HuggingFaceTokenizer
+
+    micro_batch_size: 2
+    global_batch_size: 2048
+    
+    # MEMORY OPTIMIZATIONS
+    recompute_activations: False
+    use_torch_fsdp2: False # it's either this or the next 4 args
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    expert_model_parallel_size: 2
+    context_parallel_size: 1
+    sequence_parallel: True
+    use_distributed_optimizer: True
+    moe_token_dispatcher_type: "allgather"
+    
+    # COMM OPTIONS
+    distributed_timeout_minutes: 120
+    overlap_param_gather: True
+    overlap_grad_reduce: True
+    gradient_accumulation_fusion: False
+    overlap_moe_expert_parallel_comm: True
+    bias_swiglu_fusion: False
+    add_bias_linear: False
+    bias_dropout_fusion: False
+
+    # OPTIMIZER
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1e-8
+    lr: 3e-4
+    min_lr: 0.0
+    clip_grad: 1.0
+    weight_decay: 0.05
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    
+    dataloader_type: single
+    # training schedule. Round numbers to avoid floating point issues
+    train_iters: ${oc.eval:'-(-4_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    lr_warmup_iters: ${oc.eval:'min(${.train_iters} // 10, 25000)'}
+    lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
+    lr_decay_iters: ${.train_iters}
+    ckpt_format: torch_dist
+    save_interval: 1000
+    save: ${project.base_output_dir}
+    load: ${project.base_output_dir}
+    tensorboard_dir: ${project.base_output_dir}/tensorboard
+    wandb: false 
+    wandb_save_dir: "${project.base_output_dir}/wandb"
+    wandb_project: "${project.name}"
+    wandb_exp_name: "${project.name}"
+
+
+

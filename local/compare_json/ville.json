@@ -1,0 +1,1573 @@
+{
+  "lr": {
+    "value": 0.001
+  },
+  "fp8": {
+    "value": null
+  },
+  "bf16": {
+    "value": true
+  },
+  "fp16": {
+    "value": false
+  },
+  "load": {
+    "value": "/scratch/project_462000963/users/villekom/output/dense_Scaling_20251204_210108_853/dense_Scaling_50M_lr0.001_gbs128"
+  },
+  "rank": {
+    "value": 7
+  },
+  "save": {
+    "value": "/scratch/project_462000963/users/villekom/output/dense_Scaling_20251204_210108_853/dense_Scaling_50M_lr0.001_gbs128"
+  },
+  "seed": {
+    "value": 1234
+  },
+  "spec": {
+    "value": null
+  },
+  "img_h": {
+    "value": 224
+  },
+  "img_w": {
+    "value": 224
+  },
+  "split": {
+    "value": "99,1,0"
+  },
+  "_wandb": {
+    "value": {
+      "e": {
+        "kh5xcwmldksoexx5t44ntwtx9t7loa4n": {
+          "os": "Linux-5.14.21-150500.55.49_13.0.56-cray_shasta_c-x86_64-with-glibc2.31",
+          "git": {
+            "commit": "eccb819a47e071661cd9fdd7ae081007f33c152c",
+            "remote": "git@github.com:OpenEuroLLM/oellm-autoexp.git"
+          },
+          "gpu": "AMD INSTINCT MI200 (MCM) OAM LC MBA HPE C2",
+          "args": [
+            "--num-layers",
+            "12",
+            "--hidden-size",
+            "384",
+            "--ffn-hidden-size",
+            "1536",
+            "--num-attention-heads",
+            "6",
+            "--num-query-groups",
+            "6",
+            "--max-position-embeddings",
+            "4096",
+            "--position-embedding-type",
+            "rope",
+            "--normalization",
+            "RMSNorm",
+            "--swiglu",
+            "--attention-dropout",
+            "0.0",
+            "--hidden-dropout",
+            "0.0",
+            "--weight-decay",
+            "0.1",
+            "--adam-beta2",
+            "0.99",
+            "--micro-batch-size",
+            "16",
+            "--global-batch-size",
+            "128",
+            "--no-bias-swiglu-fusion",
+            "--no-bias-dropout-fusion",
+            "--use-flash-attn",
+            "--no-gradient-accumulation-fusion",
+            "--lr",
+            "0.001",
+            "--lr-decay-style",
+            "WSD",
+            "--lr-wsd-decay-style",
+            "linear",
+            "--lr-warmup-iters",
+            "1000",
+            "--save-interval",
+            "5000",
+            "--ckpt-format",
+            "torch",
+            "--bf16",
+            "--data-path",
+            "/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-actual",
+            "/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-distill",
+            "/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-diverse_qa_pairs",
+            "/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-extract_knowledge",
+            "/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-knowledge_list",
+            "/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-wrap_medium",
+            "--split",
+            "99,1,0",
+            "--data-cache-path",
+            "/flash/project_462000963/cache/",
+            "--seq-length",
+            "4096",
+            "--num-workers",
+            "7",
+            "--num-dataset-builder-threads",
+            "6",
+            "--tokenizer-type",
+            "HuggingFaceTokenizer",
+            "--tokenizer-model",
+            "EleutherAI/gpt-neox-20b",
+            "--qk-layernorm",
+            "--log-throughput",
+            "--wandb-project",
+            "dense_scaling",
+            "--wandb-exp-name",
+            "LUMI_50M_lr0.001_gbs128",
+            "--wandb-save-dir",
+            "/scratch/project_462000963/users/villekom/output/dense_Scaling_20251204_210108_853/dense_Scaling_50M_lr0.001_gbs128/wandb",
+            "--te-fallback-layernorm-linear",
+            "--train-iters",
+            "95368",
+            "--lr-wsd-decay-iters",
+            "19073",
+            "--save",
+            "/scratch/project_462000963/users/villekom/output/dense_Scaling_20251204_210108_853/dense_Scaling_50M_lr0.001_gbs128",
+            "--load",
+            "/scratch/project_462000963/users/villekom/output/dense_Scaling_20251204_210108_853/dense_Scaling_50M_lr0.001_gbs128",
+            "--tensorboard-dir",
+            "/scratch/project_462000963/users/villekom/output/dense_Scaling_20251204_210108_853/dense_Scaling_50M_lr0.001_gbs128/tensorboard"
+          ],
+          "disk": {
+            "/": {
+              "used": "12288",
+              "total": "67108864"
+            }
+          },
+          "host": "nid005076",
+          "root": "/scratch/project_462000963/users/villekom/output/dense_Scaling_20251204_210108_853/dense_Scaling_50M_lr0.001_gbs128/wandb",
+          "email": "vmjkom@utu.fi",
+          "slurm": {
+            "qos": "normal",
+            "conf": "/etc/slurm/slurm.conf",
+            "hint": "nomultithread",
+            "gtids": "0,1,2,3,4,5,6,7",
+            "jobid": "15195684",
+            "umask": "0007",
+            "job_id": "15195684",
+            "nnodes": "1",
+            "nodeid": "0",
+            "nprocs": "8",
+            "ntasks": "8",
+            "procid": "7",
+            "stepid": "0",
+            "account": "project_462000963",
+            "job_gid": "10015490",
+            "job_qos": "normal",
+            "job_uid": "10015490",
+            "localid": "7",
+            "step_id": "0",
+            "cpu_bind": "quiet,mask_cpu:0x000000000000000000000000000000FE,0x0000000000000000000000000000FE00,0x00000000000000000000000000FE0000,0x000000000000000000000000FE000000,0x0000000000000000000000FE00000000,0x00000000000000000000FE0000000000,0x000000000000000000FE000000000000,0x0000000000000000FE00000000000000",
+            "job_gpus": "0,1,2,3,4,5,6,7",
+            "job_name": "dense_Scaling_50M_lr0.001_gbs128",
+            "job_user": "villekom",
+            "mpi_type": "cray_shasta",
+            "nodelist": "nid005076",
+            "task_pid": "59499",
+            "partition": "dev-g",
+            "qos_debug": "normal",
+            "step_gpus": "0,1,2,3,4,5,6,7",
+            "submit_dir": "/pfs/lustrep4/scratch/project_462000963/users/villekom/open_eurollm/oellm-autoexp",
+            "job_account": "project_462000963",
+            "submit_host": "uan04",
+            "cluster_name": "lumi",
+            "cpus_on_node": "112",
+            "distribution": "block",
+            "gpus_on_node": "8",
+            "job_end_time": "1765141391",
+            "job_nodelist": "nid005076",
+            "prio_process": "0",
+            "cpu_bind_list": "0x000000000000000000000000000000FE,0x0000000000000000000000000000FE00,0x00000000000000000000000000FE0000,0x000000000000000000000000FE000000,0x0000000000000000000000FE00000000,0x00000000000000000000FE0000000000,0x000000000000000000FE000000000000,0x0000000000000000FE00000000000000",
+            "cpu_bind_type": "mask_cpu:",
+            "cpus_per_task": "7",
+            "gpus_per_node": "8",
+            "job_num_nodes": "1",
+            "job_partition": "small-g",
+            "step_nodelist": "nid005076",
+            "topology_addr": "nid005076",
+            "job_start_time": "1764882191",
+            "srun_comm_host": "10.253.51.172",
+            "srun_comm_port": "41731",
+            "step_num_nodes": "1",
+            "step_num_tasks": "8",
+            "tasks_per_node": "8",
+            "ntasks_per_node": "8",
+            "partition_debug": "dev-g",
+            "step_resv_ports": "26946-26954",
+            "working_cluster": "lumi:10.253.124.2:6817:9984:109",
+            "cpu_bind_verbose": "quiet",
+            "threads_per_core": "1",
+            "job_cpus_per_node": "56",
+            "launch_node_ipaddr": "10.253.51.172",
+            "step_launcher_port": "41731",
+            "step_tasks_per_node": "8",
+            "topology_addr_pattern": "node"
+          },
+          "memory": {
+            "total": "540235755520"
+          },
+          "python": "CPython 3.12.11",
+          "gpu_amd": [
+            {
+              "id": "2",
+              "sku": "D65201",
+              "model": "0x7408",
+              "series": "AMD INSTINCT MI200 (MCM) OAM LC MBA HPE C2",
+              "vendor": "Advanced Micro Devices, Inc. [AMD/ATI]",
+              "maxPower": "500.0",
+              "uniqueId": "0x744adc56c5d97522",
+              "mclkRange": "400Mhz - 1600Mhz",
+              "sclkRange": "500Mhz - 1650Mhz",
+              "gpuOverdrive": "0",
+              "vbiosVersion": "113-D65201-046",
+              "performanceLevel": "manual",
+              "gpuMemoryOverdrive": "0"
+            },
+            {
+              "id": "6",
+              "sku": "D65201",
+              "model": "0x7408",
+              "series": "AMD INSTINCT MI200 (MCM) OAM LC MBA HPE C2",
+              "vendor": "Advanced Micro Devices, Inc. [AMD/ATI]",
+              "maxPower": "500.0",
+              "uniqueId": "0xed6d84efca514c62",
+              "mclkRange": "400Mhz - 1600Mhz",
+              "sclkRange": "500Mhz - 1650Mhz",
+              "gpuOverdrive": "0",
+              "vbiosVersion": "113-D65201-046",
+              "performanceLevel": "manual",
+              "gpuMemoryOverdrive": "0"
+            },
+            {
+              "id": "7",
+              "sku": "D65201",
+              "model": "0x7408",
+              "series": "AMD INSTINCT MI200 (MCM) OAM LC MBA HPE C2",
+              "vendor": "Advanced Micro Devices, Inc. [AMD/ATI]",
+              "maxPower": "0.0",
+              "uniqueId": "0xd0bd6d53ade1a6a0",
+              "mclkRange": "400Mhz - 1600Mhz",
+              "sclkRange": "500Mhz - 1650Mhz",
+              "gpuOverdrive": "0",
+              "vbiosVersion": "113-D65201-046",
+              "performanceLevel": "manual",
+              "gpuMemoryOverdrive": "0"
+            },
+            {
+              "id": "5",
+              "sku": "D65201",
+              "model": "0x7408",
+              "series": "AMD INSTINCT MI200 (MCM) OAM LC MBA HPE C2",
+              "vendor": "Advanced Micro Devices, Inc. [AMD/ATI]",
+              "maxPower": "0.0",
+              "uniqueId": "0x98bafc672310e579",
+              "mclkRange": "400Mhz - 1600Mhz",
+              "sclkRange": "500Mhz - 1650Mhz",
+              "gpuOverdrive": "0",
+              "vbiosVersion": "113-D65201-046",
+              "performanceLevel": "manual",
+              "gpuMemoryOverdrive": "0"
+            },
+            {
+              "id": "0",
+              "sku": "D65201",
+              "model": "0x7408",
+              "series": "AMD INSTINCT MI200 (MCM) OAM LC MBA HPE C2",
+              "vendor": "Advanced Micro Devices, Inc. [AMD/ATI]",
+              "maxPower": "500.0",
+              "uniqueId": "0x24fb5ce1c2900f9c",
+              "mclkRange": "400Mhz - 1600Mhz",
+              "sclkRange": "500Mhz - 1650Mhz",
+              "gpuOverdrive": "0",
+              "vbiosVersion": "113-D65201-046",
+              "performanceLevel": "manual",
+              "gpuMemoryOverdrive": "0"
+            },
+            {
+              "id": "4",
+              "sku": "D65201",
+              "model": "0x7408",
+              "series": "AMD INSTINCT MI200 (MCM) OAM LC MBA HPE C2",
+              "vendor": "Advanced Micro Devices, Inc. [AMD/ATI]",
+              "maxPower": "500.0",
+              "uniqueId": "0x75af96c184c3b169",
+              "mclkRange": "400Mhz - 1600Mhz",
+              "sclkRange": "500Mhz - 1650Mhz",
+              "gpuOverdrive": "0",
+              "vbiosVersion": "113-D65201-046",
+              "performanceLevel": "manual",
+              "gpuMemoryOverdrive": "0"
+            },
+            {
+              "id": "3",
+              "sku": "D65201",
+              "model": "0x7408",
+              "series": "AMD INSTINCT MI200 (MCM) OAM LC MBA HPE C2",
+              "vendor": "Advanced Micro Devices, Inc. [AMD/ATI]",
+              "maxPower": "0.0",
+              "uniqueId": "0x943ac0244360055",
+              "mclkRange": "400Mhz - 1600Mhz",
+              "sclkRange": "500Mhz - 1650Mhz",
+              "gpuOverdrive": "0",
+              "vbiosVersion": "113-D65201-046",
+              "performanceLevel": "manual",
+              "gpuMemoryOverdrive": "0"
+            },
+            {
+              "id": "1",
+              "sku": "D65201",
+              "model": "0x7408",
+              "series": "AMD INSTINCT MI200 (MCM) OAM LC MBA HPE C2",
+              "vendor": "Advanced Micro Devices, Inc. [AMD/ATI]",
+              "maxPower": "0.0",
+              "uniqueId": "0xf33810bb50b5375",
+              "mclkRange": "400Mhz - 1600Mhz",
+              "sclkRange": "500Mhz - 1650Mhz",
+              "gpuOverdrive": "0",
+              "vbiosVersion": "113-D65201-046",
+              "performanceLevel": "manual",
+              "gpuMemoryOverdrive": "0"
+            }
+          ],
+          "program": "/pfs/lustrep4/scratch/project_462000963/users/villekom/open_eurollm/oellm-autoexp/./submodules/ROCm-Megatron-LM/pretrain_gpt.py",
+          "codePath": "submodules/ROCm-Megatron-LM/pretrain_gpt.py",
+          "writerId": "kh5xcwmldksoexx5t44ntwtx9t7loa4n",
+          "cpu_count": 64,
+          "gpu_count": 8,
+          "startedAt": "2025-12-04T21:04:48.718608Z",
+          "executable": "/opt/miniconda3/envs/pytorch/bin/python",
+          "codePathLocal": "submodules/ROCm-Megatron-LM/pretrain_gpt.py",
+          "cpu_count_logical": 128
+        }
+      },
+      "m": [],
+      "t": {
+        "1": [
+          1,
+          5,
+          11,
+          41,
+          49,
+          51,
+          53,
+          71,
+          98,
+          105
+        ],
+        "2": [
+          1,
+          5,
+          11,
+          41,
+          49,
+          51,
+          53,
+          71,
+          98,
+          105
+        ],
+        "3": [
+          13,
+          16,
+          61
+        ],
+        "4": "3.12.11",
+        "5": "0.21.3",
+        "6": "4.55.3",
+        "12": "0.21.3",
+        "13": "linux-x86_64"
+      },
+      "cli_version": "0.21.3",
+      "python_version": "3.12.11"
+    }
+  },
+  "min_lr": {
+    "value": 0
+  },
+  "swiglu": {
+    "value": true
+  },
+  "profile": {
+    "value": false
+  },
+  "adam_eps": {
+    "value": 1e-8
+  },
+  "finetune": {
+    "value": false
+  },
+  "ict_load": {
+    "value": null
+  },
+  "yaml_cfg": {
+    "value": null
+  },
+  "bert_load": {
+    "value": null
+  },
+  "ckpt_step": {
+    "value": null
+  },
+  "clip_grad": {
+    "value": 1
+  },
+  "data_path": {
+    "value": [
+      "/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-actual",
+      "/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-distill",
+      "/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-diverse_qa_pairs",
+      "/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-extract_knowledge",
+      "/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-knowledge_list",
+      "/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-wrap_medium"
+    ]
+  },
+  "fp8_wgrad": {
+    "value": true
+  },
+  "manual_gc": {
+    "value": false
+  },
+  "mask_prob": {
+    "value": 0.15
+  },
+  "mask_type": {
+    "value": "random"
+  },
+  "mock_data": {
+    "value": false
+  },
+  "onnx_safe": {
+    "value": null
+  },
+  "optimizer": {
+    "value": "adam"
+  },
+  "patch_dim": {
+    "value": 16
+  },
+  "test_mode": {
+    "value": false
+  },
+  "adam_beta1": {
+    "value": 0.9
+  },
+  "adam_beta2": {
+    "value": 0.99
+  },
+  "async_save": {
+    "value": null
+  },
+  "eval_iters": {
+    "value": 100
+  },
+  "fp8_margin": {
+    "value": 0
+  },
+  "hysteresis": {
+    "value": 2
+  },
+  "local_rank": {
+    "value": 7
+  },
+  "loss_scale": {
+    "value": null
+  },
+  "merge_file": {
+    "value": null
+  },
+  "num_layers": {
+    "value": 12
+  },
+  "rerun_mode": {
+    "value": "disabled"
+  },
+  "seq_length": {
+    "value": 4096
+  },
+  "skip_train": {
+    "value": false
+  },
+  "use_z_loss": {
+    "value": false
+  },
+  "v_head_dim": {
+    "value": 128
+  },
+  "vocab_file": {
+    "value": null
+  },
+  "vocab_size": {
+    "value": null
+  },
+  "world_size": {
+    "value": 8
+  },
+  "ckpt_format": {
+    "value": "torch"
+  },
+  "hidden_size": {
+    "value": 384
+  },
+  "kv_channels": {
+    "value": 64
+  },
+  "mask_factor": {
+    "value": 1
+  },
+  "no_load_rng": {
+    "value": null
+  },
+  "no_save_rng": {
+    "value": null
+  },
+  "num_classes": {
+    "value": 1000
+  },
+  "num_experts": {
+    "value": null
+  },
+  "num_workers": {
+    "value": 7
+  },
+  "openai_gelu": {
+    "value": false
+  },
+  "q_lora_rank": {
+    "value": null
+  },
+  "qk_head_dim": {
+    "value": 128
+  },
+  "rotary_base": {
+    "value": 10000
+  },
+  "sample_rate": {
+    "value": 1
+  },
+  "train_iters": {
+    "value": 95368
+  },
+  "window_size": {
+    "value": null
+  },
+  "add_qkv_bias": {
+    "value": true
+  },
+  "cp_comm_type": {
+    "value": [
+      "p2p"
+    ]
+  },
+  "decoupled_lr": {
+    "value": null
+  },
+  "flash_decode": {
+    "value": false
+  },
+  "fp8_interval": {
+    "value": 1
+  },
+  "head_lr_mult": {
+    "value": 1
+  },
+  "kv_lora_rank": {
+    "value": 32
+  },
+  "log_interval": {
+    "value": 100
+  },
+  "log_progress": {
+    "value": false
+  },
+  "norm_epsilon": {
+    "value": 0.00001
+  },
+  "num_channels": {
+    "value": 3
+  },
+  "params_dtype": {
+    "value": "torch.bfloat16"
+  },
+  "qk_layernorm": {
+    "value": true
+  },
+  "sgd_momentum": {
+    "value": 0.9
+  },
+  "squared_relu": {
+    "value": false
+  },
+  "weight_decay": {
+    "value": 0.1
+  },
+  "data_sharding": {
+    "value": true
+  },
+  "eod_mask_loss": {
+    "value": false
+  },
+  "eval_interval": {
+    "value": 1000
+  },
+  "exit_interval": {
+    "value": null
+  },
+  "ict_head_size": {
+    "value": null
+  },
+  "lazy_mpu_init": {
+    "value": null
+  },
+  "log_straggler": {
+    "value": false
+  },
+  "logging_level": {
+    "value": null
+  },
+  "no_load_optim": {
+    "value": null
+  },
+  "no_save_optim": {
+    "value": null
+  },
+  "normalization": {
+    "value": "RMSNorm"
+  },
+  "profile_ranks": {
+    "value": [
+      0
+    ]
+  },
+  "s3_cache_path": {
+    "value": null
+  },
+  "save_interval": {
+    "value": 5000
+  },
+  "train_samples": {
+    "value": null
+  },
+  "use_dist_ckpt": {
+    "value": false
+  },
+  "wandb_project": {
+    "value": "dense_scaling"
+  },
+  "data_args_path": {
+    "value": null
+  },
+  "embedding_path": {
+    "value": null
+  },
+  "hidden_dropout": {
+    "value": 0
+  },
+  "iter_per_epoch": {
+    "value": 1250
+  },
+  "log_throughput": {
+    "value": true
+  },
+  "lr_decay_iters": {
+    "value": null
+  },
+  "lr_decay_style": {
+    "value": "WSD"
+  },
+  "lr_warmup_init": {
+    "value": 0
+  },
+  "manual_gc_eval": {
+    "value": true
+  },
+  "min_loss_scale": {
+    "value": 1
+  },
+  "mmap_bin_files": {
+    "value": true
+  },
+  "moe_layer_freq": {
+    "value": 1
+  },
+  "rotary_percent": {
+    "value": 1
+  },
+  "short_seq_prob": {
+    "value": 0.1
+  },
+  "test_data_path": {
+    "value": null
+  },
+  "tokenizer_type": {
+    "value": "HuggingFaceTokenizer"
+  },
+  "use_flash_attn": {
+    "value": true
+  },
+  "wandb_exp_name": {
+    "value": "LUMI_50M_lr0.001_gbs128"
+  },
+  "wandb_save_dir": {
+    "value": "/scratch/project_462000963/users/villekom/output/dense_Scaling_20251204_210108_853/dense_Scaling_50M_lr0.001_gbs128/wandb"
+  },
+  "add_bias_linear": {
+    "value": true
+  },
+  "adlr_autoresume": {
+    "value": false
+  },
+  "block_data_path": {
+    "value": null
+  },
+  "data_cache_path": {
+    "value": "/flash/project_462000963/cache/"
+  },
+  "dataloader_type": {
+    "value": "single"
+  },
+  "ddp_bucket_size": {
+    "value": null
+  },
+  "ffn_hidden_size": {
+    "value": 1536
+  },
+  "init_method_std": {
+    "value": 0.02
+  },
+  "log_params_norm": {
+    "value": false
+  },
+  "lr_warmup_iters": {
+    "value": 1000
+  },
+  "moe_extended_tp": {
+    "value": false
+  },
+  "moe_router_topk": {
+    "value": 2
+  },
+  "tensorboard_dir": {
+    "value": "/scratch/project_462000963/users/villekom/output/dense_Scaling_20251204_210108_853/dense_Scaling_50M_lr0.001_gbs128/tensorboard"
+  },
+  "tokenizer_model": {
+    "value": "EleutherAI/gpt-neox-20b"
+  },
+  "tp_comm_overlap": {
+    "value": false
+  },
+  "train_data_path": {
+    "value": null
+  },
+  "use_torch_fsdp2": {
+    "value": false
+  },
+  "valid_data_path": {
+    "value": null
+  },
+  "vocab_extra_ids": {
+    "value": 0
+  },
+  "app_tag_run_name": {
+    "value": null
+  },
+  "attention_sink_k": {
+    "value": 0
+  },
+  "bert_binary_head": {
+    "value": true
+  },
+  "bias_gelu_fusion": {
+    "value": true
+  },
+  "classes_fraction": {
+    "value": 1
+  },
+  "decoupled_min_lr": {
+    "value": null
+  },
+  "end_weight_decay": {
+    "value": 0.1
+  },
+  "fp8_param_gather": {
+    "value": false
+  },
+  "hybrid_mlp_ratio": {
+    "value": 0
+  },
+  "lr_decay_samples": {
+    "value": null
+  },
+  "micro_batch_size": {
+    "value": 16
+  },
+  "moe_grouped_gemm": {
+    "value": false
+  },
+  "moe_z_loss_coeff": {
+    "value": null
+  },
+  "num_query_groups": {
+    "value": 6
+  },
+  "one_logger_async": {
+    "value": false
+  },
+  "overlap_p2p_comm": {
+    "value": false
+  },
+  "profile_step_end": {
+    "value": 12
+  },
+  "recompute_method": {
+    "value": null
+  },
+  "tiktoken_pattern": {
+    "value": null
+  },
+  "timing_log_level": {
+    "value": 0
+  },
+  "titles_data_path": {
+    "value": null
+  },
+  "tp_comm_split_ag": {
+    "value": true
+  },
+  "tp_comm_split_rs": {
+    "value": true
+  },
+  "transformer_impl": {
+    "value": "transformer_engine"
+  },
+  "use_rope_scaling": {
+    "value": false
+  },
+  "align_grad_reduce": {
+    "value": true
+  },
+  "apply_rope_fusion": {
+    "value": true
+  },
+  "attention_backend": {
+    "value": "auto"
+  },
+  "attention_dropout": {
+    "value": 0
+  },
+  "ckpt_convert_save": {
+    "value": null
+  },
+  "config_logger_dir": {
+    "value": ""
+  },
+  "dino_teacher_temp": {
+    "value": 0.07
+  },
+  "enable_ft_package": {
+    "value": false
+  },
+  "enable_one_logger": {
+    "value": true
+  },
+  "global_batch_size": {
+    "value": 128
+  },
+  "loss_scale_window": {
+    "value": 1000
+  },
+  "lr_warmup_samples": {
+    "value": 0
+  },
+  "max_tokens_to_oom": {
+    "value": 12000
+  },
+  "moe_use_upcycling": {
+    "value": false
+  },
+  "padded_vocab_size": {
+    "value": 50304
+  },
+  "rampup_batch_size": {
+    "value": null
+  },
+  "retro_project_dir": {
+    "value": null
+  },
+  "sequence_parallel": {
+    "value": false
+  },
+  "timing_log_option": {
+    "value": "minmax"
+  },
+  "use_legacy_models": {
+    "value": false
+  },
+  "use_one_sent_docs": {
+    "value": false
+  },
+  "align_param_gather": {
+    "value": false
+  },
+  "apply_layernorm_1p": {
+    "value": false
+  },
+  "bert_embedder_type": {
+    "value": "megatron"
+  },
+  "bias_swiglu_fusion": {
+    "value": false
+  },
+  "data_parallel_size": {
+    "value": 8
+  },
+  "decoder_num_layers": {
+    "value": null
+  },
+  "decoder_seq_length": {
+    "value": null
+  },
+  "deterministic_mode": {
+    "value": false
+  },
+  "encoder_num_layers": {
+    "value": 12
+  },
+  "encoder_seq_length": {
+    "value": 4096
+  },
+  "evidence_data_path": {
+    "value": null
+  },
+  "indexer_batch_size": {
+    "value": 128
+  },
+  "initial_loss_scale": {
+    "value": 4294967296
+  },
+  "lr_warmup_fraction": {
+    "value": null
+  },
+  "lr_wsd_decay_iters": {
+    "value": 19073
+  },
+  "lr_wsd_decay_style": {
+    "value": "linear"
+  },
+  "manual_gc_interval": {
+    "value": 0
+  },
+  "moe_aux_loss_coeff": {
+    "value": 0
+  },
+  "moe_permute_fusion": {
+    "value": false
+  },
+  "one_logger_project": {
+    "value": "megatron-lm"
+  },
+  "profile_step_start": {
+    "value": 10
+  },
+  "reset_position_ids": {
+    "value": false
+  },
+  "rotary_interleaved": {
+    "value": false
+  },
+  "start_weight_decay": {
+    "value": 0.1
+  },
+  "swin_backbone_type": {
+    "value": "tiny"
+  },
+  "tp_comm_bulk_dgrad": {
+    "value": true
+  },
+  "tp_comm_bulk_wgrad": {
+    "value": true
+  },
+  "tp_comm_overlap_ag": {
+    "value": true
+  },
+  "tp_comm_overlap_rs": {
+    "value": true
+  },
+  "vision_pretraining": {
+    "value": false
+  },
+  "app_tag_run_version": {
+    "value": "0.0.0"
+  },
+  "bias_dropout_fusion": {
+    "value": false
+  },
+  "ckpt_convert_format": {
+    "value": null
+  },
+  "dino_local_img_size": {
+    "value": 96
+  },
+  "distributed_backend": {
+    "value": "nccl"
+  },
+  "exit_signal_handler": {
+    "value": false
+  },
+  "moe_ffn_hidden_size": {
+    "value": 1536
+  },
+  "moe_layer_recompute": {
+    "value": false
+  },
+  "num_attention_heads": {
+    "value": 6
+  },
+  "one_logger_run_name": {
+    "value": null
+  },
+  "overlap_grad_reduce": {
+    "value": false
+  },
+  "qk_pos_emb_head_dim": {
+    "value": 64
+  },
+  "query_in_block_prob": {
+    "value": 0.1
+  },
+  "retro_add_retriever": {
+    "value": false
+  },
+  "retro_num_neighbors": {
+    "value": 2
+  },
+  "tp_comm_overlap_cfg": {
+    "value": null
+  },
+  "train_sync_interval": {
+    "value": null
+  },
+  "use_checkpoint_args": {
+    "value": false
+  },
+  "barrier_with_L1_time": {
+    "value": true
+  },
+  "check_for_spiky_loss": {
+    "value": false
+  },
+  "dino_bottleneck_size": {
+    "value": 256
+  },
+  "dino_norm_last_layer": {
+    "value": false
+  },
+  "dist_ckpt_strictness": {
+    "value": "assume_ok_unexpected"
+  },
+  "error_injection_rate": {
+    "value": 0
+  },
+  "error_injection_type": {
+    "value": "transient_error"
+  },
+  "fp8_amax_history_len": {
+    "value": 1
+  },
+  "indexer_log_interval": {
+    "value": 1000
+  },
+  "lr_wsd_decay_samples": {
+    "value": null
+  },
+  "memory_snapshot_path": {
+    "value": "snapshot.pickle"
+  },
+  "moe_input_jitter_eps": {
+    "value": null
+  },
+  "overlap_param_gather": {
+    "value": false
+  },
+  "recompute_num_layers": {
+    "value": null
+  },
+  "reset_attention_mask": {
+    "value": false
+  },
+  "retriever_seq_length": {
+    "value": 256
+  },
+  "retro_attention_gate": {
+    "value": 1
+  },
+  "retro_encoder_layers": {
+    "value": 2
+  },
+  "straggler_ctrlr_port": {
+    "value": 65535
+  },
+  "use_pytorch_profiler": {
+    "value": false
+  },
+  "use_tp_pp_dp_mapping": {
+    "value": false
+  },
+  "variable_seq_lengths": {
+    "value": false
+  },
+  "vision_backbone_type": {
+    "value": "vit"
+  },
+  "wgrad_deferral_limit": {
+    "value": 0
+  },
+  "context_parallel_size": {
+    "value": 1
+  },
+  "dino_head_hidden_size": {
+    "value": 2048
+  },
+  "disable_te_fused_rope": {
+    "value": false
+  },
+  "exit_duration_in_mins": {
+    "value": null
+  },
+  "fp16_lm_cross_entropy": {
+    "value": false
+  },
+  "fp8_amax_compute_algo": {
+    "value": "most_recent"
+  },
+  "group_query_attention": {
+    "value": false
+  },
+  "log_num_zeros_in_grad": {
+    "value": false
+  },
+  "masked_softmax_fusion": {
+    "value": true
+  },
+  "moe_per_layer_logging": {
+    "value": false
+  },
+  "moe_router_group_topk": {
+    "value": null
+  },
+  "moe_router_num_groups": {
+    "value": null
+  },
+  "moe_token_drop_policy": {
+    "value": "probs"
+  },
+  "no_persist_layer_norm": {
+    "value": false
+  },
+  "pretrained_checkpoint": {
+    "value": null
+  },
+  "recompute_granularity": {
+    "value": null
+  },
+  "record_memory_history": {
+    "value": false
+  },
+  "rotary_scaling_factor": {
+    "value": 1
+  },
+  "skipped_train_samples": {
+    "value": 0
+  },
+  "use_ring_exchange_p2p": {
+    "value": false
+  },
+  "add_position_embedding": {
+    "value": true
+  },
+  "consumed_train_samples": {
+    "value": 0
+  },
+  "consumed_valid_samples": {
+    "value": 0
+  },
+  "dino_freeze_last_layer": {
+    "value": 1
+  },
+  "hybrid_attention_ratio": {
+    "value": 0
+  },
+  "moe_router_pre_softmax": {
+    "value": false
+  },
+  "multi_latent_attention": {
+    "value": false
+  },
+  "output_bert_embeddings": {
+    "value": false
+  },
+  "perform_initialization": {
+    "value": true
+  },
+  "straggler_minmax_count": {
+    "value": 1
+  },
+  "tensorboard_queue_size": {
+    "value": 1000
+  },
+  "use_cpu_initialization": {
+    "value": null
+  },
+  "auto_detect_ckpt_format": {
+    "value": false
+  },
+  "data_per_class_fraction": {
+    "value": 1
+  },
+  "dino_local_crops_number": {
+    "value": 10
+  },
+  "hybrid_override_pattern": {
+    "value": null
+  },
+  "max_position_embeddings": {
+    "value": 4096
+  },
+  "position_embedding_type": {
+    "value": "rope"
+  },
+  "retriever_score_scaling": {
+    "value": false
+  },
+  "tiktoken_special_tokens": {
+    "value": null
+  },
+  "vision_pretraining_type": {
+    "value": "classify"
+  },
+  "weight_decay_incr_style": {
+    "value": "constant"
+  },
+  "adlr_autoresume_interval": {
+    "value": 1000
+  },
+  "biencoder_projection_dim": {
+    "value": 0
+  },
+  "calculate_per_token_loss": {
+    "value": false
+  },
+  "ckpt_fully_parallel_load": {
+    "value": false
+  },
+  "ckpt_fully_parallel_save": {
+    "value": true
+  },
+  "dino_warmup_teacher_temp": {
+    "value": 0.04
+  },
+  "fp32_residual_connection": {
+    "value": false
+  },
+  "inference_max_seq_length": {
+    "value": 2560
+  },
+  "non_persistent_ckpt_type": {
+    "value": null
+  },
+  "per_split_data_args_path": {
+    "value": null
+  },
+  "retro_cyclic_train_iters": {
+    "value": null
+  },
+  "tensorboard_log_interval": {
+    "value": 1
+  },
+  "tp_comm_overlap_rs_dgrad": {
+    "value": false
+  },
+  "use_dist_ckpt_deprecated": {
+    "value": false
+  },
+  "attention_softmax_in_fp32": {
+    "value": false
+  },
+  "cross_entropy_loss_fusion": {
+    "value": false
+  },
+  "data_parallel_random_init": {
+    "value": false
+  },
+  "ddp_average_in_collective": {
+    "value": false
+  },
+  "empty_unused_memory_level": {
+    "value": 0
+  },
+  "log_memory_to_tensorboard": {
+    "value": false
+  },
+  "log_timers_to_tensorboard": {
+    "value": false
+  },
+  "moe_router_score_function": {
+    "value": "softmax"
+  },
+  "moe_shared_expert_overlap": {
+    "value": false
+  },
+  "moe_token_dispatcher_type": {
+    "value": "allgather"
+  },
+  "renormalize_blend_weights": {
+    "value": false
+  },
+  "tp_comm_bootstrap_backend": {
+    "value": "nccl"
+  },
+  "use_distributed_optimizer": {
+    "value": false
+  },
+  "exit_on_missing_checkpoint": {
+    "value": false
+  },
+  "expert_model_parallel_size": {
+    "value": 1
+  },
+  "fused_padded_mla_attention": {
+    "value": false
+  },
+  "init_method_xavier_uniform": {
+    "value": false
+  },
+  "moe_expert_capacity_factor": {
+    "value": null
+  },
+  "retro_num_retrieved_chunks": {
+    "value": 2
+  },
+  "standalone_embedding_stage": {
+    "value": false
+  },
+  "tensor_model_parallel_size": {
+    "value": 1
+  },
+  "deprecated_use_mcore_models": {
+    "value": false
+  },
+  "dist_ckpt_format_deprecated": {
+    "value": null
+  },
+  "distributed_timeout_minutes": {
+    "value": 10
+  },
+  "expert_tensor_parallel_size": {
+    "value": 1
+  },
+  "moe_router_bias_update_rate": {
+    "value": 0.001
+  },
+  "moe_use_legacy_grouped_gemm": {
+    "value": false
+  },
+  "num_dataset_builder_threads": {
+    "value": 6
+  },
+  "retro_verify_neighbor_count": {
+    "value": true
+  },
+  "tiktoken_num_special_tokens": {
+    "value": 1000
+  },
+  "disable_straggler_on_startup": {
+    "value": false
+  },
+  "distribute_saved_activations": {
+    "value": false
+  },
+  "gradient_accumulation_fusion": {
+    "value": false
+  },
+  "make_vocab_size_divisible_by": {
+    "value": 128
+  },
+  "non_persistent_save_interval": {
+    "value": null
+  },
+  "override_opt_param_scheduler": {
+    "value": false
+  },
+  "pipeline_model_parallel_size": {
+    "value": 1
+  },
+  "retro_encoder_hidden_dropout": {
+    "value": 0.1
+  },
+  "te_fallback_layernorm_linear": {
+    "value": true
+  },
+  "apply_query_key_layer_scaling": {
+    "value": false
+  },
+  "decrease_batch_size_if_needed": {
+    "value": false
+  },
+  "defer_embedding_wgrad_compute": {
+    "value": false
+  },
+  "log_batch_size_to_tensorboard": {
+    "value": false
+  },
+  "log_loss_scale_to_tensorboard": {
+    "value": true
+  },
+  "log_world_size_to_tensorboard": {
+    "value": false
+  },
+  "moe_router_enable_expert_bias": {
+    "value": false
+  },
+  "nccl_communicator_config_path": {
+    "value": null
+  },
+  "non_persistent_local_ckpt_dir": {
+    "value": null
+  },
+  "overlap_p2p_comm_warmup_flush": {
+    "value": false
+  },
+  "check_for_nan_in_loss_and_grad": {
+    "value": true
+  },
+  "ckpt_assume_constant_structure": {
+    "value": false
+  },
+  "moe_router_load_balancing_type": {
+    "value": "aux_loss"
+  },
+  "moe_router_topk_scaling_factor": {
+    "value": null
+  },
+  "non_persistent_global_ckpt_dir": {
+    "value": null
+  },
+  "non_persistent_local_ckpt_algo": {
+    "value": "fully_parallel"
+  },
+  "use_rotary_position_embeddings": {
+    "value": false
+  },
+  "dino_warmup_teacher_temp_epochs": {
+    "value": 30
+  },
+  "keep_fp8_weight_transpose_cache": {
+    "value": false
+  },
+  "moe_router_force_load_balancing": {
+    "value": false
+  },
+  "retro_encoder_attention_dropout": {
+    "value": 0.1
+  },
+  "decoder_last_pipeline_num_layers": {
+    "value": null
+  },
+  "moe_pad_expert_input_to_capacity": {
+    "value": false
+  },
+  "retriever_report_topk_accuracies": {
+    "value": []
+  },
+  "use_mp_args_from_checkpoint_args": {
+    "value": false
+  },
+  "clone_scatter_output_in_embedding": {
+    "value": true
+  },
+  "decoder_first_pipeline_num_layers": {
+    "value": null
+  },
+  "log_validation_ppl_to_tensorboard": {
+    "value": false
+  },
+  "accumulate_allreduce_grads_in_fp32": {
+    "value": true
+  },
+  "encoder_tensor_model_parallel_size": {
+    "value": 0
+  },
+  "microbatch_group_size_per_vp_stage": {
+    "value": null
+  },
+  "pipeline_model_parallel_split_rank": {
+    "value": null
+  },
+  "scatter_gather_tensors_in_pipeline": {
+    "value": true
+  },
+  "use_checkpoint_opt_param_scheduler": {
+    "value": false
+  },
+  "ckpt_fully_parallel_save_deprecated": {
+    "value": false
+  },
+  "create_attention_mask_in_dataloader": {
+    "value": true
+  },
+  "hierarchical_context_parallel_sizes": {
+    "value": null
+  },
+  "moe_shared_expert_intermediate_size": {
+    "value": null
+  },
+  "num_distributed_optimizer_instances": {
+    "value": 1
+  },
+  "rotary_seq_len_interpolation_factor": {
+    "value": null
+  },
+  "untie_embeddings_and_output_weights": {
+    "value": false
+  },
+  "biencoder_shared_query_context_model": {
+    "value": false
+  },
+  "encoder_pipeline_model_parallel_size": {
+    "value": 0
+  },
+  "virtual_pipeline_model_parallel_size": {
+    "value": null
+  },
+  "async_tensor_model_parallel_allreduce": {
+    "value": true
+  },
+  "num_layers_per_virtual_pipeline_stage": {
+    "value": null
+  },
+  "inference_batch_times_seqlen_threshold": {
+    "value": -1
+  },
+  "apply_residual_connection_post_layernorm": {
+    "value": false
+  },
+  "overlap_param_gather_with_optimizer_step": {
+    "value": false
+  },
+  "transformer_pipeline_model_parallel_size": {
+    "value": 1
+  },
+  "use_tokenizer_model_from_checkpoint_args": {
+    "value": true
+  },
+  "ckpt_convert_update_legacy_dist_opt_format": {
+    "value": false
+  },
+  "check_weight_hash_across_dp_replicas_interval": {
+    "value": null
+  }
+}
