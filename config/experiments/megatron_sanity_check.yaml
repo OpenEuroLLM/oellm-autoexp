@@ -1,11 +1,16 @@
 # @package _global_
+# Cluster-agnostic sanity check. Run via run_sanity_check.sh which injects
+# container=<cluster> and slurm=<cluster> overrides from the CLUSTER env var.
+#
+# Data: wget -P "$DATA_DIR/gpt-neox-20b/common-pile" \
+#           https://462000963.lumidata.eu/common-pile/wikipesto.{bin,idx,info.json}
 defaults:
-  - base
+  - ../base
   - /backend: megatron
-  - /container: mi325x
-  - /slurm: mi325x
+  - /container: none    # overridden by CLUSTER in run_sanity_check.sh
+  - /slurm: local       # overridden by CLUSTER in run_sanity_check.sh
   - /sweep: none
-  - /backend/megatron: [sanity_check,qwen3_125M]
+  - /backend/megatron: [sanity_check]
   - _self_
 
 backend:
@@ -24,7 +29,7 @@ backend:
     distributed_timeout_minutes: 10
     overlap_grad_reduce: true
     recompute_activations: false
-    
+
     micro_batch_size: 16
     ckpt_format: torch_dist
 
@@ -32,11 +37,15 @@ backend:
     wandb_exp_name: ${job.name}_${oc.env:SLURM_JOB_ID,local}
     wandb_save_dir: ${job.base_output_dir}/wandb
 
-# set to 8 hours
 slurm:
   sbatch:
+    nodes: 2
     time: "8:00:00"
+  env:
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    WANDB_MODE: "online"
+    # WANDB_ENTITY: "openeurollm-project"
+    OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
 
 job:
-  # include cluster name in experiment name. 
-  name: megatron_sanity_check_MI325X_mb${backend.megatron.micro_batch_size}
+  name: megatron_sanity_check_${slurm.env.MACHINE_NAME}_mb${backend.megatron.micro_batch_size}
