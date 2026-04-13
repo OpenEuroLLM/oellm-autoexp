@@ -5,22 +5,19 @@ defaults:
   - /container: lumi
   - /slurm: lumi
   - /sweep: none
-  - /backend/megatron: [sanity_check,qwen3_125M]
+  - /backend/megatron: [sanity_check] # a dense 70M non-emb param qwen3-like model 
   - _self_
 
-
-env:
-  USE_ROCM_AITER_ROPE_BACKEND: "0"
-  WANDB_MODE: "online"
-  WANDB_ENTITY: "openeurollm-project"
-
+# Auxiliary variables are used for references in this config file.
 aux:
   data_dir: ${oc.env:DATA_DIR,"/scratch/project_462000963/preprocessed"}
   model_name: "tiny"
 
+### Intention: easily runnable, quick experiment to see that loss curve is near-identical across runs between software stacks and clusters. Sharing model architecture, data and optimizer configurations
+
 backend:
   megatron:
-    # Preprocessed data should follow this structure:
+    # Preprocessed data from LUMIO:  `wget https://462000963.lumidata.eu/common-pile/wikipesto.{bin,idx,info.json}`
     data_path:
       - ${aux.data_dir}/gpt-neox-20b/common-pile/wikipesto
     data_cache_path: ${job.base_output_dir}/cache
@@ -41,7 +38,6 @@ backend:
     overlap_grad_reduce: true
     recompute_activations: false
     
-    
     micro_batch_size: 16 # lumi max
     ckpt_format: torch_dist
 
@@ -52,7 +48,13 @@ backend:
 slurm:
   sbatch:
     time: "2:00:00"
-    nodes: 4
+    nodes: 2
+
+  env:
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    WANDB_MODE: "disabled" # <---- Modes: disabled, online, offline 
+    WANDB_ENTITY: "openeurollm-project"
+    OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
 
 job:
   # include cluster name in experiment name. 
