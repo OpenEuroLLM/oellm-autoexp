@@ -1,5 +1,6 @@
 defaults:
  - _self_
+ - qwen3_base
 
 ### MODEL PARAMS for 600M Qwen3 model
 
@@ -54,12 +55,20 @@ defaults:
 # attention_dropout: 0.0
 # hidden_dropout: 0.0
 # add_bias_linear: false
-# use_flash_attn: true
 
+num_layers: 16
+hidden_size: 512
+ffn_hidden_size: 2048
+num_attention_heads: 4
+num_query_groups: 4
+kv_channels: 128
+untie_embeddings_and_output_weights: False
+
+attention_backend: auto
 init_method_std: 0.02
 
 ### DATA
-global_batch_size: 512
+global_batch_size: 512 
 data_path:
   - ${oc.env:DATA_DIR}/preprocessed/gpt-neox-20b/wikipesto/wikipesto
 data_cache_path: ${job.base_output_dir}/cache
