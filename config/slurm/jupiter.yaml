@@ -11,12 +11,11 @@ launcher_cmd: "\
 srun:
   exclusive: true
   wait: 60
-  cpus_per_task: 18
+  cpus_per_task: 228
   threads_per_core: 1
 launcher_env_passthrough: false
 env:
   MACHINE_NAME: JUPITER
-  WORLD_SIZE: 16
   MASTER_ADDR: "$(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1)"
   MASTER_PORT: "20074"
   ARCH: "$(uname -m)"
@@ -29,7 +28,7 @@ sbatch:
   ntasks_per_node: 1
   gpus_per_node: 4
   gres: "gpu:4"
-  cpus_per_task: 18
+  cpus_per_task: 228
   partition: ${oc.env:SLURM_PARTITION,booster}
   account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
   time: "12:00:00"

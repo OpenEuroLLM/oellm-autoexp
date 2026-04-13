@@ -17,6 +17,7 @@ torchrun_args:
   rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
   rdzv_backend: "c10d"
   node_rank: "$SLURM_NODEID"
+  numa_binding: "node"
 env:
   PYTHONPATH: ".:submodules/Megatron-LM"
   RUN_DIR: ${.PROJECT_DIR}/submodules/Megatron-LM

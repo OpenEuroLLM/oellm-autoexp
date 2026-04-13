@@ -31,6 +31,8 @@ backend:
     # Data
     data_cache_path: /e/project1/e-sta-openeurollm/komulainen1_jupiter/data/cache
     data_path: 
+      - "/e/project1/e-sta-openeurollm/komulainen1_jupiter/data/fineweb-10BT/fineweb-10BT_text_document"
+    tokenizer_model: "/e/project1/e-sta-openeurollm/komulainen1_jupiter/hf_cache/hub/models--openeurollm--tokenizer-256k/snapshots/ac1ce776f8a78fc7aa96dfc91ffc1ae6966b2fa1"
     tokenizer_type: HuggingFaceTokenizer
     vocab_size: 262000
 

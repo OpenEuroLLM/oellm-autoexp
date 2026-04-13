@@ -232,3 +232,4 @@ slurm_jupiter.sh
 slurm_juwels.sh
 logs/
 output/
+helper_scripts/
