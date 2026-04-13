@@ -51,7 +51,7 @@ slurm:
 
   env:
     USE_ROCM_AITER_ROPE_BACKEND: "0"
-    WANDB_MODE: "enabled" # <---- Modes: disabled, online, offline 
+    WANDB_MODE: "online" # <---- Modes: disabled, online, offline 
     WANDB_ENTITY: "openeurollm-project"
     OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
 
