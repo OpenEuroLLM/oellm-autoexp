@@ -1,6 +1,5 @@
 defaults:
  - _self_
- - qwen3_base
 
 ### MODEL PARAMS for 600M Qwen3 model
 
@@ -29,7 +28,7 @@ defaults:
 # bf16: true
 # add_bias_linear: false
 
-### Model params for 150M Qwen3 model
+### Model params for 150M Qwen3 model 
 
 # num_layers: 12
 # hidden_size: 768
@@ -55,29 +54,21 @@ defaults:
 # attention_dropout: 0.0
 # hidden_dropout: 0.0
 # add_bias_linear: false
+# use_flash_attn: true
 
-num_layers: 16
-hidden_size: 512
-ffn_hidden_size: 2048
-num_attention_heads: 4
-num_query_groups: 4
-kv_channels: 128
-untie_embeddings_and_output_weights: False
-
-attention_backend: auto
 init_method_std: 0.02
 
 ### DATA
 global_batch_size: 512
 data_path:
-  - ${oc.env:DATA_DIR}/gpt-neox-20b/common-pile/wikipesto
+  - ${oc.env:DATA_DIR}/preprocessed/gpt-neox-20b/wikipesto/wikipesto
 data_cache_path: ${job.base_output_dir}/cache
 dataloader_type: single
 num_workers: 7
 tokenizer_type: HuggingFaceTokenizer
 tokenizer_model: EleutherAI/gpt-neox-20b
 make_vocab_size_divisible_by: 128
-train_iters: 2384 #
+train_iters: 2384 # 
 log_interval: 10
 log_throughput: true
 log_progress: true
@@ -96,7 +87,7 @@ optimizer: adam
 adam_beta1: 0.9
 adam_beta2: 0.95
 adam_eps: 1.0e-8
-lr: 0.001
+lr: 0.002
 min_lr: 0.0
 lr_decay_style: WSD
 lr_wsd_decay_style: linear
