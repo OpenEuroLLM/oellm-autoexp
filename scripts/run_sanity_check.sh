@@ -26,8 +26,6 @@ echo "Running sanity check on cluster: $CLUSTER"
 case $CLUSTER in
     lumi)
         export DATA_DIR="/pfs/lustrep4/scratch/project_462000963/preprocessed"
-        export SLURM_PARTITION=dev-g
-        export SLURM_ACCOUNT=project_462000963
         ;;
     jupiter)
         echo "TODO: Not defined yet"
@@ -42,7 +40,8 @@ case $CLUSTER in
         exit 1
         ;;
     mi325x)
-        export DATA_DIR="/shared_silo/scratch/rluukkon/data/preprocessed"
+        echo "TODO: Not defined yet"
+        exit 1
         ;;
     *)
         echo "TODO: Not defined yet"
@@ -52,6 +51,6 @@ esac
 
 
 uv run --python 3.12 python scripts/run_autoexp.py \
-    --config-name experiments/megatron_sanity_check \
+    --config-name experiments/megatron_sanity_checks/megatron_sanity_check \
     container=$CLUSTER slurm=$CLUSTER \
     "$@"
