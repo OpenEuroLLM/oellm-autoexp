@@ -1,6 +1,6 @@
 # @package _global_
 defaults:
-  - base
+  - ../base
   - /backend: megatron
   - /container: lumi
   - /slurm: lumi
@@ -8,13 +8,12 @@ defaults:
   - /backend/megatron: [sanity_check] # a dense 70M non-emb param qwen3-like model 
   - _self_
 
-# Auxiliary variables are used for references in this config file.
+# Auxiliary variables are used for references inside this config file.
 aux:
   data_dir: ${oc.env:DATA_DIR,"/scratch/project_462000963/preprocessed"}
   model_name: "tiny"
 
-### Intention: easily runnable, quick experiment to see that loss curve is near-identical across runs between software stacks and clusters. Sharing model architecture, data and optimizer configurations
-
+### Intention: easily runnable, quick experiment to see that loss curve is near-identical across runs between software stacks and clusters.
 backend:
   megatron:
     # Preprocessed data from LUMIO:  `wget https://462000963.lumidata.eu/common-pile/wikipesto.{bin,idx,info.json}`
@@ -48,11 +47,11 @@ backend:
 slurm:
   sbatch:
     time: "2:00:00"
-    nodes: 2
+    nodes: 4
 
   env:
     USE_ROCM_AITER_ROPE_BACKEND: "0"
-    WANDB_MODE: "disabled" # <---- Modes: disabled, online, offline 
+    WANDB_MODE: "enabled" # <---- Modes: disabled, online, offline 
     WANDB_ENTITY: "openeurollm-project"
     OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
 
