@@ -147,6 +147,14 @@ Search the output for the job name (e.g., `moe_abl_nexp_8_lr0.001_gbsz1024_seed1
 
 **Note:** Indices depend on the current sweep config. If you add batch sizes or learning rates, indices shift. Re-run `--list-stable` / `--list-decay` after config changes.
 
+
+
+```python
+python scripts/automated_resume_timed_out.py
+    --config-name experiments/swagatam/test_moe_130M_300BT_bsz_256.yaml \\
+    --config-dir config
+```
+
 ---
 
 ## Checkpoint Saving and Loading
@@ -187,6 +195,7 @@ Decay jobs are started by the **original** monitor session (e.g., `1773407491`) 
 
 ```bash
 python scripts/monitor_autoexp.py --session 1773917843
+python scripts/monitor_autoexp.py --session 1775635896 --- moe with gqa <256, 0.001>
 ```
 
 ### Will the monitor start the same job twice?
@@ -289,8 +298,6 @@ python scripts/run_autoexp.py \
 ++job.log_path_current='${job.base_output_dir}/current-eval.log'
 ```
 
-
-
 ## try with a specific checkpoint number within the folder
 
 say 51000 -- 38770832
@@ -312,8 +319,6 @@ python scripts/run_autoexp.py \
 ++job.log_path='${job.base_output_dir}/slurm-%j-eval-51000.log' \
 ++job.log_path_current='${job.base_output_dir}/current-eval-51000.log'
 ```
-
-
 
 will it work for stable?
 
@@ -373,9 +378,10 @@ python scripts/run_autoexp.py \
 ++job.log_path_current='${job.base_output_dir}/current-eval-35000.log'
 ```
 
-
 ## full determinism by dropping bf16, flash attention
+
 - first on 2 nodes 38852188
+
 ```
 python scripts/run_autoexp.py \
 --config-name experiments/swagatam/test_moe_130M_300BT_bsz_512.yaml \
@@ -401,6 +407,7 @@ python scripts/run_autoexp.py \
 ```
 
 - then on 4 nodes
+
 ```
 python scripts/run_autoexp.py \
 --config-name experiments/swagatam/test_moe_130M_300BT_bsz_512.yaml \
@@ -424,3 +431,4 @@ python scripts/run_autoexp.py \
 ++job.log_path='${job.base_output_dir}/slurm-%j-eval-35000-fp32-nodes-4.log' \
 ++job.log_path_current='${job.base_output_dir}/current-eval-35000.log'
 ```
+

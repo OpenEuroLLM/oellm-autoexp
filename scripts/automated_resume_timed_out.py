@@ -11,6 +11,8 @@ Usage:
   python scripts/automated_resume_timed_out.py \\
     --config-name experiments/swagatam/test_moe_130M_300BT_bsz_256.yaml \\
     --config-dir config
+    
+    python scripts/resume_timed_out.py --config-name experiments/swagatam/test_moe_130M_300BT_GQA.yaml --config-dir config --indices 0,3,6,9 --dry-run
 
   # Show per-job status (complete / incomplete / unknown) and exit_interval
   python scripts/automated_resume_timed_out.py ... --verbose
