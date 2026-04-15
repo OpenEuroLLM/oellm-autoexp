@@ -11,8 +11,7 @@ create_attention_mask_in_dataloader: False
 # data_args_path: local/6040_datapath.txt
 data_path: 
   - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/gpt-neox-20b/merged/CC-MAIN-2020-high-actual_merged
-data_cache_path: /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/gpt-neox-20b/merged/CC-MAIN-2020-high-actual_merged.cache
-  /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/gpt-neox-20b/merged/CC-MAIN-2020-high-actual_merged.cache
+data_cache_path: /shared_silo/scratch/datasets/CC-MAIN-200-high-actual/gpt-neox-20b/merged/CC-MAIN-2020-high-actual_merged.cache
 # Tokenizer
 tokenizer_model: EleutherAI/gpt-neox-20b
 tokenizer_type: HuggingFaceTokenizer
