@@ -23,9 +23,11 @@
 # Megatron uses "static" successfully at 64N. Titan's c10d works but has
 # different init_process_group code. "static" avoids the discovery phase entirely.
 #
-# ── Results ──────────────────────────────────────────────────────────────────
+# ── Results (32 nodes, 128×GH200) ────────────────────────────────────────────
 # c10d backend: only EP=32 lbs=4 ppmbs=2 worked (18 steps). All others failed.
-# static backend: (to be filled in)
+# static backend: ALL OOM — same memory bottleneck as 16-node.
+# Automodel accumulates all microbatch logits before loss computation,
+# causing OOM regardless of EP/lbs/ppmbs configuration.
 
 defaults:
   - ../../base

@@ -3,6 +3,11 @@
 # Follows up on phase 1 where bs=4 used only 20% memory (19 GiB / 95 GiB).
 # Goal: find the optimal batch size up to memory limit.
 #
+# ── Results ──────────────────────────────────────────────────────────────────
+# INVALID — jobs 307466-307468 used buggy titan_custom_config.py (wrong model).
+# Results were from a debug-size model (~5.57 GiB, not ~40 GiB).
+# See titan_moe_235BA22B_fullac_bs_sweep_jupiter.yaml for correct results.
+#
 defaults:
   - ../../base
   - /backend: titan

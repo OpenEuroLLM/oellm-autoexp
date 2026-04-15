@@ -15,8 +15,17 @@
 #
 # GBS=256 to keep per-GPU batch constant (mbs=1)
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (64 nodes, 256×GH200) ────────────────────────────────────────────
+#   EP=8  + allgather: CANCELLED (timeout)
+#   EP=8  + alltoall:  CANCELLED (timeout)
+#   EP=16 + allgather: 14.9 TFLOPS, 102.1 tps/GPU, 36.4 GiB (38%)
+#   EP=16 + alltoall:  11.5 TFLOPS,  78.8 tps/GPU, 48.3 GiB (51%)
+#   EP=32 + allgather:  8.2 TFLOPS,  56.0 tps/GPU, 34.5 GiB (36%)
+#   EP=32 + alltoall:  CANCELLED (timeout)
+#
+# Findings: allgather still beats alltoall. EP scaling kills throughput:
+# EP=16 ~15 TFLOPS, EP=32 ~8 TFLOPS. EP=8 timed out (possibly hung).
+# 64N EP=16 (14.9) matches 32N EP=16 (14.7) — flat scaling at high EP.
 
 defaults:
   - ../../base

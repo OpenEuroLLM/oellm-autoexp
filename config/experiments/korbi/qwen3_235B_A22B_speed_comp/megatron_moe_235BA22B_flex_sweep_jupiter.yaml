@@ -19,8 +19,10 @@
 # Container: DeepEP+NVSHMEM container (has deep_ep package at /opt/)
 # Requires: /dev/shm bind, PYTHONPATH includes /opt/, no expandable_segments
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (16 nodes, 64×GH200) ─────────────────────────────────────────────
+# ALL CRASHED — DeepEP/NVSHMEM failures (SIGABRT or traceback errors).
+# DeepEP NVSHMEM not functional on JUPITER GH200 (aarch64) with current container.
+# HybridEP also crashed. No training iterations completed.
 
 defaults:
   - ../../base

@@ -99,7 +99,7 @@ sweep:
         # Confirm prior result: 27.5 TFLOPS, 75.3 GiB (79%) (job 307427)
         - aux.dispatcher_tag: allgather
           backend.megatron.moe_token_dispatcher_type: allgather
-          # Result: (pending)
+          # Result: 26.7 TFLOPS, 183.2 tps/GPU, 75.4 GiB (79%)
 
         # ── Config 1: alltoall dispatcher ─────────────────────────────────────────
         # For EP=8 inter-node (IB): alltoall routes only selected tokens per expert
@@ -108,4 +108,4 @@ sweep:
         # For inter-node EP=8 on IB: alltoall may be comparable or better.
         - aux.dispatcher_tag: alltoall
           backend.megatron.moe_token_dispatcher_type: alltoall
-          # Result: (pending)
+          # Result: 17.1 TFLOPS, 117.7 tps/GPU, 82.7 GiB (87%) — alltoall 36% SLOWER

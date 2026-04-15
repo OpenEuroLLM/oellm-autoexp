@@ -131,11 +131,13 @@ sweep:
   groups:
     - type: list
       configs:
-        # ── CONFIRMED RESULTS (nocompile+full-AC) ──────────────────────────────
-        # bs=1 (323666/323680): 38-41 GiB (41%), ~31 TFLOPS
+        # ── CONFIRMED RESULTS (nocompile+full-AC, 16N 64×GH200) ────────────────
+        # bs=1 (323666/323680): 38-41 GiB (41%), ~31 TFLOPS, ~185 tps/GPU
         # bs=2 (323730): 49-51 GiB (52%), ~39 TFLOPS  [step 20]
-        # bs=4 (323729): 64-74 GiB (68-77%), ~46 TFLOPS  [step 10]
-        # bs=8,16,32,64: failed (stale file handle bad nodes or OOM)
+        # bs=4: 46.5 TFLOPS, 282 tps/GPU, 68.3 GiB (72%)
+        # bs=5: 48.0 TFLOPS, 291 tps/GPU, 87.0 GiB (92%)
+        # bs=6: 48.4 TFLOPS, 294 tps/GPU, 84.4 GiB (89%) ← 16N OPTIMAL
+        # bs=8,16,32,64: CANCELLED/OOM (bad nodes or memory limit)
         # bs=32 confirmed OOM at ~88-89 GiB (job 323734)
         #
         # ── nocompile + full-AC, sweep bs ──────────────────────────────────────

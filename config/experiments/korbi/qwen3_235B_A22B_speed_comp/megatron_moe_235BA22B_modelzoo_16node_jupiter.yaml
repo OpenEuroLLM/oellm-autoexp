@@ -28,8 +28,10 @@
 # Container: DeepEP+NVSHMEM container (has deep_ep package at /opt/)
 # Requires: /dev/shm bind, PYTHONPATH includes /opt/, no expandable_segments
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (16 nodes, 64×GH200) ─────────────────────────────────────────────
+# ALL CRASHED — DeepEP/NVSHMEM SIGABRT on JUPITER GH200 (aarch64).
+# Neither DeepEP nor HybridEP functional in current container.
+# No training iterations completed for any config.
 
 defaults:
   - ../../base

@@ -19,8 +19,18 @@
 #   - pp_mbs: {1, 2, 4} — pipeline microbatch size
 #   - EP: {8, 16} — expert parallelism degree
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (16 nodes, 64×GH200) ─────────────────────────────────────────────
+# ALL OOM or FAILED — 235BA22B is too large for PP=2+EP=8 on 64 GPUs.
+#   ep8_pp2_lbs4_ppmbs1: FAILED (no training metrics)
+#   ep8_pp2_lbs4_ppmbs2: OOM (88.9 GiB allocated, needs 4 GiB more)
+#   ep8_pp2_lbs4_ppmbs4: OOM
+#   ep8_pp2_lbs8_ppmbs2: OOM
+#   ep8_pp2_lbs8_ppmbs4: OOM
+#   ep8_pp2_lbs16_ppmbs4: OOM
+#   ep16_pp2_lbs4_ppmbs2: OOM
+#   ep16_pp2_lbs8_ppmbs4: OOM
+# Automodel accumulates all microbatch logits before loss → OOM bottleneck.
+# 235BA22B requires more nodes or PP>2 to fit in memory.
 
 defaults:
   - ../../base

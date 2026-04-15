@@ -29,6 +29,10 @@
 #   - NVSHMEM container + /dev/shm bind
 #   - PYTORCH_CUDA_ALLOC_CONF="" (NVSHMEM conflicts with expandable_segments)
 #
+# ── Results (32 nodes, 128×GH200) ────────────────────────────────────────────
+# ALL CRASHED — DeepEP/HybridEP NVSHMEM failures on JUPITER GH200.
+# No training iterations completed for any config.
+#
 # ── Results ──────────────────────────────────────────────────────────────────
 # (to be filled in after jobs complete)
 

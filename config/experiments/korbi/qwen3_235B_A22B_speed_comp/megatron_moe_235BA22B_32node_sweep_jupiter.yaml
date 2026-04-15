@@ -14,8 +14,15 @@
 #
 # GBS scales with nodes: 128 (vs 64 at 16 nodes) to keep per-GPU batch constant
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (32 nodes, 128×GH200) ────────────────────────────────────────────
+#   EP=8  + allgather: 25.6 TFLOPS, 175.8 tps/GPU, 54.4 GiB (57%)
+#   EP=8  + alltoall:  19.2 TFLOPS, 131.8 tps/GPU, 59.6 GiB (63%)
+#   EP=16 + allgather: 14.7 TFLOPS, 101.0 tps/GPU, 46.6 GiB (49%)
+#   EP=16 + alltoall:  11.8 TFLOPS,  81.2 tps/GPU, 54.5 GiB (57%)
+#
+# Findings: EP=8 allgather best. alltoall 25-30% slower at all EP sizes.
+# EP=16 halves throughput vs EP=8 — wider EP group = more IB comm overhead.
+# 32N EP=8 (25.6) vs 16N EP=8 (27.5) → 7% scaling loss.
 
 defaults:
   - ../../base

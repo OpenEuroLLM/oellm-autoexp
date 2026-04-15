@@ -18,8 +18,19 @@
 #
 # CRITICAL: NCCL_NET_GDR_LEVEL=0 required for PP=2 configs (inter-node P2P)
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (32 nodes, 128×GH200) ────────────────────────────────────────────
+#   PP=1, EP=8,  full-AC, bs=4: 43.6 TFLOPS, 265 tps/GPU, 65.7 GiB (69%)
+#   PP=1, EP=8,  full-AC, bs=8: 47.2 TFLOPS, 286 tps/GPU, 89.7 GiB (94%) ← OPTIMAL
+#   PP=1, EP=16, full-AC, bs=4: 30.2 TFLOPS, 183 tps/GPU, 71.4 GiB (75%)
+#   PP=1, EP=8,  no-AC,  bs=4: OOM
+#   PP=1, EP=8,  no-AC,  bs=8: OOM
+#   PP=1, EP=16, no-AC,  bs=4: OOM
+#   PP=1, EP=16, full-AC, bs=8: OOM
+#   PP=1, EP=8,  full-AC, bs=4 (other): OOM
+#   PP=1, EP=16, no-AC,  bs=8: OOM
+#
+# Findings: EP=8 beats EP=16 (+44%). bs=8 is optimal at EP=8 (94% memory).
+# 32N EP=8 (47.2) ≈ 16N bs=6 (48.4) — near-perfect weak scaling.
 
 defaults:
   - ../../base

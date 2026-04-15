@@ -16,8 +16,12 @@
 #
 # Expected: marginal gains; Megatron is TP=4-bottlenecked.
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (16 nodes, 64×GH200) ─────────────────────────────────────────────
+#   baseline (sp+ggmm):  28.5 TFLOPS, 196.0 tps/GPU, 75.3 GiB (79%) ← +3.6% vs prior 27.5
+#   no_ggmm:             23.9 TFLOPS, 163.8 tps/GPU, 75.3 GiB (79%) — ggmm=false is −16%
+#
+# Conclusion: grouped_gemm gives +19% (28.5→23.9). SP+ggmm slightly exceeds prior baseline
+# (28.5 vs 27.5 TFLOPS) — run-to-run variance or container/scheduling differences.
 
 defaults:
   - ../../base

@@ -22,8 +22,9 @@
 # CRITICAL: NCCL_NET_GDR_LEVEL=0 required — PP inter-node P2P hangs with GDR_LEVEL=2
 #   (same issue as 30BA3B PP=2; see MEMORY.md issue #5)
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (16 nodes, 64×GH200) ─────────────────────────────────────────────
+# ALL OOM — PP=2 with FSDP reshard issues caused memory blowup.
+# See titan_moe_235BA22B_pp2ep8_debug_jupiter.yaml for diagnosis.
 
 defaults:
   - ../../base

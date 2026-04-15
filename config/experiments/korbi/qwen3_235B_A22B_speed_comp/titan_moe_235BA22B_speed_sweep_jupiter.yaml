@@ -18,8 +18,9 @@
 #   + 94-layer activations (no-AC) ≈ 19 GiB → ~71 GiB + alloc spikes → OOM.
 #
 # ── Confirmed valid results ───────────────────────────────────────────────────
-# nocompile+full-AC+bs=1: 38-41 GiB (41-43%), ~31 TFLOPS  [jobs 323666, 323680*]
-# compile+full-AC+bs=1:   38-40 GiB (41-43%), ~31 TFLOPS  [job 323682] ← compile=0% gain
+# compile+full-AC+bs=1:   41.5 GiB (44%), 30.3 TFLOPS, 184 tps/GPU  [job 323682]
+# nocompile+full-AC+bs=1: 39.4 GiB (41%), 30.4 TFLOPS, 185 tps/GPU  [sanity check]
+# compile gives ~0% gain for 235BA22B MoE
 #
 # ── CONCLUSION: No-AC not viable. See titan_moe_235BA22B_fullac_bs_sweep_jupiter.yaml ──
 #

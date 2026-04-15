@@ -9,8 +9,16 @@
 #
 # H100 reference: 245-276 TFLOPS (245 base, 276 with 1F1B overlap)
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (64 nodes, 256×GH200) ────────────────────────────────────────────
+#   allgather_ep16_fullrecomp: 47.3 TFLOPS, 324.9 tps/GPU, 31.4 GiB (33%) — only 5 steps
+#   allgather_ep32:            OOM
+#   alltoall_ep32:             OOM
+#   allgather_ep16:            OOM (selective recompute)
+#   alltoall_ep16:             CANCELLED
+#   alltoall_ep32_fullrecomp:  CANCELLED
+#
+# Only EP=16+allgather+full-recompute fit in memory. 47.3 TFLOPS is promising
+# (1.7× vs TP=4+PP=2+EP=8 baseline of 27.5) but only 5 steps — needs longer run.
 
 defaults:
   - ../../base

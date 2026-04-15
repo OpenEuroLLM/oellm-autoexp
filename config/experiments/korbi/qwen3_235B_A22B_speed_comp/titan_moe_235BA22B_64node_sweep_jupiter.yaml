@@ -10,8 +10,20 @@
 #
 # Sweep: PP × EP × AC × batch_size combinations
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (64 nodes, 256×GH200) ────────────────────────────────────────────
+#   PP=1, EP=8,  full-AC, bs=4: 43.7 TFLOPS, 265 tps/GPU, 47.9 GiB (50%)
+#   PP=1, EP=8,  full-AC, bs=8: 47.4 TFLOPS, 288 tps/GPU, 84.9 GiB (89%) ← OPTIMAL
+#   PP=1, EP=16, full-AC, bs=4: 28.8 TFLOPS, 175 tps/GPU, 59.6 GiB (63%)
+#   PP=1, EP=32, full-AC, bs=4: 16.0 TFLOPS,  97 tps/GPU, 70.1 GiB (74%)
+#   PP=1, EP=8,  no-AC,  *:     OOM (all batch sizes)
+#   PP=1, EP=16, full-AC, bs=8: OOM
+#   PP=1, EP=32, full-AC, bs=8: OOM
+#   PP=1, EP=16, no-AC,  *:     OOM
+#
+# Findings: EP=8+bs=8 optimal at every scale. Near-perfect scaling:
+# 16N: 48.4 → 32N: 47.2 → 64N: 47.4 TFLOPS (−0-2% per doubling).
+# EP scaling: EP=8 47.4, EP=16 28.8 (−39%), EP=32 16.0 (−66%).
+# Titan 47.4 TFLOPS vs Megatron best 27.5 → Titan 1.72× faster.
 
 defaults:
   - ../../base

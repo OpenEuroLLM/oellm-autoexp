@@ -13,8 +13,9 @@
 # Base: v2 best = TP=1, PP=4, EP=16, VPP=12, allgather, full recompute → 51.0 TFLOPS
 # (selective recompute OOMed on 16N)
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (16 nodes, 64×GH200) ─────────────────────────────────────────────
+# ALL CANCELLED/CRASHED — no training iterations completed.
+# IB/NCCL plugin and container compatibility issues on JUPITER GH200.
 
 defaults:
   - ../../base

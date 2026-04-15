@@ -12,8 +12,9 @@
 # H100 reference achieved 245-276 TFLOPS (245 base, 276 with 1F1B overlap).
 # JUPITER GH200 target: scaled proportionally to GH200 peak (similar to H100 SXM).
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (64 nodes, 256×GH200) ────────────────────────────────────────────
+# ALL CRASHED — DeepEP/HybridEP NVSHMEM failures on JUPITER GH200.
+# No training iterations completed.
 
 defaults:
   - ../../base

@@ -16,8 +16,9 @@
 #   - CUDA_DEVICE_MAX_CONNECTIONS=32 for concurrent streams
 #   - mock_data for pure compute benchmark
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (32 nodes, 128×GH200) ────────────────────────────────────────────
+# ALL OOM or CANCELLED — selective recompute OOMs with TP=2+PP=8+VPP=4.
+# Full recompute variants also OOM at EP=16. No usable results.
 
 defaults:
   - ../../base

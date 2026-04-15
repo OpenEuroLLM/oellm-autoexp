@@ -20,9 +20,11 @@
 # c10d dynamic discovery failed at 64 nodes — ALL configs got
 # RendezvousConnectionError. "static" avoids dynamic discovery entirely.
 #
-# ── Results ──────────────────────────────────────────────────────────────────
+# ── Results (64 nodes, 256×GH200) ────────────────────────────────────────────
 # c10d backend: ALL failed with RendezvousConnectionError (2026-04-10)
-# static backend: (to be filled in)
+# static backend: ALL OOM — same memory bottleneck as 16/32-node.
+# Automodel accumulates all microbatch logits before loss computation,
+# causing OOM regardless of EP/lbs/ppmbs configuration.
 
 defaults:
   - ../../base

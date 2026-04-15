@@ -20,8 +20,9 @@
 #
 # Container: DeepEP+NVSHMEM
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (32 nodes, 128×GH200) ────────────────────────────────────────────
+# NO OUTPUT — directory not found on cluster. Jobs likely never submitted
+# (DeepEP container issues blocked all flex dispatcher experiments).
 
 defaults:
   - ../../base

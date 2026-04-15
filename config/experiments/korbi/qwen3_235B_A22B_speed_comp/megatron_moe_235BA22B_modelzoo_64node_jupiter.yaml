@@ -11,8 +11,9 @@
 # With 96 effective layers, PP=4 → 24/stage.
 # VPP: 12 virtual stages/rank → 2 layers/virtual stage.
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (64 nodes, 256×GH200) ────────────────────────────────────────────
+# NO OUTPUT — directory not found on cluster. Jobs likely never submitted
+# (DeepEP container issues blocked all flex dispatcher experiments).
 
 defaults:
   - ../../base

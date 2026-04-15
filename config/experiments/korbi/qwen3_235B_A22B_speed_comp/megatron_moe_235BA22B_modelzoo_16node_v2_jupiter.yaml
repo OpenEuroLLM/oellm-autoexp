@@ -17,8 +17,12 @@
 #   min_micro = PP × num_model_chunks = 4 × 12 = 48. GBS/DP = 512/16 = 32 < 48!
 #   → Need GBS ≥ 48 × 16 = 768. Use GBS=1024 (64 microbatches per DP rank).
 #
-# ── Results ──────────────────────────────────────────────────────────────────
-# (to be filled in after jobs complete)
+# ── Results (16 nodes, 64×GH200) ─────────────────────────────────────────────
+# allgather_selrecomp: CANCELLED (timeout — VPP pipeline bubble too large?)
+# alltoall_selrecomp:  OOM
+# allgather_fullrecomp: OOM
+# ep8_alltoall_selrecomp: OOM
+# VPP=12 with TP=1+PP=4 requires too much activation memory at EP=16/8.
 
 defaults:
   - ../../base
