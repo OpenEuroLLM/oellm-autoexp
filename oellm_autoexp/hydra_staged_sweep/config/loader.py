@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, TypeVar
 from collections.abc import Iterable, Mapping
@@ -11,6 +12,7 @@ from collections.abc import Iterable, Mapping
 from compoconf import parse_config, ConfigInterface
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
+from omegaconf.errors import OmegaConfBaseException
 
 from . import schema
 from .resolvers import register_default_resolvers
@@ -24,6 +26,49 @@ register_default_resolvers()
 
 class ConfigLoaderError(RuntimeError):
     """Raised when the configuration file cannot be parsed."""
+
+
+def _raise_resolution_error(
+    exc: OmegaConfBaseException,
+    config_name: str,
+    choices: dict[str, Any],
+    config_dir: Path,
+) -> None:
+    """Re-raise an OmegaConf resolution error with an actionable hint.
+
+    Inspects the resolved config-group choices to detect common mistakes such
+    as a required config group (e.g. ``job``) never being loaded because the
+    ``defaults:`` list points at an empty base file.
+    """
+    msg = str(exc)
+    hints: list[str] = []
+
+    # Detect missing interpolation key errors: "Interpolation key 'X.Y' not found"
+    m = re.search(r"Interpolation key '([^']+)' not found", msg)
+    if m:
+        inter_key = m.group(1)          # e.g. "job.base_output_dir"
+        top_key = inter_key.split(".")[0]  # e.g. "job"
+
+        # Filter out Hydra's own internal groups
+        app_choices = {k: v for k, v in choices.items() if not k.startswith("hydra/")}
+        loaded_groups = sorted(app_choices)
+
+        if top_key not in app_choices:
+            group_dir = config_dir / top_key
+            if group_dir.is_dir():
+                available = sorted(p.stem for p in group_dir.glob("*.yaml"))
+                hints.append(
+                    f"Config group '{top_key}' was never loaded, but is required.\n"
+                    f"  Loaded groups : {loaded_groups}\n"
+                    f"  Available in '{top_key}/': {available}\n"
+                    f"  Fix: add 'one of the keys in {available}' to your defaults list, "
+                    f"or make sure your base config includes it."
+                )
+
+    hint_section = ("\n\nHint:\n  " + "\n  ".join(hints)) if hints else ""
+    raise ConfigLoaderError(
+        f"Failed to resolve config '{config_name}': {exc}{hint_section}"
+    ) from exc
 
 
 def _load_yaml(path: str | Path) -> Mapping[str, Any]:
@@ -80,9 +125,28 @@ def load_hydra_config(
         raise ConfigLoaderError(f"Hydra config directory not found: {config_dir}")
 
     with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
-        cfg = compose(config_name=config_name, overrides=overrides)
+        cfg = compose(config_name=config_name, overrides=overrides, return_hydra_config=True)
 
-    data = OmegaConf.to_container(cfg, resolve=True)  # type: ignore[return-value]
+    choices: dict[str, Any] = {}
+    try:
+        choices = OmegaConf.to_container(cfg.hydra.runtime.choices, resolve=False)  # type: ignore[assignment]
+        LOGGER.debug(
+            "Resolved config groups for '%s':\n%s",
+            config_name,
+            "\n".join(f"  {k}: {v}" for k, v in choices.items()),
+        )
+    except Exception as exc:
+        LOGGER.debug("Could not extract Hydra config choices: %s", exc)
+
+    # Strip the hydra overlay — it contains unresolvable interpolations that
+    # would cause OmegaConf.to_container(resolve=True) to fail.
+    cfg = OmegaConf.masked_copy(cfg, [k for k in cfg if k != "hydra"])
+
+    try:
+        data = OmegaConf.to_container(cfg, resolve=True)  # type: ignore[return-value]
+    except OmegaConfBaseException as exc:
+        _raise_resolution_error(exc, config_name=config_name, choices=choices, config_dir=config_dir)
+        raise  # unreachable; satisfies type checkers
     if not isinstance(data, Mapping):
         raise ConfigLoaderError(f"Hydra config {config_name} did not produce a mapping")
 
