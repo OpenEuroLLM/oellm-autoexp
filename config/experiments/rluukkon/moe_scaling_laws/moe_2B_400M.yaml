@@ -1,20 +1,23 @@
 # @package _global_
+# Cluster-agnostic entrypoint. Run via:
+#   bash scripts/run_experiment.sh moe_scaling_laws/moe_2B_400M
+# which injects container=<cluster>, slurm=<cluster>, and
+# experiments/rluukkon/moe_scaling_laws/moe_2B_400M=<cluster> from CLUSTER.
 defaults:
   - ../../base
   - /backend: megatron
-  - /container: mi325x
-  - /slurm: mi325x
+  - /container: none                                              # overridden by CLUSTER
+  - /slurm: local                                                 # overridden by CLUSTER
+  - /experiments/rluukkon/moe_scaling_laws/moe_2B_400M: default  # overridden by CLUSTER
   - /sweep: none
   - /experiments/rluukkon/moe_scaling_laws/models: moe_2B_400M
-  - /experiments/rluukkon/data:   neox_50B_english
   - _self_
 
 slurm:
   sbatch:
-    partition: amd-tw-verification
     nodes: 1
     time: 0-00:30:00
-  
+
   env:
     USE_ROCM_AITER_ROPE_BACKEND: "0"
     WANDB_MODE: "online"
@@ -33,6 +36,13 @@ backend:
     moe_token_dispatcher_type: "alltoall"
     moe_per_layer_logging: True
     # moe_router_fusion: True #doesn't work with primus_v25 container
+
+    use_pytorch_profiler: true
+    profile: true
+    profile_ranks: [0]
+    profile_step_start: 5
+    profile_step_end: 6
+    exit_interval: 10
 
     # training schedule. Round numbers to avoid floating point issues
     # set num_tokens to the formula
