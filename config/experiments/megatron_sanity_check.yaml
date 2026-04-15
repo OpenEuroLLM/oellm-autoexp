@@ -5,7 +5,7 @@
 # Data: wget -P "$DATA_DIR/gpt-neox-20b/common-pile" \
 #           https://462000963.lumidata.eu/common-pile/wikipesto.{bin,idx,info.json}
 defaults:
-  - ../base
+  - base
   - /backend: megatron
   - /container: none    # overridden by CLUSTER in run_sanity_check.sh
   - /slurm: local       # overridden by CLUSTER in run_sanity_check.sh
