@@ -2,12 +2,12 @@
 defaults:
   - base
   - /backend: megatron
-  - /container: amd_mi325x_cloud
-  - /slurm: amd_mi325x_cloud
+  - /container: mi325x
+  - /slurm: mi325x
   - /monitoring: megatron_basic
   - /project: default
   - /sweep: none
-  - /experiments/rluukkon/models: moe_2B_400M
+  - /experiments/rluukkon/moe_scaling_laws/models: moe_2B_400M
   - /experiments/rluukkon/data:   neox_50B_english
   - _self_
 
