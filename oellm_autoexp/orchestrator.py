@@ -21,6 +21,7 @@ from oellm_autoexp.monitor.loop import MonitorLoop, JobFileStore, JobRecordConfi
 from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
 from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
 from oellm_autoexp.monitor.submission import SlurmJobConfig, LocalJobConfig
+from oellm_autoexp.slurm_gen import generate_script
 
 import oellm_autoexp.backends.megatron_backend  # noqa  - register
 import oellm_autoexp.postprocess.megatron_dist_to_torch  # noqa  - register
@@ -331,10 +332,32 @@ def _resolve_job_name(config: RootConfig) -> str:
         return f"{base_name}_{index_str}"
 
 
+def render_job_scripts(plan: ExecutionPlan, *, session_id: str = "dry-run") -> list[Path]:
+    """Render sbatch scripts for every job in the plan without submitting.
+
+    Calls the same ``_build_job_record`` path used by real submission so the
+    rendered scripts are byte-for-byte identical to what would be submitted.
+
+    Returns:
+        Ordered list of paths to the written ``.sbatch`` files.
+    """
+    script_paths: list[Path] = []
+    for job in plan.jobs:
+        record = _build_job_record(plan, job, session_id)
+        if not isinstance(record.definition, SlurmJobConfig):
+            LOGGER.info("Skipping script render for non-SLURM job '%s'", record.job_id)
+            continue
+        path = generate_script(record.definition.slurm)
+        LOGGER.info("Rendered script: %s", path)
+        script_paths.append(Path(path))
+    return script_paths
+
+
 __all__ = [
     "ExecutionPlan",
     "SubmissionResult",
     "build_execution_plan",
+    "render_job_scripts",
     "submit_jobs",
     "load_monitor_controller",
     "run_loop",

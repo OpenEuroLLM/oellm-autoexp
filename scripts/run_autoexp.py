@@ -21,6 +21,7 @@ from oellm_autoexp.config.schema import ConfigSetup
 from oellm_autoexp.orchestrator import (
     build_execution_plan,
     ExecutionPlan,
+    render_job_scripts,
     submit_jobs,
     run_loop,
 )
@@ -195,6 +196,11 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     if args.dry_run:
+        script_paths = render_job_scripts(plan)
+        if script_paths:
+            print(f"Rendered {len(script_paths)} script(s) (not submitted):")
+            for p in script_paths:
+                print(f"  {p}")
         exit(0)
 
     _write_job_provenance(
