@@ -1,0 +1,18 @@
+# @package backend.megatron
+# Default / local config for validation and dry-runs (no real GPUs or data needed).
+# Cluster configs (mi325x.yaml, lumi.yaml, ...) inherit from this and override.
+
+tensor_model_parallel_size: 1
+pipeline_model_parallel_size: 1
+expert_model_parallel_size: 1
+context_parallel_size: 1
+sequence_parallel: False
+use_distributed_optimizer: False
+use_torch_fsdp2: False
+recompute_activations: False
+
+overlap_param_gather: False
+overlap_grad_reduce: False
+overlap_moe_expert_parallel_comm: False
+
+mock_data: True

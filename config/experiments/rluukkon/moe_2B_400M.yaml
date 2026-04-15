@@ -31,6 +31,12 @@ backend:
     moe_router_fusion: True
     expert_model_parallel_size: 1 # test deepep 
 
+    use_pytorch_profiler: true
+    profile: true
+    profile_ranks: 0
+    profile_step_start: 5
+    profile_step_end: 6
+    exit_interval: 10
 
     # training schedule. Round numbers to avoid floating point issues
     # set num_tokens to the formula

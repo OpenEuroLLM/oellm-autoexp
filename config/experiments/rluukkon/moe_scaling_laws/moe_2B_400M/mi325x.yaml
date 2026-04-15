@@ -1,0 +1,23 @@
+# @package backend.megatron
+# MI325X: 8 GPUs/node @ 192 GB HBM each.
+# Inherits single-process defaults and overrides parallelism + data paths.
+defaults:
+  - default
+  - _self_
+
+tensor_model_parallel_size: 1
+pipeline_model_parallel_size: 1
+expert_model_parallel_size: 8
+context_parallel_size: 1
+sequence_parallel: True
+use_distributed_optimizer: True
+recompute_activations: False
+
+overlap_param_gather: True
+overlap_grad_reduce: True
+overlap_moe_expert_parallel_comm: True
+
+mock_data: False
+data_path:
+  - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/gpt-neox-20b/merged/CC-MAIN-2020-high-actual_merged
+data_cache_path: /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/gpt-neox-20b/merged/CC-MAIN-2020-high-actual_merged.cache
