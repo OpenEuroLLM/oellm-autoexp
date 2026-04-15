@@ -1,5 +1,7 @@
 # @package backend.megatron
-# Data configuration
+# Dataset shape and tokenizer settings for neox-50B English data.
+# Cluster-specific data_path / data_cache_path live in the experiment's
+# cluster config (e.g. moe_2B_400M/mi325x.yaml).
 global_batch_size: 1024
 seq_length: 4096
 
@@ -9,14 +11,11 @@ num_dataset_builder_threads: 7
 split: '99,1,0'
 create_attention_mask_in_dataloader: False
 # data_args_path: local/6040_datapath.txt
-data_path: 
-  - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/gpt-neox-20b/merged/CC-MAIN-2020-high-actual_merged
-data_cache_path: /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/gpt-neox-20b/merged/CC-MAIN-2020-high-actual_merged.cache
-  /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/gpt-neox-20b/merged/CC-MAIN-2020-high-actual_merged.cache
+
 # Tokenizer
 tokenizer_model: EleutherAI/gpt-neox-20b
 tokenizer_type: HuggingFaceTokenizer
 
 # DATA
-micro_batch_size: 8 
+micro_batch_size: 8
 

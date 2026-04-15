@@ -40,8 +40,7 @@ case $CLUSTER in
         exit 1
         ;;
     mi325x)
-        echo "TODO: Not defined yet"
-        exit 1
+        export DATA_DIR="/shared_silo/scratch/rluukkon/data/preprocessed"
         ;;
     *)
         echo "TODO: Not defined yet"
@@ -51,6 +50,6 @@ esac
 
 
 uv run --python 3.12 python scripts/run_autoexp.py \
-    --config-name experiments/megatron_sanity_checks/megatron_sanity_check \
+    --config-name experiments/megatron_sanity_check \
     container=$CLUSTER slurm=$CLUSTER \
     "$@"
