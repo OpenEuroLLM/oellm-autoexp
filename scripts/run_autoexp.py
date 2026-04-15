@@ -207,12 +207,13 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.dry_run:
         return
+    
     #if args.no_monitor:
     #    exit(0)
 
-    #if args.submit_and_exit:
-    #    res.loop.observe_once()
-    #    exit(0)
+    if args.submit_and_exit:
+        res.loop.observe_once()
+        exit(0)
 
     run_loop(res.loop)
 
