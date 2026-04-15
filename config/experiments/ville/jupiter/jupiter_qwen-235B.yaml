@@ -72,13 +72,7 @@ backend:
     # Comms / Overlap
     overlap_p2p_comm: true
     overlap_param_gather: true
-    overlap_grad_reduce: true # DP=1 no DP peers to overlap
-
-#   [default1]:[rank5]:   File "/usr/local/lib/python3.12/dist-packages/deep_ep/utils.py", line 98, in check_nvlink_connections
-#   [default1]:[rank5]:     assert status == pynvml.NVML_P2P_STATUS_OK, \
-#   [default1]:[rank5]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#   [default1]:[rank5]: AssertionError: No NVLink connection between GPU 0 and GPU 0, but allow_nvlink_for_normal_mode=True
-    #overlap_moe_expert_parallel_comm: true # if enabled with only flex or with hybridEP
+    overlap_grad_reduce: true
 
     # Activation Recompute
     recompute_granularity: selective # then recompute_method: null must be set
@@ -87,7 +81,8 @@ backend:
     recompute_num_layers: null
 
     data_cache_path: /e/project1/e-sta-openeurollm/komulainen1_jupiter/data/cache
-    data_path: /e/project1/e-sta-openeurollm/komulainen1_jupiter/data/fineweb-10BT/fineweb-10BT_text_document
+    data_path: 
+      - /e/project1/e-sta-openeurollm/komulainen1_jupiter/data/fineweb-10BT/fineweb-10BT_text_document
     tokenizer_model: "/e/project1/e-sta-openeurollm/komulainen1_jupiter/hf_cache/hub/models--openeurollm--tokenizer-256k/snapshots/ac1ce776f8a78fc7aa96dfc91ffc1ae6966b2fa1"
     tokenizer_type: HuggingFaceTokenizer
     vocab_size: 262000
@@ -104,7 +99,7 @@ backend:
 container:
   image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deep-hybridep_aarch64.sif
 job:
-  name: meg_moe_30BA3B_n${slurm.sbatch.nodes}_ep${backend.megatron.expert_model_parallel_size}_pp${backend.megatron.pipeline_model_parallel_size}_tp${backend.megatron.tensor_model_parallel_size}_mbs${backend.megatron.micro_batch_size}_gbs${backend.megatron.global_batch_size}_vp${backend.megatron.num_layers_per_virtual_pipeline_stage}_${aux.dispatcher_tag}
+  name: "${aux.job_name_base}_ep${backend.megatron.expert_model_parallel_size}_pp${backend.megatron.pipeline_model_parallel_size}_tp${backend.megatron.tensor_model_parallel_size}_vpp${backend.megatron.num_layers_per_virtual_pipeline_stage}"
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
 
 slurm:
@@ -122,13 +117,19 @@ sweep:
         - backend.megatron.tensor_model_parallel_size: 2
           backend.megatron.pipeline_model_parallel_size: 8
           backend.megatron.expert_model_parallel_size: 16
+          backend.megatron.num_layers_per_virtual_pipeline_stage: [1,2,4]
+          backend.megatron.micro_batch_size: 2
         
         # Smaller EP, bigger TP
         - backend.megatron.tensor_model_parallel_size: 4
           backend.megatron.pipeline_model_parallel_size: 8
           backend.megatron.expert_model_parallel_size: 8
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 2
+          backend.megatron.micro_batch_size: 4
 
-       #    
-        - backend.megatron.tensor_model_parallel_size: 2
-          backend.megatron.pipeline_model_parallel_size: 8
-          backend.megatron.expert_model_parallel_size: 16
+       # PP The only inter-node
+        - backend.megatron.tensor_model_parallel_size: 4
+          backend.megatron.pipeline_model_parallel_size: 16
+          backend.megatron.expert_model_parallel_size: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 2
+          backend.megatron.micro_batch_size: 4
