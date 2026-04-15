@@ -28,7 +28,7 @@ backend:
       seq_len: 4096
 
     model:
-      vocab_size: 50384  # Qwen3 vocabulary size (must match tokenizer)
+      vocab_size: 50384  # Vocabulary size (must match tokenizer)
       # tokenizer_path: /leonardo_scratch/fast/EUHPC_D29_026/tokenizer/neox
       tokenizer_path: /e/project1/projectnucleus/franke5/workspace/titan-train/torchtitan/assets/tokenizer/gpt-neox-20b
 
