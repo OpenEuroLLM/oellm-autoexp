@@ -74,7 +74,7 @@ distributed_timeout_minutes: 120
 overlap_param_gather: True
 overlap_grad_reduce: True
 gradient_accumulation_fusion: False
-overlap_moe_expert_parallel_comm: True
+# overlap_moe_expert_parallel_comm: True
 bias_swiglu_fusion: False
 bias_dropout_fusion: False
 

@@ -11,7 +11,7 @@ create_attention_mask_in_dataloader: False
 # data_args_path: local/6040_datapath.txt
 data_path: 
   - /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/merged_all/high-all
-data_cache_path: /flash/project_462000353/rluukkon/cache
+data_cache_path: /flash/${oc.env:DATA_ACCOUNT,project_462000963}/rluukkon/cache
 
 # Tokenizer
 tokenizer_model: EleutherAI/gpt-neox-20b
