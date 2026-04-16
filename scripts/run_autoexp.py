@@ -212,10 +212,7 @@ def main(argv: list[str] | None = None) -> None:
 
     res = submit_jobs(plan, no_error_catching=args.debug, local_mode=args.local)
 
-    if args.no_monitor:
-        exit(0)
-
-    if args.submit_and_exit:
+    if args.no_monitor or args.submit_and_exit:
         res.loop.observe_once()
         exit(0)
 
