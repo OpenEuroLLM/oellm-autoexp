@@ -8,7 +8,7 @@ defaults:
   - /backend: megatron
   - /container: none                                              # overridden by CLUSTER
   - /slurm: local                                                 # overridden by CLUSTER
-  - /experiments/rluukkon/moe_scaling_laws/moe_2B_400M: default  # overridden by CLUSTER
+  - /experiments/rluukkon/moe_scaling_laws/moe_2B_400M: default   # overridden by CLUSTER
   - /sweep: none
   - /experiments/rluukkon/moe_scaling_laws/models: moe_2B_400M
   - _self_

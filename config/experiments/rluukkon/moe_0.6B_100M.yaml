@@ -4,16 +4,16 @@ defaults:
   - /backend: megatron
   - /container: amd_mi325x_cloud
   - /slurm: amd_mi325x_cloud
-  - /monitoring: megatron_basic
-  - /project: default
+  # - /monitoring: megatron_basic
+  # - /project: default
   - /sweep: none 
   - /experiments/rluukkon/models: moe_0.6B_100M
   - /experiments/rluukkon/data:   neox_50B_english
   - _self_
 
-project:
-  name: moe-exploration
-  resume: true
+# project:
+#   name: moe-exploration
+#   resume: true
   
 slurm:
   sbatch:
