@@ -7,7 +7,6 @@ defaults:
   - /sweep: none
   - /backend/megatron: [base]
   - /experiments/rluukkon/models: moe_0.7B_115M
-  - /experiments/rluukkon/data:   moe_ablation_data
   - _self_
 
   
@@ -16,7 +15,32 @@ backend:
     log_throughput: true
     log_interval: 10
     log_progress: true
+    # Data configuration (in-line style with rest of file)
+    global_batch_size: 1024
+    seq_length: 4096
+    max_position_embeddings: ${.seq_length}
+    num_workers: 7
+    num_dataset_builder_threads: 7
+    split: '99,1,0'
+    create_attention_mask_in_dataloader: False
+    moe_per_layer_logging: True
+    # make topk=1
+    moe_router_topk: 2
+    moe_aux_loss_coeff: 0.0
+     
 
+
+    # DATA
+    data_path: 
+      - /pfs/lustrep4/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/high/actual/CC-MAIN-2015-40_text_document
+    data_cache_path: /flash/${oc.env:DATA_ACCOUNT,project_462000963}/rluukkon/cache
+    dataloader_type: cyclic
+
+    # Tokenizer
+    tokenizer_model: EleutherAI/gpt-neox-20b
+    tokenizer_type: HuggingFaceTokenizer
+
+    micro_batch_size: 8
 
     # training schedule. Round numbers to avoid floating point issues
     # set num_tokens to the formula
@@ -30,10 +54,10 @@ backend:
 
     save: ${job.base_output_dir}
     load: null
-    wandb_project: moe-router-breaking-experiments
+    # wandb_project: moe-router-breaking-experiments
+    wandb_project: moe-exploration
     wandb_exp_name: ${job.name}_${oc.env:SLURM_JOB_ID,local}
     wandb_save_dir: ${job.base_output_dir}/wandb
-    seed: 11
 
 slurm:
   sbatch:
@@ -51,4 +75,4 @@ slurm:
     DATA_PATH: "${oc.env:DATA_PATH,/pfs/lustrep4/scratch/project_462000963/preprocessed}"
 
 job:
-  name: overfit_0.7B_115M_${slurm.env.MACHINE_NAME}
+  name:  overfit_0.7B_115M_topk${backend.megatron.moe_router_topk}_aux${backend.megatron.moe_aux_loss_coeff}_${slurm.env.MACHINE_NAME}
