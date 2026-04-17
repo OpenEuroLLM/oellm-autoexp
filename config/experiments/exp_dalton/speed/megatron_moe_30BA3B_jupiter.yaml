@@ -28,7 +28,7 @@ defaults:
   - _self_
 
 aux:
-  experiment_group: "megatron_moe_30BA3B_comparable_speed_deepep_fineweb_gpt2"
+  experiment_group: "megatron_moe_30BA3B_speed_deepep_thomascontainer_fineweb_gpt2_profile"
 
 backend:
   megatron:
@@ -44,7 +44,7 @@ backend:
     global_batch_size: 64 # CHANGED: for correct token gbs when scaled up
     micro_batch_size: 2
     expert_model_parallel_size: 4
-    pipeline_model_parallel_size: 2
+    pipeline_model_parallel_size: 1
     tensor_model_parallel_size: 1
 
     recompute_granularity: full
@@ -57,13 +57,24 @@ backend:
     moe_router_force_load_balancing: true
     moe_token_dispatcher_type: allgather
     # moe_token_dispatcher_type: flex
-    # moe_flex_dispatcher_backend: deepep
+    # moe_flex_dispatcher_backend: hybridep
 
     data_path:
       - /e/project1/e-sta-openeurollm/harmsen1/datasets/FineWeb/fineweb-10BT_text_document
     data_cache_path: /e/scratch/e-sta-openeurollm/harmsen1/data
     # mock_data: true
     tokenizer_model: /e/scratch/e-sta-openeurollm/harmsen1/hf_home/hub/models--openai-community--gpt2/snapshots/607a30d783dfa663caf39e06633721c8d4cfcd7e
+
+    # profiling
+    profile: true
+    use_pytorch_profiler: true
+    profile_step_start: 7
+    profile_step_end: 13
+    # profile_ranks: [0, 2, 3, 4]
+    profile_ranks: [0]
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+    log_timers_to_tensorboard: true
+
 
   env:
     TOKENIZERS_PARALLELISM: "false"
@@ -81,8 +92,10 @@ job:
 
 slurm:
   sbatch:
-    nodes: 2
+    nodes: 4
     time: "00:30:00"
 
 container:
-  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deepep_pt2510_aarch64_202603032309.sif
+  # image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deepep_pt2510_aarch64_202603032309.sif
+  # image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-deepep-nvshmem_base2510_aarch64_202603310850.sif
+  image: /e/project1/e-sta-openeurollm/vanosch1/containers/MegatronTrainingJupiter_aarch64.sif 
