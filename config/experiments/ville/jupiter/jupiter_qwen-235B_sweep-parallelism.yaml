@@ -1,0 +1,140 @@
+# @package _global_
+
+defaults:
+  - /experiments: base
+  - /backend: megatron_torchdist_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe_235BA22B]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "distributed-training-benchmarking"
+  job_name_base: "JUPITER_qwen3-235B_nodes-${slurm.sbatch.nodes}_gbsz-${backend.megatron.global_batch_size}"
+  job_name_suffix: ""
+
+
+backend:
+  megatron:
+    # Training
+    train_iters: 20
+    eval_interval: 999
+    eval_iters: 0
+    rerun_mode: disabled
+
+    # Checkpointing
+    save: null
+    load: null
+    ckpt_step: 0
+
+    # Distributed
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 8
+    expert_model_parallel_size: 16
+    expert_tensor_parallel_size: 1
+    num_layers_per_virtual_pipeline_stage: 4  # VPP=4 (ref); 96/(PP=8 × 4)=3 VP stages; EP×PP×TP=8×8×2=128=world_size (32 nodes × 4 GPUs)
+
+    # Batch sizes
+    global_batch_size: 2048
+    micro_batch_size: 1
+
+    # Optimizer
+    lr: 0.001
+    use_distributed_optimizer: true
+
+    # Model
+    attention_backend: auto
+    #padded_vocab_size: 262144
+    padded_vocab_size: 151936 # Qwen 3 vocab size
+    account_for_embedding_in_pipeline_split: true
+    account_for_loss_in_pipeline_split: true
+
+    # Precision / FP8
+    fp8: hybrid
+    fp8_recipe: blockwise
+    fp8_param_gather: true
+    moe_router_dtype: "fp32"
+    moe_router_force_load_balancing: true
+
+    distributed_timeout_minutes: 30 # Higher timeout for 512+ node jobs
+
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: hybridep
+    moe_hybridep_num_sms: 8 # more compute-bound on powercapped GH200 so relatively low SM
+
+    # Comms / Overlap
+    overlap_p2p_comm: true
+    overlap_param_gather: true
+    overlap_grad_reduce: true
+
+    # Activation Recompute
+    recompute_granularity: selective # then recompute_method: null must be set
+    recompute_modules: [moe_act layernorm]
+    recompute_method: null
+    recompute_num_layers: null
+
+    data_cache_path: /e/project1/e-sta-openeurollm/komulainen1_jupiter/data/cache
+    data_path:
+      - /e/project1/e-sta-openeurollm/komulainen1_jupiter/data/fineweb-10BT/fineweb-10BT_text_document
+    tokenizer_model: "/e/project1/e-sta-openeurollm/komulainen1_jupiter/hf_cache/hub/models--openeurollm--tokenizer-256k/snapshots/ac1ce776f8a78fc7aa96dfc91ffc1ae6966b2fa1"
+    tokenizer_type: HuggingFaceTokenizer
+    vocab_size: 262000
+
+        # Logging
+    log_throughput: true
+    log_interval: 1
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+    wandb_save_dir: "${job.base_output_dir}"
+    wandb_project: "qwen3-235B-A22B-scaling-jupiter"
+    wandb_entity: "openeurollm-project"
+    wandb_exp_name: "${job.name}"
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+    CUDA_DEVICE_MAX_CONNECTIONS: 1 # only for TP
+    NCCL_DEBUG: "INFO"
+    NCCL_DEBUG_FILE: "${job.base_output_dir}/nccl.log"
+    APPTAINERENV_TRITON_LIBCUDA_PATH: "/usr/local/cuda/compat/lib.real"
+    APPTAINERENV_TRITON_HOME: "/tmp/triton_cache"
+
+
+container:
+  image: /e/project1/laionize/luukkonen1/container_cachedir/nemo-v26.02-nemotron3-super.sif
+job:
+  name: "${aux.job_name_base}_ep${backend.megatron.expert_model_parallel_size}_pp${backend.megatron.pipeline_model_parallel_size}_tp${backend.megatron.tensor_model_parallel_size}_vpp${backend.megatron.num_layers_per_virtual_pipeline_stage}"
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+slurm:
+  sbatch:
+    nodes: 64
+    time: "00:30:00"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # Thomas baseline
+        - backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.pipeline_model_parallel_size: 8
+          backend.megatron.expert_model_parallel_size: 16
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 2
+          backend.megatron.micro_batch_size: 1
+
+        # Smaller EP, bigger TP
+        - backend.megatron.tensor_model_parallel_size: 4
+          backend.megatron.pipeline_model_parallel_size: 8
+          backend.megatron.expert_model_parallel_size: 8
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 1
+          backend.megatron.micro_batch_size: 1
+
+       # PP The only inter-node
+        - backend.megatron.tensor_model_parallel_size: 4
+          backend.megatron.pipeline_model_parallel_size: 16
+          backend.megatron.expert_model_parallel_size: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 1
+          backend.megatron.micro_batch_size: 1
