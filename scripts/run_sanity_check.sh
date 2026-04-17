@@ -26,6 +26,8 @@ echo "Running sanity check on cluster: $CLUSTER"
 case $CLUSTER in
     lumi)
         export DATA_DIR="/pfs/lustrep4/scratch/project_462000963/preprocessed"
+        export SLURM_PARTITION=dev-g
+        export SLURM_ACCOUNT=project_462000963
         ;;
     jupiter)
         echo "TODO: Not defined yet"
