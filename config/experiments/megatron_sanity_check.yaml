@@ -40,7 +40,7 @@ backend:
 slurm:
   sbatch:
     nodes: 2
-    time: "8:00:00"
+    time: "2:00:00"
   env:
     USE_ROCM_AITER_ROPE_BACKEND: "0"
     WANDB_MODE: "online"
