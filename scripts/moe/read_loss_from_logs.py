@@ -46,9 +46,13 @@ def lr_key(lr: float) -> float:
     return round(float(lr), 12)
 
 
-def gqa_from_grid_dir_name(grid_dir_name: str) -> str:
-    """yes if sweep lives under moe_GQA_*, else no."""
-    return "yes" if grid_dir_name.startswith("moe_GQA_") else "no"
+def detect_gqa(name: str) -> str:
+    """Detect GQA from a folder name. 'no_GQA' or no mention → no; 'GQA' → yes."""
+    if "no_GQA" in name:
+        return "no"
+    if "GQA" in name:
+        return "yes"
+    return "no"
 
 
 def parse_run_name(name: str) -> dict[str, float | int] | None:
@@ -88,9 +92,13 @@ def resolve_log(run_dir: Path) -> Path | None:
 GridKey = tuple[str, int, float, int, int]
 
 
-def index_runs(evals_root: Path) -> tuple[dict[GridKey, dict[str, float | int]], list[str]]:
-    """Map (GQA, bsz, lr_key, n_exp, decay_bt) -> {iteration, lm loss}."""
-    indexed: dict[GridKey, dict[str, float | int]] = {}
+def index_runs(evals_root: Path) -> tuple[dict[GridKey, list[dict[str, float | int | str]]], list[str]]:
+    """Map (GQA, bsz, lr_key, n_exp, decay_bt) -> list of {iteration, lm loss, run_name}.
+
+    Keeps duplicates (e.g. a base sweep and a replication sweep that both map to GQA=no)
+    so every run folder shows up as its own row in the final CSV.
+    """
+    indexed: dict[GridKey, list[dict[str, float | int | str]]] = {}
     warnings: list[str] = []
     if not evals_root.is_dir():
         warnings.append(f"Missing or not a directory: {evals_root}")
@@ -99,7 +107,7 @@ def index_runs(evals_root: Path) -> tuple[dict[GridKey, dict[str, float | int]],
     for grid_dir in sorted(evals_root.iterdir()):
         if not grid_dir.is_dir():
             continue
-        gqa = gqa_from_grid_dir_name(grid_dir.name)
+        gqa = detect_gqa(grid_dir.name)
         for run_dir in sorted(grid_dir.iterdir()):
             if not run_dir.is_dir():
                 continue
@@ -117,16 +125,18 @@ def index_runs(evals_root: Path) -> tuple[dict[GridKey, dict[str, float | int]],
                 warnings.append(f"skip (no validation line): {log_path}")
                 continue
             key: GridKey = (gqa, meta["bsz"], lr_key(meta["lr"]), meta["n_exp"], meta["decay_bt"])
-            if key in indexed:
-                warnings.append(f"duplicate grid point GQA={gqa} {key[1:]}: replacing with {run_dir}")
-            indexed[key] = dict(metrics)
+            entry: dict[str, float | int | str] = {**metrics, "run_name": run_name}
+            indexed.setdefault(key, []).append(entry)
     return indexed, warnings
 
 
 def build_full_grid(
-    indexed: dict[GridKey, dict[str, float | int]],
+    indexed: dict[GridKey, list[dict[str, float | int | str]]],
 ) -> list[dict[str, float | int | str]]:
-    """One row per (GQA × grid cell); NaN where no run produced metrics."""
+    """One row per (GQA × grid cell), or one per matching run when a cell has multiples.
+
+    Cells with no matching run produce a single NaN row.
+    """
     rows: list[dict[str, float | int | str]] = []
     nan = float("nan")
     for gqa in ("no", "yes"):
@@ -135,46 +145,99 @@ def build_full_grid(
                 for n_exp in GRID_N_EXP:
                     for decay_bt in GRID_DECAY_BT:
                         k: GridKey = (gqa, bsz, lr_key(lr), n_exp, decay_bt)
-                        row: dict[str, float | int | str] = {
+                        base: dict[str, float | int | str] = {
                             "GQA": gqa,
                             "bsz": bsz,
                             "lr": lr,
                             "n_exp": n_exp,
                             "decay_bt": decay_bt,
                         }
-                        if k in indexed:
-                            row["iteration"] = indexed[k]["iteration"]
-                            row["lm loss"] = indexed[k]["lm loss"]
-                        else:
-                            row["iteration"] = nan
-                            row["lm loss"] = nan
-                        rows.append(row)
+                        entries = indexed.get(k, [])
+                        if not entries:
+                            rows.append({**base, "iteration": nan, "lm loss": nan, "run_name": ""})
+                            continue
+                        for entry in entries:
+                            rows.append({
+                                **base,
+                                "iteration": entry["iteration"],
+                                "lm loss": entry["lm loss"],
+                                "run_name": entry.get("run_name", ""),
+                            })
     return rows
 
 
-def main() -> None:
-    evals_root = EVALS_ROOT
-    if len(sys.argv) > 1:
-        evals_root = Path(sys.argv[1]).resolve()
+def is_single_grid_folder(path: Path) -> bool:
+    """True when path looks like a single grid folder (children are run dirs, not grid dirs)."""
+    for child in path.iterdir():
+        if child.is_dir() and RUN_NAME.search(child.name):
+            return True
+    return False
 
-    indexed, warnings = index_runs(evals_root)
-    rows = build_full_grid(indexed)
-    out_cols = ["GQA", "bsz", "lr", "n_exp", "decay_bt", "iteration", "lm loss"]
 
-    csv_path = evals_root / CSV_NAME
-    evals_root.mkdir(parents=True, exist_ok=True)
+def scan_single_folder(grid_dir: Path) -> tuple[list[dict], list[str]]:
+    """Scan one grid folder and return rows + warnings (no full-grid padding)."""
+    gqa = detect_gqa(grid_dir.name)
+    rows: list[dict] = []
+    warnings: list[str] = []
+    for run_dir in sorted(grid_dir.iterdir()):
+        if not run_dir.is_dir():
+            continue
+        meta = parse_run_name(run_dir.name)
+        log_path = resolve_log(run_dir)
+        if meta is None:
+            warnings.append(f"skip (bad run name): {run_dir}")
+            continue
+        if log_path is None:
+            warnings.append(f"skip (no log): {run_dir}")
+            continue
+        metrics = last_validation_from_log(log_path)
+        if metrics is None:
+            warnings.append(f"skip (no validation line): {log_path}")
+            continue
+        rows.append({"GQA": gqa, **meta, **metrics, "run_name": run_dir.name})
+    rows.sort(key=lambda r: (r["bsz"], r["lr"], r["n_exp"], r["decay_bt"]))
+    return rows, warnings
+
+
+def write_csv(rows: list[dict], out_cols: list[str], csv_path: Path) -> None:
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=out_cols)
         w.writeheader()
         for row in rows:
             w.writerow(row)
-    print(f"Wrote {len(rows)} rows to {csv_path}")
-    n_ok = sum(
+
+
+def main() -> None:
+    target = EVALS_ROOT
+    if len(sys.argv) > 1:
+        target = Path(sys.argv[1]).resolve()
+
+    # Single grid folder mode: flat CSV of whatever runs are inside
+    if target.is_dir() and is_single_grid_folder(target):
+        rows, warnings = scan_single_folder(target)
+        out_cols = ["GQA", "bsz", "lr", "n_exp", "decay_bt", "iteration", "lm loss", "run_name"]
+        csv_path = target / CSV_NAME
+        write_csv(rows, out_cols, csv_path)
+        print(f"Wrote {len(rows)} rows to {csv_path}")
+        for line in warnings:
+            print(line, file=sys.stderr)
+        return
+
+    # Full grid mode: Cartesian product across all grid folders; duplicates (e.g.
+    # replication sweeps) show up as extra rows on the same grid cell.
+    indexed, warnings = index_runs(target)
+    rows = build_full_grid(indexed)
+    out_cols = ["GQA", "bsz", "lr", "n_exp", "decay_bt", "iteration", "lm loss", "run_name"]
+    csv_path = target / CSV_NAME
+    write_csv(rows, out_cols, csv_path)
+    n_runs = sum(
         1
         for r in rows
         if not (isinstance(r["iteration"], float) and math.isnan(r["iteration"]))
     )
-    print(f"Filled {n_ok} / {len(rows)} grid cells from logs")
+    n_empty = len(rows) - n_runs
+    print(f"Wrote {len(rows)} rows to {csv_path} ({n_runs} from logs, {n_empty} empty grid cells)")
     for line in warnings:
         print(line, file=sys.stderr)
 
