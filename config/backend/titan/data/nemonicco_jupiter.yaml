@@ -5,7 +5,7 @@ data:
   min_doc_len: 10
 
   chunks_dir:
-    - /e/scratch/projectnucleus/poeppel1/datasets/nemotron_downsampled_5p_valid_chunked/
+    - /e/scratch/projectnucleus/poeppel1/datasets/copy_nemotron_downsampled_15p_chunked/
 
 
 validation:
