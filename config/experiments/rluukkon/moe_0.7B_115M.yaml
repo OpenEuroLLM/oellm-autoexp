@@ -18,6 +18,7 @@ backend:
     log_progress: true
 
 
+
     # training schedule. Round numbers to avoid floating point issues
     # set num_tokens to the formula
     train_iters: ${oc.eval:'-(-30_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
@@ -28,16 +29,15 @@ backend:
     tensorboard_dir: ${job.base_output_dir}/tensorboard
     # wandb: true 
 
-    save: ${job.base_output_dir}
+    save: null #${job.base_output_dir}
     load: null
-    wandb_project: moe-router-breaking-experiments
+    wandb_project: moe-exploration
     wandb_exp_name: ${job.name}_${oc.env:SLURM_JOB_ID,local}
     wandb_save_dir: ${job.base_output_dir}/wandb
-    seed: 11
 
 slurm:
   sbatch:
-    partition: standard-g
+    partition: dev-g
     nodes: 4
     time: 0-01:00:00
     account: project_462000963
@@ -51,4 +51,4 @@ slurm:
     DATA_PATH: "${oc.env:DATA_PATH,/pfs/lustrep4/scratch/project_462000963/preprocessed}"
 
 job:
-  name: overfit_0.7B_115M_${slurm.env.MACHINE_NAME}
+  name: megatron_moe_0.7B_115M_${slurm.env.MACHINE_NAME}_mb${backend.megatron.micro_batch_size}

@@ -69,8 +69,26 @@ deterministic. It does not directly penalise imbalance.
 
 ## Section 2 — Router Diagnostics
 
-These two metrics are **always computed** regardless of which aux loss is configured. They are
-pure diagnostics with no gradient — computed inside `torch.no_grad()` on the raw logits
+### Config: when diagnostics run
+
+Router diagnostics (`router_logit_logsumexp`, `router_mean_max_prob`) and the expert-utilization
+tracker (Section 3) are controlled by `TransformerConfig` / CLI:
+
+- **`moe_detailed_metrics_eval_only`** (default `False`): When `True`, Megatron skips these
+  diagnostics during **training** forwards (better throughput). They are still accumulated under
+  `model.eval()` during validation; after `evaluate_and_print_results`, router metrics are flushed
+  via `track_moe_metrics()` with an aux-key allowlist so you see routing health on the validation
+  distribution at eval cadence, not on the train distribution between evals.
+- **`moe_log_expert_load_history_table`** (default `False`): When `True` and W&amp;B is enabled,
+  logs a W&amp;B Table `moe/expert_load_history_table` (columns: step, layer, expert, token count,
+  token fraction) for custom history charts. This is suppressed while
+  `moe_detailed_metrics_eval_only` is `True` during normal training logs so the table only reflects
+  intervals where full utilization logging runs (unless you rely on the post-eval flush path).
+
+When `moe_detailed_metrics_eval_only` is `False` (default), the two router scalars below are
+computed on **every** forward (train and eval), regardless of which aux loss is configured.
+
+They are pure diagnostics with no gradient — computed inside `torch.no_grad()` on the raw logits
 immediately after the z-loss attachment and before the top-k selection. They capture pre-decision
 router state that post-routing metrics (token counts) cannot reveal.
 
@@ -137,9 +155,9 @@ regularised.
 
 ## Section 3 — Expert Utilization
 
-These metrics are derived from accumulated token counts per expert per layer. They are always
-computed when the utilization tracker is populated (which happens every forward pass in
-`TopKRouter.routing()`).
+These metrics are derived from accumulated token counts per expert per layer. They are computed
+whenever the utilization tracker is populated in `TopKRouter.routing()` — on **every** forward by
+default, or **only under eval** when `moe_detailed_metrics_eval_only` is `True` (see Section 2).
 
 Source: `track_moe_metrics()` in
 `submodules/Megatron-LM/megatron/core/transformer/moe/moe_utils.py`.

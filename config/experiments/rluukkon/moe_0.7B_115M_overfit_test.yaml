@@ -21,7 +21,6 @@ backend:
     max_position_embeddings: ${.seq_length}
     num_workers: 7
     num_dataset_builder_threads: 7
-    split: '99,1,0'
     create_attention_mask_in_dataloader: False
     moe_per_layer_logging: True
     # make topk=1
@@ -31,8 +30,11 @@ backend:
 
 
     # DATA
-    data_path: 
+    train_data_path: 
       - /pfs/lustrep4/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/high/actual/CC-MAIN-2015-40_text_document
+    
+    valid_data_path: 
+      - /pfs/lustrep4/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_5p_new/all/high-all
     data_cache_path: /flash/${oc.env:DATA_ACCOUNT,project_462000963}/rluukkon/cache
     dataloader_type: cyclic
 
@@ -44,14 +46,14 @@ backend:
 
     # training schedule. Round numbers to avoid floating point issues
     # set num_tokens to the formula
-    train_iters: ${oc.eval:'-(-30_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    train_iters: ${oc.eval:'-(-6_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
     lr_warmup_iters: ${oc.eval:'min(${.train_iters} // 10, 25000)'}
     lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
     lr_decay_iters: ${.train_iters}
     # exit_interval: 10000
     tensorboard_dir: ${job.base_output_dir}/tensorboard
     # wandb: true 
-
+    # moe_log_expert_load_wandb_table: true
     save: ${job.base_output_dir}
     load: null
     # wandb_project: moe-router-breaking-experiments
@@ -61,9 +63,9 @@ backend:
 
 slurm:
   sbatch:
-    partition: standard-g
-    nodes: 4
-    time: 0-01:00:00
+    partition: dev-g
+    nodes: 1
+    time: 0-00:10:00
     account: project_462000963
 
 
@@ -75,4 +77,4 @@ slurm:
     DATA_PATH: "${oc.env:DATA_PATH,/pfs/lustrep4/scratch/project_462000963/preprocessed}"
 
 job:
-  name:  overfit_0.7B_115M_topk${backend.megatron.moe_router_topk}_aux${backend.megatron.moe_aux_loss_coeff}_${slurm.env.MACHINE_NAME}
+  name:  overfit_0.7B_115M_topk${backend.megatron.moe_router_topk}_aux${backend.megatron.moe_aux_loss_coeff}_lr${backend.megatron.lr}_${slurm.env.MACHINE_NAME}
