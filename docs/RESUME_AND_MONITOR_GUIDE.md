@@ -196,6 +196,7 @@ Decay jobs are started by the **original** monitor session (e.g., `1773407491`) 
 ```bash
 python scripts/monitor_autoexp.py --session 1773917843
 python scripts/monitor_autoexp.py --session 1775635896 --- moe with gqa <256, 0.001>
+python scripts/monitor_autoexp.py --session 1776240987 --- replication of moe no gqa <256, 0.001> 8 and 32 experts
 ```
 
 ### Will the monitor start the same job twice?
