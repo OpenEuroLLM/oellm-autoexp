@@ -8,4 +8,4 @@ export PYTHONPATH=/gpfs/projects/ehpc533/environments/oellm-autoexp_mn5_python3.
 source /gpfs/projects/ehpc533/environments/oellm-autoexp_mn5_python3.11_20260408/bin/activate
 
 # variable
-source /gpfs/projects/ehpc533/oellm-autoexp-joan/oellm_env.sh
+source /gpfs/projects/ehpc533/users/diana/oellm-autoexp/oellm_env.sh

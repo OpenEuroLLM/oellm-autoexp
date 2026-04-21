@@ -37,7 +37,7 @@ backend:
     max_position_embeddings: 4096
     vocab_file: /gpfs/projects/ehpc533/tokenizers/gpt-neox-20b/vocab.json
     merge_file: /gpfs/projects/ehpc533/tokenizers/gpt-neox-20b//merges.txt
-    num_workers: 8
+    num_workers: 32
     split: '99,1,0'
     legacy_tokenizer: True
 
@@ -112,6 +112,7 @@ backend:
     ckpt_format: "torch_dist"
     save_interval: 4000
     save: ${job.base_output_dir}/checkpoints
+    load: "${.save}"
 
     # Extra checkpoints at decay branching points.
     # References aux.save_step_* scalars, which are overridden per stable phase in the sweep.
@@ -151,8 +152,6 @@ slurm:
   sbatch:
     nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
     qos: acc_ehpc
-    account: ehpc715
-
 
 
 # COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE

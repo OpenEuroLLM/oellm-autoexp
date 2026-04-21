@@ -43,7 +43,7 @@ backend:
     max_position_embeddings: 4096
     vocab_file: /gpfs/projects/ehpc533/tokenizers/gpt-neox-20b/vocab.json
     merge_file: /gpfs/projects/ehpc533/tokenizers/gpt-neox-20b//merges.txt
-    num_workers: 8
+    num_workers: 64
     split: '99,1,0'
     legacy_tokenizer: True
 
@@ -118,6 +118,7 @@ backend:
     ckpt_format: "torch_dist"
     save_interval: 2000
     save: ${job.base_output_dir}/checkpoints
+    load: "${.save}"
 
     # Base training configuration (for stable phase)
     micro_batch_size: 16
