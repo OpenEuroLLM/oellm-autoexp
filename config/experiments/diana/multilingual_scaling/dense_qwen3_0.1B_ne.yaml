@@ -39,6 +39,7 @@ backend:
     merge_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/merges.txt
     num_workers: 8
     split: '99,1,0'
+    dataloader_type: "cyclic"
     legacy_tokenizer: True
 
     # MODEL: 0.1B NE
