@@ -35,7 +35,6 @@ from oellm_autoexp.config.schema import (
     ContainerConfig,
 )
 from oellm_autoexp.slurm_gen.generator import generate_script
-from oellm_autoexp.slurm_gen.validator import validate_job_script
 
 
 LOGGER = logging.getLogger(__name__)
@@ -103,15 +102,10 @@ def submit_jobs(
     no_error_catching: bool = False,
     local_mode: bool = False,
     dry_run: bool = False,
-    no_monitor: bool | None = None,
 ) -> SubmissionResult:
-    # If no_monitor is not explicitly set, default to True if dry_run is True, otherwise False.
-    if no_monitor is None:
-        no_monitor = dry_run
+    store, session_id = _ensure_state_store(plan, session_id=session_id)
     client = slurm_client or SlurmClient(SlurmClientConfig())
     local_client = LocalCommandClient(LocalCommandClientConfig())
-    if not no_monitor:
-        store, session_id = _ensure_state_store(plan, session_id=session_id)
     loop = MonitorLoop(
         store, slurm_client=client, local_client=local_client, no_error_catching=no_error_catching
     )
@@ -123,7 +117,7 @@ def submit_jobs(
         if dry_run and isinstance(record.definition, SlurmJobConfig):
             path = generate_script(record.definition.slurm)
             LOGGER.info("DRY RUN - Generated batch script: %s", path)
-            #TODO: Might aswell validate the job script and therein megatron arguments here
+            # TODO: Might aswell validate the job script and therein megatron arguments here
         store.upsert(record)
         submitted_job_ids.append(record.job_id)
 

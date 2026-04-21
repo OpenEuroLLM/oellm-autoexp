@@ -24,8 +24,6 @@ from oellm_autoexp.orchestrator import (
     submit_jobs,
     run_loop,
 )
-from oellm_autoexp.slurm_gen.generator import generate_script
-from oellm_autoexp.slurm_gen.validator import validate_job_script
 from oellm_autoexp.utils.logging_config import configure_logging
 
 
@@ -203,12 +201,14 @@ def main(argv: list[str] | None = None) -> None:
         overrides=args.overrides,
     )
 
-    res = submit_jobs(plan, no_error_catching=args.debug, local_mode=args.local,dry_run=args.dry_run,no_monitor=args.no_monitor)
+    res = submit_jobs(
+        plan, no_error_catching=args.debug, local_mode=args.local, dry_run=args.dry_run
+    )
 
     if args.dry_run:
         return
-    
-    #if args.no_monitor:
+
+    # if args.no_monitor:
     #    exit(0)
 
     if args.submit_and_exit:
