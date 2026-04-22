@@ -10,16 +10,17 @@ hidden_size: 4096
 num_attention_heads: 32
 num_query_groups: 4
 swiglu: true
-rotary_base: 10000000
+rotary_base: 10000000 # subject to change - to 10000
 normalization: RMSNorm
 norm_epsilon: 1e-6
-use_bias_linear: false
+add_bias_linear: false
 
 # gated delta net config
+experimental_attention_variant: gated_delta_net
 # in the config, it's 3 LA 1 FA
 linear_attention_freq: 4 # 3 GDN 1 LA
 linear_conv_kernel_dim: 4
-linear_conv_head_dim: 128
+linear_key_head_dim: 128
 linear_value_head_dim: 128
 linear_num_key_heads: 16
 linear_num_value_heads: 32
@@ -57,5 +58,5 @@ qk_layernorm: true
 # ffn_hidden_size: 6144
 # num_attention_heads: 32
 kv_channels: 128
-max_position_embeddings: 8192
+max_position_embeddings: 8192 # subject to change - to 4096 (= seq_length)
 # num_query_groups: 4
