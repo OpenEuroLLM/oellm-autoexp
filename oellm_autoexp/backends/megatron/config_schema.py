@@ -1641,6 +1641,29 @@ class MegatronConfig(ConfigInterface):
     # Rank of Key and Value tensors' low rank representation.
     kv_lora_rank: int = 32
 
+    # Frequency between LA (linear attention) layers and SDPA (scaled dot-product attention)
+    # layers. Accepts either: - An integer N: Represents a (N-1):N ratio, meaning (N-1) LA
+    # layers for every 1 SDPA layer - A string containing a Python list expression that
+    # defines a custom pattern, e.g.: "([1]*3+[0]*1)*3" evaluates to [1,1,1,0,1,1,1,0,1,1,1,0]
+    # where 1 indicates an LA layer and 0 indicates a SDPA layer. - A list that defines a
+    # custom pattern, e.g.: [1,1,1,0,1,1,1,0,1,1,1,0]
+    linear_attention_freq: Any | None = None
+
+    # Conv kernel dimension for the gated delta net.
+    linear_conv_kernel_dim: int | None = 4
+
+    # Query and key head dimension for the gated delta net.
+    linear_key_head_dim: int | None = 128
+
+    # Number of query and key heads for the gated delta net.
+    linear_num_key_heads: int | None = 16
+
+    # Number of value and gate heads for the gated delta net.
+    linear_num_value_heads: int | None = 32
+
+    # Value and gate head dimension for the gated delta net.
+    linear_value_head_dim: int | None = 128
+
     # Dimension of the head in the QK projection. q_head_dim = qk_head_dim +
     # qk_pos_emb_head_dim
     qk_head_dim: int = 128
@@ -2039,6 +2062,9 @@ class MegatronConfig(ConfigInterface):
     # optimizer. This dtype is used for storing the optimizer state in memory during training
     # but does not affect the precision in the kernel computation.
     exp_avg_sq_dtype: Literal["fp32", "fp16", "bf16", "fp8"] = "fp32"
+
+    # Type of attention variant to use. Currently support gated_delta_net and dsa.
+    experimental_attention_variant: Literal["gated_delta_net", "dsa"] | None = None
 
     # If set, disable using one_logger to track E2E metricsNote that one_logger is an internal
     # tool and not available externally. For installation, please go to

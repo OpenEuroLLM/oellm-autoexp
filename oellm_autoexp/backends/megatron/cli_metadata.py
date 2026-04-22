@@ -1401,6 +1401,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "experimental_attention_variant": MegatronArgMetadata(
+        arg_type=str,
+        default=None,
+        help="Type of attention variant to use. Currently support gated_delta_net and dsa.",
+        choices=("gated_delta_net", "dsa"),
+        nargs=None,
+        element_type=None,
+    ),
     "expert_model_parallel_size": MegatronArgMetadata(
         arg_type=int,
         default=1,
@@ -2414,6 +2422,62 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=32,
         help="Rank of Key and Value tensors' low rank representation.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "linear_attention_freq": MegatronArgMetadata(
+        arg_type=None,
+        default=None,
+        help=(
+            "Frequency between LA (linear attention) layers and SDPA (scaled dot-product"
+            " attention) layers. Accepts either: - An integer N: Represents a (N-1):N ratio,"
+            " meaning (N-1) LA layers for every 1 SDPA layer - A string containing a Python"
+            " list expression that defines a custom pattern, e.g.: \"([1]*3+[0]*1)*3\""
+            " evaluates to [1,1,1,0,1,1,1,0,1,1,1,0] where 1 indicates an LA layer and 0"
+            " indicates a SDPA layer. - A list that defines a custom pattern, e.g.:"
+            " [1,1,1,0,1,1,1,0,1,1,1,0]"
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "linear_conv_kernel_dim": MegatronArgMetadata(
+        arg_type=int,
+        default=4,
+        help="Conv kernel dimension for the gated delta net.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "linear_key_head_dim": MegatronArgMetadata(
+        arg_type=int,
+        default=128,
+        help="Query and key head dimension for the gated delta net.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "linear_num_key_heads": MegatronArgMetadata(
+        arg_type=int,
+        default=16,
+        help="Number of query and key heads for the gated delta net.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "linear_num_value_heads": MegatronArgMetadata(
+        arg_type=int,
+        default=32,
+        help="Number of value and gate heads for the gated delta net.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "linear_value_head_dim": MegatronArgMetadata(
+        arg_type=int,
+        default=128,
+        help="Value and gate head dimension for the gated delta net.",
         choices=None,
         nargs=None,
         element_type=None,
@@ -6551,6 +6615,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default="fp32",
     ),
+    "experimental_attention_variant": MegatronActionSpec(
+        option_strings=("--experimental-attention-variant",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
     "expert_model_parallel_size": MegatronActionSpec(
         option_strings=("--expert-model-parallel-size",),
         action_type="store",
@@ -7341,6 +7412,48 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=32,
+    ),
+    "linear_attention_freq": MegatronActionSpec(
+        option_strings=("--linear-attention-freq",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "linear_conv_kernel_dim": MegatronActionSpec(
+        option_strings=("--linear-conv-kernel-dim",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=4,
+    ),
+    "linear_key_head_dim": MegatronActionSpec(
+        option_strings=("--linear-key-head-dim",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=128,
+    ),
+    "linear_num_key_heads": MegatronActionSpec(
+        option_strings=("--linear-num-key-heads",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=16,
+    ),
+    "linear_num_value_heads": MegatronActionSpec(
+        option_strings=("--linear-num-value-heads",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=32,
+    ),
+    "linear_value_head_dim": MegatronActionSpec(
+        option_strings=("--linear-value-head-dim",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=128,
     ),
     "langrl_env_config": MegatronActionSpec(
         option_strings=("--langrl-env-config",),
