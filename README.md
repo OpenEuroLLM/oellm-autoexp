@@ -43,8 +43,8 @@ The environment variables used in the `config/` here are:
     # using uv
     curl -LsSf https://astral.sh/uv/install.sh | sh
     # uv creates a python virtual environment matching pyproject.toml-file on the fly. inode-count for env ~2k.
-    SLURM_ACCOUNT=project_462000963 SLURM_PARTITION=dev-g uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/megatron_lumi_speed_test.yaml  
-    
+    SLURM_ACCOUNT=project_462000963 SLURM_PARTITION=dev-g uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/megatron_lumi_speed_test.yaml
+
 
 ## Cluster setup: MARENOSTRUM notes
 You need to install oellm-autoexp or its requirements in a conda environment to run it on MARENOSTRUM. To do this:
