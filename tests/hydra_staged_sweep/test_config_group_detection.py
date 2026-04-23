@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 
 
-from hydra_staged_sweep.dag_resolver import is_config_group, param_to_cmdlines
+from oellm_autoexp.hydra_staged_sweep.dag_resolver import is_config_group, param_to_cmdlines
 
 
 def test_is_config_group_with_slash():

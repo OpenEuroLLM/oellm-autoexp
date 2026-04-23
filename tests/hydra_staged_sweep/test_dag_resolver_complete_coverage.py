@@ -1,13 +1,13 @@
 """Comprehensive tests for dag_resolver.py to achieve 100% coverage."""
 
 import pytest
-from hydra_staged_sweep.dag_resolver import (
+from oellm_autoexp.hydra_staged_sweep.dag_resolver import (
     find_sibling_by_group_path,
     build_dependency_dag_from_points,
     _resolve_filter_from_context,
     _collect_group_filters,
 )
-from hydra_staged_sweep.expander import SweepPoint
+from oellm_autoexp.hydra_staged_sweep.expander import SweepPoint
 
 
 def test_find_sibling_no_sibling_patterns():
@@ -125,7 +125,7 @@ def test_resolve_filter_from_context_invalid_type():
 
 
 def test_resolve_filter_from_context_non_bool_result():
-    from hydra_staged_sweep.config.resolvers import register_default_resolvers
+    from oellm_autoexp.hydra_staged_sweep.config.resolvers import register_default_resolvers
 
     register_default_resolvers(force=True)
     with pytest.raises(ValueError, match="sweep.filter must resolve to a bool"):
@@ -136,7 +136,9 @@ def test_resolve_filter_from_context_non_dict(monkeypatch):
     def fake_to_container(*args, **kwargs):
         return []
 
-    monkeypatch.setattr("hydra_staged_sweep.dag_resolver.OmegaConf.to_container", fake_to_container)
+    monkeypatch.setattr(
+        "oellm_autoexp.hydra_staged_sweep.dag_resolver.OmegaConf.to_container", fake_to_container
+    )
     with pytest.raises(ValueError, match="sweep.filter must resolve to a bool"):
         _resolve_filter_from_context("${oc.eval:'True'}", {})
 

@@ -2,7 +2,7 @@ import argparse
 import sys
 from unittest.mock import MagicMock, patch
 import pytest
-from argparse_schema import (
+from oellm_autoexp.argparse_schema import (
     ArgMetadata,
     ActionSpec,
     get_arg_metadata,
@@ -13,7 +13,7 @@ from argparse_schema import (
     generate_defaults_yaml,
     generate_cli_metadata_code,
 )
-from argparse_schema.converter import (
+from oellm_autoexp.argparse_schema.converter import (
     _coerce_value,
     _coerce_arguments,
     _action_type_name,
@@ -268,8 +268,8 @@ def test_build_cmdline_args_without_metadata():
 
 
 def test_type_repr_edge_cases():
-    from argparse_schema.codegen import _type_repr, _literal_token, _type_name
-    from argparse_schema import ArgMetadata
+    from oellm_autoexp.argparse_schema.codegen import _type_repr, _literal_token, _type_name
+    from oellm_autoexp.argparse_schema import ArgMetadata
 
     # Choices mismatch
     meta = ArgMetadata(choices=(1, 2), arg_type=int, default=1)
@@ -312,7 +312,7 @@ def test_type_repr_edge_cases():
 
 
 def test_codegen_format_default():
-    from argparse_schema.codegen import _format_default
+    from oellm_autoexp.argparse_schema.codegen import _format_default
 
     assert _format_default("s")[0] == "'s'"
     assert _format_default(True)[0] == "True"
@@ -325,7 +325,7 @@ def test_generate_defaults_yaml_skips_non_kv_lines():
     metadata = {"foo": ArgMetadata(default=None, help="Foo help")}
     defaults = {"foo": 1}
 
-    with patch("argparse_schema.codegen.OmegaConf.to_yaml") as mock_to_yaml:
+    with patch("oellm_autoexp.argparse_schema.codegen.OmegaConf.to_yaml") as mock_to_yaml:
         mock_to_yaml.return_value = "\n# comment\nfoo: 1\n"
         yaml_text = generate_defaults_yaml(metadata, defaults)
 
@@ -379,7 +379,7 @@ def test_extract_action_type():
 
 
 def test_register_argparse_resolver():
-    from argparse_schema.resolver import register_argparse_resolver
+    from oellm_autoexp.argparse_schema.resolver import register_argparse_resolver
     from omegaconf import OmegaConf, DictConfig
 
     metadata = {"foo": ArgMetadata(arg_type=int, default=1)}

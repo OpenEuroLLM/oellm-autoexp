@@ -3,11 +3,11 @@ import yaml
 from dataclasses import dataclass, field
 from compoconf import ConfigInterface, asdict
 
-from hydra_staged_sweep.dag_resolver import resolve_sweep_with_dag
-from hydra_staged_sweep.config.schema import StagedSweepRoot, ConfigSetup, SweepConfig
-from hydra_staged_sweep.config.resolvers import register_default_resolvers
-from hydra_staged_sweep.config.loader import load_config_reference
-from hydra_staged_sweep.expander import SweepPoint, expand_sweep
+from oellm_autoexp.hydra_staged_sweep.dag_resolver import resolve_sweep_with_dag
+from oellm_autoexp.hydra_staged_sweep.config.schema import StagedSweepRoot, ConfigSetup, SweepConfig
+from oellm_autoexp.hydra_staged_sweep.config.resolvers import register_default_resolvers
+from oellm_autoexp.hydra_staged_sweep.config.loader import load_config_reference
+from oellm_autoexp.hydra_staged_sweep.expander import SweepPoint, expand_sweep
 
 
 @dataclass(kw_only=True)

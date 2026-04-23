@@ -1,11 +1,11 @@
 """Comprehensive tests for loader.py to achieve 100% coverage."""
 
 from pathlib import Path
-from hydra_staged_sweep.config.loader import (
+from oellm_autoexp.hydra_staged_sweep.config.loader import (
     load_config,
     load_config_reference,
 )
-from hydra_staged_sweep.config.schema import StagedSweepRoot
+from oellm_autoexp.hydra_staged_sweep.config.schema import StagedSweepRoot
 import tempfile
 
 

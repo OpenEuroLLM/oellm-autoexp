@@ -7,15 +7,15 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any
 from compoconf import ConfigInterface
-from hydra_staged_sweep.config.loader import (
+from oellm_autoexp.hydra_staged_sweep.config.loader import (
     load_config,
     load_config_reference,
 )
-from hydra_staged_sweep.config.schema import StagedSweepRoot
-from hydra_staged_sweep.dag_resolver import (
+from oellm_autoexp.hydra_staged_sweep.config.schema import StagedSweepRoot
+from oellm_autoexp.hydra_staged_sweep.dag_resolver import (
     find_sibling_by_group_path,
 )
-from hydra_staged_sweep.expander import SweepPoint
+from oellm_autoexp.hydra_staged_sweep.expander import SweepPoint
 
 
 def test_config_reference_json_exception(caplog):
@@ -147,9 +147,11 @@ def test_multiple_siblings_warning_log(caplog):
 def test_build_dag_valueerror_exception():
     """Cover lines 127-128: except ValueError in build_dependency_dag."""
     from unittest.mock import patch  # noqa
-    from hydra_staged_sweep.dag_resolver import build_dependency_dag_from_points
+    from oellm_autoexp.hydra_staged_sweep.dag_resolver import build_dependency_dag_from_points
 
-    with patch("hydra_staged_sweep.dag_resolver.find_sibling_by_group_path") as mock_find:
+    with patch(
+        "oellm_autoexp.hydra_staged_sweep.dag_resolver.find_sibling_by_group_path"
+    ) as mock_find:
         mock_find.side_effect = ValueError("Test error")
 
         p0 = SweepPoint(
@@ -169,14 +171,14 @@ def test_build_dag_valueerror_exception():
 
 def test_resolve_sweep_dict_input():
     """Cover line 211: else branch when points is already dict."""
-    from hydra_staged_sweep.dag_resolver import resolve_sweep_with_dag
+    from oellm_autoexp.hydra_staged_sweep.dag_resolver import resolve_sweep_with_dag
 
     with tempfile.TemporaryDirectory() as tmpdir:
         config_path = Path(tmpdir) / "config.yaml"
         config_path.write_text("sweep:\n  type: product")
 
         config = load_config(str(config_path))
-        from hydra_staged_sweep.config.schema import ConfigSetup
+        from oellm_autoexp.hydra_staged_sweep.config.schema import ConfigSetup
 
         setup = ConfigSetup(pwd=".", config_path=str(config_path), config_dir=tmpdir)
 
@@ -189,7 +191,7 @@ def test_resolve_sweep_dict_input():
 
 def test_unknown_group_type():
     """Cover line 246: raise ValueError for unknown group type."""
-    from hydra_staged_sweep.expander import _expand_group
+    from oellm_autoexp.hydra_staged_sweep.expander import _expand_group
 
     with pytest.raises(ValueError, match="Unknown group type"):
         _expand_group(
@@ -204,7 +206,7 @@ def test_unknown_group_type():
 
 def test_cartesian_product_empty():
     """Cover line 257: empty list returns empty."""
-    from hydra_staged_sweep.expander import _cartesian_product_groups
+    from oellm_autoexp.hydra_staged_sweep.expander import _cartesian_product_groups
 
     result = _cartesian_product_groups([], set())
     assert result == []

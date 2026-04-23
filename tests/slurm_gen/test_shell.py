@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from slurm_gen.shell import run_command
+from oellm_autoexp.slurm_gen.shell import run_command
 
 
 class TestRunCommand:

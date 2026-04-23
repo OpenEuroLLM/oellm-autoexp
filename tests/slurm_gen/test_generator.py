@@ -4,13 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from slurm_gen.generator import (
+from oellm_autoexp.slurm_gen.generator import (
     build_replacements,
     build_sbatch_directives,
     generate_script,
     merge_slurm_config,
 )
-from slurm_gen.schema import SbatchConfig, SlurmConfig
+from oellm_autoexp.slurm_gen.schema import SbatchConfig, SlurmConfig
 
 
 def make_config(tmp_path: Path) -> SlurmConfig:
@@ -88,53 +88,29 @@ class TestGenerateScript:
             job_name="demo",
             log_path=str(tmp_path / "logs" / "demo.log"),
             command=["python", "train.py"],
-            now_ms=1700000000000,
         )
 
-        assert script_path == Path(config.script_dir) / "demo_1700000000000.sbatch"
-        assert script_path.exists()
-        contents = script_path.read_text()
+        assert Path(script_path).exists()
+        contents = Path(script_path).read_text()
         assert "#SBATCH --time=0-01:00:00" in contents
         assert "python train.py" in contents
 
-    def test_generates_script_in_output_dir_when_script_dir_empty(self, tmp_path: Path):
+    def test_generates_script_in_custom_script_path(self, tmp_path: Path):
         config = make_config(tmp_path)
-        config.script_dir = ""
         template_path = Path(config.template_path)
         template_path.write_text("#!/bin/bash\n{command}\n")
-        output_dir = tmp_path / "out"
+        custom_path = str(tmp_path / "custom" / "my_script.sbatch")
 
         script_path = generate_script(
             config,
             job_name="demo",
+            script_path=custom_path,
             log_path=str(tmp_path / "logs" / "demo.log"),
             command=["echo", "hello"],
-            output_dir=output_dir,
-            script_name="custom.sbatch",
         )
 
-        assert script_path == output_dir / "custom.sbatch"
-        assert script_path.exists()
-        assert "echo hello" in script_path.read_text()
-
-    def test_generates_script_in_log_dir_parent_when_no_output_dir(self, tmp_path: Path):
-        config = make_config(tmp_path)
-        config.script_dir = ""
-        template_path = Path(config.template_path)
-        template_path.write_text("#!/bin/bash\n{command}\n")
-        log_path = tmp_path / "logs" / "nested" / "demo.log"
-
-        script_path = generate_script(
-            config,
-            job_name="demo",
-            log_path=str(log_path),
-            command=["echo", "fallback"],
-            script_name="fallback.sbatch",
-        )
-
-        assert script_path == log_path.parent / "fallback.sbatch"
-        assert script_path.exists()
-        assert "echo fallback" in script_path.read_text()
+        assert Path(script_path).exists()
+        assert "echo hello" in Path(script_path).read_text()
 
     def test_missing_template_path_raises(self, tmp_path: Path):
         config = make_config(tmp_path)

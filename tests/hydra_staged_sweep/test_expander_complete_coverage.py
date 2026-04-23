@@ -1,13 +1,13 @@
 """Comprehensive tests for expander.py to achieve 100% coverage."""
 
-from hydra_staged_sweep.expander import expand_sweep, _product_dict
-from hydra_staged_sweep.config.schema import SweepConfig
+from oellm_autoexp.hydra_staged_sweep.expander import expand_sweep, _product_dict
+from oellm_autoexp.hydra_staged_sweep.config.schema import SweepConfig
 from omegaconf import DictConfig
 
 
 def test_expand_group_with_empty_groups():
     """Test _expand_group with empty groups list."""
-    from hydra_staged_sweep.expander import _expand_group
+    from oellm_autoexp.hydra_staged_sweep.expander import _expand_group
 
     result = _expand_group(
         group_type="product",

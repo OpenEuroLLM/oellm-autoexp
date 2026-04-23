@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from slurm_gen import render_template, render_template_file, SbatchTemplateError
+from oellm_autoexp.slurm_gen import render_template, render_template_file, SbatchTemplateError
 
 
 class TestRenderTemplate:

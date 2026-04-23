@@ -1,10 +1,10 @@
 import networkx as nx
-from hydra_staged_sweep.dag_resolver import (
+from oellm_autoexp.hydra_staged_sweep.dag_resolver import (
     extract_sibling_patterns,
     find_sibling_by_group_path,
     build_dependency_dag_from_points,
 )
-from hydra_staged_sweep.expander import SweepPoint
+from oellm_autoexp.hydra_staged_sweep.expander import SweepPoint
 
 
 def test_extract_sibling_patterns():

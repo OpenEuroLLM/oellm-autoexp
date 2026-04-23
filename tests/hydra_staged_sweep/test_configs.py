@@ -1,6 +1,6 @@
 from pathlib import Path
 from dataclasses import dataclass
-from hydra_staged_sweep.config.loader import (
+from oellm_autoexp.hydra_staged_sweep.config.loader import (
     load_config_reference,
 )
 from compoconf import NonStrictDataclass

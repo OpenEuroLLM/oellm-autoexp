@@ -1,10 +1,10 @@
 import textwrap
 from dataclasses import dataclass, field
 from compoconf import ConfigInterface
-from hydra_staged_sweep.config.schema import StagedSweepRoot, ConfigSetup
-from hydra_staged_sweep.expander import expand_sweep
-from hydra_staged_sweep.dag_resolver import resolve_sweep_with_dag
-from hydra_staged_sweep.config.loader import load_config
+from oellm_autoexp.hydra_staged_sweep.config.schema import StagedSweepRoot, ConfigSetup
+from oellm_autoexp.hydra_staged_sweep.expander import expand_sweep
+from oellm_autoexp.hydra_staged_sweep.dag_resolver import resolve_sweep_with_dag
+from oellm_autoexp.hydra_staged_sweep.config.loader import load_config
 
 
 @dataclass(kw_only=True)

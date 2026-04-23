@@ -1,12 +1,12 @@
 import pytest
-from hydra_staged_sweep.dag_resolver import (
+from oellm_autoexp.hydra_staged_sweep.dag_resolver import (
     resolve_sweep_with_dag,
     extract_sibling_patterns,
     build_dependency_dag_from_points,
     config_to_cmdline,
 )
-from hydra_staged_sweep.config.schema import StagedSweepRoot, ConfigSetup
-from hydra_staged_sweep.expander import SweepPoint
+from oellm_autoexp.hydra_staged_sweep.config.schema import StagedSweepRoot, ConfigSetup
+from oellm_autoexp.hydra_staged_sweep.expander import SweepPoint
 
 
 def test_extract_sibling_patterns_nested():

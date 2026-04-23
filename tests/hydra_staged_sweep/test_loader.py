@@ -4,14 +4,14 @@ import textwrap
 from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import MagicMock, patch
-from hydra_staged_sweep.config.loader import (
+from oellm_autoexp.hydra_staged_sweep.config.loader import (
     load_config,
     load_hydra_config,
     load_config_reference,
     ConfigLoaderError,
 )
-from hydra_staged_sweep.dag_resolver import param_to_cmdlines
-from hydra_staged_sweep.config.schema import StagedSweepRoot
+from oellm_autoexp.hydra_staged_sweep.dag_resolver import param_to_cmdlines
+from oellm_autoexp.hydra_staged_sweep.config.schema import StagedSweepRoot
 
 
 @dataclass(kw_only=True)

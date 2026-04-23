@@ -1,5 +1,5 @@
-from hydra_staged_sweep.config.schema import SweepConfig
-from hydra_staged_sweep.expander import expand_sweep
+from oellm_autoexp.hydra_staged_sweep.config.schema import SweepConfig
+from oellm_autoexp.hydra_staged_sweep.expander import expand_sweep
 
 
 def test_composable_product_group():

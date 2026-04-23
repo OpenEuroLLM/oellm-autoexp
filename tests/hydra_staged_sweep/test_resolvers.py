@@ -1,6 +1,6 @@
 import pytest
 from omegaconf import OmegaConf
-from hydra_staged_sweep.config.resolvers import register_default_resolvers
+from oellm_autoexp.hydra_staged_sweep.config.resolvers import register_default_resolvers
 
 
 @pytest.fixture(autouse=True)

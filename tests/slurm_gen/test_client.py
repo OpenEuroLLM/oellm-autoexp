@@ -6,15 +6,15 @@ from collections.abc import Callable
 
 import pytest
 
-from slurm_gen import SlurmConfig
-from slurm_gen.client import (
+from oellm_autoexp.slurm_gen import SlurmConfig
+from oellm_autoexp.slurm_gen.client import (
     FakeSlurmClient,
     FakeSlurmClientConfig,
     SlurmClient,
     SlurmClientConfig,
     SlurmJob,
 )
-import slurm_gen.client
+import oellm_autoexp.slurm_gen.client
 
 
 @dataclass
@@ -81,9 +81,7 @@ def slurm_client_config() -> SlurmClientConfig:
 @pytest.fixture
 def configured_client(tmp_path: Path, slurm_config: SlurmConfig) -> SlurmClient:
     """Pre-configured SlurmClient for tests."""
-    client = SlurmClient(SlurmClientConfig())
-    client.configure(slurm_config)
-    return client
+    return SlurmClient(SlurmClientConfig())
 
 
 class TestSlurmJob:
@@ -267,7 +265,7 @@ class TestSlurmClient:
     def test_submit_parses_job_id(self, configured_client, tmp_path, monkeypatch):
         """Test that submit correctly parses job ID from sbatch output."""
         mock_run = make_mock_run({"sbatch": MockResult(stdout="Submitted batch job 12345")})
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         config = make_job_config(tmp_path, name="test", script_name="job.sh", log_name="log.txt")
         job_id = configured_client.submit(config)
@@ -278,7 +276,7 @@ class TestSlurmClient:
         mock_run = make_mock_run(
             {"sbatch": MockResult(returncode=1, stderr="sbatch: error: invalid option")}
         )
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         with pytest.raises(RuntimeError, match="sbatch failed"):
             configured_client.submit(
@@ -288,7 +286,7 @@ class TestSlurmClient:
     def test_submit_array(self, configured_client, tmp_path, monkeypatch):
         """Test that submit_array correctly calls sbatch with --array."""
         mock_run = make_mock_run({"sbatch": MockResult(stdout="Submitted batch job 10000")})
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         config = make_job_config(
             tmp_path, name="test_array", script_name="array.sbatch", log_name="logs/array.log"
@@ -313,7 +311,7 @@ class TestSlurmClient:
     def test_submit_noncontiguous_array(self, configured_client, tmp_path, monkeypatch):
         """Test that submit_array correctly calls sbatch with --array."""
         mock_run = make_mock_run({"sbatch": MockResult(stdout="Submitted batch job 10000")})
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         config = make_job_config(
             tmp_path, name="test_array", script_name="array.sbatch", log_name="logs/array.log"
@@ -333,7 +331,7 @@ class TestSlurmClient:
     def test_cancel(self, configured_client, monkeypatch):
         """Test cancelling a job."""
         mock_run = make_mock_run({})
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         configured_client.cancel("12345")
         assert mock_run.calls[-1] == ["scancel", "12345"]
@@ -348,7 +346,7 @@ class TestSlurmClient:
     def test_submit_unable_to_parse_job_id(self, configured_client, tmp_path, monkeypatch):
         """Test that submit raises when job ID can't be parsed."""
         mock_run = make_mock_run({"sbatch": MockResult(stdout="Some output without job id")})
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         with pytest.raises(RuntimeError, match="Unable to parse job id"):
             configured_client.submit(
@@ -360,7 +358,7 @@ class TestSlurmClient:
         mock_run = make_mock_run(
             {"sbatch": MockResult(returncode=1, stderr="sbatch: error: invalid option")}
         )
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         with pytest.raises(RuntimeError, match="sbatch failed for array"):
             configured_client.submit_array(
@@ -373,7 +371,7 @@ class TestSlurmClient:
     def test_submit_array_parse_failure(self, configured_client, tmp_path, monkeypatch):
         """Test that submit_array raises when job ID can't be parsed."""
         mock_run = make_mock_run({})
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         with pytest.raises(ValueError, match="submit_array requires at least one task"):
             configured_client.submit_array(
@@ -386,7 +384,7 @@ class TestSlurmClient:
     def test_submit_array_index_failure(self, configured_client, tmp_path, monkeypatch):
         """Test that submit_array raises when job ID can't be parsed."""
         mock_run = make_mock_run({"sbatch": MockResult(stdout="No valid job id here")})
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         with pytest.raises(RuntimeError, match="Unable to parse job id"):
             configured_client.submit_array(
@@ -399,7 +397,7 @@ class TestSlurmClient:
     def test_remove(self, configured_client, tmp_path, monkeypatch):
         """Test removing a job from tracking."""
         mock_run = make_mock_run({"sbatch": MockResult(stdout="Submitted batch job 12345")})
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         job_id = configured_client.submit(
             make_job_config(tmp_path, name="test", script_name="job.sh", log_name="log.txt")
@@ -418,7 +416,7 @@ class TestSlurmClient:
             call_count[0] += 1
             return MockResult(stdout=f"Submitted batch job {10000 + call_count[0]}")
 
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         configured_client.submit(
             make_job_config(tmp_path, name="job_a", script_name="a.sh", log_name="a.txt")
@@ -461,7 +459,7 @@ class TestSlurmClient:
                 "squeue": MockResult(stdout="12345 RUNNING"),
             }
         )
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         job_id = configured_client.submit(
             make_job_config(tmp_path, name="test", script_name="job.sh", log_name="log.txt")
@@ -480,7 +478,7 @@ class TestSlurmClient:
                 "sacct": MockResult(stdout="12345|COMPLETED"),
             }
         )
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         job_id = configured_client.submit(
             make_job_config(tmp_path, name="test", script_name="job.sh", log_name="log.txt")
@@ -501,7 +499,7 @@ class TestSlurmClient:
                 "sacct": MockResult(stdout="12345|FAILED"),
             }
         )
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         job_id = configured_client.submit(
             make_job_config(tmp_path, name="test", script_name="job.sh", log_name="log.txt")
@@ -522,7 +520,7 @@ class TestSlurmClient:
                 ),
             }
         )
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         config = make_job_config(
             tmp_path, name="test_array", script_name="array.sbatch", log_name="array.log"
@@ -546,7 +544,7 @@ class TestSlurmClient:
                 "sacct": MockResult(returncode=1, stderr="sacct error"),
             }
         )
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         configured_client.submit(
             make_job_config(tmp_path, name="test", script_name="job.sh", log_name="log.txt")
@@ -568,7 +566,7 @@ class TestSlurmClient:
                 "squeue": MockResult(stdout="12345 RUNNING\n\n99999\n"),
             }
         )
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         job_id = configured_client.submit(
             make_job_config(tmp_path, name="test", script_name="job.sh", log_name="log.txt")
@@ -585,7 +583,7 @@ class TestSlurmClient:
                 "squeue": MockResult(stdout="12345 RUNNING\n99999 PENDING"),
             }
         )
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         job_id = configured_client.submit(
             make_job_config(tmp_path, name="test", script_name="job.sh", log_name="log.txt")
@@ -606,7 +604,7 @@ class TestSlurmClient:
                 ),
             }
         )
-        monkeypatch.setattr(slurm_gen.client, "run_command", mock_run)
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
 
         job_id = configured_client.submit(
             make_job_config(tmp_path, name="test", script_name="job.sh", log_name="log.txt")
@@ -620,19 +618,14 @@ class TestSlurmClient:
 class TestSlurmClientConfiguration:
     """Tests for SLURM client configuration."""
 
-    def test_unconfigured_client_raises(self):
-        """Test that accessing slurm_config before configure raises."""
-        client = FakeSlurmClient(FakeSlurmClientConfig())
-        with pytest.raises(RuntimeError, match="has not been configured"):
-            _ = client.slurm_config
+    def test_client_has_config(self):
+        """Test that client exposes its config."""
+        cfg = SlurmClientConfig()
+        client = SlurmClient(cfg)
+        assert client.config is cfg
 
-    def test_configure_sets_config(self):
-        """Test that configure properly sets the config."""
-        client = FakeSlurmClient(FakeSlurmClientConfig())
-        config = SlurmConfig(
-            template_path="templates/base.sbatch",
-            script_dir="/tmp/scripts",
-            log_dir="/tmp/logs",
-        )
-        client.configure(config)
-        assert client.slurm_config == config
+    def test_fake_client_has_config(self):
+        """Test that fake client exposes its config."""
+        cfg = FakeSlurmClientConfig()
+        client = FakeSlurmClient(cfg)
+        assert client.config is cfg

@@ -1,6 +1,6 @@
 """Tests for command-line formatting functions in dag_resolver."""
 
-from hydra_staged_sweep.dag_resolver import param_to_cmdlines, config_to_cmdline
+from oellm_autoexp.hydra_staged_sweep.dag_resolver import param_to_cmdlines, config_to_cmdline
 
 
 def test_param_to_cmdlines_string():
@@ -45,7 +45,7 @@ def test_param_to_cmdlines_dict():
 def test_param_to_cmdlines_list_of_dicts():
     """Test formatting a list of dicts (not a config group list)."""
     result = param_to_cmdlines("items", [{"a": 1}, {"b": 2}], prefix="++")
-    # Should use indexed format
+    # Should use indexed format with list creation line
     assert "++items=[0,1]" in result
     assert "++items.0.a=1" in result
     assert "++items.1.b=2" in result
@@ -54,7 +54,7 @@ def test_param_to_cmdlines_list_of_dicts():
 def test_param_to_cmdlines_list_mixed_types():
     """Test formatting a list with mixed types (not all strings)."""
     result = param_to_cmdlines("mixed", ["a", 1, "b"], prefix="++")
-    # Should fall through to config_to_cmdline for mixed types
+    # Should fall through to config_to_cmdline with list creation line
     assert "++mixed=[0,1,2]" in result
 
 

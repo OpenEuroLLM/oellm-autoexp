@@ -1,6 +1,6 @@
 """Tests for configuration schema."""
 
-from slurm_gen import SlurmConfig, SbatchConfig, SrunConfig
+from oellm_autoexp.slurm_gen import SlurmConfig, SbatchConfig, SrunConfig
 
 
 class TestSlurmConfig:
@@ -24,7 +24,7 @@ class TestSlurmConfig:
             script_dir="/tmp/scripts",
             log_dir="/tmp/logs",
         )
-        assert config.array is True
+        assert config.array is False
         assert config.launcher_cmd == ""
         assert config.srun_opts == ""
         assert config.launcher_env_passthrough is False
