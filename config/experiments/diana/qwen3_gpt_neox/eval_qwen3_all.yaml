@@ -29,12 +29,7 @@ backend:
 
     # DATA: separate train and validation paths
     train_data_path: [
-      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-actual,
-      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-distill,
-      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-diverse_qa_pairs,
-      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-extract_knowledge,
-      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-knowledge_list,
-      /leonardo_work/OELLM_prod2026/preprocessed/gpt-neox-20b/nemotron-cc/1.0/high-synthetic-wrap_medium
+      /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-LUMI-sample-318BT/high-all,
     ]
     valid_data_path: [/leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-LUMI-sample-valid/high-all]
     # data_cache_path: /leonardo_scratch/large/userexternal/donutu00/MEGATRON_CACHEDIR
@@ -52,6 +47,7 @@ backend:
     ffn_hidden_size: 1536
     num_attention_heads: 8
     num_query_groups: 4
+    group_query_attention: True
     init_method_std: 0.02
     position_embedding_type: "rope"
     rotary_base: 10000
@@ -181,30 +177,32 @@ sweep:
           backend.megatron.ffn_hidden_size: 1536
           backend.megatron.num_attention_heads: 8
           backend.megatron.num_query_groups: 4
+          backend.megatron.group_query_attention: True
+          backend.megatron.add_bias_linear: False
           backend.megatron.micro_batch_size: 16
         configs:
-          - type: list
-            defaults:
-              backend.megatron.aux.train_group_tag: "lr0.001_gbsz32_beta20.99"
-            configs:
-              - stage: decay6BT
-              - stage: decay12BT
+          # - type: list
+          #   defaults:
+          #     backend.megatron.aux.train_group_tag: "lr0.001_gbsz32_beta20.99"
+          #   configs:
+          #     - stage: decay6BT
+          #     - stage: decay12BT
 
-          - type: list
-            defaults:
-              backend.megatron.aux.train_group_tag: "lr0.002_gbsz128_beta20.99"
-            configs:
-              - stage: decay20BT
-              - stage: decay30BT
-              - stage: decay50BT
-              - stage: decay80BT
+          # - type: list
+          #   defaults:
+          #     backend.megatron.aux.train_group_tag: "lr0.002_gbsz128_beta20.99"
+          #   configs:
+          #     - stage: decay20BT
+          #     - stage: decay30BT
+          #     - stage: decay50BT
+          #     - stage: decay80BT
 
           - type: list
             defaults:
               backend.megatron.aux.train_group_tag: "lr0.002_gbsz256_beta20.99"
             configs:
-              - stage: decay120BT
-              - stage: decay200BT
+              # - stage: decay120BT
+              # - stage: decay200BT
               - stage: decay300BT
       # ================================================================
       # 300M  beta2=0.95
@@ -212,113 +210,119 @@ sweep:
       #   Group 2: gbsz=256, lr=0.002  → decay at 50B, 80B, 120B
       #   Group 3: gbsz=512, lr=0.002  → decay at 200B, 300B
       # ================================================================
-      - type: list
-        defaults:
-          backend.megatron.aux.model_size_tag: "300M"
-          slurm.sbatch.time: "03:00:00"
-          backend.megatron.num_layers: 22
-          backend.megatron.hidden_size: 768
-          backend.megatron.ffn_hidden_size: 2304
-          backend.megatron.num_attention_heads: 8
-          backend.megatron.num_query_groups: 4
-          backend.megatron.micro_batch_size: 16
-        configs:
-          - type: list
-            defaults:
-              backend.megatron.aux.train_group_tag: "lr0.0005_gbsz64_beta20.95"
-            configs:
-              - stage: decay6BT
-              - stage: decay12BT
-              - stage: decay20BT
-              - stage: decay30BT
+      # - type: list
+      #   defaults:
+      #     backend.megatron.aux.model_size_tag: "300M"
+      #     slurm.sbatch.time: "03:00:00"
+      #     backend.megatron.num_layers: 22
+      #     backend.megatron.hidden_size: 768
+      #     backend.megatron.ffn_hidden_size: 2304
+      #     backend.megatron.num_attention_heads: 8
+      #     backend.megatron.num_query_groups: 4
+      #     backend.megatron.group_query_attention: True
+      #     backend.megatron.add_bias_linear: False
+      #     backend.megatron.micro_batch_size: 16
+      #   configs:
+      #     - type: list
+      #       defaults:
+      #         backend.megatron.aux.train_group_tag: "lr0.0005_gbsz64_beta20.95"
+      #       configs:
+      #         - stage: decay6BT
+      #         - stage: decay12BT
+      #         - stage: decay20BT
+      #         - stage: decay30BT
 
-          - type: list
-            defaults:
-              backend.megatron.aux.train_group_tag: "lr0.002_gbsz256_beta20.95"
-            configs:
-              - stage: decay50BT
-              - stage: decay80BT
-              - stage: decay120BT
+      #     - type: list
+      #       defaults:
+      #         backend.megatron.aux.train_group_tag: "lr0.002_gbsz256_beta20.95"
+      #       configs:
+      #         - stage: decay50BT
+      #         - stage: decay80BT
+      #         - stage: decay120BT
 
-          - type: list
-            defaults:
-              backend.megatron.aux.train_group_tag: "lr0.002_gbsz512_beta20.95"
-            configs:
-              - stage: decay200BT
-              - stage: decay300BT
+      #     - type: list
+      #       defaults:
+      #         backend.megatron.aux.train_group_tag: "lr0.002_gbsz512_beta20.95"
+      #       configs:
+      #         - stage: decay200BT
+      #         - stage: decay300BT
 
-      # ================================================================
-      # 600M  beta2=0.95
-      #   Group 1: gbsz=64,  lr=0.001 → decay at 6B
-      #   Group 2: gbsz=128, lr=0.001 → decay at 12B, 20B, 30B, 50B, 80B
-      #   Group 3: gbsz=512, lr=0.002 → decay at 120B, 200B, 300B
-      # ================================================================
-      - type: list
-        defaults:
-          backend.megatron.aux.model_size_tag: "600M"
-          slurm.sbatch.time: "03:00:00"
-          backend.megatron.num_layers: 28
-          backend.megatron.hidden_size: 1024
-          backend.megatron.ffn_hidden_size: 3072
-          backend.megatron.num_attention_heads: 16
-          backend.megatron.num_query_groups: 8
-          backend.megatron.micro_batch_size: 8
-        configs:
-          - type: list
-            defaults:
-              backend.megatron.aux.train_group_tag: "lr0.001_gbsz64_beta20.95"
-            configs:
-              - stage: decay6BT
+      # # ================================================================
+      # # 600M  beta2=0.95
+      # #   Group 1: gbsz=64,  lr=0.001 → decay at 6B
+      # #   Group 2: gbsz=128, lr=0.001 → decay at 12B, 20B, 30B, 50B, 80B
+      # #   Group 3: gbsz=512, lr=0.002 → decay at 120B, 200B, 300B
+      # # ================================================================
+      # - type: list
+      #   defaults:
+      #     backend.megatron.aux.model_size_tag: "600M"
+      #     slurm.sbatch.time: "03:00:00"
+      #     backend.megatron.num_layers: 28
+      #     backend.megatron.hidden_size: 1024
+      #     backend.megatron.ffn_hidden_size: 3072
+      #     backend.megatron.num_attention_heads: 16
+      #     backend.megatron.num_query_groups: 8
+      #     backend.megatron.group_query_attention: True
+      #     backend.megatron.add_bias_linear: False
+      #     backend.megatron.micro_batch_size: 8
+      #   configs:
+      #     - type: list
+      #       defaults:
+      #         backend.megatron.aux.train_group_tag: "lr0.001_gbsz64_beta20.95"
+      #       configs:
+      #         - stage: decay6BT
 
-          - type: list
-            defaults:
-              backend.megatron.aux.train_group_tag: "lr0.001_gbsz128_beta20.95"
-            configs:
-              - stage: decay12BT
-              - stage: decay20BT
-              - stage: decay30BT
-              - stage: decay50BT
-              - stage: decay80BT
+      #     - type: list
+      #       defaults:
+      #         backend.megatron.aux.train_group_tag: "lr0.001_gbsz128_beta20.95"
+      #       configs:
+      #         - stage: decay12BT
+      #         - stage: decay20BT
+      #         - stage: decay30BT
+      #         - stage: decay50BT
+      #         - stage: decay80BT
 
-          - type: list
-            defaults:
-              backend.megatron.aux.train_group_tag: "lr0.002_gbsz512_beta20.95"
-            configs:
-              - stage: decay120BT
-              - stage: decay200BT
-              - stage: decay300BT
+      #     - type: list
+      #       defaults:
+      #         backend.megatron.aux.train_group_tag: "lr0.002_gbsz512_beta20.95"
+      #       configs:
+      #         - stage: decay120BT
+      #         - stage: decay200BT
+      #         - stage: decay300BT
 
-      # ================================================================
-      # 1B  beta2=0.95
-      #   Group 1: gbsz=128, lr=0.0005 → decay at 6B, 12B, 20B, 30B, 50B, 80B, 120B
-      #   Group 2: gbsz=512, lr=0.002  → decay at 200B, 300B
-      # ================================================================
-      - type: list
-        defaults:
-          backend.megatron.aux.model_size_tag: "1B"
-          slurm.sbatch.time: "04:00:00"
-          backend.megatron.num_layers: 28
-          backend.megatron.hidden_size: 1536
-          backend.megatron.ffn_hidden_size: 4608
-          backend.megatron.num_attention_heads: 16
-          backend.megatron.num_query_groups: 8
-          backend.megatron.micro_batch_size: 4
-        configs:
-          - type: list
-            defaults:
-              backend.megatron.aux.train_group_tag: "lr0.0005_gbsz128_beta20.95"
-            configs:
-              - stage: decay6BT
-              - stage: decay12BT
-              - stage: decay20BT
-              - stage: decay30BT
-              - stage: decay50BT
-              - stage: decay80BT
-              - stage: decay120BT
+      # # ================================================================
+      # # 1B  beta2=0.95
+      # #   Group 1: gbsz=128, lr=0.0005 → decay at 6B, 12B, 20B, 30B, 50B, 80B, 120B
+      # #   Group 2: gbsz=512, lr=0.002  → decay at 200B, 300B
+      # # ================================================================
+      # - type: list
+      #   defaults:
+      #     backend.megatron.aux.model_size_tag: "1B"
+      #     slurm.sbatch.time: "04:00:00"
+      #     backend.megatron.num_layers: 28
+      #     backend.megatron.hidden_size: 1536
+      #     backend.megatron.ffn_hidden_size: 4608
+      #     backend.megatron.num_attention_heads: 16
+      #     backend.megatron.num_query_groups: 8
+      #     backend.megatron.group_query_attention: True
+      #     backend.megatron.add_bias_linear: False
+      #     backend.megatron.micro_batch_size: 4
+      #   configs:
+      #     - type: list
+      #       defaults:
+      #         backend.megatron.aux.train_group_tag: "lr0.0005_gbsz128_beta20.95"
+      #       configs:
+      #         - stage: decay6BT
+      #         - stage: decay12BT
+      #         - stage: decay20BT
+      #         - stage: decay30BT
+      #         - stage: decay50BT
+      #         - stage: decay80BT
+      #         - stage: decay120BT
 
-          - type: list
-            defaults:
-              backend.megatron.aux.train_group_tag: "lr0.002_gbsz512_beta20.95"
-            configs:
-              - stage: decay200BT
-              - stage: decay300BT
+      #     - type: list
+      #       defaults:
+      #         backend.megatron.aux.train_group_tag: "lr0.002_gbsz512_beta20.95"
+      #       configs:
+      #         - stage: decay200BT
+      #         - stage: decay300BT
