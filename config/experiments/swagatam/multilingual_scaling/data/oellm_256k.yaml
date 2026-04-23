@@ -1,0 +1,18 @@
+# @package backend.megatron
+# Dataset related settings for multilingual scaling experiments
+max_position_embeddings: ${.seq_length}
+num_workers: 32 # TODO
+split: '99,1,0'
+create_attention_mask_in_dataloader: False # check effect at larger scale?
+
+data_args_path: /gpfs/projects/ehpc533/data_utils/datamix-tools/datamix-tools/output/1TT-option-4.sh
+data_cache_path: /gpfs/projects/ehpc533/users/swagatam/MEGATRON_262k
+
+# Tokenizer
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: /gpfs/projects/ehpc533/tokenizers/oellm-262k
+
+# DATA (will be overridden by experiment config)
+micro_batch_size: 8
+global_batch_size: 1024
+seq_length: 4096
