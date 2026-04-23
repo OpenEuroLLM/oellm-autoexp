@@ -29,7 +29,11 @@ backend:
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
     # DATA
-    data_path: [
+    train_data_path: [
+      /gpfs/projects/ehpc533/preprocessed/gpt-neox-20b/nemotron-cc/1.0/Nemotron-cc-2024-HQ-LUMI-sample-318BT/high-all,
+    ]
+
+    valid_data_path: [
       /gpfs/projects/ehpc533/preprocessed/gpt-neox-20b/nemotron-cc/1.0/Nemotron-cc-2024-HQ-LUMI-sample-valid/high-all,
     ]
     data_cache_path: /gpfs/projects/ehpc533/users/diana/MEGATRON_CACHEDIR
@@ -38,7 +42,6 @@ backend:
     vocab_file: /gpfs/projects/ehpc533/tokenizers/gpt-neox-20b/vocab.json
     merge_file: /gpfs/projects/ehpc533/tokenizers/gpt-neox-20b//merges.txt
     num_workers: 32
-    split: '99,1,0'
     legacy_tokenizer: True
 
     # MODEL: 130M
