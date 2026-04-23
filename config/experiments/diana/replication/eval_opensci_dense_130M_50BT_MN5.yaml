@@ -1,0 +1,175 @@
+# @package _global_
+
+# 130M dense model training with pull-based multi-stage cooldown
+# Translation of dense_130M_50BT.yaml to new composable sweep system
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: marenostrum
+  - /slurm: marenostrum
+  - /job: auto_restart
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: ""
+
+job:
+  name: ""
+  base_output_dir: ""
+  # resume: true
+
+backend:
+  megatron:
+    wandb_exp_name: "${job.name}"
+    wandb_project: sanity-checks
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    # DATA
+    data_path: [
+      /gpfs/projects/ehpc533/preprocessed/gpt-neox-20b/nemotron-cc/1.0/Nemotron-cc-2024-HQ-LUMI-sample-valid/high-all,
+    ]
+    data_cache_path: /gpfs/projects/ehpc533/users/diana/MEGATRON_CACHEDIR
+    seq_length: 4096
+    max_position_embeddings: 4096
+    vocab_file: /gpfs/projects/ehpc533/tokenizers/gpt-neox-20b/vocab.json
+    merge_file: /gpfs/projects/ehpc533/tokenizers/gpt-neox-20b//merges.txt
+    num_workers: 32
+    split: '99,1,0'
+    legacy_tokenizer: True
+
+    # MODEL: 130M
+    num_layers: 18
+    hidden_size: 576
+    ffn_hidden_size: 2304
+    num_attention_heads: 9
+    num_query_groups: ${.num_attention_heads}
+    init_method_std: 0.02
+    position_embedding_type: "rope"
+    rotary_base: 10000
+    rotary_percent: 1.0
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    normalization: RMSNorm
+    norm_epsilon: 1.e-5
+    qk_layernorm: True
+    bf16: True
+    swiglu: True
+    untie_embeddings_and_output_weights: False
+    use_flash_attn: True
+    attention_softmax_in_fp32: False
+
+    # TRAINING, PARALLELISM
+    recompute_activations: False
+    use_torch_fsdp2: False
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: True
+
+    distributed_backend: nccl
+    distributed_timeout_minutes: 10
+
+    # DISTRIBUTED OPTIM
+    use_distributed_optimizer: True
+
+    # OPTIMIZER
+    optimizer: adam
+    adam_beta1: 0.9
+    adam_beta2: 0.99
+    adam_eps: 1.e-8
+    clip_grad: 1.0
+    weight_decay: 0.1
+
+    # SCHEDULER
+    lr: 0.00001
+    min_lr: 1.e-05
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_warmup_iters: 0
+    lr_wsd_decay_iters: 0
+    override_opt_param_scheduler: True
+
+    # EVAL-ONLY SETTINGS
+    skip_train: True
+    train_iters: 100
+    exit_on_missing_checkpoint: True
+    no_save_optim: True
+    no_save_rng: True
+    no_load_optim: True
+    no_load_rng: True
+
+    # PROFILE
+    profile: False
+    use_pytorch_profiler: False
+    profile_ranks: [0]
+    profile_step_start: 5
+    profile_step_end: 12
+
+    # EVALS
+    # Always evaluate exactly 2048 * 100 = 204800 samples (~838M tokens with seq=4096),
+    # independent of global batch size.
+    eval_interval: 1
+    eval_iters: "${oc.eval:'204800 // ${backend.megatron.global_batch_size}'}"
+
+    # LOGGING
+    log_interval: 10
+    log_progress: True
+    log_throughput: True
+    tensorboard_queue_size: 5
+    log_timers_to_tensorboard: True
+
+    # CHECKPOINT FORMAT
+    ckpt_format: "torch_dist"
+    save_interval: 4000
+    save: ${job.base_output_dir}/checkpoints
+    load: "${.save}"
+
+    # Base training configuration (for stable phase)
+    micro_batch_size: 16
+    global_batch_size: 128 
+
+slurm:
+  sbatch:
+    nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
+    qos: acc_ehpc
+
+
+# COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE
+sweep:
+  
+  groups:
+
+  - type: list
+    defaults:
+      job.name: "eval_opensci_replication_130M_50BT_lr0.002_gbsz128_beta20.99_\\${stage}_MN5"
+      job.base_output_dir: "results/eval_opensci_replication_130M_50BT_MN5/\\${job.name}"
+      backend.megatron.wandb_exp_name: "\\${job.name}"
+      # Load from the corresponding training run decay checkpoint.
+      backend.megatron.load: "results/dense_130M_50BT/dense_130M_lr0.002_gbsz128_beta20.99_\\${stage}/checkpoints"
+
+    configs:
+      # ================================================================
+      # 130M  beta2=0.99
+      # Group 1: gbsz=128, lr=0.002 → decay at 6B, 12B, 20B, 30B, 50B
+      # ================================================================
+      - type: list
+        defaults:
+          slurm.sbatch.time: "02:00:00"
+          backend.megatron.num_layers: 18
+          backend.megatron.hidden_size: 576
+          backend.megatron.ffn_hidden_size: 2304
+          backend.megatron.num_attention_heads: 9
+          backend.megatron.num_query_groups: 9
+          backend.megatron.micro_batch_size: 16
+        configs:
+          - type: list
+            configs:
+              - stage: decay6BT
+              - stage: decay12BT
+              - stage: decay20BT
+              - stage: decay30BT
+              - stage: decay50BT

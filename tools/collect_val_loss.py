@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Extract the final validation loss from the latest .log file in each run subdirectory
+Collect the final validation loss from the latest .log file in each run subdirectory
 and write results to a CSV.
 
 Usage:
@@ -49,7 +49,7 @@ def main():
     args = parser.parse_args()
 
     if args.output is None:
-        args.output = args.runs_dir / "val_loss_summary.csv"
+        args.output = args.runs_dir / "valid_loss.csv"
 
     if not args.runs_dir.is_dir():
         print(f"Error: {args.runs_dir} is not a directory", file=sys.stderr)
