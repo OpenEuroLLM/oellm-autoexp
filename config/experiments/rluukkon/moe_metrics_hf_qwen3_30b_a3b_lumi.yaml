@@ -1,0 +1,69 @@
+# @package _global_
+# HuggingFace MoE router metrics on LUMI (single Python process inside Singularity).
+#
+# Prereqs:
+#   - Qwen3-30B-A3B weights + tokenizer in HF cache (script defaults to offline mode), or pass
+#     --no-local-files-only via backend.extra_cli_args from the CLI.
+#   - Image with transformers, datasets, accelerate, torch (Megatron Lumi SIF may need extra pip;
+#     override container.image to an image that has them).
+#
+# Submit (from repo root, with env vars set):
+#   export OUTPUT_DIR=/scratch/project_.../runs
+#   export SLURM_ACCOUNT=project_462000963 SLURM_PARTITION=standard-g
+#   uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/rluukkon/moe_metrics_hf_qwen3_30b_a3b_lumi \
+#     container.image=/path/to/your_lumi_transformers.sif
+#
+# Inspect batch script without submitting:
+#   ... run_autoexp.py --dry-run ...
+defaults:
+  - ../base
+  - /backend: null
+  - /container: lumi
+  - /slurm: lumi
+  - /sweep: none
+  - _self_
+
+job:
+  name: moe_metrics_hf_qwen3_30b_a3b_lumi
+
+# Default LUMI slurm uses ntasks_per_node=8 (Megatron ranks). This job is one HF process using
+# device_map="auto" across all GPUs in the allocation — use a single task.
+slurm:
+  sbatch:
+    ntasks_per_node: 1
+    cpus_per_task: 56
+    gpus_per_node: 8
+    gres: "gpu:8"
+    mem: 480G
+    time: "02:00:00"
+    #partition either SLURM_PARTITION or dev-g
+    partition: ${oc.env:SLURM_PARTITION,"dev-g"}
+    account: ${oc.env:SLURM_ACCOUNT,"project_462000963"}
+
+backend:
+  class_name: NullBackend
+  base_command:
+    - python3
+    - scripts/compute_moe_metrics_hf.py
+    - --model-name
+    - Qwen/Qwen3-30B-A3B
+    - --dataset
+    - wikitext
+    - --dataset-config
+    - wikitext-2-raw-v1
+    - --dataset-split
+    - validation
+    - --num-batches
+    - "200"
+    - --batch-size
+    - "1"
+    - --max-length
+    - "2048"
+    - --seed
+    - "1234"
+    - --output-json
+    - ${job.base_output_dir}/qwen3_30b_a3b_saturation.json
+    - --coactivation-output
+    - ${job.base_output_dir}/qwen3_30b_a3b_coactivation.json
+    - --expert-token-distribution-output
+    - ${job.base_output_dir}/qwen3_30b_a3b_expert_token_dist.json
