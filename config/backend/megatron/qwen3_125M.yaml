@@ -8,3 +8,67 @@ num_attention_heads: 4
 num_query_groups: 4
 kv_channels: 128
 untie_embeddings_and_output_weights: False
+
+seq_length: 4096
+max_position_embeddings: 4096
+rotary_base: 10000
+norm_epsilon: 1e-6
+                                 
+# Batching and Parallelism
+global_batch_size: 2048
+micro_batch_size: 4
+tensor_model_parallel_size: 1
+pipeline_model_parallel_size: 1 
+context_parallel_size: 1
+sequence_parallel: true
+   
+# Optimization defaults
+weight_decay: 0.1
+adam_beta1: 0.9
+adam_beta2: 0.95
+adam_eps: 1e-8
+init_method_std: 0.02
+clip_grad: 1.0
+attention_dropout: 0.0
+hidden_dropout: 0.0
+
+
+
+# Data
+mock_data: True
+tokenizer_type: HuggingFaceTokenizer    
+tokenizer_model: /gpfs/projects/ehpc533/tokenizers/oellm-262k
+# train_data_path: 
+#   - /gpfs/projects/bsc88/text/oellm/moe/tokenized_data/intermediate_exps_validation_text_document
+# data_cache_path: /gpfs/projects/bsc88/text/oellm/moe/big_model/data_cache
+# valid_data_path:
+#   - /gpfs/projects/bsc88/text/oellm/moe/tokenized_data/intermediate_exps_validation_text_document
+# dataloader_type: single 
+
+# ENTRENAMENT, CHECKPOINTS I LOGS (Megatron)
+# Calcul de mostres basat en 2990096384638 tokens i seq_length de 8192
+train_samples: 10000
+# Learning Rate Schedule (WSD)
+lr_decay_style: WSD
+lr_wsd_decay_style: linear
+lr: 0.0003
+min_lr: 0.00003
+# Aquests valors són el 1%, 100% i 20% de train_samples (365002000)
+lr_warmup_samples: 100
+lr_decay_samples: 10000
+lr_wsd_decay_samples: 100
+# logs
+log_interval: 1
+# ckpt
+save_interval: 500
+eval_interval: 500
+save: ${job.base_output_dir}
+load: ${job.base_output_dir}
+wandb_exp_name: ${job.name}
+wandb_project: "sanity-checks"
+wandb_save_dir: ${job.base_output_dir}/wandb
+tensorboard_dir: ${job.base_output_dir}/tensorboard
+   
+aux:
+  model_name: "qwen3_125M"
+

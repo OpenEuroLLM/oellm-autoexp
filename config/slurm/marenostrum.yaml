@@ -2,7 +2,11 @@ defaults:
   - base
   - _self_
 
-launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \\\n\
+
+template_path: templates/marenostrum.sbatch
+
+launcher_cmd: "module load singularity ; \\\n\ 
+ ${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \\\n\
  export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \
   ${oc.select:container.runtime,apptainer} exec ${oc.join:' ',${oc.maptmpl:'--env %=$% \\\n',${oc.dict.keys:.env}}} \
   ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
@@ -10,7 +14,7 @@ launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.k
 srun:
   exclusive: true
   wait: 60
-  cpus_per_task: 8
+  cpus_per_task: 64
   threads_per_core: 1
   cpu_bind: "none"
   gpu_bind: "none"
@@ -29,17 +33,21 @@ env:
   NUM_GPUS_PER_NODE: "4"
   NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
   ARCH: "$(uname -m)"
-  SLURM_CPUS_PER_TASK: "12"
+  SLURM_CPUS_PER_TASK: "64"
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
+  CUDA_DEVICE_MAX_CONNECTIONS: 1
+  CXX: "g++-13"
+  CC: "gcc-13"
+
 sbatch:
   nodes: 1
   ntasks_per_node: 1
   ntasks: ${.nodes}
   gpus_per_node: 4
-  cpus_per_task: 20
+  cpus_per_task: 64
   gres: "gpu:4"
   gpu_bind: "none"
-  time: "12:00:00"
+  time: "01:00:00"
   qos: ${oc.env:SLURM_QOS,null}
   wait_all_nodes: 1
   exclusive: true
