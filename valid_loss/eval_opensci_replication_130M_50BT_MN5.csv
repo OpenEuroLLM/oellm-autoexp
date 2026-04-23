@@ -1,6 +1,6 @@
 run_name,iteration,lm_loss,lm_loss_ppl
-eval_opensci_replication_130M_50BT_lr0.002_gbsz128_beta20.99_decay12BT_MN5,22889,2.254354,9.529133
-eval_opensci_replication_130M_50BT_lr0.002_gbsz128_beta20.99_decay20BT_MN5,38147,2.209709,9.113068
-eval_opensci_replication_130M_50BT_lr0.002_gbsz128_beta20.99_decay30BT_MN5,57221,2.179148,8.838774
-eval_opensci_replication_130M_50BT_lr0.002_gbsz128_beta20.99_decay50BT_MN5,95368,2.147002,8.559161
-eval_opensci_replication_130M_50BT_lr0.002_gbsz128_beta20.99_decay6BT_MN5,11445,2.327629,10.2536
+eval_opensci_replication_130M_50BT_lr0.002_gbsz128_beta20.99_decay12BT_MN5,22889,2.648415,14.13163
+eval_opensci_replication_130M_50BT_lr0.002_gbsz128_beta20.99_decay20BT_MN5,38147,2.603713,13.51383
+eval_opensci_replication_130M_50BT_lr0.002_gbsz128_beta20.99_decay30BT_MN5,57221,2.572703,13.10118
+eval_opensci_replication_130M_50BT_lr0.002_gbsz128_beta20.99_decay50BT_MN5,95368,2.540111,12.68107
+eval_opensci_replication_130M_50BT_lr0.002_gbsz128_beta20.99_decay6BT_MN5,11445,2.722087,15.21204
