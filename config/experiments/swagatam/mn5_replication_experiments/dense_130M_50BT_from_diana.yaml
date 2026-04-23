@@ -17,7 +17,8 @@ stage: ""
 
 job:
   name: "dense_130M"
-  base_output_dir: "results/dense_130M_50BT/${job.name}"
+  base_output_dir: "results/dense_130M_create_attention_mask_in_dataloader_False_workers_${backend.megatron.num_workers}/${job.name}"
+  # base_output_dir: "results/dense_130M/${job.name}"
   # resume: true
 
 backend:
@@ -37,9 +38,10 @@ backend:
     max_position_embeddings: 4096
     vocab_file: /gpfs/projects/ehpc533/tokenizers/gpt-neox-20b/vocab.json
     merge_file: /gpfs/projects/ehpc533/tokenizers/gpt-neox-20b//merges.txt
-    num_workers: 32
+    num_workers: 64
     split: '99,1,0'
     legacy_tokenizer: True
+    create_attention_mask_in_dataloader: False
 
     # MODEL: 130M
     num_layers: 18
@@ -152,6 +154,7 @@ slurm:
   sbatch:
     nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
     qos: acc_ehpc
+    time: "12:00:00"
 
 
 # COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE
