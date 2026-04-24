@@ -1,0 +1,12 @@
+# @package _global_
+defaults:
+  - ../base
+  - /backend: megatron_torchrun
+  - /container: marenostrum
+  - /slurm: marenostrum
+  - /sweep: none
+  - /backend/megatron: [qwen3_125M]
+  - _self_
+
+job:
+  name: megatron_marenostrum_qwen3_125M

@@ -1,5 +1,5 @@
 name: demo
-log_path: ${.base_output_dir}/${oc.if:${slurm.array},slurm-%A_%a.log,slurm-%j.log}
+log_path: ${.base_output_dir}/${oc.if:${slurm.array},slurm-%A_%a,slurm-%j}-${oc.env:OELLM_TS,"notime"}.log
 log_path_current: ${.base_output_dir}/current${oc.if:${slurm.array}, "_${index}", ""}.log
 config_path: ${.base_output_dir}/${oc.if:${slurm.array},slurm-%A_%a.log,config-%j.yaml}
 config_path_current: ${.base_output_dir}/current${oc.if:${slurm.array}, "_${index}", ""}.yaml
