@@ -67,20 +67,43 @@ the shared filesystem.
 
 ---
 
-## 3. The pattern: one YAML, one `priority_tier` variable
+## 3. The pattern: one YAML, one `backend.megatron.aux.priority_tier` variable
 
-### Top-level knob
+### The knob
+
+The tier knob and the per-combo tier metadata both live under
+`backend.megatron.aux.*` — a free-form `dict[str, Any]` that OmegaConf is
+happy to resolve against, and the same namespace that already holds
+`aux.tokens`, `aux.start_iter`, etc. Keeping everything together avoids the
+awkward "top-level `aux.priority_tier` vs nested `backend.megatron.aux.tokens`"
+split.
+
+> Earlier drafts of this pattern put `priority_tier` under the top-level
+> `aux: dict[str, Any]` field on `RootConfig`, because `compoconf.parse_config`
+> is strict about unknown top-level keys. That still works, but putting
+> `priority_tier` next to the rest of the sweep-overridable aux fields under
+> `backend.megatron.aux` is strictly more consistent and has no downside:
+> Hydra overrides accept the longer dotted path, and the filter expression
+> simply uses `${backend.megatron.aux.priority_tier}` throughout.
 
 ```yaml
-# at the top of the config, after `stage: ""`
-priority_tier: all   # overridden from the CLI
+# In the base config, as a sibling of backend.megatron.aux.tokens et al.
+backend:
+  megatron:
+    aux:
+      tokens: 300_000_000_000
+      priority_tier: all   # overridden from the CLI
+      # ...plus stable_launch_tier, *_tokens_set, save_step_*, ...
 ```
 
 Valid values enumerate the sets you want to launch independently. For the
 `dense_130M_lr_gbsz_tokens_grid.yaml` example: `all`, `center`, `cross`,
 `diagonal`.
 
-### Per-combo tier membership
+From the CLI it is overridden via Hydra dotted syntax:
+`backend.megatron.aux.priority_tier=center`.
+
+### Per-combo tier membership and stable ownership
 
 Each Group-1 hyperparameter combo carries **one Python-set-literal string
 per tier**:
@@ -94,28 +117,44 @@ per tier**:
   backend.megatron.aux.diagonal_tokens_set: "{80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
 ```
 
-The three sets' union is the combo's full allowed decay set (what used to be
-`allowed_decay_tokens_set`). Using `"set()"` for empty — *not* `"{}"`, which
-is a dict literal in Python and breaks `set | dict` unions.
+The three sets' union is the combo's full allowed decay set. `"set()"` is
+used for empty — *not* `"{}"`, which is a dict literal in Python and breaks
+`set | dict` unions.
+
+`stable_launch_tier` is, by convention, the **earliest** tier (in the order
+center → cross → diagonal) whose `*_tokens_set` is non-empty for that combo.
+Why not just always launch stables with `center`? The 130M grid has stables
+whose decays live *only* in `cross` and/or `diagonal` — e.g. the
+`gbsz=512, 300BT` stables feed only diagonal decays. Launching all 20
+stables eagerly under `priority_tier=center` would queue those large,
+low-priority jobs ahead of actual center work. Assigning each stable to
+exactly one tier keeps `center` lean (4 stables + 9 decays) and defers
+non-critical stable capacity to the cross/diagonal invocations.
 
 ### Tier-aware filter
 
+For brevity, the block below elides the `backend.megatron.` prefix; every
+`aux.*` reference in the actual filter is the full
+`${backend.megatron.aux.*}` interpolation.
+
 ```yaml
 filter: "\\${oc.eval:'(
-    (\"\\${stage}\" == \"stable\" and \"\\${priority_tier}\" in {\"all\", \"center\"})
+    (\"\\${stage}\" == \"stable\" and
+        (\"\\${aux.priority_tier}\" == \"all\"
+         or \"\\${aux.priority_tier}\" == \"\\${aux.stable_launch_tier}\"))
     or
     (\"\\${stage}\" != \"stable\" and (
-        (\"\\${priority_tier}\" == \"all\"
-            and \\${backend.megatron.aux.tokens} in
-                \\${backend.megatron.aux.center_tokens_set}
-                | \\${backend.megatron.aux.cross_tokens_set}
-                | \\${backend.megatron.aux.diagonal_tokens_set})
-        or (\"\\${priority_tier}\" == \"center\"
-            and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set})
-        or (\"\\${priority_tier}\" == \"cross\"
-            and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.cross_tokens_set})
-        or (\"\\${priority_tier}\" == \"diagonal\"
-            and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.diagonal_tokens_set})
+        (\"\\${aux.priority_tier}\" == \"all\"
+            and \\${aux.tokens} in
+                \\${aux.center_tokens_set}
+                | \\${aux.cross_tokens_set}
+                | \\${aux.diagonal_tokens_set})
+        or (\"\\${aux.priority_tier}\" == \"center\"
+            and \\${aux.tokens} in \\${aux.center_tokens_set})
+        or (\"\\${aux.priority_tier}\" == \"cross\"
+            and \\${aux.tokens} in \\${aux.cross_tokens_set})
+        or (\"\\${aux.priority_tier}\" == \"diagonal\"
+            and \\${aux.tokens} in \\${aux.diagonal_tokens_set})
     ))
 )'}"
 ```
@@ -129,6 +168,11 @@ Reading it:
 - **Decays** survive iff their `aux.tokens` sits in the tier's per-combo
   set (for `tier=all`, the union of all three).
 
+All five fields (`priority_tier`, `stable_launch_tier`, `tokens`, and the
+three `*_tokens_set` sets) live in the same `backend.megatron.aux` dict, so
+there is no "two different `aux`es" gotcha — the whole tier surface area
+is one consistent namespace.
+
 Python precedence detail: `in` is a comparison (precedence lower than `|`),
 so `x in A | B | C` parses as `x in (A | B | C)`. That's what we want.
 `set() | {…}` is a no-op union, so empty-tier combos contribute nothing to
@@ -139,20 +183,21 @@ either the per-tier check or the `all`-tier union.
 ## 4. Launch workflow
 
 ```bash
-# 1) 20 stables + 9 center decays
+# 1) 4 center stables + 9 center decays
 python scripts/run_autoexp.py \
     --config-name=experiments/.../dense_130M_lr_gbsz_tokens_grid \
-    priority_tier=center
+    backend.megatron.aux.priority_tier=center
 
-# 2) 36 cross decays (waits on center's branching checkpoints)
+# 2) 10 cross stables + 36 cross decays (decays wait on sibling stables'
+#    branching checkpoints)
 python scripts/run_autoexp.py \
     --config-name=experiments/.../dense_130M_lr_gbsz_tokens_grid \
-    priority_tier=cross
+    backend.megatron.aux.priority_tier=cross
 
-# 3) 36 diagonal decays (same)
+# 3) 6 diagonal stables + 36 diagonal decays
 python scripts/run_autoexp.py \
     --config-name=experiments/.../dense_130M_lr_gbsz_tokens_grid \
-    priority_tier=diagonal
+    backend.megatron.aux.priority_tier=diagonal
 ```
 
 Each invocation:
@@ -163,8 +208,12 @@ Each invocation:
 - Submits its jobs to SLURM (either immediately for stables and centers, or
   waits on `FileExistsCondition` for cross/diagonal decays).
 
-You can launch all three in parallel — they operate on disjoint job-name
-sets and coordinate only through the shared `base_output_dir`.
+You **must** launch the three tiers in order (center → cross → diagonal) and
+cannot skip any of them: every tier owns some stables, and skipping a tier
+leaves its stables unsubmitted — the decays in *that* tier would then wait
+forever on `FileExistsCondition`. Use
+`backend.megatron.aux.priority_tier=all` if you want a single-shot
+submission of the full 101 jobs.
 
 ---
 
@@ -172,7 +221,7 @@ sets and coordinate only through the shared `base_output_dir`.
 
 Per-tier counts for the 130M lr × gbsz × tokens sweep:
 
-| priority_tier | stable | decay | total |
+| `backend.megatron.aux.priority_tier` | stable | decay | total |
 |---|---|---|---|
 | `all`      | 20 | 81 | 101 |
 | `center`   | 20 | 9  | 29  |
@@ -261,29 +310,36 @@ Runtime sequence:
 | **Single YAML + `subset_indices` CLI override** | Requires the user to translate `(lr, gbsz, tokens, tier)` tuples into sweep-point indices — brittle and needs recomputing whenever the sweep shape changes. |
 | **Hardcoded `load:` paths + no stables in cross/diagonal YAMLs** | The sibling mechanism already does this for us, *because `full_points_by_idx` means stables are always resolvable*. Hardcoding the path template adds maintenance burden (if you rename `job.name` you have to fix both the stable and the hardcoded string). |
 
-The chosen approach (single YAML + `priority_tier`) wins because:
+The chosen approach (single YAML +
+`backend.megatron.aux.priority_tier`) wins because:
 
 - Stables, their decays, and all sibling references live together in one
   place. No duplication.
 - Adding a new tier is one new `*_tokens_set` field per combo and one new
   clause in the filter.
-- `priority_tier=all` remains a valid, single-invocation mode — identical
-  to pre-tiering behavior.
+- `backend.megatron.aux.priority_tier=all` remains a valid,
+  single-invocation mode — identical to pre-tiering behavior.
 
 ---
 
 ## 8. Caveats and operational notes
 
-- **Launch order matters.** `priority_tier=cross` *before* `center` will
-  submit 36 decays that wait on `iter_NNNNNNN` files that don't exist yet.
-  They'll sit in the monitor queue forever. Always launch `center` first
-  (or include `all` in a single run).
-- **The center orchestrator must stay alive** until every center decay has
-  been submitted — its branching checkpoint is what releases those decays.
+- **Tier launch order is mandatory, and skipping is not allowed.** Because
+  each stable is owned by exactly one tier, invoking `cross` without
+  `center` submits the 10 cross-owned stables but leaves the 9 center decays
+  without their parents (center stables are never launched). Invoking only
+  `diagonal` leaves 14 of 20 stables unsubmitted entirely. The safe
+  sequences are `center → cross → diagonal` (in that order) or a single
+  `backend.megatron.aux.priority_tier=all`. You can overlap the three
+  invocations in wall time (cross orchestrator can be started as soon as
+  center is underway; see next bullet), but you cannot drop any of them.
+- **The per-tier orchestrator must stay alive** until every decay it owns
+  has been submitted — each decay waits on the branching checkpoint of its
+  sibling stable, which is polled by whichever orchestrator owns the decay.
   Ctrl-C'ing early strands pending decays (stables already dispatched to
-  SLURM keep running). Re-launching `priority_tier=center` picks up the
-  remaining work because already-submitted jobs are recognised via the
-  monitor state store.
+  SLURM keep running). Re-launching the same
+  `backend.megatron.aux.priority_tier=<tier>` picks up the remaining work
+  because already-submitted jobs are recognised via the monitor state store.
 - **Safe to parallelise the three invocations.** They work on disjoint
   job-name sets and can each run their own orchestrator concurrently.
 - **Monitor state.** Each invocation writes its own
@@ -292,8 +348,9 @@ The chosen approach (single YAML + `priority_tier`) wins because:
   three folders.
 - **Combining with SLURM-level nice.** If you want to bias the queue when
   invocations overlap, stack `slurm.sbatch.nice` on top of the tier:
-  `priority_tier=center slurm.sbatch.nice=-50` makes centers jump queue
-  ahead of a later `priority_tier=diagonal slurm.sbatch.nice=+100`
+  `backend.megatron.aux.priority_tier=center slurm.sbatch.nice=-50` makes
+  centers jump queue ahead of a later
+  `backend.megatron.aux.priority_tier=diagonal slurm.sbatch.nice=+100`
   submission.
 - **Strict serialisation.** If you *must* prevent lower-priority tiers from
   starting until higher-priority ones finish (not just "from being
@@ -314,9 +371,20 @@ The chosen approach (single YAML + `priority_tier`) wins because:
 3. **Compute per-combo per-tier token sets.** Each Group-1 entry gets
    `aux.<tier>_tokens_set` string literals; their union covers the combo's
    full allowed decay set.
-4. **Add `priority_tier: <default>` at the top** of the YAML. `all` is a
-   reasonable default that keeps the old behaviour.
-5. **Write the tier filter.** Template:
+4. **Pick each combo's `stable_launch_tier`.** Set it to the earliest tier
+   (in your priority ordering) whose `*_tokens_set` is non-empty for that
+   combo. That tier's invocation will own launching the stable. This
+   ensures lower-priority stables don't sneak into a higher-priority tier's
+   queue.
+5. **Add `priority_tier: <default>`** to the `backend.megatron.aux:`
+   mapping (alongside the other sweep-overridable aux fields like `tokens`
+   and `stable_launch_tier`). `all` is a reasonable default that keeps the
+   old non-tiered behaviour. Avoid inventing a bare top-level key —
+   `RootConfig` is a strict dataclass and will reject unknown top-level
+   fields. The top-level `aux: dict[str, Any]` field on `RootConfig` works
+   too, but putting the knob under `backend.megatron.aux` keeps all
+   tier-related fields in a single consistent namespace.
+6. **Write the tier filter.** Template:
    ```
    (stage == stable AND priority_tier ∈ stable_tiers)
    OR
