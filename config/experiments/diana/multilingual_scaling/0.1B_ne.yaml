@@ -11,6 +11,7 @@ defaults:
   - /sweep: none
   - /backend/megatron: base
   - /experiments/diana/models: dense_qwen3_0.1B_ne
+  - /experiments/diana/data: oellm_256k
   - _self_
 
 index: 0
@@ -27,22 +28,6 @@ backend:
     wandb_entity: openeurollm-project
     wandb_save_dir: "${job.base_output_dir}"
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
-
-    # DATA
-    ### TO DO: Still have to be configured 
-    data_path: [
-      /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-LUMI-sample-318BT/high-all,
-    ]
-    data_cache_path: /leonardo_scratch/large/userexternal/donutu00/MEGATRON_CACHEDIR
-    seq_length: 4096
-    max_position_embeddings: 4096
-
-    vocab_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/vocab.json
-    merge_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/merges.txt
-    num_workers: 8
-    split: '99,1,0'
-    dataloader_type: "cyclic"
-    legacy_tokenizer: True
 
     # Base training configuration (for stable phase)
     micro_batch_size: 8
