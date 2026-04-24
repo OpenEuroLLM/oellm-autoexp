@@ -67,18 +67,29 @@ the shared filesystem.
 
 ---
 
-## 3. The pattern: one YAML, one `priority_tier` variable
+## 3. The pattern: one YAML, one `aux.priority_tier` variable
 
 ### Top-level knob
 
+The knob lives under the top-level `aux: dict[str, Any]` field on `RootConfig`
+rather than as a bare top-level key. `compoconf.parse_config` is strict — any
+top-level key that is not explicitly declared on `RootConfig` raises
+`ValueError: Undefined keys {...}`, and we don't want to bake a sweep-specific
+field into the shared schema. `aux` is the schema's designated free-form dict
+for exactly this kind of YAML-local variable.
+
 ```yaml
 # at the top of the config, after `stage: ""`
-priority_tier: all   # overridden from the CLI
+aux:
+  priority_tier: all   # overridden from the CLI
 ```
 
 Valid values enumerate the sets you want to launch independently. For the
 `dense_130M_lr_gbsz_tokens_grid.yaml` example: `all`, `center`, `cross`,
 `diagonal`.
+
+From the CLI it is overridden via Hydra dotted syntax:
+`aux.priority_tier=center`.
 
 ### Per-combo tier membership
 
@@ -102,19 +113,19 @@ is a dict literal in Python and breaks `set | dict` unions.
 
 ```yaml
 filter: "\\${oc.eval:'(
-    (\"\\${stage}\" == \"stable\" and \"\\${priority_tier}\" in {\"all\", \"center\"})
+    (\"\\${stage}\" == \"stable\" and \"\\${aux.priority_tier}\" in {\"all\", \"center\"})
     or
     (\"\\${stage}\" != \"stable\" and (
-        (\"\\${priority_tier}\" == \"all\"
+        (\"\\${aux.priority_tier}\" == \"all\"
             and \\${backend.megatron.aux.tokens} in
                 \\${backend.megatron.aux.center_tokens_set}
                 | \\${backend.megatron.aux.cross_tokens_set}
                 | \\${backend.megatron.aux.diagonal_tokens_set})
-        or (\"\\${priority_tier}\" == \"center\"
+        or (\"\\${aux.priority_tier}\" == \"center\"
             and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set})
-        or (\"\\${priority_tier}\" == \"cross\"
+        or (\"\\${aux.priority_tier}\" == \"cross\"
             and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.cross_tokens_set})
-        or (\"\\${priority_tier}\" == \"diagonal\"
+        or (\"\\${aux.priority_tier}\" == \"diagonal\"
             and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.diagonal_tokens_set})
     ))
 )'}"
@@ -124,10 +135,16 @@ filter: "\\${oc.eval:'(
 
 Reading it:
 
-- **Stables** survive the filter iff `priority_tier ∈ {"all", "center"}`.
+- **Stables** survive the filter iff `aux.priority_tier ∈ {"all", "center"}`.
   This guarantees the 20 stables are launched by exactly one invocation.
 - **Decays** survive iff their `aux.tokens` sits in the tier's per-combo
   set (for `tier=all`, the union of all three).
+
+Note the two different `aux`es in the filter: the top-level
+`${aux.priority_tier}` (the tier knob on `RootConfig.aux`) and the nested
+`${backend.megatron.aux.tokens}` / `${backend.megatron.aux.*_tokens_set}`
+(Megatron backend's own aux dict). They're independent dicts that just happen
+to share the name.
 
 Python precedence detail: `in` is a comparison (precedence lower than `|`),
 so `x in A | B | C` parses as `x in (A | B | C)`. That's what we want.
@@ -142,17 +159,17 @@ either the per-tier check or the `all`-tier union.
 # 1) 20 stables + 9 center decays
 python scripts/run_autoexp.py \
     --config-name=experiments/.../dense_130M_lr_gbsz_tokens_grid \
-    priority_tier=center
+    aux.priority_tier=center
 
 # 2) 36 cross decays (waits on center's branching checkpoints)
 python scripts/run_autoexp.py \
     --config-name=experiments/.../dense_130M_lr_gbsz_tokens_grid \
-    priority_tier=cross
+    aux.priority_tier=cross
 
 # 3) 36 diagonal decays (same)
 python scripts/run_autoexp.py \
     --config-name=experiments/.../dense_130M_lr_gbsz_tokens_grid \
-    priority_tier=diagonal
+    aux.priority_tier=diagonal
 ```
 
 Each invocation:
@@ -172,7 +189,7 @@ sets and coordinate only through the shared `base_output_dir`.
 
 Per-tier counts for the 130M lr × gbsz × tokens sweep:
 
-| priority_tier | stable | decay | total |
+| aux.priority_tier | stable | decay | total |
 |---|---|---|---|
 | `all`      | 20 | 81 | 101 |
 | `center`   | 20 | 9  | 29  |
@@ -198,6 +215,10 @@ sw_obj = SimpleNamespace(type=sw["type"], groups=sw["groups"], filter=sw.get("fi
 points = expand_sweep(sw_obj)  # -> 200
 
 def keep(params, tier):
+    # `params` contains post-resolution flat dotted-key overrides for the
+    # sweep point. The tier knob lives at top-level `aux.priority_tier` on
+    # RootConfig; sweep points don't override it (it's a single global), so we
+    # just check `tier` here directly.
     stage = params["stage"]
     tokens = int(params["backend.megatron.aux.tokens"])
     c = eval(params["backend.megatron.aux.center_tokens_set"])
@@ -261,27 +282,27 @@ Runtime sequence:
 | **Single YAML + `subset_indices` CLI override** | Requires the user to translate `(lr, gbsz, tokens, tier)` tuples into sweep-point indices — brittle and needs recomputing whenever the sweep shape changes. |
 | **Hardcoded `load:` paths + no stables in cross/diagonal YAMLs** | The sibling mechanism already does this for us, *because `full_points_by_idx` means stables are always resolvable*. Hardcoding the path template adds maintenance burden (if you rename `job.name` you have to fix both the stable and the hardcoded string). |
 
-The chosen approach (single YAML + `priority_tier`) wins because:
+The chosen approach (single YAML + `aux.priority_tier`) wins because:
 
 - Stables, their decays, and all sibling references live together in one
   place. No duplication.
 - Adding a new tier is one new `*_tokens_set` field per combo and one new
   clause in the filter.
-- `priority_tier=all` remains a valid, single-invocation mode — identical
+- `aux.priority_tier=all` remains a valid, single-invocation mode — identical
   to pre-tiering behavior.
 
 ---
 
 ## 8. Caveats and operational notes
 
-- **Launch order matters.** `priority_tier=cross` *before* `center` will
+- **Launch order matters.** `aux.priority_tier=cross` *before* `center` will
   submit 36 decays that wait on `iter_NNNNNNN` files that don't exist yet.
   They'll sit in the monitor queue forever. Always launch `center` first
   (or include `all` in a single run).
 - **The center orchestrator must stay alive** until every center decay has
   been submitted — its branching checkpoint is what releases those decays.
   Ctrl-C'ing early strands pending decays (stables already dispatched to
-  SLURM keep running). Re-launching `priority_tier=center` picks up the
+  SLURM keep running). Re-launching `aux.priority_tier=center` picks up the
   remaining work because already-submitted jobs are recognised via the
   monitor state store.
 - **Safe to parallelise the three invocations.** They work on disjoint
@@ -292,8 +313,8 @@ The chosen approach (single YAML + `priority_tier`) wins because:
   three folders.
 - **Combining with SLURM-level nice.** If you want to bias the queue when
   invocations overlap, stack `slurm.sbatch.nice` on top of the tier:
-  `priority_tier=center slurm.sbatch.nice=-50` makes centers jump queue
-  ahead of a later `priority_tier=diagonal slurm.sbatch.nice=+100`
+  `aux.priority_tier=center slurm.sbatch.nice=-50` makes centers jump queue
+  ahead of a later `aux.priority_tier=diagonal slurm.sbatch.nice=+100`
   submission.
 - **Strict serialisation.** If you *must* prevent lower-priority tiers from
   starting until higher-priority ones finish (not just "from being
@@ -314,15 +335,17 @@ The chosen approach (single YAML + `priority_tier`) wins because:
 3. **Compute per-combo per-tier token sets.** Each Group-1 entry gets
    `aux.<tier>_tokens_set` string literals; their union covers the combo's
    full allowed decay set.
-4. **Add `priority_tier: <default>` at the top** of the YAML. `all` is a
-   reasonable default that keeps the old behaviour.
+4. **Add `aux.priority_tier: <default>` at the top** of the YAML (as a field
+   inside the top-level `aux:` mapping). `all` is a reasonable default that
+   keeps the old behaviour. Do NOT make it a bare top-level key — `RootConfig`
+   is a strict dataclass and will reject unknown top-level fields.
 5. **Write the tier filter.** Template:
    ```
-   (stage == stable AND priority_tier ∈ stable_tiers)
+   (stage == stable AND aux.priority_tier ∈ stable_tiers)
    OR
    (stage != stable AND (
-       (priority_tier == "all"   AND tokens in union(all tier sets))
-       OR (priority_tier == T    AND tokens in <T>_tokens_set)    for each T
+       (aux.priority_tier == "all"   AND tokens in union(all tier sets))
+       OR (aux.priority_tier == T    AND tokens in <T>_tokens_set)    for each T
    ))
    ```
 6. **Verify partition.** Run the script in §5 and confirm

@@ -52,7 +52,12 @@ stage: ""
 #   * job.base_output_dir and job.log_path_current resolve to deterministic
 #     filesystem paths (functions of job.name), so the center invocation and
 #     the cross/diagonal invocations agree on where checkpoints & logs live.
-priority_tier: all
+#
+# Lives under the top-level `aux` dict because RootConfig is a strict dataclass
+# and does not define a bare top-level `priority_tier` field; `aux` is a free-
+# form `dict[str, Any]` that is resolvable via `${aux.priority_tier}`.
+aux:
+  priority_tier: all
 
 job:
   name: "dense_130M_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_${stage}"
@@ -197,7 +202,7 @@ backend:
       cooldown_decay_fraction: 0.2  # fraction of iters spent in LR decay during cooldown
       # Per-combo per-tier allowed decay budgets (Python set literals, overridden per
       # Group-1 entry). tier=all uses the union (center | cross | diagonal).
-      # Defaults let a solo non-sweep run pass for priority_tier in {all, center}.
+      # Defaults let a solo non-sweep run pass for aux.priority_tier in {all, center}.
       center_tokens_set:   "{6_000_000_000, 12_000_000_000, 20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
       cross_tokens_set:    "set()"
       diagonal_tokens_set: "set()"
@@ -247,7 +252,7 @@ sweep:
     #     strings of decay budgets this combo should run at that grid_position.
     #     Their union equals the combo's full allowed set (the old
     #     `allowed_decay_tokens_set`). Used by `sweep.filter` together with the
-    #     top-level `priority_tier` variable to prune decays outside the CSV grid
+    #     top-level `aux.priority_tier` variable to prune decays outside the CSV grid
     #     AND outside the selected tier.
     # Decay stages override aux.tokens to their specific budget; stable keeps it.
     - type: list
@@ -473,7 +478,7 @@ sweep:
 
   # CSV-grid + priority-tier filter.
   #
-  # Stable pass:  stable survives iff priority_tier in {"all", "center"}.
+  # Stable pass:  stable survives iff aux.priority_tier in {"all", "center"}.
   # Decay pass:   decay survives iff its aux.tokens is in the tier's per-combo
   #               set (for tier=all, the union of all three tier sets).
   #
@@ -485,20 +490,20 @@ sweep:
   # Sibling refs still resolve in non-center tiers: orchestrator.py:91 passes
   # full_points_by_idx=all_points_by_idx, so the DAG resolver iterates over all
   # 200 sweep points (resolving stables fully) before the filter trims them.
-  filter: "\\${oc.eval:'((\"\\${stage}\" == \"stable\" and \"\\${priority_tier}\" in {\"all\", \"center\"}) or (\"\\${stage}\" != \"stable\" and ((\"\\${priority_tier}\" == \"all\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set} | \\${backend.megatron.aux.cross_tokens_set} | \\${backend.megatron.aux.diagonal_tokens_set}) or (\"\\${priority_tier}\" == \"center\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set}) or (\"\\${priority_tier}\" == \"cross\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.cross_tokens_set}) or (\"\\${priority_tier}\" == \"diagonal\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.diagonal_tokens_set}))))'}"
+  filter: "\\${oc.eval:'((\"\\${stage}\" == \"stable\" and \"\\${aux.priority_tier}\" in {\"all\", \"center\"}) or (\"\\${stage}\" != \"stable\" and ((\"\\${aux.priority_tier}\" == \"all\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set} | \\${backend.megatron.aux.cross_tokens_set} | \\${backend.megatron.aux.diagonal_tokens_set}) or (\"\\${aux.priority_tier}\" == \"center\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set}) or (\"\\${aux.priority_tier}\" == \"cross\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.cross_tokens_set}) or (\"\\${aux.priority_tier}\" == \"diagonal\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.diagonal_tokens_set}))))'}"
 
 
-### Job counts (per `priority_tier`)
+### Job counts (per `aux.priority_tier`)
 # Group 1 (hyperparameter combos):           20
 # Group 2 (stages): 1 stable + 9 decay       10
 # Pre-filter product (always):               20 × 10 = 200 sweep points
 #
-#   priority_tier  stables   decays              total
-#   ------------   -------   -----------------   -----
-#   all            20        81                  101    (default; full sweep)
-#   center         20        9  (all centers)    29     (stables launched here)
-#   cross           0        36 (4 per budget)   36
-#   diagonal        0        36 (4 per budget)   36
+#   aux.priority_tier  stables   decays              total
+#   -----------------  -------   -----------------   -----
+#   all                20        81                  101    (default; full sweep)
+#   center             20        9  (all centers)    29     (stables launched here)
+#   cross               0        36 (4 per budget)   36
+#   diagonal            0        36 (4 per budget)   36
 #
 # The three tiers {center, cross, diagonal} are disjoint and partition the 101.
 # Sibling resolution sees ALL 200 points in every invocation (orchestrator.py
@@ -511,13 +516,13 @@ sweep:
 #    the 9 center decays as the stable branching checkpoints land):
 #        python -m oellm_autoexp.cli run \
 #            --config-name experiments/swagatam/multilingual_scaling/dense_130M_lr_gbsz_tokens_grid \
-#            priority_tier=center
+#            aux.priority_tier=center
 # 2) Once stable branching checkpoints exist on disk (or immediately, as soon
 #    as you want to start queuing the cross decays), in a separate shell:
-#        python -m oellm_autoexp.cli run --config-name ... priority_tier=cross
+#        python -m oellm_autoexp.cli run --config-name ... aux.priority_tier=cross
 # 3) Similarly for the diagonals (any time after step 1 starts writing
 #    checkpoints):
-#        python -m oellm_autoexp.cli run --config-name ... priority_tier=diagonal
+#        python -m oellm_autoexp.cli run --config-name ... aux.priority_tier=diagonal
 # Each invocation launches its own orchestrator/monitor process; coordination
 # between them is purely via the filesystem (checkpoint dirs + log symlinks
 # under the same base_output_dir).
