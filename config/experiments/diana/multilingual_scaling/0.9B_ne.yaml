@@ -8,7 +8,7 @@ defaults:
   - /container: marenostrum
   - /slurm: marenostrum
   - /job: auto_restart
-  - /sweep: diana_multilingual_scaling_0.9B_ne
+  - /sweep: dense_qwen3_0.9B_ne_multilingual
   - /backend/megatron: base
   - /experiments/diana/models: dense_qwen3_0.9B_ne # model configs
   - /experiments/diana/data: oellm_256k # data configs
