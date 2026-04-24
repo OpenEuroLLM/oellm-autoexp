@@ -1,9 +1,5 @@
 # @package backend.megatron
 # MI325X: 8 GPUs/node @ 192 GB HBM each.
-# Inherits single-process defaults and overrides parallelism + data paths.
-defaults:
-  - default
-  - _self_
 
 tensor_model_parallel_size: 1
 pipeline_model_parallel_size: 1
@@ -11,6 +7,7 @@ expert_model_parallel_size: 8
 context_parallel_size: 1
 sequence_parallel: True
 use_distributed_optimizer: True
+use_torch_fsdp2: False
 recompute_activations: False
 
 overlap_param_gather: True

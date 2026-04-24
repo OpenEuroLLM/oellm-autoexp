@@ -11,6 +11,7 @@ defaults:
   - /experiments/rluukkon/moe_scaling_laws/moe_2B_400M: default   # overridden by CLUSTER
   - /sweep: none
   - /experiments/rluukkon/moe_scaling_laws/models: moe_2B_400M
+  - /experiments/rluukkon/data: neox_50B_english
   - _self_
 
 slurm:
