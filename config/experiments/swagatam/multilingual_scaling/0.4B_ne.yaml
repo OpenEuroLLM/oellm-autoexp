@@ -1,0 +1,50 @@
+# @package _global_
+
+# 0.4B NE dense Qwen3-like model training with pull-based multi-stage cooldown on Leonardo
+# Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: marenostrum
+  - /slurm: marenostrum
+  - /job: auto_restart
+  - /sweep: dense_qwen3_0.4B_ne_multilingual # sweep configs
+  - /backend/megatron: base
+  - /experiments/swagatam/models: dense_qwen3_0.4B_ne # model configs
+  - /experiments/swagatam/data: oellm_256k # data configs
+  - _self_
+
+index: 0
+stage: ""
+
+job:
+  name: "" # Will be overridden by sweep with stage and hyperparameter info
+  base_output_dir: "/gpfs/projects/ehpc533/multilingual_scaling/0.4B_ne/training/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+
+backend:
+  megatron:
+    wandb_exp_name: "" # Will be overridden by sweep with stage and hyperparameter info
+    wandb_project: dense_multilingual_scaling
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    # DATA
+    data_cache_path: /gpfs/projects/ehpc533/users/swagatam/MEGATRON_262k
+
+    # Base training configuration (for stable phase)
+    num_workers: 8 # Will be overridden by sweep
+    micro_batch_size: 8
+    global_batch_size: 64  # Will be overridden by sweep
+    lr: 5.e-4  # Will be overridden by sweep
+
+slurm:
+  sbatch:
+    nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
+    qos: acc_ehpc
+    account: ehpc715
+    time: "72:00:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
