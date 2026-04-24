@@ -1,25 +1,10 @@
 # @package _global_
-# MoE speed sweep for Titan Qwen3 235BA22B on JUPITER (16 nodes, 64 GPUs)
-#
-# Architecture: 94 layers, dim=4096, 64 heads, 4 KV heads (GQA), head_dim=128
-#               128 experts, topk=8, moe_inter_dim=1536, rope_theta=5000000
-# Parallelism: EP=8, dp_shard=64 (FSDP for attention; efsdp=8 for experts)
-#   efsdp = dp_shard×tp/(etp×ep) = 64×1/(1×8) = 8 → experts FSDP-sharded across 8 GPUs
-#   Each EP rank holds 128/8=16 experts, FSDP-sharded by 8 → 2 effective experts/GPU
-#
-# ── Measured results (16 nodes, 64×GH200, EP=8, dp_shard=64) ───────────────
-#   nocompile, full AC,  bs=1  →  52.88 TFLOPS,  3.80 GiB  ( 4%)
-#   compile,   full AC,  bs=1  →  54.63 TFLOPS,  3.80 GiB  ( 4%)  (+3% vs nocompile)
-#   nocompile, no AC,    bs=1  →  75.74 TFLOPS,  5.57 GiB  ( 6%)  (+43% vs full AC)
-#   compile,   no AC,    bs=1  →  71.18 TFLOPS,  5.57 GiB  ( 6%)  (compile slower here)
-#   compile,   no AC,    bs=2  → 122.37 TFLOPS, 10.10 GiB  (11%)
-#   compile,   no AC,    bs=4  → 192.59 TFLOPS, 19.15 GiB  (20%)
-#   compile,   no AC,    bs=8  → 216.50 TFLOPS, 37.31 GiB  (39%)
-#   compile,   no AC,    bs=16 → 251.95 TFLOPS, 73.91 GiB  (78%)  ← OPTIMAL
-#   compile,   no AC,    bs=32 → OOM
+# Titan 235BA22B batch-size sweep phase 2 — larger batches
+# Follows up on phase 1 where bs=4 used only 20% memory (19 GiB / 95 GiB).
+# Goal: find the optimal batch size up to memory limit.
 #
 defaults:
-  - ../base
+  - ../../base
   - /backend: titan
   - /container: jupiter_titan
   - /slurm: jupiter
@@ -38,10 +23,11 @@ backend:
     model:
       vocab_size: 50304
       tokenizer_path: /e/project1/projectnucleus/franke5/workspace/titan-train/torchtitan/assets/tokenizer/gpt-neox-20b
+      multiple_of: null
 
     training:
       steps: 100
-      local_batch_size: 1
+      local_batch_size: 8
       seq_len: 4096
       dtype: bfloat16
 
@@ -53,11 +39,11 @@ backend:
       pipeline_parallel_degree: 1
       expert_parallel_degree: 8
       data_parallel_replicate_degree: 1
-      data_parallel_shard_degree: 64   # all 64 GPUs shard params (efsdp=64/8=8)
+      data_parallel_shard_degree: 64
       context_parallel_degree: 1
 
     activation_checkpoint:
-      mode: full
+      mode: none
 
     benchmarks:
       wikitext2_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext2/wikitext2
@@ -66,7 +52,7 @@ backend:
 
   env:
     TORCHDYNAMO_DISABLE: "1"
-    PYTHONPATH: .:./submodules/titan-oellm:./submodules/titan-oellm/torchtitan
+    PYTHONPATH: "${oc.env:HOME}/work/Projects/oellm-autoexp:${oc.env:HOME}/work/Projects/oellm-autoexp/submodules/titan-oellm:${oc.env:HOME}/work/Projects/oellm-autoexp/submodules/titan-oellm/torchtitan"
     NCCL_SOCKET_FAMILY: "AF_INET"
     GLOO_SOCKET_FAMILY: "AF_INET"
     NCCL_SOCKET_IFNAME: "ib0"
@@ -134,53 +120,16 @@ sweep:
   groups:
     - type: list
       configs:
-        # ── nocompile baseline ────────────────────────────────────────────────
-        - aux.compile_tag: nocompile
-          backend.titan.activation_checkpoint.mode: full
-          backend.titan.training.local_batch_size: 1
-          backend.env.TORCHDYNAMO_DISABLE: "1"
-          # Result: 52.88 TFLOPS, 3.80 GiB (4%) (job 307432)
-
-        # ── compile (barely helps MoE based on 30BA3B results) ───────────────
-        - aux.compile_tag: compile
-          backend.titan.activation_checkpoint.mode: full
-          backend.titan.training.local_batch_size: 1
-          # Result: 54.63 TFLOPS, 3.80 GiB (4%) (job 307445)
-
-        # ── no AC (key optimization from 30BA3B: +25-46% vs full AC) ─────────
-        - aux.compile_tag: nocompile
-          backend.titan.activation_checkpoint.mode: none
-          backend.titan.training.local_batch_size: 1
-          backend.env.TORCHDYNAMO_DISABLE: "1"
-          # Result: 75.74 TFLOPS, 5.57 GiB (6%) (job 307431)
-
-        - aux.compile_tag: compile
-          backend.titan.activation_checkpoint.mode: none
-          backend.titan.training.local_batch_size: 1
-          # Result: 71.18 TFLOPS, 5.57 GiB (6%) (job 307444)
-
-        # ── larger batches (huge memory headroom: bs=4 only 20% of 95 GiB) ───
-        - aux.compile_tag: compile
-          backend.titan.activation_checkpoint.mode: none
-          backend.titan.training.local_batch_size: 2
-          # Result: 122.37 TFLOPS, 10.10 GiB (11%) (job 307430)
-
-        - aux.compile_tag: compile
-          backend.titan.activation_checkpoint.mode: none
-          backend.titan.training.local_batch_size: 4
-          # Result: 192.59 TFLOPS, 19.15 GiB (20%) (job 307446)
-
+        # NOTE: Jobs 307466-307468 (original sweep) are INVALID — ran with buggy
+        # titan_custom_config.py (wrong import). Results to be filled in after re-run.
         - aux.compile_tag: compile
           backend.titan.activation_checkpoint.mode: none
           backend.titan.training.local_batch_size: 8
-          # Result: 216.50 TFLOPS, 37.31 GiB (39%) (job 307468)
 
         - aux.compile_tag: compile
           backend.titan.activation_checkpoint.mode: none
           backend.titan.training.local_batch_size: 16
-          # Result: 251.95 TFLOPS, 73.91 GiB (78%) (job 307466) ← OPTIMAL
 
         - aux.compile_tag: compile
           backend.titan.activation_checkpoint.mode: none
           backend.titan.training.local_batch_size: 32
-          # Result: OOM (job 307467)

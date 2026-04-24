@@ -194,9 +194,6 @@ def main(argv: list[str] | None = None) -> None:
         subset_indices=subset_indices or None,
     )
 
-    if args.dry_run:
-        exit(0)
-
     _write_job_provenance(
         plan,
         args=args,
@@ -204,7 +201,12 @@ def main(argv: list[str] | None = None) -> None:
         overrides=args.overrides,
     )
 
-    res = submit_jobs(plan, no_error_catching=args.debug, local_mode=args.local)
+    res = submit_jobs(
+        plan, no_error_catching=args.debug, local_mode=args.local, dry_run=args.dry_run
+    )
+
+    if args.dry_run:
+        return
 
     if args.no_monitor:
         exit(0)

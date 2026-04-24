@@ -34,6 +34,7 @@ from oellm_autoexp.config.schema import (
     PostProcessStepInterface,
     ContainerConfig,
 )
+from oellm_autoexp.slurm_gen.generator import generate_script
 
 
 LOGGER = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ def submit_jobs(
     session_id: str | None = None,
     no_error_catching: bool = False,
     local_mode: bool = False,
+    dry_run: bool = False,
 ) -> SubmissionResult:
     store, session_id = _ensure_state_store(plan, session_id=session_id)
     client = slurm_client or SlurmClient(SlurmClientConfig())
@@ -111,6 +113,11 @@ def submit_jobs(
     submitted_job_ids: list[str] = []
     for job in plan.jobs:
         record = _build_job_record(plan, job, session_id, local_mode=local_mode)
+
+        if dry_run and isinstance(record.definition, SlurmJobConfig):
+            path = generate_script(record.definition.slurm)
+            LOGGER.info("DRY RUN - Generated batch script: %s", path)
+            # TODO: Might aswell validate the job script and therein megatron arguments here
         store.upsert(record)
         submitted_job_ids.append(record.job_id)
 
@@ -296,7 +303,6 @@ def _build_job_record(
         slurm=slurm_config,
         base_config=job,
     )
-
     return JobRecordConfig(
         job_id=job_id,
         definition=definition,
@@ -309,6 +315,8 @@ def _build_container_exec_prefix(container: ContainerConfig) -> str:
     for k, v in container.env.items():
         parts.append(f"--env {shlex.quote(f'{k}={v}')}")
     parts += ["--nv", "--writable-tmpfs"]
+    if container.pwd:
+        parts.append(f"--pwd {shlex.quote(container.pwd)}")
     for bind in container.bind:
         parts.append(f"--bind {bind}")
     parts.append(shlex.quote(container.image))

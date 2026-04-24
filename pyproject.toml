@@ -30,6 +30,10 @@ megatron = [
   "six"
 ]
 
+titan = [
+  "torch",
+]
+
 dev = [
   "pytest>=7.4",
   "pytest-asyncio>=0.21",
@@ -55,6 +59,7 @@ ignore = ["E203"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=oellm_autoexp --cov-report=term-missing -q"
+norecursedirs = ["tests/monitor/tests", "tests/monitor/src"]
 
 [tool.flake8]
 ignore = "E203,W503"
