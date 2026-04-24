@@ -17,6 +17,11 @@ Single-dataset usage:
   --coactivation-output results/c4_coactivation.json \
   --expert-token-distribution-output results/c4_expert_token_dist.json
 
+Multi-process data-parallel (full model replica per rank; ``torchrun`` sets ``WORLD_SIZE``>1):
+    torchrun --standalone --nproc_per_node=4 python scripts/compute_moe_metrics_hf.py \\
+      --no-device-map --model-name Qwen/Qwen3-30B-A3B ... \\
+      # Requires enough VRAM per GPU for the entire checkpoint; batches are strided across ranks.
+
 Multi-dataset usage (one model load, N datasets, combined outputs):
     python scripts/compute_moe_metrics_hf.py \
   --model-name Qwen/Qwen3-30B-A3B \
@@ -143,6 +148,99 @@ class RouterMetricsCollector:
                 "expert_coactivation": coactivation_rate,
             }
         return results
+
+    def pack_for_distributed(self) -> Dict[str, Any]:
+        """CPU snapshot of GPU accumulators for ``torch.distributed.all_gather_object``."""
+        packed: Dict[str, Any] = {}
+        for name in self._batch_counts:
+            packed[name] = {
+                "batches": int(self._batch_counts[name]),
+                "sat_sum": self._saturation_sums[name].detach().float().cpu(),
+                "coact": self._coact_sums[name].detach().float().cpu(),
+                "single": self._single_sums[name].detach().float().cpu(),
+            }
+        return packed
+
+    def import_merged_state(self, merged: Dict[str, Any]) -> None:
+        """Replace accumulators from a global merge (CPU float tensors); then call ``finalize()``."""
+        self._batch_counts.clear()
+        self._saturation_sums.clear()
+        self._coact_sums.clear()
+        self._single_sums.clear()
+        self.coactivation_sums.clear()
+        self.single_counts.clear()
+        for name, v in merged.items():
+            self._batch_counts[name] = int(v["batches"])
+            self._saturation_sums[name] = v["sat_sum"].clone()
+            self._coact_sums[name] = v["coact"].clone()
+            self._single_sums[name] = v["single"].clone()
+
+
+def merge_router_collector_packed_states(
+    packed_per_rank: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Sum per-rank MoE statistics into one packed dict (CPU tensors, integer batch counts)."""
+    merged: Dict[str, Any] = {}
+    for rank_payload in packed_per_rank:
+        if not rank_payload:
+            continue
+        for name, v in rank_payload.items():
+            if name not in merged:
+                merged[name] = {
+                    "batches": 0,
+                    "sat_sum": v["sat_sum"].clone(),
+                    "coact": v["coact"].clone(),
+                    "single": v["single"].clone(),
+                }
+            else:
+                m = merged[name]
+                m["batches"] += int(v["batches"])
+                m["sat_sum"] = m["sat_sum"] + v["sat_sum"]
+                m["coact"] = m["coact"] + v["coact"]
+                m["single"] = m["single"] + v["single"]
+    return merged
+
+
+def _maybe_init_distributed() -> tuple[bool, int, int, int]:
+    """Return ``(use_ddp, rank, world_size, local_rank)`` for ``torchrun`` / SLURM multi-proc.
+
+    Initializes ``torch.distributed`` when ``WORLD_SIZE > 1``. Uses ``nccl`` when CUDA is
+    available, otherwise ``gloo`` (CPU-only smoke tests). Rank and world size are taken
+    from the process environment (``torchrun`` sets ``MASTER_ADDR`` / ``MASTER_PORT`` / ``RANK``).
+    """
+    ws = int(os.environ.get("WORLD_SIZE", "1"))
+    if ws <= 1:
+        return False, 0, 1, 0
+
+    import torch.distributed as dist
+
+    if dist.is_initialized():
+        rank = dist.get_rank()
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+        return True, rank, dist.get_world_size(), local_rank
+
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    if torch.cuda.is_available():
+        torch.cuda.set_device(local_rank)
+        backend = "nccl"
+    else:
+        backend = "gloo"
+
+    dist.init_process_group(backend=backend)
+    return True, dist.get_rank(), dist.get_world_size(), local_rank
+
+
+def _distributed_merge_collectors(collector: RouterMetricsCollector) -> None:
+    """In-place: replace ``collector`` accumulators with global sums over ranks."""
+    import torch.distributed as dist
+
+    if not dist.is_initialized():
+        return
+    local = collector.pack_for_distributed()
+    gathered: List[Any] = [None for _ in range(dist.get_world_size())]
+    dist.all_gather_object(gathered, local)
+    merged = merge_router_collector_packed_states(gathered)
+    collector.import_merged_state(merged)
 
 
 # Sparse-MoE class names that follow the Mixtral-style interface:
@@ -758,6 +856,14 @@ def _build_expert_distribution_layers(
     return layers_out
 
 
+def _infer_input_device(model) -> torch.device:
+    """Device for token ids / attention_mask when using HF accelerate ``device_map``."""
+    device = getattr(model, "device", None)
+    if device is not None:
+        return device if isinstance(device, torch.device) else torch.device(device)
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 def run_one_dataset(
     *,
     model,
@@ -768,6 +874,10 @@ def run_one_dataset(
     max_length: int,
     local_files_only: bool,
     dataset_cache_dir: Optional[str],
+    pad_to_multiple_of: Optional[int],
+    ddp_rank: int = 0,
+    ddp_world_size: int = 1,
+    show_progress: bool = True,
 ) -> tuple[RouterMetricsCollector, dict]:
     """Run inference for one dataset spec on the already-loaded model.
 
@@ -818,21 +928,40 @@ def run_one_dataset(
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
+    input_device = _infer_input_device(model)
+    tok_kw: Dict[str, Any] = {
+        "return_tensors": "pt",
+        "padding": True,
+        "truncation": True,
+        "max_length": max_length,
+    }
+    if pad_to_multiple_of is not None and pad_to_multiple_of > 0:
+        tok_kw["pad_to_multiple_of"] = pad_to_multiple_of
+
     try:
         total_items = min(len(texts), effective_num_batches * batch_size)
-        batch_starts = range(0, total_items, batch_size)
-        with torch.no_grad():
-            for i in tqdm(
-                batch_starts, total=effective_num_batches, desc=f"[{spec.label}]", leave=False
+        batch_starts = list(range(0, total_items, batch_size))
+        local_batch_starts = [
+            i
+            for batch_idx, i in enumerate(batch_starts)
+            if ddp_world_size <= 1 or (batch_idx % ddp_world_size == ddp_rank)
+        ]
+        # Full-sequence forwards only: disable KV cache to cut memory traffic and work
+        # tied to returning/storing past_key_values when not generating.
+        with torch.inference_mode():
+            for batch_idx, i in enumerate(
+                tqdm(
+                    local_batch_starts,
+                    total=len(local_batch_starts),
+                    desc=f"[{spec.label}]",
+                    leave=False,
+                    disable=not show_progress,
+                )
             ):
                 batch_texts = texts[i : i + batch_size]
-                inputs = tokenizer(
-                    batch_texts,
-                    return_tensors="pt",
-                    padding=True,
-                    truncation=True,
-                    max_length=max_length,
-                ).to(model.device)
+                inputs = tokenizer(batch_texts, **tok_kw).to(
+                    input_device, non_blocking=True
+                )
 
                 if inputs["input_ids"].shape[1] == 0:
                     continue
@@ -840,7 +969,11 @@ def run_one_dataset(
                 if model_type == "olmoe":
                     olmoe_inputs = dict(inputs)
                     olmoe_inputs.pop("attention_mask", None)
-                    outputs = model(**olmoe_inputs, output_router_logits=True)
+                    outputs = model(
+                        **olmoe_inputs,
+                        output_router_logits=True,
+                        use_cache=False,
+                    )
                     router_logits = getattr(outputs, "router_logits", None)
                     if router_logits is None and isinstance(outputs, dict):
                         router_logits = outputs.get("router_logits")
@@ -851,10 +984,10 @@ def run_one_dataset(
                         topk=topk,
                     )
                 else:
-                    _ = model(**inputs)
+                    _ = model(**inputs, use_cache=False)
 
-                if (i // batch_size + 1) % 10 == 0:
-                    print(f"[{spec.label}]   Processed {i // batch_size + 1} batches")
+                if show_progress and (batch_idx + 1) % 10 == 0:
+                    print(f"[{spec.label}]   Processed {batch_idx + 1} local batches (rank {ddp_rank})")
     finally:
         for hook in hooks:
             hook.remove()
@@ -928,8 +1061,43 @@ def main():
     parser.add_argument("--no-local-files-only", action="store_true", help="Allow downloading from HuggingFace (default: offline)")
     parser.add_argument("--device", type=str, default="cuda", help="Device (ignored if device-map=auto)")
     parser.add_argument("--no-device-map", action="store_true", help="Disable accelerate device_map='auto'")
+    parser.add_argument(
+        "--attn-implementation",
+        type=str,
+        default="sdpa",
+        metavar="NAME",
+        help=(
+            "Transformers attention backend (passed to from_pretrained). "
+            "'sdpa' uses PyTorch scaled-dot-product attention (usually faster than eager on PT 2.x). "
+            "Use 'eager' if load or forward fails on your stack. "
+            "'flash_attention_2' requires flash-attn and compatible hardware."
+        ),
+    )
+    parser.add_argument(
+        "--pad-to-multiple-of",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "If set, pad sequences to a multiple of N (tokenizer pad_to_multiple_of). "
+            "Can improve matmul efficiency but adds pad tokens that still participate in MoE routing, "
+            "so router metrics may shift slightly vs unpadded runs."
+        ),
+    )
+    parser.add_argument(
+        "--ddp-disable",
+        action="store_true",
+        help=(
+            "Ignore multi-process launch (WORLD_SIZE>1) and run as a single process. "
+            "Use if WORLD_SIZE is set in the environment for unrelated reasons."
+        ),
+    )
 
     args = parser.parse_args()
+
+    use_ddp, ddp_rank, ddp_world_size, ddp_local_rank = (False, 0, 1, 0)
+    if not args.ddp_disable:
+        use_ddp, ddp_rank, ddp_world_size, ddp_local_rank = _maybe_init_distributed()
 
     if args.batch_size <= 0:
         raise ValueError("--batch-size must be > 0")
@@ -937,58 +1105,113 @@ def main():
         raise ValueError("--num-batches must be > 0 when provided")
 
     dataset_specs = _parse_dataset_specs(args)
-    print(f"Configured {len(dataset_specs)} dataset(s):")
-    for spec in dataset_specs:
-        print(
-            f"  - {spec.label}: dataset={spec.dataset} dataset_path={spec.dataset_path} "
-            f"config={spec.dataset_config} split={spec.dataset_split} "
-            f"text_field={spec.dataset_text_field} percentage={spec.dataset_percentage} "
-            f"num_batches={spec.num_batches} seed={spec.seed}"
-        )
+    if ddp_rank == 0:
+        print(f"Configured {len(dataset_specs)} dataset(s):")
+        for spec in dataset_specs:
+            print(
+                f"  - {spec.label}: dataset={spec.dataset} dataset_path={spec.dataset_path} "
+                f"config={spec.dataset_config} split={spec.dataset_split} "
+                f"text_field={spec.dataset_text_field} percentage={spec.dataset_percentage} "
+                f"num_batches={spec.num_batches} seed={spec.seed}"
+            )
+        if use_ddp:
+            print(
+                f"Distributed data-parallel inference: world_size={ddp_world_size} "
+                f"(strided batch split; full replica per rank). Requires --no-device-map and enough "
+                f"VRAM per GPU for the whole model."
+            )
 
     local_files_only = not args.no_local_files_only
     if local_files_only:
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
         os.environ["HF_DATASETS_OFFLINE"] = "1"
-        print("Offline mode enabled: HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1")
+        if ddp_rank == 0:
+            print("Offline mode enabled: HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1")
 
     model_source = _resolve_model_source(args.model_name, local_files_only)
-    if model_source != args.model_name:
+    if model_source != args.model_name and ddp_rank == 0:
         print(f"Resolved cached local model path: {model_source}")
 
-    print(f"Loading model: {args.model_name}")
+    if ddp_rank == 0:
+        print(f"Loading model: {args.model_name}")
+
+    # Prefer fast SDP kernels where the backend exposes them (CUDA/HIP builds often do).
+    if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "sdp"):
+        sdp = torch.backends.cuda.sdp
+        for fn_name in ("enable_flash_sdp", "enable_mem_efficient_sdp", "enable_math_sdp"):
+            fn = getattr(sdp, fn_name, None)
+            if callable(fn):
+                fn(True)
+
+    def _model_load_kw(include_attn: bool) -> dict:
+        kw: Dict[str, Any] = {
+            "torch_dtype": torch.bfloat16,
+            "trust_remote_code": True,
+            "local_files_only": local_files_only,
+        }
+        if include_attn and args.attn_implementation:
+            kw["attn_implementation"] = args.attn_implementation
+        elif not include_attn:
+            # Second attempt: force eager so we do not silently re-use config.json default
+            # (often still "sdpa") after a failed sdpa load.
+            kw["attn_implementation"] = "eager"
+        return kw
 
     use_device_map = not args.no_device_map
-    if use_device_map:
+    if use_ddp:
+        if use_device_map and ddp_rank == 0:
+            print(
+                "Warning: DDP mode forces single-GPU replica per rank; ignoring device_map='auto' "
+                "(use --no-device-map explicitly to silence)."
+            )
+        use_device_map = False
+
+    infer_device = args.device
+    if use_ddp and torch.cuda.is_available():
+        infer_device = f"cuda:{ddp_local_rank}"
+
+    model: torch.nn.Module
+    for include_attn in (True, False):
         try:
+            if use_device_map:
+                try:
+                    model = AutoModelForCausalLM.from_pretrained(
+                        model_source,
+                        device_map="auto",
+                        low_cpu_mem_usage=True,
+                        **_model_load_kw(include_attn),
+                    )
+                    if ddp_rank == 0:
+                        print("Model loaded with automatic device placement across available GPUs")
+                    break
+                except (ImportError, ValueError) as e:
+                    if ddp_rank == 0:
+                        print(
+                            f"Warning: device_map='auto' failed ({e}). "
+                            "Install accelerate or use --no-device-map."
+                        )
+                        print("Falling back to single device (may OOM for large models)...")
+                    use_device_map = False
+
             model = AutoModelForCausalLM.from_pretrained(
                 model_source,
-                torch_dtype=torch.bfloat16,
-                trust_remote_code=True,
-                local_files_only=local_files_only,
-                device_map="auto",
-                low_cpu_mem_usage=True,
+                **_model_load_kw(include_attn),
             )
-            print("Model loaded with automatic device placement across available GPUs")
-        except (ImportError, ValueError) as e:
-            print(f"Warning: device_map='auto' failed ({e}). Install accelerate or use --no-device-map.")
-            print("Falling back to single device (may OOM for large models)...")
-            model = AutoModelForCausalLM.from_pretrained(
-                model_source,
-                torch_dtype=torch.bfloat16,
-                trust_remote_code=True,
-                local_files_only=local_files_only,
-            )
-            model = model.to(args.device)
-    else:
-        model = AutoModelForCausalLM.from_pretrained(
-            model_source,
-            torch_dtype=torch.bfloat16,
-            trust_remote_code=True,
-            local_files_only=local_files_only,
-        )
-        model = model.to(args.device)
+            model = model.to(infer_device)
+            break
+        except Exception as e:
+            if include_attn:
+                if ddp_rank == 0:
+                    print(
+                        f"Warning: model load failed with attn_implementation="
+                        f"{args.attn_implementation!r} ({type(e).__name__}: {e}). Retrying without that kwarg."
+                    )
+            else:
+                raise
+
+    if hasattr(model.config, "use_cache"):
+        model.config.use_cache = False
 
     model.eval()
 
@@ -1001,7 +1224,8 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
 
     model_type = get_model_type(model)
-    print(f"Detected model type: {model_type}")
+    if ddp_rank == 0:
+        print(f"Detected model type: {model_type}")
 
     plot_dir: Optional[Path] = None
     if args.plot:
@@ -1019,7 +1243,8 @@ def main():
     per_dataset: Dict[str, dict] = {}
     collectors: Dict[str, RouterMetricsCollector] = {}
     for spec in dataset_specs:
-        print(f"\n=== Dataset '{spec.label}' ===")
+        if ddp_rank == 0:
+            print(f"\n=== Dataset '{spec.label}' ===")
         try:
             collector, metadata = run_one_dataset(
                 model=model,
@@ -1030,10 +1255,15 @@ def main():
                 max_length=args.max_length,
                 local_files_only=local_files_only,
                 dataset_cache_dir=args.dataset_cache_dir,
+                pad_to_multiple_of=args.pad_to_multiple_of,
+                ddp_rank=ddp_rank,
+                ddp_world_size=ddp_world_size,
+                show_progress=(ddp_rank == 0),
             )
         except Exception as exc:
             status = f"error: {type(exc).__name__}: {exc}"
-            print(f"[{spec.label}] {status}")
+            if ddp_rank == 0:
+                print(f"[{spec.label}] {status}")
             per_dataset[spec.label] = {
                 "status": status,
                 "dataset": spec.dataset,
@@ -1049,6 +1279,14 @@ def main():
             }
             continue
 
+        if use_ddp:
+            _distributed_merge_collectors(collector)
+            metadata = {
+                **metadata,
+                "ddp_world_size": ddp_world_size,
+                "ddp_batch_striding": f"batch_idx % {ddp_world_size} == rank",
+            }
+
         results = collector.finalize()
         per_dataset[spec.label] = {
             "status": "ok",
@@ -1057,7 +1295,7 @@ def main():
         }
         collectors[spec.label] = collector
 
-        if plot_dir is not None and collector.coactivation_sums:
+        if plot_dir is not None and collector.coactivation_sums and ddp_rank == 0:
             print(f"[{spec.label}] Generating co-activation plots in {plot_dir}...")
             plot_coactivation_heatmaps(
                 collector.coactivation_sums,
@@ -1074,15 +1312,17 @@ def main():
         "coactivation_mode": "pairwise-adjacent",
         "datasets": per_dataset,
     }
-    print("\nResults:")
-    print(json.dumps(output_data, indent=2))
+    if ddp_rank == 0:
+        print("\nResults:")
+        print(json.dumps(output_data, indent=2))
 
-    output_path = Path(args.output_json)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(output_data, indent=2))
-    print(f"\nSaved saturation results to: {output_path}")
+    if ddp_rank == 0:
+        output_path = Path(args.output_json)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(output_data, indent=2))
+        print(f"\nSaved saturation results to: {output_path}")
 
-    if args.coactivation_output:
+    if args.coactivation_output and ddp_rank == 0:
         top_n = args.coactivation_top_n
         coactivation_summary: Dict[str, Any] = {
             "schema": "moe_coactivation_multi_dataset_v1",
@@ -1116,7 +1356,7 @@ def main():
         coact_path.write_text(json.dumps(coactivation_summary, indent=2))
         print(f"Saved co-activation results to: {coact_path}")
 
-    if args.expert_token_distribution_output:
+    if args.expert_token_distribution_output and ddp_rank == 0:
         dist_payload: Dict[str, Any] = {
             "schema": "expert_token_distribution_v2",
             "description": (
@@ -1154,6 +1394,13 @@ def main():
         dist_path.parent.mkdir(parents=True, exist_ok=True)
         dist_path.write_text(json.dumps(dist_payload, indent=2))
         print(f"Saved expert token distribution results to: {dist_path}")
+
+    if use_ddp:
+        import torch.distributed as dist
+
+        if dist.is_initialized():
+            dist.barrier()
+            dist.destroy_process_group()
 
 
 if __name__ == "__main__":

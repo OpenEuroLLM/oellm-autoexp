@@ -1,6 +1,14 @@
 # @package _global_
 # HuggingFace MoE router metrics on LUMI (single Python process inside Singularity).
 #
+# Throughput (single node): the script uses SDPA attention, KV-cache off for full-sequence
+# forwards, and non_blocking H2D copies. If sdpa fails on your image, pass
+# --attn-implementation eager in base_command.
+#
+# VRAM: with use_cache=False, activations are small vs total HBM on 4×MI325X; low % usage
+# usually means batch is too small. Increase --batch-size until you approach ~70–85% HBM
+# or hit OOM, then back off one step (watch --max-length; long seq scales VRAM ~linearly).
+#
 # Prereqs:
 #   - Qwen3-30B-A3B weights + tokenizer in HF cache (script defaults to offline mode), or pass
 #     --no-local-files-only via backend.extra_cli_args from the CLI.
@@ -19,13 +27,17 @@
 defaults:
   - ../base
   - /backend: null
-  - /container: lumi
-  - /slurm: lumi
+  - /container: mi325x
+  - /slurm: mi325x
   - /sweep: none
   - _self_
 
 job:
   name: moe_metrics_hf_qwen3_30b_a3b_lumi
+  # Unique run directory so metrics JSON and slurm logs are never clobbered by a rerun.
+  # Keep schema-compatible by not introducing new ``job`` keys (the dataclass is strict).
+  # ``oc.concat`` is binary only; nest joins to append "/<job_id-or-timestring>".
+  base_output_dir: ${oc.concat:${oc.concat:${oc.env:OUTPUT_DIR,"./output"}/,${job.name}},${oc.concat:/,${oc.env:SLURM_JOB_ID,${oc.timestring:}}}}
 
 # Default LUMI slurm uses ntasks_per_node=8 (Megatron ranks). This job is one HF process using
 # device_map="auto" across all GPUs in the allocation — use a single task.
@@ -58,18 +70,23 @@ backend:
   # quotes: `"{\"key\":\"value\"}"`. The YAML single-quoted scalars below preserve
   # backslashes verbatim, which is exactly what bash needs to see.
   base_command:
-    - python3
+    - torchrun --nproc_per_node=4
     - scripts/compute_moe_metrics_hf.py
     - --model-name
     - Qwen/Qwen3-30B-A3B
+    # Default raised from 4: MoE metrics are forward-only + no KV cache; HBM stays mostly
+    # weights unless batch×seq is large. Tune up/down if you OOM or still see low util.
     - --batch-size
-    - "4"
+    - "32"
+    - --no-local-files-only
+    - --attn-implementation
+    - sdpa
     - --max-length
-    - "2048"
+    - "8192"
     - --seed
     - "1234"
-    - --num-batches
-    - "200"
+    # - --num-batches
+    # - "200"
     # Pre-processed per-language jsonl shards under parallel_data_samples/<lang>/0.jsonl
     # (each language directory is fed to --dataset-path, which picks up *.jsonl shards).
     - --dataset-entry
