@@ -5,8 +5,8 @@ num_workers: 32 # TODO
 split: '99,1,0'
 create_attention_mask_in_dataloader: False # check effect at larger scale?
 
+# Data paths
 data_args_path: /gpfs/projects/ehpc533/data_utils/datamix-tools/datamix-tools/output/1TT-option-4.sh
-data_cache_path: /gpfs/projects/ehpc533/users/diana/MEGATRON_262k
 
 # Tokenizer
 tokenizer_type: HuggingFaceTokenizer

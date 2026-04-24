@@ -10,24 +10,27 @@ defaults:
   - /job: auto_restart
   - /sweep: none
   - /backend/megatron: base
-  - /experiments/diana/models: dense_qwen3_0.1B_ne
-  - /experiments/diana/data: oellm_256k
+  - /experiments/diana/models: dense_qwen3_0.1B_ne # model configs
+  - /experiments/diana/data: oellm_256k # data configs
   - _self_
 
 index: 0
 stage: ""
 
 job:
-  name: "dense_multilingual_qwen3_0.1B_ne_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_${stage}"
+  name: "" # Will be overridden by sweep with stage and hyperparameter info
   base_output_dir: "/gpfs/projects/ehpc533/multilingual_scaling/dense_multilingual_qwen3_0.1B_ne/training/${job.name}"
 
 backend:
   megatron:
-    wandb_exp_name: "${job.name}"
+    wandb_exp_name: "" # Will be overridden by sweep with stage and hyperparameter info
     wandb_project: dense_multilingual_scaling
     wandb_entity: openeurollm-project
     wandb_save_dir: "${job.base_output_dir}"
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    # DATA
+    data_cache_path: /gpfs/projects/ehpc533/users/diana/MEGATRON_262k
 
     # Base training configuration (for stable phase)
     micro_batch_size: 8
@@ -37,6 +40,9 @@ backend:
 slurm:
   sbatch:
     nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
+    qos: acc_ehpc
+    account: ehpc715
+    time: "72:00:00"
 
 # COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE
 sweep:

@@ -1,21 +1,21 @@
 # @package backend.megatron
 
-# 0.1B NE dense Qwen3-like model
+# 0.4B NE dense Qwen3-like model
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 # MODEL
-num_layers: 16
-hidden_size: 512
-ffn_hidden_size: 1536
+num_layers: 28
+hidden_size: 1024
+ffn_hidden_size: 3072
 kv_channels: 128
 swiglu: True
 add_bias_linear: False
 init_method_std: 0.02
 
 # Attention
-num_attention_heads: 8
-num_query_groups: 1
-group_query_attention: False
+num_attention_heads: 16
+num_query_groups: 8
+group_query_attention: True
 attention_softmax_in_fp32: False # OpenSci style
 use_flash_attn: True
 

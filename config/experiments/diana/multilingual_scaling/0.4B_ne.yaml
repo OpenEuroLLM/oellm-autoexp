@@ -1,171 +1,48 @@
 # @package _global_
 
-# 0.9B NE dense Qwen3-like model training with pull-based multi-stage cooldown on Leonardo
+# 0.4B NE dense Qwen3-like model training with pull-based multi-stage cooldown on Leonardo
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 defaults:
   - /backend: megatron_torchrun
-  - /container: leonardo
-  - /slurm: leonardo
+  - /container: marenostrum
+  - /slurm: marenostrum
   - /job: auto_restart
   - /sweep: none
   - /backend/megatron: base
+  - /experiments/diana/models: dense_qwen3_0.4B_ne # model configs
+  - /experiments/diana/data: oellm_256k # data configs
   - _self_
 
 index: 0
 stage: ""
 
 job:
-  name: "dense_qwen3_0.9B_ne_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_${stage}"
-  base_output_dir: "outputs/multilingual_scaling/dense_qwen3_0.9B_ne/training/${job.name}"
+  name: "" # Will be overridden by sweep with stage and hyperparameter info
+  base_output_dir: "outputs/multilingual_scaling/dense_qwen3_0.4B_ne/training/${job.name}"
 
 backend:
   megatron:
-    wandb_exp_name: "${job.name}"
+    wandb_exp_name: "" # Will be overridden by sweep with stage and hyperparameter info
     wandb_project: dense_multilingual_scaling
     wandb_entity: openeurollm-project
     wandb_save_dir: "${job.base_output_dir}"
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
     # DATA
-    data_path: [
-      /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-LUMI-sample-318BT/high-all,
-    ]
-    data_cache_path: /leonardo_scratch/large/userexternal/donutu00/MEGATRON_CACHEDIR
-    seq_length: 4096
-    max_position_embeddings: 4096
-
-    vocab_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/vocab.json
-    merge_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/merges.txt
-    num_workers: 8
-    split: '99,1,0'
-    dataloader_type: "cyclic"
-    legacy_tokenizer: True
-
-    # MODEL: 0.9B NE
-    num_layers: 28
-    hidden_size: 1536
-    ffn_hidden_size: 4608
-    num_attention_heads: 16
-    num_query_groups: 8
-    group_query_attention: True
-    kv_channels: 128
-    init_method_std: 0.02
-    position_embedding_type: "rope"
-    rotary_base: 10000
-    rotary_percent: 1.0
-    attention_dropout: 0.0
-    hidden_dropout: 0.0
-    normalization: RMSNorm
-    norm_epsilon: 1.e-5 # rmsnorm epsilon
-    qk_layernorm: True # enable qk-norm
-    bf16: True
-    swiglu: True
-    untie_embeddings_and_output_weights: False
-    use_flash_attn: True
-    attention_softmax_in_fp32: False # OpenSci style
-    add_bias_linear: False
-
-
-    # TRAINING, PARALLELISM
-    recompute_activations: False
-    use_torch_fsdp2: False # it's either this or the next 4 args
-    tensor_model_parallel_size: 1
-    pipeline_model_parallel_size: 1
-    context_parallel_size: 1
-    sequence_parallel: True
-
-    distributed_backend: nccl
-    distributed_timeout_minutes: 10
-
-    # DISTRIBUTED OPTIM
-    use_distributed_optimizer: True
-
-    # OPTIMIZER
-    optimizer: adam
-    adam_beta1: 0.9
-    adam_beta2: 0.95
-    adam_eps: 1.e-8
-    clip_grad: 1.0
-    weight_decay: 0.1
-
-    # SCHEDULER
-    min_lr: 0.0
-    lr_decay_style: WSD
-    lr_wsd_decay_style: linear
-    lr_warmup_iters: 2000 # Fixed for all.
-
-    # PROFILE
-    profile: False
-    use_pytorch_profiler: False
-    profile_ranks: [0]
-    profile_step_start: 5
-    profile_step_end: 12
-
-    # EVALS
-    # Eval interval scales inversely with global batch size,
-    # calibrated so that gbsz=1024 evals every 200 iterations.
-    eval_interval: "${oc.eval:'int(204800 // ${backend.megatron.global_batch_size})'}"
-    eval_iters: 100
-
-    # LOGGING
-    log_interval: 10
-    log_progress: True
-    log_throughput: True
-    tensorboard_queue_size: 5
-    log_timers_to_tensorboard: True
-
-    # CHECKPOINT FORMAT
-    ckpt_format: "torch_dist"
-    # Checkpoint interval scales inversely with global batch size,
-    # calibrated so that gbsz=1024 saves every 500 iterations.
-    save_interval: "${oc.eval:'int(512000 // ${backend.megatron.global_batch_size})'}"
-    save: ${job.base_output_dir}/checkpoints
-
-    # Extra checkpoints at decay branching points.
-    # References aux.save_step_* scalars, which are overridden per stable phase in the sweep.
-    # Scalar overrides avoid Hydra's list-override parser which can't handle oc.eval expressions.
-    # Unused slots default to 999_999_999 (a sentinel that is never reached).
-    save_extra_steps:
-      - "${backend.megatron.aux.save_step_0}"
-      - "${backend.megatron.aux.save_step_1}"
-      - "${backend.megatron.aux.save_step_2}"
-      - "${backend.megatron.aux.save_step_3}"
-      - "${backend.megatron.aux.save_step_4}"
-      - "${backend.megatron.aux.save_step_5}" 
-      - "${backend.megatron.aux.save_step_6}"
-      - "${backend.megatron.aux.save_step_7}"
-      - "${backend.megatron.aux.save_step_8}"
+    data_cache_path: /gpfs/projects/ehpc533/users/diana/MEGATRON_262k
 
     # Base training configuration (for stable phase)
     micro_batch_size: 8
     global_batch_size: 64  # Will be overridden by sweep
     lr: 5.e-4  # Will be overridden by sweep
 
-    # Auxiliary computation variables
-    # Note: Computed fields (train_iters, lr_wsd_decay_iters, start_iter)
-    # are defined in the sweep defaults alongside the tokens they depend on,
-    # so they get resolved together with stage-specific values
-    aux:
-      tokens: 300_000_000_000  # Default: 300B tokens
-      decay_fraction: 0.0  # Default: no decay
-      start_iter: 0  # only used in decay
-      cooldown_decay_fraction: 0.2  # fraction of iters spent in LR decay during cooldown
-      # Decay branching checkpoints: overridden per stable phase in the sweep.
-      # Sentinel 999_999_999 is never reached, so unused slots produce no extra saves.
-      save_step_0: 999_999_999
-      save_step_1: 999_999_999
-      save_step_2: 999_999_999
-      save_step_3: 999_999_999
-      save_step_4: 999_999_999
-      save_step_5: 999_999_999      
-      save_step_6: 999_999_999
-      save_step_7: 999_999_999
-      save_step_8: 999_999_999
-
 slurm:
   sbatch:
     nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
+    qos: acc_ehpc
+    account: ehpc715
+    time: "72:00:00"
 
 # COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE
 sweep:
@@ -175,7 +52,7 @@ sweep:
   groups:
     - type: list
       configs:
-        - job.name: "dense_qwen3_0.9B_ne_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_\\${stage}"
+        - job.name: "dense_qwen3_0.4B_ne_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_\\${stage}"
           backend.megatron.wandb_exp_name: "\\${job.name}"
     
     # GROUP 1: Hyperparameter configurations (list of two product grids)

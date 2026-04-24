@@ -1,12 +1,12 @@
 # @package backend.megatron
 
-# 0.1B NE dense Qwen3-like model
+# 0.2B NE dense Qwen3-like model
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 # MODEL
-num_layers: 16
-hidden_size: 512
-ffn_hidden_size: 1536
+num_layers: 22
+hidden_size: 768
+ffn_hidden_size: 2304
 kv_channels: 128
 swiglu: True
 add_bias_linear: False
