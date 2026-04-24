@@ -39,6 +39,7 @@ stage: ""
 # sweep-overridable aux fields under backend.megatron.aux.
 
 job:
+<<<<<<< HEAD
   # job.name embeds an extra ${backend.megatron.aux.job_horizon_suffix} so that
   # stable jobs advertise their training horizon in the monitor state:
   #   decay: ..._decay12BT  (stage already carries the budget)
@@ -47,6 +48,9 @@ job:
   # is a no-op for decays and for any non-sweep invocation, preserving the old
   # naming for those. The stable stage in sweep Group 2 overrides it.
   name: "dense_130M_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_${stage}${backend.megatron.aux.job_horizon_suffix}"
+=======
+  name: "dense_130M_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_${stage}"
+>>>>>>> exp_diana
   base_output_dir: "results/dense_130M_lr_gbsz_tokens_grid/${job.name}"
 
 backend:

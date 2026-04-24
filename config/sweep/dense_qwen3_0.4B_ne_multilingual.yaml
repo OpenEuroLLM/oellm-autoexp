@@ -1,0 +1,108 @@
+# Outer level: product (combines hyperparameters × stages)
+type: product
+
+groups:
+  - type: list
+    configs:
+      - job.name: "dense_qwen3_0.4B_ne_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_\\${stage}"
+        backend.megatron.wandb_exp_name: "\\${job.name}"
+  
+  # GROUP 1: Hyperparameter configurations (list of two product grids)
+  - type: list
+    configs:
+      # Grid 1: XX configurations (X lr × X batch sizes)
+      - type: product
+        params:
+          ##### TO DO: Still have to be configured
+          backend.megatron.lr: [1.e-3]
+          backend.megatron.global_batch_size: [128]
+          # backend.megatron.lr: [5.e-4, 1.e-3, 2.e-3, 4.e-3, 8.e-3]
+          # backend.megatron.global_batch_size: [16, 32, 64, 128, 256, 512, 1024]
+
+  # GROUP 2: Multi-stage training (stable + cooldown/decay)
+  # Uses a nested structure with defaults for decay stages
+  - type: list
+    configs:
+      # STABLE PHASE: Train for 300B tokens with no decay
+      - stage: stable300BT
+
+        backend.megatron.aux.tokens: 300_000_000_000
+        # Computed fields using ESCAPED OmegaConf interpolations (\\$ prevents early resolution)
+        # These will be unescaped during sweep expansion and resolved with stage-specific values
+        backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.lr_wsd_decay_iters: 0  # No decay in stable phase
+        backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+        
+# Save checkpoints at the two decay branching points (6B, 12B)
+        backend.megatron.aux.save_step_0: "\\${oc.eval:'int(((6_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_1: "\\${oc.eval:'int(((12_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_2: "\\${oc.eval:'int(((20_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_3: "\\${oc.eval:'int(((30_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}" 
+        backend.megatron.aux.save_step_4: "\\${oc.eval:'int(((50_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_5: "\\${oc.eval:'int(((80_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_6: "\\${oc.eval:'int(((120_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_7: "\\${oc.eval:'int(((200_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_8: "\\${oc.eval:'int(((300_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+
+      # NESTED GROUP: Cooldown/decay stages with shared defaults
+      # All decay stages share: 20% decay, checkpoint loading, start/cancel conditions
+      - type: list
+        defaults:
+          # Common decay configuration
+          backend.megatron.aux.decay_fraction: 0.2
+
+          # Computed fields using ESCAPED OmegaConf interpolations (\\$ prevents early resolution)
+          # These will be unescaped during sweep expansion and resolved with stage-specific values (6B, 12B, 30B, 50B, 80B, 120B, 200B, 300B tokens)
+          # Each computation is self-contained (doesn't reference other computed values) to avoid ordering issues
+          backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+          backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
+          backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+
+          # Checkpoint loading configuration
+          backend.megatron.load: "\\${sibling.stable300BT.job.base_output_dir}/checkpoints"
+          backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter}"
+          backend.megatron.override_opt_param_scheduler: true
+
+          # Start conditions: wait for stable to reach checkpoint (new async approach)
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.stable300BT.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(\\${backend.megatron.aux.start_iter}).zfill(7)'}"
+
+          # Cancel conditions: cancel if stable job fails
+          job.cancel_condition:
+            class_name: LogPatternCondition
+            log_path: "\\${sibling.stable300BT.job.log_path_current}"
+            pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+        configs:
+          # Each decay stage only needs to specify its unique stage and tokens
+          - stage: decay6BT
+            backend.megatron.aux.tokens: 6_000_000_000
+          - stage: decay12BT
+            backend.megatron.aux.tokens: 12_000_000_000
+          - stage: decay20BT
+            backend.megatron.aux.tokens: 20_000_000_000
+          - stage: decay30BT
+            backend.megatron.aux.tokens: 30_000_000_000
+          - stage: decay50BT
+            backend.megatron.aux.tokens: 50_000_000_000
+          - stage: decay80BT
+            backend.megatron.aux.tokens: 80_000_000_000
+          - stage: decay120BT
+            backend.megatron.aux.tokens: 120_000_000_000
+          - stage: decay200BT
+            backend.megatron.aux.tokens: 200_000_000_000
+          - stage: decay300BT
+            backend.megatron.aux.tokens: 300_000_000_000
+
+# Filter out runs in which the warmup iters take more than 30% of total training iterations.
+filter: "\\${oc.eval:'\\${backend.megatron.lr_warmup_iters} / \\${backend.megatron.train_iters} < 0.3'}"
+
+### Initial number of configs
+# XX lr x XX batch sizes x (1 stable + 9 decay) = XX configs
+
+### Expected filtered out configs because of warmup iters > 30% of total iters: 
+# - 
+
+### Total expected filtered out configs: XX configs
+
+### Total expected generated configs = XX configs

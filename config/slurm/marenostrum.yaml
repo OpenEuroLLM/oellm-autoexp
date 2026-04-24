@@ -2,7 +2,6 @@ defaults:
   - base
   - _self_
 
-
 template_path: templates/marenostrum.sbatch
 
 launcher_cmd: "module load singularity ; \\\n\ 

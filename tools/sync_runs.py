@@ -13,6 +13,9 @@ Usage:
 
     # Specify results directory
     python sync_runs.py --folder moe_200MA50M_10BT --results-dir /path/to/results
+
+    # Upload to a specific wandb project
+    python sync_runs.py --folder moe_200MA50M_10BT --project my-project
 """
 
 import argparse
@@ -48,13 +51,19 @@ def find_offline_runs(base_path: Path, include_synced: bool = False) -> tuple[li
     return sorted(offline_runs), skipped
 
 
-def sync_run(offline_run_path: Path, dry_run: bool = False) -> bool:
+def sync_run(offline_run_path: Path, dry_run: bool = False, project: str | None = None) -> bool:
     """Sync a single wandb offline run."""
     # Remove trailing slash to avoid wandb CLI bug
     path_str = str(offline_run_path).rstrip("/")
 
     cmd = ["wandb", "sync", path_str]
+<<<<<<< HEAD:scripts/sync_runs.py
 
+=======
+    if project:
+        cmd += ["--project", project]
+    
+>>>>>>> exp_diana:tools/sync_runs.py
     if dry_run:
         print(f"[DRY RUN] Would execute: {' '.join(cmd)}")
         return True
@@ -106,7 +115,21 @@ def main():
     parser.add_argument(
         "--force", action="store_true", help="Re-sync runs even if they were already synced"
     )
+<<<<<<< HEAD:scripts/sync_runs.py
 
+=======
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-sync runs even if they were already synced"
+    )
+    parser.add_argument(
+        "--project", "-p",
+        default=None,
+        help="wandb project to upload runs to (e.g., my-project)"
+    )
+    
+>>>>>>> exp_diana:tools/sync_runs.py
     args = parser.parse_args()
 
     # Determine the base path to search
@@ -156,7 +179,7 @@ def main():
     fail_count = 0
 
     for offline_run in offline_runs:
-        success = sync_run(offline_run, dry_run=args.dry_run)
+        success = sync_run(offline_run, dry_run=args.dry_run, project=args.project)
         if success:
             success_count += 1
         else:
