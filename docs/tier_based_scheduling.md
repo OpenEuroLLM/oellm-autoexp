@@ -1,0 +1,346 @@
+# Tier-based scheduling across multiple invocations
+
+How to split a single sweep config into **prioritized, independently-launched
+subsets** without duplicating work or breaking `${sibling.*}` references.
+
+Worked example used throughout:
+`config/experiments/swagatam/multilingual_scaling/dense_130M_lr_gbsz_tokens_grid.yaml`.
+
+---
+
+## 1. Problem statement
+
+A multi-stage sweep (stable → decay) produces one big plan. When you launch
+it, every job is submitted at once — SLURM eventually orders them, but you
+have no lever to say "please run the 9 **center** decays first, then the 36
+**cross** decays, then the 36 **diagonals**."
+
+Goals:
+
+1. **Prioritize** some decays over others (center → cross → diagonal).
+2. Do this with **separate invocations** so each is a standalone script you
+   can queue or cancel independently.
+3. **Never duplicate the shared stables** (20 of them, shared across all
+   81 decays).
+4. Keep decays' `${sibling.stable.*}` references working even when stables
+   are launched by a *different* invocation.
+
+---
+
+## 2. The key insight: siblings resolve from the full plan, always
+
+```python
+# oellm_autoexp/orchestrator.py
+jobs = resolve_sweep_with_dag(
+    root,
+    points_by_idx,
+    config_setup=config_setup,
+    config_class=RootConfig,
+    full_points_by_idx=all_points_by_idx,   # <- always the full set
+)
+```
+
+And inside the resolver:
+
+```python
+# oellm_autoexp/hydra_staged_sweep/dag_resolver.py
+lookup_points = full_points_by_idx if full_points_by_idx is not None else points_dict
+sibling_index = _build_sibling_index(lookup_points)
+```
+
+So the sibling DAG is built over **every expanded sweep point**, regardless of
+which subset you intend to submit. The `sweep.filter` only runs *after* each
+point has been fully resolved (see `docs/sweep_resolution_ordering.md`).
+Consequently:
+
+- A decay point's `${sibling.stable.*}` interpolation resolves to the
+  stable's real, fully-materialised config even when the stable will be
+  filtered out of the submission list.
+- Filesystem paths (`job.base_output_dir`, `job.log_path_current`) are
+  deterministic functions of `job.name`, so they agree across invocations.
+
+Together these mean: if invocation A submits the stables and invocation B
+submits some decays, B's decays produce *exactly the same* `load=...`,
+`start_condition.path=...`, and `cancel_condition.log_path=...` strings they
+would have produced in a single combined run. Coordination is entirely via
+the shared filesystem.
+
+---
+
+## 3. The pattern: one YAML, one `priority_tier` variable
+
+### Top-level knob
+
+```yaml
+# at the top of the config, after `stage: ""`
+priority_tier: all   # overridden from the CLI
+```
+
+Valid values enumerate the sets you want to launch independently. For the
+`dense_130M_lr_gbsz_tokens_grid.yaml` example: `all`, `center`, `cross`,
+`diagonal`.
+
+### Per-combo tier membership
+
+Each Group-1 hyperparameter combo carries **one Python-set-literal string
+per tier**:
+
+```yaml
+- backend.megatron.lr: 1.e-3
+  backend.megatron.global_batch_size: 128
+  backend.megatron.aux.tokens: 300_000_000_000              # max_decay_tokens
+  backend.megatron.aux.center_tokens_set:   "set()"
+  backend.megatron.aux.cross_tokens_set:    "{12_000_000_000, 20_000_000_000, 30_000_000_000, 50_000_000_000}"
+  backend.megatron.aux.diagonal_tokens_set: "{80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
+```
+
+The three sets' union is the combo's full allowed decay set (what used to be
+`allowed_decay_tokens_set`). Using `"set()"` for empty — *not* `"{}"`, which
+is a dict literal in Python and breaks `set | dict` unions.
+
+### Tier-aware filter
+
+```yaml
+filter: "\\${oc.eval:'(
+    (\"\\${stage}\" == \"stable\" and \"\\${priority_tier}\" in {\"all\", \"center\"})
+    or
+    (\"\\${stage}\" != \"stable\" and (
+        (\"\\${priority_tier}\" == \"all\"
+            and \\${backend.megatron.aux.tokens} in
+                \\${backend.megatron.aux.center_tokens_set}
+                | \\${backend.megatron.aux.cross_tokens_set}
+                | \\${backend.megatron.aux.diagonal_tokens_set})
+        or (\"\\${priority_tier}\" == \"center\"
+            and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set})
+        or (\"\\${priority_tier}\" == \"cross\"
+            and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.cross_tokens_set})
+        or (\"\\${priority_tier}\" == \"diagonal\"
+            and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.diagonal_tokens_set})
+    ))
+)'}"
+```
+
+(Written on one line in the actual YAML; broken here for readability.)
+
+Reading it:
+
+- **Stables** survive the filter iff `priority_tier ∈ {"all", "center"}`.
+  This guarantees the 20 stables are launched by exactly one invocation.
+- **Decays** survive iff their `aux.tokens` sits in the tier's per-combo
+  set (for `tier=all`, the union of all three).
+
+Python precedence detail: `in` is a comparison (precedence lower than `|`),
+so `x in A | B | C` parses as `x in (A | B | C)`. That's what we want.
+`set() | {…}` is a no-op union, so empty-tier combos contribute nothing to
+either the per-tier check or the `all`-tier union.
+
+---
+
+## 4. Launch workflow
+
+```bash
+# 1) 20 stables + 9 center decays
+python scripts/run_autoexp.py \
+    --config-name=experiments/.../dense_130M_lr_gbsz_tokens_grid \
+    priority_tier=center
+
+# 2) 36 cross decays (waits on center's branching checkpoints)
+python scripts/run_autoexp.py \
+    --config-name=experiments/.../dense_130M_lr_gbsz_tokens_grid \
+    priority_tier=cross
+
+# 3) 36 diagonal decays (same)
+python scripts/run_autoexp.py \
+    --config-name=experiments/.../dense_130M_lr_gbsz_tokens_grid \
+    priority_tier=diagonal
+```
+
+Each invocation:
+
+- Expands the full sweep plan (200 points, always).
+- Applies the filter to pick its tier's subset (29 / 36 / 36 jobs).
+- Spawns its own orchestrator/monitor process.
+- Submits its jobs to SLURM (either immediately for stables and centers, or
+  waits on `FileExistsCondition` for cross/diagonal decays).
+
+You can launch all three in parallel — they operate on disjoint job-name
+sets and coordinate only through the shared `base_output_dir`.
+
+---
+
+## 5. Partition sanity check
+
+Per-tier counts for the 130M lr × gbsz × tokens sweep:
+
+| priority_tier | stable | decay | total |
+|---|---|---|---|
+| `all`      | 20 | 81 | 101 |
+| `center`   | 20 | 9  | 29  |
+| `cross`    | 0  | 36 | 36  |
+| `diagonal` | 0  | 36 | 36  |
+
+`29 + 36 + 36 = 101`, matching the default `all`. The three partitioned
+tiers are disjoint, so back-to-back submission of all three is bit-identical
+to a single `all` invocation (same jobs, same parameters, same checkpoints).
+
+Verification script:
+
+```python
+from types import SimpleNamespace
+import yaml
+from oellm_autoexp.hydra_staged_sweep.expander import expand_sweep
+
+with open("config/experiments/swagatam/multilingual_scaling/dense_130M_lr_gbsz_tokens_grid.yaml") as f:
+    cfg = yaml.safe_load(f)
+sw = cfg["sweep"]
+sw_obj = SimpleNamespace(type=sw["type"], groups=sw["groups"], filter=sw.get("filter"),
+                         base_values={}, list_composition=[])
+points = expand_sweep(sw_obj)  # -> 200
+
+def keep(params, tier):
+    stage = params["stage"]
+    tokens = int(params["backend.megatron.aux.tokens"])
+    c = eval(params["backend.megatron.aux.center_tokens_set"])
+    x = eval(params["backend.megatron.aux.cross_tokens_set"])
+    d = eval(params["backend.megatron.aux.diagonal_tokens_set"])
+    if stage == "stable":
+        return tier in {"all", "center"}
+    return tokens in {"all": c | x | d, "center": c, "cross": x, "diagonal": d}[tier]
+
+for tier in ("all", "center", "cross", "diagonal"):
+    n = sum(keep(p.parameters, tier) for p in points)
+    print(tier, n)
+```
+
+---
+
+## 6. How decay-stable coordination works across invocations
+
+A decay's config after resolution looks like:
+
+```yaml
+backend.megatron.load: "<base_output_dir_of_sibling_stable>/checkpoints"
+backend.megatron.ckpt_step: <start_iter>
+
+job.start_condition:
+  class_name: FileExistsCondition
+  path: "<base_output_dir_of_sibling_stable>/checkpoints/iter_NNNNNNN"
+
+job.cancel_condition:
+  class_name: LogPatternCondition
+  log_path: "<base_output_dir_of_sibling_stable>/current.log"   # log_path_current
+  pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+```
+
+Each of those values is computed from the stable's *config*, not its runtime
+state. So the cross and diagonal orchestrators produce the same strings the
+center orchestrator would have.
+
+Runtime sequence:
+
+1. Center orchestrator submits stable → Megatron writes
+   `.../checkpoints/iter_NNNNNNN` once it hits `save_extra_steps[N]`.
+2. Center orchestrator also maintains `current.log` as a symlink to the
+   active `slurm-<jobid>-....log` (see `oellm_autoexp/monitor/slurm_client.py`
+   and `docs/log_symlink_usage.md`).
+3. Cross/diagonal orchestrators' monitor loops tick, evaluate each decay's
+   `FileExistsCondition` against the filesystem. No IPC with the center
+   orchestrator is needed — they're independent processes.
+4. If the stable fails, `LogPatternCondition` watches `current.log` for
+   error patterns and cancels the downstream decays — this also works
+   cross-process because the log path is filesystem-resident.
+
+---
+
+## 7. Design alternatives considered
+
+| Option | Why not chosen |
+|---|---|
+| **Three separate YAMLs** (center/cross/diagonal) each duplicating the base | Heavy duplication. Any change to model/data config has to be mirrored three times. No upside over `defaults`-based sharing, which itself is awkward because overriding specific sweep-group entries via `defaults` is painful. |
+| **Single YAML + SLURM `--nice` per grid_position** | Still a single invocation, so no way to gate "don't even queue the diagonals until I say so." Doesn't satisfy the "three scripts" requirement. Works fine as an *addition* on top of tiering, e.g. `slurm.sbatch.nice=-50` on the center invocation. |
+| **Single YAML + `subset_indices` CLI override** | Requires the user to translate `(lr, gbsz, tokens, tier)` tuples into sweep-point indices — brittle and needs recomputing whenever the sweep shape changes. |
+| **Hardcoded `load:` paths + no stables in cross/diagonal YAMLs** | The sibling mechanism already does this for us, *because `full_points_by_idx` means stables are always resolvable*. Hardcoding the path template adds maintenance burden (if you rename `job.name` you have to fix both the stable and the hardcoded string). |
+
+The chosen approach (single YAML + `priority_tier`) wins because:
+
+- Stables, their decays, and all sibling references live together in one
+  place. No duplication.
+- Adding a new tier is one new `*_tokens_set` field per combo and one new
+  clause in the filter.
+- `priority_tier=all` remains a valid, single-invocation mode — identical
+  to pre-tiering behavior.
+
+---
+
+## 8. Caveats and operational notes
+
+- **Launch order matters.** `priority_tier=cross` *before* `center` will
+  submit 36 decays that wait on `iter_NNNNNNN` files that don't exist yet.
+  They'll sit in the monitor queue forever. Always launch `center` first
+  (or include `all` in a single run).
+- **The center orchestrator must stay alive** until every center decay has
+  been submitted — its branching checkpoint is what releases those decays.
+  Ctrl-C'ing early strands pending decays (stables already dispatched to
+  SLURM keep running). Re-launching `priority_tier=center` picks up the
+  remaining work because already-submitted jobs are recognised via the
+  monitor state store.
+- **Safe to parallelise the three invocations.** They work on disjoint
+  job-name sets and can each run their own orchestrator concurrently.
+- **Monitor state.** Each invocation writes its own
+  `monitor_state/<run_id>/` folder. They don't share state, so if you want
+  to inspect "one dashboard of 101 jobs" you have to aggregate across the
+  three folders.
+- **Combining with SLURM-level nice.** If you want to bias the queue when
+  invocations overlap, stack `slurm.sbatch.nice` on top of the tier:
+  `priority_tier=center slurm.sbatch.nice=-50` makes centers jump queue
+  ahead of a later `priority_tier=diagonal slurm.sbatch.nice=+100`
+  submission.
+- **Strict serialisation.** If you *must* prevent lower-priority tiers from
+  starting until higher-priority ones finish (not just "from being
+  submitted"), add a sentinel file written by the last high-priority job
+  and an extra `FileExistsCondition` gating the low-priority ones. In
+  practice this wastes cluster capacity and is rarely worth it.
+
+---
+
+## 9. Recipe: adapting this to a new sweep
+
+1. **Enumerate tiers.** Decide the subsets you want to submit independently.
+   Tiers don't have to be symmetric (e.g. one tier could be "smoke-test
+   combos" and another "full grid").
+2. **Tag each decay point with exactly one tier.** For the 130M grid this
+   came from the CSV's `grid_position` column. For a new sweep, enumerate
+   `(lr, gbsz, tokens) → tier` however makes sense.
+3. **Compute per-combo per-tier token sets.** Each Group-1 entry gets
+   `aux.<tier>_tokens_set` string literals; their union covers the combo's
+   full allowed decay set.
+4. **Add `priority_tier: <default>` at the top** of the YAML. `all` is a
+   reasonable default that keeps the old behaviour.
+5. **Write the tier filter.** Template:
+   ```
+   (stage == stable AND priority_tier ∈ stable_tiers)
+   OR
+   (stage != stable AND (
+       (priority_tier == "all"   AND tokens in union(all tier sets))
+       OR (priority_tier == T    AND tokens in <T>_tokens_set)    for each T
+   ))
+   ```
+6. **Verify partition.** Run the script in §5 and confirm
+   `sum(non-all tiers) == len(all)`. Any mismatch means your per-tier sets
+   overlap or miss rows.
+7. **Document the invocation commands** in the config's trailing comment
+   block. Future-you will thank you.
+
+---
+
+## 10. Related reading
+
+- `docs/lr_gbsz_tokens_grid_sweep.md` — the worked example this doc refers
+  to throughout.
+- `docs/multi_stage_design.md` — pull-based stable→decay linkage.
+- `docs/sweep_resolution_ordering.md` — DAG resolution order and sibling
+  lookup internals.
+- `docs/escaped_interpolation_design.md` — why `\\${…}` is needed inside
+  sweep filters and group configs.
+- `docs/log_symlink_usage.md` — how `log_path_current` stays valid across
+  SLURM restarts; relevant for `cancel_condition` across invocations.
