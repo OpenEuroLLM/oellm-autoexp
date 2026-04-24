@@ -42,25 +42,40 @@ slurm:
 
 backend:
   class_name: NullBackend
+  # Each --dataset-entry is a JSON object with these optional fields (label is required
+  # and must be unique / filename-safe):
+  #   label, dataset, dataset_config, dataset_path,
+  #   dataset_split, dataset_text_field, dataset_percentage,
+  #   num_batches, seed
+  # Any field omitted on an entry falls back to the CLI-level --dataset-* / --num-batches
+  # / --seed default below. Model + batch_size + max_length are loaded once and shared
+  # across all entries.
+  #
+  # NB: the lumi.sbatch template wraps the launch line in outer bash single quotes, and
+  # the generator joins argv with plain " ".join (no shlex.quote). Bare `{"a":"b","c":"d"}`
+  # would trigger bash brace expansion (commas) and then quote-removal would strip the
+  # JSON quotes. Wrap each JSON in bash double quotes with backslash-escaped inner
+  # quotes: `"{\"key\":\"value\"}"`. The YAML single-quoted scalars below preserve
+  # backslashes verbatim, which is exactly what bash needs to see.
   base_command:
     - python3
     - scripts/compute_moe_metrics_hf.py
     - --model-name
     - Qwen/Qwen3-30B-A3B
-    - --dataset
-    - wikitext
-    - --dataset-config
-    - wikitext-2-raw-v1
-    - --dataset-split
-    - validation
-    - --num-batches
-    - "200"
     - --batch-size
     - "4"
     - --max-length
     - "2048"
     - --seed
     - "1234"
+    - --num-batches
+    - "200"
+    - --dataset-entry
+    - '"{\"label\":\"wikitext_2\",\"dataset\":\"wikitext\",\"dataset_config\":\"wikitext-2-raw-v1\",\"dataset_split\":\"validation\",\"dataset_text_field\":\"text\",\"dataset_percentage\":100.0}"'
+    # - --dataset-entry
+    # - '"{\"label\":\"wikitext_103\",\"dataset\":\"wikitext\",\"dataset_config\":\"wikitext-103-raw-v1\",\"dataset_split\":\"test\",\"dataset_text_field\":\"text\",\"dataset_percentage\":100.0}"'
+    # - --dataset-entry
+    # - '"{\"label\":\"c4_en\",\"dataset\":\"allenai/c4\",\"dataset_config\":\"en\",\"dataset_split\":\"validation\",\"dataset_text_field\":\"text\",\"dataset_percentage\":0.01}"'
     - --output-json
     - ${job.base_output_dir}/qwen3_30b_a3b_saturation.json
     - --coactivation-output

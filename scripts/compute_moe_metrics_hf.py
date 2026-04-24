@@ -3,7 +3,7 @@
 Adapts the Megatron-based metrics script for HuggingFace transformer MoE models.
 Generates expert co-activation heatmaps and JSON metrics.
 
-Usage:
+Single-dataset usage:
     python scripts/compute_moe_metrics_hf.py \
   --model-name mistralai/Mixtral-8x7B-v0.1 \
   --dataset-path /path/to/c4/en \
@@ -17,13 +17,21 @@ Usage:
   --coactivation-output results/c4_coactivation.json \
   --expert-token-distribution-output results/c4_expert_token_dist.json
 
-Outputs:
-    - saturation_results.json: Router saturation metrics
-    - coactivation_results.json: Co-activation matrices for top-N experts
-    - coactivation_*.png: Co-activation heatmaps for each layer
-    - expert_token_distribution.json (optional): Per-layer counts and probabilities
-      over all routed slots (flattened top-k selections per token), for cross-dataset
-      comparison of router load.
+Multi-dataset usage (one model load, N datasets, combined outputs):
+    python scripts/compute_moe_metrics_hf.py \
+  --model-name Qwen/Qwen3-30B-A3B \
+  --batch-size 1 --max-length 2048 \
+  --dataset-entry '{"label":"c4_en","dataset":"allenai/c4","dataset_config":"en","dataset_split":"validation","dataset_percentage":1.0,"num_batches":200}' \
+  --dataset-entry '{"label":"wikitext_103","dataset":"wikitext","dataset_config":"wikitext-103-raw-v1","dataset_split":"test","dataset_percentage":100.0,"num_batches":200}' \
+  --output-json results/saturation.json \
+  --coactivation-output results/coactivation.json \
+  --expert-token-distribution-output results/expert_token_dist.json
+
+Outputs (multi-dataset shape, schema *_multi_dataset_v1 / expert_token_distribution_v2):
+    - saturation output: {"datasets": {"<label>": {"layers": {...}, ...}}, ...}
+    - coactivation output: {"datasets": {"<label>": {"layers": {...}}, ...}}
+    - expert token distribution: {"datasets": {"<label>": {"layers": {...}, ...}}, ...}
+    - coactivation_<label>_<layer>.png heatmaps (when --plot is set)
 """
 
 from __future__ import annotations
@@ -31,9 +39,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
+import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -571,8 +580,14 @@ def plot_coactivation_heatmaps(
     plot_dir: Path,
     top_n: int = 32,
     single_counts: Optional[dict] = None,
+    filename_prefix: str = "",
 ) -> None:
-    """Plot co-activation matrices as heatmaps for each layer."""
+    """Plot co-activation matrices as heatmaps for each layer.
+
+    ``filename_prefix`` is prepended to the output PNG filename (use e.g. ``"c4_en_"`` in
+    multi-dataset runs so plots for different datasets land in the same directory
+    without colliding).
+    """
     if not HAS_PLOTTING:
         print("Warning: matplotlib not available, skipping co-activation plots.")
         return
@@ -594,77 +609,341 @@ def plot_coactivation_heatmaps(
         plt.title(f"Co-activation: {layer_name}")
         plt.xlabel("Expert")
         plt.ylabel("Expert")
-        # Show the actual selected expert IDs (not 0..N-1 matrix indices).
         tick_positions = list(range(len(top_indices)))
         tick_labels = [str(idx) for idx in top_indices]
         plt.xticks(tick_positions, tick_labels, rotation=90)
         plt.yticks(tick_positions, tick_labels)
         plt.tight_layout()
         
-        # Sanitize layer name for filename
         safe_name = layer_name.replace(".", "_").replace("/", "_")
-        plot_path = plot_dir / f"coactivation_{safe_name}.png"
+        plot_path = plot_dir / f"coactivation_{filename_prefix}{safe_name}.png"
         plt.savefig(plot_path, dpi=200, bbox_inches="tight")
         print(f"Saved co-activation heatmap to: {plot_path}")
         plt.close()
 
 
+_LABEL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+_DATASET_ENTRY_FIELDS = {
+    "label",
+    "dataset",
+    "dataset_config",
+    "dataset_path",
+    "dataset_split",
+    "dataset_text_field",
+    "dataset_percentage",
+    "num_batches",
+    "seed",
+}
+
+
+@dataclass
+class DatasetSpec:
+    """One dataset to score for router metrics."""
+
+    label: str
+    dataset: Optional[str] = None
+    dataset_config: Optional[str] = None
+    dataset_path: Optional[str] = None
+    dataset_split: str = "test"
+    dataset_text_field: str = "text"
+    dataset_percentage: float = 100.0
+    num_batches: Optional[int] = None
+    seed: int = 1234
+
+
+def _build_dataset_spec(entry: dict, defaults: dict) -> DatasetSpec:
+    merged = {**defaults, **entry}
+    unknown = set(merged.keys()) - _DATASET_ENTRY_FIELDS
+    if unknown:
+        raise ValueError(
+            f"Unknown --dataset-entry fields: {sorted(unknown)}. "
+            f"Allowed: {sorted(_DATASET_ENTRY_FIELDS)}"
+        )
+    label = merged.get("label")
+    if not isinstance(label, str) or not label:
+        raise ValueError(f"--dataset-entry must include a non-empty 'label': {entry!r}")
+    if not _LABEL_RE.match(label):
+        raise ValueError(
+            f"--dataset-entry label '{label}' must match [A-Za-z0-9._-]+ (filename-safe)"
+        )
+    if not merged.get("dataset") and not merged.get("dataset_path"):
+        raise ValueError(
+            f"--dataset-entry '{label}' must provide 'dataset' or 'dataset_path'"
+        )
+    fields = {k: merged[k] for k in _DATASET_ENTRY_FIELDS if k in merged}
+    return DatasetSpec(**fields)
+
+
+def _parse_dataset_specs(args: argparse.Namespace) -> List[DatasetSpec]:
+    """Build the list of DatasetSpec from CLI args.
+
+    Precedence:
+        1. If one or more ``--dataset-entry`` flags are given: each is parsed as JSON
+           and CLI-level ``--dataset-*`` flags become fallbacks for fields absent on
+           the entry.
+        2. Otherwise, fall back to the single-dataset CLI flags (legacy mode).
+    """
+    if args.dataset_entry:
+        defaults: Dict[str, Any] = {
+            "dataset_split": args.dataset_split,
+            "dataset_text_field": args.dataset_text_field,
+            "dataset_percentage": args.dataset_percentage,
+            "seed": args.seed,
+        }
+        if args.num_batches is not None:
+            defaults["num_batches"] = args.num_batches
+        if args.dataset is not None:
+            defaults["dataset"] = args.dataset
+        if args.dataset_config is not None:
+            defaults["dataset_config"] = args.dataset_config
+        if args.dataset_path is not None:
+            defaults["dataset_path"] = args.dataset_path
+
+        specs: List[DatasetSpec] = []
+        for raw in args.dataset_entry:
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"--dataset-entry is not valid JSON: {raw!r}") from exc
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"--dataset-entry must be a JSON object, got {type(entry).__name__}: {raw!r}"
+                )
+            specs.append(_build_dataset_spec(entry, defaults))
+
+        labels = [s.label for s in specs]
+        if len(set(labels)) != len(labels):
+            dupes = sorted({l for l in labels if labels.count(l) > 1})
+            raise ValueError(f"--dataset-entry labels must be unique; duplicates: {dupes}")
+        return specs
+
+    legacy: Dict[str, Any] = {
+        "label": "default",
+        "dataset": args.dataset or "wikitext",
+        "dataset_config": args.dataset_config,
+        "dataset_path": args.dataset_path,
+        "dataset_split": args.dataset_split,
+        "dataset_text_field": args.dataset_text_field,
+        "dataset_percentage": args.dataset_percentage,
+        "seed": args.seed,
+    }
+    if args.num_batches is not None:
+        legacy["num_batches"] = args.num_batches
+    return [_build_dataset_spec(legacy, defaults={})]
+
+
+def _build_expert_distribution_layers(
+    single_counts: Dict[str, torch.Tensor],
+) -> Dict[str, dict]:
+    """Return the per-layer counts / probabilities dict used inside expert-token-dist JSON."""
+    layers_out: Dict[str, dict] = {}
+    for layer_name, counts in sorted(single_counts.items()):
+        counts_f = counts.float()
+        total = float(counts_f.sum().item())
+        if total <= 0:
+            probs_list: List[float] = [0.0] * int(counts_f.numel())
+        else:
+            probs_list = (counts_f / total).tolist()
+        layers_out[layer_name] = {
+            "num_experts": int(counts_f.numel()),
+            "total_routed_selections": int(round(total)),
+            "counts_per_expert": counts_f.long().tolist(),
+            "prob_mass_per_expert": probs_list,
+        }
+    return layers_out
+
+
+def run_one_dataset(
+    *,
+    model,
+    tokenizer,
+    model_type: str,
+    spec: DatasetSpec,
+    batch_size: int,
+    max_length: int,
+    local_files_only: bool,
+    dataset_cache_dir: Optional[str],
+) -> tuple[RouterMetricsCollector, dict]:
+    """Run inference for one dataset spec on the already-loaded model.
+
+    Returns the ``RouterMetricsCollector`` (not yet finalized; keep it so callers can
+    still access ``coactivation_sums`` / ``single_counts`` after ``finalize``) and a
+    metadata dict describing the dataset configuration actually used.
+    """
+    if spec.num_batches is not None and spec.num_batches > 0:
+        planned_samples = spec.num_batches * batch_size
+    else:
+        planned_samples = 1
+
+    texts = load_dataset_texts(
+        dataset_name=spec.dataset,
+        dataset_config=spec.dataset_config,
+        dataset_path=spec.dataset_path,
+        split=spec.dataset_split,
+        text_field=spec.dataset_text_field,
+        percentage=spec.dataset_percentage,
+        cache_dir=dataset_cache_dir,
+        num_samples=planned_samples,
+        seed=spec.seed,
+        local_files_only=local_files_only,
+    )
+
+    if spec.num_batches is not None and spec.num_batches > 0:
+        effective_num_batches = spec.num_batches
+    else:
+        inferred = len(texts) // batch_size
+        if inferred <= 0:
+            raise ValueError(
+                f"[{spec.label}] Not enough sampled texts ({len(texts)}) to form one batch "
+                f"at batch_size={batch_size}. Increase dataset_percentage or reduce batch_size."
+            )
+        effective_num_batches = inferred
+        print(
+            f"[{spec.label}] Inferred num_batches={effective_num_batches} "
+            f"from sampled texts={len(texts)}"
+        )
+
+    collector = RouterMetricsCollector()
+    if model_type in ("mixtral", "qwen3_moe"):
+        hooks = register_sparse_moe_hooks(model, collector)
+    elif model_type == "olmoe":
+        hooks = []
+    elif model_type == "dbrx":
+        hooks = register_dbrx_hooks(model, collector)
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
+
+    try:
+        total_items = min(len(texts), effective_num_batches * batch_size)
+        batch_starts = range(0, total_items, batch_size)
+        with torch.no_grad():
+            for i in tqdm(
+                batch_starts, total=effective_num_batches, desc=f"[{spec.label}]", leave=False
+            ):
+                batch_texts = texts[i : i + batch_size]
+                inputs = tokenizer(
+                    batch_texts,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=max_length,
+                ).to(model.device)
+
+                if inputs["input_ids"].shape[1] == 0:
+                    continue
+
+                if model_type == "olmoe":
+                    olmoe_inputs = dict(inputs)
+                    olmoe_inputs.pop("attention_mask", None)
+                    outputs = model(**olmoe_inputs, output_router_logits=True)
+                    router_logits = getattr(outputs, "router_logits", None)
+                    if router_logits is None and isinstance(outputs, dict):
+                        router_logits = outputs.get("router_logits")
+                    topk = int(getattr(model.config, "num_experts_per_tok", 8))
+                    collect_router_logits_metrics(
+                        collector=collector,
+                        router_logits=router_logits,
+                        topk=topk,
+                    )
+                else:
+                    _ = model(**inputs)
+
+                if (i // batch_size + 1) % 10 == 0:
+                    print(f"[{spec.label}]   Processed {i // batch_size + 1} batches")
+    finally:
+        for hook in hooks:
+            hook.remove()
+
+    metadata = {
+        "dataset": spec.dataset,
+        "dataset_config": spec.dataset_config,
+        "dataset_path": spec.dataset_path,
+        "dataset_split": spec.dataset_split,
+        "dataset_text_field": spec.dataset_text_field,
+        "dataset_percentage": spec.dataset_percentage,
+        "seed": spec.seed,
+        "num_batches": effective_num_batches,
+        "num_texts_loaded": len(texts),
+    }
+    return collector, metadata
+
+
 def main():
-    raw_argv = sys.argv[1:]
     parser = argparse.ArgumentParser(description="Compute MoE metrics for HuggingFace models")
     parser.add_argument("--model-name", type=str, required=True, help="HuggingFace model name or path")
-    parser.add_argument("--dataset", type=str, default="wikitext", help="Dataset name")
-    parser.add_argument("--dataset-path", type=str, default=None, help="Local dataset path. Supports save_to_disk datasets and raw json/json.gz shard directories")
-    parser.add_argument("--dataset-config", type=str, default=None, help="Dataset config")
-    parser.add_argument("--dataset-split", type=str, default="test", help="Dataset split")
-    parser.add_argument("--dataset-text-field", type=str, default="text", help="Text field name inside the dataset")
-    parser.add_argument("--dataset-percentage", type=float, default=100.0, help="Random percentage of the dataset to sample, in the range (0, 100]")
-    parser.add_argument("--dataset-cache-dir", type=str, default=None, help="Optional HuggingFace dataset cache directory")
-    parser.add_argument("--num-batches", type=int, default=None, help="Number of batches to process. If omitted, inferred from sampled dataset size and batch-size")
-    parser.add_argument("--batch-size", type=int, default=1, help="Batch size")
-    parser.add_argument("--max-length", type=int, default=512, help="Maximum sequence length")
-    parser.add_argument("--seed", type=int, default=1234, help="Random seed used for dataset sampling")
-    parser.add_argument("--output-json", type=str, default="saturation_results.json", help="Output JSON path")
-    parser.add_argument("--coactivation-output", type=str, default=None, help="Co-activation output JSON")
+
+    # Legacy single-dataset flags. Also used as fallback defaults for --dataset-entry fields
+    # that are not explicitly set on an entry.
+    parser.add_argument("--dataset", type=str, default=None, help="Dataset name (legacy single-dataset / per-entry default)")
+    parser.add_argument("--dataset-path", type=str, default=None, help="Local dataset path (legacy single-dataset / per-entry default)")
+    parser.add_argument("--dataset-config", type=str, default=None, help="Dataset config (legacy / per-entry default)")
+    parser.add_argument("--dataset-split", type=str, default="test", help="Dataset split (per-entry default)")
+    parser.add_argument("--dataset-text-field", type=str, default="text", help="Text field name (per-entry default)")
+    parser.add_argument("--dataset-percentage", type=float, default=100.0, help="Percentage of dataset to sample in (0, 100] (per-entry default)")
+    parser.add_argument("--dataset-cache-dir", type=str, default=None, help="HuggingFace dataset cache directory")
+    parser.add_argument("--num-batches", type=int, default=None, help="Number of batches (per-entry default). If omitted, inferred per dataset from sampled text count.")
+    parser.add_argument("--seed", type=int, default=1234, help="Random seed for dataset sampling (per-entry default)")
+
+    # Multi-dataset input (repeatable).
+    parser.add_argument(
+        "--dataset-entry",
+        action="append",
+        default=[],
+        metavar="JSON",
+        help=(
+            "Repeatable JSON object describing one dataset. Required field: 'label' "
+            "(unique, filename-safe). Optional: dataset, dataset_config, dataset_path, "
+            "dataset_split, dataset_text_field, dataset_percentage, num_batches, seed. "
+            "When one or more --dataset-entry flags are given, the legacy --dataset / "
+            "--dataset-path flags only serve as per-entry defaults."
+        ),
+    )
+
+    # Shared run-wide options.
+    parser.add_argument("--batch-size", type=int, default=1, help="Batch size (shared across datasets)")
+    parser.add_argument("--max-length", type=int, default=512, help="Max sequence length (shared across datasets)")
+
+    # Outputs (combined across datasets).
+    parser.add_argument("--output-json", type=str, default="saturation_results.json", help="Output JSON path (combined across datasets)")
+    parser.add_argument("--coactivation-output", type=str, default=None, help="Co-activation output JSON (combined across datasets)")
     parser.add_argument(
         "--expert-token-distribution-output",
         type=str,
         default=None,
         help=(
             "Optional JSON path for per-layer expert selection counts and normalized "
-            "probabilities (routed slots / flattened top-k), useful for comparing router "
-            "load across datasets."
+            "probabilities, combined across all datasets under a 'datasets' key."
         ),
     )
     parser.add_argument("--coactivation-top-n", type=int, default=16, help="Top N experts for coactivation")
-    parser.add_argument("--plot", action="store_true", help="Generate saturation and co-activation plots")
+    parser.add_argument("--plot", action="store_true", help="Generate per-dataset co-activation heatmaps")
     parser.add_argument("--plot-dir", type=str, default=None, help="Directory to save plots (defaults to output-json directory)")
-    parser.add_argument("--no-local-files-only", action="store_true", help="Allow downloading from HuggingFace (default: use only cached files)")
-    parser.add_argument("--device", type=str, default="cuda", help="Device to use (ignored if device-map is auto)")
-    parser.add_argument("--no-device-map", action="store_true", help="Disable automatic device placement (requires model fit on single device)")
-    
+
+    # HF / device.
+    parser.add_argument("--no-local-files-only", action="store_true", help="Allow downloading from HuggingFace (default: offline)")
+    parser.add_argument("--device", type=str, default="cuda", help="Device (ignored if device-map=auto)")
+    parser.add_argument("--no-device-map", action="store_true", help="Disable accelerate device_map='auto'")
+
     args = parser.parse_args()
 
     if args.batch_size <= 0:
         raise ValueError("--batch-size must be > 0")
-
-    num_batches_provided = any(
-        token == "--num-batches" or token.startswith("--num-batches=")
-        for token in raw_argv
-    )
-
-    if not num_batches_provided and args.num_batches is None:
-        planned_samples = 1
-    elif args.num_batches is not None and args.num_batches > 0:
-        planned_samples = args.num_batches * args.batch_size
-    else:
+    if args.num_batches is not None and args.num_batches <= 0:
         raise ValueError("--num-batches must be > 0 when provided")
-    
-    # Default to local files only to avoid network issues; override with --no-local-files-only if needed
-    local_files_only = not args.no_local_files_only
 
+    dataset_specs = _parse_dataset_specs(args)
+    print(f"Configured {len(dataset_specs)} dataset(s):")
+    for spec in dataset_specs:
+        print(
+            f"  - {spec.label}: dataset={spec.dataset} dataset_path={spec.dataset_path} "
+            f"config={spec.dataset_config} split={spec.dataset_split} "
+            f"text_field={spec.dataset_text_field} percentage={spec.dataset_percentage} "
+            f"num_batches={spec.num_batches} seed={spec.seed}"
+        )
+
+    local_files_only = not args.no_local_files_only
     if local_files_only:
-        # Enforce strict offline mode across HuggingFace stack.
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
         os.environ["HF_DATASETS_OFFLINE"] = "1"
@@ -673,12 +952,10 @@ def main():
     model_source = _resolve_model_source(args.model_name, local_files_only)
     if model_source != args.model_name:
         print(f"Resolved cached local model path: {model_source}")
-    
+
     print(f"Loading model: {args.model_name}")
-    
-    # Try device_map="auto" for multi-GPU placement (requires accelerate)
+
     use_device_map = not args.no_device_map
-    
     if use_device_map:
         try:
             model = AutoModelForCausalLM.from_pretrained(
@@ -687,9 +964,9 @@ def main():
                 trust_remote_code=True,
                 local_files_only=local_files_only,
                 device_map="auto",
-                low_cpu_mem_usage=True
+                low_cpu_mem_usage=True,
             )
-            print(f"Model loaded with automatic device placement across available GPUs")
+            print("Model loaded with automatic device placement across available GPUs")
         except (ImportError, ValueError) as e:
             print(f"Warning: device_map='auto' failed ({e}). Install accelerate or use --no-device-map.")
             print("Falling back to single device (may OOM for large models)...")
@@ -697,7 +974,7 @@ def main():
                 model_source,
                 torch_dtype=torch.bfloat16,
                 trust_remote_code=True,
-                local_files_only=local_files_only
+                local_files_only=local_files_only,
             )
             model = model.to(args.device)
     else:
@@ -705,208 +982,174 @@ def main():
             model_source,
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
-            local_files_only=local_files_only
+            local_files_only=local_files_only,
         )
         model = model.to(args.device)
-    
+
     model.eval()
-    
+
     tokenizer = AutoTokenizer.from_pretrained(
         model_source,
         trust_remote_code=True,
-        local_files_only=local_files_only
+        local_files_only=local_files_only,
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    
-    texts = load_dataset_texts(
-        dataset_name=args.dataset,
-        dataset_config=args.dataset_config,
-        dataset_path=args.dataset_path,
-        split=args.dataset_split,
-        text_field=args.dataset_text_field,
-        percentage=args.dataset_percentage,
-        cache_dir=args.dataset_cache_dir,
-        num_samples=planned_samples,
-        seed=args.seed,
-        local_files_only=local_files_only,
-    )
 
-    if num_batches_provided:
-        effective_num_batches = args.num_batches
-    else:
-        inferred = len(texts) // args.batch_size
-        if inferred <= 0:
-            raise ValueError(
-                "Not enough sampled texts to form one batch. Increase --dataset-percentage or reduce --batch-size."
-            )
-        effective_num_batches = inferred
-        print(
-            f"Inferred num_batches={effective_num_batches} from sampled texts={len(texts)} and batch_size={args.batch_size}"
-        )
-    
-    # Register hooks based on model type
     model_type = get_model_type(model)
     print(f"Detected model type: {model_type}")
 
-    collector = RouterMetricsCollector()
-    
-    if model_type == "mixtral":
-        hooks = register_sparse_moe_hooks(model, collector)
-    elif model_type == "qwen3_moe":
-        hooks = register_sparse_moe_hooks(model, collector)
-    elif model_type == "olmoe":
-        hooks = []
-    elif model_type == "dbrx":
-        hooks = register_dbrx_hooks(model, collector)
-    else:
-        raise ValueError(f"Unsupported model type: {model_type}")
-    
-    print(f"Processing {effective_num_batches} batches...")
-    
-    # Run inference with progress bar over validation batches.
-    total_items = min(len(texts), effective_num_batches * args.batch_size)
-    batch_starts = range(0, total_items, args.batch_size)
-    with torch.no_grad():
-        for i in tqdm(batch_starts, total=effective_num_batches, desc="Validation", leave=False):
-            batch_texts = texts[i:i + args.batch_size]
-            
-            inputs = tokenizer(
-                batch_texts,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=args.max_length
-            ).to(model.device)
-            
-            # Some datasets contain empty text rows that can tokenize to length 0 for specific tokenizers.
-            # Skip those batches to avoid undefined routing statistics.
-            if inputs["input_ids"].shape[1] == 0:
-                continue
-
-            if model_type == "olmoe":
-                # Work around a Transformers OLMoE bug in load_balancing_loss_func where
-                # attention_mask can trigger a divide-by-zero for certain routed token layouts.
-                olmoe_inputs = dict(inputs)
-                olmoe_inputs.pop("attention_mask", None)
-                outputs = model(**olmoe_inputs, output_router_logits=True)
-                router_logits = getattr(outputs, "router_logits", None)
-                if router_logits is None and isinstance(outputs, dict):
-                    router_logits = outputs.get("router_logits")
-                topk = int(getattr(model.config, "num_experts_per_tok", 8))
-                collect_router_logits_metrics(
-                    collector=collector,
-                    router_logits=router_logits,
-                    topk=topk,
-                )
-            else:
-                _ = model(**inputs)
-            
-            if (i // args.batch_size + 1) % 10 == 0:
-                print(f"  Processed {i // args.batch_size + 1} batches")
-    
-    # Remove hooks
-    for hook in hooks:
-        hook.remove()
-    
-    # Get results
-    results = collector.finalize()
-    
-    # Determine plot directory
-    if args.plot:
-        if args.plot_dir:
-            plot_dir = Path(args.plot_dir)
-        else:
-            plot_dir = Path(args.output_json).parent
-        plot_dir.mkdir(parents=True, exist_ok=True)
-    
-    output_data = {
-        "model": args.model_name,
-        "model_type": model_type,
-        "coactivation_mode": "pairwise-adjacent",
-        "dataset": args.dataset,
-        "dataset_path": args.dataset_path,
-        "dataset_split": args.dataset_split,
-        "dataset_text_field": args.dataset_text_field,
-        "dataset_percentage": args.dataset_percentage,
-        "seed": args.seed,
-        "num_batches": effective_num_batches,
-        "num_batches_provided": num_batches_provided,
-        "layers": results
-    }
-    
-    print("\nResults:")
-    print(json.dumps(output_data, indent=2))
-    
-    # Save saturation results
-    output_path = Path(args.output_json)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(output_data, indent=2))
-    print(f"\nSaved saturation results to: {output_path}")
-    
-    # Save co-activation results
-    if args.coactivation_output:
-        top_n = args.coactivation_top_n
-        coactivation_summary = {
-            "model": args.model_name,
-            "layers": {}
-        }
-        
-        for layer_name, matrix in collector.coactivation_sums.items():
-            matrix_normalized = _normalize_coactivation_matrix(
-                matrix,
-                collector.single_counts.get(layer_name),
-            )
-
-            top_indices = _select_top_experts_pairwise(matrix_normalized, top_n)
-            submatrix = matrix_normalized[top_indices][:, top_indices]
-            matrix_to_save = (submatrix * 100.0).tolist()
-            
-            coactivation_summary["layers"][layer_name] = {
-                "experts": top_indices if isinstance(top_indices, list) else top_indices.tolist(),
-                "matrix": matrix_to_save,
-            }
-        
-        coact_path = Path(args.coactivation_output)
-        coact_path.parent.mkdir(parents=True, exist_ok=True)
-        coact_path.write_text(json.dumps(coactivation_summary, indent=2))
-        print(f"Saved co-activation results to: {coact_path}")
-
-    if args.expert_token_distribution_output:
-        dist_payload = build_expert_token_distribution_payload(
-            collector.single_counts,
-            model_name=args.model_name,
-            model_type=model_type,
-            dataset=args.dataset,
-            dataset_path=args.dataset_path,
-            dataset_split=args.dataset_split,
-            dataset_text_field=args.dataset_text_field,
-            dataset_percentage=args.dataset_percentage,
-            seed=args.seed,
-            num_batches=effective_num_batches,
-        )
-        dist_path = Path(args.expert_token_distribution_output)
-        dist_path.parent.mkdir(parents=True, exist_ok=True)
-        dist_path.write_text(json.dumps(dist_payload, indent=2))
-        print(f"Saved expert token distribution results to: {dist_path}")
-    
-    # Generate co-activation plots if requested
+    plot_dir: Optional[Path] = None
     if args.plot:
         if not HAS_PLOTTING:
             raise RuntimeError(
                 "matplotlib and seaborn are required for --plot but are not available. "
                 "Please install: pip install matplotlib seaborn"
             )
-        if collector.coactivation_sums:
-            print(f"\nGenerating co-activation plots in {plot_dir}...")
+        plot_dir = Path(args.plot_dir) if args.plot_dir else Path(args.output_json).parent
+        plot_dir.mkdir(parents=True, exist_ok=True)
+
+    # Process each dataset; accumulate finalized collectors for combined co-activation /
+    # expert-distribution outputs. A failure on one dataset is recorded as status and does
+    # not abort the others — preserving partial results is worth it after a large model load.
+    per_dataset: Dict[str, dict] = {}
+    collectors: Dict[str, RouterMetricsCollector] = {}
+    for spec in dataset_specs:
+        print(f"\n=== Dataset '{spec.label}' ===")
+        try:
+            collector, metadata = run_one_dataset(
+                model=model,
+                tokenizer=tokenizer,
+                model_type=model_type,
+                spec=spec,
+                batch_size=args.batch_size,
+                max_length=args.max_length,
+                local_files_only=local_files_only,
+                dataset_cache_dir=args.dataset_cache_dir,
+            )
+        except Exception as exc:
+            status = f"error: {type(exc).__name__}: {exc}"
+            print(f"[{spec.label}] {status}")
+            per_dataset[spec.label] = {
+                "status": status,
+                "dataset": spec.dataset,
+                "dataset_config": spec.dataset_config,
+                "dataset_path": spec.dataset_path,
+                "dataset_split": spec.dataset_split,
+                "dataset_text_field": spec.dataset_text_field,
+                "dataset_percentage": spec.dataset_percentage,
+                "seed": spec.seed,
+                "num_batches": spec.num_batches,
+                "num_texts_loaded": 0,
+                "layers": {},
+            }
+            continue
+
+        results = collector.finalize()
+        per_dataset[spec.label] = {
+            "status": "ok",
+            **metadata,
+            "layers": results,
+        }
+        collectors[spec.label] = collector
+
+        if plot_dir is not None and collector.coactivation_sums:
+            print(f"[{spec.label}] Generating co-activation plots in {plot_dir}...")
             plot_coactivation_heatmaps(
                 collector.coactivation_sums,
                 plot_dir,
                 args.coactivation_top_n,
                 collector.single_counts,
+                filename_prefix=f"{spec.label}_",
             )
-        else:
-            print("\nNo co-activation data to plot.")
+
+    output_data = {
+        "schema": "moe_metrics_multi_dataset_v1",
+        "model": args.model_name,
+        "model_type": model_type,
+        "coactivation_mode": "pairwise-adjacent",
+        "datasets": per_dataset,
+    }
+    print("\nResults:")
+    print(json.dumps(output_data, indent=2))
+
+    output_path = Path(args.output_json)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(output_data, indent=2))
+    print(f"\nSaved saturation results to: {output_path}")
+
+    if args.coactivation_output:
+        top_n = args.coactivation_top_n
+        coactivation_summary: Dict[str, Any] = {
+            "schema": "moe_coactivation_multi_dataset_v1",
+            "model": args.model_name,
+            "datasets": {},
+        }
+        for label, entry in per_dataset.items():
+            if entry.get("status") != "ok":
+                coactivation_summary["datasets"][label] = {
+                    "status": entry.get("status", "error: unknown"),
+                    "layers": {},
+                }
+                continue
+            coll = collectors[label]
+            layers_out: Dict[str, dict] = {}
+            for layer_name, matrix in coll.coactivation_sums.items():
+                matrix_normalized = _normalize_coactivation_matrix(
+                    matrix,
+                    coll.single_counts.get(layer_name),
+                )
+                top_indices = _select_top_experts_pairwise(matrix_normalized, top_n)
+                submatrix = matrix_normalized[top_indices][:, top_indices]
+                layers_out[layer_name] = {
+                    "experts": top_indices if isinstance(top_indices, list) else top_indices.tolist(),
+                    "matrix": (submatrix * 100.0).tolist(),
+                }
+            coactivation_summary["datasets"][label] = {"status": "ok", "layers": layers_out}
+
+        coact_path = Path(args.coactivation_output)
+        coact_path.parent.mkdir(parents=True, exist_ok=True)
+        coact_path.write_text(json.dumps(coactivation_summary, indent=2))
+        print(f"Saved co-activation results to: {coact_path}")
+
+    if args.expert_token_distribution_output:
+        dist_payload: Dict[str, Any] = {
+            "schema": "expert_token_distribution_v2",
+            "description": (
+                "Per-dataset, per-layer histogram of routed expert indices. Counts are over "
+                "all top-k selections (each token contributes up to top_k counts). "
+                "prob_mass_per_expert is counts normalized within the layer."
+            ),
+            "model": args.model_name,
+            "model_type": model_type,
+            "datasets": {},
+        }
+        for label, entry in per_dataset.items():
+            if entry.get("status") != "ok":
+                dist_payload["datasets"][label] = {
+                    "status": entry.get("status", "error: unknown"),
+                    "layers": {},
+                }
+                continue
+            coll = collectors[label]
+            dist_payload["datasets"][label] = {
+                "status": "ok",
+                "dataset": entry.get("dataset"),
+                "dataset_config": entry.get("dataset_config"),
+                "dataset_path": entry.get("dataset_path"),
+                "dataset_split": entry.get("dataset_split"),
+                "dataset_text_field": entry.get("dataset_text_field"),
+                "dataset_percentage": entry.get("dataset_percentage"),
+                "seed": entry.get("seed"),
+                "num_batches": entry.get("num_batches"),
+                "num_texts_loaded": entry.get("num_texts_loaded"),
+                "layers": _build_expert_distribution_layers(coll.single_counts),
+            }
+
+        dist_path = Path(args.expert_token_distribution_output)
+        dist_path.parent.mkdir(parents=True, exist_ok=True)
+        dist_path.write_text(json.dumps(dist_payload, indent=2))
+        print(f"Saved expert token distribution results to: {dist_path}")
 
 
 if __name__ == "__main__":
