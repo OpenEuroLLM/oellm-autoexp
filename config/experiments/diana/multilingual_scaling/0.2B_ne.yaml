@@ -20,6 +20,7 @@ stage: ""
 job:
   name: "" # Will be overridden by sweep with stage and hyperparameter info
   base_output_dir: "/gpfs/projects/ehpc533/multilingual_scaling/0.2B_ne/training/${job.name}"
+  log_path: ${slurm.sbatch.error}
 
 backend:
   megatron:
@@ -44,3 +45,5 @@ slurm:
     qos: acc_ehpc
     account: ehpc715
     time: "72:00:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
