@@ -328,40 +328,70 @@ ever at risk of spending more than 30 % of its iters warming up.
 
 ## 10. Controlling execution order — tier-based scheduling
 
-The config ships with a `priority_tier` top-level knob (default `all`) that
-splits the 101 jobs into three disjoint submission tiers:
+The config ships with a `backend.megatron.aux.priority_tier` knob (default
+`all`) that splits the 101 jobs into three disjoint submission tiers. Each
+of the 20 stables is owned by **exactly one** tier — the earliest tier (in
+`center → cross → diagonal` order) whose decays actually consume it — so
+`backend.megatron.aux.priority_tier=center` doesn't eagerly queue the
+biggest stables when their decays live in `cross`/`diagonal`.
 
-| priority_tier | stables | decays | total |
+The tier knob, the per-combo decay sets, and `stable_launch_tier` all live
+under the same `backend.megatron.aux.*` namespace (alongside `aux.tokens`
+and the `save_step_*` fields), so the whole tier-scheduling surface is one
+consistent dotted path.
+
+| `backend.megatron.aux.priority_tier` | stables | decays | total |
 |---|---|---|---|
 | `all`      | 20 | 81 | 101 |
-| `center`   | 20 | 9  | 29  |
-| `cross`    | 0  | 36 | 36  |
-| `diagonal` | 0  | 36 | 36  |
+| `center`   |  4 |  9 |  13 |
+| `cross`    | 10 | 36 |  46 |
+| `diagonal` |  6 | 36 |  42 |
 
-Each Group-1 combo carries three per-tier Python-set-literal strings
-(`aux.center_tokens_set`, `aux.cross_tokens_set`, `aux.diagonal_tokens_set`)
-whose union equals the combo's full allowed decay set. `sweep.filter` then
-keeps stables for `tier ∈ {all, center}` and decays whose `aux.tokens` is in
-the selected tier's set.
+`4 + 10 + 6 = 20` stables and `9 + 36 + 36 = 81` decays, partitioning the
+101-job plan.
+
+Each Group-1 combo carries (all under `backend.megatron.aux.*`):
+
+- three per-tier Python-set-literal strings (`center_tokens_set`,
+  `cross_tokens_set`, `diagonal_tokens_set`) whose union equals the combo's
+  full allowed decay set;
+- `stable_launch_tier` — the tier that will launch this combo's stable.
+
+`sweep.filter` keeps a stable iff
+`priority_tier ∈ {"all", stable_launch_tier}` and keeps a decay iff its
+`tokens` is in the selected tier's set.
 
 ```bash
-# Launch in priority order, each as its own orchestrator:
-python scripts/run_autoexp.py --config-name=<this-config> priority_tier=center
-python scripts/run_autoexp.py --config-name=<this-config> priority_tier=cross
-python scripts/run_autoexp.py --config-name=<this-config> priority_tier=diagonal
+# MUST launch in this order; no tier may be skipped because every tier
+# owns at least some stables.
+python scripts/run_autoexp.py --config-name=<this-config> backend.megatron.aux.priority_tier=center
+python scripts/run_autoexp.py --config-name=<this-config> backend.megatron.aux.priority_tier=cross
+python scripts/run_autoexp.py --config-name=<this-config> backend.megatron.aux.priority_tier=diagonal
 ```
 
-The sibling mechanism works across invocations automatically because
-`orchestrator.py` always passes `full_points_by_idx=all_points_by_idx` to
-the DAG resolver (so `${sibling.stable.*}` resolves even when stables are
-filtered out of the current submission), and `job.base_output_dir` /
+You can overlap the three in wall time (cross can start once center is
+underway), but you cannot skip a tier — its stables would never be
+submitted and the dependent decays would wait on `FileExistsCondition`
+forever. Use `backend.megatron.aux.priority_tier=all` for a single
+one-shot submission.
+
+The sibling mechanism works across invocations because `orchestrator.py`
+passes `full_points_by_idx=all_points_by_idx` to the DAG resolver (so
+`${sibling.stable.*}` resolves even when the sibling stable is filtered
+out of the current submission), and `job.base_output_dir` /
 `job.log_path_current` are deterministic filesystem paths.
 
+Verification:
+
+```bash
+python scripts/validate_lr_gbsz_tokens_grid_tiers.py
+```
+
 See **`docs/tier_based_scheduling.md`** for the full design rationale,
-verification script, alternatives considered, and a recipe for adapting the
-pattern to other sweeps. If you additionally want SLURM-queue-level biasing
-when tiers overlap, stack `slurm.sbatch.nice=-50` on the center invocation
-and `slurm.sbatch.nice=+100` on the diagonal one.
+alternatives considered, and a recipe for adapting the pattern to other
+sweeps. If you additionally want SLURM-queue-level biasing when tiers
+overlap, stack `slurm.sbatch.nice=-50` on the center invocation and
+`slurm.sbatch.nice=+100` on the diagonal one.
 
 ---
 
@@ -404,8 +434,10 @@ and `slurm.sbatch.nice=+100` on the diagonal one.
 
 ## 13. Related reading
 
-- `docs/tier_based_scheduling.md` — how `priority_tier` splits this sweep
-  into independently-launchable subsets without breaking sibling refs.
+- `docs/tier_based_scheduling.md` — how
+  `backend.megatron.aux.priority_tier` +
+  `backend.megatron.aux.stable_launch_tier` split this sweep into
+  independently-launchable subsets without breaking sibling refs.
 - `docs/multi_stage_design.md` — general pull-based multi-stage sweep design.
 - `docs/escaped_interpolation_design.md` — why `\\${…}` is needed inside
   sweep configs.
