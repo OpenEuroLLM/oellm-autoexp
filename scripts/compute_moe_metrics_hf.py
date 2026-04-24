@@ -344,10 +344,14 @@ def load_dataset_texts(
             for alias in split_aliases:
                 shard_files.extend(sorted(shard_dir.glob(f"*{alias}*.json")))
                 shard_files.extend(sorted(shard_dir.glob(f"*{alias}*.json.gz")))
+                shard_files.extend(sorted(shard_dir.glob(f"*{alias}*.jsonl")))
+                shard_files.extend(sorted(shard_dir.glob(f"*{alias}*.jsonl.gz")))
 
             if not shard_files:
                 shard_files.extend(sorted(shard_dir.glob("*.json")))
                 shard_files.extend(sorted(shard_dir.glob("*.json.gz")))
+                shard_files.extend(sorted(shard_dir.glob("*.jsonl")))
+                shard_files.extend(sorted(shard_dir.glob("*.jsonl.gz")))
 
             deduped_files: List[str] = []
             seen: Set[str] = set()

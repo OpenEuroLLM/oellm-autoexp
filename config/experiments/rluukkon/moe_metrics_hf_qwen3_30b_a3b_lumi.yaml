@@ -70,12 +70,20 @@ backend:
     - "1234"
     - --num-batches
     - "200"
+    # Pre-processed per-language jsonl shards under parallel_data_samples/<lang>/0.jsonl
+    # (each language directory is fed to --dataset-path, which picks up *.jsonl shards).
     - --dataset-entry
-    - '"{\"label\":\"wikitext_2\",\"dataset\":\"wikitext\",\"dataset_config\":\"wikitext-2-raw-v1\",\"dataset_split\":\"validation\",\"dataset_text_field\":\"text\",\"dataset_percentage\":100.0}"'
-    # - --dataset-entry
-    # - '"{\"label\":\"wikitext_103\",\"dataset\":\"wikitext\",\"dataset_config\":\"wikitext-103-raw-v1\",\"dataset_split\":\"test\",\"dataset_text_field\":\"text\",\"dataset_percentage\":100.0}"'
-    # - --dataset-entry
-    # - '"{\"label\":\"c4_en\",\"dataset\":\"allenai/c4\",\"dataset_config\":\"en\",\"dataset_split\":\"validation\",\"dataset_text_field\":\"text\",\"dataset_percentage\":0.01}"'
+    - '"{\"label\":\"eng_Latn\",\"dataset_path\":\"parallel_data_samples/eng_Latn\",\"dataset_text_field\":\"text\",\"dataset_percentage\":100.0}"'
+    - --dataset-entry
+    - '"{\"label\":\"deu_Latn\",\"dataset_path\":\"parallel_data_samples/deu_Latn\",\"dataset_text_field\":\"text\",\"dataset_percentage\":100.0}"'
+    - --dataset-entry
+    - '"{\"label\":\"fin_Latn\",\"dataset_path\":\"parallel_data_samples/fin_Latn\",\"dataset_text_field\":\"text\",\"dataset_percentage\":100.0}"'
+    - --dataset-entry
+    - '"{\"label\":\"ita_Latn\",\"dataset_path\":\"parallel_data_samples/ita_Latn\",\"dataset_text_field\":\"text\",\"dataset_percentage\":100.0}"'
+    - --dataset-entry
+    - '"{\"label\":\"spa_Latn\",\"dataset_path\":\"parallel_data_samples/spa_Latn\",\"dataset_text_field\":\"text\",\"dataset_percentage\":100.0}"'
+    - --dataset-entry
+    - '"{\"label\":\"swe_Latn\",\"dataset_path\":\"parallel_data_samples/swe_Latn\",\"dataset_text_field\":\"text\",\"dataset_percentage\":100.0}"'
     - --output-json
     - ${job.base_output_dir}/qwen3_30b_a3b_saturation.json
     - --coactivation-output
