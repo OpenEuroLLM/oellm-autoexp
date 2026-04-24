@@ -1,0 +1,22 @@
+a: 1
+b: null
+c: '${oc.eval:"(${a}**2)"}'
+d: '${oc.eval:"123"} {{script}}'
+e: '${oc.eval:"\"{{script}}\""}'
+launcher_cmd: "{{env_exports}} export LOCAL_ADDR=$(nslookup $(hostname) | grep 'Address: ' | sed 's/Address: //' | tail) ; \
+  ${oc.select:container.runtime,apptainer} exec {{env_flags}} --nv --mount src=/e/,destination=/e/ ${oc.select:container.image,container.sif}"
+
+MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep 'Address: ' | sed 's/Address: //' | tail) "
+
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+       - a: "\\${b}"
+    - type: product
+      configs:
+       - b: [1, 2, 3]
+       - c: [1, 2, 3]
+  filter: '\${oc.eval:"\${b}*\${c}<4"}'
