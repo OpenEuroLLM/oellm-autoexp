@@ -43,6 +43,13 @@ log_events:
     action:
       class_name: RestartAction
       reason: ""
+  - name: spiky_loss
+    pattern: "Spiky loss:"
+    pattern_type: substring
+    action:
+      class_name: LogAction
+      message: "Loss spike detected in {job_name} — check the training log for ratio/amplitude"
+      level: warning
   - name: connection_failure
     pattern: "Application launch failed: Communication connection failure"
     pattern_type: substring
