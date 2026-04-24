@@ -4,7 +4,7 @@ type: product
 groups:
   - type: list
     configs:
-      - job.name: "dense_multilingual_qwen3_0.1B_ne_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_\\${stage}"
+      - job.name: "dense_qwen3_0.1B_ne_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_\\${stage}"
         backend.megatron.wandb_exp_name: "\\${job.name}"
   
   # GROUP 1: Hyperparameter configurations (list of two product grids)
