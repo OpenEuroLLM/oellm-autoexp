@@ -11,10 +11,11 @@
 #   export OUTPUT_DIR=/scratch/project_.../runs
 #   export SLURM_ACCOUNT=project_462000963 SLURM_PARTITION=standard-g
 #   uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/rluukkon/moe_metrics_hf_qwen3_30b_a3b_lumi \
-#     container.image=/path/to/your_lumi_transformers.sif
+#     
 #
 # Inspect batch script without submitting:
-#   ... run_autoexp.py --dry-run ...
+#   ... run_autoexp.py --dry-run ... 
+## which you can also submit with bash <script> if you have an active salloc session. Useful for avoiding slurm queues for quick iterative development.
 defaults:
   - ../base
   - /backend: null
@@ -32,11 +33,10 @@ slurm:
   sbatch:
     ntasks_per_node: 1
     cpus_per_task: 56
-    gpus_per_node: 8
-    gres: "gpu:8"
+    gpus_per_node: 4
+    gres: "gpu:4"
     mem: 480G
-    time: "02:00:00"
-    #partition either SLURM_PARTITION or dev-g
+    time: "00:30:00"
     partition: ${oc.env:SLURM_PARTITION,"dev-g"}
     account: ${oc.env:SLURM_ACCOUNT,"project_462000963"}
 
@@ -56,7 +56,7 @@ backend:
     - --num-batches
     - "200"
     - --batch-size
-    - "1"
+    - "4"
     - --max-length
     - "2048"
     - --seed

@@ -683,7 +683,7 @@ def main():
         try:
             model = AutoModelForCausalLM.from_pretrained(
                 model_source,
-                # dtype=torch.bfloat16,
+                torch_dtype=torch.bfloat16,
                 trust_remote_code=True,
                 local_files_only=local_files_only,
                 device_map="auto",
@@ -695,7 +695,7 @@ def main():
             print("Falling back to single device (may OOM for large models)...")
             model = AutoModelForCausalLM.from_pretrained(
                 model_source,
-                # dtype=torch.bfloat16,
+                torch_dtype=torch.bfloat16,
                 trust_remote_code=True,
                 local_files_only=local_files_only
             )
@@ -703,7 +703,7 @@ def main():
     else:
         model = AutoModelForCausalLM.from_pretrained(
             model_source,
-            # dtype=torch.bfloat16,
+            torch_dtype=torch.bfloat16,
             trust_remote_code=True,
             local_files_only=local_files_only
         )
