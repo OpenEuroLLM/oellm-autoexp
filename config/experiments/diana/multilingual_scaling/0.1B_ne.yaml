@@ -33,9 +33,11 @@ backend:
     data_cache_path: /gpfs/projects/ehpc533/users/diana/MEGATRON_262k
 
     # Base training configuration (for stable phase)
+    num_workers: 8 # Will be overridden by sweep
     micro_batch_size: 8
     global_batch_size: 64  # Will be overridden by sweep
     lr: 5.e-4  # Will be overridden by sweep
+
 
 slurm:
   sbatch:

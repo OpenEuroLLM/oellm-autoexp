@@ -1,7 +1,6 @@
 # @package backend.megatron
 # Dataset related settings for multilingual scaling experiments
 max_position_embeddings: ${.seq_length}
-num_workers: 32 # TODO
 split: '99,1,0'
 create_attention_mask_in_dataloader: False # check effect at larger scale?
 
