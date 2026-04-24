@@ -323,6 +323,27 @@ would otherwise round down to 0.
 `lr_warmup_iters = 2000`, the worst-case ratio is the 6B decay at
 gbsz=64: `train_iters ≈ 22_889`, ratio ≈ `0.087 ≪ 0.3`. No combo is
 ever at risk of spending more than 30 % of its iters warming up.
+(The `_tiered.yaml` variant still AND-s the `< 0.3` guard into
+`sweep.filter` as a defensive future-proofing check.)
+
+### Job-name format (at a glance)
+
+Jobs surface in `monitor_state/` as
+`dense_130M_lr<LR>_gbsz<GBSZ>_<stage><horizon_suffix>.job.json`:
+
+- Decays already carry their budget in `stage`, so the suffix is empty:
+  - `dense_130M_lr0.001_gbsz64_decay12BT.job.json`
+- Stables now also carry a `<N>BT` suffix matching the combo's
+  `max_decay_tokens` (overridden by Group 2 via
+  `backend.megatron.aux.job_horizon_suffix`):
+  - `dense_130M_lr0.001_gbsz32_stable12BT.job.json`  (gbsz=32 stops at 12B)
+  - `dense_130M_lr0.001_gbsz512_stable300BT.job.json` (gbsz=512 goes to 300B)
+
+This makes it obvious at a glance how long any stable will train without
+cross-referencing the CSV, and keeps `${sibling.stable.job.base_output_dir}`
+pointing at a deterministic path (since `job.base_output_dir` is a pure
+function of `job.name`). The suffix is defined only in the
+`_tiered.yaml` variant at the moment.
 
 ---
 
