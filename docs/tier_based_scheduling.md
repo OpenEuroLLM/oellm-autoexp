@@ -108,12 +108,8 @@ From the CLI it is overridden via Hydra dotted syntax:
 ### Per-combo tier membership and stable ownership
 
 Each Group-1 hyperparameter combo carries **one Python-set-literal string
-<<<<<<< HEAD
 per tier** *and* a `stable_launch_tier` that names the tier responsible for
 submitting this combo's stable:
-=======
-per tier**:
->>>>>>> exp_diana
 
 ```yaml
 - backend.megatron.lr: 1.e-3
@@ -122,10 +118,7 @@ per tier**:
   backend.megatron.aux.center_tokens_set:   "set()"
   backend.megatron.aux.cross_tokens_set:    "{12_000_000_000, 20_000_000_000, 30_000_000_000, 50_000_000_000}"
   backend.megatron.aux.diagonal_tokens_set: "{80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
-<<<<<<< HEAD
   backend.megatron.aux.stable_launch_tier:  cross
-=======
->>>>>>> exp_diana
 ```
 
 The three sets' union is the combo's full allowed decay set. `"set()"` is
@@ -174,15 +167,10 @@ filter: "\\${oc.eval:'(
 
 Reading it:
 
-<<<<<<< HEAD
 - **Stables** survive the filter iff
   `aux.priority_tier == "all"` OR `aux.priority_tier == aux.stable_launch_tier`.
   Each stable is therefore launched by exactly one non-`all` invocation
   (the tier it is owned by).
-=======
-- **Stables** survive the filter iff `priority_tier ∈ {"all", "center"}`.
-  This guarantees the 20 stables are launched by exactly one invocation.
->>>>>>> exp_diana
 - **Decays** survive iff their `aux.tokens` sits in the tier's per-combo
   set (for `tier=all`, the union of all three).
 
@@ -192,14 +180,8 @@ there is no "two different `aux`es" gotcha — the whole tier surface area
 is one consistent namespace.
 
 Python precedence detail: `in` is a comparison (precedence lower than `|`),
-<<<<<<< HEAD
 so `x in A | B | C` parses as `x in (A | B | C)`. `set() | {…}` is a no-op
 union, so empty-tier combos contribute nothing.
-=======
-so `x in A | B | C` parses as `x in (A | B | C)`. That's what we want.
-`set() | {…}` is a no-op union, so empty-tier combos contribute nothing to
-either the per-tier check or the `all`-tier union.
->>>>>>> exp_diana
 
 ---
 
@@ -226,19 +208,12 @@ python scripts/run_autoexp.py \
 Each invocation:
 
 - Expands the full sweep plan (200 points, always).
-<<<<<<< HEAD
 - Applies the filter to pick its tier's subset (13 / 46 / 42 jobs for
   center / cross / diagonal).
 - Spawns its own orchestrator/monitor process.
 - Submits its jobs to SLURM (stables and their tier's decays go immediately;
   decays gated by `FileExistsCondition` wait until the sibling stable writes
   its branching checkpoint).
-=======
-- Applies the filter to pick its tier's subset (29 / 36 / 36 jobs).
-- Spawns its own orchestrator/monitor process.
-- Submits its jobs to SLURM (either immediately for stables and centers, or
-  waits on `FileExistsCondition` for cross/diagonal decays).
->>>>>>> exp_diana
 
 You **must** launch the three tiers in order (center → cross → diagonal) and
 cannot skip any of them: every tier owns some stables, and skipping a tier
@@ -256,7 +231,6 @@ Per-tier counts for the 130M lr × gbsz × tokens sweep:
 | `backend.megatron.aux.priority_tier` | stable | decay | total |
 |---|---|---|---|
 | `all`      | 20 | 81 | 101 |
-<<<<<<< HEAD
 | `center`   |  4 | 9  | 13  |
 | `cross`    | 10 | 36 | 46  |
 | `diagonal` |  6 | 36 | 42  |
@@ -303,45 +277,6 @@ Source: `scripts/validate_lr_gbsz_tokens_grid_tiers.py`. It expands the
 sweep, simulates the filter in Python for each tier, and asserts the
 partition invariants (disjoint, `center ∪ cross ∪ diagonal == all`).
 
-=======
-| `center`   | 20 | 9  | 29  |
-| `cross`    | 0  | 36 | 36  |
-| `diagonal` | 0  | 36 | 36  |
-
-`29 + 36 + 36 = 101`, matching the default `all`. The three partitioned
-tiers are disjoint, so back-to-back submission of all three is bit-identical
-to a single `all` invocation (same jobs, same parameters, same checkpoints).
-
-Verification script:
-
-```python
-from types import SimpleNamespace
-import yaml
-from oellm_autoexp.hydra_staged_sweep.expander import expand_sweep
-
-with open("config/experiments/swagatam/multilingual_scaling/dense_130M_lr_gbsz_tokens_grid.yaml") as f:
-    cfg = yaml.safe_load(f)
-sw = cfg["sweep"]
-sw_obj = SimpleNamespace(type=sw["type"], groups=sw["groups"], filter=sw.get("filter"),
-                         base_values={}, list_composition=[])
-points = expand_sweep(sw_obj)  # -> 200
-
-def keep(params, tier):
-    stage = params["stage"]
-    tokens = int(params["backend.megatron.aux.tokens"])
-    c = eval(params["backend.megatron.aux.center_tokens_set"])
-    x = eval(params["backend.megatron.aux.cross_tokens_set"])
-    d = eval(params["backend.megatron.aux.diagonal_tokens_set"])
-    if stage == "stable":
-        return tier in {"all", "center"}
-    return tokens in {"all": c | x | d, "center": c, "cross": x, "diagonal": d}[tier]
-
-for tier in ("all", "center", "cross", "diagonal"):
-    n = sum(keep(p.parameters, tier) for p in points)
-    print(tier, n)
-```
-
->>>>>>> exp_diana
 ---
 
 ## 6. How decay-stable coordination works across invocations
@@ -423,12 +358,9 @@ The chosen approach (single YAML +
   because already-submitted jobs are recognised via the monitor state store.
 - **Safe to parallelise the three invocations.** They work on disjoint
   job-name sets and can each run their own orchestrator concurrently.
-<<<<<<< HEAD
   Because stables are now distributed across tiers, cross and diagonal can
   be started as soon as you're happy for their stables to start filling
   the queue — they don't need to wait for the center decays to finish.
-=======
->>>>>>> exp_diana
 - **Monitor state.** Each invocation writes its own
   `monitor_state/<run_id>/` folder. They don't share state, so if you want
   to inspect "one dashboard of 101 jobs" you have to aggregate across the
@@ -473,7 +405,6 @@ The chosen approach (single YAML +
    tier-related fields in a single consistent namespace.
 6. **Write the tier filter.** Template:
    ```
-<<<<<<< HEAD
    (stage == stable AND (aux.priority_tier == "all"
                          OR aux.priority_tier == aux.stable_launch_tier))
    OR
@@ -492,20 +423,6 @@ The chosen approach (single YAML +
 8. **Document the mandatory launch order** (and the "don't skip tiers"
    invariant) in the config's trailing comment block. Future-you will
    thank you.
-=======
-   (stage == stable AND priority_tier ∈ stable_tiers)
-   OR
-   (stage != stable AND (
-       (priority_tier == "all"   AND tokens in union(all tier sets))
-       OR (priority_tier == T    AND tokens in <T>_tokens_set)    for each T
-   ))
-   ```
-6. **Verify partition.** Run the script in §5 and confirm
-   `sum(non-all tiers) == len(all)`. Any mismatch means your per-tier sets
-   overlap or miss rows.
-7. **Document the invocation commands** in the config's trailing comment
-   block. Future-you will thank you.
->>>>>>> exp_diana
 
 ---
 
