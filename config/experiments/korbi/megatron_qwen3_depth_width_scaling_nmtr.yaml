@@ -1,54 +1,53 @@
 # @package _global_
 defaults:
   - ../base
-  - /backend: titan
-  - /container: jupiter_titan
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
   - /slurm: jupiter
+  - /backend/megatron: [base,qwen3_base,data_nemonicco_jupiter]
   - /sweep: none
-  - override /backend/titan/model: qwen3_base
-  - override /backend/titan/data: slimpajama_jupiter
   - _self_
 
 # will be overridden
 aux:
   width: 512
   nheads: 8
-  nkvheads: 2
   layers: 12
   ffn_scale: 3
+  num_kv_heads: 4
 
-  total_tokens: ${oc.eval:${backend.titan.training.seq_len}*${backend.titan.training.global_batch_size}*${backend.titan.training.steps}}
+  total_tokens: ${oc.eval:${backend.megatron.seq_length}*${backend.megatron.global_batch_size}*${backend.megatron.train_iters}}
 
 backend:
-  titan:
-    training:
-      steps: 24000
-      global_batch_size: 512
-      local_batch_size: 8
-      seq_len: 4096
+  megatron:
+    train_iters: 12000
+    global_batch_size: 1024
+    micro_batch_size: 16
+    expert_model_parallel_size: 1
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    use_distributed_optimizer: true
+    sequence_parallel: false
+    eval_interval: 1000
+    seq_length: 4096
+    log_interval: 100
+    grad_reduce_in_bf16: false
 
-    model:
-      vocab_size: 50384  # Vocabulary size (must match tokenizer)
-      # tokenizer_path: /leonardo_scratch/fast/EUHPC_D29_026/tokenizer/neox
-      tokenizer_path: /e/project1/projectnucleus/franke5/workspace/titan-train/torchtitan/assets/tokenizer/gpt-neox-20b
+    # basic setup
+    lr: 0.001  # change for gbs 1024 in Niccolo's plots from 0.004 to 0.001
+    lr_decay_style: "WSD"
+    lr_warmup_iters: 2000
+    lr_wsd_decay_iters: ${oc.eval:0.2*${backend.megatron.train_iters}}
+    wandb_project: depth_width_scaling_dense
 
-      dim: ${aux.width}
-      hidden_dim: ${oc.muli:${aux.width},${aux.ffn_scale}}
-      n_layers: ${aux.layers}
-      n_heads: ${aux.nheads}
-      n_kv_heads: ${aux.nheads}
-      enable_weight_tying: true
+    kv_channels: 128
+    untie_embeddings_and_output_weights: False
 
-
-
-    lr_scheduler:
-      warm_steps: 2000
-      warm_ratio: 0
-      decay_ratio: 0.2
-
-    checkpoint:
-      enable: true
-      interval: 2000
+    hidden_size: ${aux.width}
+    ffn_hidden_size: ${oc.muli:${aux.width},${aux.ffn_scale}}
+    num_layers: ${aux.layers}
+    num_attention_heads: ${aux.nheads}
+    num_query_groups: ${oc.eval:${.num_attention_heads}/${aux.num_kv_heads}}
 
 
   env:
@@ -58,21 +57,15 @@ backend:
     HF_HOME: ${oc.env:HF_HOME}
     TORCHDYNAMO_DISABLE: "1"
     PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
-    PYTHONPATH: "./submodules/titan-oellm:./submodules/titan-oellm/torchtitan:."
-    NCCL_SOCKET_TIMEOUT: 60000
-    NCCL_TIMEOUT: 1800
-    NCCL_IB_TIMEOUT: 100
-    NCCL_IB_RETRY_CNT: 20
-    NCCL_ALGO: Ring
 
 slurm:
   sbatch:
-    nodes: 16
+    nodes: 8
 
 
 job:
-  name: titan_qwen3_depth_width_scaling_Dspaj__W${aux.width}_NH${aux.nheads}_L${aux.layers}_FFNS${aux.ffn_scale}
-  base_output_dir: ${oc.concat:${oc.env:OUTPUT_DIR,"./output"}/depth_width_scaling_dense/,${job.name}${oc.if:${slurm.array}, "_${index}", ""}}
+  name: megatron_qwen3_depth_width_scaling_D${backend.megatron.aux.dataset}__W${aux.width}_NH${aux.nheads}_L${aux.layers}_FFNS${aux.ffn_scale}_LR${backend.megatron.lr}
+  base_output_dir: ${oc.concat:${oc.env:OUTPUT_DIR,"./output"}/depth_width_scaling_dense_nmtr/,${job.name}${oc.if:${slurm.array}, "_${index}", ""}}
 
 sweep:
   # Outer level: product (combines hyperparameters × stages)
@@ -136,30 +129,29 @@ sweep:
           aux.num_kv_heads: 4
           aux.layers: 11
 
+
+      # scaling width
         - aux.width: 512
           aux.ffn_scale: 3
           aux.nheads: 16
           aux.num_kv_heads: 8
           aux.layers: 12
-
         - aux.width: 768
           aux.ffn_scale: 3
           aux.nheads: 24
           aux.num_kv_heads: 12
           aux.layers: 12
-
         - aux.width: 1024
           aux.ffn_scale: 3
           aux.nheads: 32
           aux.num_kv_heads: 16
           aux.layers: 12
-
+      # scaling depth
         - aux.width: 512
           aux.ffn_scale: 3
           aux.nheads: 16
           aux.num_kv_heads: 8
           aux.layers: 24
-
         - aux.width: 512
           aux.ffn_scale: 3
           aux.nheads: 16

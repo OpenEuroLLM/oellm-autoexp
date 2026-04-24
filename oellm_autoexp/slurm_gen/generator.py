@@ -14,7 +14,10 @@ def build_sbatch_directives(config: SlurmConfig) -> list[str]:
     directives: list[str] = []
     sbatch_values = asdict(config.sbatch)
     del sbatch_values["_non_strict"]
+    jobname_present = False
     for key, value in sbatch_values.items():
+        if key == "job_name":
+            jobname_present = True
         if value is None:
             continue
         flag = key if key.startswith("--") else f"--{key.replace('_', '-')}"
@@ -22,6 +25,8 @@ def build_sbatch_directives(config: SlurmConfig) -> list[str]:
             directives.append(f"#SBATCH {flag}")
         else:
             directives.append(f"#SBATCH {flag}={value}")
+    if not jobname_present:
+        directives.append(f"#SBATCH --job-name={config.name}")
     for line in config.sbatch_extra_directives:
         directives.append(line if line.startswith("#SBATCH") else f"#SBATCH {line}")
     return directives

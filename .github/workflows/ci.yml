@@ -79,13 +79,20 @@ jobs:
             python: '3.11'
             extras: 'dev'
             checkout_submodules: 'false'
+            extra_pip_args: ''
             pytest_args: ''
           - name: megatron-extras
             python: '3.11'
             extras: 'dev,megatron'
             checkout_submodules: 'recursive'
-            schema_only: '1'
+            extra_pip_args: ''
             pytest_args: 'tests/unit/test_megatron_backend.py tests/integration/test_megatron_optional.py'
+          - name: titan-extras
+            python: '3.11'
+            extras: 'dev,titan'
+            checkout_submodules: 'recursive'
+            extra_pip_args: '-e submodules/titan-oellm/torchtitan -e submodules/titan-oellm'
+            pytest_args: 'tests/unit/test_titan_backend.py tests/unit/test_titan_config_consistency.py'
       fail-fast: false
 
     steps:
@@ -95,6 +102,7 @@ jobs:
           submodules: false
 
       - name: Checkout submodules
+        if: matrix.checkout_submodules == 'recursive'
         env:
           GH_TOKEN: ${{ secrets.TITAN_OELLM_PAT }}
         run: |
@@ -135,6 +143,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[${{ matrix.extras }}]"
+          if [ -n "${{ matrix.extra_pip_args }}" ]; then
+            pip install ${{ matrix.extra_pip_args }}
+          fi
 
       - name: Run pytest
         run: |

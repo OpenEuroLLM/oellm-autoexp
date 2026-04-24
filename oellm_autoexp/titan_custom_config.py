@@ -1,4 +1,8 @@
-"""Custom TorchTitan JobConfig with extra model sizing fields."""
+"""Custom TorchTitan JobConfig with extra model sizing fields.
+
+NOTE: Must NOT use 'from __future__ import annotations' — torchtitan's
+ConfigManager requires runtime type inspection of field annotations.
+"""
 
 from dataclasses import dataclass, field
 
@@ -17,7 +21,7 @@ class Model(BaseModel):
     """
 
     ffn_dim_multiplier: float | None = None
-    multiple_of: int = 256
+    multiple_of: int | None = 256
 
 
 @dataclass
