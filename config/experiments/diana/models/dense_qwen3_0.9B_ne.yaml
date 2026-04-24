@@ -1,0 +1,129 @@
+# @package backend.megatron
+
+# 0.9B NE dense Qwen3-like model
+# Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
+
+# MODEL
+num_layers: 28
+hidden_size: 1536
+ffn_hidden_size: 4608
+kv_channels: 128
+swiglu: True
+add_bias_linear: False
+init_method_std: 0.02
+
+# Attention
+num_attention_heads: 16
+num_query_groups: 8
+group_query_attention: True
+attention_softmax_in_fp32: False # OpenSci style
+use_flash_attn: True
+
+# Position Embedding
+position_embedding_type: "rope"
+rotary_base: 10000
+rotary_percent: 1.0
+untie_embeddings_and_output_weights: False
+
+# Normalization
+normalization: RMSNorm
+norm_epsilon: 1.e-5 # rmsnorm epsilon
+qk_layernorm: True # enable qk-norm
+bf16: True
+
+# Disable dropout
+attention_dropout: 0.0
+hidden_dropout: 0.0
+
+# OPTIMIZER
+optimizer: adam
+adam_beta1: 0.9
+adam_beta2: 0.95
+adam_eps: 1.e-8
+clip_grad: 1.0
+weight_decay: 0.1
+
+# SCHEDULER
+min_lr: 0.0
+lr_decay_style: WSD
+lr_wsd_decay_style: linear
+lr_warmup_iters: 2000 # Fixed for all.
+
+# TRAINING, PARALLELISM
+recompute_activations: False
+use_torch_fsdp2: False # it's either this or the next 4 args
+tensor_model_parallel_size: 1
+pipeline_model_parallel_size: 1
+context_parallel_size: 1
+sequence_parallel: True
+
+# DISTRIBUTED OPTIM
+use_distributed_optimizer: True
+
+# COMM OPTIONS
+distributed_backend: nccl
+distributed_timeout_minutes: 10
+
+# PROFILE
+profile: False
+use_pytorch_profiler: False
+profile_ranks: [0]
+profile_step_start: 5
+profile_step_end: 12
+
+# EVALS
+# Eval interval scales inversely with global batch size,
+# calibrated so that gbsz=1024 evals every 200 iterations.
+eval_interval: "${oc.eval:'int(204800 // ${backend.megatron.global_batch_size})'}"
+eval_iters: 100
+
+# LOGGING
+log_interval: 1
+log_progress: True
+log_throughput: True
+tensorboard_queue_size: 5
+log_timers_to_tensorboard: True
+
+# CHECKPOINT FORMAT
+ckpt_format: "torch_dist"
+# Checkpoint interval scales inversely with global batch size,
+# calibrated so that gbsz=1024 saves every 500 iterations.
+save_interval: "${oc.eval:'int(512000 // ${backend.megatron.global_batch_size})'}"
+save: ${job.base_output_dir}/checkpoints
+load: ${.save}
+
+# Extra checkpoints at decay branching points.
+# References aux.save_step_* scalars, which are overridden per stable phase in the sweep.
+# Scalar overrides avoid Hydra's list-override parser which can't handle oc.eval expressions.
+# Unused slots default to 999_999_999 (a sentinel that is never reached).
+save_extra_steps:
+  - "${backend.megatron.aux.save_step_0}"
+  - "${backend.megatron.aux.save_step_1}"
+  - "${backend.megatron.aux.save_step_2}"
+  - "${backend.megatron.aux.save_step_3}"
+  - "${backend.megatron.aux.save_step_4}"
+  - "${backend.megatron.aux.save_step_5}" 
+  - "${backend.megatron.aux.save_step_6}"
+  - "${backend.megatron.aux.save_step_7}"
+  - "${backend.megatron.aux.save_step_8}"
+
+# Auxiliary computation variables
+# Note: Computed fields (train_iters, lr_wsd_decay_iters, start_iter)
+# are defined in the sweep defaults alongside the tokens they depend on,
+# so they get resolved together with stage-specific values
+aux:
+  tokens: 300_000_000_000  # Default: 300B tokens
+  decay_fraction: 0.0  # Default: no decay
+  start_iter: 0  # only used in decay
+  cooldown_decay_fraction: 0.2  # fraction of iters spent in LR decay during cooldown
+  # Decay branching checkpoints: overridden per stable phase in the sweep.
+  # Sentinel 999_999_999 is never reached, so unused slots produce no extra saves.
+  save_step_0: 999_999_999
+  save_step_1: 999_999_999
+  save_step_2: 999_999_999
+  save_step_3: 999_999_999
+  save_step_4: 999_999_999
+  save_step_5: 999_999_999      
+  save_step_6: 999_999_999
+  save_step_7: 999_999_999
+  save_step_8: 999_999_999
