@@ -13,3 +13,4 @@ tokenizer_model: /gpfs/projects/ehpc533/tokenizers/oellm-262k
 
 seq_length: 4096
 dataloader_type: "cyclic"
+num_workers: 8 # Will be overridden by sweep
