@@ -243,6 +243,21 @@ def _distributed_merge_collectors(collector: RouterMetricsCollector) -> None:
     collector.import_merged_state(merged)
 
 
+def _build_hf_distributed_config(enable_expert_parallel: bool):
+    """Return HF DistributedConfig (or None) for EP-capable inference loads."""
+    if not enable_expert_parallel:
+        return None
+    try:
+        from transformers.distributed.configuration_utils import DistributedConfig
+    except Exception as exc:  # pragma: no cover - depends on transformers version
+        raise RuntimeError(
+            "--enable-expert-parallel requested, but this transformers build does not "
+            "expose transformers.distributed.configuration_utils.DistributedConfig. "
+            "Upgrade transformers to a version with HF expert parallelism support."
+        ) from exc
+    return DistributedConfig(enable_expert_parallel=True)
+
+
 # Sparse-MoE class names that follow the Mixtral-style interface:
 #   attributes: gate (Linear), experts (ModuleList), top_k (int)
 #   forward output: (hidden_states, router_logits)  where router_logits is [tokens, num_experts]
@@ -877,6 +892,7 @@ def run_one_dataset(
     pad_to_multiple_of: Optional[int],
     ddp_rank: int = 0,
     ddp_world_size: int = 1,
+    shard_batches_across_ranks: bool = True,
     show_progress: bool = True,
 ) -> tuple[RouterMetricsCollector, dict]:
     """Run inference for one dataset spec on the already-loaded model.
@@ -941,11 +957,15 @@ def run_one_dataset(
     try:
         total_items = min(len(texts), effective_num_batches * batch_size)
         batch_starts = list(range(0, total_items, batch_size))
-        local_batch_starts = [
-            i
-            for batch_idx, i in enumerate(batch_starts)
-            if ddp_world_size <= 1 or (batch_idx % ddp_world_size == ddp_rank)
-        ]
+        if shard_batches_across_ranks:
+            local_batch_starts = [
+                i
+                for batch_idx, i in enumerate(batch_starts)
+                if ddp_world_size <= 1 or (batch_idx % ddp_world_size == ddp_rank)
+            ]
+        else:
+            # EP/TP collectives expect all ranks to execute identical forward schedules.
+            local_batch_starts = batch_starts
         # Full-sequence forwards only: disable KV cache to cut memory traffic and work
         # tied to returning/storing past_key_values when not generating.
         with torch.inference_mode():
@@ -1092,12 +1112,24 @@ def main():
             "Use if WORLD_SIZE is set in the environment for unrelated reasons."
         ),
     )
+    parser.add_argument(
+        "--enable-expert-parallel",
+        action="store_true",
+        help=(
+            "Enable Hugging Face expert parallelism via DistributedConfig. "
+            "Requires torchrun (WORLD_SIZE>1)."
+        ),
+    )
 
     args = parser.parse_args()
 
     use_ddp, ddp_rank, ddp_world_size, ddp_local_rank = (False, 0, 1, 0)
     if not args.ddp_disable:
         use_ddp, ddp_rank, ddp_world_size, ddp_local_rank = _maybe_init_distributed()
+    if args.enable_expert_parallel and not use_ddp:
+        raise ValueError(
+            "--enable-expert-parallel requires multi-process launch (e.g. torchrun --nproc_per_node=N)."
+        )
 
     if args.batch_size <= 0:
         raise ValueError("--batch-size must be > 0")
@@ -1114,7 +1146,12 @@ def main():
                 f"text_field={spec.dataset_text_field} percentage={spec.dataset_percentage} "
                 f"num_batches={spec.num_batches} seed={spec.seed}"
             )
-        if use_ddp:
+        if use_ddp and args.enable_expert_parallel:
+            print(
+                f"Distributed expert-parallel inference: world_size={ddp_world_size}. "
+                "All ranks execute the same batches; model handles distributed routing/collectives."
+            )
+        elif use_ddp:
             print(
                 f"Distributed data-parallel inference: world_size={ddp_world_size} "
                 f"(strided batch split; full replica per rank). Requires --no-device-map and enough "
@@ -1150,6 +1187,9 @@ def main():
             "trust_remote_code": True,
             "local_files_only": local_files_only,
         }
+        distributed_config = _build_hf_distributed_config(args.enable_expert_parallel)
+        if distributed_config is not None:
+            kw["distributed_config"] = distributed_config
         if include_attn and args.attn_implementation:
             kw["attn_implementation"] = args.attn_implementation
         elif not include_attn:
@@ -1258,6 +1298,7 @@ def main():
                 pad_to_multiple_of=args.pad_to_multiple_of,
                 ddp_rank=ddp_rank,
                 ddp_world_size=ddp_world_size,
+                shard_batches_across_ranks=(use_ddp and not args.enable_expert_parallel),
                 show_progress=(ddp_rank == 0),
             )
         except Exception as exc:
@@ -1279,12 +1320,18 @@ def main():
             }
             continue
 
-        if use_ddp:
+        if use_ddp and not args.enable_expert_parallel:
             _distributed_merge_collectors(collector)
             metadata = {
                 **metadata,
                 "ddp_world_size": ddp_world_size,
                 "ddp_batch_striding": f"batch_idx % {ddp_world_size} == rank",
+            }
+        elif use_ddp and args.enable_expert_parallel:
+            metadata = {
+                **metadata,
+                "distributed_world_size": ddp_world_size,
+                "distributed_mode": "expert_parallel",
             }
 
         results = collector.finalize()

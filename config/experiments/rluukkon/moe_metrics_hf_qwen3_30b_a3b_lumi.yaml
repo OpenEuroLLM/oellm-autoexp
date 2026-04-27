@@ -32,8 +32,10 @@ defaults:
   - /sweep: none
   - _self_
 
+aux:
+  model_name: Qwen3-30B-A3B-Base
 job:
-  name: moe_metrics_hf_qwen3_30b_a3b_lumi
+  name: ${aux.model_name}_moe_metrics_hf_lumi
   # Unique run directory so metrics JSON and slurm logs are never clobbered by a rerun.
   # Keep schema-compatible by not introducing new ``job`` keys (the dataclass is strict).
   # ``oc.concat`` is binary only; nest joins to append "/<job_id-or-timestring>".
@@ -45,8 +47,8 @@ slurm:
   sbatch:
     ntasks_per_node: 1
     cpus_per_task: 56
-    gpus_per_node: 4
-    gres: "gpu:4"
+    gpus_per_node: 8
+    gres: "gpu:8"
     mem: 480G
     time: "00:30:00"
     partition: ${oc.env:SLURM_PARTITION,"dev-g"}
@@ -70,10 +72,11 @@ backend:
   # quotes: `"{\"key\":\"value\"}"`. The YAML single-quoted scalars below preserve
   # backslashes verbatim, which is exactly what bash needs to see.
   base_command:
-    - torchrun --nproc_per_node=4
+    - torchrun --nproc_per_node=8
     - scripts/compute_moe_metrics_hf.py
+    # - --enable-expert-parallel
     - --model-name
-    - Qwen/Qwen3-30B-A3B
+    - Qwen/${aux.model_name}
     # Default raised from 4: MoE metrics are forward-only + no KV cache; HBM stays mostly
     # weights unless batch×seq is large. Tune up/down if you OOM or still see low util.
     - --batch-size
@@ -102,8 +105,8 @@ backend:
     - --dataset-entry
     - '"{\"label\":\"swe_Latn\",\"dataset_path\":\"parallel_data_samples/swe_Latn\",\"dataset_text_field\":\"text\",\"dataset_percentage\":100.0}"'
     - --output-json
-    - ${job.base_output_dir}/qwen3_30b_a3b_saturation.json
+    - ${job.base_output_dir}/${aux.model_name}_saturation.json
     - --coactivation-output
-    - ${job.base_output_dir}/qwen3_30b_a3b_coactivation.json
+    - ${job.base_output_dir}/${aux.model_name}_coactivation.json
     - --expert-token-distribution-output
-    - ${job.base_output_dir}/qwen3_30b_a3b_expert_token_dist.json
+    - ${job.base_output_dir}/${aux.model_name}_expert_token_dist.json
