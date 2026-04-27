@@ -13,9 +13,9 @@ Single-dataset usage:
   --num-batches 200 \
   --batch-size 1 \
   --max-length 2048 \
-  --output-json results/c4_saturation.json \
-  --coactivation-output results/c4_coactivation.json \
-  --expert-token-distribution-output results/c4_expert_token_dist.json
+  --output-jsonl results/c4_saturation.jsonl \
+  --coactivation-output results/c4_coactivation.jsonl \
+  --expert-token-distribution-output results/c4_expert_token_dist.jsonl
 
 Multi-process data-parallel (full model replica per rank; ``torchrun`` sets ``WORLD_SIZE``>1):
     torchrun --standalone --nproc_per_node=4 python scripts/compute_moe_metrics_hf.py \\
@@ -28,14 +28,14 @@ Multi-dataset usage (one model load, N datasets, combined outputs):
   --batch-size 1 --max-length 2048 \
   --dataset-entry '{"label":"c4_en","dataset":"allenai/c4","dataset_config":"en","dataset_split":"validation","dataset_percentage":1.0,"num_batches":200}' \
   --dataset-entry '{"label":"wikitext_103","dataset":"wikitext","dataset_config":"wikitext-103-raw-v1","dataset_split":"test","dataset_percentage":100.0,"num_batches":200}' \
-  --output-json results/saturation.json \
-  --coactivation-output results/coactivation.json \
-  --expert-token-distribution-output results/expert_token_dist.json
+  --output-jsonl results/saturation.jsonl \
+  --coactivation-output results/coactivation.jsonl \
+  --expert-token-distribution-output results/expert_token_dist.jsonl
 
-Outputs (multi-dataset shape, schema *_multi_dataset_v1 / expert_token_distribution_v2):
-    - saturation output: {"datasets": {"<label>": {"layers": {...}, ...}}, ...}
-    - coactivation output: {"datasets": {"<label>": {"layers": {...}}, ...}}
-    - expert token distribution: {"datasets": {"<label>": {"layers": {...}, ...}}, ...}
+Outputs (jsonl, one record per dataset label):
+    - saturation output: --output-jsonl
+    - coactivation output: --coactivation-output
+    - expert token distribution output: --expert-token-distribution-output
     - coactivation_<label>_<layer>.png heatmaps (when --plot is set)
 """
 
@@ -45,6 +45,8 @@ import argparse
 import json
 import os
 import re
+import shutil
+from datetime import timedelta
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
@@ -119,6 +121,15 @@ class RouterMetricsCollector:
         self._saturation_sums[name].add_(saturation_val)
         self._coact_sums[name].add_(pair_counts)
         self._single_sums[name].add_(single_counts)
+
+    def init_layer(self, name: str, num_experts: int, device: torch.device) -> None:
+        """Pre-initialize per-layer accumulators so all ranks share identical merge keys."""
+        if name in self._batch_counts:
+            return
+        self._batch_counts[name] = 0
+        self._saturation_sums[name] = torch.zeros((), dtype=torch.float32, device=device)
+        self._coact_sums[name] = torch.zeros((num_experts, num_experts), dtype=torch.float32, device=device)
+        self._single_sums[name] = torch.zeros(num_experts, dtype=torch.float32, device=device)
 
     def finalize(self) -> dict:
         """Transfer GPU accumulators to CPU and compute per-layer averages.
@@ -226,21 +237,66 @@ def _maybe_init_distributed() -> tuple[bool, int, int, int]:
     else:
         backend = "gloo"
 
-    dist.init_process_group(backend=backend)
+    # Multi-node dataset I/O can skew rank progress; use a longer timeout than
+    # PyTorch's default (10 min) to avoid false watchdog failures.
+    dist.init_process_group(backend=backend, timeout=timedelta(minutes=60))
     return True, dist.get_rank(), dist.get_world_size(), local_rank
 
 
+def _maybe_create_status_sync_group():
+    """Create a CPU/Gloo group for tiny control collectives under NCCL runs."""
+    import torch.distributed as dist
+
+    if not dist.is_initialized():
+        return None
+    if dist.get_backend() != "nccl":
+        return None
+    try:
+        return dist.new_group(backend="gloo", timeout=timedelta(minutes=60))
+    except Exception as exc:
+        if dist.get_rank() == 0:
+            print(
+                f"Warning: failed to create Gloo status-sync group ({type(exc).__name__}: {exc}); "
+                "falling back to default NCCL group for status checks."
+            )
+        return None
+
+
 def _distributed_merge_collectors(collector: RouterMetricsCollector) -> None:
-    """In-place: replace ``collector`` accumulators with global sums over ranks."""
+    """In-place all-reduce merge of collector accumulators across ranks.
+
+    This avoids ``all_gather_object`` of large Python payloads, which can allocate
+    substantial temporary buffers and is fragile under tight post-inference memory.
+    """
     import torch.distributed as dist
 
     if not dist.is_initialized():
         return
-    local = collector.pack_for_distributed()
-    gathered: List[Any] = [None for _ in range(dist.get_world_size())]
-    dist.all_gather_object(gathered, local)
-    merged = merge_router_collector_packed_states(gathered)
-    collector.import_merged_state(merged)
+
+    layer_names = sorted(collector._coact_sums.keys())
+    if not layer_names:
+        return
+
+    if collector._saturation_sums:
+        device = next(iter(collector._saturation_sums.values())).device
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Free cached blocks before collectives to reduce late-run OOM risk.
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+        torch.cuda.empty_cache()
+
+    for name in layer_names:
+        batch_count = torch.tensor(
+            float(collector._batch_counts[name]), dtype=torch.float32, device=device
+        )
+        dist.all_reduce(batch_count, op=dist.ReduceOp.SUM)
+        collector._batch_counts[name] = int(round(batch_count.item()))
+
+        dist.all_reduce(collector._saturation_sums[name], op=dist.ReduceOp.SUM)
+        dist.all_reduce(collector._coact_sums[name], op=dist.ReduceOp.SUM)
+        dist.all_reduce(collector._single_sums[name], op=dist.ReduceOp.SUM)
 
 
 def _build_hf_distributed_config(enable_expert_parallel: bool):
@@ -256,6 +312,60 @@ def _build_hf_distributed_config(enable_expert_parallel: bool):
             "Upgrade transformers to a version with HF expert parallelism support."
         ) from exc
     return DistributedConfig(enable_expert_parallel=True)
+
+
+def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
+    """Append one JSON object line and force-flush to disk."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(payload, sort_keys=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(line)
+        f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def _build_coactivation_layers(
+    collector: RouterMetricsCollector,
+    top_n: int,
+) -> Dict[str, dict]:
+    """Build per-layer coactivation JSON structure for one dataset."""
+    layers_out: Dict[str, dict] = {}
+    for layer_name, matrix in collector.coactivation_sums.items():
+        matrix_normalized = _normalize_coactivation_matrix(
+            matrix,
+            collector.single_counts.get(layer_name),
+        )
+        top_indices = _select_top_experts_pairwise(matrix_normalized, top_n)
+        submatrix = matrix_normalized[top_indices][:, top_indices]
+        layers_out[layer_name] = {
+            "experts": top_indices if isinstance(top_indices, list) else top_indices.tolist(),
+            "matrix": (submatrix * 100.0).tolist(),
+        }
+    return layers_out
+
+
+def _load_jsonl_dataset_labels(path: Path) -> Set[str]:
+    """Return dataset labels present in a JSONL checkpoint file."""
+    labels: Set[str] = set()
+    if not path.exists():
+        return labels
+    with path.open("r", encoding="utf-8") as f:
+        for lineno, line in enumerate(f, start=1):
+            raw = line.strip()
+            if not raw:
+                continue
+            try:
+                rec = json.loads(raw)
+            except json.JSONDecodeError:
+                print(f"Warning: skipping invalid JSONL line {lineno} in {path}")
+                continue
+            if not isinstance(rec, dict):
+                continue
+            label = rec.get("label")
+            if isinstance(label, str) and label:
+                labels.add(label)
+    return labels
 
 
 # Sparse-MoE class names that follow the Mixtral-style interface:
@@ -282,6 +392,14 @@ def register_sparse_moe_hooks(model, collector: RouterMetricsCollector):
         has_sparse_block_api = hasattr(module, "gate") and hasattr(module, "experts")
         if is_sparse_moe_block or has_sparse_block_api:
             layer_name = name
+            try:
+                num_experts = len(module.experts)
+            except Exception:
+                num_experts = None
+            if num_experts is not None:
+                gate_weight = getattr(getattr(module, "gate", None), "weight", None)
+                if torch.is_tensor(gate_weight):
+                    collector.init_layer(layer_name, int(num_experts), gate_weight.device)
             
             def hook_fn(module, inputs, outputs, layer_name=layer_name):
                 # Defensive guard: skip modules that do not expose sparse-MoE block attributes.
@@ -329,6 +447,10 @@ def register_dbrx_hooks(model, collector: RouterMetricsCollector):
     for name, module in model.named_modules():
         if "ffn" in name.lower() and hasattr(module, 'router'):
             layer_name = name
+            num_experts = int(getattr(module, "moe_num_experts", 0))
+            router_weight = getattr(getattr(module, "router", None), "weight", None)
+            if num_experts > 0 and torch.is_tensor(router_weight):
+                collector.init_layer(layer_name, num_experts, router_weight.device)
             
             def hook_fn(module, inputs, outputs, layer_name=layer_name):
                 num_experts = module.moe_num_experts
@@ -934,6 +1056,15 @@ def run_one_dataset(
             f"from sampled texts={len(texts)}"
         )
 
+    total_items = min(len(texts), effective_num_batches * batch_size)
+    dropped_texts = len(texts) - total_items
+    if ddp_rank == 0:
+        print(
+            f"[{spec.label}] Coverage: consumed_texts={total_items}/{len(texts)} "
+            f"(batch_size={batch_size}, num_batches={effective_num_batches}), "
+            f"dropped_texts={dropped_texts}"
+        )
+
     collector = RouterMetricsCollector()
     if model_type in ("mixtral", "qwen3_moe"):
         hooks = register_sparse_moe_hooks(model, collector)
@@ -955,7 +1086,6 @@ def run_one_dataset(
         tok_kw["pad_to_multiple_of"] = pad_to_multiple_of
 
     try:
-        total_items = min(len(texts), effective_num_batches * batch_size)
         batch_starts = list(range(0, total_items, batch_size))
         if shard_batches_across_ranks:
             local_batch_starts = [
@@ -1022,6 +1152,8 @@ def run_one_dataset(
         "seed": spec.seed,
         "num_batches": effective_num_batches,
         "num_texts_loaded": len(texts),
+        "num_texts_consumed": total_items,
+        "num_texts_dropped": dropped_texts,
     }
     return collector, metadata
 
@@ -1062,20 +1194,42 @@ def main():
     parser.add_argument("--max-length", type=int, default=512, help="Max sequence length (shared across datasets)")
 
     # Outputs (combined across datasets).
-    parser.add_argument("--output-json", type=str, default="saturation_results.json", help="Output JSON path (combined across datasets)")
-    parser.add_argument("--coactivation-output", type=str, default=None, help="Co-activation output JSON (combined across datasets)")
     parser.add_argument(
-        "--expert-token-distribution-output",
+        "--output-jsonl",
+        type=str,
+        default="saturation_results.jsonl",
+        help="Per-dataset checkpoint output (jsonl). One JSON object per dataset.",
+    )
+    parser.add_argument(
+        "--resume-from-jsonl",
         type=str,
         default=None,
         help=(
-            "Optional JSON path for per-layer expert selection counts and normalized "
-            "probabilities, combined across all datasets under a 'datasets' key."
+            "Path to a previous per-dataset jsonl checkpoint. Existing labels in that file "
+            "are treated as already processed and skipped in this run."
+        ),
+    )
+    parser.add_argument(
+        "--coactivation-output",
+        type=str,
+        default="coactivation_results.jsonl",
+        help=(
+            "Per-dataset co-activation checkpoint (jsonl). "
+            "One JSON object per dataset. Default: coactivation_results.jsonl"
+        ),
+    )
+    parser.add_argument(
+        "--expert-token-distribution-output",
+        type=str,
+        default="expert_token_distribution.jsonl",
+        help=(
+            "Per-dataset expert-token-distribution checkpoint (jsonl). "
+            "One JSON object per dataset. Default: expert_token_distribution.jsonl"
         ),
     )
     parser.add_argument("--coactivation-top-n", type=int, default=16, help="Top N experts for coactivation")
     parser.add_argument("--plot", action="store_true", help="Generate per-dataset co-activation heatmaps")
-    parser.add_argument("--plot-dir", type=str, default=None, help="Directory to save plots (defaults to output-json directory)")
+    parser.add_argument("--plot-dir", type=str, default=None, help="Directory to save plots (defaults to output-jsonl directory)")
 
     # HF / device.
     parser.add_argument("--no-local-files-only", action="store_true", help="Allow downloading from HuggingFace (default: offline)")
@@ -1126,6 +1280,7 @@ def main():
     use_ddp, ddp_rank, ddp_world_size, ddp_local_rank = (False, 0, 1, 0)
     if not args.ddp_disable:
         use_ddp, ddp_rank, ddp_world_size, ddp_local_rank = _maybe_init_distributed()
+    status_sync_group = _maybe_create_status_sync_group() if use_ddp else None
     if args.enable_expert_parallel and not use_ddp:
         raise ValueError(
             "--enable-expert-parallel requires multi-process launch (e.g. torchrun --nproc_per_node=N)."
@@ -1137,6 +1292,29 @@ def main():
         raise ValueError("--num-batches must be > 0 when provided")
 
     dataset_specs = _parse_dataset_specs(args)
+
+    output_jsonl_path = Path(args.output_jsonl)
+    coactivation_jsonl_path = Path(args.coactivation_output)
+    expert_dist_jsonl_path = Path(args.expert_token_distribution_output)
+    resume_jsonl_path = Path(args.resume_from_jsonl) if args.resume_from_jsonl else None
+    processed_labels: Set[str] = set()
+    if resume_jsonl_path is not None:
+        processed_labels = _load_jsonl_dataset_labels(resume_jsonl_path)
+        if ddp_rank == 0:
+            print(
+                f"Resume checkpoint: {resume_jsonl_path} "
+                f"(processed labels found: {len(processed_labels)})"
+            )
+
+    if processed_labels:
+        dataset_specs_all = dataset_specs
+        dataset_specs = [s for s in dataset_specs_all if s.label not in processed_labels]
+        if ddp_rank == 0:
+            skipped = [s.label for s in dataset_specs_all if s.label in processed_labels]
+            print(
+                f"Skipping {len(skipped)} already-processed dataset(s): {', '.join(skipped)}"
+            )
+            print(f"Remaining dataset(s) to process: {len(dataset_specs)}")
     if ddp_rank == 0:
         print(f"Configured {len(dataset_specs)} dataset(s):")
         for spec in dataset_specs:
@@ -1157,6 +1335,40 @@ def main():
                 f"(strided batch split; full replica per rank). Requires --no-device-map and enough "
                 f"VRAM per GPU for the whole model."
             )
+
+    if ddp_rank == 0:
+        output_jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        coactivation_jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        expert_dist_jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        if resume_jsonl_path is not None:
+            if not resume_jsonl_path.exists():
+                raise FileNotFoundError(
+                    f"--resume-from-jsonl path does not exist: {resume_jsonl_path}"
+                )
+            if resume_jsonl_path.resolve() != output_jsonl_path.resolve():
+                shutil.copyfile(resume_jsonl_path, output_jsonl_path)
+            else:
+                # In-place resume: keep existing content and append missing datasets.
+                pass
+            resume_coact = resume_jsonl_path.with_name(coactivation_jsonl_path.name)
+            resume_dist = resume_jsonl_path.with_name(expert_dist_jsonl_path.name)
+            if resume_coact.exists():
+                if resume_coact.resolve() != coactivation_jsonl_path.resolve():
+                    shutil.copyfile(resume_coact, coactivation_jsonl_path)
+            else:
+                coactivation_jsonl_path.write_text("", encoding="utf-8")
+            if resume_dist.exists():
+                if resume_dist.resolve() != expert_dist_jsonl_path.resolve():
+                    shutil.copyfile(resume_dist, expert_dist_jsonl_path)
+            else:
+                expert_dist_jsonl_path.write_text("", encoding="utf-8")
+        else:
+            output_jsonl_path.write_text("", encoding="utf-8")
+            coactivation_jsonl_path.write_text("", encoding="utf-8")
+            expert_dist_jsonl_path.write_text("", encoding="utf-8")
+        print(f"Per-dataset incremental checkpoint: {output_jsonl_path}")
+        print(f"Per-dataset coactivation checkpoint: {coactivation_jsonl_path}")
+        print(f"Per-dataset expert-distribution checkpoint: {expert_dist_jsonl_path}")
 
     local_files_only = not args.no_local_files_only
     if local_files_only:
@@ -1274,7 +1486,7 @@ def main():
                 "matplotlib and seaborn are required for --plot but are not available. "
                 "Please install: pip install matplotlib seaborn"
             )
-        plot_dir = Path(args.plot_dir) if args.plot_dir else Path(args.output_json).parent
+        plot_dir = Path(args.plot_dir) if args.plot_dir else Path(args.output_jsonl).parent
         plot_dir.mkdir(parents=True, exist_ok=True)
 
     # Process each dataset; accumulate finalized collectors for combined co-activation /
@@ -1285,6 +1497,9 @@ def main():
     for spec in dataset_specs:
         if ddp_rank == 0:
             print(f"\n=== Dataset '{spec.label}' ===")
+        collector: Optional[RouterMetricsCollector] = None
+        metadata: Dict[str, Any] = {}
+        local_status = "ok"
         try:
             collector, metadata = run_one_dataset(
                 model=model,
@@ -1303,10 +1518,10 @@ def main():
             )
         except Exception as exc:
             status = f"error: {type(exc).__name__}: {exc}"
+            local_status = status
             if ddp_rank == 0:
                 print(f"[{spec.label}] {status}")
-            per_dataset[spec.label] = {
-                "status": status,
+            metadata = {
                 "dataset": spec.dataset,
                 "dataset_config": spec.dataset_config,
                 "dataset_path": spec.dataset_path,
@@ -1316,8 +1531,126 @@ def main():
                 "seed": spec.seed,
                 "num_batches": spec.num_batches,
                 "num_texts_loaded": 0,
+            }
+
+        if use_ddp:
+            import torch.distributed as dist
+
+            if status_sync_group is not None:
+                fail_tensor = torch.tensor(
+                    0 if local_status == "ok" else 1, dtype=torch.int32, device="cpu"
+                )
+                dist.all_reduce(fail_tensor, op=dist.ReduceOp.MAX, group=status_sync_group)
+            else:
+                status_device = (
+                    torch.device(f"cuda:{ddp_local_rank}")
+                    if torch.cuda.is_available()
+                    else torch.device("cpu")
+                )
+                if status_device.type == "cuda":
+                    torch.cuda.synchronize(status_device)
+                    torch.cuda.empty_cache()
+                fail_tensor = torch.tensor(
+                    0 if local_status == "ok" else 1, dtype=torch.int32, device=status_device
+                )
+                dist.all_reduce(fail_tensor, op=dist.ReduceOp.MAX)
+            any_rank_failed = int(fail_tensor.item()) != 0
+            if any_rank_failed:
+                if ddp_rank == 0 and local_status == "ok":
+                    print(
+                        f"[{spec.label}] error: at least one rank failed before merge; "
+                        "marking dataset as failed on all ranks to keep collectives aligned."
+                    )
+                final_status = local_status if local_status != "ok" else "error: peer rank failed"
+                per_dataset[spec.label] = {
+                    "status": final_status,
+                    **metadata,
+                    "layers": {},
+                }
+                if ddp_rank == 0:
+                    _append_jsonl(
+                        output_jsonl_path,
+                        {
+                            "schema": "moe_metrics_dataset_result_v1",
+                            "model": args.model_name,
+                            "model_type": model_type,
+                            "label": spec.label,
+                            "status": final_status,
+                            **metadata,
+                            "layers": {},
+                        },
+                    )
+                    _append_jsonl(
+                        coactivation_jsonl_path,
+                        {
+                            "schema": "moe_coactivation_dataset_result_v1",
+                            "model": args.model_name,
+                            "model_type": model_type,
+                            "label": spec.label,
+                            "status": final_status,
+                            "coactivation_top_n": args.coactivation_top_n,
+                            **metadata,
+                            "layers": {},
+                        },
+                    )
+                    _append_jsonl(
+                        expert_dist_jsonl_path,
+                        {
+                            "schema": "expert_token_distribution_dataset_result_v1",
+                            "model": args.model_name,
+                            "model_type": model_type,
+                            "label": spec.label,
+                            "status": final_status,
+                            **metadata,
+                            "layers": {},
+                        },
+                    )
+                continue
+
+        if collector is None:
+            per_dataset[spec.label] = {
+                "status": local_status,
+                **metadata,
                 "layers": {},
             }
+            if ddp_rank == 0:
+                _append_jsonl(
+                    output_jsonl_path,
+                    {
+                        "schema": "moe_metrics_dataset_result_v1",
+                        "model": args.model_name,
+                        "model_type": model_type,
+                        "label": spec.label,
+                        "status": local_status,
+                        **metadata,
+                        "layers": {},
+                    },
+                )
+                _append_jsonl(
+                    coactivation_jsonl_path,
+                    {
+                        "schema": "moe_coactivation_dataset_result_v1",
+                        "model": args.model_name,
+                        "model_type": model_type,
+                        "label": spec.label,
+                        "status": local_status,
+                        "coactivation_top_n": args.coactivation_top_n,
+                        **metadata,
+                        "layers": {},
+                    },
+                )
+                _append_jsonl(
+                    expert_dist_jsonl_path,
+                    {
+                        "schema": "expert_token_distribution_dataset_result_v1",
+                        "model": args.model_name,
+                        "model_type": model_type,
+                        "label": spec.label,
+                        "status": local_status,
+                        **metadata,
+                        "layers": {},
+                    },
+                )
             continue
 
         if use_ddp and not args.enable_expert_parallel:
@@ -1340,6 +1673,45 @@ def main():
             **metadata,
             "layers": results,
         }
+        if ddp_rank == 0:
+            _append_jsonl(
+                output_jsonl_path,
+                {
+                    "schema": "moe_metrics_dataset_result_v1",
+                    "model": args.model_name,
+                    "model_type": model_type,
+                    "label": spec.label,
+                    "status": "ok",
+                    **metadata,
+                    "layers": results,
+                },
+            )
+            coact_layers = _build_coactivation_layers(collector, args.coactivation_top_n)
+            _append_jsonl(
+                coactivation_jsonl_path,
+                {
+                    "schema": "moe_coactivation_dataset_result_v1",
+                    "model": args.model_name,
+                    "model_type": model_type,
+                    "label": spec.label,
+                    "status": "ok",
+                    "coactivation_top_n": args.coactivation_top_n,
+                    **metadata,
+                    "layers": coact_layers,
+                },
+            )
+            _append_jsonl(
+                expert_dist_jsonl_path,
+                {
+                    "schema": "expert_token_distribution_dataset_result_v1",
+                    "model": args.model_name,
+                    "model_type": model_type,
+                    "label": spec.label,
+                    "status": "ok",
+                    **metadata,
+                    "layers": _build_expert_distribution_layers(collector.single_counts),
+                },
+            )
         collectors[spec.label] = collector
 
         if plot_dir is not None and collector.coactivation_sums and ddp_rank == 0:
@@ -1352,98 +1724,23 @@ def main():
                 filename_prefix=f"{spec.label}_",
             )
 
-    output_data = {
-        "schema": "moe_metrics_multi_dataset_v1",
-        "model": args.model_name,
-        "model_type": model_type,
-        "coactivation_mode": "pairwise-adjacent",
-        "datasets": per_dataset,
-    }
     if ddp_rank == 0:
-        print("\nResults:")
-        print(json.dumps(output_data, indent=2))
-
-    if ddp_rank == 0:
-        output_path = Path(args.output_json)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(output_data, indent=2))
-        print(f"\nSaved saturation results to: {output_path}")
-
-    if args.coactivation_output and ddp_rank == 0:
-        top_n = args.coactivation_top_n
-        coactivation_summary: Dict[str, Any] = {
-            "schema": "moe_coactivation_multi_dataset_v1",
-            "model": args.model_name,
-            "datasets": {},
-        }
-        for label, entry in per_dataset.items():
-            if entry.get("status") != "ok":
-                coactivation_summary["datasets"][label] = {
-                    "status": entry.get("status", "error: unknown"),
-                    "layers": {},
-                }
-                continue
-            coll = collectors[label]
-            layers_out: Dict[str, dict] = {}
-            for layer_name, matrix in coll.coactivation_sums.items():
-                matrix_normalized = _normalize_coactivation_matrix(
-                    matrix,
-                    coll.single_counts.get(layer_name),
-                )
-                top_indices = _select_top_experts_pairwise(matrix_normalized, top_n)
-                submatrix = matrix_normalized[top_indices][:, top_indices]
-                layers_out[layer_name] = {
-                    "experts": top_indices if isinstance(top_indices, list) else top_indices.tolist(),
-                    "matrix": (submatrix * 100.0).tolist(),
-                }
-            coactivation_summary["datasets"][label] = {"status": "ok", "layers": layers_out}
-
-        coact_path = Path(args.coactivation_output)
-        coact_path.parent.mkdir(parents=True, exist_ok=True)
-        coact_path.write_text(json.dumps(coactivation_summary, indent=2))
-        print(f"Saved co-activation results to: {coact_path}")
-
-    if args.expert_token_distribution_output and ddp_rank == 0:
-        dist_payload: Dict[str, Any] = {
-            "schema": "expert_token_distribution_v2",
-            "description": (
-                "Per-dataset, per-layer histogram of routed expert indices. Counts are over "
-                "all top-k selections (each token contributes up to top_k counts). "
-                "prob_mass_per_expert is counts normalized within the layer."
-            ),
-            "model": args.model_name,
-            "model_type": model_type,
-            "datasets": {},
-        }
-        for label, entry in per_dataset.items():
-            if entry.get("status") != "ok":
-                dist_payload["datasets"][label] = {
-                    "status": entry.get("status", "error: unknown"),
-                    "layers": {},
-                }
-                continue
-            coll = collectors[label]
-            dist_payload["datasets"][label] = {
-                "status": "ok",
-                "dataset": entry.get("dataset"),
-                "dataset_config": entry.get("dataset_config"),
-                "dataset_path": entry.get("dataset_path"),
-                "dataset_split": entry.get("dataset_split"),
-                "dataset_text_field": entry.get("dataset_text_field"),
-                "dataset_percentage": entry.get("dataset_percentage"),
-                "seed": entry.get("seed"),
-                "num_batches": entry.get("num_batches"),
-                "num_texts_loaded": entry.get("num_texts_loaded"),
-                "layers": _build_expert_distribution_layers(coll.single_counts),
-            }
-
-        dist_path = Path(args.expert_token_distribution_output)
-        dist_path.parent.mkdir(parents=True, exist_ok=True)
-        dist_path.write_text(json.dumps(dist_payload, indent=2))
-        print(f"Saved expert token distribution results to: {dist_path}")
+        ok_count = sum(1 for e in per_dataset.values() if e.get("status") == "ok")
+        print(
+            f"\nCompleted datasets: ok={ok_count}/{len(per_dataset)} | "
+            f"saturation={output_jsonl_path} | "
+            f"coactivation={coactivation_jsonl_path} | "
+            f"expert_dist={expert_dist_jsonl_path}"
+        )
 
     if use_ddp:
         import torch.distributed as dist
+
+        if status_sync_group is not None:
+            try:
+                dist.destroy_process_group(status_sync_group)
+            except Exception:
+                pass
 
         if dist.is_initialized():
             dist.barrier()
