@@ -32,10 +32,15 @@ defaults:
   - /sweep: none
   - _self_
 
+container:
+  # image: /shared_silo/scratch/containers/rocm_primus_v25.11_transformers-4.5.7_linear_FA.sif
+  image: /shared_silo/scratch/containers/build-rocm_primus_v25.11_transformers-5.5.4_linear_FA/rocm_primus_v25.11_transformers-5.5.4_linear_FA.sif
 aux:
-  model_name: Qwen3-30B-A3B-Base
+  model_id: Qwen3-30B-A3B-Base
+  model_name: Qwen/${aux.model_id}
 job:
-  name: ${aux.model_name}_moe_metrics_hf_lumi
+  # Keep job/output names filename-safe (no '/').
+  name: ${aux.model_id}_moe_metrics_hf_lumi
   # Unique run directory so metrics JSON and slurm logs are never clobbered by a rerun.
   # Keep schema-compatible by not introducing new ``job`` keys (the dataclass is strict).
   # ``oc.concat`` is binary only; nest joins to append "/<job_id-or-timestring>".
@@ -45,14 +50,16 @@ job:
 # device_map="auto" across all GPUs in the allocation — use a single task.
 slurm:
   sbatch:
+    nodes: 1
     ntasks_per_node: 1
     cpus_per_task: 56
     gpus_per_node: 8
     gres: "gpu:8"
     mem: 480G
-    time: "00:30:00"
+    time: "02:00:00"
     partition: ${oc.env:SLURM_PARTITION,"dev-g"}
     account: ${oc.env:SLURM_ACCOUNT,"project_462000963"}
+
 
 backend:
   class_name: NullBackend
@@ -76,14 +83,15 @@ backend:
     - scripts/compute_moe_metrics_hf.py
     # - --enable-expert-parallel
     - --model-name
-    - Qwen/${aux.model_name}
+    - ${aux.model_name}
     # Default raised from 4: MoE metrics are forward-only + no KV cache; HBM stays mostly
     # weights unless batch×seq is large. Tune up/down if you OOM or still see low util.
     - --batch-size
-    - "32"
+    - "16"
     - --no-local-files-only
     - --attn-implementation
     - sdpa
+    - --no-grouped-mm
     - --max-length
     - "8192"
     - --seed
@@ -104,9 +112,9 @@ backend:
     - '"{\"label\":\"spa_Latn\",\"dataset_path\":\"parallel_data_samples/spa_Latn\",\"dataset_text_field\":\"text\",\"dataset_percentage\":100.0}"'
     - --dataset-entry
     - '"{\"label\":\"swe_Latn\",\"dataset_path\":\"parallel_data_samples/swe_Latn\",\"dataset_text_field\":\"text\",\"dataset_percentage\":100.0}"'
-    - --output-json
-    - ${job.base_output_dir}/${aux.model_name}_saturation.json
+    - --output-jsonl
+    - ${job.base_output_dir}/${aux.model_id}_saturation.jsonl
     - --coactivation-output
-    - ${job.base_output_dir}/${aux.model_name}_coactivation.json
+    - ${job.base_output_dir}/${aux.model_id}_coactivation.jsonl
     - --expert-token-distribution-output
-    - ${job.base_output_dir}/${aux.model_name}_expert_token_dist.json
+    - ${job.base_output_dir}/${aux.model_id}_expert_token_dist.jsonl

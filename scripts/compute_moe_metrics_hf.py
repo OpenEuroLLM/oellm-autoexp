@@ -262,11 +262,19 @@ def _maybe_create_status_sync_group():
         return None
 
 
-def _distributed_merge_collectors(collector: RouterMetricsCollector) -> None:
+def _distributed_merge_collectors(
+    collector: RouterMetricsCollector,
+    gloo_group=None,
+) -> None:
     """In-place all-reduce merge of collector accumulators across ranks.
 
-    This avoids ``all_gather_object`` of large Python payloads, which can allocate
-    substantial temporary buffers and is fragile under tight post-inference memory.
+    When *gloo_group* is supplied (a Gloo CPU-backend process group) all
+    communication uses CPU tensors and the Gloo transport.  This completely
+    avoids NCCL GPU buffer allocations that accumulate across datasets and
+    ultimately starve the forward-pass of memory on later datasets.
+
+    Falls back to NCCL all_reduce on GPU tensors when *gloo_group* is None
+    (kept for compatibility with single-node runs where gloo may be absent).
     """
     import torch.distributed as dist
 
@@ -277,26 +285,53 @@ def _distributed_merge_collectors(collector: RouterMetricsCollector) -> None:
     if not layer_names:
         return
 
-    if collector._saturation_sums:
-        device = next(iter(collector._saturation_sums.values())).device
+    if gloo_group is not None:
+        # --- CPU/Gloo path: zero NCCL GPU allocations ---
+        # Move all accumulator tensors to CPU in one sweep, then do the
+        # all_reduce, and keep results on CPU (finalize() calls .cpu() anyway).
+        for name in layer_names:
+            batch_count = torch.tensor(
+                float(collector._batch_counts[name]), dtype=torch.float32
+            )
+            dist.all_reduce(batch_count, op=dist.ReduceOp.SUM, group=gloo_group)
+            collector._batch_counts[name] = int(round(batch_count.item()))
+
+            sat = collector._saturation_sums[name].cpu()
+            dist.all_reduce(sat, op=dist.ReduceOp.SUM, group=gloo_group)
+            collector._saturation_sums[name] = sat
+
+            coact = collector._coact_sums[name].cpu()
+            dist.all_reduce(coact, op=dist.ReduceOp.SUM, group=gloo_group)
+            collector._coact_sums[name] = coact
+
+            single = collector._single_sums[name].cpu()
+            dist.all_reduce(single, op=dist.ReduceOp.SUM, group=gloo_group)
+            collector._single_sums[name] = single
+
+        # GPU accumulator tensors have been moved to CPU; release the GPU memory.
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     else:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # --- Legacy NCCL/GPU path ---
+        if collector._saturation_sums:
+            device = next(iter(collector._saturation_sums.values())).device
+        else:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Free cached blocks before collectives to reduce late-run OOM risk.
-    if device.type == "cuda":
-        torch.cuda.synchronize(device)
-        torch.cuda.empty_cache()
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+            torch.cuda.empty_cache()
 
-    for name in layer_names:
-        batch_count = torch.tensor(
-            float(collector._batch_counts[name]), dtype=torch.float32, device=device
-        )
-        dist.all_reduce(batch_count, op=dist.ReduceOp.SUM)
-        collector._batch_counts[name] = int(round(batch_count.item()))
+        for name in layer_names:
+            batch_count = torch.tensor(
+                float(collector._batch_counts[name]), dtype=torch.float32, device=device
+            )
+            dist.all_reduce(batch_count, op=dist.ReduceOp.SUM)
+            collector._batch_counts[name] = int(round(batch_count.item()))
 
-        dist.all_reduce(collector._saturation_sums[name], op=dist.ReduceOp.SUM)
-        dist.all_reduce(collector._coact_sums[name], op=dist.ReduceOp.SUM)
-        dist.all_reduce(collector._single_sums[name], op=dist.ReduceOp.SUM)
+            dist.all_reduce(collector._saturation_sums[name], op=dist.ReduceOp.SUM)
+            dist.all_reduce(collector._coact_sums[name], op=dist.ReduceOp.SUM)
+            dist.all_reduce(collector._single_sums[name], op=dist.ReduceOp.SUM)
 
 
 def _build_hf_distributed_config(enable_expert_parallel: bool):
@@ -374,6 +409,7 @@ def _load_jsonl_dataset_labels(path: Path) -> Set[str]:
 _SPARSE_MOE_CLASS_NAMES = {
     "MixtralSparseMoeBlock",  # Mixtral-8x7B / 8x22B
     "Qwen3MoeSparseMoeBlock", # Qwen3-MoE (e.g. 30B-A3B)
+    "Qwen35MoeSparseMoeBlock",  # Qwen3.5-MoE (naming may vary by release)
 }
 
 
@@ -488,8 +524,22 @@ def get_model_type(model) -> str:
         return "olmoe"
     elif "dbrx" in model_type:
         return "dbrx"
-    elif "qwen3_moe" in model_type or "qwen3-moe" in model_type:
+    elif (
+        "qwen3_moe" in model_type
+        or "qwen3-moe" in model_type
+        or "qwen3.5_moe" in model_type
+        or "qwen3.5-moe" in model_type
+        or "qwen3_5_moe" in model_type
+        or "qwen3_5-moe" in model_type
+    ):
         return "qwen3_moe"
+    elif "qwen3" in model_type:
+        # Future-proof: some Qwen3(.5)-MoE releases may use new model_type strings while
+        # retaining sparse-MoE block structure (gate + experts + top_k).
+        for module in model.modules():
+            if hasattr(module, "gate") and hasattr(module, "experts") and hasattr(module, "top_k"):
+                return "qwen3_moe"
+        return "unknown"
     else:
         return "unknown"
 
@@ -1274,8 +1324,44 @@ def main():
             "Requires torchrun (WORLD_SIZE>1)."
         ),
     )
+    parser.add_argument(
+        "--experts-implementation",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help=(
+            "Override transformers config._experts_implementation after model load. "
+            "Valid values: 'grouped_mm' (default; uses torch._grouped_mm / CK kernel), "
+            "'batched_mm' (torch.bmm per token-expert pair — WARNING: O(S) memory, OOMs on "
+            "long sequences), 'eager' (original per-expert loop in the model code). "
+            "To avoid a broken CK grouped-GEMM kernel without the memory explosion of "
+            "'batched_mm', use --no-grouped-mm instead (keeps 'grouped_mm' dispatch but "
+            "forces the safe torch.mm-loop fallback inside _grouped_mm)."
+        ),
+    )
+    parser.add_argument(
+        "--no-grouped-mm",
+        action="store_true",
+        help=(
+            "Monkey-patch transformers.integrations.moe._can_use_grouped_mm to always return "
+            "False, forcing the torch.mm-loop fallback inside grouped_mm experts forward. "
+            "Use this when torch._grouped_mm / torch.nn.functional.grouped_mm is broken on "
+            "the current ROCm/CUDA build (e.g. CK workspace-not-allocated error on HIP). "
+            "Unlike --experts-implementation=batched_mm, this does NOT materialise per-token "
+            "weight copies and is therefore memory-safe at large batch sizes."
+        ),
+    )
 
     args = parser.parse_args()
+
+    if args.no_grouped_mm:
+        try:
+            import transformers.integrations.moe as _moe_mod
+            _moe_mod._can_use_grouped_mm = lambda *_a, **_kw: False
+            print("--no-grouped-mm: patched transformers._can_use_grouped_mm → False; "
+                  "grouped_mm experts will use the torch.mm-loop fallback.")
+        except Exception as _e:
+            print(f"Warning: --no-grouped-mm patch failed ({_e}); proceeding without patch.")
 
     use_ddp, ddp_rank, ddp_world_size, ddp_local_rank = (False, 0, 1, 0)
     if not args.ddp_disable:
@@ -1465,6 +1551,17 @@ def main():
     if hasattr(model.config, "use_cache"):
         model.config.use_cache = False
 
+    if args.experts_implementation is not None:
+        if hasattr(model.config, "_experts_implementation"):
+            model.config._experts_implementation = args.experts_implementation
+            if ddp_rank == 0:
+                print(f"Overriding experts implementation to: {args.experts_implementation!r}")
+        elif ddp_rank == 0:
+            print(
+                f"Warning: --experts-implementation={args.experts_implementation!r} requested but "
+                "model.config has no _experts_implementation attribute (transformers version may not support it)."
+            )
+
     model.eval()
 
     tokenizer = AutoTokenizer.from_pretrained(
@@ -1517,10 +1614,12 @@ def main():
                 show_progress=(ddp_rank == 0),
             )
         except Exception as exc:
+            import traceback
             status = f"error: {type(exc).__name__}: {exc}"
             local_status = status
-            if ddp_rank == 0:
-                print(f"[{spec.label}] {status}")
+            # Print from every rank so failures are visible in the log, not just rank 0.
+            print(f"[{spec.label}] rank {ddp_rank}: {status}")
+            traceback.print_exc()
             metadata = {
                 "dataset": spec.dataset,
                 "dataset_config": spec.dataset_config,
@@ -1654,7 +1753,7 @@ def main():
             continue
 
         if use_ddp and not args.enable_expert_parallel:
-            _distributed_merge_collectors(collector)
+            _distributed_merge_collectors(collector, gloo_group=status_sync_group)
             metadata = {
                 **metadata,
                 "ddp_world_size": ddp_world_size,
