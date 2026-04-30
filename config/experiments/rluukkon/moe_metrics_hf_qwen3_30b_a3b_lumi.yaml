@@ -36,7 +36,7 @@ container:
   # image: /shared_silo/scratch/containers/rocm_primus_v25.11_transformers-4.5.7_linear_FA.sif
   image: /shared_silo/scratch/containers/build-rocm_primus_v25.11_transformers-5.5.4_linear_FA/rocm_primus_v25.11_transformers-5.5.4_linear_FA.sif
 aux:
-  model_id: Qwen3-30B-A3B-Base
+  model_id: Qwen3.5-35B-A3B-Base
   model_name: Qwen/${aux.model_id}
 job:
   # Keep job/output names filename-safe (no '/').
@@ -118,3 +118,5 @@ backend:
     - ${job.base_output_dir}/${aux.model_id}_coactivation.jsonl
     - --expert-token-distribution-output
     - ${job.base_output_dir}/${aux.model_id}_expert_token_dist.jsonl
+    - --top-tokens-output
+    - ${job.base_output_dir}/${aux.model_id}_top_tokens.jsonl

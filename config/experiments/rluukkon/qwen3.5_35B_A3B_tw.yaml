@@ -1,0 +1,60 @@
+# @package _global_
+defaults:
+  - ../base
+  - /backend: megatron
+  - /container: mi325x
+  - /slurm: mi325x
+  - /sweep: none
+  - /backend/megatron: [qwen3_5_moe_35BA3B]
+  - _self_
+
+  
+slurm:
+  sbatch:
+    partition: amd-tw-verification
+    nodes: 2
+    time: 0-00:30:00
+  env:
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    WANDB_MODE: "offline"
+    # WANDB_ENTITY: "openeurollm-project"
+    OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
+
+backend:
+  megatron:
+    log_throughput: true
+    log_interval: 1
+    log_progress: true
+    # moe_aux_loss_coeff: 1e-4
+    global_batch_size: 32
+    micro_batch_size: 1
+    # test deepep
+    moe_token_dispatcher_type: "allgather"
+    # moe_flex_dispatcher_backend: "deepep"
+    expert_model_parallel_size: 8
+    # moe_deepep_num_sms: 24
+    
+    mock_data: true
+    lr: 3e-4
+
+
+   
+    # training schedule. Round numbers to avoid floating point issues
+    train_iters: ${oc.eval:'-(-4_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    lr_warmup_iters: ${oc.eval:'min(${.train_iters} // 10, 25000)'}
+    lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
+    lr_decay_iters: ${.train_iters}
+    ckpt_format: torch_dist
+    save_interval: 1000
+    exit_interval: 2000
+    save: ${job.base_output_dir}
+    # load: /shared_silo/scratch/rluukkon/Megatron-Bridge/checkpoints/qwen3-30b-a3b-bridge-test
+    finetune: true
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    # wandb_save_dir: "${job.base_output_dir}/wandb"
+    # wandb_project: "${job.name}"
+    # wandb_exp_name: "qwen3_30B_A3B_$SLURM_JOB_ID"
+
+
+job:
+  name: qwen3_5_35B_A3B_tw_test

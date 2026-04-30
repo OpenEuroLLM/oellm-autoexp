@@ -1,0 +1,9 @@
+defaults:
+  - qwen3_5_base
+
+# Qwen3.5-9B-Base — HF: https://huggingface.co/Qwen/Qwen3.5-9B-Base/blob/main/config.json
+hidden_size: 4096
+ffn_hidden_size: 12288
+
+aux:
+  model_name: "Qwen3.5-9B"

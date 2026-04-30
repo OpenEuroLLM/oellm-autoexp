@@ -1,0 +1,15 @@
+# @package _global_
+# Qwen3.5 variant of the HF MoE metrics run.
+#
+# Reuses the Qwen3-30B config and overrides model identifiers only.
+
+defaults:
+  - moe_metrics_hf_qwen3_30b_a3b_lumi
+  - _self_
+
+aux:
+  model_id: Qwen3.5-35B-A3B-Base
+  model_name: Qwen/${aux.model_id}
+
+job:
+  name: ${aux.model_id}_moe_metrics_hf_lumi

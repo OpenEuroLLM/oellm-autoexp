@@ -1,0 +1,18 @@
+# Qwen3.5-35B-A3B-Base
+# HF reference: https://huggingface.co/Qwen/Qwen3.5-35B-A3B-Base/blob/main/config.json
+
+defaults:
+  - qwen3_5_moe
+  - _self_
+
+# model setup - sizes/scale - Qwen3.5 35B-A3B
+num_layers: 40
+hidden_size: 2048
+ffn_hidden_size: 512
+num_attention_heads: 16
+kv_channels: 256
+max_position_embeddings: 262144
+num_query_groups: 2
+
+aux:
+  model_name: "Qwen3.5-35B-A3B"

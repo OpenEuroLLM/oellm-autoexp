@@ -1,0 +1,10 @@
+defaults:
+  - qwen3_5_base
+
+# Qwen3.5-4B-Base — HF: https://huggingface.co/Qwen/Qwen3.5-4B-Base/blob/main/config.json
+hidden_size: 2560
+ffn_hidden_size: 9216
+untie_embeddings_and_output_weights: False  # tie_word_embeddings: true
+
+aux:
+  model_name: "Qwen3.5-4B"
