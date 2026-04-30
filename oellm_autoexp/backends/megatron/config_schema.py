@@ -572,21 +572,6 @@ class MegatronConfig(ConfigInterface):
     # Enable per-layer logging for MoE, currently supports auxiliary loss and z loss.
     moe_per_layer_logging: bool = False
 
-    # If True, log a W&B Table `moe/expert_load_history_table` each logging step with columns
-    # ``step``, ``layer``, ``expert``, ``token_count``, ``token_fraction`` (one row per expert
-    # per MoE layer that received tokens). Use W&B custom charts with **historyTable** (not
-    # ``summaryTable``) and enable the **step selector** to scrub expert load over training
-    # time.
-    moe_log_expert_load_history_table: bool = False
-
-    # If True, skip expensive MoE diagnostics during training forwards (router logit stats,
-    # per-expert utilization accumulation, and their TensorBoard / W&B aggregation in
-    # ``training_log``). Those metrics are collected under ``model.eval()`` during validation
-    # and flushed right after ``evaluate_and_print_results``. Training throughput improves;
-    # you only see routing health on the val distribution at eval cadence—not on the train
-    # distribution between evals.
-    moe_detailed_metrics_eval_only: bool = False
-
     # moe_expert_capacity_factor (float): The capacity factor for each expert, None means no
     # token will be dropped. The default is None.
     moe_expert_capacity_factor: float | None = None
@@ -929,7 +914,7 @@ class MegatronConfig(ConfigInterface):
     exit_signal_handler: bool = False
 
     # Signal for the signal handler to detect.
-    exit_signal: str = '15'
+    exit_signal: str = 'SIGTERM'
 
     # Use signal handler for dataloader workers
     exit_signal_handler_for_dataloader: bool = False
@@ -1102,26 +1087,27 @@ class MegatronConfig(ConfigInterface):
     # Offload optimizer state to CPU during inference/rollout to save GPU memory
     rl_offload_optimizer_during_inference: bool = False
 
-    # Offload KV cache to CPU during training to save GPU memory
+    # Offload KV cache to CPU during training to save GPU memory (default: %(default)s)
     rl_offload_kv_cache_during_training: bool = False
 
-    # Remove KV cache during training to save GPU memory
+    # Remove KV cache during training to save GPU memory (default: %(default)s)
     rl_remove_kv_cache_during_training: bool = False
 
-    # Reset CUDA graphs between inference/training to save GPU memory
+    # Reset CUDA graphs between inference/training to save GPU memory (default: %(default)s)
     rl_reset_cuda_graphs: bool = False
 
-    # If set, use partial rollouts.
+    # If set, use partial rollouts. (default: %(default)s)
     rl_partial_rollouts: bool = False
 
-    # If set, use inference logprobs in importance sampling correction of the loss.
+    # If set, use inference logprobs in importance sampling correction of the loss. (default:
+    # %(default)s)
     rl_inference_logprobs_is_correction: bool = False
 
     # If --inference-logprobs-is-correction is on and this coefficient is set, apply
     # truncation for the IS correction at GRPO loss.
     rl_importance_sampling_truncation_coef: float | None = None
 
-    # Enable sequence packing
+    # Enable sequence packing (default: %(default)s)
     rl_use_sequence_packing: bool = False
 
     # Maximum number of sequences that can be packed into a single bin.
@@ -1133,7 +1119,7 @@ class MegatronConfig(ConfigInterface):
     rl_sequence_packing_algo: Literal['fifo', 'round-robin'] = 'fifo'
 
     # If set, do not call `delete_cuda_graphs` or `toggle_cuda_graphs` when the inference
-    # engine is suspended.
+    # engine is suspended. (default: %(default)s)
     rl_training_cuda_graphs: bool = False
 
     # Degree of tensor model parallelism for inference for RL.
@@ -1158,7 +1144,7 @@ class MegatronConfig(ConfigInterface):
 
     # When using a separate RL inference model with UVM-enabled parameters, prefetch its
     # weights to CPU when not doing rollout inference, and prefetch back to GPU right before
-    # inference. Requires --rl-inference-model-unified-memory-level=1.
+    # inference. Requires --rl-inference-model-unified-memory-level=1. (default: %(default)s)
     rl_offload_inference_model_weights_when_idle: bool = False
 
     # Method to refit the model weights between training and inference models during RL. nccl:
@@ -1167,13 +1153,14 @@ class MegatronConfig(ConfigInterface):
     refit_method: Literal['nccl', 'gloo', 'nvshmem'] = 'gloo'
 
     # If set, verify that the model weights were correctly transferred by comparing forward
-    # pass outputs onthe first swap of model weights.
+    # pass outputs onthe first swap of model weights. (default: %(default)s)
     rl_verify_model_weights_swap: bool = False
 
     # Number of parallel generation tasks for RL inference.
     rl_parallel_generation_tasks: int = 512
 
-    # Skip BOS token at the beginning of the sequences. Default is False.
+    # Skip BOS token at the beginning of the sequences. Default is False. (default:
+    # %(default)s)
     rl_skip_bos_token: bool = False
 
     # Random seed used for python, numpy, pytorch, and cuda.
@@ -2283,7 +2270,7 @@ class MegatronConfig(ConfigInterface):
     # Step interval for logging inference metrics. Default to 0 to disable inference logging.
     inference_logging_step_interval: int = 0
 
-    # Enable inference wandb logging.
+    # Enable inference wandb logging. (default: %(default)s)
     inference_wandb_logging: bool = False
 
     # This port will be used to setup the inference coordinator on node-0
