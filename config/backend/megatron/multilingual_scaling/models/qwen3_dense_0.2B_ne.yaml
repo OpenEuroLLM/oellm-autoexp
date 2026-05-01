@@ -62,7 +62,7 @@ use_distributed_optimizer: True
 
 # COMM OPTIONS
 distributed_backend: nccl
-distributed_timeout_minutes: 10
+distributed_timeout_minutes: 60
 
 # PROFILE
 profile: False
