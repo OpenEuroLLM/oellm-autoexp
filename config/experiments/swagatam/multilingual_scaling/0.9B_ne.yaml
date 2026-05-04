@@ -19,6 +19,7 @@ stage: ""
 
 job:
   name: "" # Will be overridden by sweep with stage and hyperparameter info
+  # base_output_dir: "/gpfs/projects/ehpc533/multilingual_scaling/0.9B_ne/training_workers${backend.megatron.num_workers}_nodes${slurm.sbatch.nodes}_disttime${backend.megatron.distributed_timeout_minutes}_maxnodes32/${job.name}" # for debugging
   base_output_dir: "/gpfs/projects/ehpc533/multilingual_scaling/0.9B_ne/training/${job.name}"
   log_path: ${slurm.sbatch.error}
 
@@ -32,7 +33,7 @@ backend:
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
     # DATA
-    data_cache_path: /gpfs/projects/ehpc533/users/swagatam/MEGATRON_262k
+    data_cache_path: /gpfs/projects/ehpc533/users/swagatam/MEGATRON_262k/${job.name}
 
     # Base training configuration (for stable phase)
     num_workers: 8 # Will be overridden by sweep
@@ -43,7 +44,7 @@ backend:
 
 slurm:
   sbatch:
-    nodes: "${oc.eval:'max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node})))'}"
+    nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
     qos: acc_ehpc
     account: ehpc533
     time: "72:00:00"
