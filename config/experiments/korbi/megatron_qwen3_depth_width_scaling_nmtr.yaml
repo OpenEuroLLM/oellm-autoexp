@@ -34,7 +34,7 @@ backend:
     grad_reduce_in_bf16: false
 
     # basic setup
-    lr: 0.004  # best for gbs 1024 in Niccolo's plots
+    lr: 0.001  # change for gbs 1024 in Niccolo's plots from 0.004 to 0.001
     lr_decay_style: "WSD"
     lr_warmup_iters: 2000
     lr_wsd_decay_iters: ${oc.eval:0.2*${backend.megatron.train_iters}}
@@ -64,7 +64,7 @@ slurm:
 
 
 job:
-  name: megatron_qwen3_depth_width_scaling_D${backend.megatron.aux.dataset}__W${aux.width}_NH${aux.nheads}_L${aux.layers}_FFNS${aux.ffn_scale}
+  name: megatron_qwen3_depth_width_scaling_D${backend.megatron.aux.dataset}__W${aux.width}_NH${aux.nheads}_L${aux.layers}_FFNS${aux.ffn_scale}_LR${backend.megatron.lr}
   base_output_dir: ${oc.concat:${oc.env:OUTPUT_DIR,"./output"}/depth_width_scaling_dense_nmtr/,${job.name}${oc.if:${slurm.array}, "_${index}", ""}}
 
 sweep:

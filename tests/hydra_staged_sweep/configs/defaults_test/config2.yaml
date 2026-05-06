@@ -1,0 +1,8 @@
+# Test configuration for list composition with defaults
+defaults:
+  - basic: [default,integrate_a1]
+  - _self_
+
+
+test: 1
+sweep: null
