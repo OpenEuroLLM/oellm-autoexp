@@ -14,7 +14,7 @@ init_method_std: 0.02
 
 # Attention
 num_attention_heads: 8
-num_query_groups: 1
+num_query_groups: 8
 group_query_attention: False
 attention_softmax_in_fp32: False # OpenSci style
 use_flash_attn: True
