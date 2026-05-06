@@ -30,17 +30,34 @@ def parse_elapsed(s):
 
 
 def collect_job_ids(results_dir):
-    """Return {experiment_name: [job_id, ...]} by scanning slurm-*.log files."""
-    experiments = defaultdict(list)
-    for exp_name in sorted(os.listdir(results_dir)):
-        exp_path = os.path.join(results_dir, exp_name)
-        if not os.path.isdir(exp_path):
-            continue
-        for fname in sorted(os.listdir(exp_path)):
+    """Return {experiment_name: [job_id, ...]} by scanning for log files.
+
+    Supports two layouts:
+      - <results_dir>/<exp_name>/slurm-JOBID.log
+      - <results_dir>/.../logs/stderr-JOBID.log  (stdout-JOBID.log shares the same ID)
+    """
+    experiments = defaultdict(set)  # set deduplicates stderr/stdout entries for the same job
+
+    for root, dirs, files in os.walk(results_dir):
+        dirs.sort()
+        rel_root = os.path.relpath(root, results_dir)
+
+        for fname in sorted(files):
+            # Layout 1: slurm-JOBID.log anywhere under an experiment subdir
             m = re.match(r"slurm-(\d+)\.log", fname)
-            if m:
-                experiments[exp_name].append(m.group(1))
-    return experiments
+            if m and rel_root != ".":
+                exp_name = rel_root.split(os.sep)[0]
+                experiments[exp_name].add(m.group(1))
+                continue
+
+            # Layout 2: stderr-JOBID.log inside a logs/ subdir
+            m = re.match(r"stderr-(\d+)\.log", fname)
+            if m and os.path.basename(root) == "logs":
+                parent = os.path.dirname(root)
+                exp_name = os.path.relpath(parent, results_dir)
+                experiments[exp_name].add(m.group(1))
+
+    return {k: sorted(v) for k, v in sorted(experiments.items())}
 
 
 def query_sacct(job_ids):
