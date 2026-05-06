@@ -1,6 +1,11 @@
 #!/bin/bash
+#SBATCH --account=ehpc533
+#SBATCH --nodes=1
+#SBATCH --partition=default
+#SBATCH --qos=acc_debug
+#SBATCH --time=15:00
 
-config=$1 # experiments/jllop/...
+config=$1 # experiments/multilingual_scaling/...
 shift
 
 extra_args=""

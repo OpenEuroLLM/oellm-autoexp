@@ -1,8 +1,0 @@
-#!/bin/bash
-#SBATCH --account=ehpc533
-#SBATCH --nodes=1
-#SBATCH --partition=default
-#SBATCH --qos=acc_debug
-#SBATCH --time=30:00
-
-bash run_config.sh experiments/multilingual_scaling/0.4B_ne backend.megatron.aux.priority_tier=all --no-submit
