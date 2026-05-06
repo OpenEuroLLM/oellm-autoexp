@@ -49,6 +49,12 @@ log_events:
     action:
       class_name: RestartAction
       reason: ""
+  - name: segmentation_fault
+    pattern: "Fatal Python error: Segmentation fault"
+    pattern_type: substring
+    action:
+      class_name: RestartAction
+      reason: ""
 
 state_events:
   - name: "failed"
