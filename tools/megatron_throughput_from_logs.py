@@ -44,6 +44,10 @@ from typing import Any
 
 PATH_WORKERS_NODES = re.compile(r"training_workers(\d+)_nodes(\d+)_disttime")
 
+SBATCH_NODES = re.compile(r"^#SBATCH\s+--nodes[= ](\d+)", re.MULTILINE)
+SBATCH_GPUS_PER_NODE = re.compile(r"^#SBATCH\s+--gpus-per-node[= ](\d+)", re.MULTILINE)
+SBATCH_GRES_GPU = re.compile(r"^#SBATCH\s+--gres=gpu[^:\n]*:(\d+)", re.MULTILINE)
+
 ITER_LINE = re.compile(
     r"iteration\s+(\d+)/\s*\d+\s*\|.*?elapsed time per iteration \(ms\):\s*([\d.]+).*?"
     r"throughput per GPU \(TFLOP/s/GPU\):\s*([\d.]+).*?"
@@ -143,6 +147,25 @@ def gpu_count_from_path(
     return workers * nodes
 
 
+def parse_sbatch(path: Path) -> tuple[int | None, int | None]:
+    """Return (nodes, gpus_per_node) from a SLURM sbatch file, or (None, None) if absent."""
+    if not path.is_file():
+        return None, None
+    text = path.read_text(errors="replace")
+    nodes = gpus = None
+    m = SBATCH_NODES.search(text)
+    if m:
+        nodes = int(m.group(1))
+    m = SBATCH_GPUS_PER_NODE.search(text)
+    if m:
+        gpus = int(m.group(1))
+    if gpus is None:
+        m = SBATCH_GRES_GPU.search(text)
+        if m:
+            gpus = int(m.group(1))
+    return nodes, gpus
+
+
 def gather_rows(
     bases: list[Path],
     max_elapsed_ms: float,
@@ -163,8 +186,10 @@ def gather_rows(
             continue
 
         m_path = PATH_WORKERS_NODES.search(str(base))
-        workers = int(m_path.group(1)) if m_path else None
-        nodes = int(m_path.group(2)) if m_path else None
+        path_workers = int(m_path.group(1)) if m_path else None
+        path_nodes = int(m_path.group(2)) if m_path else None
+
+        base_sbatch_nodes, base_sbatch_gpus = parse_sbatch(base / "job.sbatch")
 
         for exp in sorted(base.glob("qwen3_*")):
             raw_logs = sorted(glob.glob(str(exp / "logs" / "*.log")))
@@ -182,6 +207,15 @@ def gather_rows(
                     }
                 )
                 continue
+
+            exp_sbatch_nodes, exp_sbatch_gpus = parse_sbatch(exp / "job.sbatch")
+            sbatch_nodes = exp_sbatch_nodes or base_sbatch_nodes
+            sbatch_gpus = exp_sbatch_gpus or base_sbatch_gpus
+
+            nodes = path_nodes or sbatch_nodes
+            # workers_per_node from path regex; fall back to gpus-per-node from sbatch
+            workers = path_workers or sbatch_gpus
+            effective_gpus_per_node = gpus_per_node or sbatch_gpus
 
             try:
                 log_path = Path(pick_stdout_log(logs_read))
@@ -211,12 +245,11 @@ def gather_rows(
                 results.append(row)
                 continue
 
-            assert workers is not None and nodes is not None
             assert parsed is not None
-            n_gpu = gpu_count_from_path(workers, nodes, gpus_per_node)
-            assert n_gpu is not None
+            n_gpu = gpu_count_from_path(workers, nodes, effective_gpus_per_node)
             row.update(parsed)
-            row["n_gpus"] = n_gpu
+            if n_gpu is not None:
+                row["n_gpus"] = n_gpu
             row["gpus_per_node_setting"] = gpus_per_node
             results.append(row)
 
@@ -242,8 +275,11 @@ def print_markdown_table(rows: list[dict[str, Any]]) -> None:
         "|--:|------:|-------------:|-----:|-----:|----------:|----------------:|--------------:|--------:|"
     )
     for i, r in enumerate(ok, start=1):
+        nodes_s = str(r["nodes"]) if r.get("nodes") is not None else ""
+        workers_s = str(r["workers_per_node"]) if r.get("workers_per_node") is not None else ""
+        ngpu_s = str(r["n_gpus"]) if r.get("n_gpus") is not None else ""
         print(
-            f"| {i} | {r['nodes']} | {r['workers_per_node']} | {r['n_gpus']} | {r['lr']} | {r['global_batch']} | "
+            f"| {i} | {nodes_s} | {workers_s} | {ngpu_s} | {r['lr']} | {r['global_batch']} | "
             f"{r['avg_tflop_per_gpu']:.2f} | {r['avg_tok_per_gpu']:.0f} | {r['n_iters']} |"
         )
 
