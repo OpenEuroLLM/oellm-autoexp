@@ -1,0 +1,5 @@
+defaults:
+  - marenostrum
+  - _self_
+
+bind: ["/gpfs/projects", "/dev/shm", "/scratch/tmp"]

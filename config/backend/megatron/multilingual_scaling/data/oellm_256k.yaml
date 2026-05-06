@@ -1,0 +1,16 @@
+# @package backend.megatron
+# Dataset related settings for multilingual scaling experiments
+max_position_embeddings: ${.seq_length}
+split: '99,1,0'
+create_attention_mask_in_dataloader: False
+
+# Data paths
+data_args_path: /gpfs/projects/ehpc533/data_utils/datamix-tools/datamix-tools/output/1TT-option-4.sh
+
+# Tokenizer
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: /gpfs/projects/ehpc533/tokenizers/oellm-262k
+
+seq_length: 4096
+dataloader_type: "cyclic"
+num_workers: 8 # Will be overridden by sweep

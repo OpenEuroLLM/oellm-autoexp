@@ -1,0 +1,22 @@
+type: product
+groups:
+  - type: list
+    configs:
+      - job.name: "throughput_dense_qwen3_0.9B_ne_mbsz\\${backend.megatron.micro_batch_size}_gbsz\\${backend.megatron.global_batch_size}_numworkers\\${backend.megatron.num_workers}"
+        backend.megatron.wandb_exp_name: "\\${job.name}"
+  - type: product
+    params:
+      backend.megatron.num_workers: [2, 4, 8] 
+      backend.megatron.micro_batch_size: [2, 4]
+      backend.megatron.global_batch_size: [32, 64, 128, 256, 512]
+  - type: list
+    configs:
+      - stage: throughput
+        backend.megatron.train_iters: 100
+        backend.megatron.lr_wsd_decay_iters: 0
+        backend.megatron.lr_warmup_iters: 0
+        backend.megatron.save_interval: 999999999
+        backend.megatron.eval_interval: 999999999
+        # Disable extra checkpoint saves (already sentinel by default, but explicit)
+        backend.megatron.aux.save_step_0: 999999999
+filter: "\\${oc.eval:'\\${backend.megatron.global_batch_size} >= \\${backend.megatron.micro_batch_size} * \\${slurm.sbatch.gpus_per_node} and \\${backend.megatron.global_batch_size} // (\\${backend.megatron.micro_batch_size} * \\${slurm.sbatch.gpus_per_node}) <= 100'}"

@@ -1,0 +1,16 @@
+# @package backend.megatron
+# Dataset related settings for multilingual scaling experiments
+max_position_embeddings: ${.seq_length}
+split: '99,1,0'
+create_attention_mask_in_dataloader: False
+
+# Data paths
+data_args_path: /gpfs/projects/ehpc533/oellm-autoexp-joan/config/backend/megatron/qwen3_dense_8b_training_scale_256_nodes_mn5/data/3.6TT-option4_nemotron-mha-10p-sample_scratch.sh
+
+# Tokenizer
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: /gpfs/projects/ehpc533/tokenizers/oellm-262k
+
+seq_length: 4096
+dataloader_type: "cyclic"
+num_workers: 4 # Will be overridden by sweep

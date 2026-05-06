@@ -38,6 +38,8 @@ env:
   CUDA_DEVICE_MAX_CONNECTIONS: 1
   CXX: "g++-13"
   CC: "gcc-13"
+  NCCL_NCHANNELS_PER_PEER: "32"
+  NCCL_MIN_NCHANNELS: "32"
 
 sbatch:
   nodes: 1

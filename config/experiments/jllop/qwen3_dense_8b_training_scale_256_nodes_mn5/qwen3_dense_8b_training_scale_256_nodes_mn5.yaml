@@ -1,0 +1,49 @@
+# @package _global_
+
+# 8B dense Qwen3-like model training
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: marenostrum
+  - /slurm: marenostrum
+  - /job: auto_restart
+  - /sweep/qwen3_dense_8b_training_scale_256_nodes_mn5@sweep: qwen3_dense_8b # sweep configs
+  - /backend/megatron: base
+  - /backend/megatron/qwen3_dense_8b_training_scale_256_nodes_mn5/models: qwen3_dense_8b # model configs
+  - /backend/megatron/qwen3_dense_8b_training_scale_256_nodes_mn5/data: oellm_256k_mock_data # data configs
+  - _self_
+
+index: 0
+stage: ""
+
+job:
+  name: "qwen3_dense_8b_training_scale_256_nodes_mn5" # Will be overridden by sweep with stage and hyperparameter info
+  base_output_dir: "/gpfs/projects/ehpc533/oellm-autoexp-joan/outputs/qwen3_dense_8b_training_scale_256_nodes_mn5/qwen3_dense_8B_scaling_tests/training/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    wandb_exp_name: "" # Will be overridden by sweep with stage and hyperparameter info
+    wandb_project: qwen3_dense_8b_training_scale_256_nodes_mn5
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    # DATA
+    data_cache_path: /gpfs/projects/ehpc533/users/joan/MEGATRON_262k
+
+    # Base training configuration (for stable phase)
+    distributed_timeout_minutes: 30
+    num_workers: 4 # Will be overridden by sweep
+    micro_batch_size: 1
+    global_batch_size: 1024  # Will be overridden by sweep
+
+
+slurm:
+  sbatch:
+    nodes: 2
+    qos: acc_ehpc
+    account: ehpc533
+    time: "00:30:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"

@@ -1,0 +1,57 @@
+# @package _global_
+
+# 8B dense Qwen3-like model training with per-node NVMe data staging.
+# Identical to qwen3_dense_8b_training_scale_256_nodes_mn5 except:
+#   - uses marenostrum_nvme slurm template (adds staging srun before training)
+#   - uses marenostrum_nvme container config (binds /scratch/tmp into singularity)
+#   - data_args_path written at job time to job output dir, pointing to NVMe or
+#     falling back to GPFS if data doesn't fit
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: marenostrum_nvme
+  - /slurm: marenostrum_nvme
+  - /job: auto_restart
+  - /sweep/qwen3_dense_8b_training_scale_256_nodes_mn5@sweep: qwen3_dense_8b_nvme_multiple_bin
+  - /backend/megatron: base
+  - /backend/megatron/qwen3_dense_8b_training_scale_256_nodes_mn5/models: qwen3_dense_8b
+  - /backend/megatron/qwen3_dense_8b_training_scale_256_nodes_mn5/data: 200GB_multiple_bins_nvme
+  - _self_
+
+index: 0
+stage: ""
+
+job:
+  name: "qwen3_dense_8b_nvme_multiple_bin"
+  base_output_dir: "/gpfs/projects/ehpc533/oellm-autoexp-joan/outputs/qwen3_dense_8b_training_scale_256_nodes_mn5/qwen3_dense_8B_scaling_tests/training/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    wandb_exp_name: ""
+    wandb_project: qwen3_dense_8b_training_scale_256_nodes_mn5
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    # DATA - read from NVMe-staged file written by stage_nvme.sh at job start.
+    # Falls back to GPFS paths if data doesn't fit in node NVMe.
+    data_args_path: "${job.base_output_dir}/nvme_data_args.sh"
+    data_cache_path: /gpfs/projects/ehpc533/users/joan/MEGATRON_262k
+
+    distributed_timeout_minutes: 30
+    num_workers: 4
+    micro_batch_size: 1
+    global_batch_size: 1024
+
+slurm:
+  sbatch:
+    nodes: 8
+    qos: acc_debug
+    account: ehpc533
+    time: "02:00:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  env:
+    NVME_SRC_DATA_ARGS: /gpfs/projects/ehpc533/oellm-autoexp-joan/config/backend/megatron/qwen3_dense_8b_training_scale_256_nodes_mn5/data/subset_200GB_multiple_bins.sh
+    NVME_DST_DATA_ARGS: "${job.base_output_dir}/nvme_data_args.sh"

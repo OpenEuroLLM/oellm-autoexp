@@ -1,0 +1,32 @@
+type: product
+groups:
+  - type: list
+    configs:
+      - job.name: "qwen3_dense_8b_training_scale_nodes\\${slurm.sbatch.nodes}_mbsz\\${backend.megatron.micro_batch_size}_gbsz\\${backend.megatron.global_batch_size}_tp\\${backend.megatron.tensor_model_parallel_size}_fsdp\\${backend.megatron.use_torch_fsdp2}_num_workers\\${backend.megatron.num_workers}_mock_data"
+        backend.megatron.wandb_exp_name: "\\${job.name}"
+  - type: list
+    configs:
+      - backend.megatron.use_torch_fsdp2: False
+        backend.megatron.tensor_model_parallel_size: 2
+        backend.megatron.sequence_parallel: True
+        backend.megatron.use_distributed_optimizer: True
+      - backend.megatron.use_torch_fsdp2: True
+        backend.megatron.tensor_model_parallel_size: 1
+        backend.megatron.sequence_parallel: False
+        backend.megatron.use_distributed_optimizer: False
+        slurm.env.CUDA_DEVICE_MAX_CONNECTIONS: "1024"
+  - type: product
+    params:
+      backend.megatron.num_workers: [4]
+      backend.megatron.micro_batch_size: [1]
+      backend.megatron.global_batch_size: [512, 1024, 2048] # [256, 512, 1024, 2048]
+      slurm.sbatch.nodes: [16, 32, 64] # [2, 4, 8, 16, 32, 64]
+  - type: list
+    configs:
+      - stage: throughput
+        backend.megatron.train_iters: 10000
+        backend.megatron.lr_wsd_decay_iters: 0
+        backend.megatron.lr_warmup_iters: 0
+        backend.megatron.save_interval: 999999999
+        # Disable extra checkpoint saves (already sentinel by default, but explicit)
+        backend.megatron.aux.save_step_0: 999999999

@@ -1,0 +1,11 @@
+defaults:
+  - marenostrum
+  - _self_
+
+template_path: templates/marenostrum_nvme.sbatch
+
+env:
+  NVME_MARGIN_GB: "40"
+  PROJECT_DIR: /gpfs/projects/ehpc533/oellm-autoexp-joan
+  NVME_SRC_DATA_ARGS: ???
+  NVME_DST_DATA_ARGS: ???
