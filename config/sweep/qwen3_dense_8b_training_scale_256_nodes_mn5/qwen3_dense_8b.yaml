@@ -10,7 +10,7 @@ groups:
         backend.megatron.tensor_model_parallel_size: 2
         backend.megatron.sequence_parallel: True
         backend.megatron.use_distributed_optimizer: True
-        slurm.sbatch.qos: "acc_debug"
+        slurm.sbatch.qos: "acc_xehpc"
 #       - backend.megatron.use_torch_fsdp2: True
 #         backend.megatron.tensor_model_parallel_size: 1
 #         backend.megatron.sequence_parallel: False
@@ -21,10 +21,10 @@ groups:
 #         slurm.sbatch.qos: "acc_debug"
   - type: product
     params:
-      backend.megatron.num_workers: [2]
+      backend.megatron.num_workers: [40]
       backend.megatron.micro_batch_size: [1]
       backend.megatron.global_batch_size: [1024] # [256, 512, 1024, 2048]
-      slurm.sbatch.nodes: [2]
+      slurm.sbatch.nodes: [128]
   - type: list
     configs:
       - stage: throughput
