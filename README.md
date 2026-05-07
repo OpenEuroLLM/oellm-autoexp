@@ -9,6 +9,9 @@ For you own experiments, first create your own branch `exp_YOURNAME`. Add a fold
 PYTHONPATH=. python scripts/run_autoexp_container.py --config-ref experiments/YOURNAME/myexperiment
 ```
 
+### Your experiment time / budget
+Note that run_autoexp.py will now give GPU-h estimates (for the whole submission) and ask for confirmation if a certain limit is exceeded. You can use the omegaconf resolver "slurm.sbatch.time=${oc.slurmtime:TIME_IN_SECONDS}" to convert your estimated time (including buffer) in seconds to actual slurm time limits - so you can now calculate the slurm time easily from the actual requirement during setup rather than always assuming a very high number. Without restarts the precalculated time should always be greater or equal your actual budget needed.
+
 
 ## Using this repository
 First, clone this repository including its submodules:
