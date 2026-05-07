@@ -13,6 +13,7 @@ kv_channels: 128            # head_dim = 128; Q: 64×128=8192=2×hidden, KV: 4×
 max_position_embeddings: 4096
 swiglu: true
 overlap_grad_reduce: true
+data_parallel_sharding_strategy: "optim_grads_params"
 apply_rope_fusion: true
 gradient_accumulation_fusion: true
 bias_dropout_fusion: true
@@ -23,7 +24,7 @@ async_tensor_model_parallel_allreduce: true
 num_attention_heads: 32
 num_query_groups: 8
 group_query_attention: True
-attention_softmax_in_fp32: True # TODO check with oellm
+attention_softmax_in_fp32: False # TODO check with oellm
 use_flash_attn: True
 
 # Position Embedding

@@ -10,7 +10,7 @@ defaults:
   - /sweep/qwen3_dense_8b_training_scale_256_nodes_mn5@sweep: qwen3_dense_8b # sweep configs
   - /backend/megatron: base
   - /backend/megatron/qwen3_dense_8b_training_scale_256_nodes_mn5/models: qwen3_dense_8b # model configs
-  - /backend/megatron/qwen3_dense_8b_training_scale_256_nodes_mn5/data: oellm_256k_mock_data # data configs
+  - /backend/megatron/qwen3_dense_8b_training_scale_256_nodes_mn5/data: oellm_256k_apps # data configs
   - _self_
 
 index: 0
@@ -29,8 +29,6 @@ backend:
     wandb_save_dir: "${job.base_output_dir}"
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
-    # DATA
-    data_cache_path: /gpfs/projects/ehpc533/users/joan/MEGATRON_262k
 
     # Base training configuration (for stable phase)
     distributed_timeout_minutes: 30
