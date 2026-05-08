@@ -57,13 +57,9 @@ def sync_run(offline_run_path: Path, dry_run: bool = False, project: str | None 
     path_str = str(offline_run_path).rstrip("/")
 
     cmd = ["wandb", "sync", path_str]
-<<<<<<< HEAD:scripts/sync_runs.py
-
-=======
     if project:
         cmd += ["--project", project]
     
->>>>>>> exp_diana:tools/sync_runs.py
     if dry_run:
         print(f"[DRY RUN] Would execute: {' '.join(cmd)}")
         return True
@@ -112,12 +108,7 @@ def main():
         action="store_true",
         help="Continue syncing other runs if one fails",
     )
-    parser.add_argument(
-        "--force", action="store_true", help="Re-sync runs even if they were already synced"
-    )
-<<<<<<< HEAD:scripts/sync_runs.py
 
-=======
     parser.add_argument(
         "--force",
         action="store_true",
@@ -129,7 +120,6 @@ def main():
         help="wandb project to upload runs to (e.g., my-project)"
     )
     
->>>>>>> exp_diana:tools/sync_runs.py
     args = parser.parse_args()
 
     # Determine the base path to search
