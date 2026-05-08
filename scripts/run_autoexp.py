@@ -234,12 +234,27 @@ def main(argv: list[str] | None = None) -> None:
         + (f" approx. ({gpu_hours / n_jobs:.1f} GPU-h each)" if n_jobs > 1 else "")
     )
     if gpu_hours > 100 and not args.dry_run:
+        if n_jobs >= 5:
+            jobs_comment = "Have you checked a single job with --array-subset to confirm it works?"
+        else:
+            jobs_comment = ""
         try:
             answer = (
-                input(f"  This run will use ~{gpu_hours:.0f} GPU-h. Proceed? [y/N] ")
+                input(f"  This run will use ~{gpu_hours:.0f} GPU-h. {jobs_comment} Proceed? [y/N] ")
                 .strip()
                 .lower()
             )
+            if gpu_hours > 5000:
+                try:
+                    answer = (
+                        input(
+                            f"  This run will use ~{gpu_hours:.0f} GPU-h !! {jobs_comment} Really proceed? [y/N] "
+                        )
+                        .strip()
+                        .lower()
+                    )
+                except EOFError:
+                    answer = ""
         except EOFError:
             answer = ""
         if answer not in ("y", "yes"):
