@@ -5,7 +5,7 @@ split: '99,1,0'
 create_attention_mask_in_dataloader: False
 
 # Data paths
-data_args_path: /gpfs/projects/ehpc533/data_utils/datamix-tools/datamix-tools/output/1TT-option-4.sh
+data_args_path: /gpfs/projects/ehpc533/data_utils/datamix-tools/datamix-tools/output/1TT-option-4-apps.sh
 
 # Tokenizer
 tokenizer_type: HuggingFaceTokenizer
