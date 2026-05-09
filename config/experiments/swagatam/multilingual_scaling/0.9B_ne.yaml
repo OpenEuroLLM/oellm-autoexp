@@ -33,7 +33,7 @@ backend:
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
     # DATA
-    data_cache_path: /gpfs/projects/ehpc533/users/swagatam/MEGATRON_262k/${job.name}
+    data_cache_path: /gpfs/projects/ehpc533/users/swagatam/MEGATRON/${job.name}
 
     # Base training configuration (for stable phase)
     num_workers: 8 # Will be overridden by sweep
