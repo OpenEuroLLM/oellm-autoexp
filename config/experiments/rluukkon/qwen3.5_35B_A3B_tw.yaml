@@ -41,7 +41,6 @@ backend:
     expert_model_parallel_size: 1
     pipeline_model_parallel_size: 4
     use_distributed_optimizer: true
-    moe_shared_expert_gate: true
     # moe_deepep_num_sms: 24
 
 
@@ -52,9 +51,9 @@ backend:
     lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
     lr_decay_iters: ${.train_iters}
     ckpt_format: torch_dist
-    save_interval: 1000
-    exit_interval: 2000
-    save: ${job.base_output_dir}
+    save_interval: 2
+    exit_interval: 2
+    save: ${job.base_output_dir}_cpt
     load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-35B-A3B-Base
     finetune: true
     no_load_optim: true
