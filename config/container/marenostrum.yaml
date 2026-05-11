@@ -1,8 +1,7 @@
 class_name: Container
 image: ${oc.env:CONTAINER_CACHE_DIR,.}/nemo_2507.sif
 runtime: singularity
-bind: ["/gpfs/projects", "/dev/shm"]  
-#bind: ["/gpfs/projects"]
+bind: ["/gpfs", "/dev/shm:$TMPDIR", "/apps"]
 env:
   WANDB_MODE: "offline"
   PYTHONPATH: ".:submodules/Megatron-LM"

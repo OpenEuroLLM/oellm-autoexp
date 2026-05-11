@@ -2,9 +2,10 @@ defaults:
   - base
   - _self_
 
+
 template_path: templates/marenostrum.sbatch
 
-launcher_cmd: "module load singularity ; \\\n\ 
+launcher_cmd: "module load singularity ; \\\n\
  ${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \\\n\
  export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \
   ${oc.select:container.runtime,apptainer} exec ${oc.join:' ',${oc.maptmpl:'--env %=$% \\\n',${oc.dict.keys:.env}}} \
@@ -13,8 +14,8 @@ launcher_cmd: "module load singularity ; \\\n\
 srun:
   exclusive: true
   wait: 60
-  cpus_per_task: 64
-  threads_per_core: 1
+  cpus_per_task: 160
+  threads_per_core: 2
   cpu_bind: "none"
   gpu_bind: "none"
   kill_on_bad_exit: 1
@@ -32,18 +33,33 @@ env:
   NUM_GPUS_PER_NODE: "4"
   NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
   ARCH: "$(uname -m)"
-  SLURM_CPUS_PER_TASK: "64"
+  SLURM_CPUS_PER_TASK: "160"
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
   CUDA_DEVICE_MAX_CONNECTIONS: 1
   CXX: "g++-13"
   CC: "gcc-13"
+  NCCL_NCHANNELS_PER_PEER: "32"
+  NCCL_MIN_NCHANNELS: "32"
+  NCCL_NET: IB
+  NCCL_SOCKET_IFNAME: ib0,ib1,ib2,ib3
+  NCCL_IB_HCA: mlx5_0,mlx5_1,mlx5_4,mlx5_5
+  NCCL_NVLS_ENABLE: 0
+  NCCL_IB_DISABLE: 0
+  NCCL_DEBUG: INFO
+  NUMEXPR_MAX_THREADS: 256
+  WANDB_MODE: "offline"
+  WANDB_DIR: "$TMPDIR"
+  WANDB_CACHE_DIR: "$TMPDIR"
+  WANDB_INIT_TIMEOUT: "120"
+
 
 sbatch:
   nodes: 1
   ntasks_per_node: 1
   ntasks: ${.nodes}
   gpus_per_node: 4
-  cpus_per_task: 64
+  cpus_per_task: 160
+  threads_per_core: 2
   gres: "gpu:4"
   gpu_bind: "none"
   time: "01:00:00"
