@@ -7,14 +7,14 @@ and prints a detailed per-Slurm-job table with training metrics, throughput, GPU
 hours, and status.
 
 Usage:
-    python sweep_status.py <config.yaml> [options]
+    python progress_tracker.py <config.yaml> [options]
 
     # Override where to look for runs (useful when cluster paths differ from local mount):
-    python sweep_status.py config/experiments/multilingual_scaling/0.1B_ne.yaml \\
+    python progress_tracker.py config/experiments/multilingual_scaling/0.1B_ne.yaml \\
         --results-dir /home/diana/mn5/multilingual_scaling/0.1B_ne/training
 
     # Also write a CSV:
-    python sweep_status.py config/experiments/multilingual_scaling/0.1B_ne.yaml \\
+    python progress_tracker.py config/experiments/multilingual_scaling/0.1B_ne.yaml \\
         --csv status.csv
 """
 
@@ -826,6 +826,11 @@ def main() -> None:
         help="Optional CSV output path",
     )
     ap.add_argument(
+        "--md",
+        default=None,
+        help="Optional Markdown table output path",
+    )
+    ap.add_argument(
         "--monitor-dirs",
         nargs="*",
         default=None,
@@ -1228,6 +1233,58 @@ def main() -> None:
                     "Error":       r["error_desc"],
                 })
         print(f"\nWrote {len(rows)} rows to {csv_path}")
+
+    # ── Markdown output ─────────────────────────────────────────────────────
+    if args.md:
+        md_cols = [
+            "Run", "JobID", "N_ne(B)", "N(B)", "D(B)", "C(10^18)", "Tier", "Stage",
+            "TrainIter", "LastCkpt", "LR", "GBS", "MBS", "Nodes", "Workers",
+            "TFLOP/s/GPU", "Tok/s/GPU", "GPU-h", "Status", "Error",
+        ]
+        md_path = Path(args.md)
+        with md_path.open("w") as f:
+            f.write(f"# Sweep run status\n\n")
+            f.write(f"**Config:** `{args.config}`  \n")
+            f.write(f"**Results:** `{resolved_base}`\n\n")
+            f.write("| " + " | ".join(md_cols) + " |\n")
+            f.write("| " + " | ".join("---" for _ in md_cols) + " |\n")
+            for r in rows:
+                mb = RE_BUDGET.search(r["run_name"])
+                sd = mb.group(1) if mb else ("stable" if r["stage"] == "stable" else "decay")
+                c_val = (
+                    f"{6.0 * r['transformer_params_b'] * r['tokens_b']:.2f}"
+                    if r["transformer_params_b"] is not None and r.get("tokens_b") is not None
+                    else "N/A"
+                )
+                cells = [
+                    r["run_name"],
+                    r["job_id"] or "",
+                    f"{r['transformer_params_b']:.2f}" if r["transformer_params_b"] is not None else "N/A",
+                    f"{r['total_params_b']:.2f}" if r["total_params_b"] is not None else "N/A",
+                    str(int(r["tokens_b"])) if r.get("tokens_b") is not None else "N/A",
+                    c_val,
+                    r.get("tier", ""),
+                    sd,
+                    str(r["train_iters"]) if r["train_iters"] is not None else "N/A",
+                    str(r["last_ckpt"]) if r["last_ckpt"] is not None else "N/A",
+                    f"{r['lr']:.4f}" if r["lr"] is not None else "N/A",
+                    str(r["global_batch_size"]) if r["global_batch_size"] is not None else "N/A",
+                    str(r["micro_batch_size"]) if r["micro_batch_size"] is not None else "N/A",
+                    str(r["nodes"]) if r.get("nodes") is not None else "N/A",
+                    str(r["num_workers"]) if r["num_workers"] is not None else "N/A",
+                    f"{r['avg_tflop_per_gpu']:.1f}" if r["avg_tflop_per_gpu"] is not None else "N/A",
+                    f"{r['avg_tok_per_gpu']:.0f}" if r["avg_tok_per_gpu"] is not None else "N/A",
+                    f"{r['gpu_hours']:.1f}" if r["gpu_hours"] is not None else "N/A",
+                    f"{r['status_emoji']} {r['status_word']}",
+                    r["error_desc"] or "",
+                ]
+                f.write("| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |\n")
+            f.write("\n## Summary\n\n")
+            from collections import Counter
+            counts = Counter(r["status_word"] for r in rows)
+            for status, cnt in sorted(counts.items()):
+                f.write(f"- **{status}**: {cnt}\n")
+        print(f"\nWrote {len(rows)} rows to {md_path}")
 
 
 if __name__ == "__main__":
