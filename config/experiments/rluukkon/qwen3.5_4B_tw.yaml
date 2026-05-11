@@ -5,7 +5,7 @@ defaults:
   - /container: mi325x
   - /slurm: mi325x
   - /sweep: none
-  - /backend/megatron: [qwen3_5_moe_35BA3B]
+  - /backend/megatron: [qwen3_5_4B]
   - _self_
 
   
@@ -27,22 +27,22 @@ backend:
     log_interval: 1
     log_progress: true
     # moe_aux_loss_coeff: 1e-4
+    global_batch_size: 8
+    micro_batch_size: 1
+    # test deepep
+    # moe_token_dispatcher_type: "allgather"
+    # moe_flex_dispatcher_backend: "deepep"
+    # expert_model_parallel_size: 8
+    # moe_deepep_num_sms: 24
+    # deterministic_mode: true
+    
+    layernorm_zero_centered_gamma: true
+    # mock_data: true
     data_path: 
       - /shared_silo/scratch/mika/experiments/dataset/simple-wikipedia/train
     data_cache_path: /shared_silo/scratch/rluukkon/data/.cache
     split: "989,10,1"
     lr: 3e-4
-
-    global_batch_size: 8
-    micro_batch_size: 1
-    # test deepep
-    moe_token_dispatcher_type: "alltoall"
-    # moe_flex_dispatcher_backend: "deepep"
-    expert_model_parallel_size: 1
-    pipeline_model_parallel_size: 4
-    use_distributed_optimizer: true
-    moe_shared_expert_gate: true
-    # moe_deepep_num_sms: 24
 
 
    
@@ -55,8 +55,10 @@ backend:
     save_interval: 1000
     exit_interval: 2000
     save: ${job.base_output_dir}
-    load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-35B-A3B-Base
-    finetune: true
+    # load: /shared_silo/scratch/rluukkon/Megatron-Bridge/checkpoints/qwen3-30b-a3b-bridge-test
+    # load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-4B
+    # load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-4B-text_fix1
+    load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-4B-Base_fix3
     no_load_optim: true
     no_load_rng: true
     tensorboard_dir: ${job.base_output_dir}/tensorboard
@@ -66,4 +68,4 @@ backend:
 
 
 job:
-  name: qwen3_5_35B_A3B_tw_test
+  name: qwen3_5_4B_tw_test_fix2

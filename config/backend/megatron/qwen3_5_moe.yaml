@@ -19,6 +19,7 @@ tokenizer_model: Qwen/Qwen3.5-35B-A3B-Base
 vocab_size: 248320
 make_vocab_size_divisible_by: 256
 dist_ckpt_strictness: log_unexpected
+layernorm_zero_centered_gamma: true  # HF Qwen3_5RMSNorm uses (1 + weight) formula; must match
 ckpt_format: torch_dist
 cross_entropy_loss_fusion: true
 manual_gc: true
@@ -65,13 +66,12 @@ linear_num_value_heads: 32
 
 # moe setup
 num_experts: 256
-no_load_optim: true
 moe_router_topk: 8
 moe_ffn_hidden_size: 512
 moe_shared_expert_intermediate_size: 512
 moe_aux_loss_coeff: 0.001
 moe_router_fusion: False
-moe_router_load_balancing_type: aux_loss
+moe_router_load_balancing_type: global_aux_loss
 moe_layer_freq: 1
 moe_token_dispatcher_type: allgather
 moe_grouped_gemm: true

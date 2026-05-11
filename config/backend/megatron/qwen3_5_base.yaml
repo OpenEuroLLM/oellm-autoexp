@@ -15,7 +15,7 @@ attention_backend: auto
 transformer_impl: transformer_engine
 te_rng_tracker: true
 tokenizer_type: HuggingFaceTokenizer
-tokenizer_model: null  # override per experiment
+tokenizer_model: Qwen/Qwen3.5-4B-Base # override per experiment
 vocab_size: 248320
 make_vocab_size_divisible_by: 256
 dist_ckpt_strictness: log_unexpected
@@ -30,7 +30,8 @@ add_bias_linear: false
 rotary_percent: 0.25
 rotary_base: 10000000
 normalization: RMSNorm
-norm_epsilon: 1e-6
+layernorm_epsilon: 1e-6
+layernorm_zero_centered_gamma: true  # HF Qwen3_5RMSNorm uses (1 + weight) formula; must match
 position_embedding_type: rope
 use_rotary_position_embeddings: true
 attention_dropout: 0.0

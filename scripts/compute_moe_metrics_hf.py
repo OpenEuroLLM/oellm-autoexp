@@ -42,6 +42,7 @@ Outputs (jsonl, one record per dataset label):
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import re
@@ -51,6 +52,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+# Must be set before any CUDA context is initialised so PyTorch's caching allocator
+# uses expandable virtual-memory segments.  This eliminates the "reserved but
+# unallocated memory is large" fragmentation that appears when large attention tensors
+# (eager-mode O(seq²)) are repeatedly allocated and freed over many datasets/batches.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+import numpy as np
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import Dataset, DatasetDict, load_dataset, load_from_disk
@@ -187,6 +195,239 @@ class RouterMetricsCollector:
             self._single_sums[name] = v["single"].clone()
 
 
+class TopTokensCollector:
+    """Accumulates per-expert token frequency counts across all MoE layers and batches.
+
+    Tracks which input token IDs are most frequently (and most confidently) routed to
+    each expert, aggregated over all layers and all batches.  This is useful for
+    diagnosing dominant experts: experts that receive a disproportionate share of tokens
+    likely specialise on a specific vocabulary subset that will be visible in the top-K.
+
+    Design notes:
+    - Dense numpy accumulator: ``[num_experts, vocab_size]`` int32 for counts and float32
+      for routing-weight sums.  For Qwen3-30B-A3B (128 experts, vocab≈152k) this is
+      ~155 MB — entirely on CPU.
+    - One GPU→CPU sync per MoE layer per batch (acceptable; feature is opt-in).
+    - Padding tokens are excluded via ``current_attention_mask``.
+    - Weights are softmax probabilities over the selected top-k logits, matching the
+      weights the model actually uses when mixing expert outputs.
+    """
+
+    def __init__(self, vocab_size: int, top_k: int = 32) -> None:
+        self.vocab_size = vocab_size
+        self.top_k = top_k
+        self._counts: Optional[np.ndarray] = None       # [num_experts, vocab_size] int32
+        self._weight_sums: Optional[np.ndarray] = None  # [num_experts, vocab_size] float32
+        self._num_experts: int = 0
+        # Per-layer expert activity: {layer_name: [num_experts] int32}
+        self._layer_counts: Dict[str, np.ndarray] = {}
+        # Consecutive-layer routing transitions: {"L→L+1": [num_experts, num_experts] int32}
+        # Answers: "given a token was routed to expert E in layer L, which expert(s) did it go
+        # to in layer L+1?"
+        self._transitions: Dict[str, np.ndarray] = {}
+        # Ordering of layers seen so far (first forward pass establishes this).
+        self._layer_order: List[str] = []
+        # Per-batch state: reset at the start of each forward pass.
+        self._prev_layer_name: Optional[str] = None
+        self._prev_experts_cpu: Optional[np.ndarray] = None  # [S, topk]
+        # Set by the caller before each model forward() call.
+        self.current_input_ids: Optional[torch.Tensor] = None    # [batch, seq]
+        self.current_attention_mask: Optional[torch.Tensor] = None  # [batch, seq]
+
+    def _maybe_init(self, num_experts: int) -> None:
+        if self._counts is not None:
+            return
+        self._num_experts = num_experts
+        self._counts = np.zeros((num_experts, self.vocab_size), dtype=np.int32)
+        self._weight_sums = np.zeros((num_experts, self.vocab_size), dtype=np.float32)
+
+    def _maybe_init_layer(self, layer_name: str, num_experts: int) -> None:
+        if layer_name not in self._layer_counts:
+            self._layer_counts[layer_name] = np.zeros(num_experts, dtype=np.int32)
+            if layer_name not in self._layer_order:
+                self._layer_order.append(layer_name)
+
+    def _maybe_init_transition(self, key: str, num_experts: int) -> None:
+        if key not in self._transitions:
+            self._transitions[key] = np.zeros((num_experts, num_experts), dtype=np.int32)
+
+    def begin_batch(self) -> None:
+        """Reset per-batch state. Call before each model forward pass."""
+        self._prev_layer_name = None
+        self._prev_experts_cpu = None
+
+    def update(
+        self,
+        layer_name: str,
+        selected_experts_flat: torch.Tensor,            # [S, topk]  GPU
+        routing_weights_flat: Optional[torch.Tensor],   # [S, topk]  GPU (softmax probs)
+        num_experts: int,
+    ) -> None:
+        if self.current_input_ids is None:
+            return
+
+        S = selected_experts_flat.shape[0]
+        ids_flat = self.current_input_ids.view(-1)   # [batch*seq]
+        if ids_flat.shape[0] != S:
+            return  # shape mismatch — shouldn't happen in practice
+
+        self._maybe_init(num_experts)
+        self._maybe_init_layer(layer_name, num_experts)
+
+        # One GPU→CPU transfer per call; combine into a single .cpu() where possible.
+        ids_np = ids_flat.cpu().numpy()
+        experts_np = selected_experts_flat.cpu().numpy()  # [S, topk]
+        weights_np = (
+            routing_weights_flat.float().cpu().numpy()
+            if routing_weights_flat is not None
+            else None
+        )
+
+        # Exclude padding positions.
+        if self.current_attention_mask is not None:
+            mask = self.current_attention_mask.view(-1).cpu().numpy().astype(bool)
+            ids_np = ids_np[mask]
+            experts_np = experts_np[mask]
+            if weights_np is not None:
+                weights_np = weights_np[mask]
+
+        topk = experts_np.shape[1]
+        for k in range(topk):
+            np.add.at(self._counts, (experts_np[:, k], ids_np), 1)
+            if weights_np is not None:
+                np.add.at(self._weight_sums, (experts_np[:, k], ids_np), weights_np[:, k])
+
+        # Per-layer expert activity (uses masked/valid positions only).
+        np.add.at(self._layer_counts[layer_name], experts_np.reshape(-1), 1)
+
+        # Consecutive-layer routing transitions use the full (unmasked) sequence so that
+        # position indices stay aligned between consecutive layers.
+        unmasked_np = selected_experts_flat.cpu().numpy() if self.current_attention_mask is not None else experts_np
+        if self._prev_experts_cpu is not None and self._prev_layer_name is not None:
+            key = f"{self._prev_layer_name}→{layer_name}"
+            self._maybe_init_transition(key, num_experts)
+            prev = self._prev_experts_cpu  # [S_full, topk_prev]
+            curr = unmasked_np             # [S_full, topk_curr]
+            for k_p in range(prev.shape[1]):
+                for k_c in range(curr.shape[1]):
+                    np.add.at(self._transitions[key], (prev[:, k_p], curr[:, k_c]), 1)
+
+        self._prev_layer_name = layer_name
+        self._prev_experts_cpu = unmasked_np
+
+    def top_tokens_for_expert(self, expert_id: int) -> List[Dict]:
+        """Return top-K token entries for one expert, sorted by count descending."""
+        if self._counts is None:
+            return []
+        row = self._counts[expert_id]
+        nonzero = int((row > 0).sum())
+        k = min(self.top_k, nonzero)
+        if k == 0:
+            return []
+        top_indices = np.argpartition(row, -k)[-k:]
+        top_indices = top_indices[np.argsort(row[top_indices])[::-1]]
+        result = []
+        for idx in top_indices:
+            if row[idx] == 0:
+                break
+            entry: Dict[str, Any] = {"token_id": int(idx), "count": int(row[idx])}
+            if self._weight_sums is not None:
+                entry["weight_sum"] = round(float(self._weight_sums[expert_id, idx]), 4)
+            result.append(entry)
+        return result
+
+    def expert_total_counts(self) -> List[int]:
+        if self._counts is None:
+            return []
+        return self._counts.sum(axis=1).tolist()
+
+    def build_output(self, tokenizer, top_routing: int = 8) -> List[Dict]:
+        """Build per-expert output records sorted by total token count descending.
+
+        Each record includes:
+        - ``layer_activity``: token counts per layer (ordered), showing where this expert lives
+        - ``top_tokens``: top-K most-routed tokens (aggregated across layers)
+        - ``forward_routing``: for each layer where this expert appears, the top-N experts it
+          passes tokens to in the immediately following layer — showing routing trajectories
+        """
+        if self._counts is None:
+            return []
+        totals = self._counts.sum(axis=1)
+        order = np.argsort(totals)[::-1]
+
+        # Pre-build transition lookup: for each (from_layer, expert_id) pair, top destinations
+        # in the next layer.
+        # trans_by_from[from_layer][expert_id] = sorted list of (to_expert, count, fraction)
+        trans_by_from: Dict[str, Dict[int, List[Dict]]] = {}
+        for key, mat in self._transitions.items():
+            from_layer = key.split("→")[0]
+            if from_layer not in trans_by_from:
+                trans_by_from[from_layer] = {}
+            for expert_id in range(mat.shape[0]):
+                row = mat[expert_id]
+                row_total = int(row.sum())
+                if row_total == 0:
+                    continue
+                k = min(top_routing, int((row > 0).sum()))
+                if k == 0:
+                    continue
+                top_idx = np.argpartition(row, -k)[-k:]
+                top_idx = top_idx[np.argsort(row[top_idx])[::-1]]
+                trans_by_from[from_layer][expert_id] = [
+                    {
+                        "expert_id": int(idx),
+                        "count": int(row[idx]),
+                        "fraction": round(float(row[idx]) / row_total, 4),
+                    }
+                    for idx in top_idx
+                    if row[idx] > 0
+                ]
+
+        records = []
+        for expert_id in order:
+            top = self.top_tokens_for_expert(int(expert_id))
+            for entry in top:
+                try:
+                    entry["token"] = tokenizer.decode([entry["token_id"]], skip_special_tokens=False)
+                except Exception:
+                    entry["token"] = f"<id:{entry['token_id']}>"
+
+            # Layer activity: ordered list of (layer, count) for this expert.
+            layer_activity = [
+                {"layer": ln, "count": int(self._layer_counts[ln][expert_id])}
+                for ln in self._layer_order
+                if ln in self._layer_counts
+            ]
+
+            # Forward routing: for each layer this expert is active in, its top destinations.
+            forward_routing = []
+            for i, ln in enumerate(self._layer_order):
+                if ln not in self._layer_counts:
+                    continue
+                if self._layer_counts[ln][expert_id] == 0:
+                    continue
+                if ln not in trans_by_from:
+                    continue
+                if expert_id not in trans_by_from[ln]:
+                    continue
+                # Find the next layer name from the ordered list.
+                next_ln = self._layer_order[i + 1] if i + 1 < len(self._layer_order) else None
+                forward_routing.append({
+                    "from_layer": ln,
+                    "to_layer": next_ln,
+                    "top_next_experts": trans_by_from[ln][expert_id],
+                })
+
+            records.append({
+                "expert_id": int(expert_id),
+                "total_count": int(totals[expert_id]),
+                "layer_activity": layer_activity,
+                "top_tokens": top,
+                "forward_routing": forward_routing,
+            })
+        return records
+
+
 def merge_router_collector_packed_states(
     packed_per_rank: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
@@ -211,6 +452,37 @@ def merge_router_collector_packed_states(
                 m["single"] = m["single"] + v["single"]
     return merged
 
+
+def _distributed_merge_top_tokens_collector(
+    ttc: TopTokensCollector,
+    gloo_group=None,
+) -> None:
+    """In-place all-reduce sum of TopTokensCollector arrays across all DDP ranks.
+
+    Uses Gloo (CPU tensors) when *gloo_group* is provided to avoid NCCL GPU-memory
+    allocations; falls back to a default all_reduce otherwise.
+    """
+    import torch.distributed as dist
+
+    if not dist.is_initialized() or ttc._counts is None:
+        return
+
+    def _reduce(arr: np.ndarray) -> np.ndarray:
+        t = torch.from_numpy(arr).float()
+        if gloo_group is not None:
+            dist.all_reduce(t, op=dist.ReduceOp.SUM, group=gloo_group)
+        else:
+            dist.all_reduce(t, op=dist.ReduceOp.SUM)
+        return t.numpy().astype(arr.dtype)
+
+    ttc._counts = _reduce(ttc._counts)
+    ttc._weight_sums = _reduce(ttc._weight_sums)
+
+    for layer_name in list(ttc._layer_counts.keys()):
+        ttc._layer_counts[layer_name] = _reduce(ttc._layer_counts[layer_name])
+
+    for key in list(ttc._transitions.keys()):
+        ttc._transitions[key] = _reduce(ttc._transitions[key])
 
 def _maybe_init_distributed() -> tuple[bool, int, int, int]:
     """Return ``(use_ddp, rank, world_size, local_rank)`` for ``torchrun`` / SLURM multi-proc.
@@ -413,7 +685,7 @@ _SPARSE_MOE_CLASS_NAMES = {
 }
 
 
-def register_sparse_moe_hooks(model, collector: RouterMetricsCollector):
+def register_sparse_moe_hooks(model, collector: RouterMetricsCollector, top_tokens_collector: Optional["TopTokensCollector"] = None):
     """Register forward hooks for any Mixtral-style sparse MoE block.
 
     Covers Mixtral, Qwen3-MoE, and any other architecture whose MoE block
@@ -460,9 +732,9 @@ def register_sparse_moe_hooks(model, collector: RouterMetricsCollector):
                 num_experts = router_logits.shape[-1]
                 effective_topk = min(topk, num_experts)
                 
-                # Get top-k experts
-                selected_experts = torch.topk(router_logits, effective_topk, dim=-1).indices
-                selected_experts_flat = selected_experts.view(-1, effective_topk)
+                # Capture both indices and values in one topk call.
+                topk_result = torch.topk(router_logits, effective_topk, dim=-1)
+                selected_experts_flat = topk_result.indices.view(-1, effective_topk)
                 
                 collector.update(
                     layer_name,
@@ -470,13 +742,19 @@ def register_sparse_moe_hooks(model, collector: RouterMetricsCollector):
                     num_experts,
                     effective_topk
                 )
+
+                if top_tokens_collector is not None:
+                    # Routing weights = softmax over the selected top-k logits,
+                    # matching the weights actually used when mixing expert outputs.
+                    routing_weights = torch.softmax(topk_result.values, dim=-1).view(-1, effective_topk)
+                    top_tokens_collector.update(layer_name, selected_experts_flat, routing_weights, num_experts)
             
             hooks.append(module.register_forward_hook(hook_fn))
     
     return hooks
 
 
-def register_dbrx_hooks(model, collector: RouterMetricsCollector):
+def register_dbrx_hooks(model, collector: RouterMetricsCollector, top_tokens_collector: Optional["TopTokensCollector"] = None):
     """Register forward hooks for DBRX MoE blocks."""
     hooks = []
     
@@ -495,12 +773,8 @@ def register_dbrx_hooks(model, collector: RouterMetricsCollector):
                 hidden_states = inputs[0]
                 router_logits = module.router(hidden_states)
                 
-                routing_weights, selected_experts = torch.topk(
-                    router_logits, topk, dim=-1
-                )
-                
-                batch_size, seq_len, _ = hidden_states.shape
-                selected_experts_flat = selected_experts.view(-1, topk)
+                topk_result = torch.topk(router_logits, topk, dim=-1)
+                selected_experts_flat = topk_result.indices.view(-1, topk)
                 
                 collector.update(
                     layer_name,
@@ -508,6 +782,10 @@ def register_dbrx_hooks(model, collector: RouterMetricsCollector):
                     num_experts,
                     topk
                 )
+
+                if top_tokens_collector is not None:
+                    routing_weights = torch.softmax(topk_result.values, dim=-1).view(-1, topk)
+                    top_tokens_collector.update(layer_name, selected_experts_flat, routing_weights, num_experts)
             
             hooks.append(module.register_forward_hook(hook_fn))
     
@@ -727,6 +1005,7 @@ def collect_router_logits_metrics(
     router_logits,
     topk: int,
     layer_prefix: str = "layers",
+    top_tokens_collector: Optional["TopTokensCollector"] = None,
 ) -> None:
     """Collect metrics from per-layer router logits tensors.
 
@@ -751,8 +1030,8 @@ def collect_router_logits_metrics(
 
         num_experts = logits.shape[-1]
         effective_topk = min(topk, num_experts)
-        selected_experts = torch.topk(logits, effective_topk, dim=-1).indices
-        selected_experts_flat = selected_experts.view(-1, effective_topk)
+        topk_result = torch.topk(logits, effective_topk, dim=-1)
+        selected_experts_flat = topk_result.indices.view(-1, effective_topk)
 
         collector.update(
             f"{layer_prefix}.{layer_idx}",
@@ -760,6 +1039,10 @@ def collect_router_logits_metrics(
             num_experts,
             effective_topk,
         )
+
+        if top_tokens_collector is not None:
+            routing_weights = torch.softmax(topk_result.values, dim=-1).view(-1, effective_topk)
+            top_tokens_collector.update(f"{layer_prefix}.{layer_idx}", selected_experts_flat, routing_weights, num_experts)
 
 
 def _normalize_coactivation_matrix(
@@ -1066,6 +1349,7 @@ def run_one_dataset(
     ddp_world_size: int = 1,
     shard_batches_across_ranks: bool = True,
     show_progress: bool = True,
+    top_tokens_collector: Optional[TopTokensCollector] = None,
 ) -> tuple[RouterMetricsCollector, dict]:
     """Run inference for one dataset spec on the already-loaded model.
 
@@ -1117,11 +1401,11 @@ def run_one_dataset(
 
     collector = RouterMetricsCollector()
     if model_type in ("mixtral", "qwen3_moe"):
-        hooks = register_sparse_moe_hooks(model, collector)
+        hooks = register_sparse_moe_hooks(model, collector, top_tokens_collector)
     elif model_type == "olmoe":
         hooks = []
     elif model_type == "dbrx":
-        hooks = register_dbrx_hooks(model, collector)
+        hooks = register_dbrx_hooks(model, collector, top_tokens_collector)
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -1166,6 +1450,11 @@ def run_one_dataset(
                 if inputs["input_ids"].shape[1] == 0:
                     continue
 
+                if top_tokens_collector is not None:
+                    top_tokens_collector.begin_batch()
+                    top_tokens_collector.current_input_ids = inputs["input_ids"]
+                    top_tokens_collector.current_attention_mask = inputs.get("attention_mask")
+
                 if model_type == "olmoe":
                     olmoe_inputs = dict(inputs)
                     olmoe_inputs.pop("attention_mask", None)
@@ -1182,9 +1471,20 @@ def run_one_dataset(
                         collector=collector,
                         router_logits=router_logits,
                         topk=topk,
+                        top_tokens_collector=top_tokens_collector,
                     )
                 else:
                     _ = model(**inputs, use_cache=False)
+
+                if top_tokens_collector is not None:
+                    top_tokens_collector.current_input_ids = None
+                    top_tokens_collector.current_attention_mask = None
+
+                # Flush the allocator cache periodically to return fragmented freed
+                # blocks (e.g. large eager-attention matrices) to the driver before
+                # they can prevent future large contiguous allocations.
+                if torch.cuda.is_available() and (batch_idx + 1) % 50 == 0:
+                    torch.cuda.empty_cache()
 
                 if show_progress and (batch_idx + 1) % 10 == 0:
                     print(f"[{spec.label}]   Processed {batch_idx + 1} local batches (rank {ddp_rank})")
@@ -1276,6 +1576,26 @@ def main():
             "Per-dataset expert-token-distribution checkpoint (jsonl). "
             "One JSON object per dataset. Default: expert_token_distribution.jsonl"
         ),
+    )
+    parser.add_argument(
+        "--top-tokens-output",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=(
+            "If set, write a per-dataset JSONL with the top-K most-routed tokens per expert "
+            "(aggregated across all MoE layers).  Each record lists every expert sorted by "
+            "total token count so dominant experts appear first.  Includes both count and "
+            "routing-weight-sum fields.  Useful for diagnosing experts with unusually high "
+            "activity.  Default: disabled (no output file written)."
+        ),
+    )
+    parser.add_argument(
+        "--top-tokens-k",
+        type=int,
+        default=32,
+        metavar="K",
+        help="Number of top tokens to report per expert (default: 32).",
     )
     parser.add_argument("--coactivation-top-n", type=int, default=16, help="Top N experts for coactivation")
     parser.add_argument("--plot", action="store_true", help="Generate per-dataset co-activation heatmaps")
@@ -1382,6 +1702,7 @@ def main():
     output_jsonl_path = Path(args.output_jsonl)
     coactivation_jsonl_path = Path(args.coactivation_output)
     expert_dist_jsonl_path = Path(args.expert_token_distribution_output)
+    top_tokens_jsonl_path = Path(args.top_tokens_output) if args.top_tokens_output else None
     resume_jsonl_path = Path(args.resume_from_jsonl) if args.resume_from_jsonl else None
     processed_labels: Set[str] = set()
     if resume_jsonl_path is not None:
@@ -1426,6 +1747,8 @@ def main():
         output_jsonl_path.parent.mkdir(parents=True, exist_ok=True)
         coactivation_jsonl_path.parent.mkdir(parents=True, exist_ok=True)
         expert_dist_jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+        if top_tokens_jsonl_path is not None:
+            top_tokens_jsonl_path.parent.mkdir(parents=True, exist_ok=True)
         if resume_jsonl_path is not None:
             if not resume_jsonl_path.exists():
                 raise FileNotFoundError(
@@ -1564,6 +1887,10 @@ def main():
 
     model.eval()
 
+    if ddp_rank == 0:
+        attn_impl = getattr(model.config, "_attn_implementation", "unknown")
+        print(f"Model attention implementation: {attn_impl}")
+
     tokenizer = AutoTokenizer.from_pretrained(
         model_source,
         trust_remote_code=True,
@@ -1597,6 +1924,13 @@ def main():
         collector: Optional[RouterMetricsCollector] = None
         metadata: Dict[str, Any] = {}
         local_status = "ok"
+
+        # Create a fresh TopTokensCollector for each dataset if the feature is enabled.
+        tt_collector: Optional[TopTokensCollector] = None
+        if top_tokens_jsonl_path is not None:
+            vocab_size = tokenizer.vocab_size or len(tokenizer)
+            tt_collector = TopTokensCollector(vocab_size=vocab_size, top_k=args.top_tokens_k)
+
         try:
             collector, metadata = run_one_dataset(
                 model=model,
@@ -1612,6 +1946,7 @@ def main():
                 ddp_world_size=ddp_world_size,
                 shard_batches_across_ranks=(use_ddp and not args.enable_expert_parallel),
                 show_progress=(ddp_rank == 0),
+                top_tokens_collector=tt_collector,
             )
         except Exception as exc:
             import traceback
@@ -1754,6 +2089,8 @@ def main():
 
         if use_ddp and not args.enable_expert_parallel:
             _distributed_merge_collectors(collector, gloo_group=status_sync_group)
+            if tt_collector is not None:
+                _distributed_merge_top_tokens_collector(tt_collector, gloo_group=status_sync_group)
             metadata = {
                 **metadata,
                 "ddp_world_size": ddp_world_size,
@@ -1811,7 +2148,37 @@ def main():
                     "layers": _build_expert_distribution_layers(collector.single_counts),
                 },
             )
+            if top_tokens_jsonl_path is not None and tt_collector is not None:
+                _append_jsonl(
+                    top_tokens_jsonl_path,
+                    {
+                        "schema": "moe_top_tokens_dataset_result_v1",
+                        "model": args.model_name,
+                        "model_type": model_type,
+                        "label": spec.label,
+                        "status": "ok",
+                        "top_tokens_k": args.top_tokens_k,
+                        **metadata,
+                        # Experts sorted by total_count descending; dominant experts first.
+                        "experts": tt_collector.build_output(tokenizer, top_routing=args.top_tokens_k),
+                    },
+                )
         collectors[spec.label] = collector
+
+        # Free internal GPU-accumulator tensors (already moved to CPU by
+        # _distributed_merge_collectors) and flush the allocator cache so that
+        # fragmented blocks from this dataset's forward passes are returned to the
+        # driver before the next dataset starts.  Without this, large eager-attention
+        # allocations slowly fragment the reserved pool across datasets until a new
+        # large contiguous allocation can no longer be satisfied.
+        collector._coact_sums.clear()
+        collector._saturation_sums.clear()
+        collector._single_sums.clear()
+        tt_collector = None  # drop numpy arrays for this dataset
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
 
         if plot_dir is not None and collector.coactivation_sums and ddp_rank == 0:
             print(f"[{spec.label}] Generating co-activation plots in {plot_dir}...")
@@ -1825,12 +2192,15 @@ def main():
 
     if ddp_rank == 0:
         ok_count = sum(1 for e in per_dataset.values() if e.get("status") == "ok")
-        print(
+        summary = (
             f"\nCompleted datasets: ok={ok_count}/{len(per_dataset)} | "
             f"saturation={output_jsonl_path} | "
             f"coactivation={coactivation_jsonl_path} | "
             f"expert_dist={expert_dist_jsonl_path}"
         )
+        if top_tokens_jsonl_path is not None:
+            summary += f" | top_tokens={top_tokens_jsonl_path}"
+        print(summary)
 
     if use_ddp:
         import torch.distributed as dist
