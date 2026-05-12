@@ -95,6 +95,7 @@ RE_WANDB_SUMMARY = re.compile(
 RE_SBATCH_NODES = re.compile(r"^#SBATCH\s+--nodes[= ](\d+)", re.MULTILINE)
 RE_SBATCH_GPUS_NODE = re.compile(r"^#SBATCH\s+--gpus-per-node[= ](\d+)", re.MULTILINE)
 RE_SBATCH_GRES = re.compile(r"^#SBATCH\s+--gres=gpu[^:\n]*:(\d+)", re.MULTILINE)
+RE_SBATCH_CKPT_STEP = re.compile(r"--ckpt-step\s+(\d+)")
 
 # Token budget and stage encoded in run name
 RE_BUDGET = re.compile(r"_(stable|decay)(\d+BT)$")
@@ -228,12 +229,16 @@ def parse_config(config_path: str) -> dict:
 
 # ── SBATCH parsing ────────────────────────────────────────────────────────────
 
-def parse_sbatch(path: Path) -> tuple[int | None, int | None]:
-    """Return (nodes, gpus_per_node) from a job.sbatch file."""
+def parse_sbatch(path: Path) -> tuple[int | None, int | None, int | None]:
+    """Return (nodes, gpus_per_node, ckpt_step) from a job.sbatch file.
+
+    ckpt_step is the value of --ckpt-step, present only in decay jobs to indicate
+    the absolute iteration from which the decay phase starts.
+    """
     if not path.is_file():
-        return None, None
+        return None, None, None
     text = path.read_text(errors="replace")
-    nodes = gpus = None
+    nodes = gpus = ckpt_step = None
     m = RE_SBATCH_NODES.search(text)
     if m:
         nodes = int(m.group(1))
@@ -244,7 +249,10 @@ def parse_sbatch(path: Path) -> tuple[int | None, int | None]:
         m = RE_SBATCH_GRES.search(text)
         if m:
             gpus = int(m.group(1))
-    return nodes, gpus
+    m = RE_SBATCH_CKPT_STEP.search(text)
+    if m:
+        ckpt_step = int(m.group(1))
+    return nodes, gpus, ckpt_step
 
 
 # ── Stdout log parsing ────────────────────────────────────────────────────────
@@ -673,15 +681,18 @@ def determine_status(
     return "⚠️", "FAILED", error_str, "NONE"
 
 
-def compute_progress(last_iter: int | None, first_iter: int | None, total_iters: int | None) -> float | None:
-    """Return training progress [0–100] accounting for a non-zero start checkpoint.
+def compute_progress(last_iter: int | None, ckpt_step: int | None, total_iters: int | None) -> float | None:
+    """Return training progress [0–100] for a single training phase.
 
-    For decay runs that begin mid-training, first_iter > 1, so start_iter > 0 and
-    progress is measured only over the iterations this run covers.
+    ckpt_step is the absolute iteration where training started (0 for stable runs,
+    --ckpt-step value from job.sbatch for decay runs). Using ckpt_step rather than
+    first_iter from the log is correct for decay jobs that span multiple Slurm
+    segments: each restart resumes at a different first_iter, but ckpt_step is always
+    the fixed decay-phase origin.
     """
     if last_iter is None or total_iters is None:
         return None
-    start_iter = (first_iter - 1) if first_iter is not None else 0
+    start_iter = ckpt_step if ckpt_step is not None else 0
     denom = total_iters - start_iter
     if denom <= 0:
         return None
@@ -861,7 +872,7 @@ def main() -> None:
                 pass
 
         # sbatch info
-        sbatch_nodes, sbatch_gpus_per_node = parse_sbatch(run_dir / "job.sbatch")
+        sbatch_nodes, sbatch_gpus_per_node, sbatch_ckpt_step = parse_sbatch(run_dir / "job.sbatch")
         total_gpus = (sbatch_nodes or 0) * (sbatch_gpus_per_node or 0)
 
         job_ids = run_job_map.get(run_name, [])
@@ -966,7 +977,7 @@ def main() -> None:
                 "last_iter": stdout_data.get("last_iter"),
                 "progress": compute_progress(
                     stdout_data.get("last_iter"),
-                    stdout_data.get("first_iter"),
+                    sbatch_ckpt_step,
                     stdout_data.get("total_iters"),
                 ),
                 "last_ckpt": last_ckpt,
