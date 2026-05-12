@@ -35,6 +35,19 @@ from typing import Any
 
 import yaml
 
+# ── Import GPU-hours helpers from sibling module ───────────────────────────────
+import importlib.util as _ilu
+_gpu_hours_path = Path(__file__).parent / "gpu_hours.py"
+if _gpu_hours_path.exists():
+    _spec = _ilu.spec_from_file_location("gpu_hours", _gpu_hours_path)
+    _gh = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_gh)
+    _gpu_collect_job_ids = _gh.collect_job_ids
+    _gpu_query_sacct     = _gh.query_sacct
+    _gpu_parse_elapsed   = _gh.parse_elapsed
+else:
+    _gpu_collect_job_ids = _gpu_query_sacct = _gpu_parse_elapsed = None
+
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
@@ -1182,11 +1195,51 @@ def main() -> None:
 
     print(SEP)
 
+    # ── GPU hours CSV (always written, same format as gpu_hours.py) ─────────
+    exp_gpu_h: dict[str, float] = {}
+    grand_gpu_total = 0.0
+    gpu_csv_rows: list[dict] = []
+
+    if _gpu_collect_job_ids is not None:
+        try:
+            gpu_exp_jobs = _gpu_collect_job_ids(str(resolved_base))
+            all_gpu_jids = [jid for jids in gpu_exp_jobs.values() for jid in jids]
+            gpu_sacct_data = _gpu_query_sacct(all_gpu_jids) if all_gpu_jids else {}
+            for exp_name, job_ids in sorted(gpu_exp_jobs.items()):
+                for job_id in job_ids:
+                    if job_id not in gpu_sacct_data:
+                        continue
+                    d = gpu_sacct_data[job_id]
+                    gpu_h = _gpu_parse_elapsed(d["elapsed"]) * d["gpus"]
+                    exp_gpu_h[exp_name] = exp_gpu_h.get(exp_name, 0.0) + gpu_h
+                    grand_gpu_total += gpu_h
+                    gpu_csv_rows.append({
+                        "experiment": exp_name,
+                        "job_id":     job_id,
+                        "state":      d["state"],
+                        "elapsed":    d["elapsed"],
+                        "gpus":       d["gpus"],
+                        "gpu_hours":  round(gpu_h, 1),
+                    })
+        except SystemExit:
+            pass
+
+    if exp_gpu_h:
+        W_EXP = max(len(e) for e in exp_gpu_h) + 2
+        gpu_sep = "─" * (W_EXP + 12)
+        print()
+        print("Consumed GPU-h summary:")
+        print(gpu_sep)
+        for exp_name, h in sorted(exp_gpu_h.items()):
+            print(f"  {exp_name:<{W_EXP}}  {h:>8.1f}")
+        print(gpu_sep)
+        print(f"  {'TOTAL':<{W_EXP}}  {grand_gpu_total:>8.1f}")
+
     # Summary counts
     from collections import Counter
     counts = Counter(r["status_word"] for r in rows)
     print()
-    print("Summary:")
+    print("Training progress summary:")
     for status, cnt in sorted(counts.items()):
         print(f"  {status:<14} {cnt}")
 
@@ -1234,57 +1287,48 @@ def main() -> None:
                 })
         print(f"\nWrote {len(rows)} rows to {csv_path}")
 
+    if gpu_csv_rows:
+        gpu_csv_rows.append({
+            "experiment": "TOTAL",
+            "job_id": "", "state": "", "elapsed": "", "gpus": "",
+            "gpu_hours": round(grand_gpu_total, 1),
+        })
+        gpu_csv_path = resolved_base / "gpu_hours.csv"
+        with gpu_csv_path.open("w", newline="") as f:
+            writer = csv.DictWriter(
+                f, fieldnames=["experiment", "job_id", "state", "elapsed", "gpus", "gpu_hours"]
+            )
+            writer.writeheader()
+            writer.writerows(gpu_csv_rows)
+        print(f"\nWrote {len(gpu_csv_rows) - 1} job rows (+1 total) to {gpu_csv_path}")
+
     # ── Markdown output ─────────────────────────────────────────────────────
     if args.md:
-        md_cols = [
-            "Run", "JobID", "N_ne(B)", "N(B)", "D(B)", "C(10^18)", "Tier", "Stage",
-            "TrainIter", "LastCkpt", "LR", "GBS", "MBS", "Nodes", "Workers",
-            "TFLOP/s/GPU", "Tok/s/GPU", "GPU-h", "Status", "Error",
-        ]
         md_path = Path(args.md)
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
         with md_path.open("w") as f:
+            f.write(f"_Updated: {now_str}_\n\n")
             f.write(f"# Sweep run status\n\n")
             f.write(f"**Config:** `{args.config}`  \n")
             f.write(f"**Results:** `{resolved_base}`\n\n")
-            f.write("| " + " | ".join(md_cols) + " |\n")
-            f.write("| " + " | ".join("---" for _ in md_cols) + " |\n")
-            for r in rows:
-                mb = RE_BUDGET.search(r["run_name"])
-                sd = mb.group(1) if mb else ("stable" if r["stage"] == "stable" else "decay")
-                c_val = (
-                    f"{6.0 * r['transformer_params_b'] * r['tokens_b']:.2f}"
-                    if r["transformer_params_b"] is not None and r.get("tokens_b") is not None
-                    else "N/A"
-                )
-                cells = [
-                    r["run_name"],
-                    r["job_id"] or "",
-                    f"{r['transformer_params_b']:.2f}" if r["transformer_params_b"] is not None else "N/A",
-                    f"{r['total_params_b']:.2f}" if r["total_params_b"] is not None else "N/A",
-                    str(int(r["tokens_b"])) if r.get("tokens_b") is not None else "N/A",
-                    c_val,
-                    r.get("tier", ""),
-                    sd,
-                    str(r["train_iters"]) if r["train_iters"] is not None else "N/A",
-                    str(r["last_ckpt"]) if r["last_ckpt"] is not None else "N/A",
-                    f"{r['lr']:.4f}" if r["lr"] is not None else "N/A",
-                    str(r["global_batch_size"]) if r["global_batch_size"] is not None else "N/A",
-                    str(r["micro_batch_size"]) if r["micro_batch_size"] is not None else "N/A",
-                    str(r["nodes"]) if r.get("nodes") is not None else "N/A",
-                    str(r["num_workers"]) if r["num_workers"] is not None else "N/A",
-                    f"{r['avg_tflop_per_gpu']:.1f}" if r["avg_tflop_per_gpu"] is not None else "N/A",
-                    f"{r['avg_tok_per_gpu']:.0f}" if r["avg_tok_per_gpu"] is not None else "N/A",
-                    f"{r['gpu_hours']:.1f}" if r["gpu_hours"] is not None else "N/A",
-                    f"{r['status_emoji']} {r['status_word']}",
-                    r["error_desc"] or "",
-                ]
-                f.write("| " + " | ".join(c.replace("|", "\\|") for c in cells) + " |\n")
-            f.write("\n## Summary\n\n")
+
+            # Experiment summary GPU consumption table
+            f.write("## Consumed GPU-h summary\n\n")
+            f.write("| Experiment | GPU-h |\n")
+            f.write("| --- | --- |\n")
+            for exp_name, h in sorted(exp_gpu_h.items()):
+                f.write(f"| {exp_name} | {h:.1f} |\n")
+            f.write(f"| **TOTAL** | **{grand_gpu_total:.1f}** |\n")
+            f.write("\n")
+
+            # Status summary
+            f.write("## Training progress summary\n\n")
             from collections import Counter
             counts = Counter(r["status_word"] for r in rows)
             for status, cnt in sorted(counts.items()):
                 f.write(f"- **{status}**: {cnt}\n")
-        print(f"\nWrote {len(rows)} rows to {md_path}")
+        print(f"\nWrote markdown to {md_path}")
 
 
 if __name__ == "__main__":
