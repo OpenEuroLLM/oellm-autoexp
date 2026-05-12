@@ -12,12 +12,12 @@ defaults:
 slurm:
   sbatch:
     partition: amd-tw-verification
-    nodes: 1
-    time: 0-00:30:00
+    nodes: 2
+    time: 0-00:10:00
+  
   env:
     USE_ROCM_AITER_ROPE_BACKEND: "0"
     WANDB_MODE: "offline"
-    PYTHONBREAKPOINT: "0"
     # WANDB_ENTITY: "openeurollm-project"
     OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
 
@@ -26,24 +26,25 @@ backend:
     log_throughput: true
     log_interval: 1
     log_progress: true
-    # moe_aux_loss_coeff: 1e-4
     data_path: 
       - /shared_silo/scratch/mika/experiments/dataset/simple-wikipedia/train
     data_cache_path: /shared_silo/scratch/rluukkon/data/.cache
     split: "989,10,1"
     lr: 3e-4
-
-    global_batch_size: 8
-    micro_batch_size: 1
-    # test deepep
-    moe_token_dispatcher_type: "alltoall"
+    global_batch_size: 32
+    micro_batch_size: 2
     # moe_flex_dispatcher_backend: "deepep"
-    expert_model_parallel_size: 1
-    pipeline_model_parallel_size: 4
+    expert_model_parallel_size: 8
+    pipeline_model_parallel_size: 1
     use_distributed_optimizer: true
-    # moe_deepep_num_sms: 24
 
-
+    # Optimization stuff
+    create_attention_mask_in_dataloader: false
+    masked_softmax_fusion: false
+    bias_dropout_fusion: false
+    gradient_accumulation_fusion: False
+    moe_grouped_gemm: true
+    moe_token_dispatcher_type: "allgather"
    
     # training schedule. Round numbers to avoid floating point issues
     train_iters: ${oc.eval:'-(-4_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
@@ -51,8 +52,8 @@ backend:
     lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
     lr_decay_iters: ${.train_iters}
     ckpt_format: torch_dist
-    save_interval: 2
-    exit_interval: 2
+    # save_interval: 2
+    exit_interval: 7
     save: ${job.base_output_dir}_cpt
     load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-35B-A3B-Base
     finetune: true

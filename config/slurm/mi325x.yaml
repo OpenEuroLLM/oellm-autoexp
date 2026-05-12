@@ -41,6 +41,19 @@ env:
   NCCL_SOCKET_IFNAME: "eno0"
   GLOO_SOCKET_IFNAME: "eno0"
 
+  # RoCE v2 / bnxt_re IB tuning (amd-tw-verification fabric).
+  # Each node owns a single /24 with 8 HCAs; rails are NOT aligned across nodes.
+  # NCCL_CROSS_NIC=0 pins rank N to HCA-N on both sides, matching the wiring.
+  # NCCL_IB_GID_INDEX=3 selects the RoCE v2 (IPv4-mapped) GID; INIT->RTR hangs
+  # with index 0 (RoCE v1) on this fabric.
+  # NCCL_IB_QPS_PER_CONNECTION=4 is critical for MoE alltoall bandwidth (EP>1).
+  NCCL_CROSS_NIC: "0"
+  NCCL_IB_HCA: "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7"
+  NCCL_IB_GID_INDEX: "3"
+  NCCL_IB_TIMEOUT: "22"
+  NCCL_IB_RETRY_CNT: "13"
+  NCCL_IB_QPS_PER_CONNECTION: "4"
+
   HSA_NO_SCRATCH_RECLAIM: "1"
   NVTE_CK_USES_BWD_V3: "1"
   NVTE_CK_IS_V3_ATOMIC_FP32: "1"
@@ -60,5 +73,5 @@ sbatch:
   gres: "gpu:8"
   cpus_per_task: 7
   time: "00:30:00"
-  mem: "480G"
+  mem: 0
   exclusive: true

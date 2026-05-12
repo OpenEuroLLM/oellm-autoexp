@@ -55,9 +55,6 @@ backend:
     save_interval: 1000
     exit_interval: 2000
     save: ${job.base_output_dir}
-    # load: /shared_silo/scratch/rluukkon/Megatron-Bridge/checkpoints/qwen3-30b-a3b-bridge-test
-    # load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-4B
-    # load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-4B-text_fix1
     load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-4B-Base_fix3
     no_load_optim: true
     no_load_rng: true

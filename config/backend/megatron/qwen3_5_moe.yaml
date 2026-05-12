@@ -21,15 +21,11 @@ make_vocab_size_divisible_by: 256
 dist_ckpt_strictness: log_unexpected
 layernorm_zero_centered_gamma: true  # HF Qwen3_5RMSNorm uses (1 + weight) formula; must match
 ckpt_format: torch_dist
-cross_entropy_loss_fusion: true
+cross_entropy_loss_fusion: false
 manual_gc: true
 manual_gc_interval: 100
-cross_entropy_fusion_impl: "te"
+# cross_entropy_fusion_impl: "te"
 
-recompute_granularity: full
-recompute_method: uniform
-recompute_modules: null
-recompute_num_layers: 1
 sequence_parallel: true
 use_flash_attn: true
 
@@ -69,14 +65,16 @@ num_experts: 256
 moe_router_topk: 8
 moe_ffn_hidden_size: 512
 moe_shared_expert_intermediate_size: 512
-moe_aux_loss_coeff: 0.001
-moe_router_fusion: False
 moe_router_dtype: "fp32"
 moe_router_load_balancing_type: global_aux_loss
 moe_layer_freq: 1
 moe_shared_expert_gate: true
+
+# optimization
+moe_aux_loss_coeff: 0.001
 moe_token_dispatcher_type: allgather
-moe_grouped_gemm: true
 moe_shared_expert_overlap: false
 moe_hybridep_num_sms: 0
 moe_router_padding_for_fp8: false
+moe_grouped_gemm: true
+moe_router_fusion: False
