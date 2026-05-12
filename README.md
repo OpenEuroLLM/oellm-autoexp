@@ -6,7 +6,7 @@ Single CLI surface for planning sweeps, launching jobs (directly or by way of co
 
 For you own experiments, first create your own branch `exp_YOURNAME`. Add a folder `config/experiments/YOURNAME`. Then, within that folder you can add your own experiment composition files (see the existing ones), with `# @package _global_` as header to ensure it's located at the top-level of the config. You can then run your experiment with:
 ```bash
-PYTHONPATH=. python scripts/run_autoexp_container.py --config-ref experiments/YOURNAME/myexperiment
+PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/YOURNAME/myexperiment
 ```
 
 ### Your experiment time / budget
@@ -41,13 +41,13 @@ The environment variables used in the `config/` here are:
 - Build the Megatron container from the provided defs (see `container/megatron/MegatronTrainingLumi.def.in`) so the correct ROCm + network tuning ends up inside the image.
 - Export the usual SLURM/paths (at a minimum `SLURM_ACCOUNT`, `SLURM_PARTITION[_DEBUG]`, `CONTAINER_CACHE_DIR`, `OUTPUT_DIR`) in your profile—scripts read them automatically.
 ### Quickstart using pre-configured enviroment and default values,
-
+```
     git clone https://github.com/OpenEuroLLM/oellm-autoexp.git --recurse-submodules
     # using uv
     curl -LsSf https://astral.sh/uv/install.sh | sh
     # uv creates a python virtual environment matching pyproject.toml-file on the fly. inode-count for env ~2k.
-    SLURM_ACCOUNT=project_462000963 SLURM_PARTITION=dev-g uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/megatron_lumi_speed_test.yaml
-
+    SLURM_ACCOUNT=project_462000963 SLURM_PARTITION=dev-g uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/megatron_lumi_speed_test
+```
 
 ## Cluster setup: MARENOSTRUM notes
 You need to install oellm-autoexp or its requirements in a conda environment to run it on MARENOSTRUM. To do this:
@@ -63,7 +63,7 @@ You need to install oellm-autoexp or its requirements in a conda environment to 
 ## Cluster setup: LEONARDO notes
 For LEONARDO, all should work with a pre-built container image. To build a container image on LEONARDO, please run these commands:
 - Download the pytorch base image from nvcr.io: `singularity build --sandbox --fix-perms --force $CONTAINER_CACHE_DIR/pytorch__25.10-py3_sandbox docker://nvcr.io/nvidia/pytorch:25.10-py3`
-- Build the user-base container (in `container`), but from a compute node: `python build_container_user.py --backend megatron --definition MegatronTrainingNoRoot --append-date --container-cmd singularity --base-image $CONTAINER_CACHE_DIR/pytorch__25.10-py3_sandbox`
+- Build the user-base container (in `container`), but from a compute node (default partition): `python build_container_user.py --backend megatron --definition MegatronTrainingNoRoot --append-date --container-cmd singularity --base-image $CONTAINER_CACHE_DIR/pytorch__25.10-py3_sandbox`
 Otherwise, on the login node you run out of resources and get killed.
 Make sure also to have datasets and tokenizers downloaded before starting a job, as there is no web connection on the compute nodes.
 
@@ -84,30 +84,15 @@ python container/build_container_user.py \
 
 
 ## Supercomputer setup: JUWELS Booster / JUPITER
-To be tested.
-See also the predecessors https://github.com/SLAMPAI/megatron-autoexp ([Notes](https://iffmd.fz-juelich.de/yAbNVj9eQz647elSwlyHXQ)) and https://github.com/SLAMPAI/autoexperiment for hints.
-Testing for JUPITER: see the [JUPITER Notes](https://iffmd.fz-juelich.de/BoygWCOZRciXluqqcDQ1oQ)
-Tokenization (tested at JSC, is generic): https://github.com/marianna13/megatron-lm-parallel-data
-Containers:
-- JUPITER `/p/data1/mmlaion/shared/containers/pytorch_24.09-py3_arm_transformers_latest.sif`
-- JUWELS/JURECA `/p/data1/mmlaion/shared/containers/pytorch_24.09-py3.sif ; pytorch_25.03-py3.sif`
-- inspect container:
-```bash
-CONTAINER_IMAGE="image"
-apptainer shell ${CONTAINER_IMAGE}
-```
-
+Tested, please use the `container/build_container.sh` script with the latest/matching Megatron definition file. 
 
 ## Quick Recipes
 
 ### Single job / Sweep debugging
 ```bash
-# Plan + submit + monitor in one go (manifest written to outputs/manifests/)
+# Plan + submit + monitor in one go (manifest written to outputs/manifests/, use `--help` for options, e.g. no submission)
 python scripts/run_autoexp.py --config-name experiments/default
 
-# Prefer explicit plan/submit?
-python scripts/render_config.py  --config-name experiments/default
-python scripts/submit_autoexp.py  --config-name experiments/default
 ```
 
 ### Monitoring sessions
@@ -137,7 +122,7 @@ sweep:
       backend.megatron.global_batch_size: [64, 128, 256]
 ```
 
-This creates 9 jobs (3 × 3 grid) with all combinations of learning rates and batch sizes. Within sweep always escape omegaconf interpolations as `\\${...}`, as otherwise the value from outside the sweep will be taken (but this way you can reference those).
+This creates 9 jobs (3 × 3 grid) with all combinations of learning rates and batch sizes. Within sweep always escape omegaconf interpolations as `\\${...}`, as otherwise the value from outside the sweep will be taken (but this way you can reference those values also if needed).
 
 ### Composable Sweeps (Groups Format)
 
