@@ -35,18 +35,23 @@ from typing import Any
 
 import yaml
 
-# ── Import GPU-hours helpers from sibling module ───────────────────────────────
-import importlib.util as _ilu
-_gpu_hours_path = Path(__file__).parent / "gpu_hours.py"
-if _gpu_hours_path.exists():
-    _spec = _ilu.spec_from_file_location("gpu_hours", _gpu_hours_path)
-    _gh = _ilu.module_from_spec(_spec)
-    _spec.loader.exec_module(_gh)
-    _gpu_collect_job_ids = _gh.collect_job_ids
-    _gpu_query_sacct     = _gh.query_sacct
-    _gpu_parse_elapsed   = _gh.parse_elapsed
-else:
-    _gpu_collect_job_ids = _gpu_query_sacct = _gpu_parse_elapsed = None
+# ── Sibling-module imports ─────────────────────────────────────────────────────
+_tools_dir = str(Path(__file__).parent)
+_scripts_dir = str(Path(__file__).parent.parent / "scripts")
+for _d in (_tools_dir, _scripts_dir):
+    if _d not in sys.path:
+        sys.path.insert(0, _d)
+
+from gpu_hours import (
+    collect_job_ids as _gpu_collect_job_ids,
+    query_sacct as _gpu_query_sacct,
+    parse_elapsed as _gpu_parse_elapsed,
+)
+from validate_sweep_runs import (
+    _resolve_defaults,
+    render_job_name,
+    substitute_omegaconf_path_vars as _subst,
+)
 
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
@@ -115,79 +120,6 @@ _EVENT_ERROR_DESC: dict[str, str] = {
 # be attributed to that job (accounts for monitoring-loop processing latency).
 _EVENT_MATCH_TOLERANCE_S = 300.0
 
-
-# ── Hydra config loading (from validate_sweep_runs.py) ────────────────────────
-
-def _load_yaml(path: Path) -> dict:
-    if not path.exists():
-        return {}
-    try:
-        with open(path) as f:
-            return yaml.safe_load(f) or {}
-    except yaml.YAMLError:
-        return {}
-
-
-def _get_package(path: Path) -> str:
-    if not path.exists():
-        return "_global_"
-    with open(path) as f:
-        for line in f:
-            s = line.strip()
-            if s.startswith("# @package"):
-                return s.split("@package", 1)[1].strip()
-            if s and not s.startswith("#"):
-                break
-    return "_global_"
-
-
-def _fill_missing(base: dict, overlay: dict) -> None:
-    for k, v in overlay.items():
-        if k not in base:
-            base[k] = v
-        elif isinstance(base[k], dict) and isinstance(v, dict):
-            _fill_missing(base[k], v)
-
-
-def _find_config_root(config_path: str) -> Path | None:
-    for p in Path(config_path).resolve().parents:
-        if p.name == "config":
-            return p
-        candidate = p / "config"
-        if candidate.is_dir():
-            return candidate
-    return None
-
-
-def _resolve_defaults(cfg: dict, config_path: str) -> None:
-    config_root = _find_config_root(config_path)
-    if config_root is None:
-        return
-    for entry in cfg.get("defaults", []):
-        if not isinstance(entry, dict):
-            continue
-        for raw_key, value in entry.items():
-            if not isinstance(value, str):
-                continue
-            key = raw_key.lstrip("/")
-            at_target = None
-            if "@" in key:
-                group, at_target = key.split("@", 1)
-                key = group.rstrip("/")
-            file_path = config_root / key / f"{value}.yaml"
-            sub = _load_yaml(file_path)
-            if not sub:
-                continue
-            package = _get_package(file_path)
-            if at_target:
-                _fill_missing(cfg.setdefault(at_target, {}), sub)
-            elif package == "_global_":
-                _fill_missing(cfg, sub)
-            else:
-                target = cfg
-                for part in package.split("."):
-                    target = target.setdefault(part, {})
-                _fill_missing(target, sub)
 
 
 def _eval_token_set(s: str) -> set[int]:
@@ -292,46 +224,6 @@ def parse_config(config_path: str) -> dict:
     params["tok_to_stage"] = tok_to_stage
     return params
 
-
-def _subst(template: str, ctx: dict) -> str:
-    def _repl(m: re.Match) -> str:
-        return str(ctx[m.group(1)]) if m.group(1) in ctx else m.group(0)
-    return re.sub(r"\$\{([^}]+)\}", _repl, template)
-
-
-def render_job_name(
-    tpl: str | None,
-    nexp: int, lr: float, gbsz: int, seed: int, stage: str,
-    stable_tokens: int | None = None,
-) -> str:
-    if tpl is None:
-        return f"nexp_{nexp}_lr{lr}_gbsz{gbsz}_seed{seed}_{stage}"
-    suffix = (
-        f"{stable_tokens // 1_000_000_000}BT"
-        if stage == "stable" and stable_tokens is not None
-        else ""
-    )
-    out = tpl
-    for key, val in {
-        "backend.megatron.num_experts": nexp,
-        "backend.megatron.lr": lr,
-        "backend.megatron.global_batch_size": gbsz,
-        "backend.megatron.seed": seed,
-        "stage": stage,
-        "backend.megatron.aux.job_horizon_suffix": suffix,
-    }.items():
-        out = out.replace(f"\\${{{key}}}", str(val))
-    return out
-
-
-def resolve_base_dir(template: str, nexp: int, lr: float, gbsz: int, seed: int) -> Path:
-    ctx = {
-        "backend.megatron.global_batch_size": gbsz,
-        "backend.megatron.num_experts": nexp,
-        "backend.megatron.lr": lr,
-        "backend.megatron.seed": seed,
-    }
-    return Path(_subst(template, ctx))
 
 
 # ── SBATCH parsing ────────────────────────────────────────────────────────────
@@ -492,15 +384,6 @@ def parse_stderr(log_path: Path) -> dict:
 
 
 # ── GPU hours via sacct ───────────────────────────────────────────────────────
-
-def _parse_elapsed(s: str) -> float:
-    """Convert sacct elapsed 'D-HH:MM:SS' or 'HH:MM:SS' to hours."""
-    if "-" in s:
-        days, rest = s.split("-", 1)
-        h, mm, sec = rest.split(":")
-        return int(days) * 24 + int(h) + int(mm) / 60 + int(sec) / 3600
-    h, mm, sec = s.split(":")
-    return int(h) + int(mm) / 60 + int(sec) / 3600
 
 
 def _parse_sacct_ts(s: str) -> float | None:
@@ -1027,7 +910,7 @@ def main() -> None:
             sacct_elapsed = sacct_entry.get("elapsed", "")
             gpu_hours: float | None = None
             if sacct_elapsed:
-                elapsed_h = _parse_elapsed(sacct_elapsed)
+                elapsed_h = _gpu_parse_elapsed(sacct_elapsed)
                 gpus = sacct_entry.get("gpus", 0) or total_gpus
                 gpu_hours = elapsed_h * gpus
             else:
