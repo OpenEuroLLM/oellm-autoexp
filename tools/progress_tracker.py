@@ -1146,13 +1146,28 @@ def main() -> None:
             pass
 
     if exp_gpu_h:
+        run_latest_row: dict[str, dict] = {}
+        for run_name, _stage, _tok, _tier in run_specs:
+            run_rows = [r for r in rows if r["run_name"] == run_name]
+            if run_rows:
+                run_latest_row[run_name] = run_rows[-1]
+
         W_EXP = max(len(e) for e in exp_gpu_h) + 2
-        gpu_sep = "─" * (W_EXP + 12)
+        gpu_sep = "─" * (W_EXP + 38)
         print()
-        print("Consumed GPU-h summary:")
+        print("Training progress summary:")
+        print(f"  {'Run':<{W_EXP}}  {'GPU-h':>8}  {'Progress':>9}  {'':>2} {'Status':<12}")
         print(gpu_sep)
         for exp_name, h in sorted(exp_gpu_h.items()):
-            print(f"  {exp_name:<{W_EXP}}  {h:>8.1f}")
+            latest = run_latest_row.get(exp_name, {})
+            prog = latest.get("progress")
+            prog_str = f"{prog:.1f}%" if prog is not None else "N/A"
+            emoji = latest.get("status_emoji", "")
+            status = latest.get("status_word", "")
+            color = status_colors.get(
+                "FAILED+AUTO_RESTARTED" if latest.get("action_word") == "AUTO_RESTARTED" and status == "FAILED" else status, ""
+            )
+            print(f"  {exp_name:<{W_EXP}}  {h:>8.1f}  {prog_str:>9}  {emoji} {color}{status:<12}{RESET}")
         print(gpu_sep)
         print(f"  {'TOTAL':<{W_EXP}}  {grand_gpu_total:>8.1f}")
 
@@ -1160,7 +1175,7 @@ def main() -> None:
     from collections import Counter
     counts = Counter(r["status_word"] for r in rows)
     print()
-    print("Training progress summary:")
+    print("Status breakdown:")
     for status, cnt in sorted(counts.items()):
         print(f"  {status:<14} {cnt}")
 
@@ -1237,17 +1252,23 @@ def main() -> None:
             f.write(f"**Config:** `{args.config}`  \n")
             f.write(f"**Results:** `{resolved_base}`\n\n")
 
-            # Experiment summary GPU consumption table
-            f.write("## Consumed GPU-h summary\n\n")
-            f.write("| Experiment | GPU-h |\n")
-            f.write("| --- | --- |\n")
+            # Experiment summary GPU consumption + progress table
+            f.write("## Training progress summary\n\n")
+            f.write("| Experiment | GPU-h | Progress | Status |\n")
+            f.write("| --- | --- | --- | --- |\n")
             for exp_name, h in sorted(exp_gpu_h.items()):
-                f.write(f"| {exp_name} | {h:.1f} |\n")
-            f.write(f"| **TOTAL** | **{grand_gpu_total:.1f}** |\n")
+                run_rows = [r for r in rows if r["run_name"] == exp_name]
+                latest = run_rows[-1] if run_rows else {}
+                prog = latest.get("progress")
+                prog_str = f"{prog:.1f}%" if prog is not None else "N/A"
+                emoji = latest.get("status_emoji", "")
+                status = latest.get("status_word", "")
+                f.write(f"| {exp_name} | {h:.1f} | {prog_str} | {emoji} {status} |\n")
+            f.write(f"| **TOTAL** | **{grand_gpu_total:.1f}** | | |\n")
             f.write("\n")
 
             # Status summary
-            f.write("## Training progress summary\n\n")
+            f.write("## Status breakdown\n\n")
             from collections import Counter
             counts = Counter(r["status_word"] for r in rows)
             for status, cnt in sorted(counts.items()):
