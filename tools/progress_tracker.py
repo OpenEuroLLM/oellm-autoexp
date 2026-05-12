@@ -259,6 +259,7 @@ def parse_stdout(log_path: Path, max_elapsed_ms: float, skip_first_iters: int, m
         "train_iters": None,
         "total_params_b": None,
         "transformer_params_b": None,
+        "first_iter": None,
         "last_iter": None,
         "total_iters": None,
         "avg_tflop_per_gpu": None,
@@ -330,6 +331,7 @@ def parse_stdout(log_path: Path, max_elapsed_ms: float, skip_first_iters: int, m
 
     if rows:
         rows.sort(key=lambda x: x[0])
+        result["first_iter"] = rows[0][0]
         result["last_iter"] = rows[-1][0]
         result["total_iters"] = rows[-1][1]
 
@@ -573,24 +575,19 @@ def determine_status(
     sacct_info: dict[str, dict],
     is_latest_job: bool,
     job_monitor_events: set[str] | None = None,
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, str]:
     """
-    Returns (emoji, status_word, error_description).
+    Returns (emoji, status_word, error_description, action_word).
+
+    Status words:  NOT_LAUNCHED | QUEUED | DONE | FAILED | CANCELLED | TRAINING
+    Action words:  AUTO_RESTARTED | NONE | ""
+      - AUTO_RESTARTED: a new job was automatically submitted after this one ended
+      - NONE:           job failed and no automatic restart was taken
+      - "":             not applicable (DONE, TRAINING, QUEUED, etc.)
 
     Error source priority:
       1. *job_monitor_events* (from monitor-state files) when not None.
       2. stderr log patterns (fallback for manually launched runs).
-
-    Status words:
-    - DONE            : training completed
-    - TRAINING        : latest job, iterating, no errors
-    - FAILED          : hard error, no successor job
-    - FAILED-RESTARTED: hard error, but a newer job was submitted
-    - RESTARTED       : clean exit (time-limit / inactive), newer job exists
-    - CANCELLED       : explicitly cancelled
-    - QUEUED          : not yet started
-    - TIMEOUT         : latest job exceeded time limit (no successor)
-    - UNKNOWN         : cannot determine
     """
     sacct = sacct_info.get(job_id, {})
     sacct_state = sacct.get("state", "")
@@ -615,66 +612,80 @@ def determine_status(
     last_iter   = stdout_data.get("last_iter")
     train_iters = stdout_data.get("train_iters")
     if last_iter is not None and train_iters is not None and last_iter >= train_iters:
-        return "✅", "DONE", ""
+        return "✅", "DONE", "", ""
     if stderr_data.get("wandb_synced"):
-        return "✅", "DONE", ""
+        return "✅", "DONE", "", ""
     if use_monitor and triggered_done:
-        return "✅", "DONE", ""
+        return "✅", "DONE", "", ""
 
     # ── Hard errors ───────────────────────────────────────────────────────────
     if use_monitor:
         if triggered_hard:
-            status = "FAILED" if is_latest_job else "FAILED-RESTARTED"
-            return "⚠️", status, hard_error_desc
+            action = "AUTO_RESTARTED" if not is_latest_job else "NONE"
+            return "⚠️", "FAILED", hard_error_desc, action
     else:
         if stderr_data.get("segfault"):
-            status = "FAILED" if is_latest_job else "FAILED-RESTARTED"
-            return "⚠️", status, "Segmentation fault"
+            action = "AUTO_RESTARTED" if not is_latest_job else "NONE"
+            return "⚠️", "FAILED", "Segmentation fault", action
         if stderr_data.get("oom"):
-            status = "FAILED" if is_latest_job else "FAILED-RESTARTED"
-            return "⚠️", status, "Out of memory (CUDA OOM)"
+            action = "AUTO_RESTARTED" if not is_latest_job else "NONE"
+            return "⚠️", "FAILED", "Out of memory (CUDA OOM)", action
         if stderr_data.get("fatal"):
-            status = "FAILED" if is_latest_job else "FAILED-RESTARTED"
-            return "⚠️", status, "Fatal error"
+            action = "AUTO_RESTARTED" if not is_latest_job else "NONE"
+            return "⚠️", "FAILED", "Fatal error", action
 
     # ── sacct-based states ────────────────────────────────────────────────────
     if sacct_state:
         if "CANCEL" in sacct_state:
-            return "🚫", "CANCELLED", ""
+            return "🚫", "CANCELLED", "", ""
         if sacct_state == "COMPLETED":
-            return "✅", "DONE", ""
+            return "✅", "DONE", "", ""
         if sacct_state == "FAILED":
-            err = hard_error_desc or "; ".join(stderr_data.get("errors", [])) or sacct_state
-            status = "FAILED" if is_latest_job else "FAILED-RESTARTED"
-            return "⚠️", status, err
+            err = hard_error_desc or "; ".join(stderr_data.get("errors", [])) or "UNKNOWN"
+            action = "AUTO_RESTARTED" if not is_latest_job else "NONE"
+            return "⚠️", "FAILED", err, action
         if sacct_state == "RUNNING":
-            return "⏳", "TRAINING", ""
+            return "⏳", "TRAINING", "", ""
         if sacct_state == "PENDING":
-            return "🕒", "QUEUED", ""
+            return "🕒", "QUEUED", "", ""
         if sacct_state == "TIMEOUT":
-            if not is_latest_job:
-                return "🔁", "RESTARTED", "Time limit (normal restart)"
-            return "⚠️", "TIMEOUT", "Time limit exceeded"
+            action = "AUTO_RESTARTED" if not is_latest_job else "NONE"
+            return "⚠️", "FAILED", "Time limit exceeded", action
 
     # ── No stdout → queued / not started ─────────────────────────────────────
     if stdout_data.get("last_iter") is None and stdout_data.get("train_iters") is None:
-        return "🕒", "QUEUED", ""
+        return "🕒", "QUEUED", "", ""
 
     # ── Clean restart events ──────────────────────────────────────────────────
     if use_monitor:
         if triggered_clean and not is_latest_job:
-            return "🔁", "RESTARTED", "Time limit (normal restart)"
+            return "⚠️", "FAILED", "Time limit (normal restart)", "AUTO_RESTARTED"
     else:
         if (stderr_data.get("time_limit") or stderr_data.get("sigterm")) and not is_latest_job:
-            return "🔁", "RESTARTED", "Time limit (normal restart)"
+            return "⚠️", "FAILED", "Time limit (normal restart)", "AUTO_RESTARTED"
 
     # ── Latest job still running ──────────────────────────────────────────────
     if is_latest_job and last_iter is not None:
-        return "⏳", "TRAINING", ""
+        return "⏳", "TRAINING", "", ""
 
     # ── Fallback ──────────────────────────────────────────────────────────────
     error_str = "; ".join(stderr_data.get("errors", []))
-    return "❓", "UNKNOWN", error_str
+    return "⚠️", "FAILED", error_str, "NONE"
+
+
+def compute_progress(last_iter: int | None, first_iter: int | None, total_iters: int | None) -> float | None:
+    """Return training progress [0–100] accounting for a non-zero start checkpoint.
+
+    For decay runs that begin mid-training, first_iter > 1, so start_iter > 0 and
+    progress is measured only over the iterations this run covers.
+    """
+    if last_iter is None or total_iters is None:
+        return None
+    start_iter = (first_iter - 1) if first_iter is not None else 0
+    denom = total_iters - start_iter
+    if denom <= 0:
+        return None
+    return 100.0 * (last_iter - start_iter) / denom
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -877,6 +888,8 @@ def main() -> None:
                 "micro_batch_size": None,
                 "num_workers": None,
                 "train_iters": None,
+                "last_iter": None,
+                "progress": None,
                 "last_ckpt": last_ckpt,
                 "avg_tflop_per_gpu": None,
                 "avg_tok_per_gpu": None,
@@ -886,6 +899,7 @@ def main() -> None:
                 "sacct_elapsed": "",
                 "status_emoji": s_emoji,
                 "status_word": s_word,
+                "action_word": "",
                 "error_desc": "",
             })
             continue
@@ -929,7 +943,7 @@ def main() -> None:
                 else None                     # no monitor state → use stderr
             )
 
-            emoji, status_word, error_desc = determine_status(
+            emoji, status_word, error_desc, action_word = determine_status(
                 job_id, job_ids, stdout_data, stderr_data, sacct_info, is_latest,
                 job_monitor_events=job_monitor_events,
             )
@@ -949,6 +963,12 @@ def main() -> None:
                 "micro_batch_size": stdout_data.get("micro_batch_size"),
                 "num_workers": stdout_data.get("num_workers"),
                 "train_iters": stdout_data.get("train_iters"),
+                "last_iter": stdout_data.get("last_iter"),
+                "progress": compute_progress(
+                    stdout_data.get("last_iter"),
+                    stdout_data.get("first_iter"),
+                    stdout_data.get("total_iters"),
+                ),
                 "last_ckpt": last_ckpt,
                 "avg_tflop_per_gpu": stdout_data.get("avg_tflop_per_gpu"),
                 "avg_tok_per_gpu": stdout_data.get("avg_tok_per_gpu"),
@@ -958,6 +978,7 @@ def main() -> None:
                 "sacct_elapsed": sacct_elapsed,
                 "status_emoji": emoji,
                 "status_word": status_word,
+                "action_word": action_word,
                 "error_desc": error_desc,
             })
 
@@ -983,7 +1004,9 @@ def main() -> None:
         f"{'C(10^18)':>8} "
         f"{'Tier':>8} "
         f"{'Stage':>7} "
-        f"{'TrainIter':>10} "
+        f"{'TotIter':>9} "
+        f"{'CurIter':>9} "
+        f"{'Prog%':>6} "
         f"{'LastCkpt':>9} "
         f"{'LR':>8} "
         f"{'GBS':>5} "
@@ -995,6 +1018,7 @@ def main() -> None:
         f"{'GPU-h':>10} "
         f"{'Emoji':>2} "
         f"{'Status':>12} "
+        f"{'Action':>14} "
         f"{'Error':>10}"
     )
     SEP = "─" * len(HEADER)
@@ -1007,16 +1031,13 @@ def main() -> None:
     print(SEP)
 
     status_colors = {
-        "DONE":             "\033[92m",
-        "TRAINING":         "\033[94m",
-        "FAILED":           "\033[91m",
-        "FAILED-RESTARTED": "\033[91m",
-        "CANCELLED":        "\033[91m",
-        "TIMEOUT":          "\033[91m",
-        "QUEUED":           "\033[93m",
-        "NOT_LAUNCHED":     "\033[90m",
-        "RESTARTED":        "\033[90m",
-        "UNKNOWN":          "\033[90m",
+        "DONE":                  "\033[92m",
+        "TRAINING":              "\033[94m",
+        "FAILED":                "\033[91m",
+        "FAILED+AUTO_RESTARTED": "\033[33m",
+        "CANCELLED":             "\033[91m",
+        "QUEUED":                "\033[93m",
+        "NOT_LAUNCHED":          "\033[90m",
     }
     RESET = "\033[0m"
 
@@ -1027,7 +1048,8 @@ def main() -> None:
         if len(name_display) > W_NAME:
             name_display = name_display[: W_NAME - 1] + "…"
 
-        color = status_colors.get(r["status_word"], "")
+        color_key = "FAILED+AUTO_RESTARTED" if r["action_word"] == "AUTO_RESTARTED" and r["status_word"] == "FAILED" else r["status_word"]
+        color = status_colors.get(color_key, "")
 
         tflop_str = f"{r['avg_tflop_per_gpu']:.1f}" if r["avg_tflop_per_gpu"] is not None else "N/A"
         tok_str = f"{r['avg_tok_per_gpu']:.0f}" if r["avg_tok_per_gpu"] is not None else "N/A"
@@ -1037,6 +1059,8 @@ def main() -> None:
         lr_str = f"{r['lr']:.4f}" if r["lr"] is not None else "N/A"
         ckpt_str = str(r["last_ckpt"]) if r["last_ckpt"] is not None else "N/A"
         ti_str = str(r["train_iters"]) if r["train_iters"] is not None else "N/A"
+        ci_str = str(r["last_iter"]) if r.get("last_iter") is not None else "N/A"
+        prog_str = f"{r['progress']:.1f}%" if r.get("progress") is not None else "N/A"
         gbs_str = str(r["global_batch_size"]) if r["global_batch_size"] is not None else "N/A"
         mbs_str = str(r["micro_batch_size"]) if r["micro_batch_size"] is not None else "N/A"
         wkr_str = str(r["num_workers"]) if r["num_workers"] is not None else "N/A"
@@ -1061,7 +1085,9 @@ def main() -> None:
             f"{c_str:>8} "
             f"{r['tier']:>8} "
             f"{stage_disp:>7} "
-            f"{ti_str:>10} "
+            f"{ti_str:>9} "
+            f"{ci_str:>9} "
+            f"{prog_str:>6} "
             f"{ckpt_str:>9} "
             f"{lr_str:>8} "
             f"{gbs_str:>5} "
@@ -1071,8 +1097,9 @@ def main() -> None:
             f"{tflop_str:>12} "
             f"{tok_str:>10} "
             f"{gpu_h_str:>10} "
-            f"{r['status_emoji']} "
+            f"{'🔁' if r['action_word'] == 'AUTO_RESTARTED' else ''}{r['status_emoji']} "
             f"{color}{r['status_word']:<12}{RESET} "
+            f"{r['action_word']:<14} "
             f"{error_disp:<30}"
         )
 
@@ -1130,8 +1157,8 @@ def main() -> None:
     if args.csv:
         csv_fields = [
             "Run", "JobID", "N_ne(B)", "N(B)", "D(B)", "C(10^18)", "Tier", "Stage",
-            "TrainIter", "LastCkpt", "LR", "GBS", "MBS", "Nodes", "Workers",
-            "TFLOP/s/GPU", "Tok/s/GPU", "GPU-h", "Emoji", "Status", "Error",
+            "TotIter", "CurIter", "Prog%", "LastCkpt", "LR", "GBS", "MBS", "Nodes", "Workers",
+            "TFLOP/s/GPU", "Tok/s/GPU", "GPU-h", "Emoji", "Status", "Action", "Error",
         ]
         csv_path = Path(args.csv)
         with csv_path.open("w", newline="") as f:
@@ -1154,7 +1181,9 @@ def main() -> None:
                     "C(10^18)":    c_val,
                     "Tier":        r.get("tier", ""),
                     "Stage":       sd,
-                    "TrainIter":   r["train_iters"] if r["train_iters"] is not None else "",
+                    "TotIter":     r["train_iters"] if r["train_iters"] is not None else "",
+                    "CurIter":     r.get("last_iter") if r.get("last_iter") is not None else "",
+                    "Prog%":       f"{r['progress']:.1f}" if r.get("progress") is not None else "",
                     "LastCkpt":    r["last_ckpt"] if r["last_ckpt"] is not None else "",
                     "LR":          f"{r['lr']:.4f}" if r["lr"] is not None else "",
                     "GBS":         r["global_batch_size"] if r["global_batch_size"] is not None else "",
@@ -1166,6 +1195,7 @@ def main() -> None:
                     "GPU-h":       f"{r['gpu_hours']:.1f}" if r["gpu_hours"] is not None else "",
                     "Emoji":       r["status_emoji"],
                     "Status":      r["status_word"],
+                    "Action":      r["action_word"],
                     "Error":       r["error_desc"],
                 })
         print(f"\nWrote {len(rows)} rows to {csv_path}")
