@@ -28,6 +28,7 @@ class SbatchConfig(NonStrictDataclass):
     """Configuration for sbatch options."""
 
     account: str | None = None
+    job_name: str | None = None
     nodes: int | None = None
     partition: str | None = None
     qos: str | None = None
