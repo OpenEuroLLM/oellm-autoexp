@@ -44,7 +44,7 @@ def build_srun_flags(config: SlurmConfig) -> str:
             flags.append(flag)
         else:
             flags.append(f"{flag}={value}")
-    return " ".join(flags)
+    return " ".join(flags) + " "
 
 
 def build_replacements(
