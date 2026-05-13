@@ -1,6 +1,6 @@
 # @package _global_
 
-# 0.1B NE dense Qwen3-like model training with pull-based multi-stage cooldown on Leonardo
+# 0.2B NE dense Qwen3-like model training with pull-based multi-stage cooldown on Leonardo
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 defaults:
@@ -8,9 +8,9 @@ defaults:
   - /container: leonardo
   - /slurm: leonardo
   - /job: auto_restart
-  - /sweep/multilingual_scaling@sweep: qwen3_dense_0.1B_ne # sweep configs
+  - /sweep/multilingual_scaling@sweep: qwen3_dense_0.2B_ne # sweep configs
   - /backend/megatron: base
-  - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.1B_ne # model configs
+  - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.2B_ne # model configs
   - /backend/megatron/multilingual_scaling/data: oellm_256k_leonardo # data configs
   - _self_
 
@@ -19,7 +19,7 @@ stage: ""
 
 job:
   name: "" # Will be overridden by sweep with stage and hyperparameter info
-  base_output_dir: "/leonardo_work/OELLM_prod2026/slaing00/multilingual_scaling/0.1B_ne/training/${job.name}"
+  base_output_dir: "/leonardo_work/OELLM_prod2026/slaing00/multilingual_scaling/0.2B_ne/training/${job.name}"
   log_path: ${slurm.sbatch.error}
 
 

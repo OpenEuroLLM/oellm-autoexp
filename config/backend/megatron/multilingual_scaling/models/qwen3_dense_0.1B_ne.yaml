@@ -1,0 +1,146 @@
+# @package backend.megatron
+
+# 0.1B non-embedding (ne) dense Qwen3-like model
+# Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
+
+# MODEL
+num_layers: 16
+hidden_size: 512
+ffn_hidden_size: 1536
+kv_channels: 128
+swiglu: True
+add_bias_linear: False
+init_method_std: 0.02
+
+# Attention
+num_attention_heads: 8
+num_query_groups: 1
+group_query_attention: False
+attention_softmax_in_fp32: False # OpenSci style
+use_flash_attn: True
+
+# Position Embedding
+position_embedding_type: "rope"
+rotary_base: 10000
+rotary_percent: 1.0
+untie_embeddings_and_output_weights: False
+
+# Normalization
+normalization: RMSNorm
+norm_epsilon: 1.e-5 # rmsnorm epsilon
+qk_layernorm: True # enable qk-norm
+bf16: True
+
+# Disable dropout
+attention_dropout: 0.0
+hidden_dropout: 0.0
+
+# OPTIMIZER
+optimizer: adam
+adam_beta1: 0.9
+adam_beta2: 0.95
+adam_eps: 1.e-8
+clip_grad: 1.0
+weight_decay: 0.1
+
+# SCHEDULER
+min_lr: 0.0
+lr_decay_style: WSD
+lr_wsd_decay_style: linear
+lr_warmup_iters: 2000 # Fixed for all.
+
+# TRAINING, PARALLELISM
+recompute_activations: False
+use_torch_fsdp2: False # it's either this or the next 4 args
+tensor_model_parallel_size: 1
+pipeline_model_parallel_size: 1
+context_parallel_size: 1
+sequence_parallel: True
+
+# DISTRIBUTED OPTIM
+use_distributed_optimizer: True
+
+# COMM OPTIONS
+distributed_backend: nccl
+distributed_timeout_minutes: 60
+
+# PROFILE
+profile: False
+use_pytorch_profiler: False
+profile_ranks: [0]
+profile_step_start: 5
+profile_step_end: 12
+
+# EVALS
+eval_interval: "${oc.eval:'int(204800 // ${backend.megatron.global_batch_size})'}"
+eval_iters: 100
+
+# LOGGING
+log_interval: 1
+log_progress: True
+log_throughput: True
+tensorboard_queue_size: 5
+log_timers_to_tensorboard: True
+
+# CHECKPOINT FORMAT
+ckpt_format: "torch_dist"
+save_interval: "${oc.eval:'int(512000 // ${backend.megatron.global_batch_size})'}"
+save: ${job.base_output_dir}/checkpoints
+load: ${.save}
+
+# Extra checkpoints at every decay branching + end point for ALL 9 token budgets.
+save_extra_steps:
+  - "${backend.megatron.aux.save_step_br_0}"   # 6B   branching (iter @ 80% of 6B   budget)
+  - "${backend.megatron.aux.save_step_br_1}"   # 12B  branching
+  - "${backend.megatron.aux.save_step_br_2}"   # 20B  branching
+  - "${backend.megatron.aux.save_step_br_3}"   # 30B  branching
+  - "${backend.megatron.aux.save_step_br_4}"   # 50B  branching
+  - "${backend.megatron.aux.save_step_br_5}"   # 80B  branching
+  - "${backend.megatron.aux.save_step_br_6}"   # 120B branching
+  - "${backend.megatron.aux.save_step_br_7}"   # 200B branching
+  - "${backend.megatron.aux.save_step_br_8}"   # 300B branching
+  - "${backend.megatron.aux.save_step_end_0}"  # 6B   end (iter @ 100% of 6B budget)
+  - "${backend.megatron.aux.save_step_end_1}"  # 12B  end
+  - "${backend.megatron.aux.save_step_end_2}"  # 20B  end
+  - "${backend.megatron.aux.save_step_end_3}"  # 30B  end
+  - "${backend.megatron.aux.save_step_end_4}"  # 50B  end
+  - "${backend.megatron.aux.save_step_end_5}"  # 80B  end
+  - "${backend.megatron.aux.save_step_end_6}"  # 120B end
+  - "${backend.megatron.aux.save_step_end_7}"  # 200B end
+  - "${backend.megatron.aux.save_step_end_8}"  # 300B end
+
+# Base training configuration (overridden by sweep)
+micro_batch_size: 4     # overridden by sweep
+global_batch_size: 128  # overridden by sweep
+lr: 1.e-3               # overridden by sweep
+seed: 1234
+
+aux:
+  tokens: 300_000_000_000       # overridden by sweep (Group 1 sets per-combo default)
+  decay_fraction: 0.0           # overridden in decay stage defaults
+  start_iter: 0                 # only meaningful in decay (used for ckpt_step)
+  cooldown_decay_fraction: 0.2  # fraction of iters spent in LR decay during cooldown
+  priority_tier: all
+  center_tokens_set:   "{6_000_000_000, 12_000_000_000, 20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
+  cross_tokens_set:    "set()"
+  diagonal_tokens_set: "set()"
+  stable_launch_tier: center
+  job_horizon_suffix: ""
+  save_step_br_0: 999_999_999
+  save_step_br_1: 999_999_999
+  save_step_br_2: 999_999_999
+  save_step_br_3: 999_999_999
+  save_step_br_4: 999_999_999
+  save_step_br_5: 999_999_999
+  save_step_br_6: 999_999_999
+  save_step_br_7: 999_999_999
+  save_step_br_8: 999_999_999
+  save_step_end_0: 999_999_999
+  save_step_end_1: 999_999_999
+  save_step_end_2: 999_999_999
+  save_step_end_3: 999_999_999
+  save_step_end_4: 999_999_999
+  save_step_end_5: 999_999_999
+  save_step_end_6: 999_999_999
+  save_step_end_7: 999_999_999
+  save_step_end_8: 999_999_999
