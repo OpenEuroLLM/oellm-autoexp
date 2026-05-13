@@ -5,13 +5,13 @@
 
 defaults:
   - /backend: megatron_torchrun
-  - /container: marenostrum
-  - /slurm: marenostrum
+  - /container: leonardo
+  - /slurm: leonardo
   - /job: auto_restart
   - /sweep/multilingual_scaling@sweep: qwen3_dense_0.9B_ne # sweep configs
   - /backend/megatron: base
   - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.9B_ne # model configs
-  - /backend/megatron/multilingual_scaling/data: oellm_256k # data configs
+  - /backend/megatron/multilingual_scaling/data: oellm_256k_leonardo # data configs
   - _self_
 
 index: 0
@@ -19,7 +19,7 @@ stage: ""
 
 job:
   name: "" # Will be overridden by sweep with stage and hyperparameter info
-  base_output_dir: "/gpfs/projects/ehpc533/multilingual_scaling/0.9B_ne/training/${job.name}"
+  base_output_dir: "/leonardo_work/OELLM_prod2026/slaing00/multilingual_scaling/0.9B_ne/training/${job.name}"
   log_path: ${slurm.sbatch.error}
 
 
@@ -32,20 +32,23 @@ backend:
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
     # DATA
-    data_cache_path: /gpfs/projects/ehpc533/users/slaing00/MEGATRON_262k/${job.name} # Each job gets its own cache to avoid conflicts; will be symlinked to the same underlying data.
+    data_cache_path: /leonardo_work/OELLM_prod2026/slaing00/cache/MEGATRON_262k/${job.name} # Each job gets its own cache to avoid conflicts; will be symlinked to the same underlying data.
 
     # Base training configuration (for stable phase)
     num_workers: 8 # Will be overridden by sweep
-    micro_batch_size: 8
+    micro_batch_size: 2
     global_batch_size: 64  # Will be overridden by sweep
     lr: 5.e-4  # Will be overridden by sweep
 
 
+container:
+  env:
+    WANDB_TAGS: "leonardo"
+
 slurm:
   sbatch:
     nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
-    qos: acc_ehpc
-    account: ehpc533
-    time: "72:00:00"
+    account: oellm_prod2026
+    time: "24:00:00"
     output: "${job.base_output_dir}/logs/stdout-%j.log"
     error: "${job.base_output_dir}/logs/stderr-%j.log"
