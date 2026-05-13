@@ -67,6 +67,16 @@ RE_TRANSFORMER_PARAMS_B = re.compile(
     r"\[default0\]:Number of parameters in transformer block in billions:\s+([\d.]+)"
 )
 
+# Training loss from iteration lines: "lm loss: 3.1416"
+RE_TRAIN_LOSS = re.compile(
+    r"iteration\s+\d+/\s*\d+\s*\|[^\n]*lm loss:\s*([\d.eE+\-]+)"
+)
+
+# Validation loss lines: "validation loss at iteration X | lm loss value: Y"
+RE_VAL_LOSS = re.compile(
+    r"validation loss at[^\n]*\|[^\n]*lm loss value:\s*([\d.eE+\-]+)"
+)
+
 # Throughput / iteration line
 RE_ITER = re.compile(
     r"iteration\s+(\d+)/\s*(\d+)\s*\|"
@@ -275,6 +285,8 @@ def parse_stdout(log_path: Path, max_elapsed_ms: float, skip_first_iters: int, m
         "n_iters_sampled": None,
         "first_ts": None,
         "last_ts": None,
+        "last_train_loss": None,
+        "last_val_loss": None,
     }
     if not log_path.is_file():
         return result
@@ -313,6 +325,21 @@ def parse_stdout(log_path: Path, max_elapsed_ms: float, skip_first_iters: int, m
     m = RE_TRANSFORMER_PARAMS_B.search(text)
     if m:
         result["transformer_params_b"] = float(m.group(1))
+
+    # --- Training and validation losses ---
+    train_loss_matches = RE_TRAIN_LOSS.findall(text)
+    if train_loss_matches:
+        try:
+            result["last_train_loss"] = float(train_loss_matches[-1])
+        except (ValueError, TypeError):
+            pass
+
+    val_loss_matches = RE_VAL_LOSS.findall(text)
+    if val_loss_matches:
+        try:
+            result["last_val_loss"] = float(val_loss_matches[-1])
+        except (ValueError, TypeError):
+            pass
 
     # --- Throughput from iteration lines ---
     rows: list[tuple[int, int, float, float, float]] = []
@@ -901,6 +928,8 @@ def main() -> None:
                 "train_iters": None,
                 "last_iter": None,
                 "progress": None,
+                "last_train_loss": None,
+                "last_val_loss": None,
                 "last_ckpt": last_ckpt,
                 "avg_tflop_per_gpu": None,
                 "avg_tok_per_gpu": None,
@@ -980,6 +1009,8 @@ def main() -> None:
                     sbatch_ckpt_step,
                     stdout_data.get("total_iters"),
                 ),
+                "last_train_loss": stdout_data.get("last_train_loss"),
+                "last_val_loss": stdout_data.get("last_val_loss"),
                 "last_ckpt": last_ckpt,
                 "avg_tflop_per_gpu": stdout_data.get("avg_tflop_per_gpu"),
                 "avg_tok_per_gpu": stdout_data.get("avg_tok_per_gpu"),
@@ -1018,6 +1049,8 @@ def main() -> None:
         f"{'TotIter':>9} "
         f"{'CurIter':>9} "
         f"{'Prog%':>6} "
+        f"{'TrnLoss':>8} "
+        f"{'ValLoss':>8} "
         f"{'LastCkpt':>9} "
         f"{'LR':>8} "
         f"{'GBS':>5} "
@@ -1072,6 +1105,8 @@ def main() -> None:
         ti_str = str(r["train_iters"]) if r["train_iters"] is not None else "N/A"
         ci_str = str(r["last_iter"]) if r.get("last_iter") is not None else "N/A"
         prog_str = f"{r['progress']:.1f}%" if r.get("progress") is not None else "N/A"
+        trn_loss_str = f"{r['last_train_loss']:.4f}" if r.get("last_train_loss") is not None else "N/A"
+        val_loss_str = f"{r['last_val_loss']:.4f}" if r.get("last_val_loss") is not None else "N/A"
         gbs_str = str(r["global_batch_size"]) if r["global_batch_size"] is not None else "N/A"
         mbs_str = str(r["micro_batch_size"]) if r["micro_batch_size"] is not None else "N/A"
         wkr_str = str(r["num_workers"]) if r["num_workers"] is not None else "N/A"
@@ -1099,6 +1134,8 @@ def main() -> None:
             f"{ti_str:>9} "
             f"{ci_str:>9} "
             f"{prog_str:>6} "
+            f"{trn_loss_str:>8} "
+            f"{val_loss_str:>8} "
             f"{ckpt_str:>9} "
             f"{lr_str:>8} "
             f"{gbs_str:>5} "
@@ -1183,7 +1220,7 @@ def main() -> None:
     if args.csv:
         csv_fields = [
             "Run", "JobID", "N_ne(B)", "N(B)", "D(B)", "C(10^18)", "Tier", "Stage",
-            "TotIter", "CurIter", "Prog%", "LastCkpt", "LR", "GBS", "MBS", "Nodes", "Workers",
+            "TotIter", "CurIter", "Prog%", "TrainLoss", "ValLoss", "LastCkpt", "LR", "GBS", "MBS", "Nodes", "Workers",
             "TFLOP/s/GPU", "Tok/s/GPU", "GPU-h", "Emoji", "Status", "Action", "Error",
         ]
         csv_path = Path(args.csv)
@@ -1210,6 +1247,8 @@ def main() -> None:
                     "TotIter":     r["train_iters"] if r["train_iters"] is not None else "",
                     "CurIter":     r.get("last_iter") if r.get("last_iter") is not None else "",
                     "Prog%":       f"{r['progress']:.1f}" if r.get("progress") is not None else "",
+                    "TrainLoss":   f"{r['last_train_loss']:.4f}" if r.get("last_train_loss") is not None else "",
+                    "ValLoss":     f"{r['last_val_loss']:.4f}" if r.get("last_val_loss") is not None else "",
                     "LastCkpt":    r["last_ckpt"] if r["last_ckpt"] is not None else "",
                     "LR":          f"{r['lr']:.4f}" if r["lr"] is not None else "",
                     "GBS":         r["global_batch_size"] if r["global_batch_size"] is not None else "",
