@@ -6,6 +6,13 @@ Usage:
 
 Parses the sweep config to extract LRs, batch sizes, num_experts, decay
 stages, and results directory, then validates every expected job.
+
+Supports two config layouts:
+  - Monolithic: all settings (backend.megatron.aux, sweep.groups, seq_length)
+    live in one file (e.g. dense_130M_lr_gbsz_tokens_grid_tiered.yaml).
+  - Split: the experiment YAML composes sub-configs via Hydra defaults (e.g.
+    0.1B_ne.yaml). The script resolves the defaults list to load aux, seq_length,
+    and sweep groups from their respective sub-config files.
 """
 
 import argparse
@@ -19,12 +26,107 @@ from pathlib import Path
 import yaml
 
 
+# ── Hydra defaults resolution ─────────────────────────────────────────────────
+
+def _load_yaml_file(path: Path) -> dict:
+    """Load YAML from path, returning {} on missing file or parse error."""
+    if not path.exists():
+        return {}
+    try:
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+    except yaml.YAMLError:
+        return {}
+
+
+def _get_package(path: Path) -> str:
+    """Read the # @package directive from the first comment block of a YAML file."""
+    if not path.exists():
+        return "_global_"
+    with open(path) as f:
+        for line in f:
+            s = line.strip()
+            if s.startswith("# @package"):
+                return s.split("@package", 1)[1].strip()
+            if s and not s.startswith("#"):
+                break
+    return "_global_"
+
+
+def _fill_missing(base: dict, overlay: dict) -> None:
+    """Recursively copy keys from overlay into base only when absent in base."""
+    for k, v in overlay.items():
+        if k not in base:
+            base[k] = v
+        elif isinstance(base[k], dict) and isinstance(v, dict):
+            _fill_missing(base[k], v)
+
+
+def _find_config_root(config_path: str) -> Path | None:
+    """Walk up from config_path to find the Hydra config root (dir named 'config')."""
+    for p in Path(config_path).resolve().parents:
+        if p.name == "config":
+            return p
+        candidate = p / "config"
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _resolve_defaults(cfg: dict, config_path: str) -> None:
+    """Load configs referenced in cfg['defaults'] and fill missing keys into cfg.
+
+    Simulates Hydra defaults-list merging: sub-configs fill in keys absent in
+    the experiment file (cfg's own values always win on conflict).
+    """
+    config_root = _find_config_root(config_path)
+    if config_root is None:
+        return
+
+    for entry in cfg.get("defaults", []):
+        if not isinstance(entry, dict):
+            continue
+        for raw_key, value in entry.items():
+            if not isinstance(value, str):
+                continue
+
+            # Strip leading / and parse optional @target annotation (e.g. @sweep)
+            key = raw_key.lstrip("/")
+            at_target = None
+            if "@" in key:
+                group, at_target = key.split("@", 1)
+                key = group.rstrip("/")
+
+            file_path = config_root / key / f"{value}.yaml"
+            sub = _load_yaml_file(file_path)
+            if not sub:
+                continue
+
+            package = _get_package(file_path)
+
+            if at_target:
+                # e.g. /sweep/multilingual_scaling@sweep: foo → cfg["sweep"]
+                _fill_missing(cfg.setdefault(at_target, {}), sub)
+            elif package == "_global_":
+                _fill_missing(cfg, sub)
+            else:
+                # e.g. # @package backend.megatron → cfg["backend"]["megatron"]
+                target = cfg
+                for part in package.split("."):
+                    target = target.setdefault(part, {})
+                _fill_missing(target, sub)
+
+
 # ── Config parsing ───────────────────────────────────────────────────────────
 
 def parse_config(config_path: str) -> dict:
     """Extract sweep grid and training parameters from a config YAML."""
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
+
+    # For split configs (Hydra defaults list), load sub-configs to fill in
+    # backend.megatron.aux, seq_length, and sweep.groups.
+    _resolve_defaults(cfg, config_path)
 
     meg = cfg["backend"]["megatron"]
     aux = meg["aux"]
@@ -48,6 +150,10 @@ def parse_config(config_path: str) -> dict:
     num_experts: list[int] = []
     decay_stages: OrderedDict[str, int] = OrderedDict()
     job_name_tpl: str | None = None
+    # Explicit per-combo list for sweep configs where each Group-1 entry is a
+    # flat (lr, gbsz, stable_tokens) triplet rather than a product grid.
+    # None → fall back to Cartesian product of lrs × gbszs × num_experts.
+    _flat_combo_list: list[dict] = []
 
     for group in groups:
         if group.get("type") != "list" or "configs" not in group:
@@ -59,13 +165,33 @@ def parse_config(config_path: str) -> dict:
             if "job.name" in entry:
                 job_name_tpl = entry["job.name"]
                 continue
-            # Product sub-group (lr × gbsz)
+            # Format 1: product sub-group with explicit lr/gbsz lists
             if entry.get("type") == "product" and "params" in entry:
                 p = entry["params"]
                 lrs.extend(p.get("backend.megatron.lr", []))
                 gbszs.extend(p.get("backend.megatron.global_batch_size", []))
                 continue
-            # Flat num_experts entry
+            # Format 2: flat (lr, gbsz, stable_tokens) combo entry
+            if (
+                "backend.megatron.lr" in entry
+                and "backend.megatron.global_batch_size" in entry
+                and "stage" not in entry
+            ):
+                lr = float(entry["backend.megatron.lr"])
+                gbsz = int(entry["backend.megatron.global_batch_size"])
+                stable_tok = int(entry.get("backend.megatron.aux.tokens", aux["tokens"]))
+                nexp = int(entry.get("backend.megatron.num_experts", 1))
+                _flat_combo_list.append(
+                    {"nexp": nexp, "lr": lr, "gbsz": gbsz, "stable_tokens": stable_tok}
+                )
+                if lr not in lrs:
+                    lrs.append(lr)
+                if gbsz not in gbszs:
+                    gbszs.append(gbsz)
+                if nexp not in num_experts:
+                    num_experts.append(nexp)
+                continue
+            # Format 1: flat num_experts entry
             if "backend.megatron.num_experts" in entry and "stage" not in entry:
                 num_experts.append(int(entry["backend.megatron.num_experts"]))
                 continue
@@ -82,9 +208,10 @@ def parse_config(config_path: str) -> dict:
 
     params["lrs"] = [float(v) for v in lrs]
     params["gbszs"] = [int(v) for v in gbszs]
-    params["num_experts"] = num_experts
+    params["num_experts"] = num_experts if num_experts else [1]
     params["decay_stages"] = decay_stages
     params["job_name_tpl"] = job_name_tpl
+    params["combos"] = _flat_combo_list if _flat_combo_list else None
     return params
 
 
@@ -95,10 +222,16 @@ def render_job_name(
     gbsz: int,
     seed: int,
     stage: str,
+    stable_tokens: int | None = None,
 ) -> str:
     """Substitute concrete values into the escaped-OmegaConf job name template."""
     if tpl is None:
         return f"nexp_{nexp}_lr{lr}_gbsz{gbsz}_seed{seed}_{stage}"
+    # job_horizon_suffix: "<N>BT" for stable (e.g. "300BT"), "" for decay stages
+    if stage == "stable" and stable_tokens is not None:
+        job_horizon_suffix = f"{stable_tokens // 1_000_000_000}BT"
+    else:
+        job_horizon_suffix = ""
     out = tpl
     for key, val in {
         "backend.megatron.num_experts": nexp,
@@ -106,6 +239,7 @@ def render_job_name(
         "backend.megatron.global_batch_size": gbsz,
         "backend.megatron.seed": seed,
         "stage": stage,
+        "backend.megatron.aux.job_horizon_suffix": job_horizon_suffix,
     }.items():
         out = out.replace(f"\\${{{key}}}", str(val))
     return out
@@ -266,9 +400,12 @@ def validate_job(
     if is_stable:
         expected_ses = compute_save_extra_steps(decay_stages, seq_length, gbsz, cdf)
         if log["save_extra_steps"] is not None:
-            if log["save_extra_steps"] != expected_ses:
+            actual_ses = set(log["save_extra_steps"])
+            missing_steps = [s for s in expected_ses if s not in actual_ses]
+            if missing_steps:
                 result["issues"].append(
-                    f"save_extra_steps mismatch: got {log['save_extra_steps']}, expected {expected_ses}"
+                    f"save_extra_steps missing branch points: {missing_steps}"
+                    f" (got {sorted(actual_ses)})"
                 )
         else:
             result["issues"].append("save_extra_steps not found in log")
@@ -307,40 +444,71 @@ def main():
     seed = cfg["seed"]
     stable_tok = cfg["stable_tokens"]
     decay_stages = cfg["decay_stages"]
+    combos = cfg["combos"]
 
     n_stages = 1 + len(decay_stages)
-    n_combos = len(cfg["lrs"]) * len(cfg["gbszs"]) * len(cfg["num_experts"])
+    n_combos = len(combos) if combos else (
+        len(cfg["lrs"]) * len(cfg["gbszs"]) * len(cfg["num_experts"])
+    )
 
     print("=" * 110)
     print(f"Config:  {args.config}")
-    if cfg["lrs"] and cfg["gbszs"] and cfg["num_experts"]:
+    if combos:
+        sample = combos[0]
+        _ex = resolve_results_base_dir(
+            base_dir_template, sample["nexp"], sample["lr"], sample["gbsz"], seed
+        )
+        print(f"Results: {base_dir_template}/")
+        print(f"         (resolved e.g. {_ex}/)")
+        print(
+            f"Grid:    {n_combos} explicit (lr,gbsz) combos × {n_stages} stages"
+            f" = {n_combos * n_stages} jobs"
+        )
+    elif cfg["lrs"] and cfg["gbszs"] and cfg["num_experts"]:
         _ex = resolve_results_base_dir(
             base_dir_template, cfg["num_experts"][0], cfg["lrs"][0], cfg["gbszs"][0], seed
         )
         print(f"Results: {base_dir_template}/")
         print(f"         (resolved e.g. {_ex}/)")
+        print(
+            f"Grid:    {len(cfg['lrs'])} lr × {len(cfg['gbszs'])} gbsz × "
+            f"{len(cfg['num_experts'])} nexp × {n_stages} stages = {n_combos * n_stages} jobs"
+        )
     else:
         print(f"Results: {base_dir_template}/")
-    print(
-        f"Grid:    {len(cfg['lrs'])} lr × {len(cfg['gbszs'])} gbsz × "
-        f"{len(cfg['num_experts'])} nexp × {n_stages} stages = {n_combos * n_stages} jobs"
-    )
     print("=" * 110)
 
     results = []
-    for nexp in cfg["num_experts"]:
-        for lr in cfg["lrs"]:
-            for gbsz in cfg["gbszs"]:
-                base_dir = resolve_results_base_dir(base_dir_template, nexp, lr, gbsz, seed)
-                name = render_job_name(cfg["job_name_tpl"], nexp, lr, gbsz, seed, "stable")
+    if combos:
+        for combo in combos:
+            nexp, lr, gbsz = combo["nexp"], combo["lr"], combo["gbsz"]
+            combo_stable_tok = combo["stable_tokens"]
+            base_dir = resolve_results_base_dir(base_dir_template, nexp, lr, gbsz, seed)
+            name = render_job_name(
+                cfg["job_name_tpl"], nexp, lr, gbsz, seed, "stable", combo_stable_tok
+            )
+            results.append(
+                validate_job(base_dir, name, "stable", combo_stable_tok, seq, gbsz, cdf, decay_stages)
+            )
+            for stage_name, stage_tok in decay_stages.items():
+                name = render_job_name(cfg["job_name_tpl"], nexp, lr, gbsz, seed, stage_name)
                 results.append(
-                    validate_job(base_dir, name, "stable", stable_tok, seq, gbsz, cdf, decay_stages)
+                    validate_job(base_dir, name, stage_name, stage_tok, seq, gbsz, cdf, decay_stages)
                 )
-                for stage_name, stage_tok in decay_stages.items():
-                    name = render_job_name(cfg["job_name_tpl"], nexp, lr, gbsz, seed, stage_name)
+    else:
+        for nexp in cfg["num_experts"]:
+            for lr in cfg["lrs"]:
+                for gbsz in cfg["gbszs"]:
+                    base_dir = resolve_results_base_dir(base_dir_template, nexp, lr, gbsz, seed)
+                    name = render_job_name(cfg["job_name_tpl"], nexp, lr, gbsz, seed, "stable")
                     results.append(
-                        validate_job(base_dir, name, stage_name, stage_tok, seq, gbsz, cdf, decay_stages)
+                        validate_job(base_dir, name, "stable", stable_tok, seq, gbsz, cdf, decay_stages)
                     )
+                    for stage_name, stage_tok in decay_stages.items():
+                        name = render_job_name(cfg["job_name_tpl"], nexp, lr, gbsz, seed, stage_name)
+                        results.append(
+                            validate_job(base_dir, name, stage_name, stage_tok, seq, gbsz, cdf, decay_stages)
+                        )
 
     total = len(results)
     ok = sum(1 for r in results if r["status"] == "OK")
@@ -391,12 +559,26 @@ def main():
     # Reference table
     print()
     print("-" * 110)
-    print("Expected train_iters per (gbsz, stage):")
-    for gbsz in cfg["gbszs"]:
-        parts = [f"stable={compute_train_iters(stable_tok, seq, gbsz)}"]
-        for sn, st in decay_stages.items():
-            parts.append(f"{sn}={compute_train_iters(st, seq, gbsz)}")
-        print(f"  gbsz={gbsz}: {', '.join(parts)}")
+    if combos:
+        print("Expected train_iters per (lr, gbsz, stable_tokens):")
+        seen: set[tuple] = set()
+        for combo in combos:
+            lr, gbsz, combo_stable_tok = combo["lr"], combo["gbsz"], combo["stable_tokens"]
+            key = (gbsz, combo_stable_tok)
+            if key in seen:
+                continue
+            seen.add(key)
+            parts = [f"stable={compute_train_iters(combo_stable_tok, seq, gbsz)}"]
+            for sn, st in decay_stages.items():
+                parts.append(f"{sn}={compute_train_iters(st, seq, gbsz)}")
+            print(f"  gbsz={gbsz} stable={combo_stable_tok // 1_000_000_000}BT: {', '.join(parts)}")
+    else:
+        print("Expected train_iters per (gbsz, stage):")
+        for gbsz in cfg["gbszs"]:
+            parts = [f"stable={compute_train_iters(stable_tok, seq, gbsz)}"]
+            for sn, st in decay_stages.items():
+                parts.append(f"{sn}={compute_train_iters(st, seq, gbsz)}")
+            print(f"  gbsz={gbsz}: {', '.join(parts)}")
 
     print()
     print("Expected save_extra_steps (stable only):")
