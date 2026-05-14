@@ -62,7 +62,7 @@ use_distributed_optimizer: True
 
 # COMM OPTIONS
 distributed_backend: nccl
-distributed_timeout_minutes: 60 # with 30 some jobs still failed!
+distributed_timeout_minutes: 60
 
 # PROFILE
 profile: False
@@ -75,7 +75,6 @@ profile_step_end: 12
 # Eval interval scales inversely with global batch size,
 # calibrated so that gbsz=1024 evals every 200 iterations.
 eval_interval: "${oc.eval:'int(204800 // ${backend.megatron.global_batch_size})'}"
-# eval_interval: 200 # testing
 eval_iters: 100
 
 # LOGGING
@@ -90,7 +89,6 @@ ckpt_format: "torch_dist"
 # Checkpoint interval scales inversely with global batch size,
 # calibrated so that gbsz=1024 saves every 500 iterations.
 save_interval: "${oc.eval:'int(512000 // ${backend.megatron.global_batch_size})'}"
-# save_interval: 500 # testing
 save: ${job.base_output_dir}/checkpoints
 load: ${.save}
 
