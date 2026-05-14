@@ -493,6 +493,30 @@ def gpu_hours_from_timestamps(
 
 # ── Job discovery ─────────────────────────────────────────────────────────────
 
+def _run_id_sets(run_dir: Path) -> tuple[set[str], set[str]]:
+    """Return (config_ids, log_ids) for a run directory.
+
+    config_ids: IDs from config-{id}.yaml (job submitted via pipeline).
+    log_ids:    IDs from stdout/stderr-{id}.log (job actually ran).
+    A manually restarted run has log_ids that are not in config_ids (jobs
+    submitted directly without the config-creation step).
+    """
+    config_ids: set[str] = set()
+    log_ids: set[str] = set()
+    if run_dir.is_dir():
+        for f in run_dir.iterdir():
+            m = re.match(r"config-(\d+)\.yaml$", f.name)
+            if m:
+                config_ids.add(m.group(1))
+    logs_dir = run_dir / "logs"
+    if logs_dir.is_dir():
+        for f in logs_dir.iterdir():
+            m = re.match(r"(?:stdout|stderr)-(\d+)\.log$", f.name)
+            if m:
+                log_ids.add(m.group(1))
+    return config_ids, log_ids
+
+
 def find_job_ids(run_dir: Path) -> list[str]:
     """Return all Slurm job IDs found in logs/ or config-*.yaml files, sorted ascending.
 
@@ -500,19 +524,8 @@ def find_job_ids(run_dir: Path) -> list[str]:
     once the job starts. Including config-based IDs lets us detect jobs that are
     submitted (or queued) but haven't started writing logs yet.
     """
-    ids: set[str] = set()
-    logs_dir = run_dir / "logs"
-    if logs_dir.is_dir():
-        for f in logs_dir.iterdir():
-            m = re.match(r"(?:stdout|stderr)-(\d+)\.log$", f.name)
-            if m:
-                ids.add(m.group(1))
-    if run_dir.is_dir():
-        for f in run_dir.iterdir():
-            m = re.match(r"config-(\d+)\.yaml$", f.name)
-            if m:
-                ids.add(m.group(1))
-    return sorted(ids)
+    config_ids, log_ids = _run_id_sets(run_dir)
+    return sorted(config_ids | log_ids)
 
 
 # ── Token budget from run name ─────────────────────────────────────────────────
@@ -602,6 +615,46 @@ def map_events_to_jobs(
 
 # ── Status determination ──────────────────────────────────────────────────────
 
+def _compute_restart_action(
+    job_id: str,
+    job_has_config: bool,
+    is_latest_job: bool,
+    all_job_ids: list[str],
+    run_config_ids: set[str],
+    run_log_ids: set[str],
+) -> str:
+    """Return the restart action for a failed/cancelled job based on what followed it.
+
+    Looks at the next job in sequence that actually ran (has logs) and classifies:
+      AUTO_RESTARTED:    next running job has a config  (normal autoexp restart)
+      MANUALLY_RESTARTED: next running job has no config (manually submitted)
+      NEW_SESSION:       current job has no config but next running job has one
+                         (manual series ended, new autoexp session started)
+      NONE:              latest job, or no subsequent running job found
+    """
+    if is_latest_job:
+        return "NONE"
+    # Submitted but never ran — no action applies
+    if job_id not in run_log_ids:
+        return ""
+    try:
+        idx = all_job_ids.index(job_id)
+    except ValueError:
+        return "NONE"
+    # Find the next job that actually ran (has a log file)
+    next_running: str | None = None
+    for later_id in all_job_ids[idx + 1:]:
+        if later_id in run_log_ids:
+            next_running = later_id
+            break
+    if next_running is None:
+        return "NONE"
+    next_has_config = next_running in run_config_ids
+    if next_has_config:
+        return "NEW_SESSION" if not job_has_config else "AUTO_RESTARTED"
+    return "MANUALLY_RESTARTED"
+
+
 def determine_status(
     job_id: str,
     all_job_ids: list[str],
@@ -610,15 +663,20 @@ def determine_status(
     sacct_info: dict[str, dict],
     is_latest_job: bool,
     job_monitor_events: set[str] | None = None,
+    run_config_ids: set[str] | None = None,
+    run_log_ids: set[str] | None = None,
 ) -> tuple[str, str, str, str]:
     """
     Returns (emoji, status_word, error_description, action_word).
 
     Status words:  NOT_LAUNCHED | QUEUED | DONE | FAILED | CANCELLED | TRAINING
-    Action words:  AUTO_RESTARTED | NONE | ""
-      - AUTO_RESTARTED: a new job was automatically submitted after this one ended
-      - NONE:           job failed and no automatic restart was taken
-      - "":             not applicable (DONE, TRAINING, QUEUED, etc.)
+    Action words:  AUTO_RESTARTED | MANUALLY_RESTARTED | NEW_SESSION | NONE | ""
+      - AUTO_RESTARTED:    next running job has a config (normal autoexp restart)
+      - MANUALLY_RESTARTED: next running job has no config (manually submitted)
+      - NEW_SESSION:       current job was log-only (manual) but next running job has
+                           a config (new autoexp session started after manual series)
+      - NONE:              latest job or no subsequent running job
+      - "":                not applicable (DONE, TRAINING, QUEUED, etc.)
 
     Error source priority:
       1. *job_monitor_events* (from monitor-state files) when not None.
@@ -626,6 +684,12 @@ def determine_status(
     """
     sacct = sacct_info.get(job_id, {})
     sacct_state = sacct.get("state", "")
+
+    # Pre-compute restart action (used for all FAILED/CANCELLED paths below)
+    _cfg_ids  = run_config_ids if run_config_ids is not None else set()
+    _log_ids  = run_log_ids    if run_log_ids    is not None else set()
+    _has_cfg  = job_id in _cfg_ids
+    _restart  = _compute_restart_action(job_id, _has_cfg, is_latest_job, all_job_ids, _cfg_ids, _log_ids)
 
     # ── Classify events from monitor state (primary) or stderr (fallback) ────
     use_monitor = job_monitor_events is not None
@@ -656,36 +720,31 @@ def determine_status(
     # ── Hard errors ───────────────────────────────────────────────────────────
     if use_monitor:
         if triggered_hard:
-            action = "AUTO_RESTARTED" if not is_latest_job else "NONE"
-            return "⚠️", "FAILED", hard_error_desc, action
+            return "⚠️", "FAILED", hard_error_desc, _restart
     else:
         if stderr_data.get("segfault"):
-            action = "AUTO_RESTARTED" if not is_latest_job else "NONE"
-            return "⚠️", "FAILED", "Segmentation fault", action
+            return "⚠️", "FAILED", "Segmentation fault", _restart
         if stderr_data.get("oom"):
-            action = "AUTO_RESTARTED" if not is_latest_job else "NONE"
-            return "⚠️", "FAILED", "Out of memory (CUDA OOM)", action
+            return "⚠️", "FAILED", "Out of memory (CUDA OOM)", _restart
         if stderr_data.get("fatal"):
-            action = "AUTO_RESTARTED" if not is_latest_job else "NONE"
-            return "⚠️", "FAILED", "Fatal error", action
+            return "⚠️", "FAILED", "Fatal error", _restart
 
     # ── sacct-based states ────────────────────────────────────────────────────
     if sacct_state:
         if "CANCEL" in sacct_state:
-            return "🚫", "CANCELLED", "", ""
+            action = _restart if not is_latest_job else ""
+            return "🚫", "CANCELLED", "", action
         if sacct_state == "COMPLETED":
             return "✅", "DONE", "", ""
         if sacct_state == "FAILED":
             err = hard_error_desc or "; ".join(stderr_data.get("errors", [])) or "UNKNOWN"
-            action = "AUTO_RESTARTED" if not is_latest_job else "NONE"
-            return "⚠️", "FAILED", err, action
+            return "⚠️", "FAILED", err, _restart
         if sacct_state == "RUNNING":
             return "⏳", "TRAINING", "", ""
         if sacct_state == "PENDING":
             return "🕒", "QUEUED", "", ""
         if sacct_state == "TIMEOUT":
-            action = "AUTO_RESTARTED" if not is_latest_job else "NONE"
-            return "⚠️", "FAILED", "Time limit exceeded", action
+            return "⚠️", "FAILED", "Time limit exceeded", _restart
 
     # ── No stdout → queued / not started ─────────────────────────────────────
     if stdout_data.get("last_iter") is None and stdout_data.get("train_iters") is None:
@@ -694,10 +753,10 @@ def determine_status(
     # ── Clean restart events ──────────────────────────────────────────────────
     if use_monitor:
         if triggered_clean and not is_latest_job:
-            return "⚠️", "FAILED", "Time limit (normal restart)", "AUTO_RESTARTED"
+            return "⚠️", "FAILED", "Time limit (normal restart)", _restart
     else:
         if (stderr_data.get("time_limit") or stderr_data.get("sigterm")) and not is_latest_job:
-            return "⚠️", "FAILED", "Time limit (normal restart)", "AUTO_RESTARTED"
+            return "⚠️", "FAILED", "Time limit (normal restart)", _restart
 
     # ── Latest job still running ──────────────────────────────────────────────
     if is_latest_job and last_iter is not None:
@@ -705,7 +764,7 @@ def determine_status(
 
     # ── Fallback ──────────────────────────────────────────────────────────────
     error_str = "; ".join(stderr_data.get("errors", []))
-    return "⚠️", "FAILED", error_str, "NONE"
+    return "⚠️", "FAILED", error_str, _restart
 
 
 def compute_progress(last_iter: int | None, ckpt_step: int | None, total_iters: int | None) -> float | None:
@@ -902,6 +961,9 @@ def main() -> None:
         sbatch_nodes, sbatch_gpus_per_node, sbatch_ckpt_step = parse_sbatch(run_dir / "job.sbatch")
         total_gpus = (sbatch_nodes or 0) * (sbatch_gpus_per_node or 0)
 
+        # Per-job config/log sets, used by _compute_restart_action
+        run_config_ids, run_log_ids = _run_id_sets(run_dir)
+
         job_ids = run_job_map.get(run_name, [])
 
         if not job_ids:
@@ -986,6 +1048,8 @@ def main() -> None:
             emoji, status_word, error_desc, action_word = determine_status(
                 job_id, job_ids, stdout_data, stderr_data, sacct_info, is_latest,
                 job_monitor_events=job_monitor_events,
+                run_config_ids=run_config_ids,
+                run_log_ids=run_log_ids,
             )
 
             rows.append({
@@ -1074,14 +1138,19 @@ def main() -> None:
     print(HEADER)
     print(SEP)
 
+    _RESTART_ACTIONS = {"AUTO_RESTARTED", "MANUALLY_RESTARTED", "NEW_SESSION"}
     status_colors = {
-        "DONE":                  "\033[92m",
-        "TRAINING":              "\033[94m",
-        "FAILED":                "\033[91m",
-        "FAILED+AUTO_RESTARTED": "\033[33m",
-        "CANCELLED":             "\033[91m",
-        "QUEUED":                "\033[93m",
-        "NOT_LAUNCHED":          "\033[90m",
+        "DONE":                           "\033[92m",
+        "TRAINING":                       "\033[94m",
+        "FAILED":                         "\033[91m",
+        "FAILED+AUTO_RESTARTED":          "\033[33m",
+        "FAILED+MANUALLY_RESTARTED":      "\033[35m",
+        "FAILED+NEW_SESSION":             "\033[36m",
+        "CANCELLED":                      "\033[91m",
+        "CANCELLED+MANUALLY_RESTARTED":   "\033[35m",
+        "CANCELLED+NEW_SESSION":          "\033[36m",
+        "QUEUED":                         "\033[93m",
+        "NOT_LAUNCHED":                   "\033[90m",
     }
     RESET = "\033[0m"
 
@@ -1092,7 +1161,10 @@ def main() -> None:
         if len(name_display) > W_NAME:
             name_display = name_display[: W_NAME - 1] + "…"
 
-        color_key = "FAILED+AUTO_RESTARTED" if r["action_word"] == "AUTO_RESTARTED" and r["status_word"] == "FAILED" else r["status_word"]
+        if r["action_word"] in _RESTART_ACTIONS and r["status_word"] in ("FAILED", "CANCELLED"):
+            color_key = f"{r['status_word']}+{r['action_word']}"
+        else:
+            color_key = r["status_word"]
         color = status_colors.get(color_key, "")
 
         tflop_str = f"{r['avg_tflop_per_gpu']:.1f}" if r["avg_tflop_per_gpu"] is not None else "N/A"
@@ -1145,7 +1217,7 @@ def main() -> None:
             f"{tflop_str:>12} "
             f"{tok_str:>10} "
             f"{gpu_h_str:>10} "
-            f"{'🔁' if r['action_word'] == 'AUTO_RESTARTED' else ''}{r['status_emoji']} "
+            f"{'🔁' if r['action_word'] == 'AUTO_RESTARTED' else '🔄' if r['action_word'] == 'MANUALLY_RESTARTED' else '🆕' if r['action_word'] == 'NEW_SESSION' else ''}{r['status_emoji']} "
             f"{color}{r['status_word']:<12}{RESET} "
             f"{r['action_word']:<14} "
             f"{error_disp:<30}"
@@ -1201,9 +1273,12 @@ def main() -> None:
             prog_str = f"{prog:.1f}%" if prog is not None else "N/A"
             emoji = latest.get("status_emoji", "")
             status = latest.get("status_word", "")
-            color = status_colors.get(
-                "FAILED+AUTO_RESTARTED" if latest.get("action_word") == "AUTO_RESTARTED" and status == "FAILED" else status, ""
-            )
+            action = latest.get("action_word", "")
+            if action in _RESTART_ACTIONS and status in ("FAILED", "CANCELLED"):
+                _ck = f"{status}+{action}"
+            else:
+                _ck = status
+            color = status_colors.get(_ck, "")
             print(f"  {exp_name:<{W_EXP}}  {h:>8.1f}  {prog_str:>9}  {emoji} {color}{status:<12}{RESET}")
         print(gpu_sep)
         print(f"  {'TOTAL':<{W_EXP}}  {grand_gpu_total:>8.1f}")
