@@ -89,6 +89,11 @@ RE_ITER = re.compile(
 # Timestamp embedded in iteration lines: "[2026-05-07 20:32:47]"
 RE_TS = re.compile(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]")
 
+# Timestamp co-located with iteration count: "[2026-05-07 20:32:47] iteration  N/  M"
+RE_ITER_TS_NUM = re.compile(
+    r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\s+iteration\s+(\d+)/\s*(\d+)"
+)
+
 # Status detection patterns for stderr
 RE_SEGFAULT = re.compile(r"Segmentation fault|signal 11\b", re.IGNORECASE)
 RE_OOM = re.compile(r"OutOfMemoryError|CUDA out of memory", re.IGNORECASE)
@@ -285,6 +290,7 @@ def parse_stdout(log_path: Path, max_elapsed_ms: float, skip_first_iters: int, m
         "n_iters_sampled": None,
         "first_ts": None,
         "last_ts": None,
+        "first_iter_ts": None,
         "last_train_loss": None,
         "last_val_loss": None,
     }
@@ -363,6 +369,19 @@ def parse_stdout(log_path: Path, max_elapsed_ms: float, skip_first_iters: int, m
     if timestamps:
         result["first_ts"] = timestamps[0]
         result["last_ts"] = timestamps[-1]
+
+    # --- First iteration timestamp (for TTFI) ---
+    iter_ts_pairs: list[tuple[int, datetime]] = []
+    for m in RE_ITER_TS_NUM.finditer(text):
+        try:
+            ts = datetime.strptime(m.group(1), TS_FMT)
+            it = int(m.group(2))
+            iter_ts_pairs.append((it, ts))
+        except ValueError:
+            pass
+    if iter_ts_pairs:
+        iter_ts_pairs.sort(key=lambda x: x[0])
+        result["first_iter_ts"] = iter_ts_pairs[0][1]
 
     if rows:
         rows.sort(key=lambda x: x[0])
@@ -987,6 +1006,7 @@ def main() -> None:
                 "lr": None,
                 "micro_batch_size": None,
                 "num_workers": None,
+                "ttfi_min": None,
                 "train_iters": None,
                 "last_iter": None,
                 "progress": None,
@@ -1037,6 +1057,13 @@ def main() -> None:
                     sbatch_gpus_per_node,
                 )
 
+            # TTFI: time from Slurm job start to first iteration in this log
+            ttfi_min: float | None = None
+            sacct_start = sacct_entry.get("start_ts")
+            first_iter_ts = stdout_data.get("first_iter_ts")
+            if sacct_start is not None and first_iter_ts is not None:
+                ttfi_min = (first_iter_ts.timestamp() - sacct_start) / 60.0
+
             # Per-job monitor events: set[str] if monitor state exists, else None
             job_events_map = run_job_monitor_events.get(run_name)
             job_monitor_events = (
@@ -1066,6 +1093,7 @@ def main() -> None:
                 "lr": stdout_data.get("lr"),
                 "micro_batch_size": stdout_data.get("micro_batch_size"),
                 "num_workers": stdout_data.get("num_workers"),
+                "ttfi_min": ttfi_min,
                 "train_iters": stdout_data.get("train_iters"),
                 "last_iter": stdout_data.get("last_iter"),
                 "progress": compute_progress(
@@ -1121,6 +1149,7 @@ def main() -> None:
         f"{'MBS':>4} "
         f"{'Nodes':>6} "
         f"{'Workers':>7} "
+        f"{'TTFI(min)':>9} "
         f"{'TFLOP/s/GPU':>12} "
         f"{'Tok/s/GPU':>10} "
         f"{'GPU-h':>10} "
@@ -1182,6 +1211,7 @@ def main() -> None:
         gbs_str = str(r["global_batch_size"]) if r["global_batch_size"] is not None else "N/A"
         mbs_str = str(r["micro_batch_size"]) if r["micro_batch_size"] is not None else "N/A"
         wkr_str = str(r["num_workers"]) if r["num_workers"] is not None else "N/A"
+        ttfi_str = f"{r['ttfi_min']:.1f}" if r.get("ttfi_min") is not None else "N/A"
 
         error_disp = r["error_desc"][:28] if r["error_desc"] else ""
 
@@ -1214,6 +1244,7 @@ def main() -> None:
             f"{mbs_str:>4} "
             f"{nodes_str:>6} "
             f"{wkr_str:>7} "
+            f"{ttfi_str:>9} "
             f"{tflop_str:>12} "
             f"{tok_str:>10} "
             f"{gpu_h_str:>10} "
@@ -1262,11 +1293,13 @@ def main() -> None:
                 run_latest_row[run_name] = run_rows[-1]
 
         W_EXP = max(len(e) for e in exp_gpu_h) + 2
-        gpu_sep = "─" * (W_EXP + 38)
+        gpu_sep = "─" * (W_EXP + 52)
         print()
         print("Training progress summary:")
-        print(f"  {'Run':<{W_EXP}}  {'GPU-h':>8}  {'Progress':>9}  {'':>2} {'Status':<12}")
+        print(f"  {'Run':<{W_EXP}}  {'GPU-h':>8}  {'TTFI(min)':>9}  {'Progress':>9}  {'':>2} {'Status':<12}")
         print(gpu_sep)
+        grand_ttfi_total = 0.0
+        grand_ttfi_count = 0
         for exp_name, h in sorted(exp_gpu_h.items()):
             latest = run_latest_row.get(exp_name, {})
             prog = latest.get("progress")
@@ -1279,9 +1312,16 @@ def main() -> None:
             else:
                 _ck = status
             color = status_colors.get(_ck, "")
-            print(f"  {exp_name:<{W_EXP}}  {h:>8.1f}  {prog_str:>9}  {emoji} {color}{status:<12}{RESET}")
+            run_rows = [r for r in rows if r["run_name"] == exp_name]
+            ttfi_values = [r["ttfi_min"] for r in run_rows if r.get("ttfi_min") is not None]
+            ttfi_total = sum(ttfi_values)
+            ttfi_con_str = f"{ttfi_total:.1f}" if ttfi_values else "N/A"
+            grand_ttfi_total += ttfi_total
+            grand_ttfi_count += len(ttfi_values)
+            print(f"  {exp_name:<{W_EXP}}  {h:>8.1f}  {ttfi_con_str:>9}  {prog_str:>9}  {emoji} {color}{status:<12}{RESET}")
         print(gpu_sep)
-        print(f"  {'TOTAL':<{W_EXP}}  {grand_gpu_total:>8.1f}")
+        grand_ttfi_con = f"{grand_ttfi_total:.1f}" if grand_ttfi_count > 0 else "N/A"
+        print(f"  {'TOTAL':<{W_EXP}}  {grand_gpu_total:>8.1f}  {grand_ttfi_con:>9}")
 
     # Summary counts
     from collections import Counter
@@ -1296,6 +1336,7 @@ def main() -> None:
         csv_fields = [
             "Run", "JobID", "N_ne(B)", "N(B)", "D(B)", "C(10^18)", "Tier", "Stage",
             "TotIter", "CurIter", "Prog%", "TrainLoss", "ValLoss", "LastCkpt", "LR", "GBS", "MBS", "Nodes", "Workers",
+            "TTFI(min)",
             "TFLOP/s/GPU", "Tok/s/GPU", "GPU-h", "Emoji", "Status", "Action", "Error",
         ]
         csv_path = Path(args.csv)
@@ -1330,6 +1371,7 @@ def main() -> None:
                     "MBS":         r["micro_batch_size"] if r["micro_batch_size"] is not None else "",
                     "Nodes":       r["nodes"] if r.get("nodes") is not None else "",
                     "Workers":     r["num_workers"] if r["num_workers"] is not None else "",
+                    "TTFI(min)":   f"{r['ttfi_min']:.1f}" if r.get("ttfi_min") is not None else "",
                     "TFLOP/s/GPU": f"{r['avg_tflop_per_gpu']:.1f}" if r["avg_tflop_per_gpu"] is not None else "",
                     "Tok/s/GPU":   f"{r['avg_tok_per_gpu']:.0f}" if r["avg_tok_per_gpu"] is not None else "",
                     "GPU-h":       f"{r['gpu_hours']:.1f}" if r["gpu_hours"] is not None else "",
@@ -1368,8 +1410,10 @@ def main() -> None:
 
             # Experiment summary GPU consumption + progress table
             f.write("## Training progress summary\n\n")
-            f.write("| Experiment | GPU-h | Progress | Status |\n")
-            f.write("| --- | --- | --- | --- |\n")
+            f.write("| Experiment | GPU-h | TTFI(min) | Progress | Status |\n")
+            f.write("| --- | --- | --- | --- | --- |\n")
+            grand_ttfi_total = 0.0
+            grand_ttfi_count = 0
             for exp_name, h in sorted(exp_gpu_h.items()):
                 run_rows = [r for r in rows if r["run_name"] == exp_name]
                 latest = run_rows[-1] if run_rows else {}
@@ -1377,8 +1421,14 @@ def main() -> None:
                 prog_str = f"{prog:.1f}%" if prog is not None else "N/A"
                 emoji = latest.get("status_emoji", "")
                 status = latest.get("status_word", "")
-                f.write(f"| {exp_name} | {h:.1f} | {prog_str} | {emoji} {status} |\n")
-            f.write(f"| **TOTAL** | **{grand_gpu_total:.1f}** | | |\n")
+                ttfi_values = [r["ttfi_min"] for r in run_rows if r.get("ttfi_min") is not None]
+                ttfi_total = sum(ttfi_values)
+                ttfi_md_str = f"{ttfi_total:.1f}" if ttfi_values else "N/A"
+                grand_ttfi_total += ttfi_total
+                grand_ttfi_count += len(ttfi_values)
+                f.write(f"| {exp_name} | {h:.1f} | {ttfi_md_str} | {prog_str} | {emoji} {status} |\n")
+            grand_ttfi_md = f"**{grand_ttfi_total:.1f}**" if grand_ttfi_count > 0 else "N/A"
+            f.write(f"| **TOTAL** | **{grand_gpu_total:.1f}** | {grand_ttfi_md} | | |\n")
             f.write("\n")
 
             # Status summary
