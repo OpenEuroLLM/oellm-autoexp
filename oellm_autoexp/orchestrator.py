@@ -21,7 +21,7 @@ from oellm_autoexp.monitor.loop import MonitorLoop, JobFileStore, JobRecordConfi
 from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
 from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
 from oellm_autoexp.monitor.submission import SlurmJobConfig, LocalJobConfig
-from oellm_autoexp.slurm_gen import generate_script
+from oellm_autoexp.slurm_gen.generator import generate_script
 
 import oellm_autoexp.backends.megatron_backend  # noqa  - register
 import oellm_autoexp.postprocess.megatron_dist_to_torch  # noqa  - register
@@ -35,7 +35,6 @@ from oellm_autoexp.config.schema import (
     PostProcessStepInterface,
     ContainerConfig,
 )
-from oellm_autoexp.slurm_gen.generator import generate_script
 
 
 LOGGER = logging.getLogger(__name__)
