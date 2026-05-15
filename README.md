@@ -84,13 +84,13 @@ python container/build_container_user.py \
 
 
 ## Supercomputer setup: JUWELS Booster / JUPITER
-Tested, please use the `container/build_container.sh` script with the latest/matching Megatron definition file. 
+Tested, please use the `container/build_container.sh` script with the latest/matching Megatron definition file.
 
 ## Quick Recipes
 
 ### Single job / Sweep debugging
 ```bash
-# Plan + submit + monitor in one go (manifest written to outputs/manifests/, use `--help` for options, e.g. no submission)
+# Plan + submit + monitor in one go (manifest written to outputs/manifests/, use `--help` for options, for example no submission)
 python scripts/run_autoexp.py --config-name experiments/default
 
 ```
