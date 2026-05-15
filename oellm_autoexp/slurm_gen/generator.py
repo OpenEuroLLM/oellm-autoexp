@@ -16,7 +16,7 @@ def build_sbatch_directives(config: SlurmConfig) -> list[str]:
     del sbatch_values["_non_strict"]
     jobname_present = False
     for key, value in sbatch_values.items():
-        if key == "job_name":
+        if key == "job_name" and value is not None:
             jobname_present = True
         if value is None:
             continue
