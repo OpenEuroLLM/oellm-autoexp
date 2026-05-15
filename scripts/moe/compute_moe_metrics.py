@@ -208,6 +208,9 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+import io
+
+import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
@@ -364,7 +367,11 @@ class RouterMetricsCollector:
                 "coactivation_sum": 0.0,
                 "compare_saturation_sum": 0.0,
                 "compare_tokens": 0,
+                "expert_token_counts": tokens_per_expert.detach().cpu().clone(),
+                "topk": int(topk),
             }
+        else:
+            self.totals[name]["expert_token_counts"] += tokens_per_expert.detach().cpu()
 
         self.totals[name]["batches"] += 1
         self.totals[name]["saturation_sum"] += saturation
@@ -392,6 +399,8 @@ class RouterMetricsCollector:
             results[name] = {
                 "expert_coactivation": vals["coactivation_sum"] / batches,
                 "compare_saturation": vals["compare_saturation_sum"] / compare_tokens,
+                "expert_token_counts": vals["expert_token_counts"].tolist(),
+                "topk": vals["topk"],
             }
         return results
 
@@ -419,9 +428,22 @@ def add_metrics_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser
     group.add_argument(
         "--moe-data-type",
         type=str,
-        choices=["random", "prompts", "hf_dataset"],
+        choices=["random", "prompts", "hf_dataset", "megatron_indexed"],
         default="random",
-        help="Data source: 'random' (default), 'prompts' (from file), or 'hf_dataset' (any HuggingFace dataset).",
+        help=(
+            "Data source: 'random', 'prompts' (file), 'hf_dataset' (HF), or "
+            "'megatron_indexed' (Megatron .bin/.idx pre-tokenized data)."
+        ),
+    )
+    group.add_argument(
+        "--moe-megatron-data-path",
+        type=str,
+        default=None,
+        help=(
+            "Path prefix for Megatron IndexedDataset, e.g. "
+            "'/leonardo_work/.../Nemotron-cc-2024-HQ-LUMI-sample-valid/high-all' "
+            "(the directory containing high-all.bin and high-all.idx)."
+        ),
     )
     group.add_argument("--moe-prompts-file", type=str, default=None)
     group.add_argument(
@@ -485,6 +507,26 @@ def add_metrics_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser
         help="Comma-separated checkpoint steps to compare against the final checkpoint.",
     )
     group.add_argument(
+        "--moe-compare-ckpts-every",
+        type=int,
+        default=None,
+        help=(
+            "Auto-discover checkpoints in the --load directory at this iteration "
+            "stride (e.g. 500 => every iter_*500 ckpt). Combined with --moe-compare-ckpts."
+        ),
+    )
+    group.add_argument(
+        "--moe-load-decay",
+        type=str,
+        default=None,
+        help=(
+            "Optional decay-branch checkpoints dir (e.g. .../decay120BT/checkpoints). "
+            "Stable iters come from --load; decay iters from this dir. Iters present in "
+            "both dirs are taken from the decay dir. The final-checkpoint reference is "
+            "the highest iter across both dirs."
+        ),
+    )
+    group.add_argument(
         "--moe-coactivation-output",
         type=str,
         default=None,
@@ -501,6 +543,58 @@ def add_metrics_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser
         action="store_true",
         default=False,
         help="Save saturation and coactivation plots.",
+    )
+    group.add_argument(
+        "--moe-token-count-output",
+        type=str,
+        default=None,
+        help="Write per-step per-layer per-expert token counts JSON.",
+    )
+    group.add_argument(
+        "--moe-routing-gif",
+        type=str,
+        default=None,
+        help="Output path for animated routing GIF (per-expert token counts vs step).",
+    )
+    group.add_argument(
+        "--moe-routing-gif-layers",
+        type=str,
+        default="first,mid,last",
+        help=(
+            "Which MoE layers to render in the GIF. Use keywords 'first,mid,last' "
+            "or comma-separated layer indices (e.g. '0,8,17'), or 'all'."
+        ),
+    )
+    group.add_argument(
+        "--moe-routing-gif-frame-ms",
+        type=int,
+        default=300,
+        help="Per-frame duration of the GIF in milliseconds.",
+    )
+    group.add_argument(
+        "--moe-activation-norm-output",
+        type=str,
+        default=None,
+        help=(
+            "Write per-step per-layer per-expert FFN-output activation norms JSON. "
+            "Captured at the experts module output (post linear_fc2, before unpermute). "
+            "Note: Megatron applies routing probs at the SwiGLU stage, so values include "
+            "the per-token routing weight; relative max/median dispersion is preserved."
+        ),
+    )
+    group.add_argument(
+        "--moe-act-norm-token-reduce",
+        type=str,
+        choices=["mean", "rms", "max"],
+        default="mean",
+        help="Per-expert reduction over tokens routed to it (default: mean).",
+    )
+    group.add_argument(
+        "--moe-act-norm-vector-norm",
+        type=str,
+        choices=["l2", "rms"],
+        default="l2",
+        help="Per-token vector norm over the hidden dim (default: l2).",
     )
     group.add_argument(
         "--moe-plot-dir",
@@ -752,6 +846,73 @@ def _load_hf_dataset_texts(
     return texts
 
 
+def _build_megatron_indexed_batches(
+    path_prefix: str,
+    batch_size: int,
+    seq_length: int,
+    num_batches: int,
+    eod_token: int,
+    seed: int,
+    device: torch.device,
+) -> List[torch.Tensor]:
+    """Read pre-tokenized tokens from a Megatron IndexedDataset and pack them
+    into [num_batches, batch_size, seq_length] long tensors.
+
+    Documents are shuffled with `seed`, concatenated with `eod_token` separators,
+    and sliced into seq_length chunks. The last partial chunk is padded with eod.
+    """
+    from megatron.core.datasets.indexed_dataset import IndexedDataset  # noqa: E402
+
+    base = Path(path_prefix).expanduser()
+    if not Path(str(base) + ".bin").is_file() or not Path(str(base) + ".idx").is_file():
+        raise FileNotFoundError(
+            f"Megatron IndexedDataset prefix not found ({base}.bin / {base}.idx)."
+        )
+    _log_info(f"Opening Megatron IndexedDataset: {base}")
+    ds = IndexedDataset(str(base), multimodal=False, mmap=True)
+    n_docs = len(ds)
+    _log_info(f"IndexedDataset has {n_docs:,} documents")
+
+    needed_tokens = num_batches * batch_size * seq_length
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(n_docs)
+
+    buf = np.empty(needed_tokens + seq_length, dtype=np.int64)
+    cursor = 0
+    docs_used = 0
+    for doc_id in order:
+        if cursor >= needed_tokens:
+            break
+        tokens = np.asarray(ds.get(int(doc_id)), dtype=np.int64)
+        n = tokens.size
+        if n == 0:
+            continue
+        end = cursor + n
+        if end > buf.size:
+            end = buf.size
+            n = end - cursor
+        buf[cursor:end] = tokens[:n]
+        cursor = end
+        # Insert EOD between documents to mirror Megatron training behavior.
+        if cursor < buf.size:
+            buf[cursor] = eod_token
+            cursor += 1
+        docs_used += 1
+
+    if cursor < needed_tokens:
+        # Not enough docs covered the request — pad tail with eod.
+        buf[cursor:needed_tokens] = eod_token
+        cursor = needed_tokens
+
+    flat = torch.from_numpy(buf[:needed_tokens]).to(dtype=torch.long)
+    flat = flat.view(num_batches, batch_size, seq_length).to(device)
+    _log_success(
+        f"Built {num_batches} batches × {batch_size} × {seq_length} tokens "
+        f"from {docs_used:,} documents"
+    )
+    return [flat[i] for i in range(num_batches)]
+
+
 def _iter_token_batches(
     prompts: List[str],
     tokenizer,
@@ -785,6 +946,26 @@ def _parse_ckpt_steps(value: Optional[str]) -> List[int]:
     if not value:
         return []
     return [int(s.strip()) for s in value.split(",") if s.strip()]
+
+
+_ITER_DIR_RE = re.compile(r"^iter_(\d+)$")
+
+
+def _discover_ckpt_steps(load_dir: str, every: Optional[int]) -> List[int]:
+    if not every or every <= 0:
+        return []
+    base = Path(load_dir)
+    if not base.is_dir():
+        return []
+    discovered: List[int] = []
+    for entry in base.iterdir():
+        m = _ITER_DIR_RE.match(entry.name)
+        if not m or not entry.is_dir():
+            continue
+        step = int(m.group(1))
+        if step % every == 0:
+            discovered.append(step)
+    return sorted(discovered)
 
 
 def _get_final_checkpoint_step(load_dir: str) -> Tuple[Optional[int], bool]:
@@ -1002,6 +1183,131 @@ def _build_token_batches(
     )
 
 
+def _natural_layer_sort(names: List[str]) -> List[str]:
+    def key(s: str):
+        return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)]
+    return sorted(names, key=key)
+
+
+def _layer_index(name: str) -> Optional[int]:
+    m = re.search(r"layers\.(\d+)", name)
+    return int(m.group(1)) if m else None
+
+
+def _layer_short_label(name: str) -> str:
+    idx = _layer_index(name)
+    if idx is not None:
+        return f"L{idx}"
+    return name.split(".")[-2] if "." in name else name
+
+
+def _resolve_gif_layer_names(spec: str, all_layer_names: List[str]) -> List[str]:
+    sorted_names = _natural_layer_sort(all_layer_names)
+    if not sorted_names:
+        return []
+    spec = spec.strip().lower()
+    if spec == "all":
+        return sorted_names
+    n = len(sorted_names)
+    tokens = [t.strip() for t in spec.split(",") if t.strip()]
+    keywords = {"first": 0, "last": n - 1, "mid": n // 2, "middle": n // 2}
+    indices: List[int] = []
+    for tok in tokens:
+        if tok in keywords:
+            indices.append(keywords[tok])
+        else:
+            try:
+                idx = int(tok)
+                if 0 <= idx < n:
+                    indices.append(idx)
+            except ValueError:
+                continue
+    seen: Set[int] = set()
+    deduped = [i for i in indices if not (i in seen or seen.add(i))]
+    return [sorted_names[i] for i in deduped]
+
+
+def _render_routing_gif(
+    token_counts_by_step: Dict[int, Dict[str, Dict[str, Any]]],
+    layer_names_to_show: List[str],
+    output_path: Path,
+    frame_ms: int,
+) -> None:
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise ImportError("Pillow is required for GIF output (pip install Pillow).") from exc
+
+    if not layer_names_to_show:
+        _log_warn("No layers selected for routing GIF; skipping.")
+        return
+
+    steps_sorted = sorted(token_counts_by_step.keys())
+    if not steps_sorted:
+        _log_warn("No checkpoint steps available for routing GIF; skipping.")
+        return
+
+    # Compute a stable y-axis upper bound across all steps/layers.
+    y_max = 0.0
+    for step in steps_sorted:
+        for ln in layer_names_to_show:
+            entry = token_counts_by_step[step].get(ln)
+            if entry is None:
+                continue
+            counts = entry["counts"]
+            if counts:
+                y_max = max(y_max, max(counts))
+    if y_max <= 0:
+        y_max = 1.0
+    y_max *= 1.05
+
+    short_names = {ln: _layer_short_label(ln) for ln in layer_names_to_show}
+    layer_indices = {ln: (_layer_index(ln) if _layer_index(ln) is not None else -1)
+                     for ln in layer_names_to_show}
+
+    frames = []
+    for step in steps_sorted:
+        ncols = len(layer_names_to_show)
+        fig, axes = plt.subplots(1, ncols, figsize=(6 * ncols, 4.5), squeeze=False)
+        axes = axes[0]
+        for ax, ln in zip(axes, layer_names_to_show):
+            entry = token_counts_by_step[step].get(ln)
+            if entry is None:
+                ax.set_title(f"{short_names[ln]} (no data)")
+                continue
+            counts = entry["counts"]
+            topk = entry.get("topk", 1)
+            n_experts = len(counts)
+            x = list(range(n_experts))
+            ax.bar(x, counts, color="#1f77b4")
+            uniform = sum(counts) / n_experts if n_experts else 0.0
+            ax.axhline(uniform, color="gray", linestyle="--", linewidth=1)
+            li = layer_indices[ln]
+            ax.set_title(f"Layer {li} (top-{topk}) (step {step:,})")
+            ax.set_xlabel("Expert ID")
+            ax.set_ylabel("Token Count")
+            ax.set_ylim(0, y_max)
+        fig.suptitle(f"Per-Expert Token Counts — step {step:,}", y=1.02)
+        fig.tight_layout()
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
+        plt.close(fig)
+        buf.seek(0)
+        frames.append(Image.open(buf).convert("RGB"))
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    frames[0].save(
+        output_path,
+        save_all=True,
+        append_images=frames[1:],
+        duration=frame_ms,
+        loop=0,
+        optimize=False,
+    )
+    _log_success(f"Wrote routing GIF: {output_path} ({len(frames)} frames)")
+
+
 def _normalize_coactivation_matrix(
     matrix: torch.Tensor,
     single_counts: Optional[torch.Tensor] = None,
@@ -1053,6 +1359,108 @@ def _select_top_experts_pairwise(matrix_normalized: torch.Tensor, top_n: int) ->
     return selected[:top_n]
 
 
+class ExpertActivationNormCollector:
+    """Per-expert activation norms (Step-3.5-Flash style, arXiv 2602.10604 §4.1.3).
+
+    Hooks each MoE layer's `experts` submodule. The forward signature is
+        forward(permuted_local_hidden_states, tokens_per_expert, permuted_probs)
+        -> (fc2_output, bias)
+    with `fc2_output` of shape [total_dispatched_tokens, hidden] in expert-major
+    order, splittable by `tokens_per_expert`.
+
+    Per-expert reduction is configurable: the per-token vector norm is L2 or RMS
+    over the hidden dim; the across-token reduction is mean / RMS / max.
+    """
+
+    def __init__(self, vector_norm: str = "l2", token_reduce: str = "mean") -> None:
+        if vector_norm not in {"l2", "rms"}:
+            raise ValueError(f"vector_norm must be l2/rms, got {vector_norm}")
+        if token_reduce not in {"mean", "rms", "max"}:
+            raise ValueError(f"token_reduce must be mean/rms/max, got {token_reduce}")
+        self.vector_norm = vector_norm
+        self.token_reduce = token_reduce
+        # layer_key -> list of [n_experts] tensors (one per batch, on cpu, fp32)
+        self._per_batch: Dict[str, List[torch.Tensor]] = {}
+
+    def _per_token_norm(self, chunk: torch.Tensor) -> torch.Tensor:
+        # chunk: [n_tokens, hidden] in fp32
+        if self.vector_norm == "l2":
+            return chunk.norm(dim=-1)
+        # rms norm: sqrt(mean(x^2))
+        return chunk.pow(2).mean(dim=-1).sqrt()
+
+    def _reduce_tokens(self, per_token: torch.Tensor) -> float:
+        if per_token.numel() == 0:
+            return float("nan")
+        if self.token_reduce == "mean":
+            return per_token.mean().item()
+        if self.token_reduce == "rms":
+            return per_token.pow(2).mean().sqrt().item()
+        return per_token.max().item()
+
+    def hook(self, layer_key: str):
+        per_batch = self._per_batch.setdefault(layer_key, [])
+
+        def _fn(module, inputs, outputs):
+            # Defensive unpacking: experts modules return (fc2_output, bias_or_none)
+            fc2 = outputs[0] if isinstance(outputs, tuple) else outputs
+            if fc2 is None or fc2.dim() != 2:
+                return
+            tokens_per_expert = inputs[1] if len(inputs) > 1 else None
+            if tokens_per_expert is None:
+                return
+            if isinstance(tokens_per_expert, torch.Tensor):
+                tpe_list = tokens_per_expert.detach().cpu().tolist()
+            else:
+                tpe_list = list(tokens_per_expert)
+            n_experts = len(tpe_list)
+            norms = torch.full((n_experts,), float("nan"), dtype=torch.float32)
+            offset = 0
+            fc2_fp32 = fc2.detach().to(torch.float32)
+            for e_idx, n in enumerate(tpe_list):
+                if n <= 0:
+                    offset += int(n)
+                    continue
+                chunk = fc2_fp32[offset : offset + int(n)]
+                per_token = self._per_token_norm(chunk)
+                norms[e_idx] = self._reduce_tokens(per_token)
+                offset += int(n)
+            per_batch.append(norms.cpu())
+
+        return _fn
+
+    def finalize(self) -> Dict[str, List[float]]:
+        out: Dict[str, List[float]] = {}
+        for layer_key, batches in self._per_batch.items():
+            if not batches:
+                continue
+            stacked = torch.stack(batches, dim=0)  # [n_batches, n_experts]
+            # Average across batches, ignoring NaNs (zero-token experts in a batch).
+            mask = ~torch.isnan(stacked)
+            denom = mask.float().sum(dim=0).clamp(min=1.0)
+            stacked = torch.where(mask, stacked, torch.zeros_like(stacked))
+            mean = stacked.sum(dim=0) / denom
+            out[layer_key] = mean.tolist()
+        return out
+
+
+def _attach_activation_norm_hooks(
+    model, vector_norm: str, token_reduce: str
+) -> Tuple[ExpertActivationNormCollector, List[Any]]:
+    collector = ExpertActivationNormCollector(vector_norm, token_reduce)
+    handles: List[Any] = []
+    for name, module in model.named_modules():
+        # Match the experts submodule of each MoELayer (`<...>.mlp.experts`).
+        # Restrict to the GroupedMLP/TEGroupedMLP variants (have weight1 or linear_fc2).
+        if not name.endswith(".experts"):
+            continue
+        if not (hasattr(module, "weight1") or hasattr(module, "linear_fc2")):
+            continue
+        layer_key = name.rsplit(".experts", 1)[0]
+        handles.append(module.register_forward_hook(collector.hook(layer_key)))
+    return collector, handles
+
+
 def _collect_final_routing_and_coactivation(
     model,
     token_batches: List[torch.Tensor],
@@ -1062,11 +1470,13 @@ def _collect_final_routing_and_coactivation(
     reset_attention_mask: bool,
     eod_mask_loss: bool,
     pad_mask_loss: bool,
+    act_norm_args: Optional[Tuple[str, str]] = None,
 ) -> Tuple[
     Dict[str, List[torch.Tensor]],
     Dict[str, torch.Tensor],
     Dict[str, torch.Tensor],
     Dict[str, int],
+    Dict[str, List[float]],
 ]:
     routing_maps: Dict[str, List[torch.Tensor]] = {}
     coactivation_sums: Dict[str, torch.Tensor] = {}
@@ -1132,6 +1542,13 @@ def _collect_final_routing_and_coactivation(
 
             hooks.append(module.register_forward_hook(_hook))
 
+    act_collector: Optional[ExpertActivationNormCollector] = None
+    if act_norm_args is not None:
+        act_collector, act_handles = _attach_activation_norm_hooks(
+            model, vector_norm=act_norm_args[0], token_reduce=act_norm_args[1]
+        )
+        hooks.extend(act_handles)
+
     with torch.no_grad():
         for tokens in _progress_iter(token_batches, "Evaluating final checkpoint"):
             attention_mask, _loss_mask, position_ids = get_ltor_masks_and_position_ids(
@@ -1154,7 +1571,8 @@ def _collect_final_routing_and_coactivation(
     for handle in hooks:
         handle.remove()
 
-    return routing_maps, coactivation_sums, single_counts_sums, topk_by_layer
+    act_norms = act_collector.finalize() if act_collector is not None else {}
+    return routing_maps, coactivation_sums, single_counts_sums, topk_by_layer, act_norms
 
 
 def _compare_saturation_against_final(
@@ -1168,7 +1586,8 @@ def _compare_saturation_against_final(
     pad_mask_loss: bool,
     final_routing_maps: Dict[str, List[torch.Tensor]],
     topk_by_layer: Dict[str, int],
-) -> dict:
+    act_norm_args: Optional[Tuple[str, str]] = None,
+) -> Tuple[dict, Dict[str, List[float]]]:
     collector = RouterMetricsCollector()
     # Mutable index shared with hooks to align current batch against final-routing reference.
     batch_index = {"value": 0}
@@ -1195,6 +1614,13 @@ def _compare_saturation_against_final(
 
             hooks.append(module.register_forward_hook(_hook))
 
+    act_collector: Optional[ExpertActivationNormCollector] = None
+    if act_norm_args is not None:
+        act_collector, act_handles = _attach_activation_norm_hooks(
+            model, vector_norm=act_norm_args[0], token_reduce=act_norm_args[1]
+        )
+        hooks.extend(act_handles)
+
     with torch.no_grad():
         for tokens in _progress_iter(token_batches, "Comparing checkpoint"):
             attention_mask, _loss_mask, position_ids = get_ltor_masks_and_position_ids(
@@ -1218,7 +1644,8 @@ def _compare_saturation_against_final(
     for handle in hooks:
         handle.remove()
 
-    return collector.finalize()
+    act_norms = act_collector.finalize() if act_collector is not None else {}
+    return collector.finalize(), act_norms
 
 
 # -----------------------------------------------------------------------------
@@ -1302,8 +1729,10 @@ def main() -> None:
 
     # Tokenizer is only needed for prompt/HF dataset modes.
     use_random = args.moe_data_type == "random"
+    use_megatron_indexed = args.moe_data_type == "megatron_indexed"
 
-    if use_random:
+    if use_random or use_megatron_indexed:
+        # megatron_indexed reads pre-tokenized data; no HF tokenizer required.
         tokenizer = None
         pad_id = 0
     else:
@@ -1354,11 +1783,10 @@ def main() -> None:
             if not prompts:
                 use_random = True
 
-    if use_random:
+    if use_random or use_megatron_indexed:
         if args.moe_num_batches is None:
             raise ValueError(
-                "Provide --moe-num-batches when using random/prompt fallback inputs. "
-                "Automatic inference only applies to successfully loaded hf_dataset texts."
+                "Provide --moe-num-batches for random or megatron_indexed inputs."
             )
         effective_num_batches = args.moe_num_batches
     elif args.moe_data_type == "hf_dataset" and not num_batches_provided:
@@ -1380,6 +1808,11 @@ def main() -> None:
         eod_token = 0
         vocab_size = args.padded_vocab_size
         _log_info("Using random inputs")
+    elif use_megatron_indexed:
+        # GPT-NeoX-20B vocab uses 0 as <|endoftext|>, matching Megatron training defaults.
+        eod_token = 0
+        vocab_size = args.padded_vocab_size
+        _log_info(f"Using Megatron IndexedDataset: {args.moe_megatron_data_path}")
     else:
         eod_token = tokenizer.eod
         vocab_size = args.padded_vocab_size or tokenizer.vocab_size
@@ -1390,57 +1823,148 @@ def main() -> None:
     eod_mask_loss = getattr(args, "eod_mask_loss", False)
     pad_mask_loss = getattr(args, "pad_mask_loss", False)
 
-    compare_steps = _parse_ckpt_steps(args.moe_compare_ckpts)
-    final_step, is_release = _get_final_checkpoint_step(load_dir)
+    decay_dir = getattr(args, "moe_load_decay", None)
+    if decay_dir and not checkpoint_exists(decay_dir):
+        raise RuntimeError(f"--moe-load-decay path has no checkpoints: {decay_dir}")
+
+    # Build a (step -> dir) map: stable from --load, decay overrides on conflict.
+    explicit_steps = _parse_ckpt_steps(args.moe_compare_ckpts)
+    stable_discovered = _discover_ckpt_steps(load_dir, args.moe_compare_ckpts_every)
+    decay_discovered: List[int] = []
+    if decay_dir:
+        decay_discovered = _discover_ckpt_steps(decay_dir, args.moe_compare_ckpts_every)
+
+    step_to_dir: Dict[int, str] = {}
+    for s in stable_discovered:
+        step_to_dir[s] = load_dir
+    for s in decay_discovered:
+        step_to_dir[s] = decay_dir  # decay wins on overlap
+    for s in explicit_steps:
+        # Default explicit steps to stable unless they only exist on the decay side.
+        if s not in step_to_dir:
+            cand = decay_dir if decay_dir and (Path(decay_dir) / f"iter_{s:07d}").is_dir() else load_dir
+            step_to_dir[s] = cand
+
+    # Resolve "final" reference checkpoint = max iter across both dirs.
+    stable_final, stable_is_release = _get_final_checkpoint_step(load_dir)
+    decay_final, decay_is_release = (None, False)
+    if decay_dir:
+        decay_final, decay_is_release = _get_final_checkpoint_step(decay_dir)
+
+    # Always prefer decay's final when decay is provided; fall back to stable only
+    # when decay is absent.
+    if decay_dir is not None:
+        if decay_final is None and not decay_is_release:
+            raise RuntimeError(
+                f"Could not determine final checkpoint in decay dir: {decay_dir}"
+            )
+        final_step, is_release, final_dir = decay_final, decay_is_release, decay_dir
+    else:
+        final_step, is_release, final_dir = stable_final, stable_is_release, load_dir
+
     if final_step is None and not is_release:
         raise RuntimeError(
             "Could not determine final checkpoint from latest_checkpointed_iteration.txt"
         )
 
+    compare_steps = sorted(s for s in step_to_dir if s != final_step)
+    if decay_dir:
+        _log_info(
+            f"Discovered {len(stable_discovered)} stable + {len(decay_discovered)} decay ckpts; "
+            f"final={final_step} from {Path(final_dir).parent.name}"
+        )
+
     # Build once so all compared checkpoints see exactly the same token inputs.
-    token_batches = _build_token_batches(
-        prompts,
-        tokenizer,
-        args.moe_batch_size,
-        seq_length,
-        pad_id,
-        vocab_size,
-        effective_num_batches,
-        use_random,
-        device,
-        args.moe_seed,
-    )
+    if use_megatron_indexed:
+        if not args.moe_megatron_data_path:
+            raise ValueError(
+                "--moe-megatron-data-path is required for --moe-data-type megatron_indexed"
+            )
+        token_batches = _build_megatron_indexed_batches(
+            args.moe_megatron_data_path,
+            args.moe_batch_size,
+            seq_length,
+            effective_num_batches,
+            eod_token,
+            args.moe_seed,
+            device,
+        )
+    else:
+        token_batches = _build_token_batches(
+            prompts,
+            tokenizer,
+            args.moe_batch_size,
+            seq_length,
+            pad_id,
+            vocab_size,
+            effective_num_batches,
+            use_random,
+            device,
+            args.moe_seed,
+        )
     _log_info(f"Prepared {len(token_batches)} token batches (seq_length={seq_length})")
 
+    args.load = final_dir
     args.ckpt_step = None if is_release else final_step
     _log_stage("Final Checkpoint Evaluation")
+    act_norm_args: Optional[Tuple[str, str]] = None
+    if args.moe_activation_norm_output:
+        act_norm_args = (args.moe_act_norm_vector_norm, args.moe_act_norm_token_reduce)
+
     with _suppress_output(args.moe_quiet_init):
         load_checkpoint(ddp_model, None, None, strict=False)
-    final_routing_maps, coactivation_sums, single_counts_sums, topk_by_layer = (
-        _collect_final_routing_and_coactivation(
-            model,
-            token_batches,
-            eod_token,
-            pad_token,
-            reset_position_ids,
-            reset_attention_mask,
-            eod_mask_loss,
-            pad_mask_loss,
-        )
+    (
+        final_routing_maps,
+        coactivation_sums,
+        single_counts_sums,
+        topk_by_layer,
+        final_act_norms,
+    ) = _collect_final_routing_and_coactivation(
+        model,
+        token_batches,
+        eod_token,
+        pad_token,
+        reset_position_ids,
+        reset_attention_mask,
+        eod_mask_loss,
+        pad_mask_loss,
+        act_norm_args=act_norm_args,
     )
 
     # Compare each requested checkpoint against routing captured from the final checkpoint.
     saturation_results = {
         "final_checkpoint": "release" if is_release else final_step,
         "compare_steps": compare_steps,
+        "stable_steps": sorted(stable_discovered),
+        "decay_steps": sorted(decay_discovered),
+        "decay_dir": decay_dir,
+        "final_dir": final_dir,
         "layers": {},
     }
     _log_stage("Checkpoint Comparisons")
+    # Build token-count time series across steps; seed with the final ckpt counts.
+    final_step_label = "release" if is_release else int(final_step)
+    token_counts_by_step: Dict[Any, Dict[str, Dict[str, Any]]] = {}
+    final_counts_entry: Dict[str, Dict[str, Any]] = {}
+    for layer_name, counts_tensor in single_counts_sums.items():
+        final_counts_entry[layer_name] = {
+            "counts": counts_tensor.tolist(),
+            "topk": int(topk_by_layer.get(layer_name, 1)),
+        }
+    if isinstance(final_step_label, int):
+        token_counts_by_step[final_step_label] = final_counts_entry
+
+    # step -> {layer_name -> [n_experts] activation norm vector}
+    act_norms_by_step: Dict[Any, Dict[str, List[float]]] = {}
+    if final_act_norms and isinstance(final_step_label, int):
+        act_norms_by_step[final_step_label] = final_act_norms
+
     for step in _progress_iter(compare_steps, "Checkpoint comparisons"):
+        args.load = step_to_dir[step]
         args.ckpt_step = step
         with _suppress_output(args.moe_quiet_init):
             load_checkpoint(ddp_model, None, None, strict=False)
-        saturation_results["layers"][str(step)] = _compare_saturation_against_final(
+        layer_results, step_act_norms = _compare_saturation_against_final(
             model,
             token_batches,
             eod_token,
@@ -1451,7 +1975,18 @@ def main() -> None:
             pad_mask_loss,
             final_routing_maps,
             topk_by_layer,
+            act_norm_args=act_norm_args,
         )
+        saturation_results["layers"][str(step)] = layer_results
+        token_counts_by_step[int(step)] = {
+            layer_name: {
+                "counts": data["expert_token_counts"],
+                "topk": data["topk"],
+            }
+            for layer_name, data in layer_results.items()
+        }
+        if step_act_norms:
+            act_norms_by_step[int(step)] = step_act_norms
     if torch.distributed.is_available() and torch.distributed.is_initialized():
         if torch.distributed.get_rank() != 0:
             return
@@ -1516,7 +2051,7 @@ def main() -> None:
             layer_names = set()
             for step in steps_sorted:
                 layer_names.update(saturation_results["layers"][str(step)].keys())
-            layer_names = sorted(layer_names)
+            layer_names = _natural_layer_sort(list(layer_names))
 
             plt.figure(figsize=(14, 7))
 
@@ -1533,23 +2068,69 @@ def main() -> None:
                         y_vals.append(float("nan"))
                     else:
                         y_vals.append(layer_data.get("compare_saturation", 0.0) * 100.0)
+                ema_alpha = 0.3
+                ema_vals = []
+                acc = None
+                for v in y_vals:
+                    if v != v:  # NaN
+                        ema_vals.append(float("nan"))
+                        continue
+                    acc = v if acc is None else ema_alpha * v + (1 - ema_alpha) * acc
+                    ema_vals.append(acc)
                 plt.plot(
-                    steps_sorted,
-                    y_vals,
-                    marker="o",
-                    label=layer_name,
-                    color=colors[idx],
-                    linewidth=2.5,
-                    markersize=7,
+                    steps_sorted, ema_vals,
+                    label=_layer_short_label(layer_name),
+                    color=colors[idx], linewidth=1.8,
+                )
+
+            # Star marker at the true reference point: (final_step, 100%) — this
+            # makes the off-grid endpoint visible. Compare-curves never reach it
+            # because final_step is excluded from compare_steps and may not be
+            # aligned to args.moe_compare_ckpts_every.
+            ref_x = None
+            if not is_release and isinstance(final_step, int):
+                ref_x = final_step
+                plt.scatter(
+                    [ref_x], [100.0],
+                    marker="*", s=180,
+                    color="black", edgecolors="white", linewidths=1.0,
+                    zorder=5,
+                    label="final (=ref, 100%)",
+                )
+
+            # Vertical dotted line at the stable -> decay boundary (if a decay
+            # phase contributed checkpoints). Marks the regime change clearly so
+            # the trajectory's late-stage steepening isn't mistaken for a metric
+            # bug.
+            if decay_dir and decay_discovered:
+                boundary = min(decay_discovered)
+                plt.axvline(
+                    boundary, color="gray", linestyle=":",
+                    linewidth=1.2, alpha=0.85, zorder=2,
+                )
+                plt.text(
+                    boundary, 102, " decay phase →",
+                    fontsize=9, color="gray",
+                    va="bottom", ha="left",
                 )
 
             plt.xlabel("Checkpoint step", fontsize=12, fontweight="bold")
             plt.ylabel("Router saturation (%)", fontsize=12, fontweight="bold")
+            title_suffix = ""
+            if ref_x is not None:
+                title_suffix = f"  (final={ref_x}{', decay' if decay_dir else ''})"
             plt.title(
-                "Router saturation vs final checkpoint", fontsize=14, fontweight="bold"
+                f"Router saturation vs final checkpoint{title_suffix}",
+                fontsize=14, fontweight="bold",
             )
+            if final_dir:
+                plt.figtext(
+                    0.5, 0.005,
+                    f"Reference: {Path(final_dir).parent.name}",
+                    fontsize=8, color="gray", ha="center",
+                )
             plt.grid(True, alpha=0.3, linestyle="--")
-            plt.ylim(0, 105)
+            plt.ylim(0, 108)
             # Place legend outside plot area, to the right
             plt.legend(
                 bbox_to_anchor=(1.05, 1),
@@ -1558,7 +2139,7 @@ def main() -> None:
                 framealpha=0.95,
                 edgecolor="black",
             )
-            plt.tight_layout()
+            plt.tight_layout(rect=(0, 0.02, 1, 1))
             plt.savefig(plot_dir / "router_saturation_vs_final.png", dpi=200)
             plt.close()
             _log_success(f"Wrote plot: {plot_dir / 'router_saturation_vs_final.png'}")
@@ -1570,7 +2151,8 @@ def main() -> None:
                 plt.figure(figsize=(5, 4))
                 plt.imshow(matrix, cmap="RdPu", aspect="auto", vmin=0, vmax=60)
                 plt.colorbar(ticks=[0, 15, 30, 45, 60])
-                plt.title(f"Co-activation: {layer_name}")
+                short = _layer_short_label(layer_name)
+                plt.title(f"Co-activation: {short}")
                 plt.xlabel("Expert")
                 plt.ylabel("Expert")
                 tick_positions = list(range(len(experts)))
@@ -1578,10 +2160,227 @@ def main() -> None:
                 plt.xticks(tick_positions, tick_labels, rotation=90)
                 plt.yticks(tick_positions, tick_labels)
                 plt.tight_layout()
-                safe_name = layer_name.replace("/", "_")
-                plt.savefig(plot_dir / f"coactivation_{safe_name}.png", dpi=200)
+                li = _layer_index(layer_name)
+                fname = (
+                    f"coactivation_layer_{li}.png" if li is not None
+                    else f"coactivation_{layer_name.replace('/', '_')}.png"
+                )
+                plt.savefig(plot_dir / fname, dpi=200)
                 plt.close()
             _log_success(f"Wrote coactivation plots in: {plot_dir}")
+
+    # Per-expert token-count exports (JSON + animated GIF).
+    if args.moe_token_count_output:
+        out_path = Path(args.moe_token_count_output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        serializable = {
+            str(step): layers for step, layers in sorted(token_counts_by_step.items())
+        }
+        out_path.write_text(json.dumps(serializable, indent=2, sort_keys=True))
+        _log_success(f"Wrote token-count JSON: {out_path}")
+
+    if args.moe_routing_gif:
+        # GIF requires integer-keyed steps; drop release-only entries (no step number).
+        numeric_steps = {
+            int(step): data
+            for step, data in token_counts_by_step.items()
+            if isinstance(step, int)
+        }
+        all_layer_names = sorted({ln for entry in numeric_steps.values() for ln in entry})
+        layers_for_gif = _resolve_gif_layer_names(args.moe_routing_gif_layers, all_layer_names)
+        _render_routing_gif(
+            numeric_steps,
+            layers_for_gif,
+            Path(args.moe_routing_gif),
+            args.moe_routing_gif_frame_ms,
+        )
+
+        # Per-layer GIFs: one file per layer, for dashboard side-by-side picking.
+        # Place under the plot/results dir if --moe-plot-dir was given, else next
+        # to the combined GIF.
+        if args.moe_plot_dir:
+            per_layer_root = Path(args.moe_plot_dir)
+        else:
+            per_layer_root = Path(args.moe_routing_gif).parent
+        per_layer_dir = per_layer_root / "expert_routing_per_layer"
+        per_layer_dir.mkdir(parents=True, exist_ok=True)
+        sorted_layers = _natural_layer_sort(all_layer_names)
+        for ln in sorted_layers:
+            li = _layer_index(ln)
+            fname = (
+                f"expert_routing_layer_{li}.gif" if li is not None
+                else f"expert_routing_{_layer_short_label(ln)}.gif"
+            )
+            _render_routing_gif(
+                numeric_steps,
+                [ln],
+                per_layer_dir / fname,
+                args.moe_routing_gif_frame_ms,
+            )
+
+    # Per-expert activation norms: JSON + max/median plots.
+    if args.moe_activation_norm_output and act_norms_by_step:
+        out_path = Path(args.moe_activation_norm_output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        serializable = {
+            str(step): layers for step, layers in sorted(act_norms_by_step.items())
+        }
+        meta = {
+            "vector_norm": args.moe_act_norm_vector_norm,
+            "token_reduce": args.moe_act_norm_token_reduce,
+            "note": (
+                "fc2_output captured pre-unpermute; Megatron applies routing probs "
+                "at the SwiGLU stage so values include per-token routing weights."
+            ),
+        }
+        out_path.write_text(
+            json.dumps({"meta": meta, "steps": serializable}, indent=2, sort_keys=True)
+        )
+        _log_success(f"Wrote activation-norm JSON: {out_path}")
+
+        # Plot: per-layer max & median across experts vs step (log-y).
+        if args.moe_plot:
+            plot_dir = (
+                Path(args.moe_plot_dir) if args.moe_plot_dir else default_plot_dir
+            )
+            plot_dir.mkdir(parents=True, exist_ok=True)
+            steps_sorted = sorted(act_norms_by_step.keys())
+            layer_names = _natural_layer_sort(list({
+                ln for entry in act_norms_by_step.values() for ln in entry
+            }))
+            if layer_names:
+                plt.figure(figsize=(12, 7))
+                cmap = cm.get_cmap("tab20" if len(layer_names) <= 20 else "hsv")
+                for idx, ln in enumerate(layer_names):
+                    color = cmap(idx / max(len(layer_names) - 1, 1))
+                    max_vals, med_vals, xs = [], [], []
+                    for step in steps_sorted:
+                        norms = act_norms_by_step[step].get(ln)
+                        if not norms:
+                            continue
+                        t = torch.tensor(norms, dtype=torch.float32)
+                        t = t[~torch.isnan(t)]
+                        if t.numel() == 0:
+                            continue
+                        xs.append(step)
+                        max_vals.append(t.max().item())
+                        med_vals.append(t.median().item())
+                    if not xs:
+                        continue
+                    short = _layer_short_label(ln)
+                    plt.plot(
+                        xs, max_vals, color=color, linewidth=2.0,
+                        label=f"{short} max",
+                    )
+                    plt.plot(
+                        xs, med_vals, color=color, linewidth=1.4,
+                        linestyle="--", label=f"{short} med",
+                    )
+                plt.yscale("log")
+                plt.xlabel("Checkpoint step", fontweight="bold")
+                plt.ylabel(
+                    f"Per-expert activation norm "
+                    f"({args.moe_act_norm_vector_norm}/{args.moe_act_norm_token_reduce})",
+                    fontweight="bold",
+                )
+                plt.title("Expert activation norms — solid: max, dashed: median")
+                plt.grid(True, which="both", alpha=0.25, linestyle="--")
+                plt.legend(
+                    bbox_to_anchor=(1.02, 1), loc="upper left",
+                    fontsize=7, ncol=1, framealpha=0.95,
+                )
+                plt.tight_layout()
+                plt.savefig(plot_dir / "expert_activation_norms.png", dpi=200)
+                plt.close()
+                _log_success(
+                    f"Wrote plot: {plot_dir / 'expert_activation_norms.png'}"
+                )
+
+                # Companion plot: max/median ratio per layer (Step-3.5-Flash key metric).
+                plt.figure(figsize=(12, 6))
+                for idx, ln in enumerate(layer_names):
+                    color = cmap(idx / max(len(layer_names) - 1, 1))
+                    xs, ratios = [], []
+                    for step in steps_sorted:
+                        norms = act_norms_by_step[step].get(ln)
+                        if not norms:
+                            continue
+                        t = torch.tensor(norms, dtype=torch.float32)
+                        t = t[~torch.isnan(t)]
+                        if t.numel() == 0:
+                            continue
+                        med = t.median().item()
+                        if med <= 0:
+                            continue
+                        xs.append(step)
+                        ratios.append(t.max().item() / med)
+                    if xs:
+                        plt.plot(
+                            xs, ratios, color=color, linewidth=1.6,
+                            label=_layer_short_label(ln),
+                        )
+                plt.yscale("log")
+                plt.xlabel("Checkpoint step", fontweight="bold")
+                plt.ylabel("max / median (per-expert activation norm)", fontweight="bold")
+                plt.title("Max-to-median expert activation-norm ratio per layer")
+                plt.grid(True, which="both", alpha=0.25, linestyle="--")
+                plt.legend(
+                    bbox_to_anchor=(1.02, 1), loc="upper left",
+                    fontsize=7, ncol=1, framealpha=0.95,
+                )
+                plt.tight_layout()
+                plt.savefig(plot_dir / "expert_activation_max_over_median.png", dpi=200)
+                plt.close()
+                _log_success(
+                    f"Wrote plot: {plot_dir / 'expert_activation_max_over_median.png'}"
+                )
+
+                # Per-layer activation-norm plots (max + median, log-y).
+                per_layer_dir = plot_dir / "activation_norms_per_layer"
+                per_layer_dir.mkdir(parents=True, exist_ok=True)
+                for ln in layer_names:
+                    xs, max_vals, med_vals = [], [], []
+                    for step in steps_sorted:
+                        norms = act_norms_by_step[step].get(ln)
+                        if not norms:
+                            continue
+                        t = torch.tensor(norms, dtype=torch.float32)
+                        t = t[~torch.isnan(t)]
+                        if t.numel() == 0:
+                            continue
+                        xs.append(step)
+                        max_vals.append(t.max().item())
+                        med_vals.append(t.median().item())
+                    if not xs:
+                        continue
+                    short = _layer_short_label(ln)
+                    li = _layer_index(ln)
+                    plt.figure(figsize=(8, 5))
+                    plt.plot(xs, max_vals, color="#d62728", linewidth=2.0, label="max")
+                    plt.plot(
+                        xs, med_vals, color="#1f77b4", linewidth=1.6,
+                        linestyle="--", label="median",
+                    )
+                    plt.yscale("log")
+                    plt.xlabel("Checkpoint step", fontweight="bold")
+                    plt.ylabel(
+                        f"Per-expert activation norm "
+                        f"({args.moe_act_norm_vector_norm}/{args.moe_act_norm_token_reduce})",
+                        fontweight="bold",
+                    )
+                    plt.title(f"Activation norms — {short}")
+                    plt.grid(True, which="both", alpha=0.25, linestyle="--")
+                    plt.legend(loc="best")
+                    plt.tight_layout()
+                    fname = (
+                        f"activation_norms_layer_{li}.png" if li is not None
+                        else f"activation_norms_{short}.png"
+                    )
+                    plt.savefig(per_layer_dir / fname, dpi=180)
+                    plt.close()
+                _log_success(
+                    f"Wrote per-layer activation-norm plots in: {per_layer_dir}"
+                )
 
 
 if __name__ == "__main__":
