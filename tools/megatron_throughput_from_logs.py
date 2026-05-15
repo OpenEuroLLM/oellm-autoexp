@@ -124,6 +124,164 @@ def parse_log(
     return out, None
 
 
+# ── Per-log throughput cache ──────────────────────────────────────────────────
+
+_ITER_FIELDS = ("iter_num", "elapsed_ms", "tflop_per_gpu", "tok_per_gpu")
+
+# Columns in avg_throughput.csv.  Data fields start at index 4 (after the
+# four param columns: job_id, max_elapsed_ms, skip_first_iters, max_iters_used).
+_AVG_FIELDS = (
+    "job_id", "max_elapsed_ms", "skip_first_iters", "max_iters_used",
+    "n_iters", "it_first", "it_last",
+    "avg_tflop_per_gpu", "avg_tok_per_gpu", "avg_elapsed_ms",
+)
+_AVG_DATA_FIELDS = _AVG_FIELDS[4:]
+_AVG_INT_FIELDS  = frozenset({"skip_first_iters", "max_iters_used",
+                               "n_iters", "it_first", "it_last"})
+
+
+def _throughput_dir(log_path: Path) -> Path:
+    """Return <run_dir>/throughput/, the sibling of the logs/ directory."""
+    parent = log_path.parent
+    return (parent.parent if parent.name == "logs" else parent) / "throughput"
+
+
+def _job_id_from_log(log_path: Path) -> str:
+    m = re.search(r"stdout-(\d+)\.log$", log_path.name, re.I)
+    return m.group(1) if m else log_path.stem
+
+
+def _parse_all_iters(log_path: Path) -> list[tuple[int, float, float, float]]:
+    """Parse every iteration line: (iter_num, elapsed_ms, tflop/gpu, tok/gpu)."""
+    text = log_path.read_text(errors="replace")
+    rows: list[tuple[int, float, float, float]] = []
+    for m in ITER_LINE.finditer(text):
+        rows.append((int(m.group(1)), float(m.group(2)),
+                     float(m.group(3)), float(m.group(4))))
+    rows.sort(key=lambda x: x[0])
+    return rows
+
+
+def _save_iters_csv(iters_csv: Path, rows: list[tuple[int, float, float, float]]) -> None:
+    try:
+        iters_csv.parent.mkdir(parents=True, exist_ok=True)
+        with iters_csv.open("w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(_ITER_FIELDS)
+            w.writerows(rows)
+    except OSError:
+        pass
+
+
+def _load_avg_row(
+    avg_csv: Path,
+    job_id: str,
+    max_elapsed_ms: float,
+    skip_first_iters: int,
+    max_iters_used: int,
+) -> "dict[str, Any] | None":
+    """Return cached averages for *job_id* if stored params match, else None."""
+    if not avg_csv.is_file():
+        return None
+    try:
+        with avg_csv.open(newline="") as f:
+            for row in csv.DictReader(f):
+                if row.get("job_id") != job_id:
+                    continue
+                if (
+                    float(row["max_elapsed_ms"]) == max_elapsed_ms
+                    and int(row["skip_first_iters"]) == skip_first_iters
+                    and int(row["max_iters_used"]) == max_iters_used
+                ):
+                    return {
+                        k: (int(row[k]) if k in _AVG_INT_FIELDS else float(row[k]))
+                        for k in _AVG_DATA_FIELDS
+                    }
+    except (OSError, KeyError, ValueError):
+        pass
+    return None
+
+
+def _upsert_avg_row(
+    avg_csv: Path,
+    job_id: str,
+    result: "dict[str, Any]",
+    max_elapsed_ms: float,
+    skip_first_iters: int,
+    max_iters_used: int,
+) -> None:
+    """Write or replace the row for *job_id* in avg_throughput.csv."""
+    new_row: dict[str, Any] = {
+        "job_id":           job_id,
+        "max_elapsed_ms":   max_elapsed_ms,
+        "skip_first_iters": skip_first_iters,
+        "max_iters_used":   max_iters_used,
+        **{k: result[k] for k in _AVG_DATA_FIELDS},
+    }
+    existing: list[dict] = []
+    if avg_csv.is_file():
+        try:
+            with avg_csv.open(newline="") as f:
+                existing = [r for r in csv.DictReader(f) if r.get("job_id") != job_id]
+        except OSError:
+            pass
+    try:
+        avg_csv.parent.mkdir(parents=True, exist_ok=True)
+        with avg_csv.open("w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(_AVG_FIELDS))
+            w.writeheader()
+            w.writerows(existing)
+            w.writerow(new_row)
+    except OSError:
+        pass
+
+
+def load_or_compute_throughput(
+    log_path: Path,
+    max_elapsed_ms: float = 6000.0,
+    skip_first_iters: int = 50,
+    max_iters_used: int = 500,
+) -> "dict[str, Any] | None":
+    """Return per-GPU throughput metrics for *log_path*, with CSV caching.
+
+    Cache layout inside ``<run_dir>/throughput/`` (sibling of ``logs/``):
+
+    * ``avg_throughput.csv`` — one row per Slurm job with ``n_iters``
+      (iterations used for the average), ``skip_first_iters`` (warmup),
+      and the other parameters/results; checked first to skip re-parsing.
+    * ``<log_stem>.csv`` — raw per-iteration TFLOP/s and Tok/s for every
+      parsed iteration; written once and not refreshed automatically
+      (delete the file to force a re-parse).
+
+    Returns a dict with keys ``n_iters``, ``it_first``, ``it_last``,
+    ``avg_tflop_per_gpu``, ``avg_tok_per_gpu``, ``avg_elapsed_ms``,
+    or ``None`` if the log cannot be parsed.
+    """
+    tp_dir  = _throughput_dir(log_path)
+    avg_csv = tp_dir / "avg_throughput.csv"
+    job_id  = _job_id_from_log(log_path)
+
+    cached = _load_avg_row(avg_csv, job_id, max_elapsed_ms, skip_first_iters, max_iters_used)
+    if cached is not None:
+        return cached
+
+    if not log_path.is_file():
+        return None
+
+    # Parse all iteration lines and write the per-iteration CSV if absent.
+    all_rows = _parse_all_iters(log_path)
+    iters_csv = tp_dir / (log_path.stem + ".csv")
+    if not iters_csv.is_file() and all_rows:
+        _save_iters_csv(iters_csv, all_rows)
+
+    result, _err = parse_log(log_path, max_elapsed_ms, skip_first_iters, max_iters_used)
+    if result is None:
+        return None
+
+    _upsert_avg_row(avg_csv, job_id, result, max_elapsed_ms, skip_first_iters, max_iters_used)
+    return result
+
+
 def parse_name_meta(exp_name: str) -> tuple[float | None, int | None]:
     lr = gbs = None
     m_lr = NAME_LR.search(exp_name)

@@ -26,12 +26,16 @@ from pathlib import Path
 from statistics import mean
 from typing import Optional
 
+# Allow importing sibling modules when run as a script.
+_tools_dir = str(Path(__file__).parent)
+if _tools_dir not in sys.path:
+    sys.path.insert(0, _tools_dir)
+
+from megatron_throughput_from_logs import load_or_compute_throughput
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 LOW_THROUGHPUT_FRACTION = 0.30
-
-# Skip first N iterations per log file when computing the average (compilation / warmup).
-WARMUP_SKIP = 50
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
@@ -123,12 +127,24 @@ def _ensure_gpu_hours_csv(training_dir: Path) -> Path:
 def analyze_job(
     log_path: Path,
     num_gpus: Optional[int] = None,
+    max_elapsed_ms: float = 6000.0,
+    skip_first_iters: int = 50,
+    max_iters_used: int = 500,
 ) -> dict:
     """Analyze low-throughput iterations for a single Slurm job log file.
 
+    The reference average is obtained via :func:`load_or_compute_throughput`
+    (shared with progress_tracker) and cached in ``<run_dir>/throughput/``.
+    Low-throughput detection scans *all* iterations in the log (no elapsed-time
+    filter) so that genuine stall events are always counted.
+
     Args:
-        log_path:  Path to a stdout-{jobid}.log file.
-        num_gpus:  GPU count for this job (used to compute gpu_h_lost).
+        log_path:        Path to a stdout-{jobid}.log file.
+        num_gpus:        GPU count for this job (used to compute gpu_h_lost).
+        max_elapsed_ms:  Elapsed-time ceiling used when computing the reference
+                         average (passed to load_or_compute_throughput).
+        skip_first_iters: Warmup iterations excluded from the average.
+        max_iters_used:  Maximum post-warmup iterations averaged.
 
     Returns a dict with keys:
         time_lost_h  – total elapsed time in low-throughput iters (hours)
@@ -140,14 +156,19 @@ def analyze_job(
     empty = {"time_lost_h": None, "gpu_h_lost": None,
              "n_low_iters": None, "avg_tflop": None, "num_gpus": num_gpus}
 
+    throughput = load_or_compute_throughput(
+        log_path, max_elapsed_ms, skip_first_iters, max_iters_used
+    )
+    if throughput is None:
+        return empty
+
+    avg_tflop = throughput["avg_tflop_per_gpu"]
+    threshold = avg_tflop * LOW_THROUGHPUT_FRACTION
+
+    # Scan ALL iterations (no elapsed-time filter) to count and time low-TP events.
     rows = _parse_log_iterations(log_path)
     if not rows:
         return empty
-
-    # Average from all iterations after warmup skip; fall back to all if too short.
-    avg_rows = rows[WARMUP_SKIP:] if len(rows) > WARMUP_SKIP else rows
-    avg_tflop = mean(tflop for _it, _et, tflop in avg_rows)
-    threshold = avg_tflop * LOW_THROUGHPUT_FRACTION
 
     low_elapsed_ms = sum(et for _it, et, tflop in rows if tflop < threshold)
     n_low = sum(1 for _it, _et, tflop in rows if tflop < threshold)
@@ -169,6 +190,9 @@ def analyze_run(
     run_name: str,
     gpu_hours_csv: Optional[Path] = None,
     num_gpus: Optional[int] = None,
+    max_elapsed_ms: float = 6000.0,
+    skip_first_iters: int = 50,
+    max_iters_used: int = 500,
 ) -> dict:
     """Analyze low-throughput iterations for a whole run (all jobs aggregated).
 
@@ -176,10 +200,13 @@ def analyze_run(
     CLI; progress_tracker calls analyze_job directly per Slurm job.
 
     Args:
-        run_dir:       Path to the run directory (contains logs/).
-        run_name:      Experiment name (matches gpu_hours.csv 'experiment' column).
-        gpu_hours_csv: Path to gpu_hours.csv (used for GPU count fallback).
-        num_gpus:      GPU count override; if None, derived from sbatch or csv.
+        run_dir:          Path to the run directory (contains logs/).
+        run_name:         Experiment name (matches gpu_hours.csv 'experiment' column).
+        gpu_hours_csv:    Path to gpu_hours.csv (used for GPU count fallback).
+        num_gpus:         GPU count override; if None, derived from sbatch or csv.
+        max_elapsed_ms:   Passed to analyze_job / load_or_compute_throughput.
+        skip_first_iters: Warmup iterations excluded from the reference average.
+        max_iters_used:   Maximum post-warmup iterations averaged.
     """
     empty = {"time_lost_h": None, "gpu_h_lost": None,
              "n_low_iters": None, "avg_tflop": None, "num_gpus": None}
@@ -204,7 +231,12 @@ def analyze_run(
     any_data = False
 
     for log_file in log_files:
-        job_stats = analyze_job(log_file, num_gpus=num_gpus)
+        job_stats = analyze_job(
+            log_file, num_gpus=num_gpus,
+            max_elapsed_ms=max_elapsed_ms,
+            skip_first_iters=skip_first_iters,
+            max_iters_used=max_iters_used,
+        )
         if job_stats["time_lost_h"] is None:
             continue
         any_data = True
@@ -229,7 +261,12 @@ def analyze_run(
 
 # ── Directory-level analysis ──────────────────────────────────────────────────
 
-def analyze_experiment_dir(experiment_dir: Path) -> list[dict]:
+def analyze_experiment_dir(
+    experiment_dir: Path,
+    max_elapsed_ms: float = 6000.0,
+    skip_first_iters: int = 50,
+    max_iters_used: int = 500,
+) -> list[dict]:
     """Analyze all runs under <experiment_dir>/training/.
 
     Returns a list of dicts, one per run, each containing run_name plus all
@@ -247,7 +284,12 @@ def analyze_experiment_dir(experiment_dir: Path) -> list[dict]:
         if not run_dir.is_dir():
             continue
         run_name = run_dir.name
-        stats = analyze_run(run_dir, run_name, gpu_hours_csv)
+        stats = analyze_run(
+            run_dir, run_name, gpu_hours_csv,
+            max_elapsed_ms=max_elapsed_ms,
+            skip_first_iters=skip_first_iters,
+            max_iters_used=max_iters_used,
+        )
         stats["run_name"] = run_name
         results.append(stats)
 
@@ -271,6 +313,24 @@ def main() -> None:
         default=LOW_THROUGHPUT_FRACTION,
         help="Low-throughput threshold as a fraction of average (default: 0.30)",
     )
+    ap.add_argument(
+        "--max-elapsed-ms",
+        type=float,
+        default=6000.0,
+        help="Drop iterations longer than this when computing the reference average (default: 6000)",
+    )
+    ap.add_argument(
+        "--skip-first-iters",
+        type=int,
+        default=50,
+        help="Warmup iterations excluded from the reference average (default: 50)",
+    )
+    ap.add_argument(
+        "--max-iters",
+        type=int,
+        default=500,
+        help="Maximum post-warmup iterations used for the reference average (default: 500)",
+    )
     args = ap.parse_args()
 
     exp_dir = Path(args.experiment_dir)
@@ -278,7 +338,12 @@ def main() -> None:
         print(f"[error] Directory not found: {exp_dir}", file=sys.stderr)
         sys.exit(1)
 
-    results = analyze_experiment_dir(exp_dir)
+    results = analyze_experiment_dir(
+        exp_dir,
+        max_elapsed_ms=args.max_elapsed_ms,
+        skip_first_iters=args.skip_first_iters,
+        max_iters_used=args.max_iters,
+    )
     if not results:
         print("No runs found.")
         return
