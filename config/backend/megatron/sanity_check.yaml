@@ -29,7 +29,7 @@ defaults:
 # bf16: true
 # add_bias_linear: false
 
-### Model params for 150M Qwen3 model 
+### Model params for 150M Qwen3 model
 
 # num_layers: 12
 # hidden_size: 768
@@ -68,7 +68,7 @@ attention_backend: auto
 init_method_std: 0.02
 
 ### DATA
-global_batch_size: 512 
+global_batch_size: 512
 data_path:
   - ${oc.env:DATA_DIR}/gpt-neox-20b/common-pile/wikipesto
 data_cache_path: ${job.base_output_dir}/cache
@@ -77,7 +77,7 @@ num_workers: 7
 tokenizer_type: HuggingFaceTokenizer
 tokenizer_model: EleutherAI/gpt-neox-20b
 make_vocab_size_divisible_by: 128
-train_iters: 2384 # 
+train_iters: 2384 #
 log_interval: 10
 log_throughput: true
 log_progress: true
