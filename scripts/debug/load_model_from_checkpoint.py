@@ -373,9 +373,18 @@ local_params = sum(p.numel() for p in model.parameters())
 local_expert_params = sum(p.numel() for n, p in model.named_parameters() if "experts" in n)
 local_non_expert = local_params - local_expert_params
 
+# Embedding params live in the non-expert bucket. `named_parameters()` returns
+# each Parameter once, so a tied input/output embedding is counted only once.
+embedding_params = sum(
+    p.numel() for n, p in model.named_parameters()
+    if 'embedding' in n or 'output_layer' in n
+)
+tied_embeddings = not getattr(args, 'untie_embeddings_and_output_weights', False)
+
 ep_size = args.expert_model_parallel_size
 total_expert_params = local_expert_params * ep_size
 total_params = local_non_expert + total_expert_params
+non_embedding_params = total_params - embedding_params
 active_params = local_non_expert + total_expert_params * (args.moe_router_topk / args.num_experts)
 
 print_rank_0(f"\n{'='*60}")
@@ -392,11 +401,14 @@ print_rank_0(f"  MoE FFN hidden:  {args.moe_ffn_hidden_size}")
 print_rank_0(f"  Vocab size:      {args.padded_vocab_size}")
 print_rank_0(f"  Seq length:      {SEQ_LEN}")
 print_rank_0(f"{'='*60}")
-print_rank_0(f"  Total params:    {total_params:>14,}  ({total_params/1e9:.2f}B)")
-print_rank_0(f"  Expert (total):  {total_expert_params:>14,}  ({total_expert_params/1e9:.2f}B)")
-print_rank_0(f"  Non-expert:      {local_non_expert:>14,}  ({local_non_expert/1e9:.2f}B)")
-print_rank_0(f"  Active params:   {active_params:>14,.0f}  ({active_params/1e9:.2f}B)")
-print_rank_0(f"  Per-GPU params:  {local_params:>14,}  ({local_params/1e9:.2f}B)")
+print_rank_0(f"  Total params:         {total_params:>14,}  ({total_params/1e9:.2f}B)")
+print_rank_0(f"  Expert (total):       {total_expert_params:>14,}  ({total_expert_params/1e9:.2f}B)")
+print_rank_0(f"  Non-expert:           {local_non_expert:>14,}  ({local_non_expert/1e9:.2f}B)")
+print_rank_0(f"  Embedding params:     {embedding_params:>14,}  ({embedding_params/1e9:.2f}B)")
+print_rank_0(f"  Non-embedding params: {non_embedding_params:>14,}  ({non_embedding_params/1e9:.2f}B)")
+print_rank_0(f"  Tied embeddings:      {'yes' if tied_embeddings else 'no'}")
+print_rank_0(f"  Active params:        {active_params:>14,.0f}  ({active_params/1e9:.2f}B)")
+print_rank_0(f"  Per-GPU params:       {local_params:>14,}  ({local_params/1e9:.2f}B)")
 print_rank_0(f"{'='*60}")
 
 if torch.cuda.is_available():
