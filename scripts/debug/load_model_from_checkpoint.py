@@ -124,6 +124,56 @@ def infer_num_experts_from_path(ckpt_path_str):
     return None
 
 
+def read_checkpoint_args(load_dir, ckpt_step):
+    """Read the `args` namespace saved inside a torch_dist checkpoint.
+
+    Runs before Megatron is initialized: reads only the `common.pt` file, no
+    distributed context required. Returns None for legacy checkpoints or if
+    the iteration can't be determined.
+    """
+    from megatron.core import dist_checkpointing
+    from megatron.training.checkpointing import (
+        get_checkpoint_name,
+        get_checkpoint_tracker_filename,
+        read_metadata,
+    )
+
+    iteration = ckpt_step
+    release = False
+    if iteration is None:
+        tracker = get_checkpoint_tracker_filename(load_dir)
+        if not os.path.isfile(tracker):
+            return None
+        iteration, release = read_metadata(tracker)
+
+    ckpt_path = get_checkpoint_name(load_dir, iteration, release, return_base_dir=True)
+    if not os.path.exists(ckpt_path):
+        return None
+    if not dist_checkpointing.check_is_distributed_checkpoint(ckpt_path):
+        return None
+
+    common = dist_checkpointing.load_common_state_dict(ckpt_path)
+    return common.get('args', None)
+
+
+# Arch args not force-overridden by Megatron's `load_args_from_checkpoint`.
+# These must match the checkpoint at BUILD time, so we read them from the
+# checkpoint's saved args and override the preset accordingly.
+CKPT_ARCH_OVERRIDES = {
+    '--num-layers': 'num_layers',
+    '--hidden-size': 'hidden_size',
+    '--ffn-hidden-size': 'ffn_hidden_size',
+    '--num-attention-heads': 'num_attention_heads',
+    '--num-query-groups': 'num_query_groups',
+    '--kv-channels': 'kv_channels',
+    '--max-position-embeddings': 'max_position_embeddings',
+    '--make-vocab-size-divisible-by': 'make_vocab_size_divisible_by',
+    '--num-experts': 'num_experts',
+    '--moe-ffn-hidden-size': 'moe_ffn_hidden_size',
+    '--moe-router-topk': 'moe_router_topk',
+}
+
+
 # ---- Parse our own args before Megatron sees them ----
 pre_parser = argparse.ArgumentParser(add_help=False)
 pre_parser.add_argument("--checkpoint-path", type=str, required=True,
@@ -140,21 +190,44 @@ pre_parser.add_argument("--evaluate", action="store_true", default=False,
                              "--eval-iters, --micro-batch-size, --global-batch-size as Megatron args.")
 pre_args, remaining_argv = pre_parser.parse_known_args()
 
-preset = PRESETS[pre_args.preset]
+preset = dict(PRESETS[pre_args.preset])
 SEQ_LEN = pre_args.seq_len
 
 load_dir, ckpt_step = parse_checkpoint_path(pre_args.checkpoint_path)
 inferred_nexp = infer_num_experts_from_path(pre_args.checkpoint_path)
 
-if int(os.environ.get("RANK", os.environ.get("SLURM_PROCID", 0))) == 0:
+IS_RANK_0 = int(os.environ.get("RANK", os.environ.get("SLURM_PROCID", 0))) == 0
+
+if IS_RANK_0:
     print(f"Checkpoint dir:  {load_dir}")
     print(f"Checkpoint step: {ckpt_step if ckpt_step is not None else '(latest)'}")
     if inferred_nexp is not None:
         print(f"Inferred num_experts from path: {inferred_nexp}")
 
-# Override preset num_experts if we can infer it from the path
+# Override preset num_experts if we can infer it from the path (fallback for
+# legacy checkpoints without saved args; checkpoint's own saved args still win
+# below).
 if inferred_nexp is not None:
     preset["--num-experts"] = str(inferred_nexp)
+
+# Read architecture args directly from the checkpoint's common.pt and override
+# the preset. This handles checkpoints whose architecture differs from the
+# preset without requiring a dedicated preset per checkpoint family.
+ckpt_args = read_checkpoint_args(load_dir, ckpt_step)
+if ckpt_args is not None:
+    overrides_applied = {}
+    for flag, attr in CKPT_ARCH_OVERRIDES.items():
+        val = getattr(ckpt_args, attr, None)
+        if val is not None:
+            preset[flag] = str(val)
+            overrides_applied[flag] = val
+    if IS_RANK_0 and overrides_applied:
+        print("Architecture overrides from checkpoint's saved args:")
+        for flag, val in overrides_applied.items():
+            print(f"  {flag} = {val}")
+elif IS_RANK_0:
+    print("WARNING: could not read args from checkpoint (legacy format or missing). "
+          "Using preset values as-is; architecture mismatch may occur.")
 
 # Set micro/global batch sizes: larger defaults when evaluating
 if pre_args.evaluate:
