@@ -385,7 +385,12 @@ ep_size = args.expert_model_parallel_size
 total_expert_params = local_expert_params * ep_size
 total_params = local_non_expert + total_expert_params
 non_embedding_params = total_params - embedding_params
+# Two conventions in MoE literature:
+# - active_params: every weight touched in a forward pass (incl. embedding lookup)
+# - active_non_embedding_params: excludes embedding/output_layer; this is the
+#   number usually quoted in scaling-law papers (e.g. Qwen3-30B-"A3B" style).
 active_params = local_non_expert + total_expert_params * (args.moe_router_topk / args.num_experts)
+active_non_embedding_params = active_params - embedding_params
 
 print_rank_0(f"\n{'='*60}")
 print_rank_0(f"Model loaded from checkpoint")
@@ -408,6 +413,7 @@ print_rank_0(f"  Embedding params:     {embedding_params:>14,}  ({embedding_para
 print_rank_0(f"  Non-embedding params: {non_embedding_params:>14,}  ({non_embedding_params/1e9:.2f}B)")
 print_rank_0(f"  Tied embeddings:      {'yes' if tied_embeddings else 'no'}")
 print_rank_0(f"  Active params:        {active_params:>14,.0f}  ({active_params/1e9:.2f}B)")
+print_rank_0(f"  Active non-embed:     {active_non_embedding_params:>14,.0f}  ({active_non_embedding_params/1e9:.2f}B)")
 print_rank_0(f"  Per-GPU params:       {local_params:>14,}  ({local_params/1e9:.2f}B)")
 print_rank_0(f"{'='*60}")
 
