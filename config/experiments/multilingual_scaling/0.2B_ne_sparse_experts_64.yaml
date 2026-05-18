@@ -1,0 +1,57 @@
+# @package _global_
+
+# 0.1B NE sparse Qwen3-like model training with pull-based multi-stage cooldown on Marenostrum
+# Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: default
+    # - /job: auto_restart
+    #  - /sweep/multilingual_scaling@sweep: qwen3_sparse_0.1B_ne # sweep configs  
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.2B_ne_experts_64 # model configs
+  - /backend/megatron/multilingual_scaling/data: oellm_256k_leonardo # data configs
+  - _self_
+
+index: 0
+stage: "" # Will be overridden by sweep
+
+job:
+  name: "" # Will be overridden by sweep with stage and hyperparameter info
+  base_output_dir: "/leonardo_scratch/large/userexternal/aklein00/multilingual_scaling/0.2B_ne_sparse_experts_64/training/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    wandb_exp_name: "test_sparse_multilingual" # Will be overridden by sweep with stage and hyperparameter info
+    wandb_project: sparse_multilingual_test
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    data_cache_path: /leonardo_scratch/large/userexternal/aklein00/MEGATRON_262k # Adjust it to your own directory
+    seq_length: 4096
+    train_iters: 5
+    lr_warmup_iters: 1
+    lr_wsd_decay_iters: 1
+    micro_batch_size: 1    # overridden by sweep
+    global_batch_size:  64 # overridden by sweep        
+    eval_interval: 1000000000
+    save_interval: 1000000000
+
+
+
+slurm:
+  sbatch:
+    nodes: 2 #"${oc.eval:'max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node})))'}"
+    qos: "boost_qos_dbg"
+    account: "AIFAC_5C0_092"
+    time: "00:10:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "
+
