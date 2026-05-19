@@ -1,0 +1,11 @@
+defaults:
+  - jupiter
+  - _self_
+
+# JUPITER slurm config without apptainer wrapper — activates a venv instead.
+# Used by backends that ship as a pip-installed CLI (e.g. oellm-cli for eval)
+# rather than running inside a training container.
+launcher_cmd: "\
+  export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ;\\\n \
+  ${oc.join:'',${oc.mapkeyvaltmpl:'export %k=%v ; \\\n',${backend.env}}} \
+  source ${container.venv_path}/bin/activate ;\\\n"

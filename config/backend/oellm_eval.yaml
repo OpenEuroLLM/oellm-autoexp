@@ -1,0 +1,29 @@
+defaults:
+  - oellm_eval: base
+  - _self_
+
+class_name: OELLMEvalBackend
+
+# CLI entrypoint (default assumes `oellm` is on PATH from `uv tool install`).
+oellm_cmd: "oellm"
+
+# oellm-autoexp owns the SLURM submission, so run oellm-cli's bash script
+# in-process via --local. Requires a venv with lm-eval/lighteval installed.
+local: true
+venv_path: ${oc.env:OELLM_EVAL_VENV,null}
+
+# Environment vars consumed by oellm-cli's generated eval script.
+# Path-dependent values (EVAL_BASE_DIR, EVAL_OUTPUT_DIR) intentionally omitted
+# here — set them in the experiment yaml so they pick up the right
+# job.base_output_dir for the eval stage (otherwise they resolve against the
+# experiment-level default during Hydra compose, not the sweep point).
+env:
+  HF_HOME: ${oc.env:HF_HOME}
+  HF_HUB_OFFLINE: "1"
+  QUEUE_LIMIT: "1"
+  GPUS_PER_NODE: "${slurm.sbatch.gpus_per_node}"
+  PARTITION: "${slurm.sbatch.partition}"
+  ACCOUNT: "${slurm.sbatch.account}"
+  SLURM_MEM: ${oc.env:SLURM_MEM,"96G"}
+  EVAL_CONTAINER_IMAGE: ""
+  SINGULARITY_ARGS: ""

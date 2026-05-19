@@ -1,0 +1,110 @@
+# @package _global_
+#
+# Chained multi-stage experiment: 1000-iter OpenSci 130M training → HF conversion
+# (in the train job) → standalone eval stage using OELLMEvalBackend.
+#
+# Stage layout:
+#   stage=train: Megatron training + same-job postprocess
+#                (torch_dist → torch → HF). Outputs HF checkpoint at
+#                ${job.base_output_dir}/hf/iter_0001000/.
+#   stage=eval:  OELLMEvalBackend in venv mode, waits via FileExistsCondition
+#                for the HF checkpoint, then runs oellm-cli on it.
+#
+# The two stages are submitted as separate SLURM jobs by oellm-autoexp;
+# the eval stage's start_condition blocks until the train stage produces
+# the expected file.
+#
+# We use OpenSci 130M because mcore_to_hf currently only ships an OpenSci
+# architecture profile. For Qwen3, add a Qwen3 profile under
+# oellm_autoexp/postprocess/resources/ and a new ckpt_convert_<arch>.yaml
+# postprocess pulling it in.
+
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base_reference, opensci_ref_130M, data_mixturevitae]
+  - /postprocess: [ckpt_dist_to_torch_opensci, ckpt_convert_opensci]
+  - /sweep: none
+  - override /job: default
+  - _self_
+
+job:
+  name: "chain_opensci_130M_train_eval"
+  base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${.name}_${index}
+
+# Default backend.megatron tweaks shared by the train stage.
+backend:
+  megatron:
+    legacy_tokenizer: false
+    train_iters: 1000
+    lr_warmup_iters: 50
+    lr_decay_iters: 1000
+    lr_wsd_decay_iters: 200
+    save_interval: 1000
+    eval_interval: 1000
+    ckpt_convert_format: torch
+    ckpt_convert_save: ${job.base_output_dir}
+    ckpt_step: ${backend.megatron.train_iters}
+    # Override data_mixturevitae default path (not present on this cluster).
+    # Re-use the small nemotron validation dataset for both train + valid;
+    # fine for a 1000-iter smoke test.
+    # split must be null when using train_data_path/valid_data_path (blend_per_split).
+    train_data_path:
+      - /e/scratch/projectnucleus/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all
+    valid_data_path:
+      - /e/scratch/projectnucleus/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all
+    data_path: []
+    split: null
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  sbatch:
+    # The job-name validator expects slurm.name (with sweep index suffix);
+    # base config interpolates ${job.name} without it. Null lets the
+    # generator auto-emit the right name.
+    job_name: null
+    nodes: 1
+    time: "01:00:00"
+
+sweep:
+  type: list
+  filter: true
+  groups:
+    - type: list
+      configs:
+        - stage: train
+          # Train stage uses the dist→torch→HF postprocess inherited from
+          # defaults (run same-job after training). The eval stage clears
+          # postprocess via `postprocess: none` below.
+          # Override the default container image to one that's actually cached.
+          container.image: "${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2512_aarch64_202602252238.sif"
+
+        - stage: eval
+          backend: oellm_eval           # swap backend config group
+          container: jupiter_venv        # swap container (venv, not apptainer)
+          slurm: jupiter_venv            # swap slurm (no apptainer wrapper)
+          postprocess: none              # swap to /postprocess/none.yaml → {}
+          # \\${...} delays interpolation until the DAG resolver injects the
+          # sibling.train.* context (same trick as test_diana.yaml). Lists with
+          # `${...}` items are emitted via Hydra's dotted-path pattern by
+          # param_to_cmdlines (key=[0], key.0=val) so the literal grammar
+          # doesn't choke on the `$`.
+          backend.models:
+            - "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          backend.task_groups:
+            - open-sci-0.01
+          backend.venv_path: "${oc.env:HOME}/work/venv"
+          backend.local: true
+          backend.skip_checks: true
+          backend.verbose: true
+          # Pin eval output to the eval stage's own base_output_dir.
+          backend.env.EVAL_BASE_DIR: "${oc.env:OUTPUT_DIR,./output}/${job.name}_1/eval"
+          backend.env.EVAL_OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}/${job.name}_1/eval"
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}/model.safetensors"
+          slurm.sbatch.gpus_per_node: 1
+          slurm.sbatch.time: "00:30:00"
