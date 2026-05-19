@@ -1501,6 +1501,7 @@ def main() -> None:
             "Emoji", "Status", "Action", "Error",
         ]
         csv_path = Path(args.csv)
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
         with csv_path.open("w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=csv_fields)
             writer.writeheader()
@@ -1556,6 +1557,7 @@ def main() -> None:
             "gpu_hours": round(grand_gpu_total, 1),
         })
         gpu_csv_path = resolved_base / "gpu_hours.csv"
+        gpu_csv_path.parent.mkdir(parents=True, exist_ok=True)
         with gpu_csv_path.open("w", newline="") as f:
             writer = csv.DictWriter(
                 f, fieldnames=["experiment", "job_id", "state", "elapsed", "gpus", "gpu_hours"]
@@ -1587,6 +1589,7 @@ def main() -> None:
                     spending_ts = _m.group(1)
 
         spending_str = spending_ts if spending_ts is not None else "N/A"
+        md_path.parent.mkdir(parents=True, exist_ok=True)
         with md_path.open("w") as f:
             f.write(f"_Updated training progress: {now_str}_  \n")
             f.write(f"_Updated compute spending: {spending_str}_\n\n")
