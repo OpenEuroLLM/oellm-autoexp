@@ -1,0 +1,120 @@
+# @package _global_
+#
+# Exemplary 3-stage chained experiment: train a Qwen3 in Megatron, convert
+# the checkpoint to HuggingFace via Megatron-Bridge, then evaluate with
+# oellm-cli. Each stage is its own SLURM job; orchestration is the standard
+# oellm-autoexp sweep + sibling references + FileExistsCondition.
+#
+#   stage=train    MegatronBackend       1×1 node, apptainer (training container).
+#                  Saves torch_dist ckpt at <train_dir>/checkpoints/iter_NNNNNNN/.
+#   stage=convert  MegatronBridgeBackend 1×1 GPU, apptainer (bridge container).
+#                  Bridge.AutoBridge.export_ckpt → HF safetensors at
+#                  <train_dir>/hf/iter_NNNNNNN/.
+#   stage=eval     OELLMEvalBackend      1×1 GPU, venv (oellm-cli).
+#                  Runs the open-sci-0.01 task group on the HF checkpoint.
+#
+# NOTES
+#  - The convert stage uses MegatronTraining-JUPITER-bridge-... (see
+#    container/megatron/MegatronTraining-JUPITER-bridge.def.in). That container
+#    keeps OpenEuroLLM Megatron-LM as the primary `megatron.core` (matches
+#    training-side checkpoint format) and ships Megatron-Bridge on top, with
+#    bridge model-init imports made tolerant of fork-only symbol gaps.
+#  - The Megatron arch (config/backend/megatron/qwen3_125M.yaml) and the HF
+#    arch the bridge targets (Qwen/Qwen3-0.6B) intentionally don't have to
+#    match for the PIPELINE to run. For a weight-correct conversion you'd
+#    pair a matching pair of megatron + HF configs (vendor a new HF config
+#    and run_config template under resources/megatron_bridge/, and write a
+#    matching megatron yaml under config/backend/megatron/).
+
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base_reference, qwen3_125M, data_mixturevitae]
+  - /sweep: none
+  - override /job: default
+  - _self_
+
+job:
+  name: "chain_qwen3_bridge_train_eval"
+  base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${.name}_${index}
+
+backend:
+  megatron:
+    legacy_tokenizer: false
+    train_iters: 1000
+    lr_warmup_iters: 50
+    lr_decay_iters: 1000
+    lr_wsd_decay_iters: 200
+    save_interval: 1000
+    eval_interval: 1000
+    train_data_path:
+      - /e/scratch/projectnucleus/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all
+    valid_data_path:
+      - /e/scratch/projectnucleus/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all
+    data_path: []
+    split: null
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  sbatch:
+    job_name: null   # let the generator emit slurm.name (sweep-index-suffixed)
+    nodes: 1
+    time: "01:00:00"
+
+sweep:
+  type: list
+  filter: true
+  groups:
+    - type: list
+      configs:
+        - stage: train
+          container.image: "${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2512_aarch64_202602252238.sif"
+
+        - stage: convert
+          backend: megatron_bridge
+          # Re-use the standard jupiter container/slurm machinery; just point
+          # at the bridge-equipped SIF for this stage.
+          container: jupiter
+          container.image: "${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-bridge-bridge_aarch64_202605191331.sif"
+          # `hf_model` is still used to look up the run_config.yaml template and
+          # the reference tokenizer. `derive_hf_arch` makes the backend synthesise
+          # the HF config.json from the train stage's resolved Megatron config
+          # (passed via `megatron_config_path`) instead of using the vendored
+          # `resources/configs/<hf_model>/config.json` snapshot — this is what
+          # makes the convert stage work even when the megatron training arch
+          # doesn't match a fixed HF release size.
+          backend.hf_model: "Qwen/Qwen3-0.6B"
+          backend.tokenizer: "Qwen/Qwen3-0.6B"
+          backend.derive_hf_arch: "qwen3"
+          backend.megatron_config_path: "\\${sibling.train.job.base_output_dir}/current.yaml"
+          backend.megatron_path: "\\${sibling.train.job.base_output_dir}/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          backend.hf_path: "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          # Bridge submodule path inside the container.
+          backend.bridge_root: "/workspace/oellm-autoexp/submodules/Megatron-Bridge"
+          backend.resources: "/workspace/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge"
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.train.job.base_output_dir}/latest_checkpointed_iteration.txt"
+          slurm.sbatch.gpus_per_node: 1
+          slurm.sbatch.time: "00:30:00"
+
+        - stage: eval
+          backend: oellm_eval
+          container: jupiter_venv
+          slurm: jupiter_venv
+          backend.models:
+            - "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          backend.venv_path: "${oc.env:HOME}/work/venv"
+          backend.local: true
+          backend.skip_checks: true
+          backend.verbose: true
+          backend.env.EVAL_BASE_DIR: "${oc.env:OUTPUT_DIR,./output}/${job.name}_2/eval"
+          backend.env.EVAL_OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}/${job.name}_2/eval"
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}/model.safetensors"
+          slurm.sbatch.gpus_per_node: 1
+          slurm.sbatch.time: "01:00:00"

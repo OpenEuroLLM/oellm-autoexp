@@ -38,6 +38,7 @@ def _ensure_registrations() -> None:
         "oellm_autoexp.backends.megatron_backend",
         "oellm_autoexp.backends.titan_backend",
         "oellm_autoexp.backends.oellm_eval_backend",
+        "oellm_autoexp.backends.megatron_bridge_backend",
         "oellm_autoexp.config.actions",
         "oellm_autoexp.config.conditions",
     ):

@@ -7,3 +7,6 @@
 [submodule "submodules/oellm_cli"]
 	path = submodules/oellm_cli
 	url = git@github.com:OpenEuroLLM/oellm-cli.git
+[submodule "submodules/Megatron-Bridge"]
+	path = submodules/Megatron-Bridge
+	url = git@github.com:NVIDIA-NeMo/Megatron-Bridge.git
