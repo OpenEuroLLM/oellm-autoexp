@@ -4,7 +4,7 @@ Single CLI surface for planning sweeps, launching jobs (directly or by way of co
 
 ## Your own experiments
 
-For you own experiments, first create your own branch `exp_YOURNAME`. Add a folder `config/experiments/YOURNAME`. Then, within that folder you can add your own experiment composition files (see the existing ones), with `# @package _global_` as header to ensure it's located at the top-level of the config. You can then run your experiment with:
+For you own experiments, first create your own branch `exp_YOURNAME`. Add a folder `config/experiments/YOURNAME`. Within that folder you can add your own experiment composition files (see the existing ones), with `# @package _global_` as header to ensure it's located at the top-level of the config. You can then run your experiment with:
 ```bash
 PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/YOURNAME/myexperiment
 ```
@@ -84,13 +84,13 @@ python container/build_container_user.py \
 
 
 ## Supercomputer setup: JUWELS Booster / JUPITER
-Tested, please use the `container/build_container.sh` script with the latest/matching Megatron definition file. 
+Tested, please use the `container/build_container.sh` script with the latest/matching Megatron definition file.
 
 ## Quick Recipes
 
 ### Single job / Sweep debugging
 ```bash
-# Plan + submit + monitor in one go (manifest written to outputs/manifests/, use `--help` for options, e.g. no submission)
+# Plan + submit + monitor in one go (manifest written to outputs/manifests/, use `--help` for options, for example no submission)
 python scripts/run_autoexp.py --config-name experiments/default
 
 ```

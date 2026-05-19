@@ -22,6 +22,7 @@ from oellm_autoexp.orchestrator import (
     build_execution_plan,
     generate_scripts,
     ExecutionPlan,
+    render_job_scripts,
     submit_jobs,
     run_loop,
 )
@@ -109,6 +110,16 @@ def _collect_git_metadata(repo_root: Path) -> dict[str, str | bool]:
 def _sanitize_env() -> dict[str, str]:
     pattern = re.compile(r"(KEY|SECRET)", re.IGNORECASE)
     return {key: value for key, value in os.environ.items() if not pattern.search(key)}
+
+
+def _render_log_hint(log_template: str | Path, job_id: str) -> str:
+    """Expand SLURM log templates (%j, %A, %a) using the submitted job id."""
+    log_str = str(log_template)
+    if "_" in job_id:
+        base_id, array_idx = job_id.split("_", 1)
+        log_str = log_str.replace("%A", base_id)
+        log_str = log_str.replace("%a", array_idx)
+    return log_str.replace("%j", job_id)
 
 
 def _write_job_provenance(
@@ -231,6 +242,13 @@ def main(argv: list[str] | None = None) -> None:
         subset_indices=subset_indices or None,
     )
 
+    if args.dry_run:
+        script_paths = render_job_scripts(plan)
+        if script_paths:
+            print(f"Rendered {len(script_paths)} script(s) (not submitted):")
+            for p in script_paths:
+                print(f"  {p}")
+        exit(0)
     gpu_hours = _compute_gpu_hours(plan)
     n_jobs = len(plan.jobs)
     print(
@@ -238,12 +256,27 @@ def main(argv: list[str] | None = None) -> None:
         + (f" approx. ({gpu_hours / n_jobs:.1f} GPU-h each)" if n_jobs > 1 else "")
     )
     if gpu_hours > 100 and not args.dry_run:
+        if n_jobs >= 5:
+            jobs_comment = "Have you checked a single job with --array-subset to confirm it works?"
+        else:
+            jobs_comment = ""
         try:
             answer = (
-                input(f"  This run will use ~{gpu_hours:.0f} GPU-h. Proceed? [y/N] ")
+                input(f"  This run will use ~{gpu_hours:.0f} GPU-h. {jobs_comment} Proceed? [y/N] ")
                 .strip()
                 .lower()
             )
+            if gpu_hours > 5000:
+                try:
+                    answer = (
+                        input(
+                            f"  This run will use ~{gpu_hours:.0f} GPU-h !! {jobs_comment} Really proceed? [y/N] "
+                        )
+                        .strip()
+                        .lower()
+                    )
+                except EOFError:
+                    answer = ""
         except EOFError:
             answer = ""
         if answer not in ("y", "yes"):
@@ -257,17 +290,9 @@ def main(argv: list[str] | None = None) -> None:
         overrides=args.overrides,
     )
 
-    res = submit_jobs(
-        plan, no_error_catching=args.debug, local_mode=args.local, dry_run=args.dry_run
-    )
+    res = submit_jobs(plan, no_error_catching=args.debug, local_mode=args.local)
 
-    if args.dry_run:
-        return
-
-    if args.no_monitor:
-        exit(0)
-
-    if args.submit_and_exit:
+    if args.no_monitor or args.submit_and_exit:
         res.loop.observe_once()
         exit(0)
 

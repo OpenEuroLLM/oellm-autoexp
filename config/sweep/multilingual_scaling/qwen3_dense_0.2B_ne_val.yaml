@@ -239,81 +239,42 @@ groups:
         backend.megatron.aux.diagonal_tokens_set: "{200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  diagonal
 
-  # GROUP 2: Multi-stage training (1 stable + 9 decay).
+  # GROUP 2: Multi-stage evaluation (1 stable + 9 decay).
   # All 22 combos × 10 stages = 220 sweep points; sweep.filter prunes 117 that
   # land outside the CSV grid, leaving 22 stable + 81 decay = 103 jobs.
   - type: list
     configs:
-      # STABLE PHASE: runs to aux.tokens (= per-combo max_decay_tokens from Group 1).
-      # train_iters, start_iter are computed from aux.tokens with escaped ${...}.
-      # All 18 save_step_* slots are overridden to real iter values, using hardcoded
-      # token budgets (6B..300B) so the same expression is valid for every combo.
-      # Slots whose iter exceeds train_iters for a given combo are simply unreached.
+      # STABLE PHASE: loads the stable training checkpoint and evaluates it.
+      # train_iters is set to the stable's token budget so the warmup-ratio
+      # filter evaluates correctly; skip_train=True means no training runs.
       - stage: stable
         backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
         backend.megatron.lr_wsd_decay_iters: 0
         backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
-        # Horizon suffix for job.name: "<max_decay_tokens_in_BT>BT" (e.g. "12BT",
-        # "300BT"). All 22 Group-1 combos have max_decay_tokens as a whole number
-        # of billions, so integer division by 1e9 is exact. aux.tokens on the
-        # stable stage is the per-combo max_decay_tokens from Group 1 (the decay
-        # stages override aux.tokens to their own budget, but this suffix only
-        # applies to the stable stage).
         backend.megatron.aux.job_horizon_suffix: "\\${oc.eval:'str(\\${backend.megatron.aux.tokens}//1_000_000_000)+\"BT\"'}"
 
-        # ---- Branching checkpoints: iter at 80% of each token budget -----
-        backend.megatron.aux.save_step_br_0: "\\${oc.eval:'int(((6_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
-        backend.megatron.aux.save_step_br_1: "\\${oc.eval:'int(((12_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
-        backend.megatron.aux.save_step_br_2: "\\${oc.eval:'int(((20_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
-        backend.megatron.aux.save_step_br_3: "\\${oc.eval:'int(((30_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
-        backend.megatron.aux.save_step_br_4: "\\${oc.eval:'int(((50_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
-        backend.megatron.aux.save_step_br_5: "\\${oc.eval:'int(((80_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
-        backend.megatron.aux.save_step_br_6: "\\${oc.eval:'int(((120_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
-        backend.megatron.aux.save_step_br_7: "\\${oc.eval:'int(((200_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
-        backend.megatron.aux.save_step_br_8: "\\${oc.eval:'int(((300_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
-
-        # ---- End checkpoints: iter at 100% of each token budget -----
-        backend.megatron.aux.save_step_end_0: "\\${oc.eval:'(6_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
-        backend.megatron.aux.save_step_end_1: "\\${oc.eval:'(12_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
-        backend.megatron.aux.save_step_end_2: "\\${oc.eval:'(20_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
-        backend.megatron.aux.save_step_end_3: "\\${oc.eval:'(30_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
-        backend.megatron.aux.save_step_end_4: "\\${oc.eval:'(50_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
-        backend.megatron.aux.save_step_end_5: "\\${oc.eval:'(80_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
-        backend.megatron.aux.save_step_end_6: "\\${oc.eval:'(120_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
-        backend.megatron.aux.save_step_end_7: "\\${oc.eval:'(200_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
-        backend.megatron.aux.save_step_end_8: "\\${oc.eval:'(300_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
-
-      # NESTED GROUP: cooldown/decay stages with shared defaults.
-      # Every decay stage loads from the stable sibling's branching checkpoint
-      # (save_extra_step at 80% of the target budget) and decays LR over 20% of
-      # its own train_iters.
+      # DECAY PHASES: evaluate each decay training checkpoint.
+      # No start_condition or cancel_condition: all training checkpoints are
+      # already present, so every decay val job is submitted immediately.
+      # backend.megatron.load is NOT overridden here; the base val config sets
+      #   load: "/gpfs/.../training/${job.name}/checkpoints"
+      # so ${job.name} for a decay job (e.g. "..._decay6BT") correctly resolves
+      # to the corresponding training decay run's checkpoint directory.
       - type: list
         defaults:
           backend.megatron.aux.decay_fraction: "\\${backend.megatron.aux.cooldown_decay_fraction}"
 
+          # Keep train_iters and lr_wsd_decay_iters so the warmup-ratio filter
+          # evaluates with realistic values (not the val config's train_iters=1).
           backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
           backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
           backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
 
-          # Checkpoint loading: stable sibling saved a checkpoint at this iter
-          # via save_extra_steps. ckpt_step=start_iter picks up that exact ckpt.
-          backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/checkpoints"
-          backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter}"
-          backend.megatron.override_opt_param_scheduler: true
-
-          # Start when the branching checkpoint exists.
-          job.start_condition:
-            class_name: FileExistsCondition
-            path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(\\${backend.megatron.aux.start_iter}).zfill(7)'}"
-
-          # Cancel decay if the stable sibling crashed.
-          job.cancel_condition:
-            class_name: LogPatternCondition
-            log_path: "\\${sibling.stable.job.log_path_current}"
-            pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+          # Training is done; submit all decay val jobs immediately.
+          job.start_condition: null
+          job.cancel_condition: null
 
         configs:
-          # Each decay stage only specifies stage name and its own token budget.
           - stage: decay6BT
             backend.megatron.aux.tokens: 6_000_000_000
           - stage: decay12BT
@@ -333,115 +294,7 @@ groups:
           - stage: decay300BT
             backend.megatron.aux.tokens: 300_000_000_000
 
-# CSV-grid + priority-tier filter.
-# All variables referenced below (priority_tier, stable_launch_tier, tokens,
-# *_tokens_set) live under backend.megatron.aux.*, so the whole tier-
-# scheduling surface is uniformly namespaced; elided to just aux.<name> in
-# these comments for brevity.
-#
-# Stable pass:  stable survives iff
-#                   aux.priority_tier == "all"
-#                OR aux.priority_tier == aux.stable_launch_tier
-#               i.e. each stable is submitted by the SINGLE tier invocation
-#               that is "earliest" in the center -> cross -> diagonal order
-#               among tiers that actually consume one of its decays. This
-#               prevents center from queuing stables whose decays only live
-#               in cross/diagonal, so high-priority center work doesn't
-#               compete with low-priority stables for the same slots.
-# Decay pass:   decay survives iff its aux.tokens is in the tier's per-combo
-#               set (for tier=all, the union of all three tier sets).
-#
-# Launch-order invariant: because each stable is owned by exactly one tier,
-# the tiers MUST be launched in order (center -> cross -> diagonal) and none
-# may be skipped. Skipping `cross`, for example, would leave the 10 stables
-# it owns unsubmitted and block every decay that depends on them. Use
-# `backend.megatron.aux.priority_tier=all` for a single-shot submission.
-#
-# Python precedence note: `in` is a comparison (lower precedence than `|`),
-# so `x in A | B | C` parses as `x in (A | B | C)`. `set() | {...}` is a
-# no-op union, so empty-tier combos cleanly contribute nothing.
-#
-# Sibling refs still resolve in non-center tiers: orchestrator.py:91 passes
-# full_points_by_idx=all_points_by_idx, so the DAG resolver iterates over all
-# 220 sweep points (resolving stables fully) before the filter trims them.
-#
-# Warmup-ratio guard (AND'd at the top level):
-#   lr_warmup_iters / train_iters < 0.3
-# Every current (lr, gbsz, tokens) combo passes this trivially, but it's
-# kept as a defensive check: if someone later drops in a short-budget run
-# where the fixed warmup eats >30% of training, the filter silently prunes
-# it rather than launching a job whose LR schedule is mostly ramp-up. Safe
-# across stages because both stable and decay define train_iters via
-# oc.eval on aux.tokens, so the division always evaluates to a float.
+# Same filter as training sweep (tier routing + warmup-ratio guard).
+# For val, run with backend.megatron.aux.priority_tier=all to submit
+# everything at once (no tier ordering needed since training is done).
 filter: "\\${oc.eval:'(((\"\\${stage}\" == \"stable\" and (\"\\${backend.megatron.aux.priority_tier}\" == \"all\" or \"\\${backend.megatron.aux.priority_tier}\" == \"\\${backend.megatron.aux.stable_launch_tier}\")) or (\"\\${stage}\" != \"stable\" and ((\"\\${backend.megatron.aux.priority_tier}\" == \"all\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set} | \\${backend.megatron.aux.cross_tokens_set} | \\${backend.megatron.aux.diagonal_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"center\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"cross\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.cross_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"diagonal\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.diagonal_tokens_set})))) and (\\${backend.megatron.lr_warmup_iters} / \\${backend.megatron.train_iters} < 0.3))'}"
-
-
-### Job counts (per `backend.megatron.aux.priority_tier`)
-# Group 1 (hyperparameter combos):           22
-# Group 2 (stages): 1 stable + 9 decay       10
-# Pre-filter product (always):               22 × 10 = 220 sweep points
-#
-# Each stable is "owned" by the earliest tier that consumes one of its decays
-# (via backend.megatron.aux.stable_launch_tier). Counts:
-#   center   owns  4 stables (combos with non-empty center_tokens_set)
-#   cross    owns 10 stables (center_tokens_set empty AND cross non-empty)
-#   diagonal owns  8 stables (only diagonal_tokens_set non-empty)
-#                  -------
-#                  22 total
-#
-#   priority_tier  stables   decays              total
-#   -------------  -------   -----------------   -----
-#   all            22        81                  103    (default; full sweep)
-#   center         4         9  (all centers)    13
-#   cross          10        36 (4 per budget)   46
-#   diagonal       8         36 (4 per budget)   44
-#
-# The three tiers {center, cross, diagonal} are disjoint and partition both
-# the 22 stables and the 81 decays (so the 103 total). Because each stable
-# lives in exactly one tier, the tiers MUST be invoked in the order
-# center -> cross -> diagonal and none may be skipped; otherwise the decays
-# that depend on a skipped tier's stables will wait forever on
-# FileExistsCondition.
-#
-# Sibling resolution sees ALL 220 points in every invocation (orchestrator.py
-# calls resolve_sweep_with_dag with full_points_by_idx=all_points_by_idx), so
-# `${sibling.stable.*}` references in cross/diagonal runs resolve correctly
-# even though the stable points get filtered out of the submission list.
-#
-### Usage (3-script workflow, in order)
-# 1) Center tier: 4 stables (owned by center) + 9 center decays. The center
-#    orchestrator stays up to submit each decay as its stable's branching
-#    checkpoint lands on disk.
-#        python -m oellm_autoexp.cli run \
-#            --config-name experiments/swagatam/multilingual_scaling/dense_300M_lr_gbsz_tokens_grid_tiered \
-#            backend.megatron.aux.priority_tier=center
-# 2) Cross tier: 10 stables (owned by cross) + 36 cross decays. Launch in a
-#    separate shell as soon as you want to start filling any remaining queue
-#    capacity; its stables run in parallel with center's decays.
-#        python -m oellm_autoexp.cli run --config-name ... backend.megatron.aux.priority_tier=cross
-# 3) Diagonal tier: 8 stables (owned by diagonal) + 36 diagonal decays.
-#        python -m oellm_autoexp.cli run --config-name ... backend.megatron.aux.priority_tier=diagonal
-# Each invocation launches its own orchestrator/monitor process; coordination
-# between them is purely via the filesystem (checkpoint dirs + log symlinks
-# under the same base_output_dir). Use
-# `backend.megatron.aux.priority_tier=all` for a single one-shot submission
-# of the full 103 jobs (no tier prioritization).
-#
-### Formulas (seq_length=4096, cooldown_decay_fraction=0.2)
-# For budget B tokens and global batch gbsz:
-#   budget_iters       = ceil(B / (seq*gbsz))
-#   train_iters        = ceil(aux.tokens / (seq*gbsz))                    (stable: aux.tokens = max_decay_tokens;
-#                                                                         decay: aux.tokens = per-stage budget)
-#   lr_wsd_decay_iters = int(train_iters * decay_fraction)                (stable: 0; decay: 20%)
-#   start_iter         = int(train_iters * (1 - decay_fraction))          (stable exits here; decay loads here)
-#   save_step_br_N     = int(budget_N_iters * 0.8)                         (stable only)
-#   save_step_end_N    = budget_N_iters                                    (stable only)
-#
-### Stable train_iters reference table (per (lr, gbsz) -> max_decay_tokens):
-#   gbsz    max_decay   budget_iters
-#     32      20B          152_588
-#     64      30B          114_441
-#    128     120B          228_882
-#    256     300B          286_103
-#    512     300B          143_052
-#   1024     300B           71_526
