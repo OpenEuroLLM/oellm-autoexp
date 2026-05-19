@@ -28,6 +28,9 @@ groups:
   #     center tier is still working.
   # Decay stages override aux.tokens to their specific budget; stable keeps it.
   - type: list
+    defaults:
+      # backend.megatron.num_workers: 8
+      # backend.megatron.micro_batch_size: 2
     configs:
       # ---- gbsz 16 ----
       - backend.megatron.lr: 5.e-4
