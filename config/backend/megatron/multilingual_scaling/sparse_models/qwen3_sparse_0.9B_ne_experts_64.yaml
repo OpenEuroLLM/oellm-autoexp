@@ -67,6 +67,7 @@ tensor_model_parallel_size: 1
 pipeline_model_parallel_size: 1
 context_parallel_size: 1
 sequence_parallel: True
+expert_model_parallel_size: 4
 
 # DISTRIBUTED OPTIM
 use_distributed_optimizer: True
