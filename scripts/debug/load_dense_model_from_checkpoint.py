@@ -315,6 +315,16 @@ rank = global_rank
 # ---- Parameter summary ----
 local_params = sum(p.numel() for p in model.parameters())
 
+# Split into embedding vs non-embedding params. `named_parameters()` returns
+# each Parameter once, so when input/output embeddings are tied (single shared
+# Parameter), the shared tensor is counted only once here.
+embedding_params = sum(
+    p.numel() for n, p in model.named_parameters()
+    if 'embedding' in n or 'output_layer' in n
+)
+non_embedding_params = local_params - embedding_params
+tied_embeddings = not getattr(args, 'untie_embeddings_and_output_weights', False)
+
 print_rank_0(f"\n{'='*60}")
 print_rank_0(f"Dense model loaded from checkpoint")
 print_rank_0(f"  Checkpoint: {load_dir}")
@@ -327,7 +337,10 @@ print_rank_0(f"  Attention heads: {args.num_attention_heads} (KV groups: {args.n
 print_rank_0(f"  Vocab size:      {args.padded_vocab_size}")
 print_rank_0(f"  Seq length:      {SEQ_LEN}")
 print_rank_0(f"{'='*60}")
-print_rank_0(f"  Total params:    {local_params:>14,}  ({local_params/1e9:.3f}B)")
+print_rank_0(f"  Total params:         {local_params:>14,}  ({local_params/1e9:.3f}B)")
+print_rank_0(f"  Embedding params:     {embedding_params:>14,}  ({embedding_params/1e9:.3f}B)")
+print_rank_0(f"  Non-embedding params: {non_embedding_params:>14,}  ({non_embedding_params/1e9:.3f}B)")
+print_rank_0(f"  Tied embeddings:      {'yes' if tied_embeddings else 'no'}")
 print_rank_0(f"{'='*60}")
 
 if torch.cuda.is_available():
