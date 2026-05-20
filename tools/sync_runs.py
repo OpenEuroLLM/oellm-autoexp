@@ -59,7 +59,7 @@ def sync_run(offline_run_path: Path, dry_run: bool = False, project: str | None 
     cmd = ["wandb", "sync", path_str]
     if project:
         cmd += ["--project", project]
-    
+
     if dry_run:
         print(f"[DRY RUN] Would execute: {' '.join(cmd)}")
         return True
@@ -108,17 +108,14 @@ def main():
         action="store_true",
         help="Continue syncing other runs if one fails",
     )
+
     parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Re-sync runs even if they were already synced"
+        "--force", action="store_true", help="Re-sync runs even if they were already synced"
     )
     parser.add_argument(
-        "--project", "-p",
-        default=None,
-        help="wandb project to upload runs to (e.g., my-project)"
+        "--project", "-p", default=None, help="wandb project to upload runs to (e.g., my-project)"
     )
-    
+
     args = parser.parse_args()
 
     # Determine the base path to search
