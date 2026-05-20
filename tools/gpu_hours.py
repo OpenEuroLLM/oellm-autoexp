@@ -72,7 +72,7 @@ def query_sacct(job_ids):
         "--format=JobID,State,Elapsed,AllocTRES%80",
         "--noheader", "--parsable2",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
     if result.returncode != 0:
         print(f"sacct error: {result.stderr.strip()}", file=sys.stderr)
         sys.exit(1)

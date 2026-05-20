@@ -32,7 +32,11 @@ backend:
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
     # DATA
-    data_cache_path: /leonardo_work/OELLM_prod2026/slaing00/cache/MEGATRON_262k/${job.name} # Each job gets its own cache to avoid conflicts; will be symlinked to the same underlying data.
+    data_cache_path: /leonardo_work/OELLM_prod2026/slaing00/cache/MEGATRON_262k/${job.name} 
+
+    # Evals off
+    eval_iters: 0
+    split: "100,0,0" #evals off for now
 
     # Base training configuration (for stable phase)
     num_workers: 8 # Will be overridden by sweep

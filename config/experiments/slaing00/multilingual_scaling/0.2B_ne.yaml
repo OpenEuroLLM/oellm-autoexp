@@ -36,6 +36,7 @@ backend:
 
     # Evals off for small models
     eval_iters: 0
+    split: "100,0,0"
 
     # Base training configuration (for stable phase)
     num_workers: 8
