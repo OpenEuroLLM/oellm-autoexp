@@ -39,6 +39,7 @@ def test_qwen3_basic_mapping():
     assert cfg["rope_theta"] == 1000000
     assert cfg["tie_word_embeddings"] is True
     assert cfg["torch_dtype"] == "bfloat16"
+    # No make_vocab_size_divisible_by → raw vocab passes through.
     assert cfg["vocab_size"] == 151936
 
 
@@ -53,6 +54,15 @@ def test_qwen3_head_dim_defaults_from_hidden_and_heads():
     m["kv_channels"] = None
     cfg = derive_qwen3_hf_config(m, 100)
     assert cfg["head_dim"] == 512 // 4
+
+
+def test_vocab_padded_to_megatron_divisible_by():
+    m = _qwen3_125M_megatron()
+    m["make_vocab_size_divisible_by"] = 128
+    # 151669 → next multiple of 128 = 151680.
+    assert derive_qwen3_hf_config(m, vocab_size=151669)["vocab_size"] == 151680
+    # Already a multiple → unchanged.
+    assert derive_qwen3_hf_config(m, vocab_size=151680)["vocab_size"] == 151680
 
 
 def test_dispatch_via_derive_hf_config():

@@ -37,10 +37,12 @@ def patch_config_and_tokenizer(hf_path: Path, tokenizer_path: str) -> None:
     config = json.loads(config_file.read_text())
     changed: list[str] = []
 
-    custom_vocab_size = len(tokenizer)
-    if config.get("vocab_size") != custom_vocab_size:
-        changed.append(f"  vocab_size: {config.get('vocab_size')} -> {custom_vocab_size}")
-        config["vocab_size"] = custom_vocab_size
+    # NOTE: intentionally do NOT touch `vocab_size`. The conversion stage
+    # (write_hf_config_dir → Bridge.save_hf_pretrained) sets it to the
+    # Megatron-padded value (rounded up to make_vocab_size_divisible_by) so
+    # the embed-table shape matches the trained checkpoint. Rewriting it to
+    # `len(tokenizer)` would shrink the recorded vocab below the actual
+    # embedding rows and break loading with `ignore_mismatched_sizes=False`.
     for attr in ("bos_token_id", "eos_token_id", "pad_token_id"):
         tok_val = getattr(tokenizer, attr, None)
         if tok_val is not None and config.get(attr) != tok_val:
