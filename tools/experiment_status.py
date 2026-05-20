@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Summarise the status of training experiments in a directory.
+"""Summarise the status of training experiments in a directory.
 
 For each run subdirectory the script reports:
   - Stop reason: TIME_LIMIT, SEGFAULT, or UNKNOWN
@@ -16,14 +15,9 @@ import argparse
 import re
 import sys
 from pathlib import Path
-from typing import Optional
 
-ITER_RE = re.compile(
-    r"iteration\s+(\d+)\s*/\s*\d+"
-)
-EVAL_INTERVAL_RE = re.compile(
-    r"^\s*eval_interval:\s*(\d+)", re.MULTILINE
-)
+ITER_RE = re.compile(r"iteration\s+(\d+)\s*/\s*\d+")
+EVAL_INTERVAL_RE = re.compile(r"^\s*eval_interval:\s*(\d+)", re.MULTILINE)
 TIME_LIMIT_RE = re.compile(r"DUE TO TIME LIMIT", re.IGNORECASE)
 SEGFAULT_RE = re.compile(r"Segmentation fault|segfault", re.IGNORECASE)
 
@@ -62,7 +56,7 @@ def detect_stop_reason(stderr_logs: list[Path]) -> str:
     return "UNKNOWN"
 
 
-def latest_iteration(stdout_logs: list[Path]) -> Optional[int]:
+def latest_iteration(stdout_logs: list[Path]) -> int | None:
     """Return the highest iteration number seen across all stdout logs."""
     last = None
     for log in stdout_logs:
@@ -77,8 +71,9 @@ def latest_iteration(stdout_logs: list[Path]) -> Optional[int]:
     return last
 
 
-def get_eval_interval(run_dir: Path) -> Optional[int]:
-    """Extract eval_interval from the config-*.yaml file in the run directory."""
+def get_eval_interval(run_dir: Path) -> int | None:
+    """Extract eval_interval from the config-*.yaml file in the run
+    directory."""
     configs = sorted(run_dir.glob("config-*.yaml"), key=lambda f: f.stat().st_mtime)
     for cfg in reversed(configs):  # most recent first
         try:
@@ -92,9 +87,7 @@ def get_eval_interval(run_dir: Path) -> Optional[int]:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Summarise experiment run status in a directory."
-    )
+    parser = argparse.ArgumentParser(description="Summarise experiment run status in a directory.")
     parser.add_argument("runs_dir", type=Path, help="Directory containing run subdirectories")
     args = parser.parse_args()
 
@@ -114,13 +107,15 @@ def main():
         stdout_logs = find_logs(run_dir, "stdout")
 
         if not stderr_logs and not stdout_logs:
-            rows.append({
-                "name": run_dir.name,
-                "stop_reason": "NO_LOGS",
-                "latest_iter": None,
-                "eval_interval": None,
-                "iter_aligned": None,
-            })
+            rows.append(
+                {
+                    "name": run_dir.name,
+                    "stop_reason": "NO_LOGS",
+                    "latest_iter": None,
+                    "eval_interval": None,
+                    "iter_aligned": None,
+                }
+            )
             continue
 
         stop_reason = detect_stop_reason(stderr_logs)
@@ -128,17 +123,19 @@ def main():
         eval_int = get_eval_interval(run_dir)
 
         if last_iter is not None and eval_int is not None:
-            aligned = (last_iter % eval_int == 0)
+            aligned = last_iter % eval_int == 0
         else:
             aligned = None
 
-        rows.append({
-            "name": run_dir.name,
-            "stop_reason": stop_reason,
-            "latest_iter": last_iter,
-            "eval_interval": eval_int,
-            "iter_aligned": aligned,
-        })
+        rows.append(
+            {
+                "name": run_dir.name,
+                "stop_reason": stop_reason,
+                "latest_iter": last_iter,
+                "eval_interval": eval_int,
+                "iter_aligned": aligned,
+            }
+        )
 
     # ---- print summary table ----
     col_name = max(len(r["name"]) for r in rows) + 2
