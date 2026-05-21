@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass
 from typing import Literal
 
@@ -16,6 +17,13 @@ class MegatronDistToTorchStepConfig(ConfigInterface):
 
     ``cmd`` should be ``${backend.full_cmd}`` — the full Megatron launch
     command including ``--ckpt-convert-format torch``.
+
+    ``load_dir`` overrides ``--load`` for the conversion. Set it to the
+    directory where the just-saved torch_dist checkpoints actually live —
+    typically ``${backend.megatron.save}``. For continued-pretraining runs
+    where ``--save`` differs from ``--load``, the original ``--load`` points
+    at the source-of-resumption (which won't have the new iters), so an
+    override is required.
 
     When ``save_interval`` and ``train_iters`` are both set, every saved
     checkpoint is converted.  ``ckpt_step`` is the fallback for single-step
@@ -39,22 +47,19 @@ class MegatronDistToTorchStep(PostProcessStepInterface):
 
     def build_commands(self) -> list[str]:
         cfg = self.config
+        base = cfg.cmd
+        if cfg.load_dir:
+            # argparse last-wins, so this overrides any earlier --load.
+            base = f"{base} --load {shlex.quote(cfg.load_dir)}"
+
         if cfg.save_interval is not None and cfg.train_iters is not None:
             steps = _all_ckpt_steps(cfg.save_interval, cfg.train_iters)
         elif cfg.ckpt_step is not None:
             steps = [cfg.ckpt_step]
         else:
-            return [cfg.cmd]
+            return [base]
 
-        if not cfg.load_dir:
-            return [cfg.cmd]
-
-        tracker = f"{cfg.load_dir}/latest_checkpointed_iteration.txt"
-        commands = []
-        for step in steps:
-            commands.append(f"echo {step} > {tracker}")
-            commands.append(cfg.cmd)
-        return commands
+        return [f"{base} --load-iteration {step}" for step in steps]
 
 
 __all__ = ["MegatronDistToTorchStep", "MegatronDistToTorchStepConfig"]

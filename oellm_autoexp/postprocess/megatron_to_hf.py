@@ -78,6 +78,11 @@ class MegatronToHFStep(PostProcessStepInterface):
         if cfg.num_key_value_heads is not None:
             args.append(f"--num_key_value_heads {cfg.num_key_value_heads}")
         return " \\\n    ".join(args)
+        # Note: rank-0 gating is enforced inside mcore_to_hf.main() via
+        # SLURM_PROCID, NOT here — wrapping `if/then/fi` around this command
+        # at the shell level breaks because the orchestrator prepends
+        # `apptainer exec image.sif` and bash then mis-parses `if` as a
+        # positional arg to apptainer.
 
 
 __all__ = ["MegatronToHFStep", "MegatronToHFStepConfig"]

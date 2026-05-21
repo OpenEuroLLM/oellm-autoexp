@@ -1,0 +1,214 @@
+\begin{table}[htbp]
+\centering
+\caption{Ablations on 100B MixtureVitae mixture composition on language benchmarks.}
+\label{tab:lang_eval_table1}
+\scriptsize
+\begin{tabular}{lcccccccccccc}
+\toprule
+\textbf{Model} & \textbf{ARC-C} & \textbf{ARC-E} & \textbf{BoolQ} & \textbf{CSQA} & \textbf{COPA} & \textbf{HellaS} & \textbf{LAMBADA} & \textbf{MMLU} & \textbf{OBQA} & \textbf{PIQA} & \textbf{WinoG} & \textbf{Avg} \\
+\midrule
+MV-noinstruct & 32.0 & 61.0 & 58.0 & 18.0 & 66.0 & 46.0 & 46.0 & 25.0 & 33.0 & 68.0 & 55.0 & 46.0 \\
+\quad + SFT & 32.0 & 61.0 & 57.0 & 19.0 & 66.0 & 46.0 & \textbf{47.0} & 25.0 & 33.0 & 68.0 & 55.0 & 46.0 \\
+\quad + SFT + DPO & 32.0 & 61.0 & 57.0 & 19.0 & 66.0 & 47.0 & \textbf{47.0} & 25.0 & 33.0 & 68.0 & 55.0 & 46.0 \\
+\midrule
+\addlinespace[0.3em]
+MV-noinstruct-16k & 33.0 & 60.0 & 63.0 & 19.0 & 69.0 & 46.0 & \textbf{47.0} & 25.0 & 33.0 & 67.0 & 55.0 & 47.0 \\
+\quad + SFT & 31.0 & 60.0 & 61.0 & 18.0 & 67.0 & 46.0 & 47.0 & 25.0 & 33.0 & 67.0 & 56.0 & 46.0 \\
+\quad + SFT + DPO & 31.0 & 60.0 & 61.0 & 18.0 & 67.0 & 47.0 & 47.0 & 25.0 & 32.0 & 67.0 & 56.0 & 46.0 \\
+\midrule
+\addlinespace[0.3em]
+MV-noweb & 34.0 & \textbf{65.0} & 67.0 & 35.0 & 67.0 & 46.0 & 39.0 & 31.0 & 33.0 & 68.0 & 56.0 & 49.0 \\
+\quad + SFT & 33.0 & 63.0 & 65.0 & 35.0 & 69.0 & 47.0 & 41.0 & \textbf{33.0} & 32.0 & 67.0 & 55.0 & 49.0 \\
+\quad + SFT + DPO & 33.0 & 63.0 & 65.0 & 35.0 & 69.0 & 47.0 & 41.0 & \textbf{33.0} & 32.0 & 67.0 & 55.0 & 49.0 \\
+\midrule
+\addlinespace[0.3em]
+MV-noweb-16k & \textbf{36.0} & \textbf{65.0} & 70.0 & \textbf{37.0} & \textbf{70.0} & 45.0 & 40.0 & 32.0 & 32.0 & 67.0 & 56.0 & 50.0 \\
+\quad + SFT & 33.0 & 63.0 & 66.0 & 34.0 & 69.0 & 46.0 & 41.0 & \textbf{33.0} & 33.0 & 67.0 & 56.0 & 49.0 \\
+\quad + SFT + DPO & 33.0 & 63.0 & 67.0 & 34.0 & 69.0 & 47.0 & 41.0 & \textbf{33.0} & 33.0 & 67.0 & 56.0 & 49.0 \\
+\midrule
+\addlinespace[0.3em]
+MV & 34.0 & \textbf{65.0} & \textbf{71.0} & 31.0 & 67.0 & 48.0 & 44.0 & 32.0 & \textbf{34.0} & 68.0 & 58.0 & 50.0 \\
+\quad + SFT & 34.0 & 64.0 & \textbf{71.0} & 32.0 & 69.0 & \textbf{49.0} & 45.0 & \textbf{33.0} & \textbf{34.0} & \textbf{69.0} & 58.0 & \textbf{51.0} \\
+\quad + SFT + DPO & 34.0 & 64.0 & \textbf{71.0} & 32.0 & \textbf{70.0} & \textbf{49.0} & 45.0 & \textbf{33.0} & 33.0 & \textbf{69.0} & 58.0 & \textbf{51.0} \\
+\midrule
+\addlinespace[0.3em]
+MV-16k & 35.0 & \textbf{65.0} & 68.0 & 30.0 & 67.0 & 47.0 & 45.0 & \textbf{33.0} & 33.0 & 68.0 & 57.0 & 50.0 \\
+\quad + SFT & 33.0 & 64.0 & 69.0 & 29.0 & 68.0 & \textbf{49.0} & 45.0 & 32.0 & 33.0 & 68.0 & \textbf{59.0} & 50.0 \\
+\quad + SFT + DPO & 33.0 & 64.0 & 69.0 & 30.0 & 68.0 & \textbf{49.0} & 45.0 & 32.0 & 33.0 & 68.0 & \textbf{59.0} & 50.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\input{tables/ablation_compact}
+
+\begin{table}[ht]
+\centering
+\caption{Language Evaluation Combined Results.}
+\label{tab:lang_eval_table2}
+\resizebox{\textwidth}{!}{%
+\scriptsize
+\begin{tabular}{lcccccccccccc}
+\toprule
+Model & ARC-C & ARC-E & BoolQ & CSQA & COPA & HellaS & LAMBADA & MMLU & OBQA & PIQA & WinoG & \textbf{Avg} \\
+\midrule
+Comma0.1-300BT       & 36.0 & 63.0 & 62.0 & 21.0 & 71.0 & 53.0 & 54.0 & 27.0 & 33.0 & 71.0 & 60.0 & \textbf{50.0} \\
+\quad + SFT & 37.0 & 65.0 & 64.0 & 20.0 & 74.0 & 54.0 & 57.0 & 27.0 & 33.0 & 72.0 & 61.0 & \textbf{51.0} \\
+\quad + SFT + DPO & 37.0 & 65.0 & 65.0 & 20.0 & 74.0 & 54.0 & 57.0 & 27.0 & 33.0 & 72.0 & 61.0 & \textbf{51.0} \\
+\midrule
+\addlinespace[0.3em]
+MV          & 40.0 & 71.0 & 74.0 & 51.0 & 71.0 & 54.0 & 48.0 & 42.0 & 34.0 & 70.0 & 58.0 & \textbf{56.0} \\
+\quad + SFT & 39.0 & 70.0 & 73.0 & 50.0 & 70.0 & 56.0 & 50.0 & 43.0 & 34.0 & 70.0 & 58.0 & \textbf{56.0} \\
+\quad + SFT + DPO & 39.0 & 70.0 & 73.0 & 50.0 & 71.0 & 56.0 & 50.0 & 43.0 & 34.0 & 70.0 & 58.0 & \textbf{56.0} \\
+\midrule
+\addlinespace[0.3em]
+MV-16k          & 42.0 & 71.0 & 73.0 & 49.0 & 67.0 & 53.0 & 49.0 & 41.0 & 32.0 & 70.0 & 58.0 & \textbf{55.0} \\
+\quad + SFT & 39.0 & 70.0 & 73.0 & 50.0 & 69.0 & 55.0 & 50.0 & 42.0 & 34.0 & 70.0 & 57.0 & \textbf{55.0} \\
+\quad + SFT + DPO & 39.0 & 71.0 & 73.0 & 50.0 & 69.0 & 55.0 & 50.0 & 42.0 & 34.0 & 70.0 & 57.0 & \textbf{55.0} \\
+\midrule
+\addlinespace[0.3em]
+Qwen2.5-1.5B       & 54.0 & 81.0 & 78.0 & 76.0 & 83.0 & 68.0 & 62.0 & 61.0 & 40.0 & 77.0 & 63.0 & \textbf{68.0} \\
+\quad + SFT & 51.0 & 79.0 & 70.0 & 77.0 & 82.0 & 68.0 & 60.0 & 60.0 & 40.0 & 77.0 & 63.0 & \textbf{66.0} \\
+\quad + SFT + DPO & 52.0 & 79.0 & 70.0 & 76.0 & 82.0 & 68.0 & 60.0 & 60.0 & 39.0 & 77.0 & 63.0 & \textbf{66.0} \\
+\midrule
+\addlinespace[0.3em]
+Qwen3-1.7B       & 54.0 & 82.0 & 83.0 & 76.0 & 82.0 & 67.0 & 63.0 & 63.0 & 38.0 & 76.0 & 64.0 & \textbf{68.0} \\
+\quad + SFT & 53.0 & 81.0 & 82.0 & 77.0 & 80.0 & 68.0 & 61.0 & 63.0 & 39.0 & 76.0 & 64.0 & \textbf{68.0} \\
+\quad + SFT + DPO & 53.0 & 81.0 & 83.0 & 77.0 & 80.0 & 68.0 & 61.0 & 63.0 & 39.0 & 76.0 & 64.0 & \textbf{68.0} \\
+\midrule
+\addlinespace[0.3em]
+SmolLM2-1.7B       & 54.0 & 80.0 & 75.0 & 60.0 & 82.0 & 73.0 & 67.0 & 50.0 & 44.0 & 79.0 & 67.0 & \textbf{66.0} \\
+\quad + SFT & 53.0 & 80.0 & 75.0 & 61.0 & 85.0 & 74.0 & 69.0 & 49.0 & 43.0 & 79.0 & 67.0 & \textbf{67.0} \\
+\quad + SFT + DPO & 54.0 & 80.0 & 75.0 & 61.0 & 85.0 & 74.0 & 69.0 & 49.0 & 43.0 & 79.0 & 67.0 & \textbf{67.0} \\
+\midrule
+\addlinespace[0.3em]
+FineWeb-Edu-300BT & 44.0 & 75.0 & 67.0 & 19.0 & 76.0 & 63.0 & 52.0 & 26.0 & 42.0 & 76.0 & 61.0 & \textbf{55.0} \\
+\quad + SFT & 47.0 & 78.0 & 63.0 & 21.0 & 78.0 & 62.0 & 53.0 & 25.0 & 41.0 & 75.0 & 60.0 & \textbf{55.0} \\
+\quad + SFT + DPO & 47.0 & 78.0 & 63.0 & 21.0 & 78.0 & 63.0 & 53.0 & 26.0 & 41.0 & 75.0 & 60.0 & \textbf{55.0} \\
+\midrule
+\addlinespace[0.3em]
+Nemotron       & 49.0 & 79.0 & 76.0 & 31.0 & 80.0 & 69.0 & 57.0 & 40.0 & 39.0 & 77.0 & 62.0 & \textbf{60.0} \\
+\quad + SFT & 47.0 & 79.0 & 74.0 & 39.0 & 85.0 & 70.0 & 57.0 & 39.0 & 39.0 & 77.0 & 63.0 & \textbf{61.0} \\
+\quad + SFT + DPO & 47.0 & 79.0 & 74.0 & 39.0 & 85.0 & 70.0 & 58.0 & 39.0 & 39.0 & 77.0 & 63.0 & \textbf{61.0} \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+
+\begin{table}[ht]
+\centering
+\caption{The effect of decontamination on the model's performance on language benchmarks.}
+\label{tab:lang_eval_table3}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llcccccccccccc}
+\toprule
+\textbf{Base} & \textbf{Model} & \textbf{ARC-C} & \textbf{ARC-E} & \textbf{BoolQ} & \textbf{CSQA} & \textbf{COPA} & \textbf{HellaS} & \textbf{LAMBADA} & \textbf{MMLU} & \textbf{OBQA} & \textbf{PIQA} & \textbf{WinoG} & \textbf{Avg} \\
+\midrule
+\multirow{6}{*}{Not Decontaminated} & MV & 40.0 & \textbf{71.0} & \textbf{75.0} & 49.0 & \textbf{73.0} & 54.0 & 48.0 & 38.0 & 35.0 & 70.0 & 58.0 & \textbf{56.0} \\
+ & \quad + SFT & 39.0 & 70.0 & \textbf{75.0} & 47.0 & 71.0 & 55.0 & \textbf{50.0} & 40.0 & 35.0 & 70.0 & 58.0 & 55.0 \\
+ & \quad + SFT + DPO & 39.0 & 70.0 & \textbf{75.0} & 47.0 & 71.0 & 55.0 & \textbf{50.0} & 40.0 & 35.0 & 70.0 & 58.0 & \textbf{56.0} \\
+\cmidrule{2-14}
+ & MV-16k & 39.0 & \textbf{71.0} & \textbf{75.0} & 50.0 & 72.0 & 54.0 & 49.0 & 38.0 & \textbf{36.0} & \textbf{71.0} & 58.0 & \textbf{56.0} \\
+ & \quad + SFT & 39.0 & \textbf{71.0} & 74.0 & 48.0 & 72.0 & 55.0 & \textbf{50.0} & 38.0 & 35.0 & 70.0 & \textbf{59.0} & 55.0 \\
+ & \quad + SFT + DPO & 39.0 & \textbf{71.0} & 74.0 & 48.0 & 72.0 & 55.0 & \textbf{50.0} & 38.0 & 35.0 & \textbf{71.0} & \textbf{59.0} & \textbf{56.0} \\
+\midrule
+\addlinespace[0.3em]
+\multirow{6}{*}{Decontaminated} & MV & 40.0 & \textbf{71.0} & 74.0 & \textbf{51.0} & 71.0 & 54.0 & 48.0 & 42.0 & 34.0 & 70.0 & 58.0 & \textbf{56.0} \\
+ & \quad + SFT & 39.0 & 70.0 & 73.0 & 50.0 & 70.0 & \textbf{56.0} & \textbf{50.0} & \textbf{43.0} & 34.0 & 70.0 & 58.0 & \textbf{56.0} \\
+ & \quad + SFT + DPO & 39.0 & 70.0 & 73.0 & 50.0 & 71.0 & \textbf{56.0} & \textbf{50.0} & \textbf{43.0} & 34.0 & 70.0 & 58.0 & \textbf{56.0} \\
+\cmidrule{2-14}
+ & MV-16k & \textbf{42.0} & \textbf{71.0} & 73.0 & 49.0 & 67.0 & 53.0 & 49.0 & 41.0 & 32.0 & 70.0 & 58.0 & 55.0 \\
+ & \quad + SFT & 39.0 & 70.0 & 73.0 & 50.0 & 69.0 & 55.0 & \textbf{50.0} & 42.0 & 34.0 & 70.0 & 57.0 & 55.0 \\
+ & \quad + SFT + DPO & 39.0 & \textbf{71.0} & 73.0 & 50.0 & 69.0 & 55.0 & \textbf{50.0} & 42.0 & 34.0 & 70.0 & 57.0 & 55.0 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+
+\begin{table}[ht]
+\centering
+\caption{Performance of 0.4B scale models on language benchmarks.}
+\label{tab:lang_eval_table4}
+\scriptsize
+\begin{tabular}{lcccccccccccc}
+\toprule
+\textbf{Model} & \textbf{ARC-C} & \textbf{ARC-E} & \textbf{BoolQ} & \textbf{CSQA} & \textbf{COPA} & \textbf{HellaS} & \textbf{LAMBADA} & \textbf{MMLU} & \textbf{OBQA} & \textbf{PIQA} & \textbf{WinoG} & \textbf{Avg} \\
+\midrule
+Baguettotron & \textbf{33.0} & 58.0 & 61.0 & 19.0 & 56.0 & 36.0 & 30.0 & 27.0 & 31.0 & 61.0 & 53.0 & 42.0 \\
+\quad + SFT & 30.0 & 57.0 & 61.0 & 21.0 & 61.0 & 36.0 & 33.0 & 26.0 & \textbf{32.0} & 61.0 & \textbf{55.0} & 43.0 \\
+\quad + SFT + DPO & 31.0 & 57.0 & \textbf{62.0} & 21.0 & 61.0 & 36.0 & 33.0 & 26.0 & \textbf{32.0} & 61.0 & 54.0 & 43.0 \\
+\midrule
+\addlinespace[0.3em]
+Baguettotron 16k & 32.0 & 58.0 & 57.0 & 21.0 & 60.0 & 36.0 & 34.0 & 26.0 & 31.0 & 61.0 & \textbf{55.0} & 43.0 \\
+\quad + SFT & 31.0 & 57.0 & 64.0 & 20.0 & 61.0 & 36.0 & 33.0 & 26.0 & 31.0 & 61.0 & 54.0 & 43.0 \\
+\quad + SFT + DPO & 31.0 & 57.0 & 64.0 & 19.0 & 61.0 & 36.0 & 33.0 & 26.0 & 32.0 & 61.0 & 54.0 & 43.0 \\
+\midrule
+\addlinespace[0.3em]
+MV (0.4B) & 32.0 & \textbf{61.0} & 60.0 & \textbf{26.0} & \textbf{63.0} & \textbf{42.0} & 38.0 & 28.0 & 31.0 & \textbf{66.0} & 53.0 & \textbf{45.0} \\
+\quad + SFT & 29.0 & 59.0 & 50.0 & 25.0 & \textbf{63.0} & \textbf{42.0} & 40.0 & \textbf{29.0} & 30.0 & 65.0 & 53.0 & 44.0 \\
+\quad + SFT + DPO & 29.0 & 59.0 & 50.0 & \textbf{26.0} & \textbf{63.0} & \textbf{42.0} & 40.0 & \textbf{29.0} & 30.0 & 65.0 & 54.0 & 44.0 \\
+\midrule
+\addlinespace[0.3em]
+MV-16k (0.4B) & 32.0 & \textbf{61.0} & 58.0 & \textbf{26.0} & \textbf{63.0} & 41.0 & \textbf{41.0} & 28.0 & \textbf{32.0} & 65.0 & 54.0 & \textbf{45.0} \\
+\quad + SFT & 28.0 & 59.0 & 53.0 & 25.0 & 64.0 & 42.0 & 40.0 & 29.0 & 31.0 & 65.0 & 55.0 & 45.0 \\
+\quad + SFT + DPO & 28.0 & 59.0 & 54.0 & 25.0 & 63.0 & 42.0 & 41.0 & 29.0 & 31.0 & 65.0 & 55.0 & 45.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{OT3 Phase 2 Posttraining Language Evaluation Results.}
+\label{tab:lang_eval_ot3_phase2}
+\resizebox{\textwidth}{!}{%
+\scriptsize
+\begin{tabular}{lcccccccccccc}
+\toprule
+Model & ARC-C & ARC-E & BoolQ & CSQA & COPA & HellaS & LAMBADA & MMLU & OBQA & PIQA & WinoG & \textbf{Avg} \\
+\midrule
+Comma-16k + SFT              & 38.0 & 66.0 & 66.0 & 22.0 & 71.0 & 54.0 & 54.0 & 28.0 & 34.0 & 71.0 & 61.0 & \textbf{51.0} \\
+Comma-16k + SFT + DPO              & 36.0 & 66.0 & 65.0 & 22.0 & 73.0 & 51.0 & 49.0 & 28.0 & 33.0 & 70.0 & 59.0 & \textbf{50.0} \\
+\midrule
+\addlinespace[0.3em]
+MV-16k + SFT + DPO                 & 40.0 & 70.0 & 73.0 & 50.0 & 71.0 & 55.0 & 49.0 & 41.0 & 34.0 & 70.0 & 59.0 & \textbf{56.0} \\
+\midrule
+\addlinespace[0.3em]
+Qwen2.5-1.5B + SFT           & 51.0 & 78.0 & \textbf{77.0} & \textbf{73.0} & 84.0 & 67.0 & 46.0 & \textbf{59.0} & 41.0 & 77.0 & 63.0 & \textbf{65.0} \\
+Qwen2.5-1.5B + SFT + DPO           & 51.0 & 78.0 & \textbf{77.0} & \textbf{73.0} & 84.0 & 67.0 & 46.0 & \textbf{59.0} & 41.0 & 77.0 & 63.0 & \textbf{65.0} \\
+\midrule
+\addlinespace[0.3em]
+Qwen3-1.7B + SFT             & 49.0 & 76.0 & 75.0 & 65.0 & 81.0 & 59.0 & 43.0 & 53.0 & 39.0 & 74.0 & 60.0 & \textbf{61.0} \\
+Qwen3-1.7B + SFT + DPO             & 49.0 & 76.0 & 75.0 & 65.0 & 81.0 & 59.0 & 43.0 & 53.0 & 39.0 & 74.0 & 61.0 & \textbf{61.0} \\
+\midrule
+\addlinespace[0.3em]
+SmolLM2-1.7B-16k + SFT       & \textbf{53.0} & \textbf{81.0} & 70.0 & 59.0 & \textbf{88.0} & \textbf{71.0} & \textbf{64.0} & 44.0 & 43.0 & \textbf{78.0} & \textbf{66.0} & \textbf{65.0} \\
+SmolLM2-1.7B-Instruct-16k    & 51.0 & 79.0 & 76.0 & 62.0 & 83.0 & \textbf{71.0} & 59.0 & 47.0 & \textbf{44.0} & \textbf{78.0} & \textbf{66.0} & \textbf{65.0} \\
+\midrule
+\addlinespace[0.3em]
+FineWeb-Edu-16k + SFT              & 47.0 & 79.0 & 70.0 & 21.0 & 83.0 & 67.0 & 54.0 & 27.0 & 41.0 & 77.0 & 63.0 & \textbf{57.0} \\
+\midrule
+\addlinespace[0.3em]
+Nemotron-16k + SFT          & 48.0 & 79.0 & 75.0 & 46.0 & 81.0 & 70.0 & 57.0 & 41.0 & 42.0 & \textbf{78.0} & 64.0 & \textbf{62.0} \\
+Nemotron-16k + SFT + DPO          & 48.0 & 79.0 & 75.0 & 47.0 & 81.0 & 70.0 & 57.0 & 41.0 & 42.0 & \textbf{78.0} & 65.0 & \textbf{62.0} \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{Skipping Phase 1, OT3 Phase 2 Posttraining Language Evaluation Results.}
+\label{tab:lang_eval_ot3_phase1}
+\resizebox{\textwidth}{!}{%
+\scriptsize
+\begin{tabular}{lcccccccccccc}
+\toprule
+Model & ARC-C & ARC-E & BoolQ & CSQA & COPA & HellaS & LAMBADA & MMLU & OBQA & PIQA & WinoG & \textbf{Avg} \\
+\midrule
+MV-16k                       & 43.0 & 71.0 & 74.0 & 49.0 & 69.0 & 54.0 & 49.0 & 42.0 & 33.0 & 70.0 & 59.0 & \textbf{56.0} \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}

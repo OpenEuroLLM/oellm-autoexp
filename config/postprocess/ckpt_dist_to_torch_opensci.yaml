@@ -2,15 +2,17 @@
 #
 # Megatron torch_dist → torch checkpoint conversion.
 # Runs inside the container (same_job) after training, before HF conversion.
-# For each checkpoint step, writes the step number to
-# latest_checkpointed_iteration.txt (load_dir) so Megatron loads the correct
-# torch_dist checkpoint, then runs the conversion command.
+#
+# load_dir points at the run's --save dir (where new iters were just written),
+# not --load — for continued-pretraining runs the two differ, and the source
+# only has the resumption checkpoint, not the new iters. Step builds an
+# explicit `--load <load_dir>` that overrides whatever was in cfg.cmd.
 
 postprocess:
   dist_to_torch:
     class_name: MegatronDistToTorchStep
     cmd: "${backend.full_cmd}"
-    load_dir: ${backend.megatron.load}
+    load_dir: ${backend.megatron.save}
     ckpt_step: ${backend.megatron.ckpt_step}
     save_interval: ${backend.megatron.save_interval}
     train_iters: ${backend.megatron.train_iters}

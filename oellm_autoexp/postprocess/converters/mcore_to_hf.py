@@ -472,6 +472,15 @@ def convert_checkpoint_from_megatron_to_transformers(args):
 
 
 def main():
+    # Under srun, this script runs once per SLURM task (one per node by
+    # default); concurrent writes to the same hf/iter_NNNN/ dir produced
+    # 0-byte configuration_opensci.py and torn config.json. Gate to global
+    # rank 0. SLURM_PROCID defaults to "0" outside SLURM (local runs),
+    # which preserves single-process behavior there.
+    import os
+    if os.environ.get("SLURM_PROCID", "0") != "0":
+        return
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--megatron-path", type=str, default=None)
     parser.add_argument("--convert_checkpoint_from_megatron_to_transformers", action="store_true")

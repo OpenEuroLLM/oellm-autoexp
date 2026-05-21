@@ -18,6 +18,7 @@ srun:
 launcher_env_passthrough: true
 env:
   MACHINE_NAME: JUPITER
+  SLURM_MPI_TYPE: "none"
   HF_HOME: ${oc.env:HF_HOME}
   HF_ALLOW_CODE_EVAL: "1"
   HF_DATASETS_OFFLINE: "1"
@@ -56,5 +57,5 @@ sbatch:
   gres: "gpu:4"
   gpu_bind: "none"
   partition: ${oc.env:SLURM_PARTITION,booster}
-  account: ${oc.env:SLURM_ACCOUNT,jureap59}
+  account: ${oc.env:SLURM_ACCOUNT,reformo}
   time: "12:00:00"
