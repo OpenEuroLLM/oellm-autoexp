@@ -2,8 +2,8 @@
 defaults:
   - ../base
   - /backend: megatron
-  - /container: lumi
-  - /slurm: lumi
+  - /container: mi325x
+  - /slurm: mi325x
   - /sweep: none
   - /backend/megatron: [base]
   - /experiments/rluukkon/models: moe_0.7B_115M
@@ -25,17 +25,26 @@ backend:
     moe_per_layer_logging: True
     # make topk=1
     moe_router_topk: 2
+    # overlap_param_gather: False
     moe_aux_loss_coeff: 0.0
-     
-
+    # overlap_grad_reduce: false
+    gradient_accumulation_fusion: false
+    overlap_param_gather: False
+    overlap_grad_reduce: False
+    masked_softmax_fusion: False
+    expert_model_parallel_size: 1
+    moe_grouped_gemm: false
 
     # DATA
-    train_data_path: 
-      - /pfs/lustrep4/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/high/actual/CC-MAIN-2015-40_text_document
+    train_data_path:
+      - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/gpt-neox-20b/merged/CC-MAIN-2020-high-actual_merged
+    # train_data_path: 
+      # - /pfs/lustrep4/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/high/actual/CC-MAIN-2015-40_text_document
     
-    valid_data_path: 
-      - /pfs/lustrep4/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_5p_new/all/high-all
-    data_cache_path: /flash/${oc.env:DATA_ACCOUNT,project_462000963}/rluukkon/cache
+    # valid_data_path: 
+      # - /pfs/lustrep4/scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_5p_new/all/high-all
+    # data_cache_path: /flash/${oc.env:DATA_ACCOUNT,project_462000963}/rluukkon/cache
+    data_cache_path: /shared_silo/scratch/rluukkon/.cache
     dataloader_type: cyclic
 
     # Tokenizer
@@ -57,22 +66,24 @@ backend:
     save: ${job.base_output_dir}
     load: null
     # wandb_project: moe-router-breaking-experiments
-    wandb_project: moe-exploration
+    wandb_project: moe-exploration-overfit-test
     wandb_exp_name: ${job.name}_${oc.env:SLURM_JOB_ID,local}
     wandb_save_dir: ${job.base_output_dir}/wandb
 
 slurm:
   sbatch:
-    partition: dev-g
+    # partition: dev-g
     nodes: 1
     time: 0-00:10:00
-    account: project_462000963
+    # mem: 128G
+    # gpus_per_node: 1
+    # account: project_462000963
 
 
   env:
     USE_ROCM_AITER_ROPE_BACKEND: "0"
     WANDB_MODE: "online"
-    # WANDB_ENTITY: "openeurollm-project"
+    WANDB_ENTITY: "openeurollm-project"
     OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
     DATA_PATH: "${oc.env:DATA_PATH,/pfs/lustrep4/scratch/project_462000963/preprocessed}"
 

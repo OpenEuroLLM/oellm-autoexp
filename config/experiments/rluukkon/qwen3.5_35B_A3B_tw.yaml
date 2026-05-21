@@ -12,12 +12,13 @@ defaults:
 slurm:
   sbatch:
     partition: amd-tw-verification
-    nodes: 2
-    time: 0-00:10:00
+    nodes: 4
+    time: 0-16:00:00
   
   env:
+    # change container
     USE_ROCM_AITER_ROPE_BACKEND: "0"
-    WANDB_MODE: "offline"
+    WANDB_MODE: "online"
     # WANDB_ENTITY: "openeurollm-project"
     OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
 
@@ -27,43 +28,48 @@ backend:
     log_interval: 1
     log_progress: true
     data_path: 
-      - /shared_silo/scratch/mika/experiments/dataset/simple-wikipedia/train
+      - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
     data_cache_path: /shared_silo/scratch/rluukkon/data/.cache
     split: "989,10,1"
+    
     lr: 3e-4
-    global_batch_size: 32
+    global_batch_size: 512
     micro_batch_size: 2
     # moe_flex_dispatcher_backend: "deepep"
     expert_model_parallel_size: 8
     pipeline_model_parallel_size: 1
     use_distributed_optimizer: true
-
+    moe_per_layer_logging: true
     # Optimization stuff
     create_attention_mask_in_dataloader: false
-    masked_softmax_fusion: false
-    bias_dropout_fusion: false
-    gradient_accumulation_fusion: False
-    moe_grouped_gemm: true
-    moe_token_dispatcher_type: "allgather"
+    # masked_softmax_fusion: false
+    # bias_dropout_fusion: false
+    gradient_accumulation_fusion: false
+    moe_grouped_gemm: false
+    moe_token_dispatcher_type: "alltoall"
+    overlap_param_gather: true
+    moe_aux_loss_coeff: 0.0001 # default is 0.001
+    overlap_grad_reduce: true
+    # overlap_moe_expert_parallel_comm: true
+
    
     # training schedule. Round numbers to avoid floating point issues
-    train_iters: ${oc.eval:'-(-4_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    train_iters: ${oc.eval:'-(-10_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
     lr_warmup_iters: ${oc.eval:'min(${.train_iters} // 10, 25000)'}
     lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
     lr_decay_iters: ${.train_iters}
     ckpt_format: torch_dist
-    # save_interval: 2
-    exit_interval: 7
-    save: ${job.base_output_dir}_cpt
+    save_interval: 150
+    save: ${job.base_output_dir}_cpt_${.lr}_${.moe_aux_loss_coeff}
     load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-35B-A3B-Base
     finetune: true
     no_load_optim: true
     no_load_rng: true
     tensorboard_dir: ${job.base_output_dir}/tensorboard
-    # wandb_save_dir: "${job.base_output_dir}/wandb"
-    # wandb_project: "${job.name}"
-    # wandb_exp_name: "qwen3_30B_A3B_$SLURM_JOB_ID"
+    wandb_save_dir: "${job.base_output_dir}/wandb"
+    wandb_project: "moe-exploration"
+    wandb_exp_name: "qwen3_5_35B_A3B_tw_test_lr_3e-4_aux_0.0001_${oc.env:SLURM_JOB_ID,local}"
 
 
 job:
-  name: qwen3_5_35B_A3B_tw_test
+  name: qwen3_5_35B_A3B_tw_test_lr_3e-4_aux_0.0001_${oc.env:SLURM_JOB_ID,local}
