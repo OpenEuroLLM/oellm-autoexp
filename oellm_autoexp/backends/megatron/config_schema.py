@@ -1245,6 +1245,17 @@ class MegatronConfig(ConfigInterface):
     # below this threshold
     decoupled_min_lr: float | None = None
 
+    # Learning rate for MoE router parameters (*.mlp.router.weight). Accepts a plain float
+    # ("3e-5") for a uniform LR across all routers, or a per-layer-group spec
+    # ("0-4:3e-5,5-34:0,35-39:3e-5") where each token is a layer range and its LR separated by
+    # ":". LR=0 for a group freezes those router weights (requires_grad=False, no optimizer
+    # state allocated).
+    router_lr_spec: str | None = None
+
+    # LR floor applied to all non-frozen router param groups. Defaults to the global --min-lr
+    # if unset.
+    router_min_lr: float | None = None
+
     # Output directory to save checkpoints to.
     save: str | None = None
 

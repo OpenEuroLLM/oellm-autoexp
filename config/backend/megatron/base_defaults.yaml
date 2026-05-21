@@ -536,6 +536,8 @@ rotary_interleaved: false  # True is rotate pairs of even and odd dimensions (Ro
 rotary_percent: 1.0  # Percent of rotary dimension to use, default 100%%
 rotary_scaling_factor: 1.0  # Rotary scaling factor for the rotary embeddings.
 rotary_seq_len_interpolation_factor: null  # Sequence length interpolation factor for rotary embeddings.
+router_lr_spec: null  # Learning rate for MoE router parameters (*.mlp.router.weight). Accepts a plain float ("3e-5") for a uniform LR across all routers, or a per-layer-group spec ("0-4:3e-5,5-34:0,35-39:3e-5") where each token is a layer range and its LR separated by ":". LR=0 for a group freezes those router weights (requires_grad=False, no optimizer state allocated).
+router_min_lr: null  # LR floor applied to all non-frozen router param groups. Defaults to the global --min-lr if unset.
 run_workload_inspector_server: false  # If set, enables workload inspector server for on-demand profiling.
 sample_rate: 1.0  # sample rate for training data. Supposed to be 0  < sample_rate < 1
 save: null  # Output directory to save checkpoints to.
