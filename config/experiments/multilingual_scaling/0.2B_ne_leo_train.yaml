@@ -19,7 +19,8 @@ stage: "" # Will be overridden by sweep
 
 job:
   name: "" # Will be overridden by sweep with stage and hyperparameter info
-  base_output_dir: "/leonardo_work/OELLM_prod2026/users/shaldar0/multilingual_scaling/0.2B_ne/training/${job.name}"
+  # base_output_dir: "/leonardo_work/OELLM_prod2026/users/shaldar0/multilingual_scaling/0.2B_ne/training/${job.name}"
+  base_output_dir: "/leonardo_work/OELLM_prod2026/experiments/multilingual_scaling/0.2B_ne/training/${job.name}"
   log_path: ${slurm.sbatch.error}
 
 backend:
@@ -32,9 +33,12 @@ backend:
 
     data_cache_path: /leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp/MEGATRON_262k/${job.name} # Adjust it to your own directory
 
-    # Evals off
-    eval_iters: 0
-    split: "100,0,0"
+    # # Evals off: this changes the data stream
+    # eval_iters: 0
+    # split: "100,0,0"
+
+    # Evals off (keep data stream identical to MN5's 99,1,0)
+    eval_interval: 1_000_000_000
 
 
 slurm:
