@@ -180,9 +180,14 @@ def parse_config(config_path: str) -> dict:
     combos: list[dict] = []          # {lr, gbsz, stable_tokens, valid_decay_tokens: set[int]}
     all_decay_stages: OrderedDict[str, int] = OrderedDict()  # stage_name -> token_budget
 
+    # Used by the "new format" where stable entries carry an explicit stage name (e.g.
+    # "stable12BT") and are immediately followed by their associated decay list.
+    _pending_stable_combo: dict | None = None
+
     for group in groups:
         if group.get("type") != "list" or "configs" not in group:
             continue
+        _pending_stable_combo = None  # reset per group
         for entry in group["configs"]:
             if not isinstance(entry, dict):
                 continue
@@ -192,7 +197,7 @@ def parse_config(config_path: str) -> dict:
                 job_name_tpl = entry["job.name"]
                 continue
 
-            # Group 1: (lr, gbsz) hyperparameter combo entries
+            # Group 1 (old format): pure (lr, gbsz) combo entries without 'stage'
             if (
                 "backend.megatron.lr" in entry
                 and "backend.megatron.global_batch_size" in entry
@@ -218,20 +223,52 @@ def parse_config(config_path: str) -> dict:
                     "cross_tokens": cross,
                     "diagonal_tokens": diagonal,
                     "stable_launch_tier": str(entry.get("backend.megatron.aux.stable_launch_tier", "")),
+                    "stable_stage_name": None,  # old format: use "stable" + job_horizon_suffix
                 })
                 continue
 
-            # Group 2 stable entry: skip (it just sets train_iters formulas)
+            # New format: stable phase entry with an explicit stage name (e.g. "stable12BT").
+            # The adjacent decay list (next type:list entry) provides valid_decay_tokens.
+            _stage_val = entry.get("stage", "")
+            if (
+                isinstance(_stage_val, str) and _stage_val.startswith("stable")
+                and "backend.megatron.lr" in entry
+                and "backend.megatron.global_batch_size" in entry
+                and "backend.megatron.aux.tokens" in entry
+                and entry.get("type") not in ("product", "list")
+            ):
+                _pending_stable_combo = {
+                    "lr": float(entry["backend.megatron.lr"]),
+                    "gbsz": int(entry["backend.megatron.global_batch_size"]),
+                    "stable_tokens": int(entry["backend.megatron.aux.tokens"]),
+                    "valid_decay_tokens": set(),
+                    "center_tokens": set(),
+                    "cross_tokens": set(),
+                    "diagonal_tokens": set(),
+                    "stable_launch_tier": str(entry.get("backend.megatron.aux.stable_launch_tier", "")),
+                    "stable_stage_name": _stage_val,  # new format: pass full name (e.g. "stable12BT")
+                }
+                continue
+
+            # Group 2 stable entry (old format, stage == "stable"): skip
             if entry.get("stage") == "stable":
                 continue
 
-            # Group 2 nested decay list: collect all possible decay stage names
+            # Decay list: collect stage names; if preceded by a new-format stable entry,
+            # associate these decay tokens with that combo.
             if entry.get("type") == "list" and "configs" in entry:
+                _decay_toks: set[int] = set()
                 for dc in entry["configs"]:
                     if isinstance(dc, dict) and "stage" in dc and "backend.megatron.aux.tokens" in dc:
                         stage_name = str(dc["stage"])
                         tok = int(dc["backend.megatron.aux.tokens"])
                         all_decay_stages[stage_name] = tok
+                        _decay_toks.add(tok)
+                if _pending_stable_combo is not None:
+                    _pending_stable_combo["valid_decay_tokens"] = _decay_toks
+                    _pending_stable_combo["center_tokens"] = _decay_toks
+                    combos.append(_pending_stable_combo)
+                    _pending_stable_combo = None
 
     # Build token → stage_name reverse map
     tok_to_stage: dict[int, str] = {tok: name for name, tok in all_decay_stages.items()}
@@ -240,6 +277,7 @@ def parse_config(config_path: str) -> dict:
     params["combos"] = combos
     params["all_decay_stages"] = all_decay_stages
     params["tok_to_stage"] = tok_to_stage
+    params["adam_beta2"] = float(meg.get("adam_beta2", 0.95))
     return params
 
 
@@ -526,7 +564,9 @@ def _run_id_sets(run_dir: Path) -> tuple[set[str], set[str]]:
     """Return (config_ids, log_ids) for a run directory.
 
     config_ids: IDs from config-{id}.yaml (job submitted via pipeline).
-    log_ids:    IDs from stdout/stderr-{id}.log (job actually ran).
+    log_ids:    IDs from stdout/stderr-{id}.log in logs/ subdirectory, OR
+                from slurm-{id}.log in run_dir when no logs/ subdirectory exists
+                (combined-log convention).  Mirrors the per-job fallback in main().
     A manually restarted run has log_ids that are not in config_ids (jobs
     submitted directly without the config-creation step).
     """
@@ -543,6 +583,13 @@ def _run_id_sets(run_dir: Path) -> tuple[set[str], set[str]]:
             m = re.match(r"(?:stdout|stderr)-(\d+)\.log$", f.name)
             if m:
                 log_ids.add(m.group(1))
+    else:
+        # Fallback: combined slurm-{id}.log files at run dir root
+        if run_dir.is_dir():
+            for f in run_dir.iterdir():
+                m = re.match(r"slurm-(\d+)\.log$", f.name)
+                if m:
+                    log_ids.add(m.group(1))
     return config_ids, log_ids
 
 
@@ -893,6 +940,16 @@ def main() -> None:
     seed = cfg["seed"]
     combos = cfg["combos"]
     tok_to_stage = cfg["tok_to_stage"]
+    adam_beta2 = cfg.get("adam_beta2", 0.95)
+
+    def _render(stage: str, lr: float, gbsz: int, stable_tok: int | None = None) -> str:
+        """render_job_name wrapper that also substitutes adam_beta2 and similar extras.
+
+        render_job_name leaves un-substituted keys as '\\${key}' (backslash kept),
+        so we must match the same prefix when replacing.
+        """
+        raw = render_job_name(cfg["job_name_tpl"], 1, lr, gbsz, seed, stage, stable_tok)
+        return raw.replace("\\${backend.megatron.adam_beta2}", str(adam_beta2))
 
     # Remap cluster path to local mount
     if args.results_dir is None:
@@ -904,7 +961,7 @@ def main() -> None:
 
     # Build list of (run_name, stage, tokens) applying the per-combo filter.
     # For each combo:
-    #   - stable: always 1 run  → ..._stable{max_tokens_BT}BT
+    #   - stable: always 1 run  → ..._stable{max_tokens_BT}BT  (or ..._stable12BT for new format)
     #   - decays: only token budgets in (center | cross | diagonal) token sets
     run_specs: list[tuple[str, str, int, str]] = []
     for combo in combos:
@@ -912,7 +969,9 @@ def main() -> None:
         stable_tok = combo["stable_tokens"]
         valid_decay_toks = combo["valid_decay_tokens"]
 
-        name = render_job_name(cfg["job_name_tpl"], 1, lr, gbsz, seed, "stable", stable_tok)
+        # New format: stable_stage_name is the full name (e.g. "stable12BT"); old format: None.
+        stable_stage = combo.get("stable_stage_name") or "stable"
+        name = _render(stable_stage, lr, gbsz, stable_tok if stable_stage == "stable" else None)
         run_specs.append((name, "stable", stable_tok, combo["stable_launch_tier"]))
 
         # Decay runs: only the token budgets permitted by the filter
@@ -926,7 +985,7 @@ def main() -> None:
                 tier = "cross"
             else:
                 tier = "diagonal"
-            name = render_job_name(cfg["job_name_tpl"], 1, lr, gbsz, seed, stage_name)
+            name = _render(stage_name, lr, gbsz)
             run_specs.append((name, stage_name, decay_tok, tier))
 
     # Resolve the local results base directory (template typically has no per-combo vars here)
@@ -1053,6 +1112,12 @@ def main() -> None:
             logs_dir = run_dir / "logs"
             stdout_log = logs_dir / f"stdout-{job_id}.log"
             stderr_log = logs_dir / f"stderr-{job_id}.log"
+            # Fallback: some sweeps write a combined slurm-{id}.log in the run dir
+            if not stdout_log.is_file():
+                slurm_log = run_dir / f"slurm-{job_id}.log"
+                if slurm_log.is_file():
+                    stdout_log = slurm_log
+                    stderr_log = slurm_log
             is_latest = job_id == job_ids[-1]
 
             stdout_data = parse_stdout(stdout_log)
