@@ -1,0 +1,16 @@
+# @package backend.megatron
+# Dataset related settings for multilingual scaling experiments
+max_position_embeddings: ${.seq_length}
+split: '1,99,0'
+create_attention_mask_in_dataloader: False
+
+# Data paths
+data_args_path: /leonardo_work/OELLM_prod2026/users/shaldar0/datamix_tools_from_fedor/datamix-tools/output/1TT-option-4-val.sh
+
+# Tokenizer
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: /leonardo_work/OELLM_prod2026/users/shaldar0/tokenizers/openeurollm-tokenizer-256k
+
+seq_length: 4096
+dataloader_type: "cyclic"
+num_workers: 8 # Will be overridden by sweep
