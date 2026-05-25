@@ -226,11 +226,13 @@ def _convert_attention_params(
     hidden_size_per_head,
     tp_size,
     output_state_dict,
+    qk_norm_names=("q_layernorm", "k_layernorm"),
 ):
+    q_norm_name, k_norm_name = qk_norm_names
     if "q_layernorm" in op_name:
-        output_state_dict[f"{layer_name}.self_attn.q_layernorm.{weight_or_bias}"] = params.clone()
+        output_state_dict[f"{layer_name}.self_attn.{q_norm_name}.{weight_or_bias}"] = params.clone()
     elif "k_layernorm" in op_name:
-        output_state_dict[f"{layer_name}.self_attn.k_layernorm.{weight_or_bias}"] = params.clone()
+        output_state_dict[f"{layer_name}.self_attn.{k_norm_name}.{weight_or_bias}"] = params.clone()
     elif op_name.endswith("layer_norm_weight") or op_name.endswith("layernorm"):
         if "qkv" in op_name:
             output_state_dict[f"{layer_name}.input_layernorm.{weight_or_bias}"] = params.clone()
@@ -393,6 +395,11 @@ def convert_checkpoint_from_megatron_to_transformers(args):
     num_groups = config.num_key_value_heads
     path = "model"
 
+    # Qwen3's per-head QK RMSNorm is named q_norm/k_norm in HF; opensci uses q_layernorm/k_layernorm.
+    qk_norm_names = (
+        ("q_norm", "k_norm") if args.model_type == "qwen3" else ("q_layernorm", "k_layernorm")
+    )
+
     for pp_rank in range(pp_size):
         if pp_size > 0:
             logging.info("Converting pipeline parallel rank %d", pp_rank)
@@ -450,6 +457,7 @@ def convert_checkpoint_from_megatron_to_transformers(args):
                 hidden_size_per_head,
                 tp_size,
                 output_state_dict,
+                qk_norm_names=qk_norm_names,
             )
 
     if config.num_hidden_layers != (layer_idx + 1):  # noqa: F821
@@ -464,6 +472,9 @@ def convert_checkpoint_from_megatron_to_transformers(args):
 
     logging.info("Conversion done, saving to %s", args.save_path)
     config.save_pretrained(args.save_path)
+    # Persist tokenizer only when the architecture template didn't vendor one.
+    if not os.path.exists(os.path.join(args.save_path, "tokenizer_config.json")):
+        tokenizer.save_pretrained(args.save_path)
     save_torch_state_dict(
         state_dict=output_state_dict,
         save_directory=args.save_path,
