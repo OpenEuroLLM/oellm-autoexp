@@ -55,6 +55,12 @@ log_events:
     action:
       class_name: RestartAction
       reason: ""
+  - name: node_failure
+    pattern: "CANCELLED AT .* DUE TO NODE FAILURE"
+    pattern_type: regex
+    action:
+      class_name: RestartAction
+      reason: "Node failure"
 
 state_events:
   - name: "failed"
