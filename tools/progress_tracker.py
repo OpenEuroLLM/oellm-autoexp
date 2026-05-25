@@ -1334,6 +1334,11 @@ def main() -> None:
                 r[fld] = known[fld]
             if r.get(fld) is not None:
                 known[fld] = r[fld]
+        # Track last known iter/progress for QUEUED fill-forward below.
+        if r.get("last_iter") is not None:
+            known["last_iter"] = r["last_iter"]
+        if r.get("progress") is not None:
+            known["progress"] = r["progress"]
         # After filling train_iters, recompute progress if last_iter is still None
         # but the checkpoint confirms training completed.
         if r.get("last_iter") is None and r.get("last_ckpt") is not None:
@@ -1341,6 +1346,24 @@ def main() -> None:
             if ti is not None and r["last_ckpt"] >= ti:
                 r["last_iter"] = ti
                 r["progress"] = 100.0
+
+    # For QUEUED rows with no progress, carry forward last_iter/progress from the
+    # previous job of the same run: a queued job hasn't started yet so its progress
+    # is the same as where the previous job left off.
+    _run_queued_known: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        rn = r["run_name"]
+        known = _run_queued_known.setdefault(rn, {})
+        if r["status_word"] == "QUEUED" and r.get("last_iter") is None:
+            if "last_iter" in known:
+                r["last_iter"] = known["last_iter"]
+            if "progress" in known:
+                r["progress"] = known["progress"]
+        else:
+            if r.get("last_iter") is not None:
+                known["last_iter"] = r["last_iter"]
+            if r.get("progress") is not None:
+                known["progress"] = r["progress"]
 
     # ── Print table ─────────────────────────────────────────────────────────
 
