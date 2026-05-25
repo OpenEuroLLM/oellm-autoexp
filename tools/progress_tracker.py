@@ -101,6 +101,7 @@ RE_SEGFAULT = re.compile(r"Segmentation fault|signal 11\b", re.IGNORECASE)
 RE_OOM = re.compile(r"OutOfMemoryError|CUDA out of memory", re.IGNORECASE)
 RE_FATAL = re.compile(r"\bFATAL ERROR\b", re.IGNORECASE)
 RE_TIME_LIMIT = re.compile(r"DUE TO TIME LIMIT", re.IGNORECASE)
+RE_NODE_FAILURE = re.compile(r"DUE TO NODE FAILURE|Node failure on\b|NODE_FAIL", re.IGNORECASE)
 RE_SIGTERM = re.compile(
     r"SignalException.*?sigval=Signals\.SIGTERM|signal: 15\b", re.IGNORECASE
 )
@@ -482,6 +483,7 @@ def parse_stderr(log_path: Path) -> dict:
         "oom": False,
         "fatal": False,
         "time_limit": False,
+        "node_failure": False,
         "sigterm": False,
         "wandb_synced": False,
         "errors": [],
@@ -502,6 +504,9 @@ def parse_stderr(log_path: Path) -> dict:
         result["errors"].append("Fatal error")
     if RE_TIME_LIMIT.search(text):
         result["time_limit"] = True
+    if RE_NODE_FAILURE.search(text):
+        result["node_failure"] = True
+        result["errors"].append("Node failure")
     if RE_SIGTERM.search(text):
         result["sigterm"] = True
     if RE_WANDB_SUMMARY.search(text):
@@ -849,6 +854,8 @@ def determine_status(
             return "⚠️", "FAILED", "Out of memory (CUDA OOM)", _restart
         if stderr_data.get("fatal"):
             return "⚠️", "FAILED", "Fatal error", _restart
+        if stderr_data.get("node_failure"):
+            return "⚠️", "FAILED", "Node failure", _restart
 
     # ── sacct-based states ────────────────────────────────────────────────────
     if sacct_state:
@@ -866,6 +873,8 @@ def determine_status(
             return "🕒", "QUEUED", "", ""
         if sacct_state == "TIMEOUT":
             return "⚠️", "FAILED", "Time limit exceeded", _restart
+        if sacct_state == "NODE_FAIL":
+            return "⚠️", "FAILED", "Node failure", _restart
 
     # ── No stdout → queued / not started ─────────────────────────────────────
     if stdout_data.get("last_iter") is None and stdout_data.get("train_iters") is None:
