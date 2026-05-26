@@ -1,6 +1,6 @@
 # @package _global_
 
-# 0.9B NE sparse Qwen3-like model training with pull-based multi-stage cooldown on Marenostrum
+# 0.1B NE sparse Qwen3-like model training with pull-based multi-stage cooldown on Marenostrum
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 defaults:
@@ -9,11 +9,11 @@ defaults:
   - /slurm: leonardo
   - /job: default
     # - /job: auto_restart
-    #  - /sweep/multilingual_scaling/sparse_scaling@sweep: qwen3_sparse_0.9B_ne # sweep configs  
-  - /sweep: none
+  - /sweep/multilingual_scaling/sparse_scaling@sweep: qwen3_sparse_0.1B_ne # sweep configs  
+  # - /sweep: none
   - /backend/megatron: base
-  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.9B_ne_experts_16 # model configs
-  - /backend/megatron/multilingual_scaling/data: oellm_256k_leonardo # data configs
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.1B_ne_experts_8 # model configs
+  - /backend/megatron/multilingual_scaling/data: oellm_256k_leo_train # data configs
   - _self_
 
 index: 0
@@ -21,7 +21,7 @@ stage: "" # Will be overridden by sweep
 
 job:
   name: "" # Will be overridden by sweep with stage and hyperparameter info
-  base_output_dir: "/leonardo_work/OELLM_prod2026/experiments/sparse_multilingual_scaling/0.9B_ne_sparse_experts_16/training/${job.name}"
+  base_output_dir: "/leonardo_work/OELLM_prod2026/experiments/sparse_multilingual_scaling/0.1B_ne_sparse_experts_${backend.megatron.num_experts}_topk_${backend.megatron.moe_router_topk}/training/${job.name}"
   log_path: ${slurm.sbatch.error}
 
 backend:
@@ -33,17 +33,17 @@ backend:
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
     # DATA
-    data_cache_path: /leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp/MEGATRON_262k # Adjust it to your own directory
+    data_cache_path: /leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp/MEGATRON_262k/${job.name} # Adjust it to your own directory
     
     # For quick testing
-    seq_length: 4096
-    train_iters: 5
-    lr_warmup_iters: 1
-    lr_wsd_decay_iters: 1
-    micro_batch_size: 1    # overridden by sweep
-    global_batch_size:  64 # overridden by sweep        
-    eval_interval: 1000000000
-    save_interval: 1000000000
+    # seq_length: 4096
+    # train_iters: 5
+    # lr_warmup_iters: 1
+    # lr_wsd_decay_iters: 1
+    # micro_batch_size: 1    # overridden by sweep
+    # global_batch_size:  64 # overridden by sweep        
+    # eval_interval: 1000000000
+    # save_interval: 1000000000
 
     # Base training configuration (for stable phase)
     num_workers: 8 # Will be overridden by sweep
@@ -51,13 +51,16 @@ backend:
     global_batch_size: 64  # Will be overridden by sweep
     lr: 5.e-4  # Will be overridden by sweep
 
+    # eval_interval: 200
+    # save_interval: 500
+
 
 slurm:
   sbatch:
-    nodes: 2 #"${oc.eval:'max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node})))'}"
-    qos: "boost_qos_dbg"
+    nodes: "${oc.eval:'max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node})))'}"
+    # qos: "boost_qos_dbg"
     account: "AIFAC_5C0_092"
-    time: "02:00:00"
+    time: "00:40:00"
     output: "${job.base_output_dir}/logs/stdout-%j.log"
     error: "${job.base_output_dir}/logs/stderr-%j.log"
   srun:
