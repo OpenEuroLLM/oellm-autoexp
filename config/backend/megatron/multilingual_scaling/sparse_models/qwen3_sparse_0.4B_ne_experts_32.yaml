@@ -1,32 +1,32 @@
 # @package backend.megatron
 
-# 0.2B non-embedding (ne) sparse Qwen3-like model
+# 0.4B non-embedding (ne) sparse Qwen3-like model
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 # MODEL
-num_layers: 22
-hidden_size: 768
-ffn_hidden_size: 2304
+num_layers: 28
+hidden_size: 1024
+ffn_hidden_size: 3072
 kv_channels: 128
 swiglu: True
 add_bias_linear: False
 init_method_std: 0.02
 
 # MoE PARAMETERS
-num_experts: 64           
-moe_ffn_hidden_size: 1152 
+num_experts: 32 # 64
+moe_ffn_hidden_size: 768 # 1536
 moe_router_load_balancing_type: "aux_loss"
-moe_router_topk: 2
+moe_router_topk: 4 # 2
 moe_grouped_gemm: True
-moe_aux_loss_coeff: 1.e-3
+moe_aux_loss_coeff: 1.e-2
 moe_token_dispatcher_type: "allgather"
 moe_router_dtype: "fp32"
-moe_z_loss_coeff: null
+moe_z_loss_coeff: 1.e-3
 
 # Attention
-num_attention_heads: 8
-num_query_groups: 1
-group_query_attention: False
+num_attention_heads: 16
+num_query_groups: 8
+group_query_attention: True
 attention_softmax_in_fp32: False # OpenSci style
 use_flash_attn: True
 
@@ -148,10 +148,10 @@ aux:
   #   backend.megatron.aux.priority_tier=center
   # Valid values and per-tier job counts (see sweep.filter comment below for
   # the full derivation):
-  #   all       -> 22 stable + 81 decay = 103 jobs (default; everything)
+  #   all       -> 20 stable + 81 decay = 101 jobs (default; everything)
   #   center    ->  4 stable +  9 center decays   = 13 jobs
   #   cross     -> 10 stable + 36 cross decays    = 46 jobs
-  #   diagonal  ->  8 stable + 36 diagonal decays = 44 jobs
+  #   diagonal  ->  6 stable + 36 diagonal decays = 42 jobs
   # Tiers are DISJOINT: running all three back-to-back is exactly
   # equivalent to a single `all` run. Each stable is owned by exactly one
   # tier (see aux.stable_launch_tier), so the tiers MUST be launched in
@@ -161,7 +161,7 @@ aux:
   #
   # Why this works across separate invocations:
   #   * orchestrator.py:91 passes full_points_by_idx=all_points_by_idx,
-  #     so the sibling DAG is built over ALL 220 expanded points
+  #     so the sibling DAG is built over ALL 200 expanded points
   #     regardless of filter. Cross/diagonal decays therefore always see
   #     a resolved `sibling.stable.*` config, even when stables are
   #     filtered out of submission.

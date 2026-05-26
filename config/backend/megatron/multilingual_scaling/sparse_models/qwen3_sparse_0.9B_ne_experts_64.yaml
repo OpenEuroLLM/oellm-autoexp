@@ -14,14 +14,14 @@ init_method_std: 0.02
 
 # MoE PARAMETERS
 num_experts: 64           
-moe_ffn_hidden_size: 2304
+moe_ffn_hidden_size: 1152 # 2304
 moe_router_load_balancing_type: "aux_loss"
-moe_router_topk: 2
+moe_router_topk: 4 # 2
 moe_grouped_gemm: True
-moe_aux_loss_coeff: 1.e-3
+moe_aux_loss_coeff: 1.e-2
 moe_token_dispatcher_type: "allgather"
 moe_router_dtype: "fp32"
-moe_z_loss_coeff: null
+moe_z_loss_coeff: 1.e-3
 
 # Attention
 num_attention_heads: 16
@@ -64,7 +64,7 @@ lr_warmup_iters: 2000 # Fixed for all.
 recompute_activations: False
 use_torch_fsdp2: False # it's either this or the next 4 args
 tensor_model_parallel_size: 1
-pipeline_model_parallel_size: 1
+pipeline_model_parallel_size: 2
 context_parallel_size: 1
 sequence_parallel: True
 expert_model_parallel_size: 4

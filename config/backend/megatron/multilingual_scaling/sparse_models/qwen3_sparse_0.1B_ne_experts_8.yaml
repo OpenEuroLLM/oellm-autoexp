@@ -6,26 +6,26 @@
 # MODEL
 num_layers: 16
 hidden_size: 512
-ffn_hidden_size: 1536
+#ffn_hidden_size: 1536
 kv_channels: 128
 swiglu: True
 add_bias_linear: False
 init_method_std: 0.02
 
 # MoE PARAMETERS
-num_experts: 64           
-moe_ffn_hidden_size: 768
+num_experts: 8 #16           
+moe_ffn_hidden_size: 384 #768 
 moe_router_load_balancing_type: "aux_loss"
-moe_router_topk: 2
+moe_router_topk: 4 #2
 moe_grouped_gemm: True
-moe_aux_loss_coeff: 1.e-3
+moe_aux_loss_coeff: 1.e-2
 moe_token_dispatcher_type: "allgather"
 moe_router_dtype: "fp32"
-moe_z_loss_coeff: null 
+moe_z_loss_coeff: 1.e-3 # disabled by default, do we need this?
 
 # Attention
 num_attention_heads: 8
-num_query_groups: 1
+num_query_groups: 8
 group_query_attention: False
 attention_softmax_in_fp32: False # OpenSci style
 use_flash_attn: True
@@ -67,7 +67,7 @@ tensor_model_parallel_size: 1
 pipeline_model_parallel_size: 1
 context_parallel_size: 1
 sequence_parallel: True
-expert_model_parallel_size: 4
+expert_model_parallel_size: 2
 
 # DISTRIBUTED OPTIM
 use_distributed_optimizer: True
