@@ -10,7 +10,7 @@ postprocess:
     target_params_dtype: bf16
     model_type: qwen3
     architecture_class: Qwen3ForCausalLM
-    tokenizer_name: Qwen/Qwen3-1.7B-Base
+    tokenizer_name: /p/data1/mmlaion/shared/models/Qwen/Qwen3-1.7B-Base
     ckpt_step: ${backend.megatron.ckpt_step}
     save_interval: ${backend.megatron.save_interval}
     train_iters: ${backend.megatron.train_iters}

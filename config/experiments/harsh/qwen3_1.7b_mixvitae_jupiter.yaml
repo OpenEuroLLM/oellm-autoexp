@@ -42,14 +42,29 @@ backend:
     seq_length: 4096
 
     tokenizer_type: HuggingFaceTokenizer
-    tokenizer_model: Qwen/Qwen3-1.7B-Base
+    tokenizer_model: /p/data1/mmlaion/shared/models/Qwen/Qwen3-1.7B-Base
     vocab_size: 151936
     legacy_tokenizer: false
     split: "989,10,1"
     num_workers: 4
 
     data_path:
-      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v2-qwen3/data_shard_00000
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00000
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00001
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00002
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00003
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00004
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00005
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00006
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00007
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00008
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00009
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00010
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00011
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00012
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00013
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00014
+      - ${oc.env:OELLM_DATASETS_TOKENIZED_DIR}/MixtureVitae-v1-qwen3/data_shard_00015
 
     tensor_model_parallel_size: 1
     pipeline_model_parallel_size: 1
