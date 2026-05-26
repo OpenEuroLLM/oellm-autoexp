@@ -864,6 +864,11 @@ def main() -> None:
         help="Optional Markdown table output path",
     )
     ap.add_argument(
+        "--machine",
+        default="",
+        help="Machine name tag (e.g. LEONARDO, MN5) written to CSV output.",
+    )
+    ap.add_argument(
         "--monitor-dirs",
         nargs="*",
         default=None,
@@ -1046,6 +1051,9 @@ def main() -> None:
                 "status_word": s_word,
                 "action_word": "",
                 "error_desc": "",
+                "ckpt_step": sbatch_ckpt_step,
+                "machine": args.machine,
+                "sacct_start_ts": None,
             })
             continue
 
@@ -1091,6 +1099,23 @@ def main() -> None:
             elif (run_name, job_id) in external_job_gpu_h:
                 gpu_hours = external_job_gpu_h[(run_name, job_id)]
 
+            # Cross-cluster job ID collision detection:
+            # MN5 and Leonardo share a numeric Slurm job ID space. A job ID that
+            # exists on MN5 may also exist on Leonardo as a completely different job
+            # (typically a CPU-only job with no gres/gpu in its TRES). When that
+            # happens, sacct returns the wrong job's elapsed/start/end times, which
+            # cause nonsensical TTFI values (days instead of minutes).
+            #
+            # Heuristic: if sacct reports 0 GPUs but the sbatch file declares GPUs,
+            # the sacct entry belongs to a foreign-cluster job. Discard it entirely
+            # so TTFI, status, and GPU-h are not corrupted.
+            if sacct_entry.get("gpus", 0) == 0 and total_gpus > 0:
+                sacct_entry = {}
+                sacct_state = ""
+                sacct_elapsed = ""
+                gpu_hours = external_job_gpu_h.get((run_name, job_id))  # keep if CSV has it
+                gpus = total_gpus
+
             # Low-throughput analysis (reuses the throughput cache written above).
             _job_lt = _analyze_low_throughput_job(
                 stdout_log,
@@ -1101,14 +1126,26 @@ def main() -> None:
             )
 
             # TTFI: time from Slurm job start to first iteration in this log.
+            # Validate first_iter_ts against the sacct time window first: if the
+            # timestamp falls outside [start-60s, end+300s] the log file was written
+            # by a different job (e.g. a later restart reused the log path or a
+            # framework bug wrote to a stale filename). In that case discard it so we
+            # don't compute a days-long TTFI.
+            #
             # Fallback hierarchy (each fires only when previous conditions fail):
             #   1. sacct start + first_iter_ts  (normal case)
-            #   2. sacct start + sacct end, no iter  (sacct available, iter never reached)
-            #   3. gpu_hours / total_gpus, no iter  (sacct unavailable; gpu_hours from external CSV)
+            #   2. sacct start + sacct end, no valid iter ts (iter never reached)
+            #   3. gpu_hours / total_gpus, no iter  (sacct unavailable; external CSV)
             ttfi_min: float | None = None
             sacct_start = sacct_entry.get("start_ts")
             sacct_end = sacct_entry.get("end_ts")
             first_iter_ts = stdout_data.get("first_iter_ts")
+            if (first_iter_ts is not None
+                    and sacct_start is not None
+                    and sacct_end is not None):
+                _ts = first_iter_ts.timestamp()
+                if _ts < sacct_start - 60 or _ts > sacct_end + 300:
+                    first_iter_ts = None  # log timestamps don't belong to this job
             if sacct_start is not None and first_iter_ts is not None:
                 ttfi_min = (first_iter_ts.timestamp() - sacct_start) / 60.0
             elif sacct_start is not None and first_iter_ts is None and sacct_end is not None:
@@ -1137,6 +1174,22 @@ def main() -> None:
                 if overhead_gpu_h is not None and gpu_hours and gpu_hours > 0 else None
             )
 
+            # Final sanity: overhead cannot exceed actual GPU-h. If it does the log
+            # file's content still doesn't correspond to this job's sacct window
+            # (e.g. log is from a longer run than sacct recorded). Null all overhead
+            # columns so they don't corrupt the summary.
+            if (overhead_gpu_h is not None
+                    and gpu_hours is not None
+                    and gpu_hours > 0
+                    and overhead_gpu_h > gpu_hours):
+                ttfi_min = None
+                ttfi_gpu_h = None
+                _lt_time_v = None
+                _lt_gpu_h_v = None
+                overhead_time_h = None
+                overhead_gpu_h = None
+                overhead_pct = None
+
             # Per-job monitor events: set[str] if monitor state exists, else None
             job_events_map = run_job_monitor_events.get(run_name)
             job_monitor_events = (
@@ -1151,6 +1204,10 @@ def main() -> None:
                 run_config_ids=run_config_ids,
                 run_log_ids=run_log_ids,
             )
+
+            if stdout_data.get("last_iter") is None and status_word in ("FAILED", "CANCELLED"):
+                zero_warn = "zero iters"
+                error_desc = (zero_warn + "; " + error_desc).rstrip("; ") if error_desc else zero_warn
 
             rows.append({
                 "run_name": run_name,
@@ -1182,8 +1239,8 @@ def main() -> None:
                 "avg_tok_per_gpu": _tp["avg_tok_per_gpu"] if _tp else None,
                 "n_iters_sampled": _tp["n_iters"] if _tp else None,
                 "gpu_hours": gpu_hours,
-                "time_lost_h": _job_lt.get("time_lost_h"),
-                "gpu_h_lost": _job_lt.get("gpu_h_lost"),
+                "time_lost_h": _lt_time_v,
+                "gpu_h_lost": _lt_gpu_h_v,
                 "overhead_time_h": overhead_time_h,
                 "overhead_gpu_h": overhead_gpu_h,
                 "overhead_pct": overhead_pct,
@@ -1193,6 +1250,9 @@ def main() -> None:
                 "status_word": status_word,
                 "action_word": action_word,
                 "error_desc": error_desc,
+                "ckpt_step": sbatch_ckpt_step,
+                "machine": args.machine,
+                "sacct_start_ts": sacct_entry.get("start_ts"),
             })
 
     # ── Fill-forward static fields for eval-only runs ───────────────────────
@@ -1212,13 +1272,16 @@ def main() -> None:
                 r[fld] = known[fld]
             if r.get(fld) is not None:
                 known[fld] = r[fld]
-        # After filling train_iters, recompute progress if last_iter is still None
-        # but the checkpoint confirms training completed.
+        # After filling train_iters, recompute progress from checkpoint when available.
         if r.get("last_iter") is None and r.get("last_ckpt") is not None:
             ti = r.get("train_iters")
-            if ti is not None and r["last_ckpt"] >= ti:
-                r["last_iter"] = ti
-                r["progress"] = 100.0
+            if ti is not None:
+                if r["last_ckpt"] >= ti:
+                    r["last_iter"] = ti
+                    r["progress"] = 100.0
+                elif r.get("progress") is None:
+                    # QUEUED/waiting: estimate progress from last saved checkpoint
+                    r["progress"] = compute_progress(r["last_ckpt"], r.get("ckpt_step"), ti)
 
     # ── Print table ─────────────────────────────────────────────────────────
 
@@ -1466,21 +1529,23 @@ def main() -> None:
             oh_gpu_h_vals = [r["overhead_gpu_h"] for r in run_rows if r.get("overhead_gpu_h") is not None]
             oh_gpu_h_sum = sum(oh_gpu_h_vals) if oh_gpu_h_vals else None
             oh_gpu_h_str = f"{oh_gpu_h_sum:.2f}" if oh_gpu_h_sum is not None else "N/A"
-            oh_pct_val = oh_gpu_h_sum / h * 100.0 if oh_gpu_h_sum is not None and h > 0 else None
+            run_gpu_h_sum = sum(r["gpu_hours"] for r in run_rows if r.get("gpu_hours") is not None)
+            oh_pct_val = oh_gpu_h_sum / run_gpu_h_sum * 100.0 if oh_gpu_h_sum is not None and run_gpu_h_sum > 0 else None
             oh_pct_str = f"{oh_pct_val:.1f}%" if oh_pct_val is not None else "N/A"
             if oh_gpu_h_sum is not None: grand_oh_gpu_h += oh_gpu_h_sum
             print(
                 f"  {exp_name:<{W_EXP}}  {ttfi_gpu_h_str:>10}  {lt_gpu_h_str:>12}  {oh_gpu_h_str:>14}"
-                f"  {h:>8.1f}  {oh_pct_str:>9}  {prog_str:>9}  {emoji} {color}{status:<12}{RESET}"
+                f"  {run_gpu_h_sum:>8.1f}  {oh_pct_str:>9}  {prog_str:>9}  {emoji} {color}{status:<12}{RESET}"
             )
         print(gpu_sep)
         grand_ttfi_gpu_h_str = f"{grand_ttfi_gpu_h:.2f}" if grand_ttfi_gpu_h else "N/A"
         grand_oh_gpu_h_str = f"{grand_oh_gpu_h:.2f}" if grand_oh_gpu_h else "N/A"
-        grand_oh_pct = grand_oh_gpu_h / grand_gpu_total * 100.0 if grand_oh_gpu_h and grand_gpu_total > 0 else None
+        rows_gpu_total = sum(r["gpu_hours"] for r in rows if r.get("gpu_hours") is not None)
+        grand_oh_pct = grand_oh_gpu_h / rows_gpu_total * 100.0 if grand_oh_gpu_h and rows_gpu_total > 0 else None
         grand_oh_pct_str = f"{grand_oh_pct:.1f}%" if grand_oh_pct is not None else "N/A"
         print(
             f"  {'TOTAL':<{W_EXP}}  {grand_ttfi_gpu_h_str:>10}  {grand_lt_gpu_h:>12.2f}"
-            f"  {grand_oh_gpu_h_str:>14}  {grand_gpu_total:>8.1f}  {grand_oh_pct_str:>9}  {'':>9}"
+            f"  {grand_oh_gpu_h_str:>14}  {rows_gpu_total:>8.1f}  {grand_oh_pct_str:>9}  {'':>9}"
         )
 
     # Summary counts
@@ -1494,10 +1559,11 @@ def main() -> None:
     # ── CSV output ──────────────────────────────────────────────────────────
     if args.csv:
         csv_fields = [
-            "Run", "JobID", "N_ne(B)", "N(B)", "D(B)", "C(10^18)", "Tier", "Stage",
+            "Machine", "Run", "JobID", "StartTime",
+            "N_ne(B)", "N(B)", "D(B)", "C(10^18)", "Tier", "Stage",
             "TotIter", "CurIter", "LastCkpt", "Prog%", "TrainLoss", "ValLoss", "LR", "GBS", "MBS", "Nodes", "Workers",
             "TFLOP/s/GPU", "Tok/s/GPU", "TTFI(min)", "TTFI-GPU-h",
-            "LowTP-time(h)", "LowTP-GPU-h", "Overhead-time(h)", "Overhead-GPU-h", "GPU-h", "Overhead%",
+            "LowTP-time(h)", "LowTP-GPU-h", "Overhead-time(h)", "Overhead-GPU-h", "GPU-h", "Elapsed", "Overhead%",
             "Emoji", "Status", "Action", "Error",
         ]
         csv_path = Path(args.csv)
@@ -1512,9 +1578,16 @@ def main() -> None:
                     if r["transformer_params_b"] is not None and r.get("tokens_b") is not None
                     else ""
                 )
+                _start_ts = r.get("sacct_start_ts")
+                _start_str = (
+                    datetime.fromtimestamp(_start_ts).strftime(TS_FMT)
+                    if _start_ts is not None else ""
+                )
                 writer.writerow({
+                    "Machine":     r.get("machine", ""),
                     "Run":         r["run_name"],
                     "JobID":       r["job_id"],
+                    "StartTime":   _start_str,
                     "N_ne(B)":     f"{r['transformer_params_b']:.2f}" if r["transformer_params_b"] is not None else "",
                     "N(B)":        f"{r['total_params_b']:.2f}" if r["total_params_b"] is not None else "",
                     "D(B)":        int(r["tokens_b"]) if r.get("tokens_b") is not None else "",
@@ -1541,6 +1614,7 @@ def main() -> None:
                     "Overhead-time(h)": f"{r['overhead_time_h']:.4f}" if r.get("overhead_time_h") is not None else "",
                     "Overhead-GPU-h":   f"{r['overhead_gpu_h']:.4f}"  if r.get("overhead_gpu_h")  is not None else "",
                     "GPU-h":            f"{r['gpu_hours']:.1f}"       if r["gpu_hours"]           is not None else "",
+                    "Elapsed":          r.get("sacct_elapsed", ""),
                     "Overhead%":        f"{r['overhead_pct']:.2f}"    if r.get("overhead_pct")    is not None else "",
                     "Emoji":         r["status_emoji"],
                     "Status":      r["status_word"],
@@ -1624,14 +1698,16 @@ def main() -> None:
                 oh_gpu_h_vals_md = [r["overhead_gpu_h"] for r in run_rows if r.get("overhead_gpu_h") is not None]
                 oh_gpu_h_md_sum = sum(oh_gpu_h_vals_md) if oh_gpu_h_vals_md else None
                 oh_gpu_h_md_str = f"{oh_gpu_h_md_sum:.2f}" if oh_gpu_h_md_sum is not None else "N/A"
-                oh_pct_md = oh_gpu_h_md_sum / h * 100.0 if oh_gpu_h_md_sum is not None and h > 0 else None
+                run_gpu_h_md_sum = sum(r["gpu_hours"] for r in run_rows if r.get("gpu_hours") is not None)
+                oh_pct_md = oh_gpu_h_md_sum / run_gpu_h_md_sum * 100.0 if oh_gpu_h_md_sum is not None and run_gpu_h_md_sum > 0 else None
                 oh_pct_md_str = f"{oh_pct_md:.1f}%" if oh_pct_md is not None else "N/A"
                 if oh_gpu_h_md_sum is not None: grand_oh_gpu_h_md += oh_gpu_h_md_sum
                 f.write(
                     f"| {exp_name} | {ttfi_gpu_h_md_str} | {lt_gpu_h_md} | {oh_gpu_h_md_str}"
                     f" | {h:.1f} | {oh_pct_md_str} | {prog_str} | {emoji} {status} |\n"
                 )
-            grand_oh_pct_md = grand_oh_gpu_h_md / grand_gpu_total * 100.0 if grand_oh_gpu_h_md and grand_gpu_total > 0 else None
+            rows_gpu_total_md = sum(r["gpu_hours"] for r in rows if r.get("gpu_hours") is not None)
+            grand_oh_pct_md = grand_oh_gpu_h_md / rows_gpu_total_md * 100.0 if grand_oh_gpu_h_md and rows_gpu_total_md > 0 else None
             grand_oh_pct_md_str = f"{grand_oh_pct_md:.1f}%" if grand_oh_pct_md is not None else "N/A"
             f.write(
                 f"| **TOTAL** | **{grand_ttfi_gpu_h_md:.2f}** | **{grand_lt_gpu_h_md:.2f}**"

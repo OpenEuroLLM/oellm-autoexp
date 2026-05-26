@@ -35,7 +35,7 @@ backend:
     data_cache_path: /leonardo_work/OELLM_prod2026/slaing00/cache/MEGATRON_262k/${job.name}
 
     # Evals off for small models
-    eval_iters: 0
+    eval_iters: 1_000_000_000
     split: "100,0,0"
 
     # Base training configuration (for stable phase)

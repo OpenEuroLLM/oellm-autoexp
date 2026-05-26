@@ -34,9 +34,9 @@ backend:
     # DATA
     data_cache_path: /leonardo_work/OELLM_prod2026/slaing00/cache/MEGATRON_262k/${job.name} 
 
-    # Evals off
-    eval_iters: 0
-    split: "100,0,0" #evals off for now
+    # Evals off (keep data stream identical to 99,1,0)
+    eval_interval: 1_000_000_000
+    split: "99,1,0"
 
     # Base training configuration (for stable phase)
     num_workers: 8 # Will be overridden by sweep

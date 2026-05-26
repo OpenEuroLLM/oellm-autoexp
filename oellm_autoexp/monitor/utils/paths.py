@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+LOGGER = logging.getLogger(__name__)
 
 
 def expand_log_path(log_path: str | Path, job_id: str) -> Path:
@@ -28,17 +31,19 @@ def expand_log_path(log_path: str | Path, job_id: str) -> Path:
 
 def update_log_symlink(target: Path, symlink_path: Path) -> None:
     symlink_path.parent.mkdir(parents=True, exist_ok=True)
+    target = target.absolute()
+    symlink_path = symlink_path.absolute()
+    tmp = symlink_path.with_name(symlink_path.name + ".tmp")
     try:
-        if symlink_path.is_symlink() or symlink_path.exists():
-            symlink_path.unlink()
-    except OSError:  # pragma: no cover
-        pass
-    try:
-        target = target.absolute()
-        symlink_path = symlink_path.absolute()
-        symlink_path.symlink_to(target)
-    except OSError:  # pragma: no cover
-        pass
+        tmp.unlink(missing_ok=True)
+        tmp.symlink_to(target)
+        tmp.rename(symlink_path)
+    except OSError as e:
+        LOGGER.warning("Failed to update symlink %s -> %s: %s", symlink_path, target, e)
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def resolve_log_path(
