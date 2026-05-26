@@ -1,5 +1,5 @@
 # @package _global_
-# Megatron 235BA22B JUPITER 
+# Megatron 235BA22B JUPITER
 # Use num_layers_per_virtual_pipeline_stage to fill PP bubble
 # Bubble is = (PP−1) / (PP−1 + GA×VP)
 # VP = num_layers / (PP × num_layers_per_virtual_pipeline_stage)

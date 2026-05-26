@@ -11,7 +11,7 @@ launcher_cmd: "\
 srun:
   exclusive: true
   wait: 60
-  cpus_per_task: 16
+  cpus_per_task: 288
   mpi: "none"
   threads_per_core: 1
   gpu_bind: "none"
@@ -30,7 +30,6 @@ env:
   NUM_GPUS_PER_NODE: "4"
   NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
   ARCH: "$(uname -m)"
-  SLURM_CPUS_PER_TASK: "16"
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
   PYTHONUNBUFFERED: "1"
   PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
@@ -47,13 +46,15 @@ env:
   GLOO_SOCKET_IFNAME: ib0
   GLOO_SOCKET_FAMILY: AF_INET
   TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+  OMP_NUM_THREADS: "$SLURM_CPUS_PER_TASK"
 
 sbatch:
   nodes: 1
   ntasks_per_node: 1
   ntasks: ${.nodes}
   gpus_per_node: 4
-  cpus_per_task: 16
+  cpus_per_task: 288
+  exclusive: true
   gres: "gpu:4"
   gpu_bind: "none"
   partition: ${oc.env:SLURM_PARTITION,booster}

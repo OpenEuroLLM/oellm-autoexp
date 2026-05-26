@@ -21,6 +21,7 @@ from oellm_autoexp.config.schema import ConfigSetup
 from oellm_autoexp.orchestrator import (
     build_execution_plan,
     ExecutionPlan,
+    render_job_scripts,
     submit_jobs,
     run_loop,
 )
@@ -107,6 +108,16 @@ def _sanitize_env() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if not pattern.search(key)}
 
 
+def _render_log_hint(log_template: str | Path, job_id: str) -> str:
+    """Expand SLURM log templates (%j, %A, %a) using the submitted job id."""
+    log_str = str(log_template)
+    if "_" in job_id:
+        base_id, array_idx = job_id.split("_", 1)
+        log_str = log_str.replace("%A", base_id)
+        log_str = log_str.replace("%a", array_idx)
+    return log_str.replace("%j", job_id)
+
+
 def _write_job_provenance(
     plan: ExecutionPlan,
     *,
@@ -128,6 +139,39 @@ def _write_job_provenance(
     manifest_path = _default_manifest_path(plan.config_setup.monitor_state_dir)
     with open(manifest_path, "w") as fp:
         json.dump(base_payload, fp)
+
+
+def _parse_slurm_time(time_str: str) -> float:
+    """Parse a SLURM time string (D-HH:MM:SS or HH:MM:SS) and return hours."""
+    time_str = time_str.strip()
+    days = 0
+    if "-" in time_str:
+        day_part, time_str = time_str.split("-", 1)
+        days = int(day_part)
+    parts = time_str.split(":")
+    if len(parts) == 3:
+        h, m, s = int(parts[0]), int(parts[1]), int(parts[2])
+    elif len(parts) == 2:
+        h, m, s = 0, int(parts[0]), int(parts[1])
+    else:
+        h, m, s = int(parts[0]), 0, 0
+    return days * 24 + h + m / 60 + s / 3600
+
+
+def _compute_gpu_hours(plan: ExecutionPlan) -> float:
+    """Sum GPU-hours across all jobs in the plan."""
+    total = 0.0
+    for job in plan.jobs:
+        sbatch = job.config.slurm.sbatch
+        nodes = int(getattr(sbatch, "nodes", 1) or 1)
+        gpus_per_node = int(getattr(sbatch, "gpus_per_node", 1) or 1)
+        time_str = str(getattr(sbatch, "time", "1:00:00") or "1:00:00")
+        try:
+            hours = _parse_slurm_time(time_str)
+        except (ValueError, IndexError):
+            hours = 0.0
+        total += hours * nodes * gpus_per_node
+    return total
 
 
 def _parse_subset(spec: str | None) -> set[int]:
@@ -195,7 +239,45 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     if args.dry_run:
+        script_paths = render_job_scripts(plan)
+        if script_paths:
+            print(f"Rendered {len(script_paths)} script(s) (not submitted):")
+            for p in script_paths:
+                print(f"  {p}")
         exit(0)
+    gpu_hours = _compute_gpu_hours(plan)
+    n_jobs = len(plan.jobs)
+    print(
+        f"Plan: {n_jobs} job(s) — estimated {gpu_hours:.1f} GPU-h total - assuming full slurm time and no restarts"
+        + (f" approx. ({gpu_hours / n_jobs:.1f} GPU-h each)" if n_jobs > 1 else "")
+    )
+    if gpu_hours > 100 and not args.dry_run:
+        if n_jobs >= 5:
+            jobs_comment = "Have you checked a single job with --array-subset to confirm it works?"
+        else:
+            jobs_comment = ""
+        try:
+            answer = (
+                input(f"  This run will use ~{gpu_hours:.0f} GPU-h. {jobs_comment} Proceed? [y/N] ")
+                .strip()
+                .lower()
+            )
+            if gpu_hours > 5000:
+                try:
+                    answer = (
+                        input(
+                            f"  This run will use ~{gpu_hours:.0f} GPU-h !! {jobs_comment} Really proceed? [y/N] "
+                        )
+                        .strip()
+                        .lower()
+                    )
+                except EOFError:
+                    answer = ""
+        except EOFError:
+            answer = ""
+        if answer not in ("y", "yes"):
+            print("Aborted.")
+            return
 
     _write_job_provenance(
         plan,
@@ -206,10 +288,7 @@ def main(argv: list[str] | None = None) -> None:
 
     res = submit_jobs(plan, no_error_catching=args.debug, local_mode=args.local)
 
-    if args.no_monitor:
-        exit(0)
-
-    if args.submit_and_exit:
+    if args.no_monitor or args.submit_and_exit:
         res.loop.observe_once()
         exit(0)
 
