@@ -29,14 +29,14 @@ groups:
   # Decay stages override aux.tokens to their specific budget; stable keeps it.
   - type: list
     defaults:
-      # backend.megatron.num_workers: 8
+      backend.megatron.num_workers: 8
       # backend.megatron.micro_batch_size: 2
     configs:
       # ---- gbsz 16 ----
       - backend.megatron.lr: 5.e-4
         backend.megatron.global_batch_size: 16
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 6_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "set()"
@@ -45,7 +45,7 @@ groups:
       - backend.megatron.lr: 1.e-3
         backend.megatron.global_batch_size: 16
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 6_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "{6_000_000_000}"
@@ -54,7 +54,7 @@ groups:
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 16
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 6_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "set()"
@@ -65,7 +65,7 @@ groups:
       - backend.megatron.lr: 5.e-4
         backend.megatron.global_batch_size: 32
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 12_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "{6_000_000_000}"
@@ -74,7 +74,7 @@ groups:
       - backend.megatron.lr: 1.e-3
         backend.megatron.global_batch_size: 32
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 12_000_000_000
         backend.megatron.aux.center_tokens_set:   "{6_000_000_000}"
         backend.megatron.aux.cross_tokens_set:    "{12_000_000_000}"
@@ -83,7 +83,7 @@ groups:
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 32
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 12_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "{6_000_000_000}"
@@ -94,7 +94,7 @@ groups:
       - backend.megatron.lr: 5.e-4
         backend.megatron.global_batch_size: 64
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 12_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "{12_000_000_000}"
@@ -103,7 +103,7 @@ groups:
       - backend.megatron.lr: 1.e-3
         backend.megatron.global_batch_size: 64
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 50_000_000_000
         backend.megatron.aux.center_tokens_set:   "{12_000_000_000}"
         backend.megatron.aux.cross_tokens_set:    "{6_000_000_000}"
@@ -112,7 +112,7 @@ groups:
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 64
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 50_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "{12_000_000_000, 20_000_000_000, 30_000_000_000, 50_000_000_000}"
@@ -121,7 +121,7 @@ groups:
       - backend.megatron.lr: 4.e-3
         backend.megatron.global_batch_size: 64
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 50_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "set()"
@@ -132,7 +132,7 @@ groups:
       - backend.megatron.lr: 5.e-4
         backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 12_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "set()"
@@ -141,7 +141,7 @@ groups:
       - backend.megatron.lr: 1.e-3
         backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 300_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "{12_000_000_000, 20_000_000_000, 30_000_000_000, 50_000_000_000}"
@@ -150,7 +150,7 @@ groups:
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 300_000_000_000
         backend.megatron.aux.center_tokens_set:   "{20_000_000_000, 30_000_000_000, 50_000_000_000}"
         backend.megatron.aux.cross_tokens_set:    "{80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
@@ -159,7 +159,7 @@ groups:
       - backend.megatron.lr: 4.e-3
         backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 300_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "{20_000_000_000, 30_000_000_000, 50_000_000_000}"
@@ -170,7 +170,7 @@ groups:
       - backend.megatron.lr: 1.e-3
         backend.megatron.global_batch_size: 256
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 300_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "{80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
@@ -179,7 +179,7 @@ groups:
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 256
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 300_000_000_000
         backend.megatron.aux.center_tokens_set:   "{80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.cross_tokens_set:    "{20_000_000_000, 30_000_000_000, 50_000_000_000}"
@@ -188,7 +188,7 @@ groups:
       - backend.megatron.lr: 4.e-3
         backend.megatron.global_batch_size: 256
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 64
+        # backend.megatron.num_workers: 64
         backend.megatron.aux.tokens: 300_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "{80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
@@ -199,7 +199,7 @@ groups:
       - backend.megatron.lr: 1.e-3
         backend.megatron.global_batch_size: 512
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 32
+        # backend.megatron.num_workers: 32
         backend.megatron.aux.tokens: 300_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "set()"
@@ -208,7 +208,7 @@ groups:
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 512
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 32
+        # backend.megatron.num_workers: 32
         backend.megatron.aux.tokens: 300_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "{80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
@@ -217,7 +217,7 @@ groups:
       - backend.megatron.lr: 4.e-3
         backend.megatron.global_batch_size: 512
         backend.megatron.micro_batch_size: 4
-        backend.megatron.num_workers: 32
+        # backend.megatron.num_workers: 32
         backend.megatron.aux.tokens: 300_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "set()"

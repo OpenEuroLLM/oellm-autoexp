@@ -65,6 +65,8 @@ groups:
         backend.megatron.aux.stable_launch_tier:  cross
       - backend.megatron.lr: 5.e-4
         backend.megatron.global_batch_size: 64
+        # backend.megatron.micro_batch_size: 1 # just a test, not needed with PP=2
+        # slurm.sbatch.nodes: 8
         backend.megatron.aux.tokens: 50_000_000_000
         backend.megatron.aux.center_tokens_set:   "{6_000_000_000, 12_000_000_000}"
         backend.megatron.aux.cross_tokens_set:    "{20_000_000_000, 30_000_000_000, 50_000_000_000}"
