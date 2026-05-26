@@ -19,7 +19,7 @@ stage: ""
 
 job:
   name: "" # Will be overridden by sweep with stage and hyperparameter info
-  base_output_dir: "/leonardo_work/OELLM_prod2026/slaing00/multilingual_scaling/0.1B_ne/training/${job.name}"
+  base_output_dir: "/leonardo_work/OELLM_prod2026/experiments/multilingual_scaling/0.1B_ne/training/${job.name}"
   log_path: ${slurm.sbatch.error}
 
 
@@ -35,7 +35,8 @@ backend:
     data_cache_path: /leonardo_work/OELLM_prod2026/slaing00/cache/MEGATRON_262k/${job.name}
 
     # Evals off for small models
-    eval_iters: 1_000_000_000
+    eval_interval: 1_000_000_000
+    #eval_iters: 0
     split: "100,0,0"
 
     # Base training configuration (for stable phase)
