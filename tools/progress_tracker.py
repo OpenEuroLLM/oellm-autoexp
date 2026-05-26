@@ -28,9 +28,10 @@ import re
 import subprocess
 import sys
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from statistics import mean
+from statistics import mean, median
 from typing import Any
 
 import yaml
@@ -121,7 +122,21 @@ RE_BUDGET = re.compile(r"_(stable|decay)(\d+BT)$")
 TS_FMT = "%Y-%m-%d %H:%M:%S"
 
 TIER_SORT_ORDER = {"center": 0, "cross": 1, "diagonal": 2}
-SUMMARY_MD_TIER_SEP = "| — | — | — | — | — | — | — | — | — | — | — | — |"
+SUMMARY_MD_TIER_SEP = "| — | — | — | — | — | — | — | — | — | — | — | — | — | — |"
+
+# Checkpoint save cadence: save_interval = SAVE_INTERVAL_NUM // global_batch_size
+_SAVE_INTERVAL_NUM = 512_000
+_DECAY_BUDGETS_TOK = (
+    6_000_000_000,
+    12_000_000_000,
+    20_000_000_000,
+    30_000_000_000,
+    50_000_000_000,
+    80_000_000_000,
+    120_000_000_000,
+    200_000_000_000,
+    300_000_000_000,
+)
 
 
 def _summary_table_sort_key(
@@ -324,8 +339,239 @@ def parse_config(config_path: str) -> dict:
     params["all_decay_stages"] = all_decay_stages
     params["tok_to_stage"] = tok_to_stage
     params["adam_beta2"] = float(meg.get("adam_beta2", 0.95))
+    params["cooldown_decay_fraction"] = float(aux.get("cooldown_decay_fraction", 0.2))
     return params
 
+
+# ── Checkpoint storage ─────────────────────────────────────────────────────────
+
+def _save_interval(gbsz: int) -> int:
+    return _SAVE_INTERVAL_NUM // gbsz
+
+
+def _train_iters(tokens: int, gbsz: int, seq_length: int) -> int:
+    return (tokens + seq_length * gbsz - 1) // (seq_length * gbsz)
+
+
+def _count_checkpoint_iters(checkpoints_dir: Path) -> int:
+    if not checkpoints_dir.is_dir():
+        return 0
+    return sum(
+        1 for p in checkpoints_dir.iterdir()
+        if p.is_dir() and p.name.startswith("iter_")
+    )
+
+
+def measure_checkpoint_storage_gb(checkpoints_dir: Path, *, timeout_s: int = 180) -> float | None:
+    """Return total checkpoint-directory size in GiB, or None if unavailable."""
+    if not checkpoints_dir.is_dir():
+        return None
+    try:
+        proc = subprocess.run(
+            ["du", "-sb", str(checkpoints_dir)],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            nbytes = int(proc.stdout.split()[0])
+            return nbytes / (1024 ** 3)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _expected_stable_checkpoint_iters(
+    stable_tokens: int,
+    gbsz: int,
+    seq_length: int,
+    cooldown_decay_fraction: float,
+) -> set[int]:
+    """Unique iteration indices saved by a stable run at completion."""
+    train_iters = _train_iters(stable_tokens, gbsz, seq_length)
+    save_int = _save_interval(gbsz)
+    iters: set[int] = set()
+    step = save_int
+    while step <= train_iters:
+        iters.add(step)
+        step += save_int
+    for budget in _DECAY_BUDGETS_TOK:
+        if budget > stable_tokens:
+            break
+        budget_iters = _train_iters(budget, gbsz, seq_length)
+        iters.add(int(budget_iters * (1.0 - cooldown_decay_fraction)))
+        iters.add(budget_iters)
+    return iters
+
+
+def _expected_decay_checkpoint_iters(
+    decay_tokens: int,
+    gbsz: int,
+    seq_length: int,
+    cooldown_decay_fraction: float,
+) -> set[int]:
+    """Unique iteration indices saved by a decay run at completion."""
+    full_iters = _train_iters(decay_tokens, gbsz, seq_length)
+    start_iter = int(full_iters * (1.0 - cooldown_decay_fraction))
+    save_int = _save_interval(gbsz)
+    iters: set[int] = set()
+    step = ((start_iter // save_int) + 1) * save_int
+    while step <= full_iters:
+        iters.add(step)
+        step += save_int
+    # Short decay phases (< save_interval) still persist a final checkpoint.
+    if full_iters > start_iter:
+        iters.add(full_iters)
+    return iters
+
+
+def _is_stable_stage(stage: str) -> bool:
+    return stage == "stable" or stage.startswith("stable")
+
+
+def _expected_checkpoint_count(
+    stage: str,
+    tokens: int,
+    gbsz: int,
+    seq_length: int,
+    cooldown_decay_fraction: float,
+) -> int:
+    if _is_stable_stage(stage):
+        return len(_expected_stable_checkpoint_iters(
+            tokens, gbsz, seq_length, cooldown_decay_fraction
+        ))
+    return len(_expected_decay_checkpoint_iters(
+        tokens, gbsz, seq_length, cooldown_decay_fraction
+    ))
+
+
+def measure_all_checkpoint_storage_gb(
+    resolved_base: Path,
+    run_names: list[str],
+    *,
+    max_workers: int = 8,
+) -> dict[str, float | None]:
+    """Measure checkpoint storage for many runs in parallel (du -sb per run)."""
+    results: dict[str, float | None] = {}
+
+    def _du_one(name: str) -> tuple[str, float | None]:
+        ckpt_dir = resolved_base / name / "checkpoints"
+        return name, measure_checkpoint_storage_gb(ckpt_dir)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_du_one, name): name for name in run_names}
+        for fut in as_completed(futures):
+            name, gb = fut.result()
+            results[name] = gb
+    return results
+
+
+def build_run_checkpoint_storage(
+    run_specs: list[tuple[str, str, int, str]],
+    run_to_gbsz: dict[str, int],
+    run_stage_map: dict[str, str],
+    resolved_base: Path,
+    rows: list[dict[str, Any]],
+    seq_length: int,
+    cooldown_decay_fraction: float,
+) -> dict[str, tuple[float | None, float | None]]:
+    """Per-run checkpoint storage in GiB: (measured_gb, remaining_gb).
+
+    measured_gb is the current ``checkpoints/`` size (du -sb) when present.
+    remaining_gb is an estimated storage still needed at completion, derived
+    from median GiB/checkpoint of finished runs and expected checkpoint count.
+    """
+    run_names = [name for name, _stage, _tok, _tier in run_specs]
+    measured_gb = measure_all_checkpoint_storage_gb(resolved_base, run_names)
+    iter_counts = {
+        name: _count_checkpoint_iters(resolved_base / name / "checkpoints")
+        for name in run_names
+    }
+
+    gb_per_ckpt_samples: list[float] = []
+    for run_name, _stage, _tok, _tier in run_specs:
+        gb = measured_gb.get(run_name)
+        n_ckpt = iter_counts.get(run_name, 0)
+        latest = next((r for r in reversed(rows) if r["run_name"] == run_name), None)
+        if (
+            gb is not None
+            and gb > 0
+            and n_ckpt > 0
+            and latest is not None
+            and latest.get("status_word") == "DONE"
+        ):
+            gb_per_ckpt_samples.append(gb / n_ckpt)
+
+    ref_gb_per_ckpt = median(gb_per_ckpt_samples) if gb_per_ckpt_samples else None
+
+    run_storage: dict[str, tuple[float | None, float | None]] = {}
+    for run_name, stage, tokens, _tier in run_specs:
+        gb = measured_gb.get(run_name)
+        n_ckpt = iter_counts.get(run_name, 0)
+        latest = next((r for r in reversed(rows) if r["run_name"] == run_name), None)
+        status = latest.get("status_word", "") if latest else ""
+
+        measured_val: float | None = (
+            gb if gb is not None and gb > 0 and n_ckpt > 0 else None
+        )
+
+        remaining_val: float | None = None
+        gbsz = run_to_gbsz.get(run_name)
+        if ref_gb_per_ckpt is not None and gbsz is not None:
+            exp_n = _expected_checkpoint_count(
+                stage, tokens, gbsz, seq_length, cooldown_decay_fraction
+            )
+            if exp_n > 0:
+                if status == "DONE" and measured_val is not None:
+                    remaining_val = None
+                else:
+                    remaining_ckpts = max(0, exp_n - n_ckpt)
+                    if remaining_ckpts > 0:
+                        remaining_val = ref_gb_per_ckpt * remaining_ckpts
+
+        run_storage[run_name] = (measured_val, remaining_val)
+
+    return run_storage
+
+
+CKPT_GB_PLACEHOLDER = "--"
+
+
+def _format_ckpt_measured_cell(
+    run_checkpoint_storage: dict[str, tuple[float | None, float | None]],
+    exp_name: str,
+    *,
+    compute: bool,
+    md: bool = False,
+) -> str:
+    if not compute:
+        return "" if md else CKPT_GB_PLACEHOLDER
+    measured, _remaining = run_checkpoint_storage.get(exp_name, (None, None))
+    if measured is None:
+        return CKPT_GB_PLACEHOLDER if not md else ""
+    return f"{measured:.1f}"
+
+
+def _format_ckpt_remaining_cell(
+    run_checkpoint_storage: dict[str, tuple[float | None, float | None]],
+    exp_name: str,
+    *,
+    compute: bool,
+    md: bool = False,
+) -> str:
+    if not compute:
+        return "" if md else CKPT_GB_PLACEHOLDER
+    _measured, remaining = run_checkpoint_storage.get(exp_name, (None, None))
+    if remaining is None:
+        return CKPT_GB_PLACEHOLDER if not md else ""
+    return f"{remaining:.1f}"
+
+
+def _format_ckpt_gb_total(total: float, *, compute: bool, md: bool = False) -> str:
+    if not compute:
+        return "" if md else CKPT_GB_PLACEHOLDER
+    return f"{total:.1f}" if total else CKPT_GB_PLACEHOLDER if not md else ""
 
 
 # ── SBATCH parsing ────────────────────────────────────────────────────────────
@@ -974,6 +1220,14 @@ def main() -> None:
             "If omitted, auto-discovered from <project_root>/monitor_state/*/ ."
         ),
     )
+    ap.add_argument(
+        "--compute-storage",
+        action="store_true",
+        help=(
+            "Measure checkpoint storage (du -sb on each run's checkpoints/ directory). "
+            "Slow on large trees; without this flag the Ckpt-GB columns are left blank."
+        ),
+    )
     args = ap.parse_args()
 
     project_root = Path(__file__).resolve().parent.parent
@@ -1570,6 +1824,20 @@ def main() -> None:
     summary_gpu_h = _build_summary_exp_gpu_h(run_specs, exp_gpu_h, rows)
     summary_grand_total = sum(h for h in summary_gpu_h.values() if h is not None)
 
+    # ── Checkpoint storage (GiB) ──────────────────────────────────────────────
+    run_checkpoint_storage: dict[str, tuple[float | None, float | None]] = {}
+    if args.compute_storage:
+        print("\nMeasuring checkpoint storage (du -sb on checkpoints/ per run)…", flush=True)
+        run_checkpoint_storage = build_run_checkpoint_storage(
+            run_specs,
+            run_to_gbsz,
+            run_stage_map,
+            resolved_base,
+            rows,
+            cfg["seq_length"],
+            cfg.get("cooldown_decay_fraction", 0.2),
+        )
+
     # ── Remaining GPU-h estimation ────────────────────────────────────────────
     # Per-run throughput: mean of avg_tok_per_gpu across all jobs for that run.
     # Each per-job value is already filtered (max_elapsed_ms / skip_first_iters /
@@ -1662,7 +1930,7 @@ def main() -> None:
                 run_latest_row[run_name] = run_rows[-1]
 
         W_EXP = max(len(e) for e in summary_gpu_h) + 2
-        gpu_sep = "─" * (W_EXP + 136)
+        gpu_sep = "─" * (W_EXP + 172)
         sorted_exps = sorted(
             summary_gpu_h.items(),
             key=lambda item: _summary_table_sort_key(item[0], run_tier_map, run_stage_map),
@@ -1671,10 +1939,13 @@ def main() -> None:
         print("Training progress summary:")
         if _ref_avg_tok_per_gpu is not None:
             print(f"  (~ estimates use stable-run throughput per combo; global fallback: {_ref_avg_tok_per_gpu:,.0f} Tok/s/GPU)")
+        if args.compute_storage:
+            print("  (Ckpt-GB: measured checkpoints/ size; Ckpt-GB-remaining: estimated storage still needed)")
         print(
             f"  {'T#':>3}  {'#':>3}  {'Run':<{W_EXP}}  {'Tier':<9}  {'Progress':>9}  {'':>2} {'Status':<12}"
             f"  {'TTFI-GPU-h':>10}  {'LowTP-GPU-h':>12}  {'Overhead-GPU-h':>14}"
             f"  {'GPU-h':>8}  {'Overhead%':>9}  {'Remaining-GPU-h':>16}"
+            f"  {'Ckpt-GB':>10}  {'Ckpt-GB-rem':>12}"
         )
         print(gpu_sep)
         grand_lt_time = 0.0
@@ -1682,6 +1953,8 @@ def main() -> None:
         grand_ttfi_gpu_h = 0.0
         grand_oh_gpu_h = 0.0
         grand_remaining_gpu_h = 0.0
+        grand_ckpt_gb = 0.0
+        grand_ckpt_rem_gb = 0.0
         prev_tier: str | None = None
         tier_idx = 0
         _tier_ttfi_gpu_h = 0.0
@@ -1689,6 +1962,8 @@ def main() -> None:
         _tier_oh_gpu_h = 0.0
         _tier_gpu_h = 0.0
         _tier_rem_gpu_h = 0.0
+        _tier_ckpt_gb = 0.0
+        _tier_ckpt_rem_gb = 0.0
         _tier_name_cur = ""
         for idx, (exp_name, h) in enumerate(sorted_exps, start=1):
             tier_str = run_tier_map.get(exp_name, "")
@@ -1747,10 +2022,25 @@ def main() -> None:
             if rem_val is not None:
                 grand_remaining_gpu_h += rem_val
                 _tier_rem_gpu_h += rem_val
+            ckpt_str = _format_ckpt_measured_cell(
+                run_checkpoint_storage, exp_name, compute=args.compute_storage
+            )
+            ckpt_rem_str = _format_ckpt_remaining_cell(
+                run_checkpoint_storage, exp_name, compute=args.compute_storage
+            )
+            if args.compute_storage:
+                ckpt_val, ckpt_rem_val = run_checkpoint_storage.get(exp_name, (None, None))
+                if ckpt_val is not None:
+                    grand_ckpt_gb += ckpt_val
+                    _tier_ckpt_gb += ckpt_val
+                if ckpt_rem_val is not None:
+                    grand_ckpt_rem_gb += ckpt_rem_val
+                    _tier_ckpt_rem_gb += ckpt_rem_val
             print(
                 f"  {tier_idx:>3}  {idx:>3}  {exp_name:<{W_EXP}}  {tier_str:<9}  {prog_str:>9}  {emoji} {color}{status:<12}{RESET}"
                 f"  {ttfi_gpu_h_str:>10}  {lt_gpu_h_str:>12}  {oh_gpu_h_str:>14}"
                 f"  {gpu_h_str:>8}  {oh_pct_str:>9}  {rem_str:>16}"
+                f"  {ckpt_str:>10}  {ckpt_rem_str:>12}"
             )
             is_last_entry = idx >= len(sorted_exps)
             next_tier_str = "" if is_last_entry else run_tier_map.get(sorted_exps[idx][0], "")
@@ -1761,16 +2051,21 @@ def main() -> None:
                 _t_oh_s = f"{_tier_oh_gpu_h:.2f}" if _tier_oh_gpu_h else "N/A"
                 _t_gpu_h_s = f"{_tier_gpu_h:.1f}" if _tier_gpu_h else "N/A"
                 _t_rem_s = f"{_tier_rem_gpu_h:.1f}" if _tier_rem_gpu_h else "N/A"
+                _t_ckpt_s = _format_ckpt_gb_total(_tier_ckpt_gb, compute=args.compute_storage)
+                _t_ckpt_rem_s = _format_ckpt_gb_total(_tier_ckpt_rem_gb, compute=args.compute_storage)
                 print(
                     f"  {'':>3}  {'':>3}  {f'[{_tier_name_cur} total]':<{W_EXP}}  {_tier_name_cur:<9}  {'':>9}  {'':>2} {'':<12}"
                     f"  {_t_ttfi_s:>10}  {_tier_lt_gpu_h:>12.2f}"
                     f"  {_t_oh_s:>14}  {_t_gpu_h_s:>8}  {_t_oh_pct_s:>9}  {_t_rem_s:>16}"
+                    f"  {_t_ckpt_s:>10}  {_t_ckpt_rem_s:>12}"
                 )
                 _tier_ttfi_gpu_h = 0.0
                 _tier_lt_gpu_h = 0.0
                 _tier_oh_gpu_h = 0.0
                 _tier_gpu_h = 0.0
                 _tier_rem_gpu_h = 0.0
+                _tier_ckpt_gb = 0.0
+                _tier_ckpt_rem_gb = 0.0
                 print(gpu_sep)
         grand_ttfi_gpu_h_str = f"{grand_ttfi_gpu_h:.2f}" if grand_ttfi_gpu_h else "N/A"
         grand_oh_gpu_h_str = f"{grand_oh_gpu_h:.2f}" if grand_oh_gpu_h else "N/A"
@@ -1781,10 +2076,13 @@ def main() -> None:
         )
         grand_oh_pct_str = f"{grand_oh_pct:.1f}%" if grand_oh_pct is not None else "N/A"
         grand_rem_str = f"{grand_remaining_gpu_h:.1f}" if grand_remaining_gpu_h else "N/A"
+        grand_ckpt_str = _format_ckpt_gb_total(grand_ckpt_gb, compute=args.compute_storage)
+        grand_ckpt_rem_str = _format_ckpt_gb_total(grand_ckpt_rem_gb, compute=args.compute_storage)
         print(
             f"  {'':>3}  {'':>3}  {'TOTAL':<{W_EXP}}  {'':<9}  {'':>9}  {'':>2} {'':<12}"
             f"  {grand_ttfi_gpu_h_str:>10}  {grand_lt_gpu_h:>12.2f}"
             f"  {grand_oh_gpu_h_str:>14}  {summary_grand_total:>8.1f}  {grand_oh_pct_str:>9}  {grand_rem_str:>16}"
+            f"  {grand_ckpt_str:>10}  {grand_ckpt_rem_str:>12}"
         )
 
     # Summary counts
@@ -1923,14 +2221,18 @@ def main() -> None:
             f.write("## Training progress summary\n\n")
             if _ref_avg_tok_per_gpu is not None:
                 f.write(f"_~ estimates use stable-run throughput per combo; global fallback: {_ref_avg_tok_per_gpu:,.0f} Tok/s/GPU_\n\n")
+            if args.compute_storage:
+                f.write("_Ckpt-GB: measured `checkpoints/` size; Ckpt-GB-remaining: estimated storage still needed_\n\n")
             f.write(
-                "| T# | # | Experiment | Tier | Progress | Status | TTFI-GPU-h | LowTP-GPU-h | Overhead-GPU-h | GPU-h | Overhead% | Remaining-GPU-h |\n"
+                "| T# | # | Experiment | Tier | Progress | Status | TTFI-GPU-h | LowTP-GPU-h | Overhead-GPU-h | GPU-h | Overhead% | Remaining-GPU-h | Ckpt-GB | Ckpt-GB-remaining |\n"
             )
-            f.write("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+            f.write("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
             grand_lt_time_md = 0.0
             grand_lt_gpu_h_md = 0.0
             grand_ttfi_gpu_h_md = 0.0
             grand_oh_gpu_h_md = 0.0
+            grand_ckpt_gb_md = 0.0
+            grand_ckpt_rem_gb_md = 0.0
             sorted_exps_md = sorted(
                 summary_gpu_h.items(),
                 key=lambda item: _summary_table_sort_key(item[0], run_tier_map, run_stage_map),
@@ -1942,6 +2244,8 @@ def main() -> None:
             _tier_oh_gpu_h_md = 0.0
             _tier_gpu_h_md = 0.0
             _tier_rem_gpu_h_md = 0.0
+            _tier_ckpt_gb_md = 0.0
+            _tier_ckpt_rem_gb_md = 0.0
             _tier_name_md = ""
             for idx, (exp_name, h) in enumerate(sorted_exps_md, start=1):
                 tier_str = run_tier_map.get(exp_name, "")
@@ -1997,10 +2301,25 @@ def main() -> None:
                 )
                 if rem_val_md is not None:
                     _tier_rem_gpu_h_md += rem_val_md
+                ckpt_md_str = _format_ckpt_measured_cell(
+                    run_checkpoint_storage, exp_name, compute=args.compute_storage, md=True
+                )
+                ckpt_rem_md_str = _format_ckpt_remaining_cell(
+                    run_checkpoint_storage, exp_name, compute=args.compute_storage, md=True
+                )
+                if args.compute_storage:
+                    ckpt_val_md, ckpt_rem_val_md = run_checkpoint_storage.get(exp_name, (None, None))
+                    if ckpt_val_md is not None:
+                        grand_ckpt_gb_md += ckpt_val_md
+                        _tier_ckpt_gb_md += ckpt_val_md
+                    if ckpt_rem_val_md is not None:
+                        grand_ckpt_rem_gb_md += ckpt_rem_val_md
+                        _tier_ckpt_rem_gb_md += ckpt_rem_val_md
                 f.write(
                     f"| {tier_idx_md} | {idx} | {exp_name} | {tier_str} | {prog_str} | {emoji} {status}"
                     f" | {ttfi_gpu_h_md_str} | {lt_gpu_h_md} | {oh_gpu_h_md_str}"
-                    f" | {gpu_h_md_str} | {oh_pct_md_str} | {rem_md_str} |\n"
+                    f" | {gpu_h_md_str} | {oh_pct_md_str} | {rem_md_str}"
+                    f" | {ckpt_md_str or '—'} | {ckpt_rem_md_str or '—'} |\n"
                 )
                 is_last_md = idx >= len(sorted_exps_md)
                 next_tier_md_str = "" if is_last_md else run_tier_map.get(sorted_exps_md[idx][0], "")
@@ -2011,10 +2330,17 @@ def main() -> None:
                     _t_oh_md_s = f"{_tier_oh_gpu_h_md:.2f}" if _tier_oh_gpu_h_md else "N/A"
                     _t_gpu_h_md_s = f"{_tier_gpu_h_md:.1f}" if _tier_gpu_h_md else "N/A"
                     _t_rem_md_s = f"{_tier_rem_gpu_h_md:.1f}" if _tier_rem_gpu_h_md else "N/A"
+                    _t_ckpt_md_s = _format_ckpt_gb_total(
+                        _tier_ckpt_gb_md, compute=args.compute_storage, md=True
+                    )
+                    _t_ckpt_rem_md_s = _format_ckpt_gb_total(
+                        _tier_ckpt_rem_gb_md, compute=args.compute_storage, md=True
+                    )
                     f.write(
                         f"| | | **[{_tier_name_md} total]** | **{_tier_name_md}** | | |"
                         f" **{_t_ttfi_md_s}** | **{_tier_lt_gpu_h_md:.2f}**"
-                        f" | **{_t_oh_md_s}** | **{_t_gpu_h_md_s}** | **{_t_oh_pct_md_s}** | **{_t_rem_md_s}** |\n"
+                        f" | **{_t_oh_md_s}** | **{_t_gpu_h_md_s}** | **{_t_oh_pct_md_s}** | **{_t_rem_md_s}**"
+                        f" | {_t_ckpt_md_s or '**—**'} | {_t_ckpt_rem_md_s or '**—**'} |\n"
                     )
                     f.write(f"{SUMMARY_MD_TIER_SEP}\n")
                     _tier_ttfi_gpu_h_md = 0.0
@@ -2022,6 +2348,8 @@ def main() -> None:
                     _tier_oh_gpu_h_md = 0.0
                     _tier_gpu_h_md = 0.0
                     _tier_rem_gpu_h_md = 0.0
+                    _tier_ckpt_gb_md = 0.0
+                    _tier_ckpt_rem_gb_md = 0.0
             grand_oh_pct_md = (
                 grand_oh_gpu_h_md / summary_grand_total * 100.0
                 if grand_oh_gpu_h_md and summary_grand_total > 0
@@ -2031,10 +2359,16 @@ def main() -> None:
                 f"{grand_oh_pct_md:.1f}%" if grand_oh_pct_md is not None else "N/A"
             )
             grand_rem_md_str = f"{grand_remaining_total:.1f}" if grand_remaining_total else "N/A"
+            grand_ckpt_md_str = _format_ckpt_gb_total(
+                grand_ckpt_gb_md, compute=args.compute_storage, md=True
+            )
+            grand_ckpt_rem_md_str = _format_ckpt_gb_total(
+                grand_ckpt_rem_gb_md, compute=args.compute_storage, md=True
+            )
             f.write(
                 f"| | | **TOTAL** | | | | **{grand_ttfi_gpu_h_md:.2f}** | **{grand_lt_gpu_h_md:.2f}**"
                 f" | **{grand_oh_gpu_h_md:.2f}** | **{summary_grand_total:.1f}** | **{grand_oh_pct_md_str}**"
-                f" | **{grand_rem_md_str}** |\n"
+                f" | **{grand_rem_md_str}** | {grand_ckpt_md_str or '**—**'} | {grand_ckpt_rem_md_str or '**—**'} |\n"
             )
             f.write("\n")
 
