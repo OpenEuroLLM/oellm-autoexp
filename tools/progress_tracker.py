@@ -121,7 +121,7 @@ RE_BUDGET = re.compile(r"_(stable|decay)(\d+BT)$")
 TS_FMT = "%Y-%m-%d %H:%M:%S"
 
 TIER_SORT_ORDER = {"center": 0, "cross": 1, "diagonal": 2}
-SUMMARY_MD_TIER_SEP = "| — | — | — | — | — | — | — | — | — | — | — |"
+SUMMARY_MD_TIER_SEP = "| — | — | — | — | — | — | — | — | — | — | — | — |"
 
 
 def _summary_table_sort_key(
@@ -1018,6 +1018,8 @@ def main() -> None:
     #   - stable: always 1 run  → ..._stable{max_tokens_BT}BT  (or ..._stable12BT for new format)
     #   - decays: only token budgets in (center | cross | diagonal) token sets
     run_specs: list[tuple[str, str, int, str]] = []
+    decay_to_stable: dict[str, str] = {}  # decay run_name → its paired stable run_name
+    run_to_gbsz: dict[str, int] = {}
     for combo in combos:
         lr, gbsz = combo["lr"], combo["gbsz"]
         stable_tok = combo["stable_tokens"]
@@ -1025,8 +1027,9 @@ def main() -> None:
 
         # New format: stable_stage_name is the full name (e.g. "stable12BT"); old format: None.
         stable_stage = combo.get("stable_stage_name") or "stable"
-        name = _render(stable_stage, lr, gbsz, stable_tok if stable_stage == "stable" else None)
-        run_specs.append((name, "stable", stable_tok, combo["stable_launch_tier"]))
+        stable_name = _render(stable_stage, lr, gbsz, stable_tok if stable_stage == "stable" else None)
+        run_specs.append((stable_name, "stable", stable_tok, combo["stable_launch_tier"]))
+        run_to_gbsz[stable_name] = gbsz
 
         # Decay runs: only the token budgets permitted by the filter
         for decay_tok in sorted(valid_decay_toks):
@@ -1041,6 +1044,8 @@ def main() -> None:
                 tier = "diagonal"
             name = _render(stage_name, lr, gbsz)
             run_specs.append((name, stage_name, decay_tok, tier))
+            decay_to_stable[name] = stable_name
+            run_to_gbsz[name] = gbsz
 
     run_tier_map: dict[str, str] = {name: tier for name, _stage, _tok, tier in run_specs}
     run_stage_map: dict[str, str] = {name: stage for name, stage, _tok, _tier in run_specs}
@@ -1143,6 +1148,7 @@ def main() -> None:
                 "ttfi_gpu_h": None,
                 "train_iters": None,
                 "last_iter": None,
+                "ckpt_step": sbatch_ckpt_step,
                 "progress": None,
                 "last_train_loss": None,
                 "last_val_loss": None,
@@ -1292,6 +1298,7 @@ def main() -> None:
                 "ttfi_gpu_h": ttfi_gpu_h,
                 "train_iters": stdout_data.get("train_iters"),
                 "last_iter": stdout_data.get("last_iter"),
+                "ckpt_step": sbatch_ckpt_step,
                 "progress": compute_progress(
                     stdout_data.get("last_iter"),
                     sbatch_ckpt_step,
@@ -1563,6 +1570,90 @@ def main() -> None:
     summary_gpu_h = _build_summary_exp_gpu_h(run_specs, exp_gpu_h, rows)
     summary_grand_total = sum(h for h in summary_gpu_h.values() if h is not None)
 
+    # ── Remaining GPU-h estimation ────────────────────────────────────────────
+    # Per-run throughput: mean of avg_tok_per_gpu across all jobs for that run.
+    # Each per-job value is already filtered (max_elapsed_ms / skip_first_iters /
+    # max_iters in load_or_compute_throughput), so the mean is robust to outliers.
+    _run_tp_vals: dict[str, list[float]] = {}
+    for r in rows:
+        if r.get("avg_tok_per_gpu") is not None:
+            _run_tp_vals.setdefault(r["run_name"], []).append(r["avg_tok_per_gpu"])
+    _run_avg_tok: dict[str, float] = {rn: mean(v) for rn, v in _run_tp_vals.items()}
+
+    # Global fallback: mean across all runs that have throughput data.
+    _ref_avg_tok_per_gpu: float | None = mean(list(_run_avg_tok.values())) if _run_avg_tok else None
+
+    # Per-gbsz average throughput from stable runs (used to estimate NOT_LAUNCHED runs).
+    _gbsz_stable_toks: dict[int, list[float]] = {}
+    for _rn_s, _avg_s in _run_avg_tok.items():
+        if run_stage_map.get(_rn_s, "") == "stable":
+            _gbsz_s = run_to_gbsz.get(_rn_s)
+            if _gbsz_s is not None:
+                _gbsz_stable_toks.setdefault(_gbsz_s, []).append(_avg_s)
+    _gbsz_stable_avg_tok: dict[int, float] = {
+        gbsz: mean(vals) for gbsz, vals in _gbsz_stable_toks.items()
+    }
+
+    # Per-stage branch-point token count for decay runs.
+    # A decay run starts from a stable checkpoint and runs to decay_tok total tokens,
+    # so it only processes (decay_tok - ckpt_tokens) new tokens.
+    # ckpt_tokens = ckpt_step × gbsz × seq_length is the same across all combos of
+    # the same stage (they branch at the same training-token budget), so we take the
+    # first available value from any launched decay row of that stage.
+    _seq_len = cfg["seq_length"]
+    _stage_ckpt_tokens: dict[str, int] = {}  # stage_name → branch-point raw token count
+    for r in rows:
+        _rs = run_stage_map.get(r["run_name"], "")
+        if (
+            _rs != "stable"
+            and r.get("ckpt_step") is not None
+            and r.get("global_batch_size") is not None
+            and _rs not in _stage_ckpt_tokens
+        ):
+            _stage_ckpt_tokens[_rs] = r["ckpt_step"] * r["global_batch_size"] * _seq_len
+
+    # (value, is_estimated) per run
+    #   is_estimated=False → extrapolated from actual spend: h_spent × (1−p)/p
+    #   is_estimated=True  → derived from throughput of corresponding stable run
+    #                        (or global mean if that too is unavailable)
+    run_remaining: dict[str, tuple[float | None, bool]] = {}
+    for _rn, _rs, _rt, _ in run_specs:
+        _run_rows_r = [r for r in rows if r["run_name"] == _rn]
+        _latest_r   = _run_rows_r[-1] if _run_rows_r else {}
+        _status_r   = _latest_r.get("status_word", "NOT_LAUNCHED")
+        _h_r        = summary_gpu_h.get(_rn)
+        _prog_r     = _latest_r.get("progress")
+        # Reference throughput: for NOT_LAUNCHED runs prefer gbsz-matched stable avg,
+        # otherwise prefer stable sibling, then own data, then global mean.
+        _stable_rn  = decay_to_stable.get(_rn)  # None for stable runs
+        _gbsz_rn    = run_to_gbsz.get(_rn)
+        if _status_r == "NOT_LAUNCHED":
+            _ref_tok = (
+                (_gbsz_stable_avg_tok.get(_gbsz_rn) if _gbsz_rn is not None else None)
+                or _run_avg_tok.get(_stable_rn)
+                or _run_avg_tok.get(_rn)
+                or _ref_avg_tok_per_gpu
+            )
+        else:
+            _ref_tok = (
+                _run_avg_tok.get(_stable_rn)
+                or _run_avg_tok.get(_rn)
+                or _ref_avg_tok_per_gpu
+            )
+        # Effective token count: for decay runs subtract the stable branch-point tokens.
+        # For stable runs (or decay runs with no ckpt_tokens info), use full budget.
+        _ckpt_toks  = _stage_ckpt_tokens.get(_rs, 0) if _rs != "stable" else 0
+        _eff_tokens = max(0, _rt - _ckpt_toks)
+        if _status_r == "DONE":
+            run_remaining[_rn] = (0.0, False)
+        elif _h_r is not None and _prog_r is not None and _prog_r > 0:
+            run_remaining[_rn] = (_h_r * (100.0 - _prog_r) / _prog_r, False)
+        elif _ref_tok is not None and _eff_tokens > 0:
+            run_remaining[_rn] = (_eff_tokens / (_ref_tok * 3600.0), True)
+        else:
+            run_remaining[_rn] = (None, False)
+    grand_remaining_total = sum(v for v, _ in run_remaining.values() if v is not None)
+
     if summary_gpu_h:
         run_latest_row: dict[str, dict] = {}
         for run_name, _stage, _tok, _tier in run_specs:
@@ -1571,30 +1662,40 @@ def main() -> None:
                 run_latest_row[run_name] = run_rows[-1]
 
         W_EXP = max(len(e) for e in summary_gpu_h) + 2
-        gpu_sep = "─" * (W_EXP + 118)
+        gpu_sep = "─" * (W_EXP + 136)
         sorted_exps = sorted(
             summary_gpu_h.items(),
             key=lambda item: _summary_table_sort_key(item[0], run_tier_map, run_stage_map),
         )
         print()
         print("Training progress summary:")
+        if _ref_avg_tok_per_gpu is not None:
+            print(f"  (~ estimates use stable-run throughput per combo; global fallback: {_ref_avg_tok_per_gpu:,.0f} Tok/s/GPU)")
         print(
             f"  {'T#':>3}  {'#':>3}  {'Run':<{W_EXP}}  {'Tier':<9}  {'Progress':>9}  {'':>2} {'Status':<12}"
             f"  {'TTFI-GPU-h':>10}  {'LowTP-GPU-h':>12}  {'Overhead-GPU-h':>14}"
-            f"  {'GPU-h':>8}  {'Overhead%':>9}"
+            f"  {'GPU-h':>8}  {'Overhead%':>9}  {'Remaining-GPU-h':>16}"
         )
         print(gpu_sep)
         grand_lt_time = 0.0
         grand_lt_gpu_h = 0.0
         grand_ttfi_gpu_h = 0.0
         grand_oh_gpu_h = 0.0
+        grand_remaining_gpu_h = 0.0
         prev_tier: str | None = None
         tier_idx = 0
+        _tier_ttfi_gpu_h = 0.0
+        _tier_lt_gpu_h = 0.0
+        _tier_oh_gpu_h = 0.0
+        _tier_gpu_h = 0.0
+        _tier_rem_gpu_h = 0.0
+        _tier_name_cur = ""
         for idx, (exp_name, h) in enumerate(sorted_exps, start=1):
             tier_str = run_tier_map.get(exp_name, "")
             if tier_str != prev_tier:
                 tier_idx = 1
                 prev_tier = tier_str
+                _tier_name_cur = tier_str
             else:
                 tier_idx += 1
             latest = run_latest_row.get(exp_name, {})
@@ -1615,6 +1716,7 @@ def main() -> None:
             ttfi_gpu_h_str = f"{ttfi_gpu_h_sum:.2f}" if ttfi_gpu_h_sum is not None else "N/A"
             if ttfi_gpu_h_sum is not None:
                 grand_ttfi_gpu_h += ttfi_gpu_h_sum
+                _tier_ttfi_gpu_h += ttfi_gpu_h_sum
             # Low-throughput stats: sum across all jobs for this run
             lt_time_vals = [r["time_lost_h"] for r in run_rows if r.get("time_lost_h") is not None]
             lt_gpu_h_vals = [r["gpu_h_lost"] for r in run_rows if r.get("gpu_h_lost") is not None]
@@ -1625,6 +1727,7 @@ def main() -> None:
                 grand_lt_time += lt_time
             if lt_gpu_h is not None:
                 grand_lt_gpu_h += lt_gpu_h
+                _tier_lt_gpu_h += lt_gpu_h
             # Overhead (TTFI + LowTP) GPU-h and percentage for this run
             oh_gpu_h_vals = [r["overhead_gpu_h"] for r in run_rows if r.get("overhead_gpu_h") is not None]
             oh_gpu_h_sum = sum(oh_gpu_h_vals) if oh_gpu_h_vals else None
@@ -1636,17 +1739,39 @@ def main() -> None:
             gpu_h_str = f"{h:.1f}" if h is not None else "N/A"
             if oh_gpu_h_sum is not None:
                 grand_oh_gpu_h += oh_gpu_h_sum
+                _tier_oh_gpu_h += oh_gpu_h_sum
+            if h is not None:
+                _tier_gpu_h += h
+            rem_val, rem_est = run_remaining.get(exp_name, (None, False))
+            rem_str = (f"~{rem_val:.1f}" if rem_est else f"{rem_val:.1f}") if rem_val is not None else "N/A"
+            if rem_val is not None:
+                grand_remaining_gpu_h += rem_val
+                _tier_rem_gpu_h += rem_val
             print(
                 f"  {tier_idx:>3}  {idx:>3}  {exp_name:<{W_EXP}}  {tier_str:<9}  {prog_str:>9}  {emoji} {color}{status:<12}{RESET}"
                 f"  {ttfi_gpu_h_str:>10}  {lt_gpu_h_str:>12}  {oh_gpu_h_str:>14}"
-                f"  {gpu_h_str:>8}  {oh_pct_str:>9}"
+                f"  {gpu_h_str:>8}  {oh_pct_str:>9}  {rem_str:>16}"
             )
-            if idx < len(sorted_exps):
-                cur_tier = run_tier_map.get(exp_name, "")
-                next_tier = run_tier_map.get(sorted_exps[idx][0], "")
-                if next_tier != cur_tier:
-                    print(gpu_sep)
-        print(gpu_sep)
+            is_last_entry = idx >= len(sorted_exps)
+            next_tier_str = "" if is_last_entry else run_tier_map.get(sorted_exps[idx][0], "")
+            if is_last_entry or next_tier_str != tier_str:
+                _t_oh_pct = _tier_oh_gpu_h / _tier_gpu_h * 100.0 if _tier_gpu_h > 0 else None
+                _t_oh_pct_s = f"{_t_oh_pct:.1f}%" if _t_oh_pct is not None else "N/A"
+                _t_ttfi_s = f"{_tier_ttfi_gpu_h:.2f}" if _tier_ttfi_gpu_h else "N/A"
+                _t_oh_s = f"{_tier_oh_gpu_h:.2f}" if _tier_oh_gpu_h else "N/A"
+                _t_gpu_h_s = f"{_tier_gpu_h:.1f}" if _tier_gpu_h else "N/A"
+                _t_rem_s = f"{_tier_rem_gpu_h:.1f}" if _tier_rem_gpu_h else "N/A"
+                print(
+                    f"  {'':>3}  {'':>3}  {f'[{_tier_name_cur} total]':<{W_EXP}}  {_tier_name_cur:<9}  {'':>9}  {'':>2} {'':<12}"
+                    f"  {_t_ttfi_s:>10}  {_tier_lt_gpu_h:>12.2f}"
+                    f"  {_t_oh_s:>14}  {_t_gpu_h_s:>8}  {_t_oh_pct_s:>9}  {_t_rem_s:>16}"
+                )
+                _tier_ttfi_gpu_h = 0.0
+                _tier_lt_gpu_h = 0.0
+                _tier_oh_gpu_h = 0.0
+                _tier_gpu_h = 0.0
+                _tier_rem_gpu_h = 0.0
+                print(gpu_sep)
         grand_ttfi_gpu_h_str = f"{grand_ttfi_gpu_h:.2f}" if grand_ttfi_gpu_h else "N/A"
         grand_oh_gpu_h_str = f"{grand_oh_gpu_h:.2f}" if grand_oh_gpu_h else "N/A"
         grand_oh_pct = (
@@ -1655,10 +1780,11 @@ def main() -> None:
             else None
         )
         grand_oh_pct_str = f"{grand_oh_pct:.1f}%" if grand_oh_pct is not None else "N/A"
+        grand_rem_str = f"{grand_remaining_gpu_h:.1f}" if grand_remaining_gpu_h else "N/A"
         print(
             f"  {'':>3}  {'':>3}  {'TOTAL':<{W_EXP}}  {'':<9}  {'':>9}  {'':>2} {'':<12}"
             f"  {grand_ttfi_gpu_h_str:>10}  {grand_lt_gpu_h:>12.2f}"
-            f"  {grand_oh_gpu_h_str:>14}  {summary_grand_total:>8.1f}  {grand_oh_pct_str:>9}"
+            f"  {grand_oh_gpu_h_str:>14}  {summary_grand_total:>8.1f}  {grand_oh_pct_str:>9}  {grand_rem_str:>16}"
         )
 
     # Summary counts
@@ -1676,10 +1802,16 @@ def main() -> None:
             "TotIter", "CurIter", "LastCkpt", "Prog%", "TrainLoss", "ValLoss", "LR", "GBS", "MBS", "Nodes", "Workers",
             "TFLOP/s/GPU", "Tok/s/GPU", "TTFI(min)", "TTFI-GPU-h",
             "LowTP-time(h)", "LowTP-GPU-h", "Overhead-time(h)", "Overhead-GPU-h", "GPU-h", "Overhead%",
+            "Remaining-GPU-h",
             "Emoji", "Status", "Action", "Error",
         ]
         csv_path = Path(args.csv)
         csv_path.parent.mkdir(parents=True, exist_ok=True)
+        # Pre-compute which job_id is the latest for each run (remaining GPU-h
+        # is a per-run estimate, so we only populate it on the latest-job row).
+        _csv_latest_job: dict[str, str] = {
+            rn: jids[-1] for rn, jids in run_job_map.items() if jids
+        }
         with csv_path.open("w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=csv_fields)
             writer.writeheader()
@@ -1690,6 +1822,17 @@ def main() -> None:
                     f"{6.0 * r['transformer_params_b'] * r['tokens_b']:.2f}"
                     if r["transformer_params_b"] is not None and r.get("tokens_b") is not None
                     else ""
+                )
+                _is_latest_csv = (
+                    r["job_id"] == ""
+                    or r["job_id"] == _csv_latest_job.get(r["run_name"])
+                )
+                _rem_v_csv, _rem_est_csv = (
+                    run_remaining.get(r["run_name"], (None, False)) if _is_latest_csv else (None, False)
+                )
+                rem_gpu_h_csv = (
+                    (f"~{_rem_v_csv:.1f}" if _rem_est_csv else f"{_rem_v_csv:.1f}")
+                    if _rem_v_csv is not None else ""
                 )
                 writer.writerow({
                     "Run":         r["run_name"],
@@ -1721,6 +1864,7 @@ def main() -> None:
                     "Overhead-GPU-h":   f"{r['overhead_gpu_h']:.4f}"  if r.get("overhead_gpu_h")  is not None else "",
                     "GPU-h":            f"{r['gpu_hours']:.1f}"       if r["gpu_hours"]           is not None else "",
                     "Overhead%":        f"{r['overhead_pct']:.2f}"    if r.get("overhead_pct")    is not None else "",
+                    "Remaining-GPU-h":  rem_gpu_h_csv,
                     "Emoji":         r["status_emoji"],
                     "Status":      r["status_word"],
                     "Action":      r["action_word"],
@@ -1777,10 +1921,12 @@ def main() -> None:
 
             # Experiment summary GPU consumption + progress table
             f.write("## Training progress summary\n\n")
+            if _ref_avg_tok_per_gpu is not None:
+                f.write(f"_~ estimates use stable-run throughput per combo; global fallback: {_ref_avg_tok_per_gpu:,.0f} Tok/s/GPU_\n\n")
             f.write(
-                "| T# | # | Experiment | Tier | Progress | Status | TTFI-GPU-h | LowTP-GPU-h | Overhead-GPU-h | GPU-h | Overhead% |\n"
+                "| T# | # | Experiment | Tier | Progress | Status | TTFI-GPU-h | LowTP-GPU-h | Overhead-GPU-h | GPU-h | Overhead% | Remaining-GPU-h |\n"
             )
-            f.write("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+            f.write("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
             grand_lt_time_md = 0.0
             grand_lt_gpu_h_md = 0.0
             grand_ttfi_gpu_h_md = 0.0
@@ -1791,11 +1937,18 @@ def main() -> None:
             )
             prev_tier_md: str | None = None
             tier_idx_md = 0
+            _tier_ttfi_gpu_h_md = 0.0
+            _tier_lt_gpu_h_md = 0.0
+            _tier_oh_gpu_h_md = 0.0
+            _tier_gpu_h_md = 0.0
+            _tier_rem_gpu_h_md = 0.0
+            _tier_name_md = ""
             for idx, (exp_name, h) in enumerate(sorted_exps_md, start=1):
                 tier_str = run_tier_map.get(exp_name, "")
                 if tier_str != prev_tier_md:
                     tier_idx_md = 1
                     prev_tier_md = tier_str
+                    _tier_name_md = tier_str
                 else:
                     tier_idx_md += 1
                 run_rows = [r for r in rows if r["run_name"] == exp_name]
@@ -1811,6 +1964,7 @@ def main() -> None:
                 )
                 if ttfi_gpu_h_md_sum is not None:
                     grand_ttfi_gpu_h_md += ttfi_gpu_h_md_sum
+                    _tier_ttfi_gpu_h_md += ttfi_gpu_h_md_sum
                 lt_time_vals_md = [r["time_lost_h"] for r in run_rows if r.get("time_lost_h") is not None]
                 lt_gpu_h_vals_md = [r["gpu_h_lost"] for r in run_rows if r.get("gpu_h_lost") is not None]
                 lt_time = sum(lt_time_vals_md) if lt_time_vals_md else None
@@ -1820,6 +1974,7 @@ def main() -> None:
                     grand_lt_time_md += lt_time
                 if lt_gpu_h is not None:
                     grand_lt_gpu_h_md += lt_gpu_h
+                    _tier_lt_gpu_h_md += lt_gpu_h
                 oh_gpu_h_vals_md = [r["overhead_gpu_h"] for r in run_rows if r.get("overhead_gpu_h") is not None]
                 oh_gpu_h_md_sum = sum(oh_gpu_h_vals_md) if oh_gpu_h_vals_md else None
                 oh_gpu_h_md_str = f"{oh_gpu_h_md_sum:.2f}" if oh_gpu_h_md_sum is not None else "N/A"
@@ -1832,16 +1987,41 @@ def main() -> None:
                 gpu_h_md_str = f"{h:.1f}" if h is not None else "N/A"
                 if oh_gpu_h_md_sum is not None:
                     grand_oh_gpu_h_md += oh_gpu_h_md_sum
+                    _tier_oh_gpu_h_md += oh_gpu_h_md_sum
+                if h is not None:
+                    _tier_gpu_h_md += h
+                rem_val_md, rem_est_md = run_remaining.get(exp_name, (None, False))
+                rem_md_str = (
+                    (f"~{rem_val_md:.1f}" if rem_est_md else f"{rem_val_md:.1f}")
+                    if rem_val_md is not None else "N/A"
+                )
+                if rem_val_md is not None:
+                    _tier_rem_gpu_h_md += rem_val_md
                 f.write(
                     f"| {tier_idx_md} | {idx} | {exp_name} | {tier_str} | {prog_str} | {emoji} {status}"
                     f" | {ttfi_gpu_h_md_str} | {lt_gpu_h_md} | {oh_gpu_h_md_str}"
-                    f" | {gpu_h_md_str} | {oh_pct_md_str} |\n"
+                    f" | {gpu_h_md_str} | {oh_pct_md_str} | {rem_md_str} |\n"
                 )
-                if idx < len(sorted_exps_md):
-                    cur_tier = run_tier_map.get(exp_name, "")
-                    next_tier = run_tier_map.get(sorted_exps_md[idx][0], "")
-                    if next_tier != cur_tier:
-                        f.write(f"{SUMMARY_MD_TIER_SEP}\n")
+                is_last_md = idx >= len(sorted_exps_md)
+                next_tier_md_str = "" if is_last_md else run_tier_map.get(sorted_exps_md[idx][0], "")
+                if is_last_md or next_tier_md_str != tier_str:
+                    _t_oh_pct_md = _tier_oh_gpu_h_md / _tier_gpu_h_md * 100.0 if _tier_gpu_h_md > 0 else None
+                    _t_oh_pct_md_s = f"{_t_oh_pct_md:.1f}%" if _t_oh_pct_md is not None else "N/A"
+                    _t_ttfi_md_s = f"{_tier_ttfi_gpu_h_md:.2f}" if _tier_ttfi_gpu_h_md else "N/A"
+                    _t_oh_md_s = f"{_tier_oh_gpu_h_md:.2f}" if _tier_oh_gpu_h_md else "N/A"
+                    _t_gpu_h_md_s = f"{_tier_gpu_h_md:.1f}" if _tier_gpu_h_md else "N/A"
+                    _t_rem_md_s = f"{_tier_rem_gpu_h_md:.1f}" if _tier_rem_gpu_h_md else "N/A"
+                    f.write(
+                        f"| | | **[{_tier_name_md} total]** | **{_tier_name_md}** | | |"
+                        f" **{_t_ttfi_md_s}** | **{_tier_lt_gpu_h_md:.2f}**"
+                        f" | **{_t_oh_md_s}** | **{_t_gpu_h_md_s}** | **{_t_oh_pct_md_s}** | **{_t_rem_md_s}** |\n"
+                    )
+                    f.write(f"{SUMMARY_MD_TIER_SEP}\n")
+                    _tier_ttfi_gpu_h_md = 0.0
+                    _tier_lt_gpu_h_md = 0.0
+                    _tier_oh_gpu_h_md = 0.0
+                    _tier_gpu_h_md = 0.0
+                    _tier_rem_gpu_h_md = 0.0
             grand_oh_pct_md = (
                 grand_oh_gpu_h_md / summary_grand_total * 100.0
                 if grand_oh_gpu_h_md and summary_grand_total > 0
@@ -1850,9 +2030,11 @@ def main() -> None:
             grand_oh_pct_md_str = (
                 f"{grand_oh_pct_md:.1f}%" if grand_oh_pct_md is not None else "N/A"
             )
+            grand_rem_md_str = f"{grand_remaining_total:.1f}" if grand_remaining_total else "N/A"
             f.write(
                 f"| | | **TOTAL** | | | | **{grand_ttfi_gpu_h_md:.2f}** | **{grand_lt_gpu_h_md:.2f}**"
-                f" | **{grand_oh_gpu_h_md:.2f}** | **{summary_grand_total:.1f}** | **{grand_oh_pct_md_str}** |\n"
+                f" | **{grand_oh_gpu_h_md:.2f}** | **{summary_grand_total:.1f}** | **{grand_oh_pct_md_str}**"
+                f" | **{grand_rem_md_str}** |\n"
             )
             f.write("\n")
 
