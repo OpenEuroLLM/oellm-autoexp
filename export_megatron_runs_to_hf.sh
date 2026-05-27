@@ -318,7 +318,7 @@ _add_retention_candidates() {
 
     case "$KEEP_ORIGINAL_CHECKPOINTS" in
         all)
-            return
+            return 0
             ;;
         latest)
             local latest
