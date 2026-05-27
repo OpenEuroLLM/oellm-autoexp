@@ -234,3 +234,10 @@ logs/
 output/
 
 local/  
+trash/
+exports/
+data/
+uv.lock
+misc
+runs_to_convert.txt
+autoexp-update.img
