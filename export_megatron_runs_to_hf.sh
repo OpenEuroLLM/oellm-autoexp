@@ -243,7 +243,7 @@ fi
 
 _collect_all_iter_dirs() {
     local ckpt_dir="$1"
-    find "$ckpt_dir" -maxdepth 1 -mindepth 1 -type d -name 'iter_*' -printf '%f\t%p\n' \
+    find -L "$ckpt_dir" -maxdepth 1 -mindepth 1 -type d -name 'iter_*' -printf '%f\t%p\n' \
         | awk -F '\t' '$1 ~ /^iter_[0-9]+$/ { printf "%020d\t%s\n", substr($1, 6) + 0, $2 }' \
         | sort -n \
         | cut -f2-
