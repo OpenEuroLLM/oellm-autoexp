@@ -54,17 +54,13 @@ import torch
 
 # ── Adjust these paths ────────────────────────────────────────────────────────
 HF_MODEL_ID = "Qwen/Qwen3.5-4B-Base"
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 MEGATRON_CKPT = (
     "/shared_silo/scratch/rluukkon/oellm/Megatron-Bridge"
     "/megatron_ckpt/Qwen3.5-4B-text_fix1"
 )
-MEGATRON_LM_PATH = (
-    "/shared_silo/scratch/rluukkon/oellm/oellm-autoexp"
-    "/submodules/Megatron-LM"
-)
-MEGATRON_BRIDGE_SRC = (
-    "/shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/src"
-)
+MEGATRON_LM_PATH = f"{_REPO_ROOT}/submodules/Megatron-LM"
+MEGATRON_BRIDGE_SRC = f"{_REPO_ROOT}/submodules/Megatron-Bridge/src"
 
 DEVICE = "cuda"
 DTYPE = torch.bfloat16

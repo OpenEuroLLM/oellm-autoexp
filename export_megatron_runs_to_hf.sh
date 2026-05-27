@@ -19,7 +19,7 @@
 #
 # Optional:
 #   --bridge-root DIR              Megatron-Bridge checkout containing tw-tools/
-#                                  Default: /home/risto.luukkonen@amd.com/rluukkon/oellm/Megatron-Bridge
+#                                  Default: ./submodules/Megatron-Bridge
 #   --latest-only                  Export only the latest checkpoint per run.
 #   --iters N [N ...]              Export explicit iteration numbers only, e.g. --iters 150 300.
 #   --keep-original-checkpoints MODE
@@ -45,17 +45,18 @@
 #   bash export_megatron_runs_to_hf.sh \
 #       --run-root ./output/qwen3_5_35B_A3B_tw_test_cpt \
 #       --hf-model Qwen/Qwen3.5-35B-A3B-Base \
-#       --out-base /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/exports \
+#       --out-base exports/ \
 #       --keep-original-checkpoints latest
 #
 #   bash export_megatron_runs_to_hf.sh --dry-run --latest-only \
 #       --run-list runs.txt \
 #       --hf-model /shared_silo/scratch/rluukkon/oellm/hf_home/hub/models--Qwen--Qwen3.5-35B-A3B-Base/snapshots/0f0813072d2358973511097385626f21fcb6d422 \
-#       --out-base /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/exports
+#       --out-base exports/
 
 set -euo pipefail
 
-DEFAULT_BRIDGE_ROOT="/home/risto.luukkonen@amd.com/rluukkon/oellm/Megatron-Bridge"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_BRIDGE_ROOT="${SCRIPT_DIR}/submodules/Megatron-Bridge"
 
 RUN_ROOTS=()
 RUN_LISTS=()
