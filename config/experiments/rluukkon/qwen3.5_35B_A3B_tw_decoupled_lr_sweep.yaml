@@ -1,0 +1,160 @@
+# @package _global_
+defaults:
+  - ../base
+  - /backend: megatron
+  - /container: mi325x
+  - /slurm: mi325x
+  - /sweep: none
+  - /backend/megatron: [qwen3_5_moe_35BA3B]
+  - _self_
+
+slurm:
+  sbatch:
+    partition: amd-tw-verification
+    nodes: 4
+    time: 0-11:00:00
+
+  env:
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    WANDB_MODE: "online"
+    OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
+    # mi325x.yaml uses \${SCRATCH}/\${PWD} (OmegaConf-escaped bash vars).
+    # When the DAG resolver serialises a sibling's resolved config and re-injects
+    # it as ++ overrides, the escaping is stripped and OmegaConf tries to
+    # resolve ${SCRATCH} as a config key → InterpolationKeyError.
+    # Fix: resolve SCRATCH/PWD from the environment at planning time so the
+    # injected sibling value is a plain concrete string with no ${} tokens.
+    APPTAINER_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+    SINGULARITY_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+
+backend:
+  megatron:
+    log_throughput: true
+    log_interval: 1
+    log_progress: true
+    data_path:
+      - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
+    data_cache_path: /shared_silo/scratch/rluukkon/data/.cache
+    split: "989,10,1"
+
+    # NOTE: router_lr_spec only covers the top-k router weight
+    # (decoder.layers.*.mlp.router.weight). It does NOT cover
+    # decoder.layers.*.mlp.shared_experts.gate_weight (enabled by
+    # moe_shared_expert_gate: true in qwen3_5_moe.yaml), which continues to
+    # train at the main lr below. The shared-expert gate is a sigmoid-bounded
+    # per-token mixing scalar (~82K params total), not a hard routing
+    # decision, so this is intentional / expected for CPT.
+    # router_lr_spec and lr are set per-run in the sweep below.
+
+    global_batch_size: 512
+    micro_batch_size: 2
+    expert_model_parallel_size: 8
+    pipeline_model_parallel_size: 1
+    use_distributed_optimizer: true
+    moe_per_layer_logging: true
+    create_attention_mask_in_dataloader: false
+    gradient_accumulation_fusion: false
+    moe_grouped_gemm: false
+    moe_token_dispatcher_type: "alltoall"
+    overlap_param_gather: true
+    moe_aux_loss_coeff: 0.0001  # held constant across all runs
+    overlap_grad_reduce: true
+
+    # Training schedule — round up to avoid floating-point issues
+    train_iters: ${oc.eval:'-(-10_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    lr_warmup_iters: ${oc.eval:'min(${.train_iters} // 10, 25000)'}  # held constant
+    lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
+    lr_decay_iters: ${.train_iters}
+
+    ckpt_format: torch_dist
+    save_interval: 150
+    save: ${job.base_output_dir}/checkpoints
+    load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-35B-A3B-Base
+    finetune: true
+    no_load_optim: true
+    no_load_rng: true
+
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    wandb_save_dir: "${job.base_output_dir}/wandb"
+    wandb_project: "moe-exploration"
+    # router_lr_spec can contain colons and commas (e.g. "0-4:3e-5,5-34:0,35-39:3e-5")
+    # which are safe in W&B display names but not in filesystem paths or Slurm job
+    # names. Keep the full spec here for W&B readability; use stage in job.name below.
+    wandb_exp_name: "qwen3_5_35B_A3B_tw_topk${backend.megatron.moe_router_topk}_aux${backend.megatron.moe_aux_loss_coeff}_lr${backend.megatron.lr}_rtlr${backend.megatron.router_lr_spec}_${oc.env:SLURM_JOB_ID,local}"
+
+# stage (run_A … run_D) uniquely identifies each run and is filesystem/Slurm-safe.
+# router_lr_spec is intentionally omitted from the name to avoid colons and commas
+# in paths and the Slurm job-name field.
+job:
+  name: qwen3_5_35B_A3B_tw_aux${backend.megatron.moe_aux_loss_coeff}_lr${backend.megatron.lr}_${stage}_${slurm.env.MACHINE_NAME}
+
+
+# ── 4-run grid: vary lr × router_lr_spec, everything else constant ────────────
+#
+# Dependency chain: A → B → C → D (sequential via the oellm-autoexp monitor).
+# Each run's start_condition waits for the previous run's log to contain
+# "after training is done" (megatron/training/training.py:print_datetime).
+# cancel_condition aborts the waiting run if the predecessor fatally crashes.
+#
+# Run  lr      router_lr_spec              Purpose
+# A    3e-5    "0"                         Safe baseline / control (frozen router)
+# B    1e-4    "0"                         Faster adaptation, frozen router
+# C    3e-5    "3e-6"                      Conservative LR, minimal router drift
+# D    3e-5    "0-4:3e-5,5-34:0,35-39:3e-5"  Edge-layer router only
+sweep:
+  type: product
+
+  groups:
+    - type: list
+      configs:
+
+        # ── Run A ─ Safe baseline ──────────────────────────────────────────────
+        # 10% of original peak LR, frozen router. Clean "no degradation" control.
+        - stage: run_A
+          backend.megatron.lr: 3e-5
+          backend.megatron.router_lr_spec: "0"
+
+        # ── Run B ─ Moderate LR, frozen router ────────────────────────────────
+        # ~33% of original peak. Tests faster adaptation without router drift.
+        - stage: run_B
+          backend.megatron.lr: 1e-4
+          backend.megatron.router_lr_spec: "0"
+          job.start_condition:
+            class_name: LogPatternCondition
+            log_path: "\\${sibling.run_A.job.log_path_current}"
+            pattern: "after training is done"
+          job.cancel_condition:
+            class_name: LogPatternCondition
+            log_path: "\\${sibling.run_A.job.log_path_current}"
+            pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+
+        # ── Run C ─ Slow router ───────────────────────────────────────────────
+        # Conservative main LR; router drifts at 10× slower than main.
+        # Tests whether any router adaptation helps on new data.
+        - stage: run_C
+          backend.megatron.lr: 3e-5
+          backend.megatron.router_lr_spec: "3e-6"
+          job.start_condition:
+            class_name: LogPatternCondition
+            log_path: "\\${sibling.run_B.job.log_path_current}"
+            pattern: "after training is done"
+          job.cancel_condition:
+            class_name: LogPatternCondition
+            log_path: "\\${sibling.run_B.job.log_path_current}"
+            pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+
+        # ── Run D ─ Per-layer edge routers ────────────────────────────────────
+        # Adapt layers 0-4 and 35-39 (edge routers: raw-token / output-aligned
+        # representations); freeze bulk routers (layers 5-34).
+        # Common pattern in MoE CPT papers.
+        - stage: run_D
+          backend.megatron.lr: 3e-5
+          backend.megatron.router_lr_spec: "0-4:3e-5,5-34:0,35-39:3e-5"
+          job.start_condition:
+            class_name: LogPatternCondition
+            log_path: "\\${sibling.run_C.job.log_path_current}"
+            pattern: "after training is done"
+          job.cancel_condition:
+            class_name: LogPatternCondition
+            log_path: "\\${sibling.run_C.job.log_path_current}"
+            pattern: "FATAL ERROR|OutOfMemoryError|Traceback"

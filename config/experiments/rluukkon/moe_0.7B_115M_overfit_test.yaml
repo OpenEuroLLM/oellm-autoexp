@@ -34,7 +34,9 @@ backend:
     masked_softmax_fusion: False
     expert_model_parallel_size: 1
     moe_grouped_gemm: false
-
+    router_lr_spec: "0"
+    lr: 3e-4
+    min_lr: 0.0
     # DATA
     train_data_path:
       - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/gpt-neox-20b/merged/CC-MAIN-2020-high-actual_merged
@@ -88,4 +90,5 @@ slurm:
     DATA_PATH: "${oc.env:DATA_PATH,/pfs/lustrep4/scratch/project_462000963/preprocessed}"
 
 job:
-  name:  overfit_0.7B_115M_topk${backend.megatron.moe_router_topk}_aux${backend.megatron.moe_aux_loss_coeff}_lr${backend.megatron.lr}_${slurm.env.MACHINE_NAME}
+# frozen router lr
+  name:  overfit_0.7B_115M_topk${backend.megatron.moe_router_topk}_aux${backend.megatron.moe_aux_loss_coeff}_lr${backend.megatron.lr}_frozen_router_lr_spec${backend.megatron.router_lr_spec}_${slurm.env.MACHINE_NAME}

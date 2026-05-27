@@ -1,3 +1,6 @@
+defaults:
+  - base
+  - _self_
 # Qwen3.5 MoE base architecture config
 # HF reference: https://huggingface.co/Qwen/Qwen3.5-35B-A3B-Base/blob/main/config.json
 #
@@ -7,7 +10,6 @@
 #   - attention_output_gate, apply_wd_to_qk_layernorm
 #   - num_experts: 256, moe_ffn_hidden_size: 512, moe_shared_expert_intermediate_size: 512
 #   - vocab_size: 248320
-
 # general setup
 seq_length: 8192
 encoder_seq_length: null  # must be null when seq_length is set (mutually exclusive in Megatron)

@@ -1,0 +1,230 @@
+# @package _global_
+defaults:
+  - ../base
+  - /backend: megatron
+  - /container: mi325x
+  - /slurm: mi325x
+  - /sweep: none
+  - /backend/megatron: [qwen3_5_moe_35BA3B]
+  - _self_
+
+slurm:
+  sbatch:
+    partition: amd-tw-verification
+    nodes: 4
+    time: 0-13:00:00
+
+  env:
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    WANDB_MODE: "online"
+    OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
+    # mi325x.yaml uses \${SCRATCH}/\${PWD} (OmegaConf-escaped bash vars).
+    # When the DAG resolver serialises a sibling's resolved config and re-injects
+    # it as ++ overrides, the escaping is stripped and OmegaConf tries to
+    # resolve ${SCRATCH} as a config key → InterpolationKeyError.
+    # Fix: resolve SCRATCH/PWD from the environment at planning time so the
+    # injected sibling value is a plain concrete string with no ${} tokens.
+    APPTAINER_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+    SINGULARITY_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+
+backend:
+  megatron:
+    log_throughput: true
+    log_interval: 1
+    log_progress: true
+    # data_path is overridden per stage in the sweep below (weighted bilingual mix).
+    # CC-MAIN English web corpus (48.3B tokens):
+    data_path:
+      - 0.5
+      - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
+      - 0.5
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt2.0_cleaned_fin/train
+    data_cache_path: /shared_silo/scratch/rluukkon/data/.cache
+    split: "989,10,1"
+
+    # NOTE: router_lr_spec only covers the top-k router weight
+    # (decoder.layers.*.mlp.router.weight). It does NOT cover
+    # decoder.layers.*.mlp.shared_experts.gate_weight (enabled by
+    # moe_shared_expert_gate: true in qwen3_5_moe.yaml), which continues to
+    # train at the main lr. The shared-expert gate is a sigmoid-bounded
+    # per-token mixing scalar (~82K params total), not a hard routing
+    # decision, so this is intentional / expected for CPT.
+    # lr, router_lr_spec, moe_aux_loss_coeff, and data_path are set per-run below.
+
+    global_batch_size: 512
+    micro_batch_size: 2
+    expert_model_parallel_size: 8
+    pipeline_model_parallel_size: 1
+    use_distributed_optimizer: true
+    moe_per_layer_logging: true
+    create_attention_mask_in_dataloader: false
+    gradient_accumulation_fusion: false
+    moe_grouped_gemm: false
+    moe_token_dispatcher_type: "alltoall"
+    overlap_param_gather: true
+    overlap_grad_reduce: true
+    # moe_aux_loss_coeff is set per-run:
+    #   frozen runs → 0.0  (router weights don't update; enforcing load-balance
+    #                        is meaningless and adds gradient noise to representations)
+    #   edge runs   → 0.0001 (router adapts; aux loss maintains load balance)
+
+    # Training schedule: 10B tokens, ceil-division to avoid float issues
+    train_iters: ${oc.eval:'-(-10_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    # Fixed 500-iter warmup (monolingual grid showed LR=1e-4 needed >238 iters to
+    # suppress grad-norm spikes; 500 is safe for both LR levels).
+    lr_warmup_iters: 500
+    lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
+    lr_decay_iters: ${.train_iters}
+
+    ckpt_format: torch_dist
+    save_interval: 600
+    save: ${job.base_output_dir}/checkpoints
+    load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-35B-A3B-Base
+    finetune: true
+    no_load_optim: true
+    no_load_rng: true
+
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    wandb_save_dir: "${job.base_output_dir}/wandb"
+    wandb_project: "moe-exploration"
+    wandb_exp_name: "qwen3_5_35B_A3B_bilingual_topk${backend.megatron.moe_router_topk}_aux${backend.megatron.moe_aux_loss_coeff}_lr${backend.megatron.lr}_rtlr${backend.megatron.router_lr_spec}_${stage}_${oc.env:SLURM_JOB_ID,local}"
+
+# stage encodes all three sweep axes (lr, router, mix) — filesystem/Slurm-safe.
+# router_lr_spec is intentionally omitted from job.name to avoid colons/commas.
+job:
+  name: qwen3_5_35B_A3B_bilingual_aux${backend.megatron.moe_aux_loss_coeff}_lr${backend.megatron.lr}_${stage}_${slurm.env.MACHINE_NAME}
+
+
+# ── 2×2×2 factorial: LR × router × data mix, all 8 runs submitted in parallel ─
+#
+# Factor A — LR:     3e-5  ×  1e-4
+# Factor B — Router: frozen ("0")  ×  edge ("0-4:3e-5,5-34:0,35-39:3e-5")
+# Factor C — Mix:    50/50 EN/FI   ×  30/70 EN/FI
+#
+# Data corpora:
+#   EN — CC-MAIN-2020 (48.3B tokens)
+#   FI — HPLT 2.0 cleaned Finnish (53.6B tokens)
+# Neither corpus is exhausted at 10B tokens under any mixture.
+#
+# moe_aux_loss_coeff:
+#   frozen runs → 0.0   (router won't update; aux loss only adds gradient noise)
+#   edge runs   → 0.0001 (router adapts; aux loss maintains expert load balance)
+#
+# Stage naming: lr{LR}_{frz|edg}_{EN_pct}{FI_pct}
+#   e.g. lr1e4_edg_3070 = lr=1e-4, edge router, 30% EN / 70% FI
+sweep:
+  type: product
+
+  groups:
+    - type: list
+      configs:
+
+        # ── LR=3e-5, frozen router ─────────────────────────────────────────────
+
+        # A1: anchor — balanced mix, conservative LR, frozen router
+        # This is the "safe CPT" baseline. Low forgetting risk; slower Finnish gain.
+        - stage: lr3e5_frz_5050
+          backend.megatron.lr: 3e-5
+          backend.megatron.min_lr: 3e-6
+          backend.megatron.router_lr_spec: "0"
+          backend.megatron.moe_aux_loss_coeff: 0.0
+          backend.megatron.data_path:
+            - 0.5
+            - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
+            - 0.5
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt2.0_cleaned_fin/train
+
+        # A2: Finnish-dominant mix, conservative LR, frozen router
+        # Tests whether more Finnish exposure improves Finnish at 3e-5 LR.
+        - stage: lr3e5_frz_3070
+          backend.megatron.lr: 3e-5
+          backend.megatron.min_lr: 3e-6
+          backend.megatron.router_lr_spec: "0"
+          backend.megatron.moe_aux_loss_coeff: 0.0
+          backend.megatron.data_path:
+            - 0.3
+            - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
+            - 0.7
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt2.0_cleaned_fin/train
+
+        # ── LR=3e-5, edge router ──────────────────────────────────────────────
+
+        # A3: balanced mix, conservative LR, edge-layer routers unfrozen
+        # Tests whether edge-router adaptation helps at 3e-5 LR (replaces monolingual Run D).
+        - stage: lr3e5_edg_5050
+          backend.megatron.lr: 3e-5
+          backend.megatron.min_lr: 3e-6
+          backend.megatron.router_lr_spec: "0-4:3e-5,5-34:0,35-39:3e-5"
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.data_path:
+            - 0.5
+            - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
+            - 0.5
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt2.0_cleaned_fin/train
+
+        # A4: Finnish-dominant mix, conservative LR, edge-layer routers unfrozen
+        - stage: lr3e5_edg_3070
+          backend.megatron.lr: 3e-5
+          backend.megatron.min_lr: 3e-6
+          backend.megatron.router_lr_spec: "0-4:3e-5,5-34:0,35-39:3e-5"
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.data_path:
+            - 0.3
+            - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
+            - 0.7
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt2.0_cleaned_fin/train
+
+        # ── LR=1e-4, frozen router ────────────────────────────────────────────
+
+        # B1: balanced mix, fast LR, frozen router
+        # Monolingual best (Run B) transposed to bilingual — key comparison point.
+        - stage: lr1e4_frz_5050
+          backend.megatron.lr: 1e-4
+          backend.megatron.min_lr: 1e-5
+          backend.megatron.router_lr_spec: "0"
+          backend.megatron.moe_aux_loss_coeff: 0.0
+          backend.megatron.data_path:
+            - 0.5
+            - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
+            - 0.5
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt2.0_cleaned_fin/train
+
+        # B2: Finnish-dominant mix, fast LR, frozen router
+        # Most aggressive adaptation run. High Finnish gain expected; forgetting risk highest.
+        - stage: lr1e4_frz_3070
+          backend.megatron.lr: 1e-4
+          backend.megatron.min_lr: 1e-5
+          backend.megatron.router_lr_spec: "0"
+          backend.megatron.moe_aux_loss_coeff: 0.0
+          backend.megatron.data_path:
+            - 0.3
+            - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
+            - 0.7
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt2.0_cleaned_fin/train
+
+        # ── LR=1e-4, edge router ──────────────────────────────────────────────
+
+        # B3: balanced mix, fast LR, edge-layer routers unfrozen
+        # Tests whether edge-router adaptation helps or hurts at higher LR.
+        - stage: lr1e4_edg_5050
+          backend.megatron.lr: 1e-4
+          backend.megatron.min_lr: 1e-5
+          backend.megatron.router_lr_spec: "0-4:3e-5,5-34:0,35-39:3e-5"
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.data_path:
+            - 0.5
+            - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
+            - 0.5
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt2.0_cleaned_fin/train
+
+        # B4: Finnish-dominant mix, fast LR, edge-layer routers unfrozen
+        - stage: lr1e4_edg_3070
+          backend.megatron.lr: 1e-4
+          backend.megatron.min_lr: 1e-5
+          backend.megatron.router_lr_spec: "0-4:3e-5,5-34:0,35-39:3e-5"
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.data_path:
+            - 0.3
+            - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
+            - 0.7
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt2.0_cleaned_fin/train
