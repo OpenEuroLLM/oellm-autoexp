@@ -36,6 +36,10 @@ The environment variables used in the `config/` here are:
 - $CONTAINER_CACHE_DIR  : directory containing container images
 
 
+## Bring you own container
+
+If you have your own container, just use the cli override: `container.image=PATH_TO_YOUR_CONTAINER` or define it in your experiment yaml. 
+
 ## Cluster setup: LUMI notes
 - Install prerequisites outside the container (rccl-tuner, cray-python, etc.) following the LUMI docs. (SEE: https://github.com/sfantao/rccl-tuner.git)
 - Build the Megatron container from the provided defs (see `container/megatron/MegatronTrainingLumi.def.in`) so the correct ROCm + network tuning ends up inside the image.
