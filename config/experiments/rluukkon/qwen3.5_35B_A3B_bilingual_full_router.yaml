@@ -52,11 +52,8 @@ backend:
     train_iters: ${oc.eval:'-(-10_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
     lr_warmup_iters: 500
 
-    # WSD schedule: warmup → stable → linear decay in last 20%
-    # Previous bilingual sweep used linear decay (no stable phase) — this fixes that.
-    lr_decay_style: WSD
-    lr_wsd_decay_style: linear
-    lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
+    # Linear decay (warmup → linear decay to min_lr) — matches the earlier
+    # bilingual sweep schedule for direct comparability.
     lr_decay_iters: ${.train_iters}
 
     ckpt_format: torch_dist
@@ -81,7 +78,7 @@ job:
 # Factor A — Router LR:  1e-5 (conservative)  ×  3e-5 (matched to model LR)
 # Factor B — Data mix:   50/50 EN/FI          ×  30/70 EN/FI
 #
-# All runs use model lr=3e-5, WSD schedule, aux_loss_coeff=0.0001.
+# All runs use model lr=3e-5, linear decay schedule, aux_loss_coeff=0.0001.
 # router_lr_spec is a plain float → applies uniformly to all 40 layers.
 #
 # Comparison targets:
