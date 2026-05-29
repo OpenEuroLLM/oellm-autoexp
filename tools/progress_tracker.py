@@ -785,7 +785,7 @@ def query_sacct(job_ids: list[str]) -> dict[str, dict]:
         result = subprocess.run(
             [
                 "sacct", "-j", ",".join(job_ids),
-                "--format=JobID,State,Elapsed,AllocTRES%80,Start,End",
+                "--format=JobID,State,Elapsed,AllocTRES%80,Start,End,User",
                 "--noheader", "--parsable2",
             ],
             capture_output=True, text=True, timeout=15,
@@ -801,6 +801,7 @@ def query_sacct(job_ids: list[str]) -> dict[str, dict]:
         if len(parts) < 6:
             continue
         jid_field, state, elapsed, alloc_tres, start, end = parts[:6]
+        user = parts[6].strip() if len(parts) > 6 else ""
         if "." in jid_field:
             continue
         gpus = 0
@@ -813,6 +814,8 @@ def query_sacct(job_ids: list[str]) -> dict[str, dict]:
             "gpus":     gpus,
             "start_ts": _parse_sacct_ts(start),
             "end_ts":   _parse_sacct_ts(end),
+            "start_str": start.strip(),
+            "user":     user,
         }
     return info
 
@@ -1425,6 +1428,8 @@ def main() -> None:
                 "overhead_pct": None,
                 "sacct_state": "",
                 "sacct_elapsed": "",
+                "sacct_start_str": "",
+                "owner": "",
                 "cluster": "",
                 "status_emoji": s_emoji,
                 "status_word": s_word,
@@ -1626,6 +1631,8 @@ def main() -> None:
                 "overhead_pct": overhead_pct,
                 "sacct_state": sacct_state,
                 "sacct_elapsed": sacct_elapsed,
+                "sacct_start_str": sacct_entry.get("start_str", ""),
+                "owner": sacct_entry.get("user", ""),
                 "cluster": cluster,
                 "status_emoji": emoji,
                 "status_word": status_word,
@@ -2279,7 +2286,8 @@ def main() -> None:
             _csv_run_cluster_tag[_rn] = "MIX" if len(_cls) > 1 else (next(iter(_cls)) if _cls else "")
 
         csv_fields = [
-            "Run", "JobID", "Machine", "RunClusters", "N_ne(B)", "N(B)", "D(B)", "C(10^18)", "Tier", "Stage",
+            "Run", "JobID", "Machine", "RunClusters", "Owner", "StartTime", "Elapsed",
+            "N_ne(B)", "N(B)", "D(B)", "C(10^18)", "Tier", "Stage",
             "TotIter", "CurIter", "LastCkpt", "Prog%", "TrainLoss", "ValLoss", "LR", "GBS", "MBS", "Nodes", "Workers",
             "TFLOP/s/GPU", "Tok/s/GPU", "TTFI(min)", "TTFI-GPU-h",
             "LowTP-time(h)", "LowTP-GPU-h", "Overhead-time(h)", "Overhead-GPU-h", "GPU-h(LEO)", "GPU-h(MN5)", "GPU-h", "Overhead%",
@@ -2320,6 +2328,9 @@ def main() -> None:
                     "JobID":       r["job_id"],
                     "Machine":     r.get("cluster", ""),
                     "RunClusters": _csv_run_cluster_tag.get(r["run_name"], ""),
+                    "Owner":       r.get("owner", ""),
+                    "StartTime":   r.get("sacct_start_str", ""),
+                    "Elapsed":     r.get("sacct_elapsed", ""),
                     "N_ne(B)":     f"{r['transformer_params_b']:.2f}" if r["transformer_params_b"] is not None else "",
                     "N(B)":        f"{r['total_params_b']:.2f}" if r["total_params_b"] is not None else "",
                     "D(B)":        int(r["tokens_b"]) if r.get("tokens_b") is not None else "",
