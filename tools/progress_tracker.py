@@ -1878,11 +1878,67 @@ def main() -> None:
                 exp_gpu_h[rn] = exp_gpu_h.get(rn, 0.0) + r["gpu_hours"]
                 grand_gpu_total += r["gpu_hours"]
 
+    # Infer GPU-h for foreign-cluster jobs from log data (sacct on this machine
+    # returns 0 for jobs that ran on the other cluster).
+    # GPU-h = efficient training GPU-h (from throughput) + LowTP GPU-h (from logs).
+    # LowTP is log-based and valid; efficient GPU-h covers the remaining training time.
+    _foreign_cluster = "MN5" if args.machine != "MN5" else "LEO"
+    _run_prev_last_iter: dict[str, int] = {}
+    for r in rows:
+        rn = r["run_name"]
+        if r.get("gpu_hours") is None and r.get("cluster") == _foreign_cluster:
+            avg_tp   = r.get("avg_tok_per_gpu")
+            tok_b    = r.get("tokens_b")
+            tr_iters = r.get("train_iters")
+            last_it  = r.get("last_iter")
+            if avg_tp and avg_tp > 0 and tr_iters and tr_iters > 0 and tok_b and last_it:
+                tokens_per_iter = tok_b * 1e9 / tr_iters
+                start_iter = _run_prev_last_iter.get(rn, 0)
+                job_tokens = (last_it - start_iter) * tokens_per_iter
+                if job_tokens > 0:
+                    efficient_gpu_h = job_tokens / (avg_tp * 3600)
+                    lowtp_gpu_h = r.get("gpu_h_lost") or 0.0
+                    r["gpu_hours"] = efficient_gpu_h + lowtp_gpu_h
+        if r.get("cluster") == _foreign_cluster and r.get("last_iter") is not None:
+            _run_prev_last_iter[rn] = r["last_iter"]
+
+    # For foreign-cluster rows: TTFI requires sacct job-start time so always null it.
+    # LowTP is log-based and kept. Recompute overhead without TTFI component.
+    # For rows still without gpu_hours (couldn't infer), null overhead% but keep LowTP.
+    # Also null TTFI/overhead for undetected foreign jobs (gpu_hours=None) in foreign runs.
+    _foreign_run_names = {r["run_name"] for r in rows if r.get("cluster") == _foreign_cluster}
+    for r in rows:
+        is_foreign_row = r.get("cluster") == _foreign_cluster
+        is_undetected_foreign = (
+            r["run_name"] in _foreign_run_names and r.get("gpu_hours") is None
+        )
+        if is_foreign_row or is_undetected_foreign:
+            # TTFI always unknown without sacct start time
+            r["ttfi_min"] = None
+            r["ttfi_gpu_h"] = None
+            if r.get("gpu_hours") is not None:
+                # Recompute overhead as LowTP only (no TTFI)
+                ltp = r.get("gpu_h_lost") or 0.0
+                r["overhead_gpu_h"] = ltp if ltp > 0 else None
+                r["overhead_time_h"] = r.get("time_lost_h")
+                r["overhead_pct"] = (ltp / r["gpu_hours"] * 100) if ltp > 0 else None
+            else:
+                r["overhead_time_h"] = None
+                r["overhead_gpu_h"] = None
+                r["overhead_pct"] = None
+
+    # Add inferred foreign-cluster GPU-h into exp_gpu_h so the summary table
+    # reflects real usage (sacct returned 0 for these jobs).
+    for r in rows:
+        if r.get("cluster") == _foreign_cluster and r.get("gpu_hours") is not None:
+            rn = r["run_name"]
+            exp_gpu_h[rn] = exp_gpu_h.get(rn, 0.0) + r["gpu_hours"]
+            grand_gpu_total += r["gpu_hours"]
+
     summary_gpu_h = _build_summary_exp_gpu_h(run_specs, exp_gpu_h, rows)
     summary_grand_total = sum(h for h in summary_gpu_h.values() if h is not None)
 
     # Per-run GPU-h split by cluster, aggregated from per-job rows.
-    _foreign_cluster = "MN5" if args.machine != "MN5" else "LEO"
     _run_gpu_h_leo: dict[str, float] = {}
     _run_gpu_h_mn5: dict[str, float] = {}
     _foreign_job_seen = False
@@ -2216,11 +2272,17 @@ def main() -> None:
 
     # ── CSV output ──────────────────────────────────────────────────────────
     if args.csv:
+        # Pre-compute run-level cluster tag (LEO / MN5 / MIX) for CSV
+        _csv_run_cluster_tag: dict[str, str] = {}
+        for _rn in {r["run_name"] for r in rows}:
+            _cls = {r.get("cluster", "") for r in rows if r["run_name"] == _rn and r.get("cluster")}
+            _csv_run_cluster_tag[_rn] = "MIX" if len(_cls) > 1 else (next(iter(_cls)) if _cls else "")
+
         csv_fields = [
-            "Run", "JobID", "Machine", "N_ne(B)", "N(B)", "D(B)", "C(10^18)", "Tier", "Stage",
+            "Run", "JobID", "Machine", "RunClusters", "N_ne(B)", "N(B)", "D(B)", "C(10^18)", "Tier", "Stage",
             "TotIter", "CurIter", "LastCkpt", "Prog%", "TrainLoss", "ValLoss", "LR", "GBS", "MBS", "Nodes", "Workers",
             "TFLOP/s/GPU", "Tok/s/GPU", "TTFI(min)", "TTFI-GPU-h",
-            "LowTP-time(h)", "LowTP-GPU-h", "Overhead-time(h)", "Overhead-GPU-h", "GPU-h", "Overhead%",
+            "LowTP-time(h)", "LowTP-GPU-h", "Overhead-time(h)", "Overhead-GPU-h", "GPU-h(LEO)", "GPU-h(MN5)", "GPU-h", "Overhead%",
             "Remaining-GPU-h",
             "Emoji", "Status", "Action", "Error",
         ]
@@ -2257,6 +2319,7 @@ def main() -> None:
                     "Run":         r["run_name"],
                     "JobID":       r["job_id"],
                     "Machine":     r.get("cluster", ""),
+                    "RunClusters": _csv_run_cluster_tag.get(r["run_name"], ""),
                     "N_ne(B)":     f"{r['transformer_params_b']:.2f}" if r["transformer_params_b"] is not None else "",
                     "N(B)":        f"{r['total_params_b']:.2f}" if r["total_params_b"] is not None else "",
                     "D(B)":        int(r["tokens_b"]) if r.get("tokens_b") is not None else "",
@@ -2282,6 +2345,8 @@ def main() -> None:
                     "LowTP-GPU-h":      f"{r['gpu_h_lost']:.4f}"     if r.get("gpu_h_lost")     is not None else "",
                     "Overhead-time(h)": f"{r['overhead_time_h']:.4f}" if r.get("overhead_time_h") is not None else "",
                     "Overhead-GPU-h":   f"{r['overhead_gpu_h']:.4f}"  if r.get("overhead_gpu_h")  is not None else "",
+                    "GPU-h(LEO)":       f"{r['gpu_hours']:.1f}" if r.get("gpu_hours") is not None and r.get("cluster") == args.machine else "",
+                    "GPU-h(MN5)":       f"{r['gpu_hours']:.1f}" if r.get("gpu_hours") is not None and r.get("cluster") == _foreign_cluster else "",
                     "GPU-h":            f"{r['gpu_hours']:.1f}"       if r["gpu_hours"]           is not None else "",
                     "Overhead%":        f"{r['overhead_pct']:.2f}"    if r.get("overhead_pct")    is not None else "",
                     "Remaining-GPU-h":  rem_gpu_h_csv,
@@ -2483,4 +2548,68 @@ def main() -> None:
                     _t_leo_md_s = f"{_tier_gpu_h_leo_md:.1f}" if _tier_gpu_h_leo_md else "N/A"
                     _t_mn5_md_s = f"{_tier_gpu_h_mn5_md:.1f}" if _tier_gpu_h_mn5_md else "N/A"
                     _t_rem_md_s = f"{_tier_rem_gpu_h_md:.1f}" if _tier_rem_gpu_h_md else "N/A"
-          
+                    _t_ckpt_md_s = _format_ckpt_gb_total(
+                        _tier_ckpt_gb_md, compute=args.compute_storage, md=True
+                    )
+                    _t_ckpt_rem_md_s = _format_ckpt_gb_total(
+                        _tier_ckpt_rem_gb_md, compute=args.compute_storage, md=True
+                    )
+                    _md_tier_gpu_h_cols = (
+                        f" **{_t_leo_md_s}** | **{_t_mn5_md_s}** | **{_t_gpu_h_md_s}**"
+                        if _any_cluster_split else f" **{_t_gpu_h_md_s}**"
+                    )
+                    f.write(
+                        f"| | | **[{_tier_name_md} total]** | **{_tier_name_md}** | | | |"
+                        f" **{_t_ttfi_md_s}** | **{_tier_lt_gpu_h_md:.2f}**"
+                        f" | **{_t_oh_md_s}** |{_md_tier_gpu_h_cols} | **{_t_oh_pct_md_s}** | **{_t_rem_md_s}**"
+                        f" | {_t_ckpt_md_s or '**—**'} | {_t_ckpt_rem_md_s or '**—**'} |\n"
+                    )
+                    f.write(f"{SUMMARY_MD_TIER_SEP}\n")
+                    _tier_ttfi_gpu_h_md = 0.0
+                    _tier_lt_gpu_h_md = 0.0
+                    _tier_oh_gpu_h_md = 0.0
+                    _tier_gpu_h_md = 0.0
+                    _tier_gpu_h_leo_md = 0.0
+                    _tier_gpu_h_mn5_md = 0.0
+                    _tier_rem_gpu_h_md = 0.0
+                    _tier_ckpt_gb_md = 0.0
+                    _tier_ckpt_rem_gb_md = 0.0
+            grand_oh_pct_md = (
+                grand_oh_gpu_h_md / summary_grand_total * 100.0
+                if grand_oh_gpu_h_md and summary_grand_total > 0
+                else None
+            )
+            grand_oh_pct_md_str = (
+                f"{grand_oh_pct_md:.1f}%" if grand_oh_pct_md is not None else "N/A"
+            )
+            grand_rem_md_str = f"{grand_remaining_total:.1f}" if grand_remaining_total else "N/A"
+            grand_ckpt_md_str = _format_ckpt_gb_total(
+                grand_ckpt_gb_md, compute=args.compute_storage, md=True
+            )
+            grand_ckpt_rem_md_str = _format_ckpt_gb_total(
+                grand_ckpt_rem_gb_md, compute=args.compute_storage, md=True
+            )
+            _grand_leo_md_s = f"{grand_gpu_h_leo_md:.1f}" if grand_gpu_h_leo_md else "N/A"
+            _grand_mn5_md_s = f"{grand_gpu_h_mn5_md:.1f}" if grand_gpu_h_mn5_md else "N/A"
+            _md_grand_gpu_h_cols = (
+                f" **{_grand_leo_md_s}** | **{_grand_mn5_md_s}** | **{summary_grand_total:.1f}**"
+                if _any_cluster_split else f" **{summary_grand_total:.1f}**"
+            )
+            f.write(
+                f"| | | **TOTAL** | | | | | **{grand_ttfi_gpu_h_md:.2f}** | **{grand_lt_gpu_h_md:.2f}**"
+                f" | **{grand_oh_gpu_h_md:.2f}** |{_md_grand_gpu_h_cols} | **{grand_oh_pct_md_str}**"
+                f" | **{grand_rem_md_str}** | {grand_ckpt_md_str or '**—**'} | {grand_ckpt_rem_md_str or '**—**'} |\n"
+            )
+            f.write("\n")
+
+            # Status summary
+            f.write("## Status breakdown\n\n")
+            from collections import Counter
+            counts = Counter(r["status_word"] for r in rows)
+            for status, cnt in sorted(counts.items()):
+                f.write(f"- **{status}**: {cnt}\n")
+        print(f"\nWrote markdown to {md_path}")
+
+
+if __name__ == "__main__":
+    main()
