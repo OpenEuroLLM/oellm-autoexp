@@ -1,0 +1,7 @@
+defaults:
+  - jupiter
+  - _self_
+
+# MegaDLM container built from nvcr.io/nvidia/pytorch:24.11-py3
+# with flash-attn, transformer-engine, and the MegaDLMs diffusion extension.
+image: /e/project1/e-sta-openeurollm/vanosch1/containers/MegaDLM-24-11.sif

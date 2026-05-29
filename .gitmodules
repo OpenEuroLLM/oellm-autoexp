@@ -4,3 +4,6 @@
 [submodule "submodules/titan-oellm"]
 	path = submodules/titan-oellm
 	url = git@github.com:OpenEuroLLM/titan-oellm.git
+[submodule "submodules/MegaDLMs"]
+	path = submodules/MegaDLMs
+	url = git@github.com:OpenEuroLLM/MegaDLMs.git

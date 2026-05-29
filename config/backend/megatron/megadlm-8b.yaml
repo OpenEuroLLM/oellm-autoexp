@@ -1,0 +1,98 @@
+# MegaDLM 8B model config
+# Architecture matches the Qwen2.5-based 8B used in MegaDLMs/pretrain_difflm.job.
+# seq_length is 4097 (not 4096): difflm-noshift trims the first token after
+# embedding, so the effective context length is 4096, which must be divisible by TP.
+
+# ── Architecture ────────────────────────────────────────────────────────────────
+num_layers: 36
+hidden_size: 4096
+num_attention_heads: 32
+group_query_attention: true
+num_query_groups: 8
+kv_channels: 128
+ffn_hidden_size: 14336
+swiglu: true
+vocab_size: 50289
+normalization: RMSNorm
+norm_epsilon: 1.0e-6
+rotary_base: 500000
+add_bias_linear: false
+position_embedding_type: rope
+qk_layernorm: true
+untie_embeddings_and_output_weights: true
+
+# ── Sequence ─────────────────────────────────────────────────────────────────────
+seq_length: 4097
+max_position_embeddings: 4097
+
+# ── Attention ────────────────────────────────────────────────────────────────────
+attention_backend: auto
+attention_softmax_in_fp32: true
+attention_dropout: 0.0
+hidden_dropout: 0.0
+# Disable fusions that conflict with the diffusion forward pass.
+bias_gelu_fusion: false
+bias_dropout_fusion: false
+bias_swiglu_fusion: false
+
+# ── Precision ───────────────────────────────────────────────────────────────────
+bf16: true
+use_flash_attn: true
+
+# ── Optimizer ───────────────────────────────────────────────────────────────────
+use_distributed_optimizer: true
+overlap_param_gather: true
+overlap_grad_reduce: true
+weight_decay: 0.1
+adam_beta1: 0.9
+adam_beta2: 0.95
+adam_eps: 1.0e-8
+init_method_std: 0.02
+clip_grad: 1.0
+
+# ── Learning rate (WSD schedule) ────────────────────────────────────────────────
+lr: 0.0002
+min_lr: 0.00002
+lr_decay_style: WSD
+lr_warmup_iters: 0
+lr_decay_iters: ${backend.megatron.train_iters}  # keeps WSD schedule aligned with training length
+lr_wsd_decay_style: exponential
+lr_wsd_decay_iters: 0
+
+# ── Training ────────────────────────────────────────────────────────────────────
+train_iters: 10
+micro_batch_size: 1
+global_batch_size: 64     # override per experiment: MBS × DP × GAS
+eval_iters: 0
+eval_interval: 10
+
+# ── Data ────────────────────────────────────────────────────────────────────────
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: /e/scratch/e-sta-openeurollm/harmsen1/hf_home/hub/models--openai-community--gpt2/snapshots/607a30d783dfa663caf39e06633721c8d4cfcd7e
+data_path:
+  - /e/project1/e-sta-openeurollm/harmsen1/datasets/FineWeb/fineweb-10BT_text_document
+num_workers: 8
+dataloader_type: cyclic
+
+# ── Checkpointing ───────────────────────────────────────────────────────────────
+ckpt_format: torch_dist
+auto_detect_ckpt_format: true
+ckpt_fully_parallel_load: true
+save_interval: 10
+save: "${job.base_output_dir}/checkpoints"
+load: "${job.base_output_dir}/checkpoints"
+
+# ── Logging ─────────────────────────────────────────────────────────────────────
+log_interval: 1
+log_throughput: true
+log_params_norm: true
+log_num_zeros_in_grad: true
+log_timers_to_tensorboard: true
+log_validation_ppl_to_tensorboard: true
+log_memory_to_tensorboard: true
+log_progress: true
+wandb_project: "megadlm-jupiter"
+wandb_save_dir: "${job.base_output_dir}/wandb"
+
+aux:
+  model_name: "megadlm-8b"
