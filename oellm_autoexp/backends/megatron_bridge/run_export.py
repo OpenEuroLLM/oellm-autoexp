@@ -100,12 +100,71 @@ def _run_convert(
     inside a container with Megatron-Bridge installed (see
     ``container/megatron/MegatronTraining-JUPITER-bridge.def.in``).
     """
-    # Bridge's src must come AFTER the 3rdparty Megatron-LM (or any other
-    # source that provides `megatron.core`), otherwise Python's namespace
-    # package lookup finds `megatron/bridge` first and shadows `megatron.core`.
-    for p in (bridge_root / "3rdparty" / "Megatron-LM", bridge_root / "src"):
-        if str(p) not in sys.path:
-            sys.path.insert(0, str(p))
+    # Some installed `nvidia_resiliency_ext` versions don't expose
+    # `__version__`; Megatron-LM's `dist_checkpointing/strategies/nvrx.py`
+    # reads it unconditionally during module import and crashes. Patch
+    # before any megatron.core import.
+    try:
+        import nvidia_resiliency_ext as _nvrx
+
+        if not hasattr(_nvrx, "__version__"):
+            # Bridge's vendored Megatron-LM asserts >= 0.6.0; lie if needed
+            # so the dist-ckpt strategies module imports without async support.
+            _nvrx.__version__ = "0.6.0"
+    except ImportError:
+        pass
+
+    # Bridge's src must come AFTER any source that provides `megatron.core`,
+    # otherwise Python's namespace package lookup finds `megatron/bridge`
+    # first and shadows `megatron.core`. If `megatron.core` is already
+    # importable (typical: PYTHONPATH points at the OpenEuroLLM fork at
+    # submodules/Megatron-LM, or the training container ships it via pip),
+    # leave it alone — only fall back to Bridge's vendored 3rdparty copy
+    # when nothing else provides it. That fallback can crash on
+    # version-skewed `nvidia_resiliency_ext`, so the prefer-existing path
+    # is important.
+    try:
+        import megatron.core  # noqa: F401
+    except ImportError:
+        thirdparty = bridge_root / "3rdparty" / "Megatron-LM"
+        if str(thirdparty) not in sys.path:
+            sys.path.insert(0, str(thirdparty))
+    src_path = bridge_root / "src"
+    if str(src_path) not in sys.path:
+        sys.path.append(str(src_path))
+
+    # Older OpenEuroLLM Megatron-LM forks lack
+    # `_clean_metadata_for_serialization` (Bridge added it upstream). Shim
+    # it as a no-op so Bridge's `checkpointing` module can import.
+    try:
+        from megatron.core.dist_checkpointing import utils as _mc_dc_utils
+
+        if not hasattr(_mc_dc_utils, "_clean_metadata_for_serialization"):
+            _mc_dc_utils._clean_metadata_for_serialization = lambda *a, **kw: None
+    except ImportError:
+        pass
+
+    # Bridge expects `megatron.core.optimizer.layer_wise_optimizer.LayerWiseDistributedOptimizer`,
+    # which the OpenEuroLLM fork doesn't ship. Bridge only uses it for
+    # `isinstance` checks against the 'torch' (legacy) checkpoint format —
+    # our torch_dist export never triggers that branch — so registering a
+    # placeholder type is sufficient.
+    try:
+        import importlib
+        import types
+
+        _opt_pkg = importlib.import_module("megatron.core.optimizer")
+        try:
+            importlib.import_module("megatron.core.optimizer.layer_wise_optimizer")
+        except ImportError:
+            _layer_wise_mod = types.ModuleType("megatron.core.optimizer.layer_wise_optimizer")
+            _layer_wise_mod.LayerWiseDistributedOptimizer = type(
+                "LayerWiseDistributedOptimizer", (), {}
+            )
+            sys.modules["megatron.core.optimizer.layer_wise_optimizer"] = _layer_wise_mod
+            _opt_pkg.layer_wise_optimizer = _layer_wise_mod  # type: ignore[attr-defined]
+    except ImportError:
+        pass
 
     try:
         from megatron.bridge import AutoBridge
