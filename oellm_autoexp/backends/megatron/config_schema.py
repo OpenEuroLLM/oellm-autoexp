@@ -1256,6 +1256,12 @@ class MegatronConfig(ConfigInterface):
     # if unset.
     router_min_lr: float | None = None
 
+    # Freeze all parameters in the specified decoder layer range. Accepts a layer-range string
+    # using the same syntax as --router-lr (e.g. "5-34" or "5,6,7,10-20"). Matching layers
+    # have all their parameters set to requires_grad=False before the optimizer is
+    # constructed, so no optimizer state is allocated for them.
+    freeze_layers: str | None = None
+
     # Output directory to save checkpoints to.
     save: str | None = None
 
