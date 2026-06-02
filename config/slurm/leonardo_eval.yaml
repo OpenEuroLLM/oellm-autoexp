@@ -1,0 +1,13 @@
+defaults:
+  - leonardo
+  - _self_
+
+# Leonardo eval launcher: run inside the eval_env-leonardo.sif container
+# (lm_eval/lighteval pre-installed) and pull oellm-cli from the user-site
+# install ($HOME/.local/lib/python3.12/site-packages).
+launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
+  export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
+  ${oc.select:container.runtime,singularity} exec ${oc.join:' ',${oc.maptmpl:'--env %=$% \\\n',${oc.dict.keys:.env}}} \
+  ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
+  --env PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin \
+  --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif}"

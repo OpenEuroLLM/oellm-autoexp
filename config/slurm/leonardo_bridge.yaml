@@ -1,0 +1,7 @@
+defaults:
+  - leonardo
+  - _self_
+
+# Same as the base leonardo slurm config (template handles --bind already),
+# but kept as a separate entry so the bridge stage can be referenced
+# distinctly in chain experiments (mirrors juwels_bridge.yaml).

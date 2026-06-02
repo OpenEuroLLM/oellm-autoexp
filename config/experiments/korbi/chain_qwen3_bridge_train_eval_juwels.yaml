@@ -1,0 +1,146 @@
+# @package _global_
+#
+# JUWELS port of chain_qwen3_bridge_train_eval_jupiter.yaml. Same 3-stage
+# train→convert→eval flow, but reusing the existing MegatronTraining
+# training container for both train and bridge (no separate bridge SIF on
+# JUWELS yet — Bridge is made importable by patch_bridge_lazy_imports.py
+# already applied to the host's submodules/Megatron-Bridge tree, plus a
+# PYTHONPATH override that adds Bridge's src and the OpenEuroLLM
+# Megatron-LM fork ahead of the container's baked-in megatron.core).
+#
+# The eval stage uses a venv at $OELLM_EVAL_VENV (default ~/work/eval_venv)
+# with oellm-cli + lm-eval installed; see slurm/juwels_venv.yaml for the
+# launcher (sources the venv and unsets the noisy stages-2025 PYTHONPATH).
+
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: juwels
+  - /slurm: juwels
+  - /backend/megatron: [base_reference, qwen3_125M]
+  - /sweep: none
+  - override /job: default
+  - _self_
+
+job:
+  name: "chain_qwen3_bridge_train_eval_juwels"
+  base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${.name}_${index}
+
+backend:
+  megatron:
+    legacy_tokenizer: false
+    trust_remote_code: true
+    train_iters: 50
+    lr_warmup_iters: 5
+    lr_decay_iters: 50
+    lr_wsd_decay_iters: 10
+    save_interval: 50
+    eval_interval: 100
+    eval_iters: 1
+    micro_batch_size: 2
+    global_batch_size: 16
+    # franke5's nemotron_v2/tok_qwen3.5_v2 .idx files trip the strict
+    # `sequence_lengths.shape[0] == document_indices[-1]` check in the
+    # container's Megatron-LM (likely tokenized with a different format).
+    # Slimpajama (gpt-neox tokenization) survives the assertion, and the
+    # vocab mismatch is acceptable for a pipeline smoke test.
+    train_data_path:
+      - /p/project1/projectnucleus/shared/data/cerebras-SlimPajama-627B/train/merged
+    valid_data_path:
+      - /p/project1/projectnucleus/shared/data/cerebras-SlimPajama-627B/train/merged
+    test_data_path:
+      - /p/project1/projectnucleus/shared/data/cerebras-SlimPajama-627B/train/merged
+    data_path: []
+    split: null
+    # Bridge's Qwen3 path requires no QKV bias, no MLP bias, embeddings tied.
+    add_qkv_bias: false
+    add_bias_linear: false
+    untie_embeddings_and_output_weights: false
+    # Train with the Qwen3-0.6B tokenizer (matches data tokenization +
+    # bridge's HF target). Path lives inside the container at
+    # /workspace/oellm-autoexp/ (host repo bind-mounted there).
+    tokenizer_model: "/workspace/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge/tokenizers/Qwen/Qwen3-0.6B"
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    # base juwels.yaml exports SLURM_CPUS_PER_TASK=12 from the env block,
+    # but sbatch.cpus_per_task is 32 → newer SLURMs reject the mismatch.
+    # Match them here for the chain experiment.
+    SLURM_CPUS_PER_TASK: "32"
+  sbatch:
+    job_name: null
+    nodes: 1
+    gpus_per_node: 1
+    cpus_per_task: 32
+    time: "00:30:00"
+    partition: ${oc.env:SLURM_PARTITION_DEBUG,${oc.env:SLURM_PARTITION,develbooster}}
+    account: ${oc.env:SLURM_ACCOUNT,cstdl}
+
+sweep:
+  type: list
+  filter: true
+  groups:
+    - type: list
+      configs:
+        - stage: train
+          # default container.image from /container=juwels (MegatronTraining sif)
+          container.image: "${oc.env:CONTAINER_CACHE_DIR,/p/scratch/projectnucleus/poeppel1/container_cache}/MegatronTraining_x86_64_202512301918.sif"
+          container.bind:
+            - "/p/scratch"
+            - "/p/project1"
+            - "${oc.env:HOME}/work/Projects/oellm-autoexp:/workspace/oellm-autoexp"
+
+        - stage: convert
+          backend: megatron_bridge
+          slurm: juwels_bridge
+          container.image: "${oc.env:CONTAINER_CACHE_DIR,/p/scratch/projectnucleus/poeppel1/container_cache}/MegatronTraining_x86_64_202512301918.sif"
+          container.bind:
+            - "/p/scratch"
+            - "/p/project1"
+            - "${oc.env:HOME}/work/Projects/oellm-autoexp:/workspace/oellm-autoexp"
+          # PYTHONPATH deliberately excludes our OpenEuroLLM Megatron-LM
+          # fork — Bridge's checkpointing module reaches for symbols
+          # (`ParamGroupOverride`, `LayerWiseDistributedOptimizer`,
+          # `_clean_metadata_for_serialization`) that the fork doesn't ship.
+          # With our fork off PYTHONPATH, run_export.py's `import
+          # megatron.core` falls through to Bridge's vendored 3rdparty
+          # copy (added to sys.path by the script itself), which Bridge was
+          # built against. The torch_dist checkpoint format is
+          # cross-compatible between the two MLM trees.
+          backend.env.PYTHONPATH: "/workspace/oellm-autoexp:/workspace/oellm-autoexp/submodules/Megatron-Bridge/src"
+          backend.hf_model: "Qwen/Qwen3-0.6B"
+          backend.tokenizer: "Qwen/Qwen3-0.6B"
+          backend.derive_hf_arch: "qwen3"
+          backend.megatron_config_path: "\\${sibling.train.job.base_output_dir}/current.yaml"
+          backend.megatron_path: "\\${sibling.train.job.base_output_dir}/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          backend.hf_path: "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          backend.bridge_root: "/workspace/oellm-autoexp/submodules/Megatron-Bridge"
+          backend.resources: "/workspace/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge"
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.train.job.base_output_dir}/latest_checkpointed_iteration.txt"
+          slurm.sbatch.gpus_per_node: 1
+          slurm.sbatch.time: "00:30:00"
+
+        - stage: eval
+          backend: oellm_eval
+          container: juwels_venv
+          slurm: juwels_venv
+          backend.models:
+            - "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          backend.venv_path: "${oc.env:HOME}/work/eval_venv"
+          backend.local: true
+          backend.skip_checks: true
+          backend.verbose: true
+          backend.limit: 4
+          backend.env.EVAL_BASE_DIR: "${oc.env:OUTPUT_DIR,./output}/${job.name}_2/eval"
+          backend.env.EVAL_OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}/${job.name}_2/eval"
+          # Allow live HF download until oellm-cli grows a prefetch step.
+          backend.env.HF_HUB_OFFLINE: "0"
+          backend.env.HF_DATASETS_OFFLINE: "0"
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}/model.safetensors"
+          slurm.sbatch.gpus_per_node: 1
+          slurm.sbatch.time: "01:00:00"

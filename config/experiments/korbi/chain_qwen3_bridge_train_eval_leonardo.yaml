@@ -1,0 +1,150 @@
+# @package _global_
+#
+# Leonardo port of chain_qwen3_bridge_train_eval_jupiter.yaml.
+# Train Qwen3-125M briefly on Nemotron-CC (GPT-NeoX tokenized — only data
+# available on Leonardo without re-tokenization), convert via
+# Megatron-Bridge using the same training container (Bridge made
+# importable via patch_bridge_lazy_imports.py applied to the host's
+# submodules tree), then evaluate inside eval_env-leonardo.sif which
+# already ships lm_eval/lighteval; oellm-cli was installed via
+# `pip install --user` so it lives under ~/.local.
+
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: leonardo
+  - /slurm: leonardo
+  - /backend/megatron: [base_reference, qwen3_125M]
+  - /sweep: none
+  - override /job: default
+  - _self_
+
+job:
+  name: "chain_qwen3_bridge_train_eval_leonardo"
+  base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${.name}_${index}
+
+backend:
+  megatron:
+    legacy_tokenizer: false
+    trust_remote_code: true
+    train_iters: 50
+    lr_warmup_iters: 5
+    lr_decay_iters: 50
+    lr_wsd_decay_iters: 10
+    save_interval: 50
+    eval_interval: 100
+    eval_iters: 1
+    micro_batch_size: 2
+    global_batch_size: 16
+    # Use merged_0 for all splits (it has clean .bin/.idx files, no
+    # accidental directory collision like the *valid* dataset which has
+    # both high-all.bin and high-all/cache/ side by side and confused
+    # whatever path-resolution layer Megatron applies).
+    train_data_path:
+      - /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-LUMI-sample-318BT/high-all
+    valid_data_path:
+      - /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-LUMI-sample-318BT/high-all
+    test_data_path:
+      - /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-LUMI-sample-318BT/high-all
+    data_path: []
+    split: null
+    add_qkv_bias: false
+    add_bias_linear: false
+    untie_embeddings_and_output_weights: false
+    tokenizer_model: "${oc.env:HOME}/work/Projects/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge/tokenizers/Qwen/Qwen3-0.6B"
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  sbatch:
+    job_name: null
+    nodes: 1
+    gpus_per_node: 1
+    time: "00:30:00"
+    partition: ${oc.env:SLURM_PARTITION_DEBUG,${oc.env:SLURM_PARTITION,boost_usr_prod}}
+    qos: ${oc.env:SLURM_QOS_DEBUG,${oc.env:SLURM_QOS,normal}}
+    account: ${oc.env:SLURM_ACCOUNT,OELLM_prod2026}
+
+sweep:
+  type: list
+  filter: true
+  groups:
+    - type: list
+      configs:
+        - stage: train
+          container.image: "${oc.env:OELLM_CONTAINERS_DIR,/leonardo_work/OELLM_prod2026/container_images}/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif"
+          container.bind:
+            - "/leonardo_scratch"
+            - "/leonardo"
+            - "/leonardo_work"
+            - "${oc.env:HOME}/work/Projects/oellm-autoexp:/workspace/oellm-autoexp"
+
+        - stage: convert
+          backend: megatron_bridge
+          slurm: leonardo_bridge
+          container.image: "${oc.env:OELLM_CONTAINERS_DIR,/leonardo_work/OELLM_prod2026/container_images}/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif"
+          container.bind:
+            - "/leonardo_scratch"
+            - "/leonardo"
+            - "/leonardo_work"
+            - "${oc.env:HOME}/work/Projects/oellm-autoexp:/workspace/oellm-autoexp"
+          # See juwels chain for rationale: skip our OpenEuroLLM fork so
+          # Bridge falls back to its own 3rdparty Megatron-LM (which
+          # matches the symbols Bridge expects). torch_dist checkpoints
+          # are cross-compatible.
+          backend.env.PYTHONPATH: "/workspace/oellm-autoexp:/workspace/oellm-autoexp/submodules/Megatron-Bridge/src"
+          # Leonardo's eval container has oellm-cli installed via pip
+          # --user → $HOME/.local. That user-site also ships an antlr4
+          # version that breaks omegaconf when picked up inside the
+          # convert (training) container, so skip user-site here.
+          backend.env.PYTHONNOUSERSITE: "1"
+          backend.hf_model: "Qwen/Qwen3-0.6B"
+          backend.tokenizer: "Qwen/Qwen3-0.6B"
+          backend.derive_hf_arch: "qwen3"
+          backend.megatron_config_path: "\\${sibling.train.job.base_output_dir}/current.yaml"
+          backend.megatron_path: "\\${sibling.train.job.base_output_dir}/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          backend.hf_path: "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          backend.bridge_root: "/workspace/oellm-autoexp/submodules/Megatron-Bridge"
+          backend.resources: "/workspace/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge"
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.train.job.base_output_dir}/latest_checkpointed_iteration.txt"
+          slurm.sbatch.gpus_per_node: 1
+          slurm.sbatch.time: "00:30:00"
+
+        - stage: eval
+          backend: oellm_eval
+          container: leonardo_eval
+          slurm: leonardo_eval
+          backend.models:
+            - "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          # When backend.local=true, oellm-cli sources venv_path/bin/activate;
+          # the leonardo eval container already provides lm_eval/lighteval
+          # system-wide and oellm-cli came in via `pip install --user`, so we
+          # point at a stub venv (~/eval_venv_stub/bin/activate is empty).
+          backend.venv_path: "${oc.env:HOME}/eval_venv_stub"
+          backend.local: true
+          backend.skip_checks: true
+          backend.verbose: true
+          backend.limit: 4
+          backend.env.EVAL_BASE_DIR: "${oc.env:OUTPUT_DIR,./output}/${job.name}_2/eval"
+          backend.env.EVAL_OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}/${job.name}_2/eval"
+          backend.env.PYTHONPATH: ""
+          # Use cached datasets (populated by scripts/prefetch_datasets.py
+          # on the login node — compute nodes have no internet). With
+          # HF_DATASETS_OFFLINE=1 the datasets lib skips HEAD requests and
+          # reads straight from cache; HF_HUB_OFFLINE=1 mirrors that.
+          backend.env.HF_HUB_OFFLINE: "1"
+          backend.env.HF_DATASETS_OFFLINE: "1"
+          # oellm-cli's generated eval script unconditionally sets
+          # HF_DATASETS_CACHE=$HF_HOME/datasets. Point HF_HOME at the
+          # legacy `.cache/huggingface` so the prefetched datasets at
+          # `.cache/huggingface/datasets/<repo___name>/...` are found.
+          backend.env.HF_HOME: "/leonardo_scratch/fast/EUHPC_D29_026/.cache/huggingface"
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}/model.safetensors"
+          slurm.sbatch.gpus_per_node: 1
+          # Stay under boost_qos_dbg's 30-min wall limit so the eval can
+          # run on the debug QOS for fast turnaround.
+          slurm.sbatch.time: "00:30:00"
