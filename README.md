@@ -253,14 +253,14 @@ Before running, visualize the execution plan:
 
 ```bash
 # Visualize the multi-stage DAG structure
-python scripts/visualize_plan.py --config-ref experiments/my_experiment
+python scripts/visualize_plan.py --config-name experiments/my_experiment
 
 # Limit jobs shown per stage
-python scripts/visualize_plan.py --config-ref experiments/my_experiment \
+python scripts/visualize_plan.py --config-name experiments/my_experiment \
     --max-jobs-per-stage 5
 
 # With Hydra overrides
-python scripts/visualize_plan.py --config-ref experiments/my_experiment \
+python scripts/visualize_plan.py --config-name experiments/my_experiment \
     backend.megatron.lr=1e-4
 ```
 
