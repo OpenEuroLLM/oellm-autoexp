@@ -44,7 +44,14 @@ backend:
     # Always evaluate exactly 2048 * 100 = 204800 samples (~838M tokens with seq=4096), independent of gbsz
     # eval_iters: "${oc.eval:'int(204800 // (${backend.megatron.micro_batch_size} * ${slurm.sbatch.gpus_per_node}))'}"
     eval_iters: "${oc.eval:'int(204800 // ${backend.megatron.global_batch_size})'}"
-    eval_interval: 1
+    # Must stay larger than any sweep train_iters (max ~286k for gbsz=256/300BT). With skip_train the
+    # eval is a one-shot pass gated only by eval_iters>0, NOT by eval_interval, so this value never drives
+    # a periodic loop. It only controls Megatron's valid dataset sizing:
+    #   eval_samples = (train_iters // eval_interval + 1) * eval_iters * gbsz
+    # The sweep's stable stage raises train_iters to the full budget (for the warmup-ratio filter), so a
+    # small eval_interval here would request ~29B valid samples and hang the dataset build past the NCCL
+    # timeout. Keeping (train_iters // eval_interval + 1) == 1 yields the intended eval_iters*gbsz=204800.
+    eval_interval: 1_000_000_000 # 1
 
     exit_on_missing_checkpoint: True
     save_interval: 1
@@ -56,8 +63,8 @@ backend:
 slurm:
   sbatch:
     # Max possible allocation on MN5 is 100 nodes per job.
-    nodes: 4
+    nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
     account: oellm_prod2026
-    time: "02:00:00"
+    time: "04:00:00"
     output: "${job.base_output_dir}/logs/stdout-%j.log"
     error: "${job.base_output_dir}/logs/stderr-%j.log"
