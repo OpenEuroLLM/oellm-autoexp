@@ -1,6 +1,6 @@
 # @package _global_
 #
-# Standalone evaluation of an HF checkpoint on JUPITER using oellm-cli.
+# Standalone evaluation of an HF checkpoint on JUPITER using oellm-evals.
 #
 # Usage:
 #   export OUTPUT_DIR=...                # where eval results land
@@ -10,7 +10,7 @@
 #       backend.models='["/path/to/hf/checkpoint"]'
 #
 # The eval runs sequentially inside a single SLURM job allocated by oellm-autoexp
-# (no extra sbatch from oellm-cli, since backend.local=true).
+# (no extra sbatch from oellm-evals, since backend.local=true).
 
 defaults:
   - /backend: oellm_eval

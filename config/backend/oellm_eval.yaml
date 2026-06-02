@@ -4,15 +4,15 @@ defaults:
 
 class_name: OELLMEvalBackend
 
-# CLI entrypoint (default assumes `oellm` is on PATH from `uv tool install`).
-oellm_cmd: "oellm"
+# CLI entrypoint (default assumes `oellm-eval` is on PATH from `uv tool install`).
+oellm_cmd: "oellm-eval"
 
-# oellm-autoexp owns the SLURM submission, so run oellm-cli's bash script
+# oellm-autoexp owns the SLURM submission, so run oellm-evals's bash script
 # in-process via --local. Requires a venv with lm-eval/lighteval installed.
 local: true
 venv_path: ${oc.env:OELLM_EVAL_VENV,null}
 
-# Environment vars consumed by oellm-cli's generated eval script.
+# Environment vars consumed by oellm-evals's generated eval script.
 # Path-dependent values (EVAL_BASE_DIR, EVAL_OUTPUT_DIR) intentionally omitted
 # here — set them in the experiment yaml so they pick up the right
 # job.base_output_dir for the eval stage (otherwise they resolve against the

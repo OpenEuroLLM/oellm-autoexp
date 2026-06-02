@@ -8,7 +8,7 @@
 #                (torch_dist → torch → HF). Outputs HF checkpoint at
 #                ${job.base_output_dir}/hf/iter_0001000/.
 #   stage=eval:  OELLMEvalBackend in venv mode, waits via FileExistsCondition
-#                for the HF checkpoint, then runs oellm-cli on it.
+#                for the HF checkpoint, then runs oellm-evals on it.
 #
 # The two stages are submitted as separate SLURM jobs by oellm-autoexp;
 # the eval stage's start_condition blocks until the train stage produces

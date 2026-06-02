@@ -3,7 +3,7 @@ image: /leonardo_work/OELLM_prod2026/container_images/eval_env-leonardo.sif
 runtime: singularity
 # Includes /workspace/oellm-autoexp because the user-site oellm install
 # was an editable install made from inside the convert container, so its
-# `.pth` file points at /workspace/oellm-autoexp/submodules/oellm_cli/.
+# `.pth` file points at /workspace/oellm-autoexp/submodules/oellm_evals/.
 bind:
   - "/leonardo_scratch"
   - "/leonardo"

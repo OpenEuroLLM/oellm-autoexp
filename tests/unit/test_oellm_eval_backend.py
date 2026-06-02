@@ -15,7 +15,7 @@ def test_builds_command_with_task_groups():
         venv_path="/home/u/venv",
     )
     cmd = OELLMEvalBackend(cfg).build_launch_command()
-    assert cmd.startswith("oellm schedule-eval")
+    assert cmd.startswith("oellm-eval schedule")
     assert "--models /path/to/hf" in cmd
     assert "--task_groups open-sci-0.01" in cmd
     assert "--venv_path /home/u/venv" in cmd

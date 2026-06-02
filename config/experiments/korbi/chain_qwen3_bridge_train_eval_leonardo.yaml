@@ -6,7 +6,7 @@
 # Megatron-Bridge using the same training container (Bridge made
 # importable via patch_bridge_lazy_imports.py applied to the host's
 # submodules tree), then evaluate inside eval_env-leonardo.sif which
-# already ships lm_eval/lighteval; oellm-cli was installed via
+# already ships lm_eval/lighteval; oellm-evals was installed via
 # `pip install --user` so it lives under ~/.local.
 
 defaults:
@@ -93,7 +93,7 @@ sweep:
           # matches the symbols Bridge expects). torch_dist checkpoints
           # are cross-compatible.
           backend.env.PYTHONPATH: "/workspace/oellm-autoexp:/workspace/oellm-autoexp/submodules/Megatron-Bridge/src"
-          # Leonardo's eval container has oellm-cli installed via pip
+          # Leonardo's eval container has oellm-evals installed via pip
           # --user → $HOME/.local. That user-site also ships an antlr4
           # version that breaks omegaconf when picked up inside the
           # convert (training) container, so skip user-site here.
@@ -118,9 +118,9 @@ sweep:
           slurm: leonardo_eval
           backend.models:
             - "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
-          # When backend.local=true, oellm-cli sources venv_path/bin/activate;
+          # When backend.local=true, oellm-evals sources venv_path/bin/activate;
           # the leonardo eval container already provides lm_eval/lighteval
-          # system-wide and oellm-cli came in via `pip install --user`, so we
+          # system-wide and oellm-evals came in via `pip install --user`, so we
           # point at a stub venv (~/eval_venv_stub/bin/activate is empty).
           backend.venv_path: "${oc.env:HOME}/eval_venv_stub"
           backend.local: true
@@ -136,7 +136,7 @@ sweep:
           # reads straight from cache; HF_HUB_OFFLINE=1 mirrors that.
           backend.env.HF_HUB_OFFLINE: "1"
           backend.env.HF_DATASETS_OFFLINE: "1"
-          # oellm-cli's generated eval script unconditionally sets
+          # oellm-evals's generated eval script unconditionally sets
           # HF_DATASETS_CACHE=$HF_HOME/datasets. Point HF_HOME at the
           # legacy `.cache/huggingface` so the prefetched datasets at
           # `.cache/huggingface/datasets/<repo___name>/...` are found.

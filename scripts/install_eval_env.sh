@@ -3,16 +3,16 @@
 # the current cluster. The install path depends on the cluster:
 #
 #   juwels    -> uv venv at $OELLM_EVAL_VENV (default ~/work/eval_venv)
-#                pip install -e oellm_cli[eval]   (pulls torch from PyPI)
+#                pip install -e oellm_evals[eval]   (pulls torch from PyPI)
 #   jupiter   -> uv venv at $OELLM_EVAL_VENV (default ~/work/venv)
-#                pip install -e oellm_cli[eval]
-#   leonardo  -> pip install --user -e oellm_cli[eval-base] inside
+#                pip install -e oellm_evals[eval]
+#   leonardo  -> pip install --user -e oellm_evals[eval-base] inside
 #                eval_env-leonardo.sif (container ships torch + transformers)
-#   lumi      -> pip install --target $HOME/eval_local -e oellm_cli[eval-base]
+#   lumi      -> pip install --target $HOME/eval_local -e oellm_evals[eval-base]
 #                inside laif-rocm-….sif (container ships rocm torch)
 #
 # The `[eval]` / `[eval-base]` extras are declared in
-# submodules/oellm_cli/pyproject.toml — they're the single source of
+# submodules/oellm_evals/pyproject.toml — they're the single source of
 # truth for what lm-eval-harness needs.
 #
 # Run from the repo root on a login node with internet access. Idempotent:
@@ -29,7 +29,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OELLM_CLI_DIR="$REPO_ROOT/submodules/oellm_cli"
+OELLM_EVALS_DIR="$REPO_ROOT/submodules/oellm_evals"
 AUTOEXP_DIR="$REPO_ROOT"
 
 CLUSTER=""
@@ -68,7 +68,7 @@ case "$CLUSTER" in
         PYTHONPATH= "${PIP[@]}" install --no-cache-dir --no-build-isolation \
             rouge-score
         PYTHONPATH= "${PIP[@]}" install --no-cache-dir \
-            -e "$OELLM_CLI_DIR[eval]" -e "$AUTOEXP_DIR" "compoconf==0.1.14"
+            -e "$OELLM_EVALS_DIR[eval]" -e "$AUTOEXP_DIR" "compoconf==0.1.14"
         echo "✓ Venv ready at $VENV"
         ;;
 
@@ -80,10 +80,10 @@ case "$CLUSTER" in
             set -e
             pip install --user --no-cache-dir --upgrade pip setuptools wheel
             pip install --user --no-cache-dir --upgrade \
-                -e '$OELLM_CLI_DIR[eval-base]' -e '$AUTOEXP_DIR' \
+                -e '$OELLM_EVALS_DIR[eval-base]' -e '$AUTOEXP_DIR' \
                 'compoconf==0.1.14'
         "
-        # oellm-cli's local mode needs *some* venv path to `source activate`;
+        # oellm-evals's local mode needs *some* venv path to `source activate`;
         # the container is already activated, so point at an empty stub.
         if [[ ! -f "$HOME/eval_venv_stub/bin/activate" ]]; then
             mkdir -p "$HOME/eval_venv_stub/bin"
@@ -104,7 +104,7 @@ case "$CLUSTER" in
         singularity exec "${BINDS[@]}" --env HF_HUB_OFFLINE=0 "$SIF" bash -c "
             set -e
             pip install --no-cache-dir --upgrade --target '$TARGET' \
-                -e '$OELLM_CLI_DIR[eval-base]' -e '$AUTOEXP_DIR' \
+                -e '$OELLM_EVALS_DIR[eval-base]' -e '$AUTOEXP_DIR' \
                 'compoconf==0.1.14'
         "
         if [[ ! -f "$HOME/eval_venv_stub/bin/activate" ]]; then
@@ -137,7 +137,7 @@ if [[ "$PREFETCH" == "1" ]]; then
                 --env HF_HUB_OFFLINE=0 --env HF_DATASETS_OFFLINE=0 \
                 --env HF_HOME="${HF_HOME:?HF_HOME must be set for --prefetch}" \
                 "$SIF" python3 "$REPO_ROOT/scripts/prefetch_datasets.py" \
-                open-sci-0.01 "$OELLM_CLI_DIR/oellm/resources/task-groups.yaml"
+                open-sci-0.01 "$OELLM_EVALS_DIR/oellm/resources/task-groups.yaml"
             ;;
         lumi)
             singularity exec "${BINDS[@]}" \
@@ -145,12 +145,12 @@ if [[ "$PREFETCH" == "1" ]]; then
                 --env HF_HOME="${HF_HOME:?HF_HOME must be set for --prefetch}" \
                 --env PYTHONPATH="$TARGET" \
                 "$SIF" python3 "$REPO_ROOT/scripts/prefetch_datasets.py" \
-                open-sci-0.01 "$OELLM_CLI_DIR/oellm/resources/task-groups.yaml"
+                open-sci-0.01 "$OELLM_EVALS_DIR/oellm/resources/task-groups.yaml"
             ;;
         juwels|jupiter)
             HF_HUB_OFFLINE=0 HF_DATASETS_OFFLINE=0 \
                 "$VENV/bin/python" "$REPO_ROOT/scripts/prefetch_datasets.py" \
-                open-sci-0.01 "$OELLM_CLI_DIR/oellm/resources/task-groups.yaml"
+                open-sci-0.01 "$OELLM_EVALS_DIR/oellm/resources/task-groups.yaml"
             ;;
     esac
 fi

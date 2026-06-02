@@ -2,7 +2,7 @@
 #
 # Exemplary 3-stage chained experiment: train a Qwen3 in Megatron, convert
 # the checkpoint to HuggingFace via Megatron-Bridge, then evaluate with
-# oellm-cli. Each stage is its own SLURM job; orchestration is the standard
+# oellm-evals. Each stage is its own SLURM job; orchestration is the standard
 # oellm-autoexp sweep + sibling references + FileExistsCondition.
 #
 #   stage=train    MegatronBackend       1 node × 4 GPU, apptainer (training container).
@@ -13,7 +13,7 @@
 #                  <train_dir>/hf/iter_NNNNNNN/. The HF reference config.json
 #                  is synthesised from the train stage's resolved Megatron
 #                  config (`derive_hf_arch=qwen3` + `megatron_config_path`).
-#   stage=eval     OELLMEvalBackend      1 GPU,  venv (oellm-cli).
+#   stage=eval     OELLMEvalBackend      1 GPU,  venv (oellm-evals).
 #                  Runs the open-sci-0.01 task group on the HF checkpoint.
 #
 # NOTES

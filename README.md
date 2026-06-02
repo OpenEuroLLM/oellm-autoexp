@@ -95,11 +95,11 @@ python scripts/run_autoexp.py --config-name experiments/default
 
 ```
 
-### Training → conversion → evaluation chain (Megatron-Bridge + oellm-cli)
+### Training → conversion → evaluation chain (Megatron-Bridge + oellm-evals)
 
 A reference chain that trains in Megatron-LM, converts the
 torch_dist checkpoint to HuggingFace by way of Megatron-Bridge, and runs
-lm-eval-harness through `oellm schedule-eval` lives under
+lm-eval-harness through `oellm-eval schedule` lives under
 `config/experiments/korbi/chain_qwen3_bridge_train_eval_<cluster>.yaml`
 for jupiter, juwels, leonardo, and lumi.
 
@@ -113,10 +113,10 @@ The two new backends are:
   `_clean_metadata_for_serialization`, a `LayerWiseDistributedOptimizer`
   placeholder) plus the `container/megatron/patch_bridge_lazy_imports.py`
   source patch applied once per checkout.
-- **`oellm_eval`** — `OELLMEvalBackend`. Wraps `oellm schedule-eval
+- **`oellm_eval`** — `OELLMEvalBackend`. Wraps `oellm-eval schedule
   --local true …` so the eval runs inside the SLURM job allocated by
-  oellm-autoexp (no extra sbatch from oellm-cli). Reads task definitions
-  from `submodules/oellm_cli/oellm/resources/task-groups.yaml`.
+  oellm-autoexp (no extra sbatch from oellm-evals). Reads task definitions
+  from `submodules/oellm_evals/oellm/resources/task-groups.yaml`.
 
 Once per checkout, on a login node with internet, run the installer:
 
@@ -131,8 +131,8 @@ That single script:
 - builds the right Python environment for the cluster — `uv venv` on
   juwels/jupiter, `pip install --user` inside the eval container on
   leonardo, `pip install --target` inside the rocm container on lumi
-- installs `oellm-cli` with the `[eval]` / `[eval-base]` extras from
-  `submodules/oellm_cli/pyproject.toml` (single source of truth for the
+- installs `oellm-evals` with the `[eval]` / `[eval-base]` extras from
+  `submodules/oellm_evals/pyproject.toml` (single source of truth for the
   lm-eval dep set), plus `oellm-autoexp` and the `compoconf==0.1.14` pin
 - applies `container/megatron/patch_bridge_lazy_imports.py` so
   `from megatron.bridge import AutoBridge` is tolerant of missing model
@@ -145,7 +145,7 @@ That single script:
 
 Set `HF_HOME` to the cluster-appropriate location before running with
 `--prefetch` — on Leonardo this is the dotted `.cache/huggingface` dir
-(because oellm-cli's eval script hardcodes
+(because oellm-evals's eval script hardcodes
 `HF_DATASETS_CACHE=$HF_HOME/datasets` and Leonardo's `lm_eval` reads from
 that legacy layout); see
 [`docs/bridge_eval_setup.md`](docs/bridge_eval_setup.md) for the per-cluster

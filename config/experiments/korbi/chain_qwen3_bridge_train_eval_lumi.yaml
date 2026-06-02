@@ -6,7 +6,7 @@
 # to the host's submodules/Megatron-Bridge tree, plus a PYTHONPATH
 # override that fronts the OpenEuroLLM Megatron-LM fork). Eval runs inside
 # the laif-rocm container which already has rocm torch + transformers;
-# oellm-cli + lm-eval are installed via `pip install --target` to
+# oellm-evals + lm-eval are installed via `pip install --target` to
 # $HOME/eval_local and added to PYTHONPATH at runtime.
 
 defaults:

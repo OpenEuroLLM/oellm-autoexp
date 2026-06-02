@@ -1,12 +1,12 @@
-"""OELLM-CLI evaluation backend.
+"""Oellm-evals evaluation backend.
 
-Wraps ``oellm schedule-eval`` so an evaluation run can be scheduled by
+Wraps ``oellm-eval schedule`` so an evaluation run can be scheduled by
 oellm-autoexp like any other backend (Megatron, Titan, ...). The default
 mode (``local: true``) runs the eval script directly inside the SLURM
-job allocated by oellm-autoexp, so oellm-cli does **not** spawn its own
+job allocated by oellm-autoexp, so oellm-evals does **not** spawn its own
 sbatch and monitoring stays in oellm-autoexp's hands.
 
-See ``submodules/oellm_cli/oellm/main.py::schedule_evals`` for the
+See ``submodules/oellm_evals/oellm/main.py::schedule_evals`` for the
 underlying CLI; this backend exposes a typed config with the same
 surface plus an ``extra_cli_args`` escape hatch.
 """
@@ -26,26 +26,27 @@ LOGGER = logging.getLogger(__name__)
 
 @dataclass(init=False)
 class OELLMEvalBackendConfig(NonStrictDataclass, BaseBackendConfig):
-    """Configuration for the oellm-cli evaluation backend."""
+    """Configuration for the oellm-evals evaluation backend."""
 
     class_name: str = "OELLMEvalBackend"
     env: dict[str, str] = field(default_factory=dict)
 
-    # CLI entrypoint. By default we assume `oellm` is on PATH (e.g. installed
-    # via `uv tool install`). Override with an absolute path if needed.
-    oellm_cmd: str = "oellm"
+    # CLI entrypoint. By default we assume `oellm-eval` is on PATH (e.g.
+    # installed via `uv tool install`). Override with an absolute path if
+    # needed.
+    oellm_cmd: str = "oellm-eval"
 
     # --- Evaluation target -------------------------------------------------
     models: list[str] = field(default_factory=list)
     tasks: list[str] | None = None
     task_groups: list[str] | None = None
-    # oellm-cli accepts an int or list of ints. We allow both.
+    # oellm-evals accepts an int or list of ints. We allow both.
     n_shot: int | list[int] | None = None
     eval_csv_path: str | None = None
 
     # --- Runtime / options -------------------------------------------------
     # When ``local`` is true the eval runs sequentially inside the SLURM job
-    # allocated by oellm-autoexp. When false, ``oellm schedule-eval`` will
+    # allocated by oellm-autoexp. When false, ``oellm-eval schedule`` will
     # submit its own sbatch (not recommended for autoexp pipelines).
     local: bool = True
     venv_path: str | None = None
@@ -55,7 +56,7 @@ class OELLMEvalBackendConfig(NonStrictDataclass, BaseBackendConfig):
     skip_checks: bool = False
     trust_remote_code: bool = True
     lm_eval_include_path: str | None = None
-    # JSON string passed through to oellm-cli when local=False.
+    # JSON string passed through to oellm-evals when local=False.
     slurm_template_var: str | None = None
     max_array_len: int = 128
     dry_run: bool = False
@@ -73,7 +74,7 @@ class OELLMEvalBackendConfig(NonStrictDataclass, BaseBackendConfig):
 
 
 def _build_oellm_cmd(cfg: OELLMEvalBackendConfig) -> str:
-    parts: list[str] = [cfg.oellm_cmd, "schedule-eval"]
+    parts: list[str] = [cfg.oellm_cmd, "schedule"]
 
     if cfg.eval_csv_path:
         parts.append(f"--eval_csv_path {shlex.quote(cfg.eval_csv_path)}")
@@ -151,7 +152,7 @@ class OELLMEvalBackend(BaseBackend):
         if cfg.local and not cfg.venv_path:
             raise ValueError(
                 "OELLMEvalBackend: `local: true` requires `venv_path` "
-                "(oellm-cli's --local mode needs a venv with lm-eval/lighteval installed)."
+                "(oellm-evals's --local mode needs a venv with lm-eval/lighteval installed)."
             )
 
     def build_launch_command(self) -> str:

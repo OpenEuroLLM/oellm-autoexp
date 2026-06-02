@@ -1,8 +1,8 @@
-# Megatron-Bridge + oellm-cli chain setup
+# Megatron-Bridge + oellm-evals chain setup
 
 This guide covers the cluster-side prerequisites for running the
 `MegatronBridgeBackend` (Megatron → HF checkpoint conversion) and
-`OELLMEvalBackend` (lm-eval-harness evaluation by way of `oellm schedule-eval
+`OELLMEvalBackend` (lm-eval-harness evaluation by way of `oellm-eval schedule
 --local`) as chained stages after a Megatron training run. The reference
 chain experiment is
 `config/experiments/korbi/chain_qwen3_bridge_train_eval_<cluster>.yaml`.
@@ -17,7 +17,7 @@ The chain has three SLURM jobs gated by `FileExistsCondition`:
    `python -m oellm_autoexp.backends.megatron_bridge.run_export …`
    inside the training container, writes `hf/iter_NNNNNNN/model.safetensors`.
 3. **eval** — `OELLMEvalBackend` with `local: true`, runs
-   `oellm schedule-eval --local true …` which calls `lm_eval` per task and
+   `oellm-eval schedule --local true …` which calls `lm_eval` per task and
    drops `results/<hash>_<ts>.json` files.
 
 The convert stage **does not** require a separate container — it reuses
@@ -39,7 +39,7 @@ the training container, with two cluster-agnostic shims applied:
 # Clone with submodules (and force HTTPS so private mirrors don't matter)
 git -c url.https://github.com/.insteadOf=git@github.com: \
     clone https://github.com/OpenEuroLLM/oellm-autoexp.git \
-    -b oellm_cli_integration --recurse-submodules
+    -b oellm_evals_integration --recurse-submodules
 
 cd oellm-autoexp
 
@@ -52,9 +52,9 @@ bash scripts/install_eval_env.sh --prefetch
 The installer auto-detects the cluster from hostname by way of
 `scripts/detect_cluster.py`; pass `--cluster NAME` to override.
 Dependencies for the eval env are declared upstream in
-`submodules/oellm_cli/pyproject.toml` under the `[eval]` and
+`submodules/oellm_evals/pyproject.toml` under the `[eval]` and
 `[eval-base]` extras (single source of truth, see
-[`submodules/oellm_cli/docs/VENV.md`](../submodules/oellm_cli/docs/VENV.md)):
+[`submodules/oellm_evals/docs/VENV.md`](../submodules/oellm_evals/docs/VENV.md)):
 
 - **`[eval]`** — full venv install: `lm_eval[hf,vllm,api,tasks]>=0.4.12`
   plus `datasets>=4.0`. Pulls torch + transformers + accelerate + peft
@@ -71,7 +71,7 @@ goes sideways.
 
 ## Eval environment
 
-`oellm schedule-eval --local true` shells out to `python -m lm_eval`, so
+`oellm-eval schedule --local true` shells out to `python -m lm_eval`, so
 the eval stage needs an environment with:
 
 - `oellm` CLI on `$PATH`
@@ -87,7 +87,7 @@ Two ways to provide that:
   sources `<venv>/bin/activate` and runs `oellm` from there.
 - **Container** (leonardo, lumi): bake or extend an eval container that
   already ships `lm_eval`. Install `oellm` by way of `pip install --user -e
-  submodules/oellm_cli` from inside the container so its `entry_points`
+  submodules/oellm_evals` from inside the container so its `entry_points`
   console script lands in `~/.local/bin`. Add `~/.local/bin` to PATH by way of
   `--env PATH=…` in the eval slurm launcher (`*_eval.yaml`). The user-site
   `.pth` files are editable installs pointing inside the container, so
@@ -104,7 +104,7 @@ this from a login node:
 # Run inside whatever env will be used at eval time so the
 # datasets-library version matches.
 python scripts/prefetch_datasets.py open-sci-0.01 \
-    submodules/oellm_cli/oellm/resources/task-groups.yaml
+    submodules/oellm_evals/oellm/resources/task-groups.yaml
 ```
 
 Two important details:
@@ -112,7 +112,7 @@ Two important details:
 - `HF_HUB_OFFLINE` / `HF_DATASETS_OFFLINE` must be unset (or `=0`) during
   the prefetch; the script clears them, but the login shell's bashrc
   often sets them.
-- oellm-cli's generated eval script unconditionally exports
+- oellm-evals's generated eval script unconditionally exports
   `HF_DATASETS_CACHE=$HF_HOME/datasets`. Pick `HF_HOME` so that
   `$HF_HOME/datasets/<owner>___<repository>/…` lines up with the populated
   legacy cache layout that `lm_eval` reads from. On Leonardo this means
@@ -134,7 +134,7 @@ module load Stages/2025  # gives Python 3.12
 uv venv --python 3.12 ~/work/eval_venv
 PYTHONPATH= ~/work/eval_venv/bin/pip install \
     torch transformers "lm_eval>=0.4.12" \
-    -e ~/work/Projects/oellm-autoexp/submodules/oellm_cli \
+    -e ~/work/Projects/oellm-autoexp/submodules/oellm_evals \
     -e ~/work/Projects/oellm-autoexp \
     "compoconf==0.1.14" \
     scipy threadpoolctl scikit-learn chardet pytz tabulate colorama \
@@ -151,12 +151,12 @@ Required env at submit time: `SLURM_PARTITION_DEBUG=develbooster`,
 ### Leonardo
 
 ```bash
-# 1) Install oellm-cli + datasets/lm-eval into the eval container's user-site
+# 1) Install oellm-evals + datasets/lm-eval into the eval container's user-site
 singularity exec --bind /leonardo_scratch --bind /leonardo --bind /leonardo_work \
     --env HF_HUB_OFFLINE=0 \
     /leonardo_work/OELLM_prod2026/container_images/eval_env-leonardo.sif \
     bash -c "pip install --user --no-cache-dir \
-        -e /leonardo/home/$USER/work/Projects/oellm-autoexp/submodules/oellm_cli \
+        -e /leonardo/home/$USER/work/Projects/oellm-autoexp/submodules/oellm_evals \
         --upgrade 'datasets>=4.0' 'lm_eval>=0.4.12'"
 
 # 2) Pre-fetch datasets inside the eval container (legacy cache layout)
@@ -166,7 +166,7 @@ singularity exec --bind /leonardo_scratch --bind /leonardo --bind /leonardo_work
     /leonardo_work/OELLM_prod2026/container_images/eval_env-leonardo.sif \
     python3 scripts/prefetch_datasets.py
 
-# 3) Stub a venv directory so oellm-cli's `source $VENV/bin/activate` is a no-op
+# 3) Stub a venv directory so oellm-evals's `source $VENV/bin/activate` is a no-op
 #    (container is already the activated env).
 mkdir -p ~/eval_venv_stub/bin && touch ~/eval_venv_stub/bin/activate
 ```
@@ -196,7 +196,7 @@ singularity exec --bind $HOME --bind /pfs \
     /scratch/project_462000963/containers/laif-rocm-….sif \
     bash -c "pip install --no-cache-dir --upgrade \
         --target \$HOME/eval_local/lib/python3.12/site-packages \
-        -e /scratch/project_462000963/user/$USER/Projects/oellm-autoexp/submodules/oellm_cli \
+        -e /scratch/project_462000963/user/$USER/Projects/oellm-autoexp/submodules/oellm_evals \
         -e /scratch/project_462000963/user/$USER/Projects/oellm-autoexp \
         compoconf==0.1.14 'lm_eval>=0.4.12' 'datasets>=4.0' \
         jsonargparse rich pandas pyyaml"

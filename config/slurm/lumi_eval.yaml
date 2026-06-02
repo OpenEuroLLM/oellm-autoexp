@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 # Lumi eval launcher: run inside laif-rocm container (ROCm torch + transformers
-# baked in) with oellm-cli + lm-eval installed at $HOME/eval_local via
+# baked in) with oellm-evals + lm-eval installed at $HOME/eval_local via
 # `pip install --target` (see container/build_container_user.py-equivalent
 # bootstrap). The --env PYTHONPATH adds that prefix so the host-installed
 # packages take precedence over /opt/venv inside the container.

@@ -9,7 +9,7 @@
 # Megatron-LM fork ahead of the container's baked-in megatron.core).
 #
 # The eval stage uses a venv at $OELLM_EVAL_VENV (default ~/work/eval_venv)
-# with oellm-cli + lm-eval installed; see slurm/juwels_venv.yaml for the
+# with oellm-evals + lm-eval installed; see slurm/juwels_venv.yaml for the
 # launcher (sources the venv and unsets the noisy stages-2025 PYTHONPATH).
 
 defaults:
@@ -136,7 +136,7 @@ sweep:
           backend.limit: 4
           backend.env.EVAL_BASE_DIR: "${oc.env:OUTPUT_DIR,./output}/${job.name}_2/eval"
           backend.env.EVAL_OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}/${job.name}_2/eval"
-          # Allow live HF download until oellm-cli grows a prefetch step.
+          # Allow live HF download until oellm-evals grows a prefetch step.
           backend.env.HF_HUB_OFFLINE: "0"
           backend.env.HF_DATASETS_OFFLINE: "0"
           job.start_condition:
