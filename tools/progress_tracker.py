@@ -717,6 +717,10 @@ def parse_stdout(log_path: Path) -> dict:
         result["last_iter"] = iter_rows[-1][0]
         result["total_iters"] = iter_rows[-1][1]
 
+    # Infer submitting user from paths like /gpfs/projects/.../users/<name>/
+    m = re.search(r"/users/([^/\s]+)/", text)
+    result["log_user"] = m.group(1) if m else None
+
     return result
 
 
@@ -1632,7 +1636,9 @@ def main() -> None:
                 "sacct_state": sacct_state,
                 "sacct_elapsed": sacct_elapsed,
                 "sacct_start_str": sacct_entry.get("start_str", ""),
-                "owner": sacct_entry.get("user", ""),
+                # sacct user for local jobs; fall back to path-based inference
+                # from log for foreign-cluster jobs (sacct entry is discarded).
+                "owner": sacct_entry.get("user", "") or stdout_data.get("log_user", "") or "",
                 "cluster": cluster,
                 "status_emoji": emoji,
                 "status_word": status_word,
