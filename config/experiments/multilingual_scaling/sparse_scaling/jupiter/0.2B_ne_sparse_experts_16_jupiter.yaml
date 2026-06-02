@@ -1,0 +1,93 @@
+# @package _global_
+
+# 0.2B NE sparse Qwen3-like model training with pull-based multi-stage cooldown on Marenostrum
+# Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: default
+    # - /job: auto_restart
+    # - /sweep/multilingual_scaling/sparse_scaling@sweep: qwen3_sparse_0.2B_ne # sweep configs
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.2B_ne_experts_16 # model configs
+    # - /backend/megatron/multilingual_scaling/data: oellm_256k_leonardo # data configs
+  - _self_
+
+index: 0
+stage: "" # Will be overridden by sweep
+
+job:
+  name: "" # Will be overridden by sweep with stage and hyperparameter info
+  base_output_dir: "/e/scratch/e-sta-openeurollm/harmsen1/testoutput/02B/${backend.megatron.micro_batch_size}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+    NCCL_NET_GDR_LEVEL: "0"  # keep for safety; PP=1 has no P2P but harmless
+    HF_HUB_OFFLINE: 1
+    CUDA_DEVICE_MAX_CONNECTIONS: 4
+
+  megatron:
+    wandb_exp_name: "test_sparse_multilingual" # Will be overridden by sweep with stage and hyperparameter info
+    wandb_project: sparse_multilingual_test
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    # DATA
+    data_path:
+      - /e/project1/e-sta-openeurollm/harmsen1/datasets/FineWeb/fineweb-10BT_text_document
+    data_cache_path: /e/scratch/e-sta-openeurollm/harmsen1/data # Adjust it to your own directory
+    tokenizer_model: /e/scratch/e-sta-openeurollm/harmsen1/hf_home/hub/models--openai-community--gpt2/snapshots/607a30d783dfa663caf39e06633721c8d4cfcd7e
+    tokenizer_type: HuggingFaceTokenizer
+    seq_length: 4096
+    max_position_embeddings: ${.seq_length}
+    split: '99,1,0'
+    create_attention_mask_in_dataloader: False
+    dataloader_type: "cyclic"
+
+    # For quick testing
+    # seq_length: 4096
+    train_iters: 5
+    lr_warmup_iters: 1
+    lr_wsd_decay_iters: 1
+    micro_batch_size: 8    # overridden by sweep
+    # global_batch_size:  64 # overridden by sweep
+    eval_interval: 1000000000
+    save_interval: 1000000000
+
+    # Base training configuration (for stable phase)
+    num_workers: 8 # Will be overridden by sweep
+    # micro_batch_size: 8 # Will be overridden by sweep
+    global_batch_size: 64  # Will be overridden by sweep
+    lr: 5.e-4  # Will be overridden by sweep
+
+    # eval_interval: 200
+    # save_interval: 500
+    log_progress: false
+
+
+slurm:
+  sbatch:
+    # nodes: "${oc.eval:'max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node})))'}"
+    nodes: 1
+    # qos: "boost_qos_dbg"
+    account: "e-sta-openeurollm"
+    time: "00:30:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "
+
+container:
+  image: /e/project1/e-sta-openeurollm/harmsen1/containers/MegatronTraining-JUPITER-deep-hybridep-fla_aarch64.sif
+

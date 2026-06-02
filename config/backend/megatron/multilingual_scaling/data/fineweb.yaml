@@ -1,0 +1,17 @@
+# @package backend.megatron
+# Dataset related settings for multilingual scaling experiments
+max_position_embeddings: ${.seq_length}
+split: '99,1,0'
+create_attention_mask_in_dataloader: False
+
+# Data paths
+data_path: 
+  - /e/project1/e-sta-openeurollm/harmsen1/datasets/FineWeb/fineweb-10BT_text_document
+
+# Tokenizer
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: /e/scratch/e-sta-openeurollm/harmsen1/hf_home/hub/models--openai-community--gpt2/snapshots/607a30d783dfa663caf39e06633721c8d4cfcd7e 
+
+seq_length: 4096
+dataloader_type: "cyclic"
+num_workers: 8 # Will be overridden by sweep
