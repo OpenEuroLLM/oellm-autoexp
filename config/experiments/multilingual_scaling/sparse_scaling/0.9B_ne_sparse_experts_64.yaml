@@ -7,8 +7,7 @@ defaults:
   - /backend: megatron_torchrun
   - /container: leonardo
   - /slurm: leonardo
-  - /job: default
-    # - /job: auto_restart
+  - /job: auto_restart
   - /sweep/multilingual_scaling/sparse_scaling@sweep: qwen3_sparse_0.9B_ne # sweep configs  
   # - /sweep: none
   - /backend/megatron: base
