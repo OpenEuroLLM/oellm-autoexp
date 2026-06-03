@@ -1,0 +1,41 @@
+# ft_launcher variant of `megatron_torchrun_localaddr`.
+#
+# Replaces `torchrun` with NVIDIA Resiliency Extension's `ft_launcher`
+# (https://github.com/NVIDIA/nvidia-resiliency-ext). `ft_launcher` is a
+# drop-in, torchrun-compatible launcher that additionally starts a per-rank
+# monitor (heartbeats + section-based hang detection). It is REQUIRED for
+# Megatron's `--enable-ft-package` (and therefore for the built-in
+# `FT_SIM_FAULT_DESC` fault simulator) to work.
+#
+# In-process restart + warm-reserve ("spare node jumps in") is driven by the
+# `--inprocess-*` Megatron args (set in the experiment config), which use
+# their own TCPStore on MASTER_PORT+1/+2 and do not depend on the rendezvous
+# backend below.
+#
+# NOTE: `ft_launcher` must be on PATH inside the container. It ships with
+# `nvidia-resiliency-ext`, which the bridge container installs
+# (container/megatron/MegatronTraining-JUPITER-bridge.def.in).
+defaults:
+  - megatron_torchrun
+  - _self_
+
+# Same arg-rendering pipeline as megatron_torchrun, but:
+#   * `torchrun` -> `ft_launcher`
+#   * append the launcher-level FT timeouts. These are hardcoded (NOT routed
+#     through `torchrun_args`) because the cliargs resolver rewrites `_`->`-`,
+#     while ft_launcher expects literal underscores in `--ft-param-<name>`.
+#       - rank_section_timeouts: per-section soft timeouts (s) for the rank
+#         monitor: setup / step / checkpointing.
+#       - rank_out_of_section_timeout: timeout (s) outside any named section
+#         (e.g. warmup iters).
+#     With `--calc-ft-timeouts` (see experiment) Megatron refines these from
+#     observed intervals and persists them to <save>/ft_state.json.
+dist_cmd: "ft_launcher ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n  %',' %',\
+ ${oc.cliargs:${.torchrun_args}}}}\\\n  --ft-param-rank_section_timeouts=setup:600,step:180,checkpointing:420 \\\n  --ft-param-rank_out_of_section_timeout=300 \\\n   ${.launcher_script}"
+
+torchrun_args:
+  local_addr: $LOCAL_ADDR
+  # In-process restart handles per-fault recovery; keep a few job-level
+  # restarts as a backstop for faults in-process cannot catch (e.g. a process
+  # that dies before the wrapper is active).
+  max_restarts: 3
