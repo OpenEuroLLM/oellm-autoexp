@@ -34,7 +34,6 @@ backend:
     # DATA
     data_cache_path: /leonardo_work/OELLM_prod2026/slaing00/cache/MEGATRON_262k/${job.name} 
 
-    # Evals off (keep data stream identical to 99,1,0)
     eval_interval: 1_000_000_000
     split: "99,1,0"
 
@@ -52,7 +51,7 @@ container:
 slurm:
   sbatch:
     nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
-    account: oellm_prod2026
+    account: aifac_5c0_092
     time: "24:00:00"
     output: "${job.base_output_dir}/logs/stdout-%j.log"
     error: "${job.base_output_dir}/logs/stderr-%j.log"

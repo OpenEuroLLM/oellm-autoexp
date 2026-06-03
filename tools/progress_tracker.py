@@ -1597,6 +1597,14 @@ def main() -> None:
                 run_log_ids=run_log_ids,
             )
 
+            _progress = compute_progress(
+                stdout_data.get("last_iter"),
+                sbatch_ckpt_step,
+                stdout_data.get("total_iters"),
+            )
+            if _progress is not None and _progress >= 100.0 and status_word != "DONE":
+                emoji, status_word, error_desc, action_word = "✅", "DONE", "", ""
+
             rows.append({
                 "run_name": run_name,
                 "job_id": job_id,
@@ -1616,11 +1624,7 @@ def main() -> None:
                 "train_iters": stdout_data.get("train_iters"),
                 "last_iter": stdout_data.get("last_iter"),
                 "ckpt_step": sbatch_ckpt_step,
-                "progress": compute_progress(
-                    stdout_data.get("last_iter"),
-                    sbatch_ckpt_step,
-                    stdout_data.get("total_iters"),
-                ),
+                "progress": _progress,
                 "last_train_loss": stdout_data.get("last_train_loss"),
                 "last_val_loss": stdout_data.get("last_val_loss"),
                 "last_ckpt": last_ckpt,
