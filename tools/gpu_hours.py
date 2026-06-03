@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Calculate GPU hours for all experiments in a results directory. Scans for
-slurm-<jobid>.log files, queries sacct, and reports per-job and per-experiment
-GPU-hours.
+"""
+Calculate GPU hours for all experiments in a results directory.
+Scans for slurm-<jobid>.log files, queries sacct, and reports per-job
+and per-experiment GPU-hours.
 
 Usage:
     python gpu_hours.py [results_dir]
@@ -60,21 +61,18 @@ def collect_job_ids(results_dir):
 
 
 def query_sacct(job_ids):
-    """Run sacct for the given job IDs.
-
+    """
+    Run sacct for the given job IDs.
     Returns {job_id: {"state": ..., "elapsed": ..., "gpus": int}}.
     Only the top-level job entry (no .batch / .extern / .N steps) is kept.
     """
     ids_str = ",".join(job_ids)
     cmd = [
-        "sacct",
-        "-j",
-        ids_str,
+        "sacct", "-j", ids_str,
         "--format=JobID,State,Elapsed,AllocTRES%80",
-        "--noheader",
-        "--parsable2",
+        "--noheader", "--parsable2",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
     if result.returncode != 0:
         print(f"sacct error: {result.stderr.strip()}", file=sys.stderr)
         sys.exit(1)
@@ -103,21 +101,11 @@ def query_sacct(job_ids):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Calculate GPU hours for all experiments in a results directory."
-    )
-    parser.add_argument(
-        "results_dir",
-        nargs="?",
-        default=".",
-        help="Directory containing experiment subdirectories (default: current directory)",
-    )
-    parser.add_argument(
-        "--output",
-        "-o",
-        default=None,
-        help="Output CSV file (default: <results_dir>/gpu_hours.csv)",
-    )
+    parser = argparse.ArgumentParser(description="Calculate GPU hours for all experiments in a results directory.")
+    parser.add_argument("results_dir", nargs="?", default=".",
+                        help="Directory containing experiment subdirectories (default: current directory)")
+    parser.add_argument("--output", "-o", default=None,
+                        help="Output CSV file (default: <results_dir>/gpu_hours.csv)")
     args = parser.parse_args()
 
     results_dir = os.path.abspath(args.results_dir)
@@ -135,12 +123,12 @@ def main():
     sacct_info = query_sacct(all_job_ids)
 
     # ---- per-job table ----
-    col_exp = max(len(e) for e in experiments) + 2
-    col_job = 12
+    col_exp   = max(len(e) for e in experiments) + 2
+    col_job   = 12
     col_state = 20
-    col_ela = 14
-    col_gpu = 6
-    col_gpuh = 8
+    col_ela   = 14
+    col_gpu   = 6
+    col_gpuh  = 8
 
     header = (
         f"{'Experiment':<{col_exp}}  "
@@ -174,16 +162,14 @@ def main():
             hours = parse_elapsed(d["elapsed"])
             gpu_h = hours * d["gpus"]
             exp_total += gpu_h
-            csv_rows.append(
-                {
-                    "experiment": exp_name,
-                    "job_id": job_id,
-                    "state": d["state"],
-                    "elapsed": d["elapsed"],
-                    "gpus": d["gpus"],
-                    "gpu_hours": round(gpu_h, 1),
-                }
-            )
+            csv_rows.append({
+                "experiment": exp_name,
+                "job_id": job_id,
+                "state": d["state"],
+                "elapsed": d["elapsed"],
+                "gpus": d["gpus"],
+                "gpu_hours": round(gpu_h, 1),
+            })
             print(
                 f"{display_name:<{col_exp}}  "
                 f"{job_id:>{col_job}}  "
@@ -204,8 +190,7 @@ def main():
     for exp_name, job_ids in experiments.items():
         exp_gpu_h = sum(
             parse_elapsed(sacct_info[jid]["elapsed"]) * sacct_info[jid]["gpus"]
-            for jid in job_ids
-            if jid in sacct_info
+            for jid in job_ids if jid in sacct_info
         )
         print(f"  {exp_name:<{col_exp - 2}}  {exp_gpu_h:>8.1f} GPU-h")
 
@@ -214,21 +199,17 @@ def main():
     print(sep)
 
     # ---- save to CSV ----
-    csv_rows.append(
-        {
-            "experiment": "TOTAL",
-            "job_id": "",
-            "state": "",
-            "elapsed": "",
-            "gpus": "",
-            "gpu_hours": round(grand_total, 1),
-        }
-    )
+    csv_rows.append({
+        "experiment": "TOTAL",
+        "job_id": "",
+        "state": "",
+        "elapsed": "",
+        "gpus": "",
+        "gpu_hours": round(grand_total, 1),
+    })
     output_csv = args.output if args.output else os.path.join(results_dir, "gpu_hours.csv")
     with open(output_csv, "w", newline="") as f:
-        writer = csv.DictWriter(
-            f, fieldnames=["experiment", "job_id", "state", "elapsed", "gpus", "gpu_hours"]
-        )
+        writer = csv.DictWriter(f, fieldnames=["experiment", "job_id", "state", "elapsed", "gpus", "gpu_hours"])
         writer.writeheader()
         writer.writerows(csv_rows)
     print(f"\nWrote {len(csv_rows) - 1} job rows (+1 total) to {output_csv}")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Analyze low-throughput iterations for all runs in a multilingual scaling
-experiment directory.
+"""
+Analyze low-throughput iterations for all runs in a multilingual scaling experiment directory.
 
 For each run (possibly spanning multiple Slurm jobs / restarts), reports:
   - time lost in low-throughput iterations (hours)
@@ -24,13 +24,14 @@ import subprocess
 import sys
 from pathlib import Path
 from statistics import mean
+from typing import Optional
 
 # Allow importing sibling modules when run as a script.
 _tools_dir = str(Path(__file__).parent)
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
-from megatron_throughput_from_logs import load_or_compute_throughput  # noqa: E402
+from megatron_throughput_from_logs import load_or_compute_throughput
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -52,10 +53,8 @@ RE_SBATCH_GRES = re.compile(r"^#SBATCH\s+--gres=gpu[^:\n]*:(\d+)", re.MULTILINE)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-
 def _parse_log_iterations(log_path: Path) -> list[tuple[int, float, float]]:
-    """Return sorted list of (iter_num, elapsed_ms, tflop_per_gpu) from a
-    stdout log."""
+    """Return sorted list of (iter_num, elapsed_ms, tflop_per_gpu) from a stdout log."""
     if not log_path.is_file():
         return []
     text = log_path.read_text(errors="replace")
@@ -66,9 +65,8 @@ def _parse_log_iterations(log_path: Path) -> list[tuple[int, float, float]]:
     return rows
 
 
-def _parse_sbatch_gpus(run_dir: Path) -> int | None:
-    """Return total GPU count (nodes × gpus-per-node) from job.sbatch, or
-    None."""
+def _parse_sbatch_gpus(run_dir: Path) -> Optional[int]:
+    """Return total GPU count (nodes × gpus-per-node) from job.sbatch, or None."""
     sbatch = run_dir / "job.sbatch"
     if not sbatch.is_file():
         return None
@@ -89,9 +87,8 @@ def _parse_sbatch_gpus(run_dir: Path) -> int | None:
     return None
 
 
-def _get_gpus_from_csv(run_name: str, gpu_hours_csv: Path) -> int | None:
-    """Return GPU count for *run_name* from gpu_hours.csv (first non-zero
-    entry)."""
+def _get_gpus_from_csv(run_name: str, gpu_hours_csv: Path) -> Optional[int]:
+    """Return GPU count for *run_name* from gpu_hours.csv (first non-zero entry)."""
     if not gpu_hours_csv.is_file():
         return None
     with gpu_hours_csv.open(newline="") as f:
@@ -107,25 +104,18 @@ def _get_gpus_from_csv(run_name: str, gpu_hours_csv: Path) -> int | None:
 
 
 def _ensure_gpu_hours_csv(training_dir: Path) -> Path:
-    """Return gpu_hours.csv path, generating it via gpu_hours.py if the file is
-    absent."""
+    """Return gpu_hours.csv path, generating it via gpu_hours.py if the file is absent."""
     csv_path = training_dir / "gpu_hours.csv"
     if csv_path.is_file():
         return csv_path
     gpu_hours_script = Path(__file__).parent / "gpu_hours.py"
     if gpu_hours_script.is_file():
-        print("[info] gpu_hours.csv not found — generating via gpu_hours.py ...", flush=True)
+        print(f"[info] gpu_hours.csv not found — generating via gpu_hours.py ...", flush=True)
         try:
             subprocess.run(
-                [
-                    sys.executable,
-                    str(gpu_hours_script),
-                    str(training_dir),
-                    "--output",
-                    str(csv_path),
-                ],
-                check=True,
-                timeout=120,
+                [sys.executable, str(gpu_hours_script), str(training_dir),
+                 "--output", str(csv_path)],
+                check=True, timeout=120,
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             print(f"[warn] gpu_hours.py failed: {exc}", file=sys.stderr)
@@ -134,10 +124,9 @@ def _ensure_gpu_hours_csv(training_dir: Path) -> Path:
 
 # ── Core analysis ─────────────────────────────────────────────────────────────
 
-
 def analyze_job(
     log_path: Path,
-    num_gpus: int | None = None,
+    num_gpus: Optional[int] = None,
     max_elapsed_ms: float = 6000.0,
     skip_first_iters: int = 50,
     max_iters_used: int = 500,
@@ -164,13 +153,8 @@ def analyze_job(
         avg_tflop    – reference average throughput (TFLOP/s/GPU)
         num_gpus     – GPU count used for the calculation
     """
-    empty = {
-        "time_lost_h": None,
-        "gpu_h_lost": None,
-        "n_low_iters": None,
-        "avg_tflop": None,
-        "num_gpus": num_gpus,
-    }
+    empty = {"time_lost_h": None, "gpu_h_lost": None,
+             "n_low_iters": None, "avg_tflop": None, "num_gpus": num_gpus}
 
     throughput = load_or_compute_throughput(
         log_path, max_elapsed_ms, skip_first_iters, max_iters_used
@@ -182,12 +166,16 @@ def analyze_job(
     threshold = avg_tflop * LOW_THROUGHPUT_FRACTION
 
     # Scan ALL iterations (no elapsed-time filter) to count and time low-TP events.
+    # Skip the first skip_first_iters so they are not double-counted with TTFI:
+    # TTFI is measured from job start through the timestamp of the first logged
+    # iteration, which includes the wall time of those warmup iters.
     rows = _parse_log_iterations(log_path)
     if not rows:
         return empty
 
-    low_elapsed_ms = sum(et for _it, et, tflop in rows if tflop < threshold)
-    n_low = sum(1 for _it, _et, tflop in rows if tflop < threshold)
+    rows_post_warmup = [(it, et, tflop) for it, et, tflop in rows if it > skip_first_iters]
+    low_elapsed_ms = sum(et for _it, et, tflop in rows_post_warmup if tflop < threshold)
+    n_low = sum(1 for _it, _et, tflop in rows_post_warmup if tflop < threshold)
 
     time_lost_h = low_elapsed_ms / 1_000 / 3_600
     gpu_h_lost = (time_lost_h * num_gpus) if num_gpus is not None else None
@@ -204,8 +192,8 @@ def analyze_job(
 def analyze_run(
     run_dir: Path,
     run_name: str,
-    gpu_hours_csv: Path | None = None,
-    num_gpus: int | None = None,
+    gpu_hours_csv: Optional[Path] = None,
+    num_gpus: Optional[int] = None,
     max_elapsed_ms: float = 6000.0,
     skip_first_iters: int = 50,
     max_iters_used: int = 500,
@@ -224,13 +212,8 @@ def analyze_run(
         skip_first_iters: Warmup iterations excluded from the reference average.
         max_iters_used:   Maximum post-warmup iterations averaged.
     """
-    empty = {
-        "time_lost_h": None,
-        "gpu_h_lost": None,
-        "n_low_iters": None,
-        "avg_tflop": None,
-        "num_gpus": None,
-    }
+    empty = {"time_lost_h": None, "gpu_h_lost": None,
+             "n_low_iters": None, "avg_tflop": None, "num_gpus": None}
 
     logs_dir = run_dir / "logs"
     if not logs_dir.is_dir():
@@ -246,15 +229,14 @@ def analyze_run(
         num_gpus = _get_gpus_from_csv(run_name, gpu_hours_csv)
 
     total_time_lost_h = 0.0
-    total_gpu_h_lost = 0.0
-    total_n_low = 0
+    total_gpu_h_lost  = 0.0
+    total_n_low       = 0
     avg_tflops: list[float] = []
     any_data = False
 
     for log_file in log_files:
         job_stats = analyze_job(
-            log_file,
-            num_gpus=num_gpus,
+            log_file, num_gpus=num_gpus,
             max_elapsed_ms=max_elapsed_ms,
             skip_first_iters=skip_first_iters,
             max_iters_used=max_iters_used,
@@ -274,15 +256,14 @@ def analyze_run(
 
     return {
         "time_lost_h": total_time_lost_h,
-        "gpu_h_lost": total_gpu_h_lost if num_gpus is not None else None,
+        "gpu_h_lost":  total_gpu_h_lost if num_gpus is not None else None,
         "n_low_iters": total_n_low,
-        "avg_tflop": mean(avg_tflops) if avg_tflops else None,
-        "num_gpus": num_gpus,
+        "avg_tflop":   mean(avg_tflops) if avg_tflops else None,
+        "num_gpus":    num_gpus,
     }
 
 
 # ── Directory-level analysis ──────────────────────────────────────────────────
-
 
 def analyze_experiment_dir(
     experiment_dir: Path,
@@ -292,8 +273,8 @@ def analyze_experiment_dir(
 ) -> list[dict]:
     """Analyze all runs under <experiment_dir>/training/.
 
-    Returns a list of dicts, one per run, each containing run_name plus
-    all keys returned by analyze_run().
+    Returns a list of dicts, one per run, each containing run_name plus all
+    keys returned by analyze_run().
     """
     training_dir = experiment_dir / "training"
     if not training_dir.is_dir():
@@ -308,9 +289,7 @@ def analyze_experiment_dir(
             continue
         run_name = run_dir.name
         stats = analyze_run(
-            run_dir,
-            run_name,
-            gpu_hours_csv,
+            run_dir, run_name, gpu_hours_csv,
             max_elapsed_ms=max_elapsed_ms,
             skip_first_iters=skip_first_iters,
             max_iters_used=max_iters_used,
@@ -322,7 +301,6 @@ def analyze_experiment_dir(
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
-
 
 def main() -> None:
     ap = argparse.ArgumentParser(
@@ -376,21 +354,25 @@ def main() -> None:
 
     W = max(len(r["run_name"]) for r in results) + 2
 
-    header = f"{'Run':<{W}}  {'LowTP-Iters':>12}  {'AvgTFLOP':>9}  {'TimeLost(h)':>12}  {'GPU-h Lost':>11}  {'GPUs':>5}"
+    header = (
+        f"{'Run':<{W}}  {'LowTP-Iters':>12}  {'AvgTFLOP':>9}"
+        f"  {'TimeLost(h)':>12}  {'GPU-h Lost':>11}  {'GPUs':>5}"
+    )
     sep = "─" * len(header)
     print(sep)
     print(header)
     print(sep)
 
     for r in results:
-        n_str = str(r["n_low_iters"]) if r["n_low_iters"] is not None else "N/A"
-        avg_str = f"{r['avg_tflop']:.1f}" if r["avg_tflop"] is not None else "N/A"
-        tl_str = f"{r['time_lost_h']:.4f}" if r["time_lost_h"] is not None else "N/A"
-        gl_str = f"{r['gpu_h_lost']:.4f}" if r["gpu_h_lost"] is not None else "N/A"
-        gpus_str = str(r["num_gpus"]) if r["num_gpus"] is not None else "N/A"
+        n_str    = str(r["n_low_iters"])  if r["n_low_iters"]  is not None else "N/A"
+        avg_str  = f"{r['avg_tflop']:.1f}" if r["avg_tflop"]   is not None else "N/A"
+        tl_str   = f"{r['time_lost_h']:.4f}" if r["time_lost_h"] is not None else "N/A"
+        gl_str   = f"{r['gpu_h_lost']:.4f}"  if r["gpu_h_lost"]  is not None else "N/A"
+        gpus_str = str(r["num_gpus"])        if r["num_gpus"]    is not None else "N/A"
 
         print(
-            f"{r['run_name']:<{W}}  {n_str:>12}  {avg_str:>9}  {tl_str:>12}  {gl_str:>11}  {gpus_str:>5}"
+            f"{r['run_name']:<{W}}  {n_str:>12}  {avg_str:>9}"
+            f"  {tl_str:>12}  {gl_str:>11}  {gpus_str:>5}"
         )
 
     print(sep)
