@@ -26,18 +26,30 @@
 #   * delay: seconds after training start before the fault fires.
 # So "rank_killed;5;90" kills rank 5 ~90s in; the reserve node takes over.
 #
-# Caveats (validate on cluster -- this is a starting point, not yet battle-tested)
-# --------------------------------------------------------------------------------
-# * Recovery resumes from the last checkpoint, so checkpointing MUST work. We
-#   use nvidia-resiliency-ext LOCAL checkpoints (+replication so a dead node's
-#   shard survives on a neighbour). This is a different code path from the
-#   torch_dist GLOBAL save that crashed for MoE EP+TP (see project memory #7);
-#   we keep `save_interval` huge so no global save fires during the run, while
-#   `save` is still set because ft setup() asserts a save dir (for ft_state.json).
+# STATUS (tested on JUPITER, 2026-06-03)
+# -------------------------------------
+# VERIFIED working: ft_launcher + c10d rendezvous + warm reserve come up; the
+# simulated fault fires; the in-process restart runs cleanly and the RESERVE
+# NODE TAKES OVER and training resumes (job 569668). Requires the 1-line
+# Megatron fix in inprocess_restart.py (ft_integration.shutdown() in
+# destroy_state) — without it the restart loops on AssertionError('rank monitor
+# client is already initialized'). mbs=1 is needed to avoid an OOM on recovery
+# (the Qwen3 ~152k-vocab logits make steady-state memory very tight at mbs=4).
+#
+# KNOWN BLOCKER for resume-after-fault: the MoE EP+TP CHECKPOINT SAVE segfaults
+# at the first save interval — BOTH the torch_dist global path (project memory
+# #7) AND the nvidia-resiliency-ext LOCAL path. So today recovery restarts from
+# scratch (random init), not from a checkpoint. Resume-based resilience needs
+# the MoE checkpoint-save crash fixed first. Until then this demonstrates the
+# fault-detect + reserve-takeover mechanics, not progress-preserving recovery.
+#
+# Other notes:
 # * Requires PyTorch >=2.5.1 / NCCL >=2.26.2 (pt2512 container is fine).
 # * `ft_launcher` must be on PATH in the container (nvidia-resiliency-ext).
 # * Classic barrier-rendezvous spare-node support is "planned"; the supported
 #   route today is this in-process warm-reserve path.
+# * The /container:jupiter default sif (…202603120039) is gone from the cache;
+#   override container.image to a present one (see below).
 defaults:
   - /experiments/base
   - /backend: megatron_ftlauncher_localaddr
@@ -49,9 +61,9 @@ defaults:
 
 backend:
   megatron:
-    train_iters: 400          # ~10 min @ ~1.5 s/iter -> fault at 90s lands mid-run
+    train_iters: 400
     global_batch_size: 64
-    micro_batch_size: 4
+    micro_batch_size: 1       # mbs=1 to avoid OOM on in-process restart (152k-vocab logits)
     expert_model_parallel_size: 4
     pipeline_model_parallel_size: 2     # PP=2 spans the 2 active nodes (inter-node)
     tensor_model_parallel_size: 1
@@ -86,9 +98,15 @@ backend:
     replication_factor: 2               # ...to 1 neighbour, so a dead node's state survives
     replication_jump: 4                 # replica is 4 ranks away -> on the other active node
 
+    # NOTE: the old franke5 SlimPajama path is GONE. Using the nemotron
+    # downsampled valid set, which is tokenized with the Qwen3 tokenizer
+    # (vocab ~152k) -- so the tokenizer below MUST be Qwen3, not gpt-neox,
+    # or token IDs go out of bounds (CUDA assert).
     data_path:
-     - /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
+     - /e/scratch/projectnucleus/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all
     data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: ${oc.env:HOME}/work/Projects/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge/tokenizers/Qwen/Qwen3-0.6B
   env:
     TOKENIZERS_PARALLELISM: "false"
     TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
@@ -112,6 +130,11 @@ backend:
     # separators (apptainer then gets no command -> exit 127). The inner quotes
     # survive the outer single-quoted bash -c and protect the semicolons.
     FT_SIM_FAULT_DESC: '"rank_killed;5;90"'
+
+container:
+  # /container:jupiter's default sif is gone from the cache; pin a present one
+  # that has ft_launcher + nvidia-resiliency-ext (NVRX 0.5.0).
+  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2512_aarch64_202602231451.sif
 
 slurm:
   sbatch:
