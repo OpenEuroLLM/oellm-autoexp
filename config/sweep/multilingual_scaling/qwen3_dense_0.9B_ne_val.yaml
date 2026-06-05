@@ -10,7 +10,7 @@ groups:
   # GROUP 1: Hyperparameter configurations (identical to training sweep).
   - type: list
     defaults:
-      backend.megatron.num_workers: 16
+      backend.megatron.num_workers: 8
       backend.megatron.micro_batch_size: 2
     configs:
       # ---- gbsz 32 ----
