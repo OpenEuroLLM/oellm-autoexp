@@ -17,7 +17,7 @@ slurm:
   launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
     export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
     export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; export AITER_JIT_DIR=/tmp/$USER/aiter_jit_dir ; \\\n\
-    ${oc.select:container.runtime,apptainer} exec --rocm --overlay fla-overlay.img:ro ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} \
+    ${oc.select:container.runtime,apptainer} exec --rocm --overlay /shared_silo/scratch/containers/fla-overla-for-primus-v26.1.img:ro ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} \
     ${oc.select:container.image,container.sif}"
 
   env:
