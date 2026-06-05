@@ -14,6 +14,12 @@ slurm:
     nodes: 8
     time: 0-72:00:00
 
+  launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
+    export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
+    export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; export AITER_JIT_DIR=/tmp/$USER/aiter_jit_dir ; \\\n\
+    ${oc.select:container.runtime,apptainer} exec --rocm --overlay fla-overlay.img:ro ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} \
+    ${oc.select:container.image,container.sif}"
+
   env:
     USE_ROCM_AITER_ROPE_BACKEND: "0"
     WANDB_MODE: "online"
