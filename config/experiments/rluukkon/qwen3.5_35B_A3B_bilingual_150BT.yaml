@@ -36,10 +36,27 @@ backend:
     log_interval: 1
     log_progress: true
     data_path:
-      - 0.3
-      - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
-      - 0.7
+      # Finnish native (60% total, proportional by dataset size, ~0.87 epochs each)
+      - 0.3116
       - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt2.0_cleaned_fin/train
+      - 0.2727
+      - /shared_silo/scratch/ttoivone/tokenized/FineWeb-2-fin_Latn-max-500Btok/FineWeb-2-fin_Latn-max-500Btok_text_document
+      - 0.0134
+      - /shared_silo/scratch/ttoivone/tokenized/FinePDFs-Edu-fin_Latn-max-500Btok/FinePDFs-Edu-fin_Latn-max-500Btok_text_document
+      - 0.0023
+      - /shared_silo/scratch/ttoivone/tokenized/wikipedia-20231101.fi-max-500Btok/wikipedia-20231101.fi-max-500Btok_text_document
+      # Synth — Nemotron-CC-fi machine translations (10%, ~0.12 epochs)
+      - 0.10
+      - /shared_silo/scratch/ttoivone/tokenized/MT-Nemotron-CC-fin_Latn-max-500Btok/MT-Nemotron-CC-fin_Latn-max-500Btok_text_document
+      # English — CC-MAIN-2020 (24%, ~0.75 epochs)
+      - 0.24
+      - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
+      # Code — Stack-edu + Nemotron-Code-v2 (5%, ~0.25 epochs)
+      - 0.05
+      - /shared_silo/scratch/ttoivone/merge/code
+      # Chat — Nemotron-PT + SmolTalk + UltraChat (1%, ~1.88 epochs)
+      - 0.01
+      - /shared_silo/scratch/ttoivone/merge/chat
     data_cache_path: /shared_silo/scratch/rluukkon/data/.cache
     split: "989,10,1"
 
@@ -92,7 +109,7 @@ backend:
     tensorboard_dir: ${job.base_output_dir}/tensorboard
     wandb_save_dir: "${job.base_output_dir}/wandb"
     wandb_project: "moe-exploration"
-    wandb_exp_name: "qwen3_5_35B_A3B_150BT_lr${backend.megatron.lr}_rtlr${backend.megatron.router_lr_spec}_3070_${oc.env:SLURM_JOB_ID,local}"
+    wandb_exp_name: "qwen3_5_35B_A3B_150BT_lr${backend.megatron.lr}_rtlr${backend.megatron.router_lr_spec}_5mix_${oc.env:SLURM_JOB_ID,local}"
 
 job:
-  name: qwen3_5_35B_A3B_150BT_lr${backend.megatron.lr}_3070_${slurm.env.MACHINE_NAME}
+  name: qwen3_5_35B_A3B_150BT_lr${backend.megatron.lr}_5mix_${slurm.env.MACHINE_NAME}
