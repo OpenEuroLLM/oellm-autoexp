@@ -70,8 +70,8 @@ backend:
     moe_grouped_gemm: false
     moe_token_dispatcher_type: "alltoall"
     moe_permute_fusion: true
-    moe_shared_expert_overlap: false
-    overlap_moe_expert_parallel_comm: true
+    moe_shared_expert_overlap: true
+    overlap_moe_expert_parallel_comm: false
     overlap_param_gather: true
     overlap_grad_reduce: true
 
