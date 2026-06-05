@@ -76,7 +76,7 @@ backend:
     ckpt_format: torch_dist
     save_interval: 1500
     save_extra_steps:
-      - ${oc.eval:'${.train_iters} - int(${.train_iters} * 0.2)'}
+      - ${oc.eval:'${backend.megatron.train_iters} - int(${backend.megatron.train_iters} * 0.2)'}
     save: ${job.base_output_dir}/checkpoints
     load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-35B-A3B-Base
     finetune: true
