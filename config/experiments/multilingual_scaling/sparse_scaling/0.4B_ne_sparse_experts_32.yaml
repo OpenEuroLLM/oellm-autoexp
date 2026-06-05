@@ -7,8 +7,8 @@ defaults:
   - /backend: megatron_torchrun
   - /container: leonardo
   - /slurm: leonardo
-  - /job: default
-    # - /job: auto_restart
+  # - /job: default
+  - /job: auto_restart
   - /sweep/multilingual_scaling/sparse_scaling@sweep: qwen3_sparse_0.4B_ne # sweep configs  
   # - /sweep: none
   - /backend/megatron: base
@@ -42,7 +42,7 @@ backend:
     # lr_wsd_decay_iters: 1
     # micro_batch_size: 1    # overridden by sweep
     # global_batch_size:  64 # overridden by sweep        
-    # eval_interval: 1000000000
+    eval_interval: 1000000000
     # save_interval: 1000000000
 
     # Base training configuration (for stable phase)
@@ -60,7 +60,7 @@ slurm:
     nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
     # qos: "boost_qos_dbg"
     account: "AIFAC_5C0_092"
-    time: "01:00:00"
+    time: "24:00:00"
     output: "${job.base_output_dir}/logs/stdout-%j.log"
     error: "${job.base_output_dir}/logs/stderr-%j.log"
   srun:
