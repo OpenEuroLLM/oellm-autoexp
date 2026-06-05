@@ -1,0 +1,92 @@
+# @package _global_
+defaults:
+  - ../base
+  - /backend: megatron
+  - /container: mi325x
+  - /slurm: mi325x
+  - /sweep: none
+  - /backend/megatron: [qwen3_5_moe_35BA3B]
+  - _self_
+
+slurm:
+  sbatch:
+    partition: amd-tw-verification
+    nodes: 8
+    time: 0-72:00:00
+
+  env:
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    WANDB_MODE: "online"
+    OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
+    APPTAINER_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+    SINGULARITY_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+
+container:
+  image: /shared_silo/scratch/containers/primus_v26.1.sif
+
+backend:
+  megatron:
+    log_throughput: true
+    log_interval: 1
+    log_progress: true
+    data_path:
+      - 0.3
+      - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
+      - 0.7
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt2.0_cleaned_fin/train
+    data_cache_path: /shared_silo/scratch/rluukkon/data/.cache
+    split: "989,10,1"
+
+    global_batch_size: 1024
+    micro_batch_size: 2
+    expert_model_parallel_size: 8
+    pipeline_model_parallel_size: 1
+    use_distributed_optimizer: true
+    moe_per_layer_logging: true
+    create_attention_mask_in_dataloader: false
+    moe_grouped_gemm: false
+    moe_token_dispatcher_type: "alltoall"
+    moe_permute_fusion: true
+    moe_shared_expert_overlap: false
+    overlap_moe_expert_parallel_comm: true
+    overlap_param_gather: true
+    overlap_grad_reduce: true
+
+    # Optimizer: AdamW with beta2=0.95 for faster second-moment warmup
+    # and better adaptation to sparse MoE expert gradients
+    adam_beta2: 0.95
+    weight_decay: 0.1
+
+    # Training schedule: 150BT tokens (~17,882 iters)
+    train_iters: ${oc.eval:'-(-150_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    lr: 3e-5
+    min_lr: 3e-6
+    lr_warmup_iters: 500
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
+    lr_decay_iters: ${.train_iters}
+
+    # Router: full training at conservative LR, with aux loss for load balance
+    router_lr_spec: "1e-5"
+    moe_aux_loss_coeff: 0.0001
+
+    # Checkpoints: every 1500 iters (~12.6BT), ~12 checkpoints total
+    # Plus an extra save right before WSD decay begins (enables branch-and-decay)
+    ckpt_format: torch_dist
+    save_interval: 1500
+    save_extra_steps:
+      - ${oc.eval:'${.train_iters} - int(${.train_iters} * 0.2)'}
+    save: ${job.base_output_dir}/checkpoints
+    load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-35B-A3B-Base
+    finetune: true
+    no_load_optim: true
+    no_load_rng: true
+
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    wandb_save_dir: "${job.base_output_dir}/wandb"
+    wandb_project: "moe-exploration"
+    wandb_exp_name: "qwen3_5_35B_A3B_150BT_lr${backend.megatron.lr}_rtlr${backend.megatron.router_lr_spec}_3070_${oc.env:SLURM_JOB_ID,local}"
+
+job:
+  name: qwen3_5_35B_A3B_150BT_lr${backend.megatron.lr}_3070_${slurm.env.MACHINE_NAME}
