@@ -32,6 +32,7 @@ from pathlib import Path
 
 
 _DEFAULT_SEARCH_ROOTS = [
+    "/leonardo_work/OELLM_prod2026/experiments/multilingual_scaling",
     "/leonardo_work/OELLM_prod2026/{user}/multilingual_scaling",
 ]
 
