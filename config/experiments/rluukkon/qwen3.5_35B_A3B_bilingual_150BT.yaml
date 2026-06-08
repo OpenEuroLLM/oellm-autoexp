@@ -4,7 +4,7 @@ defaults:
   - /backend: megatron
   - /container: mi325x
   - /slurm: mi325x
-  - /sweep: none
+  - /sweep: none    # overridden inline below
   - /backend/megatron: [qwen3_5_moe_35BA3B]
   - _self_
 
@@ -101,15 +101,33 @@ backend:
     save_extra_steps:
       - ${oc.eval:'${backend.megatron.train_iters} - int(${backend.megatron.train_iters} * 0.2)'}
     save: ${job.base_output_dir}/checkpoints
-    load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-35B-A3B-Base
-    finetune: true
-    no_load_optim: true
-    no_load_rng: true
 
     tensorboard_dir: ${job.base_output_dir}/tensorboard
     wandb_save_dir: "${job.base_output_dir}/wandb"
     wandb_project: "moe-exploration"
     wandb_exp_name: "qwen3_5_35B_A3B_150BT_lr${backend.megatron.lr}_rtlr${backend.megatron.router_lr_spec}_5mix_${oc.env:SLURM_JOB_ID,local}"
+
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        # Stage 1: fresh CPT from base model
+        - stage: init
+          backend.megatron.load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-35B-A3B-Base
+          backend.megatron.finetune: true
+          backend.megatron.no_load_optim: true
+          backend.megatron.no_load_rng: true
+
+        # Stage 2: resume from init's latest checkpoint
+        - stage: resume
+          backend.megatron.load: "\\${sibling.init.job.base_output_dir}/checkpoints"
+          backend.megatron.finetune: false
+          backend.megatron.no_load_optim: false
+          backend.megatron.no_load_rng: false
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.init.job.base_output_dir}/checkpoints/latest_checkpointed_iteration.txt"
 
 job:
   name: qwen3_5_35B_A3B_150BT_lr${backend.megatron.lr}_5mix_${slurm.env.MACHINE_NAME}
