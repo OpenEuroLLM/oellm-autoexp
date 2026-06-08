@@ -100,5 +100,4 @@ def main(argv: list[str] | None = None) -> None:
 if __name__ == "__main__":
     main()
 
-setfacl -m u:slaing00:rwx /leonardo_work/OELLM_prod2026/slaing00/multilingual_scaling
 
