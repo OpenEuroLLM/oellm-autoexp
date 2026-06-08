@@ -143,13 +143,21 @@ def _summary_table_sort_key(
     exp_name: str,
     run_tier_map: dict[str, str],
     run_stage_map: dict[str, str],
-) -> tuple[int, int, str]:
+) -> tuple:
     tier = run_tier_map.get(exp_name, "")
     stage = run_stage_map.get(exp_name, "")
+    lr_m = re.search(r"_lr([0-9.e+\-]+)_", exp_name)
+    gbsz_m = re.search(r"_gbsz(\d+)_", exp_name)
+    tok_m = re.search(r"(?:stable|decay)(\d+)BT", exp_name)
+    lr = float(lr_m.group(1)) if lr_m else 0.0
+    gbsz = int(gbsz_m.group(1)) if gbsz_m else 0
+    tok = int(tok_m.group(1)) if tok_m else 0
     return (
         TIER_SORT_ORDER.get(tier, 99),
+        lr,
+        gbsz,
         0 if stage == "stable" else 1,
-        exp_name,
+        tok,
     )
 
 
@@ -1472,6 +1480,33 @@ def main() -> None:
                 gpu_hours = elapsed_h * gpus
             elif (run_name, job_id) in external_job_gpu_h:
                 gpu_hours = external_job_gpu_h[(run_name, job_id)]
+
+            # Cross-cluster collision detection:
+            # MN5 and Leonardo share a numeric Slurm job ID space.  A job ID from
+            # MN5 that also exists on Leonardo as a different job returns wrong
+            # timestamps and GPU counts.  Two heuristics:
+            #   1. sacct reports 0 GPUs but sbatch declares GPUs → CPU-only collision
+            #   2. sacct reports GPUs but fewer than half of what sbatch declares →
+            #      a different user's small job collided (e.g. 1 GPU vs expected 32)
+            _sacct_gpus = sacct_entry.get("gpus", 0)
+            _is_collision = (
+                bool(sacct_elapsed)
+                and (
+                    (sacct_entry and _sacct_gpus == 0 and total_gpus > 0)
+                    or (sacct_entry and total_gpus > 0 and 0 < _sacct_gpus < total_gpus // 2)
+                )
+            )
+            cluster = ""
+            if _is_collision:
+                foreign = "MN5" if args.machine != "MN5" else "LEO"
+                cluster = foreign
+                sacct_entry = {}
+                sacct_state = ""
+                sacct_elapsed = ""
+                gpu_hours = external_job_gpu_h.get((run_name, job_id))
+                gpus = total_gpus
+            elif sacct_entry:
+                cluster = args.machine
 
             # Low-throughput analysis (reuses the throughput cache written above).
             _job_lt = _analyze_low_throughput_job(
