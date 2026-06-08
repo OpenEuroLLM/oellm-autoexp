@@ -108,7 +108,6 @@ def main():
         action="store_true",
         help="Continue syncing other runs if one fails",
     )
-
     parser.add_argument(
         "--force", action="store_true", help="Re-sync runs even if they were already synced"
     )
