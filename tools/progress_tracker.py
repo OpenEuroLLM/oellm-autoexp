@@ -1401,8 +1401,17 @@ def main() -> None:
 
         if not job_ids:
             if run_dir.is_dir():
-                # Directory exists but no log files → submitted to Slurm, not started yet
-                s_emoji, s_word = "🕒", "QUEUED"
+                # Check monitor session: if every session for this run ended as cancelled,
+                # show CANCELLED rather than misleading the user into thinking it's queued.
+                _sessions = run_monitor_sessions.get(run_name) or []
+                _all_cancelled = bool(_sessions) and all(
+                    s.get("final_state") == "cancelled" for s in _sessions
+                )
+                if _all_cancelled:
+                    s_emoji, s_word = "🚫", "CANCELLED"
+                else:
+                    # Directory exists but no log files → submitted to Slurm, not started yet
+                    s_emoji, s_word = "🕒", "QUEUED"
             else:
                 # Run directory doesn't exist → this tier has not been launched at all
                 s_emoji, s_word = "⚪", "NOT_LAUNCHED"

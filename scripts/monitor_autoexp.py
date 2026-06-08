@@ -30,6 +30,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--session", default=None)
     parser.add_argument("--session-dir", default=None)
+    parser.add_argument(
+        "--reset-jobs",
+        nargs="+",
+        metavar="PATTERN",
+        default=None,
+        help=(
+            "Reset one or more jobs in the session so the monitor resubmits them. "
+            "Each PATTERN is matched as a substring of the job filename. "
+            "Example: --reset-jobs lr0.002_gbsz256_decay lr0.001_gbsz512_stable300BT"
+        ),
+    )
     args = parser.parse_args(argv)
     if args.session is None and args.session_dir is None:
         print("Error either session or session-dir is required")
@@ -97,15 +108,53 @@ def _parse_subset(spec: str | None) -> set[int]:
     return indices
 
 
+def _reset_jobs(session_dir: Path, patterns: list[str]) -> None:
+    """Reset matching jobs so the monitor will resubmit them on next poll."""
+    import json, shutil
+
+    matched = 0
+    for path in sorted(session_dir.glob("*.job.json")):
+        if not any(p in path.name for p in patterns):
+            continue
+        data = json.loads(path.read_text())
+        rt = data.get("runtime", {})
+        old = {k: rt.get(k) for k in ("final_state", "submitted", "runtime_job_id", "attempts")}
+        rt["final_state"] = None
+        rt["submitted"] = False
+        rt["runtime_job_id"] = None
+        rt["log_cursor"] = 0
+        rt["last_status"] = None
+        rt["action_state"] = {}
+        new = {k: rt.get(k) for k in ("final_state", "submitted", "runtime_job_id", "attempts")}
+        backup = path.with_suffix(".bak.json")
+        shutil.copy2(path, backup)
+        path.write_text(json.dumps(data, indent=2))
+        print(f"  reset {path.name}")
+        print(f"    before: {old}")
+        print(f"    after:  {new}")
+        matched += 1
+
+    if matched == 0:
+        print(f"No jobs matched patterns: {patterns}")
+    else:
+        print(f"\nReset {matched} job(s). Backups saved as *.bak.json")
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     configure_logging(not args.no_verbose, args.debug)
 
-    slurm_client = SlurmClient(SlurmClientConfig())
-    local_client = LocalCommandClient(LocalCommandClientConfig())
     session_dir = Path(args.session_dir) if args.session_dir else Path(args.monitor_state_dir) / args.session
     if not session_dir.exists():
         print(f"Session directory {session_dir} does not exist.")
+        return
+
+    if args.reset_jobs:
+        _reset_jobs(session_dir, args.reset_jobs)
+        return
+
+    slurm_client = SlurmClient(SlurmClientConfig())
+    local_client = LocalCommandClient(LocalCommandClientConfig())
     loop = MonitorLoop(
         store=JobFileStore(str(session_dir)),
         slurm_client=slurm_client,
