@@ -2,7 +2,7 @@
 # Dataset related settings for the baby run
 max_position_embeddings: ${.seq_length}
 split: '95,5,0'
-create_attention_mask_in_dataloader: False
+create_attention_mask_in_dataloader: false
 
 # Data paths
 data_args_path: /leonardo_work/OELLM_prod2026/users/ecozzolino/10TT_data_path.sh

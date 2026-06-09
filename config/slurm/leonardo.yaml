@@ -34,7 +34,7 @@ env:
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
   NCCL_IB_TIMEOUT: "120"
   TRITON_LIBCUDA_PATH: "/usr/local/cuda/lib64/stubs"
-  OMP_NUM_THREADS: "1"
+  OMP_NUM_THREADS: "16"
   CUDA_DEVICE_MAX_CONNECTIONS: "1"
   PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
   CUDA_VISIBLE_DEVICES: "0,1,2,3"
@@ -51,5 +51,5 @@ sbatch:
   partition: "boost_usr_prod"
   time: "24:00:00"
   qos: ${oc.env:SLURM_QOS,null}
-  output: "${job.base_output_dir}/logs/stdout-%j.log"
-  error: "${job.base_output_dir}/logs/stderr-%j.log"
+  output: "${job.base_output_dir}/logs/%j-out.log"
+  error: "${job.base_output_dir}/logs/%j-err.log"

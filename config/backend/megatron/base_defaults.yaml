@@ -62,7 +62,7 @@ context_parallel_size: 1  # Degree of context parallelism.
 cp_comm_type:  # Inter-gpu communication type for context parallelism: p2p, a2a, allgather or a2a+p2p. If a single string is provided, all layers will share the same communication type. Users can also specify separated types for each layer like --cp-comm-type p2p p2p a2a a2a a2a+p2p a2a+p2p
 - p2p
 cpu_offloading_num_layers: 0  # The number of Transformer layers to offload to CPU.
-create_attention_mask_in_dataloader: false  # If set, do not create attention_masks in dataloader.
+create_attention_mask_in_dataloader: true  # If set, do not create attention_masks in dataloader.
 cross_entropy_fusion_impl: native  # choices: ['native', 'te'] | Implementation of cross entropy loss calculation.
 cross_entropy_loss_fusion: false  # Enabled fusion of cross entropy loss calculation.
 cuda_graph_impl: none  # choices: ['none', 'local', 'transformer_engine'] | Determines the CUDA graph capture implementation. "none": no CUDA graph. "local": capture the CUDA graph using MCore local implementation. --cuda-graph-scope="full_iteration" enables whole iteration CUDA graph. "transformer_engine": capture the CUDA graph using TE make_graphed_callables().
