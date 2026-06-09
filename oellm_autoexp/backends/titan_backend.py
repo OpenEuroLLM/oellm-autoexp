@@ -267,7 +267,8 @@ def _apply_schema_filter(data: dict[str, Any], schema: type) -> dict[str, Any]:
 
 def _prune_internal_keys(data: dict[str, Any]) -> None:
     data.pop("class_name", None)
-    data.pop("_non_strict", None)
+    if "_non_strict" in data:
+        data.pop("_non_strict", None)
     for key, value in list(data.items()):
         if isinstance(value, dict):
             _prune_internal_keys(value)
