@@ -14,4 +14,5 @@ groups:
         backend.megatron.min_lr: 0.0
         backend.megatron.lr_warmup_iters: 20 # 2000 # Fixed for all.
         backend.megatron.lr_wsd_decay_iters: 0
-        backend.megatron.eval_iters: 0
+        backend.megatron.eval_iters: 10
+        backend.megatron.eval_interval: 99999999
