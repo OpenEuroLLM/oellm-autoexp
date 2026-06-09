@@ -29,7 +29,7 @@ backend:
     log_interval: 1
     eval_interval: 9999
     lr_warmup_iters: 2000
-    lr_decay_iters: 3000 
+    lr_decay_iters: 3000
     lr_wsd_decay_iters: 3000
 
 slurm:
