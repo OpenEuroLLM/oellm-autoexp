@@ -1,0 +1,149 @@
+# @package _global_
+#
+# Resilient training demo: warm-reserve ("spare") node + in-process restart,
+# with a SIMULATED node failure injected mid-run.
+#
+# What this exercises
+# -------------------
+# * Allocate 3 nodes but only train on 2 (8 GPUs). The 3rd node is a WARM
+#   RESERVE held idle by nvidia-resiliency-ext's in-process restart wrapper.
+# * `--inprocess-restart` + `--inprocess-active-world-size 8`: on a rank/node
+#   failure the wrapper reassigns reserve-node ranks into the dead slots,
+#   keeping world_size == 8 constant (mandatory for Megatron, whose
+#   TP*PP*EP*DP factorization is fixed) and resumes WITHOUT tearing down the
+#   Python process/container -> fast recovery.
+# * `--enable-ft-package` (via ft_launcher) adds heartbeat + hang detection
+#   and, crucially, enables Megatron's built-in fault simulator.
+#
+# Simulating the failure
+# ----------------------
+# The `FT_SIM_FAULT_DESC` env var (read by Megatron's
+# ft_integration.maybe_setup_simulated_fault) makes one rank kill/hang itself
+# mid-training -- no extra script required. Format: "type;rank;base_delay":
+#   * type:  rank_killed (SIGKILL) | rank_hung (SIGSTOP) | random
+#   * rank:  global rank to fail (blank = random). Here 5 -> on node 1, so we
+#            exercise an inter-node recovery and bring the reserve node in.
+#   * delay: seconds after training start before the fault fires.
+# So "rank_killed;5;90" kills rank 5 ~90s in; the reserve node takes over.
+#
+# STATUS (tested on JUPITER, 2026-06-03)
+# -------------------------------------
+# VERIFIED working: ft_launcher + c10d rendezvous + warm reserve come up; the
+# simulated fault fires; the in-process restart runs cleanly and the RESERVE
+# NODE TAKES OVER and training resumes (job 569668). Requires the 1-line
+# Megatron fix in inprocess_restart.py (ft_integration.shutdown() in
+# destroy_state) — without it the restart loops on AssertionError('rank monitor
+# client is already initialized'). mbs=1 is needed to avoid an OOM on recovery
+# (the Qwen3 ~152k-vocab logits make steady-state memory very tight at mbs=4).
+#
+# KNOWN BLOCKER for resume-after-fault: the MoE EP+TP CHECKPOINT SAVE segfaults
+# at the first save interval — BOTH the torch_dist global path (project memory
+# #7) AND the nvidia-resiliency-ext LOCAL path. So today recovery restarts from
+# scratch (random init), not from a checkpoint. Resume-based resilience needs
+# the MoE checkpoint-save crash fixed first. Until then this demonstrates the
+# fault-detect + reserve-takeover mechanics, not progress-preserving recovery.
+#
+# Other notes:
+# * Requires PyTorch >=2.5.1 / NCCL >=2.26.2 (pt2512 container is fine).
+# * `ft_launcher` must be on PATH in the container (nvidia-resiliency-ext).
+# * Classic barrier-rendezvous spare-node support is "planned"; the supported
+#   route today is this in-process warm-reserve path.
+# * The /container:jupiter default sif (…202603120039) is gone from the cache;
+#   override container.image to a present one (see below).
+defaults:
+  - /experiments/base
+  - /backend: megatron_ftlauncher_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe_30BA3B]
+  - /sweep: none
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 400
+    global_batch_size: 64
+    micro_batch_size: 1       # mbs=1 to avoid OOM on in-process restart (152k-vocab logits)
+    expert_model_parallel_size: 4
+    pipeline_model_parallel_size: 2     # PP=2 spans the 2 active nodes (inter-node)
+    tensor_model_parallel_size: 1
+    eval_interval: 1000
+    seq_length: 4096
+    lr: 0.001
+    log_interval: 1
+    use_distributed_optimizer: true
+    moe_router_dtype: "fp32"
+
+    # --- Fault tolerance: in-process restart + warm reserve ---------------
+    enable_ft_package: true             # ft_launcher rank monitor + sim-fault hook
+    calc_ft_timeouts: true              # refine section timeouts from observed timings
+    inprocess_restart: true
+    inprocess_active_world_size: 8      # 2 nodes x 4 GPUs are active; node 3 = reserve
+    inprocess_granularity: node         # reserve/replace at whole-node granularity
+    inprocess_max_iterations: 3         # cap in-process restarts before giving up
+    inprocess_empty_cuda_cache: true    # release cached mem on each restart
+
+    # --- Checkpointing for recovery (local + replicated) ------------------
+    save: /e/scratch/projectnucleus/poeppel1/output/resilient_demo/ckpt   # ADJUST
+    load: /e/scratch/projectnucleus/poeppel1/output/resilient_demo/ckpt   # ADJUST
+    ckpt_step: 0
+    save_interval: 1000000              # effectively disable GLOBAL torch_dist save
+    async_save: true
+    no_load_optim: false                # base sets this true; resume needs optimizer state
+    no_load_rng: false                  # restore RNG too, for an exact-as-possible resume
+    non_persistent_ckpt_type: local                                       # fast, resumable
+    non_persistent_local_ckpt_dir: /e/scratch/projectnucleus/poeppel1/output/resilient_demo/local_ckpt  # ADJUST
+    non_persistent_save_interval: 20    # snapshot every 20 iters for recovery
+    replication: true                   # mirror each rank's local shard...
+    replication_factor: 2               # ...to 1 neighbour, so a dead node's state survives
+    replication_jump: 4                 # replica is 4 ranks away -> on the other active node
+
+    # NOTE: the old franke5 SlimPajama path is GONE. Using the nemotron
+    # downsampled valid set, which is tokenized with the Qwen3 tokenizer
+    # (vocab ~152k) -- so the tokenizer below MUST be Qwen3, not gpt-neox,
+    # or token IDs go out of bounds (CUDA assert).
+    data_path:
+     - /e/scratch/projectnucleus/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all
+    data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: ${oc.env:HOME}/work/Projects/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge/tokenizers/Qwen/Qwen3-0.6B
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+
+    # PP=2 inter-node P2P hangs on JUPITER GH200 without GDR disabled (memory #5/#12)
+    NCCL_NET_GDR_LEVEL: "0"
+    # in-process restart relies on the c10d watchdog surfacing NCCL errors fast
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+    # silence c10d waitForInput timeout spam during restart (inprocess_restart.py warns if unset)
+    TORCH_CPP_LOG_LEVEL: "error"
+
+    # >>> SIMULATED FAULT <<<  kill global rank 5 (on node 1) ~90s into training.
+    # Set to "" / remove to run resiliently without an injected fault.
+    # NOTE: the embedded double-quotes are REQUIRED. The value is rendered
+    # unquoted into `srun bash -c '... --env FT_SIM_FAULT_DESC=<val> ...'`, so a
+    # bare "rank_killed;5;90" would have its ';' parsed as shell command
+    # separators (apptainer then gets no command -> exit 127). The inner quotes
+    # survive the outer single-quoted bash -c and protect the semicolons.
+    FT_SIM_FAULT_DESC: '"rank_killed;5;90"'
+
+container:
+  # /container:jupiter's default sif is gone from the cache; pin a present one
+  # that has ft_launcher + nvidia-resiliency-ext (NVRX 0.5.0).
+  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2512_aarch64_202602231451.sif
+
+slurm:
+  sbatch:
+    nodes: 3                  # 2 active + 1 warm reserve
+    time: "00:30:00"
+    # Leave job_name unset so the rendered #SBATCH --job-name falls back to the
+    # sweep-resolved record name (e.g. ..._0); otherwise the submit-time
+    # validator (which checks the resolved name) rejects the script.
+    job_name: null
+
+job:
+  name: megatron_moe_resilient_jupiter
