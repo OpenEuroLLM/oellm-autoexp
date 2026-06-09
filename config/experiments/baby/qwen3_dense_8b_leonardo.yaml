@@ -1,0 +1,27 @@
+# @package _global_
+
+# 8B dense Qwen3-like model training
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: auto_restart
+  - /sweep/baby@sweep: qwen3_dense_8b_leonardo # sweep configs
+  - /backend/megatron: base
+  - /backend/megatron/baby/models: qwen3_dense_8b # model configs
+  - /backend/megatron/baby/data: oellm_256k_10TT_leonardo_train # data configs
+  - _self_
+
+index: 0
+stage: ""
+
+job:
+  name: "qwen3_dense_8b_leonardo"
+  base_output_dir: "/leonardo_work/OELLM_prod2026/users/jlloppal/oellm-autoexp/MEGATRON_262k/${job.name}" # TODO modify!
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    wandb_project: qwen3_dense_8b_leonardo
+    data_cache_path: /leonardo_work/OELLM_prod2026/users/jlloppal/oellm-autoexp/MEGATRON_262k/ # TODO Do we need to adjust it to a common directory or every user will have their own cache?

@@ -1,0 +1,17 @@
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+         - slurm.sbatch.nodes: 256
+           backend.megatron.global_batch_size: 3072
+           backend.megatron.micro_batch_size: 6
+           slurm.sbatch.qos: boost_qos_bprod
+           backend.megatron.train_iters: 100
+           slurm.sbatch.time: "01:00:00"
+           # SCHEDULER
+           backend.megatron.min_lr: 0.0
+           backend.megatron.lr_warmup_iters: 20 # 2000 # Fixed for all.
+           backend.megatron.lr_wsd_decay_iters: 0
+           backend.megatron.eval_iters: 0
