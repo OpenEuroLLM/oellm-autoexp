@@ -1,0 +1,38 @@
+# @package _global_
+
+# 9B dense Qwen3-like model training
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+  - /backend/megatron: base
+  - /sweep: none
+  - /backend/megatron/baby/models: qwen3_dense_9b
+  - /backend/megatron/baby/data: oellm_256k_10TT_leonardo_train
+  - _self_
+
+index: 0
+stage: ""
+
+job:
+  name: "qwen3_dense_9b_leonardo"
+  base_output_dir: "output/${job.name}"
+  log_path: ${slurm.sbatch.error}
+  slurm: ${slurm}
+
+backend:
+  megatron:
+    wandb_project: qwen3_dense_9b_leonardo
+    data_cache_path: /leonardo_work/OELLM_prod2026/qwen3-9b-baby-run/cache
+    train_iters: 10
+    log_interval: 1
+    eval_interval: 9999
+    lr_warmup_iters: 2000
+    lr_decay_iters: 3000 
+    lr_wsd_decay_iters: 3000
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:30:00"
