@@ -5,16 +5,23 @@ Reads a sweep YAML config, discovers all expected runs under the results directo
 and prints a detailed per-Slurm-job table with training metrics, throughput, GPU
 hours, and status.
 
-Usage:
-    python progress_tracker.py <config.yaml> [options]
+Usage (run from repo root):
+    python tools/progress_tracker.py <config.yaml> [--machine LEO|MN5] [options]
 
-    # Override where to look for runs (useful when cluster paths differ from local mount):
-    python progress_tracker.py config/experiments/multilingual_scaling/0.1B_ne.yaml \\
-        --results-dir /home/diana/mn5/multilingual_scaling/0.1B_ne/training
+    # Basic — prints table to stdout:
+    python tools/progress_tracker.py config/experiments/<user>/<exp>/<model>.yaml --machine LEO
 
-    # Also write a CSV:
-    python progress_tracker.py config/experiments/multilingual_scaling/0.1B_ne.yaml \\
-        --csv status.csv
+    # Write markdown and CSV output files:
+    python tools/progress_tracker.py config/experiments/<user>/<exp>/<model>.yaml \\
+        --machine LEO --md /path/to/progress.md --csv /path/to/progress.csv
+
+    # Also measure checkpoint storage (slow on large trees):
+    python tools/progress_tracker.py config/experiments/<user>/<exp>/<model>.yaml \\
+        --machine LEO --compute-storage --md /path/to/progress.md --csv /path/to/progress.csv
+
+    # Override where to look for runs (useful when cluster paths differ):
+    python tools/progress_tracker.py config/experiments/<user>/<exp>/<model>.yaml \\
+        --results-dir /path/to/experiment/training
 """
 
 from __future__ import annotations
