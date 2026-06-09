@@ -1,7 +1,7 @@
 # @package backend.megatron
 # Dataset related settings for the baby run
 max_position_embeddings: ${.seq_length}
-split: '99,1,0'
+split: '100,0,0'
 create_attention_mask_in_dataloader: False
 
 # Data paths
