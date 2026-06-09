@@ -1,5 +1,4 @@
-"""
-Utilities shared between progress_tracker and any sweep-validation tooling.
+"""Utilities shared between progress_tracker and any sweep-validation tooling.
 
 Provides:
   _resolve_defaults          -- merge Hydra-style defaults into a parsed cfg dict
@@ -18,8 +17,10 @@ import yaml
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
+
 def _deep_merge(base: dict, override: dict) -> dict:
-    """Merge *override* into *base* in-place (nested dicts are merged recursively)."""
+    """Merge *override* into *base* in-place (nested dicts are merged
+    recursively)."""
     for k, v in override.items():
         if k in base and isinstance(base[k], dict) and isinstance(v, dict):
             _deep_merge(base[k], v)
@@ -29,7 +30,8 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def _find_config_root(config_path: str) -> Path:
-    """Walk up from config_path until we find the ancestor directory named 'config'."""
+    """Walk up from config_path until we find the ancestor directory named
+    'config'."""
     p = Path(config_path).resolve()
     for ancestor in p.parents:
         if ancestor.name == "config":
@@ -39,7 +41,8 @@ def _find_config_root(config_path: str) -> Path:
 
 
 def _read_package(yaml_text: str) -> str | None:
-    """Return the value of a '# @package <name>' directive from the first 5 lines."""
+    """Return the value of a '# @package <name>' directive from the first 5
+    lines."""
     for line in yaml_text.splitlines()[:5]:
         m = re.match(r"#\s*@package\s+(\S+)", line)
         if m:
@@ -48,7 +51,8 @@ def _read_package(yaml_text: str) -> str | None:
 
 
 def _navigate(cfg: dict, dotted_path: str) -> dict:
-    """Return (creating as needed) the nested dict at *dotted_path* inside *cfg*."""
+    """Return (creating as needed) the nested dict at *dotted_path* inside
+    *cfg*."""
     node = cfg
     for key in dotted_path.split("."):
         if key not in node or not isinstance(node[key], dict):
@@ -94,8 +98,6 @@ def _apply_default(cfg: dict, config_root: Path, raw_key: str, value: str) -> No
         if not isinstance(entry, dict):
             continue
         for sub_key, sub_val in entry.items():
-            # Resolve relative to the sub-config's directory
-            sub_root = yaml_file.parent
             # Absolute keys start with /; relative keys are under the same group dir
             if str(sub_key).startswith("/"):
                 _apply_default(cfg, config_root, sub_key, str(sub_val))
@@ -123,11 +125,13 @@ def _resolve_defaults(cfg: dict, config_path: str) -> None:
 
 # ── job-name rendering ─────────────────────────────────────────────────────────
 
+
 def substitute_omegaconf_path_vars(template: str, ctx: dict[str, Any]) -> str:
     """Replace ${key} references in *template* with values from *ctx*.
 
     Unresolvable references are left as-is.
     """
+
     def _replace(m: re.Match) -> str:
         key = m.group(1)
         return str(ctx[key]) if key in ctx else m.group(0)
@@ -159,11 +163,11 @@ def render_job_name(
     horizon_suffix = f"{tokens // 1_000_000_000}BT" if tokens is not None else ""
 
     ctx: dict[str, Any] = {
-        "backend.megatron.lr":                  str(lr),
-        "backend.megatron.global_batch_size":   str(gbsz),
-        "backend.megatron.seed":                str(seed),
-        "backend.megatron.num_experts":         str(num_experts),
-        "stage":                                stage,
+        "backend.megatron.lr": str(lr),
+        "backend.megatron.global_batch_size": str(gbsz),
+        "backend.megatron.seed": str(seed),
+        "backend.megatron.num_experts": str(num_experts),
+        "stage": stage,
         "backend.megatron.aux.job_horizon_suffix": horizon_suffix,
     }
     return substitute_omegaconf_path_vars(unescaped, ctx)
