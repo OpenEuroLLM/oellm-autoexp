@@ -24,7 +24,7 @@ import networkx as nx
 from compoconf import asdict
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
-from .config.schema import StagedSweepRoot, ConfigSetup
+from .config.schema import StagedSweepRoot, SweepConfig, ConfigSetup
 from .config.loader import load_config_reference
 from .expander import SweepPoint
 from .planner import JobPlan
@@ -367,9 +367,9 @@ def resolve_sweep_with_dag(
     filtered_jobs = {}
     base_context = asdict(config)
     base_context = {k: v for k, v in base_context.items() if k not in ("sweep", "sibling")}
-    sweep_filter_expr = config.sweep.filter if config.sweep else True
+    sweep_filter_expr = config.sweep.filter if isinstance(config.sweep, SweepConfig) else True
 
-    if config.sweep is None:
+    if not isinstance(config.sweep, SweepConfig):
         point = points_dict[list(points_dict)[0]]
         resolved = load_config_reference(
             config_dir=config_setup.config_dir,
