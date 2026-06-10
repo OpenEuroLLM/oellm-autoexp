@@ -236,12 +236,15 @@ if __name__ == "__main__":
     import os
     import runpy
 
-    _apply_turbo_grouped_gemm_patch()
-
-    # Execute pretrain_gpt.py as __main__ (it has no main() function)
     megatron_dir = os.path.join(os.path.dirname(__file__), "..", "submodules", "Megatron-LM")
     megatron_dir = os.path.abspath(megatron_dir)
     sys.path.insert(0, megatron_dir)
+    # Also add project root for any local imports
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+    _apply_turbo_grouped_gemm_patch()
+
+    # Execute pretrain_gpt.py as __main__ (it has no main() function)
     pretrain_script = os.path.join(megatron_dir, "pretrain_gpt.py")
     sys.argv[0] = pretrain_script
     runpy.run_path(pretrain_script, run_name="__main__")
