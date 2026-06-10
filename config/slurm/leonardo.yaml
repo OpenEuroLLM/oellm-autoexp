@@ -47,9 +47,7 @@ sbatch:
   gpus_per_node: 4
   cpus_per_task: 32
   gres: "gpu:4"
-  account: "OELLM_prod2026"
-  partition: "boost_usr_prod"
+  account: ${oc.env:SLURM_ACCOUNT, OELLM_prod2026}
+  partition: ${oc.env:SLURM_PARTITION, boost_usr_prod}
   time: "24:00:00"
   qos: ${oc.env:SLURM_QOS,null}
-  output: "${job.base_output_dir}/logs/%j-out.log"
-  error: "${job.base_output_dir}/logs/%j-err.log"
