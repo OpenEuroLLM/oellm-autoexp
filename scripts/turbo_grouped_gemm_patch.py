@@ -163,6 +163,42 @@ def _apply_turbo_grouped_gemm_patch():
                 tp_axis_map, prefix, sharded_offsets, metadata
             )
 
+    # --- Patch bias_act_func on TEGroupedMLP to use fused SwiGLU+probs ---
+
+    from megatron.core.transformer.moe.experts import TEGroupedMLP
+    import torch.nn.functional as F
+
+    _orig_bias_act_func = TEGroupedMLP.bias_act_func
+
+    def _turbo_bias_act_func(self, intermediate_parallel, bias_parallel, permuted_probs):
+        if not (self.config.gated_linear_unit and self.config.activation_func is F.silu):
+            return _orig_bias_act_func(self, intermediate_parallel, bias_parallel, permuted_probs)
+
+        if bias_parallel is not None:
+            intermediate_parallel = intermediate_parallel + bias_parallel
+
+        tokens_per_expert = getattr(self, "_turbo_tokens_per_expert", None)
+        if tokens_per_expert is None:
+            return _orig_bias_act_func(self, intermediate_parallel, bias_parallel, permuted_probs)
+
+        probs_1d = permuted_probs.squeeze(-1) if permuted_probs.dim() == 2 else permuted_probs
+        probs_1d = probs_1d.float()
+        num_tokens = intermediate_parallel.shape[0]
+        row_mask = primus_turbo_torch.ops.tokens_per_expert_to_mask(tokens_per_expert, num_tokens)
+        return primus_turbo_torch.ops.swiglu_with_probs(intermediate_parallel, probs_1d, row_mask)
+
+    TEGroupedMLP.bias_act_func = _turbo_bias_act_func
+
+    _orig_forward = TEGroupedMLP.forward
+
+    def _turbo_forward(self, permuted_local_hidden_states, tokens_per_expert, permuted_probs):
+        self._turbo_tokens_per_expert = tokens_per_expert
+        result = _orig_forward(self, permuted_local_hidden_states, tokens_per_expert, permuted_probs)
+        self._turbo_tokens_per_expert = None
+        return result
+
+    TEGroupedMLP.forward = _turbo_forward
+
     # --- Monkey-patch all Megatron modules that reference these classes ---
 
     te_ext.TEColumnParallelGroupedLinear = TurboColumnParallelGroupedLinear
@@ -183,6 +219,9 @@ def _apply_turbo_grouped_gemm_patch():
         )
         print(
             "[turbo_grouped_gemm_patch] Patched TERowParallelGroupedLinear -> TurboRowParallelGroupedLinear"
+        )
+        print(
+            "[turbo_grouped_gemm_patch] Patched TEGroupedMLP.bias_act_func -> fused SwiGLU+probs"
         )
         import primus_turbo
         print(
