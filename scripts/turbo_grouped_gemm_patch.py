@@ -227,8 +227,9 @@ def _apply_turbo_grouped_gemm_patch():
         print(
             "[turbo_grouped_gemm_patch] Patched TERowParallelGroupedLinear -> TurboRowParallelGroupedLinear"
         )
+        import primus_turbo
         print(
-            f"[turbo_grouped_gemm_patch] primus_turbo version: {primus_turbo_torch.__version__}"
+            f"[turbo_grouped_gemm_patch] primus_turbo version: {primus_turbo.__version__}"
         )
 
 
