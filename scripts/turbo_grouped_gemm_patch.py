@@ -1,25 +1,21 @@
 """Monkey-patch Megatron's TEGroupedLinear to use Primus-Turbo grouped GEMM.
 
 This replaces the TE-backed per-expert GEMM with primus_turbo's fused
-grouped_gemm kernel, which consolidates all expert weights into a single
-[G, out_features, in_features] tensor and launches one kernel instead of G.
+grouped_gemm kernel. On each forward call the per-expert weight{i}
+parameters are stacked into [G, out, in] and passed to grouped_gemm.
+Gradients flow back through torch.stack to the original TE parameters,
+so checkpoint loading, distributed optimizer, and DDP work unchanged.
 
 Usage — set as the launcher script in your experiment config:
 
     backend:
+      launcher_script: ./scripts/turbo_grouped_gemm_patch.py
       megatron:
         moe_grouped_gemm: true
-      launcher_script: ./scripts/turbo_grouped_gemm_patch.py
 
-Or run directly:
-
-    python scripts/turbo_grouped_gemm_patch.py --moe-grouped-gemm [other megatron args...]
-
-Requires primus_turbo to be installed in the container (already present in primus_v26.1.sif).
-Only supports TP=1 (tensor_model_parallel_size=1), which is the standard MoE configuration.
+Requires primus_turbo (already in primus_v26.1.sif). TP=1 only.
 """
 
-import gc
 import sys
 
 import torch
@@ -38,8 +34,12 @@ def _apply_turbo_grouped_gemm_patch():
     from megatron.core.utils import get_pg_size
 
     class TurboGroupedLinear(TEGroupedLinear):
-        """TEGroupedLinear subclass that consolidates per-expert weights into a
-        single [G, out, in] tensor and uses primus_turbo grouped_gemm."""
+        """TEGroupedLinear subclass that uses primus_turbo grouped_gemm.
+
+        Keeps TE's original weight{i} parameters untouched — checkpoint
+        loading, distributed optimizer, and DDP all work as before.
+        On each forward call we torch.stack the per-expert weights and
+        call the fused grouped_gemm kernel."""
 
         def __init__(
             self,
@@ -69,64 +69,21 @@ def _apply_turbo_grouped_gemm_patch():
                 tp_comm_buffer_name=tp_comm_buffer_name,
                 pg_collection=pg_collection,
             )
-
             tp_size = get_pg_size(self._tp_group)
-            assert tp_size == 1, (
-                f"TurboGroupedLinear only supports TP=1, got {tp_size}"
-            )
-            assert not self.delay_wgrad_compute, (
-                "TurboGroupedLinear does not support delay_wgrad_compute"
-            )
-
-            w0 = self.weight0
-            buffer = torch.empty(
-                self.num_gemms,
-                self.out_features,
-                self.in_features,
-                device=w0.device,
-                dtype=w0.dtype,
-            )
-
-            with torch.no_grad():
-                for i in range(self.num_gemms):
-                    buffer[i].copy_(getattr(self, f"weight{i}"))
-
-            self.register_parameter("weights", torch.nn.Parameter(buffer.clone()))
-
-            saved_attrs = [
-                dict(getattr(self, f"weight{i}").__dict__)
-                for i in range(self.num_gemms)
-            ]
-            for attr_name, attr_val in saved_attrs[0].items():
-                setattr(self.weights, attr_name, attr_val)
-
-            for i in range(self.num_gemms):
-                if f"weight{i}" in self._parameters:
-                    del self._parameters[f"weight{i}"]
-            del buffer
-            gc.collect()
-            torch.cuda.empty_cache()
-
-            for i in range(self.num_gemms):
-                weight_i = torch.nn.Parameter(
-                    self.weights[i].detach(), requires_grad=False
-                )
-                for attr_name, attr_val in saved_attrs[i].items():
-                    setattr(weight_i, attr_name, attr_val)
-                self.register_parameter(f"weight{i}", weight_i)
+            assert tp_size == 1, f"TurboGroupedLinear only supports TP=1, got {tp_size}"
 
         def forward(self, x, m_splits):
+            weights = torch.stack(
+                [getattr(self, f"weight{i}") for i in range(self.num_gemms)]
+            )
             if isinstance(m_splits, list):
                 m_splits = torch.tensor(m_splits, dtype=torch.long, device=x.device)
             else:
                 m_splits = m_splits.to(x.device)
             out = primus_turbo_torch.ops.grouped_gemm(
-                x, self.weights, m_splits, trans_b=True
+                x, weights, m_splits, trans_b=True
             )
             return out, None
-
-        def backward_dw(self):
-            pass
 
     class TurboColumnParallelGroupedLinear(TurboGroupedLinear):
 
