@@ -17,25 +17,27 @@ index: 0
 stage: ""
 
 job:
-  name: "qwen3_dense_9b_leonardo"
-  base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${.name}
+  name: "qwen3-9b-baby-run"
+  base_output_dir: /leonardo_work/OELLM_prod2026/production-training/${job.name}/
 
 backend:
   megatron:
-    wandb_project: qwen3_dense_9b_leonardo
-    data_cache_path: /leonardo_work/OELLM_prod2026/qwen3-9b-baby-run/cache
-    train_iters: 10
-    log_interval: 1
-    eval_interval: 9999
-    lr_warmup_iters: 2000
-    lr_decay_iters: 3000
-    lr_wsd_decay_iters: 3000
+    wandb_project: qwen3-9b-baby-run
+    data_cache_path: ${job.base_output_dir}/cache
 
-    save: null
-    load: null
+    train_iters: 2265953 # Check! 1 epoch: 9.5T tokens / (seq_len 4096 × gbs 1024)
 
+    micro_batch_size: 1
+    global_batch_size: 2048
+
+    rotary_base: 100000
+
+    save_interval: "${oc.eval:'int(512000 // ${backend.megatron.global_batch_size})'}"
+    save: ${job.base_output_dir}/checkpoints
+    load: ${.save}
 
 slurm:
   sbatch:
     nodes: 1
     time: "00:30:00"
+    # qos: boost_qos_dbg for debugging, qos_oellm for production
