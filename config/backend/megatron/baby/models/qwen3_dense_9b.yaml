@@ -32,7 +32,7 @@ attention_backend: "auto"
 
 # Position Embedding
 position_embedding_type: "rope"
-rotary_base: 10000
+rotary_base: 100000
 rotary_percent: 1.0
 untie_embeddings_and_output_weights: true
 
@@ -58,8 +58,17 @@ weight_decay: 0.05
 min_lr: 0.0
 lr_decay_style: WSD
 lr_wsd_decay_style: linear
-lr_warmup_iters: 2000 # Fixed for all.
-lr_wsd_decay_iters: 3000
+lr_warmup_iters: 2000
+lr_wsd_decay_iters: 2000
+train_iters: 794922 # 10T tokens / (seq_len 4096 * gbs 3072) = 794,922
+lr: 0.0006
+
+
+
+# BASE TRAINING
+micro_batch_size: 6
+global_batch_size: 3072
+seed: 1234
 
 # TRAINING, PARALLELISM
 recompute_activations: True
@@ -86,9 +95,9 @@ profile_step_start: 5
 profile_step_end: 12
 
 # EVALS
-# Eval interval scales inversely with global batch size,
-# calibrated so that gbsz=1024 evals every 200 iterations.
-eval_interval: "${oc.eval:'int(204800 // ${backend.megatron.global_batch_size})'}"
+# tok/s = 2900 tok/s/GPU * 1024 GPUs = 2,969,600; tok/iter = 3072 * 4096 = 12,582,912
+# iters/job (24h) = 2,969,600 * 86400 / 12,582,912 ≈ 20,390; interval = 20,390 / 6 ≈ 3400
+eval_interval: 3400
 eval_iters: 100
 
 # LOGGING
@@ -104,14 +113,8 @@ tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
 # CHECKPOINT FORMAT
 ckpt_format: "torch_dist"
-# Checkpoint interval scales inversely with global batch size,
-# calibrated so that gbsz=1024 saves every 500 iterations.
-save_interval: "${oc.eval:'int(512000 // ${backend.megatron.global_batch_size})'}"
+# tok/s = 2900 tok/s/GPU * 1024 GPUs = 2,969,600; tok/iter = 3072 * 4096 = 12,582,912
+# iters/job (24h) = 2,969,600 * 86400 / 12,582,912 ≈ 20,390; interval = 20,390 / 6 ≈ 3400
+save_interval: 3400
 save: ${job.base_output_dir}/checkpoints
 load: ${.save}
-
-# Base training configuration (overridden by sweep)
-micro_batch_size: 1    # overridden by sweep
-global_batch_size: 1024  # overridden by sweep
-lr: 0.0006
-seed: 1234
