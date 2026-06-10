@@ -1,0 +1,90 @@
+# @package _global_
+# Short test run to validate Primus-Turbo grouped GEMM patch.
+# Uses the turbo_grouped_gemm_patch.py wrapper script instead of pretrain_gpt.py directly.
+defaults:
+  - ../base
+  - /backend: megatron
+  - /container: mi325x
+  - /slurm: mi325x
+  - /sweep: none
+  - /backend/megatron: [qwen3_5_moe_35BA3B]
+  - _self_
+
+slurm:
+  sbatch:
+    partition: amd-tw-verification
+    nodes: 8
+    time: 0-01:00:00
+
+  launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
+    export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
+    export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; export AITER_JIT_DIR=/tmp/$USER/aiter_jit_dir ; \\\n\
+    ${oc.select:container.runtime,apptainer} exec --rocm --overlay /shared_silo/scratch/containers/fla-overla-for-primus-v26.1.img:ro ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} \
+    ${oc.select:container.image,container.sif}"
+
+  env:
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    WANDB_MODE: "offline"
+    OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
+    APPTAINER_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+    SINGULARITY_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+
+container:
+  image: /shared_silo/scratch/containers/primus_v26.1.sif
+
+backend:
+  launcher_script: ./scripts/turbo_grouped_gemm_patch.py
+  megatron:
+    log_throughput: true
+    log_interval: 1
+    log_progress: true
+    data_path:
+      - 0.5
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt2.0_cleaned_fin/train
+      - 0.5
+      - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
+    data_cache_path: /shared_silo/scratch/rluukkon/data/.cache
+    split: "989,10,1"
+
+    global_batch_size: 1024
+    micro_batch_size: 2
+    expert_model_parallel_size: 8
+    pipeline_model_parallel_size: 1
+    use_distributed_optimizer: true
+    create_attention_mask_in_dataloader: false
+    moe_grouped_gemm: true
+    moe_token_dispatcher_type: "alltoall"
+    moe_permute_fusion: true
+    moe_shared_expert_overlap: true
+    overlap_moe_expert_parallel_comm: false
+    overlap_param_gather: true
+    overlap_grad_reduce: true
+
+    adam_beta2: 0.95
+    weight_decay: 0.1
+
+    # Short test: 20 iterations only
+    train_iters: 20
+    lr: 3e-5
+    min_lr: 3e-6
+    lr_warmup_iters: 5
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: 4
+    lr_decay_iters: 20
+
+    ckpt_format: torch_dist
+    save_interval: 1000
+    save: ${job.base_output_dir}/checkpoints
+
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    wandb_project: "moe-exploration"
+    wandb_exp_name: "turbo_grouped_gemm_test_${oc.env:SLURM_JOB_ID,local}"
+
+    load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-35B-A3B-Base
+    finetune: true
+    no_load_optim: true
+    no_load_rng: true
+
+job:
+  name: turbo_grouped_gemm_test
