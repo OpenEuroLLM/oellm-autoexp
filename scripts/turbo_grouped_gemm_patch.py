@@ -181,6 +181,11 @@ def _apply_turbo_grouped_gemm_patch():
         if tokens_per_expert is None:
             return _orig_bias_act_func(self, intermediate_parallel, bias_parallel, permuted_probs)
 
+        if isinstance(tokens_per_expert, list):
+            tokens_per_expert = torch.tensor(tokens_per_expert, dtype=torch.long, device=intermediate_parallel.device)
+        elif not tokens_per_expert.is_cuda:
+            tokens_per_expert = tokens_per_expert.to(device=intermediate_parallel.device)
+
         probs_1d = permuted_probs.squeeze(-1) if permuted_probs.dim() == 2 else permuted_probs
         probs_1d = probs_1d.float()
         num_tokens = intermediate_parallel.shape[0]
