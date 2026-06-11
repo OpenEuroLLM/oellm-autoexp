@@ -99,7 +99,7 @@ profile_step_end: 12
 # iters/job (24h) = 2,867,200 * 86400 / 8,388,608 = 29,531.25 ≈ 29,531; interval = 29,531 / 12 = 2,460.916  ≈ 2461 
 
 eval_interval: 2461
-eval_iters: 100
+eval_iters: -1
 
 # LOGGING
 log_interval: 1
