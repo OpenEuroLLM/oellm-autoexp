@@ -61,13 +61,13 @@ lr_wsd_decay_style: linear
 lr_warmup_iters: 2000
 lr_wsd_decay_iters: 2000
 train_iters: 794922 # 10T tokens / (seq_len 4096 * gbs 3072) = 794,922
-lr: 0.0006
+lr: 0.00035
 
 
 
 # BASE TRAINING
-micro_batch_size: 6
-global_batch_size: 3072
+micro_batch_size: 4
+global_batch_size: 2048
 seed: 1234
 
 # TRAINING, PARALLELISM
