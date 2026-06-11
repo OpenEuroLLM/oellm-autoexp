@@ -58,7 +58,7 @@ weight_decay: 0.05
 min_lr: 0.0
 lr_decay_style: WSD
 lr_wsd_decay_style: linear
-lr_warmup_iters: 2000
+lr_warmup_iters: 4000
 lr_wsd_decay_iters: 2000
 train_iters: 1192383 # 10T tokens / (seq_len 4096 * gbs 2048) = 1,192,383
 lr: 0.00035
