@@ -29,7 +29,6 @@ backend:
     train_iters: 10
     lr_warmup_iters: 1
     lr_wsd_decay_iters: 1
-    save_interval: 10
 
     micro_batch_size: 1
     global_batch_size: 32
