@@ -1,21 +1,27 @@
 #!/usr/bin/env python3
-"""
-Sweep run status table for multilingual_scaling experiments.
+"""Sweep run status table for multilingual_scaling experiments.
 
 Reads a sweep YAML config, discovers all expected runs under the results directory,
 and prints a detailed per-Slurm-job table with training metrics, throughput, GPU
 hours, and status.
 
-Usage:
-    python progress_tracker.py <config.yaml> [options]
+Usage (run from repo root):
+    python tools/progress_tracker.py <config.yaml> [--machine LEO|MN5] [options]
 
-    # Override where to look for runs (useful when cluster paths differ from local mount):
-    python progress_tracker.py config/experiments/multilingual_scaling/0.1B_ne.yaml \\
-        --results-dir /home/diana/mn5/multilingual_scaling/0.1B_ne/training
+    # Basic — prints table to stdout:
+    python tools/progress_tracker.py config/experiments/<user>/<exp>/<model>.yaml --machine LEO
 
-    # Also write a CSV:
-    python progress_tracker.py config/experiments/multilingual_scaling/0.1B_ne.yaml \\
-        --csv status.csv
+    # Write markdown and CSV output files:
+    python tools/progress_tracker.py config/experiments/<user>/<exp>/<model>.yaml \\
+        --machine LEO --md /path/to/progress.md --csv /path/to/progress.csv
+
+    # Also measure checkpoint storage (slow on large trees):
+    python tools/progress_tracker.py config/experiments/<user>/<exp>/<model>.yaml \\
+        --machine LEO --compute-storage --md /path/to/progress.md --csv /path/to/progress.csv
+
+    # Override where to look for runs (useful when cluster paths differ):
+    python tools/progress_tracker.py config/experiments/<user>/<exp>/<model>.yaml \\
+        --results-dir /path/to/experiment/training
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -43,14 +50,14 @@ for _d in (_tools_dir, _scripts_dir):
     if _d not in sys.path:
         sys.path.insert(0, _d)
 
-from gpu_hours import (
+from gpu_hours import (  # noqa: E402
     collect_job_ids as _gpu_collect_job_ids,
     query_sacct as _gpu_query_sacct,
     parse_elapsed as _gpu_parse_elapsed,
 )
-from low_throughput_analysis import analyze_job as _analyze_low_throughput_job
-from megatron_throughput_from_logs import load_or_compute_throughput as _compute_throughput
-from validate_sweep_runs import (
+from low_throughput_analysis import analyze_job as _analyze_low_throughput_job  # noqa: E402
+from megatron_throughput_from_logs import load_or_compute_throughput as _compute_throughput  # noqa: E402
+from validate_sweep_runs import (  # noqa: E402
     _resolve_defaults,
     render_job_name,
     substitute_omegaconf_path_vars as _subst,
@@ -63,22 +70,16 @@ from validate_sweep_runs import (
 RE_ARG = re.compile(r"\[default\d+\]:\s{2}(\w+)\s+\.+\s+(.+)")
 
 # Model parameter count lines
-RE_TOTAL_PARAMS_B = re.compile(
-    r"\[default0\]:Total number of parameters in billions:\s+([\d.]+)"
-)
+RE_TOTAL_PARAMS_B = re.compile(r"\[default0\]:Total number of parameters in billions:\s+([\d.]+)")
 RE_TRANSFORMER_PARAMS_B = re.compile(
     r"\[default0\]:Number of parameters in transformer block in billions:\s+([\d.]+)"
 )
 
 # Training loss from iteration lines: "lm loss: 3.1416"
-RE_TRAIN_LOSS = re.compile(
-    r"iteration\s+\d+/\s*\d+\s*\|[^\n]*lm loss:\s*([\d.eE+\-]+)"
-)
+RE_TRAIN_LOSS = re.compile(r"iteration\s+\d+/\s*\d+\s*\|[^\n]*lm loss:\s*([\d.eE+\-]+)")
 
 # Validation loss lines: "validation loss at iteration X | lm loss value: Y"
-RE_VAL_LOSS = re.compile(
-    r"validation loss at[^\n]*\|[^\n]*lm loss value:\s*([\d.eE+\-]+)"
-)
+RE_VAL_LOSS = re.compile(r"validation loss at[^\n]*\|[^\n]*lm loss value:\s*([\d.eE+\-]+)")
 
 # Throughput / iteration line
 RE_ITER = re.compile(
@@ -103,12 +104,8 @@ RE_OOM = re.compile(r"OutOfMemoryError|CUDA out of memory", re.IGNORECASE)
 RE_FATAL = re.compile(r"\bFATAL ERROR\b", re.IGNORECASE)
 RE_TIME_LIMIT = re.compile(r"DUE TO TIME LIMIT", re.IGNORECASE)
 RE_NODE_FAILURE = re.compile(r"DUE TO NODE FAILURE|Node failure on\b|NODE_FAIL", re.IGNORECASE)
-RE_SIGTERM = re.compile(
-    r"SignalException.*?sigval=Signals\.SIGTERM|signal: 15\b", re.IGNORECASE
-)
-RE_WANDB_SUMMARY = re.compile(
-    r"wandb:\s+Run summary:|wandb:\s+Synced\s+\S", re.IGNORECASE
-)
+RE_SIGTERM = re.compile(r"SignalException.*?sigval=Signals\.SIGTERM|signal: 15\b", re.IGNORECASE)
+RE_WANDB_SUMMARY = re.compile(r"wandb:\s+Run summary:|wandb:\s+Synced\s+\S", re.IGNORECASE)
 
 # SBATCH directives
 RE_SBATCH_NODES = re.compile(r"^#SBATCH\s+--nodes[= ](\d+)", re.MULTILINE)
@@ -191,15 +188,16 @@ def _build_summary_exp_gpu_h(
 # ── Monitor-state event classification ───────────────────────────────────────
 
 _CLEAN_RESTART_EVENTS = frozenset({"time_limit", "inactive"})
-_HARD_ERROR_EVENTS    = frozenset({"segmentation_fault", "error", "bus_error",
-                                    "nan_loss", "connection_failure"})
-_FINISH_EVENTS        = frozenset({"finished_training", "finish"})
+_HARD_ERROR_EVENTS = frozenset(
+    {"segmentation_fault", "error", "bus_error", "nan_loss", "connection_failure"}
+)
+_FINISH_EVENTS = frozenset({"finished_training", "finish"})
 
 _EVENT_ERROR_DESC: dict[str, str] = {
     "segmentation_fault": "Segmentation fault",
-    "error":              "Exit code 1",
-    "bus_error":          "Bus error",
-    "nan_loss":           "NaN loss",
+    "error": "Exit code 1",
+    "bus_error": "Bus error",
+    "nan_loss": "NaN loss",
     "connection_failure": "Connection failure",
 }
 
@@ -208,20 +206,21 @@ _EVENT_ERROR_DESC: dict[str, str] = {
 _EVENT_MATCH_TOLERANCE_S = 300.0
 
 
-
 def _eval_token_set(s: str) -> set[int]:
-    """Evaluate a Python set-literal string like '{6_000_000_000}' or 'set()' into a set of ints."""
+    """Evaluate a Python set-literal string like '{6_000_000_000}' or 'set()'
+    into a set of ints."""
     if not s:
         return set()
     try:
         result = eval(s)  # safe: these are only integer set literals from the YAML
-        return set(int(x) for x in result) if isinstance(result, (set, frozenset)) else set()
+        return {int(x) for x in result} if isinstance(result, (set, frozenset)) else set()
     except Exception:
         return set()
 
 
 def parse_config(config_path: str) -> dict:
-    """Parse sweep config and return all valid (run_name, stage, tokens) combos.
+    """Parse sweep config and return all valid (run_name, stage, tokens)
+    combos.
 
     The sweep uses a per-combo filter: each Group-1 entry carries
     center/cross/diagonal_tokens_set; a decay stage is only valid for a combo
@@ -246,7 +245,7 @@ def parse_config(config_path: str) -> dict:
     job_name_tpl: str | None = None
 
     # Pass 1 – collect per-combo data (Group 1 entries) and all decay stage defs (Group 2).
-    combos: list[dict] = []          # {lr, gbsz, stable_tokens, valid_decay_tokens: set[int]}
+    combos: list[dict] = []  # {lr, gbsz, stable_tokens, valid_decay_tokens: set[int]}
     all_decay_stages: OrderedDict[str, int] = OrderedDict()  # stage_name -> token_budget
 
     # Used by the "new format" where stable entries carry an explicit stage name (e.g.
@@ -278,29 +277,38 @@ def parse_config(config_path: str) -> dict:
                 gbsz = int(entry["backend.megatron.global_batch_size"])
                 stable_tok = int(entry.get("backend.megatron.aux.tokens", aux["tokens"]))
 
-                center = _eval_token_set(entry.get("backend.megatron.aux.center_tokens_set", "set()"))
+                center = _eval_token_set(
+                    entry.get("backend.megatron.aux.center_tokens_set", "set()")
+                )
                 cross = _eval_token_set(entry.get("backend.megatron.aux.cross_tokens_set", "set()"))
-                diagonal = _eval_token_set(entry.get("backend.megatron.aux.diagonal_tokens_set", "set()"))
+                diagonal = _eval_token_set(
+                    entry.get("backend.megatron.aux.diagonal_tokens_set", "set()")
+                )
                 valid_decay_tokens = center | cross | diagonal
 
-                combos.append({
-                    "lr": lr,
-                    "gbsz": gbsz,
-                    "stable_tokens": stable_tok,
-                    "valid_decay_tokens": valid_decay_tokens,
-                    "center_tokens": center,
-                    "cross_tokens": cross,
-                    "diagonal_tokens": diagonal,
-                    "stable_launch_tier": str(entry.get("backend.megatron.aux.stable_launch_tier", "")),
-                    "stable_stage_name": None,  # old format: use "stable" + job_horizon_suffix
-                })
+                combos.append(
+                    {
+                        "lr": lr,
+                        "gbsz": gbsz,
+                        "stable_tokens": stable_tok,
+                        "valid_decay_tokens": valid_decay_tokens,
+                        "center_tokens": center,
+                        "cross_tokens": cross,
+                        "diagonal_tokens": diagonal,
+                        "stable_launch_tier": str(
+                            entry.get("backend.megatron.aux.stable_launch_tier", "")
+                        ),
+                        "stable_stage_name": None,  # old format: use "stable" + job_horizon_suffix
+                    }
+                )
                 continue
 
             # New format: stable phase entry with an explicit stage name (e.g. "stable12BT").
             # The adjacent decay list (next type:list entry) provides valid_decay_tokens.
             _stage_val = entry.get("stage", "")
             if (
-                isinstance(_stage_val, str) and _stage_val.startswith("stable")
+                isinstance(_stage_val, str)
+                and _stage_val.startswith("stable")
                 and "backend.megatron.lr" in entry
                 and "backend.megatron.global_batch_size" in entry
                 and "backend.megatron.aux.tokens" in entry
@@ -314,7 +322,9 @@ def parse_config(config_path: str) -> dict:
                     "center_tokens": set(),
                     "cross_tokens": set(),
                     "diagonal_tokens": set(),
-                    "stable_launch_tier": str(entry.get("backend.megatron.aux.stable_launch_tier", "")),
+                    "stable_launch_tier": str(
+                        entry.get("backend.megatron.aux.stable_launch_tier", "")
+                    ),
                     "stable_stage_name": _stage_val,  # new format: pass full name (e.g. "stable12BT")
                 }
                 continue
@@ -328,7 +338,11 @@ def parse_config(config_path: str) -> dict:
             if entry.get("type") == "list" and "configs" in entry:
                 _decay_toks: set[int] = set()
                 for dc in entry["configs"]:
-                    if isinstance(dc, dict) and "stage" in dc and "backend.megatron.aux.tokens" in dc:
+                    if (
+                        isinstance(dc, dict)
+                        and "stage" in dc
+                        and "backend.megatron.aux.tokens" in dc
+                    ):
                         stage_name = str(dc["stage"])
                         tok = int(dc["backend.megatron.aux.tokens"])
                         all_decay_stages[stage_name] = tok
@@ -353,6 +367,7 @@ def parse_config(config_path: str) -> dict:
 
 # ── Checkpoint storage ─────────────────────────────────────────────────────────
 
+
 def _save_interval(gbsz: int) -> int:
     return _SAVE_INTERVAL_NUM // gbsz
 
@@ -364,14 +379,12 @@ def _train_iters(tokens: int, gbsz: int, seq_length: int) -> int:
 def _count_checkpoint_iters(checkpoints_dir: Path) -> int:
     if not checkpoints_dir.is_dir():
         return 0
-    return sum(
-        1 for p in checkpoints_dir.iterdir()
-        if p.is_dir() and p.name.startswith("iter_")
-    )
+    return sum(1 for p in checkpoints_dir.iterdir() if p.is_dir() and p.name.startswith("iter_"))
 
 
 def measure_checkpoint_storage_gb(checkpoints_dir: Path, *, timeout_s: int = 180) -> float | None:
-    """Return total checkpoint-directory size in GiB, or None if unavailable."""
+    """Return total checkpoint-directory size in GiB, or None if
+    unavailable."""
     if not checkpoints_dir.is_dir():
         return None
     try:
@@ -384,7 +397,7 @@ def measure_checkpoint_storage_gb(checkpoints_dir: Path, *, timeout_s: int = 180
         )
         if proc.returncode == 0 and proc.stdout.strip():
             nbytes = int(proc.stdout.split()[0])
-            return nbytes / (1024 ** 3)
+            return nbytes / (1024**3)
     except (OSError, ValueError, subprocess.TimeoutExpired):
         pass
     return None
@@ -446,12 +459,10 @@ def _expected_checkpoint_count(
     cooldown_decay_fraction: float,
 ) -> int:
     if _is_stable_stage(stage):
-        return len(_expected_stable_checkpoint_iters(
-            tokens, gbsz, seq_length, cooldown_decay_fraction
-        ))
-    return len(_expected_decay_checkpoint_iters(
-        tokens, gbsz, seq_length, cooldown_decay_fraction
-    ))
+        return len(
+            _expected_stable_checkpoint_iters(tokens, gbsz, seq_length, cooldown_decay_fraction)
+        )
+    return len(_expected_decay_checkpoint_iters(tokens, gbsz, seq_length, cooldown_decay_fraction))
 
 
 def measure_all_checkpoint_storage_gb(
@@ -460,7 +471,8 @@ def measure_all_checkpoint_storage_gb(
     *,
     max_workers: int = 8,
 ) -> dict[str, float | None]:
-    """Measure checkpoint storage for many runs in parallel (du -sb per run)."""
+    """Measure checkpoint storage for many runs in parallel (du -sb per
+    run)."""
     results: dict[str, float | None] = {}
 
     def _du_one(name: str) -> tuple[str, float | None]:
@@ -493,8 +505,7 @@ def build_run_checkpoint_storage(
     run_names = [name for name, _stage, _tok, _tier in run_specs]
     measured_gb = measure_all_checkpoint_storage_gb(resolved_base, run_names)
     iter_counts = {
-        name: _count_checkpoint_iters(resolved_base / name / "checkpoints")
-        for name in run_names
+        name: _count_checkpoint_iters(resolved_base / name / "checkpoints") for name in run_names
     }
 
     gb_per_ckpt_samples: list[float] = []
@@ -520,9 +531,7 @@ def build_run_checkpoint_storage(
         latest = next((r for r in reversed(rows) if r["run_name"] == run_name), None)
         status = latest.get("status_word", "") if latest else ""
 
-        measured_val: float | None = (
-            gb if gb is not None and gb > 0 and n_ckpt > 0 else None
-        )
+        measured_val: float | None = gb if gb is not None and gb > 0 and n_ckpt > 0 else None
 
         remaining_val: float | None = None
         gbsz = run_to_gbsz.get(run_name)
@@ -584,11 +593,12 @@ def _format_ckpt_gb_total(total: float, *, compute: bool, md: bool = False) -> s
 
 # ── SBATCH parsing ────────────────────────────────────────────────────────────
 
+
 def parse_sbatch(path: Path) -> tuple[int | None, int | None, int | None]:
     """Return (nodes, gpus_per_node, ckpt_step) from a job.sbatch file.
 
-    ckpt_step is the value of --ckpt-step, present only in decay jobs to indicate
-    the absolute iteration from which the decay phase starts.
+    ckpt_step is the value of --ckpt-step, present only in decay jobs to
+    indicate the absolute iteration from which the decay phase starts.
     """
     if not path.is_file():
         return None, None, None
@@ -612,11 +622,14 @@ def parse_sbatch(path: Path) -> tuple[int | None, int | None, int | None]:
 
 # ── Stdout log parsing ────────────────────────────────────────────────────────
 
-def parse_stdout(log_path: Path) -> dict:
-    """Parse a Megatron stdout log for training params, model size, and iteration tracking.
 
-    Throughput metrics (avg_tflop_per_gpu, avg_tok_per_gpu) are NOT computed here;
-    call load_or_compute_throughput() separately so caching is applied consistently.
+def parse_stdout(log_path: Path) -> dict:
+    """Parse a Megatron stdout log for training params, model size, and
+    iteration tracking.
+
+    Throughput metrics (avg_tflop_per_gpu, avg_tok_per_gpu) are NOT
+    computed here; call load_or_compute_throughput() separately so
+    caching is applied consistently.
     """
     result: dict[str, Any] = {
         "global_batch_size": None,
@@ -734,6 +747,7 @@ def parse_stdout(log_path: Path) -> dict:
 
 # ── Stderr log parsing ────────────────────────────────────────────────────────
 
+
 def parse_stderr(log_path: Path) -> dict:
     """Parse stderr log for error patterns and wandb completion signal."""
     result: dict[str, Any] = {
@@ -789,18 +803,26 @@ def _parse_sacct_ts(s: str) -> float | None:
 
 
 def query_sacct(job_ids: list[str]) -> dict[str, dict]:
-    """Query sacct for job state, elapsed time, GPU count, and start/end timestamps.
-    Returns {} on error."""
+    """Query sacct for job state, elapsed time, GPU count, and start/end
+    timestamps.
+
+    Returns {} on error.
+    """
     if not job_ids:
         return {}
     try:
         result = subprocess.run(
             [
-                "sacct", "-j", ",".join(job_ids),
+                "sacct",
+                "-j",
+                ",".join(job_ids),
                 "--format=JobID,State,Elapsed,AllocTRES%80,Start,End,User",
-                "--noheader", "--parsable2",
+                "--noheader",
+                "--parsable2",
             ],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         if result.returncode != 0:
             return {}
@@ -821,13 +843,13 @@ def query_sacct(job_ids: list[str]) -> dict[str, dict]:
         if m:
             gpus = int(m.group(1))
         info[jid_field.strip()] = {
-            "state":    state.strip(),
-            "elapsed":  elapsed.strip(),
-            "gpus":     gpus,
+            "state": state.strip(),
+            "elapsed": elapsed.strip(),
+            "gpus": gpus,
             "start_ts": _parse_sacct_ts(start),
-            "end_ts":   _parse_sacct_ts(end),
+            "end_ts": _parse_sacct_ts(end),
             "start_str": start.strip(),
-            "user":     user,
+            "user": user,
         }
     return info
 
@@ -848,7 +870,8 @@ def gpu_hours_from_timestamps(
 
 
 def load_external_gpu_h(csv_path: str) -> dict[tuple[str, str], float]:
-    """Load per-job GPU-h from a CSV previously produced by this script (--csv output).
+    """Load per-job GPU-h from a CSV previously produced by this script (--csv
+    output).
 
     Expects at minimum columns: Run, JobID, GPU-h.
     Returns {(run_name, job_id): gpu_hours}.  Rows with blank JobID are skipped.
@@ -858,8 +881,8 @@ def load_external_gpu_h(csv_path: str) -> dict[tuple[str, str], float]:
         reader = csv.DictReader(f)
         for row in reader:
             run_name = row.get("Run", "").strip()
-            job_id   = row.get("JobID", "").strip()
-            gpu_h_s  = row.get("GPU-h", "").strip()
+            job_id = row.get("JobID", "").strip()
+            gpu_h_s = row.get("GPU-h", "").strip()
             if not run_name or not job_id or not gpu_h_s:
                 continue
             try:
@@ -870,6 +893,7 @@ def load_external_gpu_h(csv_path: str) -> dict[tuple[str, str], float]:
 
 
 # ── Job discovery ─────────────────────────────────────────────────────────────
+
 
 def _run_id_sets(run_dir: Path) -> tuple[set[str], set[str]]:
     """Return (config_ids, log_ids) for a run directory.
@@ -905,17 +929,20 @@ def _run_id_sets(run_dir: Path) -> tuple[set[str], set[str]]:
 
 
 def find_job_ids(run_dir: Path) -> list[str]:
-    """Return all Slurm job IDs found in logs/ or config-*.yaml files, sorted ascending.
+    """Return all Slurm job IDs found in logs/ or config-*.yaml files, sorted
+    ascending.
 
-    config-{id}.yaml is written at submission time; stdout/stderr logs only appear
-    once the job starts. Including config-based IDs lets us detect jobs that are
-    submitted (or queued) but haven't started writing logs yet.
+    config-{id}.yaml is written at submission time; stdout/stderr logs
+    only appear once the job starts. Including config-based IDs lets us
+    detect jobs that are submitted (or queued) but haven't started
+    writing logs yet.
     """
     config_ids, log_ids = _run_id_sets(run_dir)
     return sorted(config_ids | log_ids)
 
 
 # ── Token budget from run name ─────────────────────────────────────────────────
+
 
 def extract_token_budget(run_name: str) -> str:
     m = RE_BUDGET.search(run_name)
@@ -925,6 +952,7 @@ def extract_token_budget(run_name: str) -> str:
 
 
 # ── Monitor-state loading ─────────────────────────────────────────────────────
+
 
 def load_run_monitor_events(run_name: str, monitor_dirs: list[Path]) -> list[dict] | None:
     """Load all monitor-state sessions for *run_name* from *monitor_dirs*.
@@ -948,17 +976,21 @@ def load_run_monitor_events(run_name: str, monitor_dirs: list[Path]) -> list[dic
                 parts = key.split(":")
                 # key format: "log:<event_name>:<log_events_index>"
                 if len(parts) >= 2 and parts[0] == "log":
-                    events.append({
-                        "name": parts[1],
-                        "ts":   val.get("last_action_ts"),
-                    })
-            sessions.append({
-                "session_id":     d.name,
-                "events":         events,
-                "last_status":    rt.get("last_status"),
-                "final_state":    rt.get("final_state"),
-                "runtime_job_id": rt.get("runtime_job_id"),
-            })
+                    events.append(
+                        {
+                            "name": parts[1],
+                            "ts": val.get("last_action_ts"),
+                        }
+                    )
+            sessions.append(
+                {
+                    "session_id": d.name,
+                    "events": events,
+                    "last_status": rt.get("last_status"),
+                    "final_state": rt.get("final_state"),
+                    "runtime_job_id": rt.get("runtime_job_id"),
+                }
+            )
     return sessions if sessions else None
 
 
@@ -967,7 +999,8 @@ def map_events_to_jobs(
     sacct_info: dict[str, dict],
     monitor_sessions: list[dict],
 ) -> dict[str, set[str]]:
-    """Assign monitor-state events to specific Slurm job IDs via sacct timestamps.
+    """Assign monitor-state events to specific Slurm job IDs via sacct
+    timestamps.
 
     For each event's ``last_action_ts``, we find the job whose sacct time window
     [Start, End + _EVENT_MATCH_TOLERANCE_S] contains the timestamp.
@@ -978,10 +1011,7 @@ def map_events_to_jobs(
     job_events: dict[str, set[str]] = {jid: set() for jid in job_ids}
 
     all_events = [
-        ev
-        for session in monitor_sessions
-        for ev in session["events"]
-        if ev.get("ts") is not None
+        ev for session in monitor_sessions for ev in session["events"] if ev.get("ts") is not None
     ]
     if not all_events:
         return job_events
@@ -989,7 +1019,7 @@ def map_events_to_jobs(
     for job_id in job_ids:
         sacct = sacct_info.get(job_id, {})
         start_ts = sacct.get("start_ts")
-        end_ts   = sacct.get("end_ts")
+        end_ts = sacct.get("end_ts")
         if start_ts is None:
             continue
         deadline = (end_ts if end_ts is not None else float("inf")) + _EVENT_MATCH_TOLERANCE_S
@@ -1002,6 +1032,7 @@ def map_events_to_jobs(
 
 # ── Status determination ──────────────────────────────────────────────────────
 
+
 def _compute_restart_action(
     job_id: str,
     job_has_config: bool,
@@ -1010,7 +1041,8 @@ def _compute_restart_action(
     run_config_ids: set[str],
     run_log_ids: set[str],
 ) -> str:
-    """Return the restart action for a failed/cancelled job based on what followed it.
+    """Return the restart action for a failed/cancelled job based on what
+    followed it.
 
     Looks at the next job in sequence that actually ran (has logs) and classifies:
       AUTO_RESTARTED:    next running job has a config  (normal autoexp restart)
@@ -1030,7 +1062,7 @@ def _compute_restart_action(
         return "NONE"
     # Find the next job that actually ran (has a log file)
     next_running: str | None = None
-    for later_id in all_job_ids[idx + 1:]:
+    for later_id in all_job_ids[idx + 1 :]:
         if later_id in run_log_ids:
             next_running = later_id
             break
@@ -1053,8 +1085,7 @@ def determine_status(
     run_config_ids: set[str] | None = None,
     run_log_ids: set[str] | None = None,
 ) -> tuple[str, str, str, str]:
-    """
-    Returns (emoji, status_word, error_description, action_word).
+    """Returns (emoji, status_word, error_description, action_word).
 
     Status words:  NOT_LAUNCHED | QUEUED | DONE | FAILED | CANCELLED | TRAINING
     Action words:  AUTO_RESTARTED | MANUALLY_RESTARTED | NEW_SESSION | NONE | ""
@@ -1073,29 +1104,29 @@ def determine_status(
     sacct_state = sacct.get("state", "")
 
     # Pre-compute restart action (used for all FAILED/CANCELLED paths below)
-    _cfg_ids  = run_config_ids if run_config_ids is not None else set()
-    _log_ids  = run_log_ids    if run_log_ids    is not None else set()
-    _has_cfg  = job_id in _cfg_ids
-    _restart  = _compute_restart_action(job_id, _has_cfg, is_latest_job, all_job_ids, _cfg_ids, _log_ids)
+    _cfg_ids = run_config_ids if run_config_ids is not None else set()
+    _log_ids = run_log_ids if run_log_ids is not None else set()
+    _has_cfg = job_id in _cfg_ids
+    _restart = _compute_restart_action(
+        job_id, _has_cfg, is_latest_job, all_job_ids, _cfg_ids, _log_ids
+    )
 
     # ── Classify events from monitor state (primary) or stderr (fallback) ────
     use_monitor = job_monitor_events is not None
     if use_monitor:
-        triggered_hard  = job_monitor_events & _HARD_ERROR_EVENTS
+        triggered_hard = job_monitor_events & _HARD_ERROR_EVENTS
         triggered_clean = job_monitor_events & _CLEAN_RESTART_EVENTS
-        triggered_done  = job_monitor_events & _FINISH_EVENTS
-        hard_error_desc = "; ".join(
-            _EVENT_ERROR_DESC.get(n, n) for n in sorted(triggered_hard)
-        )
+        triggered_done = job_monitor_events & _FINISH_EVENTS
+        hard_error_desc = "; ".join(_EVENT_ERROR_DESC.get(n, n) for n in sorted(triggered_hard))
     else:
         # stderr-derived booleans (legacy path)
-        triggered_hard  = set()
+        triggered_hard = set()
         triggered_clean = set()
-        triggered_done  = set()
+        triggered_done = set()
         hard_error_desc = ""
 
     # ── DONE ─────────────────────────────────────────────────────────────────
-    last_iter   = stdout_data.get("last_iter")
+    last_iter = stdout_data.get("last_iter")
     train_iters = stdout_data.get("train_iters")
     if last_iter is not None and train_iters is not None and last_iter >= train_iters:
         return "✅", "DONE", "", ""
@@ -1158,7 +1189,9 @@ def determine_status(
     return "⚠️", "FAILED", error_str, _restart
 
 
-def compute_progress(last_iter: int | None, ckpt_step: int | None, total_iters: int | None) -> float | None:
+def compute_progress(
+    last_iter: int | None, ckpt_step: int | None, total_iters: int | None
+) -> float | None:
     """Return training progress [0–100] for a single training phase.
 
     ckpt_step is the absolute iteration where training started (0 for stable runs,
@@ -1177,6 +1210,7 @@ def compute_progress(last_iter: int | None, ckpt_step: int | None, total_iters: 
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(
@@ -1247,8 +1281,8 @@ def main() -> None:
         "--machine",
         default="LEO",
         help="Local cluster name tag (e.g. LEO, MN5). Jobs on this cluster are tagged "
-             "using this value; foreign-cluster jobs detected via sacct collision are "
-             "tagged with the opposite name. Default: %(default)s",
+        "using this value; foreign-cluster jobs detected via sacct collision are "
+        "tagged with the opposite name. Default: %(default)s",
     )
     args = ap.parse_args()
 
@@ -1259,8 +1293,7 @@ def main() -> None:
     if args.monitor_dirs is None:
         monitor_root = project_root / "monitor_state"
         monitor_dirs: list[Path] = (
-            sorted(p for p in monitor_root.iterdir() if p.is_dir())
-            if monitor_root.is_dir() else []
+            sorted(p for p in monitor_root.iterdir() if p.is_dir()) if monitor_root.is_dir() else []
         )
     else:
         monitor_dirs = [Path(d) for d in args.monitor_dirs]
@@ -1273,10 +1306,12 @@ def main() -> None:
     adam_beta2 = cfg.get("adam_beta2", 0.95)
 
     def _render(stage: str, lr: float, gbsz: int, stable_tok: int | None = None) -> str:
-        """render_job_name wrapper that also substitutes adam_beta2 and similar extras.
+        """render_job_name wrapper that also substitutes adam_beta2 and similar
+        extras.
 
-        render_job_name leaves un-substituted keys as '\\${key}' (backslash kept),
-        so we must match the same prefix when replacing.
+        render_job_name leaves un-substituted keys as '\\${key}'
+        (backslash kept), so we must match the same prefix when
+        replacing.
         """
         raw = render_job_name(cfg["job_name_tpl"], 1, lr, gbsz, seed, stage, stable_tok)
         return raw.replace("\\${backend.megatron.adam_beta2}", str(adam_beta2))
@@ -1303,7 +1338,9 @@ def main() -> None:
 
         # New format: stable_stage_name is the full name (e.g. "stable12BT"); old format: None.
         stable_stage = combo.get("stable_stage_name") or "stable"
-        stable_name = _render(stable_stage, lr, gbsz, stable_tok if stable_stage == "stable" else None)
+        stable_name = _render(
+            stable_stage, lr, gbsz, stable_tok if stable_stage == "stable" else None
+        )
         run_specs.append((stable_name, "stable", stable_tok, combo["stable_launch_tier"]))
         run_to_gbsz[stable_name] = gbsz
 
@@ -1329,11 +1366,13 @@ def main() -> None:
     # Resolve the local results base directory (template typically has no per-combo vars here)
     sample_ctx: dict[str, Any] = {"backend.megatron.seed": seed}
     if combos:
-        sample_ctx.update({
-            "backend.megatron.global_batch_size": combos[0]["gbsz"],
-            "backend.megatron.num_experts": 1,
-            "backend.megatron.lr": combos[0]["lr"],
-        })
+        sample_ctx.update(
+            {
+                "backend.megatron.global_batch_size": combos[0]["gbsz"],
+                "backend.megatron.num_experts": 1,
+                "backend.megatron.lr": combos[0]["lr"],
+            }
+        )
     resolved_base = Path(_subst(local_template, sample_ctx))
     if not resolved_base.is_dir():
         resolved_base = Path(local_template)
@@ -1348,14 +1387,15 @@ def main() -> None:
         all_job_ids.extend(jids)
 
     sacct_info = query_sacct(all_job_ids)
-    sacct_available = bool(sacct_info) or bool(all_job_ids)  # mark as available if sacct returned anything
 
     # If sacct is unavailable and --csv points to an existing file, read back the
     # GPU-h column from that file so the values are preserved when it is rewritten.
     external_job_gpu_h: dict[tuple[str, str], float] = {}
     if not sacct_info and args.csv and Path(args.csv).is_file():
         external_job_gpu_h = load_external_gpu_h(args.csv)
-        print(f"sacct unavailable – loaded {len(external_job_gpu_h)} per-job GPU-h entries from {args.csv}")
+        print(
+            f"sacct unavailable – loaded {len(external_job_gpu_h)} per-job GPU-h entries from {args.csv}"
+        )
 
     # Load monitor-state events for every run and map them to Slurm job IDs.
     # run_monitor_sessions[run_name] = None  → no monitor state (use stderr fallback)
@@ -1401,13 +1441,26 @@ def main() -> None:
 
         if not job_ids:
             if run_dir.is_dir():
-                # Check monitor session: if every session for this run ended as cancelled,
-                # show CANCELLED rather than misleading the user into thinking it's queued.
+                # Check monitor session for cancellation signal.
+                # Exclude pure ghost sessions (final_state=None AND never submitted) —
+                # these are placeholders written when a monitor run was killed before
+                # the parent stable finished; they have no definitive state.
                 _sessions = run_monitor_sessions.get(run_name) or []
-                _all_cancelled = bool(_sessions) and all(
-                    s.get("final_state") == "cancelled" for s in _sessions
+                _definitive = [
+                    s for s in _sessions
+                    if s.get("final_state") is not None
+                    or s.get("submitted")
+                    or s.get("runtime_job_id")
+                ]
+                _any_cancelled = any(
+                    s.get("final_state") == "cancelled" for s in _definitive
                 )
-                if _all_cancelled:
+                _any_active = any(
+                    s.get("final_state") is None
+                    and (s.get("submitted") or s.get("runtime_job_id"))
+                    for s in _definitive
+                )
+                if _any_cancelled and not _any_active:
                     s_emoji, s_word = "🚫", "CANCELLED"
                 else:
                     # Directory exists but no log files → submitted to Slurm, not started yet
@@ -1415,48 +1468,50 @@ def main() -> None:
             else:
                 # Run directory doesn't exist → this tier has not been launched at all
                 s_emoji, s_word = "⚪", "NOT_LAUNCHED"
-            rows.append({
-                "run_name": run_name,
-                "job_id": "",
-                "stage": stage,
-                "tier": tier,
-                "token_budget": token_budget,
-                "tokens_b": tokens / 1e9,
-                "nodes": sbatch_nodes,
-                "transformer_params_b": None,
-                "total_params_b": None,
-                "global_batch_size": None,
-                "lr": None,
-                "micro_batch_size": None,
-                "num_workers": None,
-                "ttfi_min": None,
-                "ttfi_gpu_h": None,
-                "train_iters": None,
-                "last_iter": None,
-                "ckpt_step": sbatch_ckpt_step,
-                "progress": None,
-                "last_train_loss": None,
-                "last_val_loss": None,
-                "last_ckpt": last_ckpt,
-                "avg_tflop_per_gpu": None,
-                "avg_tok_per_gpu": None,
-                "n_iters_sampled": None,
-                "gpu_hours": None,
-                "time_lost_h": None,
-                "gpu_h_lost": None,
-                "overhead_time_h": None,
-                "overhead_gpu_h": None,
-                "overhead_pct": None,
-                "sacct_state": "",
-                "sacct_elapsed": "",
-                "sacct_start_str": "",
-                "owner": "",
-                "cluster": "",
-                "status_emoji": s_emoji,
-                "status_word": s_word,
-                "action_word": "",
-                "error_desc": "",
-            })
+            rows.append(
+                {
+                    "run_name": run_name,
+                    "job_id": "",
+                    "stage": stage,
+                    "tier": tier,
+                    "token_budget": token_budget,
+                    "tokens_b": tokens / 1e9,
+                    "nodes": sbatch_nodes,
+                    "transformer_params_b": None,
+                    "total_params_b": None,
+                    "global_batch_size": None,
+                    "lr": None,
+                    "micro_batch_size": None,
+                    "num_workers": None,
+                    "ttfi_min": None,
+                    "ttfi_gpu_h": None,
+                    "train_iters": None,
+                    "last_iter": None,
+                    "ckpt_step": sbatch_ckpt_step,
+                    "progress": None,
+                    "last_train_loss": None,
+                    "last_val_loss": None,
+                    "last_ckpt": last_ckpt,
+                    "avg_tflop_per_gpu": None,
+                    "avg_tok_per_gpu": None,
+                    "n_iters_sampled": None,
+                    "gpu_hours": None,
+                    "time_lost_h": None,
+                    "gpu_h_lost": None,
+                    "overhead_time_h": None,
+                    "overhead_gpu_h": None,
+                    "overhead_pct": None,
+                    "sacct_state": "",
+                    "sacct_elapsed": "",
+                    "sacct_start_str": "",
+                    "owner": "",
+                    "cluster": "",
+                    "status_emoji": s_emoji,
+                    "status_word": s_word,
+                    "action_word": "",
+                    "error_desc": "",
+                }
+            )
             continue
 
         for job_id in job_ids:
@@ -1515,12 +1570,9 @@ def main() -> None:
             #   2. sacct reports GPUs but fewer than half of what sbatch declares →
             #      a different user's small job collided (e.g. 1 GPU vs expected 32)
             _sacct_gpus = sacct_entry.get("gpus", 0)
-            _is_collision = (
-                bool(sacct_elapsed)
-                and (
-                    (sacct_entry and _sacct_gpus == 0 and total_gpus > 0)
-                    or (sacct_entry and total_gpus > 0 and 0 < _sacct_gpus < total_gpus // 2)
-                )
+            _is_collision = bool(sacct_elapsed) and "CANCEL" not in sacct_state and (
+                (sacct_entry and _sacct_gpus == 0 and total_gpus > 0)
+                or (sacct_entry and total_gpus > 0 and 0 < _sacct_gpus < total_gpus // 2)
             )
             cluster = ""
             if _is_collision:
@@ -1529,7 +1581,7 @@ def main() -> None:
                 sacct_entry = {}
                 sacct_state = ""
                 sacct_elapsed = ""
-                gpu_hours = external_job_gpu_h.get((run_name, job_id))
+                gpu_hours = external_job_gpu_h.get((run_name, job_id)) or None
                 gpus = total_gpus
             elif sacct_entry:
                 cluster = args.machine
@@ -1555,9 +1607,7 @@ def main() -> None:
             # Validate first_iter_ts against the sacct time window: if the log
             # timestamp falls outside [start-60s, end+300s] the log was written by
             # a different job (stale filename or cross-cluster log mismatch).
-            if (first_iter_ts is not None
-                    and sacct_start is not None
-                    and sacct_end is not None):
+            if first_iter_ts is not None and sacct_start is not None and sacct_end is not None:
                 _ts = first_iter_ts.timestamp()
                 if _ts < sacct_start - 60 or _ts > sacct_end + 300:
                     first_iter_ts = None
@@ -1568,9 +1618,7 @@ def main() -> None:
             elif first_iter_ts is None and gpu_hours is not None and total_gpus > 0:
                 ttfi_min = (gpu_hours / total_gpus) * 60.0
             ttfi_gpu_h: float | None = (
-                (ttfi_min / 60.0) * total_gpus
-                if ttfi_min is not None and total_gpus > 0
-                else None
+                (ttfi_min / 60.0) * total_gpus if ttfi_min is not None and total_gpus > 0 else None
             )
 
             # Sanity check: TTFI cannot physically exceed total job elapsed time.
@@ -1581,102 +1629,170 @@ def main() -> None:
                 ttfi_gpu_h = None
 
             # Total overhead = TTFI + low-throughput (both in hours / GPU-h)
-            _lt_time_v  = _job_lt.get("time_lost_h")
+            _lt_time_v = _job_lt.get("time_lost_h")
             _lt_gpu_h_v = _job_lt.get("gpu_h_lost")
             overhead_time_h: float | None = (
                 (ttfi_min / 60.0 if ttfi_min is not None else 0.0) + (_lt_time_v or 0.0)
-                if ttfi_min is not None or _lt_time_v is not None else None
+                if ttfi_min is not None or _lt_time_v is not None
+                else None
             )
             overhead_gpu_h: float | None = (
                 (ttfi_gpu_h or 0.0) + (_lt_gpu_h_v or 0.0)
-                if ttfi_gpu_h is not None or _lt_gpu_h_v is not None else None
+                if ttfi_gpu_h is not None or _lt_gpu_h_v is not None
+                else None
             )
             # Sanity check: overhead cannot exceed total job GPU-h.  If it does,
             # the LowTP analysis read a longer log than the actual job duration
             # (cross-cluster log collision, same job ID sharing a log file).
             if overhead_gpu_h is not None and gpu_hours is not None and overhead_gpu_h > gpu_hours:
                 overhead_time_h = None
-                overhead_gpu_h  = None
+                overhead_gpu_h = None
             overhead_pct: float | None = (
                 overhead_gpu_h / gpu_hours * 100.0
-                if overhead_gpu_h is not None and gpu_hours and gpu_hours > 0 else None
+                if overhead_gpu_h is not None and gpu_hours and gpu_hours > 0
+                else None
             )
 
             # Per-job monitor events: set[str] if monitor state exists, else None
             job_events_map = run_job_monitor_events.get(run_name)
             job_monitor_events = (
-                job_events_map.get(job_id)   # may be empty set
+                job_events_map.get(job_id)  # may be empty set
                 if job_events_map is not None
-                else None                     # no monitor state → use stderr
+                else None  # no monitor state → use stderr
             )
 
             emoji, status_word, error_desc, action_word = determine_status(
-                job_id, job_ids, stdout_data, stderr_data, sacct_info, is_latest,
+                job_id,
+                job_ids,
+                stdout_data,
+                stderr_data,
+                sacct_info,
+                is_latest,
                 job_monitor_events=job_monitor_events,
                 run_config_ids=run_config_ids,
                 run_log_ids=run_log_ids,
             )
+
+            # If sacct has no record (job too old or expelled) and the job looks
+            # like it's still TRAINING or QUEUED, check if the monitor session
+            # ended as cancelled — in which case the job was stopped externally.
+            if status_word in ("TRAINING", "QUEUED") and is_latest:
+                _sessions = run_monitor_sessions.get(run_name) or []
+                _definitive = [
+                    s for s in _sessions
+                    if s.get("final_state") is not None
+                    or s.get("submitted")
+                    or s.get("runtime_job_id")
+                ]
+                _any_cancelled = any(
+                    s.get("final_state") == "cancelled" for s in _definitive
+                )
+                _any_active = any(
+                    s.get("final_state") is None
+                    and (s.get("submitted") or s.get("runtime_job_id"))
+                    for s in _definitive
+                )
+                if _any_cancelled and not _any_active:
+                    emoji, status_word, error_desc, action_word = "🚫", "CANCELLED", "", ""
+
+            # If sacct says RUNNING but the job has vanished from squeue (cluster
+            # killed it without updating sacct), the log goes stale.  Detect this:
+            # sacct=RUNNING + log not modified in >4h → job is dead, show CANCELLED.
+            if status_word == "TRAINING" and is_latest:
+                _sacct_st = sacct_info.get(job_id, {}).get("state", "")
+                if _sacct_st == "RUNNING":
+                    _log_path = run_dir / "logs" / f"stdout-{job_id}.log"
+                    if _log_path.exists():
+                        _log_age_h = (time.time() - _log_path.stat().st_mtime) / 3600
+                        if _log_age_h > 4:
+                            emoji, status_word, error_desc, action_word = "🚫", "CANCELLED", "", ""
 
             _progress = compute_progress(
                 stdout_data.get("last_iter"),
                 sbatch_ckpt_step,
                 stdout_data.get("total_iters"),
             )
+            # Fallback: latest job has no log output (e.g. failed before first iter)
+            # but a checkpoint exists on disk.  Use it + total_iters from a previous
+            # job's row so progress isn't shown as N/A.
+            if _progress is None and is_latest and last_ckpt is not None:
+                _prev_total = next(
+                    (
+                        r["train_iters"]
+                        for r in reversed(rows)
+                        if r["run_name"] == run_name and r.get("train_iters")
+                    ),
+                    None,
+                )
+                if _prev_total is not None:
+                    _progress = compute_progress(last_ckpt, sbatch_ckpt_step, _prev_total)
+                    if _progress is not None and stdout_data.get("last_iter") is None:
+                        stdout_data["last_iter"] = last_ckpt
+
             if _progress is not None and _progress >= 100.0 and status_word != "DONE":
                 emoji, status_word, error_desc, action_word = "✅", "DONE", "", ""
 
-            rows.append({
-                "run_name": run_name,
-                "job_id": job_id,
-                "stage": stage,
-                "token_budget": token_budget,
-                "tokens_b": tokens / 1e9,
-                "tier": tier,
-                "nodes": sbatch_nodes,
-                "transformer_params_b": stdout_data.get("transformer_params_b"),
-                "total_params_b": stdout_data.get("total_params_b"),
-                "global_batch_size": stdout_data.get("global_batch_size"),
-                "lr": stdout_data.get("lr"),
-                "micro_batch_size": stdout_data.get("micro_batch_size"),
-                "num_workers": stdout_data.get("num_workers"),
-                "ttfi_min": ttfi_min,
-                "ttfi_gpu_h": ttfi_gpu_h,
-                "train_iters": stdout_data.get("train_iters"),
-                "last_iter": stdout_data.get("last_iter"),
-                "ckpt_step": sbatch_ckpt_step,
-                "progress": _progress,
-                "last_train_loss": stdout_data.get("last_train_loss"),
-                "last_val_loss": stdout_data.get("last_val_loss"),
-                "last_ckpt": last_ckpt,
-                "avg_tflop_per_gpu": _tp["avg_tflop_per_gpu"] if _tp else None,
-                "avg_tok_per_gpu": _tp["avg_tok_per_gpu"] if _tp else None,
-                "n_iters_sampled": _tp["n_iters"] if _tp else None,
-                "gpu_hours": gpu_hours,
-                "time_lost_h": _job_lt.get("time_lost_h"),
-                "gpu_h_lost": _job_lt.get("gpu_h_lost"),
-                "overhead_time_h": overhead_time_h,
-                "overhead_gpu_h": overhead_gpu_h,
-                "overhead_pct": overhead_pct,
-                "sacct_state": sacct_state,
-                "sacct_elapsed": sacct_elapsed,
-                "sacct_start_str": sacct_entry.get("start_str", ""),
-                # sacct user for local jobs; fall back to path-based inference
-                # from log for foreign-cluster jobs (sacct entry is discarded).
-                "owner": sacct_entry.get("user", "") or stdout_data.get("log_user", "") or "",
-                "cluster": cluster,
-                "status_emoji": emoji,
-                "status_word": status_word,
-                "action_word": action_word,
-                "error_desc": error_desc,
-            })
+            rows.append(
+                {
+                    "run_name": run_name,
+                    "job_id": job_id,
+                    "stage": stage,
+                    "token_budget": token_budget,
+                    "tokens_b": tokens / 1e9,
+                    "tier": tier,
+                    "nodes": sbatch_nodes,
+                    "transformer_params_b": stdout_data.get("transformer_params_b"),
+                    "total_params_b": stdout_data.get("total_params_b"),
+                    "global_batch_size": stdout_data.get("global_batch_size"),
+                    "lr": stdout_data.get("lr"),
+                    "micro_batch_size": stdout_data.get("micro_batch_size"),
+                    "num_workers": stdout_data.get("num_workers"),
+                    "ttfi_min": ttfi_min,
+                    "ttfi_gpu_h": ttfi_gpu_h,
+                    "train_iters": stdout_data.get("train_iters"),
+                    "last_iter": stdout_data.get("last_iter"),
+                    "ckpt_step": sbatch_ckpt_step,
+                    "progress": _progress,
+                    "last_train_loss": stdout_data.get("last_train_loss"),
+                    "last_val_loss": stdout_data.get("last_val_loss"),
+                    "last_ckpt": last_ckpt,
+                    "avg_tflop_per_gpu": _tp["avg_tflop_per_gpu"] if _tp else None,
+                    "avg_tok_per_gpu": _tp["avg_tok_per_gpu"] if _tp else None,
+                    "n_iters_sampled": _tp["n_iters"] if _tp else None,
+                    "gpu_hours": gpu_hours,
+                    "time_lost_h": _job_lt.get("time_lost_h"),
+                    "gpu_h_lost": _job_lt.get("gpu_h_lost"),
+                    "overhead_time_h": overhead_time_h,
+                    "overhead_gpu_h": overhead_gpu_h,
+                    "overhead_pct": overhead_pct,
+                    "sacct_state": sacct_state,
+                    "sacct_elapsed": sacct_elapsed,
+                    "sacct_start_str": sacct_entry.get("start_str", ""),
+                    # sacct user for local jobs; fall back to path-based inference
+                    # from log for foreign-cluster jobs (sacct entry is discarded).
+                    "owner": sacct_entry.get("user", "") or stdout_data.get("log_user", "") or "",
+                    "cluster": cluster,
+                    "status_emoji": emoji,
+                    "status_word": status_word,
+                    "action_word": action_word,
+                    "error_desc": error_desc,
+                }
+            )
 
     # ── Fill-forward static fields for eval-only runs ───────────────────────
     # Fields that are constant per run but may be absent from an eval-only log
     # (Megatron may not print the full args/param-count block in eval mode).
     _FILL_FIELDS = [
-        "transformer_params_b", "total_params_b", "global_batch_size", "lr",
-        "micro_batch_size", "num_workers", "train_iters",
-        "avg_tflop_per_gpu", "avg_tok_per_gpu", "last_train_loss",
+        "transformer_params_b",
+        "total_params_b",
+        "global_batch_size",
+        "lr",
+        "micro_batch_size",
+        "num_workers",
+        "train_iters",
+        "avg_tflop_per_gpu",
+        "avg_tok_per_gpu",
+        "last_train_loss",
     ]
     _run_last_known: dict[str, dict[str, Any]] = {}
     for r in rows:
@@ -1778,17 +1894,17 @@ def main() -> None:
 
     _RESTART_ACTIONS = {"AUTO_RESTARTED", "MANUALLY_RESTARTED", "NEW_SESSION"}
     status_colors = {
-        "DONE":                           "\033[92m",
-        "TRAINING":                       "\033[94m",
-        "FAILED":                         "\033[91m",
-        "FAILED+AUTO_RESTARTED":          "\033[33m",
-        "FAILED+MANUALLY_RESTARTED":      "\033[35m",
-        "FAILED+NEW_SESSION":             "\033[36m",
-        "CANCELLED":                      "\033[91m",
-        "CANCELLED+MANUALLY_RESTARTED":   "\033[35m",
-        "CANCELLED+NEW_SESSION":          "\033[36m",
-        "QUEUED":                         "\033[93m",
-        "NOT_LAUNCHED":                   "\033[90m",
+        "DONE": "\033[92m",
+        "TRAINING": "\033[94m",
+        "FAILED": "\033[91m",
+        "FAILED+AUTO_RESTARTED": "\033[33m",
+        "FAILED+MANUALLY_RESTARTED": "\033[35m",
+        "FAILED+NEW_SESSION": "\033[36m",
+        "CANCELLED": "\033[91m",
+        "CANCELLED+MANUALLY_RESTARTED": "\033[35m",
+        "CANCELLED+NEW_SESSION": "\033[36m",
+        "QUEUED": "\033[93m",
+        "NOT_LAUNCHED": "\033[90m",
     }
     RESET = "\033[0m"
 
@@ -1805,28 +1921,36 @@ def main() -> None:
             color_key = r["status_word"]
         color = status_colors.get(color_key, "")
 
-        tflop_str    = f"{r['avg_tflop_per_gpu']:.1f}" if r["avg_tflop_per_gpu"] is not None else "N/A"
-        tok_str      = f"{r['avg_tok_per_gpu']:.0f}"  if r["avg_tok_per_gpu"]   is not None else "N/A"
-        gpu_h_str    = f"{r['gpu_hours']:.1f}"        if r["gpu_hours"]         is not None else "N/A"
-        lt_time_str  = f"{r['time_lost_h']:.3f}"      if r.get("time_lost_h")   is not None else "N/A"
-        lt_gpu_h_str = f"{r['gpu_h_lost']:.2f}"       if r.get("gpu_h_lost")    is not None else "N/A"
-        trans_str = f"{r['transformer_params_b']:.2f}" if r["transformer_params_b"] is not None else "N/A"
+        tflop_str = f"{r['avg_tflop_per_gpu']:.1f}" if r["avg_tflop_per_gpu"] is not None else "N/A"
+        tok_str = f"{r['avg_tok_per_gpu']:.0f}" if r["avg_tok_per_gpu"] is not None else "N/A"
+        gpu_h_str = f"{r['gpu_hours']:.1f}" if r["gpu_hours"] is not None else "N/A"
+        lt_time_str = f"{r['time_lost_h']:.3f}" if r.get("time_lost_h") is not None else "N/A"
+        lt_gpu_h_str = f"{r['gpu_h_lost']:.2f}" if r.get("gpu_h_lost") is not None else "N/A"
+        trans_str = (
+            f"{r['transformer_params_b']:.2f}" if r["transformer_params_b"] is not None else "N/A"
+        )
         total_str = f"{r['total_params_b']:.2f}" if r["total_params_b"] is not None else "N/A"
         lr_str = f"{r['lr']:.4f}" if r["lr"] is not None else "N/A"
         ckpt_str = str(r["last_ckpt"]) if r["last_ckpt"] is not None else "N/A"
         ti_str = str(r["train_iters"]) if r["train_iters"] is not None else "N/A"
         ci_str = str(r["last_iter"]) if r.get("last_iter") is not None else "N/A"
         prog_str = f"{r['progress']:.1f}%" if r.get("progress") is not None else "N/A"
-        trn_loss_str = f"{r['last_train_loss']:.4f}" if r.get("last_train_loss") is not None else "N/A"
+        trn_loss_str = (
+            f"{r['last_train_loss']:.4f}" if r.get("last_train_loss") is not None else "N/A"
+        )
         val_loss_str = f"{r['last_val_loss']:.4f}" if r.get("last_val_loss") is not None else "N/A"
         gbs_str = str(r["global_batch_size"]) if r["global_batch_size"] is not None else "N/A"
         mbs_str = str(r["micro_batch_size"]) if r["micro_batch_size"] is not None else "N/A"
         wkr_str = str(r["num_workers"]) if r["num_workers"] is not None else "N/A"
-        ttfi_str       = f"{r['ttfi_min']:.1f}"       if r.get("ttfi_min")       is not None else "N/A"
-        ttfi_gpu_h_str = f"{r['ttfi_gpu_h']:.2f}"    if r.get("ttfi_gpu_h")    is not None else "N/A"
-        oh_time_str    = f"{r['overhead_time_h']:.3f}" if r.get("overhead_time_h") is not None else "N/A"
-        oh_gpu_h_str   = f"{r['overhead_gpu_h']:.2f}" if r.get("overhead_gpu_h") is not None else "N/A"
-        oh_pct_str     = f"{r['overhead_pct']:.1f}%"  if r.get("overhead_pct")  is not None else "N/A"
+        ttfi_str = f"{r['ttfi_min']:.1f}" if r.get("ttfi_min") is not None else "N/A"
+        ttfi_gpu_h_str = f"{r['ttfi_gpu_h']:.2f}" if r.get("ttfi_gpu_h") is not None else "N/A"
+        oh_time_str = (
+            f"{r['overhead_time_h']:.3f}" if r.get("overhead_time_h") is not None else "N/A"
+        )
+        oh_gpu_h_str = (
+            f"{r['overhead_gpu_h']:.2f}" if r.get("overhead_gpu_h") is not None else "N/A"
+        )
+        oh_pct_str = f"{r['overhead_pct']:.1f}%" if r.get("overhead_pct") is not None else "N/A"
 
         error_disp = r["error_desc"][:28] if r["error_desc"] else ""
 
@@ -1836,7 +1960,9 @@ def main() -> None:
         else:
             c_str = "N/A"
         m_budget = RE_BUDGET.search(r["run_name"])
-        stage_disp = m_budget.group(1) if m_budget else ("stable" if r["stage"] == "stable" else "decay")
+        stage_disp = (
+            m_budget.group(1) if m_budget else ("stable" if r["stage"] == "stable" else "decay")
+        )
         nodes_str = str(r["nodes"]) if r.get("nodes") is not None else "N/A"
 
         print(
@@ -1896,14 +2022,16 @@ def main() -> None:
                     gpu_h = _gpu_parse_elapsed(d["elapsed"]) * d["gpus"]
                     exp_gpu_h[exp_name] = exp_gpu_h.get(exp_name, 0.0) + gpu_h
                     grand_gpu_total += gpu_h
-                    gpu_csv_rows.append({
-                        "experiment": exp_name,
-                        "job_id":     job_id,
-                        "state":      d["state"],
-                        "elapsed":    d["elapsed"],
-                        "gpus":       d["gpus"],
-                        "gpu_hours":  round(gpu_h, 1),
-                    })
+                    gpu_csv_rows.append(
+                        {
+                            "experiment": exp_name,
+                            "job_id": job_id,
+                            "state": d["state"],
+                            "elapsed": d["elapsed"],
+                            "gpus": d["gpus"],
+                            "gpu_hours": round(gpu_h, 1),
+                        }
+                    )
         except SystemExit:
             pass
 
@@ -1924,10 +2052,10 @@ def main() -> None:
     for r in rows:
         rn = r["run_name"]
         if r.get("gpu_hours") is None and r.get("cluster") == _foreign_cluster:
-            avg_tp   = r.get("avg_tok_per_gpu")
-            tok_b    = r.get("tokens_b")
+            avg_tp = r.get("avg_tok_per_gpu")
+            tok_b = r.get("tokens_b")
             tr_iters = r.get("train_iters")
-            last_it  = r.get("last_iter")
+            last_it = r.get("last_iter")
             if avg_tp and avg_tp > 0 and tr_iters and tr_iters > 0 and tok_b and last_it:
                 tokens_per_iter = tok_b * 1e9 / tr_iters
                 start_iter = _run_prev_last_iter.get(rn, 0)
@@ -1946,9 +2074,7 @@ def main() -> None:
     _foreign_run_names = {r["run_name"] for r in rows if r.get("cluster") == _foreign_cluster}
     for r in rows:
         is_foreign_row = r.get("cluster") == _foreign_cluster
-        is_undetected_foreign = (
-            r["run_name"] in _foreign_run_names and r.get("gpu_hours") is None
-        )
+        is_undetected_foreign = r["run_name"] in _foreign_run_names and r.get("gpu_hours") is None
         if is_foreign_row or is_undetected_foreign:
             # TTFI always unknown without sacct start time
             r["ttfi_min"] = None
@@ -2053,14 +2179,14 @@ def main() -> None:
     run_remaining: dict[str, tuple[float | None, bool]] = {}
     for _rn, _rs, _rt, _ in run_specs:
         _run_rows_r = [r for r in rows if r["run_name"] == _rn]
-        _latest_r   = _run_rows_r[-1] if _run_rows_r else {}
-        _status_r   = _latest_r.get("status_word", "NOT_LAUNCHED")
-        _h_r        = summary_gpu_h.get(_rn)
-        _prog_r     = _latest_r.get("progress")
+        _latest_r = _run_rows_r[-1] if _run_rows_r else {}
+        _status_r = _latest_r.get("status_word", "NOT_LAUNCHED")
+        _h_r = summary_gpu_h.get(_rn)
+        _prog_r = _latest_r.get("progress")
         # Reference throughput: for NOT_LAUNCHED runs prefer gbsz-matched stable avg,
         # otherwise prefer stable sibling, then own data, then global mean.
-        _stable_rn  = decay_to_stable.get(_rn)  # None for stable runs
-        _gbsz_rn    = run_to_gbsz.get(_rn)
+        _stable_rn = decay_to_stable.get(_rn)  # None for stable runs
+        _gbsz_rn = run_to_gbsz.get(_rn)
         if _status_r == "NOT_LAUNCHED":
             _ref_tok = (
                 (_gbsz_stable_avg_tok.get(_gbsz_rn) if _gbsz_rn is not None else None)
@@ -2069,14 +2195,10 @@ def main() -> None:
                 or _ref_avg_tok_per_gpu
             )
         else:
-            _ref_tok = (
-                _run_avg_tok.get(_stable_rn)
-                or _run_avg_tok.get(_rn)
-                or _ref_avg_tok_per_gpu
-            )
+            _ref_tok = _run_avg_tok.get(_stable_rn) or _run_avg_tok.get(_rn) or _ref_avg_tok_per_gpu
         # Effective token count: for decay runs subtract the stable branch-point tokens.
         # For stable runs (or decay runs with no ckpt_tokens info), use full budget.
-        _ckpt_toks  = _stage_ckpt_tokens.get(_rs, 0) if _rs != "stable" else 0
+        _ckpt_toks = _stage_ckpt_tokens.get(_rs, 0) if _rs != "stable" else 0
         _eff_tokens = max(0, _rt - _ckpt_toks)
         if _status_r == "DONE":
             run_remaining[_rn] = (0.0, False)
@@ -2104,15 +2226,19 @@ def main() -> None:
         print()
         print("Training progress summary:")
         if _ref_avg_tok_per_gpu is not None:
-            print(f"  (~ estimates use stable-run throughput per combo; global fallback: {_ref_avg_tok_per_gpu:,.0f} Tok/s/GPU)")
+            print(
+                f"  (~ estimates use stable-run throughput per combo; global fallback: {_ref_avg_tok_per_gpu:,.0f} Tok/s/GPU)"
+            )
         if args.compute_storage:
-            print("  (Ckpt-GB: measured checkpoints/ size; Ckpt-GB-remaining: estimated storage still needed)")
+            print(
+                "  (Ckpt-GB: measured checkpoints/ size; Ckpt-GB-remaining: estimated storage still needed)"
+            )
         _local = args.machine or "LEO"
         _foreign = "MN5" if _local != "MN5" else "LEO"
         _gpu_h_hdr = (
-            f"  {'GPU-h('+_local+')':>10}  {'GPU-h('+_foreign+')':>10}  {'GPU-h':>8}"
-            if _any_cluster_split else
-            f"  {'GPU-h':>8}"
+            f"  {'GPU-h(' + _local + ')':>10}  {'GPU-h(' + _foreign + ')':>10}  {'GPU-h':>8}"
+            if _any_cluster_split
+            else f"  {'GPU-h':>8}"
         )
         print(
             f"  {'T#':>3}  {'#':>3}  {'Run':<{W_EXP}}  {'Tier':<9}  {'Progress':>9}  {'':>2} {'Status':<12}  {'Clusters':>8}"
@@ -2163,7 +2289,9 @@ def main() -> None:
             color = status_colors.get(_ck, "")
             run_rows = [r for r in rows if r["run_name"] == exp_name]
             _run_cls = {r.get("cluster", "") for r in run_rows if r.get("cluster")}
-            _cluster_tag = "MIX" if len(_run_cls) > 1 else (next(iter(_run_cls)) if _run_cls else "")
+            _cluster_tag = (
+                "MIX" if len(_run_cls) > 1 else (next(iter(_run_cls)) if _run_cls else "")
+            )
             # TTFI GPU-h: sum across all jobs for this run
             ttfi_gpu_h_vals = [r["ttfi_gpu_h"] for r in run_rows if r.get("ttfi_gpu_h") is not None]
             ttfi_gpu_h_sum = sum(ttfi_gpu_h_vals) if ttfi_gpu_h_vals else None
@@ -2186,12 +2314,17 @@ def main() -> None:
             # Only include jobs with known GPU-h so the denominator and numerator
             # are from the same cluster (avoids inflated % from MN5 LowTP with
             # only LEO GPU-h in the denominator).
-            oh_gpu_h_vals = [r["overhead_gpu_h"] for r in run_rows
-                             if r.get("overhead_gpu_h") is not None and r.get("gpu_hours") is not None]
+            oh_gpu_h_vals = [
+                r["overhead_gpu_h"]
+                for r in run_rows
+                if r.get("overhead_gpu_h") is not None and r.get("gpu_hours") is not None
+            ]
             oh_gpu_h_sum = sum(oh_gpu_h_vals) if oh_gpu_h_vals else None
             oh_gpu_h_str = f"{oh_gpu_h_sum:.2f}" if oh_gpu_h_sum is not None else "N/A"
             oh_pct_val = (
-                oh_gpu_h_sum / h * 100.0 if oh_gpu_h_sum is not None and h is not None and h > 0 else None
+                oh_gpu_h_sum / h * 100.0
+                if oh_gpu_h_sum is not None and h is not None and h > 0
+                else None
             )
             oh_pct_str = f"{oh_pct_val:.1f}%" if oh_pct_val is not None else "N/A"
             gpu_h_str = f"{h:.1f}" if h is not None else "N/A"
@@ -2211,7 +2344,11 @@ def main() -> None:
                 _tier_gpu_h_mn5 += _h_mn5
                 grand_gpu_h_mn5 += _h_mn5
             rem_val, rem_est = run_remaining.get(exp_name, (None, False))
-            rem_str = (f"~{rem_val:.1f}" if rem_est else f"{rem_val:.1f}") if rem_val is not None else "N/A"
+            rem_str = (
+                (f"~{rem_val:.1f}" if rem_est else f"{rem_val:.1f}")
+                if rem_val is not None
+                else "N/A"
+            )
             if rem_val is not None:
                 grand_remaining_gpu_h += rem_val
                 _tier_rem_gpu_h += rem_val
@@ -2231,8 +2368,8 @@ def main() -> None:
                     _tier_ckpt_rem_gb += ckpt_rem_val
             _gpu_h_cols = (
                 f"  {_h_leo_str:>10}  {_h_mn5_str:>10}  {gpu_h_str:>8}"
-                if _any_cluster_split else
-                f"  {gpu_h_str:>8}"
+                if _any_cluster_split
+                else f"  {gpu_h_str:>8}"
             )
             print(
                 f"  {tier_idx:>3}  {idx:>3}  {exp_name:<{W_EXP}}  {tier_str:<9}  {prog_str:>9}  {emoji} {color}{status:<12}{RESET}  {_cluster_tag:>8}"
@@ -2252,11 +2389,13 @@ def main() -> None:
                 _t_mn5_s = f"{_tier_gpu_h_mn5:.1f}" if _tier_gpu_h_mn5 else "N/A"
                 _t_rem_s = f"{_tier_rem_gpu_h:.1f}" if _tier_rem_gpu_h else "N/A"
                 _t_ckpt_s = _format_ckpt_gb_total(_tier_ckpt_gb, compute=args.compute_storage)
-                _t_ckpt_rem_s = _format_ckpt_gb_total(_tier_ckpt_rem_gb, compute=args.compute_storage)
+                _t_ckpt_rem_s = _format_ckpt_gb_total(
+                    _tier_ckpt_rem_gb, compute=args.compute_storage
+                )
                 _t_gpu_h_cols = (
                     f"  {_t_leo_s:>10}  {_t_mn5_s:>10}  {_t_gpu_h_s:>8}"
-                    if _any_cluster_split else
-                    f"  {_t_gpu_h_s:>8}"
+                    if _any_cluster_split
+                    else f"  {_t_gpu_h_s:>8}"
                 )
                 print(
                     f"  {'':>3}  {'':>3}  {f'[{_tier_name_cur} total]':<{W_EXP}}  {_tier_name_cur:<9}  {'':>9}  {'':>2} {'':<12}  {'':>8}"
@@ -2289,8 +2428,8 @@ def main() -> None:
         _grand_mn5_s = f"{grand_gpu_h_mn5:.1f}" if grand_gpu_h_mn5 else "N/A"
         _grand_gpu_h_cols = (
             f"  {_grand_leo_s:>10}  {_grand_mn5_s:>10}  {summary_grand_total:>8.1f}"
-            if _any_cluster_split else
-            f"  {summary_grand_total:>8.1f}"
+            if _any_cluster_split
+            else f"  {summary_grand_total:>8.1f}"
         )
         print(
             f"  {'':>3}  {'':>3}  {'TOTAL':<{W_EXP}}  {'':<9}  {'':>9}  {'':>2} {'':<12}"
@@ -2301,6 +2440,7 @@ def main() -> None:
 
     # Summary counts
     from collections import Counter
+
     counts = Counter(r["status_word"] for r in rows)
     print()
     print("Status breakdown:")
@@ -2313,24 +2453,58 @@ def main() -> None:
         _csv_run_cluster_tag: dict[str, str] = {}
         for _rn in {r["run_name"] for r in rows}:
             _cls = {r.get("cluster", "") for r in rows if r["run_name"] == _rn and r.get("cluster")}
-            _csv_run_cluster_tag[_rn] = "MIX" if len(_cls) > 1 else (next(iter(_cls)) if _cls else "")
+            _csv_run_cluster_tag[_rn] = (
+                "MIX" if len(_cls) > 1 else (next(iter(_cls)) if _cls else "")
+            )
 
         csv_fields = [
-            "Run", "JobID", "Machine", "RunClusters", "Owner", "StartTime", "Elapsed",
-            "N_ne(B)", "N(B)", "D(B)", "C(10^18)", "Tier", "Stage",
-            "TotIter", "CurIter", "LastCkpt", "Prog%", "TrainLoss", "ValLoss", "LR", "GBS", "MBS", "Nodes", "Workers",
-            "TFLOP/s/GPU", "Tok/s/GPU", "TTFI(min)", "TTFI-GPU-h",
-            "LowTP-time(h)", "LowTP-GPU-h", "Overhead-time(h)", "Overhead-GPU-h", "GPU-h(LEO)", "GPU-h(MN5)", "GPU-h", "Overhead%",
+            "Run",
+            "JobID",
+            "Machine",
+            "RunClusters",
+            "Owner",
+            "StartTime",
+            "Elapsed",
+            "N_ne(B)",
+            "N(B)",
+            "D(B)",
+            "C(10^18)",
+            "Tier",
+            "Stage",
+            "TotIter",
+            "CurIter",
+            "LastCkpt",
+            "Prog%",
+            "TrainLoss",
+            "ValLoss",
+            "LR",
+            "GBS",
+            "MBS",
+            "Nodes",
+            "Workers",
+            "TFLOP/s/GPU",
+            "Tok/s/GPU",
+            "TTFI(min)",
+            "TTFI-GPU-h",
+            "LowTP-time(h)",
+            "LowTP-GPU-h",
+            "Overhead-time(h)",
+            "Overhead-GPU-h",
+            "GPU-h(LEO)",
+            "GPU-h(MN5)",
+            "GPU-h",
+            "Overhead%",
             "Remaining-GPU-h",
-            "Emoji", "Status", "Action", "Error",
+            "Emoji",
+            "Status",
+            "Action",
+            "Error",
         ]
         csv_path = Path(args.csv)
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         # Pre-compute which job_id is the latest for each run (remaining GPU-h
         # is a per-run estimate, so we only populate it on the latest-job row).
-        _csv_latest_job: dict[str, str] = {
-            rn: jids[-1] for rn, jids in run_job_map.items() if jids
-        }
+        _csv_latest_job: dict[str, str] = {rn: jids[-1] for rn, jids in run_job_map.items() if jids}
         with csv_path.open("w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=csv_fields)
             writer.writeheader()
@@ -2342,68 +2516,107 @@ def main() -> None:
                     if r["transformer_params_b"] is not None and r.get("tokens_b") is not None
                     else ""
                 )
-                _is_latest_csv = (
-                    r["job_id"] == ""
-                    or r["job_id"] == _csv_latest_job.get(r["run_name"])
+                _is_latest_csv = r["job_id"] == "" or r["job_id"] == _csv_latest_job.get(
+                    r["run_name"]
                 )
                 _rem_v_csv, _rem_est_csv = (
-                    run_remaining.get(r["run_name"], (None, False)) if _is_latest_csv else (None, False)
+                    run_remaining.get(r["run_name"], (None, False))
+                    if _is_latest_csv
+                    else (None, False)
                 )
                 rem_gpu_h_csv = (
                     (f"~{_rem_v_csv:.1f}" if _rem_est_csv else f"{_rem_v_csv:.1f}")
-                    if _rem_v_csv is not None else ""
+                    if _rem_v_csv is not None
+                    else ""
                 )
-                writer.writerow({
-                    "Run":         r["run_name"],
-                    "JobID":       r["job_id"],
-                    "Machine":     r.get("cluster", ""),
-                    "RunClusters": _csv_run_cluster_tag.get(r["run_name"], ""),
-                    "Owner":       r.get("owner", ""),
-                    "StartTime":   r.get("sacct_start_str", ""),
-                    "Elapsed":     r.get("sacct_elapsed", ""),
-                    "N_ne(B)":     f"{r['transformer_params_b']:.2f}" if r["transformer_params_b"] is not None else "",
-                    "N(B)":        f"{r['total_params_b']:.2f}" if r["total_params_b"] is not None else "",
-                    "D(B)":        int(r["tokens_b"]) if r.get("tokens_b") is not None else "",
-                    "C(10^18)":    c_val,
-                    "Tier":        r.get("tier", ""),
-                    "Stage":       sd,
-                    "TotIter":     r["train_iters"] if r["train_iters"] is not None else "",
-                    "CurIter":     r.get("last_iter") if r.get("last_iter") is not None else "",
-                    "LastCkpt":    r["last_ckpt"] if r["last_ckpt"] is not None else "",
-                    "Prog%":       f"{r['progress']:.1f}" if r.get("progress") is not None else "",
-                    "TrainLoss":   f"{r['last_train_loss']:.4f}" if r.get("last_train_loss") is not None else "",
-                    "ValLoss":     f"{r['last_val_loss']:.4f}" if r.get("last_val_loss") is not None else "",
-                    "LR":          f"{r['lr']:.4f}" if r["lr"] is not None else "",
-                    "GBS":         r["global_batch_size"] if r["global_batch_size"] is not None else "",
-                    "MBS":         r["micro_batch_size"] if r["micro_batch_size"] is not None else "",
-                    "Nodes":       r["nodes"] if r.get("nodes") is not None else "",
-                    "Workers":     r["num_workers"] if r["num_workers"] is not None else "",
-                    "TFLOP/s/GPU":   f"{r['avg_tflop_per_gpu']:.1f}" if r["avg_tflop_per_gpu"] is not None else "",
-                    "Tok/s/GPU":     f"{r['avg_tok_per_gpu']:.0f}" if r["avg_tok_per_gpu"] is not None else "",
-                    "TTFI(min)":     f"{r['ttfi_min']:.1f}" if r.get("ttfi_min") is not None else "",
-                    "TTFI-GPU-h":    f"{r['ttfi_gpu_h']:.2f}" if r.get("ttfi_gpu_h") is not None else "",
-                    "LowTP-time(h)":    f"{r['time_lost_h']:.4f}"    if r.get("time_lost_h")    is not None else "",
-                    "LowTP-GPU-h":      f"{r['gpu_h_lost']:.4f}"     if r.get("gpu_h_lost")     is not None else "",
-                    "Overhead-time(h)": f"{r['overhead_time_h']:.4f}" if r.get("overhead_time_h") is not None else "",
-                    "Overhead-GPU-h":   f"{r['overhead_gpu_h']:.4f}"  if r.get("overhead_gpu_h")  is not None else "",
-                    "GPU-h(LEO)":       f"{r['gpu_hours']:.1f}" if r.get("gpu_hours") is not None and r.get("cluster") == args.machine else "",
-                    "GPU-h(MN5)":       f"{r['gpu_hours']:.1f}" if r.get("gpu_hours") is not None and r.get("cluster") == _foreign_cluster else "",
-                    "GPU-h":            f"{r['gpu_hours']:.1f}"       if r["gpu_hours"]           is not None else "",
-                    "Overhead%":        f"{r['overhead_pct']:.2f}"    if r.get("overhead_pct")    is not None else "",
-                    "Remaining-GPU-h":  rem_gpu_h_csv,
-                    "Emoji":         r["status_emoji"],
-                    "Status":      r["status_word"],
-                    "Action":      r["action_word"],
-                    "Error":       r["error_desc"],
-                })
+                writer.writerow(
+                    {
+                        "Run": r["run_name"],
+                        "JobID": r["job_id"],
+                        "Machine": r.get("cluster", ""),
+                        "RunClusters": _csv_run_cluster_tag.get(r["run_name"], ""),
+                        "Owner": r.get("owner", ""),
+                        "StartTime": r.get("sacct_start_str", ""),
+                        "Elapsed": r.get("sacct_elapsed", ""),
+                        "N_ne(B)": f"{r['transformer_params_b']:.2f}"
+                        if r["transformer_params_b"] is not None
+                        else "",
+                        "N(B)": f"{r['total_params_b']:.2f}"
+                        if r["total_params_b"] is not None
+                        else "",
+                        "D(B)": int(r["tokens_b"]) if r.get("tokens_b") is not None else "",
+                        "C(10^18)": c_val,
+                        "Tier": r.get("tier", ""),
+                        "Stage": sd,
+                        "TotIter": r["train_iters"] if r["train_iters"] is not None else "",
+                        "CurIter": r.get("last_iter") if r.get("last_iter") is not None else "",
+                        "LastCkpt": r["last_ckpt"] if r["last_ckpt"] is not None else "",
+                        "Prog%": f"{r['progress']:.1f}" if r.get("progress") is not None else "",
+                        "TrainLoss": f"{r['last_train_loss']:.4f}"
+                        if r.get("last_train_loss") is not None
+                        else "",
+                        "ValLoss": f"{r['last_val_loss']:.4f}"
+                        if r.get("last_val_loss") is not None
+                        else "",
+                        "LR": f"{r['lr']:.4f}" if r["lr"] is not None else "",
+                        "GBS": r["global_batch_size"] if r["global_batch_size"] is not None else "",
+                        "MBS": r["micro_batch_size"] if r["micro_batch_size"] is not None else "",
+                        "Nodes": r["nodes"] if r.get("nodes") is not None else "",
+                        "Workers": r["num_workers"] if r["num_workers"] is not None else "",
+                        "TFLOP/s/GPU": f"{r['avg_tflop_per_gpu']:.1f}"
+                        if r["avg_tflop_per_gpu"] is not None
+                        else "",
+                        "Tok/s/GPU": f"{r['avg_tok_per_gpu']:.0f}"
+                        if r["avg_tok_per_gpu"] is not None
+                        else "",
+                        "TTFI(min)": f"{r['ttfi_min']:.1f}"
+                        if r.get("ttfi_min") is not None
+                        else "",
+                        "TTFI-GPU-h": f"{r['ttfi_gpu_h']:.2f}"
+                        if r.get("ttfi_gpu_h") is not None
+                        else "",
+                        "LowTP-time(h)": f"{r['time_lost_h']:.4f}"
+                        if r.get("time_lost_h") is not None
+                        else "",
+                        "LowTP-GPU-h": f"{r['gpu_h_lost']:.4f}"
+                        if r.get("gpu_h_lost") is not None
+                        else "",
+                        "Overhead-time(h)": f"{r['overhead_time_h']:.4f}"
+                        if r.get("overhead_time_h") is not None
+                        else "",
+                        "Overhead-GPU-h": f"{r['overhead_gpu_h']:.4f}"
+                        if r.get("overhead_gpu_h") is not None
+                        else "",
+                        "GPU-h(LEO)": f"{r['gpu_hours']:.1f}"
+                        if r.get("gpu_hours") is not None and r.get("cluster") == args.machine
+                        else "",
+                        "GPU-h(MN5)": f"{r['gpu_hours']:.1f}"
+                        if r.get("gpu_hours") is not None and r.get("cluster") == _foreign_cluster
+                        else "",
+                        "GPU-h": f"{r['gpu_hours']:.1f}" if r["gpu_hours"] is not None else "",
+                        "Overhead%": f"{r['overhead_pct']:.2f}"
+                        if r.get("overhead_pct") is not None
+                        else "",
+                        "Remaining-GPU-h": rem_gpu_h_csv,
+                        "Emoji": r["status_emoji"],
+                        "Status": r["status_word"],
+                        "Action": r["action_word"],
+                        "Error": r["error_desc"],
+                    }
+                )
         print(f"\nWrote {len(rows)} rows to {csv_path}")
 
     if gpu_csv_rows:
-        gpu_csv_rows.append({
-            "experiment": "TOTAL",
-            "job_id": "", "state": "", "elapsed": "", "gpus": "",
-            "gpu_hours": round(grand_gpu_total, 1),
-        })
+        gpu_csv_rows.append(
+            {
+                "experiment": "TOTAL",
+                "job_id": "",
+                "state": "",
+                "elapsed": "",
+                "gpus": "",
+                "gpu_hours": round(grand_gpu_total, 1),
+            }
+        )
         gpu_csv_path = resolved_base / "gpu_hours.csv"
         gpu_csv_path.parent.mkdir(parents=True, exist_ok=True)
         with gpu_csv_path.open("w", newline="") as f:
@@ -2441,28 +2654,28 @@ def main() -> None:
         with md_path.open("w") as f:
             f.write(f"_Updated training progress: {now_str}_  \n")
             f.write(f"_Updated compute spending: {spending_str}_\n\n")
-            f.write(f"# Sweep run status\n\n")
+            f.write("# Sweep run status\n\n")
             f.write(f"**Config:** `{args.config}`  \n")
             f.write(f"**Results:** `{resolved_base}`\n\n")
 
             # Experiment summary GPU consumption + progress table
             f.write("## Training progress summary\n\n")
             if _ref_avg_tok_per_gpu is not None:
-                f.write(f"_~ estimates use stable-run throughput per combo; global fallback: {_ref_avg_tok_per_gpu:,.0f} Tok/s/GPU_\n\n")
+                f.write(
+                    f"_~ estimates use stable-run throughput per combo; global fallback: {_ref_avg_tok_per_gpu:,.0f} Tok/s/GPU_\n\n"
+                )
             if args.compute_storage:
-                f.write("_Ckpt-GB: measured `checkpoints/` size; Ckpt-GB-remaining: estimated storage still needed_\n\n")
-            _md_gpu_h_hdr = (
-                "GPU-h(LEO) | GPU-h(MN5) | GPU-h"
-                if _any_cluster_split else "GPU-h"
-            )
-            _md_gpu_h_sep = (
-                " --- | --- | ---"
-                if _any_cluster_split else " ---"
-            )
+                f.write(
+                    "_Ckpt-GB: measured `checkpoints/` size; Ckpt-GB-remaining: estimated storage still needed_\n\n"
+                )
+            _md_gpu_h_hdr = "GPU-h(LEO) | GPU-h(MN5) | GPU-h" if _any_cluster_split else "GPU-h"
+            _md_gpu_h_sep = " --- | --- | ---" if _any_cluster_split else " ---"
             f.write(
                 f"| T# | # | Experiment | Tier | Progress | Status | Clusters | TTFI-GPU-h | LowTP-GPU-h | Overhead-GPU-h | {_md_gpu_h_hdr} | Overhead% | Remaining-GPU-h | Ckpt-GB | Ckpt-GB-remaining |\n"
             )
-            f.write(f"| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |{_md_gpu_h_sep} | --- | --- | --- | --- |\n")
+            f.write(
+                f"| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |{_md_gpu_h_sep} | --- | --- | --- | --- |\n"
+            )
             grand_lt_time_md = 0.0
             grand_lt_gpu_h_md = 0.0
             grand_ttfi_gpu_h_md = 0.0
@@ -2502,8 +2715,14 @@ def main() -> None:
                 emoji = latest.get("status_emoji", "")
                 status = latest.get("status_word", "")
                 _md_run_cls = {r.get("cluster", "") for r in run_rows if r.get("cluster")}
-                _md_cluster_tag = "MIX" if len(_md_run_cls) > 1 else (next(iter(_md_run_cls)) if _md_run_cls else "")
-                ttfi_gpu_h_vals_md = [r["ttfi_gpu_h"] for r in run_rows if r.get("ttfi_gpu_h") is not None]
+                _md_cluster_tag = (
+                    "MIX"
+                    if len(_md_run_cls) > 1
+                    else (next(iter(_md_run_cls)) if _md_run_cls else "")
+                )
+                ttfi_gpu_h_vals_md = [
+                    r["ttfi_gpu_h"] for r in run_rows if r.get("ttfi_gpu_h") is not None
+                ]
                 ttfi_gpu_h_md_sum = sum(ttfi_gpu_h_vals_md) if ttfi_gpu_h_vals_md else None
                 ttfi_gpu_h_md_str = (
                     f"{ttfi_gpu_h_md_sum:.2f}" if ttfi_gpu_h_md_sum is not None else "N/A"
@@ -2511,8 +2730,12 @@ def main() -> None:
                 if ttfi_gpu_h_md_sum is not None:
                     grand_ttfi_gpu_h_md += ttfi_gpu_h_md_sum
                     _tier_ttfi_gpu_h_md += ttfi_gpu_h_md_sum
-                lt_time_vals_md = [r["time_lost_h"] for r in run_rows if r.get("time_lost_h") is not None]
-                lt_gpu_h_vals_md = [r["gpu_h_lost"] for r in run_rows if r.get("gpu_h_lost") is not None]
+                lt_time_vals_md = [
+                    r["time_lost_h"] for r in run_rows if r.get("time_lost_h") is not None
+                ]
+                lt_gpu_h_vals_md = [
+                    r["gpu_h_lost"] for r in run_rows if r.get("gpu_h_lost") is not None
+                ]
                 lt_time = sum(lt_time_vals_md) if lt_time_vals_md else None
                 lt_gpu_h = sum(lt_gpu_h_vals_md) if lt_gpu_h_vals_md else None
                 lt_gpu_h_md = f"{lt_gpu_h:.2f}" if lt_gpu_h is not None else "N/A"
@@ -2521,8 +2744,11 @@ def main() -> None:
                 if lt_gpu_h is not None:
                     grand_lt_gpu_h_md += lt_gpu_h
                     _tier_lt_gpu_h_md += lt_gpu_h
-                oh_gpu_h_vals_md = [r["overhead_gpu_h"] for r in run_rows
-                                    if r.get("overhead_gpu_h") is not None and r.get("gpu_hours") is not None]
+                oh_gpu_h_vals_md = [
+                    r["overhead_gpu_h"]
+                    for r in run_rows
+                    if r.get("overhead_gpu_h") is not None and r.get("gpu_hours") is not None
+                ]
                 oh_gpu_h_md_sum = sum(oh_gpu_h_vals_md) if oh_gpu_h_vals_md else None
                 oh_gpu_h_md_str = f"{oh_gpu_h_md_sum:.2f}" if oh_gpu_h_md_sum is not None else "N/A"
                 oh_pct_md = (
@@ -2550,7 +2776,8 @@ def main() -> None:
                 rem_val_md, rem_est_md = run_remaining.get(exp_name, (None, False))
                 rem_md_str = (
                     (f"~{rem_val_md:.1f}" if rem_est_md else f"{rem_val_md:.1f}")
-                    if rem_val_md is not None else "N/A"
+                    if rem_val_md is not None
+                    else "N/A"
                 )
                 if rem_val_md is not None:
                     _tier_rem_gpu_h_md += rem_val_md
@@ -2561,7 +2788,9 @@ def main() -> None:
                     run_checkpoint_storage, exp_name, compute=args.compute_storage, md=True
                 )
                 if args.compute_storage:
-                    ckpt_val_md, ckpt_rem_val_md = run_checkpoint_storage.get(exp_name, (None, None))
+                    ckpt_val_md, ckpt_rem_val_md = run_checkpoint_storage.get(
+                        exp_name, (None, None)
+                    )
                     if ckpt_val_md is not None:
                         grand_ckpt_gb_md += ckpt_val_md
                         _tier_ckpt_gb_md += ckpt_val_md
@@ -2570,7 +2799,8 @@ def main() -> None:
                         _tier_ckpt_rem_gb_md += ckpt_rem_val_md
                 _md_run_gpu_h_cols = (
                     f" {_h_leo_md_str} | {_h_mn5_md_str} | {gpu_h_md_str}"
-                    if _any_cluster_split else f" {gpu_h_md_str}"
+                    if _any_cluster_split
+                    else f" {gpu_h_md_str}"
                 )
                 f.write(
                     f"| {tier_idx_md} | {idx} | {exp_name} | {tier_str} | {prog_str} | {emoji} {status}"
@@ -2579,9 +2809,13 @@ def main() -> None:
                     f" | {ckpt_md_str or '—'} | {ckpt_rem_md_str or '—'} |\n"
                 )
                 is_last_md = idx >= len(sorted_exps_md)
-                next_tier_md_str = "" if is_last_md else run_tier_map.get(sorted_exps_md[idx][0], "")
+                next_tier_md_str = (
+                    "" if is_last_md else run_tier_map.get(sorted_exps_md[idx][0], "")
+                )
                 if is_last_md or next_tier_md_str != tier_str:
-                    _t_oh_pct_md = _tier_oh_gpu_h_md / _tier_gpu_h_md * 100.0 if _tier_gpu_h_md > 0 else None
+                    _t_oh_pct_md = (
+                        _tier_oh_gpu_h_md / _tier_gpu_h_md * 100.0 if _tier_gpu_h_md > 0 else None
+                    )
                     _t_oh_pct_md_s = f"{_t_oh_pct_md:.1f}%" if _t_oh_pct_md is not None else "N/A"
                     _t_ttfi_md_s = f"{_tier_ttfi_gpu_h_md:.2f}" if _tier_ttfi_gpu_h_md else "N/A"
                     _t_oh_md_s = f"{_tier_oh_gpu_h_md:.2f}" if _tier_oh_gpu_h_md else "N/A"
@@ -2597,7 +2831,8 @@ def main() -> None:
                     )
                     _md_tier_gpu_h_cols = (
                         f" **{_t_leo_md_s}** | **{_t_mn5_md_s}** | **{_t_gpu_h_md_s}**"
-                        if _any_cluster_split else f" **{_t_gpu_h_md_s}**"
+                        if _any_cluster_split
+                        else f" **{_t_gpu_h_md_s}**"
                     )
                     f.write(
                         f"| | | **[{_tier_name_md} total]** | **{_tier_name_md}** | | | |"
@@ -2634,7 +2869,8 @@ def main() -> None:
             _grand_mn5_md_s = f"{grand_gpu_h_mn5_md:.1f}" if grand_gpu_h_mn5_md else "N/A"
             _md_grand_gpu_h_cols = (
                 f" **{_grand_leo_md_s}** | **{_grand_mn5_md_s}** | **{summary_grand_total:.1f}**"
-                if _any_cluster_split else f" **{summary_grand_total:.1f}**"
+                if _any_cluster_split
+                else f" **{summary_grand_total:.1f}**"
             )
             f.write(
                 f"| | | **TOTAL** | | | | | **{grand_ttfi_gpu_h_md:.2f}** | **{grand_lt_gpu_h_md:.2f}**"
@@ -2646,6 +2882,7 @@ def main() -> None:
             # Status summary
             f.write("## Status breakdown\n\n")
             from collections import Counter
+
             counts = Counter(r["status_word"] for r in rows)
             for status, cnt in sorted(counts.items()):
                 f.write(f"- **{status}**: {cnt}\n")

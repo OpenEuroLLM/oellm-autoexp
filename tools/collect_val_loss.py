@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract the final validation loss from the latest .log file in each run
+"""Collect the final validation loss from the latest .log file in each run
 subdirectory and write results to a CSV.
 
 Usage:
@@ -49,12 +49,14 @@ def main():
         "-o",
         type=Path,
         default=None,
-        help="Output CSV file (default: <runs_dir>/val_loss_summary.csv)",
+        help="Output CSV file (default: /leonardo_work/OELLM_prod2026/users/donutu00/oellm-autoexp/valid_loss/<runs_dir_name>.csv)",
     )
     args = parser.parse_args()
 
     if args.output is None:
-        args.output = args.runs_dir / "val_loss_summary.csv"
+        output_dir = Path("/leonardo_work/OELLM_prod2026/users/donutu00/oellm-autoexp/valid_loss")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        args.output = output_dir / f"{args.runs_dir.name}.csv"
 
     if not args.runs_dir.is_dir():
         print(f"Error: {args.runs_dir} is not a directory", file=sys.stderr)
