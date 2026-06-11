@@ -60,7 +60,7 @@ lr_decay_style: WSD
 lr_wsd_decay_style: linear
 lr_warmup_iters: 2000
 lr_wsd_decay_iters: 2000
-train_iters: 794922 # 10T tokens / (seq_len 4096 * gbs 3072) = 794,922
+train_iters: 1192383 # 10T tokens / (seq_len 4096 * gbs 2048) ≈ 1,192,383
 lr: 0.00035
 
 
@@ -95,9 +95,10 @@ profile_step_start: 5
 profile_step_end: 12
 
 # EVALS
-# tok/s = 2900 tok/s/GPU * 1024 GPUs = 2,969,600; tok/iter = 3072 * 4096 = 12,582,912
-# iters/job (24h) = 2,969,600 * 86400 / 12,582,912 ≈ 20,390; interval = 20,390 / 6 ≈ 3400
-eval_interval: 3400
+# tok/s = 2800 tok/s/GPU * 1024 GPUs = 2,867,200; tok/iter = 2048 * 4096 = 8,388,608
+# iters/job (24h) = 2,867,200 * 86400 / 8,388,608 = 29,531.25 ≈ 29,531; interval = 29,531 / 6 = 4,921.833  ≈ 4922 
+
+eval_interval: 4922
 eval_iters: 100
 
 # LOGGING
@@ -113,8 +114,8 @@ tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
 # CHECKPOINT FORMAT
 ckpt_format: "torch_dist"
-# tok/s = 2900 tok/s/GPU * 1024 GPUs = 2,969,600; tok/iter = 3072 * 4096 = 12,582,912
-# iters/job (24h) = 2,969,600 * 86400 / 12,582,912 ≈ 20,390; interval = 20,390 / 6 ≈ 3400
-save_interval: 3400
+# tok/s = 2800 tok/s/GPU * 1024 GPUs = 2,867,200; tok/iter = 2048 * 4096 = 8,388,608
+# iters/job (24h) = 2,867,200 * 86400 / 8,388,608 = 29,531.25 ≈ 29,531; interval = 29,531 / 6 = 4,921.833  ≈ 4922 
+save_interval: 4922 
 save: ${job.base_output_dir}/checkpoints
 load: ${.save}
