@@ -13,8 +13,7 @@ from oellm_autoexp.slurm_gen.template_renderer import render_template_file
 def build_sbatch_directives(config: SlurmConfig) -> list[str]:
     directives: list[str] = []
     sbatch_values = asdict(config.sbatch)
-    if "_non_strict" in sbatch_values:
-        del sbatch_values["_non_strict"]
+    sbatch_values.pop("_non_strict", None)
     jobname_present = False
     for key, value in sbatch_values.items():
         if key == "job_name" and value is not None:
