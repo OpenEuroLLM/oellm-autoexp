@@ -303,7 +303,10 @@ def main(argv: list[str] | None = None) -> None:
         overrides=args.overrides,
     )
 
-    if args.chain:
+    use_chain = args.chain or any(
+        getattr(job.config.job, "chain_repeat", 1) > 1 for job in plan.jobs
+    )
+    if use_chain:
         if args.local:
             print("--chain is not supported with --local mode", file=sys.stderr)
             return

@@ -204,7 +204,7 @@ def _build_job_record(
     if not isinstance(job.config, RootConfig):
         raise ValueError("JobPlan.config must be RootConfig")
 
-    job_name = _resolve_job_name(job.config)
+    job_name = _resolve_job_name(job.config, len(plan.jobs))
 
     job_hash = _stable_hash_hex(json.dumps(asdict(job.config)))[:6]
     job_id = f"{job_name}_{job_hash}"
@@ -323,8 +323,10 @@ def _build_container_exec_prefix(container: ContainerConfig) -> str:
     return " \\\n    ".join(parts)
 
 
-def _resolve_job_name(config: RootConfig) -> str:
+def _resolve_job_name(config: RootConfig, total_jobs: int = 1) -> str:
     base_name = str(config.job.name or "job")
+    if total_jobs <= 1:
+        return base_name
     index = getattr(config, "index", None)
     if index is None:
         return base_name
