@@ -25,6 +25,7 @@ job:
 backend:
   megatron:
     wandb_project: test_baby_9b_dense
+    wandb_exp_name: "${job.name}_${oc.env:SLURM_JOB_ID,local}"
     data_cache_path: /leonardo_work/OELLM_prod2026/production_training/baby_9b_dense/cache
 
     train_iters: 10
@@ -43,4 +44,4 @@ slurm:
   sbatch:
     nodes: 1
     time: "00:30:00"
-    qos: boost_qos_dbg # boost_qos_dbg for debugging, qos_oellm for production. 
+    qos: boost_qos_dbg # boost_qos_dbg for debugging, qos_oellm for production.
