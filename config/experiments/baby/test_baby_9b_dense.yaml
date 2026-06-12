@@ -20,6 +20,7 @@ job:
   log_path_current: ${.base_output_dir}/logs/current.log
   config_path: ${.base_output_dir}/logs/config-%j.yaml
   config_path_current: ${.base_output_dir}/logs/current.yaml
+  # chain_repeat: 2 # for >2 you need different qos than boost_qos_dbg
 
 backend:
   megatron:
@@ -33,6 +34,8 @@ backend:
     micro_batch_size: 1
     global_batch_size: 32
 
+    save: null
+    load: null
 
 slurm:
   env:
@@ -40,4 +43,4 @@ slurm:
   sbatch:
     nodes: 1
     time: "00:30:00"
-    qos: boost_qos_dbg # for debugging, qos_oellm for production
+    qos: boost_qos_dbg # boost_qos_dbg for debugging, qos_oellm for production. 
