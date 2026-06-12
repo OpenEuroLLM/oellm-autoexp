@@ -60,8 +60,7 @@ lr_decay_style: WSD
 lr_wsd_decay_style: linear
 lr_warmup_iters: 4000
 train_iters: 1192383 # 10T tokens / (seq_len 4096 * gbs 2048) = 1,192,383
-cooldown_decay_fraction: 0.2
-lr_wsd_decay_iters: "${oc.eval:'int(${backend.megatron.train_iters} * ${backend.megatron.cooldown_decay_fraction})'}"
+lr_wsd_decay_iters: 238476  # = train_iters (1192383) * cooldown_decay_fraction (0.2)
 lr: 0.00035
 
 
