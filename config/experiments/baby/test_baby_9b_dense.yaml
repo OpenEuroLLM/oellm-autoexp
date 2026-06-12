@@ -24,7 +24,7 @@ job:
 backend:
   megatron:
     wandb_project: test_baby_9b_dense
-    data_cache_path: /leonardo_work/OELLM_prod2026/production-training/baby_9b_dense/cache
+    data_cache_path: /leonardo_work/OELLM_prod2026/production_training/baby_9b_dense/cache
 
     train_iters: 10
     lr_warmup_iters: 1
