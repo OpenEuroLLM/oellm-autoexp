@@ -25,8 +25,9 @@ job:
 backend:
   megatron:
     wandb_project: test_baby_9b_dense
-    wandb_exp_name: "${job.name}_${oc.env:SLURM_JOB_ID,local}"
+    wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
     data_cache_path: /leonardo_work/OELLM_prod2026/production_training/baby_9b_dense/cache
+    # data_cache_path: tmp/
 
     train_iters: 10
     lr_warmup_iters: 1
@@ -35,6 +36,8 @@ backend:
     micro_batch_size: 1
     global_batch_size: 32
 
+    eval_iters: 1
+    eval_interval: 11
     save: null
     load: null
 

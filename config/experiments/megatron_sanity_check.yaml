@@ -34,7 +34,7 @@ backend:
     ckpt_format: torch_dist
 
     wandb_project: megatron-sanity-check
-    wandb_exp_name: ${job.name}_${oc.env:SLURM_JOB_ID,local}
+    wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
     wandb_save_dir: ${job.base_output_dir}/wandb
 
 slurm:
