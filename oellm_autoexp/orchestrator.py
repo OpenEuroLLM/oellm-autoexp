@@ -369,7 +369,7 @@ def chain_submit_jobs(
 ) -> SubmissionResult:
     """Submit all jobs to Slurm immediately as a dependency chain.
 
-    Each job in the plan is submitted with --dependency=afterok:<prev_id> so
+    Each job in the plan is submitted with --dependency=afterany:<prev_id> so
     all jobs appear in the Slurm queue from the start and benefit from
     scheduling priority. With repeat > 1, every job in the plan is submitted
     repeat times, each run depending on the previous.
@@ -409,7 +409,7 @@ def chain_submit_jobs(
 
         slurm_cfg = record.definition.slurm
         if prev_slurm_id is not None:
-            slurm_cfg = replace(slurm_cfg, dependency=f"afterok:{prev_slurm_id}")
+            slurm_cfg = replace(slurm_cfg, dependency=f"afterany:{prev_slurm_id}")
             record = replace(record, definition=replace(record.definition, slurm=slurm_cfg))
 
         if dry_run:
