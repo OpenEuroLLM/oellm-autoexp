@@ -358,12 +358,114 @@ def render_job_scripts(plan: ExecutionPlan, *, session_id: str = "dry-run") -> l
     return script_paths
 
 
+def chain_submit_jobs(
+    plan: ExecutionPlan,
+    *,
+    slurm_client: SlurmClient | None = None,
+    session_id: str | None = None,
+    no_error_catching: bool = False,
+    dry_run: bool = False,
+    repeat: int = 1,
+) -> SubmissionResult:
+    """Submit all jobs to Slurm immediately as a dependency chain.
+
+    Each job in the plan is submitted with --dependency=afterok:<prev_id> so
+    all jobs appear in the Slurm queue from the start and benefit from
+    scheduling priority. With repeat > 1, every job in the plan is submitted
+    repeat times, each run depending on the previous.
+
+    The monitor loop still runs after this call to watch logs and handle
+    restarts, but will not re-submit jobs since they are already marked
+    submitted=True.
+    """
+    store, session_id = _ensure_state_store(plan, session_id=session_id)
+    client = slurm_client or SlurmClient(SlurmClientConfig())
+    local_client = LocalCommandClient(LocalCommandClientConfig())
+    loop = MonitorLoop(
+        store, slurm_client=client, local_client=local_client, no_error_catching=no_error_catching
+    )
+
+    submitted_job_ids: list[str] = []
+    prev_slurm_id: str | None = None
+
+    jobs_to_submit: list[tuple[JobPlan, str | None]] = []
+    for job in plan.jobs:
+        # CLI --repeat > 1 overrides config; otherwise use job.chain_repeat
+        effective_repeat = repeat if repeat > 1 else getattr(job.config.job, "chain_repeat", 1)
+        for i in range(effective_repeat):
+            suffix = f"_r{i + 1}" if effective_repeat > 1 else ""
+            jobs_to_submit.append((job, suffix))
+
+    for job, repeat_suffix in jobs_to_submit:
+        record = _build_job_record(plan, job, session_id)
+        if repeat_suffix:
+            record = replace(record, job_id=record.job_id + repeat_suffix)
+
+        if not isinstance(record.definition, SlurmJobConfig):
+            LOGGER.warning("chain_submit_jobs: skipping non-Slurm job '%s'", record.job_id)
+            store.upsert(record)
+            submitted_job_ids.append(record.job_id)
+            continue
+
+        slurm_cfg = record.definition.slurm
+        if prev_slurm_id is not None:
+            slurm_cfg = replace(slurm_cfg, dependency=f"afterok:{prev_slurm_id}")
+            record = replace(record, definition=replace(record.definition, slurm=slurm_cfg))
+
+        if dry_run:
+            path = generate_script(slurm_cfg)
+            LOGGER.info(
+                "DRY RUN - script: %s  dependency: %s",
+                path,
+                slurm_cfg.dependency or "none",
+            )
+            store.upsert(record)
+            submitted_job_ids.append(record.job_id)
+            prev_slurm_id = f"DRY-{record.job_id}"
+            continue
+
+        try:
+            slurm_job_id = client.submit(record.definition)
+        except Exception as exc:
+            LOGGER.error("chain_submit_jobs: failed to submit '%s': %s", record.job_id, exc)
+            store.mark_finished(record.job_id, "cancelled")
+            break
+
+        record = replace(
+            record,
+            runtime=replace(
+                record.runtime,
+                submitted=True,
+                runtime_job_id=slurm_job_id,
+                attempts=1,
+                start_ts=time.time(),
+            ),
+        )
+        store.upsert(record)
+        submitted_job_ids.append(record.job_id)
+        prev_slurm_id = slurm_job_id
+        LOGGER.info(
+            "chain_submit_jobs: submitted '%s' as Slurm job %s (dependency: %s)",
+            record.job_id,
+            slurm_job_id,
+            slurm_cfg.dependency or "none",
+        )
+
+    return SubmissionResult(
+        loop=loop,
+        state_store=store,
+        session_id=session_id,
+        submitted_job_ids=submitted_job_ids,
+    )
+
+
 __all__ = [
     "ExecutionPlan",
     "SubmissionResult",
     "build_execution_plan",
     "render_job_scripts",
     "submit_jobs",
+    "chain_submit_jobs",
     "load_monitor_controller",
     "run_loop",
     "run_loop_sync",
