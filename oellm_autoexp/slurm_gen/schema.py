@@ -72,6 +72,7 @@ class SlurmConfig(ConfigInterface):
     srun: SrunConfig = field(default_factory=SrunConfig)
     sbatch: SbatchConfig = field(default_factory=SbatchConfig)
     sbatch_extra_directives: list[str] = field(default_factory=list)
+    dependency: str | None = None
     test_only: bool = False
 
     def __post_init__(self):
