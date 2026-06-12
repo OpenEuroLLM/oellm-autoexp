@@ -1567,12 +1567,21 @@ def main() -> None:
             # MN5 that also exists on Leonardo as a different job returns wrong
             # timestamps and GPU counts.  Two heuristics:
             #   1. sacct reports 0 GPUs but sbatch declares GPUs → CPU-only collision
-            #   2. sacct reports GPUs but fewer than half of what sbatch declares →
-            #      a different user's small job collided (e.g. 1 GPU vs expected 32)
+            #   2. sacct reports GPUs but fewer than 1/8 of what sbatch declares →
+            #      a different user's small job collided (e.g. 1 GPU vs expected 32).
+            #      Threshold is // 8 (not // 2) to avoid false-positives when the same
+            #      run was historically submitted with fewer nodes on this cluster.
             _sacct_gpus = sacct_entry.get("gpus", 0)
-            _is_collision = bool(sacct_elapsed) and "CANCEL" not in sacct_state and (
-                (sacct_entry and _sacct_gpus == 0 and total_gpus > 0)
-                or (sacct_entry and total_gpus > 0 and 0 < _sacct_gpus < total_gpus // 2)
+            # Exclude PENDING jobs: sacct reports 0 GPUs for queued-but-unstarted
+            # jobs, which would falsely trigger the 0-GPU collision heuristic.
+            _is_collision = (
+                bool(sacct_elapsed)
+                and "CANCEL" not in sacct_state
+                and sacct_state != "PENDING"
+                and (
+                    (sacct_entry and _sacct_gpus == 0 and total_gpus > 0)
+                    or (sacct_entry and total_gpus > 0 and 0 < _sacct_gpus < max(total_gpus // 8, 1))
+                )
             )
             cluster = ""
             if _is_collision:
