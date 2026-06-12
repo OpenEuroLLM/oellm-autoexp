@@ -20,7 +20,7 @@ job:
   log_path_current: ${.base_output_dir}/logs/current.log
   config_path: ${.base_output_dir}/logs/config-%j.yaml
   config_path_current: ${.base_output_dir}/logs/current.yaml
-  # chain_repeat: 3 # for >2 you need different qos than boost_qos_dbg
+  chain_repeat: 3 # for > 2 you need different qos than boost_qos_dbg
 
 backend:
   megatron:
