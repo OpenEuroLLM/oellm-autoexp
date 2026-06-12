@@ -14,7 +14,7 @@ swiglu: true
 overlap_grad_reduce: true # backward
 overlap_param_gather: true # forward
 tp_comm_overlap: true # Overlap tensor parallel communication with computation (reduces idle time between GPUs)
-data_parallel_sharding_strategy: "optim_grads_params" # Do we need this if FSDP is disabled?
+# data_parallel_sharding_strategy: "optim_grads_params" # Do we need this if FSDP is disabled?
 apply_rope_fusion: true
 gradient_accumulation_fusion: true
 bias_dropout_fusion: true
@@ -99,7 +99,7 @@ profile_step_end: 12
 # iters/job (24h) = 2,867,200 * 86400 / 8,388,608 = 29,531.25 ≈ 29,531; interval = 29,531 / 12 = 2,460.916  ≈ 2461 
 
 eval_interval: 2461
-eval_iters: -1
+eval_iters: 100
 
 # LOGGING
 log_interval: 1
