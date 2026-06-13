@@ -371,10 +371,11 @@ def chain_submit_jobs(
 ) -> SubmissionResult:
     """Submit all jobs to Slurm immediately as a dependency chain.
 
-    Each job in the plan is submitted with --dependency=afterany:<prev_id> so
-    all jobs appear in the Slurm queue from the start and benefit from
-    scheduling priority. With repeat > 1, every job in the plan is submitted
-    repeat times, each run depending on the previous.
+    Each job in the plan is submitted with
+    --dependency=afterany:<prev_id> so all jobs appear in the Slurm
+    queue from the start and benefit from scheduling priority. With
+    repeat > 1, every job in the plan is submitted repeat times, each
+    run depending on the previous.
 
     The monitor loop still runs after this call to watch logs and handle
     restarts, but will not re-submit jobs since they are already marked

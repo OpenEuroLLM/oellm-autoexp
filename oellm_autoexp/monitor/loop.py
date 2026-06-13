@@ -439,7 +439,8 @@ class MonitorLoop:
         had_activity: bool,
         now: float,
     ) -> str:
-        """Accumulate an inactivity streak and fire its action once it qualifies.
+        """Accumulate an inactivity streak and fire its action once it
+        qualifies.
 
         The streak is stored as a persistent EventRecord (keyed by the stable
         event_key) in ``runtime.events``: ``count`` counts consecutive inactive

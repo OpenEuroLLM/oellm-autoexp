@@ -38,7 +38,9 @@ class ActionResult:
     message: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     status: str = "success"  # For tracking action execution status
-    action_config: BaseMonitorAction.cfgtype | None = None  # Reference to the action's config for typed access
+    action_config: BaseMonitorAction.cfgtype | None = (
+        None  # Reference to the action's config for typed access
+    )
 
 
 @dataclass(kw_only=True)
@@ -69,7 +71,9 @@ class EventRecord:
             self.history.append({"ts": self.last_seen_ts, "note": note})  # pragma: no cover
 
 
-def event_key(job_id: str, event_name: str, metadata: dict[str, Any] | None = None) -> tuple[str, str]:
+def event_key(
+    job_id: str, event_name: str, metadata: dict[str, Any] | None = None
+) -> tuple[str, str]:
     h = hashlib.md5()
     h.update(json.dumps(metadata).encode("utf8"))
     h = str(h.digest())[:16]
