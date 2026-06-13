@@ -206,8 +206,6 @@ class SlurmClient(BaseSlurmClient):
 
     def submit(self, slurm_config: SlurmConfig) -> str:
         submit_cmd = shlex.split(self.config.submit_cmd)
-        if slurm_config.dependency:
-            submit_cmd = [*submit_cmd, f"--dependency={slurm_config.dependency}"]
         proc = run_command([*submit_cmd, str(slurm_config.script_path)])
         if proc.returncode != 0:
             raise RuntimeError(

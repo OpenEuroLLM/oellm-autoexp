@@ -412,7 +412,7 @@ def chain_submit_jobs(
 
         slurm_cfg = record.definition.slurm
         if prev_slurm_id is not None:
-            slurm_cfg = replace(slurm_cfg, dependency=f"afterany:{prev_slurm_id}")
+            slurm_cfg.sbatch = replace(slurm_cfg.sbatch, dependency=f"afterany:{prev_slurm_id}")
             record = replace(record, definition=replace(record.definition, slurm=slurm_cfg))
 
         if dry_run:
@@ -420,7 +420,7 @@ def chain_submit_jobs(
             LOGGER.info(
                 "DRY RUN - script: %s  dependency: %s",
                 path,
-                slurm_cfg.dependency or "none",
+                slurm_cfg.sbatch.dependency or "none",
             )
             store.upsert(record)
             submitted_job_ids.append(record.job_id)
@@ -451,7 +451,7 @@ def chain_submit_jobs(
             "chain_submit_jobs: submitted '%s' as Slurm job %s (dependency: %s)",
             record.job_id,
             slurm_job_id,
-            slurm_cfg.dependency or "none",
+            slurm_cfg.sbatch.dependency or "none",
         )
 
     return SubmissionResult(
