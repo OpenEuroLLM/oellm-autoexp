@@ -22,7 +22,6 @@ from oellm_autoexp.monitor.actions import (
     LogEvent,
     LogEventConfig,
     RestartActionConfig,
-    event_key,
 )
 from oellm_autoexp.monitor.loop import (
     JobFileStore,
@@ -88,8 +87,13 @@ def test_event_record_roundtrips_through_asdict():
     """The streak is persisted as asdict(EventRecord) and rebuilt with
     EventRecord(**stored); count/timestamps must survive that round-trip."""
     rec = EventRecord(
-        event_id="e", name="inactive", source="log", count=1,
-        first_seen_ts=100.0, last_seen_ts=100.0, payload={"inactive": True},
+        event_id="e",
+        name="inactive",
+        source="log",
+        count=1,
+        first_seen_ts=100.0,
+        last_seen_ts=100.0,
+        payload={"inactive": True},
     )
     stored = asdict(rec)
     rebuilt = EventRecord(**stored)
@@ -152,9 +156,7 @@ def _make_job(
             )
         ],
     )
-    record = JobRecord(
-        job_id="job", definition=definition, runtime=JobRuntime()
-    )
+    record = JobRecord(job_id="job", definition=definition, runtime=JobRuntime())
     return record, log_path
 
 
@@ -172,13 +174,11 @@ def _streak_count(job: JobRecord) -> int:
 
 
 def test_restart_after_n_consecutive_inactive_polls(tmp_path, client):
-    """polls=3: streak accumulates one per poll and restarts on the 3rd."""
+    """Polls=3: streak accumulates one per poll and restarts on the 3rd."""
     store = JobFileStore(tmp_path / "state")
     record, _ = _make_job(tmp_path, inactivity_polls=3)
     store.upsert(record)
-    monitor = MonitorLoop(
-        store, local_client=client, show_poll_state=False, no_error_catching=True
-    )
+    monitor = MonitorLoop(store, local_client=client, show_poll_state=False, no_error_catching=True)
 
     # Poll 1: starts the sleep job (no log processing on the submit poll).
     monitor.observe_once()
@@ -211,9 +211,7 @@ def test_activity_resets_the_inactivity_streak(tmp_path, client):
     store = JobFileStore(tmp_path / "state")
     record, log_path = _make_job(tmp_path, inactivity_polls=3)
     store.upsert(record)
-    monitor = MonitorLoop(
-        store, local_client=client, show_poll_state=False, no_error_catching=True
-    )
+    monitor = MonitorLoop(store, local_client=client, show_poll_state=False, no_error_catching=True)
 
     monitor.observe_once()  # poll 1: submit
     monitor.observe_once()  # poll 2: count 1
@@ -237,7 +235,7 @@ def test_activity_resets_the_inactivity_streak(tmp_path, client):
 
 
 def test_restart_after_inactivity_timeout(tmp_path, client, monkeypatch):
-    """timeout=300s with a 1-poll floor fires once real elapsed time crosses
+    """Timeout=300s with a 1-poll floor fires once real elapsed time crosses
     the threshold, regardless of how many polls that took."""
     clock = FakeClock(1000.0)
     monkeypatch.setattr(loop_mod, "time", clock)
@@ -245,9 +243,7 @@ def test_restart_after_inactivity_timeout(tmp_path, client, monkeypatch):
     store = JobFileStore(tmp_path / "state")
     record, _ = _make_job(tmp_path, inactivity_polls=1, inactivity_timeout_s=300.0)
     store.upsert(record)
-    monitor = MonitorLoop(
-        store, local_client=client, show_poll_state=False, no_error_catching=True
-    )
+    monitor = MonitorLoop(store, local_client=client, show_poll_state=False, no_error_catching=True)
 
     monitor.observe_once()  # poll 1: submit (anchors nothing yet)
     monitor.observe_once()  # poll 2: streak starts, elapsed 0
@@ -263,7 +259,7 @@ def test_restart_after_inactivity_timeout(tmp_path, client, monkeypatch):
 
 
 def test_and_semantics_time_floor_gates_poll_count(tmp_path, client, monkeypatch):
-    """polls=5 AND timeout=300s: hitting 5 polls is not enough while the real
+    """Polls=5 AND timeout=300s: hitting 5 polls is not enough while the real
     elapsed time is still under 300s."""
     clock = FakeClock(1000.0)
     monkeypatch.setattr(loop_mod, "time", clock)
@@ -271,9 +267,7 @@ def test_and_semantics_time_floor_gates_poll_count(tmp_path, client, monkeypatch
     store = JobFileStore(tmp_path / "state")
     record, _ = _make_job(tmp_path, inactivity_polls=5, inactivity_timeout_s=300.0)
     store.upsert(record)
-    monitor = MonitorLoop(
-        store, local_client=client, show_poll_state=False, no_error_catching=True
-    )
+    monitor = MonitorLoop(store, local_client=client, show_poll_state=False, no_error_catching=True)
 
     monitor.observe_once()  # poll 1: submit
     # Six inactive polls, advancing 60s each -> count reaches 5 at the 6th,
