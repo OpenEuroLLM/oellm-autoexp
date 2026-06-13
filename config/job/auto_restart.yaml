@@ -28,6 +28,12 @@ log_events:
       reason: ""
   - name: inactive
     pattern_type: inactivity
+    # Restart only after the log has been silent for >=5 consecutive polls AND
+    # >=300s of real elapsed time (both must hold). At the default 60s poll
+    # interval these coincide (~5 min); the time floor keeps it correct if the
+    # poll interval changes or a poll is skipped.
+    inactivity_polls: 5
+    inactivity_timeout_s: 300
     action:
       class_name: RestartAction
       reason: "Inactive Log"
@@ -37,9 +43,9 @@ state_events:
     transition: ["RUNNING", "FAILED"]
     action:
       class_name: RestartAction
-      reason: "Inactive Log"
+      reason: "Job failed"
   - name: "cancelled"
     transition: ["RUNNING", "CANCELLED"]
     action:
       class_name: RestartAction
-      reason: "Inactive Log"
+      reason: "Job cancelled"
