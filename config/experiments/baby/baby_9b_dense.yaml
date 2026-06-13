@@ -6,7 +6,7 @@ defaults:
   - /backend: megatron_torchrun
   - /container: leonardo
   - /slurm: leonardo
-  - /job: auto_restart
+  - /job: auto_cancel
   - /sweep: none
   - /backend/megatron: base
   - /backend/megatron/baby/models: qwen3_dense_9b

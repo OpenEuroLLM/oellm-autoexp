@@ -1,0 +1,52 @@
+defaults:
+ - default
+
+log_events:
+  - name: finished_training
+    pattern: "[after training is done]"
+    pattern_type: substring
+    action:
+      class_name: FinishAction
+      reason: "Training finished"
+  - name: finish
+    pattern: ".*validation loss.*on test set.*"
+    pattern_type: regex
+    action:
+      class_name: FinishAction
+      reason: "Test Evaluation Finished"
+  - name: error
+    pattern: "Exited with exit code 1"
+    pattern_type: substring
+    action:
+      class_name: RestartAction
+      reason: ""
+  # TIME LIMIT IS ALREADY HANDLED IN DEPENDENCY CHAIN
+  # - name: time_limit
+  #   pattern: "DUE TO TIME LIMIT"
+  #   pattern_type: substring
+  #   action:
+  #     class_name: RestartAction
+  #     reason: ""
+  - name: inactive
+    pattern_type: inactivity
+    # Restart only after the log has been silent for >=5 consecutive polls AND
+    # >=300s of real elapsed time (both must hold). At the default 60s poll
+    # interval these coincide (~5 min); the time floor keeps it correct if the
+    # poll interval changes or a poll is skipped.
+    inactivity_polls: 5
+    inactivity_timeout_s: 300
+    action:
+      class_name: CancelAction
+      reason: "Inactive Log"
+
+state_events:
+  - name: "failed"
+    transition: ["RUNNING", "FAILED"]
+    action:
+      class_name: FinishAction
+      reason: "Job failed"
+  - name: "cancelled"
+    transition: ["RUNNING", "CANCELLED"]
+    action:
+      class_name: FinishAction
+      reason: "Job cancelled"
