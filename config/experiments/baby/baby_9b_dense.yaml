@@ -6,7 +6,7 @@ defaults:
   - /backend: megatron_torchrun
   - /container: leonardo
   - /slurm: leonardo
-  - /job: default
+  - /job: auto_restart
   - /sweep: none
   - /backend/megatron: base
   - /backend/megatron/baby/models: qwen3_dense_9b
@@ -31,6 +31,7 @@ backend:
 slurm:
   env:
     HF_HOME: /leonardo_work/OELLM_prod2026/hf_cache/${oc.env:USER}
+    NCCL_DEBUG: info
   sbatch:
     nodes: 256
     time: "24:00:00"
