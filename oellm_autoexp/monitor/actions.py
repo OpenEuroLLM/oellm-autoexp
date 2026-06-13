@@ -38,9 +38,7 @@ class ActionResult:
     message: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     status: str = "success"  # For tracking action execution status
-    action_config: BaseMonitorAction.cfgtype | None = (
-        None  # Reference to the action's config for typed access
-    )
+    action_config: BaseMonitorAction.cfgtype | None = None  # Reference to the action's config for typed access
 
 
 @dataclass(kw_only=True)
@@ -71,9 +69,7 @@ class EventRecord:
             self.history.append({"ts": self.last_seen_ts, "note": note})  # pragma: no cover
 
 
-def event_key(
-    job_id: str, event_name: str, metadata: dict[str, Any] | None = None
-) -> tuple[str, str]:
+def event_key(job_id: str, event_name: str, metadata: dict[str, Any] | None = None) -> tuple[str, str]:
     h = hashlib.md5()
     h.update(json.dumps(metadata).encode("utf8"))
     h = str(h.digest())[:16]
@@ -244,6 +240,12 @@ class LogEventConfig(EventConfig):
     pattern_type: Literal["substring", "regex", "inactivity"] = "substring"
     extract_groups: dict[str, int | str] = field(default_factory=dict)
     match_once: bool = True
+    # For pattern_type == "inactivity": minimum number of consecutive polls
+    # without new log output, AND minimum real elapsed seconds across that
+    # streak, before the action fires. Both must hold (AND). Leaving a field at
+    # its default disables that half of the check.
+    inactivity_polls: int = 1
+    inactivity_timeout_s: float = 0.0
 
 
 @dataclass
@@ -266,20 +268,40 @@ class LogEvent:
 
     def check_triggers(self, log_text: str) -> list[dict[str, Any]]:
         """Check if event triggers in the given log text, return metadata for
-        each match."""
-        triggers = []
+        each match.
+
+        Inactivity events are time/poll based rather than text based and are
+        handled separately by the monitor loop (see ``inactivity_qualifies``);
+        this method only matches substring/regex patterns.
+        """
         if self.config.pattern_type == "inactivity":
-            if log_text == "":
-                metadata = dict(self.config.metadata)
-                metadata["inactive"]
-                triggers.append()
-        else:
-            for match in self._iter_matches(log_text):
-                metadata = self._build_metadata(match, log_text)
-                triggers.append(metadata)
+            return []
+        triggers = []
+        for match in self._iter_matches(log_text):
+            metadata = self._build_metadata(match, log_text)
+            triggers.append(metadata)
         if self.config.match_once:
             triggers = triggers[:1]
         return triggers
+
+    def inactivity_metadata(self) -> dict[str, Any]:
+        """Stable metadata identifying this inactivity streak."""
+        metadata = dict(self.config.metadata)
+        metadata["inactive"] = True
+        return metadata
+
+    def inactivity_qualifies(self, *, count: int, elapsed_s: float) -> bool:
+        """Return True when an inactivity streak has lasted long enough to act.
+
+        ``count`` consecutive inactive polls AND ``elapsed_s`` real seconds must
+        both meet their configured thresholds (each half disabled when its
+        threshold is left at the default).
+        """
+        if count < self.config.inactivity_polls:
+            return False
+        if self.config.inactivity_timeout_s > 0 and elapsed_s < self.config.inactivity_timeout_s:
+            return False
+        return True
 
     def _iter_matches(self, text: str) -> list:
         """Find all pattern matches in text."""

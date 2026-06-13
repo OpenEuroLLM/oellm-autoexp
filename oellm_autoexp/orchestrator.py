@@ -17,7 +17,7 @@ from oellm_autoexp.hydra_staged_sweep import expand_sweep, resolve_sweep_with_da
 from oellm_autoexp.hydra_staged_sweep.expander import SweepPoint
 from oellm_autoexp.hydra_staged_sweep.planner import JobPlan
 
-from oellm_autoexp.monitor.loop import MonitorLoop, JobFileStore, JobRecordConfig, JobRuntimeConfig
+from oellm_autoexp.monitor.loop import MonitorLoop, JobFileStore, JobRecord, JobRuntime
 from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
 from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
 from oellm_autoexp.monitor.submission import SlurmJobConfig, LocalJobConfig
@@ -200,7 +200,7 @@ def _ensure_state_store(
 
 def _build_job_record(
     plan: ExecutionPlan, job: JobPlan, session_id: str, *, local_mode: bool = False
-) -> JobRecordConfig:
+) -> JobRecord:
     if not isinstance(job.config, RootConfig):
         raise ValueError("JobPlan.config must be RootConfig")
 
@@ -276,10 +276,10 @@ def _build_job_record(
             },
             base_config=job,
         )
-        return JobRecordConfig(
+        return JobRecord(
             job_id=job_id,
             definition=definition,
-            runtime=JobRuntimeConfig(submitted=False),
+            runtime=JobRuntime(submitted=False),
         )
 
     definition = SlurmJobConfig(
@@ -303,10 +303,10 @@ def _build_job_record(
         slurm=slurm_config,
         base_config=job,
     )
-    return JobRecordConfig(
+    return JobRecord(
         job_id=job_id,
         definition=definition,
-        runtime=JobRuntimeConfig(submitted=False),
+        runtime=JobRuntime(submitted=False),
     )
 
 
