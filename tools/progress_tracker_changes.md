@@ -25,6 +25,37 @@ Companion tools called internally:
 
 ## Bug fixes (2026-06-15)
 
+### Bug 7 — TTFI-GPU-h missing when `job.sbatch` encodes GPU count as env var
+
+**Root cause**
+
+`parse_sbatch()` looks for `#SBATCH --gpus-per-node` and `#SBATCH --gres=gpu:N`
+directives.  Some single-run configs (e.g. `baby_9b_dense`) store the canonical
+sbatch file under `<run_dir>/script/job.sbatch`, while the root-level
+`<run_dir>/job.sbatch` (used by the job-chain mechanism) encodes the GPU count
+as an `export GPUS_PER_NODE=4` environment variable rather than an `#SBATCH`
+directive.  The regex therefore finds `nodes` but returns `gpus_per_node = None`,
+making `total_gpus = 0` and causing `ttfi_gpu_h` to remain `None`.
+
+**Fix** (`progress_tracker.py`, `main` sbatch lookup):
+
+After parsing the primary `job.sbatch`, retry with `script/job.sbatch` whenever
+`gpus_per_node` is still `None`.  Fields already resolved from the primary file
+(`nodes`, `--ckpt-step`) are kept and not overwritten:
+
+```python
+sbatch_nodes, sbatch_gpus_per_node, sbatch_ckpt_step = parse_sbatch(run_dir / "job.sbatch")
+if sbatch_gpus_per_node is None:
+    _n2, _g2, _c2 = parse_sbatch(run_dir / "script" / "job.sbatch")
+    sbatch_nodes = sbatch_nodes or _n2
+    sbatch_gpus_per_node = _g2
+    sbatch_ckpt_step = sbatch_ckpt_step or _c2
+```
+
+---
+
+## Bug fixes (2026-06-15)
+
 ### Bug 5 — Fill-forward propagating stale metrics into config-only CANCELLED rows
 
 **Root cause**
