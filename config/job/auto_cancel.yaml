@@ -50,6 +50,11 @@ state_events:
     action:
       class_name: FinishAction
       reason: "Job timed out"
+  - name: "timeout"
+    transition: ["COMPLETING", "TIMEOUT"]
+    action:
+      class_name: FinishAction
+      reason: "Job timed out"
   - name: "cancelled"
     transition: ["RUNNING", "CANCELLED"]
     action:
