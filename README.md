@@ -4,7 +4,7 @@ Single CLI surface for planning sweeps, launching jobs (directly or by way of co
 
 ## Your own experiments
 
-For you own experiments, first create your own branch `exp_YOURNAME`. Add a folder `config/experiments/YOURNAME`. Then, within that folder you can add your own experiment composition files (see the existing ones), with `# @package _global_` as header to ensure it's located at the top-level of the config. You can then run your experiment with:
+For you own experiments, first create your own branch `exp_YOURNAME`. Add a folder `config/experiments/YOURNAME`. Within that folder you can add your own experiment composition files (see the existing ones), with `# @package _global_` as header to ensure it's located at the top-level of the config. You can then run your experiment with:
 ```bash
 PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/YOURNAME/myexperiment
 ```
@@ -35,6 +35,10 @@ The environment variables used in the `config/` here are:
 - $SLURM_PARTITION      : default slurm partition ($SLURM_PARITION_DEBUG can point to a debug partition)
 - $CONTAINER_CACHE_DIR  : directory containing container images
 
+
+## Bring you own container
+
+If you have your own container, just use the cli override: `container.image=PATH_TO_YOUR_CONTAINER` or define it in your experiment yaml.
 
 ## Cluster setup: LUMI notes
 - Install prerequisites outside the container (rccl-tuner, cray-python, etc.) following the LUMI docs. (SEE: https://github.com/sfantao/rccl-tuner.git)
@@ -84,13 +88,13 @@ python container/build_container_user.py \
 
 
 ## Supercomputer setup: JUWELS Booster / JUPITER
-Tested, please use the `container/build_container.sh` script with the latest/matching Megatron definition file. 
+Tested, please use the `container/build_container.sh` script with the latest/matching Megatron definition file.
 
 ## Quick Recipes
 
 ### Single job / Sweep debugging
 ```bash
-# Plan + submit + monitor in one go (manifest written to outputs/manifests/, use `--help` for options, e.g. no submission)
+# Plan + submit + monitor in one go (manifest written to outputs/manifests/, use `--help` for options, for example no submission)
 python scripts/run_autoexp.py --config-name experiments/default
 
 ```
@@ -249,14 +253,14 @@ Before running, visualize the execution plan:
 
 ```bash
 # Visualize the multi-stage DAG structure
-python scripts/visualize_plan.py --config-ref experiments/my_experiment
+python scripts/visualize_plan.py --config-name experiments/my_experiment
 
 # Limit jobs shown per stage
-python scripts/visualize_plan.py --config-ref experiments/my_experiment \
+python scripts/visualize_plan.py --config-name experiments/my_experiment \
     --max-jobs-per-stage 5
 
 # With Hydra overrides
-python scripts/visualize_plan.py --config-ref experiments/my_experiment \
+python scripts/visualize_plan.py --config-name experiments/my_experiment \
     backend.megatron.lr=1e-4
 ```
 
