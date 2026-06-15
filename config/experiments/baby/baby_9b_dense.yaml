@@ -20,13 +20,18 @@ job:
   log_path_current: ${.base_output_dir}/logs/current.log
   config_path: ${.base_output_dir}/logs/config-%j.yaml
   config_path_current: ${.base_output_dir}/logs/current.yaml
-  chain_repeat: 3 # for > 2 you need different qos than boost_qos_dbg
+  chain_repeat: 3
 
 backend:
   megatron:
     wandb_project: baby_9b_dense
     wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
     data_cache_path: ${job.base_output_dir}/cache
+
+    # EXIT safely on signal
+    exit_signal_handler: true
+    # 24h limit
+    exit_duration_in_mins: 1435
 
 slurm:
   env:
@@ -36,3 +41,5 @@ slurm:
     nodes: 256
     time: "24:00:00"
     qos: qos_oellm
+    # slurm signal to process to stop training and checkpoint right before time limit
+    signal: "TERM@240"
