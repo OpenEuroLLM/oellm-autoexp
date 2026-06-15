@@ -181,8 +181,10 @@ class MonitorLoop:
             runtime = job.runtime
             runtime_id = runtime.runtime_job_id
             new_status = statuses.get(runtime_id) if runtime_id else None
-            self._status_action(job, runtime.last_status, new_status)
+            status_effect = self._status_action(job, runtime.last_status, new_status)
             runtime.last_status = new_status
+            if self._apply_effect(job, status_effect, runtime_id):
+                continue
             if not runtime.submitted:
                 if self._check_cancel(job):
                     self._store.mark_finished(job.job_id, "cancelled")
@@ -216,22 +218,7 @@ class MonitorLoop:
 
             # Process log events
             effect = self._process_log_events(job)
-            if effect == "finished":
-                if runtime_id:
-                    client = self._get_client(job)
-                    client.remove(runtime_id)
-                self._store.mark_finished(job.job_id, "finished")
-                continue
-            if effect == "cancelled":
-                if runtime_id:
-                    client = self._get_client(job)
-                    client.cancel(runtime_id)
-                    client.remove(runtime_id)
-                self._store.mark_finished(job.job_id, "cancelled")
-                continue
-            if effect == "restart":
-                self._restart_job(job)
-                self._store.upsert(job)
+            if self._apply_effect(job, effect, runtime_id):
                 continue
 
             # Check if job completed naturally
@@ -265,7 +252,7 @@ class MonitorLoop:
                     }
                 else:
                     poll_state[job.runtime.runtime_job_id] = {
-                        "state": statuses.get(runtime_id),
+                        "state": statuses.get(runtime.runtime_job_id),
                         "cancel_condition": job.definition.cancel_condition,
                         "runtime": job.runtime,
                     }
@@ -423,7 +410,7 @@ class MonitorLoop:
                 action = event_cfg.action.instantiate(BaseMonitorAction)
                 if self._evaluate_event_condition(job, event, event_cfg.condition, action_id):
                     result = action.execute(self._action_context(event, job))
-                    self._update_action_state(runtime, action_id, result)
+                    self._update_action_state(job, action_id, result)
                     effect = self._handle_action_result(job, result)
                     if effect in ("finished", "cancelled", "restart"):
                         return effect
@@ -491,19 +478,50 @@ class MonitorLoop:
             return "continue"
 
         result = action.execute(self._action_context(record, job))
-        self._update_action_state(runtime, action_id, result)
+        self._update_action_state(job, action_id, result)
         # Clear the streak so it must re-accumulate before firing again.
         runtime.events.pop(key, None)
         return self._handle_action_result(job, result)
 
-    def _status_action(self, job: JobRecord, old_status: str | None, new_status: str | None):
-        """Process state transition events."""
+    def _apply_effect(self, job: JobRecord, effect: str, runtime_id: str | None) -> bool:
+        """Advance a job's lifecycle for a terminal/restart action effect.
+
+        Returns True if the job was finished, cancelled, or restarted
+        (in which case the caller should stop processing it for this
+        poll), False for the "continue" effect.
+        """
+        if effect == "finished":
+            if runtime_id:
+                self._get_client(job).remove(runtime_id)
+            self._store.mark_finished(job.job_id, "finished")
+            return True
+        if effect == "cancelled":
+            if runtime_id:
+                client = self._get_client(job)
+                client.cancel(runtime_id)
+                client.remove(runtime_id)
+            self._store.mark_finished(job.job_id, "cancelled")
+            return True
+        if effect == "restart":
+            self._restart_job(job)
+            self._store.upsert(job)
+            return True
+        return False
+
+    def _status_action(self, job: JobRecord, old_status: str | None, new_status: str | None) -> str:
+        """Process state transition events.
+
+        Returns: "continue", "finished", "cancelled", or "restart". A terminal
+        or restart effect lets a configured ``state_events`` action (e.g. treat
+        a SLURM ``TIMEOUT`` as finished) drive the job lifecycle, the same way
+        log events do via :meth:`_process_log_events`.
+        """
         runtime = job.runtime
         definition = job.definition
 
         # Skip if no state change
         if old_status == new_status:
-            return
+            return "continue"
 
         # Process each state event configuration (already parsed)
         state_events = getattr(definition, "state_events", None) or []
@@ -540,9 +558,12 @@ class MonitorLoop:
             action = event_cfg.action.instantiate(BaseMonitorAction)
             if self._evaluate_event_condition(job, event, event_cfg.condition, action_id):
                 result = action.execute(self._action_context(event, job))
-                self._update_action_state(runtime, action_id, result)
-                # Note: we don't handle remove/restart here as state changes are informational
-                # and shouldn't directly control job lifecycle
+                self._update_action_state(job, action_id, result)
+                effect = self._handle_action_result(job, result)
+                if effect in ("finished", "cancelled", "restart"):
+                    return effect
+
+        return "continue"
 
     def _action_context(self, event: EventRecord, job: JobRecord):
         from oellm_autoexp.monitor.actions import ActionContext
@@ -629,10 +650,19 @@ class MonitorLoop:
             timestamp=timestamp,
         )
 
-    def _update_action_state(self, runtime: JobRuntime, action_id: str, result) -> None:
+    def _update_action_state(self, job: JobRecord, action_id: str, result) -> None:
+        runtime = job.runtime
         state = runtime.action_state.setdefault(action_id, {})
         state["last_action_ts"] = time.time()
         state["last_status"] = result.status
+        LOGGER.info(
+            "Action executed for job '%s' [%s]: special=%s status=%s%s",
+            job.job_id,
+            action_id,
+            result.special,
+            result.status,
+            f" reason='{result.message}'" if result.message else "",
+        )
 
     def _handle_action_result(self, job: JobRecord, result: ActionResult) -> str:
         """Handle the result of an action execution.
