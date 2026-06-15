@@ -232,7 +232,7 @@ def parse_config(config_path: str) -> dict:
     _resolve_defaults(cfg, config_path)
 
     meg = cfg["backend"]["megatron"]
-    aux = meg["aux"]
+    aux = meg.get("aux", {})
 
     params: dict[str, Any] = {
         "seq_length": int(meg["seq_length"]),
@@ -242,7 +242,7 @@ def parse_config(config_path: str) -> dict:
     raw_dir = cfg["job"]["base_output_dir"]
     params["base_dir_template"] = raw_dir.split("${job.name}")[0].rstrip("/")
 
-    groups = cfg["sweep"]["groups"]
+    groups = cfg.get("sweep", {}).get("groups", [])
     job_name_tpl: str | None = None
 
     # Pass 1 – collect per-combo data (Group 1 entries) and all decay stage defs (Group 2).
@@ -343,11 +343,14 @@ def parse_config(config_path: str) -> dict:
     tok_to_stage: dict[int, str] = {tok: name for name, tok in all_decay_stages.items()}
 
     params["job_name_tpl"] = job_name_tpl
+    params["job_name"] = cfg.get("job", {}).get("name")
     params["combos"] = combos
     params["all_decay_stages"] = all_decay_stages
     params["tok_to_stage"] = tok_to_stage
     params["adam_beta2"] = float(meg.get("adam_beta2", 0.95))
     params["cooldown_decay_fraction"] = float(aux.get("cooldown_decay_fraction", 0.2))
+    # Detect single-run (non-sweep) configs: no sweep groups were found.
+    params["is_single_run"] = not combos
     return params
 
 
@@ -894,6 +897,16 @@ def _run_id_sets(run_dir: Path) -> tuple[set[str], set[str]]:
             m = re.match(r"(?:stdout|stderr)-(\d+)\.log$", f.name)
             if m:
                 log_ids.add(m.group(1))
+            # Single-run configs store config-*.yaml inside logs/
+            m = re.match(r"config-(\d+)\.yaml$", f.name)
+            if m:
+                config_ids.add(m.group(1))
+        # Single-run configs write combined slurm-*.log inside logs/
+        if not log_ids:
+            for f in logs_dir.iterdir():
+                m = re.match(r"slurm-(\d+)\.log$", f.name)
+                if m:
+                    log_ids.add(m.group(1))
     else:
         # Fallback: combined slurm-{id}.log files at run dir root
         if run_dir.is_dir():
@@ -1323,6 +1336,12 @@ def main() -> None:
             decay_to_stable[name] = stable_name
             run_to_gbsz[name] = gbsz
 
+    # Non-sweep config: treat the single job itself as the only run.
+    if not run_specs and cfg.get("is_single_run") and cfg.get("job_name"):
+        _single_name = cfg["job_name"]
+        run_specs = [(_single_name, "stable", 0, "")]
+        run_to_gbsz[_single_name] = 0
+
     run_tier_map: dict[str, str] = {name: tier for name, _stage, _tok, tier in run_specs}
     run_stage_map: dict[str, str] = {name: stage for name, stage, _tok, _tier in run_specs}
 
@@ -1456,6 +1475,7 @@ def main() -> None:
                 "status_word": s_word,
                 "action_word": "",
                 "error_desc": "",
+                "has_log": False,
             })
             continue
 
@@ -1463,12 +1483,15 @@ def main() -> None:
             logs_dir = run_dir / "logs"
             stdout_log = logs_dir / f"stdout-{job_id}.log"
             stderr_log = logs_dir / f"stderr-{job_id}.log"
-            # Fallback: some sweeps write a combined slurm-{id}.log in the run dir
+            # Fallback: combined slurm-{id}.log — check logs/ first, then run dir root
             if not stdout_log.is_file():
-                slurm_log = run_dir / f"slurm-{job_id}.log"
+                slurm_log = logs_dir / f"slurm-{job_id}.log"
+                if not slurm_log.is_file():
+                    slurm_log = run_dir / f"slurm-{job_id}.log"
                 if slurm_log.is_file():
                     stdout_log = slurm_log
                     stderr_log = slurm_log
+            has_log = stdout_log.is_file()
             is_latest = job_id == job_ids[-1]
 
             stdout_data = parse_stdout(stdout_log)
@@ -1668,6 +1691,7 @@ def main() -> None:
                 "status_word": status_word,
                 "action_word": action_word,
                 "error_desc": error_desc,
+                "has_log": has_log,
             })
 
     # ── Fill-forward static fields for eval-only runs ───────────────────────
@@ -1683,7 +1707,10 @@ def main() -> None:
         rn = r["run_name"]
         known = _run_last_known.setdefault(rn, {})
         for fld in _FILL_FIELDS:
-            if r.get(fld) is None and fld in known:
+            # Only inject into rows that actually ran — config-only rows (no log
+            # file) must stay blank so CANCELLED/QUEUED stubs don't inherit the
+            # previous job's loss or throughput values.
+            if r.get(fld) is None and fld in known and r.get("has_log"):
                 r[fld] = known[fld]
             if r.get(fld) is not None:
                 known[fld] = r[fld]
@@ -1717,6 +1744,10 @@ def main() -> None:
                 known["last_iter"] = r["last_iter"]
             if r.get("progress") is not None:
                 known["progress"] = r["progress"]
+
+    # Drop config-only rows that never produced a log and were cancelled —
+    # they carry no useful information and would just clutter the table.
+    rows = [r for r in rows if r.get("has_log") or r["status_word"] != "CANCELLED"]
 
     # ── Print table ─────────────────────────────────────────────────────────
 
@@ -2404,7 +2435,13 @@ def main() -> None:
             "job_id": "", "state": "", "elapsed": "", "gpus": "",
             "gpu_hours": round(grand_gpu_total, 1),
         })
-        gpu_csv_path = resolved_base / "gpu_hours.csv"
+        # Single-run configs: resolved_base may be a shared, non-writable parent dir.
+        # Fall back to the directory of --csv (or CWD) so we can always write.
+        if cfg.get("is_single_run"):
+            _csv_anchor = Path(args.csv).parent if args.csv else Path(".")
+            gpu_csv_path = _csv_anchor / "gpu_hours.csv"
+        else:
+            gpu_csv_path = resolved_base / "gpu_hours.csv"
         gpu_csv_path.parent.mkdir(parents=True, exist_ok=True)
         with gpu_csv_path.open("w", newline="") as f:
             writer = csv.DictWriter(
