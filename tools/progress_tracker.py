@@ -1409,8 +1409,13 @@ def main() -> None:
             except (ValueError, OSError):
                 pass
 
-        # sbatch info
+        # sbatch info; fall back to script/job.sbatch when the primary file lacks GPU directives
         sbatch_nodes, sbatch_gpus_per_node, sbatch_ckpt_step = parse_sbatch(run_dir / "job.sbatch")
+        if sbatch_gpus_per_node is None:
+            _n2, _g2, _c2 = parse_sbatch(run_dir / "script" / "job.sbatch")
+            sbatch_nodes = sbatch_nodes or _n2
+            sbatch_gpus_per_node = _g2
+            sbatch_ckpt_step = sbatch_ckpt_step or _c2
         total_gpus = (sbatch_nodes or 0) * (sbatch_gpus_per_node or 0)
 
         # Per-job config/log sets, used by _compute_restart_action
