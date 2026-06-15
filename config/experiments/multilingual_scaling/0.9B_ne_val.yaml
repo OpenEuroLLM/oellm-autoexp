@@ -56,7 +56,7 @@ slurm:
   sbatch:
     nodes: 1 # 1 node is sufficient for evaluation
     gpus_per_node: 4 # use all 4 GPUs on the node for faster evaluation
-    account: oellm_prod2026
+    account: AIFAC_5C0_092
     time: "03:00:00"
     output: "${job.base_output_dir}/logs/stdout-%j.log"
     error: "${job.base_output_dir}/logs/stderr-%j.log"
