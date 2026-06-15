@@ -43,3 +43,6 @@ slurm:
     qos: qos_oellm
     # slurm signal to process to stop training and checkpoint right before time limit
     signal: "TERM@240"
+
+  # make the sbatch script unique for every re-run
+  name: "job_${oc.timestring:}"

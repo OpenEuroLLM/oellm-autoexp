@@ -133,6 +133,7 @@ slurm:
     # Megatron's --exit-signal-handler saves a checkpoint and exits cleanly.
     signal: "TERM@30"
 
+  name: "job_${oc.timestring:}"
 
 stage: stable
 
