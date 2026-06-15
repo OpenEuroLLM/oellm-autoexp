@@ -1,5 +1,5 @@
 # @package _global_
-
+# Sweep to get baseline, which is qwen3_32b_jupiter_baseline.yaml at 380 TFLOPS
 defaults:
   - base
   - /backend: megatron_torchrun_localaddr
@@ -66,9 +66,8 @@ slurm:
     time: "00:30:00"
 sweep:
   type: product
+  # VPP
   groups:
-    - type: product
+    - type: list
       params:
-        backend.megatron.micro_batch_size: [1, 2]
-        backend.megatron.recompute_activations: [false, true]
-        backend.megatron.num_layers_per_virtual_pipeline_stage: [1,2]
+        backend.megatron.num_layers_per_virtual_pipeline_stage: [4,6]

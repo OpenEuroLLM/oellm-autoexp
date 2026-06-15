@@ -1,0 +1,13 @@
+# Sweep: micro batch size with and without recompute activations
+# This sweep tests different micro batch sizes (1, 2, 4) combined with
+# recompute activations enabled/disabled
+# Total configurations: 3 batch sizes × 2 recompute modes = 6 jobs
+
+type: product
+
+groups:
+  # GROUP 1: Micro batch size and recompute combinations
+  - type: product
+    params:
+      backend.megatron.micro_batch_size: [1, 2, 4]
+      backend.megatron.recompute_activations: [false, true]

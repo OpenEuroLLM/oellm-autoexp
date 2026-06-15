@@ -1,5 +1,5 @@
 # @package _global_
-
+# Sweep to get baseline, which is qwen3_32b_jupiter_baseline.yaml at 380 TFLOPS
 defaults:
   - base
   - /backend: megatron_torchrun_localaddr
