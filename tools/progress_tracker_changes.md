@@ -23,6 +23,202 @@ Companion tools called internally:
 
 ---
 
+## Bug fixes (2026-06-15)
+
+### Bug 5 — Fill-forward propagating stale metrics into config-only CANCELLED rows
+
+**Root cause**
+
+`find_job_ids` returns the union of IDs from `config-{id}.yaml` files *and* log
+files.  A job that was submitted (config written) but cancelled before it ever
+wrote a log line therefore still enters the per-job processing loop in `main`.
+`parse_stdout` and `parse_stderr` both return all-`None` / all-`False` for a
+non-existent file.
+
+The fill-forward pass that follows row collection runs unconditionally on every
+row.  When an earlier job in the same run had real training data, the `known`
+dict already holds `last_train_loss`, `avg_tflop_per_gpu`, `avg_tok_per_gpu`,
+`train_iters`, and other fields.  Those were injected verbatim into the
+config-only row, so the CANCELLED stub appeared to show loss and throughput
+values from a completely different job execution.
+
+**Fix** (`progress_tracker.py`):
+
+1. After the log-path fallback chain, record whether a log file was actually
+   found:
+
+   ```python
+   has_log = stdout_log.is_file()
+   ```
+
+2. Store `has_log` in every row dict (both the no-job-ids branch and the
+   per-job branch).
+
+3. Guard the injection step of the fill-forward so only rows with a real log
+   receive inherited values:
+
+   ```python
+   # before
+   if r.get(fld) is None and fld in known:
+       r[fld] = known[fld]
+
+   # after
+   if r.get(fld) is None and fld in known and r.get("has_log"):
+       r[fld] = known[fld]
+   ```
+
+   Rows without a log still *contribute* to `known` if they somehow carry data,
+   but they will never receive values injected from a prior job.
+
+---
+
+### Bug 6 — Config-only CANCELLED rows cluttering the table
+
+**Root cause**
+
+A consequence of Bug 5's discovery: even after fixing the fill-forward, a
+config-only CANCELLED row still appeared as a row full of `N/A` values.  A job
+that was cancelled before it started provides no actionable information — the
+run's restart history is already captured by the `action_word` column of the
+preceding row.
+
+**Fix** (`progress_tracker.py`, after fill-forward passes):
+
+```python
+rows = [r for r in rows if r.get("has_log") or r["status_word"] != "CANCELLED"]
+```
+
+Rows are dropped only when **both** conditions hold: no log file exists *and*
+the status is CANCELLED.  QUEUED rows (submitted, not yet started) and
+NOT_LAUNCHED rows are kept so pending work remains visible.
+
+---
+
+### Bug 3 — `KeyError: 'aux'` and `KeyError: 'sweep'` for configs without a sweep
+
+**Root cause**
+
+`parse_config` accessed `meg["aux"]` and `cfg["sweep"]["groups"]` with hard
+dictionary lookups.  Experiment configs that compose sub-configs via the Hydra
+defaults list (e.g. `baby_9b_dense.yaml`) do not carry `backend.megatron.aux`
+or `sweep` in the YAML that the script loads directly — those keys live in
+separate sub-config files that Hydra merges at runtime but the script's
+`_resolve_defaults` helper did not bring in for this config layout.
+
+`aux` holds sweep-level metadata (`tokens`, `cooldown_decay_fraction`, etc.) that
+is only meaningful when a real sweep is defined.  For configs with `sweep: none`
+(`groups: []`), none of the code paths that read `aux["tokens"]` are ever reached,
+and `aux.get("cooldown_decay_fraction", 0.2)` already has a safe default.
+
+**Fix** (`progress_tracker.py`, `parse_config`):
+
+```python
+# before
+aux = meg["aux"]
+groups = cfg["sweep"]["groups"]
+
+# after
+aux = meg.get("aux", {})
+groups = cfg.get("sweep", {}).get("groups", [])
+```
+
+Both accesses now return safe empty defaults (`{}` / `[]`) when the key is
+absent, so the tracker works for single-run (no-sweep) experiment configs.
+
+---
+
+### Bug 4 — empty table for non-sweep (single-run) configs
+
+**Root cause**
+
+Even after Bug 3's key-error fix, running the tracker on a single-run config
+(e.g. `baby_9b_dense.yaml`) produced an empty table with no rows.  Four
+separate issues combined to cause this:
+
+**4a — empty `run_specs` when there are no sweep combos**
+
+`parse_config` builds a `combos` list from `sweep.groups`.  When the config has
+`sweep: none` (no groups), `combos` is empty, `run_specs` is never populated,
+and the row-collection loop has nothing to iterate over.
+
+**Fix** (`progress_tracker.py`, `parse_config` + `main`):
+
+`parse_config` now sets `is_single_run = True` and records `job_name` (from
+`cfg["job"]["name"]`) when no combos are found.  In `main`, a fallback block
+after the combo loop detects this and synthesises a single entry:
+
+```python
+if not run_specs and cfg.get("is_single_run") and cfg.get("job_name"):
+    _single_name = cfg["job_name"]
+    run_specs = [(_single_name, "stable", 0, "")]
+    run_to_gbsz[_single_name] = 0
+```
+
+**4b — `_run_id_sets` did not find logs stored inside `logs/`**
+
+Single-run configs write both `config-{id}.yaml` and `slurm-{id}.log` inside
+`<run_dir>/logs/`.  `_run_id_sets` looked for `config-*.yaml` only at the
+run-dir root, and its `slurm-*.log` fallback only fired when `logs/` did not
+exist — so both were missed when `logs/` was present but contained combined
+logs rather than split `stdout/stderr` files.
+
+**Fix** (`progress_tracker.py`, `_run_id_sets`):
+
+```python
+if logs_dir.is_dir():
+    for f in logs_dir.iterdir():
+        # split stdout/stderr logs (sweep convention)
+        m = re.match(r"(?:stdout|stderr)-(\d+)\.log$", f.name)
+        if m:
+            log_ids.add(m.group(1))
+        # config files stored in logs/ (single-run convention)
+        m = re.match(r"config-(\d+)\.yaml$", f.name)
+        if m:
+            config_ids.add(m.group(1))
+    # combined slurm-*.log inside logs/ when no split logs found
+    if not log_ids:
+        for f in logs_dir.iterdir():
+            m = re.match(r"slurm-(\d+)\.log$", f.name)
+            if m:
+                log_ids.add(m.group(1))
+```
+
+**4c — stdout log fallback did not check `logs/slurm-{id}.log`**
+
+The log-reading block in `main` fell back to `<run_dir>/slurm-{id}.log` when
+`logs/stdout-{id}.log` was absent.  For single-run configs the combined log is
+at `<run_dir>/logs/slurm-{id}.log`, which was never tried.
+
+**Fix** (`progress_tracker.py`, `main` log-file lookup):
+
+```python
+if not stdout_log.is_file():
+    slurm_log = logs_dir / f"slurm-{job_id}.log"   # check logs/ first
+    if not slurm_log.is_file():
+        slurm_log = run_dir / f"slurm-{job_id}.log" # then run-dir root
+    if slurm_log.is_file():
+        stdout_log = slurm_log
+        stderr_log = slurm_log
+```
+
+**4d — `gpu_hours.csv` written to non-writable shared parent**
+
+For sweep configs `resolved_base` is the user-owned experiment directory.  For
+single-run configs it is the shared parent (`/production_training`), which
+other users own.  Writing `gpu_hours.csv` there raised `PermissionError`.
+
+**Fix** (`progress_tracker.py`, `main` GPU-h CSV path):
+
+```python
+if cfg.get("is_single_run"):
+    _csv_anchor = Path(args.csv).parent if args.csv else Path(".")
+    gpu_csv_path = _csv_anchor / "gpu_hours.csv"
+else:
+    gpu_csv_path = resolved_base / "gpu_hours.csv"
+```
+
+---
+
 ## Bug fixes (2026-05-22)
 
 ### Bug 1 — Overhead percentage showing > 100 % (e.g. 219817 %)
