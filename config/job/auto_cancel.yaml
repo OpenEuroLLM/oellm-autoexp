@@ -21,12 +21,12 @@ log_events:
       class_name: RestartAction
       reason: ""
   # TIME LIMIT IS ALREADY HANDLED IN DEPENDENCY CHAIN
-  # - name: time_limit
-  #   pattern: "DUE TO TIME LIMIT"
-  #   pattern_type: substring
-  #   action:
-  #     class_name: RestartAction
-  #     reason: ""
+  - name: time_limit
+    pattern: "DUE TO TIME LIMIT"
+    pattern_type: substring
+    action:
+      class_name: FinishAction
+      reason: ""
   - name: inactive
     pattern_type: inactivity
     # Restart only after the log has been silent for >=5 consecutive polls AND
@@ -45,6 +45,11 @@ state_events:
     action:
       class_name: FinishAction
       reason: "Job failed"
+  - name: "timeout"
+    transition: ["RUNNING", "TIMEOUT"]
+    action:
+      class_name: FinishAction
+      reason: "Job timed out"
   - name: "cancelled"
     transition: ["RUNNING", "CANCELLED"]
     action:
