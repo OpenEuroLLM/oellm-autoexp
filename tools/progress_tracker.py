@@ -1481,6 +1481,7 @@ def main() -> None:
                 "action_word": "",
                 "error_desc": "",
                 "has_log": False,
+                "is_collision": False,
             })
             continue
 
@@ -1639,7 +1640,7 @@ def main() -> None:
             )
 
             emoji, status_word, error_desc, action_word = determine_status(
-                job_id, job_ids, stdout_data, stderr_data, sacct_info, is_latest,
+                job_id, job_ids, stdout_data, stderr_data, {job_id: sacct_entry}, is_latest,
                 job_monitor_events=job_monitor_events,
                 run_config_ids=run_config_ids,
                 run_log_ids=run_log_ids,
@@ -1697,6 +1698,7 @@ def main() -> None:
                 "action_word": action_word,
                 "error_desc": error_desc,
                 "has_log": has_log,
+                "is_collision": _is_collision,
             })
 
     # ── Fill-forward static fields for eval-only runs ───────────────────────
@@ -1750,9 +1752,11 @@ def main() -> None:
             if r.get("progress") is not None:
                 known["progress"] = r["progress"]
 
-    # Drop config-only rows that never produced a log and were cancelled —
-    # they carry no useful information and would just clutter the table.
-    rows = [r for r in rows if r.get("has_log") or r["status_word"] != "CANCELLED"]
+    # Drop config-only rows that never produced a log and carry no useful status:
+    # - CANCELLED stubs with no log are always noise.
+    # - Collision-detected rows with no log have an unreliable status (the sacct
+    #   data belongs to a different job on the local cluster); drop them too.
+    rows = [r for r in rows if r.get("has_log") or (r["status_word"] != "CANCELLED" and not r.get("is_collision"))]
 
     # ── Print table ─────────────────────────────────────────────────────────
 

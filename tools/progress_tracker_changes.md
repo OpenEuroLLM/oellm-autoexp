@@ -250,6 +250,95 @@ else:
 
 ---
 
+### Bug 8 — MN5 collision rows show wrong status and config-only stubs reappear
+
+**Root cause**
+
+MN5 and Leonardo share a Slurm numeric job ID space (documented in Bug 1).  The
+collision detection at the bottom of the per-job loop in `main` correctly
+identifies these collisions and resets the *local* variables `sacct_entry`,
+`sacct_state`, and `sacct_elapsed` to empty values:
+
+```python
+if _is_collision:
+    sacct_entry = {}
+    sacct_state = ""
+    sacct_elapsed = ""
+```
+
+However, `determine_status` is called immediately after and receives the **full
+`sacct_info` dict** as its argument.  Inside the function it re-looks up the
+entry independently:
+
+```python
+sacct = sacct_info.get(job_id, {})      # still sees the colliding Leo job
+sacct_state = sacct.get("state", "")
+```
+
+The local wipe was invisible to `determine_status`.  Two concrete failure modes
+resulted:
+
+- **Wrong status for MN5 jobs that do have a log** — if the colliding Leo job
+  happened to be `PENDING`, `determine_status` returned `QUEUED` even when the
+  log file showed the run actively training.
+
+- **Config-only MN5 stubs appearing or disappearing non-deterministically** — the
+  existing filter at line 1755 dropped config-only rows whose status was
+  `CANCELLED`.  Whether a collision row ended up `CANCELLED` or `QUEUED` (or
+  anything else) depended entirely on the accidental state of whatever Leonardo
+  job happened to share the same numeric ID, not on the actual MN5 job.
+
+**Fix** (`progress_tracker.py`):
+
+**Fix 8a — pass the already-resolved `sacct_entry` to `determine_status`**
+
+The local `sacct_entry` variable already holds the correct post-collision value
+(`{}` for collisions, real data otherwise).  Passing `{job_id: sacct_entry}` to
+`determine_status` instead of the full `sacct_info` dict ensures the function
+uses the same resolved entry rather than re-reading the raw table:
+
+```python
+# before
+emoji, status_word, error_desc, action_word = determine_status(
+    job_id, job_ids, stdout_data, stderr_data, sacct_info, is_latest, ...
+)
+
+# after
+emoji, status_word, error_desc, action_word = determine_status(
+    job_id, job_ids, stdout_data, stderr_data, {job_id: sacct_entry}, is_latest, ...
+)
+```
+
+`determine_status` only ever calls `sacct_info.get(job_id, {})`, so passing a
+single-entry dict is equivalent and self-documenting.
+
+**Fix 8b — track `is_collision` in every row and extend the filter**
+
+The config-only-stub suppression previously relied on the colliding Leo job
+happening to be `CANCELLED` so that the row received `CANCELLED` status and was
+caught by the existing filter.  Fix 8a removes that accidental dependency:
+collision rows now always fall through to `QUEUED` (no sacct state, no log).
+
+`is_collision` is now stored in every row dict (`False` for no-job-ids rows,
+`_is_collision` for per-job rows).  The filter is extended to also drop
+config-only collision rows explicitly, regardless of the colliding job's state:
+
+```python
+# before
+rows = [r for r in rows if r.get("has_log") or r["status_word"] != "CANCELLED"]
+
+# after
+rows = [r for r in rows if r.get("has_log") or (r["status_word"] != "CANCELLED" and not r.get("is_collision"))]
+```
+
+A row is now kept only when **at least one** of these holds:
+- it has a real log file (`has_log = True`)
+- its status is not `CANCELLED` **and** it is not a cross-cluster collision stub
+
+This replaces the coincidental suppression with an explicit, deterministic rule.
+
+---
+
 ## Bug fixes (2026-05-22)
 
 ### Bug 1 — Overhead percentage showing > 100 % (e.g. 219817 %)
