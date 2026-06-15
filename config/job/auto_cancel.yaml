@@ -36,47 +36,17 @@ log_events:
     inactivity_polls: 5
     inactivity_timeout_s: 300
     action:
-      class_name: RestartAction
+      class_name: CancelAction
       reason: "Inactive Log"
-  - name: bus_error
-    pattern: "Unexpected bus error encountered in worker."
-    pattern_type: substring
-    action:
-      class_name: RestartAction
-      reason: ""
-  - name: nan_loss
-    pattern: "message='found NaN in local forward loss calculation"
-    pattern_type: substring
-    action:
-      class_name: RestartAction
-      reason: ""
-  - name: connection_failure
-    pattern: "Application launch failed: Communication connection failure"
-    pattern_type: substring
-    action:
-      class_name: RestartAction
-      reason: ""
-  - name: segmentation_fault
-    pattern: "Fatal Python error: Segmentation fault"
-    pattern_type: substring
-    action:
-      class_name: RestartAction
-      reason: ""
-  - name: node_failure
-    pattern: "CANCELLED AT .* DUE TO NODE FAILURE"
-    pattern_type: regex
-    action:
-      class_name: RestartAction
-      reason: "Node failure"
 
 state_events:
   - name: "failed"
     transition: ["RUNNING", "FAILED"]
     action:
-      class_name: RestartAction
+      class_name: FinishAction
       reason: "Job failed"
   - name: "cancelled"
     transition: ["RUNNING", "CANCELLED"]
     action:
-      class_name: RestartAction
+      class_name: FinishAction
       reason: "Job cancelled"
