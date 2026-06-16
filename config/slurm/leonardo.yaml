@@ -34,7 +34,12 @@ env:
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
   NCCL_IB_TIMEOUT: "120"
   TRITON_LIBCUDA_PATH: "/usr/local/cuda/lib64/stubs"
-  OMP_NUM_THREADS: "1"
+  OMP_NUM_THREADS: "16"
+  CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+  CUDA_VISIBLE_DEVICES: "0,1,2,3"
+  TORCHDYNAMO_DISABLE: "1"
+  UB_SKIPMC: "1"
 sbatch:
   nodes: 1
   ntasks_per_node: 1
@@ -42,5 +47,7 @@ sbatch:
   gpus_per_node: 4
   cpus_per_task: 32
   gres: "gpu:4"
+  account: ${oc.env:SLURM_ACCOUNT, OELLM_prod2026}
+  partition: ${oc.env:SLURM_PARTITION, boost_usr_prod}
   time: "24:00:00"
   qos: ${oc.env:SLURM_QOS,null}

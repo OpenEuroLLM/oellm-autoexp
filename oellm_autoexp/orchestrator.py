@@ -331,7 +331,7 @@ def _resolve_job_name(config: RootConfig) -> str:
     if index is None:
         return base_name
     index_str = str(index)
-    if index_str in base_name:
+    if f"_{index_str}" in base_name or base_name.endswith(index_str):
         return base_name
     if "%a" in base_name:
         return base_name.replace("%a", index_str)
