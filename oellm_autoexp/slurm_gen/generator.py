@@ -66,7 +66,9 @@ def generate_script(
     if not config.template_path:
         raise ValueError("SlurmConfig.template_path is required")
     job_name = config.name or job_name
-    script_path = script_path or config.script_path or Path(config.script_dir) / (job_name + ".sbatch")
+    script_path = (
+        script_path or config.script_path or Path(config.script_dir) / (job_name + ".sbatch")
+    )
 
     replacements = build_replacements(
         config,
@@ -78,7 +80,9 @@ def generate_script(
     return script_path
 
 
-def merge_slurm_config(base: dict[str, Any] | None, override: dict[str, Any] | None) -> dict[str, Any]:
+def merge_slurm_config(
+    base: dict[str, Any] | None, override: dict[str, Any] | None
+) -> dict[str, Any]:
     if not base:
         return dict(override or {})
     if not override:
