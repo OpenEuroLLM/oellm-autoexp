@@ -2,7 +2,12 @@
 
 Output layout (default): _publish/
   index.html, style.css, app.js, manifest.json
-  bsz<X>/nexp_<Y>/lr<Z>/120BT/...assets...
+  <root-name>/bsz<X>/nexp_<Y>/lr<Z>/120BT/...assets...
+
+  e.g.
+    moe_analysis/bsz256/nexp_8/lr0.001/120BT/...
+    moe_analysis_global_batch_aux/bsz256/nexp_8/lr0.001/120BT/...
+    moe_analysis_deepseek_bias/bsz256/nexp_8/lr0.001/120BT/...
 
 Usage (run with the miniforge python that has Pillow):
   $MINIFORGE/bin/python scripts/moe/publish_dashboard.py [options]
@@ -52,15 +57,41 @@ JSON_FILES = [
 ]
 
 
-def stage_bucket(src: Path, dst: Path, include_json: bool) -> None:
+def _up_to_date(src: Path, dst: Path) -> bool:
+    """True if dst already reflects src (same-or-newer mtime). For images, the
+    staged copy may have been compressed in place (PNG keeps name) or a GIF may
+    have been re-encoded to .webp and the .gif deleted; treat the .webp sibling
+    as the staged artifact for gifs."""
+    candidates = [dst]
+    if dst.suffix == ".gif":
+        candidates.append(dst.with_suffix(".webp"))
+    src_mtime = src.stat().st_mtime
+    for c in candidates:
+        if c.exists() and c.stat().st_mtime >= src_mtime:
+            return True
+    return False
+
+
+def stage_bucket(src: Path, dst: Path, include_json: bool, incremental: bool = False) -> list[Path]:
+    """Copy referenced assets from src->dst. Returns the list of paths actually
+    written this call (so the caller can compress only new files)."""
+    written: list[Path] = []
+
+    def _copy(s: Path, d: Path) -> None:
+        if incremental and _up_to_date(s, d):
+            return
+        d.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(s, d)
+        written.append(d)
+
     dst.mkdir(parents=True, exist_ok=True)
     for name in REFERENCED_TOP:
         s = src / name
         if s.exists():
-            shutil.copy2(s, dst / name)
+            _copy(s, dst / name)
     for pat in REFERENCED_GLOBS:
         for s in src.glob(pat):
-            shutil.copy2(s, dst / s.name)
+            _copy(s, dst / s.name)
     for sub, pat in REFERENCED_SUBDIR_GLOBS.items():
         sub_src = src / sub
         if not sub_src.is_dir():
@@ -68,12 +99,13 @@ def stage_bucket(src: Path, dst: Path, include_json: bool) -> None:
         sub_dst = dst / sub
         sub_dst.mkdir(exist_ok=True)
         for s in sub_src.glob(pat):
-            shutil.copy2(s, sub_dst / s.name)
+            _copy(s, sub_dst / s.name)
     if include_json:
         for name in JSON_FILES:
             s = src / name
             if s.exists():
-                shutil.copy2(s, dst / name)
+                _copy(s, dst / name)
+    return written
 
 
 def compress_png(p_str: str) -> tuple[int, int]:
@@ -132,7 +164,13 @@ def parallel_apply(label: str, paths: list[Path], fn, workers: int, executor: st
 def main() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=Path, default=repo_root / "results" / "moe_analysis")
+    parser.add_argument("--root", type=Path, action="append", default=None,
+                        help="Results root to publish as a tab (repeatable). "
+                             "Defaults to the three known roots: moe_analysis, "
+                             "moe_analysis_global_batch_aux, moe_analysis_deepseek_bias.")
+    parser.add_argument("--stage", type=str, action="append", default=None,
+                        help="Stage subdir per --root (repeatable; positional with --root). "
+                             "Defaults to 120BT for every root. e.g. --stage stable")
     parser.add_argument("--publish-dir", type=Path, default=repo_root / "_publish")
     parser.add_argument("--quality", type=int, default=70, help="WebP quality (lower = smaller).")
     parser.add_argument("--workers", type=int, default=8)
@@ -144,39 +182,77 @@ def main() -> None:
     parser.add_argument("--build-python", default="python3.11",
                         help="Interpreter for build_dashboard.py (stdlib only).")
     parser.add_argument("--clean", action="store_true",
-                        help="Remove the publish dir before staging.")
+                        help="Remove the publish dir before staging (forces a full rebuild).")
+    parser.add_argument("--full", action="store_true",
+                        help="Re-stage and re-compress every bucket. Default is incremental: "
+                             "skip assets already staged & up-to-date, compress only new files.")
     args = parser.parse_args()
 
-    root: Path = args.root.resolve()
+    # Incremental unless a full/clean rebuild was requested.
+    incremental = not (args.full or args.clean)
+
+    if args.root:
+        roots = [r.resolve() for r in args.root]
+    else:
+        roots = [
+            (repo_root / "results" / "moe_analysis").resolve(),
+            (repo_root / "results" / "moe_analysis_global_batch_aux").resolve(),
+            (repo_root / "results" / "moe_analysis_deepseek_bias").resolve(),
+        ]
+        roots = [r for r in roots if r.is_dir()]
+        if not roots:
+            sys.exit("no default roots exist; pass --root explicitly")
     out: Path = args.publish_dir.resolve()
-    if not root.is_dir():
-        sys.exit(f"results root not found: {root}")
+    for r in roots:
+        if not r.is_dir():
+            sys.exit(f"results root not found: {r}")
+
+    stages = args.stage or []
+    if stages and len(stages) != len(roots):
+        sys.exit(
+            f"--stage given {len(stages)} times but {len(roots)} roots resolved; "
+            f"counts must match"
+        )
+    stages = stages + ["120BT"] * (len(roots) - len(stages))
 
     if args.clean and out.exists():
         print(f"Removing {out} ...")
         shutil.rmtree(out)
     out.mkdir(parents=True, exist_ok=True)
 
-    # 1. Stage
-    print(f"Staging buckets from {root} -> {out}")
-    buckets = sorted([b for b in root.glob("bsz*/nexp_*/lr*/120BT") if b.is_dir()])
-    print(f"  found {len(buckets)} buckets")
-    for src in buckets:
-        rel = src.relative_to(root)
-        dst = out / rel
-        stage_bucket(src, dst, include_json=args.include_json)
-        if args.no_routing_per_layer:
-            sub = dst / "expert_routing_per_layer"
-            if sub.is_dir():
-                shutil.rmtree(sub)
+    # 1. Stage each root under _publish/<root-name>/...
+    print(f"Mode: {'incremental' if incremental else 'full rebuild'}")
+    newly_staged: list[Path] = []
+    for root, stage in zip(roots, stages):
+        root_out = out / root.name
+        print(f"Staging buckets from {root} (stage={stage}) -> {root_out}")
+        buckets = sorted([b for b in root.glob(f"bsz*/nexp_*/lr*/{stage}") if b.is_dir()])
+        print(f"  found {len(buckets)} buckets")
+        for src in buckets:
+            rel = src.relative_to(root)
+            dst = root_out / rel
+            newly_staged += stage_bucket(
+                src, dst, include_json=args.include_json, incremental=incremental
+            )
+            if args.no_routing_per_layer:
+                sub = dst / "expert_routing_per_layer"
+                if sub.is_dir():
+                    shutil.rmtree(sub)
+    if incremental:
+        print(f"  {len(newly_staged)} new/changed files to compress")
 
-    # 2. Compress
+    # 2. Compress. Incremental: only files staged this run; full: everything.
+    if incremental:
+        pngs = [p for p in newly_staged if p.suffix == ".png"]
+        gifs = [p for p in newly_staged if p.suffix == ".gif"]
+    else:
+        pngs = list(out.rglob("*.png"))
+        gifs = list(out.rglob("*.gif"))
+
     print("Compressing PNGs ...")
-    pngs = list(out.rglob("*.png"))
     parallel_apply("PNG optimize", pngs, compress_png, args.workers)
 
     print("Re-encoding GIFs as animated WebP (process pool, method=2) ...")
-    gifs = list(out.rglob("*.gif"))
     parallel_apply(
         "GIF -> WebP",
         gifs,
@@ -190,10 +266,11 @@ def main() -> None:
     cmd = [
         args.build_python,
         str(args.build_script),
-        "--root", str(root),
         "--publish-dir", str(out),
         "--gif-ext", "webp",
     ]
+    for r, stage in zip(roots, stages):
+        cmd += ["--root", str(r), "--stage", stage]
     if not args.include_json:
         cmd.append("--no-raw-json")
     print("  $", " ".join(cmd))

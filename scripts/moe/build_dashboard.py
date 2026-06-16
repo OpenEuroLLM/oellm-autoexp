@@ -1,7 +1,8 @@
 """Build a static HTML dashboard for the MoE post-hoc sweep.
 
-Scans results/moe_analysis/bsz*/nexp_*/lr*/120BT/ and emits:
-  results/moe_analysis/dashboard/{index.html, style.css, app.js, manifest.json}
+Scans one or more results roots (each containing bsz*/nexp_*/lr*/120BT/ buckets)
+and emits a multi-tab dashboard at <primary-root>/dashboard/ (or --out):
+  index.html, style.css, app.js, manifest.json
 
 Pure static — open index.html directly or serve via any static file server.
 """
@@ -10,11 +11,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 
 ROOT_DEFAULT = Path("results/moe_analysis")
 LAYER_RE = re.compile(r"_layer_(\d+)\.")
+ACT_L_RE = re.compile(r"expert_activation_L(\d+)\.png$")
+REV_RE = re.compile(r"^step(\d+)-tokens(\d+)B$", re.IGNORECASE)
+
+# Friendlier labels for the standard ablation result dirs. Falls back to the
+# directory basename if not in this table.
+DEFAULT_LABELS = {
+    "moe_analysis": "Main sweep",
+    "moe_analysis_global_batch_aux": "Global Batch Aux",
+    "moe_analysis_deepseek_bias": "DeepSeek Bias",
+    "moe_analysis_auxloss": "Aux Loss 0.01 (stable)",
+}
 
 
 def _layers_in(dir_path: Path, pattern: str) -> list[int]:
@@ -49,7 +62,8 @@ def _scan_bucket(bucket: Path) -> dict:
     }
 
 
-def build_manifest(root: Path) -> dict:
+def _scan_root(root: Path, stage: str) -> dict:
+    """Scan one results root and return its bsz/nexp/lr structure."""
     buckets: dict[str, dict[str, dict[str, dict]]] = {}
     bsz_set, nexp_set, lr_set = set(), set(), set()
     for bsz_dir in sorted(root.glob("bsz*")):
@@ -60,7 +74,7 @@ def build_manifest(root: Path) -> dict:
             nexp = nexp_dir.name.replace("nexp_", "")
             for lr_dir in sorted(nexp_dir.glob("lr*")):
                 lr = lr_dir.name.replace("lr", "")
-                bucket = lr_dir / "120BT"
+                bucket = lr_dir / stage
                 if not bucket.is_dir():
                     continue
                 bsz_set.add(bsz)
@@ -76,10 +90,107 @@ def build_manifest(root: Path) -> dict:
         "nexp_values": _sort_num(nexp_set),
         "lr_values": _sort_num(lr_set),
         "buckets": buckets,
-        "stage": "120BT",
-        "bucket_prefix": "../",
+    }
+
+
+def _scan_hf_model(model_root: Path, out_dir: Path, label: str | None) -> dict | None:
+    """Scan a single HF-model results dir (e.g. .../olmoe_1b_7b) into a model tab.
+
+    Expects cross-revision artifacts under `<model_root>/_aggregate/` (produced by
+    aggregate_hf_revisions.py) plus per-revision dirs named `stepN-tokensMB`.
+    Returns a tab dict with kind='model', or None if no `_aggregate/` is present.
+    """
+    agg = model_root / "_aggregate"
+    if not agg.is_dir():
+        return None
+
+    def rel(p: Path) -> str:
+        r = os.path.relpath(p, out_dir)
+        return "" if r == "." else r + "/"
+
+    act_layers = sorted({
+        int(m.group(1)) for p in (agg / "per_layer").glob("expert_activation_L*.png")
+        if (m := ACT_L_RE.search(p.name))
+    })
+    routing_layers = sorted({
+        int(m.group(1)) for p in (agg / "routing").glob("expert_routing_layer_*.gif")
+        if (m := LAYER_RE.search(p.name))
+    })
+
+    revs: list[tuple[int, int, str]] = []
+    for d in model_root.iterdir():
+        if d.is_dir() and (m := REV_RE.match(d.name)):
+            revs.append((int(m.group(2)), int(m.group(1)), d.name))  # (tokens, step, name)
+    revs.sort()
+    revisions = [r[2] for r in revs]
+    coact_layers = _layers_in(model_root / revisions[-1], "coactivation_layer_*.png") if revisions else []
+
+    name = model_root.name
+    return {
+        "id": re.sub(r"[^a-zA-Z0-9_]+", "_", name),
+        "label": label or name,
+        "kind": "model",
+        "stage_badge": f"{len(revisions)} rev",
+        "agg_prefix": rel(agg),
+        "root_prefix": rel(model_root),
+        "has_saturation": (agg / "router_saturation_vs_final.png").exists(),
+        "has_activation_agg": (agg / "expert_activation_norms.png").exists(),
+        "has_activation_maxmed": (agg / "expert_activation_max_over_median.png").exists(),
+        "has_activation_grid": (agg / "expert_activation_per_layer.png").exists(),
+        "has_saturation_json": (agg / "router_saturation.json").exists(),
+        "activation_layers": act_layers,
+        "routing_layers": routing_layers,
+        "coactivation_layers": coact_layers,
+        "revisions": revisions,
+    }
+
+
+def _tab_id(root_name: str) -> str:
+    return root_name.replace("moe_analysis_", "").replace("moe_analysis", "main") or "main"
+
+
+def _tab_label(root_name: str) -> str:
+    return DEFAULT_LABELS.get(root_name, root_name)
+
+
+def build_manifest(
+    tabs_input: list[tuple[Path, str | None]],
+    out_dir: Path,
+    publish_mode: bool,
+) -> dict:
+    """Build manifest covering one or more result roots as tabs.
+
+    tabs_input: list of (root_path, override_label_or_None).
+    out_dir: where the dashboard files will be written (used to compute the
+      per-tab path_prefix in local mode).
+    publish_mode: if True, each tab's assets are expected to live at
+      <out_dir>/<root_basename>/bszX/... so path_prefix = '<basename>/'.
+      Otherwise path_prefix is the relative path from out_dir to the root.
+    """
+    tabs = []
+    for root, label_override, stage in tabs_input:
+        root = root.resolve()
+        name = root.name
+        if publish_mode:
+            path_prefix = f"{name}/"
+        else:
+            rel = os.path.relpath(root, out_dir)
+            path_prefix = f"{rel}/" if rel != "." else ""
+        data = _scan_root(root, stage)
+        tabs.append({
+            "id": _tab_id(name),
+            "label": label_override or _tab_label(name),
+            "root_name": name,
+            "path_prefix": path_prefix,
+            "stage": stage,
+            **data,
+        })
+
+    return {
+        "stage": tabs[0]["stage"] if tabs else "120BT",
         "gif_ext": "gif",
         "no_raw_json": False,
+        "tabs": tabs,
     }
 
 
@@ -96,11 +207,14 @@ INDEX_HTML = """<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <h1><span class=\"brand\">MoE Post-Hoc Sweep</span><span class=\"brand-sep\">·</span><span class=\"brand-stage\">120BT</span></h1>
+  <h1><span class=\"brand\">MoE Post-Hoc Sweep</span><span class=\"brand-sep\">·</span><span class=\"brand-stage\" id=\"brand-stage\">120BT</span></h1>
+  <nav class=\"tab-bar\" id=\"tab-bar\" role=\"tablist\"></nav>
   <div class=\"selectors\">
+    <span id=\"sweep-selectors\" class=\"sweep-selectors\">
     <label>Batch Size <select id=\"sel-bsz\"></select></label>
     <label>Number of Experts <select id=\"sel-nexp\"></select></label>
     <label>Learning Rate <select id=\"sel-lr\"></select></label>
+    </span>
     <span id=\"bucket-status\" class=\"status\"></span>
     <button id=\"theme-toggle\" class=\"theme-toggle\" type=\"button\" aria-label=\"Toggle dark mode\" title=\"Toggle dark mode\">
       <span class=\"theme-icon theme-icon-light\">☀</span>
@@ -276,6 +390,48 @@ header h1::before {
   color: var(--accent-strong);
   font-variant-numeric: tabular-nums;
 }
+.tab-bar {
+  display: flex;
+  gap: .35rem;
+  margin: 0 0 .75rem;
+  padding: .3rem;
+  background: linear-gradient(180deg, var(--panel-soft), color-mix(in srgb, var(--panel-soft) 70%, var(--bg)));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  flex-wrap: wrap;
+}
+.tab-bar button {
+  font-family: inherit;
+  font-size: .85rem;
+  font-weight: 500;
+  padding: .4rem .9rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-soft);
+  cursor: pointer;
+  border-radius: 6px;
+  letter-spacing: .01em;
+  transition: background-color .12s, color .12s, border-color .12s, transform .1s;
+}
+.tab-bar button:hover {
+  background: var(--panel);
+  color: var(--fg);
+  border-color: var(--border-strong);
+}
+.tab-bar button.active {
+  background: linear-gradient(135deg, var(--accent), #a855f7);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(79, 70, 229, .35), inset 0 1px 0 rgba(255, 255, 255, .15);
+}
+.tab-bar button .tab-count {
+  margin-left: .4rem;
+  font-size: .7rem;
+  opacity: .75;
+  font-variant-numeric: tabular-nums;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
 .selectors {
   display: flex;
   gap: .85rem;
@@ -292,6 +448,31 @@ header h1::before {
   align-items: center;
   gap: .4rem;
 }
+/* display:contents lets the 3 sweep labels stay direct flex children of
+   .selectors while still being toggleable as a group (hidden for model tabs). */
+.sweep-selectors { display: contents; }
+.rev-select-wrap { margin: 0 0 .65rem; }
+.rev-select-label {
+  font-size: .78rem;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+}
+.rev-select {
+  font-family: inherit;
+  font-size: .82rem;
+  padding: .3rem .6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+}
+.rev-select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .selectors select {
   margin-left: 0;
   padding: .4rem 1.85rem .4rem .75rem;
@@ -340,6 +521,18 @@ main {
   gap: 1.25rem;
   max-width: 1600px;
   margin: 0 auto;
+  transition: opacity .22s ease, transform .22s ease, filter .22s ease;
+  will-change: opacity, transform;
+}
+main.tab-switching {
+  opacity: 0;
+  transform: translateY(6px);
+  filter: blur(2px);
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  main { transition: none; }
+  main.tab-switching { opacity: 1; transform: none; filter: none; }
 }
 
 /* Panel */
@@ -834,12 +1027,28 @@ APP_JS = r"""(async function() {
   const $ = id => document.getElementById(id);
   const selBsz = $('sel-bsz'), selNexp = $('sel-nexp'), selLr = $('sel-lr');
 
-  const BUCKET_PREFIX = M.bucket_prefix !== undefined ? M.bucket_prefix : '../';
   const GIF_EXT = M.gif_ext || 'gif';
   const HIDE_RAW_JSON = !!M.no_raw_json;
 
+  // Back-compat: pre-tab manifests had a flat shape.
+  const TABS = M.tabs && M.tabs.length ? M.tabs : [{
+    id: 'main',
+    label: 'Main',
+    path_prefix: M.bucket_prefix !== undefined ? M.bucket_prefix : '../',
+    stage: M.stage,
+    bsz_values: M.bsz_values || [],
+    nexp_values: M.nexp_values || [],
+    lr_values: M.lr_values || [],
+    buckets: M.buckets || {},
+  }];
+
+  // Remember user's last selection per tab.
+  const tabSelections = Object.fromEntries(TABS.map(t => [t.id, { bsz: null, nexp: null, lr: null }]));
+  let activeTab = TABS[0];
+
   function bucketPath(bsz, nexp, lr) {
-    return `${BUCKET_PREFIX}bsz${bsz}/nexp_${nexp}/lr${lr}/${STAGE}`;
+    const stage = activeTab.stage || STAGE;
+    return `${activeTab.path_prefix}bsz${bsz}/nexp_${nexp}/lr${lr}/${stage}`;
   }
 
   function fillSelect(sel, values, prev) {
@@ -854,20 +1063,22 @@ APP_JS = r"""(async function() {
 
   function currentBucket() {
     const bsz = selBsz.value, nexp = selNexp.value, lr = selLr.value;
-    const b = ((M.buckets[bsz] || {})[nexp] || {})[lr];
+    const b = ((activeTab.buckets[bsz] || {})[nexp] || {})[lr];
     return b ? { bsz, nexp, lr, info: b, path: bucketPath(bsz, nexp, lr) } : null;
   }
 
   function refreshNexp() {
     const bsz = selBsz.value;
-    const nexps = Object.keys(M.buckets[bsz] || {}).sort((a,b) => +a - +b);
+    const nexps = Object.keys(activeTab.buckets[bsz] || {}).sort((a,b) => +a - +b);
     fillSelect(selNexp, nexps, selNexp.value);
     refreshLr();
   }
   function refreshLr() {
     const bsz = selBsz.value, nexp = selNexp.value;
-    const lrs = Object.keys((M.buckets[bsz] || {})[nexp] || {}).sort((a,b) => +a - +b);
+    const lrs = Object.keys((activeTab.buckets[bsz] || {})[nexp] || {}).sort((a,b) => +a - +b);
     fillSelect(selLr, lrs, selLr.value);
+    // Persist selection for this tab so switching back restores it.
+    tabSelections[activeTab.id] = { bsz: selBsz.value, nexp: selNexp.value, lr: selLr.value };
     render();
   }
 
@@ -918,6 +1129,12 @@ APP_JS = r"""(async function() {
       img.alt = 'expert_activation_max_over_median';
       agg.appendChild(img);
     }
+    if (activeTab.kind === 'model' && b.info.has_activation_grid) {
+      const img = document.createElement('img');
+      img.src = `${b.path}/expert_activation_per_layer.png`;
+      img.alt = 'expert_activation_per_layer';
+      agg.appendChild(img);
+    }
     if (!agg.children.length) agg.innerHTML = '<div class="missing">No aggregate plots.</div>';
 
     const layers = b.info.activation_layers;
@@ -931,11 +1148,14 @@ APP_JS = r"""(async function() {
       tabs.innerHTML = '<span class="missing">No per-layer data.</span>';
       return;
     }
+    const actPath = (L) => activeTab.kind === 'model'
+      ? `${b.path}/per_layer/expert_activation_L${L}.png`
+      : `${b.path}/activation_norms_per_layer/activation_norms_layer_${L}.png`;
     const showLayer = (L) => {
       detail.innerHTML = '';
       const img = document.createElement('img');
-      img.src = `${b.path}/activation_norms_per_layer/activation_norms_layer_${L}.png`;
-      img.alt = `activation_norms_layer_${L}`;
+      img.src = actPath(L);
+      img.alt = `activation_layer_${L}`;
       detail.appendChild(img);
     };
     buildLayerTabs(tabs, layers, showLayer);
@@ -943,7 +1163,7 @@ APP_JS = r"""(async function() {
     layers.forEach(L => {
       const fig = document.createElement('figure');
       const img = document.createElement('img');
-      img.src = `${b.path}/activation_norms_per_layer/activation_norms_layer_${L}.png`;
+      img.src = actPath(L);
       img.loading = 'lazy';
       const cap = document.createElement('figcaption'); cap.textContent = `L${L}`;
       fig.appendChild(img); fig.appendChild(cap);
@@ -952,6 +1172,8 @@ APP_JS = r"""(async function() {
   }
 
   function renderCoactivation(b) {
+    const stale = document.querySelector('.rev-select-wrap');
+    if (stale) stale.remove();
     const layers = b.info.coactivation_layers;
     const tabs = $('coact-tabs');
     const detail = $('coact-detail');
@@ -1206,7 +1428,9 @@ APP_JS = r"""(async function() {
           frames: null,
           w: 0, h: 0,
           layer: defL,
-          url: () => `${b.path}/expert_routing_per_layer/expert_routing_layer_${slotState.layer}.${GIF_EXT}`,
+          url: () => activeTab.kind === 'model'
+            ? `${b.path}/routing/expert_routing_layer_${slotState.layer}.gif`
+            : `${b.path}/expert_routing_per_layer/expert_routing_layer_${slotState.layer}.${GIF_EXT}`,
         };
         sel.addEventListener('change', () => {
           slotState.layer = sel.value;
@@ -1261,11 +1485,113 @@ APP_JS = r"""(async function() {
     }
   }
 
+  // ---- Model tab (HF single model, cross-revision) ----------------------
+  function modelB() {
+    const agg = (activeTab.agg_prefix || '').replace(/\/$/, '');
+    return {
+      path: agg,
+      info: {
+        has_saturation_plot: !!activeTab.has_saturation,
+        has_activation_norms_agg: !!activeTab.has_activation_agg,
+        has_activation_max_over_median: !!activeTab.has_activation_maxmed,
+        has_activation_grid: !!activeTab.has_activation_grid,
+        activation_layers: activeTab.activation_layers || [],
+        routing_layers: activeTab.routing_layers || [],
+        has_routing_gif_agg: false,
+      },
+    };
+  }
+
+  function renderModelCoactivation(t) {
+    const tabs = $('coact-tabs'), detail = $('coact-detail'), scroll = $('coact-scroll');
+    tabs.innerHTML = ''; detail.innerHTML = ''; scroll.innerHTML = '';
+    const sec = document.getElementById('sec-coactivation');
+    const stale = sec.querySelector('.rev-select-wrap');
+    if (stale) stale.remove();
+    const layers = t.coactivation_layers || [];
+    const revs = t.revisions || [];
+    if (!layers.length || !revs.length) {
+      tabs.innerHTML = '<span class="missing">No coactivation plots.</span>';
+      return;
+    }
+    let curRev = revs[revs.length - 1];   // default: final revision
+    let curLayer = layers[0];
+
+    const wrap = document.createElement('div');
+    wrap.className = 'rev-select-wrap';
+    const lbl = document.createElement('label');
+    lbl.className = 'rev-select-label';
+    lbl.textContent = 'Revision ';
+    const sel = document.createElement('select');
+    sel.className = 'rev-select';
+    revs.forEach(r => {
+      const o = document.createElement('option');
+      o.value = r; o.textContent = r;
+      if (r === curRev) o.selected = true;
+      sel.appendChild(o);
+    });
+    lbl.appendChild(sel); wrap.appendChild(lbl);
+    sec.insertBefore(wrap, sec.querySelector('.sub'));
+
+    const imgSrc = (L) => `${t.root_prefix}${curRev}/coactivation_layer_${L}.png`;
+    const show = (L) => {
+      curLayer = L;
+      detail.innerHTML = '';
+      const img = document.createElement('img');
+      img.src = imgSrc(L); img.alt = `coactivation_layer_${L}`;
+      detail.appendChild(img);
+    };
+    const rebuild = () => {
+      buildLayerTabs(tabs, layers, show, curLayer);
+      show(curLayer);
+      scroll.innerHTML = '';
+      layers.forEach(L => {
+        const fig = document.createElement('figure');
+        const img = document.createElement('img');
+        img.src = imgSrc(L); img.loading = 'lazy';
+        const cap = document.createElement('figcaption'); cap.textContent = `L${L}`;
+        fig.appendChild(img); fig.appendChild(cap);
+        scroll.appendChild(fig);
+      });
+    };
+    sel.addEventListener('change', () => { curRev = sel.value; rebuild(); });
+    rebuild();
+  }
+
+  function renderModelRaw(t) {
+    const ul = $('raw-links');
+    ul.innerHTML = '';
+    const sec = document.getElementById('sec-raw');
+    if (HIDE_RAW_JSON) { if (sec) sec.style.display = 'none'; return; }
+    if (sec) sec.style.display = '';
+    if (!t.has_saturation_json) {
+      ul.innerHTML = '<li><span class="missing">No JSON.</span></li>';
+      return;
+    }
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = `${t.agg_prefix}router_saturation.json`;
+    a.textContent = 'router_saturation.json'; a.target = '_blank';
+    li.appendChild(a); ul.appendChild(li);
+  }
+
+  function renderModelView() {
+    const b = modelB();
+    $('bucket-status').textContent =
+      `${activeTab.label} · ${(activeTab.revisions || []).length} revisions`;
+    renderSaturation(b);
+    renderActivation(b);
+    renderModelCoactivation(activeTab);
+    renderRouting(b);
+    renderModelRaw(activeTab);
+  }
+
   function render() {
+    if (activeTab.kind === 'model') { renderModelView(); return; }
     const b = currentBucket();
     const status = $('bucket-status');
     if (!b) { status.textContent = 'No bucket'; return; }
-    status.textContent = `bsz${b.bsz} / nexp_${b.nexp} / lr${b.lr} / ${STAGE}`;
+    status.textContent = `bsz${b.bsz} / nexp_${b.nexp} / lr${b.lr} / ${activeTab.stage || STAGE}`;
     renderSaturation(b);
     renderActivation(b);
     renderCoactivation(b);
@@ -1273,61 +1599,182 @@ APP_JS = r"""(async function() {
     renderRaw(b);
   }
 
-  // Footer stats
-  const totalBuckets = Object.values(M.buckets).reduce(
-    (n, ne) => n + Object.values(ne).reduce((m, lr) => m + Object.keys(lr).length, 0), 0);
-  const fs = document.getElementById('footer-stats');
-  if (fs) fs.textContent = `${totalBuckets} buckets · ${M.bsz_values.length} bsz × ${M.nexp_values.length} nexp × ${M.lr_values.length} lr`;
+  function countBuckets(tab) {
+    if (tab.kind === 'model') return (tab.revisions || []).length;
+    return Object.values(tab.buckets).reduce(
+      (n, ne) => n + Object.values(ne).reduce((m, lr) => m + Object.keys(lr).length, 0), 0);
+  }
 
-  fillSelect(selBsz, M.bsz_values);
-  refreshNexp();
+  function updateFooter() {
+    const fs = document.getElementById('footer-stats');
+    if (!fs) return;
+    if (activeTab.kind === 'model') {
+      fs.textContent = `${activeTab.label} · ${(activeTab.revisions || []).length} revisions · ${(activeTab.routing_layers || []).length} layers`;
+      return;
+    }
+    const n = countBuckets(activeTab);
+    fs.textContent = `${activeTab.label} · ${n} buckets · ${activeTab.bsz_values.length} bsz × ${activeTab.nexp_values.length} nexp × ${activeTab.lr_values.length} lr`;
+  }
+
+  const mainEl = document.querySelector('main');
+  let _tabSwitchTimer = null;
+  function applyTab(tab) {
+    activeTab = tab;
+    document.querySelectorAll('#tab-bar button').forEach(b => {
+      b.classList.toggle('active', b.dataset.tabId === tab.id);
+    });
+    const badge = document.getElementById('brand-stage');
+    if (badge) badge.textContent = tab.kind === 'model'
+      ? (tab.stage_badge || 'model') : (tab.stage || STAGE);
+    const sweepSel = document.getElementById('sweep-selectors');
+    if (tab.kind === 'model') {
+      if (sweepSel) sweepSel.style.display = 'none';
+      updateFooter();
+      render();
+      return;
+    }
+    if (sweepSel) sweepSel.style.display = '';
+    const sel = tabSelections[tab.id];
+    fillSelect(selBsz, tab.bsz_values, sel.bsz);
+    if (sel.nexp) selNexp.value = sel.nexp;
+    if (sel.lr) selLr.value = sel.lr;
+    refreshNexp();
+    updateFooter();
+  }
+
+  function activateTab(tab, opts) {
+    if (tab === activeTab && !(opts && opts.force)) return;
+    const animate = !!mainEl && !(opts && opts.immediate);
+    if (!animate) { applyTab(tab); return; }
+    if (_tabSwitchTimer) clearTimeout(_tabSwitchTimer);
+    mainEl.classList.add('tab-switching');
+    // Wait for the fade-out, swap content, then fade back in on next frame.
+    _tabSwitchTimer = setTimeout(() => {
+      applyTab(tab);
+      requestAnimationFrame(() => {
+        mainEl.classList.remove('tab-switching');
+      });
+    }, 180);
+  }
+
+  function buildTabBar() {
+    const bar = $('tab-bar');
+    if (!bar) return;
+    bar.innerHTML = '';
+    if (TABS.length <= 1) { bar.style.display = 'none'; return; }
+    TABS.forEach(t => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.tabId = t.id;
+      btn.setAttribute('role', 'tab');
+      const count = countBuckets(t);
+      btn.innerHTML = `${t.label}<span class="tab-count">${count}</span>`;
+      btn.addEventListener('click', () => activateTab(t));
+      bar.appendChild(btn);
+    });
+  }
+
+  buildTabBar();
   selBsz.addEventListener('change', refreshNexp);
   selNexp.addEventListener('change', refreshLr);
-  selLr.addEventListener('change', render);
+  selLr.addEventListener('change', () => {
+    tabSelections[activeTab.id] = { bsz: selBsz.value, nexp: selNexp.value, lr: selLr.value };
+    render();
+  });
+  activateTab(TABS[0], { immediate: true, force: true });
 })();
 """
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=Path, default=ROOT_DEFAULT,
-                        help="results/moe_analysis directory (scanned for buckets)")
+    parser.add_argument("--root", type=Path, action="append", default=None,
+                        help="Results root to include as a tab (repeatable; first one is the primary). "
+                             "If omitted, defaults to results/moe_analysis.")
+    parser.add_argument("--label", type=str, action="append", default=None,
+                        help="Override tab label (repeatable; positional with --root).")
+    parser.add_argument("--stage", type=str, action="append", default=None,
+                        help="Stage subdir per root (repeatable; positional with --root). "
+                             "Defaults to 120BT for every root. e.g. --stage stable")
+    parser.add_argument("--hf-root", type=Path, action="append", default=None,
+                        help="HF single-model results dir (e.g. results/moe_analysis_hf/olmoe_1b_7b) "
+                             "containing an _aggregate/ subdir. Added as a model tab. Repeatable.")
+    parser.add_argument("--hf-label", type=str, action="append", default=None,
+                        help="Override label for the corresponding --hf-root (repeatable, positional).")
     parser.add_argument("--out", type=Path, default=None,
-                        help="dashboard output dir (default: <root>/dashboard)")
+                        help="dashboard output dir (default: <primary-root>/dashboard)")
     parser.add_argument("--publish-dir", type=Path, default=None,
-                        help="When set, write dashboard files at the ROOT of this dir (paths become bszX/... not ../bszX/...). Overrides --out.")
+                        help="When set, write dashboard files at the ROOT of this dir; "
+                             "each tab's assets are expected at <publish-dir>/<root-name>/bszX/...")
     parser.add_argument("--gif-ext", choices=["gif", "webp"], default="gif",
                         help="Extension to use for routing animations (publish flow uses 'webp').")
     parser.add_argument("--no-raw-json", action="store_true",
                         help="Hide the Raw JSON panel (use when JSONs are not staged).")
     args = parser.parse_args()
 
-    root = args.root.resolve()
-    if args.publish_dir is not None:
-        out = args.publish_dir.resolve()
-        bucket_prefix = ""
+    hf_roots = [r.resolve() for r in (args.hf_root or [])]
+    if args.root:
+        roots = [r.resolve() for r in args.root]
+    elif hf_roots:
+        roots = []  # HF-only dashboard: no sweep tabs
     else:
-        out = (args.out or (root / "dashboard")).resolve()
-        bucket_prefix = "../"
+        roots = [ROOT_DEFAULT.resolve()]
+    labels = args.label or []
+    if labels and len(labels) != len(roots):
+        raise SystemExit(
+            f"--label given {len(labels)} times but --root given {len(roots)} times; "
+            f"counts must match"
+        )
+    stages = args.stage or []
+    if stages and len(stages) != len(roots):
+        raise SystemExit(
+            f"--stage given {len(stages)} times but --root given {len(roots)} times; "
+            f"counts must match"
+        )
+    labels_padded = labels + [None] * (len(roots) - len(labels))
+    stages_padded = stages + ["120BT"] * (len(roots) - len(stages))
+    tabs_input = list(zip(roots, labels_padded, stages_padded))
+
+    primary = roots[0] if roots else hf_roots[0]
+    publish_mode = args.publish_dir is not None
+    if publish_mode:
+        out = args.publish_dir.resolve()
+    else:
+        out = (args.out or (primary / "dashboard")).resolve()
     out.mkdir(parents=True, exist_ok=True)
 
-    manifest = build_manifest(root)
-    manifest["bucket_prefix"] = bucket_prefix
+    manifest = build_manifest(tabs_input, out, publish_mode)
     manifest["gif_ext"] = args.gif_ext
     manifest["no_raw_json"] = bool(args.no_raw_json)
+
+    # HF single-model tabs (kind='model'): cross-revision plots from _aggregate/.
+    hf_labels = args.hf_label or []
+    hf_labels_padded = hf_labels + [None] * (len(hf_roots) - len(hf_labels))
+    for hr, hl in zip(hf_roots, hf_labels_padded):
+        mt = _scan_hf_model(hr, out, hl)
+        if mt is None:
+            print(f"  WARNING: no _aggregate/ under {hr}; skipping model tab")
+            continue
+        manifest["tabs"].append(mt)
 
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))
     (out / "index.html").write_text(INDEX_HTML)
     (out / "style.css").write_text(STYLE_CSS)
     (out / "app.js").write_text(APP_JS)
 
-    n_buckets = sum(len(lr) for nexp in manifest["buckets"].values() for lr in nexp.values())
     print(f"Wrote dashboard to {out}")
-    print(f"  bsz: {manifest['bsz_values']}")
-    print(f"  nexp: {manifest['nexp_values']}")
-    print(f"  lr: {manifest['lr_values']}")
-    print(f"  buckets: {n_buckets}")
-    print(f"  bucket_prefix: '{bucket_prefix}'  gif_ext: {args.gif_ext}  no_raw_json: {args.no_raw_json}")
+    for tab in manifest["tabs"]:
+        if tab.get("kind") == "model":
+            print(f"  tab '{tab['id']}' ({tab['label']}) [model]: {len(tab['revisions'])} revisions, "
+                  f"agg='{tab['agg_prefix']}', "
+                  f"act_layers={len(tab['activation_layers'])} routing={len(tab['routing_layers'])} "
+                  f"coact={len(tab['coactivation_layers'])}")
+            continue
+        n = sum(len(lr) for nexp in tab["buckets"].values() for lr in nexp.values())
+        print(f"  tab '{tab['id']}' ({tab['label']}): {n} buckets, "
+              f"prefix='{tab['path_prefix']}', "
+              f"bsz={tab['bsz_values']} nexp={tab['nexp_values']} lr={tab['lr_values']}")
+    print(f"  gif_ext: {args.gif_ext}  no_raw_json: {args.no_raw_json}  publish_mode: {publish_mode}")
 
 
 if __name__ == "__main__":
