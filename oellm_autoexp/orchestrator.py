@@ -412,7 +412,7 @@ def chain_submit_jobs(
 
         slurm_cfg = record.definition.slurm
         if prev_slurm_id is not None:
-            slurm_cfg.sbatch = replace(slurm_cfg.sbatch, dependency=f"afterany:{prev_slurm_id}")
+            slurm_cfg.sbatch.dependency = f"afterany:{prev_slurm_id}"
             record = replace(record, definition=replace(record.definition, slurm=slurm_cfg))
 
         if dry_run:
