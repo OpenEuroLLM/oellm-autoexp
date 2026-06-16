@@ -1,0 +1,123 @@
+# @package _global_
+#
+# MoE post-hoc metrics for the aux_loss=0.01 (no-GQA) grid. Stable-only:
+# no decay branch is saved for these runs, so the stable final checkpoint is
+# the reference. One sbatch job per nexp.
+#
+# Submit:
+#   source /leonardo_work/OELLM_prod2026/users/ajha0001/miniforge3/bin/activate autoexp
+#   cd $AUTOEXP
+#   python scripts/run_autoexp.py --config-name=experiments/abhash/moe_metrics_auxloss --submit-and-exit
+#
+defaults:
+  - /backend: 'null'
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: default
+  - /sweep: none
+  - _self_
+
+index: 0
+stage: ""
+
+metadata:
+  # Sweep variables.
+  bsz: 256
+  nexp: 8
+  lr: "0.001"
+
+  # Constants.
+  results_root: /leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp/results
+  analysis_root: results/moe_analysis_auxloss
+  idx_data: /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-LUMI-sample-valid/high-all
+  vocab_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/vocab.json
+  merge_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/merges.txt
+
+  # Derived paths.
+  grid_dir: ${metadata.results_root}/moe_no_GQA_aux_loss_0.01_bsz${metadata.bsz}_lr_sparsity_grid_A130M_120BT
+  run_tag: moe_no_GQA_aux_loss_0.01_nexp_${metadata.nexp}_lr${metadata.lr}_gbsz${metadata.bsz}_seed1234
+  stable_path: ${metadata.grid_dir}/${metadata.run_tag}_stable/checkpoints
+  out_dir: ${metadata.analysis_root}/bsz${metadata.bsz}/nexp_${metadata.nexp}/lr${metadata.lr}/stable
+
+job:
+  base_output_dir: ${metadata.out_dir}
+  name: moe_metrics_auxloss_bsz${metadata.bsz}_nexp${metadata.nexp}_lr${metadata.lr}_stable
+
+backend:
+  base_command:
+    - python
+    - scripts/moe/compute_moe_metrics.py
+    - --load
+    - ${metadata.stable_path}
+    - --use-checkpoint-args
+    - --ckpt-format
+    - torch_dist
+    - --vocab-file
+    - ${metadata.vocab_file}
+    - --merge-file
+    - ${metadata.merge_file}
+    - --legacy-tokenizer
+    - --no-bias-dropout-fusion
+    - --moe-data-type
+    - megatron_indexed
+    - --moe-megatron-data-path
+    - ${metadata.idx_data}
+    - --moe-batch-size
+    - "1"
+    - --moe-seq-length
+    - "4096"
+    - --moe-num-batches
+    - "200"
+    - --moe-compare-ckpts-every
+    - "1000"
+    - --moe-output-json
+    - ${metadata.out_dir}/saturation.json
+    - --moe-coactivation-output
+    - ${metadata.out_dir}/coactivation.json
+    - --moe-token-count-output
+    - ${metadata.out_dir}/token_counts.json
+    - --moe-activation-norm-output
+    - ${metadata.out_dir}/expert_activation_norms.json
+    - --moe-routing-gif
+    - ${metadata.out_dir}/expert_routing.gif
+    - --moe-routing-gif-layers
+    - "first,mid,last"
+    - --moe-routing-gif-frame-ms
+    - "250"
+    - --moe-plot
+    - --moe-plot-dir
+    - ${metadata.out_dir}
+
+container:
+  image: /leonardo_work/OELLM_prod2026/container_images/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif
+  env:
+    WANDB_MODE: offline
+    MACHINE_NAME: LEONARDO
+    PYTHONPATH: "."
+    TMPDIR: ${oc.env:TMPDIR,/tmp}
+    HF_HOME: ${oc.env:HF_HOME,/tmp}
+
+slurm:
+  sbatch:
+    nodes: 1
+    ntasks_per_node: 1
+    gpus_per_node: 1
+    gres: "gpu:1"
+    cpus_per_task: 8
+    time: "02:00:00"
+  srun:
+    cpus_per_task: 8
+  env:
+    SLURM_CPUS_PER_TASK: "8"
+
+# Sweep: 2 buckets (nexp 8, 64) at bsz256 / lr0.001.
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        - type: product
+          params:
+            metadata.bsz: [256]
+            metadata.nexp: [8, 64]
+            metadata.lr: ["0.001"]

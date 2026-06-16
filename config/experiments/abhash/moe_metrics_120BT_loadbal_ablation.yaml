@@ -1,0 +1,131 @@
+# @package _global_
+#
+# MoE post-hoc metrics sweep over the load-balance ablation grids:
+#   algo ∈ {global_batch_aux, deepseek_bias}
+#   nexp ∈ {8, 64}
+# All at the single (bsz=256, lr=0.001) operating point. → 4 buckets total,
+# all submitted from a SINGLE python invocation (avoids the shared monitor_state
+# race seen when running two concurrent run_autoexp.py invocations).
+#
+# Submit:
+#   export SLURM_ACCOUNT=OELLM_prod2026
+#   export SLURM_PARTITION=boost_usr_prod
+#   export OELLM_CONTAINERS_DIR=/leonardo_work/OELLM_prod2026/container_images
+#   export HF_HOME=/tmp
+#   python scripts/run_autoexp.py --config-name=experiments/abhash/moe_metrics_120BT_loadbal_ablation
+#
+defaults:
+  - /backend: 'null'
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: default
+  - /sweep: none
+  - _self_
+
+index: 0
+stage: ""
+
+metadata:
+  bsz: 256
+  nexp: 8
+  lr: "0.001"
+  algo: global_batch_aux  # overridden by sweep
+
+  results_root: /leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp/results
+  analysis_root: results/moe_analysis_${metadata.algo}
+  idx_data: /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-LUMI-sample-valid/high-all
+  vocab_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/vocab.json
+  merge_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/merges.txt
+
+  grid_dir: ${metadata.results_root}/moe_no_GQA_${metadata.algo}_bsz${metadata.bsz}_lr_sparsity_grid_A130M_120BT
+  run_tag: moe_no_GQA_${metadata.algo}_nexp_${metadata.nexp}_lr${metadata.lr}_gbsz${metadata.bsz}_seed1234
+  stable_path: ${metadata.grid_dir}/${metadata.run_tag}_stable/checkpoints
+  decay_path: ${metadata.grid_dir}/${metadata.run_tag}_decay120BT/checkpoints
+  out_dir: ${metadata.analysis_root}/bsz${metadata.bsz}/nexp_${metadata.nexp}/lr${metadata.lr}/120BT
+
+job:
+  base_output_dir: ${metadata.out_dir}
+  name: moe_metrics_${metadata.algo}_bsz${metadata.bsz}_nexp${metadata.nexp}_lr${metadata.lr}_120BT
+
+backend:
+  base_command:
+    - python
+    - scripts/moe/compute_moe_metrics.py
+    - --load
+    - ${metadata.stable_path}
+    - --moe-load-decay
+    - ${metadata.decay_path}
+    - --use-checkpoint-args
+    - --ckpt-format
+    - torch_dist
+    - --vocab-file
+    - ${metadata.vocab_file}
+    - --merge-file
+    - ${metadata.merge_file}
+    - --legacy-tokenizer
+    - --no-bias-dropout-fusion
+    - --moe-data-type
+    - megatron_indexed
+    - --moe-megatron-data-path
+    - ${metadata.idx_data}
+    - --moe-batch-size
+    - "1"
+    - --moe-seq-length
+    - "4096"
+    - --moe-num-batches
+    - "240"
+    - --moe-compare-ckpts-every
+    - "1000"
+    - --moe-output-json
+    - ${metadata.out_dir}/saturation.json
+    - --moe-coactivation-output
+    - ${metadata.out_dir}/coactivation.json
+    - --moe-token-count-output
+    - ${metadata.out_dir}/token_counts.json
+    - --moe-activation-norm-output
+    - ${metadata.out_dir}/expert_activation_norms.json
+    - --moe-routing-gif
+    - ${metadata.out_dir}/expert_routing.gif
+    - --moe-routing-gif-layers
+    - "first,mid,last"
+    - --moe-routing-gif-frame-ms
+    - "250"
+    - --moe-plot
+    - --moe-plot-dir
+    - ${metadata.out_dir}
+
+container:
+  image: /leonardo_work/OELLM_prod2026/container_images/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif
+  env:
+    WANDB_MODE: offline
+    MACHINE_NAME: LEONARDO
+    PYTHONPATH: "."
+    TMPDIR: ${oc.env:TMPDIR,/tmp}
+    HF_HOME: ${oc.env:HF_HOME,/tmp}
+
+slurm:
+  sbatch:
+    nodes: 1
+    ntasks_per_node: 1
+    gpus_per_node: 1
+    gres: "gpu:1"
+    cpus_per_task: 8
+    time: "02:00:00"
+    job_name: null
+  srun:
+    cpus_per_task: 8
+  env:
+    SLURM_CPUS_PER_TASK: "8"
+    MASTER_PORT: "$((20000 + SLURM_JOB_ID % 10000))"
+
+# 2 algos × 2 nexp = 4 buckets, all in one sweep so one python invocation
+# submits them. bsz and lr are fixed for this ablation.
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        - type: product
+          params:
+            metadata.algo: [global_batch_aux, deepseek_bias]
+            metadata.nexp: [8, 64]

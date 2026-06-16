@@ -1,0 +1,137 @@
+# @package _global_
+#
+# MoE post-hoc metrics sweep on Leonardo. One sbatch job per (bsz, nexp, lr)
+# bucket, each running scripts/moe/compute_moe_metrics.py over the linked
+# stable + decay120BT timeline for that bucket.
+#
+# Submit:
+#   export SLURM_ACCOUNT=OELLM_prod2026
+#   export SLURM_PARTITION=boost_usr_prod
+#   export OELLM_CONTAINERS_DIR=/leonardo_work/OELLM_prod2026/container_images
+#   export HF_HOME=/tmp     # not used in megatron_indexed mode but base.yaml expects it
+#   python scripts/run_autoexp.py --config-name=experiments/abhash/moe_metrics_120BT
+#
+# Single bucket (no sweep): override metadata.bsz / metadata.nexp / metadata.lr from the CLI
+# and disable sweep groups.
+#
+defaults:
+  - /backend: 'null'
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: default
+  - /sweep: none
+  - _self_
+
+index: 0
+stage: ""
+
+# All custom keys live under metadata. (the schema only allows known top-level keys).
+metadata:
+  # Sweep variables (overridden by the product groups below).
+  bsz: 1024
+  nexp: 8
+  lr: "0.001"
+
+  # Constants.
+  results_root: /leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp/results
+  analysis_root: results/moe_analysis
+  idx_data: /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-LUMI-sample-valid/high-all
+  vocab_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/vocab.json
+  merge_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/merges.txt
+
+  # Derived paths (resolved automatically from the sweep variables).
+  grid_dir: ${metadata.results_root}/moe_bsz${metadata.bsz}_lr_sparsity_grid_A130M_120BT
+  run_tag: moe_abl_nexp_${metadata.nexp}_lr${metadata.lr}_gbsz${metadata.bsz}_seed1234
+  stable_path: ${metadata.grid_dir}/${metadata.run_tag}_stable/checkpoints
+  decay_path: ${metadata.grid_dir}/${metadata.run_tag}_decay120BT/checkpoints
+  out_dir: ${metadata.analysis_root}/bsz${metadata.bsz}/nexp_${metadata.nexp}/lr${metadata.lr}/120BT
+
+job:
+  base_output_dir: ${metadata.out_dir}
+  name: moe_metrics_bsz${metadata.bsz}_nexp${metadata.nexp}_lr${metadata.lr}_120BT
+
+# The compute job: NullBackend simply runs the python script.
+backend:
+  base_command:
+    - python
+    - scripts/moe/compute_moe_metrics.py
+    - --load
+    - ${metadata.stable_path}
+    - --moe-load-decay
+    - ${metadata.decay_path}
+    - --use-checkpoint-args
+    - --ckpt-format
+    - torch_dist
+    - --vocab-file
+    - ${metadata.vocab_file}
+    - --merge-file
+    - ${metadata.merge_file}
+    - --legacy-tokenizer
+    - --no-bias-dropout-fusion
+    - --moe-data-type
+    - megatron_indexed
+    - --moe-megatron-data-path
+    - ${metadata.idx_data}
+    - --moe-batch-size
+    - "1"
+    - --moe-seq-length
+    - "4096"
+    - --moe-num-batches
+    - "200"
+    - --moe-compare-ckpts-every
+    - "1000"
+    - --moe-output-json
+    - ${metadata.out_dir}/saturation.json
+    - --moe-coactivation-output
+    - ${metadata.out_dir}/coactivation.json
+    - --moe-token-count-output
+    - ${metadata.out_dir}/token_counts.json
+    - --moe-activation-norm-output
+    - ${metadata.out_dir}/expert_activation_norms.json
+    - --moe-routing-gif
+    - ${metadata.out_dir}/expert_routing.gif
+    - --moe-routing-gif-layers
+    - "first,mid,last"
+    - --moe-routing-gif-frame-ms
+    - "250"
+    - --moe-plot
+    - --moe-plot-dir
+    - ${metadata.out_dir}
+
+# Container image (autoexp-built, has compoconf + Megatron + torch).
+container:
+  image: /leonardo_work/OELLM_prod2026/container_images/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif
+  env:
+    WANDB_MODE: offline
+    MACHINE_NAME: LEONARDO
+    PYTHONPATH: "."
+    TMPDIR: ${oc.env:TMPDIR,/tmp}
+    HF_HOME: ${oc.env:HF_HOME,/tmp}
+
+# 1 GPU, 30 min per bucket (vs leonardo default 4 GPU / 24 h).
+slurm:
+  sbatch:
+    nodes: 1
+    ntasks_per_node: 1
+    gpus_per_node: 1
+    gres: "gpu:1"
+    cpus_per_task: 8
+    time: "02:00:00"
+    job_name: null
+  srun:
+    cpus_per_task: 8
+  env:
+    SLURM_CPUS_PER_TASK: "8"
+    MASTER_PORT: "$((20000 + SLURM_JOB_ID % 10000))"
+
+# Sweep: 3 (bsz) × 4 (nexp) × 5 (lr) = 60 buckets.
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        - type: product
+          params:
+            metadata.bsz: [256, 512, 1024]
+            metadata.nexp: [8, 16, 32, 64]
+            metadata.lr: ["0.0005", "0.001", "0.002", "0.004", "0.008"]

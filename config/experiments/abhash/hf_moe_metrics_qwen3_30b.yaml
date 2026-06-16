@@ -1,0 +1,97 @@
+# @package _global_
+#
+# HF MoE metrics: Qwen3-30B-A3B (single snapshot, "main").
+# Uses the same Megatron-indexed validation bytes as the Megatron sweeps,
+# decoded via GPT-NeoX-20B then re-tokenized with Qwen's tokenizer.
+#
+# Submit:
+#   export SLURM_ACCOUNT=OELLM_prod2026
+#   export SLURM_PARTITION=boost_usr_prod
+#   export OELLM_CONTAINERS_DIR=/leonardo_work/OELLM_prod2026/container_images
+#   export HF_HOME=/leonardo_scratch/large/userexternal/ajha0001/HF_CACHE
+#   python scripts/run_autoexp.py --config-name=experiments/abhash/hf_moe_metrics_qwen3_30b
+#
+defaults:
+  - /backend: 'null'
+  - /container: none
+  - /slurm: leonardo_autoexp
+  - /job: default
+  - /sweep: none
+  - _self_
+
+index: 0
+stage: ""
+
+metadata:
+  model: Qwen/Qwen3-30B-A3B
+  revision: main
+  short_name: qwen3_30b_a3b
+
+  hf_cache: /leonardo_scratch/large/userexternal/ajha0001/HF_CACHE
+  idx_data: /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-LUMI-sample-valid/high-all
+  decode_tokenizer: /leonardo_scratch/large/userexternal/ajha0001/tokenizers/gpt-neox-20b
+
+  analysis_root: results/moe_analysis_hf
+  out_dir: ${metadata.analysis_root}/${metadata.short_name}/${metadata.revision}
+
+job:
+  base_output_dir: ${metadata.out_dir}
+  name: hf_moe_metrics_${metadata.short_name}_${metadata.revision}
+
+backend:
+  base_command:
+    - python
+    - scripts/moe/compute_moe_metrics_hf.py
+    - --model
+    - ${metadata.model}
+    - --revision
+    - ${metadata.revision}
+    - --hf-cache-dir
+    - ${metadata.hf_cache}
+    - --torch-dtype
+    - bfloat16
+    - --moe-data-type
+    - megatron_indexed_text
+    - --moe-megatron-data-path
+    - ${metadata.idx_data}
+    - --moe-decode-tokenizer
+    - ${metadata.decode_tokenizer}
+    - --moe-batch-size
+    - "1"
+    - --moe-seq-length
+    - "4096"
+    - --moe-num-batches
+    - "240"
+    - --moe-coactivation-output
+    - ${metadata.out_dir}/coactivation.json
+    - --moe-token-count-output
+    - ${metadata.out_dir}/token_counts.json
+    - --moe-activation-norm-output
+    - ${metadata.out_dir}/expert_activation_norms.json
+    - --moe-routing-maps-output
+    - ${metadata.out_dir}/routing_maps.npz
+    - --moe-plot
+    - --moe-plot-dir
+    - ${metadata.out_dir}
+
+# Qwen3-30B-A3B is ~60 GB in bf16 — needs 2 GPUs to be safe.
+# Runs in the `autoexp` conda env directly (no singularity).
+slurm:
+  sbatch:
+    nodes: 1
+    ntasks_per_node: 1
+    gpus_per_node: 2
+    gres: "gpu:2"
+    cpus_per_task: 16
+    time: "03:00:00"
+    job_name: null
+  srun:
+    cpus_per_task: 16
+  env:
+    SLURM_CPUS_PER_TASK: "16"
+    MASTER_PORT: "$((20000 + SLURM_JOB_ID % 10000))"
+    WANDB_MODE: offline
+    PYTHONPATH: "."
+    TMPDIR: ${oc.env:TMPDIR,/tmp}
+    HF_HOME: ${metadata.hf_cache}
+    HF_HUB_OFFLINE: "1"
