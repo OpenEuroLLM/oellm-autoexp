@@ -1217,6 +1217,319 @@ def compute_progress(
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 
+def _lw_last_iter(run_dir: Path) -> tuple[int | None, int | None, float | None]:
+    """Return (last_iter, total_iters, last_train_loss) by scanning the most recent stdout log
+    backwards in chunks until the last iteration line is found."""
+    logs_dir = run_dir / "logs"
+    candidates: list[Path] = []
+    if logs_dir.is_dir():
+        candidates = sorted(logs_dir.glob("stdout-*.log")) or sorted(logs_dir.glob("slurm-*.log"))
+    if not candidates:
+        candidates = sorted(run_dir.glob("slurm-*.log"))
+    if not candidates:
+        return None, None, None
+    log_path = candidates[-1]
+    try:
+        chunk = 262144  # 256 KB per read
+        max_read = 8 * 1024 * 1024  # give up after 8 MB
+        with open(log_path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            offset = size
+            accumulated = b""
+            while offset > 0:
+                read_size = min(chunk, offset)
+                offset -= read_size
+                f.seek(offset)
+                accumulated = f.read(read_size) + accumulated
+                text = accumulated.decode("utf-8", errors="replace")
+                matches = list(RE_ITER.finditer(text))
+                if matches:
+                    m = matches[-1]
+                    last_iter = int(m.group(1))
+                    total_iters = int(m.group(2))
+                    # average of last 10 training losses from the same region
+                    loss_matches = list(RE_TRAIN_LOSS.finditer(text))
+                    last_loss = (
+                        sum(float(m.group(1)) for m in loss_matches[-10:]) / len(loss_matches[-10:])
+                        if loss_matches else None
+                    )
+                    return last_iter, total_iters, last_loss
+                if size - offset >= max_read:
+                    break
+    except OSError:
+        pass
+    return None, None, None
+
+
+def _lw_max_checkpoint(run_dir: Path) -> int | None:
+    """Return the highest checkpoint iteration saved on disk, or None.
+
+    Handles both plain-digit dirs (e.g. 91553) and iter_XXXXXXX dirs.
+    """
+    ckpt_dir = run_dir / "checkpoints"
+    if not ckpt_dir.is_dir():
+        return None
+    iters: list[int] = []
+    for d in ckpt_dir.iterdir():
+        if not d.is_dir():
+            continue
+        if d.name.isdigit():
+            iters.append(int(d.name))
+        elif d.name.startswith("iter_") and d.name[5:].isdigit():
+            iters.append(int(d.name[5:]))
+    return max(iters) if iters else None
+
+
+def _squeue_active(job_ids: list[str]) -> set[str]:
+    """Return the set of job IDs currently in the SLURM queue (running or pending)."""
+    if not job_ids:
+        return set()
+    try:
+        out = subprocess.check_output(
+            ["squeue", "--noheader", "-o", "%i", "-j", ",".join(job_ids)],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        return {line.strip() for line in out.splitlines() if line.strip()}
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return set()
+
+
+def _lw_status(
+    run_dir: Path,
+    last_iter: int | None,
+    total_iters: int | None,
+    active_jobs: set[str],
+    latest_job: str | None,
+    max_ckpt: int | None,
+    has_any_logs: bool,
+    has_config: bool,
+) -> str:
+    """Derive status using pre-computed local signals + squeue for ambiguous cases only."""
+    if not run_dir.is_dir():
+        return "NOT_LAUNCHED"
+    # DONE: checkpoint or iteration count reached total
+    if total_iters and max_ckpt is not None and max_ckpt >= total_iters:
+        return "DONE"
+    if total_iters and last_iter is not None and last_iter >= total_iters:
+        return "DONE"
+    # QUEUED/TRAINING: only if squeue confirms the job is active
+    if latest_job and latest_job in active_jobs:
+        return "TRAINING" if (last_iter is not None or max_ckpt is not None) else "QUEUED"
+    # Not in squeue, not done — resolve from local evidence
+    if not has_any_logs and not has_config:
+        return "NOT_LAUNCHED"
+    if has_any_logs:
+        logs_dir = run_dir / "logs"
+        stderr_candidates: list[Path] = []
+        if logs_dir.is_dir():
+            stderr_candidates = sorted(logs_dir.glob("stderr-*.log"))
+        if stderr_candidates:
+            try:
+                with open(stderr_candidates[-1], "rb") as f:
+                    f.seek(0, 2)
+                    size = f.tell()
+                    f.seek(max(0, size - 8192))
+                    tail = f.read().decode("utf-8", errors="replace")
+                if RE_TIME_LIMIT.search(tail):
+                    return "TIMEOUT"
+                if RE_NODE_FAILURE.search(tail):
+                    return "NODE_FAILURE"
+                if RE_OOM.search(tail) or RE_SEGFAULT.search(tail) or RE_FATAL.search(tail):
+                    return "FAILED"
+            except OSError:
+                pass
+        return "STOPPED"
+    # Config exists but no logs and not in squeue
+    return "NOT_LAUNCHED"
+
+
+def _lightweight_main(args: argparse.Namespace) -> None:
+    project_root = Path(__file__).resolve().parent.parent
+    os.chdir(project_root)
+
+    cfg = parse_config(args.config)
+    base_dir_template = cfg["base_dir_template"]
+    seed = cfg["seed"]
+    combos = cfg["combos"]
+    tok_to_stage = cfg["tok_to_stage"]
+    adam_beta2 = cfg.get("adam_beta2", 0.95)
+
+    def _render(stage: str, lr: float, gbsz: int, stable_tok: int | None = None) -> str:
+        raw = render_job_name(cfg["job_name_tpl"], 1, lr, gbsz, seed, stage, stable_tok)
+        return raw.replace("\\${backend.megatron.adam_beta2}", str(adam_beta2))
+
+    if args.results_dir is None:
+        old_prefix, new_prefix = args.prefix_remap.split(":", 1)
+        local_template = base_dir_template.replace(old_prefix, new_prefix)
+    else:
+        local_template = str(args.results_dir).split("${job.name}")[0].rstrip("/")
+
+    run_specs: list[tuple[str, str, int, str]] = []
+    run_to_gbsz: dict[str, int] = {}
+    for combo in combos:
+        lr, gbsz = combo["lr"], combo["gbsz"]
+        stable_tok = combo["stable_tokens"]
+        stable_stage = combo.get("stable_stage_name") or "stable"
+        stable_name = _render(
+            stable_stage, lr, gbsz, stable_tok if stable_stage == "stable" else None
+        )
+        run_specs.append((stable_name, "stable", stable_tok, combo["stable_launch_tier"]))
+        run_to_gbsz[stable_name] = gbsz
+        for decay_tok in sorted(combo["valid_decay_tokens"]):
+            stage_name = tok_to_stage.get(decay_tok)
+            if stage_name is None:
+                continue
+            decay_name = _render(stage_name, lr, gbsz)
+            if decay_tok in combo["center_tokens"]:
+                decay_tier = "center"
+            elif decay_tok in combo["cross_tokens"]:
+                decay_tier = "cross"
+            else:
+                decay_tier = "diagonal"
+            run_specs.append((decay_name, stage_name, decay_tok, decay_tier))
+            run_to_gbsz[decay_name] = gbsz
+
+    if not run_specs and cfg.get("is_single_run") and cfg.get("job_name"):
+        run_specs = [(cfg["job_name"], "stable", 0, "")]
+
+    _tier_order = {"center": 0, "cross": 1, "diagonal": 2, "": 3}
+
+    def _lw_sort_key(spec: tuple[str, str, int, str]) -> tuple:
+        run_name, stage, tokens, tier = spec
+        # Extract lr and gbsz from run_name for stable ordering within tier
+        m_lr = re.search(r"lr([\d.]+)", run_name)
+        m_gbsz = re.search(r"gbsz(\d+)", run_name)
+        lr_val = float(m_lr.group(1)) if m_lr else 0.0
+        gbsz_val = int(m_gbsz.group(1)) if m_gbsz else 0
+        is_decay = 0 if stage.startswith("stable") else 1
+        return (_tier_order.get(tier, 3), lr_val, gbsz_val, is_decay, tokens)
+
+    run_specs.sort(key=_lw_sort_key)
+
+    seq_length = cfg["seq_length"]
+    sample_ctx: dict[str, Any] = {"backend.megatron.seed": seed}
+    if combos:
+        sample_ctx.update(
+            {
+                "backend.megatron.global_batch_size": combos[0]["gbsz"],
+                "backend.megatron.num_experts": 1,
+                "backend.megatron.lr": combos[0]["lr"],
+            }
+        )
+    resolved_base = Path(_subst(local_template, sample_ctx))
+    if not resolved_base.is_dir():
+        resolved_base = Path(local_template)
+
+    status_colors = {
+        "DONE": "\033[92m",
+        "TRAINING": "\033[94m",
+        "STOPPED": "\033[33m",
+        "FAILED": "\033[91m",
+        "TIMEOUT": "\033[33m",
+        "NODE_FAILURE": "\033[33m",
+        "QUEUED": "\033[93m",
+        "NOT_LAUNCHED": "\033[90m",
+    }
+    RESET = "\033[0m"
+
+    # First pass: gather local signals (fast, no network)
+    run_info: list[tuple[str, str, int, str, Path, str | None, int | None, int | None, int | None, bool, bool]] = []
+    needs_squeue: list[str] = []
+    for run_name, stage, tokens, tier in run_specs:
+        run_dir = resolved_base / run_name
+        job_ids = find_job_ids(run_dir)
+        latest_job = job_ids[-1] if job_ids else None
+        last_iter, total_iters, last_loss = _lw_last_iter(run_dir)
+        if total_iters is None and tokens:
+            gbsz = run_to_gbsz.get(run_name)
+            if gbsz:
+                total_iters = _train_iters(tokens, gbsz, seq_length)
+        max_ckpt = _lw_max_checkpoint(run_dir)
+        config_ids, log_ids = _run_id_sets(run_dir)
+        has_any_logs = bool(log_ids)
+        # Only query squeue for runs that are ambiguous (not clearly done or not launched)
+        clearly_done = bool(
+            (total_iters and max_ckpt is not None and max_ckpt >= total_iters)
+            or (total_iters and last_iter is not None and last_iter >= total_iters)
+        )
+        clearly_not_launched = not run_dir.is_dir() or not bool(config_ids or log_ids)
+        if latest_job and not clearly_done and not clearly_not_launched:
+            needs_squeue.append(latest_job)
+        run_info.append((run_name, stage, tokens, tier, run_dir, latest_job, last_iter, total_iters, max_ckpt, has_any_logs, bool(config_ids), last_loss))
+
+    # Single squeue call only for ambiguous jobs
+    active_jobs = _squeue_active(needs_squeue)
+
+    rows: list[dict] = []
+    for run_name, stage, tokens, tier, run_dir, latest_job, last_iter, total_iters, max_ckpt, has_any_logs, has_config, last_loss in run_info:
+        status = _lw_status(run_dir, last_iter, total_iters, active_jobs, latest_job, max_ckpt, has_any_logs, has_config)
+        progress = (
+            f"{100.0 * last_iter / total_iters:.1f}%" if last_iter and total_iters else "—"
+        )
+        remaining = (
+            f"{100.0 * (total_iters - last_iter) / total_iters:.1f}%"
+            if last_iter and total_iters and last_iter < total_iters
+            else ("0.0%" if status == "DONE" else "—")
+        )
+        display_iter = last_iter if last_iter is not None else max_ckpt
+        iter_str = (
+            f"{display_iter} / {total_iters}" if display_iter is not None and total_iters else
+            (f"— / {total_iters}" if total_iters else "—")
+        )
+        loss_str = f"{last_loss:.4f}" if last_loss is not None else "—"
+        rows.append(
+            {
+                "run_name": run_name,
+                "job_id": latest_job or "—",
+                "status": status,
+                "iter_str": iter_str,
+                "progress": progress,
+                "remaining": remaining,
+                "tier": tier,
+                "loss": loss_str,
+            }
+        )
+
+    W_NAME = max((len(r["run_name"]) for r in rows), default=30)
+    W_NAME = min(W_NAME, 60)
+    header = (
+        f"{'Run':<{W_NAME}}  {'Job ID':>12}  {'Tier':<8}  {'Iter / Total':>22}  {'Done':>6}  {'Remaining':>9}  {'Loss':>8}  Status"
+    )
+    sep = "─" * len(header)
+    print()
+    print(f"Config:  {args.config}")
+    print(f"Results: {resolved_base}")
+    print(sep)
+    print(header)
+    print(sep)
+    for r in rows:
+        name = r["run_name"] if len(r["run_name"]) <= W_NAME else r["run_name"][: W_NAME - 1] + "…"
+        color = status_colors.get(r["status"], "")
+        print(
+            f"{name:<{W_NAME}}  {r['job_id']:>12}  {r['tier']:<8}  {r['iter_str']:>22}  "
+            f"{r['progress']:>6}  {r['remaining']:>9}  {r['loss']:>8}  {color}{r['status']}{RESET}"
+        )
+    print(sep)
+    done = sum(1 for r in rows if r["status"] == "DONE")
+    training = sum(1 for r in rows if r["status"] == "TRAINING")
+    queued = sum(1 for r in rows if r["status"] == "QUEUED")
+    stopped = sum(1 for r in rows if r["status"] == "STOPPED")
+    failed = sum(1 for r in rows if r["status"] in ("FAILED", "TIMEOUT", "NODE_FAILURE"))
+    not_launched = sum(1 for r in rows if r["status"] == "NOT_LAUNCHED")
+    print(
+        f"  {len(rows)} runs total — "
+        f"\033[92m{done} done\033[0m  "
+        f"\033[94m{training} training\033[0m  "
+        f"\033[93m{queued} queued\033[0m  "
+        f"\033[33m{stopped} stopped\033[0m  "
+        f"\033[91m{failed} failed\033[0m  "
+        f"\033[90m{not_launched} not launched\033[0m"
+    )
+    print()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Print a per-Slurm-job status table for a sweep config."
@@ -1289,7 +1602,19 @@ def main() -> None:
         "using this value; foreign-cluster jobs detected via sacct collision are "
         "tagged with the opposite name. Default: %(default)s",
     )
+    ap.add_argument(
+        "--lightweight",
+        action="store_true",
+        help=(
+            "Quick summary: show job name, latest job ID, status and progress for each run. "
+            "Skips log parsing, sacct, throughput and GPU-h calculation."
+        ),
+    )
     args = ap.parse_args()
+
+    if args.lightweight:
+        _lightweight_main(args)
+        return
 
     project_root = Path(__file__).resolve().parent.parent
     os.chdir(project_root)
