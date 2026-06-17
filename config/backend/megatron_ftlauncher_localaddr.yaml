@@ -1,0 +1,50 @@
+# ft_launcher variant of the Megatron launcher (for fault-tolerant / warm-reserve
+# in-process restart). Bases on the `megatron` backend (empty torchrun_args) and
+# defines a clean ft_launcher arg set, rather than inheriting megatron_torchrun's
+# STATIC-rendezvous args (node_rank/master_addr/master_port) which ft_launcher
+# rejects and which can't simply be nulled (torchrun_args is typed dict[str,str]).
+#
+# Replaces `torchrun` with NVIDIA Resiliency Extension's `ft_launcher`
+# (https://github.com/NVIDIA/nvidia-resiliency-ext) — a torchrun-compatible
+# launcher that also starts a per-rank monitor (heartbeats + hang detection).
+# REQUIRED for Megatron's `--enable-ft-package` and its built-in
+# `FT_SIM_FAULT_DESC` fault simulator.
+#
+# In-process restart + warm reserve ("spare node jumps in") is driven by the
+# `--inprocess-*` Megatron args (set in the experiment); they use their own
+# TCPStore on MASTER_PORT+1/+2 and don't depend on the rendezvous backend here.
+#
+# VERIFIED ON JUPITER (job 569668, nvidia-resiliency-ext 0.5.0 in
+# MegatronTraining-JUPITER_pt2512_aarch64_202602231451.sif): launcher + c10d
+# rendezvous + reserve come up, the fault fires, the in-process restart runs
+# cleanly and the reserve node takes over and resumes training.
+#
+# DEPENDENCY: requires the 1-line Megatron fix that resets the FT rank-monitor
+# client between in-process restarts — add `ft_integration.shutdown()` to
+# `destroy_state()` in megatron/training/inprocess_restart.py. Without it every
+# restart hits AssertionError('rank monitor client is already initialized').
+defaults:
+  - megatron
+  - _self_
+
+# ft_launcher invocation. vs plain torchrun:
+#   * `torchrun` -> `ft_launcher`.
+#   * Rendezvous MUST be c10d (ft_launcher rejects rdzv_backend=static) -> use a
+#     shared rdzv_id and DON'T pass node_rank/master_addr/master_port.
+#   * FT section timeouts are hardcoded here (NOT routed through torchrun_args)
+#     because the cliargs resolver rewrites `_`->`-`. NVRX 0.5.0 names them
+#     `--ft-rank-section-timeouts` / `--ft-rank-out-of-section-timeout` (the
+#     `--ft-param-*` form from newer docs is rejected as unrecognized on 0.5.0).
+#     With `--calc-ft-timeouts` (experiment) Megatron refines + persists them.
+dist_cmd: "ft_launcher ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n  %',' %',\
+ ${oc.cliargs:${.torchrun_args}}}}\\\n  --ft-rank-section-timeouts=setup:600,step:180,checkpointing:420 \\\n  --ft-rank-out-of-section-timeout=300 \\\n   ${.launcher_script}"
+
+torchrun_args:
+  nproc_per_node: ${slurm.sbatch.gpus_per_node}
+  nnodes: ${slurm.sbatch.nodes}
+  max_restarts: "3"     # job-level restart backstop; in-process handles per-fault recovery
+  tee: "3"
+  rdzv_backend: c10d    # ft_launcher requires c10d (static is rejected)
+  rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
+  rdzv_id: "$SLURM_JOB_ID"
+  local_addr: "$LOCAL_ADDR"
