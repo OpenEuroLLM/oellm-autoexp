@@ -225,12 +225,12 @@ from model_provider import model_provider  # noqa: E402
 from megatron.core.transformer.moe.router import TopKRouter  # noqa: E402
 from megatron.training import get_args, get_model, print_rank_0  # noqa: E402
 from megatron.training.tokenizer import build_tokenizer  # noqa: E402
-from megatron.training.checkpointing import (
+from megatron.training.checkpointing import (  # noqa: E402
     checkpoint_exists,
     get_checkpoint_tracker_filename,
     load_checkpoint,
     read_metadata,
-)  # noqa: E402
+)
 from megatron.training.initialize import initialize_megatron  # noqa: E402
 from megatron.training.utils import get_ltor_masks_and_position_ids  # noqa: E402
 

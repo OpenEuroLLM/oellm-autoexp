@@ -56,7 +56,7 @@
 [default0]:  classes_fraction ................................ 1.0
 [default0]:  clip_grad ....................................... 1.0
 [default0]:  clone_scatter_output_in_embedding ............... True
-[default0]:  config_logger_dir ............................... 
+[default0]:  config_logger_dir ...............................
 [default0]:  consumed_train_samples .......................... 0
 [default0]:  consumed_valid_samples .......................... 0
 [default0]:  context_parallel_size ........................... 1

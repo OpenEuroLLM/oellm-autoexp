@@ -309,13 +309,13 @@ base_args.extend(remaining_argv)
 
 sys.argv = base_args
 
-from functools import partial
+from functools import partial  # noqa: E402
 
-from gpt_builders import gpt_builder
-from model_provider import model_provider
-from megatron.training import get_args, get_model, print_rank_0
-from megatron.training.checkpointing import load_checkpoint
-from megatron.training.initialize import initialize_megatron
+from gpt_builders import gpt_builder  # noqa: E402
+from model_provider import model_provider  # noqa: E402
+from megatron.training import get_args, get_model, print_rank_0  # noqa: E402
+from megatron.training.checkpointing import load_checkpoint  # noqa: E402
+from megatron.training.initialize import initialize_megatron  # noqa: E402
 
 
 initialize_megatron(

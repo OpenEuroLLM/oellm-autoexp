@@ -30,7 +30,7 @@ _tools_dir = str(Path(__file__).parent)
 if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
-from megatron_throughput_from_logs import load_or_compute_throughput
+from megatron_throughput_from_logs import load_or_compute_throughput  # noqa: E402
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 

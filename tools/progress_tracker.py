@@ -42,14 +42,14 @@ for _d in (_tools_dir, _scripts_dir):
     if _d not in sys.path:
         sys.path.insert(0, _d)
 
-from gpu_hours import (
+from gpu_hours import (  # noqa: E402
     collect_job_ids as _gpu_collect_job_ids,
     query_sacct as _gpu_query_sacct,
     parse_elapsed as _gpu_parse_elapsed,
 )
-from low_throughput_analysis import analyze_job as _analyze_low_throughput_job
-from megatron_throughput_from_logs import load_or_compute_throughput as _compute_throughput
-from validate_sweep_runs import (
+from low_throughput_analysis import analyze_job as _analyze_low_throughput_job  # noqa: E402
+from megatron_throughput_from_logs import load_or_compute_throughput as _compute_throughput  # noqa: E402
+from validate_sweep_runs import (  # noqa: E402
     _resolve_defaults,
     render_job_name,
     substitute_omegaconf_path_vars as _subst,

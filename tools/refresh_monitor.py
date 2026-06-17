@@ -57,7 +57,9 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Only reset jobs with final_state set; skip limbo jobs",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Print what would change, don't write")
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print what would change, don't write"
+    )
     args = parser.parse_args(argv)
 
     session_dir = args.session_dir
@@ -99,4 +101,3 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
-
