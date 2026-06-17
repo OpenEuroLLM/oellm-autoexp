@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import sys
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -103,9 +104,14 @@ def main(argv: list[str] | None = None) -> None:
 
     slurm_client = SlurmClient(SlurmClientConfig())
     local_client = LocalCommandClient(LocalCommandClientConfig())
-    session_dir = Path(args.session_dir) or Path(args.monitor_state_dir) / args.session
+    session_dir = (
+        Path(args.session_dir)
+        if args.session_dir
+        else Path(args.monitor_state_dir) / args.session
+    )
     if not session_dir.exists():
-        print(f"Session directory {session_dir} does not exist.")
+        print(f"Session directory {session_dir} does not exist.", file=sys.stderr)
+        sys.exit(1)
     loop = MonitorLoop(
         store=JobFileStore(str(session_dir)),
         slurm_client=slurm_client,

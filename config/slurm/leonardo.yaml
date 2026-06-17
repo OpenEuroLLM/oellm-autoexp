@@ -24,6 +24,7 @@ env:
   HF_DATASETS_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
   MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep \"Address: \" | sed \"s/Address: //\" | tail) "
+  WANDB_MODE: "offline"
   MASTER_PORT: "20074"
   NUM_NODES: "$SLURM_JOB_NUM_NODES"
   GPUS_PER_NODE: "4"

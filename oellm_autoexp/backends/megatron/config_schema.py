@@ -419,6 +419,9 @@ class MegatronConfig(ConfigInterface):
     # Disable bias in the linear layers
     add_bias_linear: bool = True
 
+    # Disable bias in the linear layers (standalone flag).
+    disable_bias_linear: bool = False
+
     # Enable bias only in the QKV linear layers
     add_qkv_bias: bool = False
 
@@ -1743,6 +1746,9 @@ class MegatronConfig(ConfigInterface):
 
     # Path to save the wandb results locally.
     wandb_save_dir: str = ""
+
+    # The wandb entity name.
+    wandb_entity: str = ""
 
     # Set default logging level
     logging_level: int | None = None

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Parse Megatron stdout logs for per-GPU TFLOP/s and token/s, then print a
-summary table.
+"""
+Parse Megatron stdout logs for per-GPU TFLOP/s and token/s, then print a summary table.
 
 Looks for ``qwen3_*`` experiment subdirectories under each given base directory, reads
 ``logs/stdout*.log`` first (fallback: ``*.log`` in the run directory). When multiple
@@ -60,8 +60,7 @@ NAME_GBS = re.compile(r"gbsz(\d+)_")
 
 
 def filter_readable(paths: list[str]) -> list[str]:
-    """Drop missing paths / broken symlinks (common for ``current.log`` before
-    job writes)."""
+    """Drop missing paths / broken symlinks (common for ``current.log`` before job writes)."""
     return sorted(p for p in paths if Path(p).is_file())
 
 
@@ -73,8 +72,7 @@ def pick_stdout_log(log_paths: list[str]) -> str:
         raise FileNotFoundError("no readable log files in candidate list")
 
     def score(path: str) -> tuple[int, int]:
-        """Prefer latest Slurm job id (stdout-JOBID.log); tie-break on larger
-        file."""
+        """Prefer latest Slurm job id (stdout-JOBID.log); tie-break on larger file."""
         path_obj = Path(path)
         m = re.search(r"stdout-(\d+)\.log$", path_obj.name, re.I)
         job_id = int(m.group(1)) if m else -1
@@ -133,21 +131,13 @@ _ITER_FIELDS = ("iter_num", "elapsed_ms", "tflop_per_gpu", "tok_per_gpu")
 # Columns in avg_throughput.csv.  Data fields start at index 4 (after the
 # four param columns: job_id, max_elapsed_ms, skip_first_iters, max_iters_used).
 _AVG_FIELDS = (
-    "job_id",
-    "max_elapsed_ms",
-    "skip_first_iters",
-    "max_iters_used",
-    "n_iters",
-    "it_first",
-    "it_last",
-    "avg_tflop_per_gpu",
-    "avg_tok_per_gpu",
-    "avg_elapsed_ms",
+    "job_id", "max_elapsed_ms", "skip_first_iters", "max_iters_used",
+    "n_iters", "it_first", "it_last",
+    "avg_tflop_per_gpu", "avg_tok_per_gpu", "avg_elapsed_ms",
 )
 _AVG_DATA_FIELDS = _AVG_FIELDS[4:]
-_AVG_INT_FIELDS = frozenset(
-    {"skip_first_iters", "max_iters_used", "n_iters", "it_first", "it_last"}
-)
+_AVG_INT_FIELDS  = frozenset({"skip_first_iters", "max_iters_used",
+                               "n_iters", "it_first", "it_last"})
 
 
 def _throughput_dir(log_path: Path) -> Path:
@@ -166,7 +156,8 @@ def _parse_all_iters(log_path: Path) -> list[tuple[int, float, float, float]]:
     text = log_path.read_text(errors="replace")
     rows: list[tuple[int, float, float, float]] = []
     for m in ITER_LINE.finditer(text):
-        rows.append((int(m.group(1)), float(m.group(2)), float(m.group(3)), float(m.group(4))))
+        rows.append((int(m.group(1)), float(m.group(2)),
+                     float(m.group(3)), float(m.group(4))))
     rows.sort(key=lambda x: x[0])
     return rows
 
@@ -188,9 +179,8 @@ def _load_avg_row(
     max_elapsed_ms: float,
     skip_first_iters: int,
     max_iters_used: int,
-) -> dict[str, Any] | None:
-    """Return cached averages for *job_id* if stored params match, else
-    None."""
+) -> "dict[str, Any] | None":
+    """Return cached averages for *job_id* if stored params match, else None."""
     if not avg_csv.is_file():
         return None
     try:
@@ -215,17 +205,17 @@ def _load_avg_row(
 def _upsert_avg_row(
     avg_csv: Path,
     job_id: str,
-    result: dict[str, Any],
+    result: "dict[str, Any]",
     max_elapsed_ms: float,
     skip_first_iters: int,
     max_iters_used: int,
 ) -> None:
     """Write or replace the row for *job_id* in avg_throughput.csv."""
     new_row: dict[str, Any] = {
-        "job_id": job_id,
-        "max_elapsed_ms": max_elapsed_ms,
+        "job_id":           job_id,
+        "max_elapsed_ms":   max_elapsed_ms,
         "skip_first_iters": skip_first_iters,
-        "max_iters_used": max_iters_used,
+        "max_iters_used":   max_iters_used,
         **{k: result[k] for k in _AVG_DATA_FIELDS},
     }
     existing: list[dict] = []
@@ -251,7 +241,7 @@ def load_or_compute_throughput(
     max_elapsed_ms: float = 6000.0,
     skip_first_iters: int = 50,
     max_iters_used: int = 500,
-) -> dict[str, Any] | None:
+) -> "dict[str, Any] | None":
     """Return per-GPU throughput metrics for *log_path*, with CSV caching.
 
     Cache layout inside ``<run_dir>/throughput/`` (sibling of ``logs/``):
@@ -267,9 +257,9 @@ def load_or_compute_throughput(
     ``avg_tflop_per_gpu``, ``avg_tok_per_gpu``, ``avg_elapsed_ms``,
     or ``None`` if the log cannot be parsed.
     """
-    tp_dir = _throughput_dir(log_path)
+    tp_dir  = _throughput_dir(log_path)
     avg_csv = tp_dir / "avg_throughput.csv"
-    job_id = _job_id_from_log(log_path)
+    job_id  = _job_id_from_log(log_path)
 
     cached = _load_avg_row(avg_csv, job_id, max_elapsed_ms, skip_first_iters, max_iters_used)
     if cached is not None:
@@ -316,8 +306,7 @@ def gpu_count_from_path(
 
 
 def parse_sbatch(path: Path) -> tuple[int | None, int | None]:
-    """Return (nodes, gpus_per_node) from a SLURM sbatch file, or (None, None)
-    if absent."""
+    """Return (nodes, gpus_per_node) from a SLURM sbatch file, or (None, None) if absent."""
     if not path.is_file():
         return None, None
     text = path.read_text(errors="replace")

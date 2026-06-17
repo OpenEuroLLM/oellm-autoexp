@@ -32,6 +32,21 @@ def build_sbatch_directives(config: SlurmConfig) -> list[str]:
     return directives
 
 
+def build_srun_flags(config: SlurmConfig) -> str:
+    flags: list[str] = []
+    srun_values = asdict(config.srun)
+    del srun_values["_non_strict"]
+    for key, value in srun_values.items():
+        if value is None:
+            continue
+        flag = key if key.startswith("--") else f"--{key.replace('_', '-')}"
+        if value is True:
+            flags.append(flag)
+        else:
+            flags.append(f"{flag}={value}")
+    return " ".join(flags) + " "
+
+
 def build_replacements(
     config: SlurmConfig,
     *,
@@ -49,7 +64,7 @@ def build_replacements(
         "sbatch_directives": "\n".join(build_sbatch_directives(config)),
         "env_exports": env_exports,
         "launcher_cmd": config.launcher_cmd or "",
-        "srun_opts": config.srun_opts or "",
+        "srun_opts": config.srun_opts or build_srun_flags(config),
         "launcher_env_passthrough": str(config.launcher_env_passthrough).lower(),
     }
 

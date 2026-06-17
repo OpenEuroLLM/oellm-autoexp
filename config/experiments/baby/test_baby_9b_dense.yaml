@@ -1,0 +1,50 @@
+# @package _global_
+
+# 9B dense Qwen3-like model training
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/baby/models: qwen3_dense_9b
+  - /backend/megatron/baby/data: oellm_256k_10TT_leonardo_train
+  - _self_
+
+job:
+  name: "test_baby_9b_dense"
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${job.name}"
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+  chain_repeat: 3 # for >2 you need different qos than boost_qos_dbg
+
+backend:
+  megatron:
+    wandb_project: test_baby_9b_dense
+    wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
+    data_cache_path: /leonardo_work/OELLM_prod2026/production_training/baby_9b_dense/cache
+    # data_cache_path: tmp/
+
+    train_iters: 10
+    lr_warmup_iters: 1
+    lr_wsd_decay_iters: 1
+
+    micro_batch_size: 1
+    global_batch_size: 32
+
+    eval_iters: 1
+    eval_interval: 11
+    save: null
+    load: null
+
+slurm:
+  env:
+    HF_HOME: /leonardo_work/OELLM_prod2026/hf_cache/${oc.env:USER}
+  sbatch:
+    nodes: 1
+    time: "00:30:00"
+    qos: boost_qos_dbg # boost_qos_dbg for debugging, qos_oellm for production.

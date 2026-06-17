@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Sync wandb offline runs to the cloud.
+"""
+Sync wandb offline runs to the cloud.
 
 Usage:
     # Sync all runs in a folder
@@ -31,13 +32,13 @@ def is_run_synced(offline_run: Path) -> bool:
 
 def find_offline_runs(base_path: Path, include_synced: bool = False) -> tuple[list[Path], int]:
     """Find all wandb offline run directories under a path.
-
+    
     Returns:
         Tuple of (runs_to_sync, skipped_count)
     """
     offline_runs = []
     skipped = 0
-
+    
     # Look for wandb/offline-run-* patterns
     for wandb_dir in base_path.rglob("wandb"):
         if wandb_dir.is_dir():
@@ -47,7 +48,7 @@ def find_offline_runs(base_path: Path, include_synced: bool = False) -> tuple[li
                         skipped += 1
                         continue
                     offline_runs.append(offline_run)
-
+    
     return sorted(offline_runs), skipped
 
 
@@ -59,15 +60,15 @@ def sync_run(offline_run_path: Path, dry_run: bool = False, project: str | None 
     cmd = ["wandb", "sync", path_str]
     if project:
         cmd += ["--project", project]
-
+    
     if dry_run:
         print(f"[DRY RUN] Would execute: {' '.join(cmd)}")
         return True
-
-    print(f"\n{'=' * 60}")
+    
+    print(f"\n{'='*60}")
     print(f"Syncing: {path_str}")
-    print(f"{'=' * 60}")
-
+    print(f"{'='*60}")
+    
     try:
         result = subprocess.run(cmd, check=False)
         if result.returncode != 0:
@@ -83,43 +84,50 @@ def main():
     parser = argparse.ArgumentParser(
         description="Sync wandb offline runs to the cloud",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
+        epilog=__doc__
     )
-
+    
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
-        "--folder", "-f", help="Folder name under results directory (e.g., moe_200MA50M_10BT)"
+        "--folder", "-f",
+        help="Folder name under results directory (e.g., moe_200MA50M_10BT)"
     )
     group.add_argument(
-        "--rundir",
-        "-r",
-        help="Specific run directory path (e.g., moe_200MA50M_10BT/moe_200MA50M_10BT_schedWSD_lr0.001_gbsz512_beta20.95)",
+        "--rundir", "-r",
+        help="Specific run directory path (e.g., moe_200MA50M_10BT/moe_200MA50M_10BT_schedWSD_lr0.001_gbsz512_beta20.95)"
     )
-
+    
     parser.add_argument(
-        "--results-dir", default="results", help="Base results directory (default: results)"
-    )
-    parser.add_argument(
-        "--dry-run", "-n", action="store_true", help="Print commands without executing"
+        "--results-dir",
+        default="results",
+        help="Base results directory (default: results)"
     )
     parser.add_argument(
-        "--continue-on-error",
-        "-c",
+        "--dry-run", "-n",
         action="store_true",
-        help="Continue syncing other runs if one fails",
+        help="Print commands without executing"
     )
     parser.add_argument(
-        "--force", action="store_true", help="Re-sync runs even if they were already synced"
+        "--continue-on-error", "-c",
+        action="store_true",
+        help="Continue syncing other runs if one fails"
     )
     parser.add_argument(
-        "--project", "-p", default=None, help="wandb project to upload runs to (e.g., my-project)"
+        "--force",
+        action="store_true",
+        help="Re-sync runs even if they were already synced"
     )
-
+    parser.add_argument(
+        "--project", "-p",
+        default=None,
+        help="wandb project to upload runs to (e.g., my-project)"
+    )
+    
     args = parser.parse_args()
-
+    
     # Determine the base path to search
     results_dir = Path(args.results_dir)
-
+    
     if args.folder:
         base_path = results_dir / args.folder
     else:
@@ -131,38 +139,38 @@ def main():
             base_path = results_dir / args.rundir
         else:
             base_path = Path(args.rundir)
-
+    
     if not base_path.exists():
         print(f"Error: Path does not exist: {base_path}")
         sys.exit(1)
-
+    
     print(f"Searching for offline runs in: {base_path}")
-
+    
     # Find all offline runs
     offline_runs, skipped = find_offline_runs(base_path, include_synced=args.force)
-
+    
     if not offline_runs and skipped == 0:
         print(f"No offline runs found in {base_path}")
         sys.exit(0)
-
+    
     if skipped > 0:
         print(f"\nSkipped {skipped} already-synced run(s) (use --force to re-sync)")
-
+    
     if not offline_runs:
         print("All runs already synced!")
         sys.exit(0)
-
+    
     print(f"\nFound {len(offline_runs)} offline run(s) to sync:")
     for run in offline_runs:
         print(f"  - {run}")
-
+    
     if args.dry_run:
         print("\n[DRY RUN MODE - No actual syncing will occur]\n")
-
+    
     # Sync each run
     success_count = 0
     fail_count = 0
-
+    
     for offline_run in offline_runs:
         success = sync_run(offline_run, dry_run=args.dry_run, project=args.project)
         if success:
@@ -170,16 +178,14 @@ def main():
         else:
             fail_count += 1
             if not args.continue_on_error and not args.dry_run:
-                print("\nStopping due to error. Use --continue-on-error to continue.")
+                print(f"\nStopping due to error. Use --continue-on-error to continue.")
                 break
-
+    
     # Summary
-    print(f"\n{'=' * 60}")
-    print(
-        f"Summary: {success_count} succeeded, {fail_count} failed out of {len(offline_runs)} total"
-    )
-    print(f"{'=' * 60}")
-
+    print(f"\n{'='*60}")
+    print(f"Summary: {success_count} succeeded, {fail_count} failed out of {len(offline_runs)} total")
+    print(f"{'='*60}")
+    
     if fail_count > 0:
         sys.exit(1)
 

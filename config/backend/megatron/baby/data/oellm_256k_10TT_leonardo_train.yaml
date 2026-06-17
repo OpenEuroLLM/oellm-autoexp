@@ -1,15 +1,15 @@
 # @package backend.megatron
 # Dataset related settings for the baby run
 max_position_embeddings: ${.seq_length}
-split: '95,5,0'
+split: '99,1,0'
 create_attention_mask_in_dataloader: false
 
 # Data paths
-data_args_path: /leonardo_work/OELLM_prod2026/users/ecozzolino/10TT_data_path.sh
+data_args_path: /leonardo_work/OELLM_prod2026/production_training/baby_9b_dense/10T_baby_datamix.txt
 
 # Tokenizer
 tokenizer_type: HuggingFaceTokenizer
-tokenizer_model: /leonardo_work/OELLM_prod2026/users/shaldar0/tokenizers/openeurollm-tokenizer-256k
+tokenizer_model: /leonardo_work/OELLM_prod2026/production_training/baby_9b_dense/tokenizer
 
 seq_length: 4096
 dataloader_type: "cyclic"
