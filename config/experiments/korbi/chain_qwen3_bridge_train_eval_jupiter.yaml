@@ -1,0 +1,140 @@
+# @package _global_
+#
+# Exemplary 3-stage chained experiment: train a Qwen3 in Megatron, convert
+# the checkpoint to HuggingFace via Megatron-Bridge, then evaluate with
+# oellm-evals. Each stage is its own SLURM job; orchestration is the standard
+# oellm-autoexp sweep + sibling references + FileExistsCondition.
+#
+#   stage=train    MegatronBackend       1 node × 4 GPU, apptainer (training container).
+#                  Megatron Qwen3 1000-iter run; saves legacy MLM ckpt at
+#                  <train_dir>/iter_NNNNNNN/.
+#   stage=convert  MegatronBridgeBackend 1 GPU,  apptainer (bridge container).
+#                  Bridge.export_ckpt → HF safetensors at
+#                  <train_dir>/hf/iter_NNNNNNN/. The HF reference config.json
+#                  is synthesised from the train stage's resolved Megatron
+#                  config (`derive_hf_arch=qwen3` + `megatron_config_path`).
+#   stage=eval     OELLMEvalBackend      1 GPU,  venv (oellm-evals).
+#                  Runs the open-sci-0.01 task group on the HF checkpoint.
+#
+# NOTES
+#  - The bridge container (MegatronTraining-JUPITER-bridge-*) keeps OpenEuroLLM
+#    Megatron-LM as the primary `megatron.core` (matches training-side
+#    checkpoint format) and ships Megatron-Bridge on top. Bridge model-init
+#    imports are made tolerant of fork-only symbol gaps; the Qwen3 path is
+#    unaffected.
+#  - `backend.megatron.add_qkv_bias: false` is required for the convert stage:
+#    Bridge's Qwen3Bridge sets `add_qkv_bias=False` (Qwen3 does *not* use QKV
+#    bias, unlike Qwen2). Training with QKV bias produces tensors with no HF
+#    counterpart and the param mapping crashes mid-export.
+
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base_reference, qwen3_125M, data_mixturevitae]
+  - /sweep: none
+  - override /job: default
+  - _self_
+
+job:
+  name: "chain_qwen3_bridge_train_eval_match"
+  base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${.name}_${index}
+
+backend:
+  megatron:
+    legacy_tokenizer: false
+    train_iters: 1000
+    lr_warmup_iters: 50
+    lr_decay_iters: 1000
+    lr_wsd_decay_iters: 200
+    save_interval: 1000
+    eval_interval: 1000
+    train_data_path:
+      - /e/scratch/projectnucleus/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all
+    valid_data_path:
+      - /e/scratch/projectnucleus/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all
+    data_path: []
+    split: null
+    # Match Bridge's Qwen3 expectation: no QKV bias, no MLP bias, embeddings
+    # tied. Without this override Bridge's Qwen3Bridge param-mapping has no
+    # mapping for `decoder.layers.*.self_attention.linear_qkv.bias` and the
+    # weight stream crashes at the first untied tensor.
+    add_qkv_bias: false
+    add_bias_linear: false
+    untie_embeddings_and_output_weights: false
+    # Train with the same tokenizer the convert stage targets so the trained
+    # embedding rows match the HF config's vocab_size. The base config uses
+    # `EleutherAI/gpt-neox-20b` (50304 padded vocab) which mismatches Qwen3's
+    # ~151k vocab and trips transformers' shape check at eval time.
+    # JUPITER's HF_HOME doesn't have Qwen3-0.6B model snapshots fully cached;
+    # point at the local resources tree the bridge backend ships (populated by
+    # scripts/download_tokenizers.py).
+    tokenizer_model: "${oc.env:HOME}/work/Projects/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge/tokenizers/Qwen/Qwen3-0.6B"
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  sbatch:
+    job_name: null   # let the generator emit slurm.name (sweep-index-suffixed)
+    nodes: 1
+    time: "01:00:00"
+
+sweep:
+  type: list
+  filter: true
+  groups:
+    - type: list
+      configs:
+        - stage: train
+          container.image: "${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_pt2512_aarch64_202602252238.sif"
+
+        - stage: convert
+          backend: megatron_bridge
+          # Re-use the jupiter apptainer launcher; point at the bridge SIF.
+          container: jupiter
+          container.image: "${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-bridge-bridge_aarch64_202605191331.sif"
+          # Bind-mount the live host repo over the container's /workspace/oellm-autoexp
+          # so iteration on backend code doesn't require a container rebuild.
+          container.bind:
+            - "/e"
+            - "/dev/shm"
+            - "${oc.env:HOME}/work/Projects/oellm-autoexp:/workspace/oellm-autoexp"
+          # `hf_model` is used to look up the run_config.yaml template + the
+          # reference tokenizer under resources/megatron_bridge/. The HF
+          # config.json is synthesised on the fly via `derive_hf_arch`
+          # (`oellm_autoexp.backends.megatron_bridge.hf_config_gen`) from the
+          # train stage's resolved Megatron config — no vendored config.json
+          # needs to match the architecture.
+          backend.hf_model: "Qwen/Qwen3-0.6B"
+          backend.tokenizer: "Qwen/Qwen3-0.6B"
+          backend.derive_hf_arch: "qwen3"
+          backend.megatron_config_path: "\\${sibling.train.job.base_output_dir}/current.yaml"
+          backend.megatron_path: "\\${sibling.train.job.base_output_dir}/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          backend.hf_path: "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          # Bridge submodule paths inside the container.
+          backend.bridge_root: "/workspace/oellm-autoexp/submodules/Megatron-Bridge"
+          backend.resources: "/workspace/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge"
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.train.job.base_output_dir}/latest_checkpointed_iteration.txt"
+          slurm.sbatch.gpus_per_node: 1
+          slurm.sbatch.time: "00:30:00"
+
+        - stage: eval
+          backend: oellm_eval
+          container: jupiter_venv
+          slurm: jupiter_venv
+          backend.models:
+            - "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          backend.venv_path: "${oc.env:HOME}/work/venv"
+          backend.local: true
+          backend.skip_checks: true
+          backend.verbose: true
+          backend.env.EVAL_BASE_DIR: "${oc.env:OUTPUT_DIR,./output}/${job.name}_2/eval"
+          backend.env.EVAL_OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}/${job.name}_2/eval"
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}/model.safetensors"
+          slurm.sbatch.gpus_per_node: 1
+          slurm.sbatch.time: "01:00:00"

@@ -1,0 +1,6 @@
+class_name: Venv
+venv_path: ${oc.env:OELLM_EVAL_VENV,${oc.env:HOME}/work/eval_venv}
+
+env:
+  MACHINE_NAME: "JUWELS"
+  HF_HOME: ${oc.env:HF_HOME}

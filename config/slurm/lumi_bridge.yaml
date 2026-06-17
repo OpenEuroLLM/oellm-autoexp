@@ -1,0 +1,7 @@
+defaults:
+  - lumi
+  - _self_
+
+# Bridge stage on Lumi: re-uses the lumi.yaml launcher_cmd unchanged (it
+# already handles binds + AITER_JIT_DIR). PYTHONPATH override is injected
+# per-stage via backend.env in the chain experiment.

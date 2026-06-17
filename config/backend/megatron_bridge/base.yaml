@@ -1,0 +1,7 @@
+# @package backend
+# Required per-experiment:
+megatron_path: ???
+hf_path: ???
+hf_model: ???
+tokenizer: ???
+extra_cli_args: []
