@@ -1,0 +1,17 @@
+defaults:
+  - lumi
+  - _self_
+
+# Lumi eval launcher: run inside laif-rocm container (ROCm torch + transformers
+# baked in) with oellm-evals + lm-eval installed at $HOME/eval_local via
+# `pip install --target` (see container/build_container_user.py-equivalent
+# bootstrap). The --env PYTHONPATH adds that prefix so the host-installed
+# packages take precedence over /opt/venv inside the container.
+launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
+  export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
+  ${oc.select:container.runtime,singularity} exec \
+  ${oc.join:' ',${oc.maptmpl:'--env %=$% \\\n',${oc.dict.keys:.env}}} \
+  ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
+  --env PYTHONPATH=$HOME/eval_local/lib/python3.12/site-packages \
+  --env PATH=$HOME/eval_local/bin:$PATH \
+  ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif}"

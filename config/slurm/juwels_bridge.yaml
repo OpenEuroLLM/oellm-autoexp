@@ -1,0 +1,15 @@
+defaults:
+  - juwels
+  - _self_
+
+# Override juwels.yaml to include explicit --bind mounts in the launcher.
+# The base juwels.yaml relies on JUWELS-wide apptainer/singularity auto-binds
+# for /p/scratch and /p/project1 during training, but the Megatron-Bridge
+# convert stage also needs the host's patched
+# submodules/Megatron-Bridge to be visible inside the container at
+# /workspace/oellm-autoexp, so we have to add the explicit bind list here.
+launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \\\n\
+ export LOCAL_ADDR=$(nslookup $(hostname | sed \"s/.juwels//\" )i \
+  | grep \"Address: \" | tail -n1 | sed \"s/.*Address: //\") ; \
+  ${oc.select:container.runtime,apptainer} exec ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}}\
+ --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif}"

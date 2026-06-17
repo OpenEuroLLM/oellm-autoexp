@@ -1,0 +1,3 @@
+# @package backend
+hf_model: "Qwen/Qwen3-1.7B"
+tokenizer: "Qwen/Qwen3-1.7B"

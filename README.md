@@ -99,6 +99,78 @@ python scripts/run_autoexp.py --config-name experiments/default
 
 ```
 
+### Training → conversion → evaluation chain (Megatron-Bridge + oellm-evals)
+
+A reference chain that trains in Megatron-LM, converts the
+torch_dist checkpoint to HuggingFace by way of Megatron-Bridge, and runs
+lm-eval-harness through `oellm-eval schedule` lives under
+`config/experiments/korbi/chain_qwen3_bridge_train_eval_<cluster>.yaml`
+for jupiter, juwels, leonardo, and lumi.
+
+The two new backends are:
+
+- **`megatron_bridge`** — `MegatronBridgeBackend`. Runs
+  `python -m oellm_autoexp.backends.megatron_bridge.run_export …`
+  inside the training container; reuses the SIF, no separate bridge
+  image is needed thanks to runtime shims in `run_export.py`
+  (`nvidia_resiliency_ext.__version__`,
+  `_clean_metadata_for_serialization`, a `LayerWiseDistributedOptimizer`
+  placeholder) plus the `container/megatron/patch_bridge_lazy_imports.py`
+  source patch applied once per checkout.
+- **`oellm_eval`** — `OELLMEvalBackend`. Wraps `oellm-eval schedule
+  --local true …` so the eval runs inside the SLURM job allocated by
+  oellm-autoexp (no extra sbatch from oellm-evals). Reads task definitions
+  from `submodules/oellm_evals/oellm/resources/task-groups.yaml`.
+
+Once per checkout, on a login node with internet, run the installer:
+
+```bash
+# Auto-detects the cluster from hostname; pass --cluster NAME to override.
+# Adds --prefetch to also pre-cache the eval datasets into HF_HOME.
+bash scripts/install_eval_env.sh --prefetch
+```
+
+That single script:
+
+- builds the right Python environment for the cluster — `uv venv` on
+  juwels/jupiter, `pip install --user` inside the eval container on
+  leonardo, `pip install --target` inside the rocm container on lumi
+- installs `oellm-evals` with the `[eval]` / `[eval-base]` extras from
+  `submodules/oellm_evals/pyproject.toml` (single source of truth for the
+  lm-eval dep set), plus `oellm-autoexp` and the `compoconf==0.1.14` pin
+- applies `container/megatron/patch_bridge_lazy_imports.py` so
+  `from megatron.bridge import AutoBridge` is tolerant of missing model
+  bridges
+- pulls the Qwen3-0.6B tokenizer's heavy files into
+  `oellm_autoexp/postprocess/resources/megatron_bridge/`
+- with `--prefetch`, calls `scripts/prefetch_datasets.py` inside the
+  matching env so HF datasets land in the cache layout the eval stage
+  will actually read from
+
+Set `HF_HOME` to the cluster-appropriate location before running with
+`--prefetch` — on Leonardo this is the dotted `.cache/huggingface` dir
+(because oellm-evals's eval script hardcodes
+`HF_DATASETS_CACHE=$HF_HOME/datasets` and Leonardo's `lm_eval` reads from
+that legacy layout); see
+[`docs/bridge_eval_setup.md`](docs/bridge_eval_setup.md) for the per-cluster
+values.
+
+Then submit a chain experiment as usual:
+
+```bash
+PYTHONPATH=. python scripts/run_autoexp.py \
+    --config-name experiments/korbi/chain_qwen3_bridge_train_eval_<cluster>
+```
+
+The orchestrator submits train, waits for `latest_checkpointed_iteration.txt`
+under the train output, submits convert, then submits eval once the HF
+`model.safetensors` appears. Each stage's logs land under
+`$OUTPUT_DIR/chain_qwen3_bridge_train_eval_<cluster>_{0,1,2}/`; per-task
+eval results are written to `…_2/eval/<timestamp>/results/<hash>_<ts>.json`.
+
+Per-cluster env / venv / container prerequisites for both backends are in
+[`docs/bridge_eval_setup.md`](docs/bridge_eval_setup.md).
+
 ### Monitoring sessions
 - Every submission drops `<monitoring_state_dir>/<session_id>/<job_id>.json`. Resuming is symmetric:
 ```bash
