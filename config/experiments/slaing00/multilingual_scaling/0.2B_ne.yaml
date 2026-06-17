@@ -1,0 +1,58 @@
+# @package _global_
+
+# 0.2B NE dense Qwen3-like model training with pull-based multi-stage cooldown on Leonardo
+# Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: auto_restart
+  - /sweep/multilingual_scaling@sweep: qwen3_dense_0.2B_ne # sweep configs
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.2B_ne # model configs
+  - /backend/megatron/multilingual_scaling/data: oellm_256k_leonardo # data configs
+  - _self_
+
+index: 0
+stage: ""
+
+job:
+  name: "" # Will be overridden by sweep with stage and hyperparameter info
+  base_output_dir: "/leonardo_work/OELLM_prod2026/experiments/multilingual_scaling/0.2B_ne/training/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+
+backend:
+  megatron:
+    wandb_exp_name: "" # Will be overridden by sweep with stage and hyperparameter info
+    wandb_project: dense_multilingual_scaling
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    # DATA
+    data_cache_path: /leonardo_work/OELLM_prod2026/slaing00/cache/MEGATRON_262k/${job.name}
+
+    # Evals off for small models
+    eval_iters: 0
+    split: "100,0,0"
+
+    # Base training configuration (for stable phase)
+    num_workers: 8
+    micro_batch_size: 4
+    global_batch_size: 64  # Will be overridden by sweep
+    lr: 5.e-4  # Will be overridden by sweep
+
+
+container:
+  env:
+    WANDB_TAGS: "leonardo"
+
+slurm:
+  sbatch:
+    nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
+    account: oellm_prod2026
+    time: "24:00:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
