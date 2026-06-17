@@ -24,7 +24,7 @@ import networkx as nx
 from compoconf import asdict
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
-from .config.schema import StagedSweepRoot, ConfigSetup
+from .config.schema import StagedSweepRoot, SweepConfig, ConfigSetup
 from .config.loader import load_config_reference
 from .expander import SweepPoint
 from .planner import JobPlan
@@ -329,6 +329,11 @@ def param_to_cmdlines(key: str, val: Any, prefix: str = "", config_dir: str | Pa
         val = val.replace('"', '\\"')
         return [f'{prefix}{key}="{val}"']
     elif isinstance(val, list) and all(isinstance(item, str) for item in val):
+        if any("$" in item for item in val):
+            # Items contain OmegaConf interpolations; Hydra's [a,b] literal grammar
+            # can't represent them. Fall through to the placeholder + dotted-path
+            # pattern (key=[0,1,...], key.0=val0, ...) implemented in dict_to_cmdlines.
+            return config_to_cmdline(val, override=prefix or "++", prefix=key)
         # Format as Hydra config group list: subconfig=[a,b]
         list_str = "[" + ",".join(val) + "]"
         return [f"{prefix}{key}={list_str}"]
@@ -380,9 +385,9 @@ def resolve_sweep_with_dag(
     filtered_jobs = {}
     base_context = asdict(config)
     base_context = {k: v for k, v in base_context.items() if k not in ("sweep", "sibling")}
-    sweep_filter_expr = config.sweep.filter if config.sweep else True
+    sweep_filter_expr = config.sweep.filter if isinstance(config.sweep, SweepConfig) else True
 
-    if config.sweep is None:
+    if not isinstance(config.sweep, SweepConfig):
         point = points_dict[list(points_dict)[0]]
         resolved = load_config_reference(
             config_dir=config_setup.config_dir,

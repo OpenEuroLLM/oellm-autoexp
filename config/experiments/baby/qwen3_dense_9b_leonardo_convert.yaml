@@ -1,0 +1,70 @@
+# @package _global_
+#
+# Standalone Megatron → HuggingFace conversion for the Qwen3 dense 9B baby run.
+#
+# Prerequisites (once per clone):
+#   # 1. Patch Megatron-Bridge (from the repo root):
+#   singularity exec --bind /leonardo_work \
+#       /leonardo_work/OELLM_prod2026/container_images/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif \
+#       python container/megatron/patch_bridge_lazy_imports.py \
+#           submodules/Megatron-Bridge/src/megatron/bridge/models
+#
+#   # 2. Create a minimal venv with sentencepiece:
+#   singularity exec --bind /leonardo_work \
+#       /leonardo_work/OELLM_prod2026/container_images/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif \
+#       bash -c "python3.12 -m venv /leonardo_work/OELLM_prod2026/users/$USER/environments/venv_bridge \
+#                && /leonardo_work/OELLM_prod2026/users/$USER/environments/venv_bridge/bin/pip install sentencepiece"
+#
+# Usage:
+#   export CKPT_ITER=iter_0067200
+#   export OUTPUT_DIR=/leonardo_work/OELLM_prod2026/users/$USER/output
+#   export OELLM_SITEPACKAGES=/leonardo_work/OELLM_prod2026/users/$USER/environments/venv_bridge/lib/python3.12/site-packages
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/baby/qwen3_dense_9b_leonardo_convert
+
+defaults:
+  - ../base
+  - /backend: megatron_bridge
+  - /container: leonardo
+  - /slurm: leonardo_bridge
+  - /sweep: none
+  - _self_
+
+job:
+  name: "qwen3_9b_convert"
+  base_output_dir: "${oc.env:OUTPUT_DIR}/qwen3_9b_convert"
+
+backend:
+  hf_model: "Qwen/Qwen3-8B"
+  tokenizer: "/leonardo_work/OELLM_prod2026/users/shaldar0/tokenizers/openeurollm-tokenizer-256k"
+  megatron_path: "/leonardo_work/OELLM_prod2026/production_training/baby_9b_dense/checkpoints/${oc.env:CKPT_ITER,iter_0067200}"
+  hf_path: "${oc.env:OUTPUT_DIR}/qwen3_9b_hf/${oc.env:CKPT_ITER,iter_0067200}"
+  derive_hf_arch: "qwen3"
+  megatron_config_path: "/leonardo_work/OELLM_prod2026/production_training/baby_9b_dense/logs/megatron_9b_config.json"
+  bridge_root: "/workspace/oellm-autoexp/submodules/Megatron-Bridge"
+  resources: "/workspace/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge"
+  env:
+    PYTHONPATH: "/workspace/oellm-autoexp/submodules/Megatron-Bridge/3rdparty/Megatron-LM:/workspace/oellm-autoexp/submodules/Megatron-Bridge/src:/workspace/oellm-autoexp:${oc.env:OELLM_SITEPACKAGES}"
+    PYTHONNOUSERSITE: "1"
+    HF_HOME: /leonardo_work/OELLM_prod2026/hf_cache/${oc.env:USER}
+
+container:
+  image: /leonardo_work/OELLM_prod2026/container_images/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif
+  bind:
+    - "/leonardo_scratch"
+    - "/leonardo"
+    - "/leonardo_work"
+    - "/leonardo_work/OELLM_prod2026/users/${oc.env:USER}/oellm-autoexp:/workspace/oellm-autoexp"
+
+slurm:
+  env:
+    TMPDIR: "${job.base_output_dir}"
+    HF_HOME: /leonardo_work/OELLM_prod2026/hf_cache/${oc.env:USER}
+  sbatch:
+    nodes: 1
+    gpus_per_node: 4
+    time: "00:30:00"
+    account: "OELLM_prod2026"
+    partition: "boost_usr_prod"
+    qos: "boost_qos_dbg"
+    job_name: null

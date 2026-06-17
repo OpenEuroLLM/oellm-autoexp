@@ -97,7 +97,7 @@ class TestOELLMEvalStep:
         step = OELLMEvalStep(cfg)
         cmd = step.build_command()
 
-        assert "oellm schedule-eval" in cmd
+        assert "oellm-eval schedule" in cmd
         assert "--models /tmp/hf/iter_1000" in cmd
         assert "open-sci-0.01" in cmd
         assert "--dry_run" not in cmd

@@ -1,597 +1,173 @@
-#!/usr/bin/env python3
-"""Validate sweep runs against the config YAML that generated them.
+"""Utilities shared between progress_tracker and any sweep-validation tooling.
 
-Usage:
-    python scripts/validate_sweep_runs.py <config.yaml>
-
-Parses the sweep config to extract LRs, batch sizes, num_experts, decay
-stages, and results directory, then validates every expected job.
-
-Supports two config layouts:
-  - Monolithic: all settings (backend.megatron.aux, sweep.groups, seq_length)
-    live in one file (e.g. dense_130M_lr_gbsz_tokens_grid_tiered.yaml).
-  - Split: the experiment YAML composes sub-configs via Hydra defaults (e.g.
-    0.1B_ne.yaml). The script resolves the defaults list to load aux, seq_length,
-    and sweep groups from their respective sub-config files.
+Provides:
+  _resolve_defaults          -- merge Hydra-style defaults into a parsed cfg dict
+  render_job_name            -- render a job-name template for a given combo/stage
+  substitute_omegaconf_path_vars -- substitute ${key} refs from a context dict
 """
 
-import argparse
-import math
-import os
+from __future__ import annotations
+
 import re
-import sys
-from collections import OrderedDict
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 
-# ── Hydra defaults resolution ─────────────────────────────────────────────────
-
-def _load_yaml_file(path: Path) -> dict:
-    """Load YAML from path, returning {} on missing file or parse error."""
-    if not path.exists():
-        return {}
-    try:
-        with open(path) as f:
-            return yaml.safe_load(f) or {}
-    except yaml.YAMLError:
-        return {}
+# ── helpers ────────────────────────────────────────────────────────────────────
 
 
-def _get_package(path: Path) -> str:
-    """Read the # @package directive from the first comment block of a YAML file."""
-    if not path.exists():
-        return "_global_"
-    with open(path) as f:
-        for line in f:
-            s = line.strip()
-            if s.startswith("# @package"):
-                return s.split("@package", 1)[1].strip()
-            if s and not s.startswith("#"):
-                break
-    return "_global_"
-
-
-def _fill_missing(base: dict, overlay: dict) -> None:
-    """Recursively copy keys from overlay into base only when absent in base."""
-    for k, v in overlay.items():
-        if k not in base:
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Merge *override* into *base* in-place (nested dicts are merged
+    recursively)."""
+    for k, v in override.items():
+        if k in base and isinstance(base[k], dict) and isinstance(v, dict):
+            _deep_merge(base[k], v)
+        else:
             base[k] = v
-        elif isinstance(base[k], dict) and isinstance(v, dict):
-            _fill_missing(base[k], v)
+    return base
 
 
-def _find_config_root(config_path: str) -> Path | None:
-    """Walk up from config_path to find the Hydra config root (dir named 'config')."""
-    for p in Path(config_path).resolve().parents:
-        if p.name == "config":
-            return p
-        candidate = p / "config"
-        if candidate.is_dir():
-            return candidate
+def _find_config_root(config_path: str) -> Path:
+    """Walk up from config_path until we find the ancestor directory named
+    'config'."""
+    p = Path(config_path).resolve()
+    for ancestor in p.parents:
+        if ancestor.name == "config":
+            return ancestor
+    # fallback: assume config/experiments/.../file.yaml layout (4 levels up)
+    return p.parent.parent.parent.parent
+
+
+def _read_package(yaml_text: str) -> str | None:
+    """Return the value of a '# @package <name>' directive from the first 5
+    lines."""
+    for line in yaml_text.splitlines()[:5]:
+        m = re.match(r"#\s*@package\s+(\S+)", line)
+        if m:
+            return m.group(1)
     return None
 
 
-def _resolve_defaults(cfg: dict, config_path: str) -> None:
-    """Load configs referenced in cfg['defaults'] and fill missing keys into cfg.
+def _navigate(cfg: dict, dotted_path: str) -> dict:
+    """Return (creating as needed) the nested dict at *dotted_path* inside
+    *cfg*."""
+    node = cfg
+    for key in dotted_path.split("."):
+        if key not in node or not isinstance(node[key], dict):
+            node[key] = {}
+        node = node[key]
+    return node
 
-    Simulates Hydra defaults-list merging: sub-configs fill in keys absent in
-    the experiment file (cfg's own values always win on conflict).
-    """
-    config_root = _find_config_root(config_path)
-    if config_root is None:
+
+def _apply_default(cfg: dict, config_root: Path, raw_key: str, value: str) -> None:
+    """Load one defaults-list entry and merge it into *cfg*."""
+    # /sweep/multilingual_scaling@sweep → group=sweep/multilingual_scaling, pkg_override=sweep
+    if "@" in raw_key:
+        config_group, pkg_override = raw_key.rsplit("@", 1)
+    else:
+        config_group, pkg_override = raw_key, None
+
+    config_group = config_group.strip("/")
+    yaml_file = config_root / config_group / f"{value}.yaml"
+    if not yaml_file.is_file():
         return
 
+    text = yaml_file.read_text(errors="replace")
+    sub_cfg = yaml.safe_load(text) or {}
+
+    # Determine target package (in dotted form, e.g. "backend.megatron")
+    if pkg_override is not None:
+        package = pkg_override
+    else:
+        file_pkg = _read_package(text)
+        if file_pkg and file_pkg != "_global_":
+            package = file_pkg
+        else:
+            # infer from config group path: backend/megatron → backend.megatron
+            package = config_group.replace("/", ".")
+
+    target = _navigate(cfg, package) if package else cfg
+    _deep_merge(target, sub_cfg)
+
+    # Recurse into the sub-config's own defaults (one level only — enough for base.yaml)
+    for entry in sub_cfg.get("defaults", []):
+        if entry == "_self_" or isinstance(entry, str):
+            continue
+        if not isinstance(entry, dict):
+            continue
+        for sub_key, sub_val in entry.items():
+            # Absolute keys start with /; relative keys are under the same group dir
+            if str(sub_key).startswith("/"):
+                _apply_default(cfg, config_root, sub_key, str(sub_val))
+            else:
+                rel_key = f"{config_group}/{sub_key}".strip("/")
+                _apply_default(cfg, config_root, f"/{rel_key}", str(sub_val))
+
+
+def _resolve_defaults(cfg: dict, config_path: str) -> None:
+    """Merge Hydra-style defaults list entries into *cfg* in-place.
+
+    Handles the subset needed by parse_config:
+      - sweep YAML (via the @sweep key)  → cfg["sweep"]
+      - model/data YAMLs with @package backend.megatron → cfg["backend"]["megatron"]
+    """
+    config_root = _find_config_root(config_path)
     for entry in cfg.get("defaults", []):
+        if entry == "_self_" or isinstance(entry, str):
+            continue
         if not isinstance(entry, dict):
             continue
         for raw_key, value in entry.items():
-            if not isinstance(value, str):
-                continue
-
-            # Strip leading / and parse optional @target annotation (e.g. @sweep)
-            key = raw_key.lstrip("/")
-            at_target = None
-            if "@" in key:
-                group, at_target = key.split("@", 1)
-                key = group.rstrip("/")
-
-            file_path = config_root / key / f"{value}.yaml"
-            sub = _load_yaml_file(file_path)
-            if not sub:
-                continue
-
-            package = _get_package(file_path)
-
-            if at_target:
-                # e.g. /sweep/multilingual_scaling@sweep: foo → cfg["sweep"]
-                _fill_missing(cfg.setdefault(at_target, {}), sub)
-            elif package == "_global_":
-                _fill_missing(cfg, sub)
-            else:
-                # e.g. # @package backend.megatron → cfg["backend"]["megatron"]
-                target = cfg
-                for part in package.split("."):
-                    target = target.setdefault(part, {})
-                _fill_missing(target, sub)
+            _apply_default(cfg, config_root, str(raw_key), str(value))
 
 
-# ── Config parsing ───────────────────────────────────────────────────────────
+# ── job-name rendering ─────────────────────────────────────────────────────────
 
-def parse_config(config_path: str) -> dict:
-    """Extract sweep grid and training parameters from a config YAML."""
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f)
 
-    # For split configs (Hydra defaults list), load sub-configs to fill in
-    # backend.megatron.aux, seq_length, and sweep.groups.
-    _resolve_defaults(cfg, config_path)
+def substitute_omegaconf_path_vars(template: str, ctx: dict[str, Any]) -> str:
+    """Replace ${key} references in *template* with values from *ctx*.
 
-    meg = cfg["backend"]["megatron"]
-    aux = meg["aux"]
+    Unresolvable references are left as-is.
+    """
 
-    params = {
-        "seq_length": int(meg["seq_length"]),
-        "stable_tokens": int(aux["tokens"]),
-        "cooldown_decay_fraction": float(aux["cooldown_decay_fraction"]),
-        "seed": int(meg.get("seed", 1234)),
-    }
+    def _replace(m: re.Match) -> str:
+        key = m.group(1)
+        return str(ctx[key]) if key in ctx else m.group(0)
 
-    # Parent of each job folder: strip ${job.name}; may still contain
-    # ${backend.megatron.global_batch_size} etc. — resolved per combo in main().
-    raw_dir = cfg["job"]["base_output_dir"]
-    params["base_dir_template"] = raw_dir.split("${job.name}")[0].rstrip("/")
-
-    # Walk sweep groups
-    groups = cfg["sweep"]["groups"]
-    lrs: list[float] = []
-    gbszs: list[int] = []
-    num_experts: list[int] = []
-    decay_stages: OrderedDict[str, int] = OrderedDict()
-    job_name_tpl: str | None = None
-    # Explicit per-combo list for sweep configs where each Group-1 entry is a
-    # flat (lr, gbsz, stable_tokens) triplet rather than a product grid.
-    # None → fall back to Cartesian product of lrs × gbszs × num_experts.
-    _flat_combo_list: list[dict] = []
-
-    for group in groups:
-        if group.get("type") != "list" or "configs" not in group:
-            continue
-        for entry in group["configs"]:
-            if not isinstance(entry, dict):
-                continue
-            # Group 0: job name template
-            if "job.name" in entry:
-                job_name_tpl = entry["job.name"]
-                continue
-            # Format 1: product sub-group with explicit lr/gbsz lists
-            if entry.get("type") == "product" and "params" in entry:
-                p = entry["params"]
-                lrs.extend(p.get("backend.megatron.lr", []))
-                gbszs.extend(p.get("backend.megatron.global_batch_size", []))
-                continue
-            # Format 2: flat (lr, gbsz, stable_tokens) combo entry
-            if (
-                "backend.megatron.lr" in entry
-                and "backend.megatron.global_batch_size" in entry
-                and "stage" not in entry
-            ):
-                lr = float(entry["backend.megatron.lr"])
-                gbsz = int(entry["backend.megatron.global_batch_size"])
-                stable_tok = int(entry.get("backend.megatron.aux.tokens", aux["tokens"]))
-                nexp = int(entry.get("backend.megatron.num_experts", 1))
-                _flat_combo_list.append(
-                    {"nexp": nexp, "lr": lr, "gbsz": gbsz, "stable_tokens": stable_tok}
-                )
-                if lr not in lrs:
-                    lrs.append(lr)
-                if gbsz not in gbszs:
-                    gbszs.append(gbsz)
-                if nexp not in num_experts:
-                    num_experts.append(nexp)
-                continue
-            # Format 1: flat num_experts entry
-            if "backend.megatron.num_experts" in entry and "stage" not in entry:
-                num_experts.append(int(entry["backend.megatron.num_experts"]))
-                continue
-            # Stable phase → skip (tokens from base)
-            if entry.get("stage") == "stable":
-                continue
-            # Nested decay list
-            if entry.get("type") == "list" and "configs" in entry:
-                for dc in entry["configs"]:
-                    if isinstance(dc, dict) and "stage" in dc:
-                        decay_stages[dc["stage"]] = int(
-                            dc["backend.megatron.aux.tokens"]
-                        )
-
-    params["lrs"] = [float(v) for v in lrs]
-    params["gbszs"] = [int(v) for v in gbszs]
-    params["num_experts"] = num_experts if num_experts else [1]
-    params["decay_stages"] = decay_stages
-    params["job_name_tpl"] = job_name_tpl
-    params["combos"] = _flat_combo_list if _flat_combo_list else None
-    return params
+    return re.sub(r"\$\{([^}]+)\}", _replace, template)
 
 
 def render_job_name(
-    tpl: str | None,
-    nexp: int,
+    tpl: str,
+    num_experts: int,
     lr: float,
     gbsz: int,
     seed: int,
     stage: str,
-    stable_tokens: int | None = None,
+    tokens: int | None = None,
 ) -> str:
-    """Substitute concrete values into the escaped-OmegaConf job name template."""
-    if tpl is None:
-        return f"nexp_{nexp}_lr{lr}_gbsz{gbsz}_seed{seed}_{stage}"
-    # job_horizon_suffix: "<N>BT" for stable (e.g. "300BT"), "" for decay stages
-    if stage == "stable" and stable_tokens is not None:
-        job_horizon_suffix = f"{stable_tokens // 1_000_000_000}BT"
-    else:
-        job_horizon_suffix = ""
-    out = tpl
-    for key, val in {
-        "backend.megatron.num_experts": nexp,
-        "backend.megatron.lr": lr,
-        "backend.megatron.global_batch_size": gbsz,
-        "backend.megatron.seed": seed,
+    """Render a job-name template for a given (lr, gbsz, stage, tokens) combo.
+
+    *tokens* is the stable-phase token budget (sets job_horizon_suffix to e.g.
+    "50BT").  For decay stages *tokens* is omitted — the suffix is empty because
+    the budget is already embedded in *stage* (e.g. "decay6BT").
+
+    The template uses escaped OmegaConf syntax (``\\${...}``) so that Hydra
+    doesn't interpolate it at config-load time; we unescape before substituting.
+    """
+    # Unescape \${ → ${
+    unescaped = tpl.replace("\\${", "${")
+
+    horizon_suffix = f"{tokens // 1_000_000_000}BT" if tokens is not None else ""
+
+    ctx: dict[str, Any] = {
+        "backend.megatron.lr": str(lr),
+        "backend.megatron.global_batch_size": str(gbsz),
+        "backend.megatron.seed": str(seed),
+        "backend.megatron.num_experts": str(num_experts),
         "stage": stage,
-        "backend.megatron.aux.job_horizon_suffix": job_horizon_suffix,
-    }.items():
-        out = out.replace(f"\\${{{key}}}", str(val))
-    return out
-
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-def substitute_omegaconf_path_vars(template: str, ctx: dict[str, object]) -> str:
-    """Replace ${key} segments when key is in ctx; leave others unchanged."""
-
-    def _repl(m: re.Match[str]) -> str:
-        key = m.group(1)
-        if key in ctx:
-            return str(ctx[key])
-        return m.group(0)
-
-    return re.sub(r"\$\{([^}]+)\}", _repl, template)
-
-
-def resolve_results_base_dir(template: str, nexp: int, lr: float, gbsz: int, seed: int) -> Path:
-    """Hydra-style path prefix with sweep variables filled in."""
-    ctx = {
-        "backend.megatron.global_batch_size": gbsz,
-        "backend.megatron.num_experts": nexp,
-        "backend.megatron.lr": lr,
-        "backend.megatron.seed": seed,
+        "backend.megatron.aux.job_horizon_suffix": horizon_suffix,
     }
-    return Path(substitute_omegaconf_path_vars(template, ctx))
-
-
-def ceil_div(a: int, b: int) -> int:
-    return (a + b - 1) // b
-
-
-def compute_train_iters(tokens: int, seq_length: int, gbsz: int) -> int:
-    return ceil_div(tokens, seq_length * gbsz)
-
-
-def compute_start_iter(tokens: int, seq_length: int, gbsz: int, cdf: float) -> int:
-    return int(compute_train_iters(tokens, seq_length, gbsz) * (1 - cdf))
-
-
-def compute_save_extra_steps(
-    decay_stages: dict[str, int], seq_length: int, gbsz: int, cdf: float,
-) -> list[int]:
-    return [compute_start_iter(t, seq_length, gbsz, cdf) for t in decay_stages.values()]
-
-
-# ── Log parsing ──────────────────────────────────────────────────────────────
-
-def parse_log(log_path: Path) -> dict:
-    """Extract key metrics from a Megatron log file."""
-    info: dict = {
-        "exists": log_path.exists(),
-        "train_iters": None,
-        "last_val_iter": None,
-        "last_train_iter": None,
-        "save_extra_steps": None,
-        "ckpt_step": None,
-        "val_loss": None,
-        "errors": [],
-    }
-    if not info["exists"]:
-        return info
-
-    content = log_path.read_bytes().decode("utf-8", errors="replace")
-
-    m = re.search(r"train_iters\s*\.+\s*(\d+)", content)
-    if m:
-        info["train_iters"] = int(m.group(1))
-
-    m = re.search(r"save_extra_steps\s*\.+\s*\[([^\]]+)\]", content)
-    if m:
-        info["save_extra_steps"] = [int(x.strip()) for x in m.group(1).split(",")]
-
-    m = re.search(r"--ckpt-step\s+(\d+)", content)
-    if m:
-        info["ckpt_step"] = int(m.group(1))
-
-    for m in re.finditer(r"validation loss at iteration (\d+)", content):
-        info["last_val_iter"] = int(m.group(1))
-
-    for m in re.finditer(r" iteration\s+(\d+)/", content):
-        info["last_train_iter"] = int(m.group(1))
-
-    val_losses = re.findall(r"lm loss value:\s+([\d.E+-]+)", content)
-    if val_losses:
-        info["val_loss"] = float(val_losses[-1])
-
-    for pat in ("FATAL ERROR", "OutOfMemoryError", "Traceback"):
-        if pat in content:
-            info["errors"].append(pat)
-
-    return info
-
-
-# ── Validation ───────────────────────────────────────────────────────────────
-
-def validate_job(
-    base_dir: Path,
-    name: str,
-    stage: str,
-    tokens: int,
-    seq_length: int,
-    gbsz: int,
-    cdf: float,
-    decay_stages: dict[str, int],
-) -> dict:
-    """Validate a single job against expected parameters."""
-    job_dir = base_dir / name
-    log_path = job_dir / "current.log"
-    expected_iters = compute_train_iters(tokens, seq_length, gbsz)
-    is_stable = stage == "stable"
-
-    result = {
-        "name": name,
-        "stage": stage,
-        "dir_exists": job_dir.exists(),
-        "expected_train_iters": expected_iters,
-        "issues": [],
-        "status": "UNKNOWN",
-    }
-
-    if not result["dir_exists"]:
-        result["status"] = "MISSING"
-        result["issues"].append("directory not found")
-        return result
-
-    log = parse_log(log_path)
-    result["log_info"] = log
-
-    if not log["exists"]:
-        result["status"] = "NO_LOG"
-        result["issues"].append("current.log not found")
-        return result
-
-    if log["errors"]:
-        result["issues"].append(f"errors in log: {log['errors']}")
-
-    if log["train_iters"] is not None and log["train_iters"] != expected_iters:
-        result["issues"].append(
-            f"train_iters mismatch: got {log['train_iters']}, expected {expected_iters}"
-        )
-
-    completed = False
-    if log["last_val_iter"] is not None:
-        if log["last_val_iter"] == expected_iters:
-            completed = True
-        elif log["last_val_iter"] < expected_iters:
-            result["issues"].append(
-                f"incomplete: last_val_iter={log['last_val_iter']}, expected={expected_iters}"
-            )
-        else:
-            result["issues"].append(
-                f"overshot: last_val_iter={log['last_val_iter']}, expected={expected_iters}"
-            )
-
-    if is_stable:
-        expected_ses = compute_save_extra_steps(decay_stages, seq_length, gbsz, cdf)
-        if log["save_extra_steps"] is not None:
-            actual_ses = set(log["save_extra_steps"])
-            missing_steps = [s for s in expected_ses if s not in actual_ses]
-            if missing_steps:
-                result["issues"].append(
-                    f"save_extra_steps missing branch points: {missing_steps}"
-                    f" (got {sorted(actual_ses)})"
-                )
-        else:
-            result["issues"].append("save_extra_steps not found in log")
-    else:
-        expected_start = compute_start_iter(tokens, seq_length, gbsz, cdf)
-        if log["ckpt_step"] is not None and log["ckpt_step"] != expected_start:
-            result["issues"].append(
-                f"ckpt_step mismatch: got {log['ckpt_step']}, expected {expected_start}"
-            )
-
-    if completed and not log["errors"]:
-        result["status"] = "OK"
-    elif log["errors"]:
-        result["status"] = "ERROR"
-    elif not completed and log["last_val_iter"] is not None:
-        result["status"] = "INCOMPLETE"
-    else:
-        result["status"] = "UNCLEAR"
-
-    return result
-
-
-# ── Main ─────────────────────────────────────────────────────────────────────
-
-def main():
-    parser = argparse.ArgumentParser(description="Validate sweep runs against config")
-    parser.add_argument("config", help="Path to the sweep config YAML")
-    args = parser.parse_args()
-
-    os.chdir(Path(__file__).resolve().parent.parent)
-
-    cfg = parse_config(args.config)
-    base_dir_template = cfg["base_dir_template"]
-    seq = cfg["seq_length"]
-    cdf = cfg["cooldown_decay_fraction"]
-    seed = cfg["seed"]
-    stable_tok = cfg["stable_tokens"]
-    decay_stages = cfg["decay_stages"]
-    combos = cfg["combos"]
-
-    n_stages = 1 + len(decay_stages)
-    n_combos = len(combos) if combos else (
-        len(cfg["lrs"]) * len(cfg["gbszs"]) * len(cfg["num_experts"])
-    )
-
-    print("=" * 110)
-    print(f"Config:  {args.config}")
-    if combos:
-        sample = combos[0]
-        _ex = resolve_results_base_dir(
-            base_dir_template, sample["nexp"], sample["lr"], sample["gbsz"], seed
-        )
-        print(f"Results: {base_dir_template}/")
-        print(f"         (resolved e.g. {_ex}/)")
-        print(
-            f"Grid:    {n_combos} explicit (lr,gbsz) combos × {n_stages} stages"
-            f" = {n_combos * n_stages} jobs"
-        )
-    elif cfg["lrs"] and cfg["gbszs"] and cfg["num_experts"]:
-        _ex = resolve_results_base_dir(
-            base_dir_template, cfg["num_experts"][0], cfg["lrs"][0], cfg["gbszs"][0], seed
-        )
-        print(f"Results: {base_dir_template}/")
-        print(f"         (resolved e.g. {_ex}/)")
-        print(
-            f"Grid:    {len(cfg['lrs'])} lr × {len(cfg['gbszs'])} gbsz × "
-            f"{len(cfg['num_experts'])} nexp × {n_stages} stages = {n_combos * n_stages} jobs"
-        )
-    else:
-        print(f"Results: {base_dir_template}/")
-    print("=" * 110)
-
-    results = []
-    if combos:
-        for combo in combos:
-            nexp, lr, gbsz = combo["nexp"], combo["lr"], combo["gbsz"]
-            combo_stable_tok = combo["stable_tokens"]
-            base_dir = resolve_results_base_dir(base_dir_template, nexp, lr, gbsz, seed)
-            name = render_job_name(
-                cfg["job_name_tpl"], nexp, lr, gbsz, seed, "stable", combo_stable_tok
-            )
-            results.append(
-                validate_job(base_dir, name, "stable", combo_stable_tok, seq, gbsz, cdf, decay_stages)
-            )
-            for stage_name, stage_tok in decay_stages.items():
-                name = render_job_name(cfg["job_name_tpl"], nexp, lr, gbsz, seed, stage_name)
-                results.append(
-                    validate_job(base_dir, name, stage_name, stage_tok, seq, gbsz, cdf, decay_stages)
-                )
-    else:
-        for nexp in cfg["num_experts"]:
-            for lr in cfg["lrs"]:
-                for gbsz in cfg["gbszs"]:
-                    base_dir = resolve_results_base_dir(base_dir_template, nexp, lr, gbsz, seed)
-                    name = render_job_name(cfg["job_name_tpl"], nexp, lr, gbsz, seed, "stable")
-                    results.append(
-                        validate_job(base_dir, name, "stable", stable_tok, seq, gbsz, cdf, decay_stages)
-                    )
-                    for stage_name, stage_tok in decay_stages.items():
-                        name = render_job_name(cfg["job_name_tpl"], nexp, lr, gbsz, seed, stage_name)
-                        results.append(
-                            validate_job(base_dir, name, stage_name, stage_tok, seq, gbsz, cdf, decay_stages)
-                        )
-
-    total = len(results)
-    ok = sum(1 for r in results if r["status"] == "OK")
-    failed = [r for r in results if r["status"] != "OK"]
-
-    header = f"{'Job Name':<70} {'Expected':>8} {'Actual':>8} {'Status':>10}"
-    print(header)
-    print("-" * 110)
-
-    status_colors = {
-        "OK": "\033[92m",
-        "MISSING": "\033[91m",
-        "ERROR": "\033[91m",
-        "INCOMPLETE": "\033[93m",
-        "UNCLEAR": "\033[93m",
-        "NO_LOG": "\033[91m",
-    }
-
-    for r in results:
-        actual = ""
-        if "log_info" in r and r["log_info"]["last_val_iter"] is not None:
-            actual = str(r["log_info"]["last_val_iter"])
-        elif r["status"] == "MISSING":
-            actual = "-"
-
-        suffix = ""
-        if "log_info" in r and r["log_info"].get("val_loss") is not None:
-            suffix = f"  ppl={math.exp(r['log_info']['val_loss']):.1f}"
-
-        color = status_colors.get(r["status"], "")
-        reset = "\033[0m" if color else ""
-
-        print(
-            f"{r['name']:<70} {r['expected_train_iters']:>8} {actual:>8} "
-            f"{color}{r['status']:>10}{reset}{suffix}"
-        )
-
-    if failed:
-        print()
-        print("=" * 110)
-        print(f"ISSUES ({len(failed)} jobs):")
-        print("=" * 110)
-        for r in failed:
-            print(f"\n  {r['name']}  [{r['status']}]")
-            for issue in r["issues"]:
-                print(f"    - {issue}")
-
-    # Reference table
-    print()
-    print("-" * 110)
-    if combos:
-        print("Expected train_iters per (lr, gbsz, stable_tokens):")
-        seen: set[tuple] = set()
-        for combo in combos:
-            lr, gbsz, combo_stable_tok = combo["lr"], combo["gbsz"], combo["stable_tokens"]
-            key = (gbsz, combo_stable_tok)
-            if key in seen:
-                continue
-            seen.add(key)
-            parts = [f"stable={compute_train_iters(combo_stable_tok, seq, gbsz)}"]
-            for sn, st in decay_stages.items():
-                parts.append(f"{sn}={compute_train_iters(st, seq, gbsz)}")
-            print(f"  gbsz={gbsz} stable={combo_stable_tok // 1_000_000_000}BT: {', '.join(parts)}")
-    else:
-        print("Expected train_iters per (gbsz, stage):")
-        for gbsz in cfg["gbszs"]:
-            parts = [f"stable={compute_train_iters(stable_tok, seq, gbsz)}"]
-            for sn, st in decay_stages.items():
-                parts.append(f"{sn}={compute_train_iters(st, seq, gbsz)}")
-            print(f"  gbsz={gbsz}: {', '.join(parts)}")
-
-    print()
-    print("Expected save_extra_steps (stable only):")
-    for gbsz in cfg["gbszs"]:
-        ses = compute_save_extra_steps(decay_stages, seq, gbsz, cdf)
-        print(f"  gbsz={gbsz}: {ses}")
-
-    print()
-    print(f"{'=' * 110}")
-    print(f"Result: {ok}/{total} jobs OK")
-    print(f"{'=' * 110}")
-    sys.exit(0 if not failed else 1)
-
-
-if __name__ == "__main__":
-    main()
+    return substitute_omegaconf_path_vars(unescaped, ctx)

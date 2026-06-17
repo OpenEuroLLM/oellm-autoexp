@@ -1,7 +1,7 @@
 # @package _global_
 #
-# Run oellm-cli evaluation on dclm-core-22 task group.
-# Spawns a new SLURM job (via oellm schedule-eval).
+# Run oellm-evals evaluation on dclm-core-22 task group.
+# Spawns a new SLURM job (via oellm-eval schedule).
 
 postprocess:
   eval:
