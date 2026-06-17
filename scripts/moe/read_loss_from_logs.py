@@ -1,6 +1,5 @@
-"""
-Walk eval result directories, read current.log (or slurm logs), extract the last
-validation loss line, and write a summary CSV under results/evals.
+"""Walk eval result directories, read current.log (or slurm logs), extract the
+last validation loss line, and write a summary CSV under results/evals.
 
 The CSV lists the full grid for non-GQA and GQA sweeps (240 rows: GQA no/yes ×120
 cells). Parent folders named moe_GQA_* are GQA=yes; all other grid folders are
@@ -47,7 +46,10 @@ def lr_key(lr: float) -> float:
 
 
 def detect_gqa(name: str) -> str:
-    """Detect GQA from a folder name. 'no_GQA' or no mention → no; 'GQA' → yes."""
+    """Detect GQA from a folder name.
+
+    'no_GQA' or no mention → no; 'GQA' → yes.
+    """
     if "no_GQA" in name:
         return "no"
     if "GQA" in name:
@@ -92,11 +94,15 @@ def resolve_log(run_dir: Path) -> Path | None:
 GridKey = tuple[str, int, float, int, int]
 
 
-def index_runs(evals_root: Path) -> tuple[dict[GridKey, list[dict[str, float | int | str]]], list[str]]:
-    """Map (GQA, bsz, lr_key, n_exp, decay_bt) -> list of {iteration, lm loss, run_name}.
+def index_runs(
+    evals_root: Path,
+) -> tuple[dict[GridKey, list[dict[str, float | int | str]]], list[str]]:
+    """Map (GQA, bsz, lr_key, n_exp, decay_bt) -> list of {iteration, lm loss,
+    run_name}.
 
-    Keeps duplicates (e.g. a base sweep and a replication sweep that both map to GQA=no)
-    so every run folder shows up as its own row in the final CSV.
+    Keeps duplicates (e.g. a base sweep and a replication sweep that
+    both map to GQA=no) so every run folder shows up as its own row in
+    the final CSV.
     """
     indexed: dict[GridKey, list[dict[str, float | int | str]]] = {}
     warnings: list[str] = []
@@ -133,7 +139,8 @@ def index_runs(evals_root: Path) -> tuple[dict[GridKey, list[dict[str, float | i
 def build_full_grid(
     indexed: dict[GridKey, list[dict[str, float | int | str]]],
 ) -> list[dict[str, float | int | str]]:
-    """One row per (GQA × grid cell), or one per matching run when a cell has multiples.
+    """One row per (GQA × grid cell), or one per matching run when a cell has
+    multiples.
 
     Cells with no matching run produce a single NaN row.
     """
@@ -157,17 +164,20 @@ def build_full_grid(
                             rows.append({**base, "iteration": nan, "lm loss": nan, "run_name": ""})
                             continue
                         for entry in entries:
-                            rows.append({
-                                **base,
-                                "iteration": entry["iteration"],
-                                "lm loss": entry["lm loss"],
-                                "run_name": entry.get("run_name", ""),
-                            })
+                            rows.append(
+                                {
+                                    **base,
+                                    "iteration": entry["iteration"],
+                                    "lm loss": entry["lm loss"],
+                                    "run_name": entry.get("run_name", ""),
+                                }
+                            )
     return rows
 
 
 def is_single_grid_folder(path: Path) -> bool:
-    """True when path looks like a single grid folder (children are run dirs, not grid dirs)."""
+    """True when path looks like a single grid folder (children are run dirs,
+    not grid dirs)."""
     for child in path.iterdir():
         if child.is_dir() and RUN_NAME.search(child.name):
             return True
@@ -175,7 +185,8 @@ def is_single_grid_folder(path: Path) -> bool:
 
 
 def scan_single_folder(grid_dir: Path) -> tuple[list[dict], list[str]]:
-    """Scan one grid folder and return rows + warnings (no full-grid padding)."""
+    """Scan one grid folder and return rows + warnings (no full-grid
+    padding)."""
     gqa = detect_gqa(grid_dir.name)
     rows: list[dict] = []
     warnings: list[str] = []
@@ -232,9 +243,7 @@ def main() -> None:
     csv_path = target / CSV_NAME
     write_csv(rows, out_cols, csv_path)
     n_runs = sum(
-        1
-        for r in rows
-        if not (isinstance(r["iteration"], float) and math.isnan(r["iteration"]))
+        1 for r in rows if not (isinstance(r["iteration"], float) and math.isnan(r["iteration"]))
     )
     n_empty = len(rows) - n_runs
     print(f"Wrote {len(rows)} rows to {csv_path} ({n_runs} from logs, {n_empty} empty grid cells)")

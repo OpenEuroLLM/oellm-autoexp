@@ -123,7 +123,7 @@ gating, cancel logic); each config line only specifies `stage` and
 ## 4. Escaped OmegaConf interpolations
 
 Throughout the sweep, formulae are written as *escaped* interpolations
-— i.e. **double-backslash-dollar** (`\\$`):
+— that is **double-backslash-dollar** (`\\$`):
 
 ```yaml
 backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+…)//…'}"
@@ -169,7 +169,7 @@ Putting it together for stable runs (rounded to integers):
 | 512  | 300B      | 143,052     |
 
 Branching checkpoints for a given budget are at 80 % of `budget_iters(B)`.
-E.g. at gbsz = 128 the 50B branching iter is
+For example at gbsz = 128 the 50B branching iter is
 `int(ceil(50e9 / 524_288) × 0.8) = int(95_367 × 0.8) = 76_293`.
 
 ---
@@ -186,7 +186,7 @@ Semantics:
 
 - **Stable** points always pass (the LHS disjunct short-circuits).
 - **Decay** points pass iff their `aux.tokens` is in the per-combo allowed
-  set — i.e. if the `(lr, gbsz, tokens)` triple is actually a row in the CSV.
+  set — that is if the `(lr, gbsz, tokens)` triple is actually a row in the CSV.
 
 Important: filter evaluation happens **after** the full per-point config
 is rendered (see `dag_resolver.py:_resolve_filter_from_context`). All
@@ -241,12 +241,12 @@ sentinel `999_999_999` and decay jobs emit no `save_extra_steps` saves.
 ### Why branching AND end points?
 
 - **Branching** (`0.8 × budget_iters`): lets a decay job load this iter
-  via `load + ckpt_step = start_iter`.
+  by way of `load + ckpt_step = start_iter`.
 - **End** (`1.0 × budget_iters`): baseline "what would loss be if we kept
   training stably to this budget", useful as a no-decay reference when
   comparing against the decay endpoint.
 
-For combos with small `max_decay_tokens` (e.g. gbsz=16 → 6B), only
+For combos with small `max_decay_tokens` (for example gbsz=16 → 6B), only
 `save_step_br_0` / `save_step_end_0` actually fire during stable training;
 the other 16 slots point past `train_iters`.
 
@@ -254,7 +254,7 @@ the other 16 slots point past `train_iters`.
 
 ## 8. Decay → stable linkage (pull-based)
 
-Every decay stage, via the shared `defaults` block, sets:
+Every decay stage, by way of the shared `defaults` block, sets:
 
 ```yaml
 backend.megatron.aux.decay_fraction: "${backend.megatron.aux.cooldown_decay_fraction}"
@@ -277,7 +277,7 @@ job.cancel_condition:
 `dag_resolver.py:extract_sibling_patterns` scans each sweep point's
 parameters for escaped `${sibling.<stage>.…}` references and builds a
 dependency DAG. For every decay point, it finds the sibling point with
-the **same Group 1 position** (i.e. matching `(lr, gbsz)`) whose `stage`
+the **same Group 1 position** (that is matching `(lr, gbsz)`) whose `stage`
 matches the requested pattern — in our case the stage literally named
 `stable`. That sibling's fully-resolved config is then exposed under
 `sibling.stable.*` when the decay point is rendered, making
@@ -294,7 +294,7 @@ unsubmitted job on each tick:
 For a decay job the start condition is a `FileExistsCondition` on the
 exact `iter_<branching_iter>` directory inside its stable sibling's
 checkpoint dir. Until the stable has saved that branching checkpoint
-(via `save_extra_steps`), the decay just sits in the store.
+(by way of `save_extra_steps`), the decay just sits in the store.
 
 `cancel_condition` catches sibling failure: if the stable log contains
 `FATAL ERROR|OutOfMemoryError|Traceback`, the decay is marked cancelled
@@ -334,7 +334,7 @@ Jobs surface in `monitor_state/` as
 - Decays already carry their budget in `stage`, so the suffix is empty:
   - `dense_130M_lr0.001_gbsz64_decay12BT.job.json`
 - Stables now also carry a `<N>BT` suffix matching the combo's
-  `max_decay_tokens` (overridden by Group 2 via
+  `max_decay_tokens` (overridden by Group 2 by way of
   `backend.megatron.aux.job_horizon_suffix`):
   - `dense_130M_lr0.001_gbsz32_stable12BT.job.json`  (gbsz=32 stops at 12B)
   - `dense_130M_lr0.001_gbsz512_stable300BT.job.json` (gbsz=512 goes to 300B)
@@ -400,7 +400,7 @@ The sibling mechanism works across invocations because `orchestrator.py`
 passes `full_points_by_idx=all_points_by_idx` to the DAG resolver (so
 `${sibling.stable.*}` resolves even when the sibling stable is filtered
 out of the current submission), and `job.base_output_dir` /
-`job.log_path_current` are deterministic filesystem paths.
+`job.log_path_current` are deterministic file system paths.
 
 Verification:
 
@@ -422,7 +422,7 @@ overlap, stack `slurm.sbatch.nice=-50` on the center invocation and
   Python `in` check on floats. YAML `1.e-3` parses as `0.001`; Python's
   `float('1e-3') == float('0.001')` is true and they hash identically,
   so `0.001 in {0.001, …}` works. If you ever inject a non-trivially-
-  rounded LR (e.g. `0.0005000001`) you'll get a silent miss — stick to
+  rounded LR (for example `0.0005000001`) you'll get a silent miss — stick to
   short literals.
 - **Default `allowed_decay_tokens_set`.** The base config gives it "all
   9 budgets" so a solo run without a sweep still passes the filter.
@@ -437,7 +437,7 @@ overlap, stack `slurm.sbatch.nice=-50` on the center invocation and
   `- /experiments/swagatam/multilingual_scaling/data/oellm_256k` to
   `defaults:` and remove the `vocab_file`/`merge_file`/`legacy_tokenizer`
   lines.
-- **Non-contiguous allowed sets matter.** E.g. `(5e-4, 128)` has
+- **Non-contiguous allowed sets matter.** For example `(5e-4, 128)` has
   `allowed_decay_tokens_set = {12B}` only — not `{6B, 12B}` — so no 6B
   decay job is spawned even though the combo could mechanically support
   it. Don't simplify to "all budgets ≤ max"; the CSV is authoritative.

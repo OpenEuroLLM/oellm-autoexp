@@ -38,7 +38,7 @@ sweep:
         - backend.megatron.num_experts: 16
         # num_experts: 32  | Total: ~366M  | Active: ~48M
         - backend.megatron.num_experts: 32
-    
+
     # Seeds
     - type: list
       configs:

@@ -5,7 +5,7 @@ Experiment parameters from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL
 
 ## Running (as slaing00)
 
-Submit via the orchestrator sbatch files, e.g.:
+Submit by way of the orchestrator sbatch files, for example:
 
 ```bash
 sbatch config/experiments/slaing00/multilingual_scaling/0.9B_ne_orch_center.sbatch
@@ -52,7 +52,7 @@ Each job gets its own subdirectory (`${job.name}`) to avoid write conflicts betw
 
 ### 3. Sbatch orchestrator files
 
-The `.sbatch` files in this directory hardcode the repo path:
+The `.sbatch` files in this directory hardcode the repository path:
 
 ```bash
 cd /leonardo_work/OELLM_prod2026/slaing00/oellm-autoexp
@@ -76,5 +76,5 @@ Update both to reflect your checkout location and config directory.
 |---|---|---|
 | `job.base_output_dir` | `*.yaml` | Replace `slaing00` with your username |
 | `backend.megatron.data_cache_path` | `*.yaml` | Replace `slaing00` with your username; `mkdir -p` the parent |
-| `cd ...` path | `*.sbatch` | Point to your repo checkout |
+| `cd ...` path | `*.sbatch` | Point to your repository checkout |
 | `--config-name` | `*.sbatch` | Point to your config directory |

@@ -64,7 +64,11 @@ def main() -> None:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--config-name", required=True, help="Config name (e.g. experiments/swagatam/test_moe_130M_300BT_filtering)")
+    parser.add_argument(
+        "--config-name",
+        required=True,
+        help="Config name (e.g. experiments/swagatam/test_moe_130M_300BT_filtering)",
+    )
     parser.add_argument("--config-dir", type=Path, default=Path("config"))
     parser.add_argument(
         "--python",
@@ -177,7 +181,10 @@ def main() -> None:
         sys.exit(1)
 
     if not indices:
-        print("No indices specified. Use --indices with --list-stable / --list-decay to see available indices.", file=sys.stderr)
+        print(
+            "No indices specified. Use --indices with --list-stable / --list-decay to see available indices.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     sys.path.insert(0, str(REPO_ROOT))
@@ -202,7 +209,10 @@ def main() -> None:
         print(f"Warning: indices {invalid} not found in sweep, skipping", file=sys.stderr)
     resume_indices = sorted(set(indices) & all_indices)
     if not resume_indices:
-        print("No valid indices found. Use --list-stable / --list-decay to see available indices.", file=sys.stderr)
+        print(
+            "No valid indices found. Use --list-stable / --list-decay to see available indices.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     plan = build_execution_plan(
@@ -234,13 +244,18 @@ def main() -> None:
             if resolved_load:
                 load_path = str(resolved_load)
             else:
-                print(f"Warning: no resolved load path for decay index {idx}, falling back to own checkpoints", file=sys.stderr)
+                print(
+                    f"Warning: no resolved load path for decay index {idx}, falling back to own checkpoints",
+                    file=sys.stderr,
+                )
                 load_path = f"{base_output}/checkpoints"
         index_to_load[idx] = load_path
 
     missing = set(resume_indices) - set(index_to_load)
     if missing:
-        print(f"Warning: indices {sorted(missing)} not found in plan (filtered out?)", file=sys.stderr)
+        print(
+            f"Warning: indices {sorted(missing)} not found in plan (filtered out?)", file=sys.stderr
+        )
 
     commands: list[tuple[int, list[str]]] = []
     for idx in resume_indices:
@@ -287,7 +302,9 @@ def main() -> None:
 
     # Parallel: run each in background (each has its own monitor)
     print("\nSubmitting jobs (each runs in foreground with its own monitor)...")
-    print("Run each command in a separate terminal/screen, or use --sequential to run one by one.\n")
+    print(
+        "Run each command in a separate terminal/screen, or use --sequential to run one by one.\n"
+    )
     for idx, cmd in commands:
         print(f"# Index {idx}:")
         print(" ".join(cmd))

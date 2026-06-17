@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Export Megatron checkpoint to HuggingFace Qwen3 MoE format.
+"""Export Megatron checkpoint to HuggingFace Qwen3 MoE format.
 
 This script converts a Megatron-LM checkpoint (with custom config) to
 HuggingFace Qwen3 MoE format that can be loaded with transformers.
@@ -98,7 +97,8 @@ class TeeStream:
 
 
 def _setup_stdout_stderr_tee(log_file_path: str) -> None:
-    """Tee process stdout/stderr to a log file while preserving terminal output."""
+    """Tee process stdout/stderr to a log file while preserving terminal
+    output."""
     log_path = Path(log_file_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_file = open(log_path, "a", buffering=1, encoding="utf-8")
@@ -182,7 +182,8 @@ def validate_checkpoint_config_for_qwen3_moe(cfg: dict) -> tuple[list[str], list
 
 
 def sync_hf_config_from_checkpoint(hf_config, cfg: dict) -> list[str]:
-    """Apply checkpoint architecture values onto HF config and return change log."""
+    """Apply checkpoint architecture values onto HF config and return change
+    log."""
     mapping = {
         "num_layers": "num_hidden_layers",
         "hidden_size": "hidden_size",
@@ -239,7 +240,9 @@ def sync_hf_config_from_checkpoint(hf_config, cfg: dict) -> list[str]:
         if nh and hs:
             derived = hs // nh
             if getattr(hf_config, "head_dim", None) != derived:
-                changes.append(f"head_dim: {getattr(hf_config, 'head_dim', None)} -> {derived} (derived)")
+                changes.append(
+                    f"head_dim: {getattr(hf_config, 'head_dim', None)} -> {derived} (derived)"
+                )
                 hf_config.head_dim = derived
 
     # Align tied/untied embeddings with checkpoint semantics.
@@ -261,8 +264,7 @@ def sync_hf_config_from_checkpoint(hf_config, cfg: dict) -> list[str]:
 
 
 def apply_full_checkpoint_config_to_hf(hf_config, cfg: dict) -> tuple[list[str], int]:
-    """
-    Apply checkpoint config comprehensively to HF config.
+    """Apply checkpoint config comprehensively to HF config.
 
     1) Sync canonical architecture fields (HF-native keys)
     2) Preserve full raw checkpoint config under `megatron_modelopt_run_config`
@@ -282,7 +284,8 @@ def apply_full_checkpoint_config_to_hf(hf_config, cfg: dict) -> tuple[list[str],
 
 
 def find_hf_checkpoint_config_mismatches(hf_cfg: dict, ckpt_cfg: dict) -> list[str]:
-    """Return a list of config mismatches between exported HF config and Megatron checkpoint config."""
+    """Return a list of config mismatches between exported HF config and
+    Megatron checkpoint config."""
     mapping = {
         "num_layers": "num_hidden_layers",
         "hidden_size": "hidden_size",
@@ -342,7 +345,8 @@ def _resolve_reference_model_path(
     hf_cache_dir: str | None,
     local_files_only: bool,
 ) -> str:
-    """Resolve a HF model ID to a local path when offline/local-only mode is used."""
+    """Resolve a HF model ID to a local path when offline/local-only mode is
+    used."""
     ref_path = Path(reference_model)
     if ref_path.exists():
         return str(ref_path)
@@ -379,7 +383,9 @@ def _resolve_reference_model_path(
         repo_dir = hub_base / repo_dir_name
         snapshots_dir = repo_dir / "snapshots"
         if snapshots_dir.exists():
-            snapshots = sorted([p for p in snapshots_dir.iterdir() if p.is_dir()], key=lambda p: p.stat().st_mtime)
+            snapshots = sorted(
+                [p for p in snapshots_dir.iterdir() if p.is_dir()], key=lambda p: p.stat().st_mtime
+            )
             if snapshots:
                 resolved = str(snapshots[-1])
                 console.print(f"[green]✓[/green] Resolved cached snapshot: {resolved}")
@@ -414,12 +420,21 @@ def _build_checkpoint_sized_reference_template(
 ) -> str:
     """Create a local HF reference model with checkpoint-matched architecture.
 
-    This prevents export from inheriting the original reference model shard/key map
-    (e.g., 48 layers / 128 experts) when the checkpoint has a smaller shape.
+    This prevents export from inheriting the original reference model
+    shard/key map (e.g., 48 layers / 128 experts) when the checkpoint
+    has a smaller shape.
     """
-    from transformers import AutoConfig, AutoTokenizer, GenerationConfig, PreTrainedTokenizerFast, Qwen3MoeForCausalLM
+    from transformers import (
+        AutoConfig,
+        AutoTokenizer,
+        GenerationConfig,
+        PreTrainedTokenizerFast,
+        Qwen3MoeForCausalLM,
+    )
 
-    resolved_reference = _resolve_reference_model_path(reference_model_or_path, hf_cache_dir, local_files_only)
+    resolved_reference = _resolve_reference_model_path(
+        reference_model_or_path, hf_cache_dir, local_files_only
+    )
     base_config = AutoConfig.from_pretrained(
         resolved_reference,
         trust_remote_code=True,
@@ -461,7 +476,7 @@ def _build_checkpoint_sized_reference_template(
                 tokenizer_object=fast_tok,
                 **special_tokens,
             )
-            console.print(f"[green]✓[/green] Built tokenizer from vocab/merges files")
+            console.print("[green]✓[/green] Built tokenizer from vocab/merges files")
         else:
             tokenizer = AutoTokenizer.from_pretrained(
                 resolved_reference,
@@ -484,7 +499,9 @@ def _build_checkpoint_sized_reference_template(
         # Optional file; no action needed if absent.
         pass
 
-    console.print(f"[green]✓[/green] Created checkpoint-sized local reference template: {template_dir}")
+    console.print(
+        f"[green]✓[/green] Created checkpoint-sized local reference template: {template_dir}"
+    )
     return str(template_dir)
 
 
@@ -496,22 +513,26 @@ def load_megatron_config(megatron_path: Path) -> dict:
         megatron_path / "config.yaml",
     ]
 
-    iter_dirs = sorted([d for d in megatron_path.iterdir() if d.is_dir() and d.name.startswith("iter_")])
+    iter_dirs = sorted(
+        [d for d in megatron_path.iterdir() if d.is_dir() and d.name.startswith("iter_")]
+    )
     if iter_dirs:
         latest_iter = iter_dirs[-1]
-        config_files.extend([
-            latest_iter / "modelopt_run_config.yaml",
-            latest_iter / "run_config.yaml",
-            latest_iter / "config.yaml",
-        ])
-    
+        config_files.extend(
+            [
+                latest_iter / "modelopt_run_config.yaml",
+                latest_iter / "run_config.yaml",
+                latest_iter / "config.yaml",
+            ]
+        )
+
     for config_file in config_files:
         if config_file.exists():
             console.print(f"[green]✓[/green] Found config: {config_file}")
-            with open(config_file, 'r') as f:
+            with open(config_file) as f:
                 config = yaml.safe_load(f)
             return config
-    
+
     raise FileNotFoundError(
         f"Could not find config file in {megatron_path}. "
         f"Looked for: modelopt_run_config.yaml, run_config.yaml, config.yaml"
@@ -537,9 +558,8 @@ def export_megatron_to_qwen3_moe(
     tokenizer_bos_token: str = "<|endoftext|>",
     tokenizer_pad_token: str | None = None,
 ) -> None:
-    """
-    Export Megatron checkpoint to HuggingFace Qwen3 MoE format.
-    
+    """Export Megatron checkpoint to HuggingFace Qwen3 MoE format.
+
     Args:
         megatron_path: Path to Megatron checkpoint directory
         hf_output_path: Output path for HuggingFace model
@@ -583,8 +603,10 @@ def export_megatron_to_qwen3_moe(
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
         os.environ["HF_DATASETS_OFFLINE"] = "1"
         local_files_only = True
-        console.print("[cyan]Offline mode enabled (HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1)[/cyan]")
-    
+        console.print(
+            "[cyan]Offline mode enabled (HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1)[/cyan]"
+        )
+
     # ------------------------------------------------------------------
     # 1) Resolve reference artifacts (config/tokenizer) source.
     # ------------------------------------------------------------------
@@ -608,7 +630,9 @@ def export_megatron_to_qwen3_moe(
     else:
         console.print(f"Using reference model for config: {reference_model}")
 
-    resolved_reference = _resolve_reference_model_path(reference_model, hf_cache_dir, local_files_only)
+    resolved_reference = _resolve_reference_model_path(
+        reference_model, hf_cache_dir, local_files_only
+    )
     if resolved_reference != reference_model:
         console.print(f"Using local snapshot path: {resolved_reference}")
 
@@ -651,8 +675,10 @@ def export_megatron_to_qwen3_moe(
         local_files_only=local_files_only,
         cache_dir=hf_cache_dir,
     )
-    
-    detected_model_type = getattr(getattr(bridge.hf_pretrained, "config", None), "model_type", "unknown")
+
+    detected_model_type = getattr(
+        getattr(bridge.hf_pretrained, "config", None), "model_type", "unknown"
+    )
     console.print(f"[green]✓[/green] Bridge initialized for model type: {detected_model_type}")
 
     # ------------------------------------------------------------------
@@ -668,21 +694,28 @@ def export_megatron_to_qwen3_moe(
                 console.print(f"[red]✗[/red] Checkpoint config error: {error}")
             raise ValueError("Checkpoint config validation failed. Refusing to export blindly.")
 
-        cfg_changes, raw_key_count = apply_full_checkpoint_config_to_hf(bridge.hf_pretrained.config, checkpoint_config)
+        cfg_changes, raw_key_count = apply_full_checkpoint_config_to_hf(
+            bridge.hf_pretrained.config, checkpoint_config
+        )
         if cfg_changes:
             console.print("[cyan]Applying checkpoint config to HF config:[/cyan]")
             for item in cfg_changes:
                 console.print(f"  - {item}")
         else:
             console.print("[green]✓[/green] HF config already matches checkpoint config")
-        console.print(f"[green]✓[/green] Preserved full checkpoint config payload ({raw_key_count} keys) in HF config")
-    
+        console.print(
+            f"[green]✓[/green] Preserved full checkpoint config payload ({raw_key_count} keys) in HF config"
+        )
+
     # ------------------------------------------------------------------
     # 4) Build Megatron model, load checkpoint, and export to HF.
     # ------------------------------------------------------------------
     console.print("\n[bold]Starting export...[/bold]")
     try:
-        from megatron.bridge.training.model_load_save import build_and_load_model, temporary_distributed_context
+        from megatron.bridge.training.model_load_save import (
+            build_and_load_model,
+            temporary_distributed_context,
+        )
 
         # Get the Qwen3MoE-aware model provider from the bridge.
         # This builds the correct Qwen3MoE architecture (not a generic GPTModel),
@@ -718,7 +751,9 @@ def export_megatron_to_qwen3_moe(
                 if nh and hs and hasattr(provider, "kv_channels"):
                     derived_kv = hs // nh
                     provider.kv_channels = derived_kv
-                    console.print(f"  Derived kv_channels={derived_kv} from hidden_size({hs}) // num_attention_heads({nh})")
+                    console.print(
+                        f"  Derived kv_channels={derived_kv} from hidden_size({hs}) // num_attention_heads({nh})"
+                    )
 
             # Align embedding/output tying so checkpoint metadata and expected keys match.
             untie = None
@@ -738,9 +773,7 @@ def export_megatron_to_qwen3_moe(
             if hasattr(provider, "share_embeddings_and_output_weights"):
                 provider.share_embeddings_and_output_weights = not untie
 
-            console.print(
-                f"  Embedding/output tying: untie_embeddings_and_output_weights={untie}"
-            )
+            console.print(f"  Embedding/output tying: untie_embeddings_and_output_weights={untie}")
 
             console.print("[green]✓[/green] Applied checkpoint dimensions to provider")
 
@@ -781,9 +814,11 @@ def export_megatron_to_qwen3_moe(
         if exact_config_match and checkpoint_config is not None:
             exported_config_file = Path(hf_output_path) / "config.json"
             if not exported_config_file.exists():
-                raise FileNotFoundError(f"Expected exported config file was not found: {exported_config_file}")
+                raise FileNotFoundError(
+                    f"Expected exported config file was not found: {exported_config_file}"
+                )
 
-            with open(exported_config_file, "r", encoding="utf-8") as f:
+            with open(exported_config_file, encoding="utf-8") as f:
                 exported_cfg = json.load(f)
 
             mismatches = find_hf_checkpoint_config_mismatches(exported_cfg, checkpoint_config)
@@ -791,23 +826,28 @@ def export_megatron_to_qwen3_moe(
                 console.print("[red]✗[/red] Exact config check failed. Mismatches:")
                 for item in mismatches:
                     console.print(f"  - {item}")
-                raise ValueError("Exported HF config does not exactly match checkpoint config (mapped fields).")
+                raise ValueError(
+                    "Exported HF config does not exactly match checkpoint config (mapped fields)."
+                )
 
-            console.print("[green]✓[/green] Exact config check passed (mapped fields match checkpoint).")
+            console.print(
+                "[green]✓[/green] Exact config check passed (mapped fields match checkpoint)."
+            )
 
         console.print("\n[green]✓[/green] Successfully exported to HuggingFace format")
     except Exception as e:
         console.print(f"\n[red]✗[/red] Export failed: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
     finally:
-        if 'template_reference_path' in locals() and template_reference_path:
+        if "template_reference_path" in locals() and template_reference_path:
             try:
                 shutil.rmtree(template_reference_path, ignore_errors=True)
             except Exception:
                 pass
-    
+
     # ------------------------------------------------------------------
     # 5) Summarize outputs and run a lightweight load check.
     # ------------------------------------------------------------------
@@ -815,7 +855,7 @@ def export_megatron_to_qwen3_moe(
         console.print("\n[bold]Output structure:[/bold]")
         files = sorted(hf_output_path_obj.iterdir())
         total_size = 0
-        
+
         for item in files:
             if item.is_dir():
                 console.print(f"  📂 {item.name}/")
@@ -823,13 +863,14 @@ def export_megatron_to_qwen3_moe(
                 size_mb = item.stat().st_size / (1024 * 1024)
                 total_size += size_mb
                 console.print(f"  📄 {item.name} ({size_mb:.2f} MB)")
-        
+
         console.print(f"\n[bold]Total size:[/bold] {total_size:.2f} MB")
-    
+
     # Verify the model can be loaded
     console.print("\n[bold]Verifying exported model...[/bold]")
     try:
         from transformers import Qwen3MoeForCausalLM
+
         model = Qwen3MoeForCausalLM.from_pretrained(
             hf_output_path,
             trust_remote_code=True,
@@ -838,7 +879,7 @@ def export_megatron_to_qwen3_moe(
             cache_dir=hf_cache_dir,
         )
         num_params = sum(p.numel() for p in model.parameters())
-        console.print(f"[green]✓[/green] Model loads successfully")
+        console.print("[green]✓[/green] Model loads successfully")
         console.print(f"  Parameters: {num_params / 1e9:.2f}B")
         console.print(f"  Layers: {model.config.num_hidden_layers}")
         console.print(f"  Hidden size: {model.config.hidden_size}")
@@ -846,8 +887,8 @@ def export_megatron_to_qwen3_moe(
         console.print(f"  Experts per token: {model.config.num_experts_per_tok}")
     except Exception as e:
         console.print(f"[yellow]⚠[/yellow] Could not verify model loading: {e}")
-    
-    console.print(f"\n[bold green]Export complete![/bold green]")
+
+    console.print("\n[bold green]Export complete![/bold green]")
     console.print(f"HuggingFace Qwen3 MoE model saved to: {hf_output_path}")
 
 
@@ -857,7 +898,7 @@ def main():
         description="Export Megatron checkpoint to HuggingFace Qwen3 MoE format",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    
+
     # Required arguments
     parser.add_argument(
         "--megatron-path",
@@ -871,9 +912,11 @@ def main():
         required=True,
         help="Output path for HuggingFace model",
     )
-    
+
     # Config source (one required)
-    config_group = parser.add_argument_group("Config Source (optional - auto-detects from checkpoint if not specified)")
+    config_group = parser.add_argument_group(
+        "Config Source (optional - auto-detects from checkpoint if not specified)"
+    )
     config_group.add_argument(
         "--reference-model",
         type=str,
@@ -885,7 +928,7 @@ def main():
         choices=["qwen3_moe", "qwen3_moe_30b", "qwen3_moe_235b"],
         help="Predefined model provider to use",
     )
-    
+
     # Tokenizer options
     tok_group = parser.add_argument_group(
         "Tokenizer Options (provide vocab+merges to use a custom BPE tokenizer instead of the reference model's)"
@@ -968,7 +1011,7 @@ def main():
             "Use this only if you intentionally want source-model shard/key expectations."
         ),
     )
-    
+
     args = parser.parse_args()
 
     if args.log_file:
@@ -976,14 +1019,14 @@ def main():
         global console
         console = Console()
         console.print(f"[cyan]Logging stdout/stderr to:[/cyan] {args.log_file}")
-    
+
     megatron_config = None
     if args.megatron_path:
         try:
             console.print("[cyan]Reading model config from Megatron checkpoint...[/cyan]")
             megatron_config = load_megatron_config(Path(args.megatron_path))
             console.print("[green]✓[/green] Successfully loaded config from checkpoint\n")
-        
+
             # Display detected configuration
             console.print("[bold]Auto-detected Model Configuration:[/bold]")
             console.print(f"  Layers: {megatron_config.get('num_layers', 'N/A')}")
@@ -991,7 +1034,9 @@ def main():
             console.print(f"  Attention heads: {megatron_config.get('num_attention_heads', 'N/A')}")
             console.print(f"  Query groups (GQA): {megatron_config.get('num_query_groups', 'N/A')}")
             console.print(f"  FFN hidden size: {megatron_config.get('ffn_hidden_size', 'N/A')}")
-            console.print(f"  MoE FFN hidden size: {megatron_config.get('moe_ffn_hidden_size', 'N/A')}")
+            console.print(
+                f"  MoE FFN hidden size: {megatron_config.get('moe_ffn_hidden_size', 'N/A')}"
+            )
             console.print(f"  Num experts: {megatron_config.get('num_moe_experts', 'N/A')}")
             console.print(f"  Experts per token: {megatron_config.get('moe_router_topk', 'N/A')}")
             console.print()
@@ -1000,10 +1045,14 @@ def main():
 
     reference_model_to_use = args.reference_model
     if not reference_model_to_use and not args.model_provider:
-        console.print("[cyan]No --reference-model specified. Using Qwen/Qwen3-30B-A3B for tokenizer/config structure.[/cyan]")
-        console.print("[cyan](The actual model dimensions are determined by your checkpoint)[/cyan]\n")
+        console.print(
+            "[cyan]No --reference-model specified. Using Qwen/Qwen3-30B-A3B for tokenizer/config structure.[/cyan]"
+        )
+        console.print(
+            "[cyan](The actual model dimensions are determined by your checkpoint)[/cyan]\n"
+        )
         reference_model_to_use = "Qwen/Qwen3-30B-A3B"
-    
+
     if bool(args.tokenizer_vocab_file) != bool(args.tokenizer_merges_file):
         parser.error("--tokenizer-vocab-file and --tokenizer-merges-file must be provided together")
 

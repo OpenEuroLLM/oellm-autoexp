@@ -33,7 +33,7 @@ backend:
       /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_2,
       /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_3,
       /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_4,
-      /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_5  
+      /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_5
     ]
     data_cache_path: /leonardo_scratch/large/userexternal/donutu00/MEGATRON_CACHEDIR
     seq_length: 4096
@@ -146,7 +146,7 @@ sweep:
           backend.megatron.wandb_exp_name: "${job.name}"
           job.base_output_dir: "${job.base_output_dir}/${job.name}"
           backend.megatron.wandb_save_dir: "${job.base_output_dir}"
-    
+
 # GROUP 1: Hyperparameter configurations (list of two product grids)
     - type: list
       configs:

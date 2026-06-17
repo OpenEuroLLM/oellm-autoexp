@@ -21,7 +21,7 @@ This document summarizes how to resume timed-out or failed jobs, find sweep indi
 
 ### Stable Jobs
 
-- Run the initial training phase (e.g., up to 120BT end point).
+- Run the initial training phase (for example, up to 120BT end point).
 - Save checkpoints to their own output dir: `results/.../moe_abl_nexp_X_lrY_gbszZ_seed1234_stable/checkpoints/`
 - Do **not** have `ckpt_step` set in config (defaults to `None`).
 - When resuming, Megatron uses `latest_checkpointed_iteration.txt` to find the latest checkpoint.
@@ -40,7 +40,7 @@ This document summarizes how to resume timed-out or failed jobs, find sweep indi
 The `resume_timed_out.py` script supports both **stable** and **decay** jobs:
 
 - **Stable jobs** → loads from their own checkpoint directory.
-- **Decay jobs** → loads from the corresponding stable sibling's checkpoint directory (resolved automatically via the config's `${sibling.stable.*}` reference).
+- **Decay jobs** → loads from the corresponding stable sibling's checkpoint directory (resolved automatically by way of the config's `${sibling.stable.*}` reference).
 
 ### List available indices
 
@@ -118,7 +118,7 @@ python scripts/run_autoexp.py \
 
 **Why `ckpt_step=null`?** Decay config sets `ckpt_step` to `start_iter` (branching point). When resuming from the decay dir, you must clear it so Megatron uses `latest_checkpointed_iteration.txt` instead.
 
-### Force a specific checkpoint (e.g., avoid tracker overwrite)
+### Force a specific checkpoint (for example, avoid tracker overwrite)
 
 ```bash
 ++backend.megatron.load=results/.../checkpoints \
@@ -143,7 +143,7 @@ python scripts/resume_timed_out.py \
   --list-decay
 ```
 
-Search the output for the job name (e.g., `moe_abl_nexp_8_lr0.001_gbsz1024_seed1234_decay80BT`) to get its index.
+Search the output for the job name (for example, `moe_abl_nexp_8_lr0.001_gbsz1024_seed1234_decay80BT`) to get its index.
 
 **Note:** Indices depend on the current sweep config. If you add batch sizes or learning rates, indices shift. Re-run `--list-stable` / `--list-decay` after config changes.
 
@@ -189,7 +189,7 @@ cat results/.../checkpoints/latest_checkpointed_iteration.txt
 
 ### Which monitor starts decay jobs?
 
-Decay jobs are started by the **original** monitor session (e.g., `1773407491`) that ran the full sweep. Resumed runs create **new** sessions with only the stable job.
+Decay jobs are started by the **original** monitor session (for example, `1773407491`) that ran the full sweep. Resumed runs create **new** sessions with only the stable job.
 
 **To start decay jobs:** Run the monitor for the original session:
 
@@ -201,7 +201,7 @@ python scripts/monitor_autoexp.py --session 1776240987 --- replication of moe no
 
 ### Will the monitor start the same job twice?
 
-**No.** The monitor only submits jobs when `runtime.submitted` is `False`. Once submitted, it stays `True` until the job is restarted (e.g., on "DUE TO TIME LIMIT") or marked finished.
+**No.** The monitor only submits jobs when `runtime.submitted` is `False`. Once submitted, it stays `True` until the job is restarted (for example, on "DUE TO TIME LIMIT") or marked finished.
 
 ### Will decay jobs resume from their own checkpoints when the monitor restarts them?
 
@@ -224,7 +224,7 @@ The resume script creates **one SLURM job per index** (one `run_autoexp` call pe
 
 **Fix:** Pass an explicit load path: `++backend.megatron.load=results/.../moe_abl_nexp_X_lrY_..._stable/checkpoints`
 
-### Resume loaded from older checkpoint (e.g., 14000 instead of 15500)
+### Resume loaded from older checkpoint (for example, 14000 instead of 15500)
 
 **Cause:** Another run overwrote `latest_checkpointed_iteration.txt` with a lower iteration.
 
@@ -232,7 +232,7 @@ The resume script creates **one SLURM job per index** (one `run_autoexp` call pe
 
 ### `failed to find checkpoint ... in wandb`
 
-**Cause:** Megatron tries to link the loaded checkpoint to a WandB artifact, but the checkpoint was never uploaded (e.g., `WANDB_MODE=offline`).
+**Cause:** Megatron tries to link the loaded checkpoint to a WandB artifact, but the checkpoint was never uploaded (for example, `WANDB_MODE=offline`).
 
 **Impact:** Harmless. The checkpoint was loaded correctly; only WandB artifact linking failed.
 
@@ -432,4 +432,3 @@ python scripts/run_autoexp.py \
 ++job.log_path='${job.base_output_dir}/slurm-%j-eval-35000-fp32-nodes-4.log' \
 ++job.log_path_current='${job.base_output_dir}/current-eval-35000.log'
 ```
-

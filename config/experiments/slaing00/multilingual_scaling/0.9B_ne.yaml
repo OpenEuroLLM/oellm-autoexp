@@ -32,7 +32,7 @@ backend:
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
     # DATA
-    data_cache_path: /leonardo_work/OELLM_prod2026/slaing00/cache/MEGATRON_262k/${job.name} 
+    data_cache_path: /leonardo_work/OELLM_prod2026/slaing00/cache/MEGATRON_262k/${job.name}
 
     eval_interval: 1_000_000_000
     split: "99,1,0"

@@ -1,7 +1,7 @@
 # @package _global_
 
 # 50M dense model training with pull-based multi-stage cooldown on Leonardo
-# Translation of dense_xmas_50M.yaml (https://github.com/Niccolo-Ajroldi/autoexperiment/blob/oellm/scripts/dense/xmas/50M.yaml) 
+# Translation of dense_xmas_50M.yaml (https://github.com/Niccolo-Ajroldi/autoexperiment/blob/oellm/scripts/dense/xmas/50M.yaml)
 # to new composable sweep system
 
 defaults:
@@ -152,7 +152,7 @@ sweep:
       configs:
         - job.name: "dense_50M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
           backend.megatron.wandb_exp_name: "\\${job.name}"
-    
+
     # GROUP 1: Hyperparameter configurations (list of two product grids)
     - type: list
       configs:
@@ -228,8 +228,8 @@ sweep:
               backend.megatron.aux.tokens: 200_000_000_000
             - stage: decay300BT
               backend.megatron.aux.tokens: 300_000_000_000
-  
-  # Filter out runs in which the warmup iters take more than 30% of total training iterations & explore 
+
+  # Filter out runs in which the warmup iters take more than 30% of total training iterations & explore
   # small gbsz (16, 32) only up to and incl. 50BT, otherwise training will take an enourmous amount of iters
   # The stable stage is always kept (when warmup check passes) because decay stages depend on it.
   filter: "\\${oc.eval:'\\${backend.megatron.lr_warmup_iters} / \\${backend.megatron.train_iters} < 0.3 and (\"\\${stage}\" == \"stable\" or \\${backend.megatron.aux.tokens} <= 50_000_000_000 or \\${backend.megatron.global_batch_size} >= 64)'}"
@@ -237,12 +237,12 @@ sweep:
 ### Initial number of scripts/configurations
 # 5 lr x 7 batch sizes x (1 stable + 9 decay) = 350 scripts
 
-### Expected filtered out scripts/configs because of warmup iters > 30% of total iters: 
+### Expected filtered out scripts/configs because of warmup iters > 30% of total iters:
 # - 1 decay6BT x 3 GBSZ (256, 512, 1024) = 3 scripts
 # - 1 decay12BT x 3 GBSZ (512, 1024) = 2 scripts
 # - 1 decay20BT x 3 GBSZ (1024) = 1 script
 
-### Expected filtered out scripts/configs because of small gbsz and large D (too many training iters): 
+### Expected filtered out scripts/configs because of small gbsz and large D (too many training iters):
 # - 2 GBSZ (16, 32) x 4 D (80BT, 120BT, 200BT, 300BT) = 8 scripts
 
 ### Total expected filtered out scripts: 3 + 2 + 1 + 8 = 13 scripts

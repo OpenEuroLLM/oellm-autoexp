@@ -44,7 +44,7 @@ The helper script `update_progress.sh` wraps the four model-size configs (0.1B, 
 
 ### 1. Config parsing
 
-`parse_config()` reads the sweep YAML (resolving any Hydra `defaults` sub-configs via `_resolve_defaults` from `validate_sweep_runs.py`) and extracts every expected `(run_name, stage, token_budget)` combination. The sweep has two kinds of runs:
+`parse_config()` reads the sweep YAML (resolving any Hydra `defaults` sub-configs by way of `_resolve_defaults` from `validate_sweep_runs.py`) and extracts every expected `(run_name, stage, token_budget)` combination. The sweep has two kinds of runs:
 
 - **Stable runs** — one per `(lr, gbsz)` hyperparameter combo, trained to a fixed token budget.
 - **Decay runs** — for each combo, only the token budgets in the combo's `center | cross | diagonal` sets are valid decay targets. The script builds this filtered list and skips combinations that are not planned.
@@ -61,11 +61,11 @@ Including config-based IDs lets the tracker detect submitted-but-not-yet-started
 
 ### 3. Slurm accounting (sacct)
 
-All job IDs across every run are batched into a single `sacct` call. The result provides authoritative `State`, `Elapsed`, GPU count (from `AllocTRES`), and start/end timestamps. If `sacct` is unavailable (e.g. running off-cluster), the tracker falls back to timestamps from the log itself or a previously written CSV.
+All job IDs across every run are batched into a single `sacct` call. The result provides authoritative `State`, `Elapsed`, GPU count (from `AllocTRES`), and start/end timestamps. If `sacct` is unavailable (for example running off-cluster), the tracker falls back to timestamps from the log itself or a previously written CSV.
 
 ### 4. Monitor-state events
 
-If `monitor_state/` session directories exist, the tracker loads per-run `{run_name}_*.job.json` files and extracts `action_state` events (e.g. `time_limit`, `segmentation_fault`, `finished_training`). Each event is matched to a specific Slurm job via the sacct time window. This is the primary signal for status classification; stderr log parsing is used as a fallback for manually submitted runs that have no monitor state.
+If `monitor_state/` session directories exist, the tracker loads per-run `{run_name}_*.job.json` files and extracts `action_state` events (for example `time_limit`, `segmentation_fault`, `finished_training`). Each event is matched to a specific Slurm job by way of the sacct time window. This is the primary signal for status classification; stderr log parsing is used as a fallback for manually submitted runs that have no monitor state.
 
 ### 5. Log parsing
 
@@ -74,7 +74,7 @@ For every job that has logs:
 - **`parse_stdout()`** extracts the Megatron `arguments` block (hyperparams, model size), iteration counters, training and validation losses, and first/last timestamps.
 - **`parse_stderr()`** scans for error patterns: segfaults, CUDA OOM, fatal errors, time-limit signals, and the wandb sync completion marker.
 - **`load_or_compute_throughput()`** (from `megatron_throughput_from_logs.py`) returns the average TFLOP/s/GPU and Tok/s/GPU, with caching in `<run_dir>/throughput/avg_throughput.csv` so repeated runs are fast.
-- **`analyze_job()`** (from `low_throughput_analysis.py`) identifies and totals iterations that ran below 30 % of the reference throughput average (e.g. during checkpoint saves or NCCL stalls).
+- **`analyze_job()`** (from `low_throughput_analysis.py`) identifies and totals iterations that ran below 30 % of the reference throughput average (for example during checkpoint saves or NCCL stalls).
 
 ### 6. Status determination
 

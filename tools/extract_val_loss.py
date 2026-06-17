@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""
-Extract the final validation loss from the latest .log file in each run subdirectory
-and write results to a CSV.
+"""Extract the final validation loss from the latest .log file in each run
+subdirectory and write results to a CSV.
 
 Usage:
     python collect_val_loss.py <runs_dir> [--output <output.csv>]
@@ -12,21 +11,20 @@ import csv
 import re
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
 
 VAL_LOSS_RE = re.compile(
     r"validation loss at iteration\s+(\d+)\s+on validation set\s*\|.*?lm loss value:\s*([\d.E+\-]+)\s*\|.*?lm loss PPL:\s*([\d.E+\-]+)"
 )
 
 
-def find_latest_log(run_dir: Path) -> Optional[Path]:
+def find_latest_log(run_dir: Path) -> Path | None:
     logs = [f for f in run_dir.iterdir() if f.suffix == ".log" and f.is_file()]
     if not logs:
         return None
     return max(logs, key=lambda f: f.stat().st_mtime)
 
 
-def extract_last_val_loss(log_file: Path) -> Optional[Tuple[int, float, float]]:
+def extract_last_val_loss(log_file: Path) -> tuple[int, float, float] | None:
     last_match = None
     with log_file.open(errors="replace") as f:
         for line in f:
@@ -42,10 +40,17 @@ def extract_last_val_loss(log_file: Path) -> Optional[Tuple[int, float, float]]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Collect final validation loss from run directories.")
+    parser = argparse.ArgumentParser(
+        description="Collect final validation loss from run directories."
+    )
     parser.add_argument("runs_dir", type=Path, help="Directory containing run subdirectories")
-    parser.add_argument("--output", "-o", type=Path, default=None,
-                        help="Output CSV file (default: <runs_dir>/val_loss_summary.csv)")
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=Path,
+        default=None,
+        help="Output CSV file (default: <runs_dir>/val_loss_summary.csv)",
+    )
     args = parser.parse_args()
 
     if args.output is None:
@@ -73,13 +78,17 @@ def main():
             continue
 
         iteration, loss, ppl = result
-        print(f"  {run_dir.name}: iter={iteration}  loss={loss:.6E}  PPL={ppl:.6E}  ({log_file.name})")
-        rows.append({
-            "run_name": run_dir.name,
-            "iteration": iteration,
-            "lm_loss": loss,
-            "lm_loss_ppl": ppl,
-        })
+        print(
+            f"  {run_dir.name}: iter={iteration}  loss={loss:.6E}  PPL={ppl:.6E}  ({log_file.name})"
+        )
+        rows.append(
+            {
+                "run_name": run_dir.name,
+                "iteration": iteration,
+                "lm_loss": loss,
+                "lm_loss_ppl": ppl,
+            }
+        )
 
     if not rows:
         print("No results collected — nothing written.", file=sys.stderr)

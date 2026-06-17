@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Find and optionally open the log file for a training run.
+"""Find and optionally open the log file for a training run.
 
 Accepts either a SLURM job ID (numeric) or a run name pattern (substring match).
 Defaults to stderr / current.log; use --stdout for the stdout log.
@@ -57,7 +56,7 @@ def find_by_slurm_id(search_dirs, job_id, stdout):
         for run_dir in sorted(d.iterdir()):
             if not run_dir.is_dir():
                 continue
-            log = run_dir / "logs" / ("{}-{}.log".format(prefix, job_id))
+            log = run_dir / "logs" / (f"{prefix}-{job_id}.log")
             if log.exists():
                 return log
     return None
@@ -106,7 +105,9 @@ def open_in_vscode(path):
     try:
         subprocess.run(["code", str(path)], check=False)
     except FileNotFoundError:
-        print("(VSCode 'code' CLI not found — copy the path above to open manually)", file=sys.stderr)
+        print(
+            "(VSCode 'code' CLI not found — copy the path above to open manually)", file=sys.stderr
+        )
 
 
 def main():
@@ -116,14 +117,18 @@ def main():
     )
     ap.add_argument("query", help="SLURM job ID (numeric) or run name substring")
     ap.add_argument(
-        "-d", "--results-dir",
+        "-d",
+        "--results-dir",
         type=Path,
         default=None,
         help="Directory containing run subdirectories (auto-discovered if omitted)",
     )
     ap.add_argument("--stderr", action="store_true", help="Return stderr log instead of stdout")
     ap.add_argument(
-        "--open", dest="open_file", action="store_true", default=True,
+        "--open",
+        dest="open_file",
+        action="store_true",
+        default=True,
         help="Open in VSCode after printing path (default: on)",
     )
     ap.add_argument("--no-open", dest="open_file", action="store_false", help="Just print the path")

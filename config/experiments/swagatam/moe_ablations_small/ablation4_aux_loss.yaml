@@ -41,7 +41,7 @@ sweep:
         - backend.megatron.moe_aux_loss_coeff: 1e-3   # baseline balancing (default)
         - backend.megatron.moe_aux_loss_coeff: 5e-2   # strong balancing
         - backend.megatron.moe_aux_loss_coeff: 1e-2   # strong balancing (default in switch moe?)
-    
+
     # Seeds
     - type: list
       configs:

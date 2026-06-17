@@ -8,7 +8,7 @@ defaults:
   - /container: marenostrum
   - /slurm: marenostrum
   - /job: auto_restart
-  - /sweep: dense_qwen3_0.1B_ne_multilingual # sweep configs  
+  - /sweep: dense_qwen3_0.1B_ne_multilingual # sweep configs
   - /backend/megatron: base
   - /experiments/swagatam/models: dense_qwen3_0.1B_ne # model configs
   - /experiments/swagatam/data: oellm_256k # data configs

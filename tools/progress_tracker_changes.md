@@ -18,7 +18,7 @@ Optionally writes a CSV (`--csv`) and a Markdown summary (`--md`).
 Companion tools called internally:
 - `megatron_throughput_from_logs.py` — parses and caches per-job throughput
 - `low_throughput_analysis.py` — identifies iterations below 30 % of run average
-- `gpu_hours.py` — collects job IDs and GPU-h via sacct
+- `gpu_hours.py` — collects job IDs and GPU-h by way of sacct
 - `validate_sweep_runs.py` — resolves sweep config to expected run names
 
 ---
@@ -30,7 +30,7 @@ Companion tools called internally:
 **Root cause**
 
 `parse_sbatch()` looks for `#SBATCH --gpus-per-node` and `#SBATCH --gres=gpu:N`
-directives.  Some single-run configs (e.g. `baby_9b_dense`) store the canonical
+directives.  Some single-run configs (for example `baby_9b_dense`) store the canonical
 sbatch file under `<run_dir>/script/job.sbatch`, while the root-level
 `<run_dir>/job.sbatch` (used by the job-chain mechanism) encodes the GPU count
 as an `export GPUS_PER_NODE=4` environment variable rather than an `#SBATCH`
@@ -130,8 +130,8 @@ NOT_LAUNCHED rows are kept so pending work remains visible.
 **Root cause**
 
 `parse_config` accessed `meg["aux"]` and `cfg["sweep"]["groups"]` with hard
-dictionary lookups.  Experiment configs that compose sub-configs via the Hydra
-defaults list (e.g. `baby_9b_dense.yaml`) do not carry `backend.megatron.aux`
+dictionary lookups.  Experiment configs that compose sub-configs by way of the Hydra
+defaults list (for example `baby_9b_dense.yaml`) do not carry `backend.megatron.aux`
 or `sweep` in the YAML that the script loads directly — those keys live in
 separate sub-config files that Hydra merges at runtime but the script's
 `_resolve_defaults` helper did not bring in for this config layout.
@@ -163,7 +163,7 @@ absent, so the tracker works for single-run (no-sweep) experiment configs.
 **Root cause**
 
 Even after Bug 3's key-error fix, running the tracker on a single-run config
-(e.g. `baby_9b_dense.yaml`) produced an empty table with no rows.  Four
+(for example `baby_9b_dense.yaml`) produced an empty table with no rows.  Four
 separate issues combined to cause this:
 
 **4a — empty `run_specs` when there are no sweep combos**
@@ -341,20 +341,20 @@ This replaces the coincidental suppression with an explicit, deterministic rule.
 
 ## Bug fixes (2026-05-22)
 
-### Bug 1 — Overhead percentage showing > 100 % (e.g. 219817 %)
+### Bug 1 — Overhead percentage showing > 100 % (for example 219817 %)
 
 **Root cause A — cross-cluster Slurm job ID collision**
 
 MN5 (MareNostrum) and Leonardo both use Slurm with independent numeric job ID
-sequences.  The same integer (e.g. `40398055`) can refer to a GPU training job
+sequences.  The same integer (for example `40398055`) can refer to a GPU training job
 on MN5 *and* a completely different CPU-only job on Leonardo.
 
-When MN5 results are synced to Leonardo's filesystem, the log files are named
+When MN5 results are synced to Leonardo's file system, the log files are named
 `stdout-{MN5_JOB_ID}.log`.  `find_job_ids` picks up these IDs, and Leonardo's
 `sacct` returns *Leonardo's* job with that ID — a CPU job with `gres/gpu=0`,
 wrong start time, wrong elapsed time.  The log timestamps (from the MN5 run)
 then don't match the sacct start time at all, producing TTFI values measured in
-**days** (e.g. 2251 GPU-h for a run with 0.0 reported GPU-h).
+**days** (for example 2251 GPU-h for a run with 0.0 reported GPU-h).
 
 **Fix — cross-cluster collision detection** (`progress_tracker.py`):
 
@@ -420,7 +420,7 @@ The summary table (printed below the per-job table) computed:
 oh_pct = oh_gpu_h_sum / h
 ```
 
-where `h` came from `_gpu_collect_job_ids` (finds jobs via `stderr-JOBID.log`
+where `h` came from `_gpu_collect_job_ids` (finds jobs by way of `stderr-JOBID.log`
 files only).  But `oh_gpu_h_sum` is built from **all** tracked rows, including
 jobs that had Slurm accounting records (sacct start/end) but never wrote a
 stderr log — for example, a job cancelled in 1 second before the container even
@@ -498,7 +498,7 @@ iteration).
 
 When a job is classified as `FAILED` or `CANCELLED` but never logged a single
 training iteration, the `Error` column is prefixed with `"zero iters"`.  This
-distinguishes a job that was cancelled mid-training (e.g. 65 % done) from one
+distinguishes a job that was cancelled mid-training (for example 65 % done) from one
 that crashed during container startup and never reached the training loop.
 
 ### `--machine` flag
@@ -548,7 +548,7 @@ megatron_exec python tools/progress_tracker.py \
 
 - **MN5 vs Leonardo separation**: when results from both clusters live in the
   same directory, sacct only returns data for the local cluster's jobs.  MN5 jobs
-  show `GPU-h = N/A` unless a previous CSV with MN5 data is passed back via
+  show `GPU-h = N/A` unless a previous CSV with MN5 data is passed back by way of
   `--csv` (the `external_job_gpu_h` fallback).  A proper fix would require either
   running the tracker on MN5 directly, or adding a `--external-csv` path that
   explicitly preserves cross-cluster GPU-h without being overwritten each run.
@@ -560,5 +560,5 @@ megatron_exec python tools/progress_tracker.py \
 
 - **Periodic execution inside monitor**: the monitor loop currently does not call
   `progress_tracker`.  A lightweight integration would be to write the `--md`
-  file periodically (e.g. every N monitor polls) so the Markdown summary stays
+  file periodically (for example every N monitor polls) so the Markdown summary stays
   up to date without a manual invocation.

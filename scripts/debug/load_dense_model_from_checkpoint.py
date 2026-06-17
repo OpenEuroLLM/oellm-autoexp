@@ -1,4 +1,5 @@
-"""Load a dense GPT model from a checkpoint for inspection and optional validation.
+"""Load a dense GPT model from a checkpoint for inspection and optional
+validation.
 
 Accepts a checkpoint path and automatically extracts the iteration step.
 Pass either the iter directory or the parent checkpoints directory:
@@ -36,9 +37,13 @@ import torch
 # objects (argparse.Namespace, enums like signal.Signals, etc.), so we force
 # weights_only=False. Safe here: we trust our own training checkpoints.
 _orig_torch_load = torch.load
+
+
 def _torch_load_full(*args, **kwargs):
     kwargs.setdefault("weights_only", False)
     return _orig_torch_load(*args, **kwargs)
+
+
 torch.load = _torch_load_full
 
 logging.getLogger("megatron.core.tensor_parallel.random").setLevel(logging.ERROR)
@@ -133,37 +138,52 @@ def read_checkpoint_args(load_dir, ckpt_step):
         return None
 
     common = dist_checkpointing.load_common_state_dict(ckpt_path)
-    return common.get('args', None)
+    return common.get("args", None)
 
 
 # Arch args not force-overridden by Megatron's `load_args_from_checkpoint`.
 # These must match the checkpoint at BUILD time, so we read them from the
 # checkpoint's saved args and override the preset accordingly.
 CKPT_ARCH_OVERRIDES = {
-    '--num-layers': 'num_layers',
-    '--hidden-size': 'hidden_size',
-    '--ffn-hidden-size': 'ffn_hidden_size',
-    '--num-attention-heads': 'num_attention_heads',
-    '--kv-channels': 'kv_channels',
-    '--max-position-embeddings': 'max_position_embeddings',
-    '--make-vocab-size-divisible-by': 'make_vocab_size_divisible_by',
+    "--num-layers": "num_layers",
+    "--hidden-size": "hidden_size",
+    "--ffn-hidden-size": "ffn_hidden_size",
+    "--num-attention-heads": "num_attention_heads",
+    "--kv-channels": "kv_channels",
+    "--max-position-embeddings": "max_position_embeddings",
+    "--make-vocab-size-divisible-by": "make_vocab_size_divisible_by",
 }
 
 
 # ---- Parse our own args before Megatron sees them ----
 pre_parser = argparse.ArgumentParser(add_help=False)
-pre_parser.add_argument("--checkpoint-path", type=str, required=True,
-                        help="Path to checkpoint: .../checkpoints/iter_XXXXXXX or .../checkpoints")
-pre_parser.add_argument("--preset", type=str, default="qwen3-300M-dense",
-                        choices=list(PRESETS.keys()),
-                        help="Model preset (fallback defaults; checkpoint args override these)")
-pre_parser.add_argument("--seq-len", type=int, default=4096,
-                        help="Sequence length for the model")
-pre_parser.add_argument("--interactive", action="store_true", default=False,
-                        help="Drop into interactive Python shell on rank 0 after loading")
-pre_parser.add_argument("--evaluate", action="store_true", default=False,
-                        help="Run validation loss after loading. Pass --valid-data-path, "
-                             "--eval-iters, --micro-batch-size, --global-batch-size as Megatron args.")
+pre_parser.add_argument(
+    "--checkpoint-path",
+    type=str,
+    required=True,
+    help="Path to checkpoint: .../checkpoints/iter_XXXXXXX or .../checkpoints",
+)
+pre_parser.add_argument(
+    "--preset",
+    type=str,
+    default="qwen3-300M-dense",
+    choices=list(PRESETS.keys()),
+    help="Model preset (fallback defaults; checkpoint args override these)",
+)
+pre_parser.add_argument("--seq-len", type=int, default=4096, help="Sequence length for the model")
+pre_parser.add_argument(
+    "--interactive",
+    action="store_true",
+    default=False,
+    help="Drop into interactive Python shell on rank 0 after loading",
+)
+pre_parser.add_argument(
+    "--evaluate",
+    action="store_true",
+    default=False,
+    help="Run validation loss after loading. Pass --valid-data-path, "
+    "--eval-iters, --micro-batch-size, --global-batch-size as Megatron args.",
+)
 pre_args, remaining_argv = pre_parser.parse_known_args()
 
 preset = dict(PRESETS[pre_args.preset])
@@ -183,11 +203,13 @@ if IS_RANK_0:
 ckpt_args = read_checkpoint_args(load_dir, ckpt_step)
 if ckpt_args is not None:
     # Sanity check: warn loudly if this is actually an MoE checkpoint.
-    nexp = getattr(ckpt_args, 'num_experts', None)
+    nexp = getattr(ckpt_args, "num_experts", None)
     if nexp is not None and nexp > 0:
         if IS_RANK_0:
-            print(f"WARNING: checkpoint has num_experts={nexp} (MoE). "
-                  f"Use load_model_from_checkpoint.py for MoE checkpoints.")
+            print(
+                f"WARNING: checkpoint has num_experts={nexp} (MoE). "
+                f"Use load_model_from_checkpoint.py for MoE checkpoints."
+            )
 
     overrides_applied = {}
     for flag, attr in CKPT_ARCH_OVERRIDES.items():
@@ -200,8 +222,10 @@ if ckpt_args is not None:
         for flag, val in overrides_applied.items():
             print(f"  {flag} = {val}")
 elif IS_RANK_0:
-    print("WARNING: could not read args from checkpoint (legacy format or missing). "
-          "Using preset values as-is; architecture mismatch may occur.")
+    print(
+        "WARNING: could not read args from checkpoint (legacy format or missing). "
+        "Using preset values as-is; architecture mismatch may occur."
+    )
 
 # Set micro/global batch sizes: larger defaults when evaluating
 if pre_args.evaluate:
@@ -214,36 +238,53 @@ else:
 # Build base sys.argv (no MoE / expert-parallel args — this is a dense model)
 base_args = [
     "load_dense_model_from_checkpoint",
-    "--tensor-model-parallel-size", "1",
-    "--pipeline-model-parallel-size", "1",
+    "--tensor-model-parallel-size",
+    "1",
+    "--pipeline-model-parallel-size",
+    "1",
     # --use-checkpoint-args force-overrides GQA, rotary, normalization, swiglu,
     # qk_layernorm, etc. from the checkpoint before model build.
     "--use-checkpoint-args",
     "--auto-detect-ckpt-format",
     "--qk-layernorm",
-    "--normalization", "RMSNorm",
-    "--norm-epsilon", "1e-06",
+    "--normalization",
+    "RMSNorm",
+    "--norm-epsilon",
+    "1e-06",
     "--swiglu",
-    "--position-embedding-type", "rope",
-    "--rotary-percent", "1.0",
-    "--rotary-base", "10000",
-    "--rotary-seq-len-interpolation-factor", "1",
-    "--seq-length", str(SEQ_LEN),
+    "--position-embedding-type",
+    "rope",
+    "--rotary-percent",
+    "1.0",
+    "--rotary-base",
+    "10000",
+    "--rotary-seq-len-interpolation-factor",
+    "1",
+    "--seq-length",
+    str(SEQ_LEN),
     "--use-flash-attn",
     "--bf16",
     # Tokenizer
-    "--tokenizer-type", "GPT2BPETokenizer",
-    "--vocab-file", "/leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/vocab.json",
-    "--merge-file", "/leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/merges.txt",
+    "--tokenizer-type",
+    "GPT2BPETokenizer",
+    "--vocab-file",
+    "/leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/vocab.json",
+    "--merge-file",
+    "/leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/merges.txt",
     "--legacy-tokenizer",
     # Required by Megatron but irrelevant for inspection
-    "--micro-batch-size", str(DEFAULT_MBS),
-    "--global-batch-size", str(DEFAULT_GBS),
-    "--lr", "1e-4",
-    "--train-iters", "1",
+    "--micro-batch-size",
+    str(DEFAULT_MBS),
+    "--global-batch-size",
+    str(DEFAULT_GBS),
+    "--lr",
+    "1e-4",
+    "--train-iters",
+    "1",
     "--no-bias-dropout-fusion",
     # Checkpoint loading
-    "--load", load_dir,
+    "--load",
+    load_dir,
     "--no-load-optim",
     "--no-load-rng",
     "--exit-on-missing-checkpoint",
@@ -277,14 +318,16 @@ from megatron.training.checkpointing import load_checkpoint
 from megatron.training.initialize import initialize_megatron
 
 
-initialize_megatron(args_defaults={
-    "no_load_rng": True,
-    "no_load_optim": True,
-    "micro_batch_size": 1,
-    "enable_msc": False,
-    "use_cpu_initialization": False,
-    "standalone_embedding_stage": False,
-})
+initialize_megatron(
+    args_defaults={
+        "no_load_rng": True,
+        "no_load_optim": True,
+        "micro_batch_size": 1,
+        "enable_msc": False,
+        "use_cpu_initialization": False,
+        "standalone_embedding_stage": False,
+    }
+)
 
 args = get_args()
 
@@ -299,15 +342,17 @@ model.eval()
 
 # ---- Inspect distributed setup ----
 global_rank = torch.distributed.get_rank()
-world_size  = torch.distributed.get_world_size()
-local_rank  = int(os.environ.get("LOCAL_RANK", 0))
-node_name   = os.environ.get("SLURMD_NODENAME")
-gpu_device  = torch.cuda.current_device()
+world_size = torch.distributed.get_world_size()
+local_rank = int(os.environ.get("LOCAL_RANK", 0))
+node_name = os.environ.get("SLURMD_NODENAME")
+gpu_device = torch.cuda.current_device()
 
 for r in range(world_size):
     if r == global_rank:
-        print(f"Global rank: {global_rank}, World size: {world_size}, "
-              f"Local rank: {local_rank}, Node name: {node_name}, GPU device: {gpu_device}")
+        print(
+            f"Global rank: {global_rank}, World size: {world_size}, "
+            f"Local rank: {local_rank}, Node name: {node_name}, GPU device: {gpu_device}"
+        )
     torch.distributed.barrier()
 
 rank = global_rank
@@ -315,29 +360,31 @@ rank = global_rank
 # ---- Parameter summary ----
 local_params = sum(p.numel() for p in model.parameters())
 
-print_rank_0(f"\n{'='*60}")
-print_rank_0(f"Dense model loaded from checkpoint")
+print_rank_0(f"\n{'=' * 60}")
+print_rank_0("Dense model loaded from checkpoint")
 print_rank_0(f"  Checkpoint: {load_dir}")
 print_rank_0(f"  Step:       {loaded_iteration}")
-print_rank_0(f"{'='*60}")
+print_rank_0(f"{'=' * 60}")
 print_rank_0(f"  Layers:          {args.num_layers}")
 print_rank_0(f"  Hidden size:     {args.hidden_size}")
 print_rank_0(f"  FFN hidden:      {args.ffn_hidden_size}")
 print_rank_0(f"  Attention heads: {args.num_attention_heads} (KV groups: {args.num_query_groups})")
 print_rank_0(f"  Vocab size:      {args.padded_vocab_size}")
 print_rank_0(f"  Seq length:      {SEQ_LEN}")
-print_rank_0(f"{'='*60}")
-print_rank_0(f"  Total params:    {local_params:>14,}  ({local_params/1e9:.3f}B)")
-print_rank_0(f"{'='*60}")
+print_rank_0(f"{'=' * 60}")
+print_rank_0(f"  Total params:    {local_params:>14,}  ({local_params / 1e9:.3f}B)")
+print_rank_0(f"{'=' * 60}")
 
 if torch.cuda.is_available():
     alloc = torch.cuda.memory_allocated() / 1e9
     free, total_mem = torch.cuda.mem_get_info()
-    print(f"  [Rank {rank}] GPU allocated: {alloc:.2f} GB, free: {free/1e9:.2f} / {total_mem/1e9:.2f} GB")
+    print(
+        f"  [Rank {rank}] GPU allocated: {alloc:.2f} GB, free: {free / 1e9:.2f} / {total_mem / 1e9:.2f} GB"
+    )
 
 torch.distributed.barrier()
-print_rank_0(f"{'='*60}")
-print_rank_0(f"\nModel architecture:")
+print_rank_0(f"{'=' * 60}")
+print_rank_0("\nModel architecture:")
 print_rank_0(str(model))
 
 # Inspect a dense MLP layer's weights
@@ -355,6 +402,7 @@ print_rank_0(f"linear_fc2.weight[:5, :5]: {w2[:5, :5]}")
 # ---- Interactive mode ----
 if pre_args.interactive:
     import code
+
     if rank == 0:
         code.interact(local=dict(globals(), **locals()))
     torch.distributed.barrier()
@@ -370,31 +418,36 @@ if pre_args.evaluate:
 
     train_valid_test_datasets_provider.is_distributed = True
 
-    print_rank_0(f"\n{'='*60}")
+    print_rank_0(f"\n{'=' * 60}")
     print_rank_0("Building validation data iterator ...")
     _, valid_data_iterator, _ = build_train_valid_test_data_iterators(
         train_valid_test_datasets_provider
     )
 
     if valid_data_iterator is None:
-        print_rank_0("ERROR: no validation data iterator created. "
-                     "Did you pass --valid-data-path?")
+        print_rank_0("ERROR: no validation data iterator created. Did you pass --valid-data-path?")
     else:
         config = get_model_config(ddp_model[0])
         total_loss_dict, _, timelimit = evaluate(
-            forward_step, valid_data_iterator, ddp_model,
-            None, config, verbose=True,
+            forward_step,
+            valid_data_iterator,
+            ddp_model,
+            None,
+            config,
+            verbose=True,
         )
 
-        print_rank_0(f"\n{'='*60}")
-        print_rank_0(f"Validation loss  (step {loaded_iteration}, "
-                     f"{args.eval_iters} iters × gbs {args.global_batch_size} "
-                     f"= {args.eval_iters * args.global_batch_size} samples):")
+        print_rank_0(f"\n{'=' * 60}")
+        print_rank_0(
+            f"Validation loss  (step {loaded_iteration}, "
+            f"{args.eval_iters} iters × gbs {args.global_batch_size} "
+            f"= {args.eval_iters * args.global_batch_size} samples):"
+        )
         for key in total_loss_dict:
             loss_val = total_loss_dict[key].item()
             ppl = math.exp(min(20, loss_val))
             print_rank_0(f"  {key}: {loss_val:.6f}  (PPL: {ppl:.2f})")
-        print_rank_0(f"{'='*60}")
+        print_rank_0(f"{'=' * 60}")
 
 torch.distributed.barrier()
 torch.distributed.destroy_process_group()

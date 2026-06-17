@@ -20,7 +20,6 @@ from oellm_autoexp.config.loader import load_config_reference
 from oellm_autoexp.config.schema import ConfigSetup
 from oellm_autoexp.orchestrator import (
     build_execution_plan,
-    generate_scripts,
     ExecutionPlan,
     render_job_scripts,
     submit_jobs,
@@ -42,7 +41,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run", action="store_true", help="Plan and render without submitting jobs"
     )
     parser.add_argument(
-        "--no-submit", action="store_true", help="Generate sbatch scripts to disk without submitting"
+        "--no-submit",
+        action="store_true",
+        help="Generate sbatch scripts to disk without submitting",
     )
     parser.add_argument("--no-monitor", action="store_true", help="Submit jobs but skip monitoring")
     parser.add_argument(

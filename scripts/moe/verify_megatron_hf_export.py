@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Sanity-check an exported HuggingFace checkpoint against its source Megatron checkpoint.
+"""Sanity-check an exported HuggingFace checkpoint against its source Megatron
+checkpoint.
 
 The script walks every tensor in the Megatron checkpoint, re-exports it through the
 bridge weight-mapping to get its HF key, then compares it against the corresponding
@@ -66,13 +67,17 @@ import code
 import inspect
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 import torch
 import yaml
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.training.model_load_save import build_and_load_model, temporary_distributed_context
+from megatron.bridge.training.model_load_save import (
+    build_and_load_model,
+    temporary_distributed_context,
+)
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -84,7 +89,7 @@ from megatron.bridge.training.model_load_save import build_and_load_model, tempo
 # bf16/fp16 would raise spurious failures for an otherwise-correct export.
 _DEFAULT_FP32_SUBSTRINGS: tuple[str, ...] = (
     "e_score_correction_bias",  # Qwen3-MoE router load-balancing correction
-    "A_log",                    # Mamba/SSM log-eigenvalue matrix
+    "A_log",  # Mamba/SSM log-eigenvalue matrix
     "linear_attn.norm.weight",  # Hybrid-attention layer-norm scale
 )
 
@@ -101,21 +106,22 @@ _CONFIG_CANDIDATES: tuple[str, ...] = (
 # (embedding tying flags) are resolved separately due to naming inconsistencies
 # across different training frameworks.
 _PROVIDER_INT_FIELDS: dict[str, str] = {
-    "num_layers":          "num_layers",
-    "hidden_size":         "hidden_size",
+    "num_layers": "num_layers",
+    "hidden_size": "hidden_size",
     "num_attention_heads": "num_attention_heads",
-    "num_query_groups":    "num_query_groups",
-    "kv_channels":         "kv_channels",
-    "ffn_hidden_size":     "ffn_hidden_size",
+    "num_query_groups": "num_query_groups",
+    "kv_channels": "kv_channels",
+    "ffn_hidden_size": "ffn_hidden_size",
     "moe_ffn_hidden_size": "moe_ffn_hidden_size",
-    "num_moe_experts":     "num_moe_experts",
-    "moe_router_topk":     "moe_router_topk",
+    "num_moe_experts": "num_moe_experts",
+    "moe_router_topk": "moe_router_topk",
 }
 
 
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class CompareSummary:
@@ -125,12 +131,12 @@ class CompareSummary:
     each tensor.  ``_print_report`` reads these at the end of the run.
     """
 
-    checked: int = 0             # total tensors visited
-    missing_in_hf: int = 0       # key absent from the HF state dict
-    shape_mismatches: int = 0    # shapes differ (usually a TP-degree mismatch)
-    dtype_mismatches: int = 0    # dtypes differ (only checked in exact mode)
-    value_mismatches: int = 0    # values differ beyond tolerance / not bit-equal
-    max_abs_diff: float = 0.0    # worst per-element absolute difference seen
+    checked: int = 0  # total tensors visited
+    missing_in_hf: int = 0  # key absent from the HF state dict
+    shape_mismatches: int = 0  # shapes differ (usually a TP-degree mismatch)
+    dtype_mismatches: int = 0  # dtypes differ (only checked in exact mode)
+    value_mismatches: int = 0  # values differ beyond tolerance / not bit-equal
+    max_abs_diff: float = 0.0  # worst per-element absolute difference seen
     max_abs_diff_name: str = ""  # name of the tensor producing max_abs_diff
 
 
@@ -154,6 +160,7 @@ class _LoadedModels:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Compare exported HF weights against a Megatron checkpoint.",
@@ -161,30 +168,56 @@ def _parse_args() -> argparse.Namespace:
     )
 
     # Paths
-    p.add_argument("--hf-path", required=True, metavar="DIR",
-                   help="Path to the exported HuggingFace model directory.")
-    p.add_argument("--megatron-path", required=True, metavar="DIR",
-                   help="Path to the Megatron checkpoint directory.")
+    p.add_argument(
+        "--hf-path",
+        required=True,
+        metavar="DIR",
+        help="Path to the exported HuggingFace model directory.",
+    )
+    p.add_argument(
+        "--megatron-path",
+        required=True,
+        metavar="DIR",
+        help="Path to the Megatron checkpoint directory.",
+    )
 
     # Loading options
-    p.add_argument("--backend", default="gloo", choices=["gloo", "nccl"],
-                   help="torch.distributed backend for the temporary process group.")
-    p.add_argument("--local-files-only", action="store_true",
-                   help="Prevent HuggingFace from downloading any remote artifacts.")
-    p.add_argument("--show-progress", action="store_true",
-                   help="Display a progress bar while iterating export_hf_weights.")
+    p.add_argument(
+        "--backend",
+        default="gloo",
+        choices=["gloo", "nccl"],
+        help="torch.distributed backend for the temporary process group.",
+    )
+    p.add_argument(
+        "--local-files-only",
+        action="store_true",
+        help="Prevent HuggingFace from downloading any remote artifacts.",
+    )
+    p.add_argument(
+        "--show-progress",
+        action="store_true",
+        help="Display a progress bar while iterating export_hf_weights.",
+    )
 
     # Comparison options
-    p.add_argument("--atol", type=float, default=1e-1,
-                   help="Absolute tolerance for allclose mode.")
-    p.add_argument("--rtol", type=float, default=1e-3,
-                   help="Relative tolerance for allclose mode.")
-    p.add_argument("--exact-match", action="store_true",
-                   help="Require bitwise-exact dtype and value match (torch.equal).")
-    p.add_argument("--max-report", type=int, default=20,
-                   help="Maximum number of per-tensor mismatch lines to print.")
+    p.add_argument("--atol", type=float, default=1e-1, help="Absolute tolerance for allclose mode.")
+    p.add_argument("--rtol", type=float, default=1e-3, help="Relative tolerance for allclose mode.")
     p.add_argument(
-        "--fp32-compare-substring", action="append", default=None, metavar="SUBSTR",
+        "--exact-match",
+        action="store_true",
+        help="Require bitwise-exact dtype and value match (torch.equal).",
+    )
+    p.add_argument(
+        "--max-report",
+        type=int,
+        default=20,
+        help="Maximum number of per-tensor mismatch lines to print.",
+    )
+    p.add_argument(
+        "--fp32-compare-substring",
+        action="append",
+        default=None,
+        metavar="SUBSTR",
         help=(
             "Cast tensors whose name contains SUBSTR to float32 before comparing "
             "(ignored in --exact-match mode).  May be repeated."
@@ -193,7 +226,8 @@ def _parse_args() -> argparse.Namespace:
 
     # Debug options
     p.add_argument(
-        "--debug-interact", action="store_true",
+        "--debug-interact",
+        action="store_true",
         help=(
             "Open an interactive Python shell on rank 0 after both models are loaded. "
             "Other ranks wait at a barrier until you exit with Ctrl-D."
@@ -203,31 +237,40 @@ def _parse_args() -> argparse.Namespace:
     # Forward pass options
     fwd = p.add_argument_group("Forward Pass Options")
     fwd.add_argument(
-        "--forward-pass", action="store_true",
+        "--forward-pass",
+        action="store_true",
         help="Run a forward pass on the exported HF model to verify it produces valid logits.",
     )
     fwd.add_argument(
-        "--compare-logits", action="store_true",
+        "--compare-logits",
+        action="store_true",
         help=(
             "Run forward passes on BOTH the HF model and the loaded Megatron model with the "
             "same token IDs and compare their logits. Implies --forward-pass."
         ),
     )
     fwd.add_argument(
-        "--forward-pass-prompt", type=str,
+        "--forward-pass-prompt",
+        type=str,
         default="The quick brown fox jumps over the lazy dog.",
         help="Input text to use for the forward pass.",
     )
     fwd.add_argument(
-        "--device", type=str, default="cpu",
+        "--device",
+        type=str,
+        default="cpu",
         help="Device for the HF forward pass (e.g. cpu, cuda, cuda:0).",
     )
     fwd.add_argument(
-        "--generate-tokens", type=int, default=0,
+        "--generate-tokens",
+        type=int,
+        default=0,
         help="If > 0, generate this many new tokens after the forward pass and print them.",
     )
     fwd.add_argument(
-        "--forward-pass-dtype", type=str, default="bfloat16",
+        "--forward-pass-dtype",
+        type=str,
+        default="bfloat16",
         choices=["float32", "float16", "bfloat16"],
         help="dtype to load the model in for the forward pass.",
     )
@@ -239,23 +282,33 @@ def _parse_args() -> argparse.Namespace:
         "HF side always uses tokenizer.json from --hf-path)"
     )
     tok.add_argument(
-        "--tokenizer-vocab-file", type=str, default=None,
+        "--tokenizer-vocab-file",
+        type=str,
+        default=None,
         help="Path to vocab.json for the Megatron BPE tokenizer.",
     )
     tok.add_argument(
-        "--tokenizer-merges-file", type=str, default=None,
+        "--tokenizer-merges-file",
+        type=str,
+        default=None,
         help="Path to merges.txt for the Megatron BPE tokenizer.",
     )
     tok.add_argument(
-        "--tokenizer-eos-token", type=str, default="<|endoftext|>",
+        "--tokenizer-eos-token",
+        type=str,
+        default="<|endoftext|>",
         help="EOS token string for the Megatron tokenizer (default: <|endoftext|>).",
     )
     tok.add_argument(
-        "--tokenizer-bos-token", type=str, default="<|endoftext|>",
+        "--tokenizer-bos-token",
+        type=str,
+        default="<|endoftext|>",
         help="BOS token string for the Megatron tokenizer (default: <|endoftext|>).",
     )
     tok.add_argument(
-        "--tokenizer-pad-token", type=str, default=None,
+        "--tokenizer-pad-token",
+        type=str,
+        default=None,
         help="PAD token string for the Megatron tokenizer (optional).",
     )
 
@@ -266,13 +319,14 @@ def _parse_args() -> argparse.Namespace:
 # Checkpoint config helpers
 # ---------------------------------------------------------------------------
 
+
 def _find_config_file(checkpoint_dir: str) -> Path | None:
     """Search *checkpoint_dir* and its parent for a known training config YAML.
 
     Many training pipelines write a side-car YAML that records the exact
     hyper-parameters used when saving the checkpoint.  Using it prevents
-    shape mismatches caused by TP/PP parallelism settings that are embedded
-    implicitly in tensor shapes rather than model configs.
+    shape mismatches caused by TP/PP parallelism settings that are
+    embedded implicitly in tensor shapes rather than model configs.
     """
     base = Path(checkpoint_dir)
     for directory in (base, base.parent):
@@ -284,7 +338,8 @@ def _find_config_file(checkpoint_dir: str) -> Path | None:
 
 
 def _load_checkpoint_config(checkpoint_dir: str) -> dict[str, Any] | None:
-    """Return the training config dict for *checkpoint_dir*, or ``None`` if absent."""
+    """Return the training config dict for *checkpoint_dir*, or ``None`` if
+    absent."""
     config_path = _find_config_file(checkpoint_dir)
     if config_path is None:
         print(
@@ -303,8 +358,10 @@ def _load_checkpoint_config(checkpoint_dir: str) -> dict[str, Any] | None:
 # Provider alignment helpers
 # ---------------------------------------------------------------------------
 
+
 def _coerce_int(value: Any) -> int | None:
-    """Coerce *value* to ``int``, handling string representations like ``"4096"``."""
+    """Coerce *value* to ``int``, handling string representations like
+    ``"4096"``."""
     if value is None:
         return None
     if isinstance(value, int):
@@ -356,7 +413,8 @@ def _align_provider_to_config(provider: Any, config: dict[str, Any] | None) -> N
 
 
 def _maybe_fix_kv_channels(provider: Any, config: dict[str, Any]) -> None:
-    """Re-derive ``kv_channels`` from head geometry when the stored value looks stale."""
+    """Re-derive ``kv_channels`` from head geometry when the stored value looks
+    stale."""
     if not hasattr(provider, "kv_channels"):
         return
     num_heads = _coerce_int(config.get("num_attention_heads"))
@@ -368,7 +426,9 @@ def _maybe_fix_kv_channels(provider: Any, config: dict[str, Any]) -> None:
     stored = _coerce_int(config.get("kv_channels"))
     if stored is None or stored != derived:
         provider.kv_channels = derived
-        print(f"kv_channels re-derived from hidden_size/num_heads: {hidden_size}/{num_heads} → {derived}")
+        print(
+            f"kv_channels re-derived from hidden_size/num_heads: {hidden_size}/{num_heads} → {derived}"
+        )
 
 
 def _resolve_untie_embeddings(config: dict[str, Any]) -> bool:
@@ -400,8 +460,10 @@ def _set_provider_tying(provider: Any, *, untie: bool) -> None:
 # Debug shell
 # ---------------------------------------------------------------------------
 
+
 def _open_debug_shell(loaded: _LoadedModels, args: argparse.Namespace) -> None:
-    """Open a rank-0 interactive Python shell; all other ranks wait at a barrier.
+    """Open a rank-0 interactive Python shell; all other ranks wait at a
+    barrier.
 
     The shell namespace merges module globals, the caller's local variables,
     and every attribute of *loaded*, so the following names are directly
@@ -443,17 +505,19 @@ def _open_debug_shell(loaded: _LoadedModels, args: argparse.Namespace) -> None:
 # Tensor comparison
 # ---------------------------------------------------------------------------
 
+
 def _maybe_cast_fp32(
     name: str,
     x: torch.Tensor,
     y: torch.Tensor,
     fp32_substrings: Iterable[str],
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Upcast *x* and *y* to float32 when *name* matches a known fp32 substring.
+    """Upcast *x* and *y* to float32 when *name* matches a known fp32
+    substring.
 
     Certain tensors accumulate in float32 regardless of the global dtype
-    (router biases, SSM eigenvalues).  Upcasting before comparison prevents
-    spurious allclose failures for otherwise-correct exports.
+    (router biases, SSM eigenvalues).  Upcasting before comparison
+    prevents spurious allclose failures for otherwise-correct exports.
     """
     if any(sub in name for sub in fp32_substrings):
         return x.float(), y.float()
@@ -466,7 +530,8 @@ def _update_max_diff(
     y: torch.Tensor,
     summary: CompareSummary,
 ) -> float:
-    """Compute max per-element absolute diff and update *summary* if it is worst so far."""
+    """Compute max per-element absolute diff and update *summary* if it is
+    worst so far."""
     if x.shape != y.shape or x.numel() == 0:
         return 0.0
     max_diff = float((x.float() - y.float()).abs().max().item())
@@ -570,6 +635,7 @@ def _compare_tensor(
 # Reporting
 # ---------------------------------------------------------------------------
 
+
 def _print_header(args: argparse.Namespace) -> None:
     """Print a human-readable summary of the run configuration."""
     mode = "exact" if args.exact_match else f"allclose (atol={args.atol}, rtol={args.rtol})"
@@ -628,6 +694,7 @@ def _print_report(summary: CompareSummary, samples: list[str]) -> int:
 # Tokenizer helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_megatron_tokenizer(
     vocab_file: str,
     merges_file: str,
@@ -635,7 +702,8 @@ def _load_megatron_tokenizer(
     bos_token: str = "<|endoftext|>",
     pad_token: str | None = None,
 ):
-    """Build a PreTrainedTokenizerFast from raw vocab.json + merges.txt files."""
+    """Build a PreTrainedTokenizerFast from raw vocab.json + merges.txt
+    files."""
     from tokenizers import ByteLevelBPETokenizer
     from transformers import PreTrainedTokenizerFast
 
@@ -654,15 +722,16 @@ def _show_tokenizer_comparison(
     """Tokenize *prompt* with both tokenizers, print a comparison table, return
     (input_ids to use for forward passes, ids_match).
 
-    If the token IDs match, the shared IDs are returned.  If they differ, the
-    HF IDs are returned (HF model is the ground truth for the forward pass).
+    If the token IDs match, the shared IDs are returned.  If they
+    differ, the HF IDs are returned (HF model is the ground truth for
+    the forward pass).
     """
     sep = "-" * 60
     print(f"\n{sep}")
     print("  Tokenizer Comparison")
     print(sep)
 
-    hf_ids  = hf_tokenizer(prompt,  return_tensors="pt")["input_ids"][0].tolist()
+    hf_ids = hf_tokenizer(prompt, return_tensors="pt")["input_ids"][0].tolist()
     meg_ids = meg_tokenizer(prompt, return_tensors="pt")["input_ids"][0].tolist()
 
     print(f"  Prompt : {prompt!r}")
@@ -695,6 +764,7 @@ def _show_tokenizer_comparison(
 # Megatron forward pass
 # ---------------------------------------------------------------------------
 
+
 def _megatron_forward_pass(
     megatron_model: list,
     input_ids: torch.Tensor,  # [1, seq_len]
@@ -713,7 +783,7 @@ def _megatron_forward_pass(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"  Moving Megatron model to {device} for forward pass …")
     model = model.to(device)
-    input_ids    = input_ids.to(device)
+    input_ids = input_ids.to(device)
     position_ids = position_ids.to(device)
 
     try:
@@ -722,7 +792,11 @@ def _megatron_forward_pass(
             out = model(input_ids, position_ids, None)
         if isinstance(out, torch.Tensor) and out.dim() == 3:
             return out.detach().cpu()
-        if isinstance(out, (tuple, list)) and isinstance(out[0], torch.Tensor) and out[0].dim() == 3:
+        if (
+            isinstance(out, (tuple, list))
+            and isinstance(out[0], torch.Tensor)
+            and out[0].dim() == 3
+        ):
             return out[0].detach().cpu()
         print(f"  WARN  Unexpected output type from Megatron model: {type(out).__name__}")
     except Exception as exc:
@@ -735,13 +809,17 @@ def _megatron_forward_pass(
 # Logit comparison
 # ---------------------------------------------------------------------------
 
+
 def _compare_logits_report(
     hf_logits: torch.Tensor,
     meg_logits: torch.Tensor,
     atol: float,
     rtol: float,
 ) -> bool:
-    """Compare HF and Megatron logits and print a detailed report. Returns True on PASS."""
+    """Compare HF and Megatron logits and print a detailed report.
+
+    Returns True on PASS.
+    """
     sep = "=" * 60
     print(f"\n{sep}")
     print("  HF vs Megatron Logit Comparison")
@@ -751,13 +829,13 @@ def _compare_logits_report(
         print(f"  FAIL  Shape mismatch: HF={tuple(hf_logits.shape)}  Meg={tuple(meg_logits.shape)}")
         return False
 
-    hf  = hf_logits.float()
+    hf = hf_logits.float()
     meg = meg_logits.float()
     diff = (hf - meg).abs()
 
-    max_diff  = diff.max().item()
+    max_diff = diff.max().item()
     mean_diff = diff.mean().item()
-    passed    = torch.allclose(hf, meg, atol=atol, rtol=rtol)
+    passed = torch.allclose(hf, meg, atol=atol, rtol=rtol)
 
     print(f"  Shape           : {tuple(hf_logits.shape)}")
     print(f"  Max  |HF - Meg| : {max_diff:.6e}")
@@ -770,10 +848,12 @@ def _compare_logits_report(
     print(f"  Worst token pos : {worst_pos}  (max diff {per_token_max[worst_pos]:.6e})")
 
     # Top-1 prediction agreement
-    hf_top1  = hf[0].argmax(dim=-1)   # [seq_len]
+    hf_top1 = hf[0].argmax(dim=-1)  # [seq_len]
     meg_top1 = meg[0].argmax(dim=-1)
-    agree    = (hf_top1 == meg_top1).float().mean().item()
-    print(f"  Top-1 agreement : {agree * 100:.1f}%  ({int(agree * hf_top1.shape[0])}/{hf_top1.shape[0]} tokens)")
+    agree = (hf_top1 == meg_top1).float().mean().item()
+    print(
+        f"  Top-1 agreement : {agree * 100:.1f}%  ({int(agree * hf_top1.shape[0])}/{hf_top1.shape[0]} tokens)"
+    )
 
     print(sep)
     return passed
@@ -858,7 +938,9 @@ def _run_forward_pass(
         print(f"        Parameters : {num_params / 1e9:.3f}B")
         print(f"        Layers     : {model.config.num_hidden_layers}")
         print(f"        Hidden     : {model.config.hidden_size}")
-        print(f"        Experts    : {model.config.num_experts}  (top-{model.config.num_experts_per_tok})")
+        print(
+            f"        Experts    : {model.config.num_experts}  (top-{model.config.num_experts_per_tok})"
+        )
     except Exception as exc:
         print(f"  FAIL  Could not load model: {exc}")
         return False, None
@@ -892,7 +974,9 @@ def _run_forward_pass(
     # Shape check
     expected_shape = (1, seq_len, vocab_size)
     if tuple(logits.shape) != expected_shape:
-        print(f"  FAIL  Unexpected logits shape: got {tuple(logits.shape)}, expected {expected_shape}")
+        print(
+            f"  FAIL  Unexpected logits shape: got {tuple(logits.shape)}, expected {expected_shape}"
+        )
         return False, None
     print(f"        Logits shape : {tuple(logits.shape)}  ✓")
 
@@ -900,14 +984,18 @@ def _run_forward_pass(
     has_nan = torch.isnan(logits).any().item()
     has_inf = torch.isinf(logits).any().item()
     if has_nan or has_inf:
-        print(f"  FAIL  Logits contain {'NaN' if has_nan else ''}{'Inf' if has_inf else ''} values.")
+        print(
+            f"  FAIL  Logits contain {'NaN' if has_nan else ''}{'Inf' if has_inf else ''} values."
+        )
         return False, None
-    print(f"        NaN / Inf    : none  ✓")
+    print("        NaN / Inf    : none  ✓")
 
     # Summary stats
     lf = logits.float()
-    print(f"        Logits stats : min={lf.min().item():.3f}  max={lf.max().item():.3f}  "
-          f"mean={lf.mean().item():.3f}  std={lf.std().item():.3f}")
+    print(
+        f"        Logits stats : min={lf.min().item():.3f}  max={lf.max().item():.3f}  "
+        f"mean={lf.mean().item():.3f}  std={lf.std().item():.3f}"
+    )
 
     # Optional generation
     if generate_tokens > 0:
@@ -932,6 +1020,7 @@ def _run_forward_pass(
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> int:
     args = _parse_args()
@@ -1031,9 +1120,9 @@ def main() -> int:
                 bos_token=args.tokenizer_bos_token,
                 pad_token=args.tokenizer_pad_token,
             )
-            meg_input_ids = meg_tokenizer_tmp(
-                args.forward_pass_prompt, return_tensors="pt"
-            )["input_ids"]
+            meg_input_ids = meg_tokenizer_tmp(args.forward_pass_prompt, return_tensors="pt")[
+                "input_ids"
+            ]
             raw = _megatron_forward_pass(megatron_model, meg_input_ids)
             if raw is not None:
                 meg_logits_for_compare = raw

@@ -150,7 +150,7 @@ sweep:
       configs:
         - job.name: "dense_50M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
           backend.megatron.wandb_exp_name: "\\${job.name}"
-    
+
     # Multi-stage training (stable + cooldown/decay)
     # Uses a nested structure with defaults for decay stages
     - type: list

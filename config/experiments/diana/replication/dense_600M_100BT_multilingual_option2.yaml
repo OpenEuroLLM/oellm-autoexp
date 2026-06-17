@@ -79,7 +79,7 @@ backend:
     adam_beta1: 0.9
     adam_beta2: 0.95
     adam_eps: 1.e-8
-    lr: 1.e-3 
+    lr: 1.e-3
     clip_grad: 1.0
     weight_decay: 0.05
 
@@ -112,7 +112,7 @@ backend:
     save: ${job.base_output_dir}/checkpoints
 
     micro_batch_size: 4
-    global_batch_size: 1024 
+    global_batch_size: 1024
 
 
     # Auxiliary computation variables
@@ -120,15 +120,15 @@ backend:
     # are defined in the sweep defaults alongside the tokens they depend on,
     # so they get resolved together with stage-specific values
     aux:
-      tokens: 100_000_000_000 
+      tokens: 100_000_000_000
       warmup_fraction: 1/10
-      cooldown_fraction: 1/5 
+      cooldown_fraction: 1/5
 
     train_iters: "${oc.eval: '(${backend.megatron.aux.tokens}+${backend.megatron.seq_length}*${backend.megatron.global_batch_size}-1)//(${backend.megatron.seq_length}*${backend.megatron.global_batch_size})'}"
     lr_warmup_iters: "${oc.eval: 'min(int(${backend.megatron.train_iters}*${backend.megatron.aux.warmup_fraction}), 250000)'}"
     lr_decay_iters: ${backend.megatron.train_iters}
     lr_wsd_decay_iters: "${oc.eval: 'int(${backend.megatron.train_iters}*${backend.megatron.aux.cooldown_fraction})'}"
-    
+
 slurm:
   sbatch:
     nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"

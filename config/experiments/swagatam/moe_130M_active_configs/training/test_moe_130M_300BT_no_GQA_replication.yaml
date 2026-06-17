@@ -75,7 +75,7 @@ backend:
     moe_token_dispatcher_type: "allgather"
     moe_router_dtype: "fp32"
     moe_z_loss_coeff: null # disabled by default, do we need this?
-    
+
     # regularization
     attention_dropout: 0.0
     hidden_dropout: 0.0
@@ -180,7 +180,7 @@ sweep:
       configs:
         - job.name: "moe_no_GQA_nexp_\\${backend.megatron.num_experts}_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_seed\\${backend.megatron.seed}_\\${stage}"
           backend.megatron.wandb_exp_name: "\\${job.name}"
-    
+
     # GROUP 1: Hyperparameter configurations (5 lr × 5 batch sizes)
     - type: list
       configs:
@@ -256,8 +256,8 @@ sweep:
               backend.megatron.aux.tokens: 80_000_000_000
             - stage: decay120BT
               backend.megatron.aux.tokens: 120_000_000_000
-  
-  # Filter out runs in which the warmup iters take more than 30% of total training iterations & explore 
+
+  # Filter out runs in which the warmup iters take more than 30% of total training iterations & explore
   # small gbsz (16) only up to and incl. 100MT.
   # The stable stage is always kept (when warmup check passes) because decay stages depend on it.
   filter: "\\${oc.eval:'\\${backend.megatron.lr_warmup_iters} / \\${backend.megatron.train_iters} < 0.3 and (\"\\${stage}\" == \"stable\" or \\${backend.megatron.aux.tokens} <= 100_000_000 or \\${backend.megatron.global_batch_size} >= 32)'}"

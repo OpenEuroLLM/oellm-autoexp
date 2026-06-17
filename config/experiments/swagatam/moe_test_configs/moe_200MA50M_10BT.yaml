@@ -30,7 +30,7 @@ slurm:
 #       params:
 #         backend.megatron.lr: [0.001, 0.003, 0.007]
 #         backend.megatron.global_batch_size: [256, 512, 1024]
-    
+
 #     # Ablation: aux loss coefficient (use 'list' for non-cartesian)
 #     # - type: list
 #     #   configs:

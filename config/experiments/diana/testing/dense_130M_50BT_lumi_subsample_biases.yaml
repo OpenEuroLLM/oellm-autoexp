@@ -128,8 +128,8 @@ backend:
 
     # Base training configuration (for stable phase)
     micro_batch_size: 8
-    global_batch_size: 128 
-    lr: 2.e-3  
+    global_batch_size: 128
+    lr: 2.e-3
 
     # Auxiliary computation variables
     # Note: Computed fields (train_iters, lr_wsd_decay_iters, start_iter)

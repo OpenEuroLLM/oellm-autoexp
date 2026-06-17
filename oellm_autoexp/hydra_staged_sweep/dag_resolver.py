@@ -349,8 +349,9 @@ def resolve_sweep_with_dag(
 ) -> list[JobPlan]:
     """Pure OmegaConf resolution with DAG ordering.
 
-    When subset_indices is used, full_points_by_idx should contain all sweep points
-    so sibling configs (e.g. stable for decay jobs) can be resolved for interpolation.
+    When subset_indices is used, full_points_by_idx should contain all
+    sweep points so sibling configs (e.g. stable for decay jobs) can be
+    resolved for interpolation.
     """
     LOGGER.info(f"Starting DAG resolution for {len(points)} sweep points")
 
@@ -430,11 +431,15 @@ def resolve_sweep_with_dag(
                 for key, value in sibling_point.parameters.items():
                     if is_config_group(key, config_setup.config_dir):
                         sibling_param_overrides.extend(
-                            param_to_cmdlines(key, value, prefix="", config_dir=config_setup.config_dir)
+                            param_to_cmdlines(
+                                key, value, prefix="", config_dir=config_setup.config_dir
+                            )
                         )
                     else:
                         sibling_param_overrides.extend(
-                            param_to_cmdlines(key, value, prefix="++", config_dir=config_setup.config_dir)
+                            param_to_cmdlines(
+                                key, value, prefix="++", config_dir=config_setup.config_dir
+                            )
                         )
                 sibling_overrides = (
                     list(config_setup.overrides)

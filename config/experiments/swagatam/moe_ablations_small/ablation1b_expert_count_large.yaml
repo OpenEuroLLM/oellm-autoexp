@@ -41,7 +41,7 @@ sweep:
         # - backend.megatron.num_experts: 128
         #   backend.megatron.expert_model_parallel_size: 8
         #   backend.megatron.micro_batch_size: 8
-    
+
     # Seeds
     - type: list
       configs:

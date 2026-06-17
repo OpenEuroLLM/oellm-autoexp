@@ -28,6 +28,7 @@ import yaml
 
 # ── Hydra defaults resolution ─────────────────────────────────────────────────
 
+
 def _load_yaml_file(path: Path) -> dict:
     """Load YAML from path, returning {} on missing file or parse error."""
     if not path.exists():
@@ -40,7 +41,8 @@ def _load_yaml_file(path: Path) -> dict:
 
 
 def _get_package(path: Path) -> str:
-    """Read the # @package directive from the first comment block of a YAML file."""
+    """Read the # @package directive from the first comment block of a YAML
+    file."""
     if not path.exists():
         return "_global_"
     with open(path) as f:
@@ -54,7 +56,8 @@ def _get_package(path: Path) -> str:
 
 
 def _fill_missing(base: dict, overlay: dict) -> None:
-    """Recursively copy keys from overlay into base only when absent in base."""
+    """Recursively copy keys from overlay into base only when absent in
+    base."""
     for k, v in overlay.items():
         if k not in base:
             base[k] = v
@@ -63,7 +66,8 @@ def _fill_missing(base: dict, overlay: dict) -> None:
 
 
 def _find_config_root(config_path: str) -> Path | None:
-    """Walk up from config_path to find the Hydra config root (dir named 'config')."""
+    """Walk up from config_path to find the Hydra config root (dir named
+    'config')."""
     for p in Path(config_path).resolve().parents:
         if p.name == "config":
             return p
@@ -74,7 +78,8 @@ def _find_config_root(config_path: str) -> Path | None:
 
 
 def _resolve_defaults(cfg: dict, config_path: str) -> None:
-    """Load configs referenced in cfg['defaults'] and fill missing keys into cfg.
+    """Load configs referenced in cfg['defaults'] and fill missing keys into
+    cfg.
 
     Simulates Hydra defaults-list merging: sub-configs fill in keys absent in
     the experiment file (cfg's own values always win on conflict).
@@ -118,6 +123,7 @@ def _resolve_defaults(cfg: dict, config_path: str) -> None:
 
 
 # ── Config parsing ───────────────────────────────────────────────────────────
+
 
 def parse_config(config_path: str) -> dict:
     """Extract sweep grid and training parameters from a config YAML."""
@@ -202,9 +208,7 @@ def parse_config(config_path: str) -> dict:
             if entry.get("type") == "list" and "configs" in entry:
                 for dc in entry["configs"]:
                     if isinstance(dc, dict) and "stage" in dc:
-                        decay_stages[dc["stage"]] = int(
-                            dc["backend.megatron.aux.tokens"]
-                        )
+                        decay_stages[dc["stage"]] = int(dc["backend.megatron.aux.tokens"])
 
     params["lrs"] = [float(v) for v in lrs]
     params["gbszs"] = [int(v) for v in gbszs]
@@ -224,7 +228,8 @@ def render_job_name(
     stage: str,
     stable_tokens: int | None = None,
 ) -> str:
-    """Substitute concrete values into the escaped-OmegaConf job name template."""
+    """Substitute concrete values into the escaped-OmegaConf job name
+    template."""
     if tpl is None:
         return f"nexp_{nexp}_lr{lr}_gbsz{gbsz}_seed{seed}_{stage}"
     # job_horizon_suffix: "<N>BT" for stable (e.g. "300BT"), "" for decay stages
@@ -246,6 +251,7 @@ def render_job_name(
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 def substitute_omegaconf_path_vars(template: str, ctx: dict[str, object]) -> str:
     """Replace ${key} segments when key is in ctx; leave others unchanged."""
@@ -283,12 +289,16 @@ def compute_start_iter(tokens: int, seq_length: int, gbsz: int, cdf: float) -> i
 
 
 def compute_save_extra_steps(
-    decay_stages: dict[str, int], seq_length: int, gbsz: int, cdf: float,
+    decay_stages: dict[str, int],
+    seq_length: int,
+    gbsz: int,
+    cdf: float,
 ) -> list[int]:
     return [compute_start_iter(t, seq_length, gbsz, cdf) for t in decay_stages.values()]
 
 
 # ── Log parsing ──────────────────────────────────────────────────────────────
+
 
 def parse_log(log_path: Path) -> dict:
     """Extract key metrics from a Megatron log file."""
@@ -337,6 +347,7 @@ def parse_log(log_path: Path) -> dict:
 
 
 # ── Validation ───────────────────────────────────────────────────────────────
+
 
 def validate_job(
     base_dir: Path,
@@ -430,6 +441,7 @@ def validate_job(
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser(description="Validate sweep runs against config")
     parser.add_argument("config", help="Path to the sweep config YAML")
@@ -447,8 +459,8 @@ def main():
     combos = cfg["combos"]
 
     n_stages = 1 + len(decay_stages)
-    n_combos = len(combos) if combos else (
-        len(cfg["lrs"]) * len(cfg["gbszs"]) * len(cfg["num_experts"])
+    n_combos = (
+        len(combos) if combos else (len(cfg["lrs"]) * len(cfg["gbszs"]) * len(cfg["num_experts"]))
     )
 
     print("=" * 110)
@@ -488,12 +500,16 @@ def main():
                 cfg["job_name_tpl"], nexp, lr, gbsz, seed, "stable", combo_stable_tok
             )
             results.append(
-                validate_job(base_dir, name, "stable", combo_stable_tok, seq, gbsz, cdf, decay_stages)
+                validate_job(
+                    base_dir, name, "stable", combo_stable_tok, seq, gbsz, cdf, decay_stages
+                )
             )
             for stage_name, stage_tok in decay_stages.items():
                 name = render_job_name(cfg["job_name_tpl"], nexp, lr, gbsz, seed, stage_name)
                 results.append(
-                    validate_job(base_dir, name, stage_name, stage_tok, seq, gbsz, cdf, decay_stages)
+                    validate_job(
+                        base_dir, name, stage_name, stage_tok, seq, gbsz, cdf, decay_stages
+                    )
                 )
     else:
         for nexp in cfg["num_experts"]:
@@ -502,12 +518,18 @@ def main():
                     base_dir = resolve_results_base_dir(base_dir_template, nexp, lr, gbsz, seed)
                     name = render_job_name(cfg["job_name_tpl"], nexp, lr, gbsz, seed, "stable")
                     results.append(
-                        validate_job(base_dir, name, "stable", stable_tok, seq, gbsz, cdf, decay_stages)
+                        validate_job(
+                            base_dir, name, "stable", stable_tok, seq, gbsz, cdf, decay_stages
+                        )
                     )
                     for stage_name, stage_tok in decay_stages.items():
-                        name = render_job_name(cfg["job_name_tpl"], nexp, lr, gbsz, seed, stage_name)
+                        name = render_job_name(
+                            cfg["job_name_tpl"], nexp, lr, gbsz, seed, stage_name
+                        )
                         results.append(
-                            validate_job(base_dir, name, stage_name, stage_tok, seq, gbsz, cdf, decay_stages)
+                            validate_job(
+                                base_dir, name, stage_name, stage_tok, seq, gbsz, cdf, decay_stages
+                            )
                         )
 
     total = len(results)

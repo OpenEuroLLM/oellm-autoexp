@@ -8,7 +8,7 @@ defaults:
   - /container: marenostrum
   - /slurm: marenostrum
   - /job: auto_restart
-  - /sweep/multilingual_scaling@sweep: qwen3_dense_0.1B_ne # sweep configs  
+  - /sweep/multilingual_scaling@sweep: qwen3_dense_0.1B_ne # sweep configs
   - /backend/megatron: base
   - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.1B_ne # model configs
   - /backend/megatron/multilingual_scaling/data: oellm_256k # data configs

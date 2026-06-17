@@ -24,7 +24,7 @@ USAGE EXAMPLE (with experiment YAML config)
         --moe-coactivation-output coactivation_results.json \
         --moe-plot \
         --moe-plot-dir plots/
-    
+
     For running with a HF dataset (wikitext here):
     python scripts/moe/compute_moe_metrics.py \
         --load chkpt_folder \
@@ -206,13 +206,15 @@ import re
 import sys
 import warnings
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any
+from collections.abc import Iterable
 
 import torch
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
 from tqdm.auto import tqdm
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MEGATRON_ROOT = REPO_ROOT / "submodules" / "Megatron-LM"
 sys.path.append(str(MEGATRON_ROOT))
@@ -293,9 +295,9 @@ class RouterMetricsCollector:
         name: str,
         routing_map: torch.Tensor,
         topk: int,
-        probs: Optional[torch.Tensor] = None,
-        padding_mask: Optional[torch.Tensor] = None,
-        reference_routing_map: Optional[torch.Tensor] = None,
+        probs: torch.Tensor | None = None,
+        padding_mask: torch.Tensor | None = None,
+        reference_routing_map: torch.Tensor | None = None,
     ) -> None:
         # Remove padding positions before any metric computation so all rates are token-valid.
         routing_map = routing_map.detach()
@@ -317,9 +319,7 @@ class RouterMetricsCollector:
                 # Fallback path: infer co-activation from routing map overlap only.
                 co_occurrence = routing_map.t().matmul(routing_map)
                 expert_counts = torch.diagonal(co_occurrence)
-                normalized = co_occurrence.float() / expert_counts.clamp(min=1.0).unsqueeze(
-                    1
-                )
+                normalized = co_occurrence.float() / expert_counts.clamp(min=1.0).unsqueeze(1)
                 coactivation_rate = _off_diagonal_mean(normalized)
             else:
                 # Main path: use ordered top-k experts to build OLMoE-style adjacent pair counts.
@@ -582,7 +582,7 @@ def _configure_logging_suppression(enabled: bool) -> None:
 # -----------------------------------------------------------------------------
 # Data loading
 # -----------------------------------------------------------------------------
-def _load_prompts(path: Optional[str]) -> List[str]:
+def _load_prompts(path: str | None) -> list[str]:
     if not path:
         return []
     prompts_path = Path(path).expanduser()
@@ -591,27 +591,25 @@ def _load_prompts(path: Optional[str]) -> List[str]:
 
 
 def _load_hf_dataset_texts(
-    dataset_path: Optional[str],
-    dataset_name: Optional[str],
-    dataset_config: Optional[str],
+    dataset_path: str | None,
+    dataset_name: str | None,
+    dataset_config: str | None,
     split: str,
     text_field: str,
     percentage: float,
-    cache_dir: Optional[str],
+    cache_dir: str | None,
     num_samples: int,
     seed: int,
-) -> List[str]:
+) -> list[str]:
     """Load texts from any HuggingFace dataset.
 
-    For remote datasets, performs a single load_dataset call and returns empty
-    list on failure.
+    For remote datasets, performs a single load_dataset call and returns
+    empty list on failure.
     """
     try:
         from datasets import Dataset, DatasetDict, load_dataset, load_from_disk
     except ImportError:
-        raise ImportError(
-            "datasets library required. Install with: pip install datasets"
-        )
+        raise ImportError("datasets library required. Install with: pip install datasets")
 
     if dataset_path:
         dataset_path_obj = Path(dataset_path).expanduser()
@@ -627,9 +625,7 @@ def _load_hf_dataset_texts(
             dataset_obj = load_from_disk(str(dataset_path_obj))
         except Exception as exc:
             # Non-save_to_disk layouts (for example C4 json.gz shards) are common on HPC storage.
-            _log_warn(
-                f"load_from_disk failed ({type(exc).__name__}); trying local shard files"
-            )
+            _log_warn(f"load_from_disk failed ({type(exc).__name__}); trying local shard files")
 
             shard_dir = dataset_path_obj
             if dataset_config:
@@ -647,7 +643,7 @@ def _load_hf_dataset_texts(
             elif split == "valid":
                 split_aliases.append("validation")
 
-            shard_files: List[Path] = []
+            shard_files: list[Path] = []
             for alias in split_aliases:
                 shard_files.extend(sorted(shard_dir.glob(f"*{alias}*.json")))
                 shard_files.extend(sorted(shard_dir.glob(f"*{alias}*.json.gz")))
@@ -658,8 +654,8 @@ def _load_hf_dataset_texts(
                 shard_files.extend(sorted(shard_dir.glob("*.json.gz")))
 
             # Preserve order while removing duplicates.
-            deduped_files: List[str] = []
-            seen: Set[str] = set()
+            deduped_files: list[str] = []
+            seen: set[str] = set()
             for file_path in shard_files:
                 key = str(file_path)
                 if key not in seen:
@@ -672,9 +668,7 @@ def _load_hf_dataset_texts(
                 )
                 return []
 
-            _log_info(
-                f"Loading {len(deduped_files)} local shard file(s) from {shard_dir}"
-            )
+            _log_info(f"Loading {len(deduped_files)} local shard file(s) from {shard_dir}")
             try:
                 dataset = load_dataset(
                     "json",
@@ -720,23 +714,19 @@ def _load_hf_dataset_texts(
             dataset = load_dataset(**load_kwargs)
             _log_success(f"Loaded {dataset_name} successfully")
         except Exception as e:
-            _log_warn(
-                f"Dataset load failed ({type(e).__name__}); falling back to random inputs"
-            )
+            _log_warn(f"Dataset load failed ({type(e).__name__}); falling back to random inputs")
             return []
 
     sample_fraction = percentage / 100.0
     # Respect percentage but guarantee enough samples to fill planned evaluation batches.
-    sample_size = min(
-        max(int(len(dataset) * sample_fraction), num_samples), len(dataset)
+    sample_size = min(max(int(len(dataset) * sample_fraction), num_samples), len(dataset))
+    _log_info(
+        f"Sampling {sample_size} entries ({percentage}%) from dataset with {len(dataset)} total entries"
     )
-    _log_info(f"Sampling {sample_size} entries ({percentage}%) from dataset with {len(dataset)} total entries")
 
-
-
-    indices = torch.randperm(
-        len(dataset), generator=torch.Generator().manual_seed(seed)
-    ).tolist()[:sample_size]
+    indices = torch.randperm(len(dataset), generator=torch.Generator().manual_seed(seed)).tolist()[
+        :sample_size
+    ]
     sampled = dataset.select(indices)
 
     texts = []
@@ -753,7 +743,7 @@ def _load_hf_dataset_texts(
 
 
 def _iter_token_batches(
-    prompts: List[str],
+    prompts: list[str],
     tokenizer,
     batch_size: int,
     seq_length: int,
@@ -781,13 +771,13 @@ def _iter_token_batches(
         yield torch.tensor(batch, device=device, dtype=torch.long)
 
 
-def _parse_ckpt_steps(value: Optional[str]) -> List[int]:
+def _parse_ckpt_steps(value: str | None) -> list[int]:
     if not value:
         return []
     return [int(s.strip()) for s in value.split(",") if s.strip()]
 
 
-def _get_final_checkpoint_step(load_dir: str) -> Tuple[Optional[int], bool]:
+def _get_final_checkpoint_step(load_dir: str) -> tuple[int | None, bool]:
     tracker = get_checkpoint_tracker_filename(load_dir)
     if not Path(tracker).is_file():
         return None, False
@@ -798,7 +788,7 @@ def _get_final_checkpoint_step(load_dir: str) -> Tuple[Optional[int], bool]:
 # -----------------------------------------------------------------------------
 # Experiment-config parsing and defaults
 # -----------------------------------------------------------------------------
-def _load_yaml_file(path: str) -> Dict[str, Any]:
+def _load_yaml_file(path: str) -> dict[str, Any]:
     config_path = Path(path).expanduser()
     if not config_path.is_file():
         raise FileNotFoundError(f"Config file not found: {path}")
@@ -815,7 +805,7 @@ def _load_yaml_file(path: str) -> Dict[str, Any]:
     return loaded
 
 
-def _deep_get(data: Dict[str, Any], path: List[str]) -> Any:
+def _deep_get(data: dict[str, Any], path: list[str]) -> Any:
     cur: Any = data
     for key in path:
         if not isinstance(cur, dict) or key not in cur:
@@ -824,8 +814,8 @@ def _deep_get(data: Dict[str, Any], path: List[str]) -> Any:
     return cur
 
 
-def _collect_cli_flags(argv: List[str]) -> Set[str]:
-    flags: Set[str] = set()
+def _collect_cli_flags(argv: list[str]) -> set[str]:
+    flags: set[str] = set()
     for token in argv:
         if token.startswith("--"):
             flags.add(token.split("=", 1)[0])
@@ -833,7 +823,7 @@ def _collect_cli_flags(argv: List[str]) -> Set[str]:
 
 
 def _preparse_bool_flag(
-    argv: List[str],
+    argv: list[str],
     positive_flag: str,
     negative_flag: str,
     default: bool,
@@ -845,7 +835,7 @@ def _preparse_bool_flag(
     return default
 
 
-def _extract_flag_value(argv: List[str], flag: str) -> Optional[str]:
+def _extract_flag_value(argv: list[str], flag: str) -> str | None:
     for idx, token in enumerate(argv):
         if token == flag and idx + 1 < len(argv):
             return argv[idx + 1]
@@ -857,8 +847,9 @@ def _extract_flag_value(argv: List[str], flag: str) -> Optional[str]:
 _LOCAL_REF_RE = re.compile(r"^\$\{\.([A-Za-z0-9_]+)\}$")
 
 
-def _resolve_backend_value(value: Any, backend: Dict[str, Any], max_depth: int = 16) -> Any:
-    """Resolve simple local Hydra-style references like ${.num_attention_heads}."""
+def _resolve_backend_value(value: Any, backend: dict[str, Any], max_depth: int = 16) -> Any:
+    """Resolve simple local Hydra-style references like
+    ${.num_attention_heads}."""
     current = value
     for _ in range(max_depth):
         if not isinstance(current, str):
@@ -873,7 +864,7 @@ def _resolve_backend_value(value: Any, backend: Dict[str, Any], max_depth: int =
     return current
 
 
-def _infer_tokenizer_type(backend: Dict[str, Any]) -> Optional[str]:
+def _infer_tokenizer_type(backend: dict[str, Any]) -> str | None:
     """Infer tokenizer_type from YAML fields when it is not explicitly set."""
     explicit = backend.get("tokenizer_type")
     if explicit:
@@ -884,7 +875,7 @@ def _infer_tokenizer_type(backend: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _build_preinit_defaults_from_experiment_config() -> Dict[str, Any]:
+def _build_preinit_defaults_from_experiment_config() -> dict[str, Any]:
     """Load the minimal set of YAML fields needed before initialize_megatron.
 
     Architecture args come from the checkpoint via use_checkpoint_args.
@@ -899,11 +890,9 @@ def _build_preinit_defaults_from_experiment_config() -> Dict[str, Any]:
     config = _load_yaml_file(config_path)
     backend = _deep_get(config, ["backend", "megatron"])
     if not isinstance(backend, dict):
-        raise ValueError(
-            "Expected backend.megatron mapping in --moe-experiment-config YAML"
-        )
+        raise ValueError("Expected backend.megatron mapping in --moe-experiment-config YAML")
 
-    defaults: Dict[str, Any] = {}
+    defaults: dict[str, Any] = {}
 
     def add_default(arg_name: str, key: str, transform=None) -> None:
         value = backend.get(key)
@@ -929,9 +918,10 @@ def _build_preinit_defaults_from_experiment_config() -> Dict[str, Any]:
 def _apply_experiment_config_defaults(args) -> None:
     """Apply post-init YAML defaults.
 
-    Only the same minimal fields set during pre-init are reapplied here (in
-    case use_checkpoint_args overwrote them), plus enabling use_checkpoint_args
-    so all architecture fields are sourced from the checkpoint.
+    Only the same minimal fields set during pre-init are reapplied here
+    (in case use_checkpoint_args overwrote them), plus enabling
+    use_checkpoint_args so all architecture fields are sourced from the
+    checkpoint.
     """
     config_path = getattr(args, "moe_experiment_config", None)
     if not config_path:
@@ -940,9 +930,7 @@ def _apply_experiment_config_defaults(args) -> None:
     config = _load_yaml_file(config_path)
     backend = _deep_get(config, ["backend", "megatron"])
     if not isinstance(backend, dict):
-        raise ValueError(
-            "Expected backend.megatron mapping in --moe-experiment-config YAML"
-        )
+        raise ValueError("Expected backend.megatron mapping in --moe-experiment-config YAML")
 
     cli_flags = _collect_cli_flags(sys.argv[1:])
 
@@ -959,9 +947,16 @@ def _apply_experiment_config_defaults(args) -> None:
     maybe_set("--merge-file", "merge_file", backend.get("merge_file"), str)
 
     if "--legacy-tokenizer" not in cli_flags and backend.get("legacy_tokenizer") is not None:
-        args.legacy_tokenizer = bool(_resolve_backend_value(backend.get("legacy_tokenizer"), backend))
-    if "--no-bias-dropout-fusion" not in cli_flags and backend.get("bias_dropout_fusion") is not None:
-        args.bias_dropout_fusion = bool(_resolve_backend_value(backend.get("bias_dropout_fusion"), backend))
+        args.legacy_tokenizer = bool(
+            _resolve_backend_value(backend.get("legacy_tokenizer"), backend)
+        )
+    if (
+        "--no-bias-dropout-fusion" not in cli_flags
+        and backend.get("bias_dropout_fusion") is not None
+    ):
+        args.bias_dropout_fusion = bool(
+            _resolve_backend_value(backend.get("bias_dropout_fusion"), backend)
+        )
 
     # Architecture comes from checkpoint; enable unless caller already set this.
     if "--use-checkpoint-args" not in cli_flags:
@@ -972,7 +967,7 @@ def _apply_experiment_config_defaults(args) -> None:
 # Batch prep and co-activation post-processing
 # -----------------------------------------------------------------------------
 def _build_token_batches(
-    prompts: List[str],
+    prompts: list[str],
     tokenizer,
     batch_size: int,
     seq_length: int,
@@ -982,7 +977,7 @@ def _build_token_batches(
     random_inputs: bool,
     device: torch.device,
     seed: int,
-) -> List[torch.Tensor]:
+) -> list[torch.Tensor]:
     # Prebuild token batches once so all checkpoints are evaluated on identical inputs.
     generator = torch.Generator(device=device)
     generator.manual_seed(seed)
@@ -1004,21 +999,19 @@ def _build_token_batches(
 
 def _normalize_coactivation_matrix(
     matrix: torch.Tensor,
-    single_counts: Optional[torch.Tensor] = None,
+    single_counts: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Normalize co-activation counts to conditional rates."""
     matrix = matrix.clone().float()
     if single_counts is None:
-        raise ValueError(
-            "single_counts must be provided for pairwise-adjacent co-activation"
-        )
+        raise ValueError("single_counts must be provided for pairwise-adjacent co-activation")
     matrix_normalized = matrix / single_counts.clamp(min=1.0).unsqueeze(1)
     # Drop diagonal to focus on cross-expert interactions only.
     matrix_normalized = matrix_normalized - torch.diag(torch.diagonal(matrix_normalized))
     return matrix_normalized
 
 
-def _select_top_experts_pairwise(matrix_normalized: torch.Tensor, top_n: int) -> List[int]:
+def _select_top_experts_pairwise(matrix_normalized: torch.Tensor, top_n: int) -> list[int]:
     """Select top experts using the original OLMoE pair-priority strategy."""
     num_experts = matrix_normalized.shape[0]
     if num_experts <= top_n:
@@ -1055,23 +1048,23 @@ def _select_top_experts_pairwise(matrix_normalized: torch.Tensor, top_n: int) ->
 
 def _collect_final_routing_and_coactivation(
     model,
-    token_batches: List[torch.Tensor],
+    token_batches: list[torch.Tensor],
     eod_token: int,
     pad_token: int,
     reset_position_ids: bool,
     reset_attention_mask: bool,
     eod_mask_loss: bool,
     pad_mask_loss: bool,
-) -> Tuple[
-    Dict[str, List[torch.Tensor]],
-    Dict[str, torch.Tensor],
-    Dict[str, torch.Tensor],
-    Dict[str, int],
+) -> tuple[
+    dict[str, list[torch.Tensor]],
+    dict[str, torch.Tensor],
+    dict[str, torch.Tensor],
+    dict[str, int],
 ]:
-    routing_maps: Dict[str, List[torch.Tensor]] = {}
-    coactivation_sums: Dict[str, torch.Tensor] = {}
-    single_counts_sums: Dict[str, torch.Tensor] = {}
-    topk_by_layer: Dict[str, int] = {}
+    routing_maps: dict[str, list[torch.Tensor]] = {}
+    coactivation_sums: dict[str, torch.Tensor] = {}
+    single_counts_sums: dict[str, torch.Tensor] = {}
+    topk_by_layer: dict[str, int] = {}
 
     # Hook every TopK router once and accumulate final-checkpoint routing/co-activation stats.
     hooks = []
@@ -1091,9 +1084,7 @@ def _collect_final_routing_and_coactivation(
                     routing_map = routing_map[~padding_mask]
                     _probs = _probs[~padding_mask]
                 topk_by_layer[layer_name] = mod.topk
-                routing_maps[layer_name].append(
-                    routing_map.to(dtype=torch.bool, device="cpu")
-                )
+                routing_maps[layer_name].append(routing_map.to(dtype=torch.bool, device="cpu"))
 
                 num_experts = _probs.shape[-1]
                 topk = min(mod.topk, num_experts)
@@ -1159,15 +1150,15 @@ def _collect_final_routing_and_coactivation(
 
 def _compare_saturation_against_final(
     model,
-    token_batches: List[torch.Tensor],
+    token_batches: list[torch.Tensor],
     eod_token: int,
     pad_token: int,
     reset_position_ids: bool,
     reset_attention_mask: bool,
     eod_mask_loss: bool,
     pad_mask_loss: bool,
-    final_routing_maps: Dict[str, List[torch.Tensor]],
-    topk_by_layer: Dict[str, int],
+    final_routing_maps: dict[str, list[torch.Tensor]],
+    topk_by_layer: dict[str, int],
 ) -> dict:
     collector = RouterMetricsCollector()
     # Mutable index shared with hooks to align current batch against final-routing reference.
@@ -1312,9 +1303,7 @@ def main() -> None:
         pad_id = tokenizer.eod
 
     seq_length = (
-        args.moe_seq_length
-        if args.moe_seq_length is not None
-        else args.max_position_embeddings
+        args.moe_seq_length if args.moe_seq_length is not None else args.max_position_embeddings
     )
     if seq_length is None:
         raise ValueError("Specify --seq-length or --max-position-embeddings.")
@@ -1336,9 +1325,7 @@ def main() -> None:
             use_random = True
         else:
             planned_samples = (
-                args.moe_num_batches * args.moe_batch_size
-                if num_batches_provided
-                else 1
+                args.moe_num_batches * args.moe_batch_size if num_batches_provided else 1
             )
             prompts = _load_hf_dataset_texts(
                 dataset_path=args.moe_dataset_path,
@@ -1496,17 +1483,13 @@ def main() -> None:
 
         output_path = Path(args.moe_coactivation_output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
-            json.dumps(coactivation_summary, indent=2, sort_keys=True)
-        )
+        output_path.write_text(json.dumps(coactivation_summary, indent=2, sort_keys=True))
         _log_success(f"Wrote coactivation JSON: {output_path}")
 
     # Optional plotting for both checkpoint-comparison curves and co-activation heatmaps.
     if args.moe_plot:
         if plt is None:
-            raise RuntimeError(
-                "matplotlib is required for --moe-plot but is not available."
-            )
+            raise RuntimeError("matplotlib is required for --moe-plot but is not available.")
 
         plot_dir = Path(args.moe_plot_dir) if args.moe_plot_dir else default_plot_dir
         plot_dir.mkdir(parents=True, exist_ok=True)
@@ -1521,9 +1504,7 @@ def main() -> None:
             plt.figure(figsize=(14, 7))
 
             cmap = cm.get_cmap("tab20" if len(layer_names) <= 20 else "hsv")
-            colors = [
-                cmap(i / max(len(layer_names) - 1, 1)) for i in range(len(layer_names))
-            ]
+            colors = [cmap(i / max(len(layer_names) - 1, 1)) for i in range(len(layer_names))]
 
             for idx, layer_name in enumerate(layer_names):
                 y_vals = []
@@ -1545,9 +1526,7 @@ def main() -> None:
 
             plt.xlabel("Checkpoint step", fontsize=12, fontweight="bold")
             plt.ylabel("Router saturation (%)", fontsize=12, fontweight="bold")
-            plt.title(
-                "Router saturation vs final checkpoint", fontsize=14, fontweight="bold"
-            )
+            plt.title("Router saturation vs final checkpoint", fontsize=14, fontweight="bold")
             plt.grid(True, alpha=0.3, linestyle="--")
             plt.ylim(0, 105)
             # Place legend outside plot area, to the right
