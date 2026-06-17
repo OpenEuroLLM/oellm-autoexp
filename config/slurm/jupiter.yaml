@@ -43,7 +43,7 @@ env:
   NCCL_IB_DISABLE: "0"
   NCCL_IB_RETRY_CNT: "20"
   NCCL_IB_HCA: mlx5_0,mlx5_1,mlx5_2,mlx5_3
-  GLOO_SOCKET_IFNAME: ib0
+  # GLOO_SOCKET_IFNAME: ib0 # necessary on JUWELS to handle GLOO CPU communication related errors; on JUPITER, this is not required
   GLOO_SOCKET_FAMILY: AF_INET
   TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
   OMP_NUM_THREADS: "$SLURM_CPUS_PER_TASK"
