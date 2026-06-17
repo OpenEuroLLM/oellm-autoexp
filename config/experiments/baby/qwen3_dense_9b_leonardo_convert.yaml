@@ -68,4 +68,3 @@ slurm:
     partition: "boost_usr_prod"
     qos: "boost_qos_dbg"
     job_name: null
-
