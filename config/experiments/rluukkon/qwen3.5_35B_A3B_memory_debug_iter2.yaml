@@ -1,0 +1,12 @@
+# @package _global_
+# Iteration 2: re-enable only TORCH_DISTRIBUTED_DEBUG to isolate culprit.
+defaults:
+  - qwen3.5_35B_A3B_memory_debug_iter1b
+  - _self_
+
+slurm:
+  env:
+    TORCH_DISTRIBUTED_DEBUG: "DETAIL"
+
+job:
+  name: qwen3_5_35B_A3B_memory_debug_iter2_${backend.megatron.lr}_${slurm.env.MACHINE_NAME}

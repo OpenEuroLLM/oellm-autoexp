@@ -1,0 +1,19 @@
+# @package _global_
+# Iteration 1: disable likely intrusive distributed debug flags only.
+defaults:
+  - qwen3.5_35B_A3B_memory_debug
+  - _self_
+
+slurm:
+  env:
+    NCCL_BLOCKING_WAIT: "0"
+    TORCH_DISTRIBUTED_DEBUG: "OFF"
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "0"
+
+job:
+  name: qwen3_5_35B_A3B_memory_debug_iter1_${backend.megatron.lr}_${slurm.env.MACHINE_NAME}
+
+backend:
+  megatron:
+    # Use base output dir directly so progress.txt path exists from job bootstrap.
+    save: ${job.base_output_dir}

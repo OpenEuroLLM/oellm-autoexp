@@ -1,0 +1,13 @@
+# @package _global_
+# Disable both overlap paths for 35B memory-debug isolation.
+defaults:
+  - qwen3.5_35B_A3B_memory_debug
+  - _self_
+
+backend:
+  megatron:
+    overlap_param_gather: false
+    overlap_grad_reduce: false
+
+job:
+  name: qwen3_5_35B_A3B_memory_debug_no_overlap${backend.megatron.lr}_${slurm.env.MACHINE_NAME}

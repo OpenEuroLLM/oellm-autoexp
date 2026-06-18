@@ -1,0 +1,16 @@
+# @package _global_
+# Mock-data overlay to isolate runtime from tokenizer/data pipeline.
+defaults:
+  - qwen3_30B_A3B_memory_debug
+  - _self_
+
+backend:
+  megatron:
+    mock_data: true
+    data_path: null
+    seq_length: 2048
+    add_bias_linear: false
+    bias_swiglu_fusion: false
+
+job:
+  name: qwen3_30B_A3B_memory_debug_mock${backend.megatron.lr}_${slurm.env.MACHINE_NAME}

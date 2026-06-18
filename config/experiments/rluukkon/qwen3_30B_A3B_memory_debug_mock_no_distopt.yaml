@@ -1,0 +1,14 @@
+# @package _global_
+# Isolate distributed optimizer contribution to CPU RSS growth.
+defaults:
+  - qwen3_30B_A3B_memory_debug_mock_no_overlap
+  - _self_
+
+backend:
+  megatron:
+    use_distributed_optimizer: false
+    overlap_param_gather: false
+    overlap_grad_reduce: false
+
+job:
+  name: qwen3_30B_A3B_memory_debug_mock_no_distopt${backend.megatron.lr}_${slurm.env.MACHINE_NAME}

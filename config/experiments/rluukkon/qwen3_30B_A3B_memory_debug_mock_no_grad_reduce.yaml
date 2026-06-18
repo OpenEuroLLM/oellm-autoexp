@@ -1,0 +1,13 @@
+# @package _global_
+# Isolate overlap_grad_reduce effect while keeping overlap_param_gather enabled.
+defaults:
+  - qwen3_30B_A3B_memory_debug_mock
+  - _self_
+
+backend:
+  megatron:
+    overlap_param_gather: true
+    overlap_grad_reduce: false
+
+job:
+  name: qwen3_30B_A3B_memory_debug_mock_no_grad_reduce${backend.megatron.lr}_${slurm.env.MACHINE_NAME}

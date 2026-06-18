@@ -1,0 +1,19 @@
+# @package _global_
+# Iteration 1b: keep memory-debug settings, disable only distributed debug flags.
+defaults:
+  - qwen3.5_35B_A3B_memory_debug
+  - _self_
+
+slurm:
+  env:
+    NCCL_BLOCKING_WAIT: "0"
+    TORCH_DISTRIBUTED_DEBUG: "OFF"
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "0"
+
+backend:
+  megatron:
+    # Avoid missing progress.txt parent path on fresh output directories.
+    save: ${job.base_output_dir}
+
+job:
+  name: qwen3_5_35B_A3B_memory_debug_iter1b_${backend.megatron.lr}_${slurm.env.MACHINE_NAME}

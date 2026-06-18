@@ -1,0 +1,12 @@
+# @package _global_
+# Iteration 3: re-enable only async NCCL error handling.
+defaults:
+  - qwen3.5_35B_A3B_memory_debug_iter1b
+  - _self_
+
+slurm:
+  env:
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+
+job:
+  name: qwen3_5_35B_A3B_memory_debug_iter3_${backend.megatron.lr}_${slurm.env.MACHINE_NAME}

@@ -1,0 +1,112 @@
+# @package _global_
+defaults:
+  - ../base
+  - /backend: megatron
+  - /container: mi325x
+  - /slurm: mi325x
+  - /sweep: none
+  - /backend/megatron: [qwen3_5_moe_35BA3B]
+  - _self_
+
+slurm:
+  sbatch:
+    partition: amd-tw-verification
+    #    nodes: 1
+    nodes: 2
+    #     time: 0-15:00:00
+    time: 0-02:00:00
+
+  env:
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    WANDB_MODE: "online"
+    OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
+    APPTAINER_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+    SINGULARITY_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+
+backend:
+  megatron:
+    log_throughput: true
+    log_interval: 1
+    log_progress: true
+    data_path:
+      - 0.3
+      - /shared_silo/scratch/datasets/CC-MAIN-2020-high-actual/Qwen3.5-35B-A3B-Base/merged/all
+      - 0.7
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt2.0_cleaned_fin/train
+    data_cache_path: /shared_silo/scratch/rluukkon/data/.cache
+    split: "989,10,1"
+
+    global_batch_size: 512
+    micro_batch_size: 4
+    expert_model_parallel_size: 8
+    pipeline_model_parallel_size: 1
+    use_distributed_optimizer: true
+    moe_per_layer_logging: true
+    create_attention_mask_in_dataloader: false
+    gradient_accumulation_fusion: false
+    moe_grouped_gemm: false
+    moe_token_dispatcher_type: "alltoall"
+    overlap_param_gather: true
+    overlap_grad_reduce: true
+
+    # Training schedule: 10B tokens
+    train_iters: ${oc.eval:'-(-10_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    lr_warmup_iters: 500
+    lr_decay_iters: ${.train_iters}
+
+    ckpt_format: torch_dist
+    save_interval: 600
+    save: ${job.base_output_dir}/checkpoints
+    load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-35B-A3B-Base
+    finetune: true
+    no_load_optim: true
+    no_load_rng: true
+
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    wandb_save_dir: "${job.base_output_dir}/wandb"
+    wandb_project: "moe-exploration"
+    wandb_exp_name: "qwen3_5_35B_A3B_bilingual_freeze_lr${backend.megatron.lr}_${stage}_${oc.env:SLURM_JOB_ID,local}"
+
+job:
+  name: qwen3_5_35B_A3B_bilingual_freeze_lr${backend.megatron.lr}_${stage}_${slurm.env.MACHINE_NAME}
+
+
+# ── Layer freezing ablation: Experiment 4 ────────────────────────────────
+#
+# Motivated by Khandelwal et al. 2026 (arXiv:2605.29714): MoE middle
+# layers are language-agnostic during multilingual CPT; specialization
+# emerges only in early/late layers. Freezing internal layers may reduce
+# catastrophic forgetting while preserving Finnish gains.
+#
+# All runs: lr=3e-5, 30/70 EN/FI, frozen router (aux=0.0).
+# Baseline comparison: lr3e5_frz_3070 from Experiment 1 (no layer freeze).
+#
+# Variants:
+#   edge_only — train layers 0-4 + 35-39, freeze 5-34 (10/40 layers train)
+#   final_only — train layers 35-39, freeze 0-34 (5/40 layers train)
+sweep:
+  type: product
+
+  groups:
+    - type: list
+      configs:
+
+        # ── Edge-only: first 5 + last 5 layers trainable ────────────────
+        # Freeze all params in middle layers 5-34.
+        # Router frozen globally (router_lr_spec: "0", aux=0.0).
+        - stage: lr3e5_edge_3070
+          backend.megatron.lr: 3e-5
+          backend.megatron.min_lr: 3e-6
+          backend.megatron.router_lr_spec: "0"
+          backend.megatron.moe_aux_loss_coeff: 0.0
+          backend.megatron.freeze_layers: "5-34"
+
+        # ── Final-only: last 5 layers trainable ─────────────────────────
+        # Freeze all params in layers 0-34.
+        # Router frozen globally (router_lr_spec: "0", aux=0.0).
+        - stage: lr3e5_final_3070
+          backend.megatron.lr: 3e-5
+          backend.megatron.min_lr: 3e-6
+          backend.megatron.router_lr_spec: "0"
+          backend.megatron.moe_aux_loss_coeff: 0.0
+          backend.megatron.freeze_layers: "0-34"
