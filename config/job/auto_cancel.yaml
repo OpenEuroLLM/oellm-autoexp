@@ -18,7 +18,7 @@ log_events:
     pattern: "Exited with exit code 1"
     pattern_type: substring
     action:
-      class_name: RestartAction
+      class_name: CancelAction
       reason: ""
   # TIME LIMIT IS ALREADY HANDLED IN DEPENDENCY CHAIN
   - name: time_limit
