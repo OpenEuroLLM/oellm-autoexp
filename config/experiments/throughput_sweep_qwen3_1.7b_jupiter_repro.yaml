@@ -1,0 +1,92 @@
+# @package _global_
+
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: default
+  - /backend/megatron: [base, qwen3_base, qwen3_1.7B, data_mixturevitae]
+  - /postprocess: [none]
+  - _self_
+
+index: 0
+stage: "all"
+
+job:
+  name: "throughput_qwen3_1.7b"
+  base_output_dir: ${oc.env:OUTPUT_DIR}/${.name}/${.name}_n${slurm.sbatch.nodes}_t${backend.megatron.aux.trial}
+
+backend:
+  megatron:
+    lr: 0.004
+    micro_batch_size: 2
+    train_iters: 100000
+    lr_warmup_iters: 50
+    lr_decay_iters: 100000
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: 10000
+    min_lr: 0.0
+    override_opt_param_scheduler: true
+    accumulate_allreduce_grads_in_fp32: false
+    weight_decay: 0.05
+    adam_beta2: 0.95
+    clip_grad: 1.0
+
+    bf16: true
+    use_flash_attn: true
+    seq_length: 4096
+
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: /e/data1/datasets/playground/mmlaion/shared/oellm_shared_evals/models/Qwen/Qwen3-1.7B-Base
+    vocab_size: 151936
+    legacy_tokenizer: false
+    split: "989,10,1"
+    num_workers: 1
+
+    data_path:
+      - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/MixtureVitae-v1-32k_packed/business/business-0_text_document
+      - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/MixtureVitae-v1-32k_packed/fineweb/fineweb-0_text_document
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: true
+
+    distributed_backend: nccl
+    use_distributed_optimizer: true
+    overlap_param_gather: true
+    overlap_grad_reduce: true
+    recompute_activations: true
+
+    ckpt_format: torch_dist
+    ckpt_fully_parallel_save: false
+    async_save: false
+    save_interval: 999999
+
+    exit_duration_in_mins: 5
+    log_interval: 10
+    log_throughput: true
+
+    aux:
+      model_name: "qwen3-1.7B"
+      dataset: mixturevitae
+      trial: 0
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - { slurm.sbatch.nodes: 1,  backend.megatron.global_batch_size: 8 }
+        - { slurm.sbatch.nodes: 2,  backend.megatron.global_batch_size: 16 }
+        - { slurm.sbatch.nodes: 4,  backend.megatron.global_batch_size: 32 }
+        - { slurm.sbatch.nodes: 8,  backend.megatron.global_batch_size: 64 }
+        - { slurm.sbatch.nodes: 16, backend.megatron.global_batch_size: 128 }
+        - { slurm.sbatch.nodes: 32, backend.megatron.global_batch_size: 256 }
+    - type: list
+      params:
+        backend.megatron.aux.trial: [0, 1, 2]
+
+slurm:
+  sbatch:
+    time: "00:10:00"

@@ -58,5 +58,5 @@ sbatch:
   gres: "gpu:4"
   gpu_bind: "none"
   partition: ${oc.env:SLURM_PARTITION,booster}
-  account: ${oc.env:SLURM_ACCOUNT,jureap59}
+  account: ${oc.env:SLURM_ACCOUNT,reformo}
   time: "12:00:00"
