@@ -127,6 +127,7 @@ backend:
     save_extra_steps:
       - ${oc.eval:'${backend.megatron.train_iters} - int(${backend.megatron.train_iters} * 0.2)'}
     save: ${job.base_output_dir}/checkpoints
+    exit_interval: 8000
 
     tensorboard_dir: ${job.base_output_dir}/tensorboard
     wandb_save_dir: "${job.base_output_dir}/wandb"

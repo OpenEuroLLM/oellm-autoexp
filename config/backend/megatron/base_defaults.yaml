@@ -19,8 +19,11 @@ apply_query_key_layer_scaling: false  # If true, scale Q * K^T by 1 / layer-numb
 apply_residual_connection_post_layernorm: false  # If True, uses the original BERT residule connection ordering.
 apply_rope_fusion: true  # Disable rope fusion, the fusion is available only when using megatron-core.
 apply_wd_to_qk_layernorm: false  # Apply weight decay to qk layernorm as a special case.
+async_ckpt_cpu_priority: 10  # CPU nice value target (0-19, higher = lower priority) for the async checkpoint writer process. If it exceeds 19, it will be set to 19. If the current nice value is greater than the target, it will be left unchanged. Only applies when using persistent ckpt worker.
+async_ckpt_io_priority: 3  # I/O scheduling class (0-3, 3=idle) for the async checkpoint writer process.
+async_ckpt_use_cpu_shm: false  # Copy GPU tensors to CPU shared-memory in the training process before handing off to the async checkpoint worker. Avoids CUDA IPC / NVLink fabric handles in the worker subprocess. Useful on MNNVL systems where fabric resources are exhausted. Only applies with the nvrx async strategy.
 async_save: false  # Apply async checkpointing save. Currently works only with `torch_dist` distributed checkpoint format.
-async_tensor_model_parallel_allreduce: true  # NOTE: Deprecated. This flag is ignored.
+async_strategy: nvrx  # choices: ['nvrx', 'mcore'] | Which async save strategy to use. Available strategies: nvrx, mcore.
 attention_backend: auto  # choices: [1, 2, 3, 4, 5] | Attention backend to run. By default we let transformer engine decide the best backend to run (except in the case of local). If attention backend is local we use the local pytorch implementation in mcore. Users can specify exact backend by changing this config.
 attention_dropout: 0.1  # Post attention dropout probability.
 attention_output_gate: false  # Whether to apply output gate to the attention layers.
@@ -53,8 +56,11 @@ ckpt_convert_save: null  # Save directory for converted checkpoint.
 ckpt_convert_update_legacy_dist_opt_format: false  # When loading a checkpoint, update the legacy format for the distributed optimizer, which previously used a merged param/grad buffer and a different bucket mapping. The legacy format was deprecated on Feb 13, 2024.
 ckpt_format: torch_dist  # choices: ['torch', 'torch_dist', 'torch_dcp', 'fsdp_dtensor'] | Checkpoint format to use. torch is the format used by torch.save/load. torch_dist is a megatron built-in distributed checkpointing format. torch_dcp is the torch.distributed.checkpoint format. fsdp_dtensor is a torch DCP native, Megatron FSDP training-specific checkpoint format.
 ckpt_fully_parallel_load: false  # Apply full load parallelization across DP for distributed checkpoints.
+ckpt_fully_parallel_load_exchange_algo: broadcast  # choices: ['broadcast', 'gather_rounds', 'gather_object'] | Algorithm for fully parallel load of distributed checkpoints. "broadcast"(default): Broadcast the checkpoint from rank 0 to all other ranks. "gather_rounds": Gather the checkpoint from all ranks in rounds. "gather_object": Gather the checkpoint from all ranks in a single operation.
+ckpt_fully_parallel_load_process_group: dp  # choices: ['dp', 'ep_dp'] | Process group for fully parallel load of distributed checkpoints. "dp"(default): Data parallel process group. "ep_dp": Expert data parallel process group.
 ckpt_fully_parallel_save: true  # Disable applying full save parallelization across DP for distributed checkpoints. Depending on ckpt format might decrease the number of files in the checkpoint. Makes DistributedOptimizer checkpoint non-reshardable.
 ckpt_fully_parallel_save_deprecated: false  # Deprecated: see --no-ckpt-fully-parallel-save.
+ckpt_fully_parallel_save_process_group: dp  # choices: ['dp', 'ep_dp'] | Process group for fully parallel save of distributed checkpoints. "dp"(default): Data parallel process group. "ep_dp": Expert data parallel process group.
 ckpt_step: null  # Checkpoint step to load model from.
 classes_fraction: 1.0  # training with fraction of classes.
 clip_grad: 1.0  # Gradient clipping based on global L2 norm.
@@ -64,17 +70,18 @@ context_parallel_size: 1  # Splits network input along sequence dimension across
 cp_comm_type:  # Inter-gpu communication type for context parallelism: p2p, a2a, allgather or a2a+p2p. If a single string is provided, all layers will share the same communication type. Users can also specify separated types for each layer like --cp-comm-type p2p p2p a2a a2a a2a+p2p a2a+p2p
 - p2p
 cpu_offloading_num_layers: 0  # Tells the number of transformer layers for which activations has to be offloaded.
+cpu_offloading_retain_pinned_cpu_buffers: false  # If True, the pinned CPU buffers are retained after offloading and reused for the next iteration. It is useful for cuda graphs capture.
 create_all_gather_group: false  # Create a separate process group for all-gather operations to overlap reduce-scatter and all-gather operations.
 create_attention_mask_in_dataloader: true  # If set, do not create attention_masks in dataloader.
 cross_entropy_fusion_impl: native  # choices: ['native', 'te'] | If 'native', MCore based CE loss fusion is used, if 'te', Parallel CE loss from Transformer Engine library is used. Defaults to 'native'.
 cross_entropy_loss_fusion: false  # If this is enabled, the fused cross entropy implementation would be used. Defaults to False.
 cuda_graph_impl: none  # choices: ['none', 'local', 'transformer_engine'] | Determines the CUDA graph capture implementation. "none": no CUDA graph. "local": capture the CUDA graph using MCore local implementation. Either partial CUDA graph (1/many CUDA graph per layer) or full iteration CUDA graph (1 CUDA graph for whole iteration excluding optimizer) is enabled. "transformer_engine": capture the CUDA graph using TE make_graphed_callables().
-cuda_graph_scope: []  # Determines the CUDA graphs capturing scope. choices: "attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba", "full_iteration". "attn": captures operations in TransformerLayer._forward_attention(). "mlp": captures operations in TransformerLayer._forward_mlp() for a dense layer. "moe": captures operations in TransformerLayer._forward_mlp() for a MoE layer. "moe_router": captures operations in TransformerLayer._forward_mlp() up to MoELayer.router(), including the shared experts if they are not overlapped with EP comm. "moe_preprocess": captures operations in MoELayer.preprocess(). Must be used together with "moe_router". "mamba": captures the mamba layer. "full_iteration": captures a whole iteration. full_iteration scope is only supported with --cuda-graph-impl=local, other scopes are only supported with --cuda-graph-impl=transformer_engine. If not specified, the default scope is to capture the whole Transformer layer. For backward compatibility, we still allow passing "full" to specify capturing the whole layer, and convert it to an empty list.
+cuda_graph_scope: []  # Determines the CUDA graphs capturing scope. choices: "attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba", "full_iteration". "attn": captures operations in TransformerLayer._forward_attention(). "mlp": captures operations in TransformerLayer._forward_mlp() for a dense layer. "moe": captures operations in TransformerLayer._forward_mlp() for a MoE layer. "moe_router": captures operations in TransformerLayer._forward_mlp() up to MoELayer.router(), including the shared experts if they are not overlapped with EP comm. "moe_preprocess": captures operations in MoELayer.preprocess(). Must be used together with "moe_router". "mamba": captures the mamba layer. "full_iteration": captures a whole training iteration. "full_iteration_inference": captures a whole inference iteration. full_iteration and full_iteration_inference scopes are only supported with --cuda-graph-impl=local, other scopes are only supported with --cuda-graph-impl=transformer_engine. If not specified, the default scope is to capture the whole Transformer layer. For backward compatibility, we still allow passing "full" to specify capturing the whole layer, and convert it to an empty list.
 cuda_graph_warmup_steps: 3  # Number of warmup steps for CUDA graphs
 data_args_path: null  # Path to data-args. Instead of feeding `--data-path` with weighted dataset, we pass in a file path from which we read that argument. This is useful when the list of data is too big.
 data_cache_path: null  # Path to a directory to hold cached index files.
 data_parallel_random_init: false  # Enable random initialization of params across data parallel ranks
-data_parallel_sharding_strategy: no_shard  # choices: ['no_shard', 'optim', 'optim_grads', 'optim_grads_params'] | Sharding strategy of data parallelism.
+data_parallel_sharding_strategy: optim_grads_params  # choices: ['no_shard', 'optim', 'optim_grads', 'optim_grads_params'] | Sharding strategy of data parallelism.
 data_path: null  # The weight and prefix list for a set of train, validation, and testdatasets which split according to --split. The accepted formats are: (1) a single prefix, (2) a list of weight prefix pairs e.g. weight1 prefix1 weight2 prefix2, (3) a list of prefixes e.g. prefix1 prefix2. For (3), weights are inferred from the lengths of the contributing datasets. This argument is exclusive to the other independent --*-data-path arguments.
 data_per_class_fraction: 1.0  # training with fraction of data per class.
 data_sharding: true  # Disable data sharding.
@@ -85,6 +92,7 @@ ddp_average_in_collective: false  # If set, average directly in data-parallel co
 ddp_bucket_size: null  # Bucket size for data-parallel communication
 ddp_num_buckets: null  # Number of buckets for data-parallel communication
 ddp_pad_buckets_for_high_nccl_busbw: false  # If set, make sure the bucket size is divisible by a large power of 2 (2^16) to ensure NCCL collectives have high bus bandwidth at large DP counts, since NCCL message size (which for ring algorithms is bucket_size / dp_size) apparently needs to be divisible by a power of 2 for high busbw.
+ddp_param_name_patterns_for_fp32_local_accumulation: []  # List of param_name patterns (in Python's fnmatch format) to match against to do local gradient accumulation in FP32. The special pattern 'all' matches every parameter.
 ddp_reduce_scatter_with_fp32_accumulation: false  # If set, use a reduce-scatter implementation which sends lower-precision values over the wire (using an all-to-all to keep total communication overhead in line with the standard ring implementation) but performs accumulation locally in FP32.
 decode_only_cuda_graphs: false  # Only use cuda graphs for decode-only steps, not prefill and mixed steps.
 decoder_first_pipeline_num_layers: null  # The number of transformer layers on the first pipeline stage of the decoder. Default None is even split of transformer layers across all pipeline stages
@@ -93,7 +101,7 @@ decoder_num_layers: null  # Number of decoder transformer layers.
 decoder_seq_length: null  # Maximum decoder sequence length to process.
 decoupled_lr: null  # Separate learning rate for the input and output layer
 decoupled_min_lr: null  # Minimum value for learning rate for the input and output layer. The schedulerclip values below this threshold
-decrease_batch_size_if_needed: false  # If set, decrease batch size if microbatch_size * dp_size does not divide batch_size. Old batch_size will be restored if training is re-started with dp_size that divides batch_size // microbatch_size.
+decrease_batch_size_if_needed: false  # If set, decrease batch size if microbatch_size * dp_size does not divide batch_size. Old batch_size will be restored if training is re-started with dp_size that divides batch_size // microbatch_size. Not supported with step-batch-size-schedule.
 defer_embedding_wgrad_compute: false  # If true, defers the embedding WGRAD GEMMs while pipeline flush is taking place enabling us to hide pipeline flush latency. Defaults to False.
 delay_wgrad_compute: false  # Delay the weight gradient computation to improve batch-level communication overlapping
 deprecated_use_mcore_models: false  # DEPRECATED. Use the implementation from megatron core.Now ignored and mcore models are the default, use --use-legacy-models to not use core models.
@@ -108,7 +116,6 @@ dino_teacher_temp: 0.07  # teacher temperature
 dino_warmup_teacher_temp: 0.04  # warump teacher temperature
 dino_warmup_teacher_temp_epochs: 30  # warmup teacher temperaure epochs
 disable_bf16_reduced_precision_matmul: false  # If True, sets torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction=False to prevent matmul from using reduced precision accumulation when using BF16.
-disable_chunked_prefill: true  # ==SUPPRESS==
 disable_jit_fuser: false  # Disable the JIT fuser.
 disable_straggler_on_startup: false  # If set, StragglerDetector is disabled on startup.
 disable_symmetric_registration: false  # Disable symmetric (window) registration for NCCL userbuffer registration.This option will force to use conventional (local) userbuffer registration when use-nccl-ub is set.
@@ -116,11 +123,12 @@ dist_ckpt_format_deprecated: null  # Deprecated: see --ckpt-format.
 dist_ckpt_optim_fully_reshardable: false  # Make optimizer distributed checkpoint fully reshardable (TP/PP/EP/DP) as opposed to plain DP reshardability.
 dist_ckpt_save_pre_mcore_014: false  # Revert checkpointing simplifications introduced in Megatron-Core v0.14. This option affects only checkpoint saving format and will be removed soon (checkpoint load format is determined based on checkpoint metadata).
 dist_ckpt_strictness: assume_ok_unexpected  # choices: ['assume_ok_unexpected', 'log_unexpected', 'log_all', 'raise_unexpected', 'raise_all', 'return_unexpected', 'return_all', 'ignore_all'] | Determine handling of key mismatch during checkpoint load. Check StrictHandling docs for flags meaning. NOTE: This flag controls only distributed checkpoint load from storage, not loading state dict into the model.
+dist_ckpt_workers: 1  # Number of workers for distributed checkpointing. Only used for async save. If set to 1, the checkpointing is performed in a single process.
 distrib_optim_fully_reshardable_mem_efficient: false  # During distributed optimizer checkpoint save and load tries to use as little memory as possible by using Gloo (instead of NCCL) and only one rank for saving. Turn on only if experiencing host or device memory issues. Has affect only with `dist_ckpt_optim_fully_reshardable` flag.
 distribute_saved_activations: false  # If True, distribute recomputed activations across the model parallel group.
 distributed_backend: nccl  # choices: ['nccl', 'gloo'] | Which backend to use for distributed training.
-distributed_timeout_minutes: 10  # Default timeout minutes for torch.distributed.
-distributed_timeout_seconds_after_init: null  # Timeout seconds for process groups after initialization.This timeout is applied to all process groups after initialization.
+distributed_timeout_minutes: 10  # Timeout minutes for torch.distributed.
+distributed_timeout_seconds_after_init: null  # Timeout in seconds for process groups after initialization. This timeout is applied to all process groups after initialization and the first iteration completes.
 dsa_indexer_head_dim: null  # Dimension per DSA indexer head.
 dsa_indexer_loss_coeff: null  # Coefficient for the DSA indexer KL divergence loss. Set to 0 to disable indexer loss.
 dsa_indexer_n_heads: null  # Number of DSA indexer heads.
@@ -130,11 +138,11 @@ dump_param_to_param_group_map: null  # Path to a file containing parameter-to-pa
 embedding_init_method_std: null  # Standard deviation of the zero mean normal for the default initialization method for the embedding layer. If None, will be set to init_method_std. Setting this to a value around 1.0 may avoid loss spikes in training. Setting this to any value will also skip applying weight decay on embedding weights to avoid shrinkage towards zero. See https://arxiv.org/abs/2312.16903 for more details.
 embedding_path: null  # Where to save/load Open-Retrieval Embedding data to/from
 empty_unused_memory_level: 0  # choices: [0, 1, 2] | Call torch.cuda.empty_cache() each iteration (training and eval), to reduce fragmentation. 0=off, 1=moderate, 2=aggressive.
+enable_chunked_prefill: false  # Enable chunked prefill (disabled by default)
 enable_cuda_graph: false  # DEPRECATED and replaced by cuda_graph_impl. When set to true, either partial CUDA graph (1/many CUDA graph per layer) or full iteration CUDA graph (1 CUDA graph for whole iteration excluding optimizer) is enabled. --cuda-graph-scope determines the scope of graph capture.
 enable_experimental: false  # Enable experimental features.
 enable_ft_package: false  # If set, Fault Tolerance package is enabled. Note: This feature is for Nvidia internal use only.
 enable_full_sharding_in_hsdp: false  # If set, enable full sharding in megatron-fsdp Hybrid Sharded Data Parallel (HSDP) mode.
-enable_gloo_process_groups: true  # Disables creation and usage of Gloo process groups.
 enable_msc: true  # Disable the usage of Multi-Storage Client (MSC) in Megatron Core.
 enable_one_logger: true  # If set, disable using one_logger to track E2E metricsNote that one_logger is an internal tool and not available externally. For installation, please go to https://confluence.nvidia.com/display/MLWFO/Package+Repositoriesfor more details
 encoder_num_layers: null  # Number of encoder transformer layers.
@@ -144,8 +152,10 @@ eod_mask_loss: false  # Mask loss for the end of document tokens.
 ep_overlap_early_attn_memory_release: false  # Enable early memory release of attention activations during EP overlap. EP overlap can increase peak memory usage when the overlapped forward module allocates more memory than what is freed by the backward module. This flag addresses this by reordering the attention backward pass to occur earlier in the schedule. Specifically: - Without this flag: attn_bwd executes after moe_combine_fwd - With this flag: attn_bwd executes before mlp_fwd The earlier execution releases attention activations sooner, reducing peak memory. Note: This may impact performance as moe_combine_fwd and moe_dispatch_bwd become exposed (not overlapped with other computation).
 error_injection_rate: 0  # Rate at which to inject unexpected results, e.g. 1000 means once every 1000 result validations
 error_injection_type: transient_error  # choices: ['correct_result', 'transient_error', 'persistent_error'] | Type of error to inject.
+eval_global_batch_size: null  # Global batch size to use during evaluation. If not set, defaults to global_batch_size. Must be divisible by (eval_micro_batch_size * data_parallel_size).
 eval_interval: null  # Interval between running evaluation on validation set. If not set, evaluation will not run during training.
 eval_iters: 100  # Number of iterations to run for evaluation. Used for both validation and test. If not set, evaluation will not run.
+eval_micro_batch_size: null  # Micro batch size to use during evaluation. If not set, defaults to micro_batch_size. Changing this affects per-device memory usage during eval and the number of microbatches per eval step.
 evidence_data_path: null  # Path to Wikipedia Evidence frm DPR paper
 exit_duration_in_mins: null  # Exit the program after this many minutes.
 exit_interval: null  # Exit the program after the iteration is divisible by this value.
@@ -153,6 +163,7 @@ exit_on_missing_checkpoint: false  # If 'load' is set, but checkpoint is not fou
 exit_signal: SIGTERM  # choices: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 34, 64] | Signal for the signal handler to detect.
 exit_signal_handler: false  # Dynamically save the checkpoint and shutdown the training if SIGTERM is received
 exit_signal_handler_for_dataloader: false  # Use signal handler for dataloader workers
+exit_signal_handler_for_training: false  # Shutdown the training when SIGINT or SIGTERM received to avoid unclear traceback
 exp_avg_dtype: fp32  # choices: ['fp32', 'fp16', 'bf16', 'fp8'] | Dtype of exp_avg (1st moment in adam optimizer) when enabling precision-aware-optimizer. This dtype is used for storing the optimizer state in memory during training but does not affect the precision in the kernel computation.
 exp_avg_sq_dtype: fp32  # choices: ['fp32', 'fp16', 'bf16', 'fp8'] | Dtype of exp_avg_sq (2nd moment in adam optimizer) when enabling precision-aware-optimizer. This dtype is used for storing the optimizer state in memory during training but does not affect the precision in the kernel computation.
 experimental_attention_variant: null  # choices: ['gated_delta_net', 'dsa'] | Type of attention variant to use. Currently support gated_delta_net and dsa.
@@ -176,11 +187,17 @@ fine_grained_activation_offloading: false  # If True, offload the input of the s
 finetune: false  # Load model for finetuning. Do not load optimizer or rng state from checkpoint and set iteration to 0. Assumed when loading a release checkpoint.
 first_last_layers_bf16: false  # If True, retains first and last N TransformerBlocks in BF16 as opposed to FP8.
 flash_decode: false  # Use the optimized flash decoding kernel during inference.
+flight_recorder_dump_on_timeout: true  # Dump flight recorder traces on NCCL timeout (TORCH_NCCL_DUMP_ON_TIMEOUT).
+flight_recorder_dump_path: null  # Path for NCCL flight recorder trace dumps. Sets TORCH_FR_DUMP_TEMP_FILE and TORCH_NCCL_DEBUG_INFO_TEMP_FILE env variables before distributed init.
+flight_recorder_extra_dump_on_exec: true  # Enable extra flight recorder dump on execution (TORCH_NCCL_EXTRA_DUMP_ON_EXEC).
+flight_recorder_include_only_active: true  # Include only active operations in flight recorder dumps (TORCH_INCLUDE_ONLY_ACTIVE).
+flight_recorder_include_stack_trace: false  # Include stack traces in flight recorder dumps (TORCH_INCLUDE_STACK_TRACE).
+flight_recorder_trace_buffer_size: 2000  # Size of the NCCL flight recorder trace buffer (TORCH_NCCL_TRACE_BUFFER_SIZE).
 fp16: false  # If true, train with fp16 mixed precision training.
 fp16_lm_cross_entropy: false  # Move the cross entropy unreduced loss calculationfor lm head to fp16.
 fp32_residual_connection: false  # If true, move residual connections to fp32.
 fp4: null  # choices: ['e2m1'] | If set, enables the use of FP4 precision through Transformer Engine. Currently only supports 'nvfp4' which uses NVFP4BlockScaling recipe (requires TE >= 2.7.0.dev0).
-fp4_param: false  # If set, keep the parameters in fp4 precision to save memory. This option must be used together with fp4 mode (i.e., TransformerConfig.fp4 is not None). Note that not all parameters will be converted to fp4; for example, biases will remain unchanged.
+fp4_param_gather: false  # Keep the compute param in fp4 (do not use any other intermediate dtype) and perform the param all-gather in fp4.
 fp4_quantizer_factory: null  # Python import path to a callable quantizer factory, e.g., package.module.quantizer_factory. Required when fp4_recipe is custom.
 fp4_recipe: nvfp4  # choices: ['nvfp4', 'custom'] | If set, enables the use of FP4 precision through Transformer Engine. Currently only 'nvfp4' is supported which uses NVFP4BlockScaling recipe for Blackwell+ architecture.
 fp8: null  # choices: ['e4m3', 'hybrid'] | If set, enables the use of FP8 precision through Transformer Engine. There are 2 predefined choices (1) 'e4m3' uniformly uses e4m3 for all FP8 tensors, (2) 'hybrid' uses e4m3 for all FP8 activation and weight tensors and e5m2 for all FP8 output activation gradient tensors.
@@ -197,6 +214,7 @@ fsdp_double_buffer: false  # Enable double buffering for temporary memory needed
 fsdp_manual_registration: false  # Manually register the FSDP communication buffers to NCCL user buffer.This option is only effective when use-megatron-fsdp and use-nccl-ub is set.
 ft_num_warmup_iters: 5  # Number of warmup iterations before monitoring step section and out-of-section timeouts. The first N iterations are excluded from timeout monitoring as they can be significantly slower than steady-state. Default: 5. Note: This feature is for Nvidia internal use only.
 full_validation: false  # If set, each time validation occurs it uses the full validation dataset(s). This currently only works for GPT datasets!
+fused_residual_rmsnorm: false  # If True, fuses residual connection and RMSNorm backward pass when TE is used.
 global_batch_size: null  # Training batch size. If set, it should be a multiple of micro-batch-size times data-parallel-size. If this value is None, then use micro-batch-size * data-parallel-size as the global batch size. This choice will result in 1 for number of micro-batches.
 glu_linear_offset: 0.0  # Offset term in the GLU activation function: activation_func(x[0]) * (x[1] + offset). Only used when gated_linear_unit is True
 grad_reduce_in_bf16: false  # Reduce gradients in bfloat16.
@@ -217,11 +235,10 @@ heterogeneous_layers_config_path: null  # Path to json file containing heterogen
 hidden_dropout: 0.1  # Dropout probability for transformer hidden state.
 hidden_size: null  # Transformer hidden size.
 hierarchical_context_parallel_sizes: null  # Degrees of the hierarchical context parallelism. Users should provide a list to specify the sizes for different levels. Taking the a2a+p2p cp comm type as example, it contains groups of two levels, so the first value of the list indicates the group size of the a2a communication type, and the second value indicates the group size of the p2p communication type.
-high_priority_stream_groups: []  # The communicator group names to use high priority streams.
-hybrid_attention_ratio: 0.0  # Ratio of attention layers to total layers, in the range [0.0, 1.0].
+high_priority_stream_groups: []  # Specify which communicator groups should use high priority streams during creation. Assigning high priority to communication streams ensures that communication kernels are scheduled with higher priority, minimizing the exposed communication when it is overlapped with other computation kernels.
 hybrid_context_parallel: false  # If true, enables hybrid context parallel. This is used to balance the workload of each CP rank when we use packed samples with variable sequence lengths. Please set max_seqlen_per_dp_cp_rank when using hybrid_context_parallel.
-hybrid_mlp_ratio: 0.0  # Ratio of mlp layers to total layers, in the range [0.0, 1.0].
-hybrid_override_pattern: null  # Force a specific hybrid layer pattern. The valueshould be a string of characters chosen fromcore.ssm.mamba_hybrid_layer_allocation.Symbols.If a value greater than 0.0 is supplied to any of the hybrid ratio arguments, then the number of each typeof layer in the override pattern must match number inthe overidden pattern
+hybrid_layer_pattern: null  # Specify a hybrid layer pattern using M (mamba), G (gdn), * (attention), D (dsa), - (mlp), E (moe). Use | to define pipeline stage boundaries for flexible virtual pipeline parallel (fVPP). Use / to separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is used, it is the sole indicator that a hybrid model is being run.
+hybrid_override_pattern: null  # Deprecated. Use --hybrid-layer-pattern instead. If specified, its value will be forwarded to --hybrid-layer-pattern.
 hysteresis: 2  # hysteresis for dynamic loss scaling
 ict_head_size: null  # Size of block embeddings to be used in ICT and REALM (paper default: 128)
 ict_load: null  # Directory containing an ICTBertModel checkpoint
@@ -230,23 +247,35 @@ img_w: 224  # Image height for vision classification task
 indexer_batch_size: 128  # How large of batches to use when doing indexing jobs
 indexer_log_interval: 1000  # After how many batches should the indexer report progress
 inference_batch_times_seqlen_threshold: -1  # If (batch-size * sequence-length) is smaller than this thresholdthen batches will not be split up for pipelining.Requires setting --pipeline-model-parallel-size > 1.Setting this to -1 indicates that batch pipelining is not used.
-inference_coordinator_port: 12346  # This port will be used to setup the inference coordinator on node-0
+inference_coordinator_port: null  # This port will be used to setup the inference coordinator on node-0
+inference_disable_triton_nvls_kernels: false  # If true, disables the use of Triton NVLS kernels during inference.
 inference_dynamic_batching: false  # Enable dynamic batching mode.
 inference_dynamic_batching_block_size: 256  # KV cache block size. It should be a multiple of 256
 inference_dynamic_batching_buffer_size_gb: 40.0  # Amount of on-GPU memory allocated for the KV cache. The total amount of memory allocated for the KV cache (CPU + GPU memory) depends on the value set for the unified virtual memory (UVM) level (via `--inference-dynamic-batching-unified-memory-level`).If the UVM level is 0, then only GPU memory is used and the total memory equals `buffer_size_gb`. If the UVM level is 1, then additional memory is utilized on the CPU and the total memory equals `buffer_size_gb + paused_buffer_size_gb`.
 inference_dynamic_batching_cuda_graph_max_tokens: 16384  # Maximum number of tokens to capture in a cuda graph.
 inference_dynamic_batching_cuda_graph_mixed_prefill_count: 16  # Number of mixed prefill requests to capture in a cuda graph.
+inference_dynamic_batching_enable_prefix_caching: false  # Enable/disable prefix caching for dynamic batching inference. When disabled, KV cache blocks cannot be shared between requests with identical prompt prefixes. (default: %(default)s)
+inference_dynamic_batching_mamba_memory_ratio: null  # Percentage of memory buffer to allocate for Mamba states. If not specified, allocates Mamba state tensors for each KV cache block. Only used for hybrid models.
 inference_dynamic_batching_max_requests: null  # Override the inference context's `max_requests`. By default, `max_requests` is set to the number of blocks in the context's memory buffer.
 inference_dynamic_batching_max_tokens: null  # Override the inference context's default `max_tokens`.
-inference_dynamic_batching_num_cuda_graphs: 16  # Maximum number of cuda graphs to capture, where the cuda graph batch sizes range from 1 to `max_requests`. (See `dynamic_context.py` for details on how `max_requests` is computed). Due to rounding, the actual number of cuda graphs may not equal this argument.
+inference_dynamic_batching_num_cuda_graphs: 16  # Maximum number of cuda graphs to capture, where the cuda graph batch sizes range from 1 to `max_requests`. (See `dynamic_context.py` for details on how `max_requests` is computed). Due to rounding, the actual number of cuda graphs may not equal this argument.The user can also pass -1, in which case we automatically determine the number of graphs to capture based on the `max_requests`.
 inference_dynamic_batching_paused_buffer_size_gb: null  # Amount of memory reserved for paused requests in the dynamic inference context. Active requests are paused when there are not enough active blocks available to continue generating a request.
+inference_dynamic_batching_prefix_caching_coordinator_policy: first_prefix_block  # choices: ['longest_prefix', 'first_prefix_block', 'round_robin'] | Coordinator routing policy for prefix caching. "first_prefix_block" (default) routes based on the first block hash only. "longest_prefix" routes to the rank with the longest matching prefix. "round_robin" ignores prefix affinity and cycles through ranks.
+inference_dynamic_batching_prefix_caching_eviction_policy: ref_zero  # choices: ['ref_zero', 'lru'] | Eviction policy for prefix caching blocks. "ref_zero" (default) immediately returns blocks to the free pool when ref_count hits 0. "lru" keeps blocks cached and evicts via LRU only when space is needed.
+inference_dynamic_batching_prefix_caching_mamba_gb: null  # GPU memory budget (in GB) for the Mamba state cache used by prefix caching on hybrid models. When set, Mamba states at block boundaries are cached for reuse.
+inference_dynamic_batching_prefix_caching_routing_alpha: 0.5  # Weight for prefix-aware routing score: score = alpha * match + (1 - alpha) * normalized_load. Higher alpha favors prefix cache hits; lower alpha favors load balance. Default: 0.5.
+inference_dynamic_batching_track_generated_token_events: false  # Track per-token events with timestamps for each generated token. When enabled, each generated token creates a GENERATED_TOKEN event with a timestamp, useful for per-token latency analysis.
 inference_dynamic_batching_track_paused_request_events: false  # Track paused request ids by adding 'paused' events to each request's event history. This has a very minor impact on latency.
 inference_dynamic_batching_unified_memory_level: 0  # choices: [0, 1] | Set unified memory usage within the dynamic inference context. The levels are: 0) no unified memory, 1) allocate `memory_buffer` in unified memory. Eventually, additional levels will be included to control other tensors within the context.
 inference_fuse_tp_communication: false  # If true, uses a fused reduce-scatter-residual-norm-allgather kernel during inference.
+inference_grouped_gemm_backend: auto  # choices: ['auto', 'torch', 'te'] | Specifies the backend to use for grouped GEMM operations during inference. Options: - 'auto': Uses FlashInfer for CUDA-graphed iterations (requires flashinfer-python), and torch.nn.functional.grouped_mm for non-CUDA-graphed iterations (falls back to TE if unavailable). Note: the heuristic for choosing backends in 'auto' mode may change in future releases. - 'torch': Uses torch.nn.functional.grouped_mm. For CUDA-graphed iterations, uses mcore_fused_moe (permute/unpermute + grouped_mm with Triton kernels). - 'te': Uses TE GroupedGEMM only. Not supported with CUDA graphs.
 inference_logging_step_interval: 0  # Step interval for logging inference metrics. Default to 0 to disable inference logging.
-inference_max_batch_size: 8  # Maximum batch size for inference.
+inference_max_requests: 8  # Maximum number of requests for inference.
 inference_max_seq_length: 2560  # Maximum sequence length expected for inference (prefill + decode).
+inference_moe_disable_fused_quant_kernels: false  # When False (default), use fused kernels that combine permute/activation with MXFP8 quantization + swizzle into a single kernel launch. Only applies when fp8_recipe='mxfp8'. Set to True to disable fusion and use separate kernel launches (useful for debugging).
 inference_rng_tracker: false  # Use a random number generator configured for inference.
+inference_text_gen_server_logging: false  # Enable per-request logging in the inference text generation server. (default: %(default)s)
+inference_use_synchronous_zmq_collectives: false  # Use synchronous ZMQ collectives for inference. Helps in reducing performance variability for MoEs. (default: %(default)s)
 inference_wandb_logging: false  # Enable inference wandb logging. (default: %(default)s)
 init_method_std: 0.02  # Standard deviation of the zero mean normal for the default initialization method, not used if init_method and output_layer_init_method are provided.
 init_method_xavier_uniform: false  # Enable Xavier uniform parameter initialization
@@ -270,25 +299,23 @@ inprocess_soft_timeout: 60  # Soft progress timeout (in seconds).
 inprocess_termination_grace_time: 1  # Interval (in seconds) between SIGTERM and SIGKILL issued on hard timeout
 is_hybrid_model: false  # Indicates whether this is a hybrid model.
 iter_per_epoch: 1250  # iterations per epoch
-iterations_to_skip: []  # List of iterations to skip during training, empty by default.
+iterations_to_skip: []  # List of 1-indexed iterations to skip during training, empty by default.
 keep_fp8_transpose_cache: false  # If set, keep the fp8 transpose cache when using Megatron FSDP.
 kitchen_attention_backend: sdpa  # choices: ['sdpa', 'fa'] | Which kitchen attention backend to use when use_kitchen_attention=True. "sdpa" for KitchenDotProductAttention, "fa" for KitchenFlashAttention.
 kv_channels: null  # Projection weights dimension in multi-head attention. This is set to hidden_size // num_attention_heads if not provided.
 kv_lora_rank: 32  # Rank of Key and Value tensors' low rank representation.
 langrl_env_config: null  # Path to YAML config file for RL environment configuration.
-langrl_external_server: false
-langrl_inference_server_conversation_template: null  # Conversation template, if using a chat server.
-langrl_inference_server_type: inplace_megatron  # choices: ['inplace_megatron', 'inplace_megatron_chat'] | Type of inference server to use.
 layernorm_epsilon: 1.0e-05  # Epsilon value for any LayerNorm/RMSNorm operations.
 layernorm_zero_centered_gamma: false  # If set to True, the LayerNorm is adjusted to center the gamma values around 0. This improves numerical stability.
-lazy_mpu_init: null  # If set to True, initialize_megatron() skips DDP initialization and returns function to complete it instead. Also turns on --use-cpu-initialization flag. This is for external DDP manager.
-legacy_tokenizer: false  # To use Megatron-LM legacy tokenizer system.
+lazy_mpu_init: false  # If set to True, initialize_megatron() skips DDP initialization and returns function to complete it instead. Also turns on --use-cpu-initialization flag. This is for external DDP manager.
 linear_attention_freq: null  # Frequency between LA (linear attention) layers and SDPA (scaled dot-product attention) layers. Accepts either: - An integer N: Represents a (N-1):N ratio, meaning (N-1) LA layers for every 1 SDPA layer - A string containing a Python list expression that defines a custom pattern, e.g.: "([1]*3+[0]*1)*3" evaluates to [1,1,1,0,1,1,1,0,1,1,1,0] where 1 indicates an LA layer and 0 indicates a SDPA layer. Examples: "([0]+[1]*23)": 1 SDPA layer followed by 23 LA layers, "([1]*3+[0]*2)*2": Three LA layers followed by two SDPA layers, repeated twice.
 linear_conv_kernel_dim: 4  # Conv kernel dimension for the gated delta net.
 linear_key_head_dim: 128  # Query and key head dimension for the gated delta net.
 linear_num_key_heads: 16  # Number of query and key heads for the gated delta net.
 linear_num_value_heads: 32  # Number of value and gate heads for the gated delta net.
 linear_value_head_dim: 128  # Value and gate head dimension for the gated delta net.
+lion_beta1: 0.95  # First beta coefficient for Lion optimizer (used in sign update). Default: 0.95.
+lion_beta2: 0.98  # Second beta coefficient for Lion optimizer (used in momentum EMA update). Default: 0.98.
 load: null  # Directory containing a model checkpoint.
 load_main_params_from_ckpt: false  # Load main parameters from checkpoint. When loading a model from a checkpoint without loading the optimizer, the model parameters are updated but for fp16 optimizer with main parameters, the main parameters need to also be updated.
 local_rank: 0  # local rank passed from distributed launcher.
@@ -321,10 +348,12 @@ lr_warmup_samples: 0  # number of samples to linearly warmup learning rate over.
 lr_wsd_decay_iters: null  # number of iterations for the annealing phase in the wsd schedule
 lr_wsd_decay_samples: null  # number of samples for the annealing phase in the wsd schedule
 lr_wsd_decay_style: exponential  # choices: ['exponential', 'linear', 'cosine', 'minus_sqrt'] | Decay style for the annealing phase of WSD
-main_grads_dtype: fp32  # choices: ['fp32', 'bf16'] | Dtype of main grads when enabling precision-aware-optimizer
-main_params_dtype: fp32  # choices: ['fp32', 'fp16'] | Dtype of main params when enabling precision-aware-optimizer
+main_grads_dtype: fp32  # choices: ['fp32', 'bf16'] | Dtype of main grads when enabling precision-aware-optimizer.
+main_params_dtype: fp32  # choices: ['fp32', 'fp16'] | Dtype of main params when enabling precision-aware-optimizer.
 make_vocab_size_divisible_by: 128  # Pad the vocab size to be divisible by this value.This is added for computational efficieny reasons.
 mamba_head_dim: 64  # The dimensionality of the heads in the Mamba layers.
+mamba_inference_conv_states_dtype: bf16  # choices: ['bf16', 'fp16', 'fp32'] | Dtype for the Mamba inference conv states tensor
+mamba_inference_ssm_states_dtype: bf16  # choices: ['bf16', 'fp16', 'fp32'] | Dtype for the Mamba inference SSM states tensor
 mamba_num_groups: 8  # The number of groups used in Mamba layers.
 mamba_num_heads: null  # The number of heads used in Mamba layers. If None, the number of heads will be hidden_size * expand // mamba_head_dim.
 mamba_state_dim: 128  # The dimensionality of the state representation in Mamba layers.
@@ -338,6 +367,9 @@ masked_softmax_fusion: true  # Disable fusion of query_key_value scaling, maskin
 max_position_embeddings: null  # Maximum number of position embeddings to use. This is the size of position embedding.
 max_seqlen_per_dp_cp_rank: null  # Maximum sequence length per DPxCP rank. This is the maximum sequence length each rank can handle without overflowing the memory. Typically, a good starting point is to set this to maximum sequence length / context parallel size. This is used to calculate the number and length of sub-samples assigned to each rank when using hybrid_context_parallel.
 max_tokens_to_oom: 12000  # Maximum number of tokens during inferencetokens here is # in prompt + # to generateAllows us to throw an error before OOM crashes server
+megatron_fsdp_grad_comm_dtype: auto  # choices: ['fp32', 'fp16', 'bf16', 'auto'] | When using Megatron-FSDP, this controls the data-type used when communicating model gradients during FSDP. If 'auto', then the main gradient data-type will be used for the gradient communication / reduction data-type. When using NCCL v2.27+, reduction is always computed in FP32 if using NCCL Symmetric kernels.
+megatron_fsdp_main_grads_dtype: auto  # choices: ['fp32', 'bf16', 'fp16', 'auto'] | Data type for the main gradient buffer utilized for distributed optimization with Megatron-FSDP. If 'auto', then the native model gradient data-type will be used for the main gradient / accumulation data-type.
+megatron_fsdp_main_params_dtype: fp32  # choices: ['fp32', 'bf16', 'fp16', 'auto'] | Data type for the main weight buffer utilized for distributed optimization and quantization with Megatron-FSDP. If 'auto', then the native model parameter data-type will be used for the main weight data-type.
 memory_snapshot_path: snapshot.pickle  # Specifies where to dump the memory history pickle.
 merge_file: null  # Path to the BPE merge file.
 micro_batch_size: null  # Batch size per model instance (local batch size). Global batch size is local batch size times data parallel size times number of micro batches.
@@ -346,6 +378,7 @@ mid_level_dataset_surplus: 0.005  # The sample surplus to build for the mid-leve
 min_loss_scale: 1.0  # Minimum loss scale for dynamic loss scaling.
 min_lr: 0.0  # Minimum value for learning rate. The schedulerclip values below this threshold.
 min_offloaded_tensor_size: 1048576  # The minimum size of the tensor to be offloaded.
+mla_down_proj_fusion: false  # Enable fused q/kv down-projection and fused input layernorm when backend supports. Otherwise fall back to the unfused MLA.
 mlp_chunks_for_prefill: 1  # The number of chunks along the sequence dimension to use for MLP computation during prefill.
 mmap_bin_files: true  # Disable mmap-ing of .bin files.
 mock_data: false  # Skip data loading and validation and opt for artificial generation of mock data when an implementation is available.
@@ -356,7 +389,6 @@ moe_deepep_num_sms: 20  # Number of SMs to use for DeepEP.
 moe_enable_deepep: false  # [Experimental] Enable DeepEP for efficient token dispatching and combine in MoE models.
 moe_enable_routing_replay: false  # If True, enable the routing replay feature for MoE layers.
 moe_expert_capacity_factor: null  # moe_expert_capacity_factor (float): The capacity factor for each expert, None means no token will be dropped. The default is None.
-moe_extended_tp: false  # NOTE: Deprecated from MCore v0.10. This flag is ignored. Its functionality is replaced by expert_tensor_parallel_size.
 moe_ffn_hidden_size: null  # MoE Feed-Forward Network hidden size. If not specified, defaults to the ffn_hidden_size.
 moe_flex_dispatcher_backend: deepep  # choices: ['deepep', 'hybridep'] | [Experimental] The backend to use for flex token dispatcher. The default is "deepep". Options are "deepep" and "hybridep". Currently only "hybridep" backend supports the MNNVL case.
 moe_grouped_gemm: false  # When there are multiple experts per rank, compress multiple local (potentially small) gemms in a single kernel launch to improve the utilization and performance by leveraging the Grouped GEMM feature introduced since CUTLASS 2.8 (https://github.com/fanshiqing/grouped_gemm).
@@ -366,12 +398,13 @@ moe_latent_size: null  # Latent projection dimension for MoE. If None, MoE laten
 moe_layer_freq: 1  # Frequency between MoE layers and Dense layers. Accepts either: - An integer N: Represents a 1:N ratio, meaning one expert layer for every N-1 dense layers - A string containing a Python list expression that defines a custom pattern, e.g.: "([1]*3+[0]*1)*3" evaluates to [1,1,1,0,1,1,1,0,1,1,1,0] where 1 indicates an expert layer and 0 indicates a dense layer. Examples: "([0]+[1]*23)": 1 dense layer followed by 23 expert layers, "([1]*3+[0]*2)*2": Three expert layers followed by two dense layers, repeated twice.
 moe_layer_recompute: false  # Memory optimization: checkpointing moe_layer to save actiavtion memory.
 moe_pad_expert_input_to_capacity: false  # moe_pad_expert_input_to_capacity (bool): If True, pads the input for each expert to match the expert capacity length, effective only after the moe_expert_capacity_factor is set. The default setting is False.
-moe_pad_experts_for_cuda_graph_inference: false  # some MoE routers have a D2H sync that will break cuda graphs.  If this flag is set the router will switch to dropping and padding during decode time which does not have a D2H sync. The capacity factor is set to the max that an expert could see during inference so no tokens are actually dropped.
+moe_pad_experts_for_cuda_graph_inference: false  # moe_pad_experts_for_cuda_graph_inference (bool): If True, the router will switch to dropping and padding during decode time which does not have a D2H sync. The capacity factor is set to the max that an expert could see during inference so no tokens are actually dropped. The default setting is False.
 moe_per_layer_logging: false  # Enable per-layer logging for MoE, currently supports auxiliary loss and z loss.
 moe_permute_fusion: false  # Fuse token rearrangement ops during token dispatching.
 moe_router_bias_update_rate: 0.001  # The expert bias is updated based on the number of assigned tokens to each expert in a global batch, where the bias is increased for the experts with less assigned tokens and decreased for the experts with more assigned tokens. The default value 1e-3 is same as that used in DeepSeekV3.
 moe_router_dtype: null  # choices: ['fp32', 'fp64'] | Data type for routing and expert output weighted averaging. Using fp32 or fp64 can improve stability especially when the number of experts is large (e.g. finegrained-moe). None means no changes for dtype.
 moe_router_enable_expert_bias: false  # TopK routing with dynamic per-expert bias in the aux-loss-free load balancing strategy. The routing decision is based on the sum of the routing scores and the expert bias. See https://arxiv.org/abs/2408.15664 for details.
+moe_router_force_biased: null  # Apply random expert bias in normal distribution with specified std to router logits. Shared seed across all ranks ensures identical bias. If positive, generates new random bias each forward pass. If negative, generates bias once per layer and reuses it (abs value is std). This is an experimental feature for benchmarking purposes.
 moe_router_force_load_balancing: false  # [Experimental] Force load balancing with random logits for MoE router, supports naive topk and group-limited topk. This is an experimental feature and only for benchmark.
 moe_router_fusion: false  # Enable fusion for MoE TopK routing and aux-loss computation. This is only supported in TransformerEngine 2.7.0 and above.
 moe_router_group_topk: null  # Number of selected groups for group-limited routing.
@@ -380,7 +413,7 @@ moe_router_num_groups: null  # Number of groups to divide experts into for group
 moe_router_padding_for_fp8: false  # [Compatibility alias for moe_router_padding_for_quantization] Enabling this will also enable moe_router_padding_for_quantization.
 moe_router_padding_for_quantization: false  # Whether to pad the routing_map to make sure the number of tokens each expert receives is a multiple of 16/32 for quantized precision (e.g., FP8, FP4). This can remove the explicit padding in the GroupedMLP layer.
 moe_router_pre_softmax: false  # Enable pre-softmax(pre-sigmoid) routing for MoE, which means softmax is before the top-k selection. By default, softmax is done after top-k.
-moe_router_score_function: softmax  # choices: ['softmax', 'sigmoid'] | Score function for MoE routing. Can be "softmax" or "sigmoid".
+moe_router_score_function: softmax  # choices: ['softmax', 'sigmoid', 'sqrtsoftplus'] | Score function for MoE routing. Can be "softmax", "sigmoid" or "sqrtsoftplus".
 moe_router_topk: 2  # Number of experts to route to for each token.
 moe_router_topk_scaling_factor: null  # Scaling factor for routing score in top-k selection, only works when moe_router_pre_softmax enabled. Defaults to None, which means no scaling.
 moe_shared_expert_gate: false  # Enable gate for shared expert. Only effective when moe-shared-expert-intermediate-size is set.
@@ -389,26 +422,35 @@ moe_shared_expert_overlap: false  # Enable overlapping between shared expert com
 moe_token_dispatcher_type: allgather  # choices: ['allgather', 'alltoall', 'flex'] | The type of token dispatcher to use. The default is 'allgather'. Options are 'allgather','alltoall' and 'flex'.
 moe_token_drop_policy: probs  # choices: ['probs', 'position'] | The policy to drop tokens. Can be either "probs" or "position". If "probs", the tokens with the lowest probabilities will be dropped. If "position", tokens at the end of each batch will be dropped.
 moe_upcycling_granularity: 1  # This param sepecifics how many times smaller is the expert hidden size compared with the original dense FFN hidden size. For using granular upcycling strategy, please set this param as a positive integer. If this param is set to 1, it means using the default upcycling strategy.
-moe_use_legacy_grouped_gemm: false  # Use legacy GroupedMLP rather than TEGroupedMLP. Note: The legacy one will be deprecated soon.
 moe_use_upcycling: false  # Load a checkpoint of a dense model, convert it into an MoE model, and save the converted model to the path specified by --save. Upcycling is implemented on the top of distributed checkpointing, so it supports parallel modes different from the dense model.
 moe_z_loss_coeff: null  # Scaling coefficient for the z-loss. A starting value of 1e-3 is recommended.
 mrope_section: null  # Multimodal rope section is for channel dimension of temporal, height and width in rope calculation.
 mscale: 1.0  # Mscale for YaRN RoPE in multi-latent attention.
 mscale_all_dim: 0.0  # Mscale all dimensions for YaRN RoPE in multi-latent attention.
+mtp_hybrid_override_pattern: null  # DEPRECATED: Use unified hybrid_layer_pattern instead. Legacy argument for loading old checkpoints. Force a specific hybrid layer pattern for MTP layers.
 mtp_loss_scaling_factor: 0.1  # Weighting factor of Multi-Token Prediction (MTP) loss. We compute the average of the MTP losses across all depths, and multiply it the scaling factor to obtain the overall MTP loss, which serves as an additional training objective.
 mtp_num_layers: null  # Number of Multi-Token Prediction (MTP) Layers. MTP extends the prediction scope to multiple future tokens at each position. This MTP implementation sequentially predict additional tokens by using D sequential modules to predict D additional tokens.
 mtp_standalone: false  # This will be set automatically according to the pipeline layout, and will be set to True if MTP is in a separate vpp stage.
+mtp_use_repeated_layer: false  # Use a single MTP layer repeatedly instead of multiple separate layers.
 multi_latent_attention: false  # Whether to use multi-latent attention.
 multiple_validation_sets: false  # If set, multiple datasets listed in the validation split are evaluated independently with a separate loss for each dataset in the list. This argument requires that no weights are included in the list.
+muon_coefficient_type: quintic  # Newton-Schulz coefficient type for the Muon optimizer. Valid types are discovered from the installed emerging_optimizers package (e.g. simple, quintic, polar_express, aol). Validated at optimizer creation time.
 muon_extra_scale_factor: 1.0  # Additional scale factor for the muon update
 muon_fp32_matmul_prec: medium  # choices: ['low', 'medium', 'high'] | FP32 matmul precision for Newton-Schulz iteration
 muon_momentum: 0.9  # Momentum factor for Muon optimizer
+muon_nesterov: false  # Whether to use Nesterov-style momentum in the internal SGD
 muon_num_ns_steps: 5  # Number of Newton-Schulz steps for Muon optimizer
-muon_scale_mode: spectral  # choices: ['spectral', 'unit_rms_norm', 'shape_scaling'] | Scale mode for Muon optimizer
+muon_scalar_optimizer: adam  # choices: ['adam', 'lion'] | Optimizer for scalar parameters (embeddings, biases, norms) when using muon. Defaults to adam.
+muon_scale_mode: spectral  # choices: ['spectral', 'unit_rms_norm', 'shape_scaling'] | Scale mode for Muon optimizer. With MuP, set --muon-scale-mode unit_rms_norm to use unit_rms_norm scaling, or set --muon-scale-mode spectral to keep spectral scaling.
 muon_split_qkv: true  # Whether to split QKV parameters for Muon optimizer
 muon_tp_mode: blockwise  # choices: ['blockwise', 'duplicated', 'distributed'] | How to perform NS calculation for tensor model parallel weights
-muon_use_nesterov: false  # Whether to use Nesterov-style momentum in the internal SGD
-nccl_all_reduce_for_prefill: false  # When using symmeric all reduce kernels this will use regular nccl kernels for prefill. This can be more effecient when prefill is large as the nccl kernels can be more bandwith optimized
+mup_attn_scale_power: 1.0  # Power for attention scaling: softmax_scale = 1 / (kv_channels ** mup_attn_scale_power). 0.5 = standard attention (1/sqrt(d_head)), 1.0 = MuP attention (1/d_head). Default: 1.0 (MuP scaling when use_mup is True). Set to 0.5 for standard scaling.
+mup_base_head_dim: null  # Base head dimension for MuP attention scaling. When set, softmax_scale = sqrt(mup_base_head_dim) / (kv_channels ** mup_attn_scale_power). Set to base model's d_head (e.g., 64) to match standard 1/sqrt(d_head) scaling at the base width, ensuring non-MuP compatibility for that specific value.
+mup_base_hidden_size: null  # Base hidden size for MuP width scaling. This is the reference width from which scaling factors are computed. Defaults to hidden_size if not specified (base model case where width_mult=1.0). Set this to your base/proxy model's hidden size when scaling up.
+mup_embedding_mult: 1.0  # Multiplier for embedding layer output. Applied after the embedding lookup. Default: 1.0 (no scaling).
+mup_output_mult: 1.0  # Multiplier for output logits before softmax. When MuP is enabled and this is left at 1.0, it is auto-set to 1/mup_width_mult to keep output variance stable across widths. Override to customize output scaling. Default: 1.0.
+mup_width_mult: 1.0  # Width multiplier for MuP scaling, computed as hidden_size / mup_base_hidden_size. This value is automatically computed in __post_init__ when use_mup is enabled.
+nccl_all_reduce_for_prefill: false  # If True, use NCCL all-reduce kernels when symmetric all-reduce is enabled.
 nccl_communicator_config_path: null  # Path to the yaml file with NCCL communicator configurations. The number of min/max thread groups and thread group cluster size of each communicator can be configured by setting `min_ctas`, `max_ctas`, and `cga_cluster_size`.
 nccl_ub: false  # Use the userbuffer registration for DP/FSDP communication buffers.This option will reduce GPU SM usage for the DP/FSDP communication,which is improving the performance of the overlapped computation.
 no_load_optim: null  # Do not load optimizer when loading checkpoint.
@@ -435,8 +477,10 @@ num_layers_at_end_in_bf16: 1  # Number of layers at the end of the model to keep
 num_layers_at_start_in_bf16: 1  # Number of layers at the start of the model to keep in BF16 precision when first_last_layers_bf16 is True.
 num_layers_per_virtual_pipeline_stage: null  # Number of layers per virtual pipeline stage
 num_query_groups: 1  # Number of query groups for group query attention. If None, normal attention is used.
+num_speculative_tokens: 0  # Number of speculative tokens generated during decode
 num_virtual_stages_per_pipeline_rank: null  # Number of virtual pipeline stages per pipeline parallelism rank
 num_workers: 2  # Dataloader number of workers.
+nvtx_ranges: false  # Enable NVTX range annotations for profiling. When enabled, inserts NVTX markers to categorize execution in profiler output.
 object_storage_cache_path: null  # Path to cache index files when using s3 or msc dataloader
 offload_modules: []  # The submodules to offload its input. choices: "attn_norm", "qkv_linear", "core_attn", "attn_proj", "mlp_norm", "expert_fc1", "moe_act". "attn_norm": offload the input of the normalization in the attention part. "qkv_linear": offload the input of the qkv linear part. "core_attn": offload the input of the core attention part. "attn_proj": offload the input of the attn linear projection part. "mlp_norm": offload the input of the normalization in the mlp part. "expert_fc1": offload the input of the expert fc1 part. "moe_act": offload the input of the moe act part.
 one_logger_async: false  # If set, forces one_logger to use async mode.
@@ -444,12 +488,14 @@ one_logger_project: megatron-lm  # The one-logger project name. Will ignore if -
 one_logger_run_name: null  # The one-logger run name displayed. Will ignore if --no-one-logger is set
 onnx_safe: null  # Use workarounds for known problems with Torch ONNX exporter
 openai_gelu: false  # Use OpenAIs GeLU implementation. This optionshould not be used unless for backward compatibilityreasons.
-optimizer: adam  # choices: ['adam', 'sgd', 'muon', 'dist_muon'] | Optimizer function
+optimizer: adam  # choices: ['adam', 'sgd', 'muon', 'dist_muon', 'lion', 'soap', 'adaptive_muon'] | Optimizer function. Note: dist_muon is deprecated; use --optimizer muon with --use-distributed-optimizer instead.
 optimizer_cpu_offload: false  # Offload optimizer state to CPU
+optimizer_cuda_graph: false  # Enable CUDA graph for optimizer step
 optimizer_offload_fraction: 1.0  # Ratio of optimizer state to offload to CPU
 outer_dp_sharding_strategy: no_shard  # choices: ['no_shard', 'optim'] | Sharding strategy for outer data parallel group in Hybrid Sharded Data Parallel (HSDP) mode. Valid values are "no_shard" (DP Replication) and "optim" (Optimizer State Hybrid Sharding). The "optim" option is only supported when --data-parallel-sharding-strategy is "optim_grads_params". This option is only effective when Hybrid FSDP is enabled (i.e., when dp_outer_dim is not None). Default: "no_shard".
 output_bert_embeddings: false  # Output Bert embeddings (via mean pooling) from model, rather than its binary head output or entire hidden batch.
 overlap_cpu_optimizer_d2h_h2d: false  # Overlap CPU optimizer step, gradients D2H and updated parameters H2D.
+overlap_dispatch_backward_with_experts_wgrad: false  # Delay the weight gradient computation for TE Grouped GEMM MoE experts. When enabled with FSDP, the expert weight gradients are computed on a separate CUDA stream after the data gradients finish, allowing overlap of wgrad compute with EP A2A communication. The FSDP gradient reduce-scatter for expert parameters is deferred until the delayed wgrad computation completes. This requires transformer_engine with GroupedLinear support (TE >= 2.3.0).
 overlap_grad_reduce: false  # If set, overlap DDP grad reduce.
 overlap_moe_expert_parallel_comm: false  # Overlap EP A2A communications with independent computations of different micro-batches in 1f1b phase of pipelining or non-pipelining schedule.
 overlap_p2p_comm: true  # overlap pipeline parallel communication with forward and backward chunks in 1F1B
@@ -463,7 +509,7 @@ per_dataset_sequences_path: null  # Path to a json file with the sequences per d
 per_split_data_args_path: null  # Path to per-split-data-args. Instead of feeding `--(train|valid|test)-data-path` with weighted dataset, we pass in a file path from which we read those arguments. This is useful when the list of data is too big. Format is a json file with `train`, `valid, `test` keys
 perform_initialization: true  # Controls weights initialization. This option can be useful when you know you are going to load values from a checkpoint.
 perform_rl_step: false  # Use the RL training step.
-phase_transition_iterations: null  # Comma-separated list of iterations where phase transitions occur. Requires fixed global batch size across phases. Does not support batch size ramp-up.
+phase_transition_iterations: null  # Comma-separated list of iterations where phase transitions occur. Requires fixed global batch size across phases.
 pin_cpu_grads: true  # Disable pinning of CPU memory for gradients.
 pin_cpu_params: true  # Disable pinning of CPU memory for parameters.
 pipeline_model_parallel_comm_backend: null  # choices: ['nccl', 'ucc'] | Configuring backend option of pipeline parallel communication (e.g., nccl, ucc) If None, the default backend will be used.
@@ -472,10 +518,12 @@ pipeline_model_parallel_size: 1  # Inter-layer model parallelism. Splits transfo
 position_embedding_type: learned_absolute  # choices: ['learned_absolute', 'rope', 'mrope', 'relative', 'none'] | Position embedding type.
 pretrained_checkpoint: null  # Directory containing a pretrained model checkpoint for finetuning.
 profile: false  # Enable nsys profiling. When using this option, nsys options should be specified in commandline. An example nsys commandline is `nsys profile -s none -t nvtx,cuda -o <path/to/output_file> --force-overwrite true --capture-range=cudaProfilerApi --capture-range-end=stop`.
-profile_ranks:  # Global ranks to profile.
-- 0
+profile_ranks: []  # Global ranks to profile.
 profile_step_end: 12  # Global step to stop profiling.
 profile_step_start: 10  # Global step to start profiling.
+pytorch_profiler_collect_callstack: false  # Collect callstack in pytorch profiler.
+pytorch_profiler_collect_chakra: false  # Collect chakra trace in pytorch profiler.
+pytorch_profiler_collect_shapes: false  # Collect tensor shape in pytorch profiler.
 q_lora_rank: null  # Rank of Query tensor's low rank representation.
 qk_clip: false  # Whether to clip the query and key weights. Needed for Muon MLA Model training.
 qk_clip_alpha: 0.5  # The balancing alpha for qk-clip. Q = Q * (eta ** alpha)
@@ -486,13 +534,14 @@ qk_layernorm: false  # Whether to apply `normalization` type of normalization to
 qk_pos_emb_head_dim: 64  # Dimension of the position embedding in the QK projection.
 query_in_block_prob: 0.1  # Probability of keeping query in block for ICT dataset
 quick_geglu: false  # Use quick geglu activation instead of default gelu
-rampup_batch_size: null  # Batch size ramp up with the following values: <start batch size>, <batch size increment>, <ramp-up samples> For example: rampup-batch-size = [16, 8, 300000] global-batch-size 1024 will start with global batch size 16 and over (1024 - 16) / 8 = 126 intervals will increase the batch size linearly to 1024. In each interval we will use approximately 300000 / 126 = 2380 samples.
+rampup_batch_size: null  # Batch size ramp up with the following values: <start batch size>, <batch size increment>, <ramp-up samples> For example: rampup-batch-size = [16, 8, 300000] global-batch-size 1024 will start with global batch size 16 and over (1024 - 16) / 8 = 126 intervals will increase the batch size linearly to 1024. In each interval we will use approximately 300000 / 126 = 2380 samples. Deprecated. Use step_batch_size_schedule instead.
 recompute_activations: false  # recompute activation to allow for training with larger models, sequences, and batch sizes.
 recompute_granularity: null  # choices: ['full', 'selective'] | Determines which type of activation recompute to use. Megatron-core supports 'selective' activation checkpointing where the submodules set in --recompute-modules is checkpointed. The default is "core_attn" which is the memory intensive part of attention. These memory intensive activations are also less compute intensive which makes activation checkpointing more efficient for LLMs (20B+). See Reducing Activation Recomputation in Large Transformer Models (https://arxiv.org/abs/2205.05198) for more details. 'full' will checkpoint the entire transformer layer. If None, no recompute is performed and all activations are saved. If set, must be 'selective' or 'full'. 'selective' always uses all layers.
 recompute_method: null  # choices: ['uniform', 'block'] | Determines which transformer layers will be recomputed. uniform will uniformly divide the total number of transformer layers in a transformer block and recompute the input activation of each divided chunk at the specified granularity. block will recompute the input activations for only a set number of transformer layers per pipeline stage. The rest of the layers in the pipeline stage will not have any activations recomputed. If None, and recompute is enabled, all layers will do recomputation. If set, must be 'uniform' or 'block'.
 recompute_modules: null  # The submodules to recompute. choices: "core_attn", "moe_act", "layernorm", "mla_up_proj", "mlp", "moe", "shared_experts". default: ["core_attn"]. "core_attn": recompute the core attention part of the transformer layer. "moe_act": recompute the MoE MLP activation function. "layernorm": recompute the input_layernorm and pre_mlp_layernorm. "mla_up_proj": recompute the MLA up projection and RoPE applying parts. "mlp": recompute the dense MLP submodule. "moe": recompute the MoE layer. "shared_experts": recompute the shared experts in the MoE layer. "moe_act", "layernorm", and "mla_up_proj" use output-discarding checkpointing, "core_attn", "mlp", "moe", and "shared_experts" use normal checkpointing.
 recompute_num_layers: null  # When recompute_method is uniform, recompute_num_layers is the number of transformer layers in each uniformly divided recompute unit. When recompute_method is block, recompute_num_layers is the number of transformer layers to recompute within each pipeline stage. Must be None for 'selective' activation checkpointing.
 record_memory_history: false  # Record memory history in last rank.
+record_shapes: false  # Record shapes of tensors in `torch.autograd.profiler.emit_nvtx` for the Nsys profiler.
 refit_method: gloo  # choices: ['nccl', 'gloo', 'nvshmem'] | Method to refit the model weights between training and inference models during RL. nccl: use NCCLCopyService to refit using NCCL; gloo: use GlooCopyService over CPU; nvshmem: use NVSHMEMCopyService to refit using the NVSHMEM.
 relative_attention_max_distance: 128  # Maximum distance for relative position embeddings calculation.
 relative_attention_num_buckets: 32  # Number of buckets for relative position embeddings.
@@ -509,25 +558,28 @@ reuse_grad_buf_for_mxfp8_param_ag: false  # If True, reuse the grad buffer for M
 rl_default_temperature: 1.0  # Default temperature for model inference.
 rl_default_top_k: -1  # Default top-k for model inference.
 rl_default_top_p: 0  # Default top-p for model inference.
+rl_generation_batch_size: null  # Override the number of groups per generation batch. Defaults to grpo_prompts_per_step when --rl-num-parallel-generation-batches is set.
 rl_importance_sampling_truncation_coef: null  # If --inference-logprobs-is-correction is on and this coefficient is set, apply truncation for the IS correction at GRPO loss.
 rl_inference_expert_model_parallel_size: null  # Degree of expert model parallelism for inference for RL.
 rl_inference_expert_tensor_model_parallel_size: null  # Degree of expert tensor model parallelism for inference for RL. For MoE models, this controls the TP size for expert layers specifically. Defaults to training expert_tensor_parallel_size if not specified.
 rl_inference_logprobs_is_correction: false  # If set, use inference logprobs in importance sampling correction of the loss. (default: %(default)s)
 rl_inference_model_unified_memory_level: 0  # choices: [0, 1] | Allocate the separate RL inference model parameters from a unified virtual memory (UVM) CUDA mempool. Level 0 disables UVM (default). Level 1 enables UVM allocation so the inference model weights can be prefetched to CPU when idle while keeping CUDA-graph-safe device pointers.
+rl_inference_parsers: []  # List of response parsers to enable for RL inference (e.g. --rl-inference-parsers deepseek-r1-reasoning qwen3-coder-tool).
 rl_inference_pipeline_model_parallel_size: null  # Degree of pipeline model parallelism for inference for RL.
 rl_inference_tensor_model_parallel_size: null  # Degree of tensor model parallelism for inference for RL.
-rl_offload_inference_model_weights_when_idle: false  # When using a separate RL inference model with UVM-enabled parameters, prefetch its weights to CPU when not doing rollout inference, and prefetch back to GPU right before inference. Requires --rl-inference-model-unified-memory-level=1. (default: %(default)s)
-rl_offload_kv_cache_during_training: false  # Offload KV cache to CPU during training to save GPU memory (default: %(default)s)
+rl_kv_cache_management_mode: persist  # choices: ['persist', 'offload', 'recompute'] | KV cache management mode during RL training: persist: leave KV cache in GPU memory (default), offload: offload KV cache to CPU during training, recompute: deallocate KV cache and recompute from scratch each cycle
+rl_num_parallel_generation_batches: null  # Number of generation batches in flight. Set to L+1 to allow for L steps of staleness between the inference and training policies. Each batch contains grpo_prompts_per_step groups by default. Requires --rl-partial-rollouts. Mutually exclusive with --rl-num-parallel-generations.
+rl_num_parallel_generations: null  # Number of rollouts being generated by the inference engine simultaneously. Internally divided by grpo_group_size. Requires --rl-partial-rollouts. Mutually exclusive with --rl-num-parallel-generation-batches.
+rl_offload_inference_model_weights_when_idle: false  # When using a separate RL inference model, offload its weights to CPU when not doing rollout inference, and restore to GPU right before inference. Works with two backends: 1) UVM (when --rl-inference-model-unified-memory-level=1), or 2) torch_memory_saver (when UVM is not enabled; requires torch_memory_saver to be installed). (default: %(default)s)
 rl_offload_optimizer_during_inference: false  # Offload optimizer state to CPU during inference/rollout to save GPU memory
-rl_parallel_generation_tasks: 512  # Number of parallel generation tasks for RL inference.
-rl_partial_rollouts: false  # If set, use partial rollouts. (default: %(default)s)
+rl_parallel_generation_tasks: null  # Deprecated: use --rl-num-parallel-generations instead.
+rl_partial_rollouts: false  # Allow inference to continue generating rollouts while training updates the policy weights. This enables off-policy training where rollouts may be generated with a stale version of the policy. Use --rl-num-parallel-generations or --rl-num-parallel-generation-batches to control the degree of staleness. (default: %(default)s)
+rl_persist_cuda_graphs: false  # Persist CUDA graphs when the inference engine is suspended. If False, CUDA graphs are deleted on suspend and re-captured on resume. (default: %(default)s)
 rl_prompts_per_eval: 32  # Number of prompts to evaluate for for each RL task.This evaluation can be very expensive when using environmentsthat evaluate pass@k so we default to a lower number.
-rl_remove_kv_cache_during_training: false  # Remove KV cache during training to save GPU memory (default: %(default)s)
-rl_reset_cuda_graphs: false  # Reset CUDA graphs between inference/training to save GPU memory (default: %(default)s)
 rl_sequence_packing_algo: fifo  # choices: ['fifo', 'round-robin'] | Algorithm for distributing packed bins across ranks. fifo: first-in-first-out sequential distribution, round-robin: distribute bins cyclically across ranks for better load balancing
 rl_sequence_packing_max_sequences_per_bin: 50  # Maximum number of sequences that can be packed into a single bin.
 rl_skip_bos_token: false  # Skip BOS token at the beginning of the sequences. Default is False. (default: %(default)s)
-rl_training_cuda_graphs: false  # If set, do not call `delete_cuda_graphs` or `toggle_cuda_graphs` when the inference engine is suspended. (default: %(default)s)
+rl_training_cuda_graphs: false  # If set, do not toggle CUDA graphs on/off between inference and training phases. (default: %(default)s)
 rl_use_sequence_packing: false  # Enable sequence packing (default: %(default)s)
 rl_verify_model_weights_swap: false  # If set, verify that the model weights were correctly transferred by comparing forward pass outputs onthe first swap of model weights. (default: %(default)s)
 rope_scaling_factor: 8.0  # Rope scaling factor in llama3.x models
@@ -542,26 +594,30 @@ router_min_lr: null  # LR floor applied to all non-frozen router param groups. D
 run_workload_inspector_server: false  # If set, enables workload inspector server for on-demand profiling.
 sample_rate: 1.0  # sample rate for training data. Supposed to be 0  < sample_rate < 1
 save: null  # Output directory to save checkpoints to.
+save_activations_interval: null  # Number of iterations between act.name->act.data mapping saves.
 save_dgrads_interval: null  # Number of iterations between dgrad saves.
 save_extra_steps: []  # Specific training iterations at which to save checkpoints
 save_interval: null  # Number of iterations between persistent checkpoint saves.
+save_params_interval: null  # Number of iterations between param.name->param.data mapping saves.
 save_retain_interval: null  # Number of iterations between retained checkpoints (other checkpoints except the last checkpoint are automatically deleted).
+save_tokens_per_expert_interval: null  # Number of iterations between tokens-per-expert routing metadata saves.
 save_wgrads_interval: null  # Number of iterations between wgrad (main_grad) saves.
-scatter_gather_tensors_in_pipeline: true  # If not set, use scatter/gather to optimize communication of tensors in pipeline.
 seed: 1234  # Random seed used for python, numpy, pytorch, and cuda.
 seq_length: null  # Maximum sequence length to process.
 sequence_parallel: false  # Makes tensor parallelism more memory efficient for LLMs (20B+) by parallelizing layer norms and dropout sequentially. See Reducing Activation Recomputation in Large Transformer Models (https://arxiv.org/abs/2205.05198) for more details.
 sft: false  # Megatron SFT training
 sft_tokenizer_prompt_format: nemotron-h-aligned  # SFT prompt format.
 sgd_momentum: 0.9  # Momentum factor for sgd
-sharp_enabled_group: null  # choices: ['dp', 'dp_replica'] | IB SHARP can be enabled from only one communication group. By default, it is enabled from dp group. Available options: [dp, dp_replica]
+sharp_enabled_group: null  # choices: ['dp', 'dp_replica'] | IB SHARP can be enabled from only one communication group. By default, it is enabled from dp group if not specified and use_sharp=True. Available options: [dp, dp_replica]
 short_seq_prob: 0.1  # Probability of producing a short sequence.
 skip_train: false  # If set, bypass the training loop, perform evaluation for validation/test, and exit.
 softmax_type: vanilla  # choices: ['vanilla', 'off-by-one', 'learnable'] | Applies modified softmax from https://www.evanmiller.org/attention-is-off-by-one.html. Supports both TE FusedAttention and local unfused attention. Supports both a fixed offset and and learnable offset.
 spec: null  # Specify the <module_location function_name> pair that returns a spec to customize a model, transformer block, or transformer layer, depending on the use case.To use local spec specify local as the argument.For more details, see the model class, `transformer_block.py`, or `transformer_layer.py`
 split: null  # Comma-separated list of proportions for training, validation, and test split. For example the split `90,5,5` will use 90%% of data for training, 5%% for validation and 5%% for test.
 squared_relu: false  # Use squared relu activation instead of default gelu
+start_eval_at_iter: null  # If set, evaluation will only start after this iteration number. Useful for skipping evaluation during early training iterations when the model is not yet meaningful. If not set, evaluation starts from the first eval_interval.
 start_weight_decay: null  # Initial weight decay coefficient for L2 regularization.
+step_batch_size_schedule: null  # Step-wise batch size schedule in format "THRESHOLD:BS THRESHOLD:BS ...". Thresholds support suffixes: K (1e3), M (1e6), B (1e9), T (1e12). If sequence length is provided, thresholds are interpreted as tokens; otherwise as samples. Example: step_batch_size_schedule = "0:768 250B:1536 500B:3072 750B:6144" Cannot be used together with decrease_batch_size_if_needed.
 straggler_ctrlr_port: 65535  # Port number to toggle StragglerDetector on/off at runtime
 straggler_minmax_count: 1  # Number of ranks to report with high/low estimated throughput
 strict_fsdp_dtensor_load: true  # Whether to enforce strict loading for FSDP DTensor checkpoints. When False, allows partial loading.
@@ -583,8 +639,10 @@ tiktoken_special_tokens: null  # List of tiktoken special tokens, needs to have 
 timing_log_level: 0  # choices: [0, 1, 2] | Granularity level to measure and report timing. 0: report only iteration time and make sure timing does not introduce extra overhead. 1: report timing for operations that are executed very limited times (basically once) during each iteration (such as gradient all-reduce) 2: report timing for operations that migh be executed numerous times during each iteration. Note that setting the level to 1 or 2 might cause increase in iteration time.
 timing_log_option: minmax  # choices: ['max', 'minmax', 'all'] | Options for logging timing: max: report the max timing across all ranks minmax: report min and max timings across all ranks all: report timings of all ranks.
 titles_data_path: null  # Path to titles dataset used for ICT
-tokenizer_hf_include_special_tokens: false  # Converting text to ids will include special for HuggingFace tokenizer.
-tokenizer_hf_use_fast: false  # Whether to use fast HuggingFace tokenizer.
+tokenizer_hf_include_special_tokens: true  # Converting text to ids will include special for HuggingFace tokenizer.
+tokenizer_hf_no_include_special_tokens: false  # Converting text to ids will not include special for HuggingFace tokenizer.
+tokenizer_hf_no_use_fast: false  # Whether to use fast HuggingFace tokenizer.
+tokenizer_hf_use_fast: true  # Whether to use fast HuggingFace tokenizer.
 tokenizer_metadata: null  # Path to tokenizer metadata in json format.
 tokenizer_model: null  # Sentencepiece tokenizer model.
 tokenizer_sentencepiece_legacy: false  # SentencePiece tokenizer wrapper legacy behavior. Allows special tokens usage.
@@ -615,12 +673,14 @@ use_dist_ckpt_deprecated: false  # Deprecated: see --ckpt-format.
 use_distributed_optimizer: false  # Use distributed optimizer.
 use_flash_attn: false  # use FlashAttention implementation of attention. https://arxiv.org/abs/2205.14135
 use_fused_weighted_squared_relu: false  # If True, uses fused weighted squared relu kernel when using MoE.
+use_gloo_process_groups: true  # If enabled, create Gloo process groups for communications.
 use_kitchen_attention: false  # Use the kitchen extension for attention (instead of TE's attention).
 use_legacy_models: false  # Use the legacy Megatron models, not Megatron-Core models.
 use_legacy_static_engine: false  # Use legacy static engine. (Current static engine uses dynamic engine under the hood)
 use_mamba_mem_eff_path: true  # Controls usage of the memory efficient path for Mamba layers.
-use_megatron_fsdp: false  # Use the Megatron FSDP code path in DDP.
+use_megatron_fsdp: false  # Use Megatron's Fully Sharded Data Parallel. Cannot be used together with use_torch_fsdp2.
 use_mp_args_from_checkpoint_args: false  # Copy model parallelism command-line arguments from checkpoint
+use_mup: false  # Enable Maximal Update Parameterization (MuP) for hyperparameter transfer across model widths. When enabled, learning rates and initialization are scaled according to the width multiplier to ensure consistent training dynamics.
 use_one_sent_docs: false  # Whether to use one sentence documents in ICT
 use_persistent_ckpt_worker: false  # Use a persistent background worker for async checkpoint saves. When enabled, creates a dedicated worker thread/process for handling async saves. When disabled, uses temporal workers that are created and destroyed for each save operation.
 use_precision_aware_optimizer: false  # Use the precision-aware optimizer in TransformerEngine, which allows setting the main params and optimizer states to lower precision, such as fp16, bf16 and fp8.
@@ -628,10 +688,10 @@ use_pytorch_profiler: false  # Use the built-in pytorch profiler. Useful if you 
 use_ring_exchange_p2p: false  # Use custom ring_exchange kernel instead of torch.distributed.batch_isend_irecv(). Requires custom built torch with torch.distributed.ring_exchange.
 use_rope_scaling: false  # Apply rope scaling as used in llama3.x
 use_rotary_position_embeddings: false  # Use rotary positional embeddings or not. Deprecated: use --position-embedding-type
-use_sharp: false  # Required to enable SHARP communication.
+use_sharp: false  # Set the use of SHARP for the collective communications of data-parallel process groups. When `True`, run barrier within each data-parallel process group, which specifies the SHARP application target groups.
 use_te_activation_func: false  # Whether to use ffn activation functions implemented by TransformerEngine
 use_tokenizer_model_from_checkpoint_args: true  # If set, do not use tokenizer model path from checkpoint
-use_torch_fsdp2: false  # Use the torch FSDP2 implementation. FSDP2 has not been tested with pipeline parallelism, and may contain bugs.
+use_torch_fsdp2: false  # Use the torch FSDP2 implementation. FSDP2 is not currently working with Pipeline Parallel. It is still not in a stable release stage, and may therefore contain bugs or other potential issues.
 use_torch_optimizer_for_cpu_offload: false  # Use torch.optim.Optimizer instead of Megatron's optimizer in optimizer cpu offload mode.
 use_tp_pp_dp_mapping: false  # If set, distributed ranks initialize order is changed from tp-cp-ep-dp-pp to tp-cp-ep-pp-dp.
 v_head_dim: 128  # Dimension of the head in the V projection.

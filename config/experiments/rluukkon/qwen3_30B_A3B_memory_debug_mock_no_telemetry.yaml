@@ -1,0 +1,20 @@
+# @package _global_
+# Isolate logging/telemetry contribution to host RSS growth.
+defaults:
+  - qwen3_30B_A3B_memory_debug_mock_no_distopt
+  - _self_
+
+backend:
+  megatron:
+    log_memory_to_tensorboard: false
+    log_timers_to_tensorboard: false
+    log_throughput: false
+    log_progress: false
+    log_interval: 10
+
+slurm:
+  env:
+    WANDB_MODE: "disabled"
+
+job:
+  name: qwen3_30B_A3B_memory_debug_mock_no_telemetry${backend.megatron.lr}_${slurm.env.MACHINE_NAME}
