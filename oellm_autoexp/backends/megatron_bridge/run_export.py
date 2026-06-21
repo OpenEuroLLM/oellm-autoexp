@@ -324,16 +324,16 @@ def _apply_checkpoint_arch_overrides(megatron_dict: dict, megatron_path: Path) -
     """Override core arch fields in ``megatron_dict`` with the checkpoint-local
     ``modelopt_run_config.yaml`` values when they exist.
 
-    The training YAML provides the rich, cleanly-typed fields (vocab padding,
-    seq_length, dtype, activation), but its structural dims can be stale. The
-    checkpoint's modelopt dump is authoritative for the architecture, so we let
-    it win for the dims that must match the weights, logging any disagreement.
+    The training YAML provides the rich, cleanly-typed fields (vocab
+    padding, seq_length, dtype, activation), but its structural dims can
+    be stale. The checkpoint's modelopt dump is authoritative for the
+    architecture, so we let it win for the dims that must match the
+    weights, logging any disagreement.
     """
     moc = Path(megatron_path) / "modelopt_run_config.yaml"
     if not moc.exists():
         LOGGER.warning(
-            "No modelopt_run_config.yaml under %s; trusting training-config arch "
-            "(could be stale).",
+            "No modelopt_run_config.yaml under %s; trusting training-config arch (could be stale).",
             megatron_path,
         )
         return megatron_dict
