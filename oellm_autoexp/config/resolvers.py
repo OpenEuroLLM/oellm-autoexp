@@ -61,9 +61,33 @@ def _resolve_train_config(training_dir, explicit: str = ""):
     return max(candidates, key=os.path.getmtime)
 
 
+def _resolve_train_config_opt(training_dir, explicit: str = ""):
+    """Tolerant variant of ``oc.train_config`` for sweep-driven conversions.
+
+    Identical to ``oc.train_config`` but returns ``""`` instead of raising when
+    no snapshot is found. A multi-checkpoint conversion sweep resolves EVERY
+    pre-filter sweep point (and the base config) before the sweep.filter prunes
+    it, so points whose training run never existed — or the base config whose
+    ``run_name`` is still empty — would otherwise crash ``oc.train_config`` on a
+    missing directory. Returning a sentinel keeps those harmless: pruned points
+    are dropped, and a surviving point that genuinely lacks a config will fail
+    later at conversion time (clear, per-job error) rather than aborting the
+    whole plan. An explicit filename is still required to exist.
+    """
+    if explicit:
+        return _resolve_train_config(training_dir, explicit)
+    try:
+        return _resolve_train_config(training_dir)
+    except FileNotFoundError:
+        return ""
+
+
 OmegaConf.register_new_resolver("oc.pad_iter", _pad_iter, replace=True)
 OmegaConf.register_new_resolver(
     "oc.train_config", _resolve_train_config, replace=True, use_cache=False
+)
+OmegaConf.register_new_resolver(
+    "oc.train_config_opt", _resolve_train_config_opt, replace=True, use_cache=False
 )
 
 
