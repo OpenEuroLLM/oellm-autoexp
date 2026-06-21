@@ -79,6 +79,55 @@ def _stage_checkpoint(
     return staged
 
 
+def _install_tokenizer_fallback(fallback_dir: Path) -> None:
+    """Redirect a checkpoint's baked tokenizer path to a local dir when missing.
+
+    Legacy Megatron checkpoints trained on another cluster bake an absolute
+    ``tokenizer_model`` path into their args (e.g. a BSC ``/gpfs/...`` path).
+    On Leonardo that path doesn't exist, so Bridge's ``build_tokenizer`` — called
+    only to compute the (padded) vocab size while loading the model — dies with
+    an ``HFValidationError`` (it treats the missing path as a Hub repo id).
+
+    Since the tokenizer is used purely for its vocab size during load, any
+    tokenizer with the same vocab works. We monkeypatch
+    ``_tokenizer_config_from_args`` so that, if ``tokenizer_model`` points at a
+    path that is absent on this filesystem, it is swapped for ``fallback_dir``
+    (the local reference tokenizer already staged for this conversion, which has
+    the correct vocab). Leonardo-native checkpoints whose paths exist are left
+    untouched.
+    """
+    try:
+        from megatron.bridge.training.mlm_compat import arguments as _mlm_args
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("Tokenizer fallback not installed (mlm_compat import failed: %s)", exc)
+        return
+
+    orig = _mlm_args._tokenizer_config_from_args
+    if getattr(orig, "_oellm_tokenizer_fallback", False):
+        return
+
+    def _patched(args):
+        cfg = orig(args)
+        tok_model = getattr(cfg, "tokenizer_model", None)
+        if tok_model and not Path(tok_model).exists():
+            LOGGER.warning(
+                "Checkpoint tokenizer_model %r is absent on this filesystem; "
+                "redirecting to local reference tokenizer %s (used only for vocab size).",
+                tok_model,
+                fallback_dir,
+            )
+            try:
+                cfg.tokenizer_model = str(fallback_dir)
+            except Exception:  # noqa: BLE001 — frozen dataclass fallback
+                import dataclasses
+
+                cfg = dataclasses.replace(cfg, tokenizer_model=str(fallback_dir))
+        return cfg
+
+    _patched._oellm_tokenizer_fallback = True
+    _mlm_args._tokenizer_config_from_args = _patched
+
+
 def _run_convert(
     bridge_root: Path,
     megatron_path: Path,
@@ -182,6 +231,10 @@ def _run_convert(
 
     LOGGER.info("Loading AutoBridge from %s", hf_ref_model)
     bridge = AutoBridge.from_hf_pretrained(str(hf_ref_model), trust_remote_code=True)
+
+    # Heal cross-cluster checkpoints whose baked tokenizer path is absent here.
+    # The reference tokenizer staged into hf_ref_model has the correct vocab.
+    _install_tokenizer_fallback(hf_ref_model)
 
     # AutoBridge.export_ckpt() calls load_megatron_model without passing
     # model_type; for legacy MegatronLM checkpoints (no run_config.yaml) this
