@@ -1,0 +1,253 @@
+type: product
+
+# Megatron -> HuggingFace CONVERSION sweep for the 0.2B-ne dense grid.
+#
+# Mirrors qwen3_dense_0.2B_ne_val.yaml (same 22 (lr, gbsz) combos + same tier
+# metadata + same 1 stable / 9 decay stage shape), but instead of training/eval
+# params each sweep point derives the only two knobs the conversion job needs:
+#
+#   aux.run_name : the training run's job.name, byte-identical to the on-disk
+#                  training dir, e.g. qwen3_dense_0.2B_ne_lr0.001_gbsz128_decay120BT
+#   aux.iter     : the FINAL checkpoint of that run, iter_<zfill7(train_iters)>,
+#                  where train_iters = ceil(aux.tokens / (seq_length * gbsz)).
+#                  - stable: aux.tokens stays the combo's max_decay_tokens, so
+#                    the converted ckpt is the stable's end checkpoint.
+#                  - decay : aux.tokens is the per-stage budget, so it is the
+#                    decay run's last checkpoint.
+#
+# Unlike the TRAINING sweep, conversion has NO stable->decay dependency: every
+# training checkpoint already exists on disk, so (like the val sweep) there is
+# no start_condition / cancel_condition and NO mandatory tier launch order. The
+# tiers are pure prioritization knobs here; aux.priority_tier=all converts the
+# whole grid in one shot.
+#
+# All tier/derivation variables live under the TOP-LEVEL aux.* dict (RootConfig
+# has `aux: dict[str, Any]`) because the megatron_bridge backend has no
+# `backend.megatron` section. Override on the CLI as `aux.priority_tier=...`
+# (NOT backend.megatron.aux...).
+
+groups:
+  # GROUP 0: derive run_name + final-iter from the point's own params.
+  - type: list
+    configs:
+      - aux.run_name: "qwen3_dense_0.2B_ne_lr\\${aux.lr}_gbsz\\${aux.gbsz}_\\${stage}\\${aux.job_horizon_suffix}"
+        aux.iter: "iter_\\${oc.eval:'str((\\${aux.tokens}+\\${aux.seq_length}*\\${aux.gbsz}-1)//(\\${aux.seq_length}*\\${aux.gbsz})).zfill(7)'}"
+
+  # GROUP 1: Hyperparameter configurations (identical grid + tier metadata to
+  # the val sweep; only the key namespace differs: aux.lr / aux.gbsz instead of
+  # backend.megatron.lr / .global_batch_size, and aux.* for the tier sets).
+  - type: list
+    configs:
+      # ---- gbsz 32 ----
+      - aux.lr: 2.5e-4
+        aux.gbsz: 32
+        aux.tokens: 20_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "set()"
+        aux.diagonal_tokens_set: "{6_000_000_000, 12_000_000_000, 20_000_000_000}"
+        aux.stable_launch_tier:  diagonal
+      - aux.lr: 5.e-4
+        aux.gbsz: 32
+        aux.tokens: 20_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "{6_000_000_000, 12_000_000_000, 20_000_000_000}"
+        aux.diagonal_tokens_set: "set()"
+        aux.stable_launch_tier:  cross
+      - aux.lr: 1.e-3
+        aux.gbsz: 32
+        aux.tokens: 20_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "set()"
+        aux.diagonal_tokens_set: "{6_000_000_000, 12_000_000_000, 20_000_000_000}"
+        aux.stable_launch_tier:  diagonal
+
+      # ---- gbsz 64 ----
+      - aux.lr: 2.5e-4
+        aux.gbsz: 64
+        aux.tokens: 20_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "{6_000_000_000, 12_000_000_000, 20_000_000_000}"
+        aux.diagonal_tokens_set: "set()"
+        aux.stable_launch_tier:  cross
+      - aux.lr: 5.e-4
+        aux.gbsz: 64
+        aux.tokens: 30_000_000_000
+        aux.center_tokens_set:   "{6_000_000_000, 12_000_000_000, 20_000_000_000}"
+        aux.cross_tokens_set:    "set()"
+        aux.diagonal_tokens_set: "{30_000_000_000}"
+        aux.stable_launch_tier:  center
+      - aux.lr: 1.e-3
+        aux.gbsz: 64
+        aux.tokens: 30_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "{6_000_000_000, 12_000_000_000, 20_000_000_000, 30_000_000_000}"
+        aux.diagonal_tokens_set: "set()"
+        aux.stable_launch_tier:  cross
+      - aux.lr: 2.e-3
+        aux.gbsz: 64
+        aux.tokens: 30_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "set()"
+        aux.diagonal_tokens_set: "{30_000_000_000}"
+        aux.stable_launch_tier:  diagonal
+
+      # ---- gbsz 128 ----
+      - aux.lr: 2.5e-4
+        aux.gbsz: 128
+        aux.tokens: 20_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "set()"
+        aux.diagonal_tokens_set: "{6_000_000_000, 12_000_000_000, 20_000_000_000}"
+        aux.stable_launch_tier:  diagonal
+      - aux.lr: 5.e-4
+        aux.gbsz: 128
+        aux.tokens: 30_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "{6_000_000_000, 12_000_000_000, 20_000_000_000, 30_000_000_000}"
+        aux.diagonal_tokens_set: "set()"
+        aux.stable_launch_tier:  cross
+      - aux.lr: 1.e-3
+        aux.gbsz: 128
+        aux.tokens: 120_000_000_000
+        aux.center_tokens_set:   "{30_000_000_000}"
+        aux.cross_tokens_set:    "set()"
+        aux.diagonal_tokens_set: "{6_000_000_000, 12_000_000_000, 20_000_000_000, 50_000_000_000, 80_000_000_000, 120_000_000_000}"
+        aux.stable_launch_tier:  center
+      - aux.lr: 2.e-3
+        aux.gbsz: 128
+        aux.tokens: 120_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "{30_000_000_000, 50_000_000_000, 80_000_000_000, 120_000_000_000}"
+        aux.diagonal_tokens_set: "set()"
+        aux.stable_launch_tier:  cross
+      - aux.lr: 4.e-3
+        aux.gbsz: 128
+        aux.tokens: 120_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "set()"
+        aux.diagonal_tokens_set: "{50_000_000_000, 80_000_000_000, 120_000_000_000}"
+        aux.stable_launch_tier:  diagonal
+
+      # ---- gbsz 256 ----
+      - aux.lr: 5.e-4
+        aux.gbsz: 256
+        aux.tokens: 30_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "set()"
+        aux.diagonal_tokens_set: "{30_000_000_000}"
+        aux.stable_launch_tier:  diagonal
+      - aux.lr: 1.e-3
+        aux.gbsz: 256
+        aux.tokens: 300_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "{30_000_000_000, 50_000_000_000, 80_000_000_000, 120_000_000_000}"
+        aux.diagonal_tokens_set: "{200_000_000_000, 300_000_000_000}"
+        aux.stable_launch_tier:  cross
+      - aux.lr: 2.e-3
+        aux.gbsz: 256
+        aux.tokens: 300_000_000_000
+        aux.center_tokens_set:   "{50_000_000_000, 80_000_000_000, 120_000_000_000}"
+        aux.cross_tokens_set:    "{200_000_000_000, 300_000_000_000}"
+        aux.diagonal_tokens_set: "{30_000_000_000}"
+        aux.stable_launch_tier:  center
+      - aux.lr: 4.e-3
+        aux.gbsz: 256
+        aux.tokens: 300_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "{50_000_000_000, 80_000_000_000, 120_000_000_000}"
+        aux.diagonal_tokens_set: "{200_000_000_000, 300_000_000_000}"
+        aux.stable_launch_tier:  cross
+
+      # ---- gbsz 512 ----
+      - aux.lr: 1.e-3
+        aux.gbsz: 512
+        aux.tokens: 300_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "{200_000_000_000, 300_000_000_000}"
+        aux.diagonal_tokens_set: "{50_000_000_000, 80_000_000_000, 120_000_000_000}"
+        aux.stable_launch_tier:  cross
+      - aux.lr: 2.e-3
+        aux.gbsz: 512
+        aux.tokens: 300_000_000_000
+        aux.center_tokens_set:   "{200_000_000_000, 300_000_000_000}"
+        aux.cross_tokens_set:    "{50_000_000_000, 80_000_000_000, 120_000_000_000}"
+        aux.diagonal_tokens_set: "set()"
+        aux.stable_launch_tier:  center
+      - aux.lr: 4.e-3
+        aux.gbsz: 512
+        aux.tokens: 300_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "{200_000_000_000, 300_000_000_000}"
+        aux.diagonal_tokens_set: "{50_000_000_000, 80_000_000_000, 120_000_000_000}"
+        aux.stable_launch_tier:  cross
+
+      # ---- gbsz 1024 ----
+      - aux.lr: 1.e-3
+        aux.gbsz: 1024
+        aux.tokens: 300_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "set()"
+        aux.diagonal_tokens_set: "{200_000_000_000, 300_000_000_000}"
+        aux.stable_launch_tier:  diagonal
+      - aux.lr: 2.e-3
+        aux.gbsz: 1024
+        aux.tokens: 300_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "{200_000_000_000, 300_000_000_000}"
+        aux.diagonal_tokens_set: "set()"
+        aux.stable_launch_tier:  cross
+      - aux.lr: 4.e-3
+        aux.gbsz: 1024
+        aux.tokens: 300_000_000_000
+        aux.center_tokens_set:   "set()"
+        aux.cross_tokens_set:    "set()"
+        aux.diagonal_tokens_set: "{200_000_000_000, 300_000_000_000}"
+        aux.stable_launch_tier:  diagonal
+
+  # GROUP 2: stage shape (1 stable + 9 decay), identical budgets to train/val.
+  - type: list
+    configs:
+      # STABLE: convert the stable run's END checkpoint. aux.tokens stays the
+      # combo's max_decay_tokens (set in Group 1), so the final iter resolves to
+      # ceil(max_decay_tokens / (seq * gbsz)). job_horizon_suffix = "<max>BT"
+      # makes run_name end in "_stable<max>BT" to match the training dir.
+      - stage: stable
+        aux.job_horizon_suffix: "\\${oc.eval:'str(\\${aux.tokens}//1_000_000_000)+\"BT\"'}"
+
+      # DECAY: convert each decay run's final checkpoint. aux.tokens overrides to
+      # the per-stage budget; suffix is empty because the stage name already
+      # carries the budget (e.g. run_name ends in "_decay120BT").
+      - type: list
+        defaults:
+          aux.job_horizon_suffix: ""
+        configs:
+          - stage: decay6BT
+            aux.tokens: 6_000_000_000
+          - stage: decay12BT
+            aux.tokens: 12_000_000_000
+          - stage: decay20BT
+            aux.tokens: 20_000_000_000
+          - stage: decay30BT
+            aux.tokens: 30_000_000_000
+          - stage: decay50BT
+            aux.tokens: 50_000_000_000
+          - stage: decay80BT
+            aux.tokens: 80_000_000_000
+          - stage: decay120BT
+            aux.tokens: 120_000_000_000
+          - stage: decay200BT
+            aux.tokens: 200_000_000_000
+          - stage: decay300BT
+            aux.tokens: 300_000_000_000
+
+# Tier-routing filter + a stable-vs-decay selector (aux.convert_kind: all|stable|decay).
+# See qwen3_dense_0.9B_ne_convert.yaml for the full rationale.
+#
+# Job counts (per aux.priority_tier; matches the 0.2B val sweep exactly):
+#   all       22 stable + 81 decay = 103
+#   center     4 stable +  9 decay =  13
+#   cross     10 stable + 36 decay =  46
+#   diagonal   8 stable + 36 decay =  44
+# (convert_kind=stable / decay further restricts to just the stable / decay
+#  half of whichever tier is selected.)
+filter: "\\${oc.eval:'(((\"\\${stage}\" == \"stable\" and (\"\\${aux.priority_tier}\" == \"all\" or \"\\${aux.priority_tier}\" == \"\\${aux.stable_launch_tier}\")) or (\"\\${stage}\" != \"stable\" and ((\"\\${aux.priority_tier}\" == \"all\" and \\${aux.tokens} in \\${aux.center_tokens_set} | \\${aux.cross_tokens_set} | \\${aux.diagonal_tokens_set}) or (\"\\${aux.priority_tier}\" == \"center\" and \\${aux.tokens} in \\${aux.center_tokens_set}) or (\"\\${aux.priority_tier}\" == \"cross\" and \\${aux.tokens} in \\${aux.cross_tokens_set}) or (\"\\${aux.priority_tier}\" == \"diagonal\" and \\${aux.tokens} in \\${aux.diagonal_tokens_set})))) and (\"\\${aux.convert_kind}\" == \"all\" or (\"\\${aux.convert_kind}\" == \"stable\" and \"\\${stage}\" == \"stable\") or (\"\\${aux.convert_kind}\" == \"decay\" and \"\\${stage}\" != \"stable\")))'}"
