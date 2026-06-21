@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import shutil
 import sys
 import tempfile
@@ -188,6 +189,15 @@ def _run_convert(
     # `model_type in ("gpt", "mamba")` fails. Inline the equivalent flow so we
     # can pass model_type="gpt" explicitly.
     LOGGER.info("Loading Megatron checkpoint: %s", megatron_path)
+    # Conversion is a single-process (world_size=1, localhost) job. If both
+    # MASTER_ADDR and MASTER_PORT are set, temporary_distributed_context binds
+    # that exact port; the cluster slurm config hardcodes a shared MASTER_PORT
+    # (e.g. Leonardo's 20074), so several quarter-node convert jobs packed onto
+    # the same node would collide with EADDRINUSE. Clear them here so the bridge
+    # falls back to dynamically selecting a free ephemeral port per process.
+    for _var in ("MASTER_ADDR", "MASTER_PORT"):
+        if os.environ.pop(_var, None) is not None:
+            LOGGER.info("Cleared %s so a free port is auto-selected for conversion", _var)
     with temporary_distributed_context(backend="gloo"):
         megatron_model = _load_megatron_model(
             str(megatron_path),
@@ -257,6 +267,13 @@ def run_export(
 
         if derive_hf_arch:
             megatron_dict = _load_megatron_config(megatron_config)
+            # The training-config YAML can be stale: a run may be reconfigured
+            # mid-flight (e.g. num_query_groups changed) and the authoritative
+            # snapshot deleted, leaving only old ones. The checkpoint dir ships a
+            # `modelopt_run_config.yaml` dumped at save time, so it always matches
+            # the weights. Override the core architecture from it to guarantee
+            # config.json agrees with the tensors.
+            megatron_dict = _apply_checkpoint_arch_overrides(megatron_dict, megatron_path)
             tok_for_vocab = (
                 str(target_tokenizer) if isinstance(target_tokenizer, Path) else target_tokenizer
             )
@@ -287,6 +304,66 @@ def run_export(
             persist = hf_path.parent / (hf_path.name + ".staging")
             LOGGER.info("Preserving staging dir at %s", persist)
             shutil.copytree(tmp, persist)
+
+
+# Structural fields that MUST match the trained weights. Sourced from the
+# checkpoint-local modelopt_run_config.yaml (ground truth) rather than the
+# training YAML, which can drift from the actual checkpoint. These are exactly
+# the dims scripts/verify_hf_export.py cross-checks.
+_CKPT_ARCH_KEYS = (
+    "num_layers",
+    "hidden_size",
+    "num_attention_heads",
+    "num_query_groups",
+    "kv_channels",
+    "ffn_hidden_size",
+)
+
+
+def _apply_checkpoint_arch_overrides(megatron_dict: dict, megatron_path: Path) -> dict:
+    """Override core arch fields in ``megatron_dict`` with the checkpoint-local
+    ``modelopt_run_config.yaml`` values when they exist.
+
+    The training YAML provides the rich, cleanly-typed fields (vocab
+    padding, seq_length, dtype, activation), but its structural dims can
+    be stale. The checkpoint's modelopt dump is authoritative for the
+    architecture, so we let it win for the dims that must match the
+    weights, logging any disagreement.
+    """
+    moc = Path(megatron_path) / "modelopt_run_config.yaml"
+    if not moc.exists():
+        LOGGER.warning(
+            "No modelopt_run_config.yaml under %s; trusting training-config arch (could be stale).",
+            megatron_path,
+        )
+        return megatron_dict
+
+    try:
+        import yaml
+
+        ckpt = yaml.safe_load(moc.read_text())
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("Could not parse %s (%s); trusting training-config arch.", moc, exc)
+        return megatron_dict
+
+    if not isinstance(ckpt, dict):
+        return megatron_dict
+
+    for key in _CKPT_ARCH_KEYS:
+        ckpt_val = ckpt.get(key)
+        if ckpt_val is None:
+            continue
+        train_val = megatron_dict.get(key)
+        if train_val != ckpt_val:
+            LOGGER.warning(
+                "arch override from checkpoint: %s training=%r -> checkpoint=%r "
+                "(training config disagreed with the saved weights)",
+                key,
+                train_val,
+                ckpt_val,
+            )
+        megatron_dict[key] = ckpt_val
+    return megatron_dict
 
 
 def _load_megatron_config(src: Path | dict | None) -> dict:
