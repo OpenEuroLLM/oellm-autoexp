@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import shutil
 import sys
 import tempfile
@@ -188,6 +189,15 @@ def _run_convert(
     # `model_type in ("gpt", "mamba")` fails. Inline the equivalent flow so we
     # can pass model_type="gpt" explicitly.
     LOGGER.info("Loading Megatron checkpoint: %s", megatron_path)
+    # Conversion is a single-process (world_size=1, localhost) job. If both
+    # MASTER_ADDR and MASTER_PORT are set, temporary_distributed_context binds
+    # that exact port; the cluster slurm config hardcodes a shared MASTER_PORT
+    # (e.g. Leonardo's 20074), so several quarter-node convert jobs packed onto
+    # the same node would collide with EADDRINUSE. Clear them here so the bridge
+    # falls back to dynamically selecting a free ephemeral port per process.
+    for _var in ("MASTER_ADDR", "MASTER_PORT"):
+        if os.environ.pop(_var, None) is not None:
+            LOGGER.info("Cleared %s so a free port is auto-selected for conversion", _var)
     with temporary_distributed_context(backend="gloo"):
         megatron_model = _load_megatron_model(
             str(megatron_path),
