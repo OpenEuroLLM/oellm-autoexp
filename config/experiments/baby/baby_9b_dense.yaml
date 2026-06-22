@@ -1,0 +1,53 @@
+# @package _global_
+
+# 9B dense Qwen3-like model training
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: auto_cancel
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/baby/models: qwen3_dense_9b
+  - /backend/megatron/baby/data: oellm_256k_10TT_leonardo_train
+  - _self_
+
+job:
+  name: "baby_9b_dense"
+  # base_output_dir: /leonardo_work/OELLM_prod2026/production_training/${job.name}
+  base_output_dir: /leonardo_scratch/fast/OELLM_prod2026/production_training/${job.name}
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+  chain_repeat: 3
+
+backend:
+  megatron:
+    wandb_project: baby_9b_dense
+    wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
+    # data_cache_path: /leonardo_work/OELLM_prod2026/production_training/${job.name}/cache
+    data_cache_path: /leonardo_scratch/fast/OELLM_prod2026/production_training/${job.name}/cache
+
+
+    # EXIT safely on signal
+    exit_signal_handler: true
+    # 24h limit
+    exit_duration_in_mins: 1435
+
+slurm:
+  env:
+    HF_HOME: /leonardo_work/OELLM_prod2026/hf_cache/${oc.env:USER}
+    NCCL_DEBUG: info
+  sbatch:
+    nodes: 256
+    time: "24:00:00"
+    qos: qos_oellm
+    exclude: "lrdn[0337,0417,2658]"
+
+    # slurm signal to process to stop training and checkpoint right before time limit
+    signal: "TERM@240"
+
+  # make the sbatch script unique for every re-run
+  name: "job_${oc.timestring:}"
