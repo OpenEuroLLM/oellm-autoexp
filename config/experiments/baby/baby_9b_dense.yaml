@@ -15,7 +15,8 @@ defaults:
 
 job:
   name: "baby_9b_dense"
-  base_output_dir: /leonardo_work/OELLM_prod2026/production_training/${job.name}
+  # base_output_dir: /leonardo_work/OELLM_prod2026/production_training/${job.name}
+  base_output_dir: /leonardo_scratch/fast/OELLM_prod2026/production_training/${job.name}
   log_path: ${.base_output_dir}/logs/slurm-%j.log
   log_path_current: ${.base_output_dir}/logs/current.log
   config_path: ${.base_output_dir}/logs/config-%j.yaml
@@ -26,7 +27,9 @@ backend:
   megatron:
     wandb_project: baby_9b_dense
     wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
-    data_cache_path: ${job.base_output_dir}/cache
+    # data_cache_path: /leonardo_work/OELLM_prod2026/production_training/${job.name}/cache
+    data_cache_path: /leonardo_scratch/fast/OELLM_prod2026/production_training/${job.name}/cache
+
 
     # EXIT safely on signal
     exit_signal_handler: true
@@ -41,6 +44,8 @@ slurm:
     nodes: 256
     time: "24:00:00"
     qos: qos_oellm
+    exclude: "lrdn[0337,0417,2658]"
+
     # slurm signal to process to stop training and checkpoint right before time limit
     signal: "TERM@240"
 
