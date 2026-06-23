@@ -8,3 +8,7 @@
 	path = submodules/Megatron-Bridge
 	url = git@github.com:jmokoistinen/Megatron-Bridge.git
 	branch = feat/qwen3.5_conv
+[submodule "submodules/lm-evaluation-harness"]
+	path = submodules/lm-evaluation-harness
+	url = https://github.com/LumiOpen/lm-evaluation-harness.git
+	branch = main
