@@ -6,6 +6,7 @@ class_name: MegatronBackend
 
 python_cmd: "python"
 full_validation: false 
+dist_cmd: "${.python_cmd} ./submodules/Megatron-LM/pretrain_gpt.py"
 env:
   PYTHONPATH: ".:submodules/Megatron-LM"
   PROJECT_DIR: ${oc.env:PROJECT_DIR,"."}
