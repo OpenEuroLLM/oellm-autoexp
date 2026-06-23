@@ -1,0 +1,4 @@
+group: flores_en_fi
+task:
+  - ogx_flores200-trans-eng_Latn-fin_Latn
+  - ogx_flores200-trans-fin_Latn-eng_Latn
