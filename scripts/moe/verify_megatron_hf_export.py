@@ -364,11 +364,11 @@ def _maybe_fix_kv_channels(provider: Any, config: dict[str, Any]) -> None:
     if not (num_heads and hidden_size):
         return
 
-    derived = hidden_size // num_heads
     stored = _coerce_int(config.get("kv_channels"))
-    if stored is None or stored != derived:
+    if stored is None:
+        derived = hidden_size // num_heads
         provider.kv_channels = derived
-        print(f"kv_channels re-derived from hidden_size/num_heads: {hidden_size}/{num_heads} → {derived}")
+        print(f"kv_channels derived (missing in config): {hidden_size}/{num_heads} → {derived}")
 
 
 def _resolve_untie_embeddings(config: dict[str, Any]) -> bool:
