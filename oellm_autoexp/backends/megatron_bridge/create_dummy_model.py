@@ -16,6 +16,7 @@ from pathlib import Path
 
 
 def build_dummy_model(config_path: Path, tokenizer_path: Path, outdir: Path) -> None:
+    import torch
     from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
     if outdir.exists() and any(outdir.iterdir()):
@@ -24,7 +25,23 @@ def build_dummy_model(config_path: Path, tokenizer_path: Path, outdir: Path) -> 
 
     config = AutoConfig.from_pretrained(str(config_path))
     tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_path))
-    model = AutoModelForCausalLM.from_config(config)
+    # The dummy weights are throwaway — Bridge only reads the architecture from
+    # this model and overwrites every tensor with the Megatron checkpoint. Build
+    # it in the config's own dtype (typically bf16) instead of the default fp32,
+    # so a multi-billion-param model doesn't materialise/serialise tens of GB of
+    # needless fp32 weights (OOM + "No space left on device" risk).
+    dtype = getattr(config, "torch_dtype", None)
+    if isinstance(dtype, str):
+        dtype = getattr(torch, dtype, None)
+    try:
+        model = (
+            AutoModelForCausalLM.from_config(config, torch_dtype=dtype)
+            if dtype is not None
+            else AutoModelForCausalLM.from_config(config)
+        )
+    except TypeError:
+        # Older transformers don't accept torch_dtype in from_config.
+        model = AutoModelForCausalLM.from_config(config)
 
     model.save_pretrained(str(outdir))
     config.save_pretrained(str(outdir))

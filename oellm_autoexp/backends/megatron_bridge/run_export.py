@@ -79,12 +79,103 @@ def _stage_checkpoint(
     return staged
 
 
+def _tokenizer_load_blocker(tok_model: str) -> str | None:
+    """Return a reason string if the baked ``tokenizer_model`` can't be loaded
+    here (so it should be redirected to the reference tokenizer), else ``None``.
+
+    Two failure modes, both fatal to Bridge's ``build_tokenizer`` (which only
+    needs the vocab size during load):
+
+    1. The path is absent — typical for checkpoints trained on another cluster
+       that bake an absolute ``/gpfs/...`` path. Bridge treats it as a Hub repo
+       id and raises an ``HFValidationError``.
+    2. The path exists but is a *SentencePiece-only* tokenizer dir (a
+       ``tokenizer.model`` with no ``tokenizer.json``). Loading it via
+       ``AutoTokenizer`` needs the ``sentencepiece`` package, which isn't in the
+       conversion container; transformers then falls back to a TikToken parser
+       that chokes on the binary ``.model`` (``ValueError: Error parsing line``).
+    """
+    p = Path(tok_model)
+    if not p.exists():
+        return "absent on this filesystem"
+    if p.is_dir() and not (p / "tokenizer.json").exists():
+        return "a SentencePiece-only dir (no tokenizer.json; needs sentencepiece)"
+    if p.is_file() and p.suffix == ".model":
+        return "a raw SentencePiece .model (needs sentencepiece)"
+    return None
+
+
+def _install_tokenizer_fallback(fallback_dir: Path) -> None:
+    """Redirect a checkpoint's baked tokenizer path to a local dir when it can't
+    be loaded in this container.
+
+    Bridge's ``build_tokenizer`` is called only to compute the (padded) vocab
+    size while loading the model, so any tokenizer with the same vocab works. We
+    monkeypatch ``_tokenizer_config_from_args`` so that, when the baked
+    ``tokenizer_model`` is unusable here (see ``_tokenizer_load_blocker`` —
+    either missing, or a SentencePiece-only dir/file the container can't parse),
+    it is swapped for ``fallback_dir`` (the local reference tokenizer staged for
+    this conversion, which has the correct vocab *and* a ``tokenizer.json`` so it
+    loads without sentencepiece). Checkpoints whose paths load fine are left
+    untouched.
+    """
+    try:
+        from megatron.bridge.training.mlm_compat import arguments as _mlm_args
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("Tokenizer fallback not installed (mlm_compat import failed: %s)", exc)
+        return
+
+    orig = _mlm_args._tokenizer_config_from_args
+    if getattr(orig, "_oellm_tokenizer_fallback", False):
+        return
+
+    def _patched(args):
+        cfg = orig(args)
+        tok_model = getattr(cfg, "tokenizer_model", None)
+        reason = _tokenizer_load_blocker(tok_model) if tok_model else None
+        if reason is not None:
+            LOGGER.warning(
+                "Checkpoint tokenizer_model %r is %s; redirecting to local "
+                "reference tokenizer %s (used only for vocab size).",
+                tok_model,
+                reason,
+                fallback_dir,
+            )
+            try:
+                cfg.tokenizer_model = str(fallback_dir)
+            except Exception:  # noqa: BLE001 — frozen dataclass fallback
+                import dataclasses
+
+                cfg = dataclasses.replace(cfg, tokenizer_model=str(fallback_dir))
+        return cfg
+
+    _patched._oellm_tokenizer_fallback = True
+    _mlm_args._tokenizer_config_from_args = _patched
+
+
+def _share_embeddings_from_config(megatron: dict) -> bool | None:
+    """Resolve whether input embeddings and the output layer are tied.
+
+    Megatron expresses this two ways: ``share_embeddings_and_output_weights``
+    (positive) or ``untie_embeddings_and_output_weights`` (its negation, the form
+    the OpenEuroLLM training CLI uses). Return the *share* boolean, or ``None`` if
+    neither is present so the caller can fall back to a heuristic.
+    """
+    if megatron.get("share_embeddings_and_output_weights") is not None:
+        return bool(megatron["share_embeddings_and_output_weights"])
+    if megatron.get("untie_embeddings_and_output_weights") is not None:
+        return not bool(megatron["untie_embeddings_and_output_weights"])
+    return None
+
+
+
 def _run_convert(
     bridge_root: Path,
     megatron_path: Path,
     hf_ref_model: Path,
     hf_out: Path,
     extra_env: dict[str, str] | None = None,
+    share_embeddings: bool | None = None,
 ) -> None:
     """Convert via Bridge's Python API directly.
 
@@ -209,16 +300,31 @@ def _run_convert(
             megatron_model = [megatron_model]
 
         # Bridge's exporter reads `model_config.share_embeddings_and_output_weights`
-        # without a default; legacy MegatronLM checkpoints produce a
-        # TransformerConfig that doesn't have it. Derive from
-        # `untie_embeddings_and_output_weights` (the negation) when missing.
+        # to decide whether to emit a separate `lm_head` or tie it to the input
+        # embeddings. Legacy MegatronLM checkpoints produce a TransformerConfig
+        # that doesn't expose this field, so we must set it ourselves — and it is
+        # critical to get right: forcing `True` on an *untied* model exports
+        # `lm_head` as a copy of the embeddings, silently discarding the trained
+        # output projection. Prefer the authoritative value from the training/
+        # checkpoint config (`share_embeddings`); only fall back to the local
+        # attribute heuristic when that is unavailable.
         for _m in megatron_model:
             cfg = getattr(_m, "config", None)
-            if cfg is not None and not hasattr(cfg, "share_embeddings_and_output_weights"):
+            if cfg is None:
+                continue
+            if share_embeddings is not None:
+                cfg.share_embeddings_and_output_weights = share_embeddings
+                LOGGER.info(
+                    "Set model_config.share_embeddings_and_output_weights = %s "
+                    "(from training/checkpoint config)",
+                    share_embeddings,
+                )
+            elif not hasattr(cfg, "share_embeddings_and_output_weights"):
                 untie = getattr(cfg, "untie_embeddings_and_output_weights", False)
                 cfg.share_embeddings_and_output_weights = not untie
                 LOGGER.info(
-                    "Patched model_config.share_embeddings_and_output_weights = %s",
+                    "Patched model_config.share_embeddings_and_output_weights = %s "
+                    "(heuristic; no tie info in training config)",
                     cfg.share_embeddings_and_output_weights,
                 )
 
@@ -261,7 +367,12 @@ def run_export(
         else tokenizer  # fall back to HF Hub id
     )
 
-    with tempfile.TemporaryDirectory(prefix="mb_export_") as tmp:
+    # Stage on the same (large) filesystem as the final output rather than the
+    # default $TMPDIR (/tmp on a Leonardo compute node is tiny). The dummy HF
+    # model written here is the size of the model being converted — tens of GB
+    # for multi-billion-param checkpoints — which overflows /tmp. hf_path.parent
+    # was just created above and lives on the roomy work/scratch tree.
+    with tempfile.TemporaryDirectory(prefix="mb_export_", dir=hf_path.parent) as tmp:
         tmp = Path(tmp)
         dummy_dir = tmp / "dummy_hf_model"
 
@@ -294,8 +405,19 @@ def run_export(
             "Step 2/4: skipped (we call bridge.export_ckpt directly, no run_config.yaml needed)"
         )
 
+        # Resolve embedding/output-weight tying authoritatively from the
+        # training/checkpoint config so the exporter doesn't silently tie an
+        # untied model's lm_head to the input embeddings (which would discard the
+        # trained output projection). None -> let _run_convert fall back to its
+        # heuristic.
+        share_emb: bool | None = None
+        if derive_hf_arch:
+            share_emb = _share_embeddings_from_config(megatron_dict)
+        elif megatron_config is not None:
+            share_emb = _share_embeddings_from_config(_load_megatron_config(megatron_config))
+
         LOGGER.info("Step 3/4: bridge.export_ckpt (in-process)")
-        _run_convert(bridge_root, megatron_path, dummy_dir, hf_path)
+        _run_convert(bridge_root, megatron_path, dummy_dir, hf_path, share_embeddings=share_emb)
 
         LOGGER.info("Step 4/4: patch HF export to use target tokenizer %s", target_tokenizer)
         patch_config_and_tokenizer(hf_path=hf_path, tokenizer_path=str(target_tokenizer))
@@ -374,11 +496,30 @@ def _load_megatron_config(src: Path | dict | None) -> dict:
     src = Path(src)
     text = src.read_text()
     # Try yaml first (oellm-autoexp's rendered job config), fall back to json.
+    # Some training-config snapshots (e.g. the baby_9b runs) serialise LR-schedule
+    # fields with custom tags like `!!python/tuple`, which yaml.safe_load refuses
+    # to construct. Those snapshots are self-generated and trusted, so fall back to
+    # a full/unsafe loader (which understands python tuples) before giving up to
+    # JSON — otherwise safe_load's failure cascades into a misleading JSONDecodeError.
+    data = None
     try:
         import yaml
 
-        data = yaml.safe_load(text)
-    except Exception:
+        for _loader in (
+            yaml.safe_load,
+            getattr(yaml, "full_load", None),
+            getattr(yaml, "unsafe_load", None),
+        ):
+            if _loader is None:
+                continue
+            try:
+                data = _loader(text)
+                break
+            except Exception:  # noqa: BLE001 — try the next, more permissive loader
+                data = None
+    except Exception:  # noqa: BLE001 — pyyaml unavailable
+        data = None
+    if data is None:
         data = json.loads(text)
     # The orchestrator's `config-<jobid>.yaml` / `current.yaml` wraps the
     # resolved root under a top-level `config:` key. Megatron is nested at
