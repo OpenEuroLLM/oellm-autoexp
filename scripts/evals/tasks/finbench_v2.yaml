@@ -1,0 +1,33 @@
+# Local finbench_v2 group — aggregates only the sub-groups confirmed working in
+# lm-eval-env-v0.4.11. The upstream group_finbench_multi_mcf_fbv2 is broken
+# (references missing paraphrase + empirical_judgments task files), and several
+# other sub-groups have dataset config mismatches or filename typos in that install.
+#
+# Excluded (broken in v0.4.11):
+#   group_finbench_multi_mcf_fbv2       — missing paraphrase/empirical_judgments YAMLs
+#   group_arc_challenge_fi_multi_mcf_fbv2 — dataset ARC-C-fi-HT config mismatch
+#   group_scandisent_fi_multi_mcf_fbv2  — filename typo (pbv2 vs fbv2)
+#   group_goldenswag_multi_mcf_fbv2     — group references goldenswag_ht_fi but files are goldenswag_fi
+#   group_ogx_truthfulqax_multi_mc1_fbv2 — group references ..._fi_fbv2 but files omit _fi
+#
+# Usage:
+#   python -m lm_eval --tasks finbench_v2 --include_path /path/to/this/dir ...
+
+group: finbench_v2
+task:
+  # FinBench v1 tasks (5 subtasks, MCF scoring, multi-prompt averaged)
+  - group_finbench_multi_mcf_analogies_fbv2
+  - group_finbench_multi_mcf_emotions_1k_fbv2
+  - group_finbench_multi_mcf_general_knowledge_fbv2
+  - group_finbench_multi_mcf_hhh_alignment_fbv2
+  - group_finbench_multi_mcf_similarities_abstraction_fbv2
+  # Additional finbench_v2 datasets
+  - group_belebele_multi_mcf_fbv2
+  - group_sib200_fi_multi_mcf_fbv2
+aggregate_metric_list:
+  - metric: acc
+    aggregation: mean
+    weight_by_size: true
+  - metric: acc_norm
+    aggregation: mean
+    weight_by_size: true

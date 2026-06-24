@@ -1,6 +1,7 @@
 # @package _global_
 # Vanilla Megatron variant of the bilingual 150BT run.
-# Fully reshardable checkpoints for flexible DP scaling.
+# Plain DP-reshardable checkpoints; optimizer reshaping across arbitrary
+# parallel layouts is intentionally disabled for this run.
 defaults:
   - ../base
   - /backend: megatron
@@ -13,10 +14,9 @@ defaults:
 slurm:
   sbatch:
     partition: amd-tw-verification
-    nodes: 8
+    nodes: 1
     time: 0-72:00:00
     exclusive: true
-    ntasks_per_node: 1
 
   launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
     export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
@@ -92,9 +92,10 @@ backend:
       - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/Nemotron-CC-Math-v1-4plus_text_document
     # manual_gc: false
     data_cache_path: /shared_silo/scratch/rluukkon/data/.cache
+    num_dataset_builder_threads: 2
     split: "989,10,1"
     num_workers: 7
-    global_batch_size: 480
+    global_batch_size: 576
     micro_batch_size: 2
     expert_model_parallel_size: 8
     pipeline_model_parallel_size: 1
@@ -108,7 +109,6 @@ backend:
     overlap_moe_expert_parallel_comm: false
     overlap_param_gather: true
     overlap_grad_reduce: true
-
     adam_beta2: 0.95
     weight_decay: 0.01
 
@@ -127,11 +127,11 @@ backend:
 
     ckpt_format: torch_dist
     dist_ckpt_optim_fully_reshardable: false
-    save_interval: 1000
+    save_interval: 2200
     save_extra_steps:
       - ${oc.eval:'${backend.megatron.train_iters} - int(${backend.megatron.train_iters} * 0.2)'}
     save: ${job.base_output_dir}/checkpoints
-    exit_interval: 8000
+    exit_interval: 13200
 
     tensorboard_dir: ${job.base_output_dir}/tensorboard
     wandb_save_dir: "${job.base_output_dir}/wandb"
