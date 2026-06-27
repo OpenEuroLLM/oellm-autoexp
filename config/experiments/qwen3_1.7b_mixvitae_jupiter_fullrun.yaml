@@ -1,9 +1,4 @@
 # @package _global_
-#
-# qwen3-1.7B-Base pretraining on MixtureVitae-v1 (300B tokens).
-# 64 nodes (256 GH200 GPUs) on Jupiter; training schedule mirrors
-# opensci_ref_1.7b_mixvitae_jupiter.yaml. Auto-restart (state_events) and a
-# finish_condition are enabled so the run resumes across node failures.
 
 defaults:
   - /backend: megatron_torchrun_localaddr
@@ -38,12 +33,12 @@ backend:
     lr: 0.004
     global_batch_size: 1024
     micro_batch_size: 4
-    train_iters: 71526           # ceil(300B / (4096 * 1024))
+    train_iters: 71526
     lr_warmup_iters: 25000
     lr_decay_iters: 71526
     lr_decay_style: WSD
     lr_wsd_decay_style: linear
-    lr_wsd_decay_iters: 14305    # 1/5 of train_iters (cooldown)
+    lr_wsd_decay_iters: 14305
     min_lr: 0.0
     weight_decay: 0.05
     adam_beta2: 0.95
@@ -62,9 +57,6 @@ backend:
     split: "989,10,1"
     num_workers: 4
 
-    # TODO: expand to the full set of MixtureVitae-v1-32k_packed (Qwen-tokenized)
-    # shards before launching the 300B-token run. The two shards below are a
-    # placeholder/test subset and are NOT enough data for a real fullrun.
     data_path:
       - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/MixtureVitae-v1-32k_packed/business/business-0_text_document
       - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/MixtureVitae-v1-32k_packed/fineweb/fineweb-0_text_document
