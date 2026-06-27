@@ -88,3 +88,4 @@ slurm:
   sbatch:
     nodes: 1
     time: "00:15:00"
+    account: reformo

@@ -90,3 +90,4 @@ sweep:
 slurm:
   sbatch:
     time: "00:10:00"
+    account: reformo
