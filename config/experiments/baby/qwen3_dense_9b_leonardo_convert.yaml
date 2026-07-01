@@ -37,7 +37,7 @@ job:
 backend:
   hf_model: "Qwen/Qwen3-8B"
   tokenizer: "/leonardo_work/OELLM_prod2026/users/shaldar0/tokenizers/openeurollm-tokenizer-256k"
-  megatron_path: "/leonardo_work/OELLM_prod2026/production_training/baby_9b_dense/checkpoints/${oc.env:CKPT_ITER,iter_0067200}"
+  megatron_path: "/leonardo_scratch/fast/OELLM_prod2026/production_training/baby_9b_dense/checkpoints/${oc.env:CKPT_ITER,iter_0067200}"
   hf_path: "${oc.env:OUTPUT_DIR}/qwen3_9b_hf/${oc.env:CKPT_ITER,iter_0067200}"
   derive_hf_arch: "qwen3"
   megatron_config_path: "/leonardo_work/OELLM_prod2026/production_training/baby_9b_dense/logs/megatron_9b_config.json"
