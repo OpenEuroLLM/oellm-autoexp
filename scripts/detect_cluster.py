@@ -2,7 +2,7 @@
 """Infer cluster identity (name, partition, account) from hostname patterns.
 
 Sources:
-  https://github.com/OpenEuroLLM/oellm-cli/blob/main/oellm/resources/clusters.yaml
+  https://github.com/OpenEuroLLM/oellm-evals/blob/main/oellm/resources/clusters.yaml
   TensorWave (MI325X): tus1-vm-amd-misc-NN
 
 Usage (print cluster name):
@@ -33,7 +33,7 @@ class ClusterInfo:
     hostname_patterns: list[str]
 
 
-# Source: https://github.com/OpenEuroLLM/oellm-cli/blob/main/oellm/resources/clusters.yaml
+# Source: https://github.com/OpenEuroLLM/oellm-evals/blob/main/oellm/resources/clusters.yaml
 # First match wins.
 _CLUSTERS: list[ClusterInfo] = [
     ClusterInfo("lumi", "standard-g", "project_462000963", ["uan*"]),

@@ -1,0 +1,4 @@
+# @package backend
+# Preset: Megatron checkpoint → HuggingFace Qwen3-0.6B with the same tokenizer.
+hf_model: "Qwen/Qwen3-0.6B"
+tokenizer: "Qwen/Qwen3-0.6B"

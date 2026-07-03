@@ -1,0 +1,16 @@
+defaults:
+  - juwels
+  - _self_
+
+# JUWELS slurm config without singularity wrapper — activates a venv instead.
+# Used by backends that ship as a pip-installed CLI (e.g. oellm-evals for eval)
+# rather than running inside a training container. The stage 2025 Python
+# bundle sets a noisy PYTHONPATH; we unset it so the venv's site-packages
+# wins (otherwise Python 3.13 system pandas tries to import into the
+# 3.12 venv and crashes).
+launcher_cmd: "\
+  export LOCAL_ADDR=$(nslookup $(hostname | sed \"s/.juwels//\" )i \
+   | grep \"Address: \" | tail -n1 | sed \"s/.*Address: //\") ;\\\n \
+  unset PYTHONPATH ;\\\n \
+  ${oc.join:'',${oc.mapkeyvaltmpl:'export %k=%v ; \\\n',${backend.env}}} \
+  source ${container.venv_path}/bin/activate ;\\\n"

@@ -139,7 +139,7 @@ class MegatronBackend(BaseBackend):
         args = asdict(self.config.megatron)
         # remove potential extension
         if "_non_strict" in args:
-            args.remove("_non_strict")
+            args.remove("_non_strict")  # outdated compoconf check (not necessary as of v0.1.16)
         if self._schema_only:
             # Schema-only validation: basic type checking against MegatronConfig
             self._validate_schema_only(args)
