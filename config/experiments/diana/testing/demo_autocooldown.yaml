@@ -1,0 +1,68 @@
+# @package _global_
+# DEMO: autocooldown pattern — stable phase + multiple decay stages
+
+defaults:
+  - /backend: megatron_torchrun
+  - /sweep: none
+  - _self_
+
+stage: ""
+
+job:
+  name: "mymodel_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_${stage}"
+  base_output_dir: "results/${job.name}"
+
+backend:
+  megatron:
+    # ... model / data / optimizer / logging config ...
+
+    lr_decay_style: WSD
+    save_interval: 1000
+    save: ${job.base_output_dir}/checkpoints
+
+    aux:
+      tokens: ???          # set per stage
+      decay_fraction: 0.0  # overridden to 0.2 in decay stages
+      start_iter: 0
+      start_iter_round: 0
+
+sweep:
+  type: list
+  configs:
+
+    # STABLE: full run, no decay
+    - stage: stable
+      backend.megatron.aux.tokens: 300_000_000_000
+      backend.megatron.train_iters: "\\${oc.eval:'...'}"
+      backend.megatron.lr_wsd_decay_iters: 0
+
+    # DECAY stages: each inherits shared settings from `defaults`
+    - type: list
+      defaults:
+        backend.megatron.aux.decay_fraction: 0.2
+        backend.megatron.train_iters:          "\\${oc.eval:'...'}"
+        backend.megatron.lr_wsd_decay_iters:   "\\${oc.eval:'...'}"
+        backend.megatron.aux.start_iter: "\\${oc.eval:'...'}"
+
+        # Load checkpoint from the sibling stable run
+        backend.megatron.load:     "\\${sibling.stable.job.base_output_dir}/checkpoints"
+        backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter}"
+
+        # Wait for stable to reach the branching checkpoint
+        job.start_condition:
+          class_name: FileExistsCondition
+          path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(\\${...}).zfill(7)'}"
+
+        # Cancel if the stable job crashes
+        job.cancel_condition:
+          class_name: LogPatternCondition
+          log_path: "\\${sibling.stable.job.log_path_current}"
+          pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+
+      configs:
+        - stage: decay_120B
+          backend.megatron.aux.tokens: 120_000_000_000
+        - stage: decay_150B
+          backend.megatron.aux.tokens: 150_000_000_000
+        - stage: decay_200B
+          backend.megatron.aux.tokens: 200_000_000_000
