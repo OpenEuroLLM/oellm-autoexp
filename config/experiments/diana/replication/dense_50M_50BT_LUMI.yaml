@@ -30,12 +30,12 @@ backend:
 
     # DATA
     data_path: [
-      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/high/actual,
-      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/high/synthetic/distill,
-      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/high/synthetic/diverse_qa_pairs,
-      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/high/synthetic/extract_knowledge,
-      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/high/synthetic/knowledge_list,
-      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/high/synthetic/wrap_medium
+      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/merged/high-actual,
+      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/merged/high-synthetic-distil,
+      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/merged/high-synthetic-diverse_qa_pairs,
+      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/merged/high-synthetic-extract_knowledge,
+      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/merged/high-synthetic-knowledge_list,
+      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/merged/high-synthetic-wrap_medium
     ]
     data_cache_path: /scratch/project_465002530/users/dianaonutu/MEGATRON_SUBSAMPLE_CACHEDIR
     seq_length: 4096
