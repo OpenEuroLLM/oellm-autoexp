@@ -87,6 +87,8 @@ backend:
     bias_gelu_fusion: False
     bias_dropout_fusion: False
     gradient_accumulation_fusion: False
+    add_bias_linear: False
+    masked_softmax_fusion: False
 
     # DISTRIBUTED OPTIM
     use_distributed_optimizer: True
