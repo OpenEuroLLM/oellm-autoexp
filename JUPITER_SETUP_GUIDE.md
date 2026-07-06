@@ -55,14 +55,14 @@ bash container/build_container.sh --definition MegatronTraining-JUPITER
 
 ## 5. Megatron lives on the host, not in the .sif
 
-Loaded at runtime via `PYTHONPATH=.:submodules/Megatron-LM`. To swap Megatron: check out a different commit in the submodule, or point `backend.launcher_script` + `backend.env.PYTHONPATH` at another clone under `/e`.
+Loaded at runtime by way of `PYTHONPATH=.:submodules/Megatron-LM`. To swap Megatron: check out a different commit in the submodule, or point `backend.launcher_script` + `backend.env.PYTHONPATH` at another clone under `/e`.
 
 ## 6. Run
 
 ```bash
 export OUTPUT_DIR=/e/.../experiments
 export HF_HOME=/e/.../hf_home
-export CONTAINER_CACHE_DIR=/e/.../   
+export CONTAINER_CACHE_DIR=/e/.../
 export OELLM_DATASETS_TOKENIZED_DIR=/e/.../tokenized_data
 export OELLM_CACHE_DIR=/e/.../.cache
 
@@ -75,7 +75,7 @@ PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/<you>/<exp>
 
 ### 7.1. Throughput sweep (N nodes × 3 trials, 5 min each)
 
-`throughput_sweep_qwen3_1.7b_jupiter_repro.yaml` is a `product` sweep over `slurm.sbatch.nodes` × `backend.megatron.aux.trial`. 
+`throughput_sweep_qwen3_1.7b_jupiter_repro.yaml` is a `product` sweep over `slurm.sbatch.nodes` × `backend.megatron.aux.trial`.
 
 Submit:
 

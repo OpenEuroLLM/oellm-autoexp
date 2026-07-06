@@ -1,19 +1,19 @@
 # Adding a New Backend
 
 A **backend** is a program that oellm-autoexp launches — usually
-via SLURM, optionally directly/local — driven by a typed config. The backend's
+by way of SLURM, optionally directly/local — driven by a typed config. The backend's
 only job is to turn that typed config into a **launch command string**; the
 orchestrator embeds that command in the SLURM/local script and handles
 submission and monitoring.
-If you just want to add an untyped bash command quickly, use the "NullBackend" as it 
+If you just want to add an untyped bash command quickly, use the "NullBackend" as it
 supports arbitrary bash commands - sacrificing the "check before submission" capability
-of the "type compilation".  
+of the "type compilation".
 
 Existing backends live in `oellm_autoexp/backends/` and are good references:
 
 - `megatron_backend.py` — Megatron-LM training (rich typed schema)
 - `titan_backend.py` — TorchTitan training (emits a TOML config file)
-- `oellm_eval_backend.py` — evaluation via `oellm-eval schedule` (compact, good template)
+- `oellm_eval_backend.py` — evaluation by way of `oellm-eval schedule` (compact, good template)
 - `megatron_bridge_backend.py` — checkpoint conversion
 - `base.py::NullBackend` — minimal echo backend for tests
 
@@ -91,15 +91,15 @@ Notes:
 - For a schema with many typed fields, put it in a subpackage
   `backends/<name>/config_schema.py` (see `backends/megatron/`, `backends/titan/`).
 - `env` is merged into the job environment; SLURM/nnodes/GPU values are available
-  via OmegaConf interpolation in the YAML (e.g. `${slurm.sbatch.nodes}`).
+  by way of OmegaConf interpolation in the YAML (for example `${slurm.sbatch.nodes}`).
 - It is generally recommended to define a new backend yourself, but you can also just use
-  "NullBackend" with a given command. This is for simple commands where you don't need 
-  typed information. 
+  "NullBackend" with a given command. This is for simple commands where you don't need
+  typed information.
 
 
 ### 2. Register the module (two import sites)
 
-Registration happens here via import side effects of `@register`. Add your module to both:
+Registration happens here by way of import side effects of `@register`. Add your module to both:
 
 - `oellm_autoexp/config/loader.py` → the tuple in `_ensure_registrations()`
 - `oellm_autoexp/orchestrator.py` → the `import ... # noqa - register` block
@@ -111,7 +111,7 @@ import oellm_autoexp.backends.my_backend  # noqa  - register   # orchestrator.py
 
 ### 3. Add the default YAML
 
-Create `config/backend/<name>.yaml` (selectable via `backend=<name>`):
+Create `config/backend/<name>.yaml` (selectable by way of `backend=<name>`):
 
 ```yaml
 class_name: MyBackend
@@ -127,7 +127,7 @@ If your config uses a nested schema group, add a `defaults:` list plus `_self_`
 
 ### 4. Use it
 
-Select the backend from an experiment config or on the CLI via override:
+Select the backend from an experiment config or on the CLI by way of override:
 
 ```
 backend=<name>
