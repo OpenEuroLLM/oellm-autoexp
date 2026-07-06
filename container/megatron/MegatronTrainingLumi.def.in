@@ -38,5 +38,5 @@ cd /workspace/oellm-autoexp
 python scripts/run_autoexp.py --help >/dev/null
 
 %help
-    A custom built container built on top of laif-rocm-6.4.4-pytorch-2.9.1-te-2.4.0-fa-2.8.0-triton-3.2.0-2026-03-19.sif 
+    A custom built container built on top of laif-rocm-6.4.4-pytorch-2.9.1-te-2.4.0-fa-2.8.0-triton-3.2.0-2026-03-19.sif
     for OELLM AutoExp
