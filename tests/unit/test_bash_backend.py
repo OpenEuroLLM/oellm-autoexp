@@ -69,10 +69,22 @@ def test_auto_cancel_sweep_expands_to_per_event_bash_jobs():
     assert "on test set" in cmds["auto_cancel__finish_eval"]
     assert "Exited with exit code 1" in cmds["auto_cancel__restart_on_error"]
     assert "DUE TO TIME LIMIT" in cmds["auto_cancel__finish_on_time_limit"]
-    assert "sleep 100000" in cmds["auto_cancel__cancel_on_silent_stall"]
+    assert "sleep " in cmds["auto_cancel__cancel_on_silent_stall"]
     assert "srun: error" in cmds["auto_cancel__srun_spam_not_cancelled"]
 
     # The events the sweep targets are actually present in auto_cancel.yaml.
     events = {e.name: e.action.class_name for e in plan.jobs[0].config.job.log_events}
     assert events["inactive"] == "CancelAction"
     assert "error" in events
+
+    # The silent-stall job overrides the inactive thresholds per-job (so a fresh
+    # plan bakes them into its state file) while others keep the defaults.
+    by_name = {j.config.job.name: j for j in plan.jobs}
+
+    def _inactive(job):
+        return next(e for e in job.config.job.log_events if e.name == "inactive")
+
+    stall = _inactive(by_name["auto_cancel__cancel_on_silent_stall"])
+    assert (stall.inactivity_polls, stall.inactivity_timeout_s) == (1, 60.0)
+    default = _inactive(by_name["auto_cancel__finish_training"])
+    assert (default.inactivity_polls, default.inactivity_timeout_s) == (5, 300.0)

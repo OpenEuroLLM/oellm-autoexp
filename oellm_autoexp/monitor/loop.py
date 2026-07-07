@@ -28,10 +28,16 @@ from oellm_autoexp.monitor.actions import (
     ActionResult,
     BaseMonitorAction,
     NewJobActionConfig,
+    UpdateChainExcludesActionConfig,
 )
+from oellm_autoexp.hydra_staged_sweep.config.resolvers import oc_exclude_nodes
 from oellm_autoexp.monitor.job_client_protocol import JobClientProtocol
 from oellm_autoexp.monitor.submission import JobInterface, SlurmJobConfig, LocalJobConfig
-from oellm_autoexp.monitor.utils.paths import resolve_log_path
+from oellm_autoexp.monitor.utils.paths import (
+    resolve_log_path,
+    expand_log_path,
+    update_log_symlink,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -181,6 +187,10 @@ class MonitorLoop:
             runtime = job.runtime
             runtime_id = runtime.runtime_job_id
             new_status = statuses.get(runtime_id) if runtime_id else None
+            # On entering RUNNING, re-point the current.* symlinks at this job so
+            # a shared 'current' symlink (dependency chain) tracks the running job.
+            if runtime_id and new_status == "RUNNING" and runtime.last_status != "RUNNING":
+                self._update_current_symlinks(job)
             status_effect = self._status_action(job, runtime.last_status, new_status)
             runtime.last_status = new_status
             if self._apply_effect(job, status_effect, runtime_id):
@@ -633,22 +643,49 @@ class MonitorLoop:
         return metadata
 
     def _resolve_log_path(self, job: JobRecord) -> Path:
+        """Resolve the job's OWN per-job log file (e.g. slurm-<jobid>.log).
+
+        Deliberately does NOT use ``log_path_current``: in a dependency chain all
+        jobs share one base_output_dir, so a shared 'current' symlink would make
+        every job read whichever job is currently running (cross-contamination).
+        The current.* symlinks are a tailing convenience maintained separately by
+        :meth:`_update_current_symlinks` on the RUNNING transition.
+        """
         definition = job.definition
-        job_id = job.runtime.runtime_job_id or job.job_id
         runtime = job.runtime
-        if "_" in job_id:
-            array_index = int(job_id.split("_")[-1])
-        else:
-            array_index = 0
-        if definition.log_path_current:
-            log_path_cur = definition.log_path_current.replace("%a", str(array_index))
-            return Path(log_path_cur)
         timestamp = int(runtime.start_ts or time.time())
         return resolve_log_path(
             definition.log_path,
             job_id=runtime.runtime_job_id or job.job_id,
             timestamp=timestamp,
         )
+
+    def _update_current_symlinks(self, job: JobRecord) -> None:
+        """Point the job's current.* symlinks at its own log/config.
+
+        Called when a job enters RUNNING so that, in a dependency chain
+        (all jobs share one base_output_dir), current.log / current.yaml
+        track the job that is actually running rather than the last-
+        submitted one. Convenience only; the monitor reads each job's
+        own per-job log (see _resolve_log_path).
+        """
+        definition = job.definition
+        runtime_id = job.runtime.runtime_job_id
+        if not runtime_id:
+            return
+        array_suffix = runtime_id.split("_")[-1] if "_" in runtime_id else "0"
+        log_current = getattr(definition, "log_path_current", None)
+        if log_current and getattr(definition, "log_path", None):
+            update_log_symlink(
+                expand_log_path(definition.log_path, runtime_id),
+                Path(log_current.replace("%a", array_suffix)),
+            )
+        config_current = getattr(definition, "config_path_current", None)
+        if config_current and getattr(definition, "config_path", None):
+            update_log_symlink(
+                expand_log_path(definition.config_path, runtime_id),
+                Path(config_current.replace("%a", array_suffix)),
+            )
 
     def _update_action_state(self, job: JobRecord, action_id: str, result) -> None:
         runtime = job.runtime
@@ -689,8 +726,57 @@ class MonitorLoop:
                 result.action_config.job_config, SlurmJobConfig
             ):
                 self._submit_slurm_job(result.action_config.job_config)
+            elif isinstance(result.action_config, UpdateChainExcludesActionConfig):
+                self._update_chain_excludes(result, job)
 
         return "continue"
+
+    def _update_chain_excludes(self, result: ActionResult, current_job: JobRecord) -> None:
+        """Set the current exclusion list on every pending sibling chain job.
+
+        Reads the exclusion file (resolved by the action and carried in
+        ``result.metadata``), then runs ``scontrol update ... ExcNodeList=`` on
+        each *pending* Slurm job in the store other than ``current_job``. Pending
+        is the only state SLURM lets us edit live; the failing/running job that
+        triggered this is skipped (restart it separately to pick up the node).
+        """
+        if self._slurm_client is None:
+            return
+        exclude_file = (result.metadata or {}).get("exclude_file") or getattr(
+            result.action_config, "exclude_file", ""
+        )
+        nodelist = oc_exclude_nodes(exclude_file)
+        if not nodelist:
+            LOGGER.info(
+                "UpdateChainExcludes: exclusion list empty (%s), nothing to do", exclude_file
+            )
+            return
+
+        statuses = self._slurm_client.squeue()
+        updated: list[str] = []
+        for sibling in self._store.load_all():
+            if sibling.job_id == current_job.job_id:
+                continue
+            if not isinstance(sibling.definition, SlurmJobConfig):
+                continue
+            runtime_id = sibling.runtime.runtime_job_id
+            if not runtime_id or not sibling.runtime.submitted:
+                continue
+            # Only pending jobs can be live-edited; treat "not yet visible in
+            # squeue" (None) as pending since chain jobs are queued up front.
+            if statuses.get(runtime_id) not in (None, "PENDING"):
+                continue
+            try:
+                self._slurm_client.update_excludes(runtime_id, nodelist)
+                updated.append(runtime_id)
+            except Exception as exc:
+                LOGGER.warning("UpdateChainExcludes: failed to update job %s: %s", runtime_id, exc)
+        LOGGER.info(
+            "UpdateChainExcludes: set ExcNodeList=%s on %d pending chain job(s): %s",
+            nodelist,
+            len(updated),
+            updated,
+        )
 
     def _restart_job(self, job: JobRecord) -> None:
         """Restart job preserving condition_state, action_state, and
