@@ -34,13 +34,12 @@ backend:
     # EXIT safely on signal
     exit_signal_handler: true
     # 24h limit
-    exit_duration_in_mins: 1435
+    exit_duration_in_mins: 1410
 
 slurm:
   env:
     HF_HOME: /leonardo_work/OELLM_prod2026/hf_cache/${oc.env:USER}
     NCCL_DEBUG: info
-    
   sbatch:
     nodes: 256
     time: "24:00:00"
