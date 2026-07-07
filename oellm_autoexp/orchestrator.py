@@ -28,6 +28,8 @@ import oellm_autoexp.postprocess.megatron_dist_to_torch  # noqa  - register
 import oellm_autoexp.postprocess.megatron_to_hf  # noqa  - register
 import oellm_autoexp.postprocess.oellm_eval  # noqa  - register
 import oellm_autoexp.backends.titan_backend  # noqa  - register
+import oellm_autoexp.backends.oellm_eval_backend  # noqa  - register
+import oellm_autoexp.backends.megatron_bridge_backend  # noqa  - register
 from oellm_autoexp.config.schema import (
     RootConfig,
     ConfigSetup,

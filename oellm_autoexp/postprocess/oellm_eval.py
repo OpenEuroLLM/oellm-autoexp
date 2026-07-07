@@ -1,4 +1,4 @@
-"""Oellm-cli evaluation step (submits eval as a separate SLURM job)."""
+"""Oellm-evals evaluation step (submits eval as a separate SLURM job)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from oellm_autoexp.postprocess.base import PostProcessStepInterface
 
 @dataclass(kw_only=True)
 class OELLMEvalStepConfig(ConfigInterface):
-    """Config for running oellm-cli evaluation."""
+    """Config for running oellm-evals evaluation."""
 
     class_name: str = "OELLMEvalStep"
 
@@ -34,7 +34,7 @@ class OELLMEvalStep(PostProcessStepInterface):
         task_groups_args = shlex.join(cfg.task_groups)
 
         parts = [
-            "oellm schedule-eval",
+            "oellm-eval schedule",
             f"--models {shlex.quote(cfg.model_path)}",
             f"--task_groups {task_groups_args}",
         ]
