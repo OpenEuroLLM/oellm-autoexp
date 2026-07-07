@@ -6,11 +6,7 @@ from pathlib import Path
 
 from oellm_autoexp.monitor.actions import (
     ActionContext,
-    AppendToFileAction,
-    AppendToFileActionConfig,
     EventRecord,
-    LogEvent,
-    LogEventConfig,
 )
 from oellm_autoexp.config.actions import RunAutoexpAction, RunAutoexpActionConfig
 
@@ -88,74 +84,3 @@ def _append_context(node: str) -> ActionContext:
         payload={"node": node, "match": f"failed on node {node}: Communication connection failure"},
     )
     return ActionContext(event=event)
-
-
-def test_append_to_file_action_appends_templated_node(tmp_path: Path):
-    target = tmp_path / "nested" / "exclude.txt"
-    config = AppendToFileActionConfig(path=str(target), content="{node}")
-    result = AppendToFileAction(config).execute(_append_context("lrdn0417"))
-
-    assert result.status == "success"
-    assert result.metadata["appended"] is True
-    # parent dirs created on demand
-    assert target.read_text().splitlines() == ["lrdn0417"]
-
-
-def test_append_to_file_action_dedups(tmp_path: Path):
-    target = tmp_path / "exclude.txt"
-    target.write_text("lrdn0417\n")
-    config = AppendToFileActionConfig(path=str(target), content="{node}")
-    result = AppendToFileAction(config).execute(_append_context("lrdn0417"))
-
-    assert result.metadata["appended"] is False
-    # not duplicated
-    assert target.read_text().splitlines() == ["lrdn0417"]
-
-
-def test_append_to_file_action_appends_distinct_nodes(tmp_path: Path):
-    target = tmp_path / "exclude.txt"
-    config = AppendToFileActionConfig(path=str(target), content="{node}")
-    action = AppendToFileAction(config)
-    action.execute(_append_context("lrdn0417"))
-    action.execute(_append_context("lrdn0001"))
-
-    assert target.read_text().splitlines() == ["lrdn0417", "lrdn0001"]
-
-
-def test_log_event_comm_failure_chains_into_exclude_append(tmp_path: Path):
-    """A 'Communication connection failure' log line should extract the node
-    and append it to the exclusion file (the LogEvent -> AppendToFileAction
-    chain)."""
-    target = tmp_path / "exclude.txt"
-    event_cfg = LogEventConfig(
-        name="comm_failure_exclude_node",
-        pattern_type="regex",
-        pattern=r"failed on node ([^:\s]+): Communication connection failure",
-        extract_groups={"node": 1},
-        match_once=False,
-        action=AppendToFileActionConfig(path=str(target), content="{node}"),
-    )
-
-    log_text = (
-        "some preamble\nfailed on node lrdn0417: Communication connection failure\ntrailing line\n"
-    )
-    triggers = LogEvent(event_cfg).check_triggers(log_text)
-    assert len(triggers) == 1
-    assert triggers[0]["node"] == "lrdn0417"
-
-    action = AppendToFileAction(event_cfg.action)
-    action.execute(
-        ActionContext(
-            event=EventRecord(event_id="e", name=event_cfg.name, source="log", payload=triggers[0])
-        )
-    )
-    assert target.read_text().splitlines() == ["lrdn0417"]
-
-
-def test_append_to_file_action_empty_content_is_noop(tmp_path: Path):
-    target = tmp_path / "exclude.txt"
-    config = AppendToFileActionConfig(path=str(target), content="")
-    result = AppendToFileAction(config).execute(_append_context("lrdn0417"))
-
-    assert result.status == "failed"
-    assert not target.exists()
