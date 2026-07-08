@@ -81,7 +81,8 @@ def _stage_checkpoint(
 
 def _tokenizer_load_blocker(tok_model: str) -> str | None:
     """Return a reason string if the baked ``tokenizer_model`` can't be loaded
-    here (so it should be redirected to the reference tokenizer), else ``None``.
+    here (so it should be redirected to the reference tokenizer), else
+    ``None``.
 
     Two failure modes, both fatal to Bridge's ``build_tokenizer`` (which only
     needs the vocab size during load):
@@ -106,8 +107,8 @@ def _tokenizer_load_blocker(tok_model: str) -> str | None:
 
 
 def _install_tokenizer_fallback(fallback_dir: Path) -> None:
-    """Redirect a checkpoint's baked tokenizer path to a local dir when it can't
-    be loaded in this container.
+    """Redirect a checkpoint's baked tokenizer path to a local dir when it
+    can't be loaded in this container.
 
     Bridge's ``build_tokenizer`` is called only to compute the (padded) vocab
     size while loading the model, so any tokenizer with the same vocab works. We
@@ -449,16 +450,16 @@ def _apply_checkpoint_arch_overrides(megatron_dict: dict, megatron_path: Path) -
     """Override core arch fields in ``megatron_dict`` with the checkpoint-local
     ``modelopt_run_config.yaml`` values when they exist.
 
-    The training YAML provides the rich, cleanly-typed fields (vocab padding,
-    seq_length, dtype, activation), but its structural dims can be stale. The
-    checkpoint's modelopt dump is authoritative for the architecture, so we let
-    it win for the dims that must match the weights, logging any disagreement.
+    The training YAML provides the rich, cleanly-typed fields (vocab
+    padding, seq_length, dtype, activation), but its structural dims can
+    be stale. The checkpoint's modelopt dump is authoritative for the
+    architecture, so we let it win for the dims that must match the
+    weights, logging any disagreement.
     """
     moc = Path(megatron_path) / "modelopt_run_config.yaml"
     if not moc.exists():
         LOGGER.warning(
-            "No modelopt_run_config.yaml under %s; trusting training-config arch "
-            "(could be stale).",
+            "No modelopt_run_config.yaml under %s; trusting training-config arch (could be stale).",
             megatron_path,
         )
         return megatron_dict
