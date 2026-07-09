@@ -1,6 +1,6 @@
 # @package _global_
 #
-# Run oellm-cli on open-sci-0.01 task group.
+# Run oellm-evals on open-sci-0.01 task group.
 
 postprocess:
   eval:

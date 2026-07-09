@@ -1,0 +1,6 @@
+# Heavy tokenizer data files are not tracked in git.
+# Use `python scripts/download_tokenizers.py` to populate.
+tokenizer.json
+tokenizer.model
+vocab.json
+merges.txt

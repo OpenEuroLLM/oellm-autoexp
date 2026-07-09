@@ -182,12 +182,16 @@ def analyze_job(
     threshold = avg_tflop * LOW_THROUGHPUT_FRACTION
 
     # Scan ALL iterations (no elapsed-time filter) to count and time low-TP events.
+    # Skip the first skip_first_iters so they are not double-counted with TTFI:
+    # TTFI is measured from job start through the timestamp of the first logged
+    # iteration, which includes the wall time of those warmup iters.
     rows = _parse_log_iterations(log_path)
     if not rows:
         return empty
 
-    low_elapsed_ms = sum(et for _it, et, tflop in rows if tflop < threshold)
-    n_low = sum(1 for _it, _et, tflop in rows if tflop < threshold)
+    rows_post_warmup = [(it, et, tflop) for it, et, tflop in rows if it > skip_first_iters]
+    low_elapsed_ms = sum(et for _it, et, tflop in rows_post_warmup if tflop < threshold)
+    n_low = sum(1 for _it, _et, tflop in rows_post_warmup if tflop < threshold)
 
     time_lost_h = low_elapsed_ms / 1_000 / 3_600
     gpu_h_lost = (time_lost_h * num_gpus) if num_gpus is not None else None
@@ -376,7 +380,10 @@ def main() -> None:
 
     W = max(len(r["run_name"]) for r in results) + 2
 
-    header = f"{'Run':<{W}}  {'LowTP-Iters':>12}  {'AvgTFLOP':>9}  {'TimeLost(h)':>12}  {'GPU-h Lost':>11}  {'GPUs':>5}"
+    header = (
+        f"{'Run':<{W}}  {'LowTP-Iters':>12}  {'AvgTFLOP':>9}"
+        f"  {'TimeLost(h)':>12}  {'GPU-h Lost':>11}  {'GPUs':>5}"
+    )
     sep = "─" * len(header)
     print(sep)
     print(header)
@@ -390,7 +397,8 @@ def main() -> None:
         gpus_str = str(r["num_gpus"]) if r["num_gpus"] is not None else "N/A"
 
         print(
-            f"{r['run_name']:<{W}}  {n_str:>12}  {avg_str:>9}  {tl_str:>12}  {gl_str:>11}  {gpus_str:>5}"
+            f"{r['run_name']:<{W}}  {n_str:>12}  {avg_str:>9}"
+            f"  {tl_str:>12}  {gl_str:>11}  {gpus_str:>5}"
         )
 
     print(sep)
