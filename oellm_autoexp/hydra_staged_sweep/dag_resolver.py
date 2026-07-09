@@ -327,6 +327,11 @@ def param_to_cmdlines(key: str, val: Any, prefix: str = "", config_dir: str | Pa
         val = val.replace('"', '\\"')
         return [f'{prefix}{key}="{val}"']
     elif isinstance(val, list) and all(isinstance(item, str) for item in val):
+        if any("$" in item for item in val):
+            # Items contain OmegaConf interpolations; Hydra's [a,b] literal grammar
+            # can't represent them. Fall through to the placeholder + dotted-path
+            # pattern (key=[0,1,...], key.0=val0, ...) implemented in dict_to_cmdlines.
+            return config_to_cmdline(val, override=prefix or "++", prefix=key)
         # Format as Hydra config group list: subconfig=[a,b]
         list_str = "[" + ",".join(val) + "]"
         return [f"{prefix}{key}={list_str}"]

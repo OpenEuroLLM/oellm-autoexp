@@ -3,11 +3,17 @@ defaults:
   - _self_
 
 template_path: templates/juwels.sbatch
+# NOTE: the entire launcher_cmd lives inside `bash -c '...'` in the
+# generated sbatch (see templates/juwels.sbatch). That means any literal
+# single quote in this string terminates the outer quote and breaks bash
+# parsing. The old version used `awk '{print $2}'` which broke under the
+# wrapper — switched to `sed "s/.*Address: //"` (double quotes) so the
+# launcher_cmd stays single-quote-free.
 launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \\\n\
  export LOCAL_ADDR=$(nslookup $(hostname | sed \"s/.juwels//\" )i \
-  | grep \"Address: \" | tail -n1 | awk '{print $2}') ; \
+  | grep \"Address: \" | tail -n1 | sed \"s/.*Address: //\") ; \
   ${oc.select:container.runtime,apptainer} exec ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}}\
- --nv ${oc.select:container.image,container.sif}"
+ --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif}"
 srun:
   exclusive: true
   wait: 60

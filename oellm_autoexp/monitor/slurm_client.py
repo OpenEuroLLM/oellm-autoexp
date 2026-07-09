@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import yaml
 
-from compoconf import ConfigInterface, register
+from compoconf import ConfigInterface, register, asdict
 from oellm_autoexp.slurm_gen import generate_script, validate_job_script
 from oellm_autoexp.slurm_gen.client import (
     BaseSlurmClient,
@@ -83,7 +83,7 @@ class SlurmClient(JobClientInterface):
             config_path = expand_log_path(job.config_path, job_id=job_id)
             LOGGER.info(f"Logging Config to: {config_path}")
             with open(config_path, "w") as fp:
-                yaml.dump(job.base_config, fp)
+                yaml.dump(asdict(job.base_config), fp)
             if job.config_path_current:
                 update_log_symlink(Path(config_path), Path(job.config_path_current))
         return job_id
