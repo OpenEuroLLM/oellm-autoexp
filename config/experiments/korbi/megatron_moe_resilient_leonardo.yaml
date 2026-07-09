@@ -1,0 +1,185 @@
+# @package _global_
+#
+# HOT-SPARE permanent-node-failure demo on LEONARDO (tiny MoE).
+#
+# What this exercises
+# -------------------
+# * Allocate 3 nodes (2 active + 1 hot-spare) and launch with ft_launcher in
+#   NVRx 0.6.0 SIMPLE hot-spare mode: `--nnodes=2:3` (min:max) + `--max-restarts`.
+#   The first 2 nodes become ACTIVE (8 GPUs: TP=1 x PP=2 x EP=4), the 3rd is a
+#   STANDBY held in reserve. NOTE: simple mode (no `--ft-segment`) is correct for
+#   Leonardo A100 (non-NVSwitch); `--ft-segment` is only for cross-node-NVLink
+#   systems (DGX H200 / HGX B200).
+# * A saboteur (armed below via slurm.env) PERMANENTLY kills the workers on
+#   SLURM_NODEID==1 (an active node) ~SABOTEUR_DELAY s in. Because that node can
+#   never resume, ft_launcher's job-level restart MUST re-form the world on the
+#   surviving active node + the standby -- a real permanent-node replacement,
+#   not an in-process reserve swap (which BLOCKS waiting for the dead node).
+# * This is the job-level hot-spare path, so `inprocess_restart: false`.
+#
+# STATUS / EXPECTATION
+# --------------------
+# On JUPITER (GH200, NCCL 2.28.9) the NVRx 0.6.0 hot-spare plumbing came up and
+# ASSIGNED active/standby segments, but the standby PROMOTION into the dead
+# node's slot HUNG in a barrier (0.6.0's barrier-rendezvous spare promotion was
+# incomplete). 0.6.0 is the newest NVRx on PyPI, so this run tests whether
+# Leonardo A100 gets past that same wall. Watch the log for the standby being
+# assigned an ACTIVE rank in the post-fault round (vs. hanging in rendezvous).
+#
+# CONTAINER / NVRx
+# ----------------
+# The Leonardo 2512 image ships NVRx 0.5.0 (no hot-spare). We override NVRx to
+# 0.6.0 via a pip --target sidecar prepended to PYTHONPATH -- see
+# config/slurm/leonardo_ftlauncher.yaml (build the sidecar once, per its header).
+defaults:
+  - /experiments/base
+  - /backend: megatron_ftlauncher_localaddr
+  - /container: leonardo
+  - /slurm: leonardo
+  - /backend/megatron: [base, qwen3_moe]
+  - /sweep: none
+  - _self_
+
+backend:
+  # --- FIXED-WORLD HOT-SPARE: run min_nodes active, hold the rest as idle spares -
+  # `--ft-restart-policy min-healthy` sets upscaling_enabled=False (launcher.py:1056),
+  # so with --nnodes=MIN:MAX the launcher runs MIN nodes ACTIVE and parks the extra
+  # (MAX-MIN) allocated nodes in the redundancy (spare) list at a FIXED world size.
+  # On a node failure it promotes a spare -> stays at MIN nodes (world + GBS FIXED).
+  # This is the "reserve 9, run 8, swap in the spare" scenario (here 3 alloc / 2
+  # active / 1 spare -> world=8, same mechanism at small scale).
+  # vs the default `any-failed` policy = ELASTIC (runs MAX active, SHRINKS on loss).
+  # The promoted spare still needs use_infra_group_rank=False (patched NVRx copy on
+  # backend.env.PYTHONPATH) so it gets a valid in-range rank.
+  torchrun_args:
+    # Active count grows to MAX_nodes at the initial rendezvous (min-healthy only
+    # stops UPSCALING a running job). So cap active with MAX=2 -> exactly 2 active
+    # (world=8); the 3rd allocated node exceeds max -> parked in the redundancy
+    # (spare) list. On a failure, min-healthy promotes the spare -> stays at 2.
+    nnodes: "2:2"                       # exactly 2 active (world=8); 3rd node = spare
+    max_restarts: "20"
+    ft_restart_policy: "min-healthy"    # reserve mode: hold spare, promote on failure
+
+  megatron:
+    # --- Tiny MoE (fast iteration; fits A100 comfortably) ---------------------
+    num_layers: 4                    # divisible by PP=2
+    hidden_size: 512
+    ffn_hidden_size: 1024
+    num_attention_heads: 8
+    num_query_groups: 2
+    kv_channels: 64
+    max_position_embeddings: 1024
+    num_experts: 8                   # divisible by EP=4
+    moe_router_topk: 2
+    moe_ffn_hidden_size: 256
+    seq_length: 1024
+    encoder_seq_length: null
+
+    # --- Parallelism: 2 active nodes x 4 GPUs = 8 (TP=1, PP=2, EP=4) -----------
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 2  # inter-node
+    # NVRx 0.6.0 --nnodes=2:3 runs ELASTICALLY: it uses all 3 nodes (12 GPUs,
+    # DP=6) until one dies, then re-forms on 2 (8 GPUs, DP=4). So the config
+    # must be valid at BOTH sizes. EP=2 divides DP=6 and DP=4; GBS=48 is
+    # divisible by mbs*6 and mbs*4. (This build does NOT hold a reserve standby;
+    # recovery = elastic shrink onto the surviving/restricted node set.)
+    expert_model_parallel_size: 2
+    sequence_parallel: false         # no-op at TP=1 (qwen3_moe base sets it true)
+    use_distributed_optimizer: true
+    moe_router_dtype: "fp32"
+
+    train_iters: 100000              # large so the fault lands mid-training (tiny model is fast)
+    global_batch_size: 48            # divisible by mbs*DP at DP=6 (12 GPU) AND DP=4 (8 GPU)
+    micro_batch_size: 1
+    eval_interval: 1000
+    lr: 0.001
+    log_interval: 1
+
+    # --- Mock data + NullTokenizer: no dataset / tokenizer file needed ---------
+    mock_data: true
+    data_path: null
+    tokenizer_type: NullTokenizer
+    tokenizer_model: null
+    vocab_size: 8192
+
+    # ISSUE-1 (wandb ckpt-artifact crash on local ckpts) is now FIXED AT SOURCE
+    # (Megatron submodule commit 6be53e28f: non-persistent/local ckpts are no longer
+    # logged as wandb artifacts). wandb is re-enabled here so the next run VERIFIES
+    # the fix -- expect NO "file:///dev/shm/..." ValueError and NO churn. Set
+    # `wandb_project: ""` only when running against an UNPATCHED Megatron.
+
+    # --- Fault tolerance: JOB-LEVEL hot-spare (NOT in-process) -----------------
+    enable_ft_package: true          # ft_launcher rank monitor / heartbeats
+    calc_ft_timeouts: true
+    inprocess_restart: false         # hot-spare recovers at the JOB level
+
+    # --- Checkpointing for recovery (local ckpt on SHARED scratch) ------------
+    # /leonardo_scratch is a shared parallel FS, so every rank -- including the
+    # promoted standby on a different node -- can read any rank's shard; no
+    # replication needed (and NVRx replication collectives crash here).
+    save: /leonardo_scratch/large/userexternal/kpoeppel/output/resilient_demo/ckpt
+    load: /leonardo_scratch/large/userexternal/kpoeppel/output/resilient_demo/ckpt
+    ckpt_step: 0
+    save_interval: 1000000           # disable the GLOBAL torch_dist save (MoE EP+TP save bug)
+    async_save: false                # SYNC: finalize the ckpt before a fault can interrupt it
+    no_load_optim: false
+    no_load_rng: false
+    # NVRx 0.6.0's local-checkpoint API differs from the 0.5.0 API Megatron was
+    # built against, so the local save CRASHES ("Path 'file://.../iter_...' must
+    # be a valid file or directory path"), which ft_launcher reads as a fault and
+    # restarts -- burning the restart budget. Disable the local ckpt so we can
+    # test the fault-recovery MECHANISM cleanly (recovery cold-starts; progress-
+    # preserving resume needs Megatron updated to the 0.6.0 local-ckpt API).
+    # (i)+RAM: node-local RAM (tmpfs) checkpoint + REPLICATION -- the fast path.
+    # Local ckpt in /dev/shm (RAM) => save/load in seconds (vs ~270s on shared
+    # scratch, which caused restart churn). Because /dev/shm dies with the node,
+    # REPLICATION mirrors each rank's shard to a rank on ANOTHER node, so a dead
+    # node's shard survives and the promoted spare fetches it over the network.
+    # >>> VERIFY /dev/shm size on a compute node first (>= the per-node replicated
+    #     shard; tiny test model is ~MBs so fine). For big models, size the shard
+    #     (~14 B/param / DP * replication_factor) and fall back to node-local NVMe
+    #     if /dev/shm (~half RAM) is too small. <<<
+    non_persistent_ckpt_type: local
+    non_persistent_local_ckpt_dir: /dev/shm/kpoeppel_oellm/local_ckpt   # RAM tmpfs
+    non_persistent_save_interval: 20                                    # frequent, cheap in RAM
+    replication: true
+    replication_jump: 4        # replica placed nproc_per_node ranks away = the OTHER node (cross-node survival)
+    replication_factor: 2      # 1 original + 1 replica
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+    # in-process/job restart relies on the c10d watchdog surfacing NCCL errors fast
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+    TORCH_CPP_LOG_LEVEL: "error"
+    # backend.env PYTHONPATH is the LAST `--env PYTHONPATH=` singularity sees, so
+    # it WINS over slurm.env's. Prepend the patched NVRx copy here (else the
+    # launcher imports the container's unpatched 0.5.0 -> use_infra_group_rank
+    # stays True). Keep Megatron's paths after it.
+    PYTHONPATH: "${oc.env:NVRX_SIDECAR,/leonardo_scratch/large/userexternal/kpoeppel/nvrx05_patched}:.:submodules/Megatron-LM"
+
+container:
+  # Override the /container:leonardo default (2510, NVRx 0.4.1, TE 2.8) with the
+  # 2512 image (NVRx 0.5.0 -> 0.6.0 via sidecar, TE 2.10, NCCL 2.28.9). Matches
+  # the proven JUPITER pt2512 stack.
+  image: /leonardo_work/OELLM_prod2026/container_images/OELLM_autoexp_MegatronTrainingNoRoot_base2512_x86_64_202601281510.sif
+
+slurm:
+  sbatch:
+    nodes: 3                 # 2 active + 1 hot-spare
+    time: "00:20:00"
+    job_name: null           # fall back to the sweep-resolved record name (validator)
+  env:
+    # ARM the saboteur ~150s in on the MIDDLE node (SLURM_NODEID==1 -> infra rank
+    # 1) -- the exact case that crashed with "Invalid infrastructure rank 2" when
+    # use_infra_group_rank was on. With use_infra_group_rank=False (above), the
+    # survivors {0,2} should re-compact to {0,1} and continue at world=8.
+    SABOTEUR_NODE: "1"
+    SABOTEUR_DELAY: "150"
+
+job:
+  name: megatron_moe_resilient_leonardo
+  # Pin outputs to bound scratch (the container binds /leonardo* only; the base
+  # default /mnt/data is NOT bound on Leonardo). Covers tensorboard/wandb/output.
+  base_output_dir: /leonardo_scratch/large/userexternal/kpoeppel/output/${job.name}

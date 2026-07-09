@@ -54,7 +54,7 @@ defaults:
   - /experiments/base
   - /backend: megatron_ftlauncher_localaddr
   - /container: jupiter
-  - /slurm: jupiter
+  - /slurm: jupiter   # like jupiter, but MASTER_ADDR has no trailing space (ft_launcher 0.6.0)
   - /backend/megatron: [base, qwen3_moe_30BA3B]
   - /sweep: none
   - _self_
@@ -87,16 +87,21 @@ backend:
     save: /e/scratch/projectnucleus/poeppel1/output/resilient_demo/ckpt   # ADJUST
     load: /e/scratch/projectnucleus/poeppel1/output/resilient_demo/ckpt   # ADJUST
     ckpt_step: 0
-    save_interval: 1000000              # effectively disable GLOBAL torch_dist save
-    async_save: true
+    save_interval: 1000000              # effectively disable GLOBAL torch_dist save (separate bug, memory #7)
+    async_save: false                   # SYNC: finalize the local ckpt before a fault can interrupt it
     no_load_optim: false                # base sets this true; resume needs optimizer state
     no_load_rng: false                  # restore RNG too, for an exact-as-possible resume
-    non_persistent_ckpt_type: local                                       # fast, resumable
+    non_persistent_ckpt_type: local                                       # fast, resumable (VERIFIED resumes)
     non_persistent_local_ckpt_dir: /e/scratch/projectnucleus/poeppel1/output/resilient_demo/local_ckpt  # ADJUST
-    non_persistent_save_interval: 20    # snapshot every 20 iters for recovery
-    replication: true                   # mirror each rank's local shard...
-    replication_factor: 2               # ...to 1 neighbour, so a dead node's state survives
-    replication_jump: 4                 # replica is 4 ranks away -> on the other active node
+    non_persistent_save_interval: 20    # snapshot every 20 iters (test script overrides this)
+    # replication OFF: local_ckpt_dir is on shared /e scratch (every rank, incl. the
+    # reserve, can read any rank's shard), so replication is unnecessary AND the NVRX
+    # replication collective (replication/group_utils.broadcast) crashes/hangs here.
+    replication: false
+    # NOTE: the energy-monitor NVML null-handle segfault is fixed by the None-guard
+    # in submodules/Megatron-LM/megatron/core/energy_monitor.py::_get_energy. Do NOT
+    # use log_energy:true as a workaround — it adds a per-iteration all_reduce that
+    # disrupts the in-process restart's NCCL state and suppresses checkpoint reloads.
 
     # NOTE: the old franke5 SlimPajama path is GONE. Using the nemotron
     # downsampled valid set, which is tokenized with the Qwen3 tokenizer
@@ -129,7 +134,7 @@ backend:
     # bare "rank_killed;5;90" would have its ';' parsed as shell command
     # separators (apptainer then gets no command -> exit 127). The inner quotes
     # survive the outer single-quoted bash -c and protect the semicolons.
-    FT_SIM_FAULT_DESC: '"rank_killed;5;90"'
+    FT_SIM_FAULT_DESC: '"rank_killed;5;150"'
 
 container:
   # /container:jupiter's default sif is gone from the cache; pin a present one
