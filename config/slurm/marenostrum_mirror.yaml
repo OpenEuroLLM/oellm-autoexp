@@ -1,0 +1,45 @@
+defaults:
+  - marenostrum
+  - _self_
+
+# Async node-local mirror (read-through) variant. Launches scripts/prefetch_warm.py in
+# --mode mirror (one per node) to continuously fill a node-local sparse mirror; training
+# reads through it via scripts/pretrain_gpt_prefetch.py (set OELLM_MIRROR_DIR).
+#
+# Required overrides at submit:
+#   backend.launcher_script=./scripts/pretrain_gpt_prefetch.py   (wrapper applies the patch)
+#   backend.megatron.data_cache_path=<dir>  and  slurm.env.PREFETCH_CACHE_DIR=<same dir>
+#   backend.megatron.data_path=[<gpfs prefix>]  and  slurm.env.PREFETCH_PREFIX=<same prefix>
+#   container.bind=[/gpfs/projects,/gpfs/scratch,/scratch]   (/scratch = node-local mirror)
+
+template_path: templates/marenostrum_mirror.sbatch
+srun_opts: "--overlap "  # training srun overlaps the backgrounded prefetch srun
+
+env:
+  PREFETCH_SCRIPT: "${oc.env:OELLM_REPO,.}/scripts/prefetch_warm.py"
+  PREFETCH_PREFIX: "/gpfs/scratch/ehpc390/data/cerebras-SlimPajama-627B/train/small"
+  PREFETCH_CACHE_DIR: "${job.base_output_dir}/dcache"
+  PREFETCH_MBS: "${backend.megatron.micro_batch_size}"
+  PREFETCH_BUDGET_GB: "300"
+  PREFETCH_PASSES: "1"
+  PREFETCH_MODE: "lanes"          # lanes (sequential, windowed-shuffle) | mirror (consumption-order)
+  PREFETCH_THREADS: "8"           # few threads: ~full copy bandwidth, low CPU contention with training
+  PREFETCH_LANE_BLOCK: "32768"    # docs per lane block (one sequential read)
+  # Locality-preserving windowed shuffle (replaces Megatron's global shuffle); read by the
+  # training container's megatron_patch. OELLM_SHUFFLE_LANES must match PREFETCH --lanes.
+  OELLM_SHUFFLE_LANES: "256"
+  OELLM_SHUFFLE_BLOCK: "8192"
+  # lanes prefetcher alignment + over-fetch bound (read by prefetch_warm on the host):
+  OELLM_TRAIN_DOC_FRAC: "0.989"   # train split fraction from split "989,10,1"
+  OELLM_MAX_LANE_BLOCKS: "3"      # fallback cap when no cursor (ignored when OELLM_CURSOR_FILE set)
+  # Consumption cursor: training writes consumed_train_samples here each iter; the prefetcher paces a
+  # sliding window [cursor-retain, cursor+lookahead] of rounds -> bounded disk for any run length.
+  OELLM_CURSOR_FILE: "/scratch/tmp/$SLURM_JOB_ID/oellm_mirror/cursor"
+  OELLM_LOOKAHEAD_BLOCKS: "3"
+  OELLM_RETAIN_BLOCKS: "1"
+  # pre-stage barrier: training's first read blocks until the prefetcher stages block 0 of all lanes
+  OELLM_PREFETCH_BARRIER: "1"
+  OELLM_PREFETCH_BARRIER_TIMEOUT: "300"
+  # Node-local mirror dir; resolved at RUNTIME (explicit job-scoped node-local path).
+  OELLM_MIRROR_DIR: "/scratch/tmp/$SLURM_JOB_ID/oellm_mirror"
+  OELLM_NODE_LOCAL_LINK: "${job.base_output_dir}/node_local"
