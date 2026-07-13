@@ -1,0 +1,49 @@
+# @package _global_
+
+# 32B dense Qwen3-like model training
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: jupiter # TODO
+  - /slurm: jupiter
+  - /job: auto_cancel
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/oellm_32b_dense/models: qwen3_dense_32b
+  - /backend/megatron/oellm_32b_dense/data: oellm_256k_15TT_jupiter_train
+  - _self_
+
+job:
+  name: "oellm_32b_dense"
+  base_output_dir: ... # TODO
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+  chain_repeat: 3
+
+backend:
+  megatron:
+    wandb_project: oellm_32b_dense
+    wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
+    data_cache_path: .../production_training/${job.name}/cache # TODO
+
+
+    # EXIT safely on signal
+    exit_signal_handler: true
+    # 24h limit
+    exit_duration_in_mins: 1410
+
+slurm:
+  env:
+    HF_HOME: /e/scratch/.../hf_cache/${oc.env:USER} # TODO
+    NCCL_DEBUG: info
+  sbatch:
+    nodes: 256
+    time: "24:00:00"
+
+    # slurm signal to process to stop training and checkpoint right before time limit
+    signal: "TERM@240"
+
+  # make the sbatch script unique for every re-run
+  name: "job_${oc.timestring:}"
