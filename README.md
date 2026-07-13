@@ -21,7 +21,7 @@ git clone https://github.com/OpenEuroLLM/oellm-autoexp.git --recurse-submodules
 Then, install it to have the basic requirements installed:
 ```bash
 pip install -e .
-# or via uv
+# or by way of uv
 uv sync
 ```
 
@@ -43,10 +43,10 @@ The environment variables used in the `config/` here are:
 If you have your own container, just use the cli override: `container.image=PATH_TO_YOUR_CONTAINER` or define it in your experiment yaml.
 
 ## Cluster setup: LUMI notes
-- HF_HOME should be set to the shared one in the project scratch. 
+- HF_HOME should be set to the shared one in the project scratch.
 - Containers lie in /scratch/project_465002530/containers/ and the image meant for autoExp is AutoExp_*.sif
 
-### UV environment and sanity check 
+### UV environment and sanity check
 ```
     git clone https://github.com/OpenEuroLLM/oellm-autoexp.git --recurse-submodules
     # Install uv
