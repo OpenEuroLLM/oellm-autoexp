@@ -1,5 +1,5 @@
 # @package _global_
-# Sweep to get baseline, which is qwen3_32b_jupiter_baseline.yaml at 380 TFLOPS
+# Real-data 4-node qwen3-32B throughput sweep for JUPITER GH200.
 defaults:
   - /experiments/base
   - /backend: megatron_torchrun_localaddr
@@ -31,6 +31,9 @@ backend:
 
     pipeline_model_parallel_size: 2
     tensor_model_parallel_size: 4
+    num_layers_per_virtual_pipeline_stage: 2
+    sequence_parallel: true
+    recompute_activations: false
 
     attention_softmax_in_fp32: false
     use_distributed_optimizer: true
@@ -41,7 +44,6 @@ backend:
     data_path:
       - /e/project1/e-sta-openeurollm/harmsen1/datasets/FineWeb/fineweb-10BT_text_document
     data_cache_path: /e/scratch/e-sta-openeurollm/${oc.env:USER}/data
-
     tokenizer_model: /e/scratch/e-sta-openeurollm/harmsen1/hf_home/hub/models--openai-community--gpt2/snapshots/607a30d783dfa663caf39e06633721c8d4cfcd7e
 
   env:
@@ -51,22 +53,48 @@ backend:
     NCCL_NET_GDR_LEVEL: "0"  # disable GDRDMA — required for PP=2 inter-node P2P
     CUDA_DEVICE_MAX_CONNECTIONS: "1"  # only for TP
     TRITON_LIBCUDA_PATH: "/usr/local/cuda/compat/lib.real"
+    NCCL_DEBUG: INFO
+    NCCL_DEBUG_SUBSYS: ALL
+    NCCL_DEBUG_FILE: ${job.base_output_dir}/nccl-%h.%p.log
 
 container:
   image: /e/project1/e-sta-openeurollm/container/nemo_26.04.sif
 job:
-  name: qwen3_32b_${slurm.sbatch.nodes}_ep${backend.megatron.expert_model_parallel_size}_pp${backend.megatron.pipeline_model_parallel_size}_tp${backend.megatron.tensor_model_parallel_size}_mbs${backend.megatron.micro_batch_size}_gbs${backend.megatron.global_batch_size}_vp${backend.megatron.num_layers_per_virtual_pipeline_stage}_recompute-${backend.megatron.recompute_activations}
+  name: qwen3_32b_n${slurm.sbatch.nodes}_pp${backend.megatron.pipeline_model_parallel_size}_tp${backend.megatron.tensor_model_parallel_size}_mbs${backend.megatron.micro_batch_size}_gbs${backend.megatron.global_batch_size}_vp${backend.megatron.num_layers_per_virtual_pipeline_stage}_${aux.variant}
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
 
 slurm:
   sbatch:
     nodes: 4
-    time: "00:30:00"
+    time: "00:45:00"
+    account: e-sta-openeurollm
+
 sweep:
-  type: product
+  type: list
+  store_sweep_json: true
   groups:
-    - type: product
-      params:
-        backend.megatron.micro_batch_size: [1, 2]
-        backend.megatron.recompute_activations: [false, true]
-        backend.megatron.num_layers_per_virtual_pipeline_stage: [1,2]
+    - type: list
+      configs:
+        - aux.variant: A40_tp_overlap
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.tp_comm_overlap: true
+
+        - aux.variant: A45_offload_core_attn
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.fine_grained_activation_offloading: true
+          backend.megatron.offload_modules: [core_attn]
+
+        - aux.variant: C41_fp8
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.fp8: hybrid
+          backend.megatron.fp8_recipe: blockwise
+          backend.megatron.fp8_param_gather: true
+
+        - aux.variant: C42_fused_ce
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.cross_entropy_loss_fusion: true
+          backend.megatron.cross_entropy_fusion_impl: te
+
+        - aux.variant: G40_zero2
+          backend.megatron.data_parallel_sharding_strategy: 'optim_grads'
+          backend.megatron.micro_batch_size: 4

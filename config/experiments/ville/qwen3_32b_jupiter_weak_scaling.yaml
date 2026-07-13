@@ -1,5 +1,4 @@
 # @package _global_
-# Recompute sweeps to increase MBS
 defaults:
   - /experiments/base
   - /backend: megatron_torchrun_localaddr
@@ -10,12 +9,11 @@ defaults:
   - _self_
 
 aux:
-  experiment_group: "qwen3-32b"
-  recompute_tag: "core_attn"
+  experiment_group: qwen3-32b-weak-scaling
 
 backend:
   megatron:
-    train_iters: 10
+    train_iters: 20
     log_interval: 1
     eval_interval: 999
     eval_iters: 0
@@ -33,10 +31,17 @@ backend:
     pipeline_model_parallel_size: 2
     tensor_model_parallel_size: 4
     num_layers_per_virtual_pipeline_stage: 2
+    sequence_parallel: true
     recompute_activations: false
 
     attention_softmax_in_fp32: false
     use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    tp_comm_overlap: true
+
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: te
 
     wandb_project: qwen3-32B-dense-scaling-jupiter
     wandb_entity: openeurollm-project
@@ -53,29 +58,44 @@ backend:
     NCCL_NET_GDR_LEVEL: "0"  # disable GDRDMA — required for PP=2 inter-node P2P
     CUDA_DEVICE_MAX_CONNECTIONS: "1"  # only for TP
     TRITON_LIBCUDA_PATH: "/usr/local/cuda/compat/lib.real"
+    NVTE_CPU_OFFLOAD_V1: "1"
+    UB_SKIPMC: "1"
+    NCCL_DEBUG: INFO
+    NCCL_DEBUG_SUBSYS: ALL
+    NCCL_DEBUG_FILE: ${job.base_output_dir}/nccl-%h.%p.log
 
 container:
   image: /e/project1/e-sta-openeurollm/container/nemo_26.04.sif
 job:
-  name: qwen3_32b_${slurm.sbatch.nodes}_ep${backend.megatron.expert_model_parallel_size}_pp${backend.megatron.pipeline_model_parallel_size}_tp${backend.megatron.tensor_model_parallel_size}_mbs${backend.megatron.micro_batch_size}_gbs${backend.megatron.global_batch_size}_vp${backend.megatron.num_layers_per_virtual_pipeline_stage}_recompute-${backend.megatron.recompute_activations}_${aux.recompute_tag}
+  name: weak_scaling_qwen3_32b_n${slurm.sbatch.nodes}_pp${backend.megatron.pipeline_model_parallel_size}_tp${backend.megatron.tensor_model_parallel_size}_mbs${backend.megatron.micro_batch_size}_gbs${backend.megatron.global_batch_size}_vp${backend.megatron.num_layers_per_virtual_pipeline_stage}
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
 
 slurm:
   sbatch:
     nodes: 4
-    time: "00:30:00"
+    time: "00:45:00"
+    account: e-sta-openeurollm
 sweep:
   type: list
   store_sweep_json: true
   groups:
     - type: list
       configs:
-        - aux.recompute_tag: "core_attn"
-          backend.megatron.recompute_granularity: "selective"
-          backend.megatron.recompute_modules: ["core_attn"]
-        - aux.recompute_tag: "layernorm"
-          backend.megatron.recompute_granularity: "selective"
-          backend.megatron.recompute_modules: ["layernorm"]
-        - aux.recompute_tag: "core_attn_layernorm"
-          backend.megatron.recompute_granularity: "selective"
-          backend.megatron.recompute_modules: ["core_attn", "layernorm"]
+        - slurm.sbatch.nodes: 4
+          backend.megatron.global_batch_size: 256
+        - slurm.sbatch.nodes: 8
+          backend.megatron.global_batch_size: 512
+        - slurm.sbatch.nodes: 16
+          backend.megatron.global_batch_size: 1024
+        - slurm.sbatch.nodes: 32
+          backend.megatron.global_batch_size: 2048
+        - slurm.sbatch.nodes: 64
+          backend.megatron.global_batch_size: 4096
+        - slurm.sbatch.nodes: 128
+          backend.megatron.global_batch_size: 8192
+        - slurm.sbatch.nodes: 256
+          backend.megatron.global_batch_size: 16384
+        - slurm.sbatch.nodes: 512
+          backend.megatron.global_batch_size: 32768
+        - slurm.sbatch.nodes: 1024
+          backend.megatron.global_batch_size: 65536
