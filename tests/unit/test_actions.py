@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from oellm_autoexp.monitor.actions import ActionContext, EventRecord
+from oellm_autoexp.monitor.actions import (
+    ActionContext,
+    EventRecord,
+)
 from oellm_autoexp.config.actions import RunAutoexpAction, RunAutoexpActionConfig
 
 
@@ -70,3 +73,14 @@ def test_run_autoexp_action_execution_dry_run(tmp_path: Path):
     # Should return failed status
     assert result.status == "failed"
     assert "exited 1" in result.message
+
+
+def _append_context(node: str) -> ActionContext:
+    """Context emulating a LogEvent that extracted a failing node name."""
+    event = EventRecord(
+        event_id="evt-node",
+        name="comm_failure_exclude_node",
+        source="log",
+        payload={"node": node, "match": f"failed on node {node}: Communication connection failure"},
+    )
+    return ActionContext(event=event)
