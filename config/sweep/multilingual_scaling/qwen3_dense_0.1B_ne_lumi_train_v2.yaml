@@ -32,55 +32,65 @@ groups:
       backend.megatron.num_workers: 8
     configs:
       # ---- gbsz 32 ----
-      - backend.megatron.lr: 5.e-4
-        backend.megatron.global_batch_size: 32
-        backend.megatron.micro_batch_size: 4
-        backend.megatron.aux.tokens: 6_000_000_000
-        backend.megatron.aux.center_tokens_set:   "set()"
-        backend.megatron.aux.cross_tokens_set:    "set()"
-        backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000}"
-        backend.megatron.aux.stable_launch_tier:  diagonal
-      - backend.megatron.lr: 1.e-3
-        backend.megatron.global_batch_size: 32
-        backend.megatron.micro_batch_size: 4
-        backend.megatron.aux.tokens: 6_000_000_000
-        backend.megatron.aux.center_tokens_set:   "set()"
-        backend.megatron.aux.cross_tokens_set:    "{6_000_000_000}"
-        backend.megatron.aux.diagonal_tokens_set: "set()"
-        backend.megatron.aux.stable_launch_tier:  cross
-      - backend.megatron.lr: 2.e-3
-        backend.megatron.global_batch_size: 32
-        backend.megatron.micro_batch_size: 4
-        backend.megatron.aux.tokens: 6_000_000_000
-        backend.megatron.aux.center_tokens_set:   "set()"
-        backend.megatron.aux.cross_tokens_set:    "set()"
-        backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000}"
-        backend.megatron.aux.stable_launch_tier:  diagonal
+      # REMOVED (fully trained; no remaining points in CSV for lr=0.0005, gbsz=32: was 6B)
+      #       - backend.megatron.lr: 5.e-4
+      #         backend.megatron.global_batch_size: 32
+      #         backend.megatron.micro_batch_size: 4
+      #         backend.megatron.aux.tokens: 6_000_000_000
+      #         backend.megatron.aux.center_tokens_set:   "set()"
+      #         backend.megatron.aux.cross_tokens_set:    "set()"
+      #         backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000}"
+      #         backend.megatron.aux.stable_launch_tier:  diagonal
+
+      # REMOVED (fully trained; no remaining points in CSV for lr=0.001, gbsz=32: was 6B)
+      #       - backend.megatron.lr: 1.e-3
+      #         backend.megatron.global_batch_size: 32
+      #         backend.megatron.micro_batch_size: 4
+      #         backend.megatron.aux.tokens: 6_000_000_000
+      #         backend.megatron.aux.center_tokens_set:   "set()"
+      #         backend.megatron.aux.cross_tokens_set:    "{6_000_000_000}"
+      #         backend.megatron.aux.diagonal_tokens_set: "set()"
+      #         backend.megatron.aux.stable_launch_tier:  cross
+
+      # REMOVED (fully trained; no remaining points in CSV for lr=0.002, gbsz=32: was 6B)
+      #       - backend.megatron.lr: 2.e-3
+      #         backend.megatron.global_batch_size: 32
+      #         backend.megatron.micro_batch_size: 4
+      #         backend.megatron.aux.tokens: 6_000_000_000
+      #         backend.megatron.aux.center_tokens_set:   "set()"
+      #         backend.megatron.aux.cross_tokens_set:    "set()"
+      #         backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000}"
+      #         backend.megatron.aux.stable_launch_tier:  diagonal
+
 
       # ---- gbsz 64 ----
+      # Already trained, removed from grid: diagonal: 12B
       - backend.megatron.lr: 5.e-4
         backend.megatron.global_batch_size: 64
         backend.megatron.micro_batch_size: 4
         backend.megatron.aux.tokens: 12_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "{6_000_000_000}"
-        backend.megatron.aux.diagonal_tokens_set: "{12_000_000_000}"
-        backend.megatron.aux.stable_launch_tier:  cross
-      - backend.megatron.lr: 1.e-3
-        backend.megatron.global_batch_size: 64
-        backend.megatron.micro_batch_size: 4
-        backend.megatron.aux.tokens: 12_000_000_000
-        backend.megatron.aux.center_tokens_set:   "{6_000_000_000}"
-        backend.megatron.aux.cross_tokens_set:    "{12_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "set()"
-        backend.megatron.aux.stable_launch_tier:  center
+        backend.megatron.aux.stable_launch_tier:  cross
+      # REMOVED (fully trained; no remaining points in CSV for lr=0.001, gbsz=64: was 6B, 12B)
+      #       - backend.megatron.lr: 1.e-3
+      #         backend.megatron.global_batch_size: 64
+      #         backend.megatron.micro_batch_size: 4
+      #         backend.megatron.aux.tokens: 12_000_000_000
+      #         backend.megatron.aux.center_tokens_set:   "{6_000_000_000}"
+      #         backend.megatron.aux.cross_tokens_set:    "{12_000_000_000}"
+      #         backend.megatron.aux.diagonal_tokens_set: "set()"
+      #         backend.megatron.aux.stable_launch_tier:  center
+
+      # Already trained, removed from grid: diagonal: 12B
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 64
         backend.megatron.micro_batch_size: 4
         backend.megatron.aux.tokens: 12_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "{6_000_000_000}"
-        backend.megatron.aux.diagonal_tokens_set: "{12_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
         backend.megatron.aux.stable_launch_tier:  cross
 
       # ---- gbsz 128 ----
@@ -92,29 +102,32 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "{12_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  cross
+      # Already trained, removed from grid: center: 12B; diagonal: 20B, 30B, 50B
       - backend.megatron.lr: 1.e-3
         backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 4
         backend.megatron.aux.tokens: 80_000_000_000
-        backend.megatron.aux.center_tokens_set:   "{12_000_000_000}"
+        backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "{6_000_000_000}"
-        backend.megatron.aux.diagonal_tokens_set: "{20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000}"
-        backend.megatron.aux.stable_launch_tier:  center
+        backend.megatron.aux.diagonal_tokens_set: "{80_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  cross
+      # Already trained, removed from grid: cross: 20B, 30B, 50B, 80B
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 4
         backend.megatron.aux.tokens: 80_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
-        backend.megatron.aux.cross_tokens_set:    "{12_000_000_000, 20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000}"
+        backend.megatron.aux.cross_tokens_set:    "{12_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  cross
+      # Already trained, removed from grid: diagonal: 20B, 30B, 50B
       - backend.megatron.lr: 4.e-3
         backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 4
         backend.megatron.aux.tokens: 80_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
         backend.megatron.aux.cross_tokens_set:    "set()"
-        backend.megatron.aux.diagonal_tokens_set: "{20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "{80_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  diagonal
 
       # ---- gbsz 256 ----
@@ -126,29 +139,32 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "set()"
         backend.megatron.aux.diagonal_tokens_set: "{12_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  diagonal
+      # Already trained, removed from grid: cross: 80B; diagonal: 120B, 200B, 300B
       - backend.megatron.lr: 1.e-3
         backend.megatron.global_batch_size: 256
         backend.megatron.micro_batch_size: 4
         backend.megatron.aux.tokens: 300_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
-        backend.megatron.aux.cross_tokens_set:    "{12_000_000_000, 20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000}"
-        backend.megatron.aux.diagonal_tokens_set: "{120_000_000_000, 200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.cross_tokens_set:    "{12_000_000_000, 20_000_000_000, 30_000_000_000, 50_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
         backend.megatron.aux.stable_launch_tier:  cross
+      # Already trained, removed from grid: center: 20B, 30B, 50B, 80B; cross: 200B, 300B
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 256
         backend.megatron.micro_batch_size: 4
         backend.megatron.aux.tokens: 300_000_000_000
-        backend.megatron.aux.center_tokens_set:   "{20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000}"
-        backend.megatron.aux.cross_tokens_set:    "{120_000_000_000, 200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{120_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "{12_000_000_000}"
-        backend.megatron.aux.stable_launch_tier:  center
+        backend.megatron.aux.stable_launch_tier:  cross
+      # Already trained, removed from grid: cross: 80B; diagonal: 120B, 200B, 300B
       - backend.megatron.lr: 4.e-3
         backend.megatron.global_batch_size: 256
         backend.megatron.micro_batch_size: 4
         backend.megatron.aux.tokens: 300_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
-        backend.megatron.aux.cross_tokens_set:    "{20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000}"
-        backend.megatron.aux.diagonal_tokens_set: "{120_000_000_000, 200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.cross_tokens_set:    "{20_000_000_000, 30_000_000_000, 50_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
         backend.megatron.aux.stable_launch_tier:  cross
 
       # ---- gbsz 512 ----
@@ -160,14 +176,15 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "{120_000_000_000, 200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "{20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  cross
+      # Already trained, removed from grid: center: 120B, 200B, 300B; cross: 80B
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 512
         backend.megatron.micro_batch_size: 4
         backend.megatron.aux.tokens: 300_000_000_000
-        backend.megatron.aux.center_tokens_set:   "{120_000_000_000, 200_000_000_000, 300_000_000_000}"
-        backend.megatron.aux.cross_tokens_set:    "{20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000}"
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{20_000_000_000, 30_000_000_000, 50_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "set()"
-        backend.megatron.aux.stable_launch_tier:  center
+        backend.megatron.aux.stable_launch_tier:  cross
       - backend.megatron.lr: 4.e-3
         backend.megatron.global_batch_size: 512
         backend.megatron.micro_batch_size: 4
