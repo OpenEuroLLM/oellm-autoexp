@@ -1,6 +1,6 @@
 # @package _global_
 
-# 0.1B NE dense Qwen3-like model training with pull-based multi-stage cooldown on LUMI
+# 0.9B NE dense Qwen3-like model training with pull-based multi-stage cooldown on LUMI
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 defaults:
@@ -8,9 +8,9 @@ defaults:
   - /container: lumi
   - /slurm: lumi
   - /job: auto_restart
-  - /sweep/multilingual_scaling@sweep: qwen3_dense_0.1B_ne_lumi_train_v2 # sweep configs  
+  - /sweep/multilingual_scaling@sweep: qwen3_dense_0.9B_ne_lumi_train_v2 # sweep configs  
   - /backend/megatron: base
-  - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.1B_ne # model configs
+  - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.9B_ne # model configs
   - /backend/megatron/multilingual_scaling/data: oellm_256k_lumi_train # data configs
   - _self_
 
@@ -19,7 +19,7 @@ stage: "" # Will be overridden by sweep
 
 job:
   name: "" # Will be overridden by sweep with stage and hyperparameter info
-  base_output_dir: "/scratch/project_465002530/multilingual_scaling/0.1B_ne/training/${job.name}"
+  base_output_dir: "/scratch/project_465002530/multilingual_scaling/0.9B_ne/training/${job.name}"
   log_path: ${.base_output_dir}/logs/slurm-%j.log
 
 backend:
