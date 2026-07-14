@@ -41,7 +41,10 @@ gap="${SABOTEUR_PASS_GAP:-0.4}"
 [ "${node}" = "-1" ] && exit 0
 
 sleep "${delay}"
-echo "[saboteur] node=${node} SLURM_NODEID=${SLURM_NODEID:-?} firing after ${delay}s (workers only, sparing agent)" >&2
+# Emit the intervention wall-clock (epoch seconds) so the harness can measure the
+# fault->recovery overhead. fire_epoch= is the authoritative t0 (runs on the
+# target node the instant before the kill).
+echo "[saboteur] node=${node} SLURM_NODEID=${SLURM_NODEID:-?} firing after ${delay}s (workers only, sparing agent) fire_epoch=$(date +%s) at $(date '+%Y-%m-%d %H:%M:%S')" >&2
 
 total=0
 for pass in $(seq 1 "${passes}"); do
@@ -59,4 +62,4 @@ for pass in $(seq 1 "${passes}"); do
   echo "[saboteur] node=${node} pass=${pass}/${passes} killed_workers=${hit}" >&2
   sleep "${gap}"
 done
-echo "[saboteur] node=${node} DONE total_killed_workers=${total}" >&2
+echo "[saboteur] node=${node} DONE total_killed_workers=${total} done_epoch=$(date +%s)" >&2
