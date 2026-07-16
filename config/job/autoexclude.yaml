@@ -1,0 +1,72 @@
+defaults:
+ - default
+
+# Job-control config for the node auto-exclusion flow. On a
+# "Communication connection failure" the monitor (1) records the offending node
+# in the exclusion file, (2) pushes the updated list onto every PENDING
+# dependency-chained sibling via `scontrol update ... ExcludeNodes=`, and
+# (3) finishes the failed job so the chain advances to the next (afterany) run.
+#
+# Events 1-3 share the same regex and fire on the same log line; ORDER MATTERS:
+# append must run before propagate (so the file already holds the new node), and
+# the finishing event must be LAST (a "finished" effect ends log processing for
+# this poll). The exclusion file path is taken from $LEONARDO_EXCLUDE_NODES -
+# the same single source of truth the oc.exclude_nodes resolver reads in
+# config/slurm/leonardo_autoexclude.yaml.
+
+log_events:
+  # 1) Record the failing node name into the exclusion file.
+  - name: exclude_node_append
+    pattern: 'failed on node ([^:\s]+): Communication connection failure'
+    pattern_type: regex
+    extract_groups:
+      node: 1
+    match_once: true
+    action:
+      class_name: AppendToFileAction
+      path: ${oc.env:LEONARDO_EXCLUDE_NODES,${oc.env:HOME}/.oellm_autoexp/leonardo_exclude_nodes.txt}
+      content: "{node}"
+
+  # 2) Propagate the updated list to all PENDING chain siblings (scontrol update).
+  - name: exclude_node_propagate
+    pattern: 'failed on node ([^:\s]+): Communication connection failure'
+    pattern_type: regex
+    match_once: true
+    action:
+      class_name: UpdateChainExcludesAction
+      exclude_file: ${oc.env:LEONARDO_EXCLUDE_NODES,${oc.env:HOME}/.oellm_autoexp/leonardo_exclude_nodes.txt}
+
+  # 3) Finish the failed job so the dependency chain advances to the next run.
+  - name: exclude_node_finish
+    pattern: "Communication connection failure"
+    pattern_type: substring
+    action:
+      class_name: FinishAction
+      reason: "Communication connection failure - node excluded, advancing chain"
+
+  # Standard clean-exit / stall handling (mirrors auto_cancel.yaml).
+  - name: finished_training
+    pattern: "[after training is done]"
+    pattern_type: substring
+    action:
+      class_name: FinishAction
+      reason: "Training finished"
+  - name: inactive
+    pattern_type: inactivity
+    inactivity_polls: 5
+    inactivity_timeout_s: 300
+    action:
+      class_name: FinishAction
+      reason: "Inactive Log"
+
+state_events:
+  - name: "failed"
+    transition: ["RUNNING", "FAILED"]
+    action:
+      class_name: FinishAction
+      reason: "Job failed"
+  - name: "timeout"
+    transition: ["RUNNING", "TIMEOUT"]
+    action:
+      class_name: FinishAction
+      reason: "Job timed out"

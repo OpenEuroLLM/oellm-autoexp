@@ -157,6 +157,91 @@ class LogAction(BaseMonitorAction):
 
 
 @dataclass
+class AppendToFileActionConfig(ConfigInterface):
+    """Configuration for an action that appends a line to a file.
+
+    Designed to be chained from a ``LogEvent`` so a matched log line (e.g. a
+    failing node name extracted via ``extract_groups``) can be persisted to an
+    external list - for example the node-exclusion file consumed by the
+    ``oc.exclude_nodes`` resolver.
+    """
+
+    class_name: str = "AppendToFileAction"
+    # Target file path. Supports {var} templating against the action context.
+    path: str = ""
+    # Line to append. Supports {var} templating; defaults to the matched text.
+    content: str = "{match}"
+    # When True, skip appending if an identical (stripped) line already exists.
+    dedup: bool = True
+    # When True, create parent directories for ``path`` if they are missing.
+    create_parents: bool = True
+
+
+@register
+class AppendToFileAction(BaseMonitorAction):
+    config: AppendToFileActionConfig
+
+    def execute(self, context: ActionContext) -> ActionResult:
+        path = Path(context.render(self.config.path)).expanduser()
+        line = context.render(self.config.content).strip()
+        if not line:
+            return ActionResult(status="failed", message="empty content, nothing appended")
+        if self.config.create_parents:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        if self.config.dedup and path.exists():
+            existing = {entry.strip() for entry in path.read_text().splitlines()}
+            if line in existing:
+                return ActionResult(
+                    status="success",
+                    message=f"'{line}' already present in {path}",
+                    metadata={"appended": False, "path": str(path), "line": line},
+                )
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+        return ActionResult(
+            status="success",
+            message=f"appended '{line}' to {path}",
+            metadata={"appended": True, "path": str(path), "line": line},
+        )
+
+
+@dataclass
+class UpdateChainExcludesActionConfig(ConfigInterface):
+    """Propagate the current node-exclusion list to dependency-chained jobs.
+
+    Designed to be chained from the same ``LogEvent`` that appends a failing node
+    to ``exclude_file`` (list the AppendToFileAction event *before* this one so the
+    file already contains the new node). The monitor loop reads ``exclude_file``
+    and runs ``scontrol update JobId=.. ExcNodeList=..`` on every *pending* sibling
+    job in the session, so the queued chain avoids the bad node without
+    regenerating or resubmitting scripts. Running jobs cannot be edited live and
+    are skipped (handle the failing job itself via a RestartAction).
+    """
+
+    class_name: str = "UpdateChainExcludesAction"
+    # File holding the node-exclusion list (same one the AppendToFileAction writes
+    # and the oc.exclude_nodes resolver reads). Supports {var} templating.
+    exclude_file: str = ""
+
+
+@register
+class UpdateChainExcludesAction(BaseMonitorAction):
+    config: UpdateChainExcludesActionConfig
+
+    def execute(self, context: ActionContext) -> ActionResult:
+        # The side effect (iterating the job store + calling scontrol) needs the
+        # monitor's store and SLURM client, so signal the loop via action_config
+        # and hand it the resolved exclude-file path (mirrors NewJobAction).
+        exclude_file = context.render(self.config.exclude_file)
+        return ActionResult(
+            status="success",
+            message="propagate excludes to pending chain jobs",
+            action_config=self.config,
+            metadata={"exclude_file": exclude_file},
+        )
+
+
+@dataclass
 class NewJobActionConfig(ConfigInterface):
     class_name: str = "NewJobAction"
     job_config: JobInterface.cfgtype = field(default_factory=MissingValue)
@@ -374,6 +459,10 @@ __all__ = [
     "ActionContext",
     "BaseMonitorAction",
     "LogAction",
+    "AppendToFileAction",
+    "AppendToFileActionConfig",
+    "UpdateChainExcludesAction",
+    "UpdateChainExcludesActionConfig",
     "NewJobAction",
     "NewJobActionConfig",
     "RestartActionConfig",

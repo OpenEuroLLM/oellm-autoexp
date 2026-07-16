@@ -102,6 +102,9 @@ class SlurmClientInterface(Protocol):  # pragma: no cover - protocol definitions
     def squeue(self) -> dict[str, str]:  # pragma: no cover
         ...
 
+    def update_excludes(self, job_id: str, nodelist: str) -> None:  # pragma: no cover
+        ...
+
     def get_job(self, job_id: str):  # pragma: no cover
         ...
 
