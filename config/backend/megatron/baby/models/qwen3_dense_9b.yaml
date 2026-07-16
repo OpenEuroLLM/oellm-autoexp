@@ -1,0 +1,117 @@
+# @package backend.megatron
+
+# 9B dense Qwen3-like model
+
+# MODEL
+num_layers: 36
+hidden_size: 4096
+ffn_hidden_size: 12288      # dense FFN
+init_method_std: 0.02
+seq_length: 4096
+kv_channels: 128            # head_dim = 128; Q: 64×128=8192=2×hidden, KV: 4×128=512
+max_position_embeddings: 4096
+swiglu: true
+overlap_grad_reduce: true # backward
+overlap_param_gather: true # forward
+tp_comm_overlap: true # Overlap tensor parallel communication with computation (reduces idle time between GPUs)
+data_parallel_sharding_strategy: "optim_grads_params" # Do we need this if FSDP is disabled?
+apply_rope_fusion: true
+gradient_accumulation_fusion: true
+bias_dropout_fusion: true
+masked_softmax_fusion: true
+async_tensor_model_parallel_allreduce: true
+accumulate_allreduce_grads_in_fp32: true
+
+# Attention
+num_attention_heads: 32
+num_query_groups: 8
+group_query_attention: True
+attention_softmax_in_fp32: True
+use_flash_attn: True
+attention_backend: "auto"
+
+# Position Embedding
+position_embedding_type: "rope"
+rotary_base: 10000
+rotary_percent: 1.0
+untie_embeddings_and_output_weights: true
+
+# Normalization
+normalization: "RMSNorm"
+norm_epsilon: 1.e-5 # rmsnorm epsilon
+qk_layernorm: True # enable qk-norm
+bf16: True
+
+# Disable dropout
+attention_dropout: 0.0
+hidden_dropout: 0.0
+
+# OPTIMIZER
+optimizer: adam
+adam_beta1: 0.9
+adam_beta2: 0.95
+adam_eps: 1.e-8
+clip_grad: 1.0
+weight_decay: 0.05
+
+# SCHEDULER
+min_lr: 0.0
+lr_decay_style: WSD
+lr_wsd_decay_style: linear
+lr_warmup_iters: 2000 # Fixed for all.
+lr_wsd_decay_iters: 3000
+
+# TRAINING, PARALLELISM
+recompute_activations: True
+use_torch_fsdp2: False # it's either this or the next 4 args
+tensor_model_parallel_size: 4
+pipeline_model_parallel_size: 1
+context_parallel_size: 1
+sequence_parallel: True
+
+add_bias_linear: false
+
+# DISTRIBUTED OPTIM
+use_distributed_optimizer: True
+
+# COMM OPTIONS
+distributed_backend: nccl
+distributed_timeout_minutes: 30
+
+# PROFILE
+profile: False
+use_pytorch_profiler: False
+profile_ranks: [0]
+profile_step_start: 5
+profile_step_end: 12
+
+# EVALS
+# Eval interval scales inversely with global batch size,
+# calibrated so that gbsz=1024 evals every 200 iterations.
+eval_interval: "${oc.eval:'int(204800 // ${backend.megatron.global_batch_size})'}"
+eval_iters: 100
+
+# LOGGING
+log_interval: 1
+log_progress: True
+log_throughput: True
+tensorboard_queue_size: 5
+log_timers_to_tensorboard: True
+wandb_entity: "openeurollm-project"
+wandb_save_dir: "${job.base_output_dir}"
+tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+
+# CHECKPOINT FORMAT
+ckpt_format: "torch_dist"
+# Checkpoint interval scales inversely with global batch size,
+# calibrated so that gbsz=1024 saves every 500 iterations.
+save_interval: "${oc.eval:'int(512000 // ${backend.megatron.global_batch_size})'}"
+save: ${job.base_output_dir}/checkpoints
+load: ${.save}
+
+# Base training configuration (overridden by sweep)
+micro_batch_size: 1    # overridden by sweep
+global_batch_size: 1024  # overridden by sweep
+lr: 0.0006
+seed: 1234
