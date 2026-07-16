@@ -90,9 +90,23 @@ log_num_zeros_in_grad: true
 log_timers_to_tensorboard: true
 log_validation_ppl_to_tensorboard: true
 log_memory_to_tensorboard: true
-log_progress: true
+# log_progress writes {save}/progress.txt at job start, but Megatron opens it in
+# append mode WITHOUT creating the parent dir, and this harness doesn't pre-create
+# the save dir (unlike the reference script's `mkdir -p`). With save enabled that
+# startup write crashes, so keep progress logging off — wandb/tensorboard/stdout
+# already carry every metric. (Re-enable only if the save dir is created first.)
+log_progress: false
 wandb_project: "megadlm-jupiter"
 wandb_save_dir: "${job.base_output_dir}/wandb"
 
 aux:
   model_name: "megadlm-8b"
+  # difflm run parameters — appended to the launch command by the megadlm_torchrun
+  # backend's full_cmd (they are NOT stock Megatron args, so they can't be emitted
+  # through the normal backend.megatron arg mapping, which drops unknown keys).
+  # mask_token 50277 matches the gpt-neox-20b tokenizer (vocab 50289); the fork's
+  # default (151656, a Qwen token) is out of range for this vocab and would crash.
+  model_running_mode: difflm-noshift
+  base_model: vanilla
+  attention_mask_type: no_mask
+  mask_token: 50277
