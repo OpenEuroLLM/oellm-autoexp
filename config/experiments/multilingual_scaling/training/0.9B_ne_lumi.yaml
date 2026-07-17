@@ -8,7 +8,7 @@ defaults:
   - /container: lumi
   - /slurm: lumi
   - /job: auto_restart
-  - /sweep/multilingual_scaling@sweep: qwen3_dense_0.9B_ne_lumi_train_v2 # sweep configs  
+  - /sweep/multilingual_scaling@sweep: qwen3_dense_0.9B_ne_lumi_train_v2 # sweep configs
   - /backend/megatron: base
   - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.9B_ne # model configs
   - /backend/megatron/multilingual_scaling/data: oellm_256k_lumi_train # data configs
@@ -34,13 +34,13 @@ backend:
 
     # Evals off
     eval_interval: 1_000_000_000
-    split: "99,1,0" #### TO CHECK!
+    # split: set per (lr, gbsz) combo in the v3 sweep (data_split_issue analysis)
 
     # Lumi-specific settings
     masked_softmax_fusion: False
     gradient_accumulation_fusion: False
 
-    num_workers: 7
+    num_workers: 6 # Ville's suggestion since otherwise all of the 7 available CPUs per tasks would have a dataloader
 
   #Lumi-specific settings
   env:
