@@ -51,6 +51,18 @@ log_events:
     action:
       class_name: FinishAction
       reason: "Training finished"
+  - name: finish
+    pattern: ".*validation loss.*on test set.*"
+    pattern_type: regex
+    action:
+      class_name: FinishAction
+      reason: "Test Evaluation Finished"
+  - name: error
+    pattern: "Exited with exit code 1"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: ""
   - name: inactive
     pattern_type: inactivity
     inactivity_polls: 5
