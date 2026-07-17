@@ -11,7 +11,7 @@ bind:
   ]
 pwd: ${oc.env:PWD}
 env:
-  WANDB_MODE: "offline"
+  WANDB_MODE: "online"
   MACHINE_NAME: "LUMI"
   PYTHONPATH: "."
 python: "python3"
