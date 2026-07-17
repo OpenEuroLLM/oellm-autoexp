@@ -198,3 +198,9 @@ aux:
   save_step_end_6: 999_999_999
   save_step_end_7: 999_999_999
   save_step_end_8: 999_999_999
+  # Checkpoints dir of an older, shorter stable run to bootstrap this combo's
+  # stable job from (checkpoint_status=extend_stable in
+  # hp_grid/v2/remaining_to_be_trained_hp_grid.csv). Empty default is a no-op;
+  # overridden per-combo in sweep Group 1, consumed by the stable stage's
+  # job.start_condition in Group 2.
+  extend_stable_source: ""
