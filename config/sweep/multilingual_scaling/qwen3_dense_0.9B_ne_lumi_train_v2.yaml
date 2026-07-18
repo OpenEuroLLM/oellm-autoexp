@@ -36,7 +36,6 @@ groups:
   # Decay stages override aux.tokens to their specific budget; stable keeps it.
   - type: list
     defaults:
-      backend.megatron.num_workers: 8
       backend.megatron.micro_batch_size: 2
       # Overridden per-combo below only for checkpoint_status=extend_stable rows
       # (hp_grid/v2/remaining_to_be_trained_hp_grid.csv): the checkpoints dir of
@@ -48,6 +47,17 @@ groups:
       # needed as decay branch points below the resume iter -- see its comment
       # for why that matters (decay12BT).
       backend.megatron.aux.extend_stable_source: ""
+      # Overridden per-combo below only for checkpoint_status=reuse_checkpoint
+      # combos that have NO "stable" row in remaining_to_be_trained_hp_grid.csv:
+      # an existing stable checkpoint already covers every branch point these
+      # decays need, so the stable stage must NOT be (re)submitted -- doing so
+      # would resume it from its last (partial) checkpoint and train it all
+      # the way to aux.tokens, i.e. actually continue/retrain it, not no-op.
+      # Consumed by the stable-tier clause in the `filter` at the bottom of
+      # this file. Combos with checkpoint_status=extend_stable still need the
+      # stable stage (to run extend_stable_source above), so this stays false
+      # for those.
+      backend.megatron.aux.skip_stable_launch: false
     configs:
       # ---- gbsz 32 ----
       # REMOVED (fully trained; no remaining points in CSV for lr=0.0005, gbsz=32: was 6B)
@@ -107,6 +117,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "{20_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "set()"
         backend.megatron.aux.stable_launch_tier:  cross
+        backend.megatron.aux.skip_stable_launch:  true
         backend.megatron.split:               "99,1,0"
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 64
@@ -130,6 +141,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "{12_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "set()"
         backend.megatron.aux.stable_launch_tier:  cross
+        backend.megatron.aux.skip_stable_launch:  true
         backend.megatron.split:               "99,1,0"
       # checkpoint_reuse_run=qwen3_dense_0.9B_ne_lr0.0005_gbsz128_stable120B: a stable at 120B already exists,
       # so aux.tokens is pinned to 120B (NOT the max of the remaining decays below) --
@@ -143,6 +155,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "set()"
         backend.megatron.aux.diagonal_tokens_set: "{80_000_000_000, 120_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  diagonal
+        backend.megatron.aux.skip_stable_launch:  true
         backend.megatron.split:               "100,0,0"
       # checkpoint_reuse_run=qwen3_dense_0.9B_ne_lr0.001_gbsz128_stable120B: a stable at 120B already exists,
       # so aux.tokens is pinned to 120B (NOT the max of the remaining decays below) --
@@ -156,6 +169,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "{6_000_000_000, 12_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "set()"
         backend.megatron.aux.stable_launch_tier:  cross
+        backend.megatron.aux.skip_stable_launch:  true
         backend.megatron.split:               "99,1,0"
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 128
@@ -202,6 +216,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "{20_000_000_000, 30_000_000_000, 50_000_000_000, 200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "{12_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  cross
+        backend.megatron.aux.skip_stable_launch:  true
         backend.megatron.split:               "100,0,0"
       # checkpoint_reuse_run=qwen3_dense_0.9B_ne_lr0.002_gbsz256_stable300B: a stable at 300B already exists,
       # so aux.tokens is pinned to 300B (NOT the max of the remaining decays below) --
@@ -215,6 +230,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "set()"
         backend.megatron.aux.diagonal_tokens_set: "{20_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  diagonal
+        backend.megatron.aux.skip_stable_launch:  true
         backend.megatron.split:               "99,1,0"
 
       # ---- gbsz 512 ----
@@ -246,6 +262,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "set()"
         backend.megatron.aux.diagonal_tokens_set: "{30_000_000_000, 50_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  diagonal
+        backend.megatron.aux.skip_stable_launch:  true
         backend.megatron.split:               "99,1,0"
       # checkpoint_reuse_run=qwen3_dense_0.9B_ne_lr0.002_gbsz512_stable300B: a stable at 300B already exists,
       # so aux.tokens is pinned to 300B (NOT the max of the remaining decays below) --
@@ -259,6 +276,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "set()"
         backend.megatron.aux.diagonal_tokens_set: "{80_000_000_000, 120_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  diagonal
+        backend.megatron.aux.skip_stable_launch:  true
         backend.megatron.split:               "100,0,0"
 
       # ---- gbsz 1024 ----
@@ -302,6 +320,16 @@ groups:
         backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
         backend.megatron.lr_wsd_decay_iters: 0
         backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+        # Only combos with aux.extend_stable_source set (Group 1) need this:
+        # those seed this stable job's checkpoints dir from an older, shorter
+        # stable run whose optimizer_param_scheduler was built for a smaller
+        # train_iters. Without it, resuming asserts (class train_iters vs.
+        # checkpoint train_iters mismatch) because train_iters here reflects
+        # the new, larger aux.tokens. Scoped to just those combos (rather than
+        # set unconditionally like the decay stages below) so the other 17
+        # stable runs keep the checkpoint/config consistency check on real
+        # (non-extend) resumes.
+        backend.megatron.override_opt_param_scheduler: "\\${oc.eval:'\"\\${backend.megatron.aux.extend_stable_source}\" != \"\"'}"
         # Horizon suffix for job.name: "<max_decay_tokens_in_BT>BT" (e.g. "12BT",
         # "300BT"). All 18 Group-1 combos have max_decay_tokens as a whole number
         # of billions, so integer division by 1e9 is exact. aux.tokens on the
@@ -410,14 +438,25 @@ groups:
 # these comments for brevity.
 #
 # Stable pass:  stable survives iff
-#                   aux.priority_tier == "all"
-#                OR aux.priority_tier == aux.stable_launch_tier
+#                   NOT aux.skip_stable_launch
+#               AND (aux.priority_tier == "all"
+#                    OR aux.priority_tier == aux.stable_launch_tier)
 #               i.e. each stable is submitted by the SINGLE tier invocation
 #               that is "earliest" in the center -> cross -> diagonal order
 #               among tiers that actually consume one of its decays. This
 #               prevents center from queuing stables whose decays only live
 #               in cross/diagonal, so high-priority center work doesn't
 #               compete with low-priority stables for the same slots.
+#               aux.skip_stable_launch (Group 1, per-combo) additionally
+#               drops the stable entirely for combos whose CSV row has
+#               checkpoint_status=reuse_checkpoint and NO "stable" row of its
+#               own: the existing checkpoint already covers every branch
+#               point their decays need, so (re)submitting the stable would
+#               just resume it from its last (partial) checkpoint and train
+#               it onward to aux.tokens -- i.e. actually continue/retrain it,
+#               not no-op. Decays still find the checkpoint fine because
+#               sibling resolution (see below) doesn't depend on the stable
+#               having been submitted this run.
 # Decay pass:   decay survives iff its aux.tokens is in the tier's per-combo
 #               set (for tier=all, the union of all three tier sets).
 #
@@ -443,7 +482,7 @@ groups:
 # it rather than launching a job whose LR schedule is mostly ramp-up. Safe
 # across stages because both stable and decay define train_iters via
 # oc.eval on aux.tokens, so the division always evaluates to a float.
-filter: "\\${oc.eval:'(((\"\\${stage}\" == \"stable\" and (\"\\${backend.megatron.aux.priority_tier}\" == \"all\" or \"\\${backend.megatron.aux.priority_tier}\" == \"\\${backend.megatron.aux.stable_launch_tier}\")) or (\"\\${stage}\" != \"stable\" and ((\"\\${backend.megatron.aux.priority_tier}\" == \"all\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set} | \\${backend.megatron.aux.cross_tokens_set} | \\${backend.megatron.aux.diagonal_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"center\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"cross\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.cross_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"diagonal\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.diagonal_tokens_set})))) and (\\${backend.megatron.lr_warmup_iters} / \\${backend.megatron.train_iters} < 0.3))'}"
+filter: "\\${oc.eval:'(((\"\\${stage}\" == \"stable\" and (not \\${backend.megatron.aux.skip_stable_launch}) and (\"\\${backend.megatron.aux.priority_tier}\" == \"all\" or \"\\${backend.megatron.aux.priority_tier}\" == \"\\${backend.megatron.aux.stable_launch_tier}\")) or (\"\\${stage}\" != \"stable\" and ((\"\\${backend.megatron.aux.priority_tier}\" == \"all\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set} | \\${backend.megatron.aux.cross_tokens_set} | \\${backend.megatron.aux.diagonal_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"center\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"cross\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.cross_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"diagonal\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.diagonal_tokens_set})))) and (\\${backend.megatron.lr_warmup_iters} / \\${backend.megatron.train_iters} < 0.3))'}"
 
 
 ### Job counts (per `backend.megatron.aux.priority_tier`)
@@ -452,26 +491,32 @@ filter: "\\${oc.eval:'(((\"\\${stage}\" == \"stable\" and (\"\\${backend.megatro
 # Pre-filter product (always):               18 × 10 = 180 sweep points
 #
 # Each stable is "owned" by the earliest tier that consumes one of its decays
-# (via backend.megatron.aux.stable_launch_tier). Counts:
+# (via backend.megatron.aux.stable_launch_tier). Of the 18 owned stables, 8
+# have aux.skip_stable_launch=true (checkpoint_status=reuse_checkpoint combos
+# with no "stable" row of their own in remaining_to_be_trained_hp_grid.csv --
+# see the filter comment above), so only 10 actually get submitted:
 #   center   owns   0 stables (combos with non-empty center_tokens_set)
-#   cross    owns  11 stables (center_tokens_set empty AND cross non-empty)
-#   diagonal owns   7 stables (only diagonal_tokens_set non-empty)
+#   cross    owns  11 stables (center_tokens_set empty AND cross non-empty),
+#                   4 skipped -> 7 actually submitted
+#   diagonal owns   7 stables (only diagonal_tokens_set non-empty),
+#                   4 skipped -> 3 actually submitted
 #                  -------
-#                  18 total
+#                  18 owned, 10 submitted
 #
 #   priority_tier  stables   decays              total
 #   -------------  -------   -----------------   -----
-#   all            18        43                  61     (default; full sweep)
+#   all            10        43                  53     (default; full sweep)
 #   center          0        0                    0     (no remaining combo has a center decay)
-#   cross           11        21                  32
-#   diagonal         7        22                  29
+#   cross            7        21                  28
+#   diagonal         3        22                  25
 #
 # The three tiers {center, cross, diagonal} are disjoint and partition both
-# the 18 stables and the 43 decays (so the 61 total). Because each stable
-# lives in exactly one tier, the tiers MUST be invoked in the order
-# center -> cross -> diagonal; center is a no-op here (0 jobs) since no
-# remaining decay in this grid sits at grid_position=center, but cross and
-# diagonal still both need to run.
+# the 18 owned stables and the 43 decays (so the 61 pre-skip total; 53 once
+# aux.skip_stable_launch drops the 8 reuse-only stables). Because each stable
+# is still owned by exactly one tier even when skipped, the tiers MUST be
+# invoked in the order center -> cross -> diagonal; center is a no-op here (0
+# jobs) since no remaining decay in this grid sits at grid_position=center,
+# but cross and diagonal still both need to run.
 #
 # Sibling resolution sees ALL 180 points in every invocation (orchestrator.py
 # calls resolve_sweep_with_dag with full_points_by_idx=all_points_by_idx), so
@@ -485,17 +530,18 @@ filter: "\\${oc.eval:'(((\"\\${stage}\" == \"stable\" and (\"\\${backend.megatro
 #        python -m oellm_autoexp.cli run \
 #            --config-name experiments/swagatam/multilingual_scaling/dense_1B_lr_gbsz_tokens_grid_tiered \
 #            backend.megatron.aux.priority_tier=center
-# 2) Cross tier: 11 stables (owned by cross) + 21 cross decays. Launch in a
-#    separate shell as soon as you want to start filling any remaining queue
-#    capacity.
+# 2) Cross tier: 7 stables actually submitted (of 11 owned; 4 skipped via
+#    aux.skip_stable_launch) + 21 cross decays. Launch in a separate shell as
+#    soon as you want to start filling any remaining queue capacity.
 #        python -m oellm_autoexp.cli run --config-name ... backend.megatron.aux.priority_tier=cross
-# 3) Diagonal tier: 7 stables (owned by diagonal) + 22 diagonal decays.
+# 3) Diagonal tier: 3 stables actually submitted (of 7 owned; 4 skipped) + 22
+#    diagonal decays.
 #        python -m oellm_autoexp.cli run --config-name ... backend.megatron.aux.priority_tier=diagonal
 # Each invocation launches its own orchestrator/monitor process; coordination
 # between them is purely via the filesystem (checkpoint dirs + log symlinks
 # under the same base_output_dir). Use
 # `backend.megatron.aux.priority_tier=all` for a single one-shot submission
-# of the full 61 jobs (no tier prioritization).
+# of the full 53 jobs (no tier prioritization).
 #
 ### Formulas (seq_length=4096, cooldown_decay_fraction=0.2)
 # For budget B tokens and global batch gbsz:
