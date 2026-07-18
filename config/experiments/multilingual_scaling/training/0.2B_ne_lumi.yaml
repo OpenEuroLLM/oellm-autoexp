@@ -61,7 +61,7 @@ slurm:
     gpus_per_node: 8
     gres: gpu:8
     cpus_per_task: 7
-    mem: 480G
+    # mem: 480G
     partition: standard-g
     account: project_465002530
     time: "48:00:00"

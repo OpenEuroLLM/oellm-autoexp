@@ -19,7 +19,8 @@ stage: "" # Will be overridden by sweep
 
 job:
   name: "" # Will be overridden by sweep with stage and hyperparameter info
-  base_output_dir: "/scratch/project_465002530/multilingual_scaling/0.4B_ne/training/${job.name}"
+  # base_output_dir: "/scratch/project_465002530/multilingual_scaling/0.4B_ne/training/${job.name}"
+  base_output_dir: "/scratch/project_465002530/users/dianaonutu/outputs/multilingual_scaling/0.4B_ne/training/${job.name}"
   log_path: ${.base_output_dir}/logs/slurm-%j.log
 
 backend:
@@ -62,7 +63,7 @@ slurm:
     gpus_per_node: 8
     gres: gpu:8
     cpus_per_task: 7
-    mem: 480G
+    # mem: 480G
     partition: standard-g
     account: project_465002530
     time: "48:00:00"
