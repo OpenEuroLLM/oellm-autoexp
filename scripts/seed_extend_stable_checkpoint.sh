@@ -21,11 +21,24 @@
 # every auto_restart resubmission: idempotent, never rolls back real progress.
 #
 # Usage: seed_extend_stable_checkpoint.sh <source_checkpoints_dir> <target_checkpoints_dir>
+#
+# The caller renders this command through an unquoted shell interpolation
+# (see the ShellCommandCondition in qwen3_dense_0.9B_ne_lumi_train_v2.yaml --
+# quoting isn't an option there since the value round-trips through Hydra's
+# CLI override grammar first). When source is the empty string, the shell
+# drops that argument entirely instead of passing an empty positional param,
+# so only the target dir arrives, in $1. Detect that by argument count rather
+# than requiring the caller to pass two tokens.
 
 set -e
 
-src="$1"
-ckpt_dir="$2"
+if [ "$#" -eq 1 ]; then
+    src=""
+    ckpt_dir="$1"
+else
+    src="$1"
+    ckpt_dir="$2"
+fi
 
 mkdir -p "$ckpt_dir"
 
