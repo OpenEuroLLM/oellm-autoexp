@@ -24,6 +24,26 @@ if str(Path(__file__).resolve().parent) not in sys.path:
 from write_guard import guard_write  # noqa: E402
 
 
+# Slurm counts GPUs as Graphics Compute Dies, but LUMI bills per physical
+# MI250x module, which carries 2 GCDs.  A standard-g node therefore appears to
+# Slurm as 8 GPUs while being billed as 4 GPU-hours per node-hour.  Reporting
+# the raw GCD count doubles every GPU-hour figure relative to the allocation.
+# See https://docs.lumi-supercomputer.eu/runjobs/lumi_env/billing/#gpu-billing
+#
+# Keyed by the model qualifier in the sacct TRES string ("gres/gpu:mi250=64").
+# Clusters that report a bare "gres/gpu=" (MN5, Leonardo) have no qualifier and
+# bill 1:1, so they are unaffected.
+GPU_BILLING_DIVISOR: dict[str, float] = {
+    "mi250": 2.0,
+    "mi250x": 2.0,
+}
+
+
+def gpu_billing_divisor(model: str) -> float:
+    """GCDs per billed GPU for *model* (1.0 when the GPU bills 1:1)."""
+    return GPU_BILLING_DIVISOR.get((model or "").strip().lower(), 1.0)
+
+
 def parse_elapsed(s):
     """Convert sacct elapsed string (D-HH:MM:SS or HH:MM:SS) to hours."""
     if "-" in s:
@@ -100,13 +120,17 @@ def query_sacct(job_ids):
         # GPU model).  The optional ":<model>" is what makes LUMI jobs report
         # zero GPUs — and therefore zero GPU-hours — without it.
         gpus = 0
-        m = re.search(r"gres/gpu(?::[^=]+)?=(\d+)", alloc_tres)
+        m = re.search(r"gres/gpu(?::([^=]+))?=(\d+)", alloc_tres)
+        model = ""
         if m:
-            gpus = int(m.group(1))
+            model = (m.group(1) or "").strip().lower()
+            gpus = int(m.group(2))
         info[job_id] = {
             "state": state.strip(),
             "elapsed": elapsed.strip(),
             "gpus": gpus,
+            "gpus_billed": gpus / gpu_billing_divisor(model),
+            "gpu_model": model,
         }
     return info
 
@@ -181,7 +205,7 @@ def main():
                 continue
             d = sacct_info[job_id]
             hours = parse_elapsed(d["elapsed"])
-            gpu_h = hours * d["gpus"]
+            gpu_h = hours * d["gpus_billed"]
             exp_total += gpu_h
             csv_rows.append(
                 {
@@ -212,7 +236,7 @@ def main():
     print(sep)
     for exp_name, job_ids in experiments.items():
         exp_gpu_h = sum(
-            parse_elapsed(sacct_info[jid]["elapsed"]) * sacct_info[jid]["gpus"]
+            parse_elapsed(sacct_info[jid]["elapsed"]) * sacct_info[jid]["gpus_billed"]
             for jid in job_ids
             if jid in sacct_info
         )

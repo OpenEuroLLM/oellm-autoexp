@@ -43,6 +43,7 @@ for _d in (_tools_dir, _scripts_dir):
         sys.path.insert(0, _d)
 
 from gpu_hours import (  # noqa: E402
+    gpu_billing_divisor as _gpu_billing_divisor,
     collect_job_ids as _gpu_collect_job_ids,
     query_sacct as _gpu_query_sacct,
     parse_elapsed as _gpu_parse_elapsed,
@@ -210,6 +211,22 @@ def _eval_token_set(s: str) -> set[int]:
         return {int(x) for x in result} if isinstance(result, (set, frozenset)) else set()
     except Exception:
         return set()
+
+
+# Billing divisor used where no sacct TRES string is available (sbatch-derived
+# GPU counts).  Set from --machine at startup; sacct-derived figures read the
+# GPU model directly and do not depend on this.
+_MACHINE_BILLING_DIVISOR: float = 1.0
+
+# GPU model implied by each cluster, for the sbatch fallback above.
+_MACHINE_GPU_MODEL = {"LUMI": "mi250"}
+
+
+def _set_machine_billing_divisor(machine: str) -> None:
+    global _MACHINE_BILLING_DIVISOR
+    _MACHINE_BILLING_DIVISOR = _gpu_billing_divisor(
+        _MACHINE_GPU_MODEL.get((machine or "").strip().upper(), "")
+    )
 
 
 def _redirect_output(path: Path, args: argparse.Namespace) -> Path:
@@ -883,12 +900,17 @@ def query_sacct(job_ids: list[str]) -> dict[str, dict]:
         if "." in jid_field:
             continue
         gpus = 0
-        m = re.search(r"gres/gpu(?::[^=]+)?=(\d+)", alloc_tres)
+        m = re.search(r"gres/gpu(?::([^=]+))?=(\d+)", alloc_tres)
+        _model = ""
         if m:
-            gpus = int(m.group(1))
+            _model = (m.group(1) or "").strip().lower()
+            gpus = int(m.group(2))
         info[jid_field.strip()] = {
             "state": state.strip(),
             "elapsed": elapsed.strip(),
+            # Billed GPUs: LUMI reports GCDs but bills per 2-GCD MI250x module.
+            "gpus_billed": gpus / _gpu_billing_divisor(_model),
+            "gpu_model": _model,
             "gpus": gpus,
             "start_ts": _parse_sacct_ts(start),
             "end_ts": _parse_sacct_ts(end),
@@ -910,7 +932,10 @@ def gpu_hours_from_timestamps(
     if total_gpus == 0:
         return None
     elapsed_h = (last_ts - first_ts).total_seconds() / 3600
-    return elapsed_h * total_gpus
+    # job.sbatch carries no GPU model, so fall back to the divisor implied by
+    # --machine (see _set_machine_billing_divisor).  Keeps this fallback in the
+    # same billing units as the sacct-derived figures.
+    return elapsed_h * total_gpus / _MACHINE_BILLING_DIVISOR
 
 
 def load_external_gpu_h(csv_path: str) -> dict[tuple[str, str], float]:
@@ -1691,6 +1716,8 @@ def main() -> None:
     if args.cache_dir:
         set_cache_root(args.cache_dir)
 
+    _set_machine_billing_divisor(args.machine)
+
     if args.lightweight:
         _lightweight_main(args)
         return
@@ -1971,11 +1998,20 @@ def main() -> None:
             sacct_state = sacct_entry.get("state", "")
             sacct_elapsed = sacct_entry.get("elapsed", "")
             gpu_hours: float | None = None
+            # gpus stays in raw GCD units: it feeds cross-cluster collision
+            # detection (which compares sacct GCDs against sbatch GCDs) and the
+            # per-GPU throughput normalisation.  GPU-hours, the billed cost, is
+            # derived from the billed count instead — LUMI bills per 2-GCD
+            # MI250x module, so raw GCD-hours double the real spend.
             gpus = total_gpus
+            _gpus_billed = total_gpus / _MACHINE_BILLING_DIVISOR
             if sacct_elapsed:
                 elapsed_h = _gpu_parse_elapsed(sacct_elapsed)
                 gpus = sacct_entry.get("gpus", 0) or total_gpus
-                gpu_hours = elapsed_h * gpus
+                _gpus_billed = sacct_entry.get("gpus_billed") or (
+                    gpus / _MACHINE_BILLING_DIVISOR
+                )
+                gpu_hours = elapsed_h * _gpus_billed
             elif (run_name, job_id) in external_job_gpu_h:
                 gpu_hours = external_job_gpu_h[(run_name, job_id)]
 
@@ -2004,9 +2040,10 @@ def main() -> None:
                 cluster = args.machine
 
             # Low-throughput analysis (reuses the throughput cache written above).
+            # Billed GPU count so gpu_h_lost lands in the same units as gpu_hours.
             _job_lt = _analyze_low_throughput_job(
                 stdout_log,
-                num_gpus=gpus or None,
+                num_gpus=_gpus_billed or None,
                 max_elapsed_ms=args.max_elapsed_ms,
                 skip_first_iters=args.skip_first_iters,
                 max_iters_used=args.max_iters,
@@ -2032,10 +2069,12 @@ def main() -> None:
                 ttfi_min = (first_iter_ts.timestamp() - sacct_start) / 60.0
             elif sacct_start is not None and first_iter_ts is None and sacct_end is not None:
                 ttfi_min = (sacct_end - sacct_start) / 60.0
-            elif first_iter_ts is None and gpu_hours is not None and total_gpus > 0:
-                ttfi_min = (gpu_hours / total_gpus) * 60.0
+            elif first_iter_ts is None and gpu_hours is not None and _gpus_billed > 0:
+                ttfi_min = (gpu_hours / _gpus_billed) * 60.0
             ttfi_gpu_h: float | None = (
-                (ttfi_min / 60.0) * total_gpus if ttfi_min is not None and total_gpus > 0 else None
+                (ttfi_min / 60.0) * _gpus_billed
+                if ttfi_min is not None and _gpus_billed > 0
+                else None
             )
 
             # Sanity check: TTFI cannot physically exceed total job elapsed time.
@@ -2400,7 +2439,7 @@ def main() -> None:
                     if job_id not in gpu_sacct_data:
                         continue
                     d = gpu_sacct_data[job_id]
-                    gpu_h = _gpu_parse_elapsed(d["elapsed"]) * d["gpus"]
+                    gpu_h = _gpu_parse_elapsed(d["elapsed"]) * d.get("gpus_billed", d["gpus"])
                     exp_gpu_h[exp_name] = exp_gpu_h.get(exp_name, 0.0) + gpu_h
                     grand_gpu_total += gpu_h
                     gpu_csv_rows.append(
@@ -2604,11 +2643,20 @@ def main() -> None:
             and _gbsz_tokens > 0
         ):
             # Partially trained: bill only the iterations still outstanding.
+            # _ref_tok is per-GCD throughput from the logs, so tokens/(_ref_tok*3600)
+            # yields GCD-hours; divide by the billing divisor to match the billed
+            # GPU-hours burned (LUMI bills per 2-GCD module).
             _rem_tokens = (_tot_it - _cur_it) * _gbsz_tokens
-            run_remaining[_rn] = (_rem_tokens / (_ref_tok * 3600.0), False)
+            run_remaining[_rn] = (
+                _rem_tokens / (_ref_tok * 3600.0 * _MACHINE_BILLING_DIVISOR),
+                False,
+            )
         elif _ref_tok is not None and _eff_tokens > 0:
             # Not started: the full budget, less any stable branch-point already trained.
-            run_remaining[_rn] = (_eff_tokens / (_ref_tok * 3600.0), True)
+            run_remaining[_rn] = (
+                _eff_tokens / (_ref_tok * 3600.0 * _MACHINE_BILLING_DIVISOR),
+                True,
+            )
         else:
             run_remaining[_rn] = (None, False)
     grand_remaining_total = sum(v for v, _ in run_remaining.values() if v is not None)
