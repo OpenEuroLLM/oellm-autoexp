@@ -20,6 +20,7 @@ stage: "" # Will be overridden by sweep
 job:
   name: "" # Will be overridden by sweep with stage and hyperparameter info
   base_output_dir: "/scratch/project_465002530/multilingual_scaling/0.2B_ne/training/${job.name}"
+  # base_output_dir: "/scratch/project_465002530/users/dianaonutu/oellm-autoexp/outputs/multilingual_scaling/0.2B_ne/training/${job.name}"
   log_path: ${.base_output_dir}/logs/slurm-%j.log
 
 backend:

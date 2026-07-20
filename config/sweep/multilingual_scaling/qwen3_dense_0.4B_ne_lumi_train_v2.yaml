@@ -161,11 +161,6 @@ groups:
       # decays branch off that existing checkpoint via the sibling stable stage instead of
       # retraining a smaller stable from scratch.
       # Already trained, removed from grid: cross: 80B, 120B
-      # NOTE: unlike the other checkpoint_reuse_run combos above, this stable's
-      # own split is NOT confirmed by data_split_issue/README.md -- it has no
-      # self-row (or any decay-sibling row) in that report, so its actual
-      # training split is unknown. Left at the 99,1,0 default here; verify
-      # against this checkpoint's actual job config/wandb run before launching.
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 256
         backend.megatron.micro_batch_size: 2
