@@ -35,6 +35,8 @@ backend:
 
     # Evals off
     eval_interval: 1_000_000_000
+    # split: set to default in data (data_split_issue analysis)
+
 
     # Lumi-specific settings
     masked_softmax_fusion: False

@@ -35,7 +35,8 @@ backend:
 
     # Evals off
     eval_interval: 1_000_000_000
-    split: "99,1,0" #### TO CHECK!
+    split: "99,1,0" # set per (lr, gbsz) combo in the v2 sweep if it deviates from default (data_split_issue analysis)
+
 
     # Lumi-specific settings
     masked_softmax_fusion: False
