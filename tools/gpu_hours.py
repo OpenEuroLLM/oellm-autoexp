@@ -12,11 +12,18 @@ Defaults to the current directory if no argument is given.
 
 import argparse
 import csv
+import math
 import os
 import re
 import sys
 import subprocess
 from collections import defaultdict
+
+# LUMI-G Slurm partitions billed under the GCD-granular formula (see
+# https://docs.lumi-supercomputer.eu/runjobs/lumi_env/billing/#gpu-billing).
+# Any other GPU partition (standard-g, or a non-LUMI cluster's GPU partition)
+# falls back to the "whole module" rate.
+_LUMI_GCD_BILLED_PARTITIONS = {"small-g", "dev-g"}
 
 
 def parse_elapsed(s):
@@ -27,6 +34,33 @@ def parse_elapsed(s):
         return int(days) * 24 + int(h) + int(m) / 60 + int(sec) / 3600
     h, m, sec = s.split(":")
     return int(h) + int(m) / 60 + int(sec) / 3600
+
+
+def parse_mem_gb(value, unit):
+    """Convert a sacct AllocTRES mem quantity (e.g. "480", "G") to GiB."""
+    factor = {"": 1 / 1024, "K": 1 / 1024 ** 2, "M": 1 / 1024, "G": 1, "T": 1024, "P": 1024 ** 2}
+    return float(value) * factor.get(unit, 1 / 1024)
+
+
+def gpu_hours_for_job(d, hours):
+    """Billed GPU-hours for one job, per LUMI's billing policy.
+
+    A GPU-hour is a full MI250x module (2 GCDs) for one hour. On standard-g
+    (always full-node) it's simply GCDs/2 * hours. On small-g/dev-g, billing
+    is 0.5 per GCD allocated, unless CPU or memory allocated per GCD exceeds
+    8 cores / 64GB, in which case that share is billed instead:
+        GPU-h = max(ceil(cpu/8), ceil(mem_GB/64), GCDs) * hours * 0.5
+    Non-LUMI GPUs (no "mi250" TRES type) are billed 1:1 (gpus * hours), since
+    sacct's gres/gpu there already counts physical GPUs, not GCDs.
+    """
+    if not d.get("is_lumi_gpu"):
+        return d["gpus"] * hours
+
+    gcds = d["gpus"]
+    if d.get("partition") in _LUMI_GCD_BILLED_PARTITIONS:
+        units = max(math.ceil(d["cpus"] / 8), math.ceil(d["mem_gb"] / 64), gcds)
+        return units * hours * 0.5
+    return (gcds / 2) * hours
 
 
 def collect_job_ids(results_dir):
@@ -63,13 +97,13 @@ def collect_job_ids(results_dir):
 def query_sacct(job_ids):
     """
     Run sacct for the given job IDs.
-    Returns {job_id: {"state": ..., "elapsed": ..., "gpus": int}}.
+    Returns {job_id: {"state", "elapsed", "partition", "gpus", "cpus", "mem_gb", "is_lumi_gpu"}}.
     Only the top-level job entry (no .batch / .extern / .N steps) is kept.
     """
     ids_str = ",".join(job_ids)
     cmd = [
         "sacct", "-j", ids_str,
-        "--format=JobID,State,Elapsed,AllocTRES%80",
+        "--format=JobID,State,Elapsed,Partition,AllocTRES%200",
         "--noheader", "--parsable2",
     ]
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
@@ -80,22 +114,38 @@ def query_sacct(job_ids):
     info = {}
     for line in result.stdout.splitlines():
         parts = line.split("|")
-        if len(parts) < 4:
+        if len(parts) < 5:
             continue
-        job_id_field, state, elapsed, alloc_tres = parts[:4]
+        job_id_field, state, elapsed, partition, alloc_tres = parts[:5]
         # Skip sub-steps (.batch, .extern, .0, .1, ...)
         if "." in job_id_field:
             continue
         job_id = job_id_field.strip()
-        # Parse GPU count from TRES string, e.g. "gres/gpu=32"
+        # Parse GPU count from TRES string, e.g. "gres/gpu=32" or LUMI's
+        # type-qualified "gres/gpu:mi250=32". On LUMI this count is GCDs,
+        # not physical GPU modules (each MI250x module = 2 GCDs).
         gpus = 0
-        m = re.search(r"gres/gpu=(\d+)", alloc_tres)
+        is_lumi_gpu = False
+        m = re.search(r"gres/gpu(?::(\w+))?=(\d+)", alloc_tres)
         if m:
-            gpus = int(m.group(1))
+            gpus = int(m.group(2))
+            is_lumi_gpu = bool(m.group(1)) and "mi250" in m.group(1).lower()
+        cpus = 0
+        m = re.search(r"(?:^|,)cpu=(\d+)", alloc_tres)
+        if m:
+            cpus = int(m.group(1))
+        mem_gb = 0.0
+        m = re.search(r"(?:^|,)mem=([\d.]+)([KMGTP]?)", alloc_tres)
+        if m:
+            mem_gb = parse_mem_gb(m.group(1), m.group(2))
         info[job_id] = {
             "state": state.strip(),
             "elapsed": elapsed.strip(),
+            "partition": partition.strip(),
             "gpus": gpus,
+            "cpus": cpus,
+            "mem_gb": mem_gb,
+            "is_lumi_gpu": is_lumi_gpu,
         }
     return info
 
@@ -160,7 +210,7 @@ def main():
                 continue
             d = sacct_info[job_id]
             hours = parse_elapsed(d["elapsed"])
-            gpu_h = hours * d["gpus"]
+            gpu_h = gpu_hours_for_job(d, hours)
             exp_total += gpu_h
             csv_rows.append({
                 "experiment": exp_name,
@@ -189,7 +239,7 @@ def main():
     print(sep)
     for exp_name, job_ids in experiments.items():
         exp_gpu_h = sum(
-            parse_elapsed(sacct_info[jid]["elapsed"]) * sacct_info[jid]["gpus"]
+            gpu_hours_for_job(sacct_info[jid], parse_elapsed(sacct_info[jid]["elapsed"]))
             for jid in job_ids if jid in sacct_info
         )
         print(f"  {exp_name:<{col_exp - 2}}  {exp_gpu_h:>8.1f} GPU-h")
