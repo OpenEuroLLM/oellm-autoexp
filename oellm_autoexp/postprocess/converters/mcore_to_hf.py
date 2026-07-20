@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import argparse
+import json
 import logging
 import os
 import re
@@ -226,11 +227,13 @@ def _convert_attention_params(
     hidden_size_per_head,
     tp_size,
     output_state_dict,
+    qk_norm_names=("q_layernorm", "k_layernorm"),
 ):
+    q_norm_name, k_norm_name = qk_norm_names
     if "q_layernorm" in op_name:
-        output_state_dict[f"{layer_name}.self_attn.q_layernorm.{weight_or_bias}"] = params.clone()
+        output_state_dict[f"{layer_name}.self_attn.{q_norm_name}.{weight_or_bias}"] = params.clone()
     elif "k_layernorm" in op_name:
-        output_state_dict[f"{layer_name}.self_attn.k_layernorm.{weight_or_bias}"] = params.clone()
+        output_state_dict[f"{layer_name}.self_attn.{k_norm_name}.{weight_or_bias}"] = params.clone()
     elif op_name.endswith("layer_norm_weight") or op_name.endswith("layernorm"):
         if "qkv" in op_name:
             output_state_dict[f"{layer_name}.input_layernorm.{weight_or_bias}"] = params.clone()
@@ -393,6 +396,10 @@ def convert_checkpoint_from_megatron_to_transformers(args):
     num_groups = config.num_key_value_heads
     path = "model"
 
+    qk_norm_names = (
+        ("q_norm", "k_norm") if args.model_type == "qwen3" else ("q_layernorm", "k_layernorm")
+    )
+
     for pp_rank in range(pp_size):
         if pp_size > 0:
             logging.info("Converting pipeline parallel rank %d", pp_rank)
@@ -450,6 +457,7 @@ def convert_checkpoint_from_megatron_to_transformers(args):
                 hidden_size_per_head,
                 tp_size,
                 output_state_dict,
+                qk_norm_names=qk_norm_names,
             )
 
     if config.num_hidden_layers != (layer_idx + 1):  # noqa: F821
@@ -469,9 +477,20 @@ def convert_checkpoint_from_megatron_to_transformers(args):
         save_directory=args.save_path,
         safe_serialization=True,
     )
+    if not os.path.exists(os.path.join(args.save_path, "tokenizer_config.json")):
+        tokenizer.save_pretrained(args.save_path)
+        cfg_path = os.path.join(args.save_path, "tokenizer_config.json")
+        with open(cfg_path) as f:
+            cfg = json.load(f)
+        if isinstance(cfg.get("extra_special_tokens"), list):
+            cfg.pop("extra_special_tokens", None)
+            with open(cfg_path, "w") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 
 def main():
+    if os.environ.get("SLURM_PROCID", "0") != "0":
+        return
     parser = argparse.ArgumentParser()
     parser.add_argument("--megatron-path", type=str, default=None)
     parser.add_argument("--convert_checkpoint_from_megatron_to_transformers", action="store_true")

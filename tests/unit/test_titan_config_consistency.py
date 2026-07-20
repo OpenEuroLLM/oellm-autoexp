@@ -53,7 +53,15 @@ _OPTIONAL_TITAN_RUNTIME_ROOTS = {
 
 
 def _reset_titan_modules(monkeypatch: pytest.MonkeyPatch) -> None:
-    prefixes = ("torch", "torchtitan", "titan_oellm", "oellm_autoexp.titan_custom_config")
+    prefixes = ["torchtitan", "titan_oellm", "oellm_autoexp.titan_custom_config"]
+    # Only purge ``torch`` when it is going to be replaced by a stub (i.e. real
+    # torch is absent, matching ``_install_torch_stub``'s guard). Deleting a real
+    # installed torch from sys.modules and re-importing it re-runs torch's
+    # non-idempotent module init (``torch/overrides.py`` raises "function
+    # '_has_torch_function' already has a docstring"). When real torch is present
+    # we keep it and import the config modules against it.
+    if importlib.util.find_spec("torch") is None:
+        prefixes.append("torch")
     for name in list(sys.modules):
         if any(name == prefix or name.startswith(f"{prefix}.") for prefix in prefixes):
             monkeypatch.delitem(sys.modules, name, raising=False)

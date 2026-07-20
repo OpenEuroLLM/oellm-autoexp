@@ -274,10 +274,10 @@ def _build_job_record(
         definition = LocalJobConfig(
             name=job_name,
             command=["bash", "-c", f"{env_str} {launch_cmd}"],
-            log_path=str(job.config.job.log_path),
-            log_path_current=str(job.config.job.log_path_current),
-            config_path=str(job.config.job.config_path),
-            config_path_current=str(job.config.job.config_path_current),
+            log_path=job.config.job.log_path,
+            log_path_current=job.config.job.log_path_current,
+            config_path=job.config.job.config_path,
+            config_path_current=job.config.job.config_path_current,
             log_events=list(base_job.log_events),
             state_events=list(base_job.state_events),
             start_condition=base_job.start_condition,
@@ -300,10 +300,10 @@ def _build_job_record(
 
     definition = SlurmJobConfig(
         name=job_name,
-        log_path=str(job.config.job.log_path),
-        log_path_current=str(job.config.job.log_path_current),
-        config_path=str(job.config.job.config_path),
-        config_path_current=str(job.config.job.config_path_current),
+        log_path=job.config.job.log_path,
+        log_path_current=job.config.job.log_path_current,
+        config_path=job.config.job.config_path,
+        config_path_current=job.config.job.config_path_current,
         log_events=list(base_job.log_events),
         state_events=list(base_job.state_events),
         start_condition=base_job.start_condition,
@@ -428,7 +428,7 @@ def chain_submit_jobs(
 
         slurm_cfg = record.definition.slurm
         if prev_slurm_id is not None:
-            slurm_cfg.sbatch = replace(slurm_cfg.sbatch, dependency=f"afterany:{prev_slurm_id}")
+            slurm_cfg.sbatch.dependency = f"afterany:{prev_slurm_id}"
             record = replace(record, definition=replace(record.definition, slurm=slurm_cfg))
 
         if dry_run:
