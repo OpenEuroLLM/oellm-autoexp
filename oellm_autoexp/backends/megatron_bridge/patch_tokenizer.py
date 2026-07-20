@@ -11,8 +11,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 from pathlib import Path
+
+# Tokenizer files copied verbatim from a local tokenizer dir. Copying (instead
+# of AutoTokenizer.save_pretrained) preserves metadata that re-serialization can
+# silently drop under newer ``transformers`` — notably ``add_bos_token`` /
+# ``add_eos_token``, ``additional_special_tokens``, ``added_tokens_decoder`` and
+# chat templates — which downstream eval harnesses (lm_eval/lighteval) rely on.
+_CANONICAL_TOKENIZER_FILES = (
+    "tokenizer.json",
+    "tokenizer.model",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "added_tokens.json",
+    "vocab.json",
+    "merges.txt",
+    "chat_template.jinja",
+    "chat_template.json",
+)
 
 
 def patch_config_and_tokenizer(hf_path: Path, tokenizer_path: str) -> None:
@@ -26,8 +44,20 @@ def patch_config_and_tokenizer(hf_path: Path, tokenizer_path: str) -> None:
     print(f"  eos_token_id: {tokenizer.eos_token_id}")
     print(f"  pad_token_id: {tokenizer.pad_token_id}")
 
-    print(f"Saving tokenizer into: {hf_path}")
-    tokenizer.save_pretrained(str(hf_path))
+    src = Path(tokenizer_path)
+    if src.is_dir():
+        # Local tokenizer dir: copy files verbatim so ALL metadata survives.
+        copied = []
+        for fname in _CANONICAL_TOKENIZER_FILES:
+            f = src / fname
+            if f.exists():
+                shutil.copy2(f, hf_path / fname)
+                copied.append(fname)
+        print(f"Copied tokenizer files verbatim into {hf_path}: {copied}")
+    else:
+        # Remote HF Hub id (no local files): fall back to re-serialization.
+        print(f"Saving tokenizer (HF id) into: {hf_path}")
+        tokenizer.save_pretrained(str(hf_path))
 
     config_file = hf_path / "config.json"
     if not config_file.exists():

@@ -49,7 +49,17 @@ def derive_qwen3_hf_config(megatron: dict, vocab_size: int) -> dict[str, Any]:
     hidden_size = _g(megatron, "hidden_size")
     num_layers = _g(megatron, "num_layers")
     num_attention_heads = _g(megatron, "num_attention_heads")
-    num_query_groups = _g(megatron, "num_query_groups", default=num_attention_heads)
+    # KV-head count. Megatron only honours `num_query_groups` when
+    # `group_query_attention` is enabled; with GQA off the model is full MHA
+    # (num_kv == num_attention_heads) regardless of the `num_query_groups`
+    # value, which may be a stale/arbitrary leftover (see commit 2caea68 that
+    # set it to a data-mix-aligned number that "doesn't influence model
+    # architecture since group_query_attention: False"). Mirror that here so the
+    # HF config matches the trained weights instead of copying the label blindly.
+    if _g(megatron, "group_query_attention", default=False):
+        num_query_groups = _g(megatron, "num_query_groups", default=num_attention_heads)
+    else:
+        num_query_groups = num_attention_heads
     kv_channels = _g(megatron, "kv_channels")
     if kv_channels is None and hidden_size and num_attention_heads:
         kv_channels = hidden_size // num_attention_heads
