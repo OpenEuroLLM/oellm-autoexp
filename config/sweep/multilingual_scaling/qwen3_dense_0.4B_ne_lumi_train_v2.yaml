@@ -133,6 +133,8 @@ groups:
         backend.megatron.split:                   "100,0,0"
 
       # ---- gbsz 256 ----
+      # NOTE! Our warmup ratio filter will drop all 6TB decays for gbsz=256 because 
+      # the warmup ratio is too high (> 0.3) for that small budget.
       - backend.megatron.lr: 5.e-4
         backend.megatron.global_batch_size: 256
         backend.megatron.micro_batch_size: 2
