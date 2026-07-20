@@ -49,6 +49,8 @@ from gpu_hours import (  # noqa: E402
 )
 from low_throughput_analysis import analyze_job as _analyze_low_throughput_job  # noqa: E402
 from megatron_throughput_from_logs import load_or_compute_throughput as _compute_throughput  # noqa: E402
+from megatron_throughput_from_logs import set_cache_root  # noqa: E402
+from write_guard import guard_write  # noqa: E402
 from validate_sweep_runs import (  # noqa: E402
     _resolve_defaults,
     render_job_name,
@@ -210,6 +212,34 @@ def _eval_token_set(s: str) -> set[int]:
         return set()
 
 
+def _redirect_output(path: Path, args: argparse.Namespace) -> Path:
+    """Map *path* under --cache-dir when set, so nothing is written into the
+    results tree.
+
+    The results directory frequently belongs to another user on a shared
+    project.  With --cache-dir the tracker treats it as strictly read-only and
+    mirrors the absolute path beneath the cache root, so derived artifacts
+    (throughput cache, gpu_hours.csv) land in the caller's own space instead.
+    """
+    root = getattr(args, "cache_dir", None)
+    if not root:
+        return path
+    path = path.resolve()
+    out = Path(root).expanduser() / path.relative_to(path.anchor)
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def _as_bool(v: Any) -> bool:
+    """Coerce a YAML scalar to bool, tolerating the string forms OmegaConf
+    leaves behind ('true', 'False', ...)."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().lower() in {"true", "yes", "1"}
+    return bool(v)
+
+
 def parse_config(config_path: str) -> dict:
     """Parse sweep config and return all valid (run_name, stage, tokens)
     combos.
@@ -248,9 +278,17 @@ def parse_config(config_path: str) -> dict:
         if group.get("type") != "list" or "configs" not in group:
             continue
         _pending_stable_combo = None  # reset per group
+        # A group may carry a `defaults:` mapping supplying keys omitted from
+        # its individual entries (e.g. aux.skip_stable_launch in the LUMI v2
+        # sweeps).  Entry-level keys win.
+        group_defaults = group.get("defaults") or {}
+        if not isinstance(group_defaults, dict):
+            group_defaults = {}
         for entry in group["configs"]:
             if not isinstance(entry, dict):
                 continue
+            if group_defaults:
+                entry = {**group_defaults, **entry}
 
             # Group 0: job name template
             if "job.name" in entry:
@@ -290,6 +328,14 @@ def parse_config(config_path: str) -> dict:
                         "stable_launch_tier": str(
                             entry.get("backend.megatron.aux.stable_launch_tier", "")
                         ),
+                        # Combos whose CSV row is checkpoint_status=reuse_checkpoint
+                        # with no stable row of its own: an existing checkpoint
+                        # already covers every branch point their decays need, so
+                        # the sweep filter never submits a stable for them.  The
+                        # stable run is therefore not expected to exist.
+                        "skip_stable_launch": _as_bool(
+                            entry.get("backend.megatron.aux.skip_stable_launch", False)
+                        ),
                         "stable_stage_name": None,  # old format: use "stable" + job_horizon_suffix
                     }
                 )
@@ -316,6 +362,9 @@ def parse_config(config_path: str) -> dict:
                     "diagonal_tokens": set(),
                     "stable_launch_tier": str(
                         entry.get("backend.megatron.aux.stable_launch_tier", "")
+                    ),
+                    "skip_stable_launch": _as_bool(
+                        entry.get("backend.megatron.aux.skip_stable_launch", False)
                     ),
                     "stable_stage_name": _stage_val,  # new format: pass full name (e.g. "stable12BT")
                 }
@@ -834,7 +883,7 @@ def query_sacct(job_ids: list[str]) -> dict[str, dict]:
         if "." in jid_field:
             continue
         gpus = 0
-        m = re.search(r"gres/gpu=(\d+)", alloc_tres)
+        m = re.search(r"gres/gpu(?::[^=]+)?=(\d+)", alloc_tres)
         if m:
             gpus = int(m.group(1))
         info[jid_field.strip()] = {
@@ -894,9 +943,16 @@ def _run_id_sets(run_dir: Path) -> tuple[set[str], set[str]]:
     """Return (config_ids, log_ids) for a run directory.
 
     config_ids: IDs from config-{id}.yaml (job submitted via pipeline).
-    log_ids:    IDs from stdout/stderr-{id}.log in logs/ subdirectory, OR
-                from slurm-{id}.log in run_dir when no logs/ subdirectory exists
-                (combined-log convention).  Mirrors the per-job fallback in main().
+    log_ids:    IDs from every log-naming convention, unioned:
+                  - logs/stdout-{id}.log, logs/stderr-{id}.log  (MN5/Leonardo:
+                    separate SBATCH --output/--error)
+                  - logs/slurm-{id}.log                         (LUMI: single
+                    combined --output, no --error)
+                  - slurm-{id}.log at the run-dir root          (older layout)
+                These must be unioned rather than tried in order: a run
+                migrated between clusters carries both conventions in the same
+                logs/ directory, and preferring one silently drops the jobs
+                that used the other.
     A manually restarted run has log_ids that are not in config_ids (jobs
     submitted directly without the config-creation step).
     """
@@ -907,29 +963,20 @@ def _run_id_sets(run_dir: Path) -> tuple[set[str], set[str]]:
             m = re.match(r"config-(\d+)\.yaml$", f.name)
             if m:
                 config_ids.add(m.group(1))
+            # Combined slurm-{id}.log at the run-dir root
+            m = re.match(r"slurm-(\d+)\.log$", f.name)
+            if m:
+                log_ids.add(m.group(1))
     logs_dir = run_dir / "logs"
     if logs_dir.is_dir():
         for f in logs_dir.iterdir():
-            m = re.match(r"(?:stdout|stderr)-(\d+)\.log$", f.name)
+            m = re.match(r"(?:stdout|stderr|slurm)-(\d+)\.log$", f.name)
             if m:
                 log_ids.add(m.group(1))
             # Single-run configs store config-*.yaml inside logs/
             m = re.match(r"config-(\d+)\.yaml$", f.name)
             if m:
                 config_ids.add(m.group(1))
-        # Single-run configs write combined slurm-*.log inside logs/
-        if not log_ids:
-            for f in logs_dir.iterdir():
-                m = re.match(r"slurm-(\d+)\.log$", f.name)
-                if m:
-                    log_ids.add(m.group(1))
-    else:
-        # Fallback: combined slurm-{id}.log files at run dir root
-        if run_dir.is_dir():
-            for f in run_dir.iterdir():
-                m = re.match(r"slurm-(\d+)\.log$", f.name)
-                if m:
-                    log_ids.add(m.group(1))
     return config_ids, log_ids
 
 
@@ -1221,14 +1268,18 @@ def _lw_last_iter(run_dir: Path) -> tuple[int | None, int | None, float | None]:
     """Return (last_iter, total_iters, last_train_loss) by scanning the most recent stdout log
     backwards in chunks until the last iteration line is found."""
     logs_dir = run_dir / "logs"
-    candidates: list[Path] = []
+    # Union every log-naming convention (see _run_id_sets): a run migrated
+    # between clusters has both stdout-*.log and slurm-*.log side by side, so
+    # preferring one would miss the newest jobs.  Pick by mtime rather than
+    # name — job IDs are only monotonic within a single cluster, and a lexical
+    # sort would order every "slurm-" before every "stdout-".
+    candidates: list[Path] = list(run_dir.glob("slurm-*.log"))
     if logs_dir.is_dir():
-        candidates = sorted(logs_dir.glob("stdout-*.log")) or sorted(logs_dir.glob("slurm-*.log"))
-    if not candidates:
-        candidates = sorted(run_dir.glob("slurm-*.log"))
+        candidates += list(logs_dir.glob("stdout-*.log"))
+        candidates += list(logs_dir.glob("slurm-*.log"))
     if not candidates:
         return None, None, None
-    log_path = candidates[-1]
+    log_path = max(candidates, key=lambda p: p.stat().st_mtime)
     try:
         chunk = 262144  # 256 KB per read
         max_read = 8 * 1024 * 1024  # give up after 8 MB
@@ -1322,12 +1373,18 @@ def _lw_status(
         return "NOT_LAUNCHED"
     if has_any_logs:
         logs_dir = run_dir / "logs"
-        stderr_candidates: list[Path] = []
+        # Error patterns live in stderr-*.log where stdout/stderr are split
+        # (MN5/Leonardo) but in the combined slurm-*.log on LUMI, which writes
+        # no stderr file at all.  Scan both, newest by mtime, or LUMI failures
+        # would all fall through to STOPPED.
+        stderr_candidates: list[Path] = list(run_dir.glob("slurm-*.log"))
         if logs_dir.is_dir():
-            stderr_candidates = sorted(logs_dir.glob("stderr-*.log"))
+            stderr_candidates += list(logs_dir.glob("stderr-*.log"))
+            stderr_candidates += list(logs_dir.glob("slurm-*.log"))
         if stderr_candidates:
             try:
-                with open(stderr_candidates[-1], "rb") as f:
+                newest = max(stderr_candidates, key=lambda p: p.stat().st_mtime)
+                with open(newest, "rb") as f:
                     f.seek(0, 2)
                     size = f.tell()
                     f.seek(max(0, size - 8192))
@@ -1375,8 +1432,13 @@ def _lightweight_main(args: argparse.Namespace) -> None:
         stable_name = _render(
             stable_stage, lr, gbsz, stable_tok if stable_stage == "stable" else None
         )
-        run_specs.append((stable_name, "stable", stable_tok, combo["stable_launch_tier"]))
-        run_to_gbsz[stable_name] = gbsz
+        # skip_stable_launch combos reuse an existing checkpoint, so the sweep
+        # filter never submits their stable job and no such run directory is
+        # expected.  The name is still computed above: decays branching off it
+        # resolve their checkpoint through decay_to_stable regardless.
+        if not combo.get("skip_stable_launch"):
+            run_specs.append((stable_name, "stable", stable_tok, combo["stable_launch_tier"]))
+            run_to_gbsz[stable_name] = gbsz
         for decay_tok in sorted(combo["valid_decay_tokens"]):
             stage_name = tok_to_stage.get(decay_tok)
             if stage_name is None:
@@ -1610,7 +1672,24 @@ def main() -> None:
             "Skips log parsing, sacct, throughput and GPU-h calculation."
         ),
     )
+    ap.add_argument(
+        "--cache-dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Treat the results tree as strictly read-only: write every derived "
+            "artifact under DIR instead, mirroring each path beneath it. Covers "
+            "the per-run throughput cache (<run_dir>/throughput/*.csv) and the "
+            "gpu_hours.csv summary, both of which otherwise land in the results "
+            "directory. Use this whenever the results belong to another user on "
+            "a shared project. Note --csv/--md are always written where you "
+            "point them and are unaffected by this flag."
+        ),
+    )
     args = ap.parse_args()
+
+    if args.cache_dir:
+        set_cache_root(args.cache_dir)
 
     if args.lightweight:
         _lightweight_main(args)
@@ -1671,8 +1750,13 @@ def main() -> None:
         stable_name = _render(
             stable_stage, lr, gbsz, stable_tok if stable_stage == "stable" else None
         )
-        run_specs.append((stable_name, "stable", stable_tok, combo["stable_launch_tier"]))
-        run_to_gbsz[stable_name] = gbsz
+        # skip_stable_launch combos reuse an existing checkpoint, so the sweep
+        # filter never submits their stable job and no such run directory is
+        # expected.  The name is still computed above: decays branching off it
+        # resolve their checkpoint through decay_to_stable regardless.
+        if not combo.get("skip_stable_launch"):
+            run_specs.append((stable_name, "stable", stable_tok, combo["stable_launch_tier"]))
+            run_to_gbsz[stable_name] = gbsz
 
         # Decay runs: only the token budgets permitted by the filter
         for decay_tok in sorted(valid_decay_toks):
@@ -2497,11 +2581,33 @@ def main() -> None:
         # For stable runs (or decay runs with no ckpt_tokens info), use full budget.
         _ckpt_toks = _stage_ckpt_tokens.get(_rs, 0) if _rs != "stable" else 0
         _eff_tokens = max(0, _rt - _ckpt_toks)
+        # Remaining compute is always "work left x measured throughput", never an
+        # extrapolation of GPU-h burned so far.  Cumulative GPU-h includes every
+        # failed and cancelled restart, so extrapolating it charges wasted compute
+        # again for the work still to do — on runs with many restarts that
+        # overstated the remainder several-fold.
+        #
+        # Throughput comes from the LUMI logs themselves (_run_avg_tok, measured
+        # tok/s/GPU), preferring this run, then its stable sibling, then a
+        # gbsz-matched average, then the global mean.  GPU-h is independent of the
+        # GPU count here: per-GPU throughput already divides it out.
+        _cur_it = _latest_r.get("last_iter")
+        _tot_it = _latest_r.get("train_iters")
+        _gbsz_tokens = (_gbsz_rn or 0) * _seq_len
         if _status_r == "DONE":
             run_remaining[_rn] = (0.0, False)
-        elif _h_r is not None and _prog_r is not None and _prog_r > 0:
-            run_remaining[_rn] = (_h_r * (100.0 - _prog_r) / _prog_r, False)
+        elif (
+            _ref_tok
+            and _cur_it is not None
+            and _tot_it is not None
+            and _tot_it > _cur_it
+            and _gbsz_tokens > 0
+        ):
+            # Partially trained: bill only the iterations still outstanding.
+            _rem_tokens = (_tot_it - _cur_it) * _gbsz_tokens
+            run_remaining[_rn] = (_rem_tokens / (_ref_tok * 3600.0), False)
         elif _ref_tok is not None and _eff_tokens > 0:
+            # Not started: the full budget, less any stable branch-point already trained.
             run_remaining[_rn] = (_eff_tokens / (_ref_tok * 3600.0), True)
         else:
             run_remaining[_rn] = (None, False)
@@ -2754,6 +2860,12 @@ def main() -> None:
                 "MIX" if len(_cls) > 1 else (next(iter(_cls)) if _cls else "")
             )
 
+        # Per-cluster GPU-h column labels.  These were hardcoded to LEO/MN5
+        # while the values were selected by comparing against --machine, so on
+        # any third cluster the local hours landed in a column named "LEO".
+        _csv_local_gpu_h = f"GPU-h({args.machine})"
+        _csv_foreign_gpu_h = f"GPU-h({_foreign_cluster})"
+
         csv_fields = [
             "Run",
             "JobID",
@@ -2787,8 +2899,8 @@ def main() -> None:
             "LowTP-GPU-h",
             "Overhead-time(h)",
             "Overhead-GPU-h",
-            "GPU-h(LEO)",
-            "GPU-h(MN5)",
+            _csv_local_gpu_h,
+            _csv_foreign_gpu_h,
             "GPU-h",
             "Overhead%",
             "Remaining-GPU-h",
@@ -2798,6 +2910,7 @@ def main() -> None:
             "Error",
         ]
         csv_path = Path(args.csv)
+        guard_write(csv_path)
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         # Pre-compute which job_id is the latest for each run (remaining GPU-h
         # is a per-run estimate, so we only populate it on the latest-job row).
@@ -2884,10 +2997,10 @@ def main() -> None:
                         "Overhead-GPU-h": f"{r['overhead_gpu_h']:.4f}"
                         if r.get("overhead_gpu_h") is not None
                         else "",
-                        "GPU-h(LEO)": f"{r['gpu_hours']:.1f}"
+                        _csv_local_gpu_h: f"{r['gpu_hours']:.1f}"
                         if r.get("gpu_hours") is not None and r.get("cluster") == args.machine
                         else "",
-                        "GPU-h(MN5)": f"{r['gpu_hours']:.1f}"
+                        _csv_foreign_gpu_h: f"{r['gpu_hours']:.1f}"
                         if r.get("gpu_hours") is not None and r.get("cluster") == _foreign_cluster
                         else "",
                         "GPU-h": f"{r['gpu_hours']:.1f}" if r["gpu_hours"] is not None else "",
@@ -2920,7 +3033,8 @@ def main() -> None:
             _csv_anchor = Path(args.csv).parent if args.csv else Path(".")
             gpu_csv_path = _csv_anchor / "gpu_hours.csv"
         else:
-            gpu_csv_path = resolved_base / "gpu_hours.csv"
+            gpu_csv_path = _redirect_output(resolved_base, args) / "gpu_hours.csv"
+        guard_write(gpu_csv_path)
         gpu_csv_path.parent.mkdir(parents=True, exist_ok=True)
         with gpu_csv_path.open("w", newline="") as f:
             writer = csv.DictWriter(
@@ -2953,6 +3067,7 @@ def main() -> None:
                     spending_ts = _m.group(1)
 
         spending_str = spending_ts if spending_ts is not None else "N/A"
+        guard_write(md_path)
         md_path.parent.mkdir(parents=True, exist_ok=True)
         with md_path.open("w") as f:
             f.write(f"_Updated training progress: {now_str}_  \n")
@@ -2971,7 +3086,11 @@ def main() -> None:
                 f.write(
                     "_Ckpt-GB: measured `checkpoints/` size; Ckpt-GB-remaining: estimated storage still needed_\n\n"
                 )
-            _md_gpu_h_hdr = "GPU-h(LEO) | GPU-h(MN5) | GPU-h" if _any_cluster_split else "GPU-h"
+            _md_gpu_h_hdr = (
+                f"GPU-h({args.machine}) | GPU-h({_foreign_cluster}) | GPU-h"
+                if _any_cluster_split
+                else "GPU-h"
+            )
             _md_gpu_h_sep = " --- | --- | ---" if _any_cluster_split else " ---"
             f.write(
                 f"| T# | # | Experiment | Tier | Progress | Status | Clusters | TTFI-GPU-h | LowTP-GPU-h | Overhead-GPU-h | {_md_gpu_h_hdr} | Overhead% | Remaining-GPU-h | Ckpt-GB | Ckpt-GB-remaining |\n"

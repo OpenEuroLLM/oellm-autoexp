@@ -16,6 +16,12 @@ import re
 import sys
 import subprocess
 from collections import defaultdict
+from pathlib import Path
+
+# Make sibling modules importable when run as a standalone script.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from write_guard import guard_write  # noqa: E402
 
 
 def parse_elapsed(s):
@@ -89,9 +95,12 @@ def query_sacct(job_ids):
         if "." in job_id_field:
             continue
         job_id = job_id_field.strip()
-        # Parse GPU count from TRES string, e.g. "gres/gpu=32"
+        # Parse GPU count from TRES string, e.g. "gres/gpu=32" (MN5/Leonardo)
+        # or "gres/gpu:mi250=64" (LUMI, which qualifies the resource with the
+        # GPU model).  The optional ":<model>" is what makes LUMI jobs report
+        # zero GPUs — and therefore zero GPU-hours — without it.
         gpus = 0
-        m = re.search(r"gres/gpu=(\d+)", alloc_tres)
+        m = re.search(r"gres/gpu(?::[^=]+)?=(\d+)", alloc_tres)
         if m:
             gpus = int(m.group(1))
         info[job_id] = {
@@ -225,6 +234,7 @@ def main():
         }
     )
     output_csv = args.output if args.output else os.path.join(results_dir, "gpu_hours.csv")
+    guard_write(output_csv)
     with open(output_csv, "w", newline="") as f:
         writer = csv.DictWriter(
             f, fieldnames=["experiment", "job_id", "state", "elapsed", "gpus", "gpu_hours"]
