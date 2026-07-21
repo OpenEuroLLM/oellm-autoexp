@@ -268,6 +268,15 @@ agnostic.
   Slurm jobs (`--group-size` checkpoints per job, one task per checkpoint),
   and submits them respecting a QOS's per-user job cap. Idempotent: re-run
   any time to pick up new checkpoints; already-converted ones are skipped.
+  `--singularity-bind` (repeatable) is required and cluster-specific; there's
+<!-- google-doc-style-ignore -->
+  no default. Pass `--hf-repo-id` when multiple operators each convert into
+  their own `--output-dir` against the same run (a scratch dir generally
+  can't be shared across HPC accounts): a checkpoint already published as a
+  complete branch on that repo is skipped too, even if this operator's own
+  `--output-dir` has never seen it, so nobody redundantly reconverts what
+  someone else already finished.
+<!-- google-doc-style-resume -->
 - **`scripts/upload_to_hf.py`**: pushes each converted `<output-dir>/<iter>/`
   to its own branch (`iter_NNNNNNN`) of a target HF Hub repository, by way of
   `upload_large_folder` (resumable). A branch only counts as complete if it
@@ -298,11 +307,14 @@ agnostic.
 - **Login-node Python**: the discovery/submission steps in
   `mass_convert_checkpoints.py` need Python ≥ 3.7 (`from __future__ import
   annotations`, f-strings); Leonardo's login-node default `python3` is 3.6.
-  Use `python3.11` (`module load python/3.11.7`) directly. No container is
-  needed for this step, since it only touches the local file system and
-  `subprocess`. `upload_to_hf.py`, by contrast, needs `huggingface_hub` and
-  must run inside the training container (`singularity exec … python3
-  scripts/upload_to_hf.py …`).
+  Use `python3.11` (`module load python/3.11.7`) directly.
+<!-- google-doc-style-ignore -->
+  Without `--hf-repo-id`, no container is needed for this step, since it
+  only touches the local file system and `subprocess`. `upload_to_hf.py`,
+  and `mass_convert_checkpoints.py` whenever `--hf-repo-id` is passed, need
+  `huggingface_hub` and must run inside the training container
+  (`singularity exec … python3 scripts/mass_convert_checkpoints.py …`).
+<!-- google-doc-style-resume -->
 - **HF Hub token**: `upload_to_hf.py --token-file` defaults to
   `~/.cache/huggingface/token`; make sure it holds a token with write
 <!-- google-doc-style-ignore -->
@@ -314,12 +326,17 @@ agnostic.
 <!-- google-doc-style-ignore -->
 ```bash
 # One-off backfill of everything already on disk, batched for throughput
-# (2-job QOS cap x group-size 16 = 32 checkpoints converting in parallel):
+# (2-job QOS cap x group-size 16 = 32 checkpoints converting in parallel).
+# --singularity-bind has no default: list whatever this cluster's containers
+# need bound; --hf-repo-id is optional, only needed when more than one
+# operator converts into their own separate --output-dir for the same run.
 python3.11 scripts/mass_convert_checkpoints.py \
     --checkpoints-dir /leonardo_scratch/fast/<project>/production_training/<run>/checkpoints \
     --training-config /leonardo_scratch/fast/<project>/production_training/<run>/logs/current.yaml \
     --output-dir /leonardo_scratch/large/userexternal/$USER/<run>-ckpts \
     --container-image /leonardo_work/<project>/container_images/<training>.sif \
+    --singularity-bind /leonardo_scratch --singularity-bind /leonardo --singularity-bind /leonardo_work/ \
+    --hf-repo-id <org>/<repo> \
     --account <SLURM_ACCOUNT> --qos boost_qos_dbg --max-concurrent-jobs 2 --group-size 16
 
 # Push everything converted so far to the Hub, one branch per iteration:
