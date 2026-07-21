@@ -1,0 +1,100 @@
+# @package _global_
+# This is the best performing config according to the sweeps standing at ~400 TFLOPS with 4-8 nodes
+# Baseline as of 13.6.2026
+defaults:
+  - /experiments/base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_32B]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "qwen3-32b-sweep5"
+  variant: ""
+
+backend:
+  megatron:
+    train_iters: 10
+    log_interval: 1
+    eval_interval: 999
+    eval_iters: 0
+    save: null
+    load: null
+    log_throughput: true
+    lr_warmup_iters: 0
+
+    # DATA
+    dataloader_type: single
+    padded_vocab_size: 262144
+    global_batch_size: 256
+    micro_batch_size: 2
+
+    pipeline_model_parallel_size: 2
+    tensor_model_parallel_size: 4
+    num_layers_per_virtual_pipeline_stage: 2
+    sequence_parallel: true
+    recompute_activations: false
+
+    attention_softmax_in_fp32: false
+    use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    tp_comm_overlap: true
+
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: te
+
+    wandb_project: qwen3-32B-dense-scaling-jupiter
+    wandb_entity: openeurollm-project
+
+    data_path:
+      - /e/project1/e-sta-openeurollm/harmsen1/datasets/FineWeb/fineweb-10BT_text_document
+    data_cache_path: /e/scratch/e-sta-openeurollm/${oc.env:USER}/data
+    tokenizer_model: /e/scratch/e-sta-openeurollm/harmsen1/hf_home/hub/models--openai-community--gpt2/snapshots/607a30d783dfa663caf39e06633721c8d4cfcd7e
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+    NCCL_NET_GDR_LEVEL: "0"  # disable GDRDMA — required for PP=2 inter-node P2P
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"  # only for TP
+    TRITON_LIBCUDA_PATH: "/usr/local/cuda/compat/lib.real"
+    UB_SKIPMC: "1"
+    NCCL_DEBUG: INFO
+    NCCL_DEBUG_SUBSYS: ALL
+    NCCL_DEBUG_FILE: ${job.base_output_dir}/nccl-%h.%p.log
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/nemo_26.04.sif
+job:
+  name: qwen3_32b_n${slurm.sbatch.nodes}_mbs${backend.megatron.micro_batch_size}_gbs${backend.megatron.global_batch_size}_${aux.variant}_n-distoptimizer-${backend.megatron.num_distributed_optimizer_instances}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+slurm:
+  sbatch:
+    nodes: 16
+    time: "00:30:00"
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+      - backend.megatron.use_sharp: true
+        slurm.sbatch.network: 'sharp'
+        aux.variant: 'sharp_enabled'
+
+      - slurm.sbatch.comment: CPU_POWER_CAP=50000000
+        aux.variant: "CPU_50W"
+
+      - backend.megatron.ddp_bucket_size: 80000000
+        aux.variant: ddp_bucket-2x
+
+      - type: product
+        params:
+          backend.megatron.num_distributed_optimizer_instances: [2, 4, 6]
+
+      - slurm.sbatch.comment: "NVIDIA_GPU_CLOCKS=1980"
+        aux.variant: 'CLOCKED-1980MHZ'
