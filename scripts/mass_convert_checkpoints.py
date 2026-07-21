@@ -17,6 +17,7 @@ conversions at a time):
         --training-config /leonardo_work/OELLM_prod2026/production_training/baby_9b_dense/logs/current.yaml \\
         --output-dir /leonardo_scratch/large/userexternal/$USER/prelude-ckpts \\
         --container-image /leonardo_work/OELLM_prod2026/container_images/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif \\
+        --singularity-bind /leonardo_scratch --singularity-bind /leonardo --singularity-bind /leonardo_work/ \\
         --account OELLM_prod2026 --qos boost_qos_dbg --max-concurrent-jobs 2 --group-size 16
 
 When multiple --checkpoints-dir/--training-config pairs are given (matched
@@ -31,6 +32,14 @@ For incremental/ongoing use (e.g. a periodic watcher that re-invokes this once
 new checkpoints appear), pass --group-size 1 so each checkpoint gets its own
 Slurm job -- this lets a caller chain a dependent upload job
 (sbatch --dependency=afterok:<jobid>) onto each individual conversion job.
+
+Pass --hf-repo-id when multiple independent operators each convert into their
+own --output-dir against the same training run (e.g. each running their own
+copy of this tool from their own scratch space, since a scratch dir generally
+can't be shared across HPC accounts). A checkpoint already published as a
+complete branch on that HF Hub repo is skipped even if it isn't present in
+this --output-dir, so operators don't redundantly reconvert what someone else
+already finished and uploaded.
 """
 
 from __future__ import annotations
@@ -77,6 +86,37 @@ def free_slots(qos: str, max_concurrent: int) -> int:
     return max_concurrent - out.count(qos)
 
 
+def hf_complete_iters(repo_id: str) -> set[str]:
+    """Iter names already published as a complete branch on repo_id.
+
+    "Complete" mirrors upload_to_hf.py's own check: the branch must
+    actually have the weight files, not just exist as a ref.
+    """
+    from huggingface_hub import HfApi
+
+    api = HfApi()
+    try:
+        branches = {b.name for b in api.list_repo_refs(repo_id).branches}
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"warning: could not query HF repo {repo_id} ({exc}); "
+            "not skipping any checkpoints based on Hub state",
+            file=sys.stderr,
+        )
+        return set()
+
+    complete = set()
+    for branch in branches:
+        try:
+            files = set(api.list_repo_files(repo_id, revision=branch))
+        except Exception:  # noqa: BLE001
+            continue
+        has_weights = any(f in ("model.safetensors", "model.safetensors.index.json") for f in files)
+        if has_weights and "config.json" in files and "validation.json" in files:
+            complete.add(branch)
+    return complete
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -103,6 +143,19 @@ def main() -> int:
     ap.add_argument("--tokenizer", default="openeurollm/Qwen3-0.9B-ne")
     ap.add_argument("--derive-hf-arch", default="qwen3")
     ap.add_argument("--max-shard-size", default="5GB")
+    ap.add_argument(
+        "--singularity-bind",
+        action="append",
+        required=True,
+        help="Path to bind into the conversion job's container (repeatable). "
+        "No default: bind paths are cluster-specific.",
+    )
+    ap.add_argument(
+        "--hf-repo-id",
+        default=None,
+        help="If set, also skip checkpoints already published as a complete branch on this "
+        "HF Hub repo, even if absent from --output-dir (see module docstring)",
+    )
     ap.add_argument("--account", required=True)
     ap.add_argument("--partition", default="boost_usr_prod")
     ap.add_argument("--qos", default="boost_qos_dbg")
@@ -156,11 +209,16 @@ def main() -> int:
     (args.output_dir / "validation").mkdir(exist_ok=True)
     (args.output_dir / "manifests").mkdir(exist_ok=True)
 
+    already_on_hf = set()
+    if args.hf_repo_id:
+        already_on_hf = hf_complete_iters(args.hf_repo_id)
+        print(f"{len(already_on_hf)} checkpoint(s) already complete on {args.hf_repo_id}")
+
     tasks = []
     skipped = 0
     for c in checkpoints:
         hf_path = args.output_dir / c["iter"]
-        if hf_path.exists() and not args.force:
+        if not args.force and (hf_path.exists() or c["iter"] in already_on_hf):
             skipped += 1
             continue
         tasks.append(
@@ -210,8 +268,9 @@ def main() -> int:
         jobname = f"ckpt_conv_g{gi:03d}"
         while free_slots(args.qos, args.max_concurrent_jobs) <= 0:
             time.sleep(10)
+        binds = " ".join(f"--bind {b}" for b in args.singularity_bind)
         task_cmd = (
-            f"singularity exec --nv --bind /leonardo_scratch --bind /leonardo --bind /leonardo_work/ "
+            f"singularity exec --nv {binds} "
             f"--env PYTHONPATH={args.repo_root}:{bridge_root}/src --env PYTHONNOUSERSITE=1 "
             f"--env HF_HOME=$HOME/.cache/huggingface --env CUDA_DEVICE_MAX_CONNECTIONS=1 "
             f"{args.container_image} python -m oellm_autoexp.backends.megatron_bridge.convert_and_validate_task "
