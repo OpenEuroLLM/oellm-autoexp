@@ -249,7 +249,7 @@ train→convert→eval pipeline. For publishing checkpoints from an
 Built for the OpenEuroLLM Prelude 9B ("baby") release, but cluster/model
 agnostic.
 
-### What's new here vs. the chain's `run_export`
+### What's new here versus the chain's `run_export`
 
 - **`--max-shard-size`** on `run_export.py` / `create_dummy_model.py`
   (default `5GB`). The real export mirrors the dummy reference model's
@@ -269,7 +269,7 @@ agnostic.
   and submits them respecting a QOS's per-user job cap. Idempotent: re-run
   any time to pick up new checkpoints; already-converted ones are skipped.
 - **`scripts/upload_to_hf.py`**: pushes each converted `<output-dir>/<iter>/`
-  to its own branch (`iter_NNNNNNN`) of a target HF Hub repo, via
+  to its own branch (`iter_NNNNNNN`) of a target HF Hub repository, by way of
   `upload_large_folder` (resumable). A branch only counts as complete if it
   actually has the weight files, `config.json`, and `validation.json`, not
   just whether the branch ref exists, so a crash or network blip mid-upload
@@ -291,7 +291,7 @@ agnostic.
 - **Tokenizer**: `run_export.py` needs a working `tokenizer.json` for the
   target tokenizer. If `transformers` falls back to a TikToken parser on a
   raw SentencePiece `.model` file (missing `sentencepiece` in the
-  container), the repo's own
+  container), the repository's own
   `oellm_autoexp/postprocess/resources/megatron_bridge/tokenizers/…/tokenizer.json`
   should already cover this for the standard OpenEuroLLM tokenizers; verify
   it's present and loads before assuming a manual copy is needed.
@@ -299,7 +299,7 @@ agnostic.
   `mass_convert_checkpoints.py` need Python ≥ 3.7 (`from __future__ import
   annotations`, f-strings); Leonardo's login-node default `python3` is 3.6.
   Use `python3.11` (`module load python/3.11.7`) directly. No container is
-  needed for this step, since it only touches the local filesystem and
+  needed for this step, since it only touches the local file system and
   `subprocess`. `upload_to_hf.py`, by contrast, needs `huggingface_hub` and
   must run inside the training container (`singularity exec … python3
   scripts/upload_to_hf.py …`).
@@ -328,7 +328,7 @@ singularity exec --bind /leonardo_scratch --bind /leonardo --bind /leonardo_work
 
 # Ongoing: re-invoke with --group-size 1 as new checkpoints appear, so each
 # gets its own Slurm job. That lets a caller chain a single-checkpoint
-# upload job onto each conversion job via `sbatch --dependency=afterok:<jobid>`
+# upload job onto each conversion job by way of `sbatch --dependency=afterok:<jobid>`
 # instead of polling. See the `checkpoint_watcher` tool in oellm-monitoring
 # for a periodic wrapper that does exactly this end to end.
 ```

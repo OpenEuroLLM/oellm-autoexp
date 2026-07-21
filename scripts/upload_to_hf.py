@@ -17,6 +17,7 @@ network failure mid-upload gets retried automatically rather than silently
 treated as complete. Failures are logged to
 <output-dir>/manifests/upload_failures.json and retried on the next pass.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -28,20 +29,52 @@ from huggingface_hub import HfApi
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--output-dir", required=True, type=Path,
-                     help="Local dir containing iter_* checkpoint subdirs (mass_convert_checkpoints.py output)")
-    ap.add_argument("--repo-id", required=True, help="Target HF Hub repo id, e.g. openeurollm/prelude")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--output-dir",
+        required=True,
+        type=Path,
+        help="Local dir containing iter_* checkpoint subdirs (mass_convert_checkpoints.py output)",
+    )
+    ap.add_argument(
+        "--repo-id", required=True, help="Target HF Hub repo id, e.g. openeurollm/prelude"
+    )
     ap.add_argument("--token-file", default=str(Path.home() / ".cache" / "huggingface" / "token"))
-    ap.add_argument("--iters", nargs="*", default=None, help="Only these iter names; default: all found")
-    ap.add_argument("--force", action="store_true", help="Re-upload even if the branch already looks complete")
+    ap.add_argument(
+        "--iters", nargs="*", default=None, help="Only these iter names; default: all found"
+    )
+    ap.add_argument(
+        "--force", action="store_true", help="Re-upload even if the branch already looks complete"
+    )
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--watch", action="store_true",
-                     help="Keep polling for newly-completed checkpoints and upload them, instead of a single pass")
-    ap.add_argument("--poll-interval", type=int, default=60, help="Seconds between polls in --watch mode")
-    ap.add_argument("--shard-count", type=int, default=1, help="Split discovered checkpoints across N parallel workers")
-    ap.add_argument("--shard-index", type=int, default=0, help="This worker shard, 0-indexed, less than shard-count")
-    ap.add_argument("--upload-workers", type=int, default=6, help="Parallel workers for upload_large_folder (a checkpoint has ~6 files, so more rarely helps)")
+    ap.add_argument(
+        "--watch",
+        action="store_true",
+        help="Keep polling for newly-completed checkpoints and upload them, instead of a single pass",
+    )
+    ap.add_argument(
+        "--poll-interval", type=int, default=60, help="Seconds between polls in --watch mode"
+    )
+    ap.add_argument(
+        "--shard-count",
+        type=int,
+        default=1,
+        help="Split discovered checkpoints across N parallel workers",
+    )
+    ap.add_argument(
+        "--shard-index",
+        type=int,
+        default=0,
+        help="This worker shard, 0-indexed, less than shard-count",
+    )
+    ap.add_argument(
+        "--upload-workers",
+        type=int,
+        default=6,
+        help="Parallel workers for upload_large_folder (a checkpoint has ~6 files, so more rarely helps)",
+    )
     args = ap.parse_args()
 
     token = Path(args.token_file).read_text().strip()
@@ -59,7 +92,8 @@ def main() -> int:
             found = [args.output_dir / it for it in args.iters]
         else:
             found = sorted(
-                d for d in args.output_dir.iterdir()
+                d
+                for d in args.output_dir.iterdir()
                 if d.is_dir() and d.name.startswith("iter_") and (d / "validation.json").exists()
             )
         if args.shard_count > 1:
@@ -124,7 +158,9 @@ def main() -> int:
     complete_branches = {b for b in all_branches if branch_is_complete(b)}
     incomplete = sorted(all_branches - complete_branches - {"main"})
     if incomplete:
-        print(f"{len(incomplete)} existing branch(es) look incomplete, will (re)upload: {incomplete}")
+        print(
+            f"{len(incomplete)} existing branch(es) look incomplete, will (re)upload: {incomplete}"
+        )
     print(f"{len(discover())} checkpoint dir(s) currently discoverable for this shard")
 
     if not args.watch:
@@ -134,11 +170,16 @@ def main() -> int:
             print(f"failures logged to {failures_path}: {sorted(failures)}")
         return 0
 
-    print(f"--watch mode: polling every {args.poll_interval}s (stop with scancel or let the job time out)")
+    print(
+        f"--watch mode: polling every {args.poll_interval}s (stop with scancel or let the job time out)"
+    )
     while True:
         uploaded, skipped, failed = upload_pass(complete_branches)
         if uploaded or failed:
-            print(f"pass done: {uploaded} uploaded, {skipped} already complete, {failed} failed", flush=True)
+            print(
+                f"pass done: {uploaded} uploaded, {skipped} already complete, {failed} failed",
+                flush=True,
+            )
         if failures:
             print(f"current failures: {sorted(failures)}", flush=True)
         time.sleep(args.poll_interval)
