@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Batch-convert Megatron checkpoints to sharded HuggingFace format, with a
-canonical-prompt validation pass, submitted to Slurm as parallel-task jobs
-that respect a QOS's per-user job cap.
+canonical-prompt validation pass, submitted to Slurm as parallel-task jobs that
+respect a QOS's per-user job cap.
 
 Re-running is safe/idempotent: any checkpoint whose --output-dir/<iter>
 already exists is skipped unless --force is passed, so a partial or killed
@@ -56,10 +56,14 @@ def discover_checkpoints(dirs_and_configs, pattern: str):
             try:
                 has_metadata = (d / "metadata.json").exists()
             except PermissionError:
-                print(f"  skipping {d.name} in {ckpt_dir}: permission denied, cannot check metadata.json")
+                print(
+                    f"  skipping {d.name} in {ckpt_dir}: permission denied, cannot check metadata.json"
+                )
                 continue
             if not has_metadata:
-                print(f"  skipping {d.name} in {ckpt_dir}: no metadata.json (broken/incomplete checkpoint)")
+                print(
+                    f"  skipping {d.name} in {ckpt_dir}: no metadata.json (broken/incomplete checkpoint)"
+                )
                 continue
             seen[d.name] = {"iter": d.name, "megatron_path": str(d), "megatron_config": str(config)}
     return [seen[k] for k in sorted(seen)]
@@ -68,17 +72,27 @@ def discover_checkpoints(dirs_and_configs, pattern: str):
 def free_slots(qos: str, max_concurrent: int) -> int:
     out = subprocess.run(
         ["squeue", "-u", os.environ["USER"], "--noheader", "--format", "%q"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        capture_output=True,
     ).stdout.decode()
     return max_concurrent - out.count(qos)
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--checkpoints-dir", action="append", required=True,
-                     help="Megatron checkpoints dir (iter_* subdirs). Repeatable; earlier wins on iter conflicts.")
-    ap.add_argument("--training-config", action="append", required=True,
-                     help="Training config YAML, one per --checkpoints-dir, same order.")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--checkpoints-dir",
+        action="append",
+        required=True,
+        help="Megatron checkpoints dir (iter_* subdirs). Repeatable; earlier wins on iter conflicts.",
+    )
+    ap.add_argument(
+        "--training-config",
+        action="append",
+        required=True,
+        help="Training config YAML, one per --checkpoints-dir, same order.",
+    )
     ap.add_argument("--checkpoint-pattern", default="iter_*")
     ap.add_argument("--output-dir", required=True, type=Path)
     ap.add_argument("--repo-root", default=REPO_ROOT, type=Path)
@@ -94,21 +108,42 @@ def main() -> int:
     ap.add_argument("--qos", default="boost_qos_dbg")
     ap.add_argument("--time-limit", default="00:30:00")
     ap.add_argument("--group-size", type=int, default=16, help="Checkpoints (Slurm tasks) per job")
-    ap.add_argument("--max-concurrent-jobs", type=int, default=2, help="Match the QOS's MaxJobsPerUser")
+    ap.add_argument(
+        "--max-concurrent-jobs", type=int, default=2, help="Match the QOS's MaxJobsPerUser"
+    )
     ap.add_argument("--cpus-per-task", type=int, default=4)
-    ap.add_argument("--gpus-per-node", type=int, default=4,
-                     help="GPUs per node on the target partition; pins --ntasks-per-node so job size "
-                          "in nodes is deterministic regardless of cluster fragmentation")
-    ap.add_argument("--limit", type=int, default=None, help="Only convert the first N discovered checkpoints (testing)")
-    ap.add_argument("--force", action="store_true", help="Reconvert even if the output already exists")
-    ap.add_argument("--dry-run", action="store_true", help="Plan only; discover + write manifests but don't submit")
+    ap.add_argument(
+        "--gpus-per-node",
+        type=int,
+        default=4,
+        help="GPUs per node on the target partition; pins --ntasks-per-node so job size "
+        "in nodes is deterministic regardless of cluster fragmentation",
+    )
+    ap.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Only convert the first N discovered checkpoints (testing)",
+    )
+    ap.add_argument(
+        "--force", action="store_true", help="Reconvert even if the output already exists"
+    )
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Plan only; discover + write manifests but don't submit",
+    )
     args = ap.parse_args()
 
     if len(args.checkpoints_dir) != len(args.training_config):
-        ap.error("--checkpoints-dir and --training-config must be repeated the same number of times, in matching order")
+        ap.error(
+            "--checkpoints-dir and --training-config must be repeated the same number of times, in matching order"
+        )
 
     bridge_root = args.bridge_root or (args.repo_root / "submodules" / "Megatron-Bridge")
-    resources = args.resources or (args.repo_root / "oellm_autoexp" / "postprocess" / "resources" / "megatron_bridge")
+    resources = args.resources or (
+        args.repo_root / "oellm_autoexp" / "postprocess" / "resources" / "megatron_bridge"
+    )
 
     print("discovering checkpoints...")
     checkpoints = discover_checkpoints(
@@ -128,16 +163,18 @@ def main() -> int:
         if hf_path.exists() and not args.force:
             skipped += 1
             continue
-        tasks.append({
-            **c,
-            "hf_path": str(hf_path),
-            "hf_model": args.hf_model,
-            "tokenizer": args.tokenizer,
-            "derive_hf_arch": args.derive_hf_arch,
-            "bridge_root": str(bridge_root),
-            "resources": str(resources),
-            "validation_json": str(hf_path / "validation.json"),
-        })
+        tasks.append(
+            {
+                **c,
+                "hf_path": str(hf_path),
+                "hf_model": args.hf_model,
+                "tokenizer": args.tokenizer,
+                "derive_hf_arch": args.derive_hf_arch,
+                "bridge_root": str(bridge_root),
+                "resources": str(resources),
+                "validation_json": str(hf_path / "validation.json"),
+            }
+        )
     print(f"{len(tasks)} to convert, {skipped} already present (skipped; use --force to redo)")
 
     if args.limit:
@@ -149,8 +186,10 @@ def main() -> int:
         return 0
 
     groups = [tasks[i : i + args.group_size] for i in range(0, len(tasks), args.group_size)]
-    print(f"{len(groups)} job(s) of up to {args.group_size} tasks each "
-          f"(max {args.max_concurrent_jobs} concurrent under qos={args.qos})")
+    print(
+        f"{len(groups)} job(s) of up to {args.group_size} tasks each "
+        f"(max {args.max_concurrent_jobs} concurrent under qos={args.qos})"
+    )
 
     manifest_paths = []
     for gi, group in enumerate(groups):
@@ -180,9 +219,14 @@ def main() -> int:
         )
         ntasks_per_node = min(n, args.gpus_per_node)
         cmd = [
-            "sbatch", f"--account={args.account}", f"--partition={args.partition}",
-            f"--qos={args.qos}", f"--time={args.time_limit}",
-            f"--ntasks={n}", "--gpus-per-task=1", f"--cpus-per-task={args.cpus_per_task}",
+            "sbatch",
+            f"--account={args.account}",
+            f"--partition={args.partition}",
+            f"--qos={args.qos}",
+            f"--time={args.time_limit}",
+            f"--ntasks={n}",
+            "--gpus-per-task=1",
+            f"--cpus-per-task={args.cpus_per_task}",
             f"--ntasks-per-node={ntasks_per_node}",
             f"--job-name={jobname}",
             f"--output={args.output_dir}/logs/{jobname}-%j.log",
@@ -190,12 +234,14 @@ def main() -> int:
             "--parsable",
             f"--wrap=srun --ntasks={n} bash -c '{task_cmd}'",
         ]
-        jid = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.decode().strip()
+        jid = subprocess.run(cmd, capture_output=True).stdout.decode().strip()
         submitted.append({"jobname": jobname, "jobid": jid, "n": n, "manifest": str(manifest_path)})
         print(f"submitted {jobname} ({n} tasks) -> {jid}")
         submitted_path.write_text(json.dumps(submitted, indent=2))
 
-    print(f"all {len(groups)} job(s) submitted ({len(submitted)} total tracked in {submitted_path})")
+    print(
+        f"all {len(groups)} job(s) submitted ({len(submitted)} total tracked in {submitted_path})"
+    )
     return 0
 
 

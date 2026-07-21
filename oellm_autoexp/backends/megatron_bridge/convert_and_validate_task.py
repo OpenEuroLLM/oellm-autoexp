@@ -39,7 +39,9 @@ def main() -> int:
 
     tasks = json.loads(args.manifest.read_text())
     if task_index >= len(tasks):
-        print(f"[task {task_index}] no checkpoint assigned (manifest has {len(tasks)} entries), exiting")
+        print(
+            f"[task {task_index}] no checkpoint assigned (manifest has {len(tasks)} entries), exiting"
+        )
         return 0
 
     task = tasks[task_index]

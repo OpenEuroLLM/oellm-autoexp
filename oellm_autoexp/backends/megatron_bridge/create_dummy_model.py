@@ -55,7 +55,11 @@ def _parse() -> argparse.Namespace:
     ap.add_argument("config", type=Path, help="HF config dir or file")
     ap.add_argument("tokenizer", type=Path, help="HF tokenizer dir")
     ap.add_argument("outdir", type=Path, help="Empty output dir to write dummy model")
-    ap.add_argument("--max-shard-size", default="5GB", help="Max shard size for the dummy model save (controls the real export's shard layout too)")
+    ap.add_argument(
+        "--max-shard-size",
+        default="5GB",
+        help="Max shard size for the dummy model save (controls the real export's shard layout too)",
+    )
     return ap.parse_args()
 
 
