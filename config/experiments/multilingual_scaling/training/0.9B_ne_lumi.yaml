@@ -58,7 +58,8 @@ slurm:
     MASTER_PORT: "9999"
   srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
   sbatch:
-    nodes: "${oc.eval:'max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node})))'}"
+    # Maximum number of nodes is 16 to maximize throughput on LUMI.
+    nodes: "${oc.eval:'min(16, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
     ntasks_per_node: 8
     gpus_per_node: 8
     gres: gpu:8
