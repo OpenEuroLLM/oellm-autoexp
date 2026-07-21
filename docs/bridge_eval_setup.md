@@ -305,10 +305,13 @@ agnostic.
   scripts/upload_to_hf.py …`).
 - **HF Hub token**: `upload_to_hf.py --token-file` defaults to
   `~/.cache/huggingface/token`; make sure it holds a token with write
+<!-- google-doc-style-ignore -->
   access to the target `--repo-id`.
+<!-- google-doc-style-resume -->
 
 ### Example: full backfill, then incremental catch-up
 
+<!-- google-doc-style-ignore -->
 ```bash
 # One-off backfill of everything already on disk, batched for throughput
 # (2-job QOS cap x group-size 16 = 32 checkpoints converting in parallel):
@@ -332,3 +335,4 @@ singularity exec --bind /leonardo_scratch --bind /leonardo --bind /leonardo_work
 # instead of polling. See the `checkpoint_watcher` tool in oellm-monitoring
 # for a periodic wrapper that does exactly this end to end.
 ```
+<!-- google-doc-style-resume -->
