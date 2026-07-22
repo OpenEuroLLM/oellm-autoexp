@@ -121,7 +121,13 @@ backend:
     load: /leonardo_scratch/large/userexternal/kpoeppel/output/resilient_demo/ckpt
     ckpt_step: 0
     save_interval: 1000000           # disable the GLOBAL torch_dist save (MoE EP+TP save bug)
-    async_save: false                # SYNC: finalize the ckpt before a fault can interrupt it
+    async_save: true                 # ASYNC local /dev/shm save: only the RAM file-WRITE is
+                                     # backgrounded. NVRx save() keeps the replication collective +
+                                     # D2H copy SYNCHRONOUS (torch.cuda.synchronize before returning),
+                                     # so no bg-NCCL conflict. A fault mid-write is safe: the write is
+                                     # .dirty.pt -> atomic-rename -> .pt + find_latest() validates, so
+                                     # recovery falls back to the last complete ckpt (lose <= 20 iters).
+                                     # Only affects the LOCAL save (the global torch_dist save is off).
     no_load_optim: false
     no_load_rng: false
     # NVRx 0.6.0's local-checkpoint API differs from the 0.5.0 API Megatron was
