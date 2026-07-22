@@ -2,9 +2,16 @@
 
 # 0.2B NE dense Qwen3-like model training with pull-based multi-stage cooldown on Lumi
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
+#
+# Uses the v2 val sweep (matches the v2 training grid used by
+# experiments/multilingual_scaling/training/lumi/0.2B_ne.yaml), which adds
+# branchNBT/endNBT eval stages on top of v1's stable/decayNBT: for every
+# decayNBT checkpoint, also evaluate the pre-decay 80%-of-budget branch
+# checkpoint and the un-decayed 100%-of-budget end checkpoint the stable run
+# saved along the way.
 
 defaults:
-  - /sweep/multilingual_scaling/validation/v1@sweep: qwen3_dense_0.2B_ne # val-specific sweep (waits on training checkpoints via FileExistsCondition; loads from training decay checkpoints)
+  - /sweep/multilingual_scaling/validation/v2@sweep: qwen3_dense_0.2B_ne # val-specific sweep (waits on training checkpoints via FileExistsCondition; loads from training stable/decay checkpoints)
   - /experiments/multilingual_scaling/cluster: lumi
   - /backend/megatron/multilingual_scaling: qwen3_dense_0.2B_ne # model configs
   - /experiments/multilingual_scaling/common: base

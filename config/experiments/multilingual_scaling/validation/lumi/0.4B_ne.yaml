@@ -17,12 +17,9 @@ job:
 backend:
   megatron:
     # Data-related configs (LUMI)
-    split: '99,1,0'
+    split: '99,1,0' #### ????
     data_args_path: /scratch/project_462000963/users/vitiugin/datamix-tools/datamix4-val.txt
     tokenizer_model: openeurollm/tokenizer-256k
-    num_dataset_builder_threads: 7 # Will be overridden by sweep. Value taken from Ville 1.7B run
-    trust_remote_code: True
-    # num_workers is set to 6 in cluster/lumi.yaml (overrides this dataset's own default of 7)
 
     data_cache_path: /scratch/project_465002530/users/diana/MEGATRON_262k_val # Adjust it to your own directory
 
