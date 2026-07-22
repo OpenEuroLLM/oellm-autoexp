@@ -18,6 +18,5 @@ sbatch:
   time: "48:00:00"
   account: ${oc.env:SLURM_ACCOUNT,"dev"}
   partition: ${oc.env:SLURM_PARTITION,"default"}
-  gres: "gpu:1"
   gpus_per_node: 4
   output: ${job.log_path}

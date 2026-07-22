@@ -42,7 +42,6 @@ untie_embeddings_and_output_weights: true
 
 # Normalization
 normalization: "RMSNorm"
-norm_epsilon: 1.e-5 # rmsnorm epsilon
 qk_layernorm: True # enable qk-norm
 bf16: True
 
