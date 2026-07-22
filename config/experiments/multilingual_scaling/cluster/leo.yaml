@@ -1,0 +1,30 @@
+# @package _global_
+# Leonardo-specific infra + policy shared by every multilingual_scaling experiment on this cluster.
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+
+container:
+  env:
+    WANDB_TAGS: "leonardo"
+
+backend:
+  megatron:
+    data_cache_path: /leonardo_work/OELLM_prod2026/users/donutu00/cache/MEGATRON_262k # Adjust it to your own directory
+
+    # No periodic eval during training on Leonardo (validation runs separately; see stage/validation.yaml)
+    eval_interval: 1_000_000_000
+
+job:
+  log_path: ${slurm.sbatch.error}
+
+slurm:
+  sbatch:
+    # Max possible allocation on LEO is 64 nodes per job.
+    nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
+    account: oellm_prod2026 # or AIFAC_5C0_092 - MoE Grant
+    time: "24:00:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"

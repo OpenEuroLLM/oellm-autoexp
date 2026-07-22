@@ -1,0 +1,24 @@
+# @package _global_
+# Marenostrum5-specific infra + policy shared by every multilingual_scaling experiment on this cluster.
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: marenostrum
+  - /slurm: marenostrum
+
+backend:
+  megatron:
+    data_cache_path: /gpfs/projects/ehpc533/users/diana/MEGATRON_262k # Adjust it to your own directory
+
+job:
+  log_path: ${slurm.sbatch.error}
+
+slurm:
+  sbatch:
+    # Max possible allocation on MN5 is 100 nodes per job.
+    nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
+    qos: acc_ehpc
+    account: ehpc533
+    time: "72:00:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"

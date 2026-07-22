@@ -4,69 +4,15 @@
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 defaults:
-  - /backend: megatron
-  - /container: lumi
-  - /slurm: lumi
-  - /job: auto_restart
-  - /sweep/multilingual_scaling@sweep: qwen3_dense_0.9B_ne_lumi_train_v2 # sweep configs
+  - /experiments/multilingual_scaling/common: base
+  - /experiments/multilingual_scaling/cluster: lumi
+  - /sweep/multilingual_scaling/training@sweep: qwen3_dense_0.9B_ne_v2 # sweep configs
   - /backend/megatron: base
   - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.9B_ne # model configs
   - /backend/megatron/multilingual_scaling/data: oellm_256k_lumi_train # data configs
   - _self_
 
-index: 0
-stage: "" # Will be overridden by sweep
-
 job:
-  name: "" # Will be overridden by sweep with stage and hyperparameter info
   base_output_dir: "/scratch/project_465002530/multilingual_scaling/0.9B_ne/training/${job.name}"
-  # base_output_dir: "/scratch/project_465002530/users/dianaonutu/oellm-autoexp/outputs/multilingual_scaling/0.9B_ne/training/${job.name}"
-  log_path: ${.base_output_dir}/logs/slurm-%j.log
 
-backend:
-  megatron:
-    wandb_exp_name: "" # Will be overridden by sweep with stage and hyperparameter info
-    wandb_project: dense_multilingual_scaling
-    wandb_entity: openeurollm-project
-    wandb_save_dir: "${job.base_output_dir}"
-    tensorboard_dir: "${job.base_output_dir}/tensorboard"
-
-    data_cache_path: /scratch/project_465002530/users/dianaonutu/cache/MEGATRON_262k # Adjust it to your own directory
-
-    # Evals off
-    eval_interval: 1_000_000_000
-    # split: set per (lr, gbsz) combo in the v2 sweep (data_split_issue analysis)
-
-    # Lumi-specific settings
-    masked_softmax_fusion: False
-    gradient_accumulation_fusion: False
-
-    num_workers: 6 # Ville's suggestion since otherwise all of the 7 available CPUs per tasks would have a dataloader
-
-  #Lumi-specific settings
-  env:
-   TOKENIZERS_PARALLELISM: "false"
-   HF_HUB_OFFLINE: "1"
-   TRITON_HOME: /tmp/triton_cache 
-
-container:
-  env:
-    WANDB_TAGS: "lumi"
-
-slurm:
-  env:
-    MASTER_PORT: "9999"
-  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
-  sbatch:
-    # Maximum number of nodes is 16 to maximize throughput on LUMI.
-    nodes: "${oc.eval:'min(16, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
-    ntasks_per_node: 8
-    gpus_per_node: 8
-    gres: gpu:8
-    cpus_per_task: 7
-    # mem: 480G
-    partition: standard-g
-    account: project_465002530
-    time: "48:00:00"
-    # output: "${job.base_output_dir}/logs/stdout-%j.log"
-    # error: "${job.base_output_dir}/logs/stderr-%j.log"
+# split: set per (lr, gbsz) combo in the v2 sweep (data_split_issue analysis)
