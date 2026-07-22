@@ -35,6 +35,8 @@ backend:
     # Evals off (keep data stream identical to MN5's 99,1,0)
     eval_interval: 1_000_000_000
 
+    num_workers: 8
+
 container:
   env:
     WANDB_TAGS: "leonardo"

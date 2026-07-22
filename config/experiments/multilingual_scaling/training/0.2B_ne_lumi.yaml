@@ -65,9 +65,6 @@ slurm:
     gpus_per_node: 8
     gres: gpu:8
     cpus_per_task: 7
-    # mem: 480G
     partition: standard-g
     account: project_465002530
     time: "48:00:00"
-    # output: "${job.base_output_dir}/logs/stdout-%j.log"
-    # error: "${job.base_output_dir}/logs/stderr-%j.log"

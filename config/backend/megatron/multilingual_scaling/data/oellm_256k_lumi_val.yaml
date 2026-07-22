@@ -1,0 +1,18 @@
+# @package backend.megatron
+# Dataset related settings for multilingual scaling experiments (LUMI)
+max_position_embeddings: ${.seq_length}
+split: '99,1,0'
+create_attention_mask_in_dataloader: False
+
+# Data paths
+data_args_path: /scratch/project_462000963/users/vitiugin/datamix-tools/datamix4-val.txt
+
+# Tokenizer
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: openeurollm/tokenizer-256k
+
+seq_length: 4096
+dataloader_type: "cyclic"
+num_workers: 7 # Will be overridden by sweep. Value taken from Ville 1.7B run
+num_dataset_builder_threads: 7 # Will be overridden by sweep. Value taken from Ville 1.7B run
+trust_remote_code: True

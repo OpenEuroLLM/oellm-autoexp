@@ -10,7 +10,6 @@ groups:
   # GROUP 1: Hyperparameter configurations (identical to training sweep).
   - type: list
     defaults:
-      backend.megatron.num_workers: 16
       backend.megatron.micro_batch_size: 2
     configs:
       # ---- gbsz 32 ----
@@ -183,14 +182,29 @@ groups:
   - type: list
     configs:
       # STABLE PHASE: loads the stable training checkpoint and evaluates it.
+      # start_condition: wait for the stable training run's own final
+      # checkpoint (iter == train_iters, always written at end of training --
+      # see Megatron training.py "after training is done" -- regardless of
+      # save_interval) before submitting the eval job. backend.megatron.load
+      # is NOT overridden here; the base val config sets
+      #   load: "/gpfs/.../training/${job.name}/checkpoints"
+      # so ${job.name} for the stable stage correctly resolves to the
+      # corresponding training stable run's checkpoint directory.
       - stage: stable
         backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
         backend.megatron.lr_wsd_decay_iters: 0
         backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
         backend.megatron.aux.job_horizon_suffix: "\\${oc.eval:'str(\\${backend.megatron.aux.tokens}//1_000_000_000)+\"BT\"'}"
+        job.start_condition:
+          class_name: FileExistsCondition
+          path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.train_iters}).zfill(7)'}"
 
       # DECAY PHASES: evaluate each decay training checkpoint.
-      # No start_condition or cancel_condition: training is done, checkpoints exist.
+      # start_condition: wait for the matching training decay run's own final
+      # checkpoint (iter == train_iters for that decay's token budget, always
+      # written at end of training regardless of save_interval) so the val
+      # job is only submitted once training has actually produced it, instead
+      # of assuming it is already present.
       # backend.megatron.load is NOT overridden; the base val config sets
       #   load: "/gpfs/.../training/${job.name}/checkpoints"
       # which correctly resolves to the training decay run's checkpoint directory.
@@ -202,7 +216,10 @@ groups:
           backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
           backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
 
-          job.start_condition: null
+          # Wait for the training decay run's final checkpoint to appear.
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.train_iters}).zfill(7)'}"
           job.cancel_condition: null
 
         configs:

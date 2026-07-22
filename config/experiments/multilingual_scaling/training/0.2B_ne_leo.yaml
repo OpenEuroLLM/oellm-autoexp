@@ -32,6 +32,8 @@ backend:
 
     data_cache_path: /leonardo_work/OELLM_prod2026/users/donutu00/cache/MEGATRON_262k # Adjust it to your own directory
 
+    num_workers: 8
+
 slurm:
   sbatch:
     # Max possible allocation on Leonardo is 64 nodes per job.

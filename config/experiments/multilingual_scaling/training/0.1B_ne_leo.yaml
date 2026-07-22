@@ -8,7 +8,7 @@ defaults:
   - /container: leonardo
   - /slurm: leonardo
   - /job: auto_restart
-  - /sweep/multilingual_scaling@sweep: qwen3_dense_0.1B_ne # sweep configs  
+  - /sweep/multilingual_scaling/training@sweep: qwen3_dense_0.1B_ne_v1 # sweep configs #### TO DO: Create a version with the data split issue 
   - /backend/megatron: base
   - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.1B_ne # model configs
   - /backend/megatron/multilingual_scaling/data: oellm_256k_leo_train # data configs
@@ -34,9 +34,7 @@ backend:
 
     # Evals off
     eval_interval: 1_000_000_000
-    split: "99,1,0"
 
-    ### ?????
     num_workers: 8
 
 container:
@@ -45,9 +43,9 @@ container:
 
 slurm:
   sbatch:
-    # Max possible allocation on MN5 is 100 nodes per job.
+    # Max possible allocation on LEO is 64 nodes per job.
     nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
-    account: oellm_prod2026
+    account: oellm_prod2026 # or AIFAC_5C0_092 - MoE Grant
     time: "24:00:00"
     output: "${job.base_output_dir}/logs/stdout-%j.log"
     error: "${job.base_output_dir}/logs/stderr-%j.log"
