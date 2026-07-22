@@ -8,7 +8,7 @@ defaults:
   - /experiments/multilingual_scaling/cluster: mn5
   - /backend/megatron/multilingual_scaling: qwen3_dense_0.4B_ne # model configs
   - /experiments/multilingual_scaling/common: base
-  - /experiments/multilingual_scaling/stage: validation
+  - /experiments/multilingual_scaling/validation/common
   - _self_
 
 job:

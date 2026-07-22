@@ -20,7 +20,7 @@ shared building blocks:
 - `cluster/{leo,lumi,mn5}.yaml` — per-cluster infra + policy shared by every experiment on that
   cluster (backend/container/slurm group selection, data cache path, node-count formula,
   account/qos, cluster-specific env vars, whether periodic eval runs during training).
-- `stage/validation.yaml` — settings shared by every validation-stage experiment regardless of
+- `validation/common.yaml` — settings shared by every validation-stage experiment regardless of
   cluster or size (skip_train, eval-only batch/iters formulas, single-node override).
   Training has no equivalent file since, once cluster + common are factored out, there was
   nothing left that's common to training across all three clusters.
