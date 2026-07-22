@@ -10,4 +10,4 @@
 
 cd /scratch/project_465002530/users/dianaonutu/oellm-autoexp
 
-uv run --python 3.12 python scripts/monitor_autoexp.py --session-dir /scratch/project_465002530/users/dianaonutu/oellm-autoexp/monitor_state/monitor_state/1784646185
+uv run --python 3.12 python scripts/monitor_autoexp.py --session-dir /scratch/project_465002530/users/dianaonutu/oellm-autoexp/monitor_state/1784646185

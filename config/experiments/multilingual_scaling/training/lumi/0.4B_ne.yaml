@@ -1,0 +1,23 @@
+# @package _global_
+
+# 0.4B NE dense Qwen3-like model training with pull-based multi-stage cooldown on LUMI
+# Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
+
+defaults:
+  - /sweep/multilingual_scaling/training@sweep: qwen3_dense_0.4B_ne_v2 # sweep configs
+  - /experiments/multilingual_scaling/cluster: lumi
+  - /backend/megatron/multilingual_scaling: qwen3_dense_0.4B_ne # model configs
+  - /experiments/multilingual_scaling/common: base
+  - _self_
+
+job:
+  base_output_dir: "/scratch/project_465002530/multilingual_scaling/0.4B_ne/training/${job.name}"
+
+backend:
+  megatron:
+    # No periodic eval during training on LUMI (validation runs separately)
+    eval_interval: 1_000_000_000
+
+    # Data-related configs (LUMI)
+    data_args_path: /scratch/project_462000963/users/vitiugin/datamix-tools/datamix4-lumi.txt
+    tokenizer_model: openeurollm/tokenizer-256k

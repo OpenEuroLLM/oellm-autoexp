@@ -2,17 +2,16 @@
 
 To launch experiments:
 ```
-PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/<stage>/<B>_ne_<cluster>
+PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/<stage>/<cluster>/<B>_ne
 ```
 where:
 - `<stage>` is `training` or `validation`
+- `<cluster>` is `leo`, `lumi`, or `mn5`
 - `<B>` denotes the NE model size (e.g., `0.1B`, `0.2B`, `0.4B`, `0.9B`)
-- `<cluster>` is `leo`, `lumi`, or `mn5` (MareNostrum training/validation leaf files omit the
-  cluster suffix for historical reasons, e.g. `training/0.1B_ne_mn5.yaml`)
 
 ### Layout
 
-Each leaf file under `training/` or `validation/` is a thin composition (usually just a
+Each leaf file under `training/<cluster>/` or `validation/<cluster>/` is a thin composition (usually just a
 `defaults:` list plus a `job.base_output_dir` and any genuinely experiment-specific override) of
 shared building blocks:
 
@@ -26,11 +25,18 @@ shared building blocks:
   Training has no equivalent file since, once cluster + common are factored out, there was
   nothing left that's common to training across all three clusters.
 - `/backend/megatron/multilingual_scaling/models/<size>.yaml` — per-size model architecture.
-- `/backend/megatron/multilingual_scaling/data/<dataset>.yaml` — per-cluster/per-split dataset
-  paths, built on `data/common/base.yaml` for the shared dataloader schema.
 - `/sweep/multilingual_scaling/...` — per-(cluster, size, stage) hyperparameter grids (left
   untouched by this reorg; genuine experiment design, not boilerplate).
 
+Dataset settings (data_args_path, tokenizer, split, num_workers, ...) are inlined directly in each
+leaf file's `backend.megatron` block rather than pulled from a shared config group — they're
+duplicated per size within a cluster/stage directory (e.g. all 4 files under `training/leo/` repeat
+the same block) by design, so everything about one experiment lives in one file. The one exception:
+LUMI's `num_workers` is set once in `cluster/lumi.yaml` (overriding the dataset's own default of 7
+down to 6) rather than repeated in every LUMI leaf file, since it's a hardware-tuning value owned by
+the cluster, not the dataset.
+
 When adding a new (size, cluster, stage) combination, a leaf file should need only: the sweep
-pointer, the model/data group pointers, and `job.base_output_dir`. If you find yourself repeating
-something else across multiple leaf files, it likely belongs in one of the shared layers above.
+pointer, the model group pointer, the dataset block, and `job.base_output_dir`. If you find
+yourself repeating something else across multiple leaf files in the same cluster directory, it
+likely belongs in `cluster/<cluster>.yaml` instead.

@@ -4,13 +4,11 @@
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 defaults:
-  - /experiments/multilingual_scaling/common: base
-  - /experiments/multilingual_scaling/cluster: mn5
-  - /experiments/multilingual_scaling/stage: validation
   - /sweep/multilingual_scaling/validation/v1@sweep: qwen3_dense_0.4B_ne # val-specific sweep (waits on training checkpoints via FileExistsCondition; loads from training decay checkpoints)
-  - /backend/megatron: base
-  - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.4B_ne # model configs
-  - /backend/megatron/multilingual_scaling/data: oellm_256k_mn5_val # data configs
+  - /experiments/multilingual_scaling/cluster: mn5
+  - /backend/megatron/multilingual_scaling: qwen3_dense_0.4B_ne # model configs
+  - /experiments/multilingual_scaling/common: base
+  - /experiments/multilingual_scaling/stage: validation
   - _self_
 
 job:
@@ -18,6 +16,12 @@ job:
 
 backend:
   megatron:
+    # Data-related configs (Marenostrum)
+    split: '0,100,0' # all-eval split, unlike the other clusters' val sets
+    data_args_path: /gpfs/projects/ehpc533/data_utils/datamix-tools/datamix-tools/output/200BT-option-4-val.sh
+    tokenizer_model: /gpfs/projects/ehpc533/tokenizers/oellm-262k
+    num_workers: 8 # Will be overridden by sweep
+
     data_cache_path: /gpfs/projects/ehpc533/users/diana/MEGATRON_262k_val # Adjust it to your own directory
 
     load: "/gpfs/projects/ehpc533/multilingual_scaling/0.4B_ne/training/${job.name}/checkpoints"

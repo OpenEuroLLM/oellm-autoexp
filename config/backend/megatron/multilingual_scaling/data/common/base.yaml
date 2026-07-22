@@ -1,9 +1,0 @@
-# @package backend.megatron
-# Shared by every multilingual_scaling dataset config, regardless of cluster or split.
-
-max_position_embeddings: ${.seq_length}
-seq_length: 4096
-create_attention_mask_in_dataloader: False
-dataloader_type: "cyclic"
-tokenizer_type: HuggingFaceTokenizer
-split: '99,1,0'

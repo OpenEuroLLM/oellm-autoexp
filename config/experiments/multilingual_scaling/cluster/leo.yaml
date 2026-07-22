@@ -14,8 +14,8 @@ backend:
   megatron:
     data_cache_path: /leonardo_work/OELLM_prod2026/users/donutu00/cache/MEGATRON_262k # Adjust it to your own directory
 
-    # No periodic eval during training on Leonardo (validation runs separately; see stage/validation.yaml)
-    eval_interval: 1_000_000_000
+    num_workers: 8 # Will be overridden by sweep
+
 
 job:
   log_path: ${slurm.sbatch.error}

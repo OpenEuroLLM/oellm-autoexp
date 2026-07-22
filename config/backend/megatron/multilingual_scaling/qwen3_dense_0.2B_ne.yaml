@@ -1,21 +1,21 @@
 # @package backend.megatron
 
-# 0.9B non-embedding (ne) dense Qwen3-like model
+# 0.2B non-embedding (ne) dense Qwen3-like model
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 # MODEL
-num_layers: 28
-hidden_size: 1536
-ffn_hidden_size: 4608
+num_layers: 22
+hidden_size: 768
+ffn_hidden_size: 2304
 kv_channels: 128
 swiglu: True
 add_bias_linear: False
 init_method_std: 0.02
 
 # Attention
-num_attention_heads: 16
+num_attention_heads: 8
 num_query_groups: 8
-group_query_attention: True
+group_query_attention: False
 attention_softmax_in_fp32: False # OpenSci style
 use_flash_attn: True
 
@@ -24,6 +24,13 @@ position_embedding_type: "rope"
 rotary_base: 10000
 rotary_percent: 1.0
 untie_embeddings_and_output_weights: False
+
+# Sequence / Dataloader
+max_position_embeddings: ${.seq_length}
+seq_length: 4096
+create_attention_mask_in_dataloader: False
+dataloader_type: "cyclic"
+tokenizer_type: HuggingFaceTokenizer
 
 # Normalization
 normalization: RMSNorm
@@ -198,9 +205,3 @@ aux:
   save_step_end_6: 999_999_999
   save_step_end_7: 999_999_999
   save_step_end_8: 999_999_999
-  # Checkpoints dir of an older, shorter stable run to bootstrap this combo's
-  # stable job from (checkpoint_status=extend_stable in
-  # hp_grid/v2/remaining_to_be_trained_hp_grid.csv). Empty default is a no-op;
-  # overridden per-combo in sweep Group 1, consumed by the stable stage's
-  # job.start_condition in Group 2.
-  extend_stable_source: ""

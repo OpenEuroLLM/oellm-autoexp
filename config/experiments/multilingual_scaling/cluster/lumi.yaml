@@ -14,16 +14,14 @@ backend:
   megatron:
     data_cache_path: /scratch/project_465002530/users/dianaonutu/cache/MEGATRON_262k # Adjust it to your own directory
 
-    # No periodic eval during training on LUMI (validation runs separately; see stage/validation.yaml)
-    eval_interval: 1_000_000_000
-
-    # Lumi-specific settings
     masked_softmax_fusion: False
     gradient_accumulation_fusion: False
 
     num_workers: 6 # Ville's suggestion since otherwise all of the 7 available CPUs per tasks would have a dataloader
+    num_dataset_builder_threads: 6
 
-  #Lumi-specific settings
+    trust_remote_code: True
+
   env:
     TOKENIZERS_PARALLELISM: "false"
     HF_HUB_OFFLINE: "1"
