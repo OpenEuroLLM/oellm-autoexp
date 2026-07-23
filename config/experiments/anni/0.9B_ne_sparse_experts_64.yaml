@@ -1,0 +1,80 @@
+# @package _global_
+
+# 0.9B NE sparse Qwen3-like model training with pull-based multi-stage cooldown on Marenostrum
+# Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.9B_ne_experts_64 # model configs
+  - /backend/megatron/: speed_test_lumi # data + rocm stuff for lumi
+  - _self_
+
+index: 0
+stage: "" # Will be overridden by sweep
+
+job:
+  name: "sparse_throughput_test" # Will be overridden by sweep with stage and hyperparameter info
+  base_output_dir: "/scratch/project_465002530/users/amoisala/oellm-autoexp/config/experiments/anni/0.9B_ne_sparse_experts_${backend.megatron.num_experts}_topk_${backend.megatron.moe_router_topk}_PP_${backend.megatron.pipeline_model_parallel_size}/training/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    train_iters: 50
+    eval_iters: 1
+    eval_interval: 1000
+    save_interval: 10000000
+    save: null
+    load: null
+    wandb_exp_name: "test_sparse_throughput" # Will be overridden by sweep with stage and hyperparameter info
+    wandb_project: "" # Disabled
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    # DATA
+    data_cache_path: /flash/project_465002530/users/$USER/megatron_cache/${job.name}
+
+    # Tokenizer
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+
+    # LUMI hipBLASLt workarounds: "Unable to find any suitable algorithms" in these GEMM shapes
+    moe_router_dtype: null
+    moe_grouped_gemm: False
+    
+    # For quick testing
+    seq_length: 4096
+    max_position_embeddings: 4096
+    #train_iters: 5
+    #lr_warmup_iters: 1
+    lr_wsd_decay_iters: 1
+    #micro_batch_size: 1    # overridden by sweep
+    #global_batch_size:  64 # overridden by sweep        
+    #eval_interval: 1000000000
+    #save_interval: 1000000000
+
+    # Base training configuration (for stable phase)
+    num_workers: 8 # Will be overridden by sweep
+    micro_batch_size: 1 # Will be overridden by sweep
+    global_batch_size: 64  # Will be overridden by sweep
+    lr: 5.e-4  # Will be overridden by sweep
+
+    # eval_interval: 200
+    # save_interval: 500
+
+
+slurm:
+  sbatch:
+    nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
+    # qos: "boost_qos_dbg"
+    account: "project_465002530"
+    time: "00:20:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "
