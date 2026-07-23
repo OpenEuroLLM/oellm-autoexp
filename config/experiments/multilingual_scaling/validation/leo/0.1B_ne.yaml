@@ -17,7 +17,7 @@ job:
 backend:
   megatron:
     # Data-related configs (LUMI)
-    split: '99,1,0'
+    split: '1,99,0'
     data_args_path: /leonardo_work/OELLM_prod2026/users/donutu00/datamix-tools/output/1TT-option-4-val-fixed_no_high_actual_merged.sh
     tokenizer_model: /leonardo_work/OELLM_prod2026/users/shaldar0/tokenizers/openeurollm-tokenizer-256k
     num_workers: 8 # Will be overridden by sweep

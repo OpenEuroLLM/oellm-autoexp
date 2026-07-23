@@ -17,7 +17,7 @@ job:
 backend:
   megatron:
     # Data-related configs (LUMI)
-    split: '99,1,0' #####????
+    split: '1,99,0'
     data_args_path: /scratch/project_462000963/users/vitiugin/datamix-tools/datamix4-val.txt
     tokenizer_model: openeurollm/tokenizer-256k
 
