@@ -5,9 +5,9 @@
 
 defaults:
   - /sweep/multilingual_scaling/validation/v1@sweep: qwen3_dense_0.4B_ne # val-specific sweep (waits on training checkpoints via FileExistsCondition; loads from training decay checkpoints)
+  - /experiments/multilingual_scaling/common: base
   - /experiments/multilingual_scaling/cluster: lumi
   - /backend/megatron/multilingual_scaling: qwen3_dense_0.4B_ne # model configs
-  - /experiments/multilingual_scaling/common: base
   - /experiments/multilingual_scaling/validation/common
   - _self_
 

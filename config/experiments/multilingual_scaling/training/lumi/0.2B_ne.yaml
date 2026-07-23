@@ -5,9 +5,9 @@
 
 defaults:
   - /sweep/multilingual_scaling/training@sweep: qwen3_dense_0.2B_ne_v2 # sweep configs
+  - /experiments/multilingual_scaling/common: base
   - /experiments/multilingual_scaling/cluster: lumi
   - /backend/megatron/multilingual_scaling: qwen3_dense_0.2B_ne # model configs
-  - /experiments/multilingual_scaling/common: base
   - _self_
 
 job:
