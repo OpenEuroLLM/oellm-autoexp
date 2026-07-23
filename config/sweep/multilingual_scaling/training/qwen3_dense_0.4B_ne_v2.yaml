@@ -143,6 +143,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "{20_000_000_000, 30_000_000_000, 50_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000, 12_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  cross
+        backend.megatron.split:                   "99,1,0"
       # checkpoint_reuse_run=qwen3_dense_0.4B_ne_lr0.001_gbsz256_stable300B: a stable at 300B already exists,
       # so aux.tokens is pinned to 300B (NOT the max of the remaining decays below) --
       # decays branch off that existing checkpoint via the sibling stable stage instead of
@@ -172,6 +173,7 @@ groups:
         backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000, 12_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  cross
         backend.megatron.aux.skip_stable_launch:  true
+        backend.megatron.split:                   "99,1,0"
       # REMOVED (fully trained; no remaining points in CSV for lr=0.004, gbsz=256: was 80B, 120B)
       #       - backend.megatron.lr: 4.e-3
       #         backend.megatron.global_batch_size: 256
@@ -192,6 +194,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "set()"
         backend.megatron.aux.diagonal_tokens_set: "{20_000_000_000, 30_000_000_000, 50_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  diagonal
+        backend.megatron.split:                   "99,1,0"
       # checkpoint_reuse_run=qwen3_dense_0.4B_ne_lr0.001_gbsz512_stable300B: a stable at 300B already exists,
       # so aux.tokens is pinned to 300B (NOT the max of the remaining decays below) --
       # decays branch off that existing checkpoint via the sibling stable stage instead of
@@ -212,11 +215,6 @@ groups:
       # decays branch off that existing checkpoint via the sibling stable stage instead of
       # retraining a smaller stable from scratch.
       # Already trained, removed from grid: center: 80B, 120B; cross: 200B, 300B
-      # NOTE: unlike the other checkpoint_reuse_run combos above, this stable's
-      # own split is NOT confirmed by data_split_issue/README.md -- it has no
-      # self-row (or any decay-sibling row) in that report, so its actual
-      # training split is unknown. Left at the 99,1,0 default here; verify
-      # against this checkpoint's actual job config/wandb run before launching.
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 512
         backend.megatron.micro_batch_size: 2
@@ -226,6 +224,7 @@ groups:
         backend.megatron.aux.diagonal_tokens_set: "{20_000_000_000, 30_000_000_000, 50_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  diagonal
         backend.megatron.aux.skip_stable_launch:  true
+        backend.megatron.split:                   "99,1,0"
       # checkpoint_reuse_run=qwen3_dense_0.4B_ne_lr0.004_gbsz512_stable300B: a stable at 300B already exists,
       # so aux.tokens is pinned to 300B (NOT the max of the remaining decays below) --
       # decays branch off that existing checkpoint via the sibling stable stage instead of
@@ -251,6 +250,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "{200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "{80_000_000_000, 120_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  cross
+        backend.megatron.split:                   "99,1,0"
       # checkpoint_reuse_run=qwen3_dense_0.4B_ne_lr0.002_gbsz1024_stable300B: a stable at 300B already exists,
       # so aux.tokens is pinned to 300B (NOT the max of the remaining decays below) --
       # decays branch off that existing checkpoint via the sibling stable stage instead of
@@ -274,6 +274,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "{200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "{80_000_000_000, 120_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  cross
+        backend.megatron.split:                   "99,1,0"
 
       # ---- gbsz 2048 ----
       - backend.megatron.lr: 1.e-3
@@ -284,6 +285,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "set()"
         backend.megatron.aux.diagonal_tokens_set: "{200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  diagonal
+        backend.megatron.split:                   "99,1,0"
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 2048
         backend.megatron.micro_batch_size: 2
@@ -292,6 +294,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "{200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.diagonal_tokens_set: "set()"
         backend.megatron.aux.stable_launch_tier:  cross
+        backend.megatron.split:                   "99,1,0"
       - backend.megatron.lr: 4.e-3
         backend.megatron.global_batch_size: 2048
         backend.megatron.micro_batch_size: 2
@@ -300,6 +303,7 @@ groups:
         backend.megatron.aux.cross_tokens_set:    "set()"
         backend.megatron.aux.diagonal_tokens_set: "{200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  diagonal
+        backend.megatron.split:                   "99,1,0"
 
   # GROUP 2: Multi-stage training (1 stable + 9 decay).
   # All 17 combos × 10 stages = 170 sweep points; sweep.filter prunes 107 that
