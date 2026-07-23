@@ -4,7 +4,7 @@
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 defaults:
-  - /sweep/multilingual_scaling/training@sweep: qwen3_dense_0.1B_ne_v1 # sweep configs #### TO DO: Create a version with the data split issue
+  - /sweep/multilingual_scaling/training/v1@sweep: qwen3_dense_0.1B_ne # sweep configs #### TO DO: Create a version with the data split issue
   - /experiments/multilingual_scaling/cluster: leo
   - /backend/megatron/multilingual_scaling: qwen3_dense_0.1B_ne # model configs
   - /experiments/multilingual_scaling/common: base
