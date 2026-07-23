@@ -159,6 +159,7 @@ fim_rate: 0.5  # Probability to convert a training sample into a FIM format.
 fim_split_sample: null  # String around which to split the sample for FIM.
 fim_spm_rate: 0.5  # Probability that the a FIM sample uses the SPM format over the PSM format.
 fim_suffix_token: <fim_suffix>  # FIM suffix token
+final_logit_softcapping: null  # If set, soft-cap the final output-layer (LM head) logits with c * tanh(logits / c) where c is this value (e.g. 30.0 as in Gemma 2).
 finetune: false  # Load model for finetuning. Do not load optimizer or rng state from checkpoint and set iteration to 0. Assumed when loading a release checkpoint.
 first_last_layers_bf16: false  # Construct first and last layers in bf16 when doing FP8 training.
 flash_decode: false  # Whether to use the flash decoding kernel.
@@ -403,6 +404,7 @@ optimizer: adam  # choices: ['adam', 'sgd'] | Optimizer function
 optimizer_cpu_offload: false  # Offload optimizer state to CPU
 optimizer_offload_fraction: 1.0  # Ratio of optimizer state to offload to CPU
 output_bert_embeddings: false  # Output Bert embeddings (via mean pooling) from model, rather than its binary head output or entire hidden batch.
+output_z_loss_coeff: null  # Scaling coefficient for the output (LM head) z-loss, an auxiliary loss coeff * mean(logsumexp(logits) ** 2) that keeps the softmax log-normalizer near zero for stability. A starting value of 1e-4 is recommended.
 overlap_cpu_optimizer_d2h_h2d: false  # Overlap CPU optimizer step, gradients D2H and updated parameters H2D.
 overlap_grad_reduce: false  # If set, overlap DDP grad reduce.
 overlap_moe_expert_parallel_comm: false  # Overlap the EP A2A communication by batch-level overlapping in 1f1b stage.
