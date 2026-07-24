@@ -1,28 +1,13 @@
 type: product
 
 groups:
-  # GROUP 0: dynamic job name + wandb name (from the sweep point's own params).
-  # Identical formula to the training sweep, so a "stable"/"decayNBT" eval
-  # point's job.name matches its training counterpart's job.name exactly --
-  # that's what lets the base val config's default
-  #   load: ".../training/${job.name}/checkpoints"
-  # find the right training checkpoint dir without any sibling reference.
-  # "branchNBT"/"endNBT" points (GROUP 2 below) don't have a training-side
-  # counterpart with that name, so they override `load` explicitly instead.
+  # GROUP 0: job naming, mirrors the training sweep exactly.
   - type: list
     configs:
       - job.name: "qwen3_dense_0.9B_ne_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_\\${stage}\\${backend.megatron.aux.job_horizon_suffix}"
         backend.megatron.wandb_exp_name: "\\${job.name}"
 
-  # GROUP 1: Hyperparameter configurations (identical to training sweep).
-  #
-  # aux.max_tokens is a second, never-overridden copy of aux.tokens (which
-  # GROUP 2's decay/branch/end stages DO override, per-stage, to their own
-  # budget). It's read by the filter below to drop an endNBT point whenever
-  # N equals the combo's own max/stable budget -- in that case endNBT and
-  # stable would otherwise evaluate the exact same checkpoint file twice
-  # (this happens for 22 of 22 combos below, wherever one of the
-  # *_tokens_set values equals aux.tokens).
+  # GROUP 1: HP grid, identical to the training sweep.
   - type: list
     defaults:
       backend.megatron.micro_batch_size: 2
@@ -215,18 +200,11 @@ groups:
         backend.megatron.aux.diagonal_tokens_set: "{200_000_000_000, 300_000_000_000}"
         backend.megatron.aux.stable_launch_tier:  diagonal
 
-  # GROUP 2: Multi-stage evaluation -- 1 stable + 9 decay + 9 branch + 9 end.
+  # GROUP 2: stages -- 1 stable + 9 decay + 9 branch + 9 end.
   - type: list
     configs:
-      # STABLE PHASE: loads the stable training checkpoint and evaluates it.
-      # start_condition: wait for the stable training run's own final
-      # checkpoint (iter == train_iters, always written at end of training --
-      # see Megatron training.py "after training is done" -- regardless of
-      # save_interval) before submitting the eval job. backend.megatron.load
-      # is NOT overridden here; the base val config sets
-      #   load: "/gpfs/.../training/${job.name}/checkpoints"
-      # so ${job.name} for the stable stage correctly resolves to the
-      # corresponding training stable run's checkpoint directory.
+      # STABLE PHASE: evaluates the training stable's checkpoint (load found
+      # via job-name matching, not overridden here).
       - stage: stable
         backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
         backend.megatron.lr_wsd_decay_iters: 0
@@ -243,15 +221,8 @@ groups:
                 log_path: "\\${job.log_path_current}"
                 pattern: ".*validation loss.*on test set.*"
 
-      # DECAY PHASES: evaluate each decay training checkpoint.
-      # start_condition: wait for the matching training decay run's own final
-      # checkpoint (iter == train_iters for that decay's token budget, always
-      # written at end of training regardless of save_interval) so the val
-      # job is only submitted once training has actually produced it, instead
-      # of assuming it is already present.
-      # backend.megatron.load is NOT overridden; the base val config sets
-      #   load: "/gpfs/.../training/${job.name}/checkpoints"
-      # which correctly resolves to the training decay run's checkpoint directory.
+      # DECAY PHASES: evaluate each decay training checkpoint (load found via
+      # job-name matching; waits for that training run's final checkpoint).
       - type: list
         defaults:
           backend.megatron.aux.decay_fraction: "\\${backend.megatron.aux.cooldown_decay_fraction}"
@@ -260,7 +231,6 @@ groups:
           backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
           backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
 
-          # Wait for the training decay run's final checkpoint to appear.
           job.start_condition:
             class_name: AndCondition
             conditions:
@@ -293,26 +263,8 @@ groups:
           - stage: decay300BT
             backend.megatron.aux.tokens: 300_000_000_000
 
-      # BRANCH PHASES (NEW): evaluate the stable run's save_step_br_N
-      # checkpoint -- the checkpoint at 80% of budget N that a decayNBT run
-      # would fork its cooldown from. Measures model quality right before
-      # decay starts.
-      #
-      # These points have no training-side directory of their own (training
-      # only writes "stable" and "decayNBT" dirs), so `load` can't be found
-      # via job-name matching like the decay phases above. Instead it's
-      # pulled from the "stable" sibling POINT DEFINED IN THIS SAME FILE
-      # (GROUP 2 above): that point's own `load` already resolves to the
-      # training stable job's checkpoint dir via the base val config's
-      # default `load: ".../training/${job.name}/checkpoints"` template.
-      # (Sibling refs only resolve within one sweep file's DAG -- there is
-      # no way to sibling-reference the training sweep directly from here --
-      # so this indirection through the local "stable" point is required.)
-      #
-      # ckpt_step (rather than a `load` path with the iter baked in) is what
-      # selects the specific checkpoint within that directory; the formula
-      # is the 80%-of-budget-N one from the training sweep's save_step_br_N
-      # slots, duplicated here for the same cross-file reason.
+      # BRANCH PHASES: evaluate the stable's checkpoint at 80% of budget N
+      # load found via the local "stable" sibling.
       - type: list
         defaults:
           backend.megatron.load: "\\${sibling.stable.backend.megatron.load}"
@@ -350,15 +302,8 @@ groups:
           - stage: branch300BT
             backend.megatron.aux.tokens: 300_000_000_000
 
-      # END PHASES (NEW): evaluate the stable run's save_step_end_N
-      # checkpoint -- the un-decayed model at exactly 100% of budget N
-      # tokens (as opposed to decayNBT, which is the *decayed* model at
-      # budget N). Same `load`-via-sibling indirection as BRANCH above.
-      #
-      # ckpt_step at 100% of budget N is exactly the same ceil-division
-      # formula as train_iters above (both equal ceil(aux.tokens/(seq*gbsz))),
-      # so it's just aliased to train_iters rather than duplicating the
-      # formula a second time.
+      # END PHASES: evaluate the stable's un-decayed checkpoint at 100% of
+      # budget N.
       - type: list
         defaults:
           backend.megatron.load: "\\${sibling.stable.backend.megatron.load}"
@@ -396,43 +341,6 @@ groups:
           - stage: end300BT
             backend.megatron.aux.tokens: 300_000_000_000
 
-# Same filter shape as validation/v1 and the training sweep (tier routing +
-# warmup-ratio guard), plus one addition: the "\\${stage}\".startswith(\"end\")
-# and aux.tokens == aux.max_tokens" clause drops an endNBT point whenever N
-# equals the combo's own stable/max budget, since that checkpoint is already
-# evaluated by the "stable" point itself (see aux.max_tokens comment in
-# GROUP 1 above). Deliberately compares against aux.max_tokens (a plain
-# per-combo field) rather than sibling.stable's resolved values: the
-# "stable" point would otherwise have to resolve itself as its own sibling
-# to evaluate this same filter expression, which is unsupported. branchNBT
-# is never affected -- 80% of budget N never equals 100% of the same or any
-# other budget.
-#
-# Everything else is unchanged: the "not stable" clause still gates any
-# non-stable stage purely by `aux.tokens in <tier>_tokens_set`, and
-# branch/end points set aux.tokens=N exactly like decay points do -- so a
-# surviving branchNBT/endNBT point exists iff the same-budget decayNBT
-# point does, i.e. only for (combo, N) pairs that actually have a decay.
+# Filter: tier routing + warmup guard + end-dedup.
 filter: "\\${oc.eval:'(((\"\\${stage}\" == \"stable\" and (\"\\${backend.megatron.aux.priority_tier}\" == \"all\" or \"\\${backend.megatron.aux.priority_tier}\" == \"\\${backend.megatron.aux.stable_launch_tier}\")) or (\"\\${stage}\" != \"stable\" and (not (\"\\${stage}\".startswith(\"end\") and \\${backend.megatron.aux.tokens} == \\${backend.megatron.aux.max_tokens})) and ((\"\\${backend.megatron.aux.priority_tier}\" == \"all\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set} | \\${backend.megatron.aux.cross_tokens_set} | \\${backend.megatron.aux.diagonal_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"center\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"cross\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.cross_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"diagonal\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.diagonal_tokens_set})))) and (\\${backend.megatron.lr_warmup_iters} / \\${backend.megatron.train_iters} < 0.3))'}"
 
-
-### Job counts (per `backend.megatron.aux.priority_tier`, priority_tier=all)
-# Group 1 (hyperparameter combos): 22 (same as training v1)
-# Group 2 (stages): 1 stable + 9 decay + 9 branch + 9 end = 28
-# Pre-filter product: 22 x 28 = 616 sweep points
-#
-# Unlike the training sweep, aux.skip_stable_launch doesn't apply here, so
-# all 22 stables are evaluated regardless of whether their training run was
-# (re)submitted by this grid or reused from an earlier one.
-#
-# Branch shares the exact same gating as decay (aux.tokens in the same
-# per-combo tier sets), so it also produces 81 points. End uses that same
-# gating minus the dedupe clause above, which drops it for the 22 combos
-# where a decay sits exactly at the combo's own max budget:
-#   22 stable + 81 decay + 81 branch + 59 end = 243 jobs (priority_tier=all)
-#
-# i.e. for every decayNBT checkpoint you'd have evaluated before this
-# change, you now also get its branchNBT (pre-decay, 80% of budget N)
-# sibling evaluated alongside it, plus an endNBT (un-decayed, 100% of
-# budget N) sibling too -- except when N is the combo's own max budget, in
-# which case "stable" already covers that exact checkpoint.
