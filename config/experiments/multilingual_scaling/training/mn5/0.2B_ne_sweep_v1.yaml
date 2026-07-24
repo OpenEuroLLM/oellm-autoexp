@@ -1,22 +1,21 @@
 # @package _global_
 
-# 0.9B NE dense Qwen3-like model training with pull-based multi-stage cooldown on Marenostrum
+# 0.2B NE dense Qwen3-like model training with pull-based multi-stage cooldown on Marenostrum
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 defaults:
-  - /sweep/multilingual_scaling/training/mn5@sweep: qwen3_dense_0.9B_ne # sweep configs
+  - /sweep/multilingual_scaling/training/v1@sweep: qwen3_dense_0.2B_ne # sweep configs
   - /experiments/multilingual_scaling/cluster: mn5
-  - /backend/megatron/multilingual_scaling: qwen3_dense_0.9B_ne # model configs
+  - /backend/megatron/multilingual_scaling: qwen3_dense_0.2B_ne # model configs
   - /experiments/multilingual_scaling/common: base
   - _self_
 
 job:
-  base_output_dir: "/gpfs/projects/ehpc533/multilingual_scaling/0.9B_ne/training/${job.name}"
+  base_output_dir: "/gpfs/projects/ehpc533/multilingual_scaling/0.2B_ne/training/${job.name}"
 
 backend:
   megatron:
     # Data-related configs (Marenostrum)
-    split: '99,1,0'
     data_args_path: /gpfs/projects/ehpc533/data_utils/datamix-tools/datamix-tools/output/1TT-option-4-apps.sh
     tokenizer_model: /gpfs/projects/ehpc533/tokenizers/oellm-262k
-    num_workers: 8 # Will be overridden by sweep
+    data_cache_path: /gpfs/projects/ehpc533/users/diana/MEGATRON_262k # Adjust it to your own directory

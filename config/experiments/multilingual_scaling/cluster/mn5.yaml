@@ -6,9 +6,13 @@ defaults:
   - /container: marenostrum
   - /slurm: marenostrum
 
+container:
+  env:
+    WANDB_TAGS: "mn5"
+
 backend:
   megatron:
-    data_cache_path: /gpfs/projects/ehpc533/users/diana/MEGATRON_262k # Adjust it to your own directory
+    num_workers: 16
 
 job:
   log_path: ${slurm.sbatch.error}
@@ -18,7 +22,8 @@ slurm:
     # Max possible allocation on MN5 is 100 nodes per job.
     nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
     qos: acc_ehpc
-    account: ehpc533
+    account: ehpc533 # Strategic allocation
     time: "72:00:00"
+    # Keep the stdout and stderr separate for readability.
     output: "${job.base_output_dir}/logs/stdout-%j.log"
     error: "${job.base_output_dir}/logs/stderr-%j.log"

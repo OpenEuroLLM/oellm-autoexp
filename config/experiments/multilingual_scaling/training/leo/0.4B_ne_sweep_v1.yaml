@@ -19,6 +19,6 @@ backend:
     eval_interval: 1_000_000_000
 
     # Data-related configs (Leonardo)
-    split: '99,1,0' ##### ?????
     data_args_path: /leonardo_work/OELLM_prod2026/users/shaldar0/datamix_tools_from_fedor/datamix-tools/output/1TT-option-4.sh
     tokenizer_model: /leonardo_work/OELLM_prod2026/users/shaldar0/tokenizers/openeurollm-tokenizer-256k
+    data_cache_path: /leonardo_work/OELLM_prod2026/users/donutu00/cache/MEGATRON_262k # Adjust it to your own directory

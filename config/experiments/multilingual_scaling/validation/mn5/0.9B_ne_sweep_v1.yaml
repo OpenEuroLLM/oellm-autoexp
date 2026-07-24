@@ -20,8 +20,5 @@ backend:
     split: '0,100,0' # all-eval split, unlike the other clusters' val sets
     data_args_path: /gpfs/projects/ehpc533/data_utils/datamix-tools/datamix-tools/output/200BT-option-4-val.sh
     tokenizer_model: /gpfs/projects/ehpc533/tokenizers/oellm-262k
-    num_workers: 8 # Will be overridden by sweep
-
     data_cache_path: /gpfs/projects/ehpc533/users/diana/MEGATRON_262k_val # Adjust it to your own directory
-
     load: "/gpfs/projects/ehpc533/multilingual_scaling/0.9B_ne/training/${job.name}/checkpoints"

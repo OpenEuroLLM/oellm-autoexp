@@ -21,3 +21,4 @@ backend:
     # Data-related configs (LUMI)
     data_args_path: /scratch/project_462000963/users/vitiugin/datamix-tools/datamix4-lumi.txt
     tokenizer_model: openeurollm/tokenizer-256k
+    data_cache_path: /scratch/project_465002530/users/dianaonutu/cache/MEGATRON_262k # Adjust it to your own directory

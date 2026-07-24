@@ -12,10 +12,7 @@ container:
 
 backend:
   megatron:
-    data_cache_path: /leonardo_work/OELLM_prod2026/users/donutu00/cache/MEGATRON_262k # Adjust it to your own directory
-
-    num_workers: 8 # Will be overridden by sweep
-
+    num_workers: 8 
 
 job:
   log_path: ${slurm.sbatch.error}
@@ -24,7 +21,8 @@ slurm:
   sbatch:
     # Max possible allocation on LEO is 64 nodes per job.
     nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
-    account: oellm_prod2026 # or AIFAC_5C0_092 - MoE Grant
+    account: AIFAC_5C0_092 # oellm_prod2026 - Strategic or AIFAC_5C0_092 - MoE Grant
     time: "24:00:00"
+    # Keep the stdout and stderr separate for readability.
     output: "${job.base_output_dir}/logs/stdout-%j.log"
     error: "${job.base_output_dir}/logs/stderr-%j.log"

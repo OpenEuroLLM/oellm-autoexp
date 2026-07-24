@@ -27,6 +27,4 @@ slurm:
   sbatch:
     nodes: 1 # 1 node is sufficient for evaluation
     time: "8:00:00"
-    # Slurm job name only (job.name itself stays untouched, since it's also used
-    # to build the checkpoint `load` path pointing at the training run's dir).
     job_name: "${job.name}_val"

@@ -1,18 +1,18 @@
 # @package _global_
 
-# 0.4B NE dense Qwen3-like model training with pull-based multi-stage cooldown on Marenostrum
+# 0.2B NE dense Qwen3-like model training with pull-based multi-stage cooldown on Marenostrum
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 defaults:
-  - /sweep/multilingual_scaling/validation/v1@sweep: qwen3_dense_0.4B_ne # val-specific sweep (waits on training checkpoints via FileExistsCondition; loads from training decay checkpoints)
+  - /sweep/multilingual_scaling/validation/v1@sweep: qwen3_dense_0.2B_ne # val-specific sweep (waits on training checkpoints via FileExistsCondition; loads from training decay checkpoints)
   - /experiments/multilingual_scaling/cluster: mn5
-  - /backend/megatron/multilingual_scaling: qwen3_dense_0.4B_ne # model configs
+  - /backend/megatron/multilingual_scaling: qwen3_dense_0.2B_ne # model configs
   - /experiments/multilingual_scaling/common: base
   - /experiments/multilingual_scaling/validation/common
   - _self_
 
 job:
-  base_output_dir: "/gpfs/projects/ehpc533/multilingual_scaling/0.4B_ne/validation/${job.name}"
+  base_output_dir: "/gpfs/projects/ehpc533/multilingual_scaling/0.2B_ne/validation/${job.name}"
 
 backend:
   megatron:
@@ -20,8 +20,5 @@ backend:
     split: '0,100,0' # all-eval split, unlike the other clusters' val sets
     data_args_path: /gpfs/projects/ehpc533/data_utils/datamix-tools/datamix-tools/output/200BT-option-4-val.sh
     tokenizer_model: /gpfs/projects/ehpc533/tokenizers/oellm-262k
-    num_workers: 8 # Will be overridden by sweep
-
     data_cache_path: /gpfs/projects/ehpc533/users/diana/MEGATRON_262k_val # Adjust it to your own directory
-
-    load: "/gpfs/projects/ehpc533/multilingual_scaling/0.4B_ne/training/${job.name}/checkpoints"
+    load: "/gpfs/projects/ehpc533/multilingual_scaling/0.2B_ne/training/${job.name}/checkpoints"

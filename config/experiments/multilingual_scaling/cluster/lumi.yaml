@@ -12,8 +12,6 @@ container:
 
 backend:
   megatron:
-    data_cache_path: /scratch/project_465002530/users/dianaonutu/cache/MEGATRON_262k # Adjust it to your own directory
-
     masked_softmax_fusion: False
     gradient_accumulation_fusion: False
 
@@ -28,7 +26,9 @@ backend:
     TRITON_HOME: /tmp/triton_cache
 
 job:
-  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  # Merging stdout and stderr into a single log file because of a new 
+  # inactivity monitoring feature that can read only a single file.
+  log_path: ${.base_output_dir}/logs/slurm-%j.log   
 
 slurm:
   env:
