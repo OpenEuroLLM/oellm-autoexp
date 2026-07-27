@@ -3,17 +3,20 @@
 # Included after the cluster group in a leaf file's defaults list, so these override that
 # cluster's training-time slurm/eval defaults for eval-only runs.
 
+container:
+  env:
+    # Run wandb offline for validation: avoids the last-rank wandb upload
+    # delaying job exit after eval finishes. 
+    WANDB_MODE: "offline"
+
 backend:
   megatron:
     # Run only evaluation without training for validation config
     skip_train: True # Bypasses the training loop entirely, only runs evaluation
     train_iters: 1 # Required even in evaluation-only mode to initialize the trainer, but we set it to 1 since it won't be used
 
-    # Global batch size: use the full node.
-    global_batch_size: "${oc.eval:'int(${backend.megatron.micro_batch_size} * ${slurm.sbatch.gpus_per_node})'}"
-
-    # Always evaluate exactly 2048 * 100 = 204800 samples (~838M tokens with seq=4096), independent of gbsz
-    eval_iters: "${oc.eval:'int(204800 // (${backend.megatron.micro_batch_size} * ${slurm.sbatch.gpus_per_node}))'}"
+    # Always evaluate exactly 2048 * 100 = 204800 samples (~838M tokens with seq=4096)
+    eval_iters: "${oc.eval:'int(204800 // ${backend.megatron.global_batch_size})'}"
     eval_interval: 1
 
     exit_on_missing_checkpoint: True
@@ -26,5 +29,5 @@ backend:
 slurm:
   sbatch:
     nodes: 1 # 1 node is sufficient for evaluation
-    time: "8:00:00"
+    time: "4:00:00"
     job_name: "${job.name}_val"

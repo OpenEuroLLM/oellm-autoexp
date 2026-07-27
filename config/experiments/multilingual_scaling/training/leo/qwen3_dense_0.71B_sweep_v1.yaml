@@ -1,10 +1,10 @@
 # @package _global_
 
-# 0.4B NE dense Qwen3-like model training with pull-based multi-stage cooldown on Leonardo
+# 0.71B dense Qwen3-like model training with pull-based multi-stage cooldown on Leonardo
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 defaults:
-  - /sweep/multilingual_scaling/training/v1@sweep: qwen3_dense_0.4B_ne # sweep configs
+  - /sweep/multilingual_scaling/training/v1@sweep: qwen3_dense_0.71B # sweep configs
   - /experiments/multilingual_scaling/cluster: leo
   - /backend/megatron/multilingual_scaling: qwen3_dense_0.4B_ne # model configs
   - /experiments/multilingual_scaling/common: base

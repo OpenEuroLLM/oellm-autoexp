@@ -1,10 +1,10 @@
 # @package _global_
 
-# 0.9B NE dense Qwen3-like model training with pull-based multi-stage cooldown on LUMI
+# 1.26B dense Qwen3-like model training with pull-based multi-stage cooldown on LUMI
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 defaults:
-  - /sweep/multilingual_scaling/training/v2@sweep: qwen3_dense_0.9B_ne # sweep configs
+  - /sweep/multilingual_scaling/training/v2@sweep: qwen3_dense_1.26B # sweep configs
   - /experiments/multilingual_scaling/common: base
   - /experiments/multilingual_scaling/cluster: lumi
   - /backend/megatron/multilingual_scaling: qwen3_dense_0.9B_ne # model configs

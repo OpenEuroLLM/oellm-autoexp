@@ -21,9 +21,14 @@ only covers how that grammar is *used* here.
 - `common.yaml` (validation) — base val config; sets `load` to the matching
   training run's checkpoint dir by default (see GROUP 2 below).
 
-Each file is named `qwen3_dense_<size>_ne.yaml`. Consumers select a grid via
-the `defaults:` path, e.g.
-`/sweep/multilingual_scaling/training/v2@sweep: qwen3_dense_0.1B_ne`.
+Each file is named `qwen3_dense_<size>.yaml`, where `<size>` is the
+**Porian/total** parameter count (`0.21B`, `0.39B`, `0.71B`, `1.26B`) —
+*not* the N_NE label the paired `backend/megatron/multilingual_scaling/qwen3_dense_<B>_ne.yaml`
+architecture file uses (e.g. this `0.21B` grid pairs with that dir's `0.1B_ne`
+architecture). See
+[experiments/multilingual_scaling/README.md](../../experiments/multilingual_scaling/README.md#what-ne-and-porian-mean)
+for why the two differ. Consumers select a grid via the `defaults:` path, e.g.
+`/sweep/multilingual_scaling/training/v2@sweep: qwen3_dense_0.21B`.
 
 ## The shape of one sweep: hyperparameters × stages
 
@@ -45,6 +50,13 @@ file) drops the pairs that don't correspond to a real job — see
 ```yaml
 job.name: "qwen3_dense_<size>_ne_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_${stage}${backend.megatron.aux.job_horizon_suffix}"
 ```
+
+`<size>_ne` here is the **N_NE** label, not the file's own Porian/total name — e.g.
+`qwen3_dense_0.21B.yaml`'s `job.name` starts with `qwen3_dense_0.1B_ne_lr...`.
+`job.name` drives `wandb_exp_name` and the run's leaf output directory, and both
+of those need to keep matching the historical `0.1B_ne`-labeled runs already
+recorded/stored under that identity — only the *file itself* was renamed to the
+Porian label.
 
 `job_horizon_suffix` is empty for decay/branch/end stages (they already carry
 their budget in `stage`, e.g. `decay12BT`) and `<N>BT` for `stable` (computed
