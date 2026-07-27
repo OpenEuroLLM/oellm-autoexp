@@ -4,7 +4,7 @@
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 #
 # Uses the v2 val sweep (matches the v2 training grid used by
-# experiments/multilingual_scaling/training/lumi/0.9B_ne.yaml), which adds
+# experiments/multilingual_scaling/training/lumi/qwen3_dense_1.26B_sweep_v2.yaml), which adds
 # branchNBT/endNBT eval stages on top of v1's stable/decayNBT: for every
 # decayNBT checkpoint, also evaluate the pre-decay 80%-of-budget branch
 # checkpoint and the un-decayed 100%-of-budget end checkpoint the stable run

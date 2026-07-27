@@ -1,18 +1,18 @@
 # @package _global_
 
-# 0.21B dense Qwen3-like model training with pull-based multi-stage cooldown on Leonardo
+# 0.71B dense Qwen3-like model training with pull-based multi-stage cooldown on Leonardo
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 defaults:
-  - /sweep/multilingual_scaling/validation/v1@sweep: qwen3_dense_0.21B # val-specific sweep (waits on training checkpoints via FileExistsCondition; loads from training checkpoints)
+  - /sweep/multilingual_scaling/validation/v1@sweep: qwen3_dense_0.71B # val-specific sweep (waits on training checkpoints via FileExistsCondition; loads from training decay checkpoints)
   - /experiments/multilingual_scaling/cluster: leo
-  - /backend/megatron/multilingual_scaling: qwen3_dense_0.1B_ne # model configs
+  - /backend/megatron/multilingual_scaling: qwen3_dense_0.4B_ne # model configs
   - /experiments/multilingual_scaling/common: base
   - /experiments/multilingual_scaling/validation/common
   - _self_
 
 job:
-  base_output_dir: "/leonardo_work/OELLM_prod2026/users/donutu00/multilingual_scaling/0.1B_ne/validation/${job.name}"
+  base_output_dir: "/leonardo_work/OELLM_prod2026/users/donutu00/multilingual_scaling/0.4B_ne/validation/${job.name}"
 
 backend:
   megatron:
@@ -21,4 +21,4 @@ backend:
     data_args_path: /leonardo_work/OELLM_prod2026/users/donutu00/datamix-tools/output/1TT-option-4-val-fixed_no_high_actual_merged.sh
     tokenizer_model: /leonardo_work/OELLM_prod2026/users/shaldar0/tokenizers/openeurollm-tokenizer-256k
     data_cache_path: /leonardo_work/OELLM_prod2026/users/donutu00/cache/MEGATRON_262k_val # Adjust it to your own directory
-    load: "/leonardo_work/OELLM_prod2026/multilingual_scaling/0.1B_ne/training/${job.name}/checkpoints"
+    load: "/leonardo_work/OELLM_prod2026/multilingual_scaling/0.4B_ne/training/${job.name}/checkpoints"
