@@ -1,0 +1,64 @@
+# @package _global_
+
+# 0.9B NE sparse Qwen3-like model VALIDATION: evaluate saved training checkpoints
+# (stable / decay / branch / end phases). Loads checkpoints from the training run
+# dirs and runs eval-only (no training).
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: auto_restart
+  - /sweep/multilingual_scaling/sparse_scaling@sweep: qwen3_sparse_0.9B_ne_val # val-specific sweep (branch/end + no-retrain)
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.9B_ne_experts_64 # model configs
+  - /backend/megatron/multilingual_scaling/data: oellm_256k_leo_val # val data configs
+  - _self_
+
+index: 0
+stage: "" # Will be overridden by sweep
+
+job:
+  name: "" # Will be overridden by sweep with stage and hyperparameter info
+  base_output_dir: "/leonardo_work/OELLM_prod2026/experiments/sparse_multilingual_scaling/0.9B_ne_sparse_experts_${backend.megatron.num_experts}_topk_${backend.megatron.moe_router_topk}_PP_${backend.megatron.pipeline_model_parallel_size}/validation_leo/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    wandb_exp_name: "" # Will be overridden by sweep with stage and hyperparameter info
+    wandb_project: sparse_multilingual_scaling
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    data_cache_path: /leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp/MEGATRON_262k_val/${job.name} # Adjust it to your own directory
+
+    # Evaluation-only: load from the matching training run's checkpoint dir.
+    # stable/decay resolve to .../training/${job.name}/checkpoints via job-name match;
+    # branch/end override `load` to the stable sibling's dir (see the val sweep).
+    load: "/leonardo_work/OELLM_prod2026/experiments/sparse_multilingual_scaling/0.9B_ne_sparse_experts_${backend.megatron.num_experts}_topk_${backend.megatron.moe_router_topk}_PP_${backend.megatron.pipeline_model_parallel_size}/training/${job.name}/checkpoints"
+
+    skip_train: True # Bypasses the training loop entirely, only runs evaluation
+    train_iters: 1 # Required to initialize the trainer; sweep overrides per stage
+
+    # Always evaluate exactly 2048 * 100 = 204800 samples, independent of gbsz
+    eval_iters: "${oc.eval:'int(204800 // ${backend.megatron.global_batch_size})'}"
+    eval_interval: 1_000_000_000
+
+    exit_on_missing_checkpoint: True
+    save_interval: 1
+    no_save_optim: True
+    no_save_rng: True
+    no_load_optim: True # skip loading optimizer state (saves memory + time)
+    no_load_rng: True # skip loading RNG state
+
+slurm:
+  sbatch:
+    nodes: 2 # 2 nodes (8 GPUs) to satisfy TP1/PP2/EMP4 (needs DP % EMP == 0) for the 0.9B checkpoints
+    gpus_per_node: 4 # use all 4 GPUs on each node
+    account: "AIFAC_5C0_092"
+    time: "02:00:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "

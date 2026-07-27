@@ -1,0 +1,64 @@
+# @package _global_
+
+# 0.4B NE sparse z-loss / shared-expert ablation VALIDATION: evaluate saved
+# training checkpoints from qwen3_sparse_0.4B_ne_z_loss_sweep (stable / decay /
+# branch / end phases). Loads checkpoints from the matching training run dirs.
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: auto_restart
+  - /sweep/multilingual_scaling/sparse_scaling@sweep: qwen3_sparse_0.4B_ne_z_loss_sweep_val
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.4B_ne_experts_32
+  - /backend/megatron/multilingual_scaling/data: oellm_256k_leo_val
+  - _self_
+
+index: 0
+stage: "" # Will be overridden by sweep
+
+job:
+  name: "" # Will be overridden by sweep with stage and ablation info
+  base_output_dir: "/leonardo_work/OELLM_prod2026/experiments/sparse_multilingual_scaling/0.4B_ne_sparse_experts_${backend.megatron.num_experts}_topk_${backend.megatron.moe_router_topk}/validation_leo/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    wandb_exp_name: "" # Will be overridden by sweep
+    wandb_project: sparse_multilingual_scaling
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    data_cache_path: /leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp/MEGATRON_262k_val/${job.name}
+
+    # Evaluation-only: load from the matching z-loss training run's checkpoint dir.
+    # Job names include topk/lbt/zloss so each ablation combo resolves to its own
+    # training tree under .../topk_<n>/training/${job.name}/checkpoints.
+    load: "/leonardo_work/OELLM_prod2026/experiments/sparse_multilingual_scaling/0.4B_ne_sparse_experts_${backend.megatron.num_experts}_topk_${backend.megatron.moe_router_topk}/training/${job.name}/checkpoints"
+
+    skip_train: True
+    train_iters: 1 # Required to initialize the trainer; sweep overrides per stage
+
+    # Always evaluate exactly 2048 * 100 = 204800 samples, independent of gbsz
+    eval_iters: "${oc.eval:'int(204800 // ${backend.megatron.global_batch_size})'}"
+    eval_interval: 1_000_000_000
+
+    exit_on_missing_checkpoint: True
+    save_interval: 1
+    no_save_optim: True
+    no_save_rng: True
+    no_load_optim: True
+    no_load_rng: True
+
+slurm:
+  sbatch:
+    nodes: 1
+    gpus_per_node: 4
+    account: "AIFAC_5C0_092"
+    time: "02:00:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "
