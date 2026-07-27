@@ -109,25 +109,25 @@ load: ${.save}
 # per stable phase in the sweep below. Decay phases leave them at the sentinel.
 # Scalar overrides (aux.save_step_*) dodge Hydra's list-override parser, which
 # cannot handle oc.eval expressions inside list elements.
-#save_extra_steps:
-#  - "${backend.megatron.aux.save_step_br_0}"   # 6B   branching (iter @ 80% of 6B   budget)
-#  - "${backend.megatron.aux.save_step_br_1}"   # 12B  branching
-#  - "${backend.megatron.aux.save_step_br_2}"   # 20B  branching
-#  - "${backend.megatron.aux.save_step_br_3}"   # 30B  branching
-#  - "${backend.megatron.aux.save_step_br_4}"   # 50B  branching
-#  - "${backend.megatron.aux.save_step_br_5}"   # 80B  branching
-#  - "${backend.megatron.aux.save_step_br_6}"   # 120B branching
-#  - "${backend.megatron.aux.save_step_br_7}"   # 200B branching
-#  - "${backend.megatron.aux.save_step_br_8}"   # 300B branching
-#  - "${backend.megatron.aux.save_step_end_0}"  # 6B   end (iter @ 100% of 6B budget)
-#  - "${backend.megatron.aux.save_step_end_1}"  # 12B  end
-#  - "${backend.megatron.aux.save_step_end_2}"  # 20B  end
-#  - "${backend.megatron.aux.save_step_end_3}"  # 30B  end
-#  - "${backend.megatron.aux.save_step_end_4}"  # 50B  end
-#  - "${backend.megatron.aux.save_step_end_5}"  # 80B  end
-#  - "${backend.megatron.aux.save_step_end_6}"  # 120B end
-#  - "${backend.megatron.aux.save_step_end_7}"  # 200B end
-#  - "${backend.megatron.aux.save_step_end_8}"  # 300B end
+save_extra_steps:
+ - "${backend.megatron.aux.save_step_br_0}"   # 6B   branching (iter @ 80% of 6B   budget)
+ - "${backend.megatron.aux.save_step_br_1}"   # 12B  branching
+ - "${backend.megatron.aux.save_step_br_2}"   # 20B  branching
+ - "${backend.megatron.aux.save_step_br_3}"   # 30B  branching
+ - "${backend.megatron.aux.save_step_br_4}"   # 50B  branching
+ - "${backend.megatron.aux.save_step_br_5}"   # 80B  branching
+ - "${backend.megatron.aux.save_step_br_6}"   # 120B branching
+ - "${backend.megatron.aux.save_step_br_7}"   # 200B branching
+ - "${backend.megatron.aux.save_step_br_8}"   # 300B branching
+ - "${backend.megatron.aux.save_step_end_0}"  # 6B   end (iter @ 100% of 6B budget)
+ - "${backend.megatron.aux.save_step_end_1}"  # 12B  end
+ - "${backend.megatron.aux.save_step_end_2}"  # 20B  end
+ - "${backend.megatron.aux.save_step_end_3}"  # 30B  end
+ - "${backend.megatron.aux.save_step_end_4}"  # 50B  end
+ - "${backend.megatron.aux.save_step_end_5}"  # 80B  end
+ - "${backend.megatron.aux.save_step_end_6}"  # 120B end
+ - "${backend.megatron.aux.save_step_end_7}"  # 200B end
+ - "${backend.megatron.aux.save_step_end_8}"  # 300B end
 
 # Base training configuration (overridden by sweep)
 micro_batch_size: 16    # overridden by sweep
@@ -140,6 +140,7 @@ seed: 1234
 # decay stages override aux.tokens to their specific budget (6B...300B).
 aux:
   tokens: 300_000_000_000       # overridden by sweep (Group 1 sets per-combo default)
+  max_tokens: 300_000_000_000   # per-combo max_decay_tokens; only used by val sweeps (end-dedup filter)
   decay_fraction: 0.0           # overridden in decay stage defaults
   start_iter: 0                 # only meaningful in decay (used for ckpt_step)
   cooldown_decay_fraction: 0.2  # fraction of iters spent in LR decay during cooldown

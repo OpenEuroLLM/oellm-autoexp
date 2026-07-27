@@ -140,6 +140,7 @@ seed: 1234
 # decay stages override aux.tokens to their specific budget (6B...300B).
 aux:
   tokens: 300_000_000_000       # overridden by sweep (Group 1 sets per-combo default)
+  max_tokens: 300_000_000_000   # per-combo max_decay_tokens; only used by val sweeps (end-dedup filter)
   decay_fraction: 0.0           # overridden in decay stage defaults
   start_iter: 0                 # only meaningful in decay (used for ckpt_step)
   cooldown_decay_fraction: 0.2  # fraction of iters spent in LR decay during cooldown
