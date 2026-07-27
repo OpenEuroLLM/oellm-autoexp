@@ -1,0 +1,44 @@
+# @package _global_
+# Tuning sweep for dense_9B_baby (baseline: 287 TFLOPS / 29.0% MFU,
+# only 60% mem WITH selective recompute on — dense has no dispatcher
+# problem, so unlike the MoEs this headroom should be real).
+#   0. norc          — recompute off at mbs4 (expected main win, ~+10-30%)
+#   1. norc_mbs6     — + bigger µbatch (GBS24 = 4 µbatches at DP1)
+#   2. gbs32         — 8 accumulation µbatches, recompute unchanged
+#   3. tp2_norc      — TP2/DP2: TP2 beat TP4 consistently for dense on
+#                      JUPITER; optim shards over DP2. Mem/GPU ≈ weights 9 +
+#                      grads 9 + optim 27 = 45 GiB + activations → OOM risk
+#                      at mbs4 without recompute, hence mbs2.
+defaults:
+  - dense_9B_baby
+  - _self_
+
+aux:
+  tag: "norc"
+
+backend:
+  megatron:
+    recompute_activations: false
+    recompute_granularity: null
+
+job:
+  name: jspeed_dense_9B_baby_tune_${aux.tag}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: norc
+        - aux.tag: norc_mbs6
+          backend.megatron.micro_batch_size: 6
+          backend.megatron.global_batch_size: 24
+        - aux.tag: gbs32
+          backend.megatron.recompute_activations: true
+          backend.megatron.recompute_granularity: selective
+          backend.megatron.global_batch_size: 32
+        - aux.tag: tp2_norc
+          backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.global_batch_size: 16

@@ -1,0 +1,23 @@
+# @package _global_
+# Weak-scaling sweep for dense_32B: TP=4 (intra-node) fixed, DP = nodes.
+# GBS = 32·nodes keeps 32 microbatches per DP rank at mbs=1 → fixed per-GPU work.
+# Flat tok/s/GPU = perfect weak scaling. Starts at the 4-node minimum.
+# Baseline (4 nodes): 1,571 tok/s/GPU, 316.9 TFLOPS (job 1034538).
+defaults:
+  - dense_32B
+  - _self_
+
+backend:
+  megatron:
+    global_batch_size: ${oc.eval:32*${slurm.sbatch.nodes}}  # mbs1 × DP(nodes) × 32 µbatches
+
+job:
+  name: jspeed_dense_32B_ws_n${slurm.sbatch.nodes}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      params:
+        slurm.sbatch.nodes: [4, 8, 16, 32, 64, 128, 256]

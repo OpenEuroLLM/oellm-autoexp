@@ -1,0 +1,51 @@
+# @package _global_
+# MoE ~1.7B total / ~0.6B active (PROPOSED arch — no small-MoE lineup exists
+# yet) — 1 node. Qwen3-MoE style, same expert granularity as 30B-A3B
+# (moe_ffn 768, topk 8), scaled down:
+#   20 layers, hidden 1024, 32 experts
+#   params (neox vocab): experts 20×75.5M=1.51B + attn 0.10B + emb 0.10B ≈ 1.7B
+#   active ≈ 0.6B (topk 8/32)
+#
+# Speed settings follow the validated 30B-A3B recipe where transferable:
+# EP=4 intra-node, allgather dispatcher, grouped GEMM, fp32 router. Small model
+# → no recompute and larger mbs should fit comfortably. UNVALIDATED.
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe, data_nemonicco_split_jupiter]
+  - common
+  - /sweep: none
+  - _self_
+
+backend:
+  megatron:
+    # ── size ─────────────────────────────────────────────────────────────
+    num_layers: 20
+    hidden_size: 1024
+    ffn_hidden_size: 3072           # unused with moe_layer_freq=1, kept consistent (3×h)
+    num_attention_heads: 16         # head_dim 128 → q-proj 1024→2048
+    num_query_groups: 4
+    kv_channels: 128
+    num_experts: 32                 # divisible by EP=4 → 8 experts/GPU
+    moe_ffn_hidden_size: 768
+    moe_router_topk: 8
+    # ── parallelism / speed ──────────────────────────────────────────────
+    expert_model_parallel_size: 4
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: false        # TP=1 → no-op all-gathers only cost time
+    micro_batch_size: 8
+    global_batch_size: 32           # mbs × DP(4)
+    recompute_granularity: null     # small model, no recompute needed
+    recompute_method: null
+    recompute_num_layers: null
+    moe_router_dtype: "fp32"
+
+slurm:
+  sbatch:
+    nodes: 1
+
+job:
+  name: jspeed_moe_1.7B

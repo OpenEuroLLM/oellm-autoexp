@@ -1,0 +1,26 @@
+# @package _global_
+# Weak-scaling sweep for the dense 1.7B speed test: nodes 1→8 with GBS ∝ nodes
+# (fixed per-GPU work: mbs=6, 1 microbatch, DP grows with nodes).
+# Perfect weak scaling ⇔ flat tok/s/GPU across the sweep
+# (reference: 1.8B dense measured −1.7% going 1→2 nodes).
+# Baseline (1 node): 35,017 tok/s/GPU, 367.1 TFLOPS (job 1051942).
+# NOTE: CUDA graphs inherited from base — validated single-node only.
+# Extract with: python scripts/extract_speed_results.py $OUTPUT_DIR/megatron_jupiter_speed
+defaults:
+  - dense_1.7B
+  - _self_
+
+backend:
+  megatron:
+    global_batch_size: ${oc.eval:48*${slurm.sbatch.nodes}}  # mbs6 × DP(4·nodes) × 2 µbatches
+
+job:
+  name: jspeed_dense_1.7B_ws_n${slurm.sbatch.nodes}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      params:
+        slurm.sbatch.nodes: [1, 2, 4, 8, 16, 32, 64, 128, 256]

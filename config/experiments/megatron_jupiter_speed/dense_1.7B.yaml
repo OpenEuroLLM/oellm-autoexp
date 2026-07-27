@@ -1,0 +1,48 @@
+# @package _global_
+# Dense 1.7B (Qwen3-1.7B arch, /backend/megatron/qwen3_1.7B) — 1 node, 4× GH200.
+#
+# VALIDATED optimum (tune sweep 2026-07-27, jobs 1051942-45):
+#   TP=1, mbs6, GBS48 (2 µbatches), no recompute, CUDA graphs
+#   → 367.1 TFLOPS / 37.1% MFU, 35,017 tok/s/GPU, 1.40 s/iter, 89% mem
+# Findings: GBS24 (1 µbatch) ran 319 TF with heavy step jitter — 2 µbatches
+# amortize the optimizer step AND stabilize timing (avg=median). GBS96 flat.
+# overlap_grad_reduce slightly negative with CUDA graphs. mbs8 OOMs on the
+# fp32 vocab-logit buffer (6.14 GiB) exactly like LLaMA-1.8B.
+# (LLaMA-1.8B-QK-LN reference on this recipe: ~412 TFLOPS — the gap is arch:
+# smaller ffn, GQA, tied embeddings.)
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_base, qwen3_1.7B, data_nemonicco_split_jupiter]
+  - common
+  - /sweep: none
+  - _self_
+
+backend:
+  megatron:
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: false        # no-op all-gathers at TP=1 cost ~4%
+    micro_batch_size: 6             # best memory/compute tradeoff on GH200 (~2B dense); 8 OOMs
+    global_batch_size: 48           # mbs × DP(4) × 2 µbatches
+    recompute_activations: false    # flash-attn backward is enough; +33% vs full recompute
+    recompute_granularity: null
+    cross_entropy_loss_fusion: true # avoids fp32 vocab-logit OOM at mbs>4
+    # CUDA graphs: +~1%; need check_for_nan off + gc_threshold alloc conf
+    # (expandable_segments conflicts with graph capture).
+    cuda_graph_impl: "local"
+    cuda_graph_scope: "full"
+    cuda_graph_warmup_steps: 3
+    check_for_nan_in_loss_and_grad: false
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: "garbage_collection_threshold:0.8"
+    PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.8"
+
+slurm:
+  sbatch:
+    nodes: 1
+
+job:
+  name: jspeed_dense_1.7B

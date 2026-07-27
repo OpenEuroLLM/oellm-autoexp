@@ -1,0 +1,55 @@
+# @package _global_
+# HybridEP dispatcher check for moe_9B (allgather optimum: 14,868 tok/s,
+# mbs8 + FULL recompute forced by allgather-dispatcher memory). PP=1 → no VPP.
+# The big prize: if HybridEP's dispatch buffers are smaller, no-recompute may
+# fit at mbs4 (allgather: OOM at 94.7 GiB) — worth ~+25% if it does.
+#   0. hybridep_full_mbs8 — dispatcher A/B at the validated settings
+#   1. hybridep_norc_mbs4 — the allgather-OOM no-recompute retry
+#   2. hybridep_norc_mbs2 — fallback (fits even with allgather, 74%)
+defaults:
+  - moe_9B
+  - _self_
+
+aux:
+  tag: "hybridep_full_mbs8"
+
+backend:
+  megatron:
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: hybridep
+    moe_hybridep_num_sms: 16
+  env:
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+
+container:
+  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deep-hybridep_aarch64.sif
+  bind:
+    - /e
+    - /dev/shm
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+job:
+  name: jspeed_moe_9B_hep_${aux.tag}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: hybridep_full_mbs8
+        - aux.tag: hybridep_norc_mbs4
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.global_batch_size: 16
+          backend.megatron.recompute_granularity: null
+          backend.megatron.recompute_method: null
+          backend.megatron.recompute_num_layers: null
+        - aux.tag: hybridep_norc_mbs2
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.global_batch_size: 32
+          backend.megatron.recompute_granularity: null
+          backend.megatron.recompute_method: null
+          backend.megatron.recompute_num_layers: null

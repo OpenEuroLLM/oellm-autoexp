@@ -1,0 +1,80 @@
+# @package _global_
+# RE-CHECK (2026-07-23): was the titan-vs-Megatron 30BA3B comparison fair?
+#
+# REPORT.md claims parity (titan 5,446 vs Megatron 5,236 tok/s/GPU), but the
+# titan optimum ran at GLOBAL batch 256 (local_batch_size 64 × dp_shard 4)
+# while Megatron ran GBS=64. At matched GBS=64 titan only reached 4,554
+# tok/s/GPU (its bs=16 row) — Megatron +15%. Megatron was never run at
+# GBS=256, where its PP=2 bubble shrinks from 25% (4 microbatches, GBS 64)
+# to ~6% (16 microbatches).
+#
+# This sweep re-runs the validated Megatron optimum (EP4+PP2+TP1, mbs4, full
+# recompute) at GBS=64 (baseline sanity re-run on the new stable data) and
+# GBS=256 (matched to the titan optimum's global batch).
+# Compare via tok/s/GPU (= GBS×4096 / step_time / 8) and elapsed ms/iter.
+defaults:
+  - ../../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe_30BA3B, data_nemonicco_split_jupiter]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "moe_30BA3B_gbs_recheck"
+
+backend:
+  megatron:
+    train_iters: 100
+    log_interval: 1
+    log_throughput: true
+    eval_interval: 100000
+    eval_iters: 0
+    save: null
+    load: null
+    ckpt_step: 0
+    lr: 0.001
+    lr_warmup_iters: 0
+    lr_decay_style: constant
+
+    global_batch_size: 64
+    micro_batch_size: 4
+    expert_model_parallel_size: 4
+    pipeline_model_parallel_size: 2
+    tensor_model_parallel_size: 1
+
+    use_distributed_optimizer: true
+    moe_router_dtype: "fp32"
+    data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+    NCCL_NET_GDR_LEVEL: "0"  # required: PP=2 inter-node P2P hangs with GDRDMA
+
+job:
+  name: meg_moe30B_recheck_gbs${backend.megatron.global_batch_size}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+slurm:
+  sbatch:
+    nodes: 2
+    time: "00:30:00"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # baseline re-run: validated optimum (expect ~5,200 tok/s/GPU, ~6.3 s/iter)
+        - backend.megatron.global_batch_size: 64
+          backend.megatron.train_iters: 100
+        # matched to titan optimum's global batch: 16 microbatches → ~6% PP bubble
+        - backend.megatron.global_batch_size: 256
+          backend.megatron.train_iters: 50
+          slurm.sbatch.time: "00:45:00"

@@ -1,0 +1,61 @@
+# @package _global_
+# Dense ~32B (Qwen3-32B arch: 64L, hidden 5120, ffn 25600, 64 heads / 8 KV
+# groups, head_dim 128, untied) — 4 nodes, 16× GH200.
+#
+# VALIDATED optimum (tune sweeps 2026-07-24, jobs 1034454-58 + 1034537-38):
+#   GBS=128 (32 µbatches) + overlap grad-reduce/param-gather
+#   → 316.9 TFLOPS / 32.0% MFU, 1,571 tok/s/GPU, 20.9 s/iter, 93% mem
+# Tuning progression (all 4 nodes, TP4, mbs1, selective recompute):
+#   GBS8: 150 TF → GBS32: 249 → GBS64: 291 → GBS128+overlap: 317
+#   overlap_grad_reduce/param_gather: +3-8%; tp_comm_overlap: no effect;
+#   TP2+PP2: OOM in train_step (2 in-flight µbatch activations at TP=2).
+# Accumulation dominates: the inter-node DP allreduce + optimizer step must be
+# amortized over many microbatches. See dense_32B_tune{,2}.yaml.
+#
+# Minimal-node reasoning (96 GiB GH200): TP=4 (intra-node NVLink), DP=4 across
+# nodes. Per GPU: bf16 weights 16.4 + bf16 grads 16.4 (fp32 accum off) +
+# dist-optim states 393.6/(TP4·DP4)=24.6 ≈ 57 GiB + activations (mbs=1,
+# selective recompute) → fits at 93%. If OOM: recompute_granularity=full.
+# No CUDA graphs here — unvalidated at this scale and memory is tight.
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_base, data_nemonicco_split_jupiter]
+  - common
+  - /sweep: none
+  - _self_
+
+backend:
+  megatron:
+    # ── size (Qwen3-32B) ─────────────────────────────────────────────────
+    num_layers: 64
+    hidden_size: 5120
+    ffn_hidden_size: 25600
+    num_attention_heads: 64         # head_dim 128 → q-proj 5120→8192
+    num_query_groups: 8
+    kv_channels: 128
+    untie_embeddings_and_output_weights: true
+    # ── parallelism / speed ──────────────────────────────────────────────
+    tensor_model_parallel_size: 4   # intra-node; TP=1 known-bad ≥3B, PP would cross nodes
+    pipeline_model_parallel_size: 1
+    sequence_parallel: true
+    train_iters: 20                 # ~21 s/iter at GBS=128
+    micro_batch_size: 1
+    global_batch_size: 128          # mbs × DP(4) × 32 accumulation steps
+    overlap_grad_reduce: true       # hide DP allreduce behind backward (+3-8%)
+    overlap_param_gather: true
+    recompute_activations: true     # selective; fall back to granularity=full if OOM
+    accumulate_allreduce_grads_in_fp32: false  # halves grad memory; fine for a speed test
+    cross_entropy_loss_fusion: true
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"  # required for TP≥2 comm overlap on JUPITER
+
+slurm:
+  sbatch:
+    nodes: 4
+    time: "00:30:00"
+
+job:
+  name: jspeed_dense_32B

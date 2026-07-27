@@ -1,0 +1,51 @@
+# @package _global_
+# HybridEP dispatcher check for moe_1.7B (allgather optimum: 43,099 tok/s,
+# mbs8 norc, 80% mem). PP=1 → no VPP here; pure dispatcher comparison, plus a
+# memory retry: mbs16+norc OOMed with allgather — HybridEP's dispatch buffers
+# may be smaller.
+#   0. hybridep_mbs8  — direct dispatcher A/B at the validated settings
+#   1. hybridep_mbs16 — the allgather-OOM point retried
+# ── Results (jobs 1052292-93, 2026-07-27): ALLGATHER STAYS at 1.7B ───────
+#   hybridep_mbs8  → 38,367 tok/s — 11% SLOWER than allgather (43,099); the
+#                    16 reserved dispatch SMs cost more than dispatch saves
+#                    on a ~0.6B-active model. Mem also higher (85 vs 80%).
+#   hybridep_mbs16 → OOM (as with allgather)
+# moe_1.7B.yaml unchanged. HybridEP crossover is between 1.7B and 3B.
+defaults:
+  - moe_1.7B
+  - _self_
+
+aux:
+  tag: "hybridep_mbs8"
+
+backend:
+  megatron:
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: hybridep
+    moe_hybridep_num_sms: 16
+  env:
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+
+container:
+  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deep-hybridep_aarch64.sif
+  bind:
+    - /e
+    - /dev/shm
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+job:
+  name: jspeed_moe_1.7B_hep_${aux.tag}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: hybridep_mbs8
+        - aux.tag: hybridep_mbs16
+          backend.megatron.micro_batch_size: 16
+          backend.megatron.global_batch_size: 64

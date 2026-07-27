@@ -1,0 +1,61 @@
+# @package _global_
+# Tuning sweep for dense_32B (baseline: 150 TFLOPS / 15.2% MFU at GBS=8,
+# job 1034338). NOTE: written against the GBS=32 base; the base has since been
+# updated to the tuned optimum (GBS=128 + overlap) — see dense_32B.yaml.
+#
+# ── Results (jobs 1034454-58, 2026-07-24) ────────────────────────────────
+#   gbs32          → 249.4 TFLOPS, 25.2% MFU, 1,237 tok/s/GPU, 93% mem
+#   gbs32_overlap  → 268.5 TFLOPS, 27.1% MFU, 1,331 tok/s/GPU (+8%)
+#   gbs32_tpco     → 249.4 TFLOPS — tp_comm_overlap: NO effect
+#   gbs64          → 290.6 TFLOPS, 29.4% MFU, 1,441 tok/s/GPU
+#   tp2pp2         → OOM in train_step (in-flight µbatch activations at TP=2)
+# Round 2 (dense_32B_tune2.yaml): gbs64_overlap 298 TF; gbs128_overlap 317 TF ← WINNER
+#
+# Hypotheses swept:
+#   0. gbs32          — accumulation alone (comm amortized 4× vs GBS 8)
+#   1. gbs32_overlap  — + overlap grad-reduce/param-gather with backward/forward
+#                       (NOTE: overlap_grad_reduce deadlocked inter-node on the
+#                       125M 2-node test, but the qwen3-1.7B repro runs it
+#                       multi-node fine — re-testing at 32B)
+#   2. gbs32_tpco     — + tp_comm_overlap (UB_SKIPMC=1 required on JUPITER)
+#   3. gbs64          — even more accumulation (16 µbatches)
+#   4. tp2pp2         — TP=2 (cheaper than TP=4) × PP=2 inter-node (needs
+#                       NCCL_NET_GDR_LEVEL=0). Same 16.4 GiB/GPU weights; OOM
+#                       risk: stage-0 holds 2 in-flight µbatch activations.
+defaults:
+  - dense_32B
+  - _self_
+
+aux:
+  tag: "gbs32"
+
+backend:
+  env:
+    UB_SKIPMC: "1"   # required for tp_comm_overlap at TP≥2 on JUPITER; harmless otherwise
+
+slurm:
+  env:
+    UB_SKIPMC: "1"
+
+job:
+  name: jspeed_dense_32B_tune_${aux.tag}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: gbs32
+        - aux.tag: gbs32_overlap
+          backend.megatron.overlap_grad_reduce: true
+          backend.megatron.overlap_param_gather: true
+        - aux.tag: gbs32_tpco
+          backend.megatron.tp_comm_overlap: true
+        - aux.tag: gbs64
+          backend.megatron.global_batch_size: 64
+          backend.megatron.train_iters: 30
+        - aux.tag: tp2pp2
+          backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.pipeline_model_parallel_size: 2
+          backend.env.NCCL_NET_GDR_LEVEL: "0"

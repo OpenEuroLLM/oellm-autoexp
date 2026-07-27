@@ -1,0 +1,42 @@
+# @package _global_
+# Tuning sweep for dense_3B (baseline: 349 TFLOPS / 35.3% MFU — best in
+# suite — but 97% mem, GBS16 = 1 µbatch, knife-edge).
+#   0. gbs64         — 4 accumulation µbatches (memory-neutral)
+#   1. gbs64_overlap — + overlap grad-reduce/param-gather (slight mem cost —
+#                      may OOM at 97%; informative either way)
+#   2. mbs2_gbs32    — memory relief + 4 µbatches; smaller-GEMM risk
+#
+# ── Results (jobs 1051946-48, 2026-07-27) ────────────────────────────────
+#   mbs2_gbs32    → 354.7 TFLOPS, 35.9% MFU, 16,807 tok/s, 73% mem ← WINNER
+#                   (beats mbs4 AND drops memory 97→73%)
+#   gbs64         → OOM at iter 1 — accumulation is NOT memory-neutral at mbs4
+#                   (persistent grad buffer); 97% had no slack
+#   gbs64_overlap → OOM likewise
+# Winner folded into dense_3B.yaml.
+defaults:
+  - dense_3B
+  - _self_
+
+aux:
+  tag: "gbs64"
+
+backend:
+  megatron:
+    global_batch_size: 64
+
+job:
+  name: jspeed_dense_3B_tune_${aux.tag}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: gbs64
+        - aux.tag: gbs64_overlap
+          backend.megatron.overlap_grad_reduce: true
+          backend.megatron.overlap_param_gather: true
+        - aux.tag: mbs2_gbs32
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.global_batch_size: 32

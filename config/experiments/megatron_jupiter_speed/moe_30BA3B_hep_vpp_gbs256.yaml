@@ -1,0 +1,22 @@
+# @package _global_
+# Last cell of the 30BA3B matrix: HybridEP + VPP (from the new main config)
+# at GBS=256. GA=16 × VP=6 → bubble ~1% (vs 4% at GBS64).
+# Expectation: marginal gain over the 7,515 tok/s GBS64 winner — the big terms
+# (dispatcher, VPP) are already in; this isolates the residual bubble.
+#
+# ── Result (job 1052339, 2026-07-27) ─────────────────────────────────────
+#   7,737 tok/s/GPU, 168.3 TFLOPS / 17.0% MFU, 16.9 s/iter, 88% mem — +3%
+#   over GBS64, matching the bubble math (4%→1%). ABSOLUTE 30BA3B best.
+# Main config stays at GBS64: production-realistic batch, and the weak-scale
+# sweep anchors on GA=4. Use this config when raw peak numbers are wanted.
+defaults:
+  - moe_30BA3B
+  - _self_
+
+backend:
+  megatron:
+    global_batch_size: 256
+    train_iters: 50
+
+job:
+  name: jspeed_moe_30BA3B_hep_vpp_gbs256

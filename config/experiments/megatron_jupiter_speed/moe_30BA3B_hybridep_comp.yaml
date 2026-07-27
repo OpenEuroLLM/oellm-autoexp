@@ -1,0 +1,80 @@
+# @package _global_
+# Head-to-head: HybridEP dispatcher + VPP (from the opt-sweep config in
+# korbi/qwen3_30B_A3B_speed_comp/megatron_moe_30BA3B_opt_sweep_jupiter.yaml)
+# vs our validated allgather optimum — on the SUITE data/vocab (neox 50k,
+# nemonicco) so results compare to the 6,076 tok/s / 133 TF baseline.
+# All in the hybridep container, incl. an allgather control to isolate
+# container effects. EP4+PP2+TP1, mbs4, full recompute throughout.
+#
+#   0. hybridep_gbs64      — opt-sweep config as written (no VPP): 20% bubble
+#   1. hybridep_vpp_gbs64  — + VPP: 4 layers/vstage → VP=6, bubble
+#                            (PP−1)/(PP−1+GA·VP) = 1/25 = 4%  (GA=4)
+#                            + overlap_p2p_comm (where interleaving pays)
+#   2. hybridep_gbs256     — HybridEP on our bubble fix (GA=16, 6%)
+#   3. allgather_gbs256    — container control (= validated best config)
+# ── Results (jobs 1052255-58, 2026-07-27) ────────────────────────────────
+#   hybridep_vpp_gbs64 → 7,515 tok/s, 163.5 TF, 88% mem ← WINNER (+24%),
+#                        folded into moe_30BA3B.yaml
+#   hybridep_gbs256    → 7,296 tok/s, 158.7 TF
+#   hybridep_gbs64     → 6,378 tok/s (dispatcher alone, 20% bubble)
+#   allgather_gbs256   → 5,805 tok/s (container control; 6,076 in pt2512 —
+#                        this container is ~4% slower for allgather)
+# NOTE: since the winner is folded into moe_30BA3B.yaml, this sweep's base
+# now IS hybridep+VPP; the entries below re-override where they differ.
+defaults:
+  - moe_30BA3B
+  - _self_
+
+aux:
+  tag: "hybridep_gbs64"
+
+backend:
+  megatron:
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: hybridep
+    moe_hybridep_num_sms: 16
+    global_batch_size: 64
+    train_iters: 100
+  env:
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+
+container:
+  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deep-hybridep_aarch64.sif
+  # hybridep container lacks the host driver libs — Triton/Inductor asserts
+  # "libcuda.so cannot found!" without these binds (same fix as the deepep
+  # config; TRITON_LIBCUDA_PATH must be the DIRECTORY, not the .so path)
+  bind:
+    - /e
+    - /dev/shm
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+job:
+  name: jspeed_moe_30BA3B_hep_${aux.tag}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: hybridep_gbs64
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.overlap_p2p_comm: false
+        - aux.tag: hybridep_vpp_gbs64
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 4
+          backend.megatron.overlap_p2p_comm: true
+        - aux.tag: hybridep_gbs256
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.overlap_p2p_comm: false
+          backend.megatron.global_batch_size: 256
+          backend.megatron.train_iters: 50
+        - aux.tag: allgather_gbs256
+          backend.megatron.moe_token_dispatcher_type: allgather
+          # moe_flex_dispatcher_backend stays 'hybridep' — ignored unless type=flex
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.overlap_p2p_comm: false
+          backend.megatron.global_batch_size: 256
+          backend.megatron.train_iters: 50

@@ -1,0 +1,54 @@
+# @package _global_
+# Tuning sweep for moe_9B (baseline suite run: 125.4 TFLOPS / 12.7% MFU,
+# 13,897 tok/s/GPU, only 54% mem — full recompute inherited from qwen3_moe
+# is clearly too conservative at 18 experts/GPU).
+#
+# Hypotheses swept (all 1 node, EP4, TP1, PP1):
+#   0. norc_mbs4    — drop recompute entirely at mbs4/GBS16 (the pure recompute win)
+#   1. norc_mbs8    — no recompute + mbs8/GBS32 (bigger expert GEMMs)
+#   2. selac_mbs8   — selective [moe_act, layernorm] + mbs8 (middle ground if
+#                     norc OOMs; 30BA3B showed selective ≈ none in memory)
+#   3. norc_mbs8_gbs128 — + accumulation (4 µbatches): amortize optimizer step
+#                     (intra-node NVLink allreduce, so less to gain than 32B dense)
+#
+# ── Results (jobs 1051258-61, 2026-07-27): ALL FOUR OOM ──────────────────
+#   norc_mbs4 reached iter 1 at 81% then OOMed in forward; every mbs8 variant
+#   OOMed immediately. Matches the 30BA3B finding: allgather-dispatcher
+#   activations dominate and selective [moe_act, layernorm] ≈ none in memory —
+#   full recompute is the only viable granularity at ≥mbs4. Round 2
+#   (moe_9B_tune2.yaml) keeps full recompute and tunes mbs/accumulation.
+defaults:
+  - moe_9B
+  - _self_
+
+aux:
+  tag: "norc_mbs4"
+
+backend:
+  megatron:
+    recompute_granularity: null
+    recompute_method: null
+    recompute_num_layers: null
+
+job:
+  name: jspeed_moe_9B_tune_${aux.tag}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: norc_mbs4
+        - aux.tag: norc_mbs8
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.global_batch_size: 32
+        - aux.tag: selac_mbs8
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.global_batch_size: 32
+          backend.megatron.recompute_granularity: selective
+          backend.megatron.recompute_modules: ["moe_act", "layernorm"]
+        - aux.tag: norc_mbs8_gbs128
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.global_batch_size: 128
+          backend.megatron.train_iters: 50

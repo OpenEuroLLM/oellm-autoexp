@@ -1,0 +1,56 @@
+# @package _global_
+# Shared settings for the megatron_jupiter_speed collection.
+# Include AFTER the /backend/megatron model configs in each leaf's defaults list
+# so the speed-test run settings (short run, no ckpt, no eval) override any
+# production schedule the model config carries (e.g. the baby 9B WSD schedule).
+#
+# Data comes from the shared /backend/megatron/data_nemonicco_split_jupiter
+# include (neox-tokenized nemonicco, 99/1/0 split), listed in each leaf's
+# defaults. Eval stays disabled below anyway — these runs measure pure
+# training throughput.
+
+aux:
+  experiment_group: "megatron_jupiter_speed"
+
+backend:
+  megatron:
+    # ── run length / logging ─────────────────────────────────────────────
+    train_iters: 100
+    log_interval: 1
+    log_throughput: true
+    eval_interval: 100000
+    eval_iters: 0                  # throughput only — skip validation
+    # ── no checkpointing ─────────────────────────────────────────────────
+    save: null
+    load: null
+    ckpt_step: 0
+    save_interval: 1000000000
+    # ── neutral optimizer schedule (throughput only) ─────────────────────
+    lr: 0.001
+    lr_warmup_iters: 0
+    lr_decay_style: constant
+    use_distributed_optimizer: true
+    # ── attention impl (validated on all JUPITER speed runs) ─────────────
+    use_flash_attn: true
+    attention_backend: flash
+    # ── data (paths/split from data_nemonicco_split_jupiter, see leafs) ──
+    data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: /e/project1/projectnucleus/shared/models/EleutherAI/gpt-neox-20b
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    PYTHONWARNINGS: "ignore::UserWarning"
+    # explicit container env like the validated MoE runs (avoids fragmentation
+    # stalls); CUDA-graph dense configs override with garbage_collection_threshold
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTORCH_ALLOC_CONF: "expandable_segments:True"
+
+job:
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+slurm:
+  sbatch:
+    time: "00:15:00"   # short time limit → much higher scheduling priority on booster

@@ -1,0 +1,46 @@
+# @package _global_
+# Tuning sweep for moe_1.7B (baseline: 181 TFLOPS / 43,099 tok/s/GPU,
+# 80% mem, no recompute, mbs8). moe_9B lesson: mbs is the knob for MoE.
+#   0. mbs16_norc — 2× µbatch without recompute (80% mem → OOM risk)
+#   1. mbs16_full — 2× µbatch WITH full recompute (safe memory)
+#   2. mbs32_full — 4× µbatch with full recompute
+#
+# ── Results (jobs 1051953-55, 2026-07-27): BASELINE STANDS ──────────────
+#   mbs16_norc → OOM (80% baseline had no room for 2× activations)
+#   mbs16_full → 34,097 tok/s — full recompute costs more than mbs16 gains
+#   mbs32_full → 34,518 tok/s — same
+# The moe_9B "mbs is the knob" lesson does NOT transfer down: at ~0.6B active,
+# recompute overhead (~25%) exceeds any GEMM-efficiency gain. Optimum remains
+# mbs8 + no recompute (43,099 tok/s, 181 TF). No change to moe_1.7B.yaml.
+defaults:
+  - moe_1.7B
+  - _self_
+
+aux:
+  tag: "mbs16_norc"
+
+backend:
+  megatron:
+    micro_batch_size: 16
+    global_batch_size: 64
+
+job:
+  name: jspeed_moe_1.7B_tune_${aux.tag}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: mbs16_norc
+        - aux.tag: mbs16_full
+          backend.megatron.recompute_granularity: full
+          backend.megatron.recompute_method: uniform
+          backend.megatron.recompute_num_layers: 1
+        - aux.tag: mbs32_full
+          backend.megatron.micro_batch_size: 32
+          backend.megatron.global_batch_size: 128
+          backend.megatron.recompute_granularity: full
+          backend.megatron.recompute_method: uniform
+          backend.megatron.recompute_num_layers: 1
