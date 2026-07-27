@@ -1,0 +1,257 @@
+type: product
+
+# ==============================================================================
+# Z-LOSS / LOAD-BALANCING ABLATION for the 0.4B-ne sparse (32-expert) model.
+#
+# Trimmed from qwen3_sparse_0.4B_ne.yaml to a SINGLE HP setting:
+#     lr=1.e-3, gbsz=128, stable120BT   (the "lr0.001_gbsz128_stable120BT" run)
+# All other (lr, gbsz) combos removed; the stable phase runs to this HP's
+# assigned max-decay budget of 120B (train_iters = 228_882).
+#
+# New sweep dimension (GROUP 1b), giving 1 x 4 = 4 base points:
+#     moe_router_load_balancing_type in {aux_loss, global_aux_loss}
+#     moe_z_loss_coeff               in {4.e-3, 2.e-3}
+#
+# Decays: 6B..120B (7 stages). The 200B/300B decays are intentionally NOT
+# included -- the 120B stable never reaches their 80% branching checkpoints
+# (br @ 305_176 / 457_764 iters > 228_882), so they could never branch here.
+# At gbsz=128 the fixed 2000-iter warmup is <30% of even the 6B budget
+# (6B -> 11_445 iters), so no decay is warmup-pruned.
+#
+# The priority-tier / *_tokens_set machinery is kept verbatim so the existing
+# run command still works, e.g.:
+#     python scripts/run_autoexp.py \
+#         --config-name experiments/multilingual_scaling/sparse_scaling/0.4B_ne_sparse_experts_32.yaml \
+#         sweep/multilingual_scaling/sparse_scaling@sweep=qwen3_sparse_0.4B_ne_z_loss_sweep \
+#         backend.megatron.aux.priority_tier=center
+# (the single combo's stable_launch_tier is `center`, so priority_tier in
+#  {all, center} launches all 4 stables + their 7 decays each.)
+# ==============================================================================
+
+groups:
+  # GROUP 0: dynamic job name + wandb name (from the sweep point's own params).
+  # Encodes the load-balancing type and z-loss coeff so each of the 4 points
+  # gets a distinct job.name / base_output_dir (no checkpoint collisions).
+  - type: list
+    configs:
+      # topk in the name distinguishes the two routing configs (Group 1c):
+      #   topk4 = 4 routed / 32 (no shared expert); topk3 = 3 routed + 1 shared.
+      # It also keeps wandb_exp_name unique across routing configs (base_output_dir
+      # already separates them via the experiment's `_topk_<n>_` path segment).
+      - job.name: "qwen3_sparse_0.4B_ne_nexp\\${backend.megatron.num_experts}_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_topk\\${backend.megatron.moe_router_topk}_lbt\\${backend.megatron.moe_router_load_balancing_type}_zloss\\${backend.megatron.moe_z_loss_coeff}_\\${stage}\\${backend.megatron.aux.job_horizon_suffix}"
+        backend.megatron.wandb_exp_name: "\\${job.name}"
+
+  # GROUP 1: single hyperparameter combo (lr=1.e-3, gbsz=128, max_decay=120BT).
+  # Based on the gbsz=128 / lr=1.e-3 entry from qwen3_sparse_0.4B_ne.yaml. All 7
+  # reachable decay budgets (6B..120B) are packed into center_tokens_set so
+  # `priority_tier=center` (and `all`) launches the full set; cross/diagonal are
+  # empty. stable_launch_tier stays `center`.
+  - type: list
+    defaults:
+      backend.megatron.num_workers: 8
+    configs:
+      - backend.megatron.lr: 1.e-3
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 2
+        backend.megatron.aux.tokens: 120_000_000_000
+        backend.megatron.aux.center_tokens_set:   "{6_000_000_000, 12_000_000_000, 20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000, 120_000_000_000}"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
+        backend.megatron.aux.stable_launch_tier:  center
+
+  # GROUP 1b: ablation combos (load-balancing x z-loss x routing), enumerated
+  # explicitly as a single list so asymmetric combos are possible (a pure product
+  # of lbt-z-loss and routing would force every row to run at BOTH topk4 and
+  # topk3). Each entry fully specifies the 4 ablation params:
+  #   moe_router_load_balancing_type, moe_z_loss_coeff, moe_router_topk,
+  #   moe_shared_expert_intermediate_size.
+  # Routing configs:
+  #   topk4 -> 4 routed / 32, no shared expert (shared size nulled to override
+  #            the model default explicitly).
+  #   topk3 -> 3 routed + 1 shared expert; shared size = 768 (== moe_ffn_hidden_size
+  #            for 0.4B, i.e. one routed-expert's width). num_experts stays 32.
+  # Order preserved from the previous 5x2 product so indices 0..79 are unchanged;
+  # the aux_loss/1e-3/topk3 combo is appended last (indices 80..87).
+  - type: list
+    configs:
+      # ---- aux_loss x {4e-3, 2e-3} x {topk4, topk3} ----
+      - backend.megatron.moe_router_load_balancing_type: aux_loss
+        backend.megatron.moe_z_loss_coeff: 4.e-3
+        backend.megatron.moe_router_topk: 4
+        backend.megatron.moe_shared_expert_intermediate_size: null
+      - backend.megatron.moe_router_load_balancing_type: aux_loss
+        backend.megatron.moe_z_loss_coeff: 4.e-3
+        backend.megatron.moe_router_topk: 3
+        backend.megatron.moe_shared_expert_intermediate_size: 768
+      - backend.megatron.moe_router_load_balancing_type: aux_loss
+        backend.megatron.moe_z_loss_coeff: 2.e-3
+        backend.megatron.moe_router_topk: 4
+        backend.megatron.moe_shared_expert_intermediate_size: null
+      - backend.megatron.moe_router_load_balancing_type: aux_loss
+        backend.megatron.moe_z_loss_coeff: 2.e-3
+        backend.megatron.moe_router_topk: 3
+        backend.megatron.moe_shared_expert_intermediate_size: 768
+      # ---- global_aux_loss x {4e-3, 2e-3} x {topk4, topk3} ----
+      - backend.megatron.moe_router_load_balancing_type: global_aux_loss
+        backend.megatron.moe_z_loss_coeff: 4.e-3
+        backend.megatron.moe_router_topk: 4
+        backend.megatron.moe_shared_expert_intermediate_size: null
+      - backend.megatron.moe_router_load_balancing_type: global_aux_loss
+        backend.megatron.moe_z_loss_coeff: 4.e-3
+        backend.megatron.moe_router_topk: 3
+        backend.megatron.moe_shared_expert_intermediate_size: 768
+      - backend.megatron.moe_router_load_balancing_type: global_aux_loss
+        backend.megatron.moe_z_loss_coeff: 2.e-3
+        backend.megatron.moe_router_topk: 4
+        backend.megatron.moe_shared_expert_intermediate_size: null
+      - backend.megatron.moe_router_load_balancing_type: global_aux_loss
+        backend.megatron.moe_z_loss_coeff: 2.e-3
+        backend.megatron.moe_router_topk: 3
+        backend.megatron.moe_shared_expert_intermediate_size: 768
+      # ---- global_aux_loss + baseline z-loss (1e-3) x {topk4, topk3} ----
+      - backend.megatron.moe_router_load_balancing_type: global_aux_loss
+        backend.megatron.moe_z_loss_coeff: 1.e-3
+        backend.megatron.moe_router_topk: 4
+        backend.megatron.moe_shared_expert_intermediate_size: null
+      - backend.megatron.moe_router_load_balancing_type: global_aux_loss
+        backend.megatron.moe_z_loss_coeff: 1.e-3
+        backend.megatron.moe_router_topk: 3
+        backend.megatron.moe_shared_expert_intermediate_size: 768
+      # ---- aux_loss + baseline z-loss (1e-3), topk3 ONLY (topk4 baseline already
+      #      run elsewhere, so it is intentionally omitted here) ----
+      - backend.megatron.moe_router_load_balancing_type: aux_loss
+        backend.megatron.moe_z_loss_coeff: 1.e-3
+        backend.megatron.moe_router_topk: 3
+        backend.megatron.moe_shared_expert_intermediate_size: 768
+
+  # GROUP 2: multi-stage training -> 1 stable + 7 decays (6B..120B).
+  # STABLE PHASE: runs to aux.tokens (= 120B here). train_iters / start_iter are
+  # computed from aux.tokens with escaped ${...}. All 18 save_step_* slots are
+  # overridden to real iter values (hardcoded 6B..300B budgets), kept verbatim;
+  # the 200B/300B slots simply resolve to iters beyond train_iters and are never
+  # reached. The stable saves a branching (80%) + end (100%) checkpoint for every
+  # budget up to 120B, so each decay below has a checkpoint to branch from.
+  - type: list
+    configs:
+      - stage: stable
+        backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.lr_wsd_decay_iters: 0
+        backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+        # Horizon suffix for job.name: "<max_decay_tokens_in_BT>BT" (here "120BT").
+        backend.megatron.aux.job_horizon_suffix: "\\${oc.eval:'str(\\${backend.megatron.aux.tokens}//1_000_000_000)+\"BT\"'}"
+
+        # ---- Branching checkpoints: iter at 80% of each token budget -----
+        backend.megatron.aux.save_step_br_0: "\\${oc.eval:'int(((6_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_1: "\\${oc.eval:'int(((12_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_2: "\\${oc.eval:'int(((20_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_3: "\\${oc.eval:'int(((30_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_4: "\\${oc.eval:'int(((50_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_5: "\\${oc.eval:'int(((80_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_6: "\\${oc.eval:'int(((120_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_7: "\\${oc.eval:'int(((200_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_8: "\\${oc.eval:'int(((300_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+
+        # ---- End checkpoints: iter at 100% of each token budget -----
+        backend.megatron.aux.save_step_end_0: "\\${oc.eval:'(6_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_1: "\\${oc.eval:'(12_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_2: "\\${oc.eval:'(20_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_3: "\\${oc.eval:'(30_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_4: "\\${oc.eval:'(50_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_5: "\\${oc.eval:'(80_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_6: "\\${oc.eval:'(120_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_7: "\\${oc.eval:'(200_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_8: "\\${oc.eval:'(300_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+
+      # NESTED GROUP: cooldown/decay stages with shared defaults.
+      # Every decay stage loads from the stable sibling's branching checkpoint
+      # (save_extra_step at 80% of the target budget) and decays LR over 20% of
+      # its own train_iters. Sibling resolution matches the stable of the SAME
+      # z-loss / load-balancing point (the z-loss group is a non-stage sweep
+      # dimension, so it stays part of the sibling match key).
+      # Only 6B..120B here -- see header note on 200B/300B exclusion.
+      - type: list
+        defaults:
+          backend.megatron.aux.decay_fraction: "\\${backend.megatron.aux.cooldown_decay_fraction}"
+
+          backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+          backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
+          backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+
+          # Checkpoint loading: stable sibling saved a checkpoint at this iter
+          # via save_extra_steps. ckpt_step=start_iter picks up that exact ckpt.
+          backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/checkpoints"
+          backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter}"
+          backend.megatron.override_opt_param_scheduler: true
+
+          # Start when the branching checkpoint exists.
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(\\${backend.megatron.aux.start_iter}).zfill(7)'}"
+
+          # Cancel decay if the stable sibling crashed.
+          job.cancel_condition:
+            class_name: LogPatternCondition
+            log_path: "\\${sibling.stable.job.log_path_current}"
+            pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+
+        configs:
+          # Each decay stage only specifies stage name and its own token budget.
+          - stage: decay6BT
+            backend.megatron.aux.tokens: 6_000_000_000
+          - stage: decay12BT
+            backend.megatron.aux.tokens: 12_000_000_000
+          - stage: decay20BT
+            backend.megatron.aux.tokens: 20_000_000_000
+          - stage: decay30BT
+            backend.megatron.aux.tokens: 30_000_000_000
+          - stage: decay50BT
+            backend.megatron.aux.tokens: 50_000_000_000
+          - stage: decay80BT
+            backend.megatron.aux.tokens: 80_000_000_000
+          - stage: decay120BT
+            backend.megatron.aux.tokens: 120_000_000_000
+
+# CSV-grid + priority-tier filter (kept verbatim from qwen3_sparse_0.4B_ne.yaml).
+# Stable branch keeps `priority_tier in {all, center}` working (this combo's
+# stable_launch_tier is center). Decay branch: the 7 budgets (6B..120B) are all
+# in center_tokens_set, so every decay is allowed under priority_tier in
+# {all, center}. Warmup-ratio guard (lr_warmup_iters/train_iters < 0.3) applies
+# to all stages as in the original; at gbsz=128 every budget passes it.
+filter: "\\${oc.eval:'(((\"\\${stage}\" == \"stable\" and (\"\\${backend.megatron.aux.priority_tier}\" == \"all\" or \"\\${backend.megatron.aux.priority_tier}\" == \"\\${backend.megatron.aux.stable_launch_tier}\")) or (\"\\${stage}\" != \"stable\" and ((\"\\${backend.megatron.aux.priority_tier}\" == \"all\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set} | \\${backend.megatron.aux.cross_tokens_set} | \\${backend.megatron.aux.diagonal_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"center\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"cross\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.cross_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"diagonal\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.diagonal_tokens_set})))) and (\\${backend.megatron.lr_warmup_iters} / \\${backend.megatron.train_iters} < 0.3))'}"
+
+
+### Job counts (per backend.megatron.aux.priority_tier)
+# Group 1  (hyperparameter combo):      1
+# Group 1b (ablation combos):           11
+# Group 2  (stages): 1 stable + 7 decay 8
+# Pre-filter product:                   1 x 11 x 8 = 88 sweep points
+#
+# At gbsz=128 no decay is warmup-pruned, so all 7 decays survive per combo.
+#
+#   priority_tier   stables   decays   total
+#   -------------   -------   ------   -----
+#   all             11        77       88   (11 combos x 7 decays)
+#   center          11        77       88   (stable_launch_tier == center; all in center set)
+#   cross           0         0        0
+#   diagonal        0         0        0
+#
+# The 11 combos (index = combo * 8 + stage; each combo is 1 stable + 7 decays):
+#   combo  indices   lbt              z-loss  routing
+#   -----  --------  ---------------  ------  -----------------------
+#     0     0.. 7    aux_loss         4e-3    topk4
+#     1     8..15    aux_loss         4e-3    topk3 (+shared 768)
+#     2    16..23    aux_loss         2e-3    topk4
+#     3    24..31    aux_loss         2e-3    topk3 (+shared 768)
+#     4    32..39    global_aux_loss  4e-3    topk4
+#     5    40..47    global_aux_loss  4e-3    topk3 (+shared 768)
+#     6    48..55    global_aux_loss  2e-3    topk4
+#     7    56..63    global_aux_loss  2e-3    topk3 (+shared 768)
+#     8    64..71    global_aux_loss  1e-3    topk4
+#     9    72..79    global_aux_loss  1e-3    topk3 (+shared 768)
+#    10    80..87    aux_loss         1e-3    topk3 (+shared 768)   <- newest
+# Within each combo the 8 stages are ordered: stable, decay6BT, decay12BT,
+# decay20BT, decay30BT, decay50BT, decay80BT, decay120BT. Every decay branches
+# from its OWN stable's checkpoint (sibling match key includes the
+# z-loss/lbt/routing params). Decays wait on the stable's branching checkpoint
+# via FileExistsCondition, so keep the orchestrator up. Run without
+# --array-subset to launch the whole set.
