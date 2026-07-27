@@ -129,7 +129,7 @@ backend:
     ckpt_format: "torch_dist"
     save_interval: 1
     save: "${job.base_output_dir}/checkpoints"
-    
+
 
     aux:
       # Top-level sweep anchors — overridden per combination by the sweep below.
@@ -149,7 +149,7 @@ slurm:
 # The training group tag (lr/gbsz/beta2) is set once per group via defaults.
 # Only the decay_tag varies at the leaf level.
 sweep:
-  
+
   groups:
 
   - type: list

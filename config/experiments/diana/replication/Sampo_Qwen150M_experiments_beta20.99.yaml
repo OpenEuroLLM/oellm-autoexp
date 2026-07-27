@@ -85,7 +85,7 @@ backend:
     # OPTIMIZER
     optimizer: adam
     adam_beta1: 0.9
-    adam_beta2: 0.99 
+    adam_beta2: 0.99
     adam_eps: 1.e-8
     clip_grad: 1.0
     weight_decay: 0.05  # different than opensci
@@ -126,8 +126,8 @@ backend:
     lr_decay_iters: 5723
 
     micro_batch_size: 16
-    global_batch_size: 256 
-    lr: 4.e-3  
+    global_batch_size: 256
+    lr: 4.e-3
 
     aux:
       exp_tag: "base"
@@ -162,12 +162,3 @@ sweep:
     #       backend.megatron.aux.exp_tag: "kv_channels64_gqa"
     #     - backend.megatron.weight_decay: 0.1
     #       backend.megatron.aux.exp_tag: "wd0.1"
-
-
-
-
-
-
-
-
-

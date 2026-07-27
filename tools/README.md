@@ -24,7 +24,7 @@ megatron_exec tools/progress_tracker.py config/experiments/slaing00/multilingual
 | `--machine` | `LEO` | Local cluster tag written to CSV (`LEO` on Leonardo, `MN5` on MareNostrum) |
 | `--csv PATH` | — | Write per-job CSV to this path |
 | `--md PATH` | — | Write per-run markdown summary to this path |
-| `--compute-storage` | off | Measure checkpoint directory sizes via `du -sb` (slow on large trees) |
+| `--compute-storage` | off | Measure checkpoint directory sizes by way of `du -sb` (slow on large trees) |
 | `--skip-first-iters` | 50 | Skip first N iterations when averaging throughput (warmup) |
 | `--max-iters` | 500 | Max iterations to use for throughput average |
 | `--max-elapsed-ms` | 6000 | Drop iterations with elapsed time above this threshold (ms) |
@@ -60,9 +60,9 @@ megatron_exec tools/progress_tracker.py config/experiments/slaing00/multilingual
 
 ### Cross-cluster notes
 
-MN5 and Leonardo share Slurm job ID sequences, so a given ID may refer to different jobs on each cluster. The tracker detects collisions via GPU count heuristics and:
+MN5 and Leonardo share Slurm job ID sequences, so a given ID may refer to different jobs on each cluster. The tracker detects collisions by way of GPU count heuristics and:
 
 - Tags affected jobs with the foreign cluster name
 - Infers GPU-h from log throughput (`efficient_GPU-h + LowTP_GPU-h`)
 - Reports `TTFI = N/A` (requires sacct start time, unavailable cross-cluster)
-- Infers job owner from filesystem paths in the log
+- Infers job owner from file system paths in the log

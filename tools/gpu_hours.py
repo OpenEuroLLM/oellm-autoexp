@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""
-Calculate GPU hours for all experiments in a results directory.
-Scans for slurm-<jobid>.log files, queries sacct, and reports per-job
-and per-experiment GPU-hours.
+"""Calculate GPU hours for all experiments in a results directory. Scans for
+slurm-<jobid>.log files, queries sacct, and reports per-job and per-experiment
+GPU-hours.
 
 Usage:
     python gpu_hours.py [results_dir]
@@ -18,12 +17,32 @@ import re
 import sys
 import subprocess
 from collections import defaultdict
+from pathlib import Path
 
-# LUMI-G Slurm partitions billed under the GCD-granular formula (see
-# https://docs.lumi-supercomputer.eu/runjobs/lumi_env/billing/#gpu-billing).
-# Any other GPU partition (standard-g, or a non-LUMI cluster's GPU partition)
-# falls back to the "whole module" rate.
-_LUMI_GCD_BILLED_PARTITIONS = {"small-g", "dev-g"}
+# Make sibling modules importable when run as a standalone script.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from write_guard import guard_write  # noqa: E402
+
+
+# Slurm counts GPUs as Graphics Compute Dies, but LUMI bills per physical
+# MI250x module, which carries 2 GCDs.  A standard-g node therefore appears to
+# Slurm as 8 GPUs while being billed as 4 GPU-hours per node-hour.  Reporting
+# the raw GCD count doubles every GPU-hour figure relative to the allocation.
+# See https://docs.lumi-supercomputer.eu/runjobs/lumi_env/billing/#gpu-billing
+#
+# Keyed by the model qualifier in the sacct TRES string ("gres/gpu:mi250=64").
+# Clusters that report a bare "gres/gpu=" (MN5, Leonardo) have no qualifier and
+# bill 1:1, so they are unaffected.
+GPU_BILLING_DIVISOR: dict[str, float] = {
+    "mi250": 2.0,
+    "mi250x": 2.0,
+}
+
+
+def gpu_billing_divisor(model: str) -> float:
+    """GCDs per billed GPU for *model* (1.0 when the GPU bills 1:1)."""
+    return GPU_BILLING_DIVISOR.get((model or "").strip().lower(), 1.0)
 
 
 def parse_elapsed(s):
@@ -95,18 +114,21 @@ def collect_job_ids(results_dir):
 
 
 def query_sacct(job_ids):
-    """
-    Run sacct for the given job IDs.
-    Returns {job_id: {"state", "elapsed", "partition", "gpus", "cpus", "mem_gb", "is_lumi_gpu"}}.
+    """Run sacct for the given job IDs.
+
+    Returns {job_id: {"state": ..., "elapsed": ..., "gpus": int}}.
     Only the top-level job entry (no .batch / .extern / .N steps) is kept.
     """
     ids_str = ",".join(job_ids)
     cmd = [
-        "sacct", "-j", ids_str,
-        "--format=JobID,State,Elapsed,Partition,AllocTRES%200",
-        "--noheader", "--parsable2",
+        "sacct",
+        "-j",
+        ids_str,
+        "--format=JobID,State,Elapsed,AllocTRES%80",
+        "--noheader",
+        "--parsable2",
     ]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"sacct error: {result.stderr.strip()}", file=sys.stderr)
         sys.exit(1)
@@ -121,41 +143,43 @@ def query_sacct(job_ids):
         if "." in job_id_field:
             continue
         job_id = job_id_field.strip()
-        # Parse GPU count from TRES string, e.g. "gres/gpu=32" or LUMI's
-        # type-qualified "gres/gpu:mi250=32". On LUMI this count is GCDs,
-        # not physical GPU modules (each MI250x module = 2 GCDs).
+        # Parse GPU count from TRES string, e.g. "gres/gpu=32" (MN5/Leonardo)
+        # or "gres/gpu:mi250=64" (LUMI, which qualifies the resource with the
+        # GPU model).  The optional ":<model>" is what makes LUMI jobs report
+        # zero GPUs — and therefore zero GPU-hours — without it.
         gpus = 0
-        is_lumi_gpu = False
-        m = re.search(r"gres/gpu(?::(\w+))?=(\d+)", alloc_tres)
+        m = re.search(r"gres/gpu(?::([^=]+))?=(\d+)", alloc_tres)
+        model = ""
         if m:
+            model = (m.group(1) or "").strip().lower()
             gpus = int(m.group(2))
-            is_lumi_gpu = bool(m.group(1)) and "mi250" in m.group(1).lower()
-        cpus = 0
-        m = re.search(r"(?:^|,)cpu=(\d+)", alloc_tres)
-        if m:
-            cpus = int(m.group(1))
-        mem_gb = 0.0
-        m = re.search(r"(?:^|,)mem=([\d.]+)([KMGTP]?)", alloc_tres)
-        if m:
-            mem_gb = parse_mem_gb(m.group(1), m.group(2))
         info[job_id] = {
             "state": state.strip(),
             "elapsed": elapsed.strip(),
             "partition": partition.strip(),
             "gpus": gpus,
-            "cpus": cpus,
-            "mem_gb": mem_gb,
-            "is_lumi_gpu": is_lumi_gpu,
+            "gpus_billed": gpus / gpu_billing_divisor(model),
+            "gpu_model": model,
         }
     return info
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Calculate GPU hours for all experiments in a results directory.")
-    parser.add_argument("results_dir", nargs="?", default=".",
-                        help="Directory containing experiment subdirectories (default: current directory)")
-    parser.add_argument("--output", "-o", default=None,
-                        help="Output CSV file (default: <results_dir>/gpu_hours.csv)")
+    parser = argparse.ArgumentParser(
+        description="Calculate GPU hours for all experiments in a results directory."
+    )
+    parser.add_argument(
+        "results_dir",
+        nargs="?",
+        default=".",
+        help="Directory containing experiment subdirectories (default: current directory)",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        help="Output CSV file (default: <results_dir>/gpu_hours.csv)",
+    )
     args = parser.parse_args()
 
     results_dir = os.path.abspath(args.results_dir)
@@ -173,12 +197,12 @@ def main():
     sacct_info = query_sacct(all_job_ids)
 
     # ---- per-job table ----
-    col_exp   = max(len(e) for e in experiments) + 2
-    col_job   = 12
+    col_exp = max(len(e) for e in experiments) + 2
+    col_job = 12
     col_state = 20
-    col_ela   = 14
-    col_gpu   = 6
-    col_gpuh  = 8
+    col_ela = 14
+    col_gpu = 6
+    col_gpuh = 8
 
     header = (
         f"{'Experiment':<{col_exp}}  "
@@ -210,16 +234,18 @@ def main():
                 continue
             d = sacct_info[job_id]
             hours = parse_elapsed(d["elapsed"])
-            gpu_h = gpu_hours_for_job(d, hours)
+            gpu_h = hours * d["gpus_billed"]
             exp_total += gpu_h
-            csv_rows.append({
-                "experiment": exp_name,
-                "job_id": job_id,
-                "state": d["state"],
-                "elapsed": d["elapsed"],
-                "gpus": d["gpus"],
-                "gpu_hours": round(gpu_h, 1),
-            })
+            csv_rows.append(
+                {
+                    "experiment": exp_name,
+                    "job_id": job_id,
+                    "state": d["state"],
+                    "elapsed": d["elapsed"],
+                    "gpus": d["gpus"],
+                    "gpu_hours": round(gpu_h, 1),
+                }
+            )
             print(
                 f"{display_name:<{col_exp}}  "
                 f"{job_id:>{col_job}}  "
@@ -239,8 +265,9 @@ def main():
     print(sep)
     for exp_name, job_ids in experiments.items():
         exp_gpu_h = sum(
-            gpu_hours_for_job(sacct_info[jid], parse_elapsed(sacct_info[jid]["elapsed"]))
-            for jid in job_ids if jid in sacct_info
+            parse_elapsed(sacct_info[jid]["elapsed"]) * sacct_info[jid]["gpus_billed"]
+            for jid in job_ids
+            if jid in sacct_info
         )
         print(f"  {exp_name:<{col_exp - 2}}  {exp_gpu_h:>8.1f} GPU-h")
 
@@ -249,17 +276,22 @@ def main():
     print(sep)
 
     # ---- save to CSV ----
-    csv_rows.append({
-        "experiment": "TOTAL",
-        "job_id": "",
-        "state": "",
-        "elapsed": "",
-        "gpus": "",
-        "gpu_hours": round(grand_total, 1),
-    })
+    csv_rows.append(
+        {
+            "experiment": "TOTAL",
+            "job_id": "",
+            "state": "",
+            "elapsed": "",
+            "gpus": "",
+            "gpu_hours": round(grand_total, 1),
+        }
+    )
     output_csv = args.output if args.output else os.path.join(results_dir, "gpu_hours.csv")
+    guard_write(output_csv)
     with open(output_csv, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["experiment", "job_id", "state", "elapsed", "gpus", "gpu_hours"])
+        writer = csv.DictWriter(
+            f, fieldnames=["experiment", "job_id", "state", "elapsed", "gpus", "gpu_hours"]
+        )
         writer.writeheader()
         writer.writerows(csv_rows)
     print(f"\nWrote {len(csv_rows) - 1} job rows (+1 total) to {output_csv}")

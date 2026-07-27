@@ -120,7 +120,7 @@ pre-commit install
 - `legacy_tokenizer: True` — supports the old tokenizer system (vocab and merges files)
 - Added `wandb_entity` and `tensorboard_dir` for logging
 - Added `save` for checkpointing
-- Removed the `iter_000XX` suffix from `load` — it is specified separately via `ckpt_step`; keeping it would cause Megatron to look for `checkpoints/iter_000XXXX/iter_000XXXX`
+- Removed the `iter_000XX` suffix from `load` — it is specified separately by way of `ckpt_step`; keeping it would cause Megatron to look for `checkpoints/iter_000XXXX/iter_000XXXX`
 - Start condition checks for zero-padded folder name `iter_000XXXX` instead of `iter_XXXX`
 - Start condition checks only for the checkpoint folder, not for `latest_checkpointed_iteration.txt` (which is saved in the parent of `checkpoints/`, not inside each checkpoint folder)
 - `ckpt_format: torch_dist` instead of `ckpt_format: torch` — prevents Megatron from overwriting `ckpt_step` with the value from `latest_checkpointed_iteration.txt` (this interaction only occurs when `use_distributed_optimizer: True`)

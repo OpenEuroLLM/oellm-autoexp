@@ -12,6 +12,11 @@ import re
 import sys
 from pathlib import Path
 
+# Make sibling modules importable when run as a standalone script.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from write_guard import guard_write  # noqa: E402
+
 VAL_LOSS_RE = re.compile(
     r"validation loss at iteration\s+(\d+)\s+on validation set\s*\|.*?lm loss value:\s*([\d.E+\-]+)\s*\|.*?lm loss PPL:\s*([\d.E+\-]+)"
 )
@@ -94,6 +99,7 @@ def main():
         print("No results collected — nothing written.", file=sys.stderr)
         sys.exit(1)
 
+    guard_write(args.output)
     with args.output.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["run_name", "iteration", "lm_loss", "lm_loss_ppl"])
         writer.writeheader()

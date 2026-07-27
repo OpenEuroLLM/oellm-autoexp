@@ -1,4 +1,5 @@
-"""Find stable sweep jobs that did not finish (e.g. SLURM time limit) and print resume commands.
+"""Find stable sweep jobs that did not finish (e.g. SLURM time limit) and print
+resume commands.
 
 Scans each stable job's output directory for ``current.log`` (the active log; ignore older
 ``slurm-*.log`` files). A job counts as **finished** when Megatron exits cleanly, detected by
@@ -11,7 +12,7 @@ Usage:
   python scripts/automated_resume_timed_out.py \\
     --config-name experiments/swagatam/test_moe_130M_300BT_bsz_256.yaml \\
     --config-dir config
-    
+
     python scripts/resume_timed_out.py --config-name experiments/swagatam/test_moe_130M_300BT_GQA.yaml --config-dir config --indices 0,3,6,9 --dry-run
 
   # Show per-job status (complete / incomplete / unknown) and exit_interval
@@ -102,7 +103,8 @@ def last_iteration_from_log(lines: list[str]) -> int | None:
 
 
 def read_current_log(log_path: Path, max_bytes: int = 8_000_000) -> list[str]:
-    """Read log file; for large files, only keep the tail (completion is always at the end)."""
+    """Read log file; for large files, only keep the tail (completion is always
+    at the end)."""
     if not log_path.is_file():
         return []
     size = log_path.stat().st_size
@@ -129,7 +131,8 @@ def tmux_session_name(prefix: str, index: int) -> str:
 
 
 def build_tmux_command(repo_root: Path, session_name: str, cmd: list[str]) -> list[str]:
-    """tmux new-session -d runs the shell command and returns immediately (detached).
+    """Tmux new-session -d runs the shell command and returns immediately
+    (detached).
 
     Always ``cd`` to the repo root (oellm-autoexp) first — ``run_autoexp`` expects that cwd
     for relative paths such as ``config/`` and ``results/``.
@@ -286,9 +289,7 @@ def main() -> None:
 
     need = len(to_resume)
     done = len(stable_jobs) - need
-    print(
-        f"Summary: {done} complete, {need} need resume (incomplete or unknown)\n"
-    )
+    print(f"Summary: {done} complete, {need} need resume (incomplete or unknown)\n")
 
     if not to_resume:
         print("Nothing to resume.")
@@ -344,7 +345,7 @@ def main() -> None:
             sessions.append((idx, name))
             if args.dry_run:
                 print(f"# Index {idx} -> session {name}")
-                print(" ".join(shlex.quote(x) for x in tmux_cmd))
+                print(shlex.join(tmux_cmd))
                 print()
             else:
                 rc = subprocess.run(tmux_cmd)
@@ -376,7 +377,9 @@ def main() -> None:
         print("\nAll resume jobs finished.")
         return
 
-    print("\nRun each command in a separate terminal/screen, or use --tmux to spawn detached sessions.\n")
+    print(
+        "\nRun each command in a separate terminal/screen, or use --tmux to spawn detached sessions.\n"
+    )
     for idx, cmd in commands:
         print(f"# Index {idx}:")
         print(" ".join(cmd))

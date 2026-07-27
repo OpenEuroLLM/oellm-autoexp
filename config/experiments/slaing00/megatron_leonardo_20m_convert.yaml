@@ -1,0 +1,40 @@
+# @package _global_
+#
+# 20M smoke-test: train 100 iters then convert checkpoint to HuggingFace format.
+# torch_dist -> torch -> HF
+# Usage (from repo root):
+#   PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/slaing00/megatron_leonardo_20m_convert
+
+defaults:
+  - /experiments/base
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+  - /sweep: none
+  - /backend/megatron: [base_reference, opensci_ref_20M, data_slimpajama]
+  - /postprocess: [ckpt_dist_to_torch_opensci, ckpt_convert_opensci]
+  - _self_
+
+job:
+  name: smoke-test20m-convert
+
+  base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${.name}
+
+backend:
+  megatron:
+    train_iters: 100
+    lr_warmup_iters: 10
+    lr_decay_iters: 100
+    lr_wsd_decay_iters: 20
+    save_interval: 100
+    eval_interval: 100
+    save: ${job.base_output_dir}
+    data_cache_path: /leonardo_work/OELLM_prod2026/users/slaing00/cache
+    ckpt_convert_format: torch
+    ckpt_convert_save: ${job.base_output_dir}
+    ckpt_step: 100
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:45:00"

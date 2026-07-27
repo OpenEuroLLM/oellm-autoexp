@@ -28,7 +28,7 @@ project:
 
 container:
   image: /leonardo_work/OELLM_prod2026/container_images/nemo_25.11.01.sif
-  bind: 
+  bind:
     - "/leonardo_work/OELLM_prod2026/"
     - "/leonardo_scratch"
     - "/leonardo"
@@ -45,7 +45,7 @@ backend:
       /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_2,
       /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_3,
       /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_4,
-      /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_5  
+      /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-real-synth-mix/GPT-NeoX/merged_5
     ]
     data_cache_path: /leonardo_scratch/large/userexternal/donutu00/MEGATRON_CACHEDIR
     seq_length: 4096

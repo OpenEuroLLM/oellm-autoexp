@@ -58,14 +58,14 @@ Consequently:
 - A decay point's `${sibling.stable.*}` interpolation resolves to the
   stable's real, fully-materialised config even when the stable will be
   filtered out of the submission list.
-- Filesystem paths (`job.base_output_dir`, `job.log_path_current`) are
+- File system paths (`job.base_output_dir`, `job.log_path_current`) are
   deterministic functions of `job.name`, so they agree across invocations.
 
 Together these mean: if invocation A submits the stables and invocation B
 submits some decays, B's decays produce *exactly the same* `load=...`,
 `start_condition.path=...`, and `cancel_condition.log_path=...` strings they
-would have produced in a single combined run. Coordination is entirely via
-the shared filesystem.
+would have produced in a single combined run. Coordination is entirely by way of
+the shared file system.
 
 ---
 
@@ -102,7 +102,7 @@ Valid values enumerate the sets you want to launch independently. For the
 `dense_130M_lr_gbsz_tokens_grid.yaml` example: `all`, `center`, `cross`,
 `diagonal`.
 
-From the CLI it is overridden via Hydra dotted syntax:
+From the CLI it is overridden by way of Hydra dotted syntax:
 `backend.megatron.aux.priority_tier=center`.
 
 ### Per-combo tier membership and stable ownership
@@ -128,7 +128,7 @@ used for empty — *not* `"{}"`, which is a dict literal in Python and breaks
 `stable_launch_tier` is, by convention, the **earliest** tier (in the order
 center → cross → diagonal) whose `*_tokens_set` is non-empty for that combo.
 Why not just always launch stables with `center`? The 130M grid has stables
-whose decays live *only* in `cross` and/or `diagonal` — e.g. the
+whose decays live *only* in `cross` and/or `diagonal` — for example the
 `gbsz=512, 300BT` stables feed only diagonal decays. Launching all 20
 stables eagerly under `priority_tier=center` would queue those large,
 low-priority jobs ahead of actual center work. Assigning each stable to
@@ -245,7 +245,7 @@ Which stables belong to which tier:
 - **center** (4): `(gbsz=32, lr=1e-3)`, `(gbsz=64, lr=1e-3)`,
   `(gbsz=128, lr=2e-3)`, `(gbsz=256, lr=2e-3)`.
 - **cross** (10): every combo whose `center_tokens_set` is empty but
-  `cross_tokens_set` is not — e.g. `(gbsz=16, lr=1e-3)`,
+  `cross_tokens_set` is not — for example `(gbsz=16, lr=1e-3)`,
   `(gbsz=32, lr=5e-4 / 2e-3)`, `(gbsz=64, lr=5e-4 / 2e-3)`,
   `(gbsz=128, lr=1e-3 / 4e-3)`, `(gbsz=256, lr=1e-3 / 4e-3)`,
   `(gbsz=512, lr=2e-3)`.
@@ -309,11 +309,11 @@ Runtime sequence:
    active `slurm-<jobid>-....log` (see `oellm_autoexp/monitor/slurm_client.py`
    and `docs/log_symlink_usage.md`).
 3. Cross/diagonal orchestrators' monitor loops tick, evaluate each decay's
-   `FileExistsCondition` against the filesystem. No IPC with the center
+   `FileExistsCondition` against the file system. No IPC with the center
    orchestrator is needed — they're independent processes.
 4. If the stable fails, `LogPatternCondition` watches `current.log` for
    error patterns and cancels the downstream decays — this also works
-   cross-process because the log path is filesystem-resident.
+   cross-process because the log path is file system-resident.
 
 ---
 
@@ -321,8 +321,8 @@ Runtime sequence:
 
 | Option | Why not chosen |
 |---|---|
-| **Three separate YAMLs** (center/cross/diagonal) each duplicating the base | Heavy duplication. Any change to model/data config has to be mirrored three times. No upside over `defaults`-based sharing, which itself is awkward because overriding specific sweep-group entries via `defaults` is painful. |
-| **Single YAML + SLURM `--nice` per grid_position** | Still a single invocation, so no way to gate "don't even queue the diagonals until I say so." Doesn't satisfy the "three scripts" requirement. Works fine as an *addition* on top of tiering, e.g. `slurm.sbatch.nice=-50` on the center invocation. |
+| **Three separate YAMLs** (center/cross/diagonal) each duplicating the base | Heavy duplication. Any change to model/data config has to be mirrored three times. No upside over `defaults`-based sharing, which itself is awkward because overriding specific sweep-group entries by way of `defaults` is painful. |
+| **Single YAML + SLURM `--nice` per grid_position** | Still a single invocation, so no way to gate "don't even queue the diagonals until I say so." Doesn't satisfy the "three scripts" requirement. Works fine as an *addition* on top of tiering, for example `slurm.sbatch.nice=-50` on the center invocation. |
 | **Single YAML + `subset_indices` CLI override** | Requires the user to translate `(lr, gbsz, tokens, tier)` tuples into sweep-point indices — brittle and needs recomputing whenever the sweep shape changes. |
 | **Hardcoded `load:` paths + no stables in cross/diagonal YAMLs** | The sibling mechanism already does this for us, *because `full_points_by_idx` means stables are always resolvable*. Hardcoding the path template adds maintenance burden (if you rename `job.name` you have to fix both the stable and the hardcoded string). |
 
@@ -355,7 +355,7 @@ The chosen approach (single YAML +
   Ctrl-C'ing early strands pending decays (stables already dispatched to
   SLURM keep running). Re-launching the same
   `backend.megatron.aux.priority_tier=<tier>` picks up the remaining work
-  because already-submitted jobs are recognised via the monitor state store.
+  because already-submitted jobs are recognised by way of the monitor state store.
 - **Safe to parallelise the three invocations.** They work on disjoint
   job-name sets and can each run their own orchestrator concurrently.
   Because stables are now distributed across tiers, cross and diagonal can
@@ -382,7 +382,7 @@ The chosen approach (single YAML +
 ## 9. Recipe: adapting this to a new sweep
 
 1. **Enumerate tiers.** Decide the subsets you want to submit independently.
-   Tiers don't have to be symmetric (e.g. one tier could be "smoke-test
+   Tiers don't have to be symmetric (for example one tier could be "smoke-test
    combos" and another "full grid").
 2. **Tag each decay point with exactly one tier.** For the 130M grid this
    came from the CSV's `grid_position` column. For a new sweep, enumerate

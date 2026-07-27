@@ -1,28 +1,20 @@
 #!/usr/bin/env python3
-"""
-Sweep run status table for multilingual_scaling experiments.
+"""Sweep run status table for multilingual_scaling experiments.
 
 Reads a sweep YAML config, discovers all expected runs under the results directory,
 and prints a detailed per-Slurm-job table with training metrics, throughput, GPU
 hours, and status.
 
-Usage (run from repo root):
-    python tools/progress_tracker.py <config.yaml> [--machine LEO|MN5] [options]
+Usage:
+    python progress_tracker.py <config.yaml> [options]
 
-    # Basic — prints table to stdout:
-    python tools/progress_tracker.py config/experiments/<user>/<exp>/<model>.yaml --machine LEO
+    # Override where to look for runs (useful when cluster paths differ from local mount):
+    python progress_tracker.py config/experiments/multilingual_scaling/0.1B_ne.yaml \\
+        --results-dir /home/diana/mn5/multilingual_scaling/0.1B_ne/training
 
-    # Write markdown and CSV output files:
-    python tools/progress_tracker.py config/experiments/<user>/<exp>/<model>.yaml \\
-        --machine LEO --md /path/to/progress.md --csv /path/to/progress.csv
-
-    # Also measure checkpoint storage (slow on large trees):
-    python tools/progress_tracker.py config/experiments/<user>/<exp>/<model>.yaml \\
-        --machine LEO --compute-storage --md /path/to/progress.md --csv /path/to/progress.csv
-
-    # Override where to look for runs (useful when cluster paths differ):
-    python tools/progress_tracker.py config/experiments/<user>/<exp>/<model>.yaml \\
-        --results-dir /path/to/experiment/training
+    # Also write a CSV:
+    python progress_tracker.py config/experiments/multilingual_scaling/0.1B_ne.yaml \\
+        --csv status.csv
 """
 
 from __future__ import annotations
@@ -50,14 +42,17 @@ for _d in (_tools_dir, _scripts_dir):
     if _d not in sys.path:
         sys.path.insert(0, _d)
 
-from gpu_hours import (
+from gpu_hours import (  # noqa: E402
+    gpu_billing_divisor as _gpu_billing_divisor,
     collect_job_ids as _gpu_collect_job_ids,
     query_sacct as _gpu_query_sacct,
     parse_elapsed as _gpu_parse_elapsed,
 )
-from low_throughput_analysis import analyze_job as _analyze_low_throughput_job
-from megatron_throughput_from_logs import load_or_compute_throughput as _compute_throughput
-from validate_sweep_runs import (
+from low_throughput_analysis import analyze_job as _analyze_low_throughput_job  # noqa: E402
+from megatron_throughput_from_logs import load_or_compute_throughput as _compute_throughput  # noqa: E402
+from megatron_throughput_from_logs import set_cache_root  # noqa: E402
+from write_guard import guard_write  # noqa: E402
+from validate_sweep_runs import (  # noqa: E402
     _resolve_defaults,
     render_job_name,
     substitute_omegaconf_path_vars as _subst,
@@ -70,22 +65,16 @@ from validate_sweep_runs import (
 RE_ARG = re.compile(r"\[default\d+\]:\s{2}(\w+)\s+\.+\s+(.+)")
 
 # Model parameter count lines
-RE_TOTAL_PARAMS_B = re.compile(
-    r"\[default0\]:Total number of parameters in billions:\s+([\d.]+)"
-)
+RE_TOTAL_PARAMS_B = re.compile(r"\[default0\]:Total number of parameters in billions:\s+([\d.]+)")
 RE_TRANSFORMER_PARAMS_B = re.compile(
     r"\[default0\]:Number of parameters in transformer block in billions:\s+([\d.]+)"
 )
 
 # Training loss from iteration lines: "lm loss: 3.1416"
-RE_TRAIN_LOSS = re.compile(
-    r"iteration\s+\d+/\s*\d+\s*\|[^\n]*lm loss:\s*([\d.eE+\-]+)"
-)
+RE_TRAIN_LOSS = re.compile(r"iteration\s+\d+/\s*\d+\s*\|[^\n]*lm loss:\s*([\d.eE+\-]+)")
 
 # Validation loss lines: "validation loss at iteration X | lm loss value: Y"
-RE_VAL_LOSS = re.compile(
-    r"validation loss at[^\n]*\|[^\n]*lm loss value:\s*([\d.eE+\-]+)"
-)
+RE_VAL_LOSS = re.compile(r"validation loss at[^\n]*\|[^\n]*lm loss value:\s*([\d.eE+\-]+)")
 
 # Throughput / iteration line
 RE_ITER = re.compile(
@@ -194,15 +183,16 @@ def _build_summary_exp_gpu_h(
 # ── Monitor-state event classification ───────────────────────────────────────
 
 _CLEAN_RESTART_EVENTS = frozenset({"time_limit", "inactive"})
-_HARD_ERROR_EVENTS    = frozenset({"segmentation_fault", "error", "bus_error",
-                                    "nan_loss", "connection_failure"})
-_FINISH_EVENTS        = frozenset({"finished_training", "finish"})
+_HARD_ERROR_EVENTS = frozenset(
+    {"segmentation_fault", "error", "bus_error", "nan_loss", "connection_failure"}
+)
+_FINISH_EVENTS = frozenset({"finished_training", "finish"})
 
 _EVENT_ERROR_DESC: dict[str, str] = {
     "segmentation_fault": "Segmentation fault",
-    "error":              "Exit code 1",
-    "bus_error":          "Bus error",
-    "nan_loss":           "NaN loss",
+    "error": "Exit code 1",
+    "bus_error": "Bus error",
+    "nan_loss": "NaN loss",
     "connection_failure": "Connection failure",
 }
 
@@ -211,20 +201,65 @@ _EVENT_ERROR_DESC: dict[str, str] = {
 _EVENT_MATCH_TOLERANCE_S = 300.0
 
 
-
 def _eval_token_set(s: str) -> set[int]:
-    """Evaluate a Python set-literal string like '{6_000_000_000}' or 'set()' into a set of ints."""
+    """Evaluate a Python set-literal string like '{6_000_000_000}' or 'set()'
+    into a set of ints."""
     if not s:
         return set()
     try:
         result = eval(s)  # safe: these are only integer set literals from the YAML
-        return set(int(x) for x in result) if isinstance(result, (set, frozenset)) else set()
+        return {int(x) for x in result} if isinstance(result, (set, frozenset)) else set()
     except Exception:
         return set()
 
 
+# Billing divisor used where no sacct TRES string is available (sbatch-derived
+# GPU counts).  Set from --machine at startup; sacct-derived figures read the
+# GPU model directly and do not depend on this.
+_MACHINE_BILLING_DIVISOR: float = 1.0
+
+# GPU model implied by each cluster, for the sbatch fallback above.
+_MACHINE_GPU_MODEL = {"LUMI": "mi250"}
+
+
+def _set_machine_billing_divisor(machine: str) -> None:
+    global _MACHINE_BILLING_DIVISOR
+    _MACHINE_BILLING_DIVISOR = _gpu_billing_divisor(
+        _MACHINE_GPU_MODEL.get((machine or "").strip().upper(), "")
+    )
+
+
+def _redirect_output(path: Path, args: argparse.Namespace) -> Path:
+    """Map *path* under --cache-dir when set, so nothing is written into the
+    results tree.
+
+    The results directory frequently belongs to another user on a shared
+    project.  With --cache-dir the tracker treats it as strictly read-only and
+    mirrors the absolute path beneath the cache root, so derived artifacts
+    (throughput cache, gpu_hours.csv) land in the caller's own space instead.
+    """
+    root = getattr(args, "cache_dir", None)
+    if not root:
+        return path
+    path = path.resolve()
+    out = Path(root).expanduser() / path.relative_to(path.anchor)
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def _as_bool(v: Any) -> bool:
+    """Coerce a YAML scalar to bool, tolerating the string forms OmegaConf
+    leaves behind ('true', 'False', ...)."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().lower() in {"true", "yes", "1"}
+    return bool(v)
+
+
 def parse_config(config_path: str) -> dict:
-    """Parse sweep config and return all valid (run_name, stage, tokens) combos.
+    """Parse sweep config and return all valid (run_name, stage, tokens)
+    combos.
 
     The sweep uses a per-combo filter: each Group-1 entry carries
     center/cross/diagonal_tokens_set; a decay stage is only valid for a combo
@@ -249,7 +284,7 @@ def parse_config(config_path: str) -> dict:
     job_name_tpl: str | None = None
 
     # Pass 1 – collect per-combo data (Group 1 entries) and all decay stage defs (Group 2).
-    combos: list[dict] = []          # {lr, gbsz, stable_tokens, valid_decay_tokens: set[int]}
+    combos: list[dict] = []  # {lr, gbsz, stable_tokens, valid_decay_tokens: set[int]}
     all_decay_stages: OrderedDict[str, int] = OrderedDict()  # stage_name -> token_budget
 
     # Used by the "new format" where stable entries carry an explicit stage name (e.g.
@@ -260,9 +295,17 @@ def parse_config(config_path: str) -> dict:
         if group.get("type") != "list" or "configs" not in group:
             continue
         _pending_stable_combo = None  # reset per group
+        # A group may carry a `defaults:` mapping supplying keys omitted from
+        # its individual entries (e.g. aux.skip_stable_launch in the LUMI v2
+        # sweeps).  Entry-level keys win.
+        group_defaults = group.get("defaults") or {}
+        if not isinstance(group_defaults, dict):
+            group_defaults = {}
         for entry in group["configs"]:
             if not isinstance(entry, dict):
                 continue
+            if group_defaults:
+                entry = {**group_defaults, **entry}
 
             # Group 0: job name template
             if "job.name" in entry:
@@ -281,9 +324,13 @@ def parse_config(config_path: str) -> dict:
                 gbsz = int(entry["backend.megatron.global_batch_size"])
                 stable_tok = int(entry.get("backend.megatron.aux.tokens", aux["tokens"]))
 
-                center = _eval_token_set(entry.get("backend.megatron.aux.center_tokens_set", "set()"))
+                center = _eval_token_set(
+                    entry.get("backend.megatron.aux.center_tokens_set", "set()")
+                )
                 cross = _eval_token_set(entry.get("backend.megatron.aux.cross_tokens_set", "set()"))
-                diagonal = _eval_token_set(entry.get("backend.megatron.aux.diagonal_tokens_set", "set()"))
+                diagonal = _eval_token_set(
+                    entry.get("backend.megatron.aux.diagonal_tokens_set", "set()")
+                )
                 valid_decay_tokens = center | cross | diagonal
 
                 combos.append(
@@ -297,6 +344,14 @@ def parse_config(config_path: str) -> dict:
                         "diagonal_tokens": diagonal,
                         "stable_launch_tier": str(
                             entry.get("backend.megatron.aux.stable_launch_tier", "")
+                        ),
+                        # Combos whose CSV row is checkpoint_status=reuse_checkpoint
+                        # with no stable row of its own: an existing checkpoint
+                        # already covers every branch point their decays need, so
+                        # the sweep filter never submits a stable for them.  The
+                        # stable run is therefore not expected to exist.
+                        "skip_stable_launch": _as_bool(
+                            entry.get("backend.megatron.aux.skip_stable_launch", False)
                         ),
                         "stable_stage_name": None,  # old format: use "stable" + job_horizon_suffix
                     }
@@ -325,6 +380,9 @@ def parse_config(config_path: str) -> dict:
                     "stable_launch_tier": str(
                         entry.get("backend.megatron.aux.stable_launch_tier", "")
                     ),
+                    "skip_stable_launch": _as_bool(
+                        entry.get("backend.megatron.aux.skip_stable_launch", False)
+                    ),
                     "stable_stage_name": _stage_val,  # new format: pass full name (e.g. "stable12BT")
                 }
                 continue
@@ -338,7 +396,11 @@ def parse_config(config_path: str) -> dict:
             if entry.get("type") == "list" and "configs" in entry:
                 _decay_toks: set[int] = set()
                 for dc in entry["configs"]:
-                    if isinstance(dc, dict) and "stage" in dc and "backend.megatron.aux.tokens" in dc:
+                    if (
+                        isinstance(dc, dict)
+                        and "stage" in dc
+                        and "backend.megatron.aux.tokens" in dc
+                    ):
                         stage_name = str(dc["stage"])
                         tok = int(dc["backend.megatron.aux.tokens"])
                         all_decay_stages[stage_name] = tok
@@ -359,6 +421,8 @@ def parse_config(config_path: str) -> dict:
     params["tok_to_stage"] = tok_to_stage
     params["adam_beta2"] = float(meg.get("adam_beta2", 0.95))
     params["cooldown_decay_fraction"] = float(aux.get("cooldown_decay_fraction", 0.2))
+    # Detect single-run (non-sweep) configs: no sweep groups were found.
+    params["is_single_run"] = not combos
     return params
 
 
@@ -594,8 +658,8 @@ def _format_ckpt_gb_total(total: float, *, compute: bool, md: bool = False) -> s
 def parse_sbatch(path: Path) -> tuple[int | None, int | None, int | None]:
     """Return (nodes, gpus_per_node, ckpt_step) from a job.sbatch file.
 
-    ckpt_step is the value of --ckpt-step, present only in decay jobs to indicate
-    the absolute iteration from which the decay phase starts.
+    ckpt_step is the value of --ckpt-step, present only in decay jobs to
+    indicate the absolute iteration from which the decay phase starts.
     """
     if not path.is_file():
         return None, None, None
@@ -619,11 +683,14 @@ def parse_sbatch(path: Path) -> tuple[int | None, int | None, int | None]:
 
 # ── Stdout log parsing ────────────────────────────────────────────────────────
 
-def parse_stdout(log_path: Path) -> dict:
-    """Parse a Megatron stdout log for training params, model size, and iteration tracking.
 
-    Throughput metrics (avg_tflop_per_gpu, avg_tok_per_gpu) are NOT computed here;
-    call load_or_compute_throughput() separately so caching is applied consistently.
+def parse_stdout(log_path: Path) -> dict:
+    """Parse a Megatron stdout log for training params, model size, and
+    iteration tracking.
+
+    Throughput metrics (avg_tflop_per_gpu, avg_tok_per_gpu) are NOT
+    computed here; call load_or_compute_throughput() separately so
+    caching is applied consistently.
     """
     result: dict[str, Any] = {
         "global_batch_size": None,
@@ -741,6 +808,7 @@ def parse_stdout(log_path: Path) -> dict:
 
 # ── Stderr log parsing ────────────────────────────────────────────────────────
 
+
 def parse_stderr(log_path: Path) -> dict:
     """Parse stderr log for error patterns and wandb completion signal."""
     result: dict[str, Any] = {
@@ -796,8 +864,11 @@ def _parse_sacct_ts(s: str) -> float | None:
 
 
 def query_sacct(job_ids: list[str]) -> dict[str, dict]:
-    """Query sacct for job state, elapsed time, GPU count, and start/end timestamps.
-    Returns {} on error."""
+    """Query sacct for job state, elapsed time, GPU count, and start/end
+    timestamps.
+
+    Returns {} on error.
+    """
     if not job_ids:
         return {}
     try:
@@ -810,7 +881,9 @@ def query_sacct(job_ids: list[str]) -> dict[str, dict]:
                 "--noheader",
                 "--parsable2",
             ],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         if result.returncode != 0:
             return {}
@@ -827,13 +900,18 @@ def query_sacct(job_ids: list[str]) -> dict[str, dict]:
         if "." in jid_field:
             continue
         gpus = 0
-        m = re.search(r"gres/gpu=(\d+)", alloc_tres)
+        m = re.search(r"gres/gpu(?::([^=]+))?=(\d+)", alloc_tres)
+        _model = ""
         if m:
-            gpus = int(m.group(1))
+            _model = (m.group(1) or "").strip().lower()
+            gpus = int(m.group(2))
         info[jid_field.strip()] = {
-            "state":    state.strip(),
-            "elapsed":  elapsed.strip(),
-            "gpus":     gpus,
+            "state": state.strip(),
+            "elapsed": elapsed.strip(),
+            # Billed GPUs: LUMI reports GCDs but bills per 2-GCD MI250x module.
+            "gpus_billed": gpus / _gpu_billing_divisor(_model),
+            "gpu_model": _model,
+            "gpus": gpus,
             "start_ts": _parse_sacct_ts(start),
             "end_ts": _parse_sacct_ts(end),
             "start_str": start.strip(),
@@ -854,11 +932,15 @@ def gpu_hours_from_timestamps(
     if total_gpus == 0:
         return None
     elapsed_h = (last_ts - first_ts).total_seconds() / 3600
-    return elapsed_h * total_gpus
+    # job.sbatch carries no GPU model, so fall back to the divisor implied by
+    # --machine (see _set_machine_billing_divisor).  Keeps this fallback in the
+    # same billing units as the sacct-derived figures.
+    return elapsed_h * total_gpus / _MACHINE_BILLING_DIVISOR
 
 
 def load_external_gpu_h(csv_path: str) -> dict[tuple[str, str], float]:
-    """Load per-job GPU-h from a CSV previously produced by this script (--csv output).
+    """Load per-job GPU-h from a CSV previously produced by this script (--csv
+    output).
 
     Expects at minimum columns: Run, JobID, GPU-h.
     Returns {(run_name, job_id): gpu_hours}.  Rows with blank JobID are skipped.
@@ -868,8 +950,8 @@ def load_external_gpu_h(csv_path: str) -> dict[tuple[str, str], float]:
         reader = csv.DictReader(f)
         for row in reader:
             run_name = row.get("Run", "").strip()
-            job_id   = row.get("JobID", "").strip()
-            gpu_h_s  = row.get("GPU-h", "").strip()
+            job_id = row.get("JobID", "").strip()
+            gpu_h_s = row.get("GPU-h", "").strip()
             if not run_name or not job_id or not gpu_h_s:
                 continue
             try:
@@ -881,13 +963,21 @@ def load_external_gpu_h(csv_path: str) -> dict[tuple[str, str], float]:
 
 # ── Job discovery ─────────────────────────────────────────────────────────────
 
+
 def _run_id_sets(run_dir: Path) -> tuple[set[str], set[str]]:
     """Return (config_ids, log_ids) for a run directory.
 
     config_ids: IDs from config-{id}.yaml (job submitted via pipeline).
-    log_ids:    IDs from stdout/stderr-{id}.log in logs/ subdirectory, OR
-                from slurm-{id}.log in run_dir when no logs/ subdirectory exists
-                (combined-log convention).  Mirrors the per-job fallback in main().
+    log_ids:    IDs from every log-naming convention, unioned:
+                  - logs/stdout-{id}.log, logs/stderr-{id}.log  (MN5/Leonardo:
+                    separate SBATCH --output/--error)
+                  - logs/slurm-{id}.log                         (LUMI: single
+                    combined --output, no --error)
+                  - slurm-{id}.log at the run-dir root          (older layout)
+                These must be unioned rather than tried in order: a run
+                migrated between clusters carries both conventions in the same
+                logs/ directory, and preferring one silently drops the jobs
+                that used the other.
     A manually restarted run has log_ids that are not in config_ids (jobs
     submitted directly without the config-creation step).
     """
@@ -898,34 +988,38 @@ def _run_id_sets(run_dir: Path) -> tuple[set[str], set[str]]:
             m = re.match(r"config-(\d+)\.yaml$", f.name)
             if m:
                 config_ids.add(m.group(1))
+            # Combined slurm-{id}.log at the run-dir root
+            m = re.match(r"slurm-(\d+)\.log$", f.name)
+            if m:
+                log_ids.add(m.group(1))
     logs_dir = run_dir / "logs"
     if logs_dir.is_dir():
         for f in logs_dir.iterdir():
-            m = re.match(r"(?:stdout|stderr)-(\d+)\.log$", f.name)
+            m = re.match(r"(?:stdout|stderr|slurm)-(\d+)\.log$", f.name)
             if m:
                 log_ids.add(m.group(1))
-    else:
-        # Fallback: combined slurm-{id}.log files at run dir root
-        if run_dir.is_dir():
-            for f in run_dir.iterdir():
-                m = re.match(r"slurm-(\d+)\.log$", f.name)
-                if m:
-                    log_ids.add(m.group(1))
+            # Single-run configs store config-*.yaml inside logs/
+            m = re.match(r"config-(\d+)\.yaml$", f.name)
+            if m:
+                config_ids.add(m.group(1))
     return config_ids, log_ids
 
 
 def find_job_ids(run_dir: Path) -> list[str]:
-    """Return all Slurm job IDs found in logs/ or config-*.yaml files, sorted ascending.
+    """Return all Slurm job IDs found in logs/ or config-*.yaml files, sorted
+    ascending.
 
-    config-{id}.yaml is written at submission time; stdout/stderr logs only appear
-    once the job starts. Including config-based IDs lets us detect jobs that are
-    submitted (or queued) but haven't started writing logs yet.
+    config-{id}.yaml is written at submission time; stdout/stderr logs
+    only appear once the job starts. Including config-based IDs lets us
+    detect jobs that are submitted (or queued) but haven't started
+    writing logs yet.
     """
     config_ids, log_ids = _run_id_sets(run_dir)
     return sorted(config_ids | log_ids)
 
 
 # ── Token budget from run name ─────────────────────────────────────────────────
+
 
 def extract_token_budget(run_name: str) -> str:
     m = RE_BUDGET.search(run_name)
@@ -935,6 +1029,7 @@ def extract_token_budget(run_name: str) -> str:
 
 
 # ── Monitor-state loading ─────────────────────────────────────────────────────
+
 
 def load_run_monitor_events(run_name: str, monitor_dirs: list[Path]) -> list[dict] | None:
     """Load all monitor-state sessions for *run_name* from *monitor_dirs*.
@@ -958,17 +1053,21 @@ def load_run_monitor_events(run_name: str, monitor_dirs: list[Path]) -> list[dic
                 parts = key.split(":")
                 # key format: "log:<event_name>:<log_events_index>"
                 if len(parts) >= 2 and parts[0] == "log":
-                    events.append({
-                        "name": parts[1],
-                        "ts":   val.get("last_action_ts"),
-                    })
-            sessions.append({
-                "session_id":     d.name,
-                "events":         events,
-                "last_status":    rt.get("last_status"),
-                "final_state":    rt.get("final_state"),
-                "runtime_job_id": rt.get("runtime_job_id"),
-            })
+                    events.append(
+                        {
+                            "name": parts[1],
+                            "ts": val.get("last_action_ts"),
+                        }
+                    )
+            sessions.append(
+                {
+                    "session_id": d.name,
+                    "events": events,
+                    "last_status": rt.get("last_status"),
+                    "final_state": rt.get("final_state"),
+                    "runtime_job_id": rt.get("runtime_job_id"),
+                }
+            )
     return sessions if sessions else None
 
 
@@ -977,7 +1076,8 @@ def map_events_to_jobs(
     sacct_info: dict[str, dict],
     monitor_sessions: list[dict],
 ) -> dict[str, set[str]]:
-    """Assign monitor-state events to specific Slurm job IDs via sacct timestamps.
+    """Assign monitor-state events to specific Slurm job IDs via sacct
+    timestamps.
 
     For each event's ``last_action_ts``, we find the job whose sacct time window
     [Start, End + _EVENT_MATCH_TOLERANCE_S] contains the timestamp.
@@ -988,10 +1088,7 @@ def map_events_to_jobs(
     job_events: dict[str, set[str]] = {jid: set() for jid in job_ids}
 
     all_events = [
-        ev
-        for session in monitor_sessions
-        for ev in session["events"]
-        if ev.get("ts") is not None
+        ev for session in monitor_sessions for ev in session["events"] if ev.get("ts") is not None
     ]
     if not all_events:
         return job_events
@@ -999,7 +1096,7 @@ def map_events_to_jobs(
     for job_id in job_ids:
         sacct = sacct_info.get(job_id, {})
         start_ts = sacct.get("start_ts")
-        end_ts   = sacct.get("end_ts")
+        end_ts = sacct.get("end_ts")
         if start_ts is None:
             continue
         deadline = (end_ts if end_ts is not None else float("inf")) + _EVENT_MATCH_TOLERANCE_S
@@ -1012,6 +1109,7 @@ def map_events_to_jobs(
 
 # ── Status determination ──────────────────────────────────────────────────────
 
+
 def _compute_restart_action(
     job_id: str,
     job_has_config: bool,
@@ -1020,7 +1118,8 @@ def _compute_restart_action(
     run_config_ids: set[str],
     run_log_ids: set[str],
 ) -> str:
-    """Return the restart action for a failed/cancelled job based on what followed it.
+    """Return the restart action for a failed/cancelled job based on what
+    followed it.
 
     Looks at the next job in sequence that actually ran (has logs) and classifies:
       AUTO_RESTARTED:    next running job has a config  (normal autoexp restart)
@@ -1040,7 +1139,7 @@ def _compute_restart_action(
         return "NONE"
     # Find the next job that actually ran (has a log file)
     next_running: str | None = None
-    for later_id in all_job_ids[idx + 1:]:
+    for later_id in all_job_ids[idx + 1 :]:
         if later_id in run_log_ids:
             next_running = later_id
             break
@@ -1063,8 +1162,7 @@ def determine_status(
     run_config_ids: set[str] | None = None,
     run_log_ids: set[str] | None = None,
 ) -> tuple[str, str, str, str]:
-    """
-    Returns (emoji, status_word, error_description, action_word).
+    """Returns (emoji, status_word, error_description, action_word).
 
     Status words:  NOT_LAUNCHED | QUEUED | DONE | FAILED | CANCELLED | TRAINING
     Action words:  AUTO_RESTARTED | MANUALLY_RESTARTED | NEW_SESSION | NONE | ""
@@ -1083,29 +1181,29 @@ def determine_status(
     sacct_state = sacct.get("state", "")
 
     # Pre-compute restart action (used for all FAILED/CANCELLED paths below)
-    _cfg_ids  = run_config_ids if run_config_ids is not None else set()
-    _log_ids  = run_log_ids    if run_log_ids    is not None else set()
-    _has_cfg  = job_id in _cfg_ids
-    _restart  = _compute_restart_action(job_id, _has_cfg, is_latest_job, all_job_ids, _cfg_ids, _log_ids)
+    _cfg_ids = run_config_ids if run_config_ids is not None else set()
+    _log_ids = run_log_ids if run_log_ids is not None else set()
+    _has_cfg = job_id in _cfg_ids
+    _restart = _compute_restart_action(
+        job_id, _has_cfg, is_latest_job, all_job_ids, _cfg_ids, _log_ids
+    )
 
     # ── Classify events from monitor state (primary) or stderr (fallback) ────
     use_monitor = job_monitor_events is not None
     if use_monitor:
-        triggered_hard  = job_monitor_events & _HARD_ERROR_EVENTS
+        triggered_hard = job_monitor_events & _HARD_ERROR_EVENTS
         triggered_clean = job_monitor_events & _CLEAN_RESTART_EVENTS
-        triggered_done  = job_monitor_events & _FINISH_EVENTS
-        hard_error_desc = "; ".join(
-            _EVENT_ERROR_DESC.get(n, n) for n in sorted(triggered_hard)
-        )
+        triggered_done = job_monitor_events & _FINISH_EVENTS
+        hard_error_desc = "; ".join(_EVENT_ERROR_DESC.get(n, n) for n in sorted(triggered_hard))
     else:
         # stderr-derived booleans (legacy path)
-        triggered_hard  = set()
+        triggered_hard = set()
         triggered_clean = set()
-        triggered_done  = set()
+        triggered_done = set()
         hard_error_desc = ""
 
     # ── DONE ─────────────────────────────────────────────────────────────────
-    last_iter   = stdout_data.get("last_iter")
+    last_iter = stdout_data.get("last_iter")
     train_iters = stdout_data.get("train_iters")
     if last_iter is not None and train_iters is not None and last_iter >= train_iters:
         return "✅", "DONE", "", ""
@@ -1168,7 +1266,9 @@ def determine_status(
     return "⚠️", "FAILED", error_str, _restart
 
 
-def compute_progress(last_iter: int | None, ckpt_step: int | None, total_iters: int | None) -> float | None:
+def compute_progress(
+    last_iter: int | None, ckpt_step: int | None, total_iters: int | None
+) -> float | None:
     """Return training progress [0–100] for a single training phase.
 
     ckpt_step is the absolute iteration where training started (0 for stable runs,
@@ -1187,6 +1287,335 @@ def compute_progress(last_iter: int | None, ckpt_step: int | None, total_iters: 
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
+
+def _lw_last_iter(run_dir: Path) -> tuple[int | None, int | None, float | None]:
+    """Return (last_iter, total_iters, last_train_loss) by scanning the most recent stdout log
+    backwards in chunks until the last iteration line is found."""
+    logs_dir = run_dir / "logs"
+    # Union every log-naming convention (see _run_id_sets): a run migrated
+    # between clusters has both stdout-*.log and slurm-*.log side by side, so
+    # preferring one would miss the newest jobs.  Pick by mtime rather than
+    # name — job IDs are only monotonic within a single cluster, and a lexical
+    # sort would order every "slurm-" before every "stdout-".
+    candidates: list[Path] = list(run_dir.glob("slurm-*.log"))
+    if logs_dir.is_dir():
+        candidates += list(logs_dir.glob("stdout-*.log"))
+        candidates += list(logs_dir.glob("slurm-*.log"))
+    if not candidates:
+        return None, None, None
+    log_path = max(candidates, key=lambda p: p.stat().st_mtime)
+    try:
+        chunk = 262144  # 256 KB per read
+        max_read = 8 * 1024 * 1024  # give up after 8 MB
+        with open(log_path, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            offset = size
+            accumulated = b""
+            while offset > 0:
+                read_size = min(chunk, offset)
+                offset -= read_size
+                f.seek(offset)
+                accumulated = f.read(read_size) + accumulated
+                text = accumulated.decode("utf-8", errors="replace")
+                matches = list(RE_ITER.finditer(text))
+                if matches:
+                    m = matches[-1]
+                    last_iter = int(m.group(1))
+                    total_iters = int(m.group(2))
+                    # average of last 10 training losses from the same region
+                    loss_matches = list(RE_TRAIN_LOSS.finditer(text))
+                    last_loss = (
+                        sum(float(m.group(1)) for m in loss_matches[-10:]) / len(loss_matches[-10:])
+                        if loss_matches else None
+                    )
+                    return last_iter, total_iters, last_loss
+                if size - offset >= max_read:
+                    break
+    except OSError:
+        pass
+    return None, None, None
+
+
+def _lw_max_checkpoint(run_dir: Path) -> int | None:
+    """Return the highest checkpoint iteration saved on disk, or None.
+
+    Handles both plain-digit dirs (e.g. 91553) and iter_XXXXXXX dirs.
+    """
+    ckpt_dir = run_dir / "checkpoints"
+    if not ckpt_dir.is_dir():
+        return None
+    iters: list[int] = []
+    for d in ckpt_dir.iterdir():
+        if not d.is_dir():
+            continue
+        if d.name.isdigit():
+            iters.append(int(d.name))
+        elif d.name.startswith("iter_") and d.name[5:].isdigit():
+            iters.append(int(d.name[5:]))
+    return max(iters) if iters else None
+
+
+def _squeue_active(job_ids: list[str]) -> set[str]:
+    """Return the set of job IDs currently in the SLURM queue (running or pending)."""
+    if not job_ids:
+        return set()
+    try:
+        out = subprocess.check_output(
+            ["squeue", "--noheader", "-o", "%i", "-j", ",".join(job_ids)],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        return {line.strip() for line in out.splitlines() if line.strip()}
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return set()
+
+
+def _lw_status(
+    run_dir: Path,
+    last_iter: int | None,
+    total_iters: int | None,
+    active_jobs: set[str],
+    latest_job: str | None,
+    max_ckpt: int | None,
+    has_any_logs: bool,
+    has_config: bool,
+) -> str:
+    """Derive status using pre-computed local signals + squeue for ambiguous cases only."""
+    if not run_dir.is_dir():
+        return "NOT_LAUNCHED"
+    # DONE: checkpoint or iteration count reached total
+    if total_iters and max_ckpt is not None and max_ckpt >= total_iters:
+        return "DONE"
+    if total_iters and last_iter is not None and last_iter >= total_iters:
+        return "DONE"
+    # QUEUED/TRAINING: only if squeue confirms the job is active
+    if latest_job and latest_job in active_jobs:
+        return "TRAINING" if (last_iter is not None or max_ckpt is not None) else "QUEUED"
+    # Not in squeue, not done — resolve from local evidence
+    if not has_any_logs and not has_config:
+        return "NOT_LAUNCHED"
+    if has_any_logs:
+        logs_dir = run_dir / "logs"
+        # Error patterns live in stderr-*.log where stdout/stderr are split
+        # (MN5/Leonardo) but in the combined slurm-*.log on LUMI, which writes
+        # no stderr file at all.  Scan both, newest by mtime, or LUMI failures
+        # would all fall through to STOPPED.
+        stderr_candidates: list[Path] = list(run_dir.glob("slurm-*.log"))
+        if logs_dir.is_dir():
+            stderr_candidates += list(logs_dir.glob("stderr-*.log"))
+            stderr_candidates += list(logs_dir.glob("slurm-*.log"))
+        if stderr_candidates:
+            try:
+                newest = max(stderr_candidates, key=lambda p: p.stat().st_mtime)
+                with open(newest, "rb") as f:
+                    f.seek(0, 2)
+                    size = f.tell()
+                    f.seek(max(0, size - 8192))
+                    tail = f.read().decode("utf-8", errors="replace")
+                if RE_TIME_LIMIT.search(tail):
+                    return "TIMEOUT"
+                if RE_NODE_FAILURE.search(tail):
+                    return "NODE_FAILURE"
+                if RE_OOM.search(tail) or RE_SEGFAULT.search(tail) or RE_FATAL.search(tail):
+                    return "FAILED"
+            except OSError:
+                pass
+        return "STOPPED"
+    # Config exists but no logs and not in squeue
+    return "NOT_LAUNCHED"
+
+
+def _lightweight_main(args: argparse.Namespace) -> None:
+    project_root = Path(__file__).resolve().parent.parent
+    os.chdir(project_root)
+
+    cfg = parse_config(args.config)
+    base_dir_template = cfg["base_dir_template"]
+    seed = cfg["seed"]
+    combos = cfg["combos"]
+    tok_to_stage = cfg["tok_to_stage"]
+    adam_beta2 = cfg.get("adam_beta2", 0.95)
+
+    def _render(stage: str, lr: float, gbsz: int, stable_tok: int | None = None) -> str:
+        raw = render_job_name(cfg["job_name_tpl"], 1, lr, gbsz, seed, stage, stable_tok)
+        return raw.replace("\\${backend.megatron.adam_beta2}", str(adam_beta2))
+
+    if args.results_dir is None:
+        old_prefix, new_prefix = args.prefix_remap.split(":", 1)
+        local_template = base_dir_template.replace(old_prefix, new_prefix)
+    else:
+        local_template = str(args.results_dir).split("${job.name}")[0].rstrip("/")
+
+    run_specs: list[tuple[str, str, int, str]] = []
+    run_to_gbsz: dict[str, int] = {}
+    for combo in combos:
+        lr, gbsz = combo["lr"], combo["gbsz"]
+        stable_tok = combo["stable_tokens"]
+        stable_stage = combo.get("stable_stage_name") or "stable"
+        stable_name = _render(
+            stable_stage, lr, gbsz, stable_tok if stable_stage == "stable" else None
+        )
+        # skip_stable_launch combos reuse an existing checkpoint, so the sweep
+        # filter never submits their stable job and no such run directory is
+        # expected.  The name is still computed above: decays branching off it
+        # resolve their checkpoint through decay_to_stable regardless.
+        if not combo.get("skip_stable_launch"):
+            run_specs.append((stable_name, "stable", stable_tok, combo["stable_launch_tier"]))
+            run_to_gbsz[stable_name] = gbsz
+        for decay_tok in sorted(combo["valid_decay_tokens"]):
+            stage_name = tok_to_stage.get(decay_tok)
+            if stage_name is None:
+                continue
+            decay_name = _render(stage_name, lr, gbsz)
+            if decay_tok in combo["center_tokens"]:
+                decay_tier = "center"
+            elif decay_tok in combo["cross_tokens"]:
+                decay_tier = "cross"
+            else:
+                decay_tier = "diagonal"
+            run_specs.append((decay_name, stage_name, decay_tok, decay_tier))
+            run_to_gbsz[decay_name] = gbsz
+
+    if not run_specs and cfg.get("is_single_run") and cfg.get("job_name"):
+        run_specs = [(cfg["job_name"], "stable", 0, "")]
+
+    _tier_order = {"center": 0, "cross": 1, "diagonal": 2, "": 3}
+
+    def _lw_sort_key(spec: tuple[str, str, int, str]) -> tuple:
+        run_name, stage, tokens, tier = spec
+        # Extract lr and gbsz from run_name for stable ordering within tier
+        m_lr = re.search(r"lr([\d.]+)", run_name)
+        m_gbsz = re.search(r"gbsz(\d+)", run_name)
+        lr_val = float(m_lr.group(1)) if m_lr else 0.0
+        gbsz_val = int(m_gbsz.group(1)) if m_gbsz else 0
+        is_decay = 0 if stage.startswith("stable") else 1
+        return (_tier_order.get(tier, 3), lr_val, gbsz_val, is_decay, tokens)
+
+    run_specs.sort(key=_lw_sort_key)
+
+    seq_length = cfg["seq_length"]
+    sample_ctx: dict[str, Any] = {"backend.megatron.seed": seed}
+    if combos:
+        sample_ctx.update(
+            {
+                "backend.megatron.global_batch_size": combos[0]["gbsz"],
+                "backend.megatron.num_experts": 1,
+                "backend.megatron.lr": combos[0]["lr"],
+            }
+        )
+    resolved_base = Path(_subst(local_template, sample_ctx))
+    if not resolved_base.is_dir():
+        resolved_base = Path(local_template)
+
+    status_colors = {
+        "DONE": "\033[92m",
+        "TRAINING": "\033[94m",
+        "STOPPED": "\033[33m",
+        "FAILED": "\033[91m",
+        "TIMEOUT": "\033[33m",
+        "NODE_FAILURE": "\033[33m",
+        "QUEUED": "\033[93m",
+        "NOT_LAUNCHED": "\033[90m",
+    }
+    RESET = "\033[0m"
+
+    # First pass: gather local signals (fast, no network)
+    run_info: list[tuple[str, str, int, str, Path, str | None, int | None, int | None, int | None, bool, bool]] = []
+    needs_squeue: list[str] = []
+    for run_name, stage, tokens, tier in run_specs:
+        run_dir = resolved_base / run_name
+        job_ids = find_job_ids(run_dir)
+        latest_job = job_ids[-1] if job_ids else None
+        last_iter, total_iters, last_loss = _lw_last_iter(run_dir)
+        if total_iters is None and tokens:
+            gbsz = run_to_gbsz.get(run_name)
+            if gbsz:
+                total_iters = _train_iters(tokens, gbsz, seq_length)
+        max_ckpt = _lw_max_checkpoint(run_dir)
+        config_ids, log_ids = _run_id_sets(run_dir)
+        has_any_logs = bool(log_ids)
+        # Only query squeue for runs that are ambiguous (not clearly done or not launched)
+        clearly_done = bool(
+            (total_iters and max_ckpt is not None and max_ckpt >= total_iters)
+            or (total_iters and last_iter is not None and last_iter >= total_iters)
+        )
+        clearly_not_launched = not run_dir.is_dir() or not bool(config_ids or log_ids)
+        if latest_job and not clearly_done and not clearly_not_launched:
+            needs_squeue.append(latest_job)
+        run_info.append((run_name, stage, tokens, tier, run_dir, latest_job, last_iter, total_iters, max_ckpt, has_any_logs, bool(config_ids), last_loss))
+
+    # Single squeue call only for ambiguous jobs
+    active_jobs = _squeue_active(needs_squeue)
+
+    rows: list[dict] = []
+    for run_name, stage, tokens, tier, run_dir, latest_job, last_iter, total_iters, max_ckpt, has_any_logs, has_config, last_loss in run_info:
+        status = _lw_status(run_dir, last_iter, total_iters, active_jobs, latest_job, max_ckpt, has_any_logs, has_config)
+        progress = (
+            f"{100.0 * last_iter / total_iters:.1f}%" if last_iter and total_iters else "—"
+        )
+        remaining = (
+            f"{100.0 * (total_iters - last_iter) / total_iters:.1f}%"
+            if last_iter and total_iters and last_iter < total_iters
+            else ("0.0%" if status == "DONE" else "—")
+        )
+        display_iter = last_iter if last_iter is not None else max_ckpt
+        iter_str = (
+            f"{display_iter} / {total_iters}" if display_iter is not None and total_iters else
+            (f"— / {total_iters}" if total_iters else "—")
+        )
+        loss_str = f"{last_loss:.4f}" if last_loss is not None else "—"
+        rows.append(
+            {
+                "run_name": run_name,
+                "job_id": latest_job or "—",
+                "status": status,
+                "iter_str": iter_str,
+                "progress": progress,
+                "remaining": remaining,
+                "tier": tier,
+                "loss": loss_str,
+            }
+        )
+
+    W_NAME = max((len(r["run_name"]) for r in rows), default=30)
+    W_NAME = min(W_NAME, 60)
+    header = (
+        f"{'Run':<{W_NAME}}  {'Job ID':>12}  {'Tier':<8}  {'Iter / Total':>22}  {'Done':>6}  {'Remaining':>9}  {'Loss':>8}  Status"
+    )
+    sep = "─" * len(header)
+    print()
+    print(f"Config:  {args.config}")
+    print(f"Results: {resolved_base}")
+    print(sep)
+    print(header)
+    print(sep)
+    for r in rows:
+        name = r["run_name"] if len(r["run_name"]) <= W_NAME else r["run_name"][: W_NAME - 1] + "…"
+        color = status_colors.get(r["status"], "")
+        print(
+            f"{name:<{W_NAME}}  {r['job_id']:>12}  {r['tier']:<8}  {r['iter_str']:>22}  "
+            f"{r['progress']:>6}  {r['remaining']:>9}  {r['loss']:>8}  {color}{r['status']}{RESET}"
+        )
+    print(sep)
+    done = sum(1 for r in rows if r["status"] == "DONE")
+    training = sum(1 for r in rows if r["status"] == "TRAINING")
+    queued = sum(1 for r in rows if r["status"] == "QUEUED")
+    stopped = sum(1 for r in rows if r["status"] == "STOPPED")
+    failed = sum(1 for r in rows if r["status"] in ("FAILED", "TIMEOUT", "NODE_FAILURE"))
+    not_launched = sum(1 for r in rows if r["status"] == "NOT_LAUNCHED")
+    print(
+        f"  {len(rows)} runs total — "
+        f"\033[92m{done} done\033[0m  "
+        f"\033[94m{training} training\033[0m  "
+        f"\033[93m{queued} queued\033[0m  "
+        f"\033[33m{stopped} stopped\033[0m  "
+        f"\033[91m{failed} failed\033[0m  "
+        f"\033[90m{not_launched} not launched\033[0m"
+    )
+    print()
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(
@@ -1260,7 +1689,38 @@ def main() -> None:
         "using this value; foreign-cluster jobs detected via sacct collision are "
         "tagged with the opposite name. Default: %(default)s",
     )
+    ap.add_argument(
+        "--lightweight",
+        action="store_true",
+        help=(
+            "Quick summary: show job name, latest job ID, status and progress for each run. "
+            "Skips log parsing, sacct, throughput and GPU-h calculation."
+        ),
+    )
+    ap.add_argument(
+        "--cache-dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Treat the results tree as strictly read-only: write every derived "
+            "artifact under DIR instead, mirroring each path beneath it. Covers "
+            "the per-run throughput cache (<run_dir>/throughput/*.csv) and the "
+            "gpu_hours.csv summary, both of which otherwise land in the results "
+            "directory. Use this whenever the results belong to another user on "
+            "a shared project. Note --csv/--md are always written where you "
+            "point them and are unaffected by this flag."
+        ),
+    )
     args = ap.parse_args()
+
+    if args.cache_dir:
+        set_cache_root(args.cache_dir)
+
+    _set_machine_billing_divisor(args.machine)
+
+    if args.lightweight:
+        _lightweight_main(args)
+        return
 
     project_root = Path(__file__).resolve().parent.parent
     os.chdir(project_root)
@@ -1269,8 +1729,7 @@ def main() -> None:
     if args.monitor_dirs is None:
         monitor_root = project_root / "monitor_state"
         monitor_dirs: list[Path] = (
-            sorted(p for p in monitor_root.iterdir() if p.is_dir())
-            if monitor_root.is_dir() else []
+            sorted(p for p in monitor_root.iterdir() if p.is_dir()) if monitor_root.is_dir() else []
         )
     else:
         monitor_dirs = [Path(d) for d in args.monitor_dirs]
@@ -1318,8 +1777,13 @@ def main() -> None:
         stable_name = _render(
             stable_stage, lr, gbsz, stable_tok if stable_stage == "stable" else None
         )
-        run_specs.append((stable_name, "stable", stable_tok, combo["stable_launch_tier"]))
-        run_to_gbsz[stable_name] = gbsz
+        # skip_stable_launch combos reuse an existing checkpoint, so the sweep
+        # filter never submits their stable job and no such run directory is
+        # expected.  The name is still computed above: decays branching off it
+        # resolve their checkpoint through decay_to_stable regardless.
+        if not combo.get("skip_stable_launch"):
+            run_specs.append((stable_name, "stable", stable_tok, combo["stable_launch_tier"]))
+            run_to_gbsz[stable_name] = gbsz
 
         # Decay runs: only the token budgets permitted by the filter
         for decay_tok in sorted(valid_decay_toks):
@@ -1337,17 +1801,25 @@ def main() -> None:
             decay_to_stable[name] = stable_name
             run_to_gbsz[name] = gbsz
 
+    # Non-sweep config: treat the single job itself as the only run.
+    if not run_specs and cfg.get("is_single_run") and cfg.get("job_name"):
+        _single_name = cfg["job_name"]
+        run_specs = [(_single_name, "stable", 0, "")]
+        run_to_gbsz[_single_name] = 0
+
     run_tier_map: dict[str, str] = {name: tier for name, _stage, _tok, tier in run_specs}
     run_stage_map: dict[str, str] = {name: stage for name, stage, _tok, _tier in run_specs}
 
     # Resolve the local results base directory (template typically has no per-combo vars here)
     sample_ctx: dict[str, Any] = {"backend.megatron.seed": seed}
     if combos:
-        sample_ctx.update({
-            "backend.megatron.global_batch_size": combos[0]["gbsz"],
-            "backend.megatron.num_experts": 1,
-            "backend.megatron.lr": combos[0]["lr"],
-        })
+        sample_ctx.update(
+            {
+                "backend.megatron.global_batch_size": combos[0]["gbsz"],
+                "backend.megatron.num_experts": 1,
+                "backend.megatron.lr": combos[0]["lr"],
+            }
+        )
     resolved_base = Path(_subst(local_template, sample_ctx))
     if not resolved_base.is_dir():
         resolved_base = Path(local_template)
@@ -1368,7 +1840,9 @@ def main() -> None:
     external_job_gpu_h: dict[tuple[str, str], float] = {}
     if not sacct_info and args.csv and Path(args.csv).is_file():
         external_job_gpu_h = load_external_gpu_h(args.csv)
-        print(f"sacct unavailable – loaded {len(external_job_gpu_h)} per-job GPU-h entries from {args.csv}")
+        print(
+            f"sacct unavailable – loaded {len(external_job_gpu_h)} per-job GPU-h entries from {args.csv}"
+        )
 
     # Load monitor-state events for every run and map them to Slurm job IDs.
     # run_monitor_sessions[run_name] = None  → no monitor state (use stderr fallback)
@@ -1475,6 +1949,8 @@ def main() -> None:
                     "status_word": s_word,
                     "action_word": "",
                     "error_desc": "",
+                    "has_log": False,
+                    "is_collision": False,
                 }
             )
             continue
@@ -1483,12 +1959,15 @@ def main() -> None:
             logs_dir = run_dir / "logs"
             stdout_log = logs_dir / f"stdout-{job_id}.log"
             stderr_log = logs_dir / f"stderr-{job_id}.log"
-            # Fallback: some sweeps write a combined slurm-{id}.log in the run dir
+            # Fallback: combined slurm-{id}.log — check logs/ first, then run dir root
             if not stdout_log.is_file():
-                slurm_log = run_dir / f"slurm-{job_id}.log"
+                slurm_log = logs_dir / f"slurm-{job_id}.log"
+                if not slurm_log.is_file():
+                    slurm_log = run_dir / f"slurm-{job_id}.log"
                 if slurm_log.is_file():
                     stdout_log = slurm_log
                     stderr_log = slurm_log
+            has_log = stdout_log.is_file()
             is_latest = job_id == job_ids[-1]
 
             stdout_data = parse_stdout(stdout_log)
@@ -1519,11 +1998,20 @@ def main() -> None:
             sacct_state = sacct_entry.get("state", "")
             sacct_elapsed = sacct_entry.get("elapsed", "")
             gpu_hours: float | None = None
+            # gpus stays in raw GCD units: it feeds cross-cluster collision
+            # detection (which compares sacct GCDs against sbatch GCDs) and the
+            # per-GPU throughput normalisation.  GPU-hours, the billed cost, is
+            # derived from the billed count instead — LUMI bills per 2-GCD
+            # MI250x module, so raw GCD-hours double the real spend.
             gpus = total_gpus
+            _gpus_billed = total_gpus / _MACHINE_BILLING_DIVISOR
             if sacct_elapsed:
                 elapsed_h = _gpu_parse_elapsed(sacct_elapsed)
                 gpus = sacct_entry.get("gpus", 0) or total_gpus
-                gpu_hours = elapsed_h * gpus
+                _gpus_billed = sacct_entry.get("gpus_billed") or (
+                    gpus / _MACHINE_BILLING_DIVISOR
+                )
+                gpu_hours = elapsed_h * _gpus_billed
             elif (run_name, job_id) in external_job_gpu_h:
                 gpu_hours = external_job_gpu_h[(run_name, job_id)]
 
@@ -1552,9 +2040,10 @@ def main() -> None:
                 cluster = args.machine
 
             # Low-throughput analysis (reuses the throughput cache written above).
+            # Billed GPU count so gpu_h_lost lands in the same units as gpu_hours.
             _job_lt = _analyze_low_throughput_job(
                 stdout_log,
-                num_gpus=gpus or None,
+                num_gpus=_gpus_billed or None,
                 max_elapsed_ms=args.max_elapsed_ms,
                 skip_first_iters=args.skip_first_iters,
                 max_iters_used=args.max_iters,
@@ -1580,11 +2069,11 @@ def main() -> None:
                 ttfi_min = (first_iter_ts.timestamp() - sacct_start) / 60.0
             elif sacct_start is not None and first_iter_ts is None and sacct_end is not None:
                 ttfi_min = (sacct_end - sacct_start) / 60.0
-            elif first_iter_ts is None and gpu_hours is not None and total_gpus > 0:
-                ttfi_min = (gpu_hours / total_gpus) * 60.0
+            elif first_iter_ts is None and gpu_hours is not None and _gpus_billed > 0:
+                ttfi_min = (gpu_hours / _gpus_billed) * 60.0
             ttfi_gpu_h: float | None = (
-                (ttfi_min / 60.0) * total_gpus
-                if ttfi_min is not None and total_gpus > 0
+                (ttfi_min / 60.0) * _gpus_billed
+                if ttfi_min is not None and _gpus_billed > 0
                 else None
             )
 
@@ -1596,11 +2085,12 @@ def main() -> None:
                 ttfi_gpu_h = None
 
             # Total overhead = TTFI + low-throughput (both in hours / GPU-h)
-            _lt_time_v  = _job_lt.get("time_lost_h")
+            _lt_time_v = _job_lt.get("time_lost_h")
             _lt_gpu_h_v = _job_lt.get("gpu_h_lost")
             overhead_time_h: float | None = (
                 (ttfi_min / 60.0 if ttfi_min is not None else 0.0) + (_lt_time_v or 0.0)
-                if ttfi_min is not None or _lt_time_v is not None else None
+                if ttfi_min is not None or _lt_time_v is not None
+                else None
             )
             overhead_gpu_h: float | None = (
                 (ttfi_gpu_h or 0.0) + (_lt_gpu_h_v or 0.0)
@@ -1615,19 +2105,25 @@ def main() -> None:
                 overhead_gpu_h = None
             overhead_pct: float | None = (
                 overhead_gpu_h / gpu_hours * 100.0
-                if overhead_gpu_h is not None and gpu_hours and gpu_hours > 0 else None
+                if overhead_gpu_h is not None and gpu_hours and gpu_hours > 0
+                else None
             )
 
             # Per-job monitor events: set[str] if monitor state exists, else None
             job_events_map = run_job_monitor_events.get(run_name)
             job_monitor_events = (
-                job_events_map.get(job_id)   # may be empty set
+                job_events_map.get(job_id)  # may be empty set
                 if job_events_map is not None
-                else None                     # no monitor state → use stderr
+                else None  # no monitor state → use stderr
             )
 
             emoji, status_word, error_desc, action_word = determine_status(
-                job_id, job_ids, stdout_data, stderr_data, {job_id: sacct_entry}, is_latest,
+                job_id,
+                job_ids,
+                stdout_data,
+                stderr_data,
+                {job_id: sacct_entry},
+                is_latest,
                 job_monitor_events=job_monitor_events,
                 run_config_ids=run_config_ids,
                 run_log_ids=run_log_ids,
@@ -1685,6 +2181,8 @@ def main() -> None:
                     "status_word": status_word,
                     "action_word": action_word,
                     "error_desc": error_desc,
+                    "has_log": has_log,
+                    "is_collision": _is_collision,
                 }
             )
 
@@ -1692,9 +2190,16 @@ def main() -> None:
     # Fields that are constant per run but may be absent from an eval-only log
     # (Megatron may not print the full args/param-count block in eval mode).
     _FILL_FIELDS = [
-        "transformer_params_b", "total_params_b", "global_batch_size", "lr",
-        "micro_batch_size", "num_workers", "train_iters",
-        "avg_tflop_per_gpu", "avg_tok_per_gpu", "last_train_loss",
+        "transformer_params_b",
+        "total_params_b",
+        "global_batch_size",
+        "lr",
+        "micro_batch_size",
+        "num_workers",
+        "train_iters",
+        "avg_tflop_per_gpu",
+        "avg_tok_per_gpu",
+        "last_train_loss",
     ]
     _run_last_known: dict[str, dict[str, Any]] = {}
     for r in rows:
@@ -1738,6 +2243,16 @@ def main() -> None:
                 known["last_iter"] = r["last_iter"]
             if r.get("progress") is not None:
                 known["progress"] = r["progress"]
+
+    # Drop config-only rows that never produced a log and carry no useful status:
+    # - CANCELLED stubs with no log are always noise.
+    # - Collision-detected rows with no log have an unreliable status (the sacct
+    #   data belongs to a different job on the local cluster); drop them too.
+    rows = [
+        r
+        for r in rows
+        if r.get("has_log") or (r["status_word"] != "CANCELLED" and not r.get("is_collision"))
+    ]
 
     # ── Print table ─────────────────────────────────────────────────────────
 
@@ -1799,17 +2314,17 @@ def main() -> None:
 
     _RESTART_ACTIONS = {"AUTO_RESTARTED", "MANUALLY_RESTARTED", "NEW_SESSION"}
     status_colors = {
-        "DONE":                           "\033[92m",
-        "TRAINING":                       "\033[94m",
-        "FAILED":                         "\033[91m",
-        "FAILED+AUTO_RESTARTED":          "\033[33m",
-        "FAILED+MANUALLY_RESTARTED":      "\033[35m",
-        "FAILED+NEW_SESSION":             "\033[36m",
-        "CANCELLED":                      "\033[91m",
-        "CANCELLED+MANUALLY_RESTARTED":   "\033[35m",
-        "CANCELLED+NEW_SESSION":          "\033[36m",
-        "QUEUED":                         "\033[93m",
-        "NOT_LAUNCHED":                   "\033[90m",
+        "DONE": "\033[92m",
+        "TRAINING": "\033[94m",
+        "FAILED": "\033[91m",
+        "FAILED+AUTO_RESTARTED": "\033[33m",
+        "FAILED+MANUALLY_RESTARTED": "\033[35m",
+        "FAILED+NEW_SESSION": "\033[36m",
+        "CANCELLED": "\033[91m",
+        "CANCELLED+MANUALLY_RESTARTED": "\033[35m",
+        "CANCELLED+NEW_SESSION": "\033[36m",
+        "QUEUED": "\033[93m",
+        "NOT_LAUNCHED": "\033[90m",
     }
     RESET = "\033[0m"
 
@@ -1826,28 +2341,36 @@ def main() -> None:
             color_key = r["status_word"]
         color = status_colors.get(color_key, "")
 
-        tflop_str    = f"{r['avg_tflop_per_gpu']:.1f}" if r["avg_tflop_per_gpu"] is not None else "N/A"
-        tok_str      = f"{r['avg_tok_per_gpu']:.0f}"  if r["avg_tok_per_gpu"]   is not None else "N/A"
-        gpu_h_str    = f"{r['gpu_hours']:.1f}"        if r["gpu_hours"]         is not None else "N/A"
-        lt_time_str  = f"{r['time_lost_h']:.3f}"      if r.get("time_lost_h")   is not None else "N/A"
-        lt_gpu_h_str = f"{r['gpu_h_lost']:.2f}"       if r.get("gpu_h_lost")    is not None else "N/A"
-        trans_str = f"{r['transformer_params_b']:.2f}" if r["transformer_params_b"] is not None else "N/A"
+        tflop_str = f"{r['avg_tflop_per_gpu']:.1f}" if r["avg_tflop_per_gpu"] is not None else "N/A"
+        tok_str = f"{r['avg_tok_per_gpu']:.0f}" if r["avg_tok_per_gpu"] is not None else "N/A"
+        gpu_h_str = f"{r['gpu_hours']:.1f}" if r["gpu_hours"] is not None else "N/A"
+        lt_time_str = f"{r['time_lost_h']:.3f}" if r.get("time_lost_h") is not None else "N/A"
+        lt_gpu_h_str = f"{r['gpu_h_lost']:.2f}" if r.get("gpu_h_lost") is not None else "N/A"
+        trans_str = (
+            f"{r['transformer_params_b']:.2f}" if r["transformer_params_b"] is not None else "N/A"
+        )
         total_str = f"{r['total_params_b']:.2f}" if r["total_params_b"] is not None else "N/A"
         lr_str = f"{r['lr']:.4f}" if r["lr"] is not None else "N/A"
         ckpt_str = str(r["last_ckpt"]) if r["last_ckpt"] is not None else "N/A"
         ti_str = str(r["train_iters"]) if r["train_iters"] is not None else "N/A"
         ci_str = str(r["last_iter"]) if r.get("last_iter") is not None else "N/A"
         prog_str = f"{r['progress']:.1f}%" if r.get("progress") is not None else "N/A"
-        trn_loss_str = f"{r['last_train_loss']:.4f}" if r.get("last_train_loss") is not None else "N/A"
+        trn_loss_str = (
+            f"{r['last_train_loss']:.4f}" if r.get("last_train_loss") is not None else "N/A"
+        )
         val_loss_str = f"{r['last_val_loss']:.4f}" if r.get("last_val_loss") is not None else "N/A"
         gbs_str = str(r["global_batch_size"]) if r["global_batch_size"] is not None else "N/A"
         mbs_str = str(r["micro_batch_size"]) if r["micro_batch_size"] is not None else "N/A"
         wkr_str = str(r["num_workers"]) if r["num_workers"] is not None else "N/A"
-        ttfi_str       = f"{r['ttfi_min']:.1f}"       if r.get("ttfi_min")       is not None else "N/A"
-        ttfi_gpu_h_str = f"{r['ttfi_gpu_h']:.2f}"    if r.get("ttfi_gpu_h")    is not None else "N/A"
-        oh_time_str    = f"{r['overhead_time_h']:.3f}" if r.get("overhead_time_h") is not None else "N/A"
-        oh_gpu_h_str   = f"{r['overhead_gpu_h']:.2f}" if r.get("overhead_gpu_h") is not None else "N/A"
-        oh_pct_str     = f"{r['overhead_pct']:.1f}%"  if r.get("overhead_pct")  is not None else "N/A"
+        ttfi_str = f"{r['ttfi_min']:.1f}" if r.get("ttfi_min") is not None else "N/A"
+        ttfi_gpu_h_str = f"{r['ttfi_gpu_h']:.2f}" if r.get("ttfi_gpu_h") is not None else "N/A"
+        oh_time_str = (
+            f"{r['overhead_time_h']:.3f}" if r.get("overhead_time_h") is not None else "N/A"
+        )
+        oh_gpu_h_str = (
+            f"{r['overhead_gpu_h']:.2f}" if r.get("overhead_gpu_h") is not None else "N/A"
+        )
+        oh_pct_str = f"{r['overhead_pct']:.1f}%" if r.get("overhead_pct") is not None else "N/A"
 
         error_disp = r["error_desc"][:28] if r["error_desc"] else ""
 
@@ -1857,7 +2380,9 @@ def main() -> None:
         else:
             c_str = "N/A"
         m_budget = RE_BUDGET.search(r["run_name"])
-        stage_disp = m_budget.group(1) if m_budget else ("stable" if r["stage"] == "stable" else "decay")
+        stage_disp = (
+            m_budget.group(1) if m_budget else ("stable" if r["stage"] == "stable" else "decay")
+        )
         nodes_str = str(r["nodes"]) if r.get("nodes") is not None else "N/A"
 
         print(
@@ -1914,17 +2439,19 @@ def main() -> None:
                     if job_id not in gpu_sacct_data:
                         continue
                     d = gpu_sacct_data[job_id]
-                    gpu_h = _gpu_parse_elapsed(d["elapsed"]) * d["gpus"]
+                    gpu_h = _gpu_parse_elapsed(d["elapsed"]) * d.get("gpus_billed", d["gpus"])
                     exp_gpu_h[exp_name] = exp_gpu_h.get(exp_name, 0.0) + gpu_h
                     grand_gpu_total += gpu_h
-                    gpu_csv_rows.append({
-                        "experiment": exp_name,
-                        "job_id":     job_id,
-                        "state":      d["state"],
-                        "elapsed":    d["elapsed"],
-                        "gpus":       d["gpus"],
-                        "gpu_hours":  round(gpu_h, 1),
-                    })
+                    gpu_csv_rows.append(
+                        {
+                            "experiment": exp_name,
+                            "job_id": job_id,
+                            "state": d["state"],
+                            "elapsed": d["elapsed"],
+                            "gpus": d["gpus"],
+                            "gpu_hours": round(gpu_h, 1),
+                        }
+                    )
         except SystemExit:
             pass
 
@@ -2093,12 +2620,43 @@ def main() -> None:
         # For stable runs (or decay runs with no ckpt_tokens info), use full budget.
         _ckpt_toks = _stage_ckpt_tokens.get(_rs, 0) if _rs != "stable" else 0
         _eff_tokens = max(0, _rt - _ckpt_toks)
+        # Remaining compute is always "work left x measured throughput", never an
+        # extrapolation of GPU-h burned so far.  Cumulative GPU-h includes every
+        # failed and cancelled restart, so extrapolating it charges wasted compute
+        # again for the work still to do — on runs with many restarts that
+        # overstated the remainder several-fold.
+        #
+        # Throughput comes from the LUMI logs themselves (_run_avg_tok, measured
+        # tok/s/GPU), preferring this run, then its stable sibling, then a
+        # gbsz-matched average, then the global mean.  GPU-h is independent of the
+        # GPU count here: per-GPU throughput already divides it out.
+        _cur_it = _latest_r.get("last_iter")
+        _tot_it = _latest_r.get("train_iters")
+        _gbsz_tokens = (_gbsz_rn or 0) * _seq_len
         if _status_r == "DONE":
             run_remaining[_rn] = (0.0, False)
-        elif _h_r is not None and _prog_r is not None and _prog_r > 0:
-            run_remaining[_rn] = (_h_r * (100.0 - _prog_r) / _prog_r, False)
+        elif (
+            _ref_tok
+            and _cur_it is not None
+            and _tot_it is not None
+            and _tot_it > _cur_it
+            and _gbsz_tokens > 0
+        ):
+            # Partially trained: bill only the iterations still outstanding.
+            # _ref_tok is per-GCD throughput from the logs, so tokens/(_ref_tok*3600)
+            # yields GCD-hours; divide by the billing divisor to match the billed
+            # GPU-hours burned (LUMI bills per 2-GCD module).
+            _rem_tokens = (_tot_it - _cur_it) * _gbsz_tokens
+            run_remaining[_rn] = (
+                _rem_tokens / (_ref_tok * 3600.0 * _MACHINE_BILLING_DIVISOR),
+                False,
+            )
         elif _ref_tok is not None and _eff_tokens > 0:
-            run_remaining[_rn] = (_eff_tokens / (_ref_tok * 3600.0), True)
+            # Not started: the full budget, less any stable branch-point already trained.
+            run_remaining[_rn] = (
+                _eff_tokens / (_ref_tok * 3600.0 * _MACHINE_BILLING_DIVISOR),
+                True,
+            )
         else:
             run_remaining[_rn] = (None, False)
     grand_remaining_total = sum(v for v, _ in run_remaining.values() if v is not None)
@@ -2333,6 +2891,7 @@ def main() -> None:
 
     # Summary counts
     from collections import Counter
+
     counts = Counter(r["status_word"] for r in rows)
     print()
     print("Status breakdown:")
@@ -2348,6 +2907,12 @@ def main() -> None:
             _csv_run_cluster_tag[_rn] = (
                 "MIX" if len(_cls) > 1 else (next(iter(_cls)) if _cls else "")
             )
+
+        # Per-cluster GPU-h column labels.  These were hardcoded to LEO/MN5
+        # while the values were selected by comparing against --machine, so on
+        # any third cluster the local hours landed in a column named "LEO".
+        _csv_local_gpu_h = f"GPU-h({args.machine})"
+        _csv_foreign_gpu_h = f"GPU-h({_foreign_cluster})"
 
         csv_fields = [
             "Run",
@@ -2382,8 +2947,8 @@ def main() -> None:
             "LowTP-GPU-h",
             "Overhead-time(h)",
             "Overhead-GPU-h",
-            "GPU-h(LEO)",
-            "GPU-h(MN5)",
+            _csv_local_gpu_h,
+            _csv_foreign_gpu_h,
             "GPU-h",
             "Overhead%",
             "Remaining-GPU-h",
@@ -2393,6 +2958,7 @@ def main() -> None:
             "Error",
         ]
         csv_path = Path(args.csv)
+        guard_write(csv_path)
         csv_path.parent.mkdir(parents=True, exist_ok=True)
         # Pre-compute which job_id is the latest for each run (remaining GPU-h
         # is a per-run estimate, so we only populate it on the latest-job row).
@@ -2479,10 +3045,10 @@ def main() -> None:
                         "Overhead-GPU-h": f"{r['overhead_gpu_h']:.4f}"
                         if r.get("overhead_gpu_h") is not None
                         else "",
-                        "GPU-h(LEO)": f"{r['gpu_hours']:.1f}"
+                        _csv_local_gpu_h: f"{r['gpu_hours']:.1f}"
                         if r.get("gpu_hours") is not None and r.get("cluster") == args.machine
                         else "",
-                        "GPU-h(MN5)": f"{r['gpu_hours']:.1f}"
+                        _csv_foreign_gpu_h: f"{r['gpu_hours']:.1f}"
                         if r.get("gpu_hours") is not None and r.get("cluster") == _foreign_cluster
                         else "",
                         "GPU-h": f"{r['gpu_hours']:.1f}" if r["gpu_hours"] is not None else "",
@@ -2509,7 +3075,14 @@ def main() -> None:
                 "gpu_hours": round(grand_gpu_total, 1),
             }
         )
-        gpu_csv_path = resolved_base / "gpu_hours.csv"
+        # Single-run configs: resolved_base may be a shared, non-writable parent dir.
+        # Fall back to the directory of --csv (or CWD) so we can always write.
+        if cfg.get("is_single_run"):
+            _csv_anchor = Path(args.csv).parent if args.csv else Path(".")
+            gpu_csv_path = _csv_anchor / "gpu_hours.csv"
+        else:
+            gpu_csv_path = _redirect_output(resolved_base, args) / "gpu_hours.csv"
+        guard_write(gpu_csv_path)
         gpu_csv_path.parent.mkdir(parents=True, exist_ok=True)
         with gpu_csv_path.open("w", newline="") as f:
             writer = csv.DictWriter(
@@ -2542,11 +3115,12 @@ def main() -> None:
                     spending_ts = _m.group(1)
 
         spending_str = spending_ts if spending_ts is not None else "N/A"
+        guard_write(md_path)
         md_path.parent.mkdir(parents=True, exist_ok=True)
         with md_path.open("w") as f:
             f.write(f"_Updated training progress: {now_str}_  \n")
             f.write(f"_Updated compute spending: {spending_str}_\n\n")
-            f.write(f"# Sweep run status\n\n")
+            f.write("# Sweep run status\n\n")
             f.write(f"**Config:** `{args.config}`  \n")
             f.write(f"**Results:** `{resolved_base}`\n\n")
 
@@ -2560,7 +3134,11 @@ def main() -> None:
                 f.write(
                     "_Ckpt-GB: measured `checkpoints/` size; Ckpt-GB-remaining: estimated storage still needed_\n\n"
                 )
-            _md_gpu_h_hdr = "GPU-h(LEO) | GPU-h(MN5) | GPU-h" if _any_cluster_split else "GPU-h"
+            _md_gpu_h_hdr = (
+                f"GPU-h({args.machine}) | GPU-h({_foreign_cluster}) | GPU-h"
+                if _any_cluster_split
+                else "GPU-h"
+            )
             _md_gpu_h_sep = " --- | --- | ---" if _any_cluster_split else " ---"
             f.write(
                 f"| T# | # | Experiment | Tier | Progress | Status | Clusters | TTFI-GPU-h | LowTP-GPU-h | Overhead-GPU-h | {_md_gpu_h_hdr} | Overhead% | Remaining-GPU-h | Ckpt-GB | Ckpt-GB-remaining |\n"
@@ -2774,6 +3352,7 @@ def main() -> None:
             # Status summary
             f.write("## Status breakdown\n\n")
             from collections import Counter
+
             counts = Counter(r["status_word"] for r in rows)
             for status, cnt in sorted(counts.items()):
                 f.write(f"- **{status}**: {cnt}\n")

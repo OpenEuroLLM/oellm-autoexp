@@ -137,7 +137,7 @@ slurm:
     time: "02:00:00"  # overridden per model size by the sweep
 
 sweep:
-  
+
   groups:
 
   - type: list

@@ -126,8 +126,8 @@ backend:
     lr_decay_iters: 114441
 
     micro_batch_size: 16
-    global_batch_size: 256 
-    lr: 4.e-3  
+    global_batch_size: 256
+    lr: 4.e-3
 
 slurm:
   sbatch:

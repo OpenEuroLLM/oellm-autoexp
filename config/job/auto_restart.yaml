@@ -37,18 +37,6 @@ log_events:
     inactivity_timeout_s: 300
     action:
       class_name: RestartAction
-      reason: "Inactive Log"
-  - name: bus_error
-    pattern: "Unexpected bus error encountered in worker."
-    pattern_type: substring
-    action:
-      class_name: RestartAction
-      reason: ""
-  - name: nan_loss
-    pattern: "message='found NaN in local forward loss calculation"
-    pattern_type: substring
-    action:
-      class_name: RestartAction
       reason: ""
   - name: connection_failure
     pattern: "Application launch failed: Communication connection failure"
