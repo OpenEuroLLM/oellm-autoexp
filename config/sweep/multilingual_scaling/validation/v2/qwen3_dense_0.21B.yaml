@@ -213,9 +213,8 @@ groups:
               path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.train_iters}).zfill(7)'}"
             - class_name: NotCondition
               condition:
-                class_name: LogPatternCondition
-                log_path: "\\${job.log_path_current}"
-                pattern: ".*validation loss.*on test set.*"
+                class_name: ShellCommandCondition
+                command: "grep -q 'validation loss.*on validation set' \\${job.base_output_dir}/logs/*.log 2>/dev/null"
 
       # DECAY PHASES: evaluate each decay training checkpoint.
       - type: list
@@ -231,9 +230,8 @@ groups:
                 path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.train_iters}).zfill(7)'}"
               - class_name: NotCondition
                 condition:
-                  class_name: LogPatternCondition
-                  log_path: "\\${job.log_path_current}"
-                  pattern: ".*validation loss.*on test set.*"
+                  class_name: ShellCommandCondition
+                  command: "grep -q 'validation loss.*on validation set' \\${job.base_output_dir}/logs/*.log 2>/dev/null"
           job.cancel_condition: null
         configs:
           - stage: decay6BT
@@ -270,9 +268,8 @@ groups:
                 path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.ckpt_step}).zfill(7)'}"
               - class_name: NotCondition
                 condition:
-                  class_name: LogPatternCondition
-                  log_path: "\\${job.log_path_current}"
-                  pattern: ".*validation loss.*on test set.*"
+                  class_name: ShellCommandCondition
+                  command: "grep -q 'validation loss.*on validation set' \\${job.base_output_dir}/logs/*.log 2>/dev/null"
           job.cancel_condition: null
         configs:
           - stage: branch6BT
@@ -309,9 +306,8 @@ groups:
                 path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.ckpt_step}).zfill(7)'}"
               - class_name: NotCondition
                 condition:
-                  class_name: LogPatternCondition
-                  log_path: "\\${job.log_path_current}"
-                  pattern: ".*validation loss.*on test set.*"
+                  class_name: ShellCommandCondition
+                  command: "grep -q 'validation loss.*on validation set' \\${job.base_output_dir}/logs/*.log 2>/dev/null"
           job.cancel_condition: null
         configs:
           - stage: end6BT
