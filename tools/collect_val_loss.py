@@ -23,7 +23,11 @@ VAL_LOSS_RE = re.compile(
 
 
 def find_latest_log(run_dir: Path) -> Path | None:
-    logs = [f for f in run_dir.iterdir() if f.suffix == ".log" and f.is_file()]
+    logs = [
+        f
+        for f in run_dir.rglob("*.log")
+        if f.is_file() and "wandb" not in f.relative_to(run_dir).parts
+    ]
     if not logs:
         return None
     return max(logs, key=lambda f: f.stat().st_mtime)
