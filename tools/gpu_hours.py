@@ -124,7 +124,7 @@ def query_sacct(job_ids):
         "sacct",
         "-j",
         ids_str,
-        "--format=JobID,State,Elapsed,AllocTRES%80",
+        "--format=JobID,State,Elapsed,Partition,AllocTRES%80",
         "--noheader",
         "--parsable2",
     ]
