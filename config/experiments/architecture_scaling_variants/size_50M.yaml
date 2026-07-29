@@ -1,0 +1,13 @@
+# @package _global_
+# 50M baseline architecture (reference_configs/50M.json): 47.6M params.
+defaults:
+  - swa_base
+  - _self_
+
+aux:
+  size: 50M
+  hidden: 384
+  ffn: 1536
+  layers: 12
+  heads: 6
+  beta2: 0.99

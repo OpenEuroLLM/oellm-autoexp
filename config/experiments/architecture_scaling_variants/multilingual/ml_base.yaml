@@ -1,0 +1,175 @@
+# @package _global_
+# Shared base for the MULTILINGUAL architecture-variant scaling rerun.
+#
+# Baseline: W&B openeurollm-project/dense_multilingual_scaling
+# (qwen3_dense_{0.1B,0.2B,0.4B,0.9B}_ne_lr*_gbsz*_{stable,decay}*BT), whose
+# authoritative configs live on the exp_diana branch
+# (config/backend/megatron/multilingual_scaling/, config/sweep/multilingual_scaling/).
+# Exported baseline data + best-combo analysis:
+#   dump/scaling_experiments_multilingual/{runs_summary.csv,configs.json,
+#     post_decay_losses_multilingual.csv,best_bs_lr_multilingual.csv,
+#     all_losses_multilingual.csv}
+#
+# Architecture change under test: sliding-window attention (window 1024,
+# causal) on >3/4 of layers — 5:1 (full attn every 6th layer) primary,
+# 7:1 (every 8th) secondary. Everything else matches the baseline recipe:
+# Qwen3-style blocks (kv_channels 128, no biases, qk-layernorm, tied
+# embeddings, GQA at 0.4B/0.9B), oellm 256k tokenizer (padded vocab 262272),
+# 1TT-option-4 multilingual mix, split 99,1,0 (metric = val loss on the 1%
+# slice, as in the baseline v1 runs), seed 1234, cyclic dataloader,
+# WSD to min_lr 0 with linear decay over the final 20%, warmup 2000.
+defaults:
+  - ../../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, data_multilingual_1tt_jupiter]
+  - /sweep: none
+  - override /job: auto_restart
+  - _self_
+
+aux:
+  experiment_group: "architecture_scaling_variants_multilingual"
+
+  # ---- architecture variant knobs ----
+  variant: swa5w1024        # 5:1 SWA:full -> window_attn_skip_freq 6
+  swa_window: "1024,0"
+  swa_full_attn_freq: 6     # full attention on every Nth layer (1-based)
+
+  # JUPITER staging location of the HF tokenizer dir (openeurollm/tokenizer-256k
+  # snapshot; JUPITER jobs run offline so the hub id cannot be resolved live).
+  tokenizer_path: /e/data1/datasets/products/openeurollm/tokenizers/tokenizer-256k
+
+  # ---- model size (set by size_*.yaml) ----
+  size: ???
+  hidden: ???
+  ffn: ???
+  layers: ???
+  heads: ???
+  qgroups: ???
+  gqa: ???
+  mbs: ???
+
+  # ---- per-ladder / per-stage ----
+  gbs: ???
+  tokens: ???
+  seq_len: 4096
+  decay_fraction: 0.2
+  start_iter: 0
+
+  # Branch iterations (0.8 x budget-iters) for every decay stage of this
+  # file's sweep. Assumes the stage group is sweep.groups.0 (ladder files);
+  # tuning files override with groups.1.
+  extra_steps: ${oc.mapeval:${oc.maptmpl:'int((((% + ${aux.seq_len}*${aux.gbs})-1)//(${aux.seq_len}*${aux.gbs}))*(1-${aux.decay_fraction}))',${oc.mapextractkey:aux.tokens,${sweep.groups.0.configs.1.configs}}}}
+
+backend:
+  megatron:
+    # ---- architecture (baseline qwen3_dense_*_ne + SWA) ----
+    hidden_size: ${aux.hidden}
+    ffn_hidden_size: ${aux.ffn}
+    num_layers: ${aux.layers}
+    num_attention_heads: ${aux.heads}
+    num_query_groups: ${aux.qgroups}
+    group_query_attention: ${aux.gqa}
+    kv_channels: 128
+    window_size: ${aux.swa_window}
+    window_attn_skip_freq: ${aux.swa_full_attn_freq}
+    add_bias_linear: false
+    qk_layernorm: true
+    attention_dropout: 0
+    hidden_dropout: 0
+    attention_softmax_in_fp32: false
+    normalization: RMSNorm
+    layernorm_epsilon: 1.0e-05
+    position_embedding_type: rope
+    rotary_base: 10000
+    rotary_percent: 1
+    swiglu: true
+    untie_embeddings_and_output_weights: false
+    init_method_std: 0.02
+    seq_length: ${aux.seq_len}
+    max_position_embeddings: ${aux.seq_len}
+    make_vocab_size_divisible_by: 128     # -> padded vocab 262272
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: ${aux.tokenizer_path}
+    trust_remote_code: true
+
+    # ---- precision / fusions (baseline) ----
+    bf16: true
+    accumulate_allreduce_grads_in_fp32: true
+    masked_softmax_fusion: false
+    gradient_accumulation_fusion: false
+    use_flash_attn: true
+
+    # ---- optimizer / WSD schedule (baseline: min_lr 0!) ----
+    lr: ???                       # set per ladder file / sweep
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 0.1
+    clip_grad: 1
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_warmup_iters: 2000
+    lr_warmup_init: 0
+    min_lr: 0.0
+
+    # ---- data / batching (identical token order as baseline per gbs) ----
+    global_batch_size: ${aux.gbs}
+    micro_batch_size: ${aux.mbs}
+    train_iters: "${oc.eval:'(${aux.tokens}+${aux.seq_len}*${aux.gbs}-1)//(${aux.seq_len}*${aux.gbs})'}"
+    dataloader_type: cyclic       # baseline uses cyclic
+    create_attention_mask_in_dataloader: false
+    seed: 1234
+    num_workers: 6
+    num_dataset_builder_threads: 6
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k"
+
+    # ---- parallelism: DP-only ----
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    expert_model_parallel_size: 1
+    expert_tensor_parallel_size: 1
+    sequence_parallel: false
+    use_distributed_optimizer: true
+    overlap_p2p_comm: false
+    distributed_timeout_minutes: 60   # first-run blend index build is slow
+
+    # ---- eval / logging / checkpointing (baseline formulas) ----
+    log_interval: 10
+    log_progress: true
+    log_throughput: true
+    eval_interval: "${oc.eval:'int(204800 // ${aux.gbs})'}"
+    eval_iters: 100
+    save: ${job.base_output_dir}
+    save_interval: "${oc.eval:'int(512000 // ${aux.gbs})'}"
+    save_extra_steps: ${aux.extra_steps}   # checkpoint exactly at branch points
+    ckpt_format: torch_dist
+    rerun_mode: disabled
+    wandb_project: dense_multilingual_scaling_swa
+    wandb_entity: openeurollm-project
+    wandb_exp_name: ${job.name}
+    wandb_save_dir: ${job.base_output_dir}/wandb
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    HF_HUB_OFFLINE: "1"
+    TORCHDYNAMO_DISABLE: "1"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+
+slurm:
+  sbatch:
+    time: "24:00:00"
+
+stage: stable
+
+job:
+  # Mirrors the baseline naming (qwen3_dense_0.2B_ne_lr0.001_gbsz128_decay30BT)
+  # with the SWA variant tag in place of "dense".
+  name: qwen3_${aux.variant}_${aux.size}_ne_lr${backend.megatron.lr}_gbsz${aux.gbs}_${stage}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"

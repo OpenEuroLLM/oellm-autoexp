@@ -1,0 +1,54 @@
+# @package _global_
+# 5:1 mLSTM — 0.1B low ladder: gbs 128, lr 2e-3, budgets 20/30/50BT.
+# Mirrors gdn5_0.1B_low (same stable/cooldown mechanics), with mLSTM in place
+# of GDN.
+defaults:
+  - size_0.1B
+  - mlstm_base
+  - _self_
+
+aux:
+  gbs: 128
+  tokens: 40_000_000_000
+
+backend:
+  megatron:
+    lr: 0.002
+
+slurm:
+  sbatch:
+    nodes: 4   # dp=16, mbs 4 -> GA 2
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # STABLE: constant lr up to the last branch point (0.8 x max budget)
+        - stage: stable
+          aux.tokens: 40_000_000_000
+          backend.megatron.train_iters: "\\${oc.eval:'max(\\${aux.extra_steps})'}"
+          backend.megatron.lr_wsd_decay_iters: 0
+
+        # COOLDOWNS: branch from stable at 0.8xD, linear decay over the final
+        # 20% of iters down to min_lr 0 (baseline WSD recipe).
+        - type: list
+          defaults:
+            aux.start_iter: "\\${oc.eval:'int(((\\${aux.tokens}+\\${aux.seq_len}*\\${aux.gbs}-1)//(\\${aux.seq_len}*\\${aux.gbs}))*(1-\\${aux.decay_fraction}))'}"
+            backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${aux.tokens}+\\${aux.seq_len}*\\${aux.gbs}-1)//(\\${aux.seq_len}*\\${aux.gbs}))*\\${aux.decay_fraction})'}"
+            backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/"
+            backend.megatron.ckpt_step: "\\${aux.start_iter}"
+            backend.megatron.override_opt_param_scheduler: true
+            stage: "decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT"
+            job.start_condition:
+              class_name: FileExistsCondition
+              path: "\\${sibling.stable.job.base_output_dir}/iter_\\${oc.eval:'str(\\${aux.start_iter}).zfill(7)'}"
+            job.cancel_condition:
+              class_name: LogPatternCondition
+              log_path: "\\${sibling.stable.job.log_path_current}"
+              pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+          configs:
+            - aux.tokens: 20_000_000_000
+            - aux.tokens: 30_000_000_000
+            - aux.tokens: 50_000_000_000

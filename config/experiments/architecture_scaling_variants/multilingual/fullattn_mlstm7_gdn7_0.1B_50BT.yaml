@@ -2,15 +2,16 @@
 # Initial multilingual architecture comparison at the smallest completed
 # baseline cell: full attention, mLSTM, GDN, and sliding-window attention.
 #
-# Every point trains the 0.1B Qwen3-style model from scratch for 50B tokens
-# with the exact low-ladder recipe: gbs=128, lr=2e-3, 2k warmup steps, and a
-# linear WSD cooldown over the final 20% (19,073 of 95,368 iterations). The
-# reference full-attention cell's end-of-decay 1%-split validation loss was
-# 2.757. This rerun trains with the full training mix (100/0/0) and performs
+# Every point trains the 0.1B Qwen3-style model from scratch for 6B tokens
+# with the completed 6B baseline setting: gbs=128, lr=5e-4, 2k warmup steps,
+# and a linear WSD cooldown over the final 20% (2,289 of 11,445 iterations).
+# The reference full-attention cell's end-of-decay 1%-split validation loss is
+# 2.979. This rerun trains with the full training mix (100/0/0) and performs
 # a common, separate `datamix4-val` evaluation after annealing. The full
-# attention control keeps the baseline's RoPE; the three hybrid variants use
-# NoPE (`position_embedding_type: none`) to test their native recurrence/local
-# attention without rotary positional embeddings.
+# attention control keeps the baseline's RoPE; mLSTM and GDN use NoPE
+# (`position_embedding_type: none`) to test their native recurrence without
+# rotary positional embeddings. SWA uses RoPE with theta=100k: Megatron applies
+# RoPE model-wide, so it cannot be limited to the local-attention layers.
 #
 # `linear_attention_freq: 8` and `window_attn_skip_freq: 8` each mean seven
 # respective hybrid layers followed by one full-attention layer. With the
@@ -26,7 +27,7 @@ aux:
   experiment_group: architecture_scaling_variants_multilingual_7to1_comparison
   variant: fullattn
   gbs: 128
-  tokens: 50_000_000_000
+  tokens: 6_000_000_000
   final_train_iters: "${oc.eval:'(${aux.tokens}+${aux.seq_len}*${aux.gbs}-1)//(${aux.seq_len}*${aux.gbs})'}"
   # This direct three-run comparison does not branch cooldowns from a stable
   # run, so disable the ladder-specific checkpoint list inherited from ml_base.
@@ -39,13 +40,13 @@ backend:
     aux:
       val_datamix_prefix: /e/data1/datasets/products/openeurollm/pretokenized/openeurollm-tokenized-256k-val
 
-    # Same direct WSD schedule as the completed 0.1B low baseline cell.
-    lr: 0.002
-    lr_decay_iters: ${backend.megatron.train_iters}
-    lr_wsd_decay_iters: 19073
+    # Same direct WSD schedule as the completed 0.1B / gbs128 baseline cell.
+    lr: 0.0005
+    lr_decay_iters: null
+    lr_wsd_decay_iters: 2289
 
-    # Full attention with RoPE is the root control. Hybrid sweep points below
-    # switch to NoPE together with their attention-selection values.
+    # Full attention with baseline RoPE is the root control. RNN hybrid points
+    # below switch to NoPE; SWA overrides only the RoPE base.
     window_size: null
     window_attn_skip_freq: null
     experimental_attention_variant: null
@@ -77,7 +78,7 @@ slurm:
   sbatch:
     nodes: 4  # dp=16, mbs=4 -> gradient accumulation 2 at gbs=128
 
-stage: final50BT
+stage: final6BT
 
 sweep:
   type: product
@@ -100,10 +101,11 @@ sweep:
           backend.megatron.experimental_attention_variant: gated_delta_net
           backend.megatron.linear_attention_freq: 8
 
-        # SWA is supported with NoPE by Megatron's GPT model; retain the same
-        # 7:1 local:full layer pattern as the RNN hybrids.
-        - aux.variant: swa7_nope
-          backend.megatron.position_embedding_type: none
+        # Megatron supplies RoPE globally, not only to SWA layers. Use a longer
+        # theta (100k) for the entire SWA 7:1 model as the available fallback.
+        - aux.variant: swa7_rope100k
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_base: 100000
           backend.megatron.window_size: "1024,0"
           backend.megatron.window_attn_skip_freq: 8
 
@@ -112,10 +114,10 @@ sweep:
     # its corresponding architecture, rather than for the entire sweep.
     - type: list
       configs:
-        - stage: final50BT
+        - stage: final6BT
           backend.megatron.split: '100,0,0'
 
-        - stage: eval50BT
+        - stage: eval6BT
           backend.megatron.skip_train: true
           backend.megatron.train_iters: 1
           backend.megatron.eval_interval: 1
@@ -125,7 +127,7 @@ sweep:
           backend.megatron.valid_data_path: ${aux.val_dataset.valid_data_path}
           backend.megatron.test_data_path: null
           backend.megatron.split: null
-          backend.megatron.load: "\\${sibling.final50BT.job.base_output_dir}/"
+          backend.megatron.load: "\\${sibling.final6BT.job.base_output_dir}/"
           backend.megatron.exit_on_missing_checkpoint: true
           backend.megatron.save_interval: 1
           backend.megatron.no_save_optim: true
@@ -137,8 +139,8 @@ sweep:
           slurm.sbatch.time: "4:00:00"
           job.start_condition:
             class_name: FileExistsCondition
-            path: "\\${sibling.final50BT.job.base_output_dir}/iter_\\${oc.eval:'str(\\${aux.final_train_iters}).zfill(7)'}"
+            path: "\\${sibling.final6BT.job.base_output_dir}/iter_\\${oc.eval:'str(\\${aux.final_train_iters}).zfill(7)'}"
           job.cancel_condition:
             class_name: LogPatternCondition
-            log_path: "\\${sibling.final50BT.job.log_path_current}"
+            log_path: "\\${sibling.final6BT.job.log_path_current}"
             pattern: "FATAL ERROR|OutOfMemoryError|Traceback"

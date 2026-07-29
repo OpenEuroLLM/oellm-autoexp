@@ -1,0 +1,13 @@
+# @package _global_
+# 600M baseline architecture (reference_configs/600M.json): 588.7M params.
+defaults:
+  - swa_base
+  - _self_
+
+aux:
+  size: 600M
+  hidden: 1280
+  ffn: 5120
+  layers: 20
+  heads: 20
+  beta2: 0.95

@@ -1,0 +1,17 @@
+# @package _global_
+# 0.2B_ne baseline architecture (exp_diana qwen3_dense_0.2B_ne.yaml):
+# N_ne ~186M, N_total/Porian ~0.39B (262k vocab). MHA. 22 layers.
+# SWA fractions: 5:1 (freq 6) -> 19/22 SWA; 7:1 (freq 8) -> 20/22 SWA.
+defaults:
+  - ml_base
+  - _self_
+
+aux:
+  size: 0.2B
+  hidden: 768
+  ffn: 2304
+  layers: 22
+  heads: 8
+  qgroups: 8
+  gqa: false
+  mbs: 4

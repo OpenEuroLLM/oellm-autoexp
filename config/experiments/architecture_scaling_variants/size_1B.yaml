@@ -1,0 +1,13 @@
+# @package _global_
+# 1B baseline architecture (reference_configs/1B.json): 983.2M params.
+defaults:
+  - swa_base
+  - _self_
+
+aux:
+  size: 1B
+  hidden: 1536
+  ffn: 6144
+  layers: 24
+  heads: 24
+  beta2: 0.95
