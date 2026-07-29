@@ -1,5 +1,20 @@
 class_name: Container
-image: ${oc.env:CONTAINER_CACHE_DIR}/pytorch-25.10-transformers-py3.sif
+# NGC 26.06 base: torch 2.13.0a0 / CUDA 13.3 / TransformerEngine 2.16.0.
+#
+# Of the three 26.06 variants this is the -transformers-5 one (transformers
+# 5.14.1), chosen because it is the only one that also ships sentencepiece.
+# The -transformers4-57-1 variant does not, so SentencePieceTokenizer -- which
+# the qwen3_125M configs use -- raises ModuleNotFoundError there and has to be
+# patched around by mounting an external venv onto PYTHONPATH.
+#
+# transformers 5.x is safe here: nothing in the container-side path pins 4.x
+# (requirements_megatron_frozen.txt is informational and not enforced at
+# runtime), and megatron.core, megatron.training and
+# megatron.core.extensions.transformer_engine were all verified to import and
+# tokenize correctly under 5.14.1. Repo code that touches transformers
+# internals (postprocess/) runs on the host venv, not in this container.
+#
+image: ${oc.env:CONTAINER_CACHE_DIR, /projects/0/prjs2013/containers/megatron-torch-2.13-nvcr.26-06-transformers-5.sif}
 runtime: singularity
 bind:
   [
@@ -11,4 +26,9 @@ pwd: ${oc.env:PWD}
 env:
   PYTHONPATH: "."
   MACHINE_NAME: "SNELLIUS"
+  # NOTE: the Snellius launcher_cmd injects ${backend.env}, not container.env,
+  # so runtime vars for this machine belong in config/slurm/snellius.yaml.
+  # LD_LIBRARY_PATH is deliberately left unset everywhere: it would be passed
+  # as `--env K=V`, replacing the value baked into the image, which already
+  # puts /usr/local/cuda/compat/lib ahead of the injected driver libs.
 python: "python"

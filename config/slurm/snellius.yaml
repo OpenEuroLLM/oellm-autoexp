@@ -7,6 +7,17 @@ env:
   MACHINE_NAME: SNELLIUS
   HF_HOME: /scratch-shared/${oc.env:USER}/hf
   WANDB_MODE: online
+  # Megatron requires this for deterministic ordering of overlapped
+  # communication and compute streams.
+  CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  # Snellius nodes expose no NVLink SHARP multicast, so skip Userbuffers
+  # multicast setup (it otherwise fails during TE/UB initialisation).
+  UB_SKIPMC: "1"
+  # Point Triton at the driver stubs that `--nv` injects; Apptainer forwards the
+  # host environment into the container, so exporting it here is enough.
+  TRITON_LIBCUDA_PATH: "/.singularity.d/libs"
+  # Read WANDB_API_KEY from the submitting shell; falls back to "" if unset.
+  WANDB_API_KEY: ${oc.env:WANDB_API_KEY,""}
   NUM_NODES: "$SLURM_JOB_NUM_NODES"
   GPUS_PER_NODE: "1"
   NUM_GPUS_PER_NODE: "1"
