@@ -43,6 +43,11 @@ batch size, optimizer, and WSD schedule are held fixed.
   its Megatron submodule is at `055f7defc`, which lacks the mLSTM/GDN
   arguments. The local validated source is `bb72650a8`; advance the remote
   runtime deliberately before submission rather than mixing schemas and code.
+- 2026-07-29: Correction: the preceding remote check used the obsolete
+  `oellm-autoexp` checkout. `sync_to_jupiter.sh` targets
+  `~/work/Projects/oellm-autoexp-hybrid`, which correctly matches
+  `hybrid_exp` at `fa8143d` with Megatron `bb72650a8`. A dry-run there passed,
+  rendered all six jobs, and confirmed that the staged validation data exists.
 
 ## Results
 
