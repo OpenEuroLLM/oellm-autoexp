@@ -1,0 +1,74 @@
+INFO:    User not listed in /etc/subuid, trying root-mapped namespace
+INFO:    Could not start root-mapped namespace
+INFO:    The %post section will be run under the fakeroot command
+INFO:    Using --fix-perms because building from a definition file
+INFO:     without either root user or unprivileged user namespaces
+WARNING: 'nodev' mount option set on /e/project1, it could be a source of failure during build process
+INFO:    Starting build...
+INFO:    Verifying bootstrap image /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-linattn_aarch64_202607290923.sif
+INFO:    Extracting local image...
+INFO:    Running post scriptlet
++ test -f /etc/shinit_v2
++ source /etc/shinit_v2
++++ sed -n 's/^NVRM.*Kernel Module\( for [a-z0-9_]*\| \) *\([^() ]*\).*$/\2/p' /proc/driver/nvidia/version
++++ sed 's/^$/unknown/'
+++ NV_DRIVER_VERS=595.71.05
+++ export _CUDA_COMPAT_PATH=/usr/local/cuda/compat
+++ _CUDA_COMPAT_PATH=/usr/local/cuda/compat
++++ hostname
+++ _CUDA_COMPAT_CHECKFILE=/usr/local/cuda/compat/.595.71.05.jpbl-s02-03.checked
+++ _CUDA_COMPAT_REALLIB=/usr/local/cuda/compat/lib.real
+++ _CUDA_COMPAT_SYMLINK=/usr/local/cuda/compat/lib
++++ nvidia-smi -q -d COMPUTE
++++ grep '^CUDA Version'
++++ sed 's/^.*: //'
+++ _RUNNING_CUDA_VERSION=
++++ echo 13.1.1.006
++++ cut -d . -f 1-2
+++ _CONTAINER_CUDA_VERSION=13.1
+++ '[' -e /dev/nvgpu -a '(' ' ' = 13.1 ')' ']'
+++ '[' '(' '(' -n 595.71.05 -a -e /dev/nvidiactl ')' -o -e /dev/nvgpu ')' -a '!' -e /usr/local/cuda/compat/.595.71.05.jpbl-s02-03.checked ']'
++++ cat /sys/module/mlx5_core/version
+++ _DETECTED_MOFED=25.10-2.4.1
+++ '[' -n 25.10-2.4.1 ']'
++++ uname -r
+++ '[' 25.10-2.4.1 '!=' 5.14.0-687.22.1.el9_8.0.1.aarch64+64k ']'
+++ dpkg --compare-versions 25.10-2.4.1 lt 4.9
+++ '[' -d /sys/bus/pci/drivers/efa ']'
+++ unset _DETECTED_MOFED
+++ unset _CUDA_COMPAT_CHECKFILE
+++ unset _CUDA_COMPAT_REALLIB
+++ unset _CUDA_COMPAT_SYMLINK
+++ unset _RUNNING_CUDA_VERSION
+++ unset _CONTAINER_CUDA_VERSION
++ '[' -z '' ']'
++ return
++ python3 -m pip install --no-cache-dir --upgrade --force-reinstall --no-deps nvidia-resiliency-ext==0.6.0
+Collecting nvidia-resiliency-ext==0.6.0
+  Downloading nvidia_resiliency_ext-0.6.0-cp312-cp312-manylinux_2_39_aarch64.whl.metadata (6.0 kB)
+Downloading nvidia_resiliency_ext-0.6.0-cp312-cp312-manylinux_2_39_aarch64.whl (770 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 770.6/770.6 kB 23.3 MB/s  0:00:00
+Installing collected packages: nvidia-resiliency-ext
+  Attempting uninstall: nvidia-resiliency-ext
+    Found existing installation: nvidia-resiliency-ext 0.5.0
+    Uninstalling nvidia-resiliency-ext-0.5.0:
+      Successfully uninstalled nvidia-resiliency-ext-0.5.0
+Successfully installed nvidia-resiliency-ext-0.6.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
++ python3 -
+nvidia-resiliency-ext 0.6.0
+module version 0.6.0
+WARNING: Help message already exists and force option is false, not overwriting
+INFO:    Adding labels
+WARNING: Label: Author already exists and force option is false, not overwriting
+WARNING: Label: Version already exists and force option is false, not overwriting
+WARNING: Label: Base already exists and force option is false, not overwriting
+WARNING: Label: Description already exists and force option is false, not overwriting
+INFO:    Adding testscript
+INFO:    Running testscript
+nvidia-resiliency-ext 0.6.0
+INFO:    Creating SIF file...
+INFO:    Build complete: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-linattn-nvrx_aarch64_202607291158.sif
+nvidia-resiliency-ext 0.6.0
+nvidia-resiliency-ext 0.6.0
+module version 0.6.0
