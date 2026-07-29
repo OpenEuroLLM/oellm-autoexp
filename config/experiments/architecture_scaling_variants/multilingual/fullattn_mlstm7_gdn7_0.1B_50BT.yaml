@@ -1,0 +1,82 @@
+# @package _global_
+# Minimal 1:1 multilingual comparison at the smallest completed baseline cell.
+#
+# Every point trains the 0.1B Qwen3-style model from scratch for 50B tokens
+# with the exact low-ladder recipe: gbs=128, lr=2e-3, 2k warmup steps, and a
+# linear WSD cooldown over the final 20% (19,073 of 95,368 iterations). The
+# reference full-attention cell's end-of-decay 1%-split validation loss is
+# 2.757. The only intended difference between sweep points is attention type.
+#
+# `linear_attention_freq: 8` means seven linear-attention layers followed by
+# one full-attention layer. With the 16-layer 0.1B model this is 14 hybrid
+# layers and two full-attention layers.
+defaults:
+  - size_0.1B
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_7to1_comparison
+  variant: fullattn
+  gbs: 128
+  tokens: 50_000_000_000
+  # This direct three-run comparison does not branch cooldowns from a stable
+  # run, so disable the ladder-specific checkpoint list inherited from ml_base.
+  extra_steps: []
+
+backend:
+  megatron:
+    # Same direct WSD schedule as the completed 0.1B low baseline cell.
+    lr: 0.002
+    lr_decay_iters: ${backend.megatron.train_iters}
+    lr_wsd_decay_iters: 19073
+
+    # Full attention is the root default. The two hybrid sweep points below
+    # replace only these attention-selection values.
+    window_size: null
+    window_attn_skip_freq: null
+    experimental_attention_variant: null
+    linear_attention_freq: null
+
+    # Shared hybrid geometry. These have no effect in the full-attention point.
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 128
+    linear_value_head_dim: 128
+    linear_num_key_heads: ${aux.qgroups}
+    linear_num_value_heads: ${aux.heads}
+    mlstm_chunk_size: 128
+
+    wandb_project: dense_multilingual_scaling_7to1_comparison
+
+# Use the already validated linear-attention image and make the host CUDA
+# driver discoverable by Triton's runtime launcher for both hybrid variants.
+container:
+  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-linattn-nvrx_aarch64_202607291158.sif
+  bind:
+    - /e
+    - /dev/shm
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+slurm:
+  sbatch:
+    nodes: 4  # dp=16, mbs=4 -> gradient accumulation 2 at gbs=128
+
+stage: final50BT
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.variant: fullattn
+
+        - aux.variant: mlstm7
+          backend.megatron.experimental_attention_variant: mlstm
+          backend.megatron.linear_attention_freq: 8
+
+        - aux.variant: gdn7
+          backend.megatron.experimental_attention_variant: gated_delta_net
+          backend.megatron.linear_attention_freq: 8
