@@ -20,6 +20,10 @@ aux:
   mlstm_chunk_size: 128
 
 backend:
+  env:
+    # Expose the JUPITER host driver library to Triton's runtime launcher.
+    # See the matching explicit binds below.
+    TRITON_LIBCUDA_PATH: /opt/nvidia/lib
   megatron:
     # ---- disable the SWA variant knobs from ml_base ----
     window_size: null
@@ -39,3 +43,10 @@ backend:
 container:
   # Linear-attention image with NVRx 0.6.0, flash-linear-attention, and mLSTM kernels.
   image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-linattn-nvrx_aarch64_202607291158.sif
+  bind:
+    - /e
+    - /dev/shm
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro

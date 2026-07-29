@@ -45,7 +45,7 @@ add_bias_linear: false
 rotary_percent: 1.0
 rotary_base: 1000000
 normalization: RMSNorm
-norm_epsilon: 1e-6
+layernorm_epsilon: 1e-6
 position_embedding_type: rope
 use_rotary_position_embeddings: true
 attention_dropout: 0.0

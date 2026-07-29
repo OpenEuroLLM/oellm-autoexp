@@ -233,3 +233,5 @@ slurm_juwels.sh
 logs/
 output/
 dump/
+
+.local_pydeps/

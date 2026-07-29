@@ -48,8 +48,6 @@ backend:
     head_lr_mult: 1.0
     hidden_dropout: 0
     hidden_size: 576
-    hybrid_attention_ratio: 0.0
-    hybrid_mlp_ratio: 0.0
     kv_channels: 64
     log_interval: 10
     log_progress: true
@@ -58,7 +56,12 @@ backend:
     lr_decay_style: WSD
     lr_warmup_init: 0
     lr_warmup_iters: 2000
-    lr_wsd_decay_iters: 114441
+    # Decay window = final 20% of this job's own budget (matches the original
+    # LUMI dense_scaling recipe, e.g. 50M_..._decay11445: wsd 2289 = 0.2*11445).
+    # Overridden to 0 for the stable stage. Was previously hard-coded to 114441
+    # (=0.2 x 300B iters), which made every smaller cooldown resume far below
+    # peak lr instead of at peak.
+    lr_wsd_decay_iters: "${oc.eval:'int(((${aux.tokens}+${aux.seq_len}*${aux.gbs}-1)//(${aux.seq_len}*${aux.gbs}))*${aux.decay_fraction})'}"
     lr_wsd_decay_style: linear
     mask_factor: 1
     max_position_embeddings: ${aux.seq_len}
@@ -156,7 +159,10 @@ sweep:
 
             # Checkpoint loading configuration
             backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/"
-            backend.megatron.ckpt_step: "${aux.start_iter}"
+            # NOTE: must be escaped — unescaped this resolved at compose time to
+            # the top-level aux.start_iter (=0), so decay jobs loaded the latest
+            # stable checkpoint instead of the branch checkpoint.
+            backend.megatron.ckpt_step: "\\${aux.start_iter}"
             backend.megatron.override_opt_param_scheduler: true
 
             stage: "decay_iter\\${aux.start_iter}"

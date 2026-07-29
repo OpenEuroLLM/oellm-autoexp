@@ -36,7 +36,7 @@ max_position_embeddings: 4096
 micro_batch_size: 16
 min_lr: 1e-05
 # moe_ffn_hidden_size: 1536
-norm_epsilon: 1e-05
+layernorm_epsilon: 1e-05
 normalization: RMSNorm
 num_attention_heads: 6
 num_dataset_builder_threads: 6
