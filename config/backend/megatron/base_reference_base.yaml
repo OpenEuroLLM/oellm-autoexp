@@ -17,12 +17,11 @@ ckpt_format: torch_dist
 dataloader_type: cyclic
 gradient_accumulation_fusion: false
 hidden_dropout: 0.0
-legacy_tokenizer: true
 log_interval: 100
 log_progress: true
 log_throughput: true
 lr_decay_style: WSD
-norm_epsilon: 1e-05
+layernorm_epsilon: 1e-05
 normalization: RMSNorm
 num_dataset_builder_threads: 6
 num_workers: 7
