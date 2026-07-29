@@ -22,6 +22,7 @@ moe_aux_loss_coeff: 1.e-2
 moe_token_dispatcher_type: "allgather"
 moe_router_dtype: "fp32"
 moe_z_loss_coeff: 1.e-3
+moe_per_layer_logging: True
 
 # Attention
 num_attention_heads: 16
