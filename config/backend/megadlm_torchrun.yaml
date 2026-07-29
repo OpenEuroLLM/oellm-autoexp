@@ -1,0 +1,31 @@
+defaults:
+  - megatron: base
+  - _self_
+
+class_name: MegatronBackend
+
+python_cmd: "python"  # not used anyways
+full_schema_validation: false
+launcher_script: "./submodules/MegaDLMs/pretrain_difflm.py"
+dist_cmd: "torchrun ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n  %',' %',\
+ ${oc.cliargs:${.torchrun_args}}}}\\\n   ${.launcher_script}"
+torchrun_args:
+  nproc_per_node: ${slurm.sbatch.gpus_per_node}
+  nnodes: ${slurm.sbatch.nodes}
+  max_restarts: 0
+  tee: 3
+  rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
+  rdzv_backend: "static"
+  node_rank: "$SLURM_NODEID"
+  master_addr: "$MASTER_ADDR"
+  master_port: "$MASTER_PORT"
+env:
+  PYTHONPATH: ".:submodules/MegaDLMs"
+  RUN_DIR: ${.PROJECT_DIR}/submodules/MegaDLMs
+  PROJECT_DIR: ${oc.env:PROJECT_DIR,.}
+  HF_HOME: ${oc.env:HF_HOME,"/scratch-shared/${oc.env:USER}/hf"}
+
+difflm_args: ""
+
+# map megatron command to
+full_cmd: "${.dist_cmd} ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n   %',' %',${oc.argsmegatron:${backend.megatron}}}} ${.difflm_args}"
