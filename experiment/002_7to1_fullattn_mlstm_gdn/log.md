@@ -37,6 +37,12 @@ batch size, optimizer, and WSD schedule are held fixed.
   its matching `final50BT` checkpoint, loads it without optimizer/RNG state,
   and evaluates 204,800 samples from `datamix4-val` with W&B offline; its
   metric will be collected from the Megatron job log.
+- 2026-07-29: Local dry-run passed: six jobs, three dependency edges, and
+  each eval resolves to its matching `iter_0095368` checkpoint with 155
+  weighted validation prefixes. JUPITER dry-run is blocked before planning:
+  its Megatron submodule is at `055f7defc`, which lacks the mLSTM/GDN
+  arguments. The local validated source is `bb72650a8`; advance the remote
+  runtime deliberately before submission rather than mixing schemas and code.
 
 ## Results
 
