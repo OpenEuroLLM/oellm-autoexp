@@ -12,7 +12,7 @@ defaults:
   - _self_
 
 job:
-  base_output_dir: "/leonardo_work/OELLM_prod2026/users/donutu00/multilingual_scaling/0.9B_ne/validation/${job.name}"
+  base_output_dir: "/leonardo_work/OELLM_prod2026/experiments/multilingual_scaling/0.9B_ne/validation_leo/${job.name}"
 
 backend:
   megatron:
@@ -21,4 +21,4 @@ backend:
     data_args_path: /leonardo_work/OELLM_prod2026/users/donutu00/datamix-tools/output/1TT-option-4-val-fixed_no_high_actual_merged.sh
     tokenizer_model: /leonardo_work/OELLM_prod2026/users/shaldar0/tokenizers/openeurollm-tokenizer-256k
     data_cache_path: /leonardo_work/OELLM_prod2026/users/donutu00/cache/MEGATRON_262k_val # Adjust it to your own directory
-    load: "/leonardo_work/OELLM_prod2026/multilingual_scaling/0.9B_ne/training/${job.name}/checkpoints"
+    load: "/leonardo_work/OELLM_prod2026/experiments/multilingual_scaling/0.9B_ne/training/${job.name}/checkpoints"
