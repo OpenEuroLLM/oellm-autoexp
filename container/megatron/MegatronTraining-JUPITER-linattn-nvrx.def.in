@@ -1,0 +1,42 @@
+Bootstrap: localimage
+From: ${BASE_IMAGE}
+
+%labels
+    Author OpenSci
+    Version 0.1.0
+    Base ${BASE_IMAGE}
+    Description Derived JUPITER linear-attention image with nvidia-resiliency-ext 0.6.0
+
+%post
+# Keep the current hybrid image intact and replace only the package Megatron
+# checks during import. The explicit pin matches Megatron-LM's pyproject.toml.
+python3 -m pip install --no-cache-dir --upgrade --force-reinstall --no-deps \
+    "nvidia-resiliency-ext==0.6.0"
+
+python3 - <<'PY'
+import importlib.metadata
+import nvidia_resiliency_ext
+
+version = importlib.metadata.version("nvidia-resiliency-ext")
+assert version == "0.6.0", version
+print("nvidia-resiliency-ext", version)
+print("module version", getattr(nvidia_resiliency_ext, "__version__", None))
+PY
+
+%test
+    python3 - <<'PY'
+import importlib.metadata
+import nvidia_resiliency_ext
+
+assert importlib.metadata.version("nvidia-resiliency-ext") == "0.6.0"
+print("nvidia-resiliency-ext", getattr(nvidia_resiliency_ext, "__version__", None))
+PY
+
+%help
+    Reproducible derived update for the JUPITER linear-attention image.
+
+    BASE_IMAGE="$CONTAINER_CACHE_DIR/MegatronTraining-JUPITER-linattn_aarch64_202607290923.sif" \
+      bash container/build_container.sh \
+        --definition MegatronTraining-JUPITER-linattn-nvrx \
+        --container-cmd apptainer \
+        --append-date
