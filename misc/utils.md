@@ -5,7 +5,6 @@
 - calculate total requested nodes: `squeue --me --noheader --format="%D" | awk '{total += $1} END {print total}'`
 - cancel slurm jobs: `scancel -u "$USER"`
 
-
 ## Training run:
 
 0.1B:
@@ -19,10 +18,17 @@
 0.1B_ne:
 `uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/validation/lumi/qwen3_dense_0.21B_sweep_v2 --submit-and-exit`
 
+## Monitor:
+0.1B:
+`python scripts/monitor_autoexp.py --session-dir ./monitor_state/1785279162`
+
 ## Collect validation loss:
 
 0.1B:
+LUMI:
 `uv run --python 3.12 python tools/collect_val_loss.py /scratch/project_465002530/multilingual_scaling/0.1B_ne/validation --output-dir /scratch/project_465002530/users/dianaonutu/dense_multilingual_models_scaling_results/results/val_loss`
+LEO:
+`python tools/collect_val_loss.py /leonardo_work/OELLM_prod2026/experiments/multilingual_scaling/0.1B_ne/validation_leo --output-dir /leonardo_work/OELLM_prod2026/users/donutu00/dense_multilingual_models_scaling_results/results/val_loss`
 
 0.2B:
 `uv run --python 3.12 python tools/collect_val_loss.py /scratch/project_465002530/multilingual_scaling/0.2B_ne/validation --output-dir /scratch/project_465002530/users/dianaonutu/dense_multilingual_models_scaling_results/results/val_loss`
