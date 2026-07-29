@@ -15,11 +15,14 @@ batch size, optimizer, and WSD schedule are held fixed.
 
 - Config: `config/experiments/architecture_scaling_variants/multilingual/fullattn_mlstm7_gdn7_0.1B_50BT.yaml`
 - Models: 0.1B Qwen3-style, 16 layers, 512 hidden size, 8 attention heads.
-- Shared recipe: 50B tokens, global batch 128, learning rate 2e-3, 2,000-step
-  warmup, 20% linear WSD cooldown, seed 1234, multilingual 1TT-option-4 mix,
-  and 99/1/0 split.
-- Baseline reference: full-attention end-of-decay validation loss 2.757 for
-  the same low-ladder 50B cell.
+- Shared training recipe: 50B tokens, global batch 128, learning rate 2e-3,
+  2,000-step warmup, 20% linear WSD cooldown, seed 1234, multilingual
+  1TT-option-4 mix, and 100/0/0 split.
+- External evaluation: after each final checkpoint, an eval-only one-node job
+  evaluates 204,800 samples from the separately staged `datamix4-val` blend.
+- Historical reference: the published full-attention 2.757 loss was on the
+  baseline's 1% train-mix slice, so it is retained as context only and is not
+  a strict numerical target for this updated protocol.
 
 ## Run Log
 
@@ -29,6 +32,11 @@ batch size, optimizer, and WSD schedule are held fixed.
   95,368 train iterations and 19,073 WSD decay iterations; all share gbs 128,
   mbs 4, split 99/1/0, and the same multilingual data-path blend. Only mLSTM
   and GDN render an experimental-attention flag, each with frequency 8.
+- 2026-07-29: Updated the protocol to train with split 100/0/0 and added an
+  `eval50BT` post-annealing stage per architecture. Each eval job waits for
+  its matching `final50BT` checkpoint, loads it without optimizer/RNG state,
+  and evaluates 204,800 samples from `datamix4-val` with W&B offline; its
+  metric will be collected from the Megatron job log.
 
 ## Results
 
@@ -37,7 +45,9 @@ batch size, optimizer, and WSD schedule are held fixed.
 ## Interpretation
 
 The sweep deliberately avoids branch-and-cooldown reuse: each variant receives
-one complete 50B-token WSD trajectory, making the final loss comparison 1:1.
+one complete 50B-token WSD trajectory. The external validation stage gives all
+three final models the same held-out metric, while avoiding validation work or
+data-order changes during training.
 
 ## Related
 

@@ -4,14 +4,19 @@
 # Every point trains the 0.1B Qwen3-style model from scratch for 50B tokens
 # with the exact low-ladder recipe: gbs=128, lr=2e-3, 2k warmup steps, and a
 # linear WSD cooldown over the final 20% (19,073 of 95,368 iterations). The
-# reference full-attention cell's end-of-decay 1%-split validation loss is
-# 2.757. The only intended difference between sweep points is attention type.
+# reference full-attention cell's end-of-decay 1%-split validation loss was
+# 2.757. This rerun trains with the full training mix (100/0/0) and performs
+# a common, separate `datamix4-val` evaluation after annealing. The only
+# intended model difference between sweep points is attention type.
 #
 # `linear_attention_freq: 8` means seven linear-attention layers followed by
 # one full-attention layer. With the 16-layer 0.1B model this is 14 hybrid
 # layers and two full-attention layers.
 defaults:
   - size_0.1B
+  # Import the validation blend under aux so it is available to the final
+  # eval-only stage without applying valid_data_path to the training jobs.
+  - /backend/megatron/data_multilingual_1tt_val_jupiter@aux.val_dataset
   - _self_
 
 aux:
@@ -19,12 +24,18 @@ aux:
   variant: fullattn
   gbs: 128
   tokens: 50_000_000_000
+  final_train_iters: "${oc.eval:'(${aux.tokens}+${aux.seq_len}*${aux.gbs}-1)//(${aux.seq_len}*${aux.gbs})'}"
   # This direct three-run comparison does not branch cooldowns from a stable
   # run, so disable the ladder-specific checkpoint list inherited from ml_base.
   extra_steps: []
 
 backend:
   megatron:
+    # The separately imported validation blend expands its paths through this
+    # prefix; it is inert for the training stage.
+    aux:
+      val_datamix_prefix: /e/data1/datasets/products/openeurollm/pretokenized/openeurollm-tokenized-256k-val
+
     # Same direct WSD schedule as the completed 0.1B low baseline cell.
     lr: 0.002
     lr_decay_iters: ${backend.megatron.train_iters}
@@ -66,7 +77,7 @@ slurm:
 stage: final50BT
 
 sweep:
-  type: list
+  type: product
   store_sweep_json: true
   groups:
     - type: list
@@ -80,3 +91,39 @@ sweep:
         - aux.variant: gdn7
           backend.megatron.experimental_attention_variant: gated_delta_net
           backend.megatron.linear_attention_freq: 8
+
+    # Train once, then run the common external validation blend from the final
+    # checkpoint. Keeping this as a stage sibling makes each eval wait only for
+    # its corresponding architecture, rather than for the entire sweep.
+    - type: list
+      configs:
+        - stage: final50BT
+          backend.megatron.split: '100,0,0'
+
+        - stage: eval50BT
+          backend.megatron.skip_train: true
+          backend.megatron.train_iters: 1
+          backend.megatron.eval_interval: 1
+          backend.megatron.eval_iters: "${oc.eval:'int(204800 // ${aux.gbs})'}"
+          backend.megatron.data_path: []
+          backend.megatron.train_data_path: null
+          backend.megatron.valid_data_path: ${aux.val_dataset.valid_data_path}
+          backend.megatron.test_data_path: null
+          backend.megatron.split: null
+          backend.megatron.load: "\\${sibling.final50BT.job.base_output_dir}/"
+          backend.megatron.exit_on_missing_checkpoint: true
+          backend.megatron.save_interval: 1
+          backend.megatron.no_save_optim: true
+          backend.megatron.no_save_rng: true
+          backend.megatron.no_load_optim: true
+          backend.megatron.no_load_rng: true
+          container.env.WANDB_MODE: offline
+          slurm.sbatch.nodes: 1
+          slurm.sbatch.time: "4:00:00"
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.final50BT.job.base_output_dir}/iter_\\${oc.eval:'str(\\${aux.final_train_iters}).zfill(7)'}"
+          job.cancel_condition:
+            class_name: LogPatternCondition
+            log_path: "\\${sibling.final50BT.job.log_path_current}"
+            pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
