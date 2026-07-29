@@ -1,5 +1,5 @@
 # @package _global_
-# Weak-scaling sweep for dense_9B_baby: TP=1, DP = 4·nodes.
+# Node-scaling sweep (fixed model; GBS grows to the optimal-batch cap, fixed above) for dense_9B_baby: TP=1, DP = 4·nodes.
 # GBS = 16·nodes keeps 4 microbatches per DP rank at mbs=1 → fixed per-GPU work.
 # Flat tok/s/GPU = perfect weak scaling. Production baby-9B target: 256 nodes.
 # Baseline (1 node): 8,383 tok/s/GPU, 390.1 TFLOPS (job 1052011).
@@ -14,7 +14,7 @@ backend:
     global_batch_size: ${oc.eval:16*${slurm.sbatch.nodes}}  # mbs1 × DP(4·nodes) × 4 µbatches
 
 job:
-  name: jspeed_dense_9B_baby_ws_n${slurm.sbatch.nodes}
+  name: jspeed_dense_9B_baby_scaling_n${slurm.sbatch.nodes}
 
 sweep:
   type: list

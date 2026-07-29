@@ -1,0 +1,20 @@
+# @package _global_
+# Fill the PP1 curve: n16→n256 under the restructured scaling config layout
+# (PP1 body defaults; n256 at mbs2). n4/n8 PP1 already measured
+# (7,547 / 7,173, jobs 1056078/1056046); n2 stays PP2 (7,651).
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - slurm.sbatch.nodes: 16
+        - slurm.sbatch.nodes: 32
+        - slurm.sbatch.nodes: 64
+        - slurm.sbatch.nodes: 128
+        - slurm.sbatch.nodes: 256
+          backend.megatron.micro_batch_size: 2

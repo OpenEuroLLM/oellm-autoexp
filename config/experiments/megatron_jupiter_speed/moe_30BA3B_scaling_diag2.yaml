@@ -1,0 +1,29 @@
+# @package _global_
+# Round 2: combine the two winning mitigations from moe_30BA3B_ws_diag
+# (baselines n4 6,509 / n8 6,131; ga8 → 7,147/6,954, overlap → 6,850/6,569,
+# novpp → 5,612/5,404 i.e. VPP strongly positive at scale).
+# overlap hides the DP reduce behind backward; ga8 halves its per-step share —
+# stacked they should approach the n2 reference (7,376) = flat weak scaling.
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+aux:
+  tag: "ga8_overlap"
+
+backend:
+  megatron:
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    global_batch_size: ${oc.eval:64*${slurm.sbatch.nodes}}  # GA=8
+
+job:
+  name: jspeed_moe_30BA3B_wsdiag_${aux.tag}_n${slurm.sbatch.nodes}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      params:
+        slurm.sbatch.nodes: [4, 8]

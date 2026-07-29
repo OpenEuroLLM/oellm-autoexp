@@ -1,0 +1,30 @@
+# @package _global_
+# Final attempt at n128/n256 with PP2: NCCL comm-init via the c10d TCPStore
+# times out for DP groups ≥256 ranks under the default 10-min pg timeout
+# (n128-PP2 DP=256 / n256-PP2 DP=512 / all PP1 n≥64 failed there; DP≤128
+# always initialized). Give init room: distributed_timeout_minutes 45,
+# 75-min wall. If this still fails, the PP4 points (4,895/4,641 — DP≤128 by
+# construction) stand as the n≥128 result.
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+backend:
+  megatron:
+    overlap_grad_reduce: false
+    overlap_param_gather: false
+    distributed_timeout_minutes: 45
+
+slurm:
+  sbatch:
+    time: "01:15:00"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - slurm.sbatch.nodes: 128
+        - slurm.sbatch.nodes: 256
+          backend.megatron.micro_batch_size: 2

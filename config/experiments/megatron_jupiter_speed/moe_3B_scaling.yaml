@@ -1,5 +1,5 @@
 # @package _global_
-# Weak-scaling sweep for moe_3B: EP=4 (intra-node) fixed, DP = 4·nodes.
+# Node-scaling sweep (fixed model; GBS grows to the optimal-batch cap, fixed above) for moe_3B: EP=4 (intra-node) fixed, DP = 4·nodes.
 # GBS = 16·nodes keeps 1 microbatch at mbs=4 → fixed per-GPU work.
 # Inherits HybridEP dispatcher + hybridep container from the base config.
 # Baseline (1 node): 32,770 tok/s/GPU, 194.5 TFLOPS (job 1052295).
@@ -13,7 +13,7 @@ backend:
     global_batch_size: ${oc.eval:16*${slurm.sbatch.nodes}}  # mbs4 × DP(4·nodes)
 
 job:
-  name: jspeed_moe_3B_ws_n${slurm.sbatch.nodes}
+  name: jspeed_moe_3B_scaling_n${slurm.sbatch.nodes}
 
 sweep:
   type: list

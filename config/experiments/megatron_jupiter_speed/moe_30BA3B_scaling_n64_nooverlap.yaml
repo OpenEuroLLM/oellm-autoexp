@@ -1,0 +1,28 @@
+# @package _global_
+# Probe: n64 with PP2 recipe but overlap OFF.
+# Hypothesis from the failure pattern: overlap_grad_reduce/param_gather init
+# (bucket + group setup) is what stalls c10d at n≥64 — every stuck init had
+# overlap on (PP1 n16-256, PP2 n64-256); the PP4 n64/128 runs (overlap off)
+# initialized in ~10 min and completed. Overlap bought only ~2.5% at n8, so
+# dropping it at scale is cheap if this probe runs clean.
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+backend:
+  megatron:
+    overlap_grad_reduce: false
+    overlap_param_gather: false
+
+slurm:
+  sbatch:
+    nodes: 64
+    time: "00:40:00"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - slurm.sbatch.nodes: 64

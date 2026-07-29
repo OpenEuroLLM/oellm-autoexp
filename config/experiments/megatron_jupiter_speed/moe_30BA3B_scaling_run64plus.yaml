@@ -1,0 +1,32 @@
+# @package _global_
+# Regime-2 points of the 30BA3B weak-scale study: n64/128/256 with GBS capped
+# at 2048 → PP4 (lpvs 2, VP=6), no overlap (−17% with PP4/VPP, job 1053983).
+# GA shrinks with nodes at the cap: n64 GA8 (bubble 5.9%), n128 GA4 (11%),
+# n256 GA2 (20%) — expected real decline; this measures the strong-scaling
+# cost of the optimal-GBS ceiling. Regime-1 curve for reference:
+# n2 7,651 … n32 6,770 (−11.5%).
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - slurm.sbatch.nodes: 64
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 2
+          backend.megatron.overlap_grad_reduce: false
+          backend.megatron.overlap_param_gather: false
+        - slurm.sbatch.nodes: 128
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 2
+          backend.megatron.overlap_grad_reduce: false
+          backend.megatron.overlap_param_gather: false
+        - slurm.sbatch.nodes: 256
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 2
+          backend.megatron.overlap_grad_reduce: false
+          backend.megatron.overlap_param_gather: false

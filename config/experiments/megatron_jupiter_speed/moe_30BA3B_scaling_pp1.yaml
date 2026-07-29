@@ -1,0 +1,41 @@
+# @package _global_
+# PP1 probe: can 30BA3B drop pipeline parallelism entirely at scale?
+# PP2 exists because at n2 the ZeRO-1 optimizer shards (÷DP4) don't leave room
+# for a full model replica. But shards shrink with DP: at n4+ PP1/EP4 should
+# fit (~17 GB weights + 17 GB grads + 360/DP GB shards + full-recompute acts).
+# PP1 wins three ways if it fits:
+#   - no pipeline bubble at ANY GA → the whole n>=64 capped-GBS regime problem
+#     disappears (GA only amortizes the optimizer step)
+#   - no P2P → NCCL_NET_GDR_LEVEL back to 2 (full GDRDMA for the DP reduce;
+#     the PP-mandated 0 throttled all IB traffic)
+#   - overlap cleanly applicable (DP inter-node, no VPP schedule to fight)
+# Cost: DP grad volume per GPU ~2x the PP2 per-stage volume (8.5B vs 4.2B
+# params' grads) — GDR2 + overlap should more than cover it.
+# References at same nodes/GBS (regime-1 tuned): n4 7,364 / n8 7,151.
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+aux:
+  tag: "pp1"
+
+backend:
+  megatron:
+    pipeline_model_parallel_size: 1
+    num_layers_per_virtual_pipeline_stage: null   # VPP meaningless at PP1
+    overlap_p2p_comm: false
+    # overlap_grad_reduce/param_gather: true inherited — DP crosses nodes
+  env:
+    NCCL_NET_GDR_LEVEL: "2"   # no PP P2P -> GDRDMA safe again (hang was PP-only)
+
+job:
+  name: jspeed_moe_30BA3B_wspp1_n${slurm.sbatch.nodes}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - slurm.sbatch.nodes: 4
+        - slurm.sbatch.nodes: 8

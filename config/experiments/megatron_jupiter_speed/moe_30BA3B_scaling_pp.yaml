@@ -1,0 +1,35 @@
+# @package _global_
+# PP-scaling alternative for 30BA3B weak scaling: grow PP with nodes so each
+# pipeline stage stays on ONE node → DP and EP groups are intra-node (NVLink)
+# at every scale; inter-node traffic is only P2P activations (~64 MB/boundary).
+#
+# Bubble stays bounded under the weak-scale GBS rule (32·nodes):
+#   GA = GBS/(mbs·DP) grows with nodes, VP fixed at 6 → GA·VP ≈ 96 const
+#   bubble = (PP−1)/(PP−1+GA·VP): PP4 3%, PP8 6.8% (vs 4% at PP2/n2)
+# VP=6 via num_layers_per_virtual_pipeline_stage = 48/(PP·6): PP4→2, PP8→1.
+# Compare against jspeed_moe_30BA3B_ws_n{4,8} (DP-scaled: 6,509 / 6,131) and
+# the wsdiag overlap/ga8/novpp entries.
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+aux:
+  tag: "pp4"
+
+job:
+  name: jspeed_moe_30BA3B_wspp_${aux.tag}_n${slurm.sbatch.nodes}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: pp4
+          slurm.sbatch.nodes: 4
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 2
+        - aux.tag: pp8
+          slurm.sbatch.nodes: 8
+          backend.megatron.pipeline_model_parallel_size: 8
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 1

@@ -17,7 +17,7 @@ ssh jupiter "bash ~/work/Projects/oellm-autoexp/submit.sh \
 | `dense_1.7B` | Qwen3-1.7B (repository config) | 1 | TP1, mbs6, GBS48, no recompute, CUDA graphs | **validated: 367 TFLOPS / 37% MFU, 35,017 tok/s/GPU** (job 1051942) |
 | `dense_3B` | ~3B Qwen3-style (PROPOSED: 32L, h2560, ffn8192) | 1 | TP1, mbs2, GBS32, no recompute, CUDA graphs | **validated: 355 TFLOPS / 36% MFU, 16,807 tok/s/GPU** (job 1051947) |
 | `dense_9B_baby` | exact baby-9B (36L, h4096, ffn12288) | 1 | TP1, mbs1, GBS16, no recompute | **validated: 390 TFLOPS / 39% MFU, 8,383 tok/s/GPU** (job 1052011; 256k prod vocab needs TP4) |
-| `dense_32B` | Qwen3-32B (64L, h5120, ffn25600) | 4 | TP4 + DP4, mbs1, GBS128, overlap, selective recompute | **validated: 317 TFLOPS / 32% MFU, 1,571 tok/s/GPU** (job 1034538) |
+| `dense_32B` | Qwen3-32B (64L, h5120, ffn25600) | 4 | TP4+PP2+VPP(VP16), mbs2, GBS128, no recompute, tpco, softmax-bf16 | **validated: 379 TFLOPS / 38% MFU, 1,880 tok/s/GPU** (job 1079963; recipe from jupiter_qwen32B_throughput branch) |
 | `moe_1.7B` | ~1.7B/0.6B-active (PROPOSED: 20L, h1024, 32 experts) | 1 | EP4, mbs8, no recompute, allgather | **validated: 181 TFLOPS, 43,099 tok/s/GPU** — HybridEP is −11% here, allgather confirmed |
 | `moe_3B` | ~3B/0.85B-active (PROPOSED: 24L, h1280, 40 experts) | 1 | EP4, mbs4, GBS16, no recompute, **HybridEP** | **validated: 195 TFLOPS, 32,770 tok/s/GPU** (job 1052295, +13% vs allgather) |
 | `moe_9B` | ~8.6B/1.3B-active (PROPOSED: 32L, h1536, 72 experts) | 1 | EP4, mbs8, GBS32, full recompute, **HybridEP** | **validated: 166 TFLOPS, 18,397 tok/s/GPU** (job 1052298, +24% vs allgather) |
@@ -29,20 +29,30 @@ bind-mounts (in each config; Inductor asserts "libcuda.so cannot found"
 without them). The 1.7B stays on the default pt2512 container/allgather —
 the 16 reserved dispatch SMs cost more than dispatch saves at ~0.6B active.
 
-Every size also has a `<config>_weakscale.yaml` companion: it includes the base
-config by way of defaults and only adds GBS ∝ nodes plus a node sweep up to 256
-(fixed per-GPU work — constant microbatch count per DP rank, EP/TP/PP layout
-unchanged):
+Every size also has a `<config>_scaling.yaml` companion: it includes the base
+config by way of defaults and adds a node sweep up to 256 with GBS ∝ nodes
+**up to an optimal-batch cap** (currently only 30BA3B has the cap, 2048
+samples; above it GBS is fixed).
 
-| Weak-scale config | Nodes | GBS |
+Terminology note — in the LLM-systems convention (Megatron papers), "weak
+scaling" means growing the MODEL with GPU count and "strong scaling" means
+fixed model + more GPUs; by that convention these sweeps are all **strong
+scaling** of fixed models. In classical HPC terms the sub-cap regime (fixed
+per-GPU batch) is weak scaling. We avoid both labels: below the cap, flat
+tok/s/GPU is the pass criterion; above the cap, per-GPU throughput declines
+by construction (batch-limited). A model-size-scaling ("weak" in the Megatron
+sense) view falls out of comparing the base configs across the size ladder
+at their minimal node counts.
+
+| Scaling config | Nodes | GBS |
 |---|---|---|
-| `dense_1.7B_weakscale` | 1→256 | 24·nodes |
-| `dense_3B_weakscale` | 1→256 | 16·nodes |
-| `dense_9B_baby_weakscale` | 1→256 | 16·nodes (TP4, DP=nodes) |
-| `dense_32B_weakscale` | 4→256 | 32·nodes (TP4, DP=nodes) |
-| `moe_1.7B_weakscale` / `moe_3B_weakscale` | 1→256 | 32·nodes |
-| `moe_9B_weakscale` | 1→256 | 32·nodes |
-| `moe_30BA3B_weakscale` | 2→256 | 32·nodes (GA 4, VP 6, 4% bubble const) |
+| `dense_1.7B_scaling` | 1→256 | 24·nodes |
+| `dense_3B_scaling` | 1→256 | 16·nodes |
+| `dense_9B_baby_scaling` | 1→256 | 16·nodes (TP4, DP=nodes) |
+| `dense_32B_scaling` | 4→256 | 32·nodes (TP4, DP=nodes) |
+| `moe_1.7B_scaling` / `moe_3B_scaling` | 1→256 | 32·nodes |
+| `moe_9B_scaling` | 1→256 | 32·nodes |
+| `moe_30BA3B_scaling` | 2→256 | min(64·nodes, 2048); **complete measured curve** 7,651 → 6,770 (n32, cap) → 5,577 (n64) → 4,641 (n128, PP4) → 2,343 (n256). Sweet spot ~n64; rules in file header (overlap only n4-32; DP≥256 init needs 45-min timeout) |
 
 Extract results (averages over the last N throughput lines, skips warmup;
 works for Megatron and titan logs — compare backends by way of tok/s/GPU only):
@@ -52,8 +62,9 @@ ssh jupiter 'cd ~/work/Projects/oellm-autoexp && python scripts/extract_speed_re
   /e/scratch/projectnucleus/poeppel1/output/megatron_jupiter_speed'
 ```
 
-For the weak-scaling sweeps, flat tok/s/GPU across the world column = perfect
-weak scaling.
+For the scaling sweeps: below the GBS cap, flat tok/s/GPU across the nodes
+column is the pass criterion; above the cap, compare against the expected
+batch-limited decline, not flatness.
 
 All MoE configs share the Qwen3-MoE expert granularity (`moe_ffn 768`, `topk 8`)
 and keep EP intra-node (EP=4 = GPUs/node) — inter-node EP measured ~37% slower.

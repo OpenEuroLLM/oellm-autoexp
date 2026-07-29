@@ -1,0 +1,35 @@
+# @package _global_
+# Validate the capped-GBS regime-2 arm of moe_30BA3B_scaling:
+# PP4 + overlap at FIXED GBS 128 on n4 (the matched-batch comparison).
+# Known at GBS128/n4: PP2 6,509 / PP2+overlap 6,850 / PP4 6,912 (no overlap).
+# If PP4+overlap lands ≥ ~7.1k, the PP4 arm for n≥64 is well-founded.
+#
+# ── Result (job 1053983, 2026-07-27): 5,749 tok/s — overlap is strongly
+# NEGATIVE with PP4/VPP (−17% vs plain PP4 6,912). With PP=nodes the DP
+# reduce is intra-node (NVLink, nearly free); overlap adds bucketing overhead
+# and interferes with the interleaved schedule. → PP4 scaling config entries run
+# WITHOUT overlap (fixed in moe_30BA3B_scaling.yaml).
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+job:
+  name: jspeed_moe_30BA3B_wspp_pp4_overlap_n${slurm.sbatch.nodes}
+
+backend:
+  megatron:
+    pipeline_model_parallel_size: 4
+    num_layers_per_virtual_pipeline_stage: 2
+    global_batch_size: 128
+
+slurm:
+  sbatch:
+    nodes: 4
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - slurm.sbatch.nodes: 4

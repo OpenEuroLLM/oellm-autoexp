@@ -1,0 +1,57 @@
+# @package _global_
+# Round 3 for dense_32B: port of the jupiter_qwen32B_throughput branch recipe
+# (ville/qwen3_32b_jupiter_sweep5.yaml — "~400 TFLOPS at 4-8 nodes" at the
+# PRODUCTION 256k vocab, nemo_26.04 container, Megatron 0.16) into our suite
+# stack (pt2512 container, 50k vocab) for a controlled comparison against our
+# 317-TF optimum (TP4/PP1/mbs1/GBS128/selective).
+# Their deltas: PP2 + VPP(lpvs2 → VP16), mbs2, NO recompute, tp_comm_overlap,
+# attention_softmax_in_fp32=false. (SHARP + optim-instances are large-scale
+# knobs — DP=2 here — tested separately.)
+#   0. port_core    — PP2+VPP+mbs2+norc (needs NCCL_NET_GDR_LEVEL=0 for PP)
+#   1. port_softmax — + attention_softmax_in_fp32 false
+#   2. port_tpco    — + tp_comm_overlap (retest: our old "no effect" was
+#                     without VPP/mbs2/norc)
+# ── Results (jobs 1079962-64, 2026-07-28) — RECIPE TRANSFERS ─────────────
+#   port_core    → 354.0 TF / 35.8% MFU, 1,756 tok/s (+12% vs our 317)
+#   port_softmax → 366.7 TF / 37.1% MFU (+3.6%)
+#   port_tpco    → 379.1 TF / 38.3% MFU, 1,880 tok/s ← WINNER (+20% total),
+#                  folded into dense_32B.yaml
+# tp_comm_overlap DOES work in pt2512 — the round-1 "no effect" was in the
+# PP1/mbs1/selective regime. No container/Megatron switch needed (both 0.16);
+# remaining gap to the branch's ~400 is vocab-FLOPs accounting (256k vs 50k).
+defaults:
+  - dense_32B
+  - _self_
+
+aux:
+  tag: "port_core"
+
+backend:
+  megatron:
+    pipeline_model_parallel_size: 2
+    num_layers_per_virtual_pipeline_stage: 2
+    micro_batch_size: 2
+    recompute_activations: false
+    recompute_granularity: null
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    dataloader_type: single
+  env:
+    NCCL_NET_GDR_LEVEL: "0"   # PP2 inter-node P2P
+    UB_SKIPMC: "1"
+
+job:
+  name: jspeed_dense_32B_tune3_${aux.tag}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: port_core
+        - aux.tag: port_softmax
+          backend.megatron.attention_softmax_in_fp32: false
+        - aux.tag: port_tpco
+          backend.megatron.attention_softmax_in_fp32: false
+          backend.megatron.tp_comm_overlap: true

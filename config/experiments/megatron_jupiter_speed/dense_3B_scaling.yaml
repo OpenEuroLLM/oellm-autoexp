@@ -1,5 +1,5 @@
 # @package _global_
-# Weak-scaling sweep for dense_3B: GBS = 32·nodes keeps per-GPU work fixed
+# Node-scaling sweep (fixed model; GBS grows to the optimal-batch cap, fixed above) for dense_3B: GBS = 32·nodes keeps per-GPU work fixed
 # (mbs=2, DP=4·nodes, 4 microbatches). Flat tok/s/GPU = perfect weak scaling.
 # Baseline (1 node): 16,807 tok/s/GPU, 354.7 TFLOPS (job 1051947).
 defaults:
@@ -11,7 +11,7 @@ backend:
     global_batch_size: ${oc.eval:32*${slurm.sbatch.nodes}}  # mbs2 × DP(4·nodes) × 4 µbatches
 
 job:
-  name: jspeed_dense_3B_ws_n${slurm.sbatch.nodes}
+  name: jspeed_dense_3B_scaling_n${slurm.sbatch.nodes}
 
 sweep:
   type: list

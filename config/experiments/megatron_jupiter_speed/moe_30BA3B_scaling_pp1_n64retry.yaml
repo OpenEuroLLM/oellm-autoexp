@@ -1,0 +1,25 @@
+# @package _global_
+# PP1 n64 retry with a 1-hour limit: the 30-min runs timed out BEFORE
+# iteration 1 (startup grows with scale under PP1/GDR2 — suspect NCCL init
+# over the 256-rank DP group with GDRDMA). If steady state materializes and
+# beats the PP2 point, PP1 stays in contention for large scale; if startup
+# stays pathological, PP2 is the final large-scale recipe.
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+slurm:
+  sbatch:
+    nodes: 64
+    time: "01:00:00"
+
+job:
+  name: jspeed_moe_30BA3B_wspp1_n64retry
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - slurm.sbatch.nodes: 64

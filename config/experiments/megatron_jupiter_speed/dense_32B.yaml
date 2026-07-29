@@ -2,15 +2,15 @@
 # Dense ~32B (Qwen3-32B arch: 64L, hidden 5120, ffn 25600, 64 heads / 8 KV
 # groups, head_dim 128, untied) — 4 nodes, 16× GH200.
 #
-# VALIDATED optimum (tune sweeps 2026-07-24, jobs 1034454-58 + 1034537-38):
-#   GBS=128 (32 µbatches) + overlap grad-reduce/param-gather
-#   → 316.9 TFLOPS / 32.0% MFU, 1,571 tok/s/GPU, 20.9 s/iter, 93% mem
-# Tuning progression (all 4 nodes, TP4, mbs1, selective recompute):
-#   GBS8: 150 TF → GBS32: 249 → GBS64: 291 → GBS128+overlap: 317
-#   overlap_grad_reduce/param_gather: +3-8%; tp_comm_overlap: no effect;
-#   TP2+PP2: OOM in train_step (2 in-flight µbatch activations at TP=2).
-# Accumulation dominates: the inter-node DP allreduce + optimizer step must be
-# amortized over many microbatches. See dense_32B_tune{,2}.yaml.
+# VALIDATED optimum (tune3 port 2026-07-28, job 1079963 — recipe from branch
+# jupiter_qwen32B_throughput, ville/qwen3_32b_jupiter_sweep5):
+#   TP4 + PP2 + VPP(lpvs2 → VP16), mbs2, GBS128, NO recompute,
+#   tp_comm_overlap + overlap grad/param, attention_softmax_in_fp32 false
+#   → 379.1 TFLOPS / 38.3% MFU, 1,880 tok/s/GPU, 17.4 s/iter, 88% mem
+# Progression: GBS8/mbs1/sel-recompute 150 TF → +accumulation/overlap 317
+# (tune{,2}) → +PP2/VPP/mbs2/norc 354 → +softmax-bf16 367 → +tpco 379 (tune3).
+# tp_comm_overlap requires UB_SKIPMC=1 and only pays in the PP2/VPP/mbs2
+# regime (no-op in the old PP1/mbs1 layout). PP2 P2P needs NCCL_NET_GDR_LEVEL=0.
 #
 # Minimal-node reasoning (96 GiB GH200): TP=4 (intra-node NVLink), DP=4 across
 # nodes. Per GPU: bf16 weights 16.4 + bf16 grads 16.4 (fp32 accum off) +
@@ -38,19 +38,26 @@ backend:
     kv_channels: 128
     untie_embeddings_and_output_weights: true
     # ── parallelism / speed ──────────────────────────────────────────────
-    tensor_model_parallel_size: 4   # intra-node; TP=1 known-bad ≥3B, PP would cross nodes
-    pipeline_model_parallel_size: 1
+    tensor_model_parallel_size: 4   # intra-node
+    pipeline_model_parallel_size: 2
+    num_layers_per_virtual_pipeline_stage: 2   # VP = 64/(2·2) = 16
     sequence_parallel: true
-    train_iters: 20                 # ~21 s/iter at GBS=128
-    micro_batch_size: 1
-    global_batch_size: 128          # mbs × DP(4) × 32 accumulation steps
-    overlap_grad_reduce: true       # hide DP allreduce behind backward (+3-8%)
+    train_iters: 20                 # ~17.5 s/iter at GBS=128
+    micro_batch_size: 2
+    global_batch_size: 128          # mbs2 × DP(2) × GA32
+    overlap_grad_reduce: true       # hide DP allreduce behind backward
     overlap_param_gather: true
-    recompute_activations: true     # selective; fall back to granularity=full if OOM
+    tp_comm_overlap: true           # +3.4% in this regime (needs UB_SKIPMC)
+    recompute_activations: false    # fits at 88% with mbs2/PP2
+    recompute_granularity: null
+    attention_softmax_in_fp32: false  # +3.6%
+    dataloader_type: single
     accumulate_allreduce_grads_in_fp32: false  # halves grad memory; fine for a speed test
     cross_entropy_loss_fusion: true
   env:
     CUDA_DEVICE_MAX_CONNECTIONS: "1"  # required for TP≥2 comm overlap on JUPITER
+    UB_SKIPMC: "1"                    # userbuffers without multicast (tp_comm_overlap)
+    NCCL_NET_GDR_LEVEL: "0"           # PP2 inter-node P2P hangs with GDRDMA
 
 slurm:
   sbatch:
