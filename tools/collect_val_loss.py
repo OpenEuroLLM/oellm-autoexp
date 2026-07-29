@@ -74,6 +74,15 @@ def classify_run(run_name: str) -> str | None:
     return STAGE_TO_FILE[m.group(1)]
 
 
+def read_existing_rows(csv_path: Path) -> dict[str, dict]:
+    """Read a previously written CSV into a dict keyed by run_name."""
+    if not csv_path.exists():
+        return {}
+    with csv_path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        return {row["run_name"]: row for row in reader}
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Collect final validation loss from run directories, split by stage."
@@ -136,19 +145,30 @@ def main():
         sys.exit(1)
 
     for stage, filename in (("predecay", "predecay.csv"), ("decay", "decay.csv"), ("stable", "stable.csv")):
-        rows = rows_by_stage[stage]
-        if not rows:
+        new_rows = rows_by_stage[stage]
+        out_path = output_dir / filename
+        merged = read_existing_rows(out_path)
+        n_before = len(merged)
+
+        if not new_rows and n_before == 0:
             print(f"\nNo {stage} results collected — skipping {filename}.")
             continue
 
-        out_path = output_dir / filename
+        n_new = sum(1 for row in new_rows if row["run_name"] not in merged)
+        n_updated = len(new_rows) - n_new
+        for row in new_rows:
+            merged[row["run_name"]] = row
+
         guard_write(out_path)
         with out_path.open("w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=["run_name", "iteration", "lm_loss", "lm_loss_ppl"])
             writer.writeheader()
-            writer.writerows(rows)
+            writer.writerows(sorted(merged.values(), key=lambda r: r["run_name"]))
 
-        print(f"\nWrote {len(rows)} rows to {out_path}")
+        print(
+            f"\nWrote {len(merged)} rows to {out_path} "
+            f"({n_new} new, {n_updated} updated, {n_before} preexisting)"
+        )
 
 
 if __name__ == "__main__":
