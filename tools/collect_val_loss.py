@@ -43,7 +43,7 @@ def find_latest_log(run_dir: Path) -> Path | None:
     logs = [
         f
         for f in run_dir.rglob("*.log")
-        if f.is_file() and "wandb" not in f.relative_to(run_dir).parts
+        if "wandb" not in f.relative_to(run_dir).parts and f.is_file()
     ]
     if not logs:
         return None
