@@ -1,0 +1,17 @@
+class_name: Container
+# Derived from MegatronTraining-JUPITER-linattn_aarch64_202607290923.sif
+# via container/megatron/MegatronTraining-JUPITER-linattn-nvrx.def.in:
+# retains flash-linear-attention 0.3.2 (GDN) + mlstm_kernels (mLSTM), and
+# upgrades nvidia-resiliency-ext from 0.5.0 to the Megatron-required 0.6.0.
+# Megatron-LM itself comes from the host submodule (v0.18.2-openeurollm).
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-linattn-nvrx_aarch64_202607291158.sif
+runtime: apptainer
+bind:
+  - "/e"
+  - "/dev/shm"
+env:
+  WANDB_MODE: "offline"
+  MACHINE_NAME: "JUPITER"
+  PYTHONPATH: ".:submodules/Megatron-LM"
+  HF_HOME: ${oc.env:HF_HOME}
+python: "/usr/bin/python"

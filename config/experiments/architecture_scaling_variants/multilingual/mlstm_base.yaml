@@ -1,0 +1,41 @@
+# @package _global_
+# mLSTM variant overlay for the multilingual architecture-variant scaling rerun.
+# Compose AFTER a size file, e.g.:
+#   defaults: [size_0.1B, mlstm_base, _self_]
+#
+# Mirrors gdn_base.yaml and the swa5 hybrid schedule: with linear_attention_freq
+# 6, layers 6,12,... (1-based) keep full softmax attention, all others use the
+# Megatron experimental mLSTM attention variant.
+#
+# Requires the linattn container (fla + mlstm_kernels) and the
+# v0.18.2-openeurollm Megatron submodule branch.
+
+aux:
+  variant: mlstm5
+  mlstm_full_attn_freq: 6
+  mlstm_num_key_heads: ${aux.qgroups}
+  mlstm_num_value_heads: ${aux.heads}
+  mlstm_key_head_dim: 128
+  mlstm_value_head_dim: 128
+  mlstm_chunk_size: 128
+
+backend:
+  megatron:
+    # ---- disable the SWA variant knobs from ml_base ----
+    window_size: null
+    window_attn_skip_freq: null
+
+    # ---- mLSTM (Megatron 0.18.2 experimental attention variant) ----
+    experimental_attention_variant: mlstm
+    linear_attention_freq: ${aux.mlstm_full_attn_freq}
+    linear_key_head_dim: ${aux.mlstm_key_head_dim}
+    linear_value_head_dim: ${aux.mlstm_value_head_dim}
+    linear_num_key_heads: ${aux.mlstm_num_key_heads}
+    linear_num_value_heads: ${aux.mlstm_num_value_heads}
+    mlstm_chunk_size: ${aux.mlstm_chunk_size}
+
+    wandb_project: dense_multilingual_scaling_mlstm
+
+container:
+  # Linear-attention image with NVRx 0.6.0, flash-linear-attention, and mLSTM kernels.
+  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-linattn-nvrx_aarch64_202607291158.sif
