@@ -1,0 +1,58 @@
+Bootstrap: localimage
+From: ${BASE_IMAGE}
+
+# Cleanup pass: bootstrap from an already-built deepep-fa3 image and strip build
+# trees, package caches, and junk (core dumps copied in from the host repo) so
+# the shipped .sif is small and transferable. NO recompilation happens here —
+# DeepEP/HybridEP, flash-attn v3 and the NCCL wheel are inherited as-is, along
+# with the parent's %environment / %runscript / %startscript / %labels.
+#
+# Build:
+#   container/build_container.sh \
+#     --definition MegatronTraining-JUPITER-deepep-fa3-slim \
+#     --base-image /path/to/MegatronTraining-JUPITER-deepep-fa3_aarch64_<stamp>.sif \
+#     --output "$CONTAINER_CACHE_DIR" --append-date
+
+%post
+# Force in-container binaries (torchrun, python 3.12 with deep_ep / flash_attn_3
+# / megatron) ahead of the host PATH apptainer forwards at runtime — otherwise
+# `torchrun`/`python` resolve to a host venv/uv interpreter (bind-mounted via /e)
+# and the run crashes. `${PATH:-}` survives build_container.sh's envsubst.
+mkdir -p /.singularity.d/env
+cat > /.singularity.d/env/91-oellm-path.sh << 'EOFPATH'
+#!/bin/bash
+export PATH=/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/bin:${PATH:-}
+EOFPATH
+chmod +x /.singularity.d/env/91-oellm-path.sh
+
+# HybridEP's runtime kernel JIT hardcodes its cache to <deep_ep pkg>/build/jit,
+# which is read-only inside the squashfs -> "Failed to compile the code" at first
+# use. Redirect it to a runtime-writable tmpfs path so the JIT can compile.
+if [ -d /usr/local/lib/python3.12/dist-packages/deep_ep ]; then
+  rm -rf /usr/local/lib/python3.12/dist-packages/deep_ep/build 2>/dev/null || true
+  ln -sf /tmp/deep_ep_build /usr/local/lib/python3.12/dist-packages/deep_ep/build
+fi
+cat > /.singularity.d/env/92-deepep-jit.sh << 'EOFJIT'
+#!/bin/bash
+# ensure the (tmpfs) HybridEP JIT cache dir exists and is writable at runtime
+mkdir -p /tmp/deep_ep_build/jit 2>/dev/null || true
+EOFJIT
+chmod +x /.singularity.d/env/92-deepep-jit.sh
+
+# core dumps ('core.<host>.<pid>', ~10-17 GB each) that %files pulled in from the
+# host repo root — the bulk of the bloat.
+rm -f /workspace/oellm-autoexp/core.* 2>/dev/null || true
+
+# build trees no longer needed after install
+rm -rf /opt/flash-attention          # flash-attn v3 build dir (installed into site-packages)
+rm -rf /workspace/deepep /opt/deepep # DeepEP source clone (installed)
+rm -f  /workspace/*.tar /workspace/*.tar.xz 2>/dev/null || true  # NVSHMEM download leftovers
+
+# package / build caches
+rm -rf /root/.cache /workspace/cache/pip 2>/dev/null || true
+python3 -m pip cache purge 2>/dev/null || true
+rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb 2>/dev/null || true
+find /usr/local/lib/python3.12/dist-packages -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+
+echo "=== post-clean sizes ==="
+du -sh /opt/* /workspace/* 2>/dev/null | sort -rh | head -15
