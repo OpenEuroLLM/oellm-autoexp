@@ -8,7 +8,7 @@
 seq_length: 4096
 encoder_seq_length: null  # must be null when seq_length is set (mutually exclusive in Megatron)
 # attention_backend: flash
-transformer_impl: transformer_engine
+# transformer_impl: transformer_engine
 # te_rng_tracker: true
 tokenizer_type: HuggingFaceTokenizer
 # tokenizer_model: Qwen/Qwen3_30B_A3B
