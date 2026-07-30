@@ -18,7 +18,18 @@ job:
   config_path_current: ${.base_output_dir}/logs/current.yaml
 
 backend:
-  difflm_args: "--attention-mask-type no_mask --mask-token 147 --base-model vanilla --model-running-mode difflm-noshift --difflm-varilen-prob 0.01 --mask-prob 0.15 --wandb-exp-name ${job.name}"
+  # MegaDLMs-only flags (submodules/MegaDLMs/custom_args/difflm.py), appended
+  # verbatim after the mapped Megatron args. See backend/megadlm_torchrun.yaml.
+  #
+  # --mask-token is interpolated from the model config so 147 has a single
+  #   source of truth; 147 is <unused_67> in oellm-tokenizer-128k-v2.
+  # --mask-prob 0.15 is NOT a diffusion parameter. It is stock Megatron's
+  #   BERT-style masking arg (same default, 0.15) and MegaDLMs never reads it,
+  #   so it is inert. The diffusion masking rate is sampled per-sequence by
+  #   pretrain_difflm.py and is not exposed as a CLI flag. Kept only to make the
+  #   no-op explicit -- drop it if it reads as a knob that does something.
+  aux:
+    difflm_args: "--attention-mask-type no_mask --mask-token ${backend.megatron.aux.mask_token_id} --base-model vanilla --model-running-mode difflm-noshift --difflm-varilen-prob 0.01 --mask-prob 0.15 --wandb-exp-name ${job.name}"
   megatron:
     global_batch_size: 512
     wandb_project: "hplt-megadlm-baseline"
