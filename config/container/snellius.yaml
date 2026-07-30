@@ -14,7 +14,10 @@ class_name: Container
 # tokenize correctly under 5.14.1. Repo code that touches transformers
 # internals (postprocess/) runs on the host venv, not in this container.
 #
-image: ${oc.env:CONTAINER_CACHE_DIR, /projects/0/prjs2013/containers/megatron-torch-2.13-nvcr.26-06-transformers-5.sif}
+# The oc.env default covers only the *directory*; the filename must stay outside
+# the interpolation, otherwise a set CONTAINER_CACHE_DIR resolves `image` to a
+# directory instead of a .sif. Matches the pattern used by the other machines.
+image: ${oc.env:CONTAINER_CACHE_DIR,/projects/0/prjs2013/containers}/megatron-torch-2.13-nvcr.26-06-transformers-5.sif
 runtime: singularity
 bind:
   [

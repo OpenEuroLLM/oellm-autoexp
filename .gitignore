@@ -151,7 +151,6 @@ activemq-data/
 .env
 .envrc
 .venv
-.venv_*/
 env/
 venv/
 ENV/
@@ -234,11 +233,3 @@ slurm_juwels.sh
 logs/
 output/
 dump/
-
-# SLURM artefacts left in the working tree by ad-hoc sbatch runs
-slurm-*.out
-*_[0-9]*.out
-*_[0-9]*.err
-
-# Weights & Biases local run cache
-wandb/
