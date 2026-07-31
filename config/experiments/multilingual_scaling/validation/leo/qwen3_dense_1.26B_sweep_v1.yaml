@@ -22,3 +22,6 @@ backend:
     tokenizer_model: /leonardo_work/OELLM_prod2026/users/shaldar0/tokenizers/openeurollm-tokenizer-256k
     data_cache_path: /leonardo_work/OELLM_prod2026/users/donutu00/cache/MEGATRON_262k_val # Adjust it to your own directory
     load: "/leonardo_work/OELLM_prod2026/experiments/multilingual_scaling/0.9B_ne/training/${job.name}/checkpoints"
+
+    # Reduced num_workers for validation to avoid exhausting node memory due to large datasets
+    num_workers: 2
