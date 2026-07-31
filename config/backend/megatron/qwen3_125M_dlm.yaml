@@ -9,12 +9,22 @@ num_query_groups: 4
 kv_channels: 128
 untie_embeddings_and_output_weights: False
 
-seq_length: 4096
-max_position_embeddings: 4096
+seq_length: 4097
+max_position_embeddings: 4097
 
 train_iters: 9536
 micro_batch_size: 8
 lr: 6.0e-4
+
+# Disable fusions that conflict with diffusion or require TE >= 1.4
+bias_gelu_fusion: false
+bias_dropout_fusion: false
+bias_swiglu_fusion: false
+apply_rope_fusion: false
+
+aux:
+  model_name: "megadlm-125m"
+  mask_token_id: 147
 
 tokenizer_type: SentencePieceTokenizer
 tokenizer_model: /projects/0/prjs2013/oellm/tokenizer/oellm-tokenizer-128k-v2/tokenizer.model
@@ -30,4 +40,5 @@ eval_interval: 1001
 eval_iters: 101
 log_interval: 10
 log_throughput: true
+log_timers_to_tensorboard: true
 use_flash_attn: true

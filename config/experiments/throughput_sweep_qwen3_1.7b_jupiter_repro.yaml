@@ -40,7 +40,6 @@ backend:
     tokenizer_type: HuggingFaceTokenizer
     tokenizer_model: /e/data1/datasets/playground/mmlaion/shared/oellm_shared_evals/models/Qwen/Qwen3-1.7B-Base
     vocab_size: 151936
-    legacy_tokenizer: false
     split: "989,10,1"
     num_workers: 1
 
