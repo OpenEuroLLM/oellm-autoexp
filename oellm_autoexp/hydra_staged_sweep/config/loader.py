@@ -10,9 +10,10 @@ from collections.abc import Iterable, Mapping
 
 from compoconf import parse_config, ConfigInterface
 from hydra import compose, initialize_config_dir
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, open_dict
 
 from . import schema
+from .cache import enable as enable_config_cache
 from .resolvers import register_default_resolvers
 
 LOGGER = logging.getLogger(__file__)
@@ -20,6 +21,9 @@ LOGGER = logging.getLogger(__file__)
 T = TypeVar("T", bound=ConfigInterface)
 
 register_default_resolvers()
+# Sweeps compose the same config tree once per point; without this every point
+# re-reads and re-merges the whole tree. See config/cache.py.
+enable_config_cache()
 
 
 class ConfigLoaderError(RuntimeError):
@@ -62,11 +66,29 @@ def load_config(path: str | Path, config_class: type[T] = schema.StagedSweepRoot
     return _parse_root(data, config_class, str(path), str(path.parent))
 
 
+def _merge_extra_config(cfg: Any, extra_config: Mapping[str, Any] | None) -> None:
+    """Force-add ``extra_config`` into the composed config, in place.
+
+    Equivalent to passing the same data as ``++key.path=value`` overrides, but
+    as a single merge. Hydra parses and applies overrides one at a time, which
+    is far too slow for the few hundred entries a resolved sibling config
+    expands into.
+    """
+    if not extra_config:
+        return
+    # Accepts an already-built container so callers that reuse the same context
+    # across configs can build it once; merging does not modify the source.
+    source = extra_config if OmegaConf.is_config(extra_config) else OmegaConf.create(dict(extra_config))
+    with open_dict(cfg):
+        cfg.merge_with(source)
+
+
 def load_hydra_config(
     config_name: str,
     config_dir: str | Path,
     overrides: Iterable[str] | None = None,
     config_class: type[T] = schema.StagedSweepRoot,
+    extra_config: Mapping[str, Any] | None = None,
 ) -> T:
     LOGGER.info(f"Loading Hydra config: {config_name} from {config_dir}")
     register_default_resolvers()
@@ -82,6 +104,8 @@ def load_hydra_config(
     with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
         cfg = compose(config_name=config_name, overrides=overrides)
 
+    _merge_extra_config(cfg, extra_config)
+
     data = OmegaConf.to_container(cfg, resolve=True)  # type: ignore[return-value]
     if not isinstance(data, Mapping):
         raise ConfigLoaderError(f"Hydra config {config_name} did not produce a mapping")
@@ -95,6 +119,7 @@ def load_config_reference(
     config_dir: str | Path | None = None,
     overrides: Iterable[str] | None = None,
     config_class: type[T] = schema.StagedSweepRoot,
+    extra_config: Mapping[str, Any] | None = None,
 ) -> T:
     if config_name is None and config_path:
         path = Path(config_path)
@@ -116,6 +141,7 @@ def load_config_reference(
                         original_config_dir or config_dir,
                         combined_overrides,
                         config_class=config_class,
+                        extra_config=extra_config,
                     )
                 except Exception as exc:
                     LOGGER.warning(
@@ -126,6 +152,8 @@ def load_config_reference(
             with initialize_config_dir(version_base=None, config_dir=os.path.abspath(path.parent)):
                 cfg = compose(config_name=path.name[:-5], overrides=overrides)
 
+            _merge_extra_config(cfg, extra_config)
+
             data = OmegaConf.to_container(cfg, resolve=True)
             if not isinstance(data, Mapping):
                 raise ConfigLoaderError(f"Config file {path} did not produce a mapping")
@@ -133,7 +161,9 @@ def load_config_reference(
             return _parse_root(data, config_class, str(path), str(path.parent))
         else:
             return load_config(path, config_class=config_class)
-    return load_hydra_config(config_name, config_dir, overrides, config_class=config_class)
+    return load_hydra_config(
+        config_name, config_dir, overrides, config_class=config_class, extra_config=extra_config
+    )
 
 
 __all__ = [

@@ -283,6 +283,31 @@ def config_to_cmdline(
     return cmdline_opts
 
 
+def drop_cmdline_invisible(value: Any) -> Any:
+    """Strip what ``config_to_cmdline`` cannot express, so a direct merge matches it.
+
+    An empty mapping flattens to zero overrides, so round-tripping a config
+    through the command line silently drops it -- and a list element that is an
+    empty mapping is left as the placeholder index ``config_to_cmdline`` emits
+    for it. Applying the same pruning before merging keeps the two paths in
+    exact agreement.
+    """
+    if isinstance(value, Mapping):
+        pruned = {key: drop_cmdline_invisible(item) for key, item in value.items()}
+        return {
+            key: item
+            for key, item in pruned.items()
+            if not (isinstance(item, Mapping) and not item)
+        }
+    if isinstance(value, (list, ListConfig, Sequence)) and not isinstance(value, (str, bytes)):
+        out = []
+        for index, item in enumerate(value):
+            pruned = drop_cmdline_invisible(item)
+            out.append(index if isinstance(pruned, Mapping) and not pruned else pruned)
+        return out
+    return value
+
+
 def is_config_group(key: str, config_dir: str | Path | None) -> bool:
     """Check if a parameter key refers to a Hydra config group.
 
@@ -370,6 +395,7 @@ def resolve_sweep_with_dag(
 
     resolved_jobs = {}
     filtered_jobs = {}
+    sibling_context_cache: dict[tuple, tuple] = {}
     base_context = asdict(config)
     base_context = {k: v for k, v in base_context.items() if k not in ("sweep", "sibling")}
     sweep_filter_expr = config.sweep.filter if isinstance(config.sweep, SweepConfig) else True
@@ -410,39 +436,50 @@ def resolve_sweep_with_dag(
 
         sibling_patterns = sibling_index.patterns_by_idx.get(point_idx, set())
         sibling_jobs = {}
+        sibling_ids = []
         for pattern in sibling_patterns:
             sibling_point = find_sibling_by_group_path(
                 point, points_dict, pattern, sibling_index=sibling_index
             )
             if sibling_point and sibling_point.index in resolved_jobs:
                 sibling_jobs[pattern] = resolved_jobs[sibling_point.index]
+                sibling_ids.append((pattern, sibling_point.index))
 
-        sibling_job_configs = {
-            sibling_pattern: asdict(
-                load_config_reference(
-                    config_dir=config_setup.config_dir,
-                    config_path=config_setup.config_path,
-                    config_name=config_setup.config_name,
-                    overrides=list(config_setup.overrides) + sibling_job.parameters,
-                    config_class=config_class,
-                )
-            )
-            for sibling_pattern, sibling_job in sibling_jobs.items()
-        }
+        # Every point in a stage chain sees the same siblings, and flattening a
+        # resolved sibling config is the most expensive step in this loop, so
+        # build the context once per distinct set of siblings.
+        context_key = tuple(sorted(sibling_ids))
+        cached_context = sibling_context_cache.get(context_key)
+        if cached_context is None:
+            # The sibling was already resolved with exactly these overrides --
+            # its JobPlan holds the result. Recomposing it here doubled the
+            # amount of Hydra composition every staged sweep had to do.
+            sibling_job_configs = {
+                sibling_pattern: asdict(sibling_job.config)
+                for sibling_pattern, sibling_job in sibling_jobs.items()
+            }
 
-        for sibling_pattern in sibling_job_configs:
-            if "sweep" in sibling_job_configs[sibling_pattern]:
-                del sibling_job_configs[sibling_pattern]["sweep"]
+            for sibling_pattern in sibling_job_configs:
+                if "sweep" in sibling_job_configs[sibling_pattern]:
+                    del sibling_job_configs[sibling_pattern]["sweep"]
 
-        cmdline_overrides_siblings = config_to_cmdline(
-            {
+            sibling_context = {
                 "sibling": {
                     sibling_job.get("stage", "unknown"): sibling_job
                     for sibling_job in sibling_job_configs.values()
                 }
-            },
-            override="++",
-        )
+            }
+            # Flatten the context as-is so job_parameters is byte-identical to
+            # what a command-line run would carry; merge the pruned form, which
+            # is what those overrides actually produce once applied.
+            cached_context = (
+                config_to_cmdline(sibling_context, override="++"),
+                OmegaConf.create(drop_cmdline_invisible(sibling_context))
+                if sibling_job_configs
+                else None,
+            )
+            sibling_context_cache[context_key] = cached_context
+        cmdline_overrides_siblings, sibling_container = cached_context
 
         # Generate parameter overrides with smart prefix selection
         param_overrides = []
@@ -459,6 +496,9 @@ def resolve_sweep_with_dag(
                     param_to_cmdlines(key, value, prefix="++", config_dir=config_setup.config_dir)
                 )
 
+        compose_overrides = (
+            list(config_setup.overrides) + [f"++index={point_idx}"] + param_overrides
+        )
         job_parameters = (
             list(config_setup.overrides)
             + cmdline_overrides_siblings
@@ -466,11 +506,15 @@ def resolve_sweep_with_dag(
             + param_overrides
         )
 
+        # job_parameters still records the sibling context as ++overrides so the
+        # job stays reproducible from the command line, but composing with it is
+        # far cheaper as a single merge than as several hundred parsed overrides.
         resolved = load_config_reference(
             config_dir=config_setup.config_dir,
             config_path=config_setup.config_path,
             config_name=config_setup.config_name,
-            overrides=job_parameters,
+            overrides=compose_overrides,
+            extra_config=sibling_container,
             config_class=config_class,
         )
 
