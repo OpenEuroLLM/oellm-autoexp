@@ -21,12 +21,25 @@ defaults:
   # Import the validation blend under aux so it is available to the final
   # eval-only stage without applying valid_data_path to the training jobs.
   - /backend/megatron/data_multilingual_1tt_val_jupiter@aux.val_dataset
+  # Validated FLA/mLSTM + TP=1 Liger container, plus mamba-ssm for the Mamba2
+  # variant (superset of jupiter_liger; the other four variants are unaffected).
+  - override /container: jupiter_liger_mamba
+  # Keep external monitoring, but do not auto-resubmit runtime failures: a
+  # configuration/kernel error must be investigated before consuming another
+  # 16-GPU allocation.
+  - override /job: default
   - _self_
 
 aux:
-  experiment_group: architecture_scaling_variants_multilingual_7to1_comparison
+  # Fresh namespace: the old group contains stale current.log symlinks to the
+  # retired projectnucleus scratch mount, which prevents DAG-condition checks.
+  experiment_group: architecture_scaling_variants_multilingual_7to1_liger_mbs32
   variant: fullattn
+  # Preserve the established optimization recipe: GBS=128, LR=5e-4.
   gbs: 128
+  # One node / DP=4 / MBS=32 gives exactly GBS=128 in one microbatch and is
+  # the measured high-throughput geometry for all four architecture variants.
+  mbs: 32
   tokens: 6_000_000_000
   final_train_iters: "${oc.eval:'(${aux.tokens}+${aux.seq_len}*${aux.gbs}-1)//(${aux.seq_len}*${aux.gbs})'}"
   # This direct three-run comparison does not branch cooldowns from a stable
@@ -35,6 +48,11 @@ aux:
 
 backend:
   megatron:
+    # The four independent jobs must not construct/cache the same blend index
+    # concurrently: a partial shuffle-index file makes the other jobs fail
+    # with EOFError.  The seed, blend, and sample counts remain identical.
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/four_model_liger_6B/${aux.variant}"
+
     # The separately imported validation blend expands its paths through this
     # prefix; it is inert for the training stage.
     aux:
@@ -44,6 +62,12 @@ backend:
     lr: 0.0005
     lr_decay_iters: null
     lr_wsd_decay_iters: 2289
+
+    # Explicit chunks avoid Liger's automatic 256-token head loop. This is
+    # the validated MBS=32 high-throughput path (317.2 TFLOP/s/GPU for full
+    # attention; four-model Tok/s results are documented in the gate config).
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
 
     # Full attention with baseline RoPE is the root control. RNN hybrid points
     # below switch to NoPE; SWA overrides only the RoPE base.
@@ -62,21 +86,18 @@ backend:
 
     wandb_project: dense_multilingual_scaling_7to1_comparison
 
-# Use the already validated linear-attention image and make the host CUDA
-# driver discoverable by Triton's runtime launcher for both hybrid variants.
-container:
-  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-linattn-nvrx_aarch64_202607291158.sif
-  bind:
-    - /e
-    - /dev/shm
-    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
-    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
-    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
-    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
-
 slurm:
+  env:
+    # Gloo's automatic interface selection resolved to an unsupported address
+    # family on the 2026-07-30 JUPITER allocation.  Use the same IPv4 IB
+    # interface already selected for NCCL.
+    GLOO_SOCKET_IFNAME: ib0
   sbatch:
-    nodes: 4  # dp=16, mbs=4 -> gradient accumulation 2 at gbs=128
+    nodes: 1  # DP=4, MBS=32, GBS=128; matches the validated benchmark.
+    # booster partition QOS permits at most 12 hours per job.
+    time: "12:00:00"
+    # Known node where the validated image exposed zero CUDA devices.
+    exclude: jpbo-001-48
 
 stage: final6BT
 
@@ -109,6 +130,16 @@ sweep:
           backend.megatron.window_size: "1024,0"
           backend.megatron.window_attn_skip_freq: 8
 
+        # 7:1 Mamba2 + NoPE. Mamba2 slots into the same linear-attention dispatch
+        # as mLSTM/GDN (experimental_attention_variant=mamba, freq 8). It uses its
+        # own state/head/group dims (mamba_state_dim 128, mamba_head_dim 64,
+        # mamba_num_groups 8, expand 2 -> 16 heads at 0.1B); the shared
+        # linear_* head knobs above are inert for it. Requires the mamba container.
+        - aux.variant: mamba2_nope
+          backend.megatron.position_embedding_type: none
+          backend.megatron.experimental_attention_variant: mamba
+          backend.megatron.linear_attention_freq: 8
+
     # Train once, then run the common external validation blend from the final
     # checkpoint. Keeping this as a stage sibling makes each eval wait only for
     # its corresponding architecture, rather than for the entire sweep.
@@ -116,6 +147,12 @@ sweep:
       configs:
         - stage: final6BT
           backend.megatron.split: '100,0,0'
+          # No validation split at train time (100,0,0), so disable the
+          # in-loop periodic evaluation. Megatron forces do_valid=True whenever
+          # eval_iters > 0 (even with an empty valid dataloader), which made all
+          # four runs crash at iter 1600 with "'NoneType' object is not an
+          # iterator". Validation happens in the separate eval6BT stage.
+          backend.megatron.eval_iters: 0
 
         - stage: eval6BT
           backend.megatron.skip_train: true

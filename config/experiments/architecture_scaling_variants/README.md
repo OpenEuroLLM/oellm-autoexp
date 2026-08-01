@@ -95,3 +95,96 @@ the science — only `aux.gbs` and lr matter.
   SWA layers (attention over ≤1024 instead of causal-avg 2048 keys) — for
   compute-optimal fits, recompute FLOPs/token; loss-vs-tokens comparisons are
   unaffected.
+
+## Active multilingual handoff — 2026-07-31
+
+This section supersedes the older monolingual execution notes above for the
+current JUPITER work. Do not commit the current changes: the user explicitly
+asked to defer commits.
+
+### Production experiment
+
+- Config: `multilingual/fullattn_mlstm7_gdn7_0.1B_50BT.yaml`; output group
+  `architecture_scaling_variants_multilingual_7to1_liger_mbs32` (a fresh
+  namespace because the older group has inaccessible projectnucleus symlinks).
+- DAG: four independent 6B-token training stages (`final6BT`) followed by one
+  dependent `datamix4-val` evaluation stage (`eval6BT`) per architecture —
+  eight points and four dependency edges. A local dry run on 2026-07-31
+  rendered all eight successfully.
+- Variants: FullAttn + RoPE (theta 10k), 7:1 mLSTM + NoPE, 7:1 GDN + NoPE,
+  and 7:1 SWA (window 1024) + RoPE (theta 100k). At the 16-layer 0.1B size,
+  `*_freq: 8` means 14 hybrid/local layers and two full-attention layers.
+- Science recipe: preserve **GBS=128** and **LR=5e-4**; 6B tokens; 2k warmup;
+  linear WSD cooldown across the final 2,289 of 11,445 iterations; training
+  split `100,0,0`; common external `datamix4-val` evaluation after annealing.
+- Performance recipe: one JUPITER node (DP=4), MBS=32, TP=1, BF16, local CUDA
+  graphs, current `jupiter_liger` container, Liger fused LM-head/CE with an
+  explicit 8,192-token chunk. This leaves GBS unchanged while replacing the
+  older four-node/MBS=4 draft with the validated high-throughput geometry.
+- Known bad node: `jpbo-001-48` is excluded because the otherwise validated
+  Apptainer image exposed zero CUDA devices there.
+- First submission (2026-07-31): SWA train `1140566`, FullAttn train
+  `1140567`, GDN train `1140568`, and mLSTM train `1140569`. **All four FAILED
+  at iteration 1600** — the first periodic-evaluation step. Root cause: the
+  training stage uses `split: 100,0,0` (no validation data), but Megatron sets
+  `do_valid = valid_dataloaders is not None and (full_validation or eval_iters
+  > 0)` (`training.py:4283`). With `eval_iters=100` inherited from `ml_base`,
+  `do_valid` was forced `True` despite the empty validation dataloader, so the
+  eval at iter 1600 dereferenced a `None` iterator and crashed every rank with
+  `TypeError: 'NoneType' object is not an iterator`. Training itself was
+  healthy up to that point (323 TFLOP/s/GPU, loss ~3.9).
+- Fix: the `final6BT` training stage now sets `backend.megatron.eval_iters: 0`,
+  which makes `do_valid` False and disables the in-loop evaluation entirely.
+  The separate `eval6BT` stage keeps its own non-zero `eval_iters`
+  (`204800 // gbs = 1600`) and runs the `datamix4-val` blend after annealing,
+  so validation coverage is unchanged.
+- Resubmission (2026-07-31, after fix): FullAttn train `1143970`, GDN train
+  `1143971`, mLSTM train `1143972`, SWA train `1143973`. Their evaluation
+  stages remain pending until the matching `iter_0011445` checkpoint exists.
+- Confirmed healthy (2026-07-31, ~26 min in): all four passed iteration 1600
+  (the previous crash point) with zero NoneType/Traceback/OOM/FATAL errors and
+  zero nan/skipped iters. Steady-state at that point: FullAttn iter 2130 loss
+  3.66 @ 306 TFLOP/s/GPU; mLSTM iter 2170 loss 3.67 @ 260; GDN iter 1840 loss
+  3.76 @ 228; SWA iter 2440 loss 3.59 @ 353 — matching the earlier throughput
+  benchmark ranking.
+
+### Completed throughput evidence
+
+All values are steady-state, per GPU, on one JUPITER GH200 node at MBS=32 /
+GBS=128; full details are inline in
+`multilingual/throughput_four_models_liger_0.1B.yaml`.
+
+| Variant | TFLOP/s/GPU | Tok/s/GPU | Job | Interpretation |
+|---|---:|---:|---:|---|
+| FullAttn | 323.6 | 197.8k | 1138460 | Production candidate |
+| mLSTM 7:1 | 260.4 | 191.2k | 1138461 | Nearly the same token rate; lower FLOP estimate is architecture-aware |
+| GDN 7:1 | 231.9 | 168.8k | 1138463 | Genuine kernel/memory penalty; 99.7% memory use |
+| SWA 7:1 | 355.3 | 217.1k | 1138462 | Production candidate |
+
+Do **not** use the MBS=64 recomputation retry:
+`multilingual/throughput_rnn_hybrids_liger_recompute_0.1B.yaml` completed but
+regressed to 235.5 TFLOP/s/GPU (mLSTM, job 1138571) and 195.7 (GDN, 1138570).
+The ranks and validation finished cleanly; only their hung outer Slurm wrappers
+were cancelled to release allocations. Other full-attention A/B outcomes are
+recorded in `multilingual/throughput_liger_optimization_sweep_0.1B.yaml`:
+explicit Liger chunk 8192/MBS32 is best; MBS48, MBS64+recompute, TE op-fuser,
+and DDP overlap did not improve it.
+
+The reported TFLOPs use Megatron's architecture-aware FLOP estimator. Compare
+Tok/s/GPU across FullAttn and recurrent hybrids when judging actual speed; a
+fixed 300-TFLOP threshold is not architecture-neutral.
+
+### Operational procedure
+
+1. Sync only changed paths with `sync_to_jupiter.sh` or a targeted `rsync -ruR`
+   to `/e/project1/e-sta-openeurollm/poeppel1/Projects/oellm-autoexp-hybrid`.
+2. On JUPITER, submit with `UV_CACHE_DIR=/e/project1/e-sta-openeurollm/poeppel1/.cache/uv`
+   and `PYTHONPATH=.:submodules/Megatron-LM`:
+   `uv run python scripts/run_autoexp.py --submit-and-exit --config-name experiments/architecture_scaling_variants/multilingual/fullattn_mlstm7_gdn7_0.1B_50BT`.
+3. Monitor all four train jobs to completion and ensure the four eval jobs start
+   only after their matching final checkpoint appears. Outer Slurm wrappers may
+   linger after all ranks exit; confirm the final iteration and validation are
+   in the log before cancelling a stuck wrapper solely to release resources.
+4. Write new job IDs, final losses, and any retry cause into
+   `experiment/003_multilingual_throughput_tuning/log.md` and this handoff
+   section. Preserve user changes and do not commit unless explicitly asked.

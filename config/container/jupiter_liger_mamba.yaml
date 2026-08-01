@@ -1,0 +1,22 @@
+class_name: Container
+# Superset of jupiter_liger (flash-linear-attention + mlstm_kernels + liger 0.8.0)
+# with mamba-ssm 2.3.2 + causal-conv1d added, so all five architecture variants
+# (full attention, SWA, GDN, mLSTM, Mamba2) share one identical container.
+# Built from container/megatron/MegatronTraining-JUPITER-linattn-mamba.def.in on
+# the linattn image; Megatron-LM stays host-mounted via PYTHONPATH.
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-linattn-mamba_aarch64_202608010917.sif
+runtime: apptainer
+bind:
+  - "/e"
+  - "/dev/shm"
+  - "/usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro"
+  - "/usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro"
+  - "/usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro"
+  - "/usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro"
+env:
+  WANDB_MODE: "offline"
+  MACHINE_NAME: "JUPITER"
+  PYTHONPATH: ".:submodules/Megatron-LM"
+  HF_HOME: ${oc.env:HF_HOME}
+  TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+python: "/usr/bin/python"

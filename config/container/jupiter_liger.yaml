@@ -1,0 +1,20 @@
+class_name: Container
+# Derived from the validated linear-attention + SentencePiece image, with
+# liger-kernel 0.8.0 added. Megatron-LM itself remains host-mounted via
+# PYTHONPATH so the TP=1 fused-LM-head adapter can evolve independently.
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-linattn_aarch64_202607310843.sif
+runtime: apptainer
+bind:
+  - "/e"
+  - "/dev/shm"
+  - "/usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro"
+  - "/usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro"
+  - "/usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro"
+  - "/usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro"
+env:
+  WANDB_MODE: "offline"
+  MACHINE_NAME: "JUPITER"
+  PYTHONPATH: ".:submodules/Megatron-LM"
+  HF_HOME: ${oc.env:HF_HOME}
+  TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+python: "/usr/bin/python"

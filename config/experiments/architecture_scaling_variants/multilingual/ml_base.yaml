@@ -97,9 +97,16 @@ backend:
     # ---- precision / fusions (baseline) ----
     bf16: true
     accumulate_allreduce_grads_in_fp32: true
-    masked_softmax_fusion: false
-    gradient_accumulation_fusion: false
+    # Match the fused Megatron execution path used by the JUPITER reference
+    # throughput configs. Native CE retains the same full-vocabulary objective.
+    masked_softmax_fusion: true
+    gradient_accumulation_fusion: true
+    cross_entropy_loss_fusion: true
     use_flash_attn: true
+    # Capture each fixed-shape Transformer layer with MCore's local CUDA graph
+    # implementation.  An empty cuda_graph_modules list means whole-layer capture.
+    cuda_graph_impl: local
+    check_for_nan_in_loss_and_grad: false
 
     # ---- optimizer / WSD schedule (baseline: min_lr 0!) ----
     lr: ???                       # set per ladder file / sweep
@@ -159,8 +166,14 @@ backend:
     HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
     HF_HOME: ${oc.env:HF_HOME}
     HF_HUB_OFFLINE: "1"
-    TORCHDYNAMO_DISABLE: "1"
-    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    # Avoid Gloo selecting an IPv6-only host/interface on JUPITER nodes.
+    GLOO_SOCKET_IFNAME: "ib0"
+    # The linattn container binds the JUPITER driver here. TorchInductor's
+    # Triton backend needs this explicit directory during Dynamo warm-up.
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+    TORCHDYNAMO_DISABLE: "0"
+    # CUDA graphs need stable allocations; expandable_segments is incompatible.
+    PYTORCH_CUDA_ALLOC_CONF: "garbage_collection_threshold:0.8"
 
 slurm:
   sbatch:

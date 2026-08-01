@@ -1,17 +1,25 @@
 class_name: Container
-# Derived from MegatronTraining-JUPITER-linattn_aarch64_202607290923.sif
-# via container/megatron/MegatronTraining-JUPITER-linattn-nvrx.def.in:
-# retains flash-linear-attention 0.3.2 (GDN) + mlstm_kernels (mLSTM), and
-# upgrades nvidia-resiliency-ext from 0.5.0 to the Megatron-required 0.6.0.
+# Derived from MegatronTraining-JUPITER-linattn-nvrx_aarch64_202607291158.sif:
+# retains flash-linear-attention 0.3.2 (GDN) + mlstm_kernels (mLSTM), the
+# Megatron-required nvidia-resiliency-ext 0.6.0, and adds sentencepiece for
+# the offline OpenEuroLLM 256k Hugging Face tokenizer.
 # Megatron-LM itself comes from the host submodule (v0.18.2-openeurollm).
-image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-linattn-nvrx_aarch64_202607291158.sif
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-linattn-sp_aarch64_202607292203.sif
 runtime: apptainer
 bind:
   - "/e"
   - "/dev/shm"
+  # Make both libcuda.so and libcuda.so.1 discoverable to Triton/Inductor.
+  # Apptainer's --nv injection alone does not expose a linkable path on every
+  # JUPITER node, which breaks the TorchDynamo compile warm-up.
+  - "/usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro"
+  - "/usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro"
+  - "/usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro"
+  - "/usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro"
 env:
   WANDB_MODE: "offline"
   MACHINE_NAME: "JUPITER"
   PYTHONPATH: ".:submodules/Megatron-LM"
   HF_HOME: ${oc.env:HF_HOME}
+  TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
 python: "/usr/bin/python"

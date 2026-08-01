@@ -114,6 +114,16 @@ class MegatronConfig(ConfigInterface):
     # Transformer Engine library is used. Defaults to 'native'.
     cross_entropy_fusion_impl: Literal['native', 'te'] = 'native'
 
+    # Fuse the LM-head projection with Liger-Kernel's chunked cross entropy. This avoids
+    # materializing full-vocabulary logits, but currently supports only tensor model parallel
+    # size one because Liger's implementation is not vocabulary parallel.
+    liger_fused_linear_cross_entropy: bool = False
+
+    # Optional power-of-two token chunk size for Liger fused LM-head CE. ``None`` preserves
+    # Liger's conservative automatic chunking. A larger chunk uses more temporary logits
+    # memory but reduces LM-head GEMM and weight-gradient-accumulation launches.
+    liger_fused_linear_cross_entropy_chunk_size: int | None = None
+
     # Set the bootstrapping backend of Tensor parallel communications.
     tp_comm_bootstrap_backend: Literal['nccl', 'mpi', 'gloo'] = 'nccl'
 
@@ -302,7 +312,7 @@ class MegatronConfig(ConfigInterface):
     multi_latent_attention: bool = False
 
     # Type of attention variant to use. Currently support gated_delta_net, mlstm and dsa.
-    experimental_attention_variant: Literal['gated_delta_net', 'mlstm', 'dsa'] | None = None
+    experimental_attention_variant: Literal['gated_delta_net', 'mlstm', 'mamba', 'dsa'] | None = None
 
     # Number of DSA indexer heads.
     dsa_indexer_n_heads: int | None = None
@@ -343,6 +353,10 @@ class MegatronConfig(ConfigInterface):
 
     # Soft cap for the mLSTM input/forget gate preactivations. None disables capping.
     mlstm_gate_soft_cap: float = 15.0
+
+    # Initial value of the mLSTM input-gate bias (filled across all heads). Larger (less
+    # negative) values open the input gate earlier in training.
+    mlstm_igate_bias_init: float = -10.0
 
     # Standard deviation of the zero mean normal for the default initialization method, not
     # used if init_method and output_layer_init_method are provided.
