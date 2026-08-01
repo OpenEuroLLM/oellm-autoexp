@@ -1,0 +1,40 @@
+Bootstrap: localimage
+From: ${BASE_IMAGE}
+
+%labels
+    Author OpenSci
+    Version 0.1.0
+    Base ${BASE_IMAGE}
+    Description Derived JUPITER linear-attention image with SentencePiece tokenizer support
+
+%post
+# Keep the current, working linattn image as the base and install only the
+# tokenizer dependency needed by the OpenEuroLLM 256k HF tokenizer.  The
+# generated constraints prevent pip from changing torch, Triton, Transformers,
+# FLA, or mLSTM kernels in the inherited image.
+if [ -f /workspace/oellm-autoexp/container/gen_constraints.py ]; then
+    python3 /workspace/oellm-autoexp/container/gen_constraints.py \
+        --output /workspace/constraints.sentencepiece.txt \
+        --exclude pip setuptools wheel
+    python3 -m pip install --no-cache-dir \
+        -c /workspace/constraints.sentencepiece.txt \
+        sentencepiece
+else
+    echo "WARNING: gen_constraints.py not found in base image, installing sentencepiece unconstrained"
+    python3 -m pip install --no-cache-dir sentencepiece
+fi
+
+python3 -m pip show sentencepiece
+
+%test
+    python3 -c "import sentencepiece; print('sentencepiece', sentencepiece.__version__)"
+    # `/e` is supplied at runtime, but is not mounted for `apptainer build`.
+    if [ -d /e/data1/datasets/products/openeurollm/tokenizers/tokenizer-256k ]; then \
+        python3 -c "from transformers import AutoTokenizer; t = AutoTokenizer.from_pretrained('/e/data1/datasets/products/openeurollm/tokenizers/tokenizer-256k', local_files_only=True, trust_remote_code=True); print(type(t).__name__, len(t))"; \
+    else \
+        echo 'Skipping external tokenizer-path test (no /e bind)'; \
+    fi
+
+%help
+    Derived from the validated JUPITER linattn image, with SentencePiece added
+    so the offline OpenEuroLLM 256k Hugging Face tokenizer can be instantiated.

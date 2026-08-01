@@ -1,0 +1,61 @@
+Bootstrap: localimage
+From: ${BASE_IMAGE}
+
+%labels
+    Author OpenSci
+    Version 0.1.0
+    Base ${BASE_IMAGE}
+    Description Derived image: adds flash-linear-attention (GDN) and mlstm_kernels (mLSTM) on top of an existing JUPITER sif
+
+%post
+# NOTE: build_container.sh pipes this template through envsubst, so this
+# section must not reference shell variables — they would be blanked at
+# template-render time.
+#
+# Pin every package already present in the base image so the new installs
+# cannot upgrade torch/triton/transformers underneath us. gen_constraints.py
+# is baked into the base image at /workspace/oellm-autoexp.
+if [ -f /workspace/oellm-autoexp/container/gen_constraints.py ]; then
+    python3 /workspace/oellm-autoexp/container/gen_constraints.py \
+        --output /workspace/constraints.linattn.txt \
+        --exclude pip setuptools wheel
+    python3 -m pip install --no-cache-dir \
+        -c /workspace/constraints.linattn.txt \
+        "flash-linear-attention~=0.3.2" \
+        mlstm_kernels \
+        "liger-kernel==0.8.0" \
+        sentencepiece
+else
+    echo "WARNING: gen_constraints.py not found in base image, installing unconstrained"
+    python3 -m pip install --no-cache-dir \
+        "flash-linear-attention~=0.3.2" \
+        mlstm_kernels \
+        "liger-kernel==0.8.0" \
+        sentencepiece
+fi
+
+python3 -m pip list | grep -i -e flash-linear -e mlstm -e liger -e sentencepiece -e triton -e "^torch "
+
+%test
+    python3 -c "import fla; print('fla', fla.__version__)"
+    python3 -c "import mlstm_kernels; print('mlstm_kernels ok')"
+    python3 -c "from mlstm_kernels.torch import get_mlstm_kernel; get_mlstm_kernel('chunkwise--triton_xl_chunk'); print('xl_chunk kernel resolvable')"
+    python3 -c "import sentencepiece; print('sentencepiece', sentencepiece.__version__)"
+    python3 -c "from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss; print('liger fused linear CE ok')"
+    # `/e` is supplied at runtime, but is not mounted for `apptainer build`.
+    if [ -d /e/data1/datasets/products/openeurollm/tokenizers/tokenizer-256k ]; then \
+        python3 -c "from transformers import AutoTokenizer; t = AutoTokenizer.from_pretrained('/e/data1/datasets/products/openeurollm/tokenizers/tokenizer-256k', local_files_only=True, trust_remote_code=True); print(type(t).__name__, len(t))"; \
+    else \
+        echo 'Skipping external tokenizer-path test (no /e bind)'; \
+    fi
+
+%help
+    Derived update image adding flash-linear-attention + mlstm_kernels +
+    SentencePiece support for the OpenEuroLLM 256k tokenizer.
+    Build on JUPITER (see JUPITER_SETUP_GUIDE.md for apptainer cache dirs):
+      BASE_IMAGE=/path/to/existing-hybridep.sif \
+        bash container/build_container.sh \
+          --definition MegatronTraining-JUPITER-linattn \
+          --container-cmd apptainer --append-date
+    Environment, runscript, and CUDA fixups are inherited from the base sif.
+    Megatron-LM itself still comes from the host submodule via PYTHONPATH.

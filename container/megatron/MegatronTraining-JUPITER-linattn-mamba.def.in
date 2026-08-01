@@ -1,0 +1,62 @@
+Bootstrap: localimage
+From: ${BASE_IMAGE}
+
+%labels
+    Author OpenSci
+    Version 0.1.0
+    Base ${BASE_IMAGE}
+    Description Derived image: adds mamba-ssm + causal-conv1d (Mamba2) on top of the linattn+liger JUPITER sif
+
+%post
+# NOTE: build_container.sh pipes this template through envsubst, so this
+# section must not reference shell variables with ${...} — they would be
+# blanked at template-render time. Plain VAR=value inline assignments are safe.
+#
+# Pin every package already present in the base image (torch/triton/transformers
+# /flash-linear-attention/mlstm_kernels/liger) so the mamba CUDA-extension build
+# compiles against the existing torch and nothing gets upgraded underneath us.
+if [ -f /workspace/oellm-autoexp/container/gen_constraints.py ]; then
+    python3 /workspace/oellm-autoexp/container/gen_constraints.py \
+        --output /workspace/constraints.mamba.txt \
+        --exclude pip setuptools wheel
+    CONSTRAINTS="-c /workspace/constraints.mamba.txt"
+else
+    echo "WARNING: gen_constraints.py not found in base image, installing unconstrained"
+    CONSTRAINTS=""
+fi
+
+# einops is imported by the Megatron Mamba mixer; ensure it is present.
+python3 -m pip install --no-cache-dir $CONSTRAINTS einops
+
+# Build the CUDA kernels from source against the base image's torch. FORCE_BUILD
+# skips the (absent) aarch64 prebuilt-wheel lookup; --no-build-isolation uses the
+# base torch/ninja/packaging; MAX_JOBS caps compile memory on the build host.
+CAUSAL_CONV1D_FORCE_BUILD=TRUE \
+MAMBA_FORCE_BUILD=TRUE \
+MAX_JOBS=4 \
+python3 -m pip install --no-cache-dir --no-build-isolation $CONSTRAINTS \
+    "causal-conv1d>=1.4.0" \
+    "mamba-ssm==2.3.2.post1"
+
+python3 -m pip list | grep -i -e mamba -e causal-conv1d -e einops -e flash-linear -e mlstm -e liger -e "^torch "
+
+%test
+    python3 -c "import mamba_ssm; print('mamba_ssm', mamba_ssm.__version__)"
+    python3 -c "import causal_conv1d; print('causal_conv1d ok')"
+    python3 -c "from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined; print('mamba chunk-scan kernel resolvable')"
+    # Confirm the base linattn+liger stack survived the mamba install.
+    python3 -c "import fla; print('fla', fla.__version__)"
+    python3 -c "import mlstm_kernels; print('mlstm_kernels ok')"
+    python3 -c "from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss; print('liger fused linear CE ok')"
+
+%help
+    Derived update image adding mamba-ssm + causal-conv1d (Mamba2 hybrid) on top
+    of the linattn+liger JUPITER image, so all five architecture variants
+    (full attention, SWA, GDN, mLSTM, Mamba2) share one identical container.
+    Build on JUPITER:
+      BASE_IMAGE=/e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-linattn_aarch64_202607310843.sif \
+        bash container/build_container.sh \
+          --definition MegatronTraining-JUPITER-linattn-mamba \
+          --container-cmd apptainer --append-date \
+          --output /e/project1/e-sta-openeurollm/container
+    Megatron-LM itself still comes from the host submodule via PYTHONPATH.
