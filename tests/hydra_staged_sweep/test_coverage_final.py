@@ -103,45 +103,37 @@ def test_metadata_setdefault_coverage():
         assert str(config_path) in result.metadata["config_ref"]
 
 
-def test_multiple_siblings_warning_log(caplog):
-    """Cover line 102: warning when multiple siblings match.
-
-    This test creates a scenario where multiple siblings have the same
-    stage name, triggering the warning at line 102.
+def test_multiple_siblings_raises():
+    """A cooldown/stage must resolve to exactly one sibling. If more than one
+    point matches the stage pattern under the same sibling key, that is a
+    genuine ambiguity — the resolver must fail loudly rather than pick an
+    arbitrary sibling (which previously loaded the wrong checkpoint).
     """
-    # Set logging level to capture warnings for the module
-    with caplog.at_level(logging.WARNING):
-        # Create points where multiple siblings match the pattern
-        # p0 MUST have a sibling reference to trigger the find_sibling logic
-        p0 = SweepPoint(
-            index=0,
-            parameters={"stage": "base", "ref": "${sibling.train.x}"},  # Has sibling reference
-            group_path=(0, 0),
-            stage_path=(False, True),
-        )
-        # Both p1 and p2 have stage="train" - this creates multiple matches
-        # They need similar group_paths so both are considered siblings of p0
-        p1 = SweepPoint(
-            index=1,
-            parameters={"stage": "train", "x": 1},
-            group_path=(0, 1),
-            stage_path=(False, True),
-        )
-        p2 = SweepPoint(
-            index=2,
-            parameters={"stage": "train", "x": 2},  # Duplicate stage name
-            group_path=(0, 2),  # Changed to (0, 2) so it's also a sibling of p0
-            stage_path=(False, True),
-        )
+    # p0 has a sibling reference; p1 and p2 both match "train" under the same
+    # stage-masked key, so resolution is ambiguous.
+    p0 = SweepPoint(
+        index=0,
+        parameters={"stage": "base", "ref": "${sibling.train.x}"},
+        group_path=(0, 0),
+        stage_path=(False, True),
+    )
+    p1 = SweepPoint(
+        index=1,
+        parameters={"stage": "train", "x": 1},
+        group_path=(0, 1),
+        stage_path=(False, True),
+    )
+    p2 = SweepPoint(
+        index=2,
+        parameters={"stage": "train", "x": 2},
+        group_path=(0, 2),
+        stage_path=(False, True),
+    )
 
-        points = {0: p0, 1: p1, 2: p2}
+    points = {0: p0, 1: p1, 2: p2}
 
-        # This should trigger line 102 warning because both p1 and p2 match "train"
-        result = find_sibling_by_group_path(p0, points, "train")
-
-        # Verify warning was logged
-        assert result is not None
-        assert any("Multiple matched siblings" in str(record.msg) for record in caplog.records)
+    with pytest.raises(ValueError, match="Ambiguous sibling"):
+        find_sibling_by_group_path(p0, points, "train")
 
 
 def test_build_dag_valueerror_exception():

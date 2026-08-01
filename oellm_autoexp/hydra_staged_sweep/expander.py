@@ -53,18 +53,6 @@ def _has_stage_key(values: Mapping[str, Any], stage_str: str) -> bool:
     return stage_str in values
 
 
-def _nested_has_stage_key(config_dict: Mapping[str, Any], stage_str: str) -> bool:
-    for key in ("groups", "params", "configs"):
-        value = config_dict.get(key)
-        if isinstance(value, Mapping) and stage_str in value:
-            return True
-        if isinstance(value, list):
-            for item in value:
-                if isinstance(item, Mapping) and stage_str in item:
-                    return True
-    return False
-
-
 def _expand_composable_sweep(
     config: SweepConfig, base_values: dict[str, Any], list_composition: set[str]
 ) -> list[SweepPoint]:
@@ -103,18 +91,27 @@ def _expand_group(
     stage_path: tuple[bool, ...],
     list_composition: set[str],
     stage_str: str = "stage",
+    in_stage_context: bool = False,
 ) -> list[tuple[dict[str, Any], tuple[int, ...], tuple[bool, ...]]]:
     """Recursively expand a group with product or list composition.
 
     Supports 'defaults' field at group level that gets merged into all configs.
 
+    Stage-axis detection (used later to identify sibling groups): a group-path
+    position is a *stage axis* iff ``stage`` is introduced at that level — via
+    the group's own ``defaults`` or a direct config value — OR we are already
+    inside a stage context inherited from an ancestor (``in_stage_context``). It
+    is NOT a stage axis merely because a deeper descendant contains ``stage``.
+    Detecting stage by looking *downward* would wrongly flag an outer axis (e.g.
+    a per-(size,gbs) ladder selector) that only *contains* stable+cooldown
+    sub-sweeps, collapsing distinct ladders together in the sibling index.
+
     Returns:
         List of (parameters, group_path, stage_path) tuples
     """
     if not groups:
-        return [
-            (dict(base_values), group_path + (0,), stage_path + ("stage" in list(base_values),))
-        ]
+        stage_here = in_stage_context or _has_stage_key(base_values, stage_str)
+        return [(dict(base_values), group_path + (0,), stage_path + (stage_here,))]
 
     all_combinations: list[tuple[dict[str, Any], tuple[int, ...], tuple[bool, ...]]] = []
 
@@ -132,15 +129,18 @@ def _expand_group(
 
         # Check if this is a nested group or a leaf group
         if "groups" in group:
-            # Nested group - recursively expand
+            # Nested group - recursively expand. Stage is introduced here if this
+            # group's (merged) defaults set it, or we are already in a stage context.
+            stage_here = in_stage_context or _has_stage_key(group_base_values, stage_str)
             nested_combinations = _expand_group(
                 group_type=group_type_str,
                 groups=group["groups"],
                 base_values=group_base_values,
                 group_path=current_path,
-                stage_path=stage_path + (False,),
+                stage_path=stage_path + (stage_here,),
                 list_composition=list_composition,
                 stage_str=stage_str,
+                in_stage_context=stage_here,
             )
             all_combinations.append(nested_combinations)
         elif "params" in group:
@@ -155,22 +155,12 @@ def _expand_group(
                 full_params.update(combo)
                 # Include combo_idx in group_path to distinguish different parameter combinations
                 combinations.append((full_params, current_path + (combo_idx,)))
-            if any(_has_stage_key(comb[0], stage_str) for comb in combinations):
-                combinations = [
-                    (
-                        *comb,
-                        stage_path + (False, True),
-                    )
-                    for comb in combinations
-                ]
-            else:
-                combinations = [
-                    (
-                        *comb,
-                        stage_path + (False, False),
-                    )
-                    for comb in combinations
-                ]
+            group_stage = in_stage_context or any(
+                _has_stage_key(comb[0], stage_str) for comb in combinations
+            )
+            combinations = [
+                (*comb, stage_path + (in_stage_context, group_stage)) for comb in combinations
+            ]
             all_combinations.append(combinations)
         elif "configs" in group:
             # Leaf list group - each config is a separate point (no cross-product)
@@ -181,7 +171,14 @@ def _expand_group(
                 if isinstance(config_dict, dict) and (
                     "groups" in config_dict or "params" in config_dict or "configs" in config_dict
                 ):
-                    stage_idx = _nested_has_stage_key(config_dict, stage_str)
+                    # Stage is introduced at THIS nested config's level only if its
+                    # own defaults (merged with the inherited context) set it — not
+                    # because a stable/cooldown deeper inside carries a stage key.
+                    nested_defaults = config_dict.get("defaults", {})
+                    merged_for_stage = dict(group_base_values)
+                    if isinstance(nested_defaults, Mapping):
+                        merged_for_stage.update(nested_defaults)
+                    stage_here = in_stage_context or _has_stage_key(merged_for_stage, stage_str)
                     # Nested group - recursively expand
                     # Wrap as a single-element group list to process correctly
                     nested_combos = _expand_group(
@@ -189,29 +186,22 @@ def _expand_group(
                         groups=[config_dict],  # Wrap the config_dict as a group
                         base_values=group_base_values,
                         group_path=current_path + (config_idx,),
-                        stage_path=stage_path
-                        + (
-                            False,
-                            stage_idx,
-                        ),
+                        stage_path=stage_path + (in_stage_context, stage_here),
                         list_composition=list_composition,
                         stage_str=stage_str,
+                        in_stage_context=stage_here,
                     )
                     combinations.extend(nested_combos)
                 else:
                     # Simple config dict
                     full_params = dict(group_base_values)
                     full_params.update(config_dict)
-                    stage_idx = _has_stage_key(full_params, stage_str)
+                    stage_here = in_stage_context or _has_stage_key(full_params, stage_str)
                     combinations.append(
                         (
                             full_params,
                             current_path + (config_idx,),
-                            stage_path
-                            + (
-                                False,
-                                stage_idx,
-                            ),
+                            stage_path + (in_stage_context, stage_here),
                         )
                     )
             all_combinations.append(combinations)

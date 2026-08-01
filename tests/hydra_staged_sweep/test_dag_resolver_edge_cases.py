@@ -5,8 +5,57 @@ from oellm_autoexp.hydra_staged_sweep.dag_resolver import (
     build_dependency_dag_from_points,
     config_to_cmdline,
 )
-from oellm_autoexp.hydra_staged_sweep.config.schema import StagedSweepRoot, ConfigSetup
-from oellm_autoexp.hydra_staged_sweep.expander import SweepPoint
+from oellm_autoexp.hydra_staged_sweep.config.schema import StagedSweepRoot, ConfigSetup, SweepConfig
+from oellm_autoexp.hydra_staged_sweep.expander import SweepPoint, expand_sweep
+
+
+def _ladder(gbs: int, budget: int) -> dict:
+    """A stable + one WSD cooldown, sharing a per-ladder gbs default."""
+    return {
+        "type": "list",
+        "defaults": {"gbs": gbs},
+        "configs": [
+            {"stage": "stable"},
+            {
+                "type": "list",
+                "defaults": {"stage": "decay", "load": "${sibling.stable.dir}"},
+                "configs": [{"tokens": budget}],
+            },
+        ],
+    }
+
+
+def test_multiladder_cooldown_branches_from_own_stable():
+    """Regression for the nested-group stage-detection bug: two ladders that
+    differ only in gbs live in one sweep file. Each cooldown must branch from
+    its OWN ladder's stable (same gbs), not the other ladder's. This holds only
+    if the ladder-selector group-path position is NOT flagged as a stage axis
+    (it merely contains stable/cooldown sub-sweeps)."""
+    config = SweepConfig(
+        type="product",
+        groups=[
+            {"type": "list", "configs": [{"variant": "A"}]},  # architecture axis
+            {"type": "list", "configs": [_ladder(128, 20), _ladder(256, 80)]},  # two ladders
+        ],
+    )
+    points = expand_sweep(config)
+
+    def find(stage: str, gbs: int) -> SweepPoint:
+        return next(
+            p for p in points
+            if p.parameters.get("stage") == stage and p.parameters.get("gbs") == gbs
+        )
+
+    stable128, stable256 = find("stable", 128), find("stable", 256)
+    decay128, decay256 = find("decay", 128), find("decay", 256)
+
+    # Distinct ladders must NOT collapse to the same sibling key.
+    dag = build_dependency_dag_from_points({p.index: p for p in points})
+    assert (stable128.index, decay128.index) in dag.edges()
+    assert (stable256.index, decay256.index) in dag.edges()
+    # ...and a cooldown must NOT branch from the other ladder's stable.
+    assert (stable256.index, decay128.index) not in dag.edges()
+    assert (stable128.index, decay256.index) not in dag.edges()
 
 
 def test_extract_sibling_patterns_nested():

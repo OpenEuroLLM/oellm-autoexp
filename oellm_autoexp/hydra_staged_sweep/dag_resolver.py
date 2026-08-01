@@ -206,7 +206,18 @@ def find_sibling_by_group_path(
     ]
     if matched_sibling:
         if len(matched_sibling) > 1:
-            LOGGER.warning(f"Multiple matched siblings for {point}, {stage_pattern}")
+            # A cooldown/stage must resolve to exactly ONE sibling. Stage-axis
+            # detection in the expander keeps distinct ladders' group paths
+            # apart, so more than one match here means a genuine ambiguity
+            # (two siblings share every non-stage group-path segment) — fail
+            # loudly at plan time rather than silently branch from an arbitrary
+            # one and load the wrong checkpoint.
+            raise ValueError(
+                f"Ambiguous sibling for point {point.index}: {len(matched_sibling)} points "
+                f"match stage pattern '{stage_pattern}' with the same sibling key "
+                f"({[s.parameters.get('stage', '') for s in matched_sibling]}). "
+                "This indicates a sweep-structure/stage-detection problem."
+            )
         return matched_sibling[0]
     return None
 
