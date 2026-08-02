@@ -346,7 +346,8 @@ _RENDER_CONTEXT: tuple | None = None
 
 
 def _render_chunk(indices: list[int]) -> list[tuple[int, str]]:
-    """Render the scripts for a slice of the plan, in a worker or in-process."""
+    """Render the scripts for a slice of the plan, in a worker or in-
+    process."""
     assert _RENDER_CONTEXT is not None, "render context not initialised"
     plan, session_id = _RENDER_CONTEXT
     rendered: list[tuple[int, str]] = []

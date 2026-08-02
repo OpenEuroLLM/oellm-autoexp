@@ -293,7 +293,8 @@ def config_to_cmdline(
 
 
 def drop_cmdline_invisible(value: Any) -> Any:
-    """Strip what ``config_to_cmdline`` cannot express, so a direct merge matches it.
+    """Strip what ``config_to_cmdline`` cannot express, so a direct merge
+    matches it.
 
     An empty mapping flattens to zero overrides, so round-tripping a config
     through the command line silently drops it -- and a list element that is an
@@ -380,8 +381,8 @@ def param_to_cmdlines(key: str, val: Any, prefix: str = "", config_dir: str | Pa
 class _LazyFilterContext:
     """Build the filter context only when a filter actually reads it.
 
-    Flattening a resolved config is not cheap, and a filter that is already a
-    bool never looks at the context.
+    Flattening a resolved config is not cheap, and a filter that is
+    already a bool never looks at the context.
     """
 
     def __init__(self, resolved: Any) -> None:
@@ -391,9 +392,7 @@ class _LazyFilterContext:
     def __call__(self) -> dict[str, Any]:
         if self._context is None:
             self._context = {
-                key: value
-                for key, value in asdict(self._resolved).items()
-                if key not in ("sweep")
+                key: value for key, value in asdict(self._resolved).items() if key not in ("sweep")
             }
         return self._context
 
@@ -408,7 +407,9 @@ _CHAIN_CONTEXT: tuple | None = None
 def _resolve_chain(chain: list[int]) -> tuple[dict[int, JobPlan], dict[int, bool]]:
     """Resolve one dependency chain, in the order given."""
     assert _CHAIN_CONTEXT is not None, "chain context not initialised"
-    (config, points_dict, config_setup, config_class, sibling_index, sweep_filter_expr) = _CHAIN_CONTEXT
+    (config, points_dict, config_setup, config_class, sibling_index, sweep_filter_expr) = (
+        _CHAIN_CONTEXT
+    )
 
     resolved_jobs: dict[int, JobPlan] = {}
     filtered_jobs: dict[int, bool] = {}
@@ -476,12 +477,18 @@ def _resolve_chain(chain: list[int]) -> tuple[dict[int, JobPlan], dict[int, bool
             # Detect if this is a config group parameter
             if is_config_group(key, config_setup.config_dir):
                 # Config group: use no prefix (regular override)
-                param_overrides.extend(param_to_cmdlines(key, value, prefix="", config_dir=config_setup.config_dir))
+                param_overrides.extend(
+                    param_to_cmdlines(key, value, prefix="", config_dir=config_setup.config_dir)
+                )
             else:
                 # Regular parameter: use ++ prefix (force-add)
-                param_overrides.extend(param_to_cmdlines(key, value, prefix="++", config_dir=config_setup.config_dir))
+                param_overrides.extend(
+                    param_to_cmdlines(key, value, prefix="++", config_dir=config_setup.config_dir)
+                )
 
-        compose_overrides = list(config_setup.overrides) + [f"++index={point_idx}"] + param_overrides
+        compose_overrides = (
+            list(config_setup.overrides) + [f"++index={point_idx}"] + param_overrides
+        )
         job_parameters = (
             list(config_setup.overrides)
             + cmdline_overrides_siblings

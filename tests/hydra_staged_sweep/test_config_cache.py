@@ -57,9 +57,7 @@ def fresh_cache():
 
 
 def _load(config_dir, overrides=None):
-    return load_hydra_config(
-        "config", config_dir, overrides or [], config_class=CacheTestConfig
-    )
+    return load_hydra_config("config", config_dir, overrides or [], config_class=CacheTestConfig)
 
 
 def test_cached_composition_matches_uncached(config_dir):
@@ -117,11 +115,9 @@ def test_disable_restores_hydra(config_dir):
 
 
 def test_fast_yaml_types_match_the_pure_python_loader(tmp_path):
-    """libyaml must type scalars exactly as OmegaConf's own loader does."""
+    """Libyaml must type scalars exactly as OmegaConf's own loader does."""
     sample = tmp_path / "s.yaml"
-    sample.write_text(
-        "a: yes\nb: no\nc: null\nd: 2020-01-01\ne: 1.0e-4\nf: '010'\ng: 010\nh: ~\n"
-    )
+    sample.write_text("a: yes\nb: no\nc: null\nd: 2020-01-01\ne: 1.0e-4\nf: '010'\ng: 010\nh: ~\n")
     cache.disable()
     plain = OmegaConf.to_container(OmegaConf.load(sample))
     cache.enable()
@@ -133,7 +129,8 @@ def test_fast_yaml_types_match_the_pure_python_loader(tmp_path):
 
 
 def test_repeated_interpolations_resolve_identically(config_dir, fresh_cache):
-    """The parse-tree cache hands out one shared tree; resolution must be stable."""
+    """The parse-tree cache hands out one shared tree; resolution must be
+    stable."""
     first = _load(config_dir, ["++depth=7"]).label
     second = _load(config_dir, ["++depth=8"]).label
     assert (first, second) == ("base-7", "base-8")
@@ -154,7 +151,8 @@ def test_repeated_interpolations_resolve_identically(config_dir, fresh_cache):
     ],
 )
 def test_extra_config_matches_the_override_round_trip(config_dir, fresh_cache, payload):
-    """Merging the context directly must land exactly where the ++overrides do."""
+    """Merging the context directly must land exactly where the ++overrides
+    do."""
     value = {"nested": payload}
     via_overrides = _load(config_dir, config_to_cmdline(value, override="++"))
     via_merge = load_hydra_config(

@@ -78,7 +78,9 @@ def _merge_extra_config(cfg: Any, extra_config: Mapping[str, Any] | None) -> Non
         return
     # Accepts an already-built container so callers that reuse the same context
     # across configs can build it once; merging does not modify the source.
-    source = extra_config if OmegaConf.is_config(extra_config) else OmegaConf.create(dict(extra_config))
+    source = (
+        extra_config if OmegaConf.is_config(extra_config) else OmegaConf.create(dict(extra_config))
+    )
     with open_dict(cfg):
         cfg.merge_with(source)
 

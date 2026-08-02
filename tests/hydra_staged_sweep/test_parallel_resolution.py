@@ -1,4 +1,5 @@
-"""Resolving a sweep across a process pool must match resolving it in-process."""
+"""Resolving a sweep across a process pool must match resolving it in-
+process."""
 
 import os
 import textwrap
@@ -105,7 +106,8 @@ def test_sibling_references_survive_the_pool(sweep_dir):
 
 
 def test_plans_survive_the_pickle_round_trip(sweep_dir):
-    """Plans cross the process boundary by pickle, so they have to survive it."""
+    """Plans cross the process boundary by pickle, so they have to survive
+    it."""
     import pickle
 
     jobs = _resolve(sweep_dir, 1)
