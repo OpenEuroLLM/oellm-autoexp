@@ -11,10 +11,7 @@ See docs/sweep_resolution_ordering.md for design rationale (Option 5).
 
 from __future__ import annotations
 
-import io
 import logging
-import os
-import pickle
 import re
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
@@ -24,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import networkx as nx
-from compoconf import ConfigInterface, asdict
+from compoconf import asdict
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from .config.schema import StagedSweepRoot, SweepConfig, ConfigSetup
@@ -380,33 +377,25 @@ def param_to_cmdlines(key: str, val: Any, prefix: str = "", config_dir: str | Pa
         )
 
 
-def _restore_config(cls: type, state: dict) -> Any:
-    """Rebuild a config from its attribute state, without calling __init__."""
-    obj = cls.__new__(cls)
-    obj.__dict__.update(state)
-    return obj
+class _LazyFilterContext:
+    """Build the filter context only when a filter actually reads it.
 
-
-class _PlanPickler(pickle.Pickler):
-    """Pickle resolved plans by state.
-
-    compoconf's ``ConfigInterface.__reduce__`` reduces to ``(cls, (), state)``,
-    so unpickling calls ``cls()`` with no arguments -- which raises for any
-    config with required fields -- and its state comes from ``asdict``, which
-    flattens nested configs into plain dicts. Neither survives the trip back
-    from a worker process, so reduce by ``__dict__`` instead.
+    Flattening a resolved config is not cheap, and a filter that is already a
+    bool never looks at the context.
     """
 
-    def reducer_override(self, obj: Any) -> Any:
-        if isinstance(obj, ConfigInterface):
-            return _restore_config, (type(obj), obj.__dict__)
-        return NotImplemented
+    def __init__(self, resolved: Any) -> None:
+        self._resolved = resolved
+        self._context: dict[str, Any] | None = None
 
-
-def _dumps(obj: Any) -> bytes:
-    buffer = io.BytesIO()
-    _PlanPickler(buffer, protocol=pickle.HIGHEST_PROTOCOL).dump(obj)
-    return buffer.getvalue()
+    def __call__(self) -> dict[str, Any]:
+        if self._context is None:
+            self._context = {
+                key: value
+                for key, value in asdict(self._resolved).items()
+                if key not in ("sweep")
+            }
+        return self._context
 
 
 # Chains of dependent points (a stable stage plus the cooldowns that branch off
@@ -512,15 +501,7 @@ def _resolve_chain(chain: list[int]) -> tuple[dict[int, JobPlan], dict[int, bool
             config_class=config_class,
         )
 
-        cached_context: list = []
-
-        def filter_context() -> dict:
-            if not cached_context:
-                cached_context.append(
-                    {k: v for k, v in asdict(resolved).items() if k not in ("sweep")}
-                )
-            return cached_context[0]
-
+        filter_context = _LazyFilterContext(resolved)
         skip_point = False
         for expr in filter_exprs:
             if not _resolve_filter_from_context(expr, filter_context):
@@ -536,11 +517,10 @@ def _resolve_chain(chain: list[int]) -> tuple[dict[int, JobPlan], dict[int, bool
             stage_name=getattr(resolved, "stage", None),
         )
 
-    # Returned as bytes: the pool's own pickler cannot handle compoconf configs.
-    return _dumps((resolved_jobs, filtered_jobs))
+    return resolved_jobs, filtered_jobs
 
 
-def _split_into_chains(dag: "nx.DiGraph", ordered_indices: list[int]) -> list[list[int]]:
+def _split_into_chains(dag: nx.DiGraph, ordered_indices: list[int]) -> list[list[int]]:
     """Group points into independent chains, each in topological order."""
     position = {index: order for order, index in enumerate(ordered_indices)}
     chains = [
@@ -594,10 +574,6 @@ def resolve_sweep_with_dag(
             config_class=config_class,
         )
 
-        resolved_dict = asdict(resolved)
-        context = {k: v for k, v in resolved_dict.items() if k not in ("sweep")}
-        skip_point = False
-
         stage_name = getattr(resolved, "stage", None)
 
         job = JobPlan(
@@ -627,7 +603,7 @@ def resolve_sweep_with_dag(
     finally:
         _CHAIN_CONTEXT = None
 
-    for chain_resolved, chain_filtered in (pickle.loads(blob) for blob in chain_results):
+    for chain_resolved, chain_filtered in chain_results:
         resolved_jobs.update(chain_resolved)
         filtered_jobs.update(chain_filtered)
 

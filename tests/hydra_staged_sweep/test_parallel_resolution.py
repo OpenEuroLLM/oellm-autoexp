@@ -9,7 +9,7 @@ import pytest
 
 from oellm_autoexp.hydra_staged_sweep.config.loader import load_config_reference
 from oellm_autoexp.hydra_staged_sweep.config.schema import ConfigSetup, StagedSweepRoot
-from oellm_autoexp.hydra_staged_sweep.dag_resolver import _dumps, resolve_sweep_with_dag
+from oellm_autoexp.hydra_staged_sweep.dag_resolver import resolve_sweep_with_dag
 from oellm_autoexp.hydra_staged_sweep.expander import expand_sweep
 from oellm_autoexp.hydra_staged_sweep.parallel import split_evenly, worker_count
 
@@ -105,13 +105,16 @@ def test_sibling_references_survive_the_pool(sweep_dir):
 
 
 def test_plans_survive_the_pickle_round_trip(sweep_dir):
-    """compoconf configs cannot pickle themselves; _dumps has to cover for it."""
+    """Plans cross the process boundary by pickle, so they have to survive it."""
     import pickle
 
     jobs = _resolve(sweep_dir, 1)
-    restored = pickle.loads(_dumps(jobs))
+    restored = pickle.loads(pickle.dumps(jobs, protocol=pickle.HIGHEST_PROTOCOL))
     assert _fingerprint(restored) == _fingerprint(jobs)
+    # compoconf < 0.2.1 rebuilt configs through __init__ and flattened nested
+    # configs to dicts, which lost both of these.
     assert type(restored[0].config) is type(jobs[0].config)
+    assert restored[0].config == jobs[0].config
 
 
 @pytest.mark.parametrize(
