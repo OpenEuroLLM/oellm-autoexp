@@ -5,7 +5,7 @@ caches nothing between ``compose()`` calls, so every point re-reads and
 re-parses the same YAML files, re-walks the same defaults list, re-merges the
 same configs and re-parses the same interpolation strings.
 
-Six independent layers, each individually switchable:
+Seven independent layers, each individually switchable:
 
 ``fast_yaml``
     Back OmegaConf's YAML loader with libyaml's C scanner (~14x faster
@@ -19,6 +19,9 @@ Six independent layers, each individually switchable:
 ``compose_cache``
     Memoize merging a defaults list into a config. Sweep points that differ
     only in ``++key=value`` overrides share one merge.
+``defaults_cache``
+    Memoize the Defaults List itself, keyed on the overrides that can actually
+    select a config group.
 ``parse_cache``
     Memoize OmegaConf's ANTLR parse trees for interpolation strings. A sweep
     typically parses a couple of dozen distinct strings thousands of times.
@@ -60,6 +63,8 @@ _stats: dict[str, int] = {
     "override_miss": 0,
     "lookup_hit": 0,
     "lookup_miss": 0,
+    "defaults_hit": 0,
+    "defaults_miss": 0,
 }
 
 
@@ -198,6 +203,45 @@ def _install_repo_cache() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 2a. lazy repository copy
+# ---------------------------------------------------------------------------
+_orig_caching_init: Any = None
+_orig_caching_initialize_sources: Any = None
+
+
+def _install_lazy_repo_copy() -> None:
+    """Stop copying the whole repository on every composition.
+
+    ``CachingConfigRepository`` deep-copies its delegate up front so that
+    ``initialize_sources()`` cannot mutate the loader's shared repository. That
+    only happens when a config overrides ``hydra.searchpath``, so defer the copy
+    until it is actually needed.
+    """
+    global _orig_caching_init, _orig_caching_initialize_sources
+    from hydra._internal.config_repository import CachingConfigRepository
+
+    if _orig_caching_init is not None:
+        return
+    _orig_caching_init = CachingConfigRepository.__init__
+    _orig_caching_initialize_sources = CachingConfigRepository.initialize_sources
+    orig_initialize = _orig_caching_initialize_sources
+
+    def __init__(self: CachingConfigRepository, delegate: Any) -> None:
+        self.delegate = delegate
+        self.cache = {}
+        self._hss_owns_delegate = False
+
+    def initialize_sources(self: CachingConfigRepository, config_search_path: Any) -> None:
+        if not getattr(self, "_hss_owns_delegate", False):
+            self.delegate = copy.deepcopy(self.delegate)
+            self._hss_owns_delegate = True
+        orig_initialize(self, config_search_path)
+
+    CachingConfigRepository.__init__ = __init__  # type: ignore[assignment]
+    CachingConfigRepository.initialize_sources = initialize_sources  # type: ignore[assignment]
+
+
+# ---------------------------------------------------------------------------
 # 2b. config-group lookup cache
 # ---------------------------------------------------------------------------
 # Resolving the defaults list asks "is this a config group?" once per override
@@ -316,6 +360,95 @@ def _install_compose_cache() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 3b. defaults-list cache
+# ---------------------------------------------------------------------------
+# Walking the Defaults List means loading every config in the tree to read its
+# own defaults and package header. Only overrides that select a config group
+# can change the outcome; the ``++key=value`` overrides a sweep varies per
+# point cannot, so every point in a sweep rebuilds the same list.
+_defaults_list_cache: dict[Any, tuple[tuple[Any, ...], Any]] = {}
+_orig_create_defaults_list: Any = None
+
+
+def _install_defaults_list_cache() -> None:
+    global _orig_create_defaults_list
+    from hydra._internal import config_loader_impl
+    from hydra._internal import defaults_list as defaults_list_module
+    from hydra._internal.defaults_list import DefaultsList, Overrides
+
+    if _orig_create_defaults_list is not None:
+        return
+    _orig_create_defaults_list = defaults_list_module.create_defaults_list
+
+    def create_defaults_list(
+        repo: Any,
+        config_name: str | None,
+        overrides_list: list[Any],
+        prepend_hydra: bool,
+        skip_missing: bool,
+    ) -> Any:
+        # Overrides() is what decides group override vs value override, so build
+        # it first and key the cache on the group-affecting ones only.
+        overrides = Overrides(repo=repo, overrides_list=overrides_list)
+        value_overrides = {id(override) for override in overrides.config_overrides}
+        selecting = tuple(
+            override.input_line
+            for override in overrides_list
+            if id(override) not in value_overrides
+        )
+        key = (
+            config_name,
+            prepend_hydra,
+            skip_missing,
+            selecting,
+            tuple((s.scheme(), s.provider, s.path) for s in repo.get_sources()),
+            _store_generation[0],
+        )
+
+        entry = _defaults_list_cache.get(key)
+        if entry is not None:
+            defaults, tree, known_choices, known_per_group = entry[1]
+            if entry[0] == _contributing_files(defaults, repo):
+                _stats["defaults_hit"] += 1
+                # Rebuilt per call: these depend on every override, not just the
+                # selecting ones. known_choices is filled by the tree walk we
+                # just skipped, so restore it from the cached run.
+                overrides.known_choices = dict(known_choices)
+                overrides.known_choices_per_group = {
+                    group: set(choices) for group, choices in known_per_group.items()
+                }
+                return DefaultsList(
+                    defaults=defaults,
+                    defaults_tree=tree,
+                    config_overrides=overrides.config_overrides,
+                    overrides=overrides,
+                )
+
+        _stats["defaults_miss"] += 1
+        # A miss re-runs the real thing, including the validation that reports
+        # unused overrides -- so a hit can only happen for a set that validated.
+        result = _orig_create_defaults_list(
+            repo, config_name, overrides_list, prepend_hydra, skip_missing
+        )
+        _defaults_list_cache[key] = (
+            _contributing_files(result.defaults, repo),
+            (
+                result.defaults,
+                result.defaults_tree,
+                dict(result.overrides.known_choices),
+                {
+                    group: set(choices)
+                    for group, choices in result.overrides.known_choices_per_group.items()
+                },
+            ),
+        )
+        return result
+
+    defaults_list_module.create_defaults_list = create_defaults_list
+    config_loader_impl.create_defaults_list = create_defaults_list
+
+
+# ---------------------------------------------------------------------------
 # 4. interpolation parse-tree cache
 # ---------------------------------------------------------------------------
 _parse_cache: dict[Any, Any] = {}
@@ -428,6 +561,7 @@ def enable(
     fast_yaml: bool = True,
     repo_cache: bool = True,
     compose_cache: bool = True,
+    defaults_cache: bool = True,
     parse_cache: bool = True,
     override_cache: bool = True,
     lookup_cache: bool = True,
@@ -452,11 +586,15 @@ def enable(
         _install_fast_yaml()
     if repo_cache:
         _install_repo_cache()
+        _install_lazy_repo_copy()
     if lookup_cache:
         _install_lookup_cache()
     if compose_cache:
         _install_store_watch()
         _install_compose_cache()
+    if defaults_cache:
+        _install_store_watch()
+        _install_defaults_list_cache()
     if parse_cache:
         _install_parse_cache()
     if override_cache:
@@ -468,12 +606,20 @@ def enable(
 def disable() -> None:
     """Restore Hydra's and OmegaConf's original behaviour."""
     global _enabled, _orig_repo_load, _orig_compose, _orig_parse, _orig_parse_rule
-    global _orig_find_source, _orig_store
+    global _orig_find_source, _orig_store, _orig_create_defaults_list, _orig_caching_init
     if _orig_repo_load is not None:
         from hydra._internal.config_repository import ConfigRepository
 
         ConfigRepository.load_config = _orig_repo_load  # type: ignore[assignment]
         _orig_repo_load = None
+    if _orig_caching_init is not None:
+        from hydra._internal.config_repository import CachingConfigRepository
+
+        CachingConfigRepository.__init__ = _orig_caching_init  # type: ignore[assignment]
+        CachingConfigRepository.initialize_sources = (  # type: ignore[assignment]
+            _orig_caching_initialize_sources
+        )
+        _orig_caching_init = None
     if _orig_find_source is not None:
         from hydra._internal.config_repository import ConfigRepository
 
@@ -484,6 +630,13 @@ def disable() -> None:
 
         ConfigLoaderImpl._compose_config_from_defaults_list = _orig_compose  # type: ignore[assignment]
         _orig_compose = None
+    if _orig_create_defaults_list is not None:
+        from hydra._internal import config_loader_impl
+        from hydra._internal import defaults_list as defaults_list_module
+
+        defaults_list_module.create_defaults_list = _orig_create_defaults_list
+        config_loader_impl.create_defaults_list = _orig_create_defaults_list
+        _orig_create_defaults_list = None
     if _orig_store is not None:
         from hydra.core.config_store import ConfigStore
 
@@ -518,3 +671,4 @@ def clear() -> None:
     _parse_cache.clear()
     _override_cache.clear()
     _lookup_cache.clear()
+    _defaults_list_cache.clear()

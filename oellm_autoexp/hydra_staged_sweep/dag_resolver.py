@@ -11,22 +11,26 @@ See docs/sweep_resolution_ordering.md for design rationale (Option 5).
 
 from __future__ import annotations
 
+import io
 import logging
+import os
+import pickle
 import re
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import zip_longest
 from pathlib import Path
 from typing import Any
 
 import networkx as nx
-from compoconf import asdict
+from compoconf import ConfigInterface, asdict
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from .config.schema import StagedSweepRoot, SweepConfig, ConfigSetup
 from .config.loader import load_config_reference
 from .expander import SweepPoint
+from .parallel import run_chunks, worker_count
 from .planner import JobPlan
 
 LOGGER = logging.getLogger(__file__)
@@ -101,13 +105,21 @@ def _build_sibling_index(points: Mapping[int, SweepPoint]) -> SiblingIndex:
     )
 
 
-def _resolve_filter_from_context(filter_expr: Any, context: Mapping[str, Any]) -> bool:
+def _resolve_filter_from_context(filter_expr: Any, context: Mapping[str, Any] | Callable) -> bool:
+    """Evaluate one filter expression.
+
+    ``context`` may be a zero-argument callable, which is only invoked for
+    filters that actually need it -- building the context means walking the
+    whole resolved config, and most filters are already a plain bool.
+    """
     if filter_expr is None:
         return True
     if isinstance(filter_expr, bool):
         return filter_expr
     if not isinstance(filter_expr, str):
         raise ValueError("sweep.filter must resolve to a bool.")
+    if callable(context):
+        context = context()
     cfg = OmegaConf.create({**context, "sweep": {"filter": filter_expr}})
     try:
         resolved = OmegaConf.to_container(cfg, resolve=True)
@@ -368,64 +380,52 @@ def param_to_cmdlines(key: str, val: Any, prefix: str = "", config_dir: str | Pa
         )
 
 
-def resolve_sweep_with_dag(
-    config: StagedSweepRoot,
-    points: list[SweepPoint] | dict[int, SweepPoint],
-    config_setup: ConfigSetup,
-    config_class: type = StagedSweepRoot,
-) -> list[JobPlan]:
-    """Pure OmegaConf resolution with DAG ordering."""
-    LOGGER.info(f"Starting DAG resolution for {len(points)} sweep points")
+def _restore_config(cls: type, state: dict) -> Any:
+    """Rebuild a config from its attribute state, without calling __init__."""
+    obj = cls.__new__(cls)
+    obj.__dict__.update(state)
+    return obj
 
-    if isinstance(points, list):
-        points_dict = {p.index: p for p in points}
-    else:
-        points_dict = points
 
-    sibling_index = _build_sibling_index(points_dict)
-    dag = build_dependency_dag_from_points(points_dict, sibling_index=sibling_index)
+class _PlanPickler(pickle.Pickler):
+    """Pickle resolved plans by state.
 
-    if not nx.is_directed_acyclic_graph(dag):
-        cycles = list(nx.simple_cycles(dag))
-        LOGGER.error(f"Circular dependencies detected: {cycles}")
-        raise ValueError(f"Circular dependencies detected: {cycles}")
+    compoconf's ``ConfigInterface.__reduce__`` reduces to ``(cls, (), state)``,
+    so unpickling calls ``cls()`` with no arguments -- which raises for any
+    config with required fields -- and its state comes from ``asdict``, which
+    flattens nested configs into plain dicts. Neither survives the trip back
+    from a worker process, so reduce by ``__dict__`` instead.
+    """
 
-    ordered_indices = list(nx.topological_sort(dag))
-    LOGGER.debug(f"Topological order: {ordered_indices}")
+    def reducer_override(self, obj: Any) -> Any:
+        if isinstance(obj, ConfigInterface):
+            return _restore_config, (type(obj), obj.__dict__)
+        return NotImplemented
 
-    resolved_jobs = {}
-    filtered_jobs = {}
+
+def _dumps(obj: Any) -> bytes:
+    buffer = io.BytesIO()
+    _PlanPickler(buffer, protocol=pickle.HIGHEST_PROTOCOL).dump(obj)
+    return buffer.getvalue()
+
+
+# Chains of dependent points (a stable stage plus the cooldowns that branch off
+# it) must be resolved in order, but separate chains share nothing. They are
+# handed to a process pool, which is worth it because resolving a point is pure
+# CPU: composing, resolving interpolations and building dataclasses.
+_CHAIN_CONTEXT: tuple | None = None
+
+
+def _resolve_chain(chain: list[int]) -> tuple[dict[int, JobPlan], dict[int, bool]]:
+    """Resolve one dependency chain, in the order given."""
+    assert _CHAIN_CONTEXT is not None, "chain context not initialised"
+    (config, points_dict, config_setup, config_class, sibling_index, sweep_filter_expr) = _CHAIN_CONTEXT
+
+    resolved_jobs: dict[int, JobPlan] = {}
+    filtered_jobs: dict[int, bool] = {}
     sibling_context_cache: dict[tuple, tuple] = {}
-    base_context = asdict(config)
-    base_context = {k: v for k, v in base_context.items() if k not in ("sweep", "sibling")}
-    sweep_filter_expr = config.sweep.filter if isinstance(config.sweep, SweepConfig) else True
 
-    if not isinstance(config.sweep, SweepConfig):
-        point = points_dict[list(points_dict)[0]]
-        resolved = load_config_reference(
-            config_dir=config_setup.config_dir,
-            config_path=config_setup.config_path,
-            config_name=config_setup.config_name,
-            overrides=point.parameters,
-            config_class=config_class,
-        )
-
-        resolved_dict = asdict(resolved)
-        context = {k: v for k, v in resolved_dict.items() if k not in ("sweep")}
-        skip_point = False
-
-        stage_name = getattr(resolved, "stage", None)
-
-        job = JobPlan(
-            config=resolved,
-            parameters=point,
-            sibling_pattern=None,
-            stage_name=stage_name,
-        )
-
-        return [job]
-
-    for point_idx in ordered_indices:
+    for point_idx in chain:
         point = points_dict[point_idx]
         try:
             group_filters = _collect_group_filters(config.sweep.groups, point.group_path)
@@ -445,7 +445,7 @@ def resolve_sweep_with_dag(
                 sibling_jobs[pattern] = resolved_jobs[sibling_point.index]
                 sibling_ids.append((pattern, sibling_point.index))
 
-        # Every point in a stage chain sees the same siblings, and flattening a
+        # Every point in a chain sees the same siblings, and flattening a
         # resolved sibling config is the most expensive step in this loop, so
         # build the context once per distinct set of siblings.
         context_key = tuple(sorted(sibling_ids))
@@ -487,18 +487,12 @@ def resolve_sweep_with_dag(
             # Detect if this is a config group parameter
             if is_config_group(key, config_setup.config_dir):
                 # Config group: use no prefix (regular override)
-                param_overrides.extend(
-                    param_to_cmdlines(key, value, prefix="", config_dir=config_setup.config_dir)
-                )
+                param_overrides.extend(param_to_cmdlines(key, value, prefix="", config_dir=config_setup.config_dir))
             else:
                 # Regular parameter: use ++ prefix (force-add)
-                param_overrides.extend(
-                    param_to_cmdlines(key, value, prefix="++", config_dir=config_setup.config_dir)
-                )
+                param_overrides.extend(param_to_cmdlines(key, value, prefix="++", config_dir=config_setup.config_dir))
 
-        compose_overrides = (
-            list(config_setup.overrides) + [f"++index={point_idx}"] + param_overrides
-        )
+        compose_overrides = list(config_setup.overrides) + [f"++index={point_idx}"] + param_overrides
         job_parameters = (
             list(config_setup.overrides)
             + cmdline_overrides_siblings
@@ -518,30 +512,131 @@ def resolve_sweep_with_dag(
             config_class=config_class,
         )
 
-        resolved_dict = asdict(resolved)
-        context = {k: v for k, v in resolved_dict.items() if k not in ("sweep")}
+        cached_context: list = []
+
+        def filter_context() -> dict:
+            if not cached_context:
+                cached_context.append(
+                    {k: v for k, v in asdict(resolved).items() if k not in ("sweep")}
+                )
+            return cached_context[0]
+
         skip_point = False
         for expr in filter_exprs:
-            if not _resolve_filter_from_context(expr, context):
+            if not _resolve_filter_from_context(expr, filter_context):
                 LOGGER.info("Skipping point %s due to sweep.filter", point_idx)
                 skip_point = True
                 break
         filtered_jobs[point_idx] = skip_point
 
+        resolved_jobs[point_idx] = JobPlan(
+            config=resolved,
+            parameters=job_parameters,
+            sibling_pattern=None,
+            stage_name=getattr(resolved, "stage", None),
+        )
+
+    # Returned as bytes: the pool's own pickler cannot handle compoconf configs.
+    return _dumps((resolved_jobs, filtered_jobs))
+
+
+def _split_into_chains(dag: "nx.DiGraph", ordered_indices: list[int]) -> list[list[int]]:
+    """Group points into independent chains, each in topological order."""
+    position = {index: order for order, index in enumerate(ordered_indices)}
+    chains = [
+        sorted(component, key=position.__getitem__)
+        for component in nx.weakly_connected_components(dag)
+    ]
+    # Longest first, so the pool does not finish early workers and then wait on
+    # one long chain started last.
+    chains.sort(key=len, reverse=True)
+    return chains
+
+
+def resolve_sweep_with_dag(
+    config: StagedSweepRoot,
+    points: list[SweepPoint] | dict[int, SweepPoint],
+    config_setup: ConfigSetup,
+    config_class: type = StagedSweepRoot,
+) -> list[JobPlan]:
+    """Pure OmegaConf resolution with DAG ordering."""
+    LOGGER.info(f"Starting DAG resolution for {len(points)} sweep points")
+
+    if isinstance(points, list):
+        points_dict = {p.index: p for p in points}
+    else:
+        points_dict = points
+
+    sibling_index = _build_sibling_index(points_dict)
+    dag = build_dependency_dag_from_points(points_dict, sibling_index=sibling_index)
+
+    if not nx.is_directed_acyclic_graph(dag):
+        cycles = list(nx.simple_cycles(dag))
+        LOGGER.error(f"Circular dependencies detected: {cycles}")
+        raise ValueError(f"Circular dependencies detected: {cycles}")
+
+    ordered_indices = list(nx.topological_sort(dag))
+    LOGGER.debug(f"Topological order: {ordered_indices}")
+
+    resolved_jobs = {}
+    filtered_jobs = {}
+    base_context = asdict(config)
+    base_context = {k: v for k, v in base_context.items() if k not in ("sweep", "sibling")}
+    sweep_filter_expr = config.sweep.filter if isinstance(config.sweep, SweepConfig) else True
+
+    if not isinstance(config.sweep, SweepConfig):
+        point = points_dict[list(points_dict)[0]]
+        resolved = load_config_reference(
+            config_dir=config_setup.config_dir,
+            config_path=config_setup.config_path,
+            config_name=config_setup.config_name,
+            overrides=point.parameters,
+            config_class=config_class,
+        )
+
+        resolved_dict = asdict(resolved)
+        context = {k: v for k, v in resolved_dict.items() if k not in ("sweep")}
+        skip_point = False
+
         stage_name = getattr(resolved, "stage", None)
 
         job = JobPlan(
             config=resolved,
-            parameters=job_parameters,
+            parameters=point,
             sibling_pattern=None,
             stage_name=stage_name,
         )
 
-        resolved_jobs[point_idx] = job
+        return [job]
 
-    return list(
-        resolved_jobs[point_idx] for point_idx in resolved_jobs if not filtered_jobs[point_idx]
+    chains = _split_into_chains(dag, ordered_indices)
+    workers = worker_count(len(chains), len(ordered_indices))
+    LOGGER.info("Resolving %d chains with %d worker(s)", len(chains), workers)
+
+    global _CHAIN_CONTEXT
+    _CHAIN_CONTEXT = (
+        config,
+        points_dict,
+        config_setup,
+        config_class,
+        sibling_index,
+        sweep_filter_expr,
     )
+    try:
+        chain_results = run_chunks(_resolve_chain, chains, workers)
+    finally:
+        _CHAIN_CONTEXT = None
+
+    for chain_resolved, chain_filtered in (pickle.loads(blob) for blob in chain_results):
+        resolved_jobs.update(chain_resolved)
+        filtered_jobs.update(chain_filtered)
+
+    # Emit in topological order, matching the order a single-process run built.
+    return [
+        resolved_jobs[point_idx]
+        for point_idx in ordered_indices
+        if point_idx in resolved_jobs and not filtered_jobs[point_idx]
+    ]
 
 
 __all__ = [
