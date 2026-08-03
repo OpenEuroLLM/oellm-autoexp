@@ -52,7 +52,13 @@ backend:
     padded_vocab_size: 50304
     normalization: RMSNorm
     swiglu: true
-    add_qkv_bias: true
+    # Match the hybrid fullattn reference (317.2 TFLOP/s at this size):
+    # no linear/QKV bias, and crucially no dataloader-built attention mask --
+    # at seq=4096/mbs=32 that mask is a ~512 MiB bool tensor per micro-batch,
+    # paid in both memory and bandwidth on every step.
+    add_bias_linear: false
+    add_qkv_bias: false
+    create_attention_mask_in_dataloader: false
     qk_layernorm: true
     position_embedding_type: rope
     rotary_base: 100000
@@ -69,7 +75,7 @@ backend:
     # logits alone are ~0.41 GiB per micro-batch sample at V=50304/seq=4096, so
     # mbs is also constrained to divide gbs/DP (=32 here), so 16 with gbs=128
     # gives 2 accumulation steps. Porting Liger is the next real lever.
-    micro_batch_size: 16
+    micro_batch_size: 32
     lr: 0.002
     min_lr: 1.0e-05
     lr_decay_style: WSD
@@ -99,7 +105,7 @@ backend:
     # the grad-accum matmul is a large, free win.
     gradient_accumulation_fusion: true
     bias_dropout_fusion: true
-    bias_gelu_fusion: false
+    bias_gelu_fusion: true
     bias_swiglu_fusion: true
     cross_entropy_loss_fusion: true
     # CUDA graphs: at 130M the per-kernel launch overhead is a large fraction of
@@ -119,8 +125,8 @@ backend:
     # Overlap the DP gradient reduce / param gather with compute. Safe here: this
     # is a single node, so the collectives stay on NVLink (the known JUPITER
     # deadlock with overlap_grad_reduce was inter-node IB).
-    overlap_grad_reduce: true
-    overlap_param_gather: true
+    overlap_grad_reduce: false
+    overlap_param_gather: false
     attention_dropout: 0
     hidden_dropout: 0
     dataloader_type: cyclic
@@ -176,10 +182,11 @@ backend:
     # the container: HF_HOME alone resolves gpt-neox-20b, adding TRANSFORMERS_CACHE
     # makes it fail.
     HUGGINGFACE_HUB_CACHE: ${aux.hf_home}/hub
-    # Inductor needs libcuda.so on the compile path; without a correct
-    # TRITON_LIBCUDA_PATH (a *directory*) it aborts with "libcuda.so cannot
-    # found!". Keep Dynamo off until that is wired up -- CUDA graphs and the
-    # fusions below deliver the throughput without it.
+    # Triton needs libcuda on its link path. This bites Liger too (its fused CE
+    # is a Triton kernel), not just Dynamo -- the job aborts with "libcuda.so
+    # cannot found!". Must be the *directory*: Triton passes it to GCC as -L.
+    # This container reports the library at /usr/local/cuda/compat/lib.
+    TRITON_LIBCUDA_PATH: "/usr/local/cuda/compat/lib"
     TORCHDYNAMO_DISABLE: "1"
     HF_DATASETS_OFFLINE: "1"
     TRANSFORMERS_OFFLINE: "1"
@@ -205,6 +212,8 @@ slurm:
   # account, and they are offline, so the tokenizer lookup fails.
   env:
     HF_HOME: ${aux.hf_home}
+    # slurm.env is the binding value in the generated sbatch.
+    TRITON_LIBCUDA_PATH: "/usr/local/cuda/compat/lib"
   sbatch:
     nodes: 1
     time: "00:20:00"
@@ -226,15 +235,18 @@ sweep:
       # 2-3. nGPT LERP residual; approx is the paper's form, analytic the exact
       #      cos(theta) factor that keeps a full-rank Jacobian.
       - aux.variant: ngpt_approx
+        backend.megatron.micro_batch_size: 32
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: approx
       - aux.variant: ngpt_analytic
+        backend.megatron.micro_batch_size: 16
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: analytic
 
       # 4. Full nGPT recipe: LERP residual + post-step weight normalization, no
       #    weight decay on the normalized body (the normalizer controls magnitude).
       - aux.variant: ngpt_wnorm
+        backend.megatron.micro_batch_size: 16
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: analytic
         backend.megatron.weight_normalizer: true
@@ -252,30 +264,30 @@ sweep:
       # 6-7. mHC: n-stream residual with doubly stochastic mixing. The LERP variant
       #      mixes first, then takes an nGPT step per stream.
       - aux.variant: mhc4
+        backend.megatron.micro_batch_size: 16
         backend.megatron.cuda_graph_impl: none
         backend.megatron.mhc: true
         backend.megatron.mhc_expansion_rate: 4
-        backend.megatron.micro_batch_size: 8
       - aux.variant: mhc2_lerp
+        backend.megatron.micro_batch_size: 8
         backend.megatron.cuda_graph_impl: none
         backend.megatron.mhc: true
         backend.megatron.mhc_expansion_rate: 2
-        backend.megatron.micro_batch_size: 8
         backend.megatron.mhc_lerp: true
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: analytic
 
       # 8-9. Block AttnRes: softmax attention over depth across block summaries.
       - aux.variant: attnres8
+        backend.megatron.micro_batch_size: 32
         backend.megatron.cuda_graph_impl: none
         backend.megatron.attn_res: true
         backend.megatron.attn_res_num_blocks: 8
-        backend.megatron.micro_batch_size: 8
       - aux.variant: attnres4_lerp
+        backend.megatron.micro_batch_size: 16
         backend.megatron.cuda_graph_impl: none
         backend.megatron.attn_res: true
         backend.megatron.attn_res_num_blocks: 4
-        backend.megatron.micro_batch_size: 8
         backend.megatron.attn_res_lerp: true
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: analytic
@@ -290,7 +302,7 @@ sweep:
         backend.megatron.num_attention_heads: 16
         backend.megatron.num_query_groups: 16
         backend.megatron.kv_channels: 128
-        backend.megatron.micro_batch_size: 4
+        backend.megatron.micro_batch_size: 8
       - aux.variant: probe1p3B_ngpt
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: analytic
@@ -300,4 +312,4 @@ sweep:
         backend.megatron.num_attention_heads: 16
         backend.megatron.num_query_groups: 16
         backend.megatron.kv_channels: 128
-        backend.megatron.micro_batch_size: 4
+        backend.megatron.micro_batch_size: 8
