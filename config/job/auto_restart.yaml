@@ -1,6 +1,15 @@
 defaults:
  - default
 
+# Mark the job finished without (re)submitting if it already reached its
+# target iteration in a past attempt's log (e.g. it crashed on distributed
+# teardown right after its final save, before printing "[after training is
+# done]"). Checked before start_condition/log_events every poll, so this
+# alone is enough to stop the restart loop for already-completed jobs.
+finish_condition:
+  class_name: ShellCommandCondition
+  command: "grep -qE 'successfully saved checkpoint from iteration[[:space:]]+${backend.megatron.train_iters}[[:space:]]' ${job.base_output_dir}/logs/*.log 2>/dev/null"
+
 log_events:
   - name: finished_training
     pattern: "[after training is done]"
