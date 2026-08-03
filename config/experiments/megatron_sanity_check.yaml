@@ -21,7 +21,6 @@ backend:
     context_parallel_size: 1
     sequence_parallel: true
     use_distributed_optimizer: true
-    async_tensor_model_parallel_allreduce: false
     masked_softmax_fusion: false
     gradient_accumulation_fusion: false
     bias_dropout_fusion: false

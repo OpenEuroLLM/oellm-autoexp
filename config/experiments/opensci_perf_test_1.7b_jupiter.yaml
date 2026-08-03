@@ -52,7 +52,6 @@ backend:
     init_method_std: 0.02
     clip_grad: 1.0
     add_qkv_bias: false
-    legacy_tokenizer: false
     override_opt_param_scheduler: true
 
     # (2) Enable all fusions
@@ -70,7 +69,7 @@ backend:
     use_flash_attn: true
     qk_layernorm: true
     normalization: RMSNorm
-    norm_epsilon: 1.0e-05
+    layernorm_epsilon: 1.0e-05
     swiglu: true
     position_embedding_type: rope
     rotary_base: 100000

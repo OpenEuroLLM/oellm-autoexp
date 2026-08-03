@@ -33,7 +33,7 @@ backend:
     # CUDA graphs: +~1%; need check_for_nan off + gc_threshold alloc conf
     # (expandable_segments conflicts with graph capture).
     cuda_graph_impl: "local"
-    cuda_graph_scope: "full"
+    cuda_graph_modules: []  # migrated from cuda_graph_scope: full (0.18.2 API)
     cuda_graph_warmup_steps: 3
     check_for_nan_in_loss_and_grad: false
   env:
