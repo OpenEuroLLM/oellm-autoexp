@@ -182,12 +182,13 @@ backend:
     # the container: HF_HOME alone resolves gpt-neox-20b, adding TRANSFORMERS_CACHE
     # makes it fail.
     HUGGINGFACE_HUB_CACHE: ${aux.hf_home}/hub
+    # Dynamo/Inductor enabled: the mHC Sinkhorn loop is torch.compile'd to fuse
+    # ~32 elementwise passes into a few kernels.
     # Triton needs libcuda on its link path. This bites Liger too (its fused CE
     # is a Triton kernel), not just Dynamo -- the job aborts with "libcuda.so
     # cannot found!". Must be the *directory*: Triton passes it to GCC as -L.
     # This container reports the library at /usr/local/cuda/compat/lib.
     TRITON_LIBCUDA_PATH: "/usr/local/cuda/compat/lib"
-    TORCHDYNAMO_DISABLE: "1"
     HF_DATASETS_OFFLINE: "1"
     TRANSFORMERS_OFFLINE: "1"
     PYTORCH_CUDA_ALLOC_CONF: "garbage_collection_threshold:0.8"
@@ -231,22 +232,27 @@ sweep:
      configs:
       # 1. Control arm: unmodified pre-norm transformer.
       - aux.variant: baseline
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 32
 
       # 2-3. nGPT LERP residual; approx is the paper's form, analytic the exact
       #      cos(theta) factor that keeps a full-rank Jacobian.
       - aux.variant: ngpt_approx
+        backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 32
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: approx
       - aux.variant: ngpt_analytic
-        backend.megatron.micro_batch_size: 16
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 24
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: analytic
 
       # 4. Full nGPT recipe: LERP residual + post-step weight normalization, no
       #    weight decay on the normalized body (the normalizer controls magnitude).
       - aux.variant: ngpt_wnorm
-        backend.megatron.micro_batch_size: 16
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 24
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: analytic
         backend.megatron.weight_normalizer: true
@@ -257,6 +263,8 @@ sweep:
       # 5. Muown: Muon on the row directions, l-infinity sign step on the row
       #    magnitudes. 1-D params fall back to Adam automatically.
       - aux.variant: muown
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 32
         backend.megatron.optimizer: muown
         backend.megatron.muown_momentum: 0.95
         backend.megatron.muown_num_ns_steps: 5
@@ -264,14 +272,16 @@ sweep:
       # 6-7. mHC: n-stream residual with doubly stochastic mixing. The LERP variant
       #      mixes first, then takes an nGPT step per stream.
       - aux.variant: mhc4
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 24
         backend.megatron.mhc_sinkhorn_iters: 8
-        backend.megatron.micro_batch_size: 16
         backend.megatron.cuda_graph_impl: none
         backend.megatron.mhc: true
         backend.megatron.mhc_expansion_rate: 4
       - aux.variant: mhc2_lerp
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 16
         backend.megatron.mhc_sinkhorn_iters: 8
-        backend.megatron.micro_batch_size: 8
         backend.megatron.cuda_graph_impl: none
         backend.megatron.mhc: true
         backend.megatron.mhc_expansion_rate: 2
@@ -281,11 +291,13 @@ sweep:
 
       # 8-9. Block AttnRes: softmax attention over depth across block summaries.
       - aux.variant: attnres8
+        backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 32
         backend.megatron.cuda_graph_impl: none
         backend.megatron.attn_res: true
         backend.megatron.attn_res_num_blocks: 8
       - aux.variant: attnres4_lerp
+        backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 16
         backend.megatron.cuda_graph_impl: none
         backend.megatron.attn_res: true
