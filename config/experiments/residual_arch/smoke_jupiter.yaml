@@ -264,11 +264,13 @@ sweep:
       # 6-7. mHC: n-stream residual with doubly stochastic mixing. The LERP variant
       #      mixes first, then takes an nGPT step per stream.
       - aux.variant: mhc4
+        backend.megatron.mhc_sinkhorn_iters: 8
         backend.megatron.micro_batch_size: 16
         backend.megatron.cuda_graph_impl: none
         backend.megatron.mhc: true
         backend.megatron.mhc_expansion_rate: 4
       - aux.variant: mhc2_lerp
+        backend.megatron.mhc_sinkhorn_iters: 8
         backend.megatron.micro_batch_size: 8
         backend.megatron.cuda_graph_impl: none
         backend.megatron.mhc: true
