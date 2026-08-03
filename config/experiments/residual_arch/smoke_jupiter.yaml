@@ -1,0 +1,190 @@
+# @package _global_
+#
+# Residual-architecture smoke sweep.
+#
+# One short job per residual/optimization scheme, all sharing the niccolo-130M
+# geometry, data, tokenizer, batch and schedule so the only difference is the
+# scheme under test. This is a *smoke* sweep: the point is that every variant
+# builds, trains and logs a decreasing loss on GPU -- not to compare quality.
+#
+# Schemes (all PP=1, which mHC and Block AttnRes currently require):
+#   baseline      standard pre-norm transformer, AdamW
+#   ngpt_approx   nGPT LERP residual, nGPT's orthogonality approximation
+#   ngpt_analytic nGPT LERP residual, exact cos(theta) factor
+#   ngpt_wnorm    nGPT + post-step weight normalizer (the full nGPT recipe)
+#   muown         Muown optimizer (row-magnitude/direction split)
+#   mhc4          mHC with 4 streams
+#   mhc2_lerp     mHC with 2 streams composed with the nGPT LERP
+#   attnres8      Block AttnRes with 8 blocks
+#   attnres4_lerp Block AttnRes with 4 blocks composed with the nGPT LERP
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, data_nemonicco_jupiter]
+  - /sweep: none
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: "residual_arch_smoke"
+  total_tokens: "${oc.eval:'${aux.seq_len}*${aux.gbs}*${backend.megatron.train_iters}'}"
+  gbs: 64
+  seq_len: 4096
+  start_iter: 0
+  additional_tag: ""
+  variant: "baseline"
+
+backend:
+  megatron:
+    # ---- geometry: niccolo 130M ----
+    num_layers: 18
+    hidden_size: 576
+    ffn_hidden_size: 2304
+    num_attention_heads: 9
+    num_query_groups: 9
+    kv_channels: 64
+    seq_length: ${aux.seq_len}
+    max_position_embeddings: ${aux.seq_len}
+    padded_vocab_size: 50304
+    normalization: RMSNorm
+    swiglu: true
+    add_qkv_bias: true
+    qk_layernorm: true
+    position_embedding_type: rope
+    rotary_base: 100000
+    rotary_percent: 1
+    untie_embeddings_and_output_weights: false
+
+    # ---- short smoke schedule ----
+    train_iters: 60
+    global_batch_size: ${aux.gbs}
+    micro_batch_size: 4
+    lr: 0.002
+    min_lr: 1.0e-05
+    lr_decay_style: WSD
+    lr_warmup_iters: 10
+    lr_wsd_decay_iters: 10
+    lr_wsd_decay_style: linear
+    lr_warmup_init: 0
+    adam_beta2: 0.99
+    weight_decay: 0.1
+    clip_grad: 1
+
+    # ---- parallelism: PP=1 is required by mHC / Block AttnRes ----
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    expert_model_parallel_size: 1
+    expert_tensor_parallel_size: 1
+    sequence_parallel: false
+
+    # ---- precision / perf ----
+    bf16: true
+    accumulate_allreduce_grads_in_fp32: true
+    grad_reduce_in_bf16: false
+    use_distributed_optimizer: true
+    use_flash_attn: true
+    gradient_accumulation_fusion: false
+    bias_dropout_fusion: false
+    bias_gelu_fusion: false
+    bias_swiglu_fusion: false
+    attention_dropout: 0
+    hidden_dropout: 0
+    dataloader_type: cyclic
+    num_workers: 7
+    num_dataset_builder_threads: 6
+    rerun_mode: disabled
+
+    # ---- tokenizer ----
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: EleutherAI/gpt-neox-20b
+
+    # ---- logging; no checkpointing for a smoke run ----
+    log_interval: 5
+    log_throughput: true
+    log_progress: true
+    eval_interval: 100000
+    eval_iters: 0
+    save: null
+    load: null
+    wandb_project: residual_arch
+    wandb_exp_name: ${job.name}
+    wandb_save_dir: ${job.base_output_dir}/wandb
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    TORCHDYNAMO_DISABLE: "1"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:20:00"
+
+stage: smoke
+
+job:
+  name: resid_${aux.variant}${aux.additional_tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+sweep:
+  type: product
+  groups:
+   - type: list
+     configs:
+      # 1. Control arm: unmodified pre-norm transformer.
+      - aux.variant: baseline
+
+      # 2-3. nGPT LERP residual; approx is the paper's form, analytic the exact
+      #      cos(theta) factor that keeps a full-rank Jacobian.
+      - aux.variant: ngpt_approx
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: approx
+      - aux.variant: ngpt_analytic
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+
+      # 4. Full nGPT recipe: LERP residual + post-step weight normalization, no
+      #    weight decay on the normalized body (the normalizer controls magnitude).
+      - aux.variant: ngpt_wnorm
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+        backend.megatron.weight_normalizer: true
+        backend.megatron.weight_normalizer_out_norm_dim_0: true
+        backend.megatron.weight_normalizer_head_unconstrained: true
+        backend.megatron.weight_decay: 0.0
+
+      # 5. Muown: Muon on the row directions, l-infinity sign step on the row
+      #    magnitudes. 1-D params fall back to Adam automatically.
+      - aux.variant: muown
+        backend.megatron.optimizer: muown
+        backend.megatron.muown_momentum: 0.95
+        backend.megatron.muown_num_ns_steps: 5
+
+      # 6-7. mHC: n-stream residual with doubly stochastic mixing. The LERP variant
+      #      mixes first, then takes an nGPT step per stream.
+      - aux.variant: mhc4
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+      - aux.variant: mhc2_lerp
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 2
+        backend.megatron.mhc_lerp: true
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+
+      # 8-9. Block AttnRes: softmax attention over depth across block summaries.
+      - aux.variant: attnres8
+        backend.megatron.attn_res: true
+        backend.megatron.attn_res_num_blocks: 8
+      - aux.variant: attnres4_lerp
+        backend.megatron.attn_res: true
+        backend.megatron.attn_res_num_blocks: 4
+        backend.megatron.attn_res_lerp: true
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
