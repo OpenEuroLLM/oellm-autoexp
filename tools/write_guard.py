@@ -50,7 +50,13 @@ def _default_roots() -> list[Path]:
     # Errors must be caught per-entry: these bases hold ~2000 project dirs and
     # many are unreadable, so a loop-level handler would abort discovery on the
     # first permission error and silently leave the user's own scratch out.
-    for base in (Path("/scratch"), Path("/pfs/lustrep3/scratch"), Path("/pfs/lustrep4/scratch")):
+    for base in (
+        Path("/scratch"),
+        Path("/pfs/lustrep3/scratch"),
+        Path("/pfs/lustrep4/scratch"),
+        Path("/leonardo_work"),
+        Path("/leonardo_scratch"),
+    ):
         try:
             projects = list(base.iterdir())
         except OSError:
