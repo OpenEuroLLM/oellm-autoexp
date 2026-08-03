@@ -116,6 +116,16 @@ class MegatronConfig(ConfigInterface):
     # Transformer Engine library is used. Defaults to 'native'.
     cross_entropy_fusion_impl: Literal["native", "te"] = "native"
 
+    # Fuse the LM-head projection with Liger-Kernel's chunked cross entropy. This avoids
+    # materializing full-vocabulary logits, but currently supports only tensor model parallel
+    # size one because Liger's implementation is not vocabulary parallel.
+    liger_fused_linear_cross_entropy: bool = False
+
+    # Optional power-of-two token chunk size for Liger fused LM-head CE. ``None`` preserves
+    # Liger's conservative automatic chunking. A larger chunk uses more temporary logits
+    # memory but reduces LM-head GEMM and weight-gradient-accumulation launches.
+    liger_fused_linear_cross_entropy_chunk_size: int | None = None
+
     # Set the bootstrapping backend of Tensor parallel communications.
     tp_comm_bootstrap_backend: Literal["nccl", "mpi", "gloo"] = "nccl"
 
@@ -303,8 +313,10 @@ class MegatronConfig(ConfigInterface):
     # Whether to use multi-latent attention.
     multi_latent_attention: bool = False
 
-    # Type of attention variant to use. Currently support gated_delta_net and dsa.
-    experimental_attention_variant: Literal["gated_delta_net", "dsa"] | None = None
+    # Type of attention variant to use. Currently support gated_delta_net, mlstm and dsa.
+    experimental_attention_variant: Literal["gated_delta_net", "mlstm", "mamba", "dsa"] | None = (
+        None
+    )
 
     # Number of DSA indexer heads.
     dsa_indexer_n_heads: int | None = None
@@ -336,6 +348,24 @@ class MegatronConfig(ConfigInterface):
 
     # Number of value and gate heads for the gated delta net.
     linear_num_value_heads: int = 32
+
+    # mlstm_kernels sequence kernel used by the mLSTM attention variant.
+    mlstm_backend: str = "chunkwise--triton_xl_chunk"
+
+    # Chunk size of the chunkwise-parallel mLSTM kernel. 128 is the fastest on H100/H200.
+    mlstm_chunk_size: int = 128
+
+    # Soft cap for the mLSTM input/forget gate preactivations. None disables capping.
+    mlstm_gate_soft_cap: float = 15.0
+
+    # Initial value of the mLSTM input-gate bias (filled across all heads). Larger (less
+    # negative) values open the input gate earlier in training.
+    mlstm_igate_bias_init: float = -10.0
+
+    # Apply a short depthwise causal conv over q,k,v before the mLSTM cell (xLSTM conv branch
+    # / GatedDeltaNet-style, via FLA causal_conv1d). Kernel width is taken from
+    # ``linear_conv_kernel_dim``.
+    mlstm_conv1d: bool = False
 
     # Standard deviation of the zero mean normal for the default initialization method, not
     # used if init_method and output_layer_init_method are provided.

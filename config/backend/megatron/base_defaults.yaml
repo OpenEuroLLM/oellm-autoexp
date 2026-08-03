@@ -174,7 +174,7 @@ exit_signal_handler_for_dataloader: false  # Use signal handler for dataloader w
 exit_signal_handler_for_training: false  # Shutdown the training when SIGINT or SIGTERM received to avoid unclear traceback
 exp_avg_dtype: fp32  # choices: ['fp32', 'fp16', 'bf16', 'fp8'] | Dtype of exp_avg (1st moment in adam optimizer) when enabling precision-aware-optimizer. This dtype is used for storing the optimizer state in memory during training but does not affect the precision in the kernel computation.
 exp_avg_sq_dtype: fp32  # choices: ['fp32', 'fp16', 'bf16', 'fp8'] | Dtype of exp_avg_sq (2nd moment in adam optimizer) when enabling precision-aware-optimizer. This dtype is used for storing the optimizer state in memory during training but does not affect the precision in the kernel computation.
-experimental_attention_variant: null  # choices: ['gated_delta_net', 'dsa'] | Type of attention variant to use. Currently support gated_delta_net and dsa.
+experimental_attention_variant: null  # choices: ['gated_delta_net', 'mlstm', 'mamba', 'dsa'] | Type of attention variant to use. Currently support gated_delta_net, mlstm and dsa.
 expert_model_parallel_size: 1  # Distributes Moe Experts across sub data parallel dimension.
 expert_tensor_parallel_size: null  # Intra-layer tensor model parallelism for expert layer. Splits tensors across GPU ranks. Default is None, which will be set to the value of tensor_model_parallel_size.
 external_cuda_graph: false  # DEPRECATED and replaced by cuda_graph_impl. When set to true, TransformerLayer layers are swapped with user provided CUDA graphs.
@@ -332,6 +332,8 @@ langrl_env_config: null  # Path to YAML config file for RL environment configura
 layernorm_epsilon: 1.0e-05  # Epsilon value for any LayerNorm/RMSNorm operations.
 layernorm_zero_centered_gamma: false  # If set to True, the LayerNorm is adjusted to center the gamma values around 0. This improves numerical stability.
 lazy_mpu_init: false  # If set to True, initialize_megatron() skips DDP initialization and returns function to complete it instead. Also turns on --use-cpu-initialization flag. This is for external DDP manager.
+liger_fused_linear_cross_entropy: false  # Fuse the LM-head projection with Liger-Kernel's chunked cross entropy. This avoids materializing full-vocabulary logits, but currently supports only tensor model parallel size one because Liger's implementation is not vocabulary parallel.
+liger_fused_linear_cross_entropy_chunk_size: null  # Optional power-of-two token chunk size for Liger fused LM-head CE. ``None`` preserves Liger's conservative automatic chunking. A larger chunk uses more temporary logits memory but reduces LM-head GEMM and weight-gradient-accumulation launches.
 linear_attention_freq: null  # Frequency between LA (linear attention) layers and SDPA (scaled dot-product attention) layers. Accepts either: - An integer N: Represents a (N-1):N ratio, meaning (N-1) LA layers for every 1 SDPA layer - A string containing a Python list expression that defines a custom pattern, e.g.: "([1]*3+[0]*1)*3" evaluates to [1,1,1,0,1,1,1,0,1,1,1,0] where 1 indicates an LA layer and 0 indicates a SDPA layer. Examples: "([0]+[1]*23)": 1 SDPA layer followed by 23 LA layers, "([1]*3+[0]*2)*2": Three LA layers followed by two SDPA layers, repeated twice.
 linear_conv_kernel_dim: 4  # Conv kernel dimension for the gated delta net.
 linear_key_head_dim: 128  # Query and key head dimension for the gated delta net.
@@ -413,6 +415,11 @@ min_offloaded_tensor_size: 1048576  # The minimum size of the tensor to be offlo
 mla_down_proj_fusion: false  # Enable fused q/kv down-projection and fused input layernorm when backend supports. Otherwise fall back to the unfused MLA.
 mlp_chunks_for_prefill: 1  # The number of chunks along the sequence dimension to use for MLP computation during prefill.
 mlp_chunks_for_training: 1  # The number of chunks along the sequence dimension to use for MLP computation during training.
+mlstm_backend: chunkwise--triton_xl_chunk  # mlstm_kernels sequence kernel used by the mLSTM attention variant.
+mlstm_chunk_size: 128  # Chunk size of the chunkwise-parallel mLSTM kernel. 128 is the fastest on H100/H200.
+mlstm_conv1d: false  # Apply a short depthwise causal conv over q,k,v before the mLSTM cell (xLSTM conv branch / GatedDeltaNet-style, via FLA causal_conv1d). Kernel width is taken from ``linear_conv_kernel_dim``.
+mlstm_gate_soft_cap: 15.0  # Soft cap for the mLSTM input/forget gate preactivations. None disables capping.
+mlstm_igate_bias_init: -10.0  # Initial value of the mLSTM input-gate bias (filled across all heads). Larger (less negative) values open the input gate earlier in training.
 mmap_bin_files: true  # Disable mmap-ing of .bin files.
 mock_data: false  # Skip data loading and validation and opt for artificial generation of mock data when an implementation is available.
 model_parallel_size: null  # Old model parallel argument, do not use. Use --tensor-model-parallel-size instead.
