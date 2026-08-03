@@ -25,7 +25,7 @@ backend:
   megatron:
     # Data-related configs (LUMI)
     split: '1,99,0'
-    data_args_path: /scratch/project_465002530/multilingual_scaling/data_mix/1TT-option-4-val-fixed-leo.sh
+    data_args_path: /scratch/project_465002530/multilingual_scaling/data_mix/1TT-option-4-val-fixed-lumi.sh
     tokenizer_model: openeurollm/tokenizer-256k
     data_cache_path: /scratch/project_465002530/users/dianaonutu/cache/MEGATRON_262k_val # Adjust it to your own directory
     load: "/scratch/project_465002530/multilingual_scaling/0.9B_ne/training/${job.name}/checkpoints"
