@@ -1,14 +1,21 @@
 defaults:
  - default
 
-# Mark the job finished without (re)submitting if it already reached its
-# target iteration in a past attempt's log (e.g. it crashed on distributed
-# teardown right after its final save, before printing "[after training is
-# done]"). Checked before start_condition/log_events every poll, so this
-# alone is enough to stop the restart loop for already-completed jobs.
+# Mark the job finished without (re)submitting if it already completed in a
+# past attempt's log (e.g. it crashed on distributed teardown right after its
+# final save/eval, before printing its normal completion marker). Checked
+# before start_condition/log_events every poll, so this alone is enough to
+# stop the restart loop for already-completed jobs. Covers both job kinds
+# sharing this template: training (checkpoint saved at train_iters) and
+# validation (eval_interval is disabled during training and train_iters=1
+# during validation, so each check only ever fires for its own job kind).
 finish_condition:
-  class_name: ShellCommandCondition
-  command: "grep -qE 'successfully saved checkpoint from iteration[[:space:]]+${backend.megatron.train_iters}[[:space:]]' ${job.base_output_dir}/logs/*.log 2>/dev/null"
+  class_name: OrCondition
+  conditions:
+    - class_name: ShellCommandCondition
+      command: "grep -qE 'successfully saved checkpoint from iteration[[:space:]]+${backend.megatron.train_iters}[[:space:]]' ${job.base_output_dir}/logs/*.log 2>/dev/null"
+    - class_name: ShellCommandCondition
+      command: "grep -qE 'validation loss.*on (validation|test) set' ${job.base_output_dir}/logs/*.log 2>/dev/null"
 
 log_events:
   - name: finished_training

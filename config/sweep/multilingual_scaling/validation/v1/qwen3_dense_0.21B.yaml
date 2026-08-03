@@ -213,14 +213,8 @@ groups:
         backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
         backend.megatron.aux.job_horizon_suffix: "\\${oc.eval:'str(\\${backend.megatron.aux.tokens}//1_000_000_000)+\"BT\"'}"
         job.start_condition:
-          class_name: AndCondition
-          conditions:
-            - class_name: FileExistsCondition
-              path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.train_iters}).zfill(7)'}"
-            - class_name: NotCondition
-              condition:
-                class_name: ShellCommandCondition
-                command: "grep -q 'validation loss.*on validation set' \\${job.base_output_dir}/logs/*.log 2>/dev/null"
+          class_name: FileExistsCondition
+          path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.train_iters}).zfill(7)'}"
 
       # DECAY PHASES: evaluate each decay training checkpoint (load found via
       # job-name matching; waits for that training run's final checkpoint).
@@ -233,14 +227,8 @@ groups:
           backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
 
           job.start_condition:
-            class_name: AndCondition
-            conditions:
-              - class_name: FileExistsCondition
-                path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.train_iters}).zfill(7)'}"
-              - class_name: NotCondition
-                condition:
-                  class_name: ShellCommandCondition
-                  command: "grep -q 'validation loss.*on validation set' \\${job.base_output_dir}/logs/*.log 2>/dev/null"
+            class_name: FileExistsCondition
+            path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.train_iters}).zfill(7)'}"
           job.cancel_condition: null
 
         configs:
@@ -272,14 +260,8 @@ groups:
           backend.megatron.lr_wsd_decay_iters: 0
           backend.megatron.ckpt_step: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.cooldown_decay_fraction}))'}"
           job.start_condition:
-            class_name: AndCondition
-            conditions:
-              - class_name: FileExistsCondition
-                path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.ckpt_step}).zfill(7)'}"
-              - class_name: NotCondition
-                condition:
-                  class_name: ShellCommandCondition
-                  command: "grep -q 'validation loss.*on validation set' \\${job.base_output_dir}/logs/*.log 2>/dev/null"
+            class_name: FileExistsCondition
+            path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.ckpt_step}).zfill(7)'}"
           job.cancel_condition: null
         configs:
           - stage: branch6BT
@@ -310,14 +292,8 @@ groups:
           backend.megatron.lr_wsd_decay_iters: 0
           backend.megatron.ckpt_step: "\\${backend.megatron.train_iters}"
           job.start_condition:
-            class_name: AndCondition
-            conditions:
-              - class_name: FileExistsCondition
-                path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.ckpt_step}).zfill(7)'}"
-              - class_name: NotCondition
-                condition:
-                  class_name: ShellCommandCondition
-                  command: "grep -q 'validation loss.*on validation set' \\${job.base_output_dir}/logs/*.log 2>/dev/null"
+            class_name: FileExistsCondition
+            path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.ckpt_step}).zfill(7)'}"
           job.cancel_condition: null
         configs:
           - stage: end6BT
