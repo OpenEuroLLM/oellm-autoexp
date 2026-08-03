@@ -917,6 +917,59 @@ class MegatronConfig(ConfigInterface):
     # L2-normalize the MLP output before the LERP residual update.
     ngpt_post_layer_norm_ffn: bool = True
 
+    # Enable mHC (arXiv:2512.24880): widen the residual into mhc_expansion_rate parallel
+    # streams mixed by a doubly stochastic matrix. Doubly stochastic mixing is non-expansive
+    # and closed under composition, so the composite depth mapping stays norm-preserving -
+    # this is what plain Hyper-Connections lose. Mutually exclusive with attn_res. Requires
+    # pipeline_model_parallel_size == 1 for now.
+    mhc: bool = False
+
+    # Number of residual streams n. n=1 degenerates to a standard residual. The paper uses
+    # n=4, reporting 6.7% training-time overhead at that setting. Costs n-times the residual
+    # activation memory and n-times the pipeline inter-stage payload.
+    mhc_expansion_rate: int = 4
+
+    # Sinkhorn-Knopp sweeps used to project the stream mixer onto the Birkhoff polytope.
+    mhc_sinkhorn_iters: int = 20
+
+    # Initial value of the learnable gates on the input-dependent (dynamic) part of the
+    # connection matrices. Small values keep the dynamic term near zero at init, so the static
+    # biases set the initial connectivity.
+    mhc_alpha_init: float = 0.01
+
+    # Initial stream connectivity. 'identity' biases the Sinkhorn input toward the identity so
+    # the streams start independent and the identity mapping is preserved at init; 'uniform'
+    # starts from the uniform doubly stochastic matrix.
+    mhc_res_init: str = "identity"
+
+    # Compose mHC with the nGPT LERP residual: mix the streams first (norm-preserving), then
+    # take a LERP step per stream toward the normalized sublayer output. Requires ngpt=True.
+    # Mixing must precede renormalization, since a convex combination of unit vectors is not
+    # itself unit norm.
+    mhc_lerp: bool = False
+
+    # Enable Block Attention Residuals (arXiv:2603.15031): replace the uniformly-weighted
+    # residual accumulation with learned softmax attention over depth. Bounds hidden-state
+    # magnitude, which otherwise grows as O(L) under PreNorm. Mutually exclusive with mhc.
+    # Requires pipeline_model_parallel_size == 1 for now.
+    attn_res: bool = False
+
+    # Number of blocks N the layers are partitioned into. Each block is summed to a single
+    # representation, so memory and pipeline traffic are O(N*h) rather than O(L*h) - the same
+    # payload shape as mHC with expansion rate N. N=num_layers recovers Full AttnRes; N=1
+    # degenerates to a standard residual. The paper finds N~8 recovers most of the benefit.
+    attn_res_num_blocks: int = 8
+
+    # Std of the normal used to initialize the learnable per-sublayer pseudo-query. 0 gives a
+    # zero query, i.e. uniform attention over depth at init - exactly the averaging a standard
+    # residual performs.
+    attn_res_query_init_std: float = 0.0
+
+    # Compose Block AttnRes with the nGPT LERP residual: accumulate each block via a LERP step
+    # toward the normalized sublayer output instead of a plain sum, keeping block summaries on
+    # the unit sphere rather than growing with block size. Requires ngpt=True.
+    attn_res_lerp: bool = False
+
     # Number of encoder transformer layers.
     encoder_num_layers: int | None = None
 
