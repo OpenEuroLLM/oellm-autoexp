@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import re
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from itertools import zip_longest
 from pathlib import Path
@@ -27,6 +27,7 @@ from omegaconf import DictConfig, ListConfig, OmegaConf
 from .config.schema import StagedSweepRoot, SweepConfig, ConfigSetup
 from .config.loader import load_config_reference
 from .expander import SweepPoint
+from .parallel import run_chunks, worker_count
 from .planner import JobPlan
 
 LOGGER = logging.getLogger(__file__)
@@ -101,13 +102,21 @@ def _build_sibling_index(points: Mapping[int, SweepPoint]) -> SiblingIndex:
     )
 
 
-def _resolve_filter_from_context(filter_expr: Any, context: Mapping[str, Any]) -> bool:
+def _resolve_filter_from_context(filter_expr: Any, context: Mapping[str, Any] | Callable) -> bool:
+    """Evaluate one filter expression.
+
+    ``context`` may be a zero-argument callable, which is only invoked for
+    filters that actually need it -- building the context means walking the
+    whole resolved config, and most filters are already a plain bool.
+    """
     if filter_expr is None:
         return True
     if isinstance(filter_expr, bool):
         return filter_expr
     if not isinstance(filter_expr, str):
         raise ValueError("sweep.filter must resolve to a bool.")
+    if callable(context):
+        context = context()
     cfg = OmegaConf.create({**context, "sweep": {"filter": filter_expr}})
     try:
         resolved = OmegaConf.to_container(cfg, resolve=True)
@@ -294,6 +303,32 @@ def config_to_cmdline(
     return cmdline_opts
 
 
+def drop_cmdline_invisible(value: Any) -> Any:
+    """Strip what ``config_to_cmdline`` cannot express, so a direct merge
+    matches it.
+
+    An empty mapping flattens to zero overrides, so round-tripping a config
+    through the command line silently drops it -- and a list element that is an
+    empty mapping is left as the placeholder index ``config_to_cmdline`` emits
+    for it. Applying the same pruning before merging keeps the two paths in
+    exact agreement.
+    """
+    if isinstance(value, Mapping):
+        pruned = {key: drop_cmdline_invisible(item) for key, item in value.items()}
+        return {
+            key: item
+            for key, item in pruned.items()
+            if not (isinstance(item, Mapping) and not item)
+        }
+    if isinstance(value, (list, ListConfig, Sequence)) and not isinstance(value, (str, bytes)):
+        out = []
+        for index, item in enumerate(value):
+            pruned = drop_cmdline_invisible(item)
+            out.append(index if isinstance(pruned, Mapping) and not pruned else pruned)
+        return out
+    return value
+
+
 def is_config_group(key: str, config_dir: str | Path | None) -> bool:
     """Check if a parameter key refers to a Hydra config group.
 
@@ -354,6 +389,168 @@ def param_to_cmdlines(key: str, val: Any, prefix: str = "", config_dir: str | Pa
         )
 
 
+class _LazyFilterContext:
+    """Build the filter context only when a filter actually reads it.
+
+    Flattening a resolved config is not cheap, and a filter that is
+    already a bool never looks at the context.
+    """
+
+    def __init__(self, resolved: Any) -> None:
+        self._resolved = resolved
+        self._context: dict[str, Any] | None = None
+
+    def __call__(self) -> dict[str, Any]:
+        if self._context is None:
+            self._context = {
+                key: value for key, value in asdict(self._resolved).items() if key not in ("sweep")
+            }
+        return self._context
+
+
+# Chains of dependent points (a stable stage plus the cooldowns that branch off
+# it) must be resolved in order, but separate chains share nothing. They are
+# handed to a process pool, which is worth it because resolving a point is pure
+# CPU: composing, resolving interpolations and building dataclasses.
+_CHAIN_CONTEXT: tuple | None = None
+
+
+def _resolve_chain(chain: list[int]) -> tuple[dict[int, JobPlan], dict[int, bool]]:
+    """Resolve one dependency chain, in the order given."""
+    assert _CHAIN_CONTEXT is not None, "chain context not initialised"
+    (config, points_dict, config_setup, config_class, sibling_index, sweep_filter_expr) = (
+        _CHAIN_CONTEXT
+    )
+
+    resolved_jobs: dict[int, JobPlan] = {}
+    filtered_jobs: dict[int, bool] = {}
+    sibling_context_cache: dict[tuple, tuple] = {}
+
+    for point_idx in chain:
+        point = points_dict[point_idx]
+        try:
+            group_filters = _collect_group_filters(config.sweep.groups, point.group_path)
+        except ValueError as exc:
+            raise ValueError(f"Unable to match group_path for filtering: {exc}") from exc
+
+        filter_exprs = [sweep_filter_expr, *group_filters]
+
+        sibling_patterns = sibling_index.patterns_by_idx.get(point_idx, set())
+        sibling_jobs = {}
+        sibling_ids = []
+        for pattern in sibling_patterns:
+            sibling_point = find_sibling_by_group_path(
+                point, points_dict, pattern, sibling_index=sibling_index
+            )
+            if sibling_point and sibling_point.index in resolved_jobs:
+                sibling_jobs[pattern] = resolved_jobs[sibling_point.index]
+                sibling_ids.append((pattern, sibling_point.index))
+
+        # Every point in a chain sees the same siblings, and flattening a
+        # resolved sibling config is the most expensive step in this loop, so
+        # build the context once per distinct set of siblings.
+        context_key = tuple(sorted(sibling_ids))
+        cached_context = sibling_context_cache.get(context_key)
+        if cached_context is None:
+            # The sibling was already resolved with exactly these overrides --
+            # its JobPlan holds the result. Recomposing it here doubled the
+            # amount of Hydra composition every staged sweep had to do.
+            sibling_job_configs = {
+                sibling_pattern: asdict(sibling_job.config)
+                for sibling_pattern, sibling_job in sibling_jobs.items()
+            }
+
+            for sibling_pattern in sibling_job_configs:
+                if "sweep" in sibling_job_configs[sibling_pattern]:
+                    del sibling_job_configs[sibling_pattern]["sweep"]
+
+            sibling_context = {
+                "sibling": {
+                    sibling_job.get("stage", "unknown"): sibling_job
+                    for sibling_job in sibling_job_configs.values()
+                }
+            }
+            # Flatten the context as-is so job_parameters is byte-identical to
+            # what a command-line run would carry; merge the pruned form, which
+            # is what those overrides actually produce once applied.
+            cached_context = (
+                config_to_cmdline(sibling_context, override="++"),
+                OmegaConf.create(drop_cmdline_invisible(sibling_context))
+                if sibling_job_configs
+                else None,
+            )
+            sibling_context_cache[context_key] = cached_context
+        cmdline_overrides_siblings, sibling_container = cached_context
+
+        # Generate parameter overrides with smart prefix selection
+        param_overrides = []
+        for key, value in point.parameters.items():
+            # Detect if this is a config group parameter
+            if is_config_group(key, config_setup.config_dir):
+                # Config group: use no prefix (regular override)
+                param_overrides.extend(
+                    param_to_cmdlines(key, value, prefix="", config_dir=config_setup.config_dir)
+                )
+            else:
+                # Regular parameter: use ++ prefix (force-add)
+                param_overrides.extend(
+                    param_to_cmdlines(key, value, prefix="++", config_dir=config_setup.config_dir)
+                )
+
+        compose_overrides = (
+            list(config_setup.overrides) + [f"++index={point_idx}"] + param_overrides
+        )
+        job_parameters = (
+            list(config_setup.overrides)
+            + cmdline_overrides_siblings
+            + [f"++index={point_idx}"]
+            + param_overrides
+        )
+
+        # job_parameters still records the sibling context as ++overrides so the
+        # job stays reproducible from the command line, but composing with it is
+        # far cheaper as a single merge than as several hundred parsed overrides.
+        resolved = load_config_reference(
+            config_dir=config_setup.config_dir,
+            config_path=config_setup.config_path,
+            config_name=config_setup.config_name,
+            overrides=compose_overrides,
+            extra_config=sibling_container,
+            config_class=config_class,
+        )
+
+        filter_context = _LazyFilterContext(resolved)
+        skip_point = False
+        for expr in filter_exprs:
+            if not _resolve_filter_from_context(expr, filter_context):
+                LOGGER.info("Skipping point %s due to sweep.filter", point_idx)
+                skip_point = True
+                break
+        filtered_jobs[point_idx] = skip_point
+
+        resolved_jobs[point_idx] = JobPlan(
+            config=resolved,
+            parameters=job_parameters,
+            sibling_pattern=None,
+            stage_name=getattr(resolved, "stage", None),
+        )
+
+    return resolved_jobs, filtered_jobs
+
+
+def _split_into_chains(dag: nx.DiGraph, ordered_indices: list[int]) -> list[list[int]]:
+    """Group points into independent chains, each in topological order."""
+    position = {index: order for order, index in enumerate(ordered_indices)}
+    chains = [
+        sorted(component, key=position.__getitem__)
+        for component in nx.weakly_connected_components(dag)
+    ]
+    # Longest first, so the pool does not finish early workers and then wait on
+    # one long chain started last.
+    chains.sort(key=len, reverse=True)
+    return chains
+
+
 def resolve_sweep_with_dag(
     config: StagedSweepRoot,
     points: list[SweepPoint] | dict[int, SweepPoint],
@@ -395,10 +592,6 @@ def resolve_sweep_with_dag(
             config_class=config_class,
         )
 
-        resolved_dict = asdict(resolved)
-        context = {k: v for k, v in resolved_dict.items() if k not in ("sweep")}
-        skip_point = False
-
         stage_name = getattr(resolved, "stage", None)
 
         job = JobPlan(
@@ -410,105 +603,34 @@ def resolve_sweep_with_dag(
 
         return [job]
 
-    for point_idx in ordered_indices:
-        point = points_dict[point_idx]
-        try:
-            group_filters = _collect_group_filters(config.sweep.groups, point.group_path)
-        except ValueError as exc:
-            raise ValueError(f"Unable to match group_path for filtering: {exc}") from exc
+    chains = _split_into_chains(dag, ordered_indices)
+    workers = worker_count(len(chains), len(ordered_indices))
+    LOGGER.info("Resolving %d chains with %d worker(s)", len(chains), workers)
 
-        filter_exprs = [sweep_filter_expr, *group_filters]
-
-        sibling_patterns = sibling_index.patterns_by_idx.get(point_idx, set())
-        sibling_jobs = {}
-        for pattern in sibling_patterns:
-            sibling_point = find_sibling_by_group_path(
-                point, points_dict, pattern, sibling_index=sibling_index
-            )
-            if sibling_point and sibling_point.index in resolved_jobs:
-                sibling_jobs[pattern] = resolved_jobs[sibling_point.index]
-
-        sibling_job_configs = {
-            sibling_pattern: asdict(
-                load_config_reference(
-                    config_dir=config_setup.config_dir,
-                    config_path=config_setup.config_path,
-                    config_name=config_setup.config_name,
-                    overrides=list(config_setup.overrides) + sibling_job.parameters,
-                    config_class=config_class,
-                )
-            )
-            for sibling_pattern, sibling_job in sibling_jobs.items()
-        }
-
-        for sibling_pattern in sibling_job_configs:
-            if "sweep" in sibling_job_configs[sibling_pattern]:
-                del sibling_job_configs[sibling_pattern]["sweep"]
-
-        cmdline_overrides_siblings = config_to_cmdline(
-            {
-                "sibling": {
-                    sibling_job.get("stage", "unknown"): sibling_job
-                    for sibling_job in sibling_job_configs.values()
-                }
-            },
-            override="++",
-        )
-
-        # Generate parameter overrides with smart prefix selection
-        param_overrides = []
-        for key, value in point.parameters.items():
-            # Detect if this is a config group parameter
-            if is_config_group(key, config_setup.config_dir):
-                # Config group: use no prefix (regular override)
-                param_overrides.extend(
-                    param_to_cmdlines(key, value, prefix="", config_dir=config_setup.config_dir)
-                )
-            else:
-                # Regular parameter: use ++ prefix (force-add)
-                param_overrides.extend(
-                    param_to_cmdlines(key, value, prefix="++", config_dir=config_setup.config_dir)
-                )
-
-        job_parameters = (
-            list(config_setup.overrides)
-            + cmdline_overrides_siblings
-            + [f"++index={point_idx}"]
-            + param_overrides
-        )
-
-        resolved = load_config_reference(
-            config_dir=config_setup.config_dir,
-            config_path=config_setup.config_path,
-            config_name=config_setup.config_name,
-            overrides=job_parameters,
-            config_class=config_class,
-        )
-
-        resolved_dict = asdict(resolved)
-        context = {k: v for k, v in resolved_dict.items() if k not in ("sweep")}
-        skip_point = False
-        for expr in filter_exprs:
-            if not _resolve_filter_from_context(expr, context):
-                LOGGER.info("Skipping point %s due to sweep.filter", point_idx)
-                skip_point = True
-                break
-        filtered_jobs[point_idx] = skip_point
-
-        stage_name = getattr(resolved, "stage", None)
-
-        job = JobPlan(
-            config=resolved,
-            parameters=job_parameters,
-            sibling_pattern=None,
-            stage_name=stage_name,
-        )
-
-        resolved_jobs[point_idx] = job
-
-    return list(
-        resolved_jobs[point_idx] for point_idx in resolved_jobs if not filtered_jobs[point_idx]
+    global _CHAIN_CONTEXT
+    _CHAIN_CONTEXT = (
+        config,
+        points_dict,
+        config_setup,
+        config_class,
+        sibling_index,
+        sweep_filter_expr,
     )
+    try:
+        chain_results = run_chunks(_resolve_chain, chains, workers)
+    finally:
+        _CHAIN_CONTEXT = None
+
+    for chain_resolved, chain_filtered in chain_results:
+        resolved_jobs.update(chain_resolved)
+        filtered_jobs.update(chain_filtered)
+
+    # Emit in topological order, matching the order a single-process run built.
+    return [
+        resolved_jobs[point_idx]
+        for point_idx in ordered_indices
+        if point_idx in resolved_jobs and not filtered_jobs[point_idx]
+    ]
 
 
 __all__ = [
