@@ -71,6 +71,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--no-verbose", action="store_true")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument(
+        "--yes", "-y", action="store_true",
+        help="Skip the GPU-h confirmation prompt(s). Required for detached / "
+        "non-interactive launches (nohup/setsid) where stdin is closed.",
+    )
+    parser.add_argument(
         "--array-subset",
         type=str,
         help="Comma-separated sweep indices or ranges (e.g., '0,3-5') to rerun.",
@@ -175,20 +180,115 @@ def _parse_slurm_time(time_str: str) -> float:
     return days * 24 + h + m / 60 + s / 3600
 
 
-def _compute_gpu_hours(plan: ExecutionPlan) -> float:
-    """Sum GPU-hours across all jobs in the plan."""
+def _job_runtime_hours(job) -> tuple[float, bool]:
+    """Estimated runtime (hours) for a single job's GPU-hour accounting.
+
+    Prefers a backend-agnostic ``aux.true_time`` if the config provides one, so
+    the sweep-wide estimate reflects the *real* (possibly >QOS, un-capped)
+    runtime rather than the ``slurm --time`` reservation — which is clamped to
+    the partition's max wall-time and would badly under-count any job that
+    wall-time-chains. ``aux.true_time`` may be a number of hours or a SLURM-style
+    duration string ("D-HH:MM:SS"/"HH:MM:SS"). Falls back to ``slurm --time``.
+
+    Returns (hours, used_true_time).
+    """
+    aux = getattr(job.config, "aux", None)
+    true_time = None
+    if aux is not None:
+        try:
+            true_time = aux.get("true_time") if hasattr(aux, "get") else aux["true_time"]
+        except (KeyError, TypeError):
+            true_time = None
+    # ``aux`` is a free-form dict, so an interpolated ``true_time`` (e.g.
+    # "${oc.eval:...}") is not resolved in place — resolve it lazily against the
+    # job's own config. Accessing just this node resolves it and its dependency
+    # subtree (train_iters, tok_s, nodes, ...) without touching unrelated
+    # ``${sibling...}`` references elsewhere.
+    if isinstance(true_time, str) and "${" in true_time:
+        try:
+            from omegaconf import OmegaConf
+
+            full = OmegaConf.create(asdict(job.config))
+            true_time = OmegaConf.select(
+                full, "aux.true_time", throw_on_resolution_failure=True
+            )
+        except Exception:
+            true_time = None
+    if true_time is not None:
+        if isinstance(true_time, (int, float)) and not isinstance(true_time, bool):
+            return float(true_time), True
+        try:
+            return _parse_slurm_time(str(true_time)), True
+        except (ValueError, IndexError):
+            pass  # malformed -> fall through to the slurm reservation
+
+    time_str = str(getattr(job.config.slurm.sbatch, "time", "1:00:00") or "1:00:00")
+    try:
+        return _parse_slurm_time(time_str), False
+    except (ValueError, IndexError):
+        return 0.0, False
+
+
+def _format_hms(seconds: float) -> str:
+    """Render seconds as a SLURM ``H:MM:SS`` duration.
+
+    Floored at 30 min so short-runtime jobs (e.g. the first_cooldown "seed" that
+    only loads a checkpoint + saves) still reserve enough for container start,
+    kernel compile and checkpoint I/O rather than the throughput-derived ~0.
+    """
+    total = max(1800, int(round(seconds)))
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}"
+
+
+TRUE_TIME_BUFFER = 1.5
+
+
+def _apply_true_time_reservations(plan: ExecutionPlan, buffer: float = TRUE_TIME_BUFFER) -> int:
+    """Right-size each job's ``slurm --time`` from the measured ``aux.true_time``.
+
+    The reservation is ``min(configured --time, true_time * buffer)`` — the
+    configured value acts as the cluster/QOS ceiling (e.g. 12h), so jobs whose
+    true runtime exceeds it keep the full ceiling and wall-time-chain. Jobs
+    without an ``aux.true_time`` are left untouched. The estimate in
+    ``_compute_gpu_hours`` still reads the un-capped ``true_time``, so this only
+    affects reservations, not the reported budget. Returns the count adjusted.
+
+    The 50% buffer (``buffer=1.5``) absorbs the GPFS-dataloader throughput
+    variance (iteration-time spikes) so a right-sized reservation still finishes
+    within its wall-time window instead of timing out and restart-looping.
+    """
+    adjusted = 0
+    for job in plan.jobs:
+        hours, used_true = _job_runtime_hours(job)
+        if not used_true:
+            continue
+        sbatch = job.config.slurm.sbatch
+        cap_str = str(getattr(sbatch, "time", "") or "")
+        try:
+            cap_hours = _parse_slurm_time(cap_str) if cap_str else float("inf")
+        except (ValueError, IndexError):
+            cap_hours = float("inf")
+        reserve_hours = min(cap_hours, hours * buffer)
+        sbatch.time = _format_hms(reserve_hours * 3600)
+        adjusted += 1
+    return adjusted
+
+
+def _compute_gpu_hours(plan: ExecutionPlan) -> tuple[float, int]:
+    """Sum GPU-hours across all jobs. Returns (total_gpu_hours, n_from_true_time)."""
     total = 0.0
+    n_true = 0
     for job in plan.jobs:
         sbatch = job.config.slurm.sbatch
         nodes = int(getattr(sbatch, "nodes", 1) or 1)
         gpus_per_node = int(getattr(sbatch, "gpus_per_node", 1) or 1)
-        time_str = str(getattr(sbatch, "time", "1:00:00") or "1:00:00")
-        try:
-            hours = _parse_slurm_time(time_str)
-        except (ValueError, IndexError):
-            hours = 0.0
+        hours, used_true = _job_runtime_hours(job)
+        if used_true:
+            n_true += 1
         total += hours * nodes * gpus_per_node
-    return total
+    return total, n_true
 
 
 def _parse_subset(spec: str | None) -> set[int]:
@@ -255,6 +355,27 @@ def main(argv: list[str] | None = None) -> None:
         subset_indices=subset_indices or None,
     )
 
+    n_reserved = _apply_true_time_reservations(plan)
+    if n_reserved:
+        print(
+            f"Right-sized slurm --time from aux.true_time (x{TRUE_TIME_BUFFER}, "
+            f"capped at the configured ceiling) for "
+            f"{n_reserved}/{len(plan.jobs)} job(s)."
+        )
+
+    gpu_hours, n_true = _compute_gpu_hours(plan)
+    n_jobs = len(plan.jobs)
+    if n_true == n_jobs and n_jobs > 0:
+        basis = "aux.true_time (measured runtime, un-capped)"
+    elif n_true > 0:
+        basis = f"aux.true_time for {n_true}/{n_jobs} jobs, else slurm --time"
+    else:
+        basis = "full slurm --time (no aux.true_time set)"
+    print(
+        f"Plan: {n_jobs} job(s) — estimated {gpu_hours:.1f} GPU-h total - basis: {basis}; no restarts"
+        + (f" approx. ({gpu_hours / n_jobs:.1f} GPU-h each)" if n_jobs > 1 else "")
+    )
+
     if args.dry_run:
         script_paths = render_job_scripts(plan)
         if script_paths:
@@ -262,13 +383,7 @@ def main(argv: list[str] | None = None) -> None:
             for p in script_paths:
                 print(f"  {p}")
         exit(0)
-    gpu_hours = _compute_gpu_hours(plan)
-    n_jobs = len(plan.jobs)
-    print(
-        f"Plan: {n_jobs} job(s) — estimated {gpu_hours:.1f} GPU-h total - assuming full slurm time and no restarts"
-        + (f" approx. ({gpu_hours / n_jobs:.1f} GPU-h each)" if n_jobs > 1 else "")
-    )
-    if gpu_hours > 100 and not args.dry_run:
+    if gpu_hours > 100 and not args.dry_run and not args.yes:
         if n_jobs >= 5:
             jobs_comment = "Have you checked a single job with --array-subset to confirm it works?"
         else:

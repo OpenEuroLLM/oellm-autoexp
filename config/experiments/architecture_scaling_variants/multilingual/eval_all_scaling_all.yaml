@@ -1,0 +1,357 @@
+# @package _global_
+# EVAL sweep — mirrors main_scaling_all.yaml (same 5 variants x 7 ladders), but
+# every point is an eval-only (skip_train) job that LOADS a trained checkpoint
+# and computes val loss / PPL on the held-out multilingual validation blend
+# (data_multilingual_1tt_val_jupiter). Two eval points per (variant,size,gbs,lr,budget):
+#   - evalcd_decay<B>BT      : the fully-decayed COOLDOWN final
+#                              (loads .../firstcd_decay<B>BT, latest checkpoint)
+#   - evalstable_branch<B>BT : the STABLE pre-decay branch checkpoint
+#                              (loads .../stable @ --ckpt-step 0.8*D)
+# 5 variants x 25 budget-points x 2 = 250 eval jobs, each 1 NODE (torch_dist is
+# dp_reshardable, so an 8-node 0.9B checkpoint reshards onto 1 node) and
+# AUTO-GATED (FileExistsCondition) on the training checkpoint appearing. Launch
+# with its own monitor alongside training; it reads the training output tree,
+# never writes to it.
+defaults:
+  - ml_base
+  # Validation blend as valid_data_path (repackaged under aux.val_dataset); the
+  # backend.megatron.aux.val_datamix_prefix below resolves its path interpolations.
+  - /backend/megatron/data_multilingual_1tt_val_jupiter@aux.val_dataset
+  - override /container: jupiter_liger_mamba
+  - _self_
+
+aux:
+  # eval jobs write here; checkpoints are LOADED from train_group.
+  experiment_group: architecture_scaling_variants_multilingual_main_7to1_eval
+  train_group: architecture_scaling_variants_multilingual_main_7to1
+  # ~200M val tokens per checkpoint, held ~constant across gbs (eval_iters below)
+  # for a fair, low-variance PPL. Tunable.
+  eval_tokens: 200_000_000
+  # Placeholder defaults so the BASE config composes (aux.* are ??? in ml_base
+  # and referenced by top-level data_cache_path/eval_iters). Every sweep point
+  # overrides all of these per (variant, ladder, budget).
+  size: 0.1B
+  hidden: 512
+  ffn: 1536
+  layers: 16
+  heads: 8
+  qgroups: 8
+  gqa: false
+  mbs: 16
+  gbs: 128
+  tokens: 20_000_000_000
+
+backend:
+  megatron:
+    # Placeholder (overridden per ladder by the sweep); base compose needs it set.
+    lr: 0.002
+    # ---- eval-only: no training, no save; load model weights only ----
+    skip_train: true
+    train_iters: 1
+    lr_warmup_iters: 0            # avoid warmup>train_iters with train_iters=1
+    eval_interval: 1
+    eval_iters: "${oc.eval:'max(50, int(${aux.eval_tokens}/(${aux.seq_len}*${aux.gbs})))'}"
+    data_path: []
+    train_data_path: null
+    test_data_path: null
+    valid_data_path: ${aux.val_dataset.valid_data_path}
+    split: null
+    save: null
+    save_extra_steps: []
+    no_load_optim: true
+    no_load_rng: true
+    no_save_optim: true
+    no_save_rng: true
+    exit_on_missing_checkpoint: true
+    lr_wsd_decay_iters: 0
+    # Per-eval-job val blend index dir (avoids concurrent-build races).
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_val_262k/${aux.variant}_${aux.size}_${stage}"
+    wandb_project: dense_multilingual_scaling_main_7to1_eval
+    aux:
+      # Resolves the ${backend.megatron.aux.val_datamix_prefix} refs inside the
+      # included validation blend.
+      val_datamix_prefix: /e/data1/datasets/products/openeurollm/pretokenized/openeurollm-tokenized-256k-val
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "3:00:00"
+    exclude: jpbo-001-48
+
+stage: eval
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    # ===================== GROUP 0 — ARCHITECTURE =====================
+    # Identical to the training sweep so the checkpoint's architecture is
+    # reconstructed exactly (required to load the weights).
+    - type: list
+      configs:
+        - aux.variant: fullattn
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_base: 10000
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: null
+          backend.megatron.linear_attention_freq: null
+
+        - aux.variant: swa7_rope100k
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_base: 100000
+          backend.megatron.window_size: "1024,0"
+          backend.megatron.window_attn_skip_freq: 8
+          backend.megatron.experimental_attention_variant: null
+          backend.megatron.linear_attention_freq: null
+
+        - aux.variant: gdn7_nope
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: gated_delta_net
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.linear_conv_kernel_dim: 4
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_value_head_dim: 128
+          backend.megatron.linear_num_key_heads: "\\${aux.qgroups}"
+          backend.megatron.linear_num_value_heads: "\\${aux.heads}"
+
+        - aux.variant: mlstm7_nope
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: mlstm
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.mlstm_conv1d: false
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_value_head_dim: 128
+          backend.megatron.linear_num_key_heads: "\\${aux.heads}"
+          backend.megatron.linear_num_value_heads: "\\${aux.heads}"
+          backend.megatron.mlstm_chunk_size: 128
+          backend.megatron.mlstm_igate_bias_init: -8.0
+
+        - aux.variant: mamba2_nope
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: mamba
+          backend.megatron.linear_attention_freq: 8
+
+    # ================= GROUP 1 — (SIZE, TIER) LADDERS =================
+    # Each ladder: shared arch/batch params + [cooldown-final evals, stable-branch
+    # evals] over that ladder's budgets. The &evalcd / &evalstable anchors are
+    # defined once (0.1B low) and reused; their interpolations resolve per point.
+    - type: list
+      configs:
+        # ---- 0.1B low: gbs128 lr2e-3 -> 20/30/50 BT ----
+        - type: list
+          defaults:
+            aux.size: 0.1B
+            aux.hidden: 512
+            aux.ffn: 1536
+            aux.layers: 16
+            aux.heads: 8
+            aux.qgroups: 8
+            aux.gqa: false
+            aux.mbs: 16
+            aux.gbs: 128
+            backend.megatron.lr: 0.002
+          configs:
+            - type: list
+              defaults: &evalcd
+                # final cooldown checkpoint iter = full budget iters
+                aux.start_iter: "\\${oc.eval:'int((\\${aux.tokens}+\\${aux.seq_len}*\\${aux.gbs}-1)//(\\${aux.seq_len}*\\${aux.gbs}))'}"
+                backend.megatron.load: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.train_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_firstcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT/"
+                stage: "evalcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT"
+                job.start_condition:
+                  class_name: FileExistsCondition
+                  path: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.train_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_firstcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT/iter_\\${oc.eval:'str(\\${aux.start_iter}).zfill(7)'}"
+              configs:
+                - aux.tokens: 20_000_000_000
+                - aux.tokens: 30_000_000_000
+                - aux.tokens: 50_000_000_000
+            - type: list
+              defaults: &evalstable
+                # stable branch iter = 0.8 * full budget iters
+                aux.start_iter: "\\${oc.eval:'int(((\\${aux.tokens}+\\${aux.seq_len}*\\${aux.gbs}-1)//(\\${aux.seq_len}*\\${aux.gbs}))*(1-\\${aux.decay_fraction}))'}"
+                backend.megatron.load: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.train_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_stable/"
+                backend.megatron.ckpt_step: "\\${aux.start_iter}"
+                stage: "evalstable_branch\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT"
+                job.start_condition:
+                  class_name: FileExistsCondition
+                  path: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.train_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_stable/iter_\\${oc.eval:'str(\\${aux.start_iter}).zfill(7)'}"
+              configs:
+                - aux.tokens: 20_000_000_000
+                - aux.tokens: 30_000_000_000
+                - aux.tokens: 50_000_000_000
+
+        # ---- 0.1B high: gbs256 lr2e-3 -> 80/200/300 BT ----
+        - type: list
+          defaults:
+            aux.size: 0.1B
+            aux.hidden: 512
+            aux.ffn: 1536
+            aux.layers: 16
+            aux.heads: 8
+            aux.qgroups: 8
+            aux.gqa: false
+            aux.mbs: 16
+            aux.gbs: 256
+            backend.megatron.lr: 0.002
+          configs:
+            - type: list
+              defaults: *evalcd
+              configs:
+                - aux.tokens: 80_000_000_000
+                - aux.tokens: 200_000_000_000
+                - aux.tokens: 300_000_000_000
+            - type: list
+              defaults: *evalstable
+              configs:
+                - aux.tokens: 80_000_000_000
+                - aux.tokens: 200_000_000_000
+                - aux.tokens: 300_000_000_000
+
+        # ---- 0.2B low: gbs128 lr1e-3 -> 6/12/20/30 BT ----
+        - type: list
+          defaults:
+            aux.size: 0.2B
+            aux.hidden: 768
+            aux.ffn: 2304
+            aux.layers: 22
+            aux.heads: 8
+            aux.qgroups: 8
+            aux.gqa: false
+            aux.mbs: 8
+            aux.gbs: 128
+            backend.megatron.lr: 0.001
+          configs:
+            - type: list
+              defaults: *evalcd
+              configs:
+                - aux.tokens: 6_000_000_000
+                - aux.tokens: 12_000_000_000
+                - aux.tokens: 20_000_000_000
+                - aux.tokens: 30_000_000_000
+            - type: list
+              defaults: *evalstable
+              configs:
+                - aux.tokens: 6_000_000_000
+                - aux.tokens: 12_000_000_000
+                - aux.tokens: 20_000_000_000
+                - aux.tokens: 30_000_000_000
+
+        # ---- 0.2B high: gbs512 lr2e-3 -> 50/80/120/200/300 BT ----
+        - type: list
+          defaults:
+            aux.size: 0.2B
+            aux.hidden: 768
+            aux.ffn: 2304
+            aux.layers: 22
+            aux.heads: 8
+            aux.qgroups: 8
+            aux.gqa: false
+            aux.mbs: 8
+            aux.gbs: 512
+            backend.megatron.lr: 0.002
+          configs:
+            - type: list
+              defaults: *evalcd
+              configs:
+                - aux.tokens: 50_000_000_000
+                - aux.tokens: 80_000_000_000
+                - aux.tokens: 120_000_000_000
+                - aux.tokens: 200_000_000_000
+                - aux.tokens: 300_000_000_000
+            - type: list
+              defaults: *evalstable
+              configs:
+                - aux.tokens: 50_000_000_000
+                - aux.tokens: 80_000_000_000
+                - aux.tokens: 120_000_000_000
+                - aux.tokens: 200_000_000_000
+                - aux.tokens: 300_000_000_000
+
+        # ---- 0.4B: gbs256 lr2e-3 -> 12/20/30/50 BT ----
+        - type: list
+          defaults:
+            aux.size: 0.4B
+            aux.hidden: 1024
+            aux.ffn: 3072
+            aux.layers: 28
+            aux.heads: 16
+            aux.qgroups: 8
+            aux.gqa: true
+            aux.mbs: 4
+            aux.gbs: 256
+            backend.megatron.lr: 0.002
+          configs:
+            - type: list
+              defaults: *evalcd
+              configs:
+                - aux.tokens: 12_000_000_000
+                - aux.tokens: 20_000_000_000
+                - aux.tokens: 30_000_000_000
+                - aux.tokens: 50_000_000_000
+            - type: list
+              defaults: *evalstable
+              configs:
+                - aux.tokens: 12_000_000_000
+                - aux.tokens: 20_000_000_000
+                - aux.tokens: 30_000_000_000
+                - aux.tokens: 50_000_000_000
+
+        # ---- 0.9B mid: gbs512 lr5e-4 -> 30/50/80/120 BT ----
+        - type: list
+          defaults:
+            aux.size: 0.9B
+            aux.hidden: 1536
+            aux.ffn: 4608
+            aux.layers: 28
+            aux.heads: 16
+            aux.qgroups: 8
+            aux.gqa: true
+            aux.mbs: 2
+            aux.gbs: 512
+            backend.megatron.lr: 0.0005
+          configs:
+            - type: list
+              defaults: *evalcd
+              configs:
+                - aux.tokens: 30_000_000_000
+                - aux.tokens: 50_000_000_000
+                - aux.tokens: 80_000_000_000
+                - aux.tokens: 120_000_000_000
+            - type: list
+              defaults: *evalstable
+              configs:
+                - aux.tokens: 30_000_000_000
+                - aux.tokens: 50_000_000_000
+                - aux.tokens: 80_000_000_000
+                - aux.tokens: 120_000_000_000
+
+        # ---- 0.9B high: gbs1024 lr1e-3 -> 200/300 BT ----
+        - type: list
+          defaults:
+            aux.size: 0.9B
+            aux.hidden: 1536
+            aux.ffn: 4608
+            aux.layers: 28
+            aux.heads: 16
+            aux.qgroups: 8
+            aux.gqa: true
+            aux.mbs: 2
+            aux.gbs: 1024
+            backend.megatron.lr: 0.001
+          configs:
+            - type: list
+              defaults: *evalcd
+              configs:
+                - aux.tokens: 200_000_000_000
+                - aux.tokens: 300_000_000_000
+            - type: list
+              defaults: *evalstable
+              configs:
+                - aux.tokens: 200_000_000_000
+                - aux.tokens: 300_000_000_000

@@ -14,27 +14,31 @@ log_events:
     action:
       class_name: FinishAction
       reason: "Test Evaluation Finished"
+  # Restart on ANY non-zero srun task exit, not just code 1. A launch-time flake
+  # (e.g. an empty MASTER_ADDR -> torchrun exits code 2) dies in seconds, before
+  # the poll ever observes the job RUNNING, so the RUNNING->FAILED state_event
+  # never fires and loop.py terminal-cancels it. Matching the exit-code line in
+  # the log (processed before the terminal-state check) makes these self-heal.
   - name: error
-    pattern: "Exited with exit code 1"
-    pattern_type: substring
+    pattern: "Exited with exit code [1-9][0-9]*"
+    pattern_type: regex
     action:
       class_name: RestartAction
       reason: ""
-  # TIME LIMIT IS ALREADY HANDLED IN DEPENDENCY CHAIN
-  # - name: time_limit
-  #   pattern: "DUE TO TIME LIMIT"
-  #   pattern_type: substring
-  #   action:
-  #     class_name: RestartAction
-  #     reason: ""
+  # SLURM wall-time TIMEOUT is handled by the RUNNING->TIMEOUT state_event
+  # below (sacct reports the TIMEOUT state even after the job leaves squeue).
+  # A single state_event is preferred over also scraping "DUE TO TIME LIMIT"
+  # from the log so a timeout can only fire one RestartAction.
   - name: inactive
     pattern_type: inactivity
-    # Restart only after the log has been silent for >=5 consecutive polls AND
-    # >=300s of real elapsed time (both must hold). At the default 60s poll
-    # interval these coincide (~5 min); the time floor keeps it correct if the
-    # poll interval changes or a poll is skipped.
-    inactivity_polls: 5
-    inactivity_timeout_s: 300
+    # Restart only after the log has been silent for >=20 consecutive polls AND
+    # >=1200s (20 min) of real elapsed time (both must hold). Raised from 5 min:
+    # a distributed checkpoint save, first-run blend-index build, and CUDA-graph
+    # capture each go log-silent for minutes on multi-node — a 5-min window
+    # scancelled jobs mid-save, corrupting checkpoints. 20 min still catches a
+    # genuinely hung rank while leaving slow-but-alive saves/startup alone.
+    inactivity_polls: 20
+    inactivity_timeout_s: 1200
     action:
       class_name: RestartAction
       reason: "Inactive Log"
@@ -50,3 +54,12 @@ state_events:
     action:
       class_name: RestartAction
       reason: "Job cancelled"
+  # SLURM killed the job at its wall-time limit. Resubmit; the job resumes from
+  # its last checkpoint (stables load their own --save dir). NOTE: cooldowns
+  # that pin --ckpt-step re-load the branch on restart and only continue if
+  # they fit one wall-time window — keep decay reservations <= the QOS limit.
+  - name: "timeout"
+    transition: ["RUNNING", "TIMEOUT"]
+    action:
+      class_name: RestartAction
+      reason: "Job hit SLURM wall-time (TIMEOUT) — resume from last checkpoint"

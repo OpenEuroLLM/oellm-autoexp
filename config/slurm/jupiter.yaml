@@ -23,7 +23,12 @@ env:
   HF_ALLOW_CODE_EVAL: "1"
   HF_DATASETS_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
-  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep \"Address: \" | sed \"s/Address: //\" | tail) "
+  # Robust master-address resolution: nslookup on JUPITER intermittently returns
+  # no "Address:" line, which yielded an EMPTY MASTER_ADDR -> torchrun exits with
+  # "--master-addr expected one argument" (exit 2) and the run is lost. Retry the
+  # lookup up to 15x, and fall back to the raw hostname if it never resolves, so
+  # MASTER_ADDR is never empty.
+  MASTER_ADDR: "$(a=\"\"; for i in $(seq 1 15); do a=$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep \"Address: \" | sed \"s/Address: //\" | tail -n 1); [ -n \"$a\" ] && break; sleep 2; done; [ -z \"$a\" ] && a=$(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1); echo \"$a\")"
   MASTER_PORT: "20074"
   NUM_NODES: "$SLURM_JOB_NUM_NODES"
   GPUS_PER_NODE: "4"

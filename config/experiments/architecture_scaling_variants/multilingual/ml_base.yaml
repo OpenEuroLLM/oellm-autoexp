@@ -57,10 +57,12 @@ aux:
   decay_fraction: 0.2
   start_iter: 0
 
-  # Branch iterations (0.8 x budget-iters) for every decay stage of this
-  # file's sweep. Assumes the stage group is sweep.groups.0 (ladder files);
-  # tuning files override with groups.1.
-  extra_steps: ${oc.mapeval:${oc.maptmpl:'int((((% + ${aux.seq_len}*${aux.gbs})-1)//(${aux.seq_len}*${aux.gbs}))*(1-${aux.decay_fraction}))',${oc.mapextractkey:aux.tokens,${sweep.groups.0.configs.1.configs}}}}
+  # Branch iterations (0.8 x budget-iters) for the stable's save_extra_steps.
+  # Safe default []; each sweep computes it per stable (main_scaling_all derives
+  # it from aux.budgets). The old sweep.groups.0 citation is fragile (it assumes
+  # the ladder is group 0) and broke the deeper first/continual cooldown stages,
+  # so the default no longer cites the sweep structure.
+  extra_steps: []
 
 backend:
   megatron:
@@ -174,6 +176,18 @@ backend:
     TORCHDYNAMO_DISABLE: "0"
     # CUDA graphs need stable allocations; expandable_segments is incompatible.
     PYTORCH_CUDA_ALLOC_CONF: "garbage_collection_threshold:0.8"
+    # Node-local JIT caches. Default ~/.triton and ~/.cache resolve (via the
+    # ~/.cache symlink) to the shared project filesystem; with many concurrent
+    # JIT-compiling ranks/jobs that means slow small-file I/O and cross-node
+    # contention on a network FS. /tmp (=$TMPDIR) is node-local + writable.
+    # Triton/inductor/nvcc self-create these dirs; content-hashed + atomic writes
+    # make intra-node concurrency safe. Trade-off: no cache reuse across jobs, so
+    # each job recompiles the kernels during warm-up (~1-2 min) — cheap insurance
+    # vs a corrupted shared cache across a 160-job sweep.
+    TRITON_CACHE_DIR: "/tmp/oellm_${oc.env:USER}/triton"
+    TORCHINDUCTOR_CACHE_DIR: "/tmp/oellm_${oc.env:USER}/inductor"
+    CUDA_CACHE_PATH: "/tmp/oellm_${oc.env:USER}/nv_compute"
+    TORCH_EXTENSIONS_DIR: "/tmp/oellm_${oc.env:USER}/torch_ext"
 
 slurm:
   sbatch:

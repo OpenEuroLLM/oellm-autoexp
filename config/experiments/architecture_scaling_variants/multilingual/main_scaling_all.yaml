@@ -1,0 +1,465 @@
+# @package _global_
+# SINGLE-FILE multilingual architecture-scaling comparison — the whole grid in
+# one nested sweep so every architecture runs the identical stages per cell.
+#
+#   sweep = ARCHITECTURE (4)  x  (SIZE,TIER) LADDER (7)
+#   each ladder = 1 stable run (to 0.8*D_max) + one WSD cooldown per budget D,
+#   branching from the stable checkpoint at 0.8*D and decaying the final 20% to 0.
+#
+# Architectures (7:1 hybrids): full attention (RoPE 10k), SWA window-1024
+# (RoPE 100k), GDN + NoPE, mLSTM + NoPE (igate bias init -8, the sweep winner).
+# Geometry: node counts are DOUBLED vs the memory-fit minimum (halved MBS,
+# fixed gbs/GA) to roughly halve wall-time so cooldowns fit the 12h QOS window.
+# Nodes/MBS per tier: 0.1B 2n/mbs16, 0.2B_low 2n/mbs8, 0.2B_high 4n/mbs8,
+# 0.4B 4n/mbs4, 0.9B 8n/mbs2. Uniform per (size,tier) so all archs match and
+# each cooldown loads its stable's distributed-optimizer shards at equal
+# geometry. (gbs, lr) per tier are the fully-covered baseline "near-winner"
+# combos. tok_s below is measured at THIS halved MBS (thr_hmbs smokes), so
+# aux.true_time reflects the real doubled-node throughput.
+#
+# Sibling scoping: a cooldown branches from the stable that shares its
+# size/gbs/lr/variant (dag_resolver disambiguates same-arch/same-ladder).
+defaults:
+  - ml_base
+  - override /container: jupiter_liger_mamba
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_main_7to1
+  # Placeholders for base resolution; every real value is set per sweep point.
+  variant: fullattn
+  size: 0.1B
+  hidden: 512
+  ffn: 1536
+  layers: 16
+  heads: 8
+  qgroups: 8
+  gqa: false
+  mbs: 32
+  gbs: 128
+  tokens: 40_000_000_000
+  extra_steps: []
+
+  # ---- runtime estimate (drives aux.true_time -> run_autoexp.py GPU-h) ----
+  # MEASURED Tok/s/GPU per (architecture, size) from the thr_hmbs_*.yaml smokes
+  # at the DOUBLED-node production MBS (0.1B mbs16, 0.2B mbs8, 0.4B mbs4,
+  # 0.9B mbs2), all 5 archs incl. mamba2. This is the throughput *invariant*
+  # (per-GPU token rate is independent of gbs/GA/nodes), so one number per
+  # (arch,size) yields an accurate un-capped runtime for every tier/stage below.
+  # Keys are letter-leading ("s01B", not "01B"): the sibling mechanism flattens
+  # aux.* into Hydra override keys, whose grammar forbids a digit-leading path
+  # segment (a "." in aux.size would also break the key path).
+  tok_s:
+    fullattn:      {"s01B": 193000, "s02B": 115000, "s04B": 59000, "s09B": 36000}
+    swa7_rope100k: {"s01B": 206000, "s02B": 124000, "s04B": 67000, "s09B": 38000}
+    gdn7_nope:     {"s01B": 165000, "s02B": 101000, "s04B": 52000, "s09B": 34000}
+    mlstm7_nope:   {"s01B": 188000, "s02B": 115000, "s04B": 56000, "s09B": 34000}
+    mamba2_nope:   {"s01B": 172000, "s02B": 94000,  "s04B": 55000, "s09B": 32000}
+  # Set per ladder alongside aux.size (must match a tok_s sub-key).
+  size_tag: "s01B"
+  # Un-capped wall-time estimate in HOURS for this point, read by run_autoexp.py
+  # as aux.true_time for the sweep GPU-hour total (independent of the QOS-capped
+  # slurm --time reservation). runtime_iters = train_iters - start_iter covers
+  # both the stable (start_iter 0 -> full 0.8*Dmax) and each cooldown (the
+  # 0.2*D decay). Deferred so it resolves per point at final composition.
+  true_time: "\\${oc.eval:'(\\${backend.megatron.train_iters} - \\${aux.start_iter}) * \\${aux.seq_len} * \\${aux.gbs} / (\\${aux.tok_s.\\${aux.variant}.\\${aux.size_tag}} * \\${slurm.sbatch.nodes} * \\${slurm.sbatch.gpus_per_node} * 3600.0)'}"
+
+backend:
+  megatron:
+    lr: 0.002
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
+    wandb_project: dense_multilingual_scaling_main_7to1
+    # Per-(variant,size,gbs) blend-index cache. num_samples ~= tokens/seq_len is
+    # independent of gbs, so all architectures/ladders at a given budget would
+    # otherwise share one index file and race-build it (EOFError) at launch.
+    # Keying on variant+size+gbs gives each ladder its own dir; the stable and
+    # its cooldowns differ in num_samples so they never collide within a dir.
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/main_sweep/${aux.variant}_${aux.size}_gbs${aux.gbs}"
+
+slurm:
+  sbatch:
+    nodes: 1
+    exclude: jpbo-001-48
+    # QOS wall-time ceiling (12h on the booster). This is the CAP; run_autoexp
+    # right-sizes each job's actual reservation down to min(this, aux.true_time
+    # x1.1) from the measured throughput. A plain value (not an interpolation)
+    # keeps it robust through the sibling snapshot; jobs whose true runtime
+    # exceeds 12h reserve the full 12h and wall-time-chain via auto_restart.
+    time: "12:00:00"
+
+stage: stable
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    # ===================== GROUP 0 — ARCHITECTURE =====================
+    - type: list
+      configs:
+        - aux.variant: fullattn
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_base: 10000
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: null
+          backend.megatron.linear_attention_freq: null
+
+        - aux.variant: swa7_rope100k
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_base: 100000
+          backend.megatron.window_size: "1024,0"
+          backend.megatron.window_attn_skip_freq: 8
+          backend.megatron.experimental_attention_variant: null
+          backend.megatron.linear_attention_freq: null
+
+        - aux.variant: gdn7_nope
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: gated_delta_net
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.linear_conv_kernel_dim: 4
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_value_head_dim: 128
+          # Escaped so they resolve at final composition against the ladder's
+          # aux.heads/qgroups (unescaped would bind the base placeholder early).
+          backend.megatron.linear_num_key_heads: "\\${aux.qgroups}"
+          backend.megatron.linear_num_value_heads: "\\${aux.heads}"
+
+        - aux.variant: mlstm7_nope
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: mlstm
+          backend.megatron.linear_attention_freq: 8
+          # NO short conv: the 6B ablation showed the causal conv HURTS mLSTM
+          # (unlike GDN/Mamba2, where it is intrinsic). mlstm_conv1d off means
+          # the conv is never built (equivalent to conv_kernel 0).
+          backend.megatron.mlstm_conv1d: false
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_value_head_dim: 128
+          # mLSTM has no GQA mode: key heads must equal value heads (= aux.heads).
+          # Escaped so they resolve against the ladder's aux.heads, not the base.
+          backend.megatron.linear_num_key_heads: "\\${aux.heads}"
+          backend.megatron.linear_num_value_heads: "\\${aux.heads}"
+          backend.megatron.mlstm_chunk_size: 128
+          backend.megatron.mlstm_igate_bias_init: -8.0
+
+        - aux.variant: mamba2_nope
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: mamba
+          backend.megatron.linear_attention_freq: 8
+          # Mamba2 uses its own state/head/group dims (mamba_state_dim 128,
+          # mamba_head_dim 64, mamba_num_groups 8, expand 2); the linear_* head
+          # knobs used by GDN/mLSTM do not apply.
+
+    # ================= GROUP 1 — (SIZE, TIER) LADDERS =================
+    # Each entry: shared ladder params + [stable, cooldown-per-budget].
+    - type: list
+      configs:
+        # ---- 0.1B low: gbs128 lr2e-3 -> 20/30/50 BT ----
+        - type: list
+          defaults:
+            aux.size: 0.1B
+            aux.hidden: 512
+            aux.ffn: 1536
+            aux.layers: 16
+            aux.heads: 8
+            aux.qgroups: 8
+            aux.gqa: false
+            aux.mbs: 16
+            aux.gbs: 128
+            backend.megatron.lr: 0.002
+            slurm.sbatch.nodes: 2
+            aux.size_tag: "s01B"
+            # Per-ladder cooldown budgets — the single source of truth for both
+            # the cooldown sweep points below and the stable's branch steps.
+            aux.budgets: [20_000_000_000, 30_000_000_000, 50_000_000_000]
+          configs:
+            - stage: stable
+              aux.tokens: 40_000_000_000
+              # Branch iters = 0.8 x (each budget) in steps, computed from
+              # aux.budgets (no sweep-path citation). Escaped so it resolves at
+              # final composition with the ladder's aux.gbs; the expression is
+              # identical for every ladder, so it is defined once here (&extra_steps).
+              aux.extra_steps: &extra_steps "\\${oc.mapeval:\\${oc.maptmpl:'int((((% + \\${aux.seq_len}*\\${aux.gbs})-1)//(\\${aux.seq_len}*\\${aux.gbs}))*(1-\\${aux.decay_fraction}))',\\${aux.budgets}}}"
+              backend.megatron.train_iters: "\\${oc.eval:'max(\\${aux.extra_steps})'}"
+              backend.megatron.lr_wsd_decay_iters: 0
+            - type: list
+              configs:
+                - type: list
+                  defaults: &firstcd
+                    aux.start_iter: "\\${oc.eval:'int(((\\${aux.tokens}+\\${aux.seq_len}*\\${aux.gbs}-1)//(\\${aux.seq_len}*\\${aux.gbs}))*(1-\\${aux.decay_fraction}))'}"
+                    backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/"
+                    backend.megatron.ckpt_step: "\\${aux.start_iter}"
+                    backend.megatron.override_opt_param_scheduler: true
+                    backend.megatron.train_iters: "\\${oc.eval:'\\${aux.start_iter}+1'}"
+                    backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'\\${backend.megatron.train_iters}-\\${aux.start_iter}'}"
+                    backend.megatron.save_interval: 1
+                    stage: "firstcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT"
+                    job.start_condition:
+                      class_name: FileExistsCondition
+                      path: "\\${sibling.stable.job.base_output_dir}/iter_\\${oc.eval:'str(\\${aux.start_iter}).zfill(7)'}"
+                    job.cancel_condition:
+                      class_name: LogPatternCondition
+                      log_path: "\\${sibling.stable.job.log_path_current}"
+                      pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+                  configs:
+                    - aux.tokens: 20_000_000_000
+                    - aux.tokens: 30_000_000_000
+                    - aux.tokens: 50_000_000_000
+                - type: list
+                  defaults: &contcd
+                    aux.start_iter: "\\${oc.eval:'int(((\\${aux.tokens}+\\${aux.seq_len}*\\${aux.gbs}-1)//(\\${aux.seq_len}*\\${aux.gbs}))*(1-\\${aux.decay_fraction}))'}"
+                    backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'\\${backend.megatron.train_iters}-\\${aux.start_iter}'}"
+                    # Directly-constructed first_cooldown dir (== its base_output_dir);
+                    # load+save it to resume own progress (restart-safe). Inlined
+                    # (not an aux var) so it is NOT sibling-serialized. Mirrors job.name.
+                    backend.megatron.load: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.experiment_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_firstcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT/"
+                    backend.megatron.save: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.experiment_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_firstcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT"
+                    backend.megatron.override_opt_param_scheduler: true
+                    stage: "contcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT"
+                    job.start_condition:
+                      class_name: FileExistsCondition
+                      path: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.experiment_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_firstcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT/iter_\\${oc.eval:'str(\\${aux.start_iter}+1).zfill(7)'}"
+                    job.cancel_condition:
+                      class_name: LogPatternCondition
+                      log_path: "\\${sibling.stable.job.log_path_current}"
+                      pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+                  configs:
+                    - aux.tokens: 20_000_000_000
+                    - aux.tokens: 30_000_000_000
+                    - aux.tokens: 50_000_000_000
+
+        # ---- 0.1B high: gbs256 lr2e-3 -> 80/200/300 BT ----
+        - type: list
+          defaults:
+            aux.size: 0.1B
+            aux.hidden: 512
+            aux.ffn: 1536
+            aux.layers: 16
+            aux.heads: 8
+            aux.qgroups: 8
+            aux.gqa: false
+            aux.mbs: 16
+            aux.gbs: 256
+            backend.megatron.lr: 0.002
+            slurm.sbatch.nodes: 2
+            aux.size_tag: "s01B"
+            aux.budgets: [80_000_000_000, 200_000_000_000, 300_000_000_000]
+          configs:
+            - stage: stable
+              aux.tokens: 240_000_000_000
+              aux.extra_steps: *extra_steps
+              backend.megatron.train_iters: "\\${oc.eval:'max(\\${aux.extra_steps})'}"
+              backend.megatron.lr_wsd_decay_iters: 0
+            - type: list
+              configs:
+                - type: list
+                  defaults: *firstcd
+                  configs:
+                    - aux.tokens: 80_000_000_000
+                    - aux.tokens: 200_000_000_000
+                    - aux.tokens: 300_000_000_000
+                - type: list
+                  defaults: *contcd
+                  configs:
+                    - aux.tokens: 80_000_000_000
+                    - aux.tokens: 200_000_000_000
+                    - aux.tokens: 300_000_000_000
+
+        # ---- 0.2B low: gbs128 lr1e-3 -> 6/12/20/30 BT ----
+        - type: list
+          defaults:
+            aux.size: 0.2B
+            aux.hidden: 768
+            aux.ffn: 2304
+            aux.layers: 22
+            aux.heads: 8
+            aux.qgroups: 8
+            aux.gqa: false
+            aux.mbs: 8
+            aux.gbs: 128
+            backend.megatron.lr: 0.001
+            slurm.sbatch.nodes: 2
+            aux.size_tag: "s02B"
+            aux.budgets: [6_000_000_000, 12_000_000_000, 20_000_000_000, 30_000_000_000]
+          configs:
+            - stage: stable
+              aux.tokens: 24_000_000_000
+              aux.extra_steps: *extra_steps
+              backend.megatron.train_iters: "\\${oc.eval:'max(\\${aux.extra_steps})'}"
+              backend.megatron.lr_wsd_decay_iters: 0
+            - type: list
+              configs:
+                - type: list
+                  defaults: *firstcd
+                  configs:
+                    - aux.tokens: 6_000_000_000
+                    - aux.tokens: 12_000_000_000
+                    - aux.tokens: 20_000_000_000
+                    - aux.tokens: 30_000_000_000
+                - type: list
+                  defaults: *contcd
+                  configs:
+                    - aux.tokens: 6_000_000_000
+                    - aux.tokens: 12_000_000_000
+                    - aux.tokens: 20_000_000_000
+                    - aux.tokens: 30_000_000_000
+
+        # ---- 0.2B high: gbs512 lr2e-3 -> 50/80/120/200/300 BT ----
+        - type: list
+          defaults:
+            aux.size: 0.2B
+            aux.hidden: 768
+            aux.ffn: 2304
+            aux.layers: 22
+            aux.heads: 8
+            aux.qgroups: 8
+            aux.gqa: false
+            aux.mbs: 8
+            aux.gbs: 512
+            backend.megatron.lr: 0.002
+            slurm.sbatch.nodes: 4
+            aux.size_tag: "s02B"
+            aux.budgets: [50_000_000_000, 80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000]
+          configs:
+            - stage: stable
+              aux.tokens: 240_000_000_000
+              aux.extra_steps: *extra_steps
+              backend.megatron.train_iters: "\\${oc.eval:'max(\\${aux.extra_steps})'}"
+              backend.megatron.lr_wsd_decay_iters: 0
+            - type: list
+              configs:
+                - type: list
+                  defaults: *firstcd
+                  configs:
+                    - aux.tokens: 50_000_000_000
+                    - aux.tokens: 80_000_000_000
+                    - aux.tokens: 120_000_000_000
+                    - aux.tokens: 200_000_000_000
+                    - aux.tokens: 300_000_000_000
+                - type: list
+                  defaults: *contcd
+                  configs:
+                    - aux.tokens: 50_000_000_000
+                    - aux.tokens: 80_000_000_000
+                    - aux.tokens: 120_000_000_000
+                    - aux.tokens: 200_000_000_000
+                    - aux.tokens: 300_000_000_000
+
+        # ---- 0.4B: gbs256 lr2e-3 -> 12/20/30/50 BT ----
+        - type: list
+          defaults:
+            aux.size: 0.4B
+            aux.hidden: 1024
+            aux.ffn: 3072
+            aux.layers: 28
+            aux.heads: 16
+            aux.qgroups: 8
+            aux.gqa: true
+            aux.mbs: 4
+            aux.gbs: 256
+            backend.megatron.lr: 0.002
+            slurm.sbatch.nodes: 4
+            aux.size_tag: "s04B"
+            aux.budgets: [12_000_000_000, 20_000_000_000, 30_000_000_000, 50_000_000_000]
+          configs:
+            - stage: stable
+              aux.tokens: 40_000_000_000
+              aux.extra_steps: *extra_steps
+              backend.megatron.train_iters: "\\${oc.eval:'max(\\${aux.extra_steps})'}"
+              backend.megatron.lr_wsd_decay_iters: 0
+            - type: list
+              configs:
+                - type: list
+                  defaults: *firstcd
+                  configs:
+                    - aux.tokens: 12_000_000_000
+                    - aux.tokens: 20_000_000_000
+                    - aux.tokens: 30_000_000_000
+                    - aux.tokens: 50_000_000_000
+                - type: list
+                  defaults: *contcd
+                  configs:
+                    - aux.tokens: 12_000_000_000
+                    - aux.tokens: 20_000_000_000
+                    - aux.tokens: 30_000_000_000
+                    - aux.tokens: 50_000_000_000
+
+        # ---- 0.9B mid: gbs512 lr5e-4 -> 30/50/80/120 BT ----
+        - type: list
+          defaults:
+            aux.size: 0.9B
+            aux.hidden: 1536
+            aux.ffn: 4608
+            aux.layers: 28
+            aux.heads: 16
+            aux.qgroups: 8
+            aux.gqa: true
+            aux.mbs: 2
+            aux.gbs: 512
+            backend.megatron.lr: 0.0005
+            slurm.sbatch.nodes: 8
+            aux.size_tag: "s09B"
+            aux.budgets: [30_000_000_000, 50_000_000_000, 80_000_000_000, 120_000_000_000]
+          configs:
+            - stage: stable
+              aux.tokens: 96_000_000_000
+              aux.extra_steps: *extra_steps
+              backend.megatron.train_iters: "\\${oc.eval:'max(\\${aux.extra_steps})'}"
+              backend.megatron.lr_wsd_decay_iters: 0
+            - type: list
+              configs:
+                - type: list
+                  defaults: *firstcd
+                  configs:
+                    - aux.tokens: 30_000_000_000
+                    - aux.tokens: 50_000_000_000
+                    - aux.tokens: 80_000_000_000
+                    - aux.tokens: 120_000_000_000
+                - type: list
+                  defaults: *contcd
+                  configs:
+                    - aux.tokens: 30_000_000_000
+                    - aux.tokens: 50_000_000_000
+                    - aux.tokens: 80_000_000_000
+                    - aux.tokens: 120_000_000_000
+
+        # ---- 0.9B high: gbs1024 lr1e-3 -> 200/300 BT ----
+        - type: list
+          defaults:
+            aux.size: 0.9B
+            aux.hidden: 1536
+            aux.ffn: 4608
+            aux.layers: 28
+            aux.heads: 16
+            aux.qgroups: 8
+            aux.gqa: true
+            aux.mbs: 2
+            aux.gbs: 1024
+            backend.megatron.lr: 0.001
+            slurm.sbatch.nodes: 8
+            aux.size_tag: "s09B"
+            aux.budgets: [200_000_000_000, 300_000_000_000]
+          configs:
+            - stage: stable
+              aux.tokens: 240_000_000_000
+              aux.extra_steps: *extra_steps
+              backend.megatron.train_iters: "\\${oc.eval:'max(\\${aux.extra_steps})'}"
+              backend.megatron.lr_wsd_decay_iters: 0
+            - type: list
+              configs:
+                - type: list
+                  defaults: *firstcd
+                  configs:
+                    - aux.tokens: 200_000_000_000
+                    - aux.tokens: 300_000_000_000
+                - type: list
+                  defaults: *contcd
+                  configs:
+                    - aux.tokens: 200_000_000_000
+                    - aux.tokens: 300_000_000_000
