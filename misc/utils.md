@@ -37,7 +37,6 @@ LEO:
 `uv run --python 3.12 python tools/collect_val_loss.py /scratch/project_465002530/multilingual_scaling/0.4B_ne/validation --output-dir /scratch/project_465002530/users/dianaonutu/dense_multilingual_models_scaling_results/training/results/val_loss`
 
 0.9B:
-
 `uv run --python 3.12 python tools/collect_val_loss.py /scratch/project_465002530/multilingual_scaling/0.9B_ne/validation --output-dir /scratch/project_465002530/users/dianaonutu/dense_multilingual_models_scaling_results/training/results/val_loss`
 
 
