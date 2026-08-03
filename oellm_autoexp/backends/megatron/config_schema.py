@@ -358,6 +358,11 @@ class MegatronConfig(ConfigInterface):
     # negative) values open the input gate earlier in training.
     mlstm_igate_bias_init: float = -10.0
 
+    # Apply a short depthwise causal conv over q,k,v before the mLSTM cell (xLSTM conv branch
+    # / GatedDeltaNet-style, via FLA causal_conv1d). Kernel width is taken from
+    # ``linear_conv_kernel_dim``.
+    mlstm_conv1d: bool = False
+
     # Standard deviation of the zero mean normal for the default initialization method, not
     # used if init_method and output_layer_init_method are provided.
     init_method_std: float = 0.02
