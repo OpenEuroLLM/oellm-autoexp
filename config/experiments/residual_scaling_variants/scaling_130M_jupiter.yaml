@@ -240,11 +240,13 @@ sweep:
       # 2-3. nGPT LERP residual; approx is the paper's form, analytic the exact
       #      cos(theta) factor that keeps a full-rank Jacobian.
       - aux.variant: ngpt_approx
+        backend.megatron.lr: 0.001
         backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 32
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: approx
       - aux.variant: ngpt_analytic
+        backend.megatron.lr: 0.001
         backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 32
         backend.megatron.ngpt: true
@@ -253,6 +255,7 @@ sweep:
       # 4. Full nGPT recipe: LERP residual + post-step weight normalization, no
       #    weight decay on the normalized body (the normalizer controls magnitude).
       - aux.variant: ngpt_wnorm
+        backend.megatron.lr: 0.001
         backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 32
         backend.megatron.ngpt: true
@@ -281,6 +284,7 @@ sweep:
         backend.megatron.mhc: true
         backend.megatron.mhc_expansion_rate: 4
       - aux.variant: mhc2_lerp
+        backend.megatron.lr: 0.001
         backend.megatron.global_batch_size: 384
         backend.megatron.micro_batch_size: 16
         backend.megatron.mhc_sinkhorn_iters: 8
@@ -299,6 +303,7 @@ sweep:
         backend.megatron.attn_res: true
         backend.megatron.attn_res_num_blocks: 8
       - aux.variant: attnres4_lerp
+        backend.megatron.lr: 0.001
         backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 32
         backend.megatron.cuda_graph_impl: none
