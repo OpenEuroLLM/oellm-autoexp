@@ -245,16 +245,16 @@ sweep:
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: approx
       - aux.variant: ngpt_analytic
-        backend.megatron.global_batch_size: 384
-        backend.megatron.micro_batch_size: 24
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 32
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: analytic
 
       # 4. Full nGPT recipe: LERP residual + post-step weight normalization, no
       #    weight decay on the normalized body (the normalizer controls magnitude).
       - aux.variant: ngpt_wnorm
-        backend.megatron.global_batch_size: 384
-        backend.megatron.micro_batch_size: 24
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 32
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: analytic
         backend.megatron.weight_normalizer: true
@@ -282,7 +282,7 @@ sweep:
         backend.megatron.mhc_expansion_rate: 4
       - aux.variant: mhc2_lerp
         backend.megatron.global_batch_size: 384
-        backend.megatron.micro_batch_size: 16
+        backend.megatron.micro_batch_size: 24
         backend.megatron.mhc_sinkhorn_iters: 8
         backend.megatron.cuda_graph_impl: none
         backend.megatron.mhc: true
@@ -293,14 +293,14 @@ sweep:
 
       # 8-9. Block AttnRes: softmax attention over depth across block summaries.
       - aux.variant: attnres8
-        backend.megatron.global_batch_size: 384
-        backend.megatron.micro_batch_size: 24
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 16
         backend.megatron.cuda_graph_impl: none
         backend.megatron.attn_res: true
         backend.megatron.attn_res_num_blocks: 8
       - aux.variant: attnres4_lerp
-        backend.megatron.global_batch_size: 128
-        backend.megatron.micro_batch_size: 16
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 32
         backend.megatron.cuda_graph_impl: none
         backend.megatron.attn_res: true
         backend.megatron.attn_res_num_blocks: 4
