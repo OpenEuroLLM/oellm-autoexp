@@ -293,8 +293,8 @@ sweep:
 
       # 8-9. Block AttnRes: softmax attention over depth across block summaries.
       - aux.variant: attnres8
-        backend.megatron.global_batch_size: 128
-        backend.megatron.micro_batch_size: 32
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 24
         backend.megatron.cuda_graph_impl: none
         backend.megatron.attn_res: true
         backend.megatron.attn_res_num_blocks: 8
