@@ -163,7 +163,7 @@ backend:
     eval_interval: 2000
     eval_iters: 10
     save: ${job.base_output_dir}
-    load: null
+    load: ${job.base_output_dir}
     wandb_project: residual_scaling_variants
     wandb_exp_name: ${job.name}
     wandb_save_dir: ${job.base_output_dir}/wandb
@@ -219,7 +219,7 @@ slurm:
     TRITON_LIBCUDA_PATH: "/usr/local/cuda/compat/lib"
   sbatch:
     nodes: 1
-    time: "04:00:00"
+    time: "12:00:00"
 
 stage: scaling
 
