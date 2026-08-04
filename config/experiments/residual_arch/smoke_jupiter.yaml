@@ -280,7 +280,7 @@ sweep:
         backend.megatron.mhc_expansion_rate: 4
       - aux.variant: mhc2_lerp
         backend.megatron.global_batch_size: 384
-        backend.megatron.micro_batch_size: 24
+        backend.megatron.micro_batch_size: 16
         backend.megatron.mhc_sinkhorn_iters: 8
         backend.megatron.cuda_graph_impl: none
         backend.megatron.mhc: true
@@ -297,8 +297,8 @@ sweep:
         backend.megatron.attn_res: true
         backend.megatron.attn_res_num_blocks: 8
       - aux.variant: attnres4_lerp
-        backend.megatron.global_batch_size: 384
-        backend.megatron.micro_batch_size: 32
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 16
         backend.megatron.cuda_graph_impl: none
         backend.megatron.attn_res: true
         backend.megatron.attn_res_num_blocks: 4
