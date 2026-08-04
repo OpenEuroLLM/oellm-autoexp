@@ -234,26 +234,17 @@ sweep:
      configs:
       # Does weight normalization help Block AttnRes?
       #
-      # AttnRes bounds hidden-state magnitude (its depth weights are convex) but
-      # leaves weight magnitude free; the normalizer bounds the other half. The
-      # catch is that nGPT can pin weights to the sphere only because learnable
-      # scalers reinject magnitude -- plain AttnRes has none (its pseudo-query and
-      # key-norm gain are 1-D and correctly skipped by the normalizer). So the
-      # first arm tests weight-norm with nothing to compensate, and the second
-      # pairs it with the LERP so stream and weights share one geometry.
+      # Only the LERP + weight-normalizer pairing is meaningful, i.e. the full
+      # nGPT recipe applied to AttnRes. The normalizer is not a standalone
+      # regularizer: it exists to keep the *weights* on the sphere so the LERP's
+      # unit-norm stream assumption holds. Without the LERP it would just strip a
+      # degree of freedom from an ordinary transformer, with no scaler to reinject
+      # the magnitude (AttnRes's pseudo-query and key-norm gain are 1-D and are
+      # correctly skipped by the normalizer).
       #
       # weight_decay goes to 0 on the normalized body: the projection controls
       # magnitude, and decaying toward zero would fight it. The head stays
       # unconstrained (wd 0.1) per the qwen3-style convention.
-      - aux.variant: attnres8_wnorm
-        backend.megatron.attn_res: true
-        backend.megatron.attn_res_num_blocks: 8
-        backend.megatron.weight_normalizer: true
-        backend.megatron.weight_normalizer_out_norm_dim_0: true
-        backend.megatron.weight_normalizer_head_unconstrained: true
-        backend.megatron.weight_decay: 0.0
-        backend.megatron.global_batch_size: 128
-        backend.megatron.micro_batch_size: 16
       - aux.variant: attnres4_lerp_wnorm
         backend.megatron.attn_res: true
         backend.megatron.attn_res_num_blocks: 4
