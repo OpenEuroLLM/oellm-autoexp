@@ -245,16 +245,16 @@ sweep:
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: approx
       - aux.variant: ngpt_analytic
-        backend.megatron.global_batch_size: 128
-        backend.megatron.micro_batch_size: 32
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 24
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: analytic
 
       # 4. Full nGPT recipe: LERP residual + post-step weight normalization, no
       #    weight decay on the normalized body (the normalizer controls magnitude).
       - aux.variant: ngpt_wnorm
-        backend.megatron.global_batch_size: 128
-        backend.megatron.micro_batch_size: 32
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 24
         backend.megatron.ngpt: true
         backend.megatron.ngpt_lerp_normalization: analytic
         backend.megatron.weight_normalizer: true
