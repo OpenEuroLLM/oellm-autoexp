@@ -322,7 +322,12 @@ def parse_config(config_path: str) -> dict:
             ):
                 lr = float(entry["backend.megatron.lr"])
                 gbsz = int(entry["backend.megatron.global_batch_size"])
-                stable_tok = int(entry.get("backend.megatron.aux.tokens", aux["tokens"]))
+                # aux.get(...) not aux["tokens"]: the default arg is evaluated
+                # eagerly, so a hard subscript raises KeyError whenever the merged
+                # config carries no top-level aux.tokens default — which the v2
+                # config split removed. Every real combo supplies its own
+                # aux.tokens, so the 0 fallback is effectively never used.
+                stable_tok = int(entry.get("backend.megatron.aux.tokens", aux.get("tokens", 0)))
 
                 center = _eval_token_set(
                     entry.get("backend.megatron.aux.center_tokens_set", "set()")
