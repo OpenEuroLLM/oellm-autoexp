@@ -33,11 +33,54 @@
 
 ## Why the last four fall short
 * AttnRes (177-193, needs 1.04-1.13x). Memory-bound at 0.87-0.97 occupancy with
-  no micro-batch headroom left. Next lever: the DepthResidualState refactor to
-  preallocated static-shape buffers, which also unlocks CUDA graphs - every arm
-  above 200 uses graphs, none below do.
-* mHC (77-96, needs 2.1-2.6x). At n=4 every layer moves 4x the residual traffic;
-  96.2/285.5 = 0.34 matches that arithmetic. The paper reaches 6.7% overhead
-  only with fused TileLang kernels plus selective recompute, and a torchtitan
-  implementation is reported near 400 TFLOP/s - so this is an implementation
-  gap, closable only by writing the fused mixing kernel.
+  no micro-batch headroom left.
+* mHC: see below - now 193.8-195.8, needing only 1.02-1.03x.
+
+## mHC: 94.9 -> 195.8 via fused stream ops
+Both large wins came from the same defect repeated twice: an n-long contraction
+written as a GEMM/einsum. At n=4 that is a handful of multiply-adds per output
+element, so baddbmm/einsum dispatched a kernel over the widest tensor in the
+model to do almost no arithmetic - and the write additionally materialized a
+full [s,b,n,C] intermediate. Rewritten as fusible elementwise-plus-reduction,
+Inductor reads the stream state once per op.
+
+| change | TFLOP/s | kept |
+|---|---|---|
+| original | 94.9 | - |
+| - per-sublayer collapse | 90.6 | reverted (flat) |
+| + coefficient cache | 96.6 | yes |
+| + fused write | 143.3 | yes |
+| + fused read | 190.2 | yes |
+| + mbs 24 -> 32 | 195.8 | yes |
+| + fused coeffs\|read | 193.0 | reverted |
+| + sinkhorn 8 -> 4 | 194.3 | reverted |
+
+The earlier claim in this file - that only hand-written TileLang kernels could
+close the gap, because 96.2/285.5 = 0.34 "matches the 4x-traffic arithmetic" -
+was numerology. It was ordinary badly-shaped PyTorch.
+
+## CUDA graphs do not help mHC (measured, negative)
+Hypothesis: mHC could not be captured because its stream state lived on
+`layer._depth_state`, invisible to CudaGraphManager, and graphs were assumed to
+be worth what the other arms gain. Fixed by carrying the streams as the layer's
+own hidden_states (numerics verified bit-identical to the previous code, and a
+captured replay verified bit-identical to eager). Then measured, one session:
+
+| mbs | graphs | TFLOP/s @ iter 60 | mem |
+|---|---|---|---|
+| 32 | no | 193.8 | 0.993 |
+| 32 | yes | OOM in capture | - |
+| 24 | no | 189.4 | 0.771 |
+| 24 | yes | 188.7 | 0.806 |
+
+At matched micro-batch graphs are worth -0.4%, i.e. nothing. The premise was
+wrong twice over: the +19-26% in the list above is *torch.compile*, not graphs,
+and "every arm above 200 uses graphs" was a correlation read as a cause. mHC is
+bound by bandwidth over the 4x-wider stream state, not by launch overhead, which
+is the only thing graphs remove. They also cost memory during capture, and at
+0.993 occupancy that forces mbs 32 -> 24, which costs a further 2.3%.
+
+Best mhc4 remains **mbs=32, no graphs: 193.8-195.8 TFLOP/s** (2.04-2.06x).
+The refactor is still worth keeping: it deletes hidden cross-layer module state,
+and it makes mHC's pipeline payload just the hidden state, so PP>1 now needs
+only the shape negotiation widened.
