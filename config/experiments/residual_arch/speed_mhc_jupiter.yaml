@@ -225,15 +225,37 @@ job:
   name: resid_${aux.variant}${aux.additional_tag}
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
 
+# mHC now carries its n-stream state as the layer's own hidden_states rather than
+# through a module attribute, which is what makes the layer CUDA-graph
+# capturable (verified bit-exact against eager in
+# tests/unit_tests/transformer/test_depth_residual_cuda_graphs.py). Graphs were
+# worth +19-26% on every other arm, so this is the arm's last untried lever:
+# memory was already at 0.993 occupancy at mbs=32, ruling batch size out.
+#
+# Three arms: the no-graph control re-run alongside so the comparison does not
+# straddle two cluster sessions, and a smaller micro-batch in case the graphs'
+# static buffers push the larger one into OOM.
 sweep:
   type: product
   groups:
    - type: list
      configs:
-      - aux.variant: speed_mhc4
+      - aux.variant: speed_mhc4_nocg
         backend.megatron.mhc: true
         backend.megatron.mhc_expansion_rate: 4
         backend.megatron.mhc_sinkhorn_iters: 8
         backend.megatron.cuda_graph_impl: none
         backend.megatron.global_batch_size: 384
         backend.megatron.micro_batch_size: 32
+      - aux.variant: speed_mhc4_cg
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 32
+      - aux.variant: speed_mhc4_cg_mbs24
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 24
