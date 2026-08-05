@@ -521,6 +521,12 @@ ngpt_lerp_normalization_attn: ''  # Overrides ngpt_lerp_normalization for the at
 ngpt_lerp_normalization_ffn: ''  # Overrides ngpt_lerp_normalization for the MLP residual when non-empty.
 ngpt_post_layer_norm_attn: true  # L2-normalize the attention output before the LERP residual update.
 ngpt_post_layer_norm_ffn: true  # L2-normalize the MLP output before the LERP residual update.
+ngpt_scaler_base_scale: -1.0  # Raw-parameter init for the scaler eigen-LR reparameterization; -1 selects 1/sqrt(hidden_size). The optimizer sees a parameter of this scale while the effective value starts at ngpt_scaler_init, decoupling the two.
+ngpt_scaler_init: 1.0  # Effective value of the nGPT scalers at initialization.
+ngpt_scaler_lr_mult: 1.0  # Learning-rate multiplier for nGPT scaler parameters (LERP alphas, s_qk, s_uv). On a normalized architecture these carry all the magnitude information, so they often want a larger step than the direction-carrying weight matrices.
+ngpt_scaler_wd_mult: 0.0  # Weight-decay multiplier for nGPT scaler parameters. 0 by default: decaying them toward zero fights the geometry.
+ngpt_use_sqk: false  # Learnable per-channel scalers on Q and K (nGPT's s_qk). Once Q/K are L2-normalized their dot product is a cosine, so the attention logits lose all scale; s_qk puts it back as a learned quantity. Pair with qk_l2_norm.
+ngpt_use_suv: false  # Learnable per-channel scaler on the MLP intermediate (nGPT's s_uv). Takes the place of the fixed 1/sqrt(ffn/hidden) up-scale when the fc1 weights are row-normalized and can no longer carry that magnitude themselves.
 no_load_optim: null  # Do not load optimizer when loading checkpoint.
 no_load_rng: null  # Do not load rng state when loading checkpoint.
 no_persist_layer_norm: false  # Disable using persistent fused layer norm kernel. This kernel supports only a set of hidden sizes. Please check persist_ln_hidden_sizes if your hidden size is supported.

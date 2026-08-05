@@ -246,6 +246,7 @@ sweep:
       # magnitude, and decaying toward zero would fight it. The head stays
       # unconstrained (wd 0.1) per the qwen3-style convention.
       - aux.variant: attnres4_lerp_wnorm
+        backend.megatron.cuda_graph_impl: none
         backend.megatron.attn_res: true
         backend.megatron.attn_res_num_blocks: 4
         backend.megatron.attn_res_lerp: true

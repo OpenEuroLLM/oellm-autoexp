@@ -1,0 +1,265 @@
+# @package _global_
+#
+# Residual-architecture scaling sweep: ~130M params, ~6B tokens.
+#
+# One short job per residual/optimization scheme, all sharing the niccolo-130M
+# geometry, data, tokenizer, batch and schedule so the only difference is the
+# scheme under test. This is a *smoke* sweep: the point is that every variant
+# builds, trains and logs a decreasing loss on GPU -- not to compare quality.
+#
+# Schemes (all PP=1, which mHC and Block AttnRes currently require):
+#   baseline      standard pre-norm transformer, AdamW
+#   ngpt_approx   nGPT LERP residual, nGPT's orthogonality approximation
+#   ngpt_analytic nGPT LERP residual, exact cos(theta) factor
+#   ngpt_wnorm    nGPT + post-step weight normalizer (the full nGPT recipe)
+#   muown         Muown optimizer (row-magnitude/direction split)
+#   mhc4          mHC with 4 streams
+#   mhc2_lerp     mHC with 2 streams composed with the nGPT LERP
+#   attnres8      Block AttnRes with 8 blocks
+#   attnres4_lerp Block AttnRes with 4 blocks composed with the nGPT LERP
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, data_nemonicco_jupiter]
+  - /sweep: none
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: "residual_scaling_variants"
+  total_tokens: "${oc.eval:'${aux.seq_len}*${aux.gbs}*${backend.megatron.train_iters}'}"
+  gbs: 128
+  tokens: 6_000_000_000
+  decay_fraction: 0.2
+  seq_len: 4096
+  start_iter: 0
+  additional_tag: ""
+  variant: "baseline"
+  # HF cache under the same project as the SLURM account these jobs run in.
+  hf_home: "/e/project1/e-sta-openeurollm/poeppel1/cache"
+
+backend:
+  megatron:
+    # ---- geometry: niccolo 130M ----
+    num_layers: 18
+    hidden_size: 576
+    ffn_hidden_size: 2304
+    num_attention_heads: 9
+    num_query_groups: 9
+    kv_channels: 64
+    seq_length: ${aux.seq_len}
+    max_position_embeddings: ${aux.seq_len}
+    padded_vocab_size: 50304
+    normalization: RMSNorm
+    swiglu: true
+    # Match the hybrid fullattn reference (317.2 TFLOP/s at this size):
+    # no linear/QKV bias, and crucially no dataloader-built attention mask --
+    # at seq=4096/mbs=32 that mask is a ~512 MiB bool tensor per micro-batch,
+    # paid in both memory and bandwidth on every step.
+    add_bias_linear: false
+    add_qkv_bias: false
+    create_attention_mask_in_dataloader: false
+    qk_layernorm: true
+    position_embedding_type: rope
+    rotary_base: 100000
+    rotary_percent: 1
+    untie_embeddings_and_output_weights: false
+
+    # ---- short smoke schedule ----
+    train_iters: ${oc.eval:'(${aux.tokens}+${aux.seq_len}*${aux.gbs}-1)//(${aux.seq_len}*${aux.gbs})'}
+    global_batch_size: ${aux.gbs}
+    # Batch is the dominant throughput lever at this size (cf. the hybrid repo's
+    # 0.1B sweep, which reaches 281.9 TFLOP/s/GPU at mbs=64/gbs=256). We cannot
+    # go that high here: that sweep runs on a Megatron branch with Liger fused
+    # linear+CE, which never materializes the (b, s, V) logits. Without it the
+    # logits alone are ~0.41 GiB per micro-batch sample at V=50304/seq=4096, so
+    # mbs is also constrained to divide gbs/DP (=32 here), so 16 with gbs=128
+    # gives 2 accumulation steps. Porting Liger is the next real lever.
+    micro_batch_size: 32
+    lr: 0.002
+    min_lr: 1.0e-05
+    lr_decay_style: WSD
+    lr_warmup_iters: 2000
+    lr_wsd_decay_iters: ${oc.eval:'int(0.2 * ${.train_iters})'}
+    lr_wsd_decay_style: linear
+    lr_warmup_init: 0
+    adam_beta2: 0.99
+    weight_decay: 0.1
+    clip_grad: 1
+
+    # ---- parallelism: PP=1 is required by mHC / Block AttnRes ----
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    expert_model_parallel_size: 1
+    expert_tensor_parallel_size: 1
+    sequence_parallel: false
+
+    # ---- precision / perf ----
+    bf16: true
+    accumulate_allreduce_grads_in_fp32: true
+    grad_reduce_in_bf16: false
+    use_distributed_optimizer: true
+    use_flash_attn: true
+    # Fusions: all were off (inherited from the niccolo smoke config). At 130M
+    # the model is launch-bound, so fusing the bias/dropout/activation chains and
+    # the grad-accum matmul is a large, free win.
+    gradient_accumulation_fusion: true
+    bias_dropout_fusion: true
+    bias_gelu_fusion: true
+    bias_swiglu_fusion: true
+    cross_entropy_loss_fusion: true
+    # CUDA graphs: at 130M the per-kernel launch overhead is a large fraction of
+    # the step. "local" captures per-layer graphs; empty cuda_graph_modules means
+    # the whole transformer layer.
+    # Liger fuses the LM-head projection with chunked cross entropy, so the
+    # (b, s, V) logits are never materialized. That is the single biggest lever
+    # at this vocab size (~0.41 GiB per micro-batch sample at V=50304/seq=4096):
+    # it removes the memory wall that capped mbs and starves throughput.
+    # Requires TP=1, which this sweep uses.
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
+    cuda_graph_impl: local
+    cuda_graph_modules: []
+    cuda_graph_warmup_steps: 3
+    check_for_nan_in_loss_and_grad: false
+    # Overlap the DP gradient reduce / param gather with compute. Safe here: this
+    # is a single node, so the collectives stay on NVLink (the known JUPITER
+    # deadlock with overlap_grad_reduce was inter-node IB).
+    overlap_grad_reduce: false
+    overlap_param_gather: false
+    attention_dropout: 0
+    hidden_dropout: 0
+    dataloader_type: cyclic
+    num_workers: 7
+    num_dataset_builder_threads: 6
+    rerun_mode: disabled
+
+    # ---- data ----
+    # data_nemonicco_jupiter points at /e/project1/jureap59/.../
+    # copy_nemotron_downsampled_15p, which no longer exists (the e-sta copy of
+    # that directory is empty). Use the surviving nemotron_downsampled_5p_valid
+    # shard: 212 GB / ~106B tokens, uint16 so gpt-neox-compatible, and far more
+    # than the ~16M tokens this 60-iteration smoke consumes.
+    train_data_path:
+      - /e/project1/e-sta-openeurollm/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all
+    valid_data_path:
+      - /e/project1/e-sta-openeurollm/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all
+    # Per-job index cache. All nine arms start simultaneously on the same
+    # dataset; with a shared cache they race to build the same index files and
+    # the losers mmap a partially-written file ("mmap length is greater than
+    # file size"). A private directory per job removes the race entirely.
+    data_cache_path: ${job.base_output_dir}/data_cache
+
+    # ---- tokenizer ----
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: EleutherAI/gpt-neox-20b
+
+    # ---- logging; no checkpointing for a smoke run ----
+    log_interval: 50
+    log_throughput: true
+    log_progress: true
+    eval_interval: 2000
+    eval_iters: 10
+    save: ${job.base_output_dir}
+    load: ${job.base_output_dir}
+    wandb_project: residual_scaling_variants
+    wandb_exp_name: ${job.name}
+    wandb_save_dir: ${job.base_output_dir}/wandb
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    # The login-node HF_HOME points into /e/project1/jureap59, which the jobs
+    # cannot read while running under the e-sta-openeurollm account. Use the
+    # equivalent cache inside the account's own project directory; it already
+    # holds the gpt-neox-20b tokenizer, and the nodes are offline so the cache
+    # is the only source.
+    HF_HOME: ${aux.hf_home}
+    # NOTE: deliberately no TRANSFORMERS_CACHE. transformers>=4.5x honours it as
+    # the hub cache, and the `<cache>/transformers` directory it conventionally
+    # points at is empty here -- setting it overrides the populated `<cache>/hub`
+    # and turns every offline tokenizer lookup into a cache miss. Verified inside
+    # the container: HF_HOME alone resolves gpt-neox-20b, adding TRANSFORMERS_CACHE
+    # makes it fail.
+    HUGGINGFACE_HUB_CACHE: ${aux.hf_home}/hub
+    # Dynamo/Inductor enabled: the mHC Sinkhorn loop is torch.compile'd to fuse
+    # ~32 elementwise passes into a few kernels.
+    # Triton needs libcuda on its link path. This bites Liger too (its fused CE
+    # is a Triton kernel), not just Dynamo -- the job aborts with "libcuda.so
+    # cannot found!". Must be the *directory*: Triton passes it to GCC as -L.
+    # This container reports the library at /usr/local/cuda/compat/lib.
+    TRITON_LIBCUDA_PATH: "/usr/local/cuda/compat/lib"
+    HF_DATASETS_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+    PYTORCH_CUDA_ALLOC_CONF: "garbage_collection_threshold:0.8"
+
+# Newer container than the jupiter default: Megatron 0.18.2 requires
+# nvidia-resiliency-ext >= 0.6.0, which the 0.16-era default image predates.
+# Overridden here rather than in config/container/jupiter.yaml so the other
+# in-flight experiment sweeps keep the image they were launched against.
+container:
+  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-linattn-mamba_aarch64_202608010917.sif
+  env:
+    # container/jupiter.yaml passes the login-node HF_HOME (jureap59) into the
+    # container; override it to the account-matched cache.
+    HF_HOME: ${aux.hf_home}
+
+slurm:
+  # slurm.env is what actually lands as `export ...` in the generated sbatch, so
+  # it is the binding value for the job -- overriding backend.env/container.env
+  # alone is not enough. config/slurm/jupiter.yaml resolves HF_HOME from the
+  # login-node environment, which points into /e/project1/jureap59; the compute
+  # nodes cannot read that project while running under the e-sta-openeurollm
+  # account, and they are offline, so the tokenizer lookup fails.
+  env:
+    HF_HOME: ${aux.hf_home}
+    # slurm.env is the binding value in the generated sbatch.
+    TRITON_LIBCUDA_PATH: "/usr/local/cuda/compat/lib"
+  sbatch:
+    nodes: 1
+    time: "12:00:00"
+
+stage: scaling
+
+job:
+  name: resid_${aux.variant}${aux.additional_tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+sweep:
+  type: product
+  groups:
+   - type: list
+     configs:
+      # nGPT with the scaler set that was missing until now. ngpt_wnorm was the
+      # worst arm (2.977) because the weight normalizer strips weight magnitude
+      # and nothing reinjected it: s_qk and s_uv were never instantiated. These
+      # two arms test the scalers alone, and then the full recipe
+      # (scalers + weight normalizer) that nGPT actually prescribes.
+      - aux.variant: ngpt_scalers
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+        backend.megatron.qk_l2_norm: true
+        backend.megatron.ngpt_use_sqk: true
+        backend.megatron.ngpt_use_suv: true
+        backend.megatron.lr: 0.001
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 16
+      - aux.variant: ngpt_scalers_wnorm
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+        backend.megatron.qk_l2_norm: true
+        backend.megatron.ngpt_use_sqk: true
+        backend.megatron.ngpt_use_suv: true
+        backend.megatron.weight_normalizer: true
+        backend.megatron.weight_normalizer_out_norm_dim_0: true
+        backend.megatron.weight_normalizer_head_unconstrained: true
+        backend.megatron.weight_decay: 0.0
+        # muP-adapted LR for the scalers: they are the only place magnitude lives
+        # once the weights are normalized, so they want a larger step than the
+        # direction-carrying matrices.
+        backend.megatron.ngpt_scaler_lr_mult: 4.0
+        backend.megatron.lr: 0.001
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 16

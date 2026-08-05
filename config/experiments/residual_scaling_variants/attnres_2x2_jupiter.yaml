@@ -238,11 +238,13 @@ sweep:
       # way -- the weights are per-sublayer; N only sets how many sources are
       # attended), so this is a clean controlled comparison.
       - aux.variant: attnres4
+        backend.megatron.cuda_graph_impl: none
         backend.megatron.attn_res: true
         backend.megatron.attn_res_num_blocks: 4
         backend.megatron.global_batch_size: 128
         backend.megatron.micro_batch_size: 16
       - aux.variant: attnres8_lerp
+        backend.megatron.cuda_graph_impl: none
         backend.megatron.attn_res: true
         backend.megatron.attn_res_num_blocks: 8
         backend.megatron.attn_res_lerp: true

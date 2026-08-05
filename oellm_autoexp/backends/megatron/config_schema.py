@@ -947,6 +947,24 @@ class MegatronConfig(ConfigInterface):
     # L2-normalize the MLP output before the LERP residual update.
     ngpt_post_layer_norm_ffn: bool = True
 
+    # Learnable per-channel scalers on Q and K (nGPT's s_qk). Once Q/K are L2-normalized their
+    # dot product is a cosine, so the attention logits lose all scale; s_qk puts it back as a
+    # learned quantity. Pair with qk_l2_norm.
+    ngpt_use_sqk: bool = False
+
+    # Learnable per-channel scaler on the MLP intermediate (nGPT's s_uv). Takes the place of
+    # the fixed 1/sqrt(ffn/hidden) up-scale when the fc1 weights are row-normalized and can no
+    # longer carry that magnitude themselves.
+    ngpt_use_suv: bool = False
+
+    # Effective value of the nGPT scalers at initialization.
+    ngpt_scaler_init: float = 1.0
+
+    # Raw-parameter init for the scaler eigen-LR reparameterization; -1 selects
+    # 1/sqrt(hidden_size). The optimizer sees a parameter of this scale while the effective
+    # value starts at ngpt_scaler_init, decoupling the two.
+    ngpt_scaler_base_scale: float = -1.0
+
     # Enable mHC (arXiv:2512.24880): widen the residual into mhc_expansion_rate parallel
     # streams mixed by a doubly stochastic matrix. Doubly stochastic mixing is non-expansive
     # and closed under composition, so the composite depth mapping stays norm-preserving -
@@ -1379,6 +1397,15 @@ class MegatronConfig(ConfigInterface):
     # Normalize the LM head too. By default the head is left unconstrained (qwen3-style row
     # growth) and controlled by weight decay instead.
     weight_normalizer_head_unconstrained: bool = True
+
+    # Learning-rate multiplier for nGPT scaler parameters (LERP alphas, s_qk, s_uv). On a
+    # normalized architecture these carry all the magnitude information, so they often want a
+    # larger step than the direction-carrying weight matrices.
+    ngpt_scaler_lr_mult: float = 1.0
+
+    # Weight-decay multiplier for nGPT scaler parameters. 0 by default: decaying them toward
+    # zero fights the geometry.
+    ngpt_scaler_wd_mult: float = 0.0
 
     # Run the weight normalizer only every N optimizer steps.
     weight_normalizer_every_n_steps: int = 1
