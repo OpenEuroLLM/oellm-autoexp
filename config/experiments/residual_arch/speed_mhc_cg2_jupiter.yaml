@@ -1,0 +1,59 @@
+# @package _global_
+#
+# Getting CUDA graphs to capture on mhc4, with the fused Triton backward.
+#
+# Capture is no longer *invalid* -- the Triton backward survives it where the
+# torch.compile'd one did not -- it just does not fit. The last attempt reached
+# 17 of 36 graphs and then failed on a 1.12 GiB allocation (an Inductor buffer
+# for the SwiGLU intermediate, [131072, 4608] bf16, during the capture warmup's
+# backward). Steady state is already 0.9934 of 95 GiB, so roughly 1.2 GiB has to
+# come from somewhere.
+#
+# mbs cannot be tuned into the gap: it must divide gbs/DP = 96, so the options
+# either side are 24 and 32 with nothing between, and mbs=24 was measured slower
+# than mbs=32 without graphs (189.4 vs 193.8). Hence four different ways at it:
+#
+#   nocg          the within-session baseline to compare against
+#   cg_attn       graph only the attention sublayers, so the MLP's compiled
+#                 region is not part of a captured callable
+#   cg_mbs28      gbs 448 keeps gbs/DP = 112, which 28 divides -- a micro-batch
+#                 between the two that were previously reachable
+#   cg_warmup1    one capture warmup step instead of three; each clones the
+#                 layer inputs, and the mHC stream state is the widest tensor
+#                 in the model
+defaults:
+  - speed_mhc_jupiter
+  - _self_
+
+sweep:
+  type: product
+  groups:
+   - type: list
+     configs:
+      - aux.variant: cg2_nocg
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.cuda_graph_impl: none
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 32
+      - aux.variant: cg2_attn_only
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.cuda_graph_modules: [attn]
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 32
+      - aux.variant: cg2_mbs28
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.global_batch_size: 448
+        backend.megatron.micro_batch_size: 28
+      - aux.variant: cg2_warmup1
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.cuda_graph_warmup_steps: 1
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 32
