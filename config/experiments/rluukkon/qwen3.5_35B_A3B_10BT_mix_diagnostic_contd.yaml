@@ -1,0 +1,281 @@
+# @package _global_
+# Continue diagnostics after their FastTrackML-backed runs save iteration 300:
+#   1. wd0.01 category totals + wd0.01 sources (anchor)
+#   2. version_1 category totals + wd0.01 sources (category ablation)
+#   3. wd0.01 category totals + version_1 sources (source ablation)
+defaults:
+  - ../base
+  - /backend: megatron
+  - /container: mi325x
+  - /slurm: mi325x
+  - /sweep: none
+  - /backend/megatron: [qwen3_5_moe_35BA3B]
+  - _self_
+
+slurm:
+  sbatch:
+    partition: amd-tw-verification
+    nodes: 4
+    time: 0-15:00:00
+    open_mode: append
+
+  launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
+    export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
+    ulimit -n 65536 ; export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; export AITER_JIT_DIR=/tmp/$USER/aiter_jit_dir ; \\\n\
+    export TRITON_CACHE_DIR=/tmp/triton-$SLURM_JOB_ID ; export TORCHINDUCTOR_CACHE_DIR=/tmp/torchinductor-$SLURM_JOB_ID ; \\\n\
+    ${oc.select:container.runtime,apptainer} exec --rocm --overlay /shared_silo/scratch/containers/fla-overla-for-primus-v26.1.img:ro ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} \
+    ${oc.select:container.image,container.sif}"
+
+  env:
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    WANDB_MODE: "online"
+    # WANDB_API_KEY: "local"
+    # FASTTRACKML_URL: "http://tus1-vm-amd-k8s-001:5000"
+    # The dashboard wandb shim is importable through the existing shared-silo bind.
+    # PYTHONPATH: "/shared_silo/scratch/shared/tw-dashboard/wandb_shim:${oc.env:PWD}"
+    OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
+    APPTAINER_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+    SINGULARITY_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+
+container:
+  image: /shared_silo/scratch/containers/primus_v26.1.sif
+
+backend:
+  megatron:
+    log_throughput: true
+    log_interval: 1
+    log_progress: true
+
+    # Default/anchor blend: exact wd0.01 weights.
+    data_path:
+      # Finnish (55.742262%)
+      - 0.269265645200258
+      - /shared_silo/scratch/ttoivone/tokenized/fin/MT-Nemotron-CC-fin_Latn-max-500Btok_text_document
+      - 0.0176945995417312
+      - /shared_silo/scratch/ttoivone/tokenized/fin/FinePDFs-Edu-fin_Latn-max-500Btok_text_document
+      - 0.0028465225349742
+      - /shared_silo/scratch/ttoivone/tokenized/fin/wikipedia-20231101.fi-max-500Btok_text_document
+      - 0.267615853930492
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt3.0_fi_filtered7/train
+      # English (25.926435%)
+      - 0.138479474674418
+      - /shared_silo/scratch/ttoivone/merge/fineweb-edu-sample-350BT-max-500Btok_text_document
+      - 0.109244918909819
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finepdfs-edu/eng_Latn_text_document
+      - 0.0115399562228682
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/wikipedia/wikipedia.en-train_text_document
+      # Code (9.231965%)
+      - 0.0254565264585122
+      - /shared_silo/scratch/ttoivone/tokenized/code/code
+      - 0.0668631233244334
+      - /shared_silo/scratch/ttoivone/tokenized/code/Nemotron-Pretraining-Code-v2-Synthetic-Rewriting-max-500Btok_text_document
+      # FinePhrase (3.846210%)
+      - 0.0117447549688257
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-faq-train_text_document
+      - 0.007763571812841
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-math-train_text_document
+      - 0.007272241197052
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-table-train_text_document
+      - 0.011681527253988
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-tutorial-train_text_document
+      # Chat/reasoning (1.406476%)
+      - 0.0065167045139476
+      - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/Nemotron-Post-Training-Dataset-v1-chat-max-500Btok_text_document
+      - 0.0003627714716967
+      - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/smoltalk-apigen-80k-max-500Btok_text_document
+      - 0.0000033758064738
+      - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/smoltalk-everyday-conversations-max-500Btok_text_document
+      - 0.0000571556644851
+      - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/smoltalk-smol-constraints-max-500Btok_text_document
+      - 0.0046831292630909
+      - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/smoltalk-smol-magpie-ultra-max-500Btok_text_document
+      - 0.0001395462513076
+      - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/smoltalk-smol-rewrite-max-500Btok_text_document
+      - 0.0003703799648604
+      - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/smoltalk-smol-summarize-max-500Btok_text_document
+      - 0.0019317002910301
+      - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/ultrachat_200k-train_sft-max-500Btok_text_document
+      # Math (3.846652%)
+      - 0.038466520742894
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/nemotron-cc-math/nemotron-cc-math.4plus-train_text_document
+
+    data_cache_path: /shared_silo/scratch/rluukkon/data/.cache
+    split: "989,10,1"
+    num_workers: 7
+    global_batch_size: 1024
+    micro_batch_size: 2
+    expert_model_parallel_size: 8
+    pipeline_model_parallel_size: 1
+    use_distributed_optimizer: true
+    moe_per_layer_logging: true
+    create_attention_mask_in_dataloader: false
+    moe_grouped_gemm: false
+    moe_token_dispatcher_type: "alltoall"
+    moe_permute_fusion: true
+    moe_shared_expert_overlap: true
+    overlap_moe_expert_parallel_comm: false
+    overlap_param_gather: true
+    overlap_grad_reduce: true
+
+    adam_beta2: 0.95
+    weight_decay: 0.01
+
+    # Match the wd0.01 schedule, shortened to exactly 10BT.
+    train_iters: ${oc.eval:'-(-10_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    lr: 3e-5
+    min_lr: 3e-6
+    lr_warmup_iters: 500
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: ${oc.eval:'${.train_iters} * 0.2'}
+    lr_decay_iters: ${.train_iters}
+    router_lr_spec: "1e-5"
+    moe_aux_loss_coeff: 0.0001
+
+    ckpt_format: torch_dist
+    dist_ckpt_optim_fully_reshardable: false
+    save_interval: 300
+    save_extra_steps:
+      - ${oc.eval:'${backend.megatron.train_iters} - int(${backend.megatron.train_iters} * 0.2)'}
+      - ${backend.megatron.train_iters}
+    save: ${job.base_output_dir}/checkpoints
+
+    # Resume model, optimizer, scheduler, RNG, and consumed-sample state from
+    # each stage's latest checkpoint in its existing output directory.
+    load: ${job.base_output_dir}/checkpoints
+    finetune: false
+    no_load_optim: false
+    no_load_rng: false
+
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    wandb_save_dir: ${job.base_output_dir}/wandb
+    wandb_project: "moe-exploration"
+    wandb_exp_name: "qwen3_5_35B_A3B_10BT_mixdiag_${stage}_${oc.env:SLURM_JOB_ID,local}"
+
+job:
+  name: qwen3_5_35B_A3B_10BT_mixdiag_${stage}_${slurm.env.MACHINE_NAME}
+
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        # Resume run 1: exact wd0.01 anchor (data_path inherited above).
+        - stage: wd_anchor
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: ${job.base_output_dir}/checkpoints/latest_checkpointed_iteration.txt
+
+        # Resume run 2: version_1 category totals, preserving wd0.01 source ratios.
+        - stage: v1cats_wdsrc
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: ${job.base_output_dir}/checkpoints/latest_checkpointed_iteration.txt
+          backend.megatron.data_path:
+            # Finnish (36%)
+            - 0.1738997101734349
+            - /shared_silo/scratch/ttoivone/tokenized/fin/MT-Nemotron-CC-fin_Latn-max-500Btok_text_document
+            - 0.01142769523996855
+            - /shared_silo/scratch/ttoivone/tokenized/fin/FinePDFs-Edu-fin_Latn-max-500Btok_text_document
+            - 0.001838368364690626
+            - /shared_silo/scratch/ttoivone/tokenized/fin/wikipedia-20231101.fi-max-500Btok_text_document
+            - 0.1728342262219059
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt3.0_fi_filtered7/train
+            # English (40%)
+            - 0.2136498516320472
+            - /shared_silo/scratch/ttoivone/merge/fineweb-edu-sample-350BT-max-500Btok_text_document
+            - 0.1685459940652822
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finepdfs-edu/eng_Latn_text_document
+            - 0.01780415430267065
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/wikipedia/wikipedia.en-train_text_document
+            # Code (5%)
+            - 0.01378716585167053
+            - /shared_silo/scratch/ttoivone/tokenized/code/code
+            - 0.03621283414832947
+            - /shared_silo/scratch/ttoivone/tokenized/code/Nemotron-Pretraining-Code-v2-Synthetic-Rewriting-max-500Btok_text_document
+            # FinePhrase (4%)
+            - 0.01221436835176718
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-faq-train_text_document
+            - 0.008073997805755682
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-math-train_text_document
+            - 0.007563021362255859
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-table-train_text_document
+            - 0.01214861248022128
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-tutorial-train_text_document
+            # Chat/reasoning (10%)
+            - 0.04633355292812529
+            - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/Nemotron-Post-Training-Dataset-v1-chat-max-500Btok_text_document
+            - 0.002579293130246739
+            - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/smoltalk-apigen-80k-max-500Btok_text_document
+            - 0.00002400187204961523
+            - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/smoltalk-everyday-conversations-max-500Btok_text_document
+            - 0.0004063748785746841
+            - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/smoltalk-smol-constraints-max-500Btok_text_document
+            - 0.03329689371618168
+            - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/smoltalk-smol-magpie-ultra-max-500Btok_text_document
+            - 0.0009921692178989823
+            - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/smoltalk-smol-rewrite-max-500Btok_text_document
+            - 0.002633389264258809
+            - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/smoltalk-smol-summarize-max-500Btok_text_document
+            - 0.01373432499266421
+            - /shared_silo/scratch/ttoivone/tokenized/chat_with_template/ultrachat_200k-train_sft-max-500Btok_text_document
+            # Math (5%)
+            - 0.05
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/nemotron-cc-math/nemotron-cc-math.4plus-train_text_document
+
+        # Resume run 3 after its current FastTrackML-backed job saves iteration 300.
+        - stage: wdcats_v1src
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: ${job.base_output_dir}/checkpoints/latest_checkpointed_iteration.txt
+          backend.megatron.data_path:
+            # Finnish (55.742262%)
+            - 0.1114845242414911
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/MT-Nemotron-CC-fin_Latn-max-500Btok_text_document
+            - 0.02369046140131685
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/FinePDFs-Edu-fin_Latn-max-500Btok_text_document
+            - 0.004180669659055915
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/wikipedia/wikipedia.fi-train2_text_document
+            - 0.4180669659055915
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt4.0_fi_cleaned_merged/hplt4.0_fi_cleaned_text_document
+            # English (25.926435%)
+            - 0.2557642810847093
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/Fineweb-edu/fineweb-edu.en-train2_text_document
+            - 0.003500068722395920
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/wikipedia/wikipedia.en-train2_text_document
+            # Code (9.231965%)
+            - 0.04375951399711622
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/code_with_template/Nemotron-Pretraining-Code-v2-Synthetic-Rewriting-max-500Btok_text_document
+            - 0.01661753696093021
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/Nemotron-Pretraining-Code-v2-Synthetic-Transpilation-max-500Btok_text_document
+            - 0.0009231964978294561
+            - /shared_silo/scratch/ttoivone/tokenized/stack-edu-tokenized/stack-edu-Go-max-500Btok_text_document
+            - 0.01274011167004649
+            - /shared_silo/scratch/ttoivone/tokenized/stack-edu-tokenized/stack-edu-Java-max-500Btok_text_document
+            - 0.005354539687410845
+            - /shared_silo/scratch/ttoivone/tokenized/stack-edu-tokenized/stack-edu-JavaScript-max-500Btok_text_document
+            - 0.01052444007525580
+            - /shared_silo/scratch/ttoivone/tokenized/stack-edu-tokenized/stack-edu-Python-max-500Btok_text_document
+            - 0.0009231964978294561
+            - /shared_silo/scratch/ttoivone/tokenized/stack-edu-tokenized/stack-edu-Rust-max-500Btok_text_document
+            - 0.001477114396527130
+            - /shared_silo/scratch/ttoivone/tokenized/stack-edu-tokenized/stack-edu-TypeScript-max-500Btok_text_document
+            # FinePhrase (3.846210%)
+            - 0.01173093904597555
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-faq.en-train2_text_document
+            - 0.007788574284623108
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-math.en-train2_text_document
+            - 0.007307798094214274
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-table.en-train2_text_document
+            - 0.01163478380789378
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-tutorial.en-train2_text_document
+            # Chat/reasoning (1.406476%)
+            - 0.01125181058151376
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/dolci_think_7B_text_document
+            - 0.001406476322689220
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/rahul_data_train_sft_text_document
+            - 0.001406476322689220
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/rahul-sft-data-train_sft_text_document
+            # Math (3.846652%)
+            - 0.038466520742894
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/Nemotron-CC-Math-v1-4plus_text_document
