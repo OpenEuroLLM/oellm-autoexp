@@ -1,0 +1,46 @@
+# @package _global_
+#
+# Kernel-level profile of mhc4, against the same-geometry baseline.
+#
+# mhc4 sits at 193.8-195.8 TFLOP/s against the baseline's 285.5, and the levers
+# left are structural (which contraction is fused with which). Two rounds of
+# guessing where the time goes have now been wrong -- the "irreducible 4x
+# traffic" reading and the CUDA-graph hypothesis -- so measure before changing
+# anything else.
+#
+# torch.profiler over three steady-state steps on rank 0. CUDA graphs are off
+# for mhc4 anyway, so every kernel shows up individually; the baseline arm has
+# them forced off too, otherwise its layers collapse into single graph replays
+# and the two traces are not comparable.
+defaults:
+  - speed_mhc_jupiter
+  - _self_
+
+backend:
+  megatron:
+    profile: true
+    use_pytorch_profiler: true
+    pytorch_profiler_collect_shapes: true
+    profile_ranks: [0]
+    profile_step_start: 20
+    profile_step_end: 23
+    # Long enough to reach steady state before the profile window and to leave
+    # a few post-window iterations for a throughput read.
+    train_iters: 30
+
+sweep:
+  type: product
+  groups:
+   - type: list
+     configs:
+      - aux.variant: prof_mhc4
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.cuda_graph_impl: none
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 32
+      - aux.variant: prof_baseline
+        backend.megatron.cuda_graph_impl: none
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 32
