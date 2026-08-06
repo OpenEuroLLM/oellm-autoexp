@@ -14,6 +14,11 @@
 # s_qk/s_uv nothing puts it back, which is why ngpt_wnorm was the worst arm here
 # (2.977) before the scalers were wired.
 #
+# micro_batch_size is 8 where the other arms use 16: mHC's 4x-wider residual
+# plus the LERP and scaler state does not fit at 16, and the arms OOM'd twice
+# before their first iteration. global_batch_size is unchanged, so this is
+# just more gradient accumulation and the loss comparison is unaffected.
+#
 # Same geometry, data, batch and schedule as every other arm in this sweep, so
 # only the scheme differs. Note mhc_lerp routes MHCMixer.write down its LERP
 # path, which does not go through the fused Triton backward -- the speed work
@@ -40,7 +45,7 @@ sweep:
         backend.megatron.ngpt_use_suv: true
         backend.megatron.lr: 0.001
         backend.megatron.global_batch_size: 128
-        backend.megatron.micro_batch_size: 16
+        backend.megatron.micro_batch_size: 8
       - aux.variant: mhc4_lerp_scalers_wnorm
         backend.megatron.mhc: true
         backend.megatron.mhc_expansion_rate: 4
@@ -62,4 +67,4 @@ sweep:
         backend.megatron.ngpt_scaler_lr_mult: 4.0
         backend.megatron.lr: 0.001
         backend.megatron.global_batch_size: 128
-        backend.megatron.micro_batch_size: 16
+        backend.megatron.micro_batch_size: 8
