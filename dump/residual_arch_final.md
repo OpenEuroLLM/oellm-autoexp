@@ -36,7 +36,7 @@
   no micro-batch headroom left.
 * mHC: see below - now 193.8-195.8, needing only 1.02-1.03x.
 
-## mHC: 94.9 -> 195.8 via fused stream ops
+## mHC: 94.9 -> 195.8 by way of fused stream ops
 Both large wins came from the same defect repeated twice: an n-long contraction
 written as a GEMM/einsum. At n=4 that is a handful of multiply-adds per output
 element, so baddbmm/einsum dispatched a kernel over the widest tensor in the
@@ -73,14 +73,166 @@ captured replay verified bit-identical to eager). Then measured, one session:
 | 24 | no | 189.4 | 0.771 |
 | 24 | yes | 188.7 | 0.806 |
 
-At matched micro-batch graphs are worth -0.4%, i.e. nothing. The premise was
+At matched micro-batch graphs are worth -0.4%, that is nothing. The premise was
 wrong twice over: the +19-26% in the list above is *torch.compile*, not graphs,
 and "every arm above 200 uses graphs" was a correlation read as a cause. mHC is
 bound by bandwidth over the 4x-wider stream state, not by launch overhead, which
 is the only thing graphs remove. They also cost memory during capture, and at
 0.993 occupancy that forces mbs 32 -> 24, which costs a further 2.3%.
 
-Best mhc4 remains **mbs=32, no graphs: 193.8-195.8 TFLOP/s** (2.04-2.06x).
+Best mhc4 is now **gbs=448 / mbs=28, CUDA graphs, Triton backward: 199.8 TFLOP/s** (2.11x).
 The refactor is still worth keeping: it deletes hidden cross-layer module state,
 and it makes mHC's pipeline payload just the hidden state, so PP>1 now needs
 only the shape negotiation widened.
+
+## Where mHC's time actually goes (torch.profiler, GH200)
+Traces from `config/experiments/residual_arch/profile_mhc_jupiter.yaml`, mhc4 vs
+the same-geometry baseline, aggregated by `dump/parse_mhc_trace.py`. Diffing the
+two traces rather than classifying kernels by name matters: the compiled backward
+of a fused op is named after different aten ops than its forward, and a
+name-based bucketing missed every backward kernel.
+
+mHC adds 1830 ms on a 4222 ms baseline step (+43%, consistent with the 1.46x
+throughput ratio):
+
+| group | ms | share of the mHC cost |
+|---|---|---|
+| backward of read/write | ~878 | 48% |
+| eager elementwise (casts) | 279 | 15% |
+| Sinkhorn fwd+bwd | ~240 | 13% |
+| coefficient GEMMs | ~180 | 10% |
+| forward write | 142 | 8% |
+| forward read | 122 | 7% |
+| RMS-norm pass | 115 | 6% |
+
+Nearly half is *backward*, which no earlier optimization round had looked at.
+
+### Per-term roofline, measured on GH200 (`dump/mhc_bwd_gh200.py`)
+Against a 3617 GB/s d2d ceiling, at training shapes:
+
+| term | ms | % peak | best alternative |
+|---|---|---|---|
+| forward write | 0.448 | 84% | - |
+| grad_streams (contract over n) | 0.400 | 84% | matmul 14x worse |
+| grad_h_post (over C -> n) | 0.329 | 63% | matmul worse |
+| **grad_h_res (over C -> n x n)** | **1.176** | **28%** | **matmul 1.38x** |
+
+Everything is at roofline except `grad_h_res`, which is also the largest single
+kernel mHC adds (1.43 ms/sublayer, 3.6x the next). It contracts a 576-long axis
+into an n x n output -- a GEMM shape -- while every other term contracts the
+4-long stream axis, where a GEMM is catastrophic. Exactly the forward lesson in
+reverse.
+
+**Local hardware cannot be used to choose here.** On a 3090 Ti every term
+measures at roofline and matmul is a 7% regression; a quarter of the bandwidth
+hides anything occupancy-bound rather than bandwidth-bound.
+
+### Hypotheses this killed
+* *Fuse the RMS-norm into the previous write* (the plan at the end of the CUDA
+  graph round): Inductor turns the write from a pointwise kernel into a reduction
+  kernel, costing +0.756 ms to save 0.633 ms. Net negative.
+* *Fuse the backward terms that share a reduction axis*: Inductor emits the same
+  5 kernels and the same timings; it will not fuse across different iteration
+  spaces. 1.01x.
+* *`bmm` with tokens grouped 64x* is genuinely faster (1.72x) but computes 64x
+  the FLOPs and needs a 268 MB transient -- unusable at 0.993 memory occupancy.
+
+### Fused Triton write backward: merged, +0.67%
+`megatron/core/transformer/mhc_kernels.py` computes all four write-backward
+terms in one pass over the upstream gradient, instead of the four kernels
+Inductor derives from the forward, each of which re-reads it. Isolated on GH200
+that is 1.842 ms against 2.150 (1.17x). End-to-end, same session, same build,
+`MHC_TRITON_BACKWARD` the only difference:
+
+| arm | TFLOP/s @ iter 60 | ms/iter |
+|---|---|---|
+| mhc4, Inductor backward | 194.8 | 2022.7 |
+| mhc4, Triton backward | **196.1** | 2009.1 |
+| mhc4, Triton + CUDA graphs | OOM at 17/36 graphs | - |
+
+**+0.67%, against ~1.7% predicted** from the isolated measurement (0.308 ms
+saved x 108 sublayer invocations per step = 33 ms; only 13.6 ms materialized).
+(Superseded by the widened tile search below, which took the isolated figure to
+1.29x.)
+About 40% of the isolated gain translates. Two candidate explanations were
+checked and refuted: the gradient is contiguous in every call, so the
+`.contiguous()` is a no-op, and memory occupancy is identical (0.9934) either
+way, so the fused kernel frees nothing. The remainder is unexplained -- the
+honest reading is that a microbenchmark on freshly allocated, L2-warm buffers
+overstates what a kernel does inside a step running at 99.3% memory occupancy.
+
+The CUDA-graph arm is worth noting separately: it OOM'd at the same 1.12 GiB
+allocation as before, but it got to 17 of 36 graphs **without**
+`cudaErrorStreamCaptureInvalidated`. So a Triton backward *is* capturable where
+the torch.compile'd one was not -- warming a one-shot autotune search during a
+forward is enough, where pre-warming Dynamo was not, because Dynamo could still
+choose to recompile inside the capture. Graphs remain unusable here for the
+unrelated reason that they do not fit at mbs=32.
+
+### Widened tile search, and CUDA graphs finally capturing
+Searching the tile cross product instead of eight hand-picked configs took the
+fused kernel from 1.842 ms to 1.704 (1.17x -> 1.29x against Inductor's 2.194).
+
+Capture was never invalid once the backward was Triton rather than
+torch.compile -- it only failed to *fit*, needing ~1.2 GiB at 0.9934 occupancy.
+mbs could not be tuned into the gap because it must divide gbs/DP = 96, leaving
+24 and 32 with nothing between; raising gbs to 448 makes gbs/DP = 112, which 28
+divides. That is the whole fix.
+
+| arm | TFLOP/s @ iter 60 | mem |
+|---|---|---|
+| mbs=32, no graphs | 198.8 | 0.9934 |
+| **gbs=448 / mbs=28, full CUDA graphs** | **199.8** | 0.9235 |
+| mbs=32, graphs on attn sublayers only | OOM | - |
+| mbs=32, graphs, 1 capture warmup step | OOM | - |
+
+Neither of the two ways of shrinking the capture itself worked; only making room
+in steady state did. Graphs are now worth +0.5% *despite* running at a smaller
+micro-batch, where the earlier measurement had them at -0.4% at matched mbs --
+consistent with the backward having changed underneath them, though at this size
+the difference is close to the run-to-run noise floor.
+
+**mhc4: 94.9 -> 199.8 TFLOP/s (2.11x).**
+
+| step | TFLOP/s |
+|---|---|
+| fused stream ops (forward) | 195.8 |
+| + fused Triton write backward | 196.1 |
+| + widened tile search | 198.8 |
+| + CUDA graphs (gbs 448 / mbs 28) | 199.8 |
+
+### The matmul lever, and why it is not merged
+Routing `grad_h_res` through matmul via a custom autograd Function is worth
+1.38x on that kernel, about +2.1% end-to-end -- roughly 195.8 -> 200. The
+backward was verified exact against autograd in float64.
+
+It is **not merged**: a custom Function's backward compiles on first call, and
+that call lands inside Megatron's backward graph capture, which dies with
+`cudaErrorStreamCaptureInvalidated`. Pre-warming the compiled backward and the
+cuBLAS workspace during the forward both failed to fix it. Shipping it would
+trade ~2% for a broken capture path on an arm that measures no benefit from
+graphs anyway, so the branch keeps the slower, capturable formulation.
+
+## mhc4 + nGPT machinery: measured, and it hurts (6B tokens, 130M)
+The question this sweep was set up for. Final loss, same geometry/data/schedule:
+
+| arm | final loss |
+|---|---|
+| **mhc4 (plain)** | **2.638** |
+| mhc4 + lerp + scalers | 2.718 |
+| mhc4 + lerp + scalers + wnorm | 2.920 |
+| ngpt_wnorm (for reference) | 2.977 |
+
+Composing nGPT's magnitude machinery with mHC is *not* additive -- it is
+negative. The LERP + scaler set costs 0.08, and the weight normalizer another
+0.20 on top. Plain mhc4 remains the best arm in the sweep.
+
+That is consistent with the two schemes constraining the same quantity twice:
+mHC already makes the mixing operator non-expansive, so pinning the stream to
+the unit sphere as well removes a degree of freedom rather than adding one.
+
+Throughput footnote: these arms ran at 65 TFLOP/s because MHCMixer.write's LERP
+branch was silently running eager (a lost `_compiled` definition swallowed by an
+`except Exception`). Fixed afterwards -- 125.9 at mbs=16 -- but the loss numbers
+above are unaffected, since global_batch_size never changed. The LERP path caps
+at mbs=16; mbs=28/32 OOM even with recompute enabled on the compiled build.
