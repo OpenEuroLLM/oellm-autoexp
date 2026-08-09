@@ -1,0 +1,93 @@
+# @package _global_
+#
+# nGPT configured the way canGPT actually runs it.
+#
+# Every nGPT arm in this sweep has lost to plain mhc4 (2.638): ngpt_wnorm 2.977,
+# mhc4+lerp+scalers 2.718, +wnorm 2.920. Before concluding that nGPT loses on
+# merit, this arm removes the differences between our recipe and the one
+# canGPT trains with, read off ../../../../titan-sci at
+# titan_sci/models/canGPT_master (SFT run:
+# user/korbi/multistream/cangpt_master_ams_stream_sft_latest_jupiter.toml).
+#
+# Four differences, all config, none of them tested until now:
+#
+#   1. Weight normalizer axis. Both codebases resolve output projections with
+#      the same line -- `norm_dim = 0 if out_norm_dim_0 else 1` -- and canGPT
+#      leaves it False (its SFT config has no [normalizer] section, so the
+#      Normalizer dataclass defaults apply). Our arms set it True. Same name,
+#      same semantics, opposite axis.
+#   2. LERP mode. canGPT_master does not implement `analytic` at all; its
+#      allowed set is approx|direct|both|direct_ste|both_ste|approx_fwd, and the
+#      SFT run uses `approx`. The exact-cos(theta) factor is our addition, so
+#      the rest of canGPT's recipe was never tuned against it.
+#   3. base_scale. canGPT fixes it at 0.01; our default is 1/sqrt(dim) = 1/24
+#      at hidden 576. alpha_scaler is frozen, so base_scale sets the effective
+#      step size on alpha -- a ~4x difference in how fast alpha moves.
+#   4. Scaler LR. The SFT run has no [weight_norm_adam] section and
+#      mup_lr_scaling=false, so canGPT gives the scalers no LR boost: the
+#      eigen-LR reparameterization is the whole mechanism. Our 4.0 was invented
+#      here.
+#
+# Weight decay is 0.1, not 0. canGPT hardcodes _HEAD_WEIGHT_DECAY = 0.1 on the
+# head group whenever head_unconstrained is set, with the comment that
+# unconstrained output rows would otherwise grow without bound. With the
+# normalizer on, a global decay only bites the head: the normalized matrices are
+# shrunk and then renormalized to unit rows in the same step (no directional
+# change), and the 1-D scalers carry is_ngpt_scaler, whose wd multiplier
+# defaults to 0.
+#
+# Not portable: canGPT's SFT model also runs softmax_scale, ffn_act_scale,
+# ffn_up/down_scale, SSMax, scalar tanh_sq attention gating and a learnable
+# pre-head scale vector. None of those exist in this Megatron build, so this arm
+# is nGPT-as-canGPT-configures-it only to the extent our implementation reaches.
+defaults:
+  - ngpt_scalers_jupiter
+  - _self_
+
+sweep:
+  type: product
+  groups:
+   - type: list
+     configs:
+      # The requested arm: untied embedding and head. The head then leaves the
+      # normalizer (head_unconstrained) and weight decay is what bounds it,
+      # which is the structure canGPT's _HEAD_WEIGHT_DECAY exists to create.
+      # Note this is +28.97M params (50304 x 576) over every other arm in the
+      # sweep, so its loss is NOT directly comparable to mhc4's 2.638.
+      - aux.variant: ngptpp
+        backend.megatron.untie_embeddings_and_output_weights: true
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: approx
+        backend.megatron.ngpt_base_scale: 0.01
+        backend.megatron.qk_l2_norm: true
+        backend.megatron.ngpt_use_sqk: true
+        backend.megatron.ngpt_use_suv: true
+        backend.megatron.weight_normalizer: true
+        backend.megatron.weight_normalizer_out_norm_dim_0: false
+        backend.megatron.weight_normalizer_head_unconstrained: true
+        backend.megatron.weight_decay: 0.1
+        backend.megatron.ngpt_scaler_lr_mult: 1.0
+        backend.megatron.lr: 0.001
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 16
+      # Same recipe, tied embedding/head -- i.e. the parameter count every other
+      # arm in this sweep has. Without this the corrected recipe cannot be put
+      # next to mhc4 or ngpt_wnorm, because untying changes the model size by
+      # 22%. head_unconstrained is a no-op under tying (there is no
+      # output_layer.weight parameter; the shared matrix classifies as
+      # "embedding" and is normalized), so this arm isolates items 1-4 above.
+      - aux.variant: ngptpp_tied
+        backend.megatron.untie_embeddings_and_output_weights: false
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: approx
+        backend.megatron.ngpt_base_scale: 0.01
+        backend.megatron.qk_l2_norm: true
+        backend.megatron.ngpt_use_sqk: true
+        backend.megatron.ngpt_use_suv: true
+        backend.megatron.weight_normalizer: true
+        backend.megatron.weight_normalizer_out_norm_dim_0: false
+        backend.megatron.weight_decay: 0.1
+        backend.megatron.ngpt_scaler_lr_mult: 1.0
+        backend.megatron.lr: 0.001
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 16
