@@ -446,3 +446,42 @@ CUDA-graph capture, so it would have exited 0 with a NaN final had it not been
 cancelled. ngpt_scaler_lr_mult 4.0 puts the scalers at an effective lr of 0.008,
 and on a weight-normalized network the scalers carry all the magnitude. Note
 canGPT's own SFT config gives the scalers no lr boost at all.
+
+## The speed-Pareto result: no scheme moves the frontier (2026-08-10)
+
+Every arm in this sweep runs 11445 iterations, that is matched *tokens*. That answers
+"which scheme is better per token", not "which is better per second" -- and the
+arms that beat baseline all do so while running slower. Giving baseline the same
+wall-clock instead of the same tokens erases the difference:
+
+| arm | elapsed | final | baseline at equal wall-clock | elapsed | final |
+|---|---|---|---|---|---|
+| mhc4_gbs128 | 2:13:00 | 2.6654 | 16,320 iters | 2:15:38 | 2.6662 |
+| loop12x2_plain | 2:25:48 | 2.6782 | 18,046 iters | 2:25:27 | 2.6814 |
+| loop12x2_ngpt | 2:55:18 | 2.6628 | 21,648 iters | (pending) | - |
+
+Both settled comparisons are dead heats: 0.0008 and 0.0032, against the ~0.002
+that three architecturally identical baselines agreed to at matched iterations.
+The wall-clock matching is tight -- 2:25:48 vs 2:25:27 is 21 seconds apart -- and
+in the mhc4 case the baseline got 2% *more* time than the arm it is pricing.
+
+**mHC's +0.056 over baseline is entirely a compute effect.** It runs at 0.70x
+throughput; spending those same seconds on 43% more tokens gets baseline to the
+same loss. The same holds for looped iso-param depth at 0.63x.
+
+That reframes the whole branch. The speed campaign (94.9 -> 199.8 TFLOP/s) was
+worth doing precisely because it is what makes this comparison close -- at the
+original 94.9 TFLOP/s mHC would have lost the wall-clock comparison badly. But
+the architecture itself buys nothing on the speed-Pareto at this scale.
+
+### What this does not rule out
+* **Parameter efficiency.** loop6x2_ngpt reaches 2.727 against baseline's 2.721
+  with 26% fewer parameters. Worthless for training throughput, potentially real
+  for memory-bandwidth-bound decoding, which this sweep does not measure.
+* **Scale.** Everything here is 130M / 6B tokens on one node. A scheme whose
+  advantage grows with size would be invisible at this scale. Testing that needs
+  a size ladder, not more variants at 130M.
+* **The iso-FLOP looped arms are settled negatively though**: loop6x2_ngpt is
+  strictly dominated by ngpt_analytic (same throughput to 0.2%, worse loss), and
+  loop6x2_plain pays 0.037 of loss for 1.4% more speed. Looping holds FLOPs fixed
+  and removes parameters, and parameters are close to free on the training clock.
