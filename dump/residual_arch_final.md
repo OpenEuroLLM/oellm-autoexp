@@ -202,7 +202,7 @@ the difference is close to the run-to-run noise floor.
 | + CUDA graphs (gbs 448 / mbs 28) | 199.8 |
 
 ### The matmul lever, and why it is not merged
-Routing `grad_h_res` through matmul via a custom autograd Function is worth
+Routing `grad_h_res` through matmul by way of a custom autograd Function is worth
 1.38x on that kernel, about +2.1% end-to-end -- roughly 195.8 -> 200. The
 backward was verified exact against autograd in float64.
 
@@ -214,18 +214,30 @@ trade ~2% for a broken capture path on an arm that measures no benefit from
 graphs anyway, so the branch keeps the slower, capturable formulation.
 
 ## mhc4 + nGPT machinery: measured, and it hurts (6B tokens, 130M)
-The question this sweep was set up for. Final loss, same geometry/data/schedule:
+The question this sweep was set up for.
 
-| arm | final loss |
-|---|---|
-| **mhc4 (plain)** | **2.638** |
-| mhc4 + lerp + scalers | 2.718 |
-| mhc4 + lerp + scalers + wnorm | 2.920 |
-| ngpt_wnorm (for reference) | 2.977 |
+**Correction (2026-08-10).** An earlier version of this table quoted mhc4 at
+2.638 and called it a final loss. It is neither: 2.638 is mhc4's *training* lm
+loss at iteration 10350, and mhc4 never finished -- both attempts (1229316,
+1231292) hit TIMEOUT, the second after 12h at iteration 10350/11445. Comparing
+it against other arms' 11445 *validation* losses was wrong on two counts.
+
+The right common checkpoint is iteration 10000, the last one mhc4 has:
+
+| arm | val @ it10000 | val @ it11445 |
+|---|---|---|
+| **mhc4 (plain)** | **2.664** | did not finish |
+| mhc4 + lerp + scalers | 2.789 | 2.714 |
+| baseline (for reference) | 2.809 | 2.721 |
+| mhc4 + lerp + scalers + wnorm | 2.996 | 2.919 |
+| ngpt_wnorm (for reference) | 3.047 | 2.972 |
+
+The qualitative claim survives the correction: at it10000 mhc4 leads the next
+arm by 0.12 and the plain baseline by 0.145, on like-for-like validation.
 
 Composing nGPT's magnitude machinery with mHC is *not* additive -- it is
-negative. The LERP + scaler set costs 0.08, and the weight normalizer another
-0.20 on top. Plain mhc4 remains the best arm in the sweep.
+negative. At it10000 the LERP + scaler set costs 0.125 and the weight
+normalizer another 0.21 on top. Plain mhc4 remains the best arm in the sweep.
 
 That is consistent with the two schemes constraining the same quantity twice:
 mHC already makes the mixing operator non-expansive, so pinning the stream to
@@ -236,3 +248,63 @@ branch was silently running eager (a lost `_compiled` definition swallowed by an
 `except Exception`). Fixed afterwards -- 125.9 at mbs=16 -- but the loss numbers
 above are unaffected, since global_batch_size never changed. The LERP path caps
 at mbs=16; mbs=28/32 OOM even with recompute enabled on the compiled build.
+
+## ngptpp: nGPT configured the way canGPT actually runs it (6B tokens, 130M)
+
+Every nGPT arm lost to mhc4, so before concluding nGPT loses on merit, the four
+config differences against `../titan-sci` (`titan_sci/models/canGPT_master`, SFT
+run `cangpt_master_ams_stream_sft_latest_jupiter.toml`) were removed:
+
+1. **Weight normalizer axis.** Both codebases resolve output projections with
+   `norm_dim = 0 if out_norm_dim_0 else 1`. canGPT leaves it False (its SFT
+   config has no `[normalizer]` section, so the dataclass defaults apply); our
+   arms set True. Same name, same semantics, opposite axis.
+2. **LERP mode.** canGPT_master does not implement `analytic` at all -- its set
+   is approx|direct|both|direct_ste|both_ste|approx_fwd, and the SFT run uses
+   `approx`. The exact-cos(theta) factor is our addition, so canGPT's recipe was
+   never tuned against it.
+3. **base_scale** 0.01 vs our `1/sqrt(dim)` = 1/24 at hidden 576. `alpha_scaler`
+   is frozen, so this is ~4x the effective step size on alpha.
+4. **No scaler LR boost.** The SFT run has no `[weight_norm_adam]` section and
+   `mup_lr_scaling=false`; the eigen-LR reparameterization is the whole
+   mechanism. Our 4.0 was invented here.
+
+Plus weight decay 0.1 rather than 0, mirroring canGPT's hardcoded
+`_HEAD_WEIGHT_DECAY`. With the normalizer on it only bites the head: normalized
+matrices are shrunk and renormalized in the same step, and the 1-D scalers carry
+`is_ngpt_scaler`, whose wd multiplier defaults to 0.
+
+| arm | val @ it10000 | val @ it11445 |
+|---|---|---|
+| ngptpp (untied, ~159M) | 2.923 | 2.825 |
+| ngptpp_tied (~130M) | 3.015 | 2.915 |
+| ngpt_wnorm (old settings) | 3.047 | 2.972 |
+
+**The config was worth 0.057.** `ngptpp_tied` is the like-for-like comparison
+(`ngpt_wnorm` with the four fixes); the gain is real but small against a ~0.2
+deficit. The lead also compressed monotonically -- 0.30 at it2000, 0.10 at
+it4000, 0.045 at it6000, 0.034 at it8000, 0.032 at it10000 -- that is the fixes buy
+a faster start, not a better endpoint. WSD decay did not re-open it.
+
+`ngptpp` (untied) is *not* comparable to the rest of the sweep: untying adds
+28.97M params (50304 x 576), 22% more model.
+
+### Where the deficit actually lives
+Sorting the completed arms at it11445: baseline 2.721, ngpt_analytic 2.729,
+ngpt_approx 2.739. **The nGPT LERP residual alone is a wash against a plain
+pre-norm transformer.** Every arm carrying the weight normalizer lands 0.2-0.25
+behind: ngpt_wnorm 2.972, mhc4_lerp_scalers_wnorm 2.919, attnres4_lerp_wnorm
+3.004, ngptpp_tied 2.915. Correcting axis/mode/base_scale/LR recovers 0.057 of
+that; the rest is not a configuration problem.
+
+The likely cause is the magnitude-reinjection machinery we never ported:
+canGPT's SFT model also runs `softmax_scale`, `ffn_act_scale`,
+`ffn_up_scale`/`ffn_down_scale`, SSMax, scalar `tanh_sq` attention gating and a
+learnable pre-head scale vector. None exist in this Megatron build. Stripping
+weight magnitude without canGPT's full scaler set to put it back is exactly the
+failure mode observed. That, not more config matching, is the next experiment.
+
+Note `head_unconstrained` is inert throughout this sweep: it runs
+`untie_embeddings_and_output_weights: false`, that is *tied*, so there is no
+`output_layer.weight` parameter, `classify_param` returns "embedding", and the
+shared matrix is normalized regardless of the flag.
