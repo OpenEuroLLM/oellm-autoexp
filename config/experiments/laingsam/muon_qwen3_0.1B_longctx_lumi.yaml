@@ -1,0 +1,122 @@
+# @package _global_
+
+# Qwen3-dense 0.1B_ne with MUON on LUMI, over the readable long-ctx-sample data.
+#
+# Derived from exp_diana:config/experiments/multilingual_scaling/training/0.1B_ne_lumi.yaml
+# -- the config that produced the real runs in
+#    /scratch/project_465002530/multilingual_scaling/0.1B_ne/training/
+#
+# THREE deliberate differences from Diana's config:
+#   1. data     -> oellm_256k_lumi_longctx  (readable sample; see that file's caveats)
+#   2. optimizer-> muon                     (the point of the experiment)
+#   3. sweep    -> none                     (one short run, not the 9-budget sweep)
+#
+# NOT comparable to the existing Adam baselines -- different data. To compare
+# Muon vs Adam, run this config twice (optimizer: muon vs optimizer: adam);
+# both arms then see identical data and the contrast is internally valid.
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: auto_restart
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.1B_ne
+  - /backend/megatron/multilingual_scaling/data: oellm_256k_lumi_longctx
+  - _self_
+
+index: 0
+stage: "smoke"
+
+job:
+  name: "muon_qwen3_0.1B_ne_longctx_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_${stage}"
+  base_output_dir: "/scratch/project_465002530/users/laingsam/muon_runs/0.1B_ne/${job.name}"
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+
+backend:
+  megatron:
+    wandb_exp_name: "${job.name}"
+    wandb_project: muon-multilingual
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    # own cache dir -- do NOT share Diana's, concurrent writes conflict
+    data_cache_path: /scratch/project_465002530/users/laingsam/cache/MEGATRON_256k/${job.name}
+
+    # Evals off (as Diana's LUMI config does)
+    eval_interval: 1_000_000_000
+    split: "99,1,0"
+
+    # LUMI-specific
+    masked_softmax_fusion: False
+    gradient_accumulation_fusion: False
+    num_workers: 7
+
+    # ---- OPTIMIZER: MUON ----
+    # Megatron arguments.py:1464-1466 -- for emerging optimizers,
+    # --use-distributed-optimizer is TRANSLATED into
+    # use_layer_wise_distributed_optimizer=True + use_distributed_optimizer=False.
+    # That is CORRECT and expected; muon shards via the layer-wise path.
+    # The model config already sets use_distributed_optimizer: True,
+    # use_torch_fsdp2: False and ckpt_format: torch_dist, all of which the
+    # emerging-optimizer asserts require. Nothing to override.
+    optimizer: muon
+    muon_momentum: 0.9
+    muon_scalar_optimizer: adam    # scalars/embeddings/norms use Adam
+    muon_scale_mode: spectral      # non-MuP; unit_rms_norm if MuP is adopted
+    muon_num_ns_steps: 5
+    muon_coefficient_type: quintic
+
+    # Adam settings apply to the scalar-parameter optimizer above.
+    # Inherited from qwen3_dense_0.1B_ne: beta1 0.9, beta2 0.95, eps 1e-8,
+    # clip_grad 1.0, weight_decay 0.1.
+
+    # ---- SHORT RUN ----
+    # 1 node: nodes = global_batch_size / (micro_batch_size * gpus_per_node)
+    #              = 32 / (4 * 8) = 1
+    micro_batch_size: 4
+    global_batch_size: 32
+    train_iters: 50          # smoke: ~6.5M tokens. Raise for a real comparison.
+    lr: 5.e-4                # NOTE: Adam's LR from the 0.1B_ne config. NOT tuned
+                             # for Muon. Fine for a smoke; tune before comparing.
+    lr_warmup_iters: 10      # model default is 2000, meaningless at 50 iters
+    save_interval: 1000000   # no checkpoints for a smoke
+
+container:
+  env:
+    WANDB_TAGS: "lumi,muon"
+    # --- HOW MUON'S DEPENDENCY GETS IN ---
+    # Muon needs `emerging_optimizers`, which is NOT in the LUMI containers.
+    # The muon-overlay.img trick works for hand-rolled `singularity exec`, but
+    # autoexp's ContainerConfig has NO overlay field (verified: zero hits for
+    # "overlay" in the codebase), so the overlay is invisible to the pipeline.
+    #
+    # emerging_optimizers is PURE PYTHON, so it doesn't need to be in the image
+    # at all -- it just needs to be importable. We install it to a plain dir on
+    # /scratch and prepend it to PYTHONPATH. No container rebuild, no autoexp
+    # patch, works with any image.
+    #
+    # Populate that dir ONCE (in an allocation -- see muon_smoke/INSTRUCTIONS.md):
+    #   pip install --no-deps --target=/scratch/project_465002530/users/laingsam/muon-pylibs \
+    #       "git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git@v0.2.0"
+    # --no-deps matters: without it pip would drag a whole torch into the dir.
+    #
+    # "." keeps the repo importable (the base lumi.yaml sets PYTHONPATH: ".").
+    PYTHONPATH: ".:/scratch/project_465002530/users/laingsam/muon-pylibs"
+
+slurm:
+  env:
+    MASTER_PORT: "9999"
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: "${oc.eval:'max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node})))'}"
+    ntasks_per_node: 8
+    gpus_per_node: 8
+    gres: gpu:8
+    cpus_per_task: 7
+    mem: 480G
+    partition: dev-g         # smoke; Diana's real runs use standard-g
+    account: project_465002530
+    time: "00:30:00"

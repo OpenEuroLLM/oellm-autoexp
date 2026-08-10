@@ -1,18 +1,12 @@
 # @package _global_
 
-# 50M dense model training with Muon optimizer — Capella (NVIDIA H100) version.
-# Ported from muon_50M_50BT_lumi.yaml (LUMI/ROCm). See muon_smoke/NEW_CLUSTER_SETUP.md.
-#
-# Not using autoexp's /container + /slurm cluster targets yet — no `capella` one
-# exists in this repo. Everything is run by hand via `singularity exec` against
-# the sandbox at /data/horse/ws/sala597i-slaing/containers/.tmp_sandbox/.../sandbox
-# (see muon_smoke/INSTRUCTIONS.md-equivalent for Capella). /container: none and
-# /slurm: local just keep hydra composition + torchrun arg resolution happy.
+# 50M dense model training with pull-based multi-stage cooldown
+# Translation of dense_50M_50BT.yaml to new composable sweep system
 
 defaults:
   - /backend: megatron
-  - /container: none
-  - /slurm: local
+  - /container: lumi
+  - /slurm: lumi
   - /job: auto_restart
   - /sweep: none
   - /backend/megatron: base
@@ -27,13 +21,6 @@ job:
   # resume: true
 
 backend:
-  env:
-    # megatron.yaml's default (".:submodules/Megatron-LM") doesn't know about
-    # emerging_optimizers, which lives in muon-pylibs/ (NEW_CLUSTER_SETUP.md
-    # step 2). This is what orchestrator/run_autoexp.py actually injects into
-    # the training subprocess's env — our own singularity --env PYTHONPATH
-    # gets overridden by this, not merged with it.
-    PYTHONPATH: ".:submodules/Megatron-LM:muon-pylibs"
   megatron:
     wandb_exp_name: "${job.name}"
     wandb_project: sanity-checks
@@ -42,22 +29,20 @@ backend:
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
     # DATA
-    # Real Nemotron data — converted from jasi149i-fastlm's tokenized_gpt2
-    # arrow shards into Megatron .bin/.idx via
-    # muon_smoke/convert_nemotron_arrow_to_megatron.py (see DATA_CONVERSION.md).
-    # train: 26,442,113 sequences (2049-length each, recovered from an OOM
-    # near the end of conversion — see DATA_CONVERSION.md incident note).
-    # valid: 18,602 sequences (finished cleanly, real sub-doc boundaries).
-    mock_data: false
-    data_path: ["/data/horse/ws/sala597i-slaing/data/nemotron_gpt2_megatron/train"]
-    data_cache_path: /data/horse/ws/sala597i-slaing/muon_test_cache/${job.name}
-    seq_length: 2048  # matches ctx_2048 packing of the source data
-    max_position_embeddings: 2048
-    # Tokenizer matches what the Nemotron sample was actually tokenized with —
-    # NOT gpt-neox-20b. Local path (read-only) avoids needing a HF Hub download.
-    tokenizer_model: /data/horse/ws/sala597i-slaing/data/nemotron_gpt2_tokenizer
+    data_path: [
+      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/merged/high-actual,
+      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/merged/high-synthetic-distil,
+      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/merged/high-synthetic-diverse_qa_pairs,
+      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/merged/high-synthetic-extract_knowledge,
+      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/merged/high-synthetic-knowledge_list,
+      /scratch/project_462000963/preprocessed/gpt-neox-20b/nemotron-cc/1.0/downsampled_15p/merged/high-synthetic-wrap_medium
+    ]
+    data_cache_path: /scratch/project_465002530/users/laingsam/muon_test_cache/${job.name}
+    seq_length: 4096
+    max_position_embeddings: 4096
+    tokenizer_model: EleutherAI/gpt-neox-20b
     tokenizer_type: HuggingFaceTokenizer
-    num_workers: 2  # matches sbatch --cpus-per-task=2; 7 (LUMI value) OOM'd here
+    num_workers: 7
     num_dataset_builder_threads: 6
     split: '99,1,0'
 
@@ -74,7 +59,7 @@ backend:
     attention_dropout: 0.0
     hidden_dropout: 0.0
     normalization: RMSNorm
-    layernorm_epsilon: 1.e-5
+    norm_epsilon: 1.e-5
     qk_layernorm: True
     bf16: True
     swiglu: True
@@ -93,18 +78,17 @@ backend:
     distributed_backend: nccl
     distributed_timeout_minutes: 10
 
-    # Generator bug workaround: v0.17's exit_signal is a signal.Signals enum
-    # (expects a name like "SIGTERM"), but base_defaults.yaml's generated
-    # default is the numeric string '15' — override explicitly.
-    exit_signal: "SIGTERM"
-
     overlap_grad_reduce: True
-    # False: LayerWiseDistributedOptimizer.set_bucket_layerwise_params_list()
-    # crashes (TypeError: 'NoneType' object is not iterable) whenever dp_cp
-    # group size is 1 (single GPU) — shard_params() sets dp_cp_params_list to
-    # None in that case but the overlap_param_gather path doesn't check for
-    # it. Multi-GPU communication-overlap optimization, irrelevant on 1 GPU.
-    overlap_param_gather: False
+    overlap_param_gather: True
+
+    # LUMI-specific settings
+    # te_fallback_layernorm_linear: True
+    bias_swiglu_fusion: False
+    bias_gelu_fusion: False
+    bias_dropout_fusion: False
+    gradient_accumulation_fusion: False
+    add_bias_linear: False
+    masked_softmax_fusion: False
 
     # DISTRIBUTED OPTIM
     use_distributed_optimizer: True
@@ -170,6 +154,13 @@ backend:
       start_iter: 0  # only used in decay
       start_iter_round: 0 # only used in decay
 
+slurm:
+  sbatch:
+    nodes: "${oc.eval:'int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))'}"
+    partition: standard-g
+    account: project_465002530
+    time: "48:00:00"
+
 # COMPOSABLE SWEEP with PULL-BASED MULTI-STAGE
 sweep:
   type: product
@@ -179,7 +170,7 @@ sweep:
       configs:
         - job.name: "dense_50M_01_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_beta2\\${backend.megatron.adam_beta2}_\\${stage}"
           backend.megatron.wandb_exp_name: "\\${job.name}"
-
+    
     # Multi-stage training (stable + cooldown/decay)
     # Uses a nested structure with defaults for decay stages
     - type: list
@@ -218,6 +209,7 @@ sweep:
             # Start conditions: wait for stable to reach checkpoint (new async approach)
             job.start_condition:
               class_name: FileExistsCondition
+              # path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${backend.megatron.aux.start_iter_round}"
               path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(\\${backend.megatron.aux.start_iter_round}).zfill(7)'}"
 
             # Cancel conditions: cancel if stable job fails

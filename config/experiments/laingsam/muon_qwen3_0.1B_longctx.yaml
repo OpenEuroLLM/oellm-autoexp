@@ -1,40 +1,37 @@
 # @package _global_
 
-# Qwen3-dense 0.1B_ne with MUON on LUMI, over the readable long-ctx-sample data.
+# Qwen3-dense 0.1B_ne with MUON — Capella (NVIDIA H100) version.
+# Ported from muon_qwen3_0.1B_longctx_lumi.yaml (LUMI/ROCm). See
+# muon_smoke/NEW_CLUSTER_SETUP.md and muon_50M_50BT.yaml (same porting
+# pattern, more heavily commented there).
 #
-# Derived from exp_diana:config/experiments/multilingual_scaling/training/0.1B_ne_lumi.yaml
-# -- the config that produced the real runs in
-#    /scratch/project_465002530/multilingual_scaling/0.1B_ne/training/
-#
-# THREE deliberate differences from Diana's config:
-#   1. data     -> oellm_256k_lumi_longctx  (readable sample; see that file's caveats)
-#   2. optimizer-> muon                     (the point of the experiment)
-#   3. sweep    -> none                     (one short run, not the 9-budget sweep)
-#
-# NOT comparable to the existing Adam baselines -- different data. To compare
-# Muon vs Adam, run this config twice (optimizer: muon vs optimizer: adam);
-# both arms then see identical data and the contrast is internally valid.
+# Real Qwen3 0.1B_ne architecture (16L/512h/1536ffn/8heads/kv128/qk-norm),
+# via the same composable model file used by multilingual_scaling
+# (config/backend/megatron/multilingual_scaling/models/qwen3_dense_0.1B_ne.yaml)
+# — NOT the generic 50M dense proxy used in muon_50M_50BT.yaml. Data/tokenizer
+# here are still our own converted Nemotron sample (GPT2Tokenizer), not the
+# real multilingual 256k-vocab tokenizer that model file was originally
+# designed for — swap those in separately once the real multilingual data is
+# available on Capella.
 
 defaults:
   - /backend: megatron
-  - /container: lumi
-  - /slurm: lumi
+  - /container: none
+  - /slurm: local
   - /job: auto_restart
   - /sweep: none
   - /backend/megatron: base
   - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.1B_ne
-  - /backend/megatron/multilingual_scaling/data: oellm_256k_lumi_longctx
   - _self_
 
 index: 0
 stage: "smoke"
 
-job:
-  name: "muon_qwen3_0.1B_ne_longctx_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_${stage}"
-  base_output_dir: "/scratch/project_465002530/users/laingsam/muon_runs/0.1B_ne/${job.name}"
-  log_path: ${.base_output_dir}/logs/slurm-%j.log
-
 backend:
+  env:
+    # Same fix as muon_50M_50BT.yaml — the orchestrator's own PYTHONPATH
+    # default doesn't know about muon-pylibs (emerging_optimizers).
+    PYTHONPATH: ".:submodules/Megatron-LM:muon-pylibs"
   megatron:
     wandb_exp_name: "${job.name}"
     wandb_project: muon-multilingual
@@ -42,81 +39,99 @@ backend:
     wandb_save_dir: "${job.base_output_dir}"
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
-    # own cache dir -- do NOT share Diana's, concurrent writes conflict
-    data_cache_path: /scratch/project_465002530/users/laingsam/cache/MEGATRON_256k/${job.name}
-
-    # Evals off (as Diana's LUMI config does)
-    eval_interval: 1_000_000_000
+    # DATA — our own converted Nemotron sample (see DATA_CONVERSION.md),
+    # same as muon_50M_50BT.yaml. NOT the real multilingual 256k data this
+    # model was originally designed for.
+    mock_data: false
+    data_path: ["/data/horse/ws/sala597i-slaing/data/nemotron_gpt2_megatron/train"]
+    data_cache_path: /data/horse/ws/sala597i-slaing/muon_test_cache/${job.name}
+    seq_length: 2048  # matches ctx_2048 packing of the source data
+    max_position_embeddings: 2048
+    tokenizer_model: /data/horse/ws/sala597i-slaing/data/nemotron_gpt2_tokenizer
+    tokenizer_type: HuggingFaceTokenizer
+    num_workers: 2  # matches sbatch --cpus-per-task=2 (see muon_50M_50BT.yaml for why)
     split: "99,1,0"
 
-    # LUMI-specific
-    masked_softmax_fusion: False
-    gradient_accumulation_fusion: False
-    num_workers: 7
+    # qwen3_dense_0.1B_ne.yaml uses the pre-v0.17 field name `norm_epsilon`;
+    # this checkout's regenerated schema (RUNG A) renamed it to
+    # layernorm_epsilon (same fix as muon_50M_50BT.yaml). That model file is
+    # SHARED (slaing00/multilingual_scaling also depends on it) so we can't
+    # edit it — instead the stale `norm_epsilon` key must be deleted via a
+    # Hydra `~` override at invocation time:
+    #   '~backend.megatron.norm_epsilon'
+    # (see 04_qwen3_real_data_test_capella.sbatch). Setting it to null here
+    # would NOT work — compoconf rejects unknown keys regardless of value.
+    layernorm_epsilon: 1.e-5
+
+    # Same v0.17 exit_signal enum-vs-string generator bug fix as muon_50M_50BT.yaml.
+    exit_signal: "SIGTERM"
+
+    # Single-GPU dp_cp-size-1 bug (LayerWiseDistributedOptimizer), same as
+    # muon_50M_50BT.yaml — multi-GPU-only optimization anyway.
+    overlap_param_gather: False
+
+    eval_interval: 1_000_000_000  # evals off, matching the LUMI original
+    exit_on_missing_checkpoint: False
 
     # ---- OPTIMIZER: MUON ----
-    # Megatron arguments.py:1464-1466 -- for emerging optimizers,
-    # --use-distributed-optimizer is TRANSLATED into
-    # use_layer_wise_distributed_optimizer=True + use_distributed_optimizer=False.
-    # That is CORRECT and expected; muon shards via the layer-wise path.
-    # The model config already sets use_distributed_optimizer: True,
-    # use_torch_fsdp2: False and ckpt_format: torch_dist, all of which the
-    # emerging-optimizer asserts require. Nothing to override.
     optimizer: muon
     muon_momentum: 0.9
-    muon_scalar_optimizer: adam    # scalars/embeddings/norms use Adam
-    muon_scale_mode: spectral      # non-MuP; unit_rms_norm if MuP is adopted
+    muon_scalar_optimizer: adam
+    muon_scale_mode: spectral
     muon_num_ns_steps: 5
     muon_coefficient_type: quintic
+    # Adam settings inherited from qwen3_dense_0.1B_ne: beta1 0.9, beta2 0.95,
+    # eps 1e-8, clip_grad 1.0, weight_decay 0.1.
 
-    # Adam settings apply to the scalar-parameter optimizer above.
-    # Inherited from qwen3_dense_0.1B_ne: beta1 0.9, beta2 0.95, eps 1e-8,
-    # clip_grad 1.0, weight_decay 0.1.
-
-    # ---- SHORT RUN ----
-    # 1 node: nodes = global_batch_size / (micro_batch_size * gpus_per_node)
-    #              = 32 / (4 * 8) = 1
-    micro_batch_size: 4
+    # ---- SHORT SMOKE RUN, single 1g.12gb MIG slice ----
+    # micro_batch_size shrunk from the LUMI value (4, tuned for a full 8x GPU
+    # node) — this is a bigger model than muon_50M_50BT's 47.7M-param proxy
+    # (16 layers vs 12, 512 hidden vs 384), so being more conservative than
+    # that config's micro_batch_size=4 to avoid the same OOM class of bug.
+    micro_batch_size: 2
     global_batch_size: 32
-    train_iters: 50          # smoke: ~6.5M tokens. Raise for a real comparison.
-    lr: 5.e-4                # NOTE: Adam's LR from the 0.1B_ne config. NOT tuned
-                             # for Muon. Fine for a smoke; tune before comparing.
-    lr_warmup_iters: 10      # model default is 2000, meaningless at 50 iters
-    save_interval: 1000000   # no checkpoints for a smoke
+    train_iters: 50           # smoke: ~3.3M tokens (same intent as LUMI original)
+    lr: 5.e-4                 # Adam's LR from qwen3_dense_0.1B_ne, NOT tuned for Muon
+    lr_warmup_iters: 10       # model default 2000 is meaningless at 50 iters
+    save_interval: 1000000    # no checkpoints for a smoke
 
-container:
-  env:
-    WANDB_TAGS: "lumi,muon"
-    # --- HOW MUON'S DEPENDENCY GETS IN ---
-    # Muon needs `emerging_optimizers`, which is NOT in the LUMI containers.
-    # The muon-overlay.img trick works for hand-rolled `singularity exec`, but
-    # autoexp's ContainerConfig has NO overlay field (verified: zero hits for
-    # "overlay" in the codebase), so the overlay is invisible to the pipeline.
-    #
-    # emerging_optimizers is PURE PYTHON, so it doesn't need to be in the image
-    # at all -- it just needs to be importable. We install it to a plain dir on
-    # /scratch and prepend it to PYTHONPATH. No container rebuild, no autoexp
-    # patch, works with any image.
-    #
-    # Populate that dir ONCE (in an allocation -- see muon_smoke/INSTRUCTIONS.md):
-    #   pip install --no-deps --target=/scratch/project_465002530/users/laingsam/muon-pylibs \
-    #       "git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git@v0.2.0"
-    # --no-deps matters: without it pip would drag a whole torch into the dir.
-    #
-    # "." keeps the repo importable (the base lumi.yaml sets PYTHONPATH: ".").
-    PYTHONPATH: ".:/scratch/project_465002530/users/laingsam/muon-pylibs"
+    # qwen3_dense_0.1B_ne.yaml sets lr_decay_style: WSD but leaves
+    # lr_wsd_decay_iters unset (null) — in multilingual_scaling's real usage
+    # this is computed per-stage by the staged-sweep DAG (stable vs decay
+    # stages, see muon_50M_50BT.yaml's sweep block). This config is a flat
+    # single "smoke" stage, not routed through that DAG, so it must be set
+    # explicitly or Megatron's OptimizerParamScheduler asserts
+    # (wsd_decay_steps is not None). 0 = no decay, matching a "stable phase"
+    # (same value muon_50M_50BT.yaml's stable stage uses).
+    lr_wsd_decay_iters: 0
 
-slurm:
-  env:
-    MASTER_PORT: "9999"
-  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
-  sbatch:
-    nodes: "${oc.eval:'max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node})))'}"
-    ntasks_per_node: 8
-    gpus_per_node: 8
-    gres: gpu:8
-    cpus_per_task: 7
-    mem: 480G
-    partition: dev-g         # smoke; Diana's real runs use standard-g
-    account: project_465002530
-    time: "00:30:00"
+    # Default async_strategy: nvrx depends on the `nvidia_resiliency_ext`
+    # package, which is missing/incompatible in this sandbox
+    # (ImportError: get_write_results_queue). Confirmed by a real crash at
+    # the first save_interval hit (iter 20, jobs 3833304 and 3833446) —
+    # training itself was clean up to that point (loss 10.9 -> 7.55 over 20
+    # iters). Not a Muon/Qwen3 issue.
+    #
+    # async_strategy alone does NOT fix it: when async_save is False,
+    # megatron/core/dist_checkpointing/serialization.py's save() calls
+    # sharded_strategy.save(...) (the sync path), whose implementation
+    # (torch.py TorchDistSaveShardedStrategy.save()) hardcodes
+    # `"nvrx" if HAVE_NVRX else "mcore"` and ignores async_strategy entirely.
+    # async_strategy is only actually threaded through on the async path
+    # (megatron/training/checkpointing.py passes async_strategy=args.async_strategy
+    # to dist_checkpointing.save only when async_sharded_save=args.async_save
+    # is True) — hence also flipping async_save on below.
+    async_strategy: mcore
+    async_save: true
+    # Confirmed via direct log evidence (jobs 3833304, 3833446, 3838181, all
+    # crashed identically): async_save=true alone was silently reset back to
+    # False by Megatron itself (arguments.py:1523-1530 — async_save requires
+    # use_persistent_ckpt_worker, warns and disables otherwise:
+    # "--async-save is not supported without --use-persistent-ckpt-worker.
+    # Disabling --async-save." — seen verbatim in output/current.log). That
+    # silent fallback is what put it back on the broken nvrx sync path.
+    use_persistent_ckpt_worker: true
+
+job:
+  name: "muon_qwen3_0.1B_ne_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_${stage}"
+  base_output_dir: "outputs/muon_qwen3_0.1B_ne/${job.name}"

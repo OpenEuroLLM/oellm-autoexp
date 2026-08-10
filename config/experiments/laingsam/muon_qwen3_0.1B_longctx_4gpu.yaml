@@ -1,0 +1,115 @@
+# @package _global_
+
+# Qwen3-dense 0.1B_ne with MUON — Capella, 4-GPU (single node) version.
+# Copy of muon_qwen3_0.1B_longctx.yaml (which passed 1-GPU, see RESULT_qwen3.md)
+# with the minimum changes needed to actually launch multi-process via
+# torchrun instead of plain python. Everything else (data, tokenizer,
+# norm_epsilon deletion override, lr_wsd_decay_iters, async checkpoint fixes)
+# is unchanged and still required the same way.
+#
+# Purpose: just confirm training runs at all with dp_cp=4 — Muon's
+# LayerWiseDistributedOptimizer has never been exercised at dp_cp>1 on this
+# branch (the overlap_param_gather=False fix below was specifically for the
+# dp_cp=1 crash; behavior at dp_cp=4 is genuinely untested). Not tuned for
+# throughput. No checkpoint save exercised here (save_interval left at the
+# huge default) — keep this test scoped to "does multi-GPU training work".
+
+defaults:
+  - /backend: megatron_torchrun  # only real difference vs the 1-GPU config's
+                                  # /backend: megatron — this one's dist_cmd
+                                  # actually uses torchrun (nproc_per_node
+                                  # driven by slurm.sbatch.gpus_per_node
+                                  # below), instead of hardcoding plain
+                                  # `python ...` for every launch regardless
+                                  # of GPU count.
+  - /container: none
+  - /slurm: local
+  - /job: auto_restart
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.1B_ne
+  - _self_
+
+index: 0
+stage: "smoke4gpu"
+
+# /slurm: local hardcodes gpus_per_node: 1 and the GPUS_PER_NODE/
+# NUM_GPUS_PER_NODE/NUM_GPUS env vars to "1" — override here rather than
+# editing that shared file. gpus_per_node is what megatron_torchrun.yaml's
+# dist_cmd actually reads for --nproc_per_node.
+slurm:
+  sbatch:
+    gpus_per_node: 4
+  env:
+    GPUS_PER_NODE: "4"
+    NUM_GPUS_PER_NODE: "4"
+    NUM_GPUS: "4"
+
+backend:
+  env:
+    PYTHONPATH: ".:submodules/Megatron-LM:muon-pylibs"
+  megatron:
+    wandb_exp_name: "${job.name}"
+    wandb_project: muon-multilingual
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    mock_data: false
+    data_path: ["/data/horse/ws/sala597i-slaing/data/nemotron_gpt2_megatron/train"]
+    data_cache_path: /data/horse/ws/sala597i-slaing/muon_test_cache/${job.name}
+    seq_length: 2048
+    max_position_embeddings: 2048
+    tokenizer_model: /data/horse/ws/sala597i-slaing/data/nemotron_gpt2_tokenizer
+    tokenizer_type: HuggingFaceTokenizer
+    num_workers: 2
+    split: "99,1,0"
+
+    layernorm_epsilon: 1.e-5
+    exit_signal: "SIGTERM"
+
+    # Kept False (same as the passing 1-GPU config) for this first multi-GPU
+    # test to isolate variables — it was a workaround for a dp_cp=1-specific
+    # crash, so it shouldn't be *needed* at dp_cp=4, but changing it at the
+    # same time as going multi-GPU would confound results if something breaks.
+    overlap_param_gather: False
+
+    eval_interval: 1_000_000_000
+    exit_on_missing_checkpoint: False
+
+    # --local always overrides job.base_output_dir to a flat ./output (see
+    # ++job.base_output_dir=./output in generated config-0.yaml), so the
+    # inherited save/load (${job.base_output_dir}/checkpoints from
+    # qwen3_dense_0.1B_ne.yaml) collide across EVERY local run regardless of
+    # experiment name — confirmed: this 4-GPU config silently loaded the
+    # 1-GPU run's leftover iter_0000050 checkpoint and considered training
+    # already done (0 new iterations ran). Fixed by pointing save/load at a
+    # path that doesn't depend on job.base_output_dir at all, keyed on
+    # job.name instead (unique per experiment, unaffected by the --local
+    # override). Own workspace, not the repo's ./output.
+    save: /data/horse/ws/sala597i-slaing/muon_test_cache/${job.name}/checkpoints
+    load: /data/horse/ws/sala597i-slaing/muon_test_cache/${job.name}/checkpoints
+
+    optimizer: muon
+    muon_momentum: 0.9
+    muon_scalar_optimizer: adam
+    muon_scale_mode: spectral
+    muon_num_ns_steps: 5
+    muon_coefficient_type: quintic
+
+    micro_batch_size: 2
+    global_batch_size: 32   # micro_batch_size(2) * dp(4) = 8; 32/8 = 4 grad-accum steps — valid
+    train_iters: 50
+    lr: 5.e-4
+    lr_warmup_iters: 10
+    save_interval: 1000000  # no checkpoint save in this test — scope kept to "does multi-GPU training run"
+
+    lr_wsd_decay_iters: 0
+
+    async_strategy: mcore
+    async_save: true
+    use_persistent_ckpt_worker: true
+
+job:
+  name: "muon_qwen3_0.1B_ne_4gpu_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_${stage}"
+  base_output_dir: "outputs/muon_qwen3_0.1B_ne/${job.name}"
