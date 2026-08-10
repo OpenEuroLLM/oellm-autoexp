@@ -29,7 +29,7 @@ defaults:
 
 aux:
   experiment_group: "residual_scaling_variants"
-  total_tokens: "${oc.eval:'${aux.seq_len}*${aux.gbs}*${backend.megatron.train_iters}'}"
+  total_tokens: "${oc.eval:'${aux.seq_len}*${backend.megatron.global_batch_size}*${backend.megatron.train_iters}'}"
   gbs: 128
   tokens: 6_000_000_000
   decay_fraction: 0.2
@@ -68,7 +68,7 @@ backend:
     untie_embeddings_and_output_weights: false
 
     # ---- short smoke schedule ----
-    train_iters: ${oc.eval:'(${aux.tokens}+${aux.seq_len}*${aux.gbs}-1)//(${aux.seq_len}*${aux.gbs})'}
+    train_iters: ${oc.eval:'(${aux.tokens}+${aux.seq_len}*${.global_batch_size}-1)//(${aux.seq_len}*${.global_batch_size})'}
     global_batch_size: ${aux.gbs}
     # Batch is the dominant throughput lever at this size (cf. the hybrid repo's
     # 0.1B sweep, which reaches 281.9 TFLOP/s/GPU at mbs=64/gbs=256). We cannot
