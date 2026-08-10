@@ -1,0 +1,70 @@
+# @package _global_
+#
+# Finish mhc4, and give it a token-matched control.
+#
+# Two separate problems with the mhc4 arm in scaling_130M_jupiter.yaml:
+#
+# 1. It never finished. Both attempts (1229316, 1231292) hit TIMEOUT, the second
+#    after 12h at iteration 10350/11445, because mHC ran at ~95 TFLOP/s before
+#    the fused read/write and the Triton write backward landed. The number that
+#    has been quoted as its "final loss", 2.638, is its *training* lm loss at
+#    10350 -- not a validation loss and not at 11445. There is a checkpoint at
+#    iteration 10000, so 1445 iterations remain.
+#
+# 2. It is not comparable to anything. The arm overrides
+#    global_batch_size to 384, but train_iters is derived from aux.gbs (128) and
+#    was not overridden -- so at any given iteration mhc4 has consumed 3x the
+#    samples of every non-mHC arm. Verified in the logs: consumed samples at
+#    iteration 10000 is 3,840,000 for mhc4 against 1,280,000 for baseline,
+#    ngpt_wnorm, attnres4_lerp and ngptpp_tied. mhc4's apparent 0.145 lead over
+#    baseline is a 15.7B-vs-5.2B token comparison. mhc2_lerp has the same defect;
+#    no other arm does.
+#
+# So both arms below. The resume answers "what does mhc4 converge to"; the
+# control answers "is mHC better than a plain transformer", which is the question
+# the sweep was built for and which no run in it currently answers.
+defaults:
+  - ngpt_scalers_jupiter
+  - _self_
+
+slurm:
+  sbatch:
+    # Resume is ~1445 iters x 384 samples at ~190 TFLOP/s (~1.7h); the control is
+    # 11445 iters x 128 samples (~2.3h). 4h covers both and keeps the short-job
+    # scheduling priority.
+    time: "04:00:00"
+
+sweep:
+  type: product
+  groups:
+   - type: list
+     configs:
+      # Resume. aux.variant must stay "mhc4" so job.name resolves to resid_mhc4
+      # and --load/--save point at the existing directory holding
+      # iter_0010000. Every setting is the original arm's, unchanged, so this is
+      # a continuation rather than a new run: gbs 384, mbs 24, sinkhorn 8, no
+      # CUDA graphs (measured -0.4% for mHC, and they OOM at mbs 32), lr 0.002
+      # from the base config. The speedup comes entirely from the current
+      # Megatron build -- fused stream read/write plus the Triton write
+      # backward -- which changes kernel implementations, not the math, and adds
+      # no parameters, so the iteration-10000 checkpoint loads unchanged.
+      - aux.variant: mhc4
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 24
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.cuda_graph_impl: none
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+      # Token-matched control: mHC at the gbs every other arm used, from
+      # scratch. lr 0.002 is the base value, which is also what baseline ran, so
+      # this differs from baseline in exactly one thing -- the residual scheme.
+      # mbs 32 divides gbs/DP = 32 (one accumulation step) and is the fastest
+      # setting measured for mHC without graphs (193.8 TFLOP/s at 0.993
+      # occupancy).
+      - aux.variant: mhc4_gbs128
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 32
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.cuda_graph_impl: none
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
