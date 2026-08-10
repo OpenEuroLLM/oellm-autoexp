@@ -1,0 +1,75 @@
+# @package _global_
+#
+# Where the recurrence sits: loop blocks of N vs looping the whole middle block.
+#
+# Identical parameters, identical FLOPs, identical effective depth -- only the
+# order in which the 12 unique layers are applied changes. For a 6-layer block
+# run twice:
+#
+#   group 6 (done):  3 4 5 6 7 8 | 3 4 5 6 7 8      outer recurrence
+#   group 3:         3 4 5 3 4 5 | 6 7 8 6 7 8
+#   group 2:         3 4 3 4 | 5 6 5 6 | 7 8 7 8
+#   group 1:         3 3 | 4 4 | 5 5 | 6 6 | ...    each layer repeated in place
+#
+# This is the sharpest available test of whether nGPT's magnitude invariance is
+# what makes weight tying work. At group 1 a layer immediately consumes its own
+# output -- the hardest case for a residual whose magnitude grows with depth. At
+# group 6 it sees five other layers first. If the invariance is the mechanism,
+# the nGPT-minus-plain gap should shrink monotonically as group size grows.
+#
+# The loop-count axis already failed to show that ordering: gaps came out 0.021
+# (3x4), 0.031 (6x2), 0.015 (12x2), with no relation to how many times a block
+# repeats. Group size varies the *tightness* of the recurrence rather than its
+# count, which is closer to what the argument actually predicts about.
+#
+# Built on the loop6x2 geometry -- 3 + (6)x2 + 3, 12 unique layers, 18 effective,
+# 92.7M params, iso-FLOP with the 18-layer baseline. Group 6 is already measured
+# (loop6x2_plain 2.758, loop6x2_ngpt 2.727), so only 1, 2 and 3 run here, giving
+# a four-point series per scheme.
+#
+# Standard budget throughout: 11445 steps, gbs 128, lr 0.002, 6.0B tokens.
+defaults:
+  - ngpt_scalers_jupiter
+  - _self_
+
+slurm:
+  sbatch:
+    # loop6x2 took 1:31 (plain) and 1:50 (nGPT); group size does not change cost.
+    time: "04:00:00"
+
+backend:
+  megatron:
+    global_batch_size: 128
+    micro_batch_size: 32
+    lr: 0.002
+    cuda_graph_impl: none
+    num_layers: 12
+    loop_prelude_layers: 3
+    loop_block_layers: 6
+    loop_iterations: 2
+    loop_coda_layers: 3
+    # Declared so the sweep's per-arm override lands in an existing key.
+    loop_group_size: 0
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - aux.grp: g1
+          backend.megatron.loop_group_size: 1
+        - aux.grp: g2
+          backend.megatron.loop_group_size: 2
+        - aux.grp: g3
+          backend.megatron.loop_group_size: 3
+    - type: list
+      configs:
+        - aux.scheme: plain
+        - aux.scheme: ngpt
+          backend.megatron.ngpt: true
+          backend.megatron.ngpt_lerp_normalization: analytic
+
+aux:
+  grp: ""
+  scheme: ""
+  variant: "loop6x2_${aux.grp}_${aux.scheme}"
