@@ -1,6 +1,6 @@
 # @package _global_
-# This is the best performing config according to the sweeps standing at ~407 TFLOPS with 16 nodes
-# Baseline as of 20.7.2026
+# This is the best performing config according to the sweeps standing at ~413 TFLOPS with 16 nodes
+# Baseline as of 03.8.2026
 defaults:
   - /experiments/base
   - /backend: megatron_torchrun_localaddr
@@ -21,55 +21,64 @@ backend:
     eval_iters: 0
     save: null
     load: null
-    log_throughput: true
     lr_warmup_iters: 0
+
+    # LOGGING
+    log_throughput: true
+    wandb_project: qwen3-32B-dense-scaling-jupiter
+    wandb_entity: openeurollm-project
+
+    # Manual garbage collection
+    manual_gc_interval: 50  # 50 is megatron's default if manual_gc = true
+    manual_gc: true
 
     # DATA
     dataloader_type: single
     padded_vocab_size: 262144
-    global_batch_size: 1024
+    global_batch_size: 4096
     micro_batch_size: 2
 
     pipeline_model_parallel_size: 2
+    pipeline_model_parallel_layout: "Et\\*9\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*7L"
     tensor_model_parallel_size: 4
-    num_layers_per_virtual_pipeline_stage: 2
     sequence_parallel: true
 
-    attention_softmax_in_fp32: false
     use_distributed_optimizer: true
+    num_distributed_optimizer_instances: 1
+
     overlap_grad_reduce: true
     overlap_param_gather: true
     tp_comm_overlap: true
-    use_sharp: true
-    ddp_bucket_size: 80000000
+
     cross_entropy_loss_fusion: true
     cross_entropy_fusion_impl: te
 
-    wandb_project: qwen3-32B-dense-scaling-jupiter
-    wandb_entity: openeurollm-project
-
     data_path:
       - /e/project1/e-sta-openeurollm/harmsen1/datasets/FineWeb/fineweb-10BT_text_document
-    data_cache_path: /e/scratch/e-sta-openeurollm/${oc.env:USER}/data
-    tokenizer_model: /e/project1/e-sta-openeurollm/komulainen1_jupiter/hf_cache/hub/models--openeurollm--tokenizer-256k/snapshots/ac1ce776f8a78fc7aa96dfc91ffc1ae6966b2fa1
+    data_cache_path: /e/fscratch/e-sta-openeurollm/komulainen1/cache/${job.name}/
+    tokenizer_model: /e/fscratch/e-sta-openeurollm/komulainen1/hf_cache/hub/models--openeurollm--tokenizer-256k/snapshots/ac1ce776f8a78fc7aa96dfc91ffc1ae6966b2fa1
 
   env:
     TOKENIZERS_PARALLELISM: "false"
     PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
     PYTHONWARNINGS: "ignore::UserWarning"
-    NCCL_NET_GDR_LEVEL: "0"  # disable GDRDMA — required for PP=2 inter-node P2P
     CUDA_DEVICE_MAX_CONNECTIONS: "1"  # only for TP
     TRITON_LIBCUDA_PATH: "/usr/local/cuda/compat/lib.real"
     SHARP_SMX_SOCK_ADDR_FAMILY: ipv4
     UB_SKIPMC: "1"
-    NCCL_DEBUG: INFO
+    NCCL_DEBUG: WARN
     NCCL_DEBUG_SUBSYS: ALL
-    NCCL_DEBUG_FILE: ${job.base_output_dir}/nccl-%h.%p.log
+    NCCL_DEBUG_FILE: ${job.base_output_dir}/nccl-%h.log
+    TORCH_CPP_LOG_LEVEL: ERROR
+    TORCH_NCCL_SHOW_EAGER_INIT_P2P_SERIALIZATION_WARNING: FALSE
+    NCCL_NVLS_ENABLE: 0
+    TORCH_AVOID_RECORD_STREAMS: 1
+
 
 container:
   image: /e/project1/e-sta-openeurollm/container/nemo_26.04.sif
 job:
-  name: qwen3_32b_n${slurm.sbatch.nodes}_mbs${backend.megatron.micro_batch_size}_gbs${backend.megatron.global_batch_size}_baseline
+  name: qwen3_32b_n${slurm.sbatch.nodes}_mbs${backend.megatron.micro_batch_size}_gbs${backend.megatron.global_batch_size}_NOCLOCKS
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
 
 slurm:
@@ -77,4 +86,3 @@ slurm:
     nodes: 16
     time: "00:30:00"
     comment: "NVIDIA_GPU_CLOCKS=1980"
-    network: 'sharp'

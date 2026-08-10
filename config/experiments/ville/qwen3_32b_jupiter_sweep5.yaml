@@ -83,15 +83,16 @@ sweep:
   groups:
     - type: list
       configs:
-      - backend.megatron.use_sharp: true
-        slurm.sbatch.network: 'sharp'
-        aux.variant: 'sharp_enabled'
-
       - slurm.sbatch.comment: CPU_POWER_CAP=50000000
         aux.variant: "CPU_50W"
 
       - backend.megatron.ddp_bucket_size: 80000000
         aux.variant: ddp_bucket-2x
+
+      - backend.megatron.account_for_embedding_in_pipeline_split: true
+        backend.megatron.account_for_loss_in_pipeline_split: true
+        backend.megatron.num_layers_per_virtual_pipeline_stage: 1
+        aux.variant: "account_pp_split"
 
       - type: product
         params:
@@ -99,3 +100,8 @@ sweep:
 
       - slurm.sbatch.comment: "NVIDIA_GPU_CLOCKS=1980"
         aux.variant: 'CLOCKED-1980MHZ'
+
+      - backend.megatron.fp8: "hybrid"
+        backend.megatron.fp8_param_gather: true
+        backend.megatron.fp8_recipe: 'delayed'
+        aux.variant: "fp8"

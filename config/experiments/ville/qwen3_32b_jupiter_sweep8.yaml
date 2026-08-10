@@ -9,12 +9,12 @@ defaults:
   - _self_
 
 aux:
-  experiment_group: "qwen3-32b-sweep6"
+  experiment_group: "qwen3-32b-sweep8"
   variant: ""
 
 backend:
   megatron:
-    train_iters: 20
+    train_iters: 50
     lr_decay_iters: ${.train_iters}
     log_interval: 1
     eval_interval: 999
@@ -27,19 +27,22 @@ backend:
     # DATA
     dataloader_type: single
     padded_vocab_size: 262144
-    global_batch_size: 1024
+    global_batch_size: 8192
     micro_batch_size: 2
 
+    # PARALLELISMS
     pipeline_model_parallel_size: 2
     tensor_model_parallel_size: 4
     num_layers_per_virtual_pipeline_stage: 2
     sequence_parallel: true
-
-    attention_softmax_in_fp32: false
     use_distributed_optimizer: true
+
+    # OVERLAP COMM
     overlap_grad_reduce: true
     overlap_param_gather: true
     tp_comm_overlap: true
+
+    # FUSIONS
     cross_entropy_loss_fusion: true
     cross_entropy_fusion_impl: te
 
@@ -60,8 +63,7 @@ backend:
     TRITON_LIBCUDA_PATH: "/usr/local/cuda/compat/lib.real"
     SHARP_SMX_SOCK_ADDR_FAMILY: ipv4
     UB_SKIPMC: "1"
-
-    NCCL_DEBUG: INFO
+    NCCL_DEBUG: WARN
     NCCL_DEBUG_SUBSYS: INIT
     NCCL_DEBUG_FILE: ${job.base_output_dir}/nccl-%h.%p.log
 
@@ -73,7 +75,7 @@ job:
 
 slurm:
   sbatch:
-    nodes: 16
+    nodes: 512
     time: "00:45:00"
     comment: "NVIDIA_GPU_CLOCKS=1980"
 
@@ -83,12 +85,28 @@ sweep:
   groups:
     - type: list
       configs:
-      - backend.megatron.fp8: "hybrid"
-        backend.megatron.fp8_param_gather: true
-        backend.megatron.fp8_recipe: 'delayed'
-        backend.megatron.train_iters: 2000
-        backend.megatron.lr_warmup_iters: 200
-        backend.megatron.global_batch_size: 256
-        slurm.sbatch.nodes: 8
-        slurm.sbatch.time: "02:30:00"
-        aux.variant: "FP8_stability"
+
+      - aux.variant: "baseline"
+
+      - backend.megatron.ddp_bucket_size: 128000000
+        slurm.sbatch.begin: "now+30minutes"
+        aux.variant: "ddp_bucket_128M"
+
+      - backend.megatron.micro_batch_size: 1
+        backend.megatron.pipeline_model_parallel_size: 1
+        backend.megatron.num_layers_per_virtual_pipeline_stage: null
+        aux.variant: "no_pp"
+
+      - backend.megatron.ddp_bucket_size: 64000000
+        slurm.sbatch.begin: "now+30minutes"
+        aux.variant: "ddp_bucket_64M"
+
+      - backend.megatron.ddp_bucket_size: 512000000
+        slurm.sbatch.begin: "now+1hour"
+        aux.variant: "ddp_bucket_512M"
+
+      - backend.megatron.account_for_embedding_in_pipeline_split: true
+        backend.megatron.account_for_loss_in_pipeline_split: true
+        backend.megatron.num_layers_per_virtual_pipeline_stage: 1
+        aux.variant: "account_pp_split"
+        slurm.sbatch.begin: "now+2hour"

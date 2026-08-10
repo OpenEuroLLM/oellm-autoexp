@@ -3,10 +3,7 @@ image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER_aarch64_20260312
 runtime: apptainer
 bind:
   - "/e"
-  - "/dev/shm"
 env:
   WANDB_MODE: "offline"
   MACHINE_NAME: "JUPITER"
-  PYTHONPATH: ".:submodules/Megatron-LM"
-  HF_HOME: ${oc.env:HF_HOME}
 python: "/usr/bin/python"
