@@ -226,7 +226,20 @@ it against other arms' 11445 *validation* losses was wrong on two counts.
 comparable to anything. The arm overrides global_batch_size to 384 while
 train_iters is derived from aux.gbs (128), so at equal iteration counts it had
 consumed 3x the samples of every other arm -- 18.0B tokens against 6.0B.
-mhc2_lerp has the same defect; no other arm does. Both the it10000 and it11445
+
+Five arms carry the defect, not two: mhc4, mhc2_lerp, mhc2_lerp_lr0.002,
+ngpt_analytic_lr0.002 and ngpt_wnorm_lr0.002 all show 768,000 consumed samples
+at iteration 2000 against 256,000 for everything else. The _lr0.002 reruns are
+inconsistent among themselves -- ngpt_approx_lr0.002 is gbs 128 while
+ngpt_analytic_lr0.002 and ngpt_wnorm_lr0.002 are 384. Only mhc4 of the five ever
+reached 11445, so the other four never entered a results table, but their
+intermediate validation numbers (ngpt_analytic_lr0.002 2.946 @it6000,
+ngpt_wnorm_lr0.002 3.037 @it6000, mhc2_lerp 2.778 @it8000) are 3x-token figures
+and must not be read against the 6B arms.
+
+Every arm that appears in the final comparison other than mhc4 is gbs 128 / 6.0B,
+verified from consumed samples rather than from config: all the nGPT arms
+included. Both the it10000 and it11445
 mhc4 figures below are therefore 3x-data numbers, and the "0.145 lead over
 baseline" they appeared to show was a token-budget artifact. Fixed in
 commit fc0ede3: train_iters and aux.total_tokens now read
