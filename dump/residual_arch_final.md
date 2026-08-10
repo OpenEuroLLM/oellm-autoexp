@@ -372,3 +372,77 @@ so the one clean architecture comparison in the sweep exists by luck rather than
 design. Arms never reaching 11445 and therefore excluded: ngpt_scalers,
 ngpt_scalers_wnorm, muown_nockpt, ngpt_analytic_lr0.002, ngpt_wnorm_lr0.002,
 mhc2_lerp_lr0.002.
+
+## The standardized sweep: one comparable set (2026-08-10)
+
+Every arm below ran 11445 iterations at gbs=128, lr=0.002, 6.0B tokens, on the
+same 130M geometry, data and schedule. Earlier tables in this file mixed two
+learning rates and two token budgets; this one does not. tok/s/GPU is computed
+from wall-clock (gbs x seq / ms_per_iter / 4), not from Megatron's reported
+figure, which is derived from a config formula.
+
+| arm | mbs | params | tok/s/GPU | final |
+|---|---|---|---|---|
+| mhc4_gbs128 | 32 | 126.5M | 193,750 | **2.665** |
+| attnres4_lerp | 16 | 124.5M | 134,185 | 2.682 |
+| attnres8_lerp | 16 | 124.5M | 152,445 | 2.689 |
+| mhc4_lerp_scalers | 8 | 126.5M | 123,049 | 2.699 |
+| ngpt_scalers | 16 | 124.5M | 197,249 | 2.700 |
+| mhc2_lerp | 16 | 124.8M | 191,850 | 2.703 |
+| ngpt_analytic | 32 | 124.5M | 231,781 | 2.708 |
+| ngpt_approx | 32 | 124.5M | 218,453 | 2.715 |
+| **baseline** | 32 | 124.5M | **276,290** | **2.721** |
+| attnres4 | 16 | 124.5M | 226,455 | 2.737 |
+| attnres8 | 32 | 124.5M | 149,200 | 2.741 |
+| ngptpp (untied) | 16 | 153.5M | 187,998 | 2.775 |
+| ngptpp_tied | 16 | 124.5M | 184,219 | 2.859 |
+| mhc4_lerp_scalers_wnorm | 8 | 126.5M | 120,570 | 2.859 |
+| muown | 32 | 124.5M | 269,862 | 2.871 |
+| ngpt_wnorm | 32 | 124.5M | 226,064 | 2.874 |
+| attnres4_lerp_wnorm | 16 | 124.5M | 195,864 | 2.887 |
+| ngpt_scalers_wnorm | 16 | 124.5M | - | **NaN at it7600** |
+
+### What the standardization changed
+Running the nGPT-geometry arms at lr 0.001 while baseline ran 0.002 was costing
+them more than any architectural difference measured in this sweep:
+
+| arm | lr 0.001 | lr 0.002 | gain |
+|---|---|---|---|
+| attnres4_lerp_wnorm | 3.004 | 2.887 | 0.117 |
+| ngpt_wnorm | 2.972 | 2.874 | 0.098 |
+| ngptpp_tied | 2.915 | 2.859 | 0.056 |
+| ngpt_analytic | 2.729 | 2.708 | 0.021 |
+
+Two earlier conclusions do not survive it. "The nGPT LERP residual alone is a
+wash against a plain pre-norm transformer" was based on 2.729 vs baseline 2.721;
+at matched lr it is 2.708, that is 0.013 *ahead*. And the mhc4+LERP+scalers penalty
+shrinks from 0.080 to 0.033 (2.699 vs 2.665) -- still negative, but a third of
+what was reported.
+
+### What survives every correction
+* **mHC wins, by 0.056 over baseline**, on tokens, batch, lr and schedule all
+  matched. It is the only scheme that beats baseline by more than 0.04.
+* **The weight normalizer costs 0.14-0.15** and nothing recovers it: not the
+  token fix, not the lr fix, not matching canGPT's configuration. Every arm
+  carrying it lands 2.859-2.887, against 2.665-2.721 for everything else.
+* **Block AttnRes only works with the LERP.** Alone it is worse than baseline
+  (2.737 / 2.741); with the LERP it is second and third best (2.682 / 2.689).
+* **mHC and nGPT do not compose.** Every nGPT component is either harmful with
+  mHC (wnorm -0.19, LERP -0.033) or has no mechanism to help: the scalers exist
+  to reinject magnitude that normalization removes, and mHC normalizes nothing.
+
+### Cost
+mHC's 0.056 costs 30% of throughput (193,750 vs 276,290 tok/s/GPU) and runs at
+99.6% memory occupancy with no micro-batch headroom left. At matched wall-clock
+baseline sees ~1.4x the tokens, which on these curves is worth roughly as much as
+mHC's advantage -- so the scheme is close to break-even against simply training
+the baseline longer. That comparison, and a second seed, are the experiments that
+decide whether any of this is worth building on.
+
+### ngpt_scalers_wnorm diverged
+Healthy to iteration 7550 (loss 3.121, grad norm 0.367), grad norm NaN at 7600,
+never recovered. The base sweep sets check_for_nan_in_loss_and_grad: false for
+CUDA-graph capture, so it would have exited 0 with a NaN final had it not been
+cancelled. ngpt_scaler_lr_mult 4.0 puts the scalers at an effective lr of 0.008,
+and on a weight-normalized network the scalers carry all the magnitude. Note
+canGPT's own SFT config gives the scalers no lr boost at all.
