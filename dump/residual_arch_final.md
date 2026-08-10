@@ -222,22 +222,46 @@ loss at iteration 10350, and mhc4 never finished -- both attempts (1229316,
 1231292) hit TIMEOUT, the second after 12h at iteration 10350/11445. Comparing
 it against other arms' 11445 *validation* losses was wrong on two counts.
 
-The right common checkpoint is iteration 10000, the last one mhc4 has:
+**Second correction (2026-08-10), larger than the first.** mhc4 was also not
+comparable to anything. The arm overrides global_batch_size to 384 while
+train_iters is derived from aux.gbs (128), so at equal iteration counts it had
+consumed 3x the samples of every other arm -- 18.0B tokens against 6.0B.
+mhc2_lerp has the same defect; no other arm does. Both the it10000 and it11445
+mhc4 figures below are therefore 3x-data numbers, and the "0.145 lead over
+baseline" they appeared to show was a token-budget artifact. Fixed in
+commit fc0ede3: train_iters and aux.total_tokens now read
+${.global_batch_size}, so the budget holds at 6.0B under any batch override.
 
-| arm | val @ it10000 | val @ it11445 |
-|---|---|---|
-| **mhc4 (plain)** | **2.664** | did not finish |
-| mhc4 + lerp + scalers | 2.789 | 2.714 |
-| baseline (for reference) | 2.809 | 2.721 |
-| mhc4 + lerp + scalers + wnorm | 2.996 | 2.919 |
-| ngpt_wnorm (for reference) | 3.047 | 2.972 |
+mhc4 was resumed from its iteration-10000 checkpoint on the current build (195.9
+TFLOP/s against the 95 it originally ran at) and finished the remaining 1445
+iterations in 51 minutes. Its true converged number is **2.583 at 18.0B tokens**,
+which stays on record as what mHC reaches with 3x the data and is excluded from
+every comparison below.
 
-The qualitative claim survives the correction: at it10000 mhc4 leads the next
-arm by 0.12 and the plain baseline by 0.145, on like-for-like validation.
+### The controlled comparison
+mhc4_gbs128 is mHC at the batch every other arm used: 11445 iterations, gbs 128,
+lr 0.002, same geometry/data/schedule as baseline, differing in exactly one
+thing. Consumed samples at iteration 11400 are identical to baseline's
+(1,459,200), verified in both logs.
+
+| arm | val @ it11445 |
+|---|---|
+| **mhc4_gbs128** | **2.666** |
+| attnres4_lerp (lr 0.002) | 2.682 |
+| attnres8_lerp (lr 0.002) | 2.689 |
+| **baseline (lr 0.002)** | **2.721** |
+
+**mHC beats the plain transformer by 0.055 on a fully controlled comparison**,
+and is the best arm in the 6B-token sweep. That is a third of the 0.145 the
+confounded comparison advertised, but it is real: the gap ran 0.089 / 0.070 /
+0.060 / 0.059 / 0.057 / 0.055 across it2000-it11445, that is it compressed early
+and then held, unlike the ngptpp lead which decayed all the way to 0.032.
 
 Composing nGPT's magnitude machinery with mHC is *not* additive -- it is
-negative. At it10000 the LERP + scaler set costs 0.125 and the weight
-normalizer another 0.21 on top. Plain mhc4 remains the best arm in the sweep.
+negative. At matched tokens and matched lr this cannot yet be quantified,
+because mhc4_lerp_scalers ran at lr 0.001 and mhc4_gbs128 at 0.002; at their own
+learning rates the composition arms land at 2.714 and 2.919 against plain mHC's
+2.666.
 
 That is consistent with the two schemes constraining the same quantity twice:
 mHC already makes the mixing operator non-expansive, so pinning the stream to
@@ -308,3 +332,30 @@ Note `head_unconstrained` is inert throughout this sweep: it runs
 `untie_embeddings_and_output_weights: false`, that is *tied*, so there is no
 `output_layer.weight` parameter, `classify_param` returns "embedding", and the
 shared matrix is normalized regardless of the flag.
+
+## The sweep's second uncontrolled variable: learning rate
+
+Pulling lr out of each arm's log shows the 6B-token arms split across two
+learning rates, and **there is no baseline at lr 0.001**:
+
+| lr 0.002 | val | | lr 0.001 | val |
+|---|---|---|---|---|
+| attnres4_lerp_lr0.002 | 2.682 | | mhc4_lerp_scalers | 2.714 |
+| attnres8_lerp | 2.689 | | attnres4_lerp | 2.715 |
+| ngpt_approx_lr0.002 | 2.715 | | ngpt_analytic | 2.729 |
+| **baseline** | **2.721** | | ngpt_approx | 2.739 |
+| attnres4 | 2.737 | | ngptpp (untied, ~159M) | 2.825 |
+| attnres8 | 2.741 | | ngptpp_tied | 2.915 |
+| muown | 2.871 | | mhc4_lerp_scalers_wnorm | 2.919 |
+| mhc4_gbs128 | **2.666** | | ngpt_wnorm | 2.972 |
+| | | | attnres4_lerp_wnorm | 3.004 |
+
+Every nGPT and mHC-composition result sits in the right-hand column with no
+controlled reference. The missing run is baseline at lr 0.001 (~2h); without it
+those nine numbers can only be ranked against each other.
+
+mhc4_gbs128 landed at lr 0.002 by inheriting the base, as the original mhc4 did,
+so the one clean architecture comparison in the sweep exists by luck rather than
+design. Arms never reaching 11445 and therefore excluded: ngpt_scalers,
+ngpt_scalers_wnorm, muown_nockpt, ngpt_analytic_lr0.002, ngpt_wnorm_lr0.002,
+mhc2_lerp_lr0.002.
