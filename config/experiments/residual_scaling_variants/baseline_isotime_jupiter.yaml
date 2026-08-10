@@ -33,8 +33,8 @@ defaults:
 
 slurm:
   sbatch:
-    # 18,046 iterations at baseline's 474 ms/iter is ~2.4h.
-    time: "04:00:00"
+    # 21,648 iterations at baseline's 474 ms/iter is ~2.9h.
+    time: "05:00:00"
 
 backend:
   megatron:
@@ -53,3 +53,8 @@ sweep:
       # Matches loop12x2_plain's wall-clock: 11445 * 748/474.4.
       - aux.variant: baseline_iso_loop12x2
         backend.megatron.train_iters: 18046
+      # Matches loop12x2_ngpt's wall-clock: 11445 * 897/474.4. That arm finished at
+      # 2.663, the best in the sweep on tokens, so it is the one most worth pricing
+      # -- and at 0.53x throughput it is also the most expensive claim to defend.
+      - aux.variant: baseline_iso_loop12x2_ngpt
+        backend.megatron.train_iters: 21648
