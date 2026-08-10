@@ -485,3 +485,34 @@ the architecture itself buys nothing on the speed-Pareto at this scale.
   strictly dominated by ngpt_analytic (same throughput to 0.2%, worse loss), and
   loop6x2_plain pays 0.037 of loss for 1.4% more speed. Looping holds FLOPs fixed
   and removes parameters, and parameters are close to free on the training clock.
+
+### Amendment: iso-steps is the primary frame
+The section above reads the wall-clock result as reframing the branch. That is too
+strong, for a reason the branch itself demonstrates: iteration time is an
+engineering variable, not an architectural one. mHC went 94.9 -> 199.8 TFLOP/s in
+one session with no change to the model.
+
+Optimization effort across these arms is badly uneven, and the ranking of
+throughput largely tracks how much attention each arm received rather than what it
+intrinsically costs:
+
+* **The looped arms ran with CUDA graphs disabled entirely.** TransformerBlock
+  refuses them because CudaGraphManager keys graphs per module and assumes one
+  call per module per step, so a looped layer would replay another position's
+  graph. Graphs are worth ~20% at this size on the arms that use them, so looped
+  throughput here is a floor, not a measurement.
+* mHC received a dedicated campaign (fused read/write, Triton backward, tile
+  search). AttnRes and the looped arms received none.
+
+So the standardized 11445-step / gbs 128 / lr 0.002 table is the primary result,
+and the iso-time comparison is best read as *the bar that kernel work has to
+clear*, not as a verdict:
+
+| arm | elapsed | baseline reaches its loss at | speedup needed to win |
+|---|---|---|---|
+| mhc4_gbs128 | 2:13:00 | ~2:15 | none, already at parity |
+| loop12x2_plain | 2:25:48 | ~2:26 | none, already at parity |
+| loop12x2_ngpt | 2:55:18 | ~2:24 | 1.22x |
+
+loop12x2_ngpt's +0.058 over baseline at equal parameters is roughly one
+loop-aware CUDA-graph integration away from being a wall-clock win too.
