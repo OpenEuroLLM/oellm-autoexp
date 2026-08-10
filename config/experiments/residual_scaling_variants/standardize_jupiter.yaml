@@ -1,0 +1,169 @@
+# @package _global_
+#
+# Every remaining scheme at baseline's settings, so the sweep has one comparable
+# set of final numbers.
+#
+# Baseline is gbs 128, 11445 iterations (= 6.0B tokens at seq 4096), lr 0.002.
+# Arms drifted from that in two ways:
+#
+#   * gbs. Five arms ran at 384 while train_iters stayed derived from aux.gbs
+#     (128), so they saw 18.0B tokens: mhc4, mhc2_lerp, mhc2_lerp_lr0.002,
+#     ngpt_analytic_lr0.002, ngpt_wnorm_lr0.002. Fixed structurally in fc0ede3.
+#   * lr. The nGPT-geometry arms and the mHC compositions ran at 0.001 while
+#     baseline, muown and the AttnRes arms ran at 0.002, so those results have no
+#     controlled reference.
+#
+# This sweep reruns every scheme that lacks a gbs=128 / 11445 / lr=0.002 result.
+# Already covered and therefore absent: baseline, muown, attnres4, attnres8,
+# attnres8_lerp, attnres4_lerp (as attnres4_lerp_lr0.002), ngpt_approx (as
+# ngpt_approx_lr0.002), and mhc4 (as mhc4_gbs128, 2.666).
+#
+# lr 0.002 is safe for the nGPT geometry: ngpt_approx_lr0.002 (2.715),
+# attnres4_lerp_lr0.002 (2.682) and attnres8_lerp (2.689) all finished there. The
+# two arms that died at 0.002 -- ngpt_analytic_lr0.002 and ngpt_wnorm_lr0.002 --
+# were also the gbs=384 ones, so the batch is the more likely cause than the
+# step size. If either dies again here that is itself the answer.
+#
+# The _std suffix is load-bearing. `load` resolves to ${job.base_output_dir},
+# which is derived from aux.variant, so reusing a name would make the job resume
+# the old run's checkpoint -- and ngpt_analytic_lr0.002 / ngpt_wnorm_lr0.002 both
+# have an iter_0005000 from their gbs=384 attempts.
+#
+# weight_decay 0.0 on the wnorm arms is part of the nGPT recipe, not drift, so it
+# stays. micro_batch_size varies per arm to fit memory; it changes gradient
+# accumulation only, not the effective batch.
+defaults:
+  - ngpt_scalers_jupiter
+  - _self_
+
+slurm:
+  sbatch:
+    # The mbs=8 LERP+scaler arms are the slowest here (~100 TFLOP/s even with the
+    # _compiled fix); the plain nGPT arms finish in ~2h.
+    time: "08:00:00"
+
+backend:
+  megatron:
+    global_batch_size: 128
+    lr: 0.002
+
+sweep:
+  type: product
+  groups:
+   - type: list
+     configs:
+      # ---- nGPT geometry ----
+      - aux.variant: ngpt_analytic_std
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+        backend.megatron.micro_batch_size: 32
+      - aux.variant: ngpt_wnorm_std
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+        backend.megatron.weight_normalizer: true
+        backend.megatron.weight_normalizer_out_norm_dim_0: true
+        backend.megatron.weight_normalizer_head_unconstrained: true
+        backend.megatron.weight_decay: 0.0
+        backend.megatron.micro_batch_size: 32
+      # These two never produced a single logged iteration in their original
+      # sweep, so this is their first real result at any setting.
+      - aux.variant: ngpt_scalers_std
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+        backend.megatron.qk_l2_norm: true
+        backend.megatron.ngpt_use_sqk: true
+        backend.megatron.ngpt_use_suv: true
+        backend.megatron.micro_batch_size: 16
+      - aux.variant: ngpt_scalers_wnorm_std
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+        backend.megatron.qk_l2_norm: true
+        backend.megatron.ngpt_use_sqk: true
+        backend.megatron.ngpt_use_suv: true
+        backend.megatron.weight_normalizer: true
+        backend.megatron.weight_normalizer_out_norm_dim_0: true
+        backend.megatron.weight_normalizer_head_unconstrained: true
+        backend.megatron.weight_decay: 0.0
+        backend.megatron.ngpt_scaler_lr_mult: 4.0
+        backend.megatron.micro_batch_size: 16
+      # ---- canGPT-matched nGPT ----
+      # ngptpp is untied, so it carries 28.97M more parameters than every other
+      # arm here. Kept because it is a scheme in its own right, but its number is
+      # not parameter-matched and must not be ranked against the rest.
+      - aux.variant: ngptpp_std
+        backend.megatron.untie_embeddings_and_output_weights: true
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: approx
+        backend.megatron.ngpt_base_scale: 0.01
+        backend.megatron.qk_l2_norm: true
+        backend.megatron.ngpt_use_sqk: true
+        backend.megatron.ngpt_use_suv: true
+        backend.megatron.weight_normalizer: true
+        backend.megatron.weight_normalizer_out_norm_dim_0: false
+        backend.megatron.weight_normalizer_head_unconstrained: true
+        backend.megatron.weight_decay: 0.1
+        backend.megatron.ngpt_scaler_lr_mult: 1.0
+        backend.megatron.micro_batch_size: 16
+      - aux.variant: ngptpp_tied_std
+        backend.megatron.untie_embeddings_and_output_weights: false
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: approx
+        backend.megatron.ngpt_base_scale: 0.01
+        backend.megatron.qk_l2_norm: true
+        backend.megatron.ngpt_use_sqk: true
+        backend.megatron.ngpt_use_suv: true
+        backend.megatron.weight_normalizer: true
+        backend.megatron.weight_normalizer_out_norm_dim_0: false
+        backend.megatron.weight_decay: 0.1
+        backend.megatron.ngpt_scaler_lr_mult: 1.0
+        backend.megatron.micro_batch_size: 16
+      # ---- mHC compositions ----
+      - aux.variant: mhc2_lerp_std
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 2
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.mhc_lerp: true
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+        backend.megatron.cuda_graph_impl: none
+        backend.megatron.micro_batch_size: 16
+      - aux.variant: mhc4_lerp_scalers_std
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.mhc_lerp: true
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+        backend.megatron.qk_l2_norm: true
+        backend.megatron.ngpt_use_sqk: true
+        backend.megatron.ngpt_use_suv: true
+        backend.megatron.micro_batch_size: 8
+      - aux.variant: mhc4_lerp_scalers_wnorm_std
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.mhc_lerp: true
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+        backend.megatron.qk_l2_norm: true
+        backend.megatron.ngpt_use_sqk: true
+        backend.megatron.ngpt_use_suv: true
+        backend.megatron.weight_normalizer: true
+        backend.megatron.weight_normalizer_out_norm_dim_0: true
+        backend.megatron.weight_normalizer_head_unconstrained: true
+        backend.megatron.weight_decay: 0.0
+        backend.megatron.ngpt_scaler_lr_mult: 4.0
+        backend.megatron.micro_batch_size: 8
+      # ---- Block AttnRes ----
+      - aux.variant: attnres4_lerp_wnorm_std
+        backend.megatron.attn_res: true
+        backend.megatron.attn_res_num_blocks: 4
+        backend.megatron.attn_res_lerp: true
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+        backend.megatron.weight_normalizer: true
+        backend.megatron.weight_normalizer_out_norm_dim_0: true
+        backend.megatron.weight_normalizer_head_unconstrained: true
+        backend.megatron.weight_decay: 0.0
+        backend.megatron.cuda_graph_impl: none
+        backend.megatron.micro_batch_size: 16
