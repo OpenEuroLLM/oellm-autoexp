@@ -516,3 +516,47 @@ clear*, not as a verdict:
 
 loop12x2_ngpt's +0.058 over baseline at equal parameters is roughly one
 loop-aware CUDA-graph integration away from being a wall-clock win too.
+
+## Where the recurrence sits: loop_group_size (6B tokens, 130M)
+
+Identical parameters (92.7M), identical FLOPs, identical effective depth (18 from
+12 unique layers, 3 + (6)x2 + 3). The *only* difference is the order in which the
+block's six layers are applied:
+
+    group 6:  3 4 5 6 7 8 | 3 4 5 6 7 8      outer recurrence
+    group 3:  3 4 5 3 4 5 | 6 7 8 6 7 8
+    group 2:  3 4 3 4 | 5 6 5 6 | 7 8 7 8
+    group 1:  3 3 | 4 4 | 5 5 | 6 6 | ...    each layer repeated in place
+
+| group | plain | nGPT | LERP gap |
+|---|---|---|---|
+| 1 | 2.7685 | 2.7597 | 0.009 |
+| 2 | 2.7524 | 2.7455 | 0.007 |
+| 3 | 2.7512 | 2.7375 | 0.014 |
+| 6 | 2.7579 | 2.7269 | 0.031 |
+
+**Plain residuals are indifferent to placement**: 2.7512-2.7685, a spread of 0.018
+with no ordering, against a ~0.015 noise floor.
+
+**nGPT is monotone in group size**: 2.7597 -> 2.7455 -> 2.7375 -> 2.7269, and the
+LERP's advantage grows from 0.009 at group 1 to 0.031 at group 6.
+
+### This refutes the magnitude-invariance mechanism
+The hypothesis was that nGPT's LERP holds ||x|| constant with depth, so a tied
+block sees inputs from the same distribution at every iteration and repetition
+becomes well-posed. That predicts the LERP should help *most* where repetition is
+tightest -- group 1, a layer consuming its own output -- and least where five
+other layers intervene. The measurement is exactly inverted, monotonically, on a
+grid where nothing but application order changes.
+
+The loop-count axis failed the same prediction independently: gaps of 0.021
+(3x4), 0.031 (6x2), 0.015 (12x2), unrelated to how many times a block repeats.
+
+So the LERP does help looped models, reliably, by ~0.03 at the best topology --
+but not by stabilising repeated application of shared weights. Whatever it
+provides is a property of the depth-wise geometry as a whole.
+
+### Practical
+Use **outer recurrence** (loop the whole block). It is free -- every cell costs
+the same -- and worth ~0.02 over repeating layers in place when combined with
+nGPT. With a plain residual, placement does not matter.
