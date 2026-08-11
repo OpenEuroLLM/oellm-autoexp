@@ -197,25 +197,56 @@ On that reading:
 | loop12x2_plain | none, already at parity |
 | loop12x2_ngpt | **1.22×** |
 
-**Correction (2026-08-11).** An earlier version of this section explained the
-disabled graphs by saying `CudaGraphManager` "keys graphs per module and assumes
-one call per module per step, so a looped layer would replay another position's
-graph." That was written from the code's comments rather than from a test, and
-it is wrong. At PP=1 — which looping requires — `reuse_cudagraphs` is true
-(`cuda_graphs.py:1519`), a runner is chosen by scanning for the first `FWD_READY`
-one (`:1566`), and a forward flips it to `BWD_READY` (`:1709-1711`). So N calls
-to one module capture N runners and replay them in capture order. That is the
-mechanism gradient accumulation already depends on: any arm with
-`mbs < gbs/DP` was already calling every layer several times per step under
-graphs.
+### Why the looped arms had no graphs, and the fix (2026-08-11)
 
-The looped arms therefore ran without graphs because of a guard that should not
-have been there, not because of a limitation. The guard has been removed and the
-recompute path now walks the loop schedule instead of a contiguous layer range;
-both are covered by tests in
-`tests/unit_tests/transformer/test_loop_schedule.py`. The 1.22× above is still
-the bar `loop12x2_ngpt` has to clear, but closing it is a rerun rather than a
-kernel project.
+This section previously gave two different explanations, both written from
+reading rather than from a run. The measured one:
+
+**Runner selection was never the problem.** At PP=1 — which looping requires —
+`reuse_cudagraphs` is true (`cuda_graphs.py:1519`), a runner is chosen by
+scanning for the first `FWD_READY` one (`:1566`), and a forward flips it to
+`BWD_READY` (`:1709-1711`). N calls to one module capture N runners and replay
+them in capture order, exactly as gradient accumulation already relies on. So
+the original guard's stated reason — "keys graphs per module and assumes one
+call per module per step" — was not the mechanism.
+
+**The blocker was one level down, in the input-buffer chaining.**
+`_resolve_input_buffer` (`:895-914`) marks a captured input `can_skip_replay_copy`
+when the graph's input buffer *is* the buffer its producer wrote into, and replay
+then skips the copy and asserts pointer equality (`:611`). That holds only while
+each module occupies one fixed position in the layer chain. A looped module sits
+at several depths, so at replay its input legitimately arrives in a different
+allocation and the assertion fires. Removing the guard without this made all
+three looped arms die on `assert user_input.data_ptr() == cudagraph_input.data_ptr()`.
+
+**Fix:** force `can_skip_replay_copy = False` when a loop schedule is active, so
+replay copies into the graph buffer instead of asserting. One hidden-state copy
+per graphed call, and inert for every non-looped model (`loop_block_layers` is 0).
+
+**Measured, 120-iteration probes on the mLSTM hybrid grid:**
+
+| arm | no graphs | graphs | speedup |
+|---|---|---|---|
+| d18 (dense) | 630 ms | 477.3 | 1.32× |
+| d12 (dense) | 589 | 401.7 | 1.47× |
+| d9 (dense) | 569 | 405.8 | 1.40× |
+| loop6x2 | 631 | 480.1 | **1.31×** |
+| loop3x4 | 633 | 488.3 | **1.30×** |
+| loop12x2 | 756 | 761.0 | **1.00× — unexplained** |
+
+Numerics check: 12 iterations, graphs on vs off, per iteration. Iterations 1-2
+bit-identical; max |Δloss| over 11 iterations is 4.2e-3 (loop6x2), 8.0e-4
+(loop12x2), 3.6e-4 (loop3x4), against **9.5e-4 for dense d18**, which the change
+cannot affect. Ordinary reduction-order drift, not a numerics bug.
+
+Activation recompute needed a real fix, not just a lifted guard: the checkpointed
+forward chunked `range(num_layers)` over `self.layers`, which under a schedule
+applies the block once instead of once per iteration — a different model that
+trains happily. It now walks the schedule. Both paths are covered in
+`tests/unit_tests/transformer/test_loop_schedule.py`.
+
+So the 1.22× above is reachable for `loop6x2`/`loop3x4`-style topologies but
+**not yet demonstrated for `loop12x2`**, the arm that actually needs it.
 
 ## Throughput
 
@@ -275,13 +306,16 @@ knowing before running anything else in this harness.
 7. **Early checkpoints mislead badly.** `loop3x4` showed a 0.802 nGPT gap at
    it2000 that collapsed to 0.035 by it4000. Gaps at the end of warmup predict
    nothing.
-8. **A guard written from a comment is not a measurement.** Looping was blocked
-   from CUDA graphs and recompute by a `NotImplementedError` justified from
-   `CudaGraphManager`'s docstring rather than a test. Reading the actual runner
-   selection showed the opposite — it is the same path gradient accumulation
-   uses. Cost: every looped arm ran ~20% slow, and the speed-Pareto section was
-   framed around a kernel project that turned out to be a rerun. The same
-   scepticism the loss numbers get should apply to claims about the harness.
+8. **A claim about the harness is not a measurement either.** Looping was blocked
+   from CUDA graphs by a `NotImplementedError` justified from `CudaGraphManager`'s
+   docstring. Reading the runner selection appeared to refute it, so the guard was
+   removed — and all three looped arms then crashed on a `data_ptr` assertion one
+   layer further down. Two explanations were published before a single run was
+   done to check either. Both the guard and its removal deserved the scepticism
+   the loss numbers get; the section above now records what a run actually showed.
+9. **Check exit state before quoting throughput.** The first graphs-on numbers for
+   `loop6x2`/`loop3x4` were read from logs of jobs that went on to fail — the
+   arms trained a while, then died. `sacct` state, not the last log line.
 
 ## Open
 
@@ -292,15 +326,20 @@ knowing before running anything else in this harness.
    actual claim under memory constraints. The current grid does not test it.
    *In progress:* the hybrid grid in `../residual_scaling_variants/looped_hybrid_jupiter.yaml`
    runs these controls (`hybrid_d12`, `hybrid_d9`) on an mLSTM stack.
-3. **Rerun the looped arms with CUDA graphs on.** No longer blocked — see the
-   correction above; the guard was unnecessary and is gone. Worth ~20% on the
-   transformer arms, and likely more on the hybrid grid, where a 120-iteration
-   probe found step time nearly depth-independent (9 → 18 layers costs 11% of
-   wall-clock while analytic TFLOP/s falls 180.6 → 127.7, that is launch-bound).
-   Launch overhead is the one thing graphs remove.
-4. **PP>1 is implemented but never equivalence-checked** for mHC or Block AttnRes
+3. **Rerun the looped arms with CUDA graphs on.** Now possible — the guard is gone
+   and the input-buffer chaining is fixed (see above). Measured at 1.30-1.31× on
+   `loop6x2`/`loop3x4`. **But `loop12x2` gains nothing** (761.0 vs 756 ms) and it is
+   the arm whose parameter win needs 1.22× to become a wall-clock win, so that
+   case needs diagnosing before the rerun is worth the GPU-hours.
+4. **~335 ms of depth-independent step cost**, even with graphs on. On the hybrid
+   grid, 9 → 18 layers costs 72 ms of a 477 ms step, and `d12` (401.7 ms) is
+   *faster* than `d9` (405.8). Fitting the dense points puts ~70% of the step in
+   something that does not scale with depth. Graphs removed ~150 ms of it; the
+   rest is unidentified and is the largest remaining throughput lever. Profile
+   rather than guess — two guesses about this subsystem have already been wrong.
+5. **PP>1 is implemented but never equivalence-checked** for mHC or Block AttnRes
    (PP=2 halves DP, so data order differs and a naive comparison fails). Treat as
    unverified.
-5. **Scale.** Everything here is 130M / 6B tokens on one node. A scheme whose
+6. **Scale.** Everything here is 130M / 6B tokens on one node. A scheme whose
    advantage grows with size is invisible at this scale; a size ladder, not more
    variants at 130M, is the way to find out.
