@@ -965,6 +965,22 @@ class MegatronConfig(ConfigInterface):
     # value starts at ngpt_scaler_init, decoupling the two.
     ngpt_scaler_base_scale: float = -1.0
 
+    # Looped (weight-tied) depth: prelude / block x iterations / coda. The middle block is
+    # built once and applied loop_iterations times, so effective depth exceeds parameter
+    # depth. num_layers counts *unique* layers and must equal prelude + block + coda.
+    #
+    # The motivation is nGPT's LERP residual: it holds ||x|| constant with depth, so a
+    # repeated block sees inputs from the same distribution at every iteration. A plain
+    # additive residual grows in magnitude with depth, so a tied block would face a
+    # different input scale on each pass. Requires PP=1, and rejects activation recompute
+    # and CUDA graphs (both assume one call per layer module per step).
+    loop_block_layers: int = 0
+    loop_iterations: int = 1
+    loop_prelude_layers: int = 0
+    loop_coda_layers: int = 0
+    # 0 = repeat the whole block (outer recurrence); N = repeat groups of N in place.
+    loop_group_size: int = 0
+
     # Enable mHC (arXiv:2512.24880): widen the residual into mhc_expansion_rate parallel
     # streams mixed by a doubly stochastic matrix. Doubly stochastic mixing is non-expansive
     # and closed under composition, so the composite depth mapping stays norm-preserving -
