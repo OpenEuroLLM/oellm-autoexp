@@ -171,6 +171,100 @@ repetition is tightest. Two independent axes say the opposite:
 The LERP does help looped models, reliably, by ~0.03 at the best topology. It is
 not doing so by stabilising repeated application of shared weights.
 
+## Looped depth in a hybrid stack, with the dense controls
+
+`../residual_scaling_variants/looped_hybrid_jupiter.yaml`. Same budget as
+everything above — 11,445 steps, gbs 128, lr 0.002, 6.0B tokens, all six arms
+verified at 1,459,200 consumed samples.
+
+Two things this grid adds. First, **the dense controls the transformer grid never
+ran**: looping was only ever compared against a *deeper* dense model, so "looping
+wins at equal parameters" was never tested against the dense model of the same
+size. Second, a stack where looping's structural cost disappears — a softmax
+layer's KV cache scales with *effective* depth, so `loop12x2` would cost 1.67× the
+KV of `d18` at equal stored parameters, while a gated linear layer's recurrent
+state is constant in sequence length. Softmax sits in the prelude and coda and
+mLSTM in the looped block, so the repeated layers are exactly the ones with no
+context-scaling state.
+
+Geometry is the 130M one with mLSTM replacing attention in the block (9 heads ×
+64, matching the softmax heads). That costs 1.669M per mixer against 1.327M, so
+these arms run ~3.3% heavier than the 124.5M transformer baseline. **The offset is
+between this grid and the transformer grid, never inside it** — do not read
+`hybrid_d18` against `baseline` as a parameter-matched pair.
+
+| arm | unique | effective | params | tok/s/GPU | mem | final |
+|---|---|---|---|---|---|---|
+| hybrid_loop12x2 | 18 | 30 | 128.66M | 171,336 | 0.667 | **2.6691** |
+| hybrid_d18 | 18 | 18 | 128.66M | 273,010 | 0.771 | 2.7079 |
+| hybrid_loop6x2 | 12 | 18 | 94.75M | 272,159 | 0.768 | 2.7487 |
+| hybrid_loop3x4 | 9 | 18 | 77.79M | 269,529 | 0.767 | 2.7790 |
+| hybrid_d12 | 12 | 12 | 94.75M | 379,589 | 0.544 | 2.7820 |
+| hybrid_d9 | 9 | 9 | 77.79M | 478,889 | 0.431 | 2.8299 |
+
+### At equal parameters, looping wins at every size
+
+| params | dense | looped | gain |
+|---|---|---|---|
+| 77.79M | d9 2.8299 | loop3x4 2.7790 | **+0.051** |
+| 94.75M | d12 2.7820 | loop6x2 2.7487 | **+0.033** |
+| 128.66M | d18 2.7079 | loop12x2 2.6691 | **+0.039** |
+
+Three for three, all above the ~0.015 noise floor, and the 128.66M cell is the
+comparison the transformer grid made (+0.043 plain / +0.058 with the LERP) —
+reproduced here on a different mixer at +0.039.
+
+### At equal FLOPs, dense wins
+
+All three at 18 effective layers:
+
+| arm | unique | params | final | vs d18 |
+|---|---|---|---|---|
+| d18 | 18 | 128.66M | **2.7079** | — |
+| loop6x2 | 12 | 94.75M | 2.7487 | −0.041 |
+| loop3x4 | 9 | 77.79M | 2.7790 | −0.071 |
+
+Spending a fixed compute budget on parameters beats spending it on depth
+recurrence, and by almost exactly what the transformer grid found (−0.037 /
+−0.070). Throughput confirms these are genuinely iso-FLOP: 273,010 / 272,159 /
+269,529 tok/s/GPU, within 1.3%.
+
+### What looping is worth, in parameters
+
+The three dense points are tightly log-linear — successive slopes −0.2425 and
+−0.2424 — giving `loss = 3.8853 − 0.2424·ln(P)`. Inverting the looped arms onto
+that curve:
+
+| arm | params | dense-equivalent | multiplier |
+|---|---|---|---|
+| loop3x4 | 77.79M | 96.0M | 1.23× |
+| loop6x2 | 94.75M | 108.7M | 1.15× |
+| loop12x2 | 128.66M | 151.0M | 1.17× |
+
+**A looped model behaves like a dense model 15–23% larger.** No clean trend with
+iteration count across the three (1.23 / 1.15 / 1.17), so treat this as a level,
+not a law; `loop12x2`'s figure is also an extrapolation past the fitted range.
+Concretely: `loop3x4` at 77.79M matches `d12` at 94.75M (2.7790 vs 2.7820) — same
+quality, 18% fewer stored parameters.
+
+That is the memory-constrained claim, tested properly for the first time. It is
+also modest next to the offload arithmetic, where any streaming of weights makes
+looping win by a wide margin: 1.15–1.23× effective parameters is what the 1.67–2×
+FLOPs buys.
+
+### Cost
+
+`loop12x2` runs at 0.63× `d18`'s throughput for its +0.039, so on matched
+wall-clock `d18` would get 1.59× the steps. Whether that closes the gap is
+**not measured here** — the analogous transformer comparison came out a dead
+heat. Note also that all six arms ran with CUDA graphs off; graphs are now
+available for looped stacks (see below) and are worth 1.30–1.31× on
+`loop6x2`/`loop3x4`, but nothing on `loop12x2`.
+
+Memory is the other half of the story: `loop12x2` reaches the best loss in this
+grid at 0.667 occupancy, *below* `d18`'s 0.771, because its micro-batch is 16
+rather than 32. Parameters, not activations, are what looping economises.
+
 ## Speed-Pareto: matched wall-clock
 
 Every arm above ran matched *tokens*. The arms that beat baseline all run slower,
@@ -321,11 +415,11 @@ knowing before running anything else in this harness.
 
 1. **Seed repeats** (2 runs). Noise is ~0.015 and several conclusions rest on
    ~0.03 differences. Cheapest thing outstanding.
-2. **Dense controls at 76.8M and 92.7M** (2 runs, faster than baseline). Needed to
-   say whether looping beats a *smaller dense model* at equal parameters — the
-   actual claim under memory constraints. The current grid does not test it.
-   *In progress:* the hybrid grid in `../residual_scaling_variants/looped_hybrid_jupiter.yaml`
-   runs these controls (`hybrid_d12`, `hybrid_d9`) on an mLSTM stack.
+2. ~~**Dense controls at 76.8M and 92.7M.**~~ **Closed.** The hybrid grid ran them
+   (`hybrid_d9`, `hybrid_d12`, `hybrid_d18`): looping beats the equally-sized dense
+   model at all three sizes, by 0.051 / 0.033 / 0.039, and is worth 1.15-1.23× in
+   effective parameters. Still open on the *transformer* stack, where only the
+   128.66M-equivalent cell was ever run.
 3. **Rerun the looped arms with CUDA graphs on.** Now possible — the guard is gone
    and the input-buffer chaining is fixed (see above). Measured at 1.30-1.31× on
    `loop6x2`/`loop3x4`. **But `loop12x2` gains nothing** (761.0 vs 756 ms) and it is
