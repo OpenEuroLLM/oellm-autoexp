@@ -188,15 +188,34 @@ is distinguishable from baseline trained longer.**
 **Read this as the bar kernel work must clear, not as a verdict.** Iteration time
 is an engineering variable and effort here was very uneven: mHC received a
 dedicated campaign (94.9 → 199.8 TFLOP/s, no model change), while the looped arms
-ran with **CUDA graphs disabled entirely** — `CudaGraphManager` keys graphs per
-module and assumes one call per module per step, so a looped layer would replay
-another position's graph. Graphs are worth ~20% at this size. On that reading:
+ran with **CUDA graphs disabled entirely**. Graphs are worth ~20% at this size.
+On that reading:
 
 | arm | speedup needed to win on wall-clock |
 |---|---|
 | mhc4 | none, already at parity |
 | loop12x2_plain | none, already at parity |
-| loop12x2_ngpt | **1.22×** — about what loop-aware CUDA graphs would give |
+| loop12x2_ngpt | **1.22×** |
+
+**Correction (2026-08-11).** An earlier version of this section explained the
+disabled graphs by saying `CudaGraphManager` "keys graphs per module and assumes
+one call per module per step, so a looped layer would replay another position's
+graph." That was written from the code's comments rather than from a test, and
+it is wrong. At PP=1 — which looping requires — `reuse_cudagraphs` is true
+(`cuda_graphs.py:1519`), a runner is chosen by scanning for the first `FWD_READY`
+one (`:1566`), and a forward flips it to `BWD_READY` (`:1709-1711`). So N calls
+to one module capture N runners and replay them in capture order. That is the
+mechanism gradient accumulation already depends on: any arm with
+`mbs < gbs/DP` was already calling every layer several times per step under
+graphs.
+
+The looped arms therefore ran without graphs because of a guard that should not
+have been there, not because of a limitation. The guard has been removed and the
+recompute path now walks the loop schedule instead of a contiguous layer range;
+both are covered by tests in
+`tests/unit_tests/transformer/test_loop_schedule.py`. The 1.22× above is still
+the bar `loop12x2_ngpt` has to clear, but closing it is a rerun rather than a
+kernel project.
 
 ## Throughput
 
@@ -256,6 +275,13 @@ knowing before running anything else in this harness.
 7. **Early checkpoints mislead badly.** `loop3x4` showed a 0.802 nGPT gap at
    it2000 that collapsed to 0.035 by it4000. Gaps at the end of warmup predict
    nothing.
+8. **A guard written from a comment is not a measurement.** Looping was blocked
+   from CUDA graphs and recompute by a `NotImplementedError` justified from
+   `CudaGraphManager`'s docstring rather than a test. Reading the actual runner
+   selection showed the opposite — it is the same path gradient accumulation
+   uses. Cost: every looped arm ran ~20% slow, and the speed-Pareto section was
+   framed around a kernel project that turned out to be a rerun. The same
+   scepticism the loss numbers get should apply to claims about the harness.
 
 ## Open
 
@@ -264,8 +290,14 @@ knowing before running anything else in this harness.
 2. **Dense controls at 76.8M and 92.7M** (2 runs, faster than baseline). Needed to
    say whether looping beats a *smaller dense model* at equal parameters — the
    actual claim under memory constraints. The current grid does not test it.
-3. **Loop-aware CUDA graphs.** ~20% on every looped arm; converts
-   `loop12x2_ngpt`'s parameter win into a wall-clock win.
+   *In progress:* the hybrid grid in `../residual_scaling_variants/looped_hybrid_jupiter.yaml`
+   runs these controls (`hybrid_d12`, `hybrid_d9`) on an mLSTM stack.
+3. **Rerun the looped arms with CUDA graphs on.** No longer blocked — see the
+   correction above; the guard was unnecessary and is gone. Worth ~20% on the
+   transformer arms, and likely more on the hybrid grid, where a 120-iteration
+   probe found step time nearly depth-independent (9 → 18 layers costs 11% of
+   wall-clock while analytic TFLOP/s falls 180.6 → 127.7, that is launch-bound).
+   Launch overhead is the one thing graphs remove.
 4. **PP>1 is implemented but never equivalence-checked** for mHC or Block AttnRes
    (PP=2 halves DP, so data order differs and a naive comparison fails). Treat as
    unverified.

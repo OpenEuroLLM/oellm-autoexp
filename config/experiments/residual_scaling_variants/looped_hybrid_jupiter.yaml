@@ -49,11 +49,12 @@
 # below are exact. Do not read hybrid_d18 against the transformer baseline as a
 # parameter-matched pair.
 #
-# CUDA graphs are off for every arm, not just the looped ones. TransformerBlock
-# refuses them under a loop schedule (CudaGraphManager keys graphs per module and
-# assumes one call per module per step), so leaving them on for the dense arms
-# would confound the throughput column with a ~20% graph effect. Loss is
-# unaffected either way.
+# CUDA graphs are off for every arm, dense ones included, so the throughput
+# column compares like with like. Looping no longer requires this -- the guard
+# that used to forbid it was removed after reading the runner selection rather
+# than its docstring -- but these arms were launched under it, so the setting
+# stays for reproducibility and uniformity. Loss is unaffected either way; a
+# graphs-on rerun is the follow-up.
 #
 # Standard budget throughout: 11445 steps, gbs 128, lr 0.002, 6.0B tokens.
 defaults:

@@ -496,11 +496,16 @@ Optimization effort across these arms is badly uneven, and the ranking of
 throughput largely tracks how much attention each arm received rather than what it
 intrinsically costs:
 
-* **The looped arms ran with CUDA graphs disabled entirely.** TransformerBlock
-  refuses them because CudaGraphManager keys graphs per module and assumes one
-  call per module per step, so a looped layer would replay another position's
-  graph. Graphs are worth ~20% at this size on the arms that use them, so looped
-  throughput here is a floor, not a measurement.
+* **The looped arms ran with CUDA graphs disabled entirely.** Graphs are worth
+  ~20% at this size on the arms that use them, so looped throughput here is a
+  floor, not a measurement. **Correction (2026-08-11):** this was originally
+  attributed to CudaGraphManager keying graphs per module and assuming one call
+  per module per step. That came from the docstring, not a test, and is wrong.
+  At PP=1 (which looping requires) reuse_cudagraphs is true, a runner is picked
+  by scanning for the first FWD_READY one, and a forward flips it to BWD_READY --
+  so N calls capture N runners and replay in capture order, which is how
+  gradient accumulation already works. The guard was unnecessary and has been
+  removed; recompute now walks the loop schedule too.
 * mHC received a dedicated campaign (fused read/write, Triton backward, tile
   search). AttnRes and the looped arms received none.
 

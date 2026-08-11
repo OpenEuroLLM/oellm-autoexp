@@ -35,10 +35,14 @@
 # ~35k parameters and would let the block take a large first step and smaller
 # later ones.
 #
-# CUDA graphs are off: CudaGraphManager keys graphs per module and assumes one
-# call per module per step, so a looped layer would replay another position's
-# graph. TransformerBlock raises rather than allowing it, and this makes the
-# arms ~20% slower than the non-looped references.
+# CUDA graphs are off, which makes these arms ~20% slower than the non-looped
+# references. That was a mistake, kept here only so the runs stay reproducible:
+# the guard that forced it was justified from CudaGraphManager's docstring rather
+# than from a test, and the docstring is misleading. At PP=1 a runner is chosen by
+# scanning for the first FWD_READY one and a forward flips it to BWD_READY, so N
+# calls to one module capture N runners and replay them in order -- exactly what
+# gradient accumulation already does. The guard is gone; rerunning these arms with
+# cuda_graph_impl: local is the open item.
 defaults:
   - ngpt_scalers_jupiter
   - _self_
