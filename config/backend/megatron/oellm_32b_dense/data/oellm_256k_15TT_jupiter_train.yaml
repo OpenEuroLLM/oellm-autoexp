@@ -9,7 +9,8 @@ data_args_path: #.../15T_datamix.txt
 
 # Tokenizer
 tokenizer_type: HuggingFaceTokenizer
-tokenizer_model: #... /leonardo_scratch/fast/OELLM_prod2026/production_training/baby_9b_dense/tokenizer
+tokenizer_model: /e/project1/e-ext-2025e02-108/production_training/oellm_32b_dense/tokenizer_256k/
+
 
 seq_length: 4096
 dataloader_type: "cyclic"

@@ -12,18 +12,14 @@ srun:
   exclusive: true
   wait: 60
   cpus_per_task: 288
-  mpi: "none"
-  threads_per_core: 1
-  gpu_bind: "none"
-srun_opts: "--mpi=none "
 launcher_env_passthrough: true
 env:
   MACHINE_NAME: JUPITER
-  HF_HOME: ${oc.env:HF_HOME}
   HF_ALLOW_CODE_EVAL: "1"
   HF_DATASETS_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
-  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep \"Address: \" | sed \"s/Address: //\" | tail) "
+  MASTER_HOST: "$(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | sed -n '1p')"
+  MASTER_ADDR: "$(getent ahostsv4 \"$MASTER_HOST\" | sed -n '1{s/[[:space:]].*//;p;}')"
   MASTER_PORT: "20074"
   NUM_NODES: "$SLURM_JOB_NUM_NODES"
   GPUS_PER_NODE: "4"
@@ -31,22 +27,11 @@ env:
   NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
   ARCH: "$(uname -m)"
   SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
-  PYTHONUNBUFFERED: "1"
-  PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
-  PYTORCH_ALLOC_CONF: "expandable_segments:True"
   NCCL_SOCKET_IFNAME: ib0
-  NCCL_NET_GDR_LEVEL: "2"
-  NCCL_NET_GDR_READ: "1"
-  NCCL_PROTO: "Simple"
   NCCL_SOCKET_FAMILY: AF_INET
-  NCCL_IB_TIMEOUT: "18"
-  NCCL_IB_DISABLE: "0"
-  NCCL_IB_RETRY_CNT: "20"
-  NCCL_IB_HCA: mlx5_0,mlx5_1,mlx5_2,mlx5_3
-  # GLOO_SOCKET_IFNAME: ib0 # necessary on JUWELS to handle GLOO CPU communication related errors; on JUPITER, this is not required
+  GLOO_SOCKET_IFNAME: ib0
   GLOO_SOCKET_FAMILY: AF_INET
-  TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
-  OMP_NUM_THREADS: "$SLURM_CPUS_PER_TASK"
+  OMP_NUM_THREADS: 64
 
 sbatch:
   nodes: 1
@@ -55,8 +40,7 @@ sbatch:
   gpus_per_node: 4
   cpus_per_task: 288
   exclusive: true
-  gres: "gpu:4"
   gpu_bind: "none"
   partition: ${oc.env:SLURM_PARTITION,booster}
-  account: ${oc.env:SLURM_ACCOUNT,jureap59}
+  account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
   time: "12:00:00"

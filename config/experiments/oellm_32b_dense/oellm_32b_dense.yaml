@@ -4,7 +4,7 @@
 
 defaults:
   - /backend: megatron_torchrun
-  - /container: jupiter # TODO
+  - /container: jupiter
   - /slurm: jupiter
   - /job: auto_cancel
   - /sweep: none
@@ -15,7 +15,7 @@ defaults:
 
 job:
   name: "oellm_32b_dense"
-  base_output_dir: ... # TODO
+  base_output_dir: /e/project1/e-ext-2025e02-108/production_training/${job.name}
   log_path: ${.base_output_dir}/logs/slurm-%j.log
   log_path_current: ${.base_output_dir}/logs/current.log
   config_path: ${.base_output_dir}/logs/config-%j.yaml
@@ -26,7 +26,7 @@ backend:
   megatron:
     wandb_project: oellm_32b_dense
     wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
-    data_cache_path: .../production_training/${job.name}/cache # TODO
+    data_cache_path: /e/scratch/e-ext-2025e02-108/production_training/${job.name}/data_cache
 
 
     # EXIT safely on signal
@@ -34,13 +34,17 @@ backend:
     # 24h limit
     exit_duration_in_mins: 1410
 
+container:
+  image: /e/project1/e-ext-2025e02-108/container/nemo_26.04.sif
+
 slurm:
   env:
-    HF_HOME: /e/scratch/.../hf_cache/${oc.env:USER} # TODO
+    HF_HOME: /e/scratch/e-ext-2025e02-108/hf_cache/${oc.env:USER}
     NCCL_DEBUG: info
   sbatch:
     nodes: 256
     time: "24:00:00"
+    account: e-ext-2025e02-108
 
     # slurm signal to process to stop training and checkpoint right before time limit
     signal: "TERM@240"
