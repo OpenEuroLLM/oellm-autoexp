@@ -62,10 +62,18 @@ defaults:
 
 slurm:
   sbatch:
-    # The transformer loop arms took 1:31 (6x2) to 2:55 (12x2). mLSTM at this
-    # size is chunkwise-parallel and should land in the same band; loop12x2 at
-    # 30 effective layers is the long pole.
-    time: "06:00:00"
+    # Measured on a 120-iteration probe: 569 ms/iter (d9) to 630 (d18), and 756
+    # for loop12x2 at 30 effective layers and mbs 16. That is 2.0-2.4h for 11445
+    # steps, so 4h carries ~1.7x margin. Kept tight deliberately: short time
+    # limits get materially better scheduling priority on the booster partition.
+    #
+    # Note for anyone reading throughput out of these runs: step time is nearly
+    # depth-independent here (9 -> 18 layers costs 11%, while Megatron's analytic
+    # TFLOP/s falls 180.6 -> 127.7 at the same wall-clock). With CUDA graphs off
+    # and mLSTM emitting many small kernels, these steps are launch-bound, not
+    # compute-bound. Wall-clock differences inside this grid therefore say very
+    # little about the architectures; read it as iso-steps.
+    time: "04:00:00"
 
 backend:
   megatron:
