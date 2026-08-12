@@ -345,6 +345,32 @@ class MegatronConfig(ConfigInterface):
     # Number of value and gate heads for the gated delta net.
     linear_num_value_heads: int = 32
 
+    # Upper bound of the delta-rule step size beta for the gated delta net. beta is produced
+    # as ``linear_beta_max * sigmoid(x)``, so this sets the range to ``[0, linear_beta_max)``.
+    # The delta rule applies the state transition ``(I - beta k k^T)``, whose eigenvalues
+    # therefore lie in ``(1 - linear_beta_max, 1]``: - ``1.0`` (default) -> eigenvalues in
+    # ``(0, 1]``, the standard DeltaNet / GatedDeltaNet formulation. - ``2.0`` -> eigenvalues
+    # in ``(-1, 1]``. Allowing negative eigenvalues lets the recurrence represent reflections
+    # rather than only contractions, which is what enables state tracking (e.g. parity / group
+    # word problems) that is provably out of reach for [0, 1]-constrained linear RNNs. See
+    # Grazzi et al., "Unlocking State-Tracking in Linear RNNs Through Negative Eigenvalues".
+    # Values other than 1.0 and 2.0 are permitted but untested.
+    linear_beta_max: float = 1.0
+
+    # Shape of the delta-rule step size beta for the gated delta net. beta is
+    # ``linear_beta_max * g(x)`` where ``g`` maps to ``(0, 1)``: - ``"sigmoid"`` (default):
+    # ``g(x) = sigmoid(x)``. Steepest at x=0 (slope 1/4), so the eigenvalue moves fastest
+    # through the middle of its range and no particular value is favoured. -
+    # ``"double_sigmoid"``: ``g(x) = (sigmoid(4(x-1)) + sigmoid(4(x+1))) / 2``. Two offset
+    # sigmoids sum to a curve with the same ``(0, 1)`` range but a flat plateau at ``g(0) =
+    # 0.5`` (slope ~0.071, ~3.5x flatter than sigmoid). Paired with ``linear_beta_max=2.0``
+    # this is exactly ``sigmoid(4(x-1)) + sigmoid(4(x+1))``: beta plateaus at 1.0, i.e. the
+    # transition eigenvalue ``1 - beta`` plateaus at 0 — the pure delta-rule "erase" point.
+    # The flat region makes that the stable default the model sits at unless the pre-
+    # activation is pushed away from 0, while still reaching contraction (beta<1) and
+    # reflection (beta>1) at the tails.
+    linear_beta_activation: str = 'sigmoid'
+
     # mlstm_kernels sequence kernel used by the mLSTM attention variant.
     mlstm_backend: str = 'chunkwise--triton_xl_chunk'
 
