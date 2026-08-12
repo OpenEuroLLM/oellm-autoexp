@@ -150,3 +150,47 @@ matching fit exponents. FLOPs/token caveat: SWA reduces attention FLOPs
 slightly — recompute FLOPs/token for compute-optimal fits; loss-vs-tokens
 comparisons are unaffected. For KV-cache claims quote window 1024 vs 4096
 context on 5/6 (or 7/8) of layers.
+
+## Downstream evaluation (`eval_downstream_all.yaml`)
+
+`eval_all_scaling_all.yaml` scores val loss / PPL. `eval_downstream_all.yaml`
+scores the same 124 cooldown finals on **`dclm-core-22`** and the
+**`oellm-multilingual`** super group with oellm-evals — two stages per point
+(`evaldclm`, `evalml`), each gated on that point's converted
+`model.safetensors`. Full write-up:
+`experiment/004_downstream_eval_arch_scaling/log.md`.
+
+The enabling piece is a **custom HF architecture** covering all five variants,
+`oellm_autoexp/hf_export/oellm_hybrid/` — attention / sliding-window attention /
+GatedDeltaNet / mLSTM / Mamba2 selected per layer via `mixer_types`, calling the
+same `fla` / `mlstm_kernels` / `mamba_ssm` kernels the runs trained with.
+`convert_megatron_to_hf.py` reads the `torch_dist` checkpoint through PyTorch DCP
+(no Megatron runtime needed) and writes a `trust_remote_code` model dir.
+
+One-time cluster prep (login node, needs internet):
+
+```bash
+bash scripts/setup_eval_env_jupiter.sh --prefetch     # venv + HF cache + datasets
+python scripts/convert_arch_scaling_to_hf.py          # 124 Megatron ckpts -> HF dirs
+```
+
+Verify a conversion against the Megatron path before trusting any numbers:
+
+```bash
+bash scripts/korbi/check_hf_megatron_parity.sh <train_run_dir>
+```
+
+Launch (pilot first, then the rest):
+
+```bash
+HYDRA_STAGED_SWEEP_WORKERS=1 PYTHONPATH=. \
+  python scripts/run_autoexp.py --submit-and-exit --config-name \
+  experiments/architecture_scaling_variants/multilingual/eval_downstream_all \
+  --array-subset 0,1         # one point, both suites; widen once timings are known
+```
+
+Known gaps, both external:
+- `facebook/flores` is **gated**; the account behind `$HF_HOME/token` has to
+  accept the terms or the two flores-200 groups cannot download.
+- `wsc273` loads through the removed `winograd_wsc` loading script, so it fails
+  under `datasets>=4` (1 of dclm-core-22's 21 tasks).
