@@ -78,19 +78,25 @@ def build_execution_plan(
 
     points = expand_sweep(root.sweep)
     points_by_idx = {point.index: point for point in points}
-    if subset_indices:
-        points_by_idx = {
-            idx: point for idx, point in points_by_idx.items() if idx in subset_indices
-        }
-        if not points_by_idx:
-            raise ValueError(f"No sweep points match indices: {sorted(subset_indices)}")
+    if subset_indices and not (subset_indices & set(points_by_idx)):
+        raise ValueError(f"No sweep points match indices: {sorted(subset_indices)}")
 
+    # Resolve the FULL DAG so sibling references (e.g. ${sibling.stable...})
+    # always resolve, and let the resolver drop everything outside the subset at
+    # the end. Filtering points BEFORE resolution drops the siblings a partial
+    # subset depends on -- a cooldown-only subset then can't resolve its stable,
+    # and dragging the stable into the subset just to satisfy that needlessly
+    # re-runs the finished stable.
     jobs = resolve_sweep_with_dag(
         root,
         points_by_idx,
         config_setup=config_setup,
         config_class=RootConfig,
+        subset_indices=subset_indices,
     )
+
+    if subset_indices:
+        points_by_idx = {i: p for i, p in points_by_idx.items() if i in subset_indices}
 
     return ExecutionPlan(
         config=root, config_setup=config_setup, sweep_points=points_by_idx, jobs=jobs

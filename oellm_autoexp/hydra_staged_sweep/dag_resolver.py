@@ -556,8 +556,13 @@ def resolve_sweep_with_dag(
     points: list[SweepPoint] | dict[int, SweepPoint],
     config_setup: ConfigSetup,
     config_class: type = StagedSweepRoot,
+    subset_indices: set[int] | None = None,
 ) -> list[JobPlan]:
-    """Pure OmegaConf resolution with DAG ordering."""
+    """Pure OmegaConf resolution with DAG ordering.
+
+    ``subset_indices`` restricts the RETURNED jobs but not what is resolved: the
+    full DAG is always resolved so sibling references survive a partial subset.
+    """
     LOGGER.info(f"Starting DAG resolution for {len(points)} sweep points")
 
     if isinstance(points, list):
@@ -626,10 +631,15 @@ def resolve_sweep_with_dag(
         filtered_jobs.update(chain_filtered)
 
     # Emit in topological order, matching the order a single-process run built.
+    # The subset (--array-subset) is applied HERE, after the full DAG has been
+    # resolved, so a partial subset's sibling references still resolve against the
+    # siblings they depend on -- filtering the points before resolution would drop
+    # those siblings.
     return [
         resolved_jobs[point_idx]
         for point_idx in ordered_indices
         if point_idx in resolved_jobs and not filtered_jobs[point_idx]
+        and (subset_indices is None or point_idx in subset_indices)
     ]
 
 
