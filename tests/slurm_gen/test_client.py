@@ -153,6 +153,15 @@ class TestFakeSlurmClient:
         client.cancel(job_id)
         assert client.squeue()[job_id] == "CANCELLED"
 
+    def test_update_excludes_records_nodelist(self, tmp_path: Path):
+        """FakeSlurmClient.update_excludes records the nodelist for the job."""
+        client = FakeSlurmClient(FakeSlurmClientConfig())
+        job_id = client.submit(
+            make_job_config(tmp_path, name="test", script_name="job.sh", log_name="log.txt")
+        )
+        client.update_excludes(job_id, "lrdn0417,lrdn0001")
+        assert client._excludes[job_id] == "lrdn0417,lrdn0001"
+
     def test_remove_job(self, tmp_path: Path):
         """Test removing a job from tracking."""
         client = FakeSlurmClient(FakeSlurmClientConfig())
@@ -335,6 +344,30 @@ class TestSlurmClient:
 
         configured_client.cancel("12345")
         assert mock_run.calls[-1] == ["scancel", "12345"]
+
+    def test_update_excludes_runs_scontrol(self, configured_client, monkeypatch):
+        """update_excludes issues `scontrol update JobId=..
+
+        ExcludeNodes=..`.
+        """
+        mock_run = make_mock_run({})
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
+
+        configured_client.update_excludes("12345", "lrdn0417,lrdn0001")
+        assert mock_run.calls[-1] == [
+            "scontrol",
+            "update",
+            "JobId=12345",
+            "ExcNodeList=lrdn0417,lrdn0001",
+        ]
+
+    def test_update_excludes_raises_on_failure(self, configured_client, monkeypatch):
+        """A nonzero scontrol exit surfaces as RuntimeError."""
+        mock_run = make_mock_run({"scontrol": MockResult(returncode=1, stderr="Job not pending")})
+        monkeypatch.setattr(oellm_autoexp.slurm_gen.client, "run_command", mock_run)
+
+        with pytest.raises(RuntimeError, match="scontrol update failed"):
+            configured_client.update_excludes("12345", "lrdn0417")
 
     def test_parse_job_id_variations(self):
         """Test parsing various sbatch output formats."""

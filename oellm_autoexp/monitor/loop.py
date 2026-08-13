@@ -20,6 +20,7 @@ from oellm_autoexp.monitor.conditions import (
 from oellm_autoexp.monitor.actions import (
     EventRecord,
     build_event_id,
+    event_key,
     LogEventConfig,
     LogEvent,
     StateEventConfig,
@@ -27,10 +28,16 @@ from oellm_autoexp.monitor.actions import (
     ActionResult,
     BaseMonitorAction,
     NewJobActionConfig,
+    UpdateChainExcludesActionConfig,
 )
+from oellm_autoexp.hydra_staged_sweep.config.resolvers import oc_exclude_nodes
 from oellm_autoexp.monitor.job_client_protocol import JobClientProtocol
 from oellm_autoexp.monitor.submission import JobInterface, SlurmJobConfig, LocalJobConfig
-from oellm_autoexp.monitor.utils.paths import resolve_log_path
+from oellm_autoexp.monitor.utils.paths import (
+    resolve_log_path,
+    expand_log_path,
+    update_log_symlink,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -39,7 +46,7 @@ SCHEMA_VERSION = 1
 
 
 @dataclass
-class JobRuntimeConfig:
+class JobRuntime:
     class_name: str = "JobRuntime"
     submitted: bool = False
     attempts: int = 0
@@ -49,16 +56,19 @@ class JobRuntimeConfig:
     log_cursor: int = 0
     condition_state: dict[str, Any] = field(default_factory=dict)
     action_state: dict[str, Any] = field(default_factory=dict)
+    # Persisted EventRecords keyed by stable event_key, surviving across polls.
+    # Currently used to accumulate inactivity streaks (count + timestamps).
+    events: dict[str, Any] = field(default_factory=dict)
     last_status: str | None = None
     final_state: str | None = None  # "finished", "cancelled", or None for active jobs
 
 
 @dataclass(kw_only=True)
-class JobRecordConfig:
+class JobRecord:
     class_name: str = "JobRecord"
     job_id: str = ""
     definition: JobInterface.cfgtype = field(default_factory=MISSING)
-    runtime: JobRuntimeConfig = field(default_factory=JobRuntimeConfig)
+    runtime: JobRuntime = field(default_factory=JobRuntime)
     schema_version: int = SCHEMA_VERSION
     array_idx: int | None = None
 
@@ -73,14 +83,14 @@ class JobFileStore:
     def list_paths(self) -> Iterable[Path]:
         return self.root.glob("*.job.json")
 
-    def load_all(self, *, include_finished: bool = False) -> list[JobRecordConfig]:
+    def load_all(self, *, include_finished: bool = False) -> list[JobRecord]:
         """Load job records, optionally excluding finished/cancelled jobs."""
-        jobs: list[JobRecordConfig] = []
+        jobs: list[JobRecord] = []
         for path in self.list_paths():
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 _import_registry()
-                job = parse_config(JobRecordConfig, payload)
+                job = parse_config(JobRecord, payload)
                 # Parse nested event configs once
                 _normalize_job_definition(job)
                 # Skip jobs that are finished/cancelled unless requested
@@ -91,7 +101,7 @@ class JobFileStore:
                 continue
         return jobs
 
-    def upsert(self, record: JobRecordConfig) -> None:
+    def upsert(self, record: JobRecord) -> None:
         path = self.path_for(record.job_id)
         payload = asdict(record)
         payload.setdefault("schema_version", SCHEMA_VERSION)
@@ -112,14 +122,14 @@ class JobFileStore:
         if path.exists():
             path.unlink()
 
-    def load(self, job_id: str, include_finished=False) -> JobRecordConfig | None:
+    def load(self, job_id: str, include_finished=False) -> JobRecord | None:
         path = self.path_for(job_id)
         if not path.exists():
             return None
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             _import_registry()
-            job = parse_config(JobRecordConfig, payload)
+            job = parse_config(JobRecord, payload)
             # Parse nested event configs once
             _normalize_job_definition(job)
             if not include_finished and job.runtime.final_state is not None:
@@ -153,7 +163,7 @@ class MonitorLoop:
         self.show_poll_state = show_poll_state
         self.no_error_catching = no_error_catching
 
-    def _get_client(self, job: JobRecordConfig) -> JobClientProtocol:
+    def _get_client(self, job: JobRecord) -> JobClientProtocol:
         """Get the appropriate client based on job configuration."""
         if job.definition is None:
             raise ValueError("Job definition is None")
@@ -177,8 +187,14 @@ class MonitorLoop:
             runtime = job.runtime
             runtime_id = runtime.runtime_job_id
             new_status = statuses.get(runtime_id) if runtime_id else None
-            self._status_action(job, runtime.last_status, new_status)
+            # On entering RUNNING, re-point the current.* symlinks at this job so
+            # a shared 'current' symlink (dependency chain) tracks the running job.
+            if runtime_id and new_status == "RUNNING" and runtime.last_status != "RUNNING":
+                self._update_current_symlinks(job)
+            status_effect = self._status_action(job, runtime.last_status, new_status)
             runtime.last_status = new_status
+            if self._apply_effect(job, status_effect, runtime_id):
+                continue
             if not runtime.submitted:
                 if self._check_cancel(job):
                     self._store.mark_finished(job.job_id, "cancelled")
@@ -212,22 +228,7 @@ class MonitorLoop:
 
             # Process log events
             effect = self._process_log_events(job)
-            if effect == "finished":
-                if runtime_id:
-                    client = self._get_client(job)
-                    client.remove(runtime_id)
-                self._store.mark_finished(job.job_id, "finished")
-                continue
-            if effect == "cancelled":
-                if runtime_id:
-                    client = self._get_client(job)
-                    client.cancel(runtime_id)
-                    client.remove(runtime_id)
-                self._store.mark_finished(job.job_id, "cancelled")
-                continue
-            if effect == "restart":
-                self._restart_job(job)
-                self._store.upsert(job)
+            if self._apply_effect(job, effect, runtime_id):
                 continue
 
             # Check if job completed naturally
@@ -261,32 +262,32 @@ class MonitorLoop:
                     }
                 else:
                     poll_state[job.runtime.runtime_job_id] = {
-                        "state": statuses.get(runtime_id),
+                        "state": statuses.get(runtime.runtime_job_id),
                         "cancel_condition": job.definition.cancel_condition,
                         "runtime": job.runtime,
                     }
 
             LOGGER.info(f"[{time.time():0.6f}]" + f"Monitor Polling: {poll_state}")
 
-    def _check_start(self, job: JobRecordConfig) -> bool:
+    def _check_start(self, job: JobRecord) -> bool:
         condition = job.definition.start_condition
         if condition is None:
             return True
         return self._evaluate_condition(job, condition, label="start").passed
 
-    def _check_cancel(self, job: JobRecordConfig) -> bool:
+    def _check_cancel(self, job: JobRecord) -> bool:
         condition = job.definition.cancel_condition
         if condition is None:
             return False
         return self._evaluate_condition(job, condition, label="cancel").passed
 
-    def _check_finish(self, job: JobRecordConfig) -> bool:
+    def _check_finish(self, job: JobRecord) -> bool:
         condition = job.definition.finish_condition
         if condition is None:
             return False
         return self._evaluate_condition(job, condition, label="finish").passed
 
-    def _start_job(self, job: JobRecordConfig) -> None:
+    def _start_job(self, job: JobRecord) -> None:
         runtime = job.runtime
         runtime.attempts += 1
         runtime.start_ts = time.time()
@@ -313,7 +314,7 @@ class MonitorLoop:
             runtime.submitted = True
             runtime.log_cursor = 0
 
-    def _start_jobs(self, job: JobRecordConfig, indices: list[int] | None = None) -> None:
+    def _start_jobs(self, job: JobRecord, indices: list[int] | None = None) -> None:
         definition = job.definition
         if definition is None:
             return
@@ -335,14 +336,14 @@ class MonitorLoop:
             job_ids = []
 
         for idx, runtime_job_id in zip(indices, job_ids):
-            task_runtime = JobRuntimeConfig(
+            task_runtime = JobRuntime(
                 submitted=True,
                 attempts=runtime.attempts,
                 runtime_job_id=runtime_job_id,
                 start_ts=runtime.start_ts,
                 log_cursor=0,
             )
-            task_record = JobRecordConfig(
+            task_record = JobRecord(
                 job_id=f"{job.job_id}_{idx}",
                 definition=definition,
                 runtime=task_runtime,
@@ -352,7 +353,7 @@ class MonitorLoop:
         if job_ids:
             self._store.remove(job.job_id)
 
-    def _process_log_events(self, job: JobRecordConfig) -> str:
+    def _process_log_events(self, job: JobRecord) -> str:
         """Process log events by checking patterns in new log content.
 
         Returns: "continue", "finished", "cancelled", or "restart"
@@ -371,17 +372,29 @@ class MonitorLoop:
         except OSError:
             return "continue"
 
-        if not new_text:
-            return "continue"
+        now = time.time()
+        had_activity = bool(new_text)
 
-        # Process each log event configuration (already parsed)
+        # Process each log event configuration (already parsed). Inactivity
+        # events must be evaluated every poll (including when there is no new
+        # text); pattern events only when there is new text to scan.
         log_events = getattr(definition, "log_events", None) or []
         for idx, event_cfg in enumerate(log_events):
             if event_cfg.action is None:
                 continue
 
-            # Create LogEvent instance
             log_event = LogEvent(event_cfg)
+
+            if event_cfg.pattern_type == "inactivity":
+                effect = self._process_inactivity_event(
+                    job, log_event, idx, had_activity=had_activity, now=now
+                )
+                if effect in ("finished", "cancelled", "restart"):
+                    return effect
+                continue
+
+            if not had_activity:
+                continue
 
             # Check if event triggers
             triggers = log_event.check_triggers(new_text)
@@ -407,21 +420,118 @@ class MonitorLoop:
                 action = event_cfg.action.instantiate(BaseMonitorAction)
                 if self._evaluate_event_condition(job, event, event_cfg.condition, action_id):
                     result = action.execute(self._action_context(event, job))
-                    self._update_action_state(runtime, action_id, result)
+                    self._update_action_state(job, action_id, result)
                     effect = self._handle_action_result(job, result)
                     if effect in ("finished", "cancelled", "restart"):
                         return effect
 
         return "continue"
 
-    def _status_action(self, job: JobRecordConfig, old_status: str | None, new_status: str | None):
-        """Process state transition events."""
+    def _process_inactivity_event(
+        self,
+        job: JobRecord,
+        log_event: LogEvent,
+        idx: int,
+        *,
+        had_activity: bool,
+        now: float,
+    ) -> str:
+        """Accumulate an inactivity streak and fire its action once it
+        qualifies.
+
+        The streak is stored as a persistent EventRecord (keyed by the stable
+        event_key) in ``runtime.events``: ``count`` counts consecutive inactive
+        polls and ``first_seen_ts``/``last_seen_ts`` bound the real elapsed time.
+        Any poll with new log output breaks (clears) the streak.
+        """
+        runtime = job.runtime
+        definition = job.definition
+        event_cfg = log_event.config
+        metadata = log_event.inactivity_metadata()
+        key = ":".join(event_key(job.job_id, event_cfg.name, metadata))
+
+        if had_activity:
+            # Activity resets the streak.
+            runtime.events.pop(key, None)
+            return "continue"
+
+        stored = runtime.events.get(key)
+        if stored is None:
+            action_state = runtime.action_state.get(f"log:{event_cfg.name}:{idx}", {})
+            record = EventRecord(
+                event_id=build_event_id(job.job_id, event_cfg.name, metadata),
+                name=event_cfg.name,
+                source="log",
+                count=1,
+                first_seen_ts=now,
+                last_seen_ts=now,
+                payload=metadata,
+                metadata={
+                    "job_id": job.job_id,
+                    "job_name": definition.name,
+                    "last_action_ts": float(action_state.get("last_action_ts", 0.0)),
+                },
+            )
+        else:
+            record = EventRecord(**stored)
+            record.touch()
+            record.last_seen_ts = now
+        runtime.events[key] = asdict(record)
+
+        elapsed_s = record.last_seen_ts - record.first_seen_ts
+        if not log_event.inactivity_qualifies(count=record.count, elapsed_s=elapsed_s):
+            return "continue"
+
+        action_id = f"log:{event_cfg.name}:{idx}"
+        action = event_cfg.action.instantiate(BaseMonitorAction)
+        if not self._evaluate_event_condition(job, record, event_cfg.condition, action_id):
+            return "continue"
+
+        result = action.execute(self._action_context(record, job))
+        self._update_action_state(job, action_id, result)
+        # Clear the streak so it must re-accumulate before firing again.
+        runtime.events.pop(key, None)
+        return self._handle_action_result(job, result)
+
+    def _apply_effect(self, job: JobRecord, effect: str, runtime_id: str | None) -> bool:
+        """Advance a job's lifecycle for a terminal/restart action effect.
+
+        Returns True if the job was finished, cancelled, or restarted
+        (in which case the caller should stop processing it for this
+        poll), False for the "continue" effect.
+        """
+        if effect == "finished":
+            if runtime_id:
+                self._get_client(job).remove(runtime_id)
+            self._store.mark_finished(job.job_id, "finished")
+            return True
+        if effect == "cancelled":
+            if runtime_id:
+                client = self._get_client(job)
+                client.cancel(runtime_id)
+                client.remove(runtime_id)
+            self._store.mark_finished(job.job_id, "cancelled")
+            return True
+        if effect == "restart":
+            self._restart_job(job)
+            self._store.upsert(job)
+            return True
+        return False
+
+    def _status_action(self, job: JobRecord, old_status: str | None, new_status: str | None) -> str:
+        """Process state transition events.
+
+        Returns: "continue", "finished", "cancelled", or "restart". A terminal
+        or restart effect lets a configured ``state_events`` action (e.g. treat
+        a SLURM ``TIMEOUT`` as finished) drive the job lifecycle, the same way
+        log events do via :meth:`_process_log_events`.
+        """
         runtime = job.runtime
         definition = job.definition
 
         # Skip if no state change
         if old_status == new_status:
-            return
+            return "continue"
 
         # Process each state event configuration (already parsed)
         state_events = getattr(definition, "state_events", None) or []
@@ -458,11 +568,14 @@ class MonitorLoop:
             action = event_cfg.action.instantiate(BaseMonitorAction)
             if self._evaluate_event_condition(job, event, event_cfg.condition, action_id):
                 result = action.execute(self._action_context(event, job))
-                self._update_action_state(runtime, action_id, result)
-                # Note: we don't handle remove/restart here as state changes are informational
-                # and shouldn't directly control job lifecycle
+                self._update_action_state(job, action_id, result)
+                effect = self._handle_action_result(job, result)
+                if effect in ("finished", "cancelled", "restart"):
+                    return effect
 
-    def _action_context(self, event: EventRecord, job: JobRecordConfig):
+        return "continue"
+
+    def _action_context(self, event: EventRecord, job: JobRecord):
         from oellm_autoexp.monitor.actions import ActionContext
 
         return ActionContext(
@@ -473,7 +586,7 @@ class MonitorLoop:
 
     def _evaluate_event_condition(
         self,
-        job: JobRecordConfig,
+        job: JobRecord,
         event: EventRecord,
         condition_cfg: MonitorConditionInterface.cfgtype | None,
         action_id: str,
@@ -502,7 +615,7 @@ class MonitorLoop:
 
     def _evaluate_condition(
         self,
-        job: JobRecordConfig,
+        job: JobRecord,
         condition_cfg: MonitorConditionInterface.cfgtype,
         *,
         label: str,
@@ -520,7 +633,7 @@ class MonitorLoop:
         result = condition.check(ctx)
         return _apply_persistence(condition_cfg, state, result)
 
-    def _build_job_metadata(self, job: JobRecordConfig) -> dict[str, Any]:
+    def _build_job_metadata(self, job: JobRecord) -> dict[str, Any]:
         definition = job.definition
         metadata = dict(definition.metadata)
         metadata.setdefault("job_id", job.job_id)
@@ -529,17 +642,17 @@ class MonitorLoop:
         metadata.setdefault("job_class", job_class)
         return metadata
 
-    def _resolve_log_path(self, job: JobRecordConfig) -> Path:
+    def _resolve_log_path(self, job: JobRecord) -> Path:
+        """Resolve the job's OWN per-job log file (e.g. slurm-<jobid>.log).
+
+        Deliberately does NOT use ``log_path_current``: in a dependency chain all
+        jobs share one base_output_dir, so a shared 'current' symlink would make
+        every job read whichever job is currently running (cross-contamination).
+        The current.* symlinks are a tailing convenience maintained separately by
+        :meth:`_update_current_symlinks` on the RUNNING transition.
+        """
         definition = job.definition
-        job_id = job.runtime.runtime_job_id or job.job_id
         runtime = job.runtime
-        if "_" in job_id:
-            array_index = int(job_id.split("_")[-1])
-        else:
-            array_index = 0
-        if definition.log_path_current:
-            log_path_cur = definition.log_path_current.replace("%a", str(array_index))
-            return Path(log_path_cur)
         timestamp = int(runtime.start_ts or time.time())
         return resolve_log_path(
             definition.log_path,
@@ -547,12 +660,48 @@ class MonitorLoop:
             timestamp=timestamp,
         )
 
-    def _update_action_state(self, runtime: JobRuntimeConfig, action_id: str, result) -> None:
+    def _update_current_symlinks(self, job: JobRecord) -> None:
+        """Point the job's current.* symlinks at its own log/config.
+
+        Called when a job enters RUNNING so that, in a dependency chain
+        (all jobs share one base_output_dir), current.log / current.yaml
+        track the job that is actually running rather than the last-
+        submitted one. Convenience only; the monitor reads each job's
+        own per-job log (see _resolve_log_path).
+        """
+        definition = job.definition
+        runtime_id = job.runtime.runtime_job_id
+        if not runtime_id:
+            return
+        array_suffix = runtime_id.split("_")[-1] if "_" in runtime_id else "0"
+        log_current = getattr(definition, "log_path_current", None)
+        if log_current and getattr(definition, "log_path", None):
+            update_log_symlink(
+                expand_log_path(definition.log_path, runtime_id),
+                Path(log_current.replace("%a", array_suffix)),
+            )
+        config_current = getattr(definition, "config_path_current", None)
+        if config_current and getattr(definition, "config_path", None):
+            update_log_symlink(
+                expand_log_path(definition.config_path, runtime_id),
+                Path(config_current.replace("%a", array_suffix)),
+            )
+
+    def _update_action_state(self, job: JobRecord, action_id: str, result) -> None:
+        runtime = job.runtime
         state = runtime.action_state.setdefault(action_id, {})
         state["last_action_ts"] = time.time()
         state["last_status"] = result.status
+        LOGGER.info(
+            "Action executed for job '%s' [%s]: special=%s status=%s%s",
+            job.job_id,
+            action_id,
+            result.special,
+            result.status,
+            f" reason='{result.message}'" if result.message else "",
+        )
 
-    def _handle_action_result(self, job: JobRecordConfig, result: ActionResult) -> str:
+    def _handle_action_result(self, job: JobRecord, result: ActionResult) -> str:
         """Handle the result of an action execution.
 
         Returns: "continue", "finished", "cancelled", or "restart"
@@ -577,10 +726,59 @@ class MonitorLoop:
                 result.action_config.job_config, SlurmJobConfig
             ):
                 self._submit_slurm_job(result.action_config.job_config)
+            elif isinstance(result.action_config, UpdateChainExcludesActionConfig):
+                self._update_chain_excludes(result, job)
 
         return "continue"
 
-    def _restart_job(self, job: JobRecordConfig) -> None:
+    def _update_chain_excludes(self, result: ActionResult, current_job: JobRecord) -> None:
+        """Set the current exclusion list on every pending sibling chain job.
+
+        Reads the exclusion file (resolved by the action and carried in
+        ``result.metadata``), then runs ``scontrol update ... ExcNodeList=`` on
+        each *pending* Slurm job in the store other than ``current_job``. Pending
+        is the only state SLURM lets us edit live; the failing/running job that
+        triggered this is skipped (restart it separately to pick up the node).
+        """
+        if self._slurm_client is None:
+            return
+        exclude_file = (result.metadata or {}).get("exclude_file") or getattr(
+            result.action_config, "exclude_file", ""
+        )
+        nodelist = oc_exclude_nodes(exclude_file)
+        if not nodelist:
+            LOGGER.info(
+                "UpdateChainExcludes: exclusion list empty (%s), nothing to do", exclude_file
+            )
+            return
+
+        statuses = self._slurm_client.squeue()
+        updated: list[str] = []
+        for sibling in self._store.load_all():
+            if sibling.job_id == current_job.job_id:
+                continue
+            if not isinstance(sibling.definition, SlurmJobConfig):
+                continue
+            runtime_id = sibling.runtime.runtime_job_id
+            if not runtime_id or not sibling.runtime.submitted:
+                continue
+            # Only pending jobs can be live-edited; treat "not yet visible in
+            # squeue" (None) as pending since chain jobs are queued up front.
+            if statuses.get(runtime_id) not in (None, "PENDING"):
+                continue
+            try:
+                self._slurm_client.update_excludes(runtime_id, nodelist)
+                updated.append(runtime_id)
+            except Exception as exc:
+                LOGGER.warning("UpdateChainExcludes: failed to update job %s: %s", runtime_id, exc)
+        LOGGER.info(
+            "UpdateChainExcludes: set ExcNodeList=%s on %d pending chain job(s): %s",
+            nodelist,
+            len(updated),
+            updated,
+        )
+
+    def _restart_job(self, job: JobRecord) -> None:
         """Restart job preserving condition_state, action_state, and
         attempts."""
         runtime = job.runtime
@@ -596,6 +794,9 @@ class MonitorLoop:
         runtime.runtime_job_id = None
         runtime.log_cursor = 0
         runtime.start_ts = None
+        # Streak records refer to the old run's log; clear so inactivity has to
+        # re-accumulate against the fresh log.
+        runtime.events.clear()
         # Note: condition_state, action_state, and attempts are preserved
 
         # Restart the job
@@ -631,7 +832,7 @@ class MonitorLoop:
             LOGGER.error(f"Failed to submit Slurm job: {e}")
 
 
-def _normalize_job_definition(job: JobRecordConfig) -> None:
+def _normalize_job_definition(job: JobRecord) -> None:
     """Parse and normalize all nested event configs in the job definition."""
     if job.definition is None:
         return

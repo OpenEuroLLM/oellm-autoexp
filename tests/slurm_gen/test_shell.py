@@ -1,9 +1,11 @@
 """Tests for shell utilities."""
 
+import errno
 import subprocess
 
 import pytest
 
+import oellm_autoexp.slurm_gen.shell as shell_mod
 from oellm_autoexp.slurm_gen.shell import run_command
 
 
@@ -47,3 +49,49 @@ class TestRunCommand:
         """Test command timeout."""
         with pytest.raises(subprocess.TimeoutExpired):
             run_command(["sleep", "10"], timeout=0.1)
+
+
+class TestSpawnRetry:
+    """Retry-on-transient-fork-failure behaviour (busy login node, EAGAIN)."""
+
+    def _patch(self, monkeypatch, side_effects):
+        """Patch subprocess.run to yield ``side_effects`` in order and record
+        call count; also make sleep instant."""
+        calls = {"n": 0}
+
+        def fake_run(*args, **kwargs):
+            i = calls["n"]
+            calls["n"] += 1
+            effect = side_effects[min(i, len(side_effects) - 1)]
+            if isinstance(effect, Exception):
+                raise effect
+            return effect
+
+        monkeypatch.setattr(shell_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(shell_mod.time, "sleep", lambda _s: None)
+        return calls
+
+    def test_retries_transient_eagain_then_succeeds(self, monkeypatch):
+        ok = subprocess.CompletedProcess(["sbatch"], 0, stdout="Submitted 123", stderr="")
+        calls = self._patch(
+            monkeypatch,
+            [BlockingIOError(errno.EAGAIN, "Resource temporarily unavailable")] * 2 + [ok],
+        )
+        result = run_command(["sbatch", "job.sh"], spawn_retry_backoff=0.0)
+        assert result.stdout == "Submitted 123"
+        assert calls["n"] == 3  # 2 failures + 1 success
+
+    def test_gives_up_after_max_retries(self, monkeypatch):
+        calls = self._patch(
+            monkeypatch, [BlockingIOError(errno.EAGAIN, "Resource temporarily unavailable")]
+        )
+        with pytest.raises(BlockingIOError):
+            run_command(["sbatch", "job.sh"], max_spawn_retries=3, spawn_retry_backoff=0.0)
+        assert calls["n"] == 4  # initial attempt + 3 retries
+
+    def test_permanent_oserror_not_retried(self, monkeypatch):
+        # ENOENT (command not found) must propagate immediately, no retries.
+        calls = self._patch(monkeypatch, [FileNotFoundError(errno.ENOENT, "No such file")])
+        with pytest.raises(FileNotFoundError):
+            run_command(["nonexistent_cmd"], spawn_retry_backoff=0.0)
+        assert calls["n"] == 1
