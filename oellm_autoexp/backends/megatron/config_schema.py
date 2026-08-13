@@ -413,6 +413,15 @@ class MegatronConfig(ConfigInterface):
     # Implementation of cross entropy loss calculation.
     cross_entropy_fusion_impl: Literal["native", "te"] = "native"
 
+    # If set, soft-cap the final output-layer (LM head) logits with c * tanh(logits / c) where
+    # c is this value (e.g. 30.0 as in Gemma 2).
+    final_logit_softcapping: float | None = None
+
+    # Scaling coefficient for the output (LM head) z-loss, an auxiliary loss coeff *
+    # mean(logsumexp(logits) ** 2) that keeps the softmax log-normalizer near zero for
+    # stability. A starting value of 1e-4 is recommended.
+    output_z_loss_coeff: float | None = None
+
     # use FlashAttention implementation of attention. https://arxiv.org/abs/2205.14135
     use_flash_attn: bool = False
 
