@@ -1,0 +1,21 @@
+defaults:
+  - marenostrum
+  - _self_
+
+# Async page-cache prefetch variant: launches scripts/prefetch_warm.py (one per node)
+# in the background before training. data_path stays on GPFS; the daemon warms the page
+# cache the trainer mmaps. The training run must use a *run-specific* data_cache_path that
+# matches PREFETCH_CACHE_DIR so the daemon can auto-discover the single index hash, e.g.
+#   backend.megatron.data_cache_path='${job.base_output_dir}/dcache'
+# Container must bind the dataset filesystem (/gpfs/scratch here).
+
+template_path: templates/marenostrum_prefetch.sbatch
+srun_opts: "--overlap "  # so the training srun overlaps the backgrounded prefetch srun
+
+env:
+  PREFETCH_SCRIPT: "${oc.env:OELLM_REPO,.}/scripts/prefetch_warm.py"
+  # Keep PREFETCH_PREFIX in sync with the experiment's data_path (GPFS prefix, no extension).
+  PREFETCH_PREFIX: "/gpfs/scratch/ehpc390/data/cerebrase-SlimPajama-627B/train/small"
+  PREFETCH_CACHE_DIR: "${job.base_output_dir}/dcache"
+  PREFETCH_MBS: "${backend.megatron.micro_batch_size}"
+  PREFETCH_BUDGET_GB: "200"

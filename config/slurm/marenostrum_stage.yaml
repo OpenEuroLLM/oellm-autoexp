@@ -1,0 +1,30 @@
+defaults:
+  - marenostrum
+  - _self_
+
+# Phase-1 staging variant of the MareNostrum SLURM config.
+# Adds a per-node "stage dataset to node-local" srun before training, via a
+# custom template that calls scripts/stage_to_local.sh.
+#
+# To use, the *data_path* of the experiment must point at the staged copy
+# (STAGE_LOCAL_DIR/<prefix-name>) and the container must bind STAGE_LOCAL_DIR.
+# See the run instructions; both are driven by the STAGE_* vars below so there is
+# a single source of truth for the source prefix and local destination.
+
+template_path: templates/marenostrum_stage.sbatch
+
+env:
+  # Absolute path to the staging helper (sbatch CWD is not guaranteed to be the
+  # repo root, so reference it explicitly). EDIT to your checkout path.
+  STAGE_SCRIPT: "${oc.env:OELLM_REPO,.}/scripts/stage_to_local.sh"
+
+  # Source dataset prefix on GPFS, WITHOUT extension (.bin/.idx appended by the
+  # staging script). Keep this in sync with the experiment's data_path.
+  STAGE_SRC_PREFIX: "${oc.env:DATA_DIR}/cerebras-SlimPajama-627B/train/small"
+
+  # Node-local destination. EDIT to MareNostrum's node-local mount. $TMPDIR is
+  # job-scoped node-local on MN5; a dedicated NVMe mount also works. This path
+  # MUST also be added to container.bind (see run instructions).
+  STAGE_LOCAL_DIR: "${oc.env:STAGE_LOCAL_DIR,$TMPDIR/megatron_data}"
+
+  STAGE_MODE: "whole"
