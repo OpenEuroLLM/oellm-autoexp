@@ -54,6 +54,17 @@ python3 -m pip uninstall -y megatron-core || true
 cd oellm-autoexp
 pip install -e .[dev]
 
+# --- nvidia-resiliency-ext >= 0.6.0 (hot-spare / spare-node fault tolerance) ---
+# The base image ships NVRx 0.5.0, which is pinned by constraints.installed.txt
+# above. 0.5.0 has NO spare-node support ("spare/redundancy NOT supported"); 0.6.0+
+# adds hot-spare nodes (ft_launcher --nnodes=min:max + --ft-segment + --max-restarts)
+# for recovering a PERMANENTLY dead node onto a restricted node set. Upgrade it
+# explicitly here (no constraints file, so it isn't capped to the base 0.5.0).
+# NOTE: bump the floor as newer NVRx lands — 0.6.0's barrier-rendezvous standby
+# promotion was incomplete in testing; prefer the latest available.
+# TODO: check this again
+python3 -m pip install --no-cache-dir --upgrade "nvidia-resiliency-ext>=0.6.0"
+
 # startup script that fixes CUDA symlinks
 mkdir -p /.singularity.d/env
 cat > /.singularity.d/env/99-cuda-fix.sh << 'EOFENV'

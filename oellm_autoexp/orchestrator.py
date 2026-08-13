@@ -14,6 +14,7 @@ from pathlib import Path
 from compoconf import asdict
 
 from oellm_autoexp.hydra_staged_sweep import expand_sweep, resolve_sweep_with_dag
+from oellm_autoexp.hydra_staged_sweep.parallel import run_chunks, split_evenly, worker_count
 from oellm_autoexp.hydra_staged_sweep.expander import SweepPoint
 from oellm_autoexp.hydra_staged_sweep.planner import JobPlan
 
@@ -341,6 +342,26 @@ def _resolve_job_name(config: RootConfig, total_jobs: int = 1) -> str:
         return f"{base_name}_{index_str}"
 
 
+_RENDER_CONTEXT: tuple | None = None
+
+
+def _render_chunk(indices: list[int]) -> list[tuple[int, str]]:
+    """Render the scripts for a slice of the plan, in a worker or in-
+    process."""
+    assert _RENDER_CONTEXT is not None, "render context not initialised"
+    plan, session_id = _RENDER_CONTEXT
+    rendered: list[tuple[int, str]] = []
+    for index in indices:
+        record = _build_job_record(plan, plan.jobs[index], session_id)
+        if not isinstance(record.definition, SlurmJobConfig):
+            LOGGER.info("Skipping script render for non-SLURM job '%s'", record.job_id)
+            continue
+        path = generate_script(record.definition.slurm)
+        LOGGER.info("Rendered script: %s", path)
+        rendered.append((index, str(path)))
+    return rendered
+
+
 def render_job_scripts(plan: ExecutionPlan, *, session_id: str = "dry-run") -> list[Path]:
     """Render sbatch scripts for every job in the plan without submitting.
 
@@ -350,16 +371,21 @@ def render_job_scripts(plan: ExecutionPlan, *, session_id: str = "dry-run") -> l
     Returns:
         Ordered list of paths to the written ``.sbatch`` files.
     """
-    script_paths: list[Path] = []
-    for job in plan.jobs:
-        record = _build_job_record(plan, job, session_id)
-        if not isinstance(record.definition, SlurmJobConfig):
-            LOGGER.info("Skipping script render for non-SLURM job '%s'", record.job_id)
-            continue
-        path = generate_script(record.definition.slurm)
-        LOGGER.info("Rendered script: %s", path)
-        script_paths.append(Path(path))
-    return script_paths
+    global _RENDER_CONTEXT
+
+    # Each job renders to its own file, so this fans out cleanly. Deal the jobs
+    # round-robin rather than in blocks so the workers stay balanced.
+    indices = list(range(len(plan.jobs)))
+    workers = worker_count(len(indices), len(indices))
+    chunks = split_evenly(indices, workers) if workers > 1 else [indices]
+
+    _RENDER_CONTEXT = (plan, session_id)
+    try:
+        results = [pair for chunk in run_chunks(_render_chunk, chunks, workers) for pair in chunk]
+    finally:
+        _RENDER_CONTEXT = None
+    # Restore plan order, which round-robin scattering broke.
+    return [Path(path) for _, path in sorted(results)]
 
 
 def chain_submit_jobs(

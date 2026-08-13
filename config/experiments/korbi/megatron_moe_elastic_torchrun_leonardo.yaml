@@ -1,0 +1,122 @@
+# @package _global_
+#
+# ELASTIC TORCHRUN permanent-node-failure test on LEONARDO (tiny MoE).
+#
+# Control experiment for megatron_moe_resilient_leonardo (which used ft_launcher
+# / NVRx 0.6.0 and FAILED to shrink 3->2 when a NON-highest node died, because
+# NVRx's barrier rendezvous doesn't re-compact survivor infra ranks). Here we
+# use plain `torchrun` (torchelastic c10d dynamic rendezvous), which RE-RANKS
+# survivors 0..N-1 on every membership change. If this recovers when the MIDDLE
+# node dies (SABOTEUR_NODE=1 -> the case NVRx crashed on), the rank bug is
+# NVRx-specific and torchelastic is the fix.
+#
+# No NVRx anywhere: torchrun backend (no --ft-* flags), NVRx sidecar dropped from
+# PYTHONPATH, FT package off, non-persistent (NVRx) local ckpt off. Recovery
+# COLD-STARTS (no checkpoint); progress-preserving resume across 12->8 would use
+# Megatron's resharding torch_dist ckpt -- a separate follow-up.
+defaults:
+  - /experiments/base
+  - /backend: megatron_torchrun_elastic
+  - /container: leonardo
+  - /slurm: leonardo_ftlauncher   # reuse the saboteur + srun --kill-on-bad-exit=0 + MASTER_ADDR strip
+  - /backend/megatron: [base, qwen3_moe]
+  - /sweep: none
+  - _self_
+
+backend:
+  torchrun_args:
+    # (ii) torchrun fixed-world spare approximation: min=max=2 -> exactly 2 active
+    # (world=8); with 3 allocated, the 3rd should sit in torchelastic's waiting
+    # list and join on a re-rendezvous (no min-healthy/redundancy concept in
+    # vanilla torchelastic -- this is the closest equivalent).
+    nnodes: "2:2"        # 2 active (world=8); 3rd allocated node = waiting spare
+    max_restarts: "20"
+
+  megatron:
+    # --- Tiny MoE (valid at 12 GPU DP=6 AND 8 GPU DP=4) -----------------------
+    num_layers: 4
+    hidden_size: 512
+    ffn_hidden_size: 1024
+    num_attention_heads: 8
+    num_query_groups: 2
+    kv_channels: 64
+    max_position_embeddings: 1024
+    num_experts: 8
+    moe_router_topk: 2
+    moe_ffn_hidden_size: 256
+    seq_length: 1024
+    encoder_seq_length: null
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 2
+    expert_model_parallel_size: 2    # divides DP=6 and DP=4
+    # Plain torchrun has NO active heartbeat monitor (that's ft_launcher's job),
+    # so it only notices a dead node when the hung collective hits the NCCL
+    # watchdog timeout. Default 10 min is too slow (collides with the job limit);
+    # 3 min => the survivors abort ~3 min after the loss, torchelastic restarts
+    # and re-rendezvous at world=8 well within the run.
+    distributed_timeout_minutes: 3
+    sequence_parallel: false
+    use_distributed_optimizer: true
+    moe_router_dtype: "fp32"
+
+    train_iters: 100000              # large so the fault lands mid-training
+    global_batch_size: 48            # divisible by mbs*DP at DP=6 and DP=4
+    micro_batch_size: 1
+    eval_interval: 1000
+    lr: 0.001
+    log_interval: 1
+
+    mock_data: true
+    data_path: null
+    tokenizer_type: NullTokenizer
+    tokenizer_model: null
+    vocab_size: 8192
+
+    # --- No NVRx / no FT package (plain torchrun) -----------------------------
+    enable_ft_package: false
+    inprocess_restart: false
+
+    # --- Checkpointing OFF (clean mechanism test; recovery cold-starts) --------
+    save: /leonardo_scratch/large/userexternal/kpoeppel/output/resilient_demo/ckpt
+    load: /leonardo_scratch/large/userexternal/kpoeppel/output/resilient_demo/ckpt
+    ckpt_step: 0
+    save_interval: 100000000
+    async_save: false
+    non_persistent_ckpt_type: null   # no NVRx local ckpt (avoids the 0.6.0 API break)
+    replication: false
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+    # torchelastic needs NCCL errors surfaced fast so the agent restarts the group
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+    TORCH_CPP_LOG_LEVEL: "error"
+    # Skip the slow flight-recorder dump on timeout so the hung process exits fast
+    # (else teardown adds minutes before torchelastic can restart).
+    TORCH_NCCL_DUMP_ON_TIMEOUT: "0"
+    TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC: "30"
+
+container:
+  image: /leonardo_work/OELLM_prod2026/container_images/OELLM_autoexp_MegatronTrainingNoRoot_base2512_x86_64_202601281510.sif
+
+slurm:
+  sbatch:
+    nodes: 3
+    time: "00:20:00"
+    job_name: null
+  env:
+    # Drop the NVRx 0.6.0 sidecar from PYTHONPATH -- plain torchrun uses the
+    # container's stock torch; NVRx is not imported at all.
+    PYTHONPATH: "$PYTHONPATH"
+    # Kill the LAST node (rank 2) -- the case NVRx recovered from. Middle-node
+    # (rank 1) kill made torchelastic's re-rendezvous hang on assigned_ranks/1
+    # (waiting for the dead node's slot, DistStoreError 60s); killing the highest
+    # rank leaves survivors {0,1} so the re-rendezvous should assign 0,1 cleanly.
+    SABOTEUR_NODE: "1"   # kill an active node; see if the waiting spare is promoted
+    SABOTEUR_DELAY: "150"
+
+job:
+  name: megatron_moe_elastic_torchrun_leonardo
+  base_output_dir: /leonardo_scratch/large/userexternal/kpoeppel/output/${job.name}

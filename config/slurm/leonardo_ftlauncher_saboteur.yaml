@@ -1,0 +1,83 @@
+# Leonardo SLURM config for ft_launcher (nvidia-resiliency-ext), including the
+# NVRx 0.6.0 HOT-SPARE path (permanent-node failure -> a standby node takes the
+# dead node's slot on a job-level restart).
+#
+# Derives from leonardo.yaml with the same two ft_launcher fixes jupiter needed,
+# plus two Leonardo-specific additions (sidecar PYTHONPATH + a gated saboteur):
+#
+# 1. SLURM_ARRAY_TASK_ID: leonardo.yaml exports "$SLURM_ARRAY_TASK_ID", which is
+#    the empty string for a NON-array job. NVRx 0.6.0 fault_tolerance/utils.py
+#    does int(os.environ['SLURM_ARRAY_TASK_ID']) when the var is set-but-present
+#    -> ValueError: invalid literal for int(): '' at launcher startup. Default 0.
+# 2. MASTER_ADDR: leonardo.yaml leaves a trailing space ("... | tail) "); strip
+#    whitespace and use `tail -n1` so the c10d rdzv endpoint is a clean
+#    "<ip>:<port>" (ft_launcher 0.6.0 is picky about this).
+# 3. PYTHONPATH: the Leonardo containers ship NVRx 0.4.1 (2510) / 0.5.0 (2512),
+#    NEITHER of which has hot-spare. We post-install NVRx 0.6.0 (the newest on
+#    PyPI) into a pip --target SIDECAR on scratch and prepend it here, so both
+#    `import nvidia_resiliency_ext` and the stock `/usr/local/bin/ft_launcher`
+#    (a plain `from ...launcher import main`) resolve to 0.6.0. Verified: the
+#    sidecar lands FIRST on sys.path, ahead of the container's dist-packages
+#    0.5.0. Build the sidecar once against the 2512 image:
+#      SIDE=/leonardo_scratch/large/userexternal/kpoeppel/nvrx06_prefix/site
+#      singularity exec --bind /leonardo_scratch <2512.sif> bash -c \
+#        "PIP_USER=0 python -m pip install --no-cache-dir --no-deps \
+#         --target=$SIDE 'nvidia-resiliency-ext==0.6.0'"
+#    Override NVRX_SIDECAR to relocate it.
+# 4. Saboteur (INERT by default): a one-shot background fault injector that
+#    simulates a PERMANENT loss of node $SABOTEUR_NODE, $SABOTEUR_DELAY s in.
+#    Delegated to scripts/saboteur.sh (see that file's header for the full
+#    rationale). KEY LESSON (2026-07-09): it kills only the TRAINING WORKERS and
+#    SPARES the ft_launcher AGENT, so the agent observes the worker failure,
+#    reports WorkerState.FAILED, and restarts the worker group at fixed world
+#    size (the path that recovered cleanly, job 49007050). The OLD inline
+#    `pkill -9 -f "python.*pretrain_gpt"` also hit the agent, which raced: when
+#    the agent died first the workers orphaned + kept training, no failure was
+#    detected, and the run looked like a "recovery stall" (~2/3 of runs) when in
+#    fact NO fault had landed. The script matches "pretrain_gpt" AND excludes
+#    "ft_launcher"/"saboteur", in a short burst that defeats the fault-time match
+#    race without touching the workers the agent respawns during the restart.
+#    Runs OUTSIDE the container -- apptainer shares the host PID ns, so it can
+#    signal the in-container workers. It reads SABOTEUR_NODE/SABOTEUR_DELAY from
+#    the env below; defaults (node=-1, delay huge) => no-op; the experiment arms
+#    it (SABOTEUR_NODE=1, small SABOTEUR_DELAY). Invoked via $SLURM_SUBMIT_DIR so
+#    it resolves regardless of the launcher's CWD.
+#    NB: use $(...) / bare $VAR here, NEVER ${...} (OmegaConf treats ${...} as an
+#    interpolation and would fail to resolve a shell var).
+defaults:
+  - leonardo
+  - _self_
+
+env:
+  SLURM_ARRAY_TASK_ID: "$(test -n \"$SLURM_ARRAY_TASK_ID\" && echo \"$SLURM_ARRAY_TASK_ID\" || echo 0)"
+  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep \"Address: \" | sed \"s/Address: //\" | tail -n1 | tr -d '[:space:]')"
+  # NVRx 0.6.0 sidecar (see header note 3). Prepended so 0.6.0 shadows the
+  # container's 0.5.0. $PYTHONPATH stays bare on purpose (not ${...}).
+  PYTHONPATH: "${oc.env:NVRX_SIDECAR,/leonardo_scratch/large/userexternal/kpoeppel/nvrx06_prefix/site}:$PYTHONPATH"
+  # Permanent-node saboteur knobs -- INERT defaults; the experiment arms them.
+  SABOTEUR_NODE: "-1"
+  SABOTEUR_DELAY: "999999"
+
+# Prepend the (gated) permanent-node saboteur to the launcher, before the env
+# exports. Identical to leonardo.yaml's launcher_cmd otherwise.
+launcher_cmd: "( SABOTEUR_NODE=$SABOTEUR_NODE SABOTEUR_DELAY=$SABOTEUR_DELAY bash \"$SLURM_SUBMIT_DIR/scripts/saboteur.sh\" ) & \\\n\
+  ${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
+  export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
+  ${oc.select:container.runtime,apptainer} exec ${oc.join:' ',${oc.maptmpl:'--env %=$% \\\n',${oc.dict.keys:.env}}} \
+  ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
+  --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif}"
+
+# Fault tolerance needs a dropped node's srun TASK to NOT tear down the whole
+# step. This template renders srun options from the `srun_opts` STRING (the
+# `srun:` dict is ignored), and Leonardo's slurm.conf defaults KillOnBadExit=1
+# (a prior run force-terminated on a task's bad exit). Force it off so that when
+# the saboteur drops a node, srun keeps the surviving tasks and ft_launcher
+# re-rendezvous + continues on the restricted node set. Trailing space required
+# (template does `srun {srun_opts}bash`).
+srun_opts: "--kill-on-bad-exit=0 "
+
+sbatch:
+  # Leonardo scheduler coordinates (override via SLURM_ACCOUNT/PARTITION/QOS).
+  account: ${oc.env:SLURM_ACCOUNT,oellm_prod2026}
+  partition: ${oc.env:SLURM_PARTITION,boost_usr_prod}
+  qos: ${oc.env:SLURM_QOS,boost_qos_dbg}
