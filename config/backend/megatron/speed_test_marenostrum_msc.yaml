@@ -1,6 +1,6 @@
-# MN5 speed test: real gpt-neox-20b tokenised data + local tokenizer.
+# MN5 speed test using MSC read-through caching for tokenised data.
 defaults:
-  - data_mn5
+  - data_mn5_msc
   - _self_
 
 lr_warmup_iters: 0

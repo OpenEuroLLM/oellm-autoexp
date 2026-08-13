@@ -49,15 +49,19 @@ while [ $# -gt 0 ]; do
 done
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"   # absolute, for a clean re-exec
 if [ "${REPEAT}" -gt 1 ] 2>/dev/null; then
-  echo "[leo-resil] ###### REPEAT MODE: ${REPEAT} runs (measuring recovery success rate) ######"
-  npass=0; nfail=0; ninc=0; results=()
+  echo "[leo-resil] ###### REPEAT MODE: ${REPEAT} runs (measuring recovery success rate + overhead) ######"
+  npass=0; nfail=0; ninc=0; results=(); overheads=()
   for run in $(seq 1 "${REPEAT}"); do
     echo "[leo-resil]"
     echo "[leo-resil] ########################## RUN ${run}/${REPEAT} ##########################"
-    REPEAT=1 bash "${SELF}"   # single pass; inherits any exported env knobs, streams its own output
-    rc=$?
+    # tee so we stream live AND can scrape this run's recovery-overhead timing.
+    rout="$(mktemp 2>/dev/null || echo "/tmp/leo_resil_run_$$_${run}")"
+    REPEAT=1 bash "${SELF}" 2>&1 | tee "${rout}"
+    rc="${PIPESTATUS[0]}"
+    ov="$(grep -aoE "TIMING overhead_s=[0-9]+" "${rout}" 2>/dev/null | head -1 | grep -oE "[0-9]+")"
+    rm -f "${rout}" 2>/dev/null
     case "${rc}" in
-      0) npass=$((npass+1)); results+=("run ${run}: PASS") ;;
+      0) npass=$((npass+1)); results+=("run ${run}: PASS${ov:+  (recovery ${ov}s)}"); [ -n "${ov}" ] && overheads+=("${ov}") ;;
       2) ninc=$((ninc+1));   results+=("run ${run}: INCONCLUSIVE") ;;
       *) nfail=$((nfail+1)); results+=("run ${run}: FAIL (see its STALL DIAGNOSIS above)") ;;
     esac
@@ -66,6 +70,10 @@ if [ "${REPEAT}" -gt 1 ] 2>/dev/null; then
   echo "[leo-resil] ################## REPEAT SUMMARY (${REPEAT} runs) ##################"
   for r in "${results[@]}"; do echo "[leo-resil]   ${r}"; done
   echo "[leo-resil] PASS=${npass}  FAIL=${nfail}  INCONCLUSIVE=${ninc}  =>  recovery success rate = ${npass}/${REPEAT}"
+  if [ "${#overheads[@]}" -ge 1 ]; then
+    printf '%s\n' "${overheads[@]}" | awk '{s+=$1; n++; if(mn==""||$1<mn)mn=$1; if($1>mx)mx=$1}
+      END{printf "[leo-resil] RECOVERY OVERHEAD (intervention->resume): mean=%.1fs  min=%ds  max=%ds  (n=%d)\n", s/n, mn, mx, n}'
+  fi
   exit 0
 fi
 
@@ -139,6 +147,32 @@ loss_at_iter() {  # $1=iter  $2=log  $3=before_line
 }
 first_loss_after_line() {  # $1=line  $2=log
   awk -v k="$1" 'NR>k && match($0, /lm loss: [0-9.eE+-]+/) { print substr($0, RSTART+9, RLENGTH-9); exit }' "$2"
+}
+
+# --- timing helpers: log timestamps -> epoch seconds (GNU date on the login node) --
+ts_to_epoch() { [ -z "$1" ] && return; date -d "$1" +%s 2>/dev/null; }
+# t0 = intervention. Prefer the saboteur's own fire_epoch=; fall back to the LAST
+# training-iteration timestamp before detection (training was alive then ~ fault).
+fire_epoch_of() {  # $1=log  $2=detect_line
+  local e; e="$(grep -aoE "fire_epoch=[0-9]+" "$1" 2>/dev/null | head -1 | grep -oE "[0-9]+")"
+  if [ -z "${e}" ]; then
+    local ts; ts="$(awk -v k="${2:-0}" 'NR<k && /iteration +[0-9]+\//' "$1" 2>/dev/null | tail -1 \
+      | grep -aoE '\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\]' | tr -d '[]')"
+    e="$(ts_to_epoch "${ts}")"
+  fi
+  echo "${e}"
+}
+# t1 = FT detection line epoch (leading "YYYY-MM-DD HH:MM:SS", drops the ,ms).
+detect_epoch() {  # $1=log
+  local ts; ts="$(grep -aE "${DETECT_RE}" "$1" 2>/dev/null | head -1 \
+    | grep -aoE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}')"
+  ts_to_epoch "${ts}"
+}
+# t2 = first training iteration AFTER line $2 (the reload) = "training resumed".
+first_iter_epoch_after() {  # $1=log  $2=line
+  local ts; ts="$(awk -v k="${2:-0}" 'NR>k && /iteration +[0-9]+\//' "$1" 2>/dev/null | head -1 \
+    | grep -aoE '\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\]' | tr -d '[]')"
+  ts_to_epoch "${ts}"
 }
 
 # Classify WHY a recovery didn't complete: rendezvous stall (before re-init) vs
@@ -252,7 +286,7 @@ else r3="FAIL(saboteur never fired)"; fi
 # Checks 4-6 only make sense once a real fault was detected; otherwise mark N/A so
 # a missed-fault run reports honestly instead of scanning the initial (cold) start.
 if [ -z "${FL}" ]; then
-  r4="N/A (no fault)"; r5="N/A (no fault)"; r6="N/A (no fault)"
+  r4="N/A (no fault)"; r5="N/A (no fault)"; r6="N/A (no fault)"; rtime="N/A (no fault)"; OVERHEAD=""
 else
   # 4. spare promoted: after the fault a world re-forms at ACTIVE_WORLD, and NO
   #    "Invalid infrastructure rank".
@@ -281,6 +315,24 @@ else
     if (post+0 <= pre*f + 0.05) print "PASS(pre=" pre " post=" post ")";
     else print "FAIL(LOSS SPIKE pre=" pre " -> post=" post " => wrong weights?)";
   }')"
+
+  # --- RECOVERY TIMING: overhead from saboteur intervention until training resumes ---
+  #   t0 = intervention (saboteur fire_epoch, else last live iter before detection)
+  #   t1 = FT agent detected the failure ; t2 = first iteration after the reload
+  # Phases: detect ${t1-t0} + restart/reload/resume ${t2-t1} ; TOTAL = t2-t0.
+  t1="$(detect_epoch "${LOG}")"
+  t0="$(fire_epoch_of "${LOG}" "${FL}")"
+  t2="$(first_iter_epoch_after "${LOG}" "${RLLINE:-0}")"
+  # iters rolled back = re-done work (fault iter - reload iter)
+  fault_iter="$(awk -v k="${FL}" 'NR<k && match($0,/iteration +[0-9]+\//){v=substr($0,RSTART,RLENGTH)} END{gsub(/[^0-9]/,"",v); if(v!="")print v}' "${LOG}")"
+  rollback=""; [ -n "${fault_iter}" ] && [ -n "${reload_iter}" ] && rollback=$(( fault_iter - reload_iter ))
+  OVERHEAD=""; rtime="UNKNOWN(missing timestamps)"
+  if [ -n "${t0}" ] && [ -n "${t2}" ]; then
+    OVERHEAD=$(( t2 - t0 ))
+    det="?"; rec="?"
+    [ -n "${t1}" ] && { det=$(( t1 - t0 )); rec=$(( t2 - t1 )); }
+    rtime="${OVERHEAD}s wall (detect ${det}s + restart/reload/resume ${rec}s)${rollback:+, ${rollback} iters rolled back}"
+  fi
 fi
 
 echo
@@ -291,6 +343,9 @@ say "3. fault fired (saboteur) ..................... ${r3}"
 say "4. spare promoted (world stays ${ACTIVE_WORLD}) ${r4}"
 say "5. reload (not cold-start) .................... ${r5}"
 say "6. WEIGHT CORRECTNESS (loss continuity) ....... ${r6}"
+say "   RECOVERY OVERHEAD (intervention->resume) ... ${rtime}"
+# machine-readable line for the --repeat aggregator (grepped, not shown to humans)
+[ -n "${OVERHEAD}" ] && say "TIMING overhead_s=${OVERHEAD}"
 
 # if the fault fired but recovery didn't complete, say WHY (rendezvous vs NCCL)
 if [ -n "${KL}" ]; then case "${r4}${r5}" in *FAIL*) diagnose_stall "${LOG}" "${KL}" ;; esac; fi
