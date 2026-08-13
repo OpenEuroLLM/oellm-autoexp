@@ -14,7 +14,7 @@ swiglu: true
 overlap_grad_reduce: true # backward
 overlap_param_gather: true # forward
 tp_comm_overlap: true # Overlap tensor parallel communication with computation (reduces idle time between GPUs)
-data_parallel_sharding_strategy: "optim_grads_params" # Do we need this if FSDP is disabled?
+# data_parallel_sharding_strategy: "optim_grads_params" # Do we need this if FSDP is disabled?
 apply_rope_fusion: true
 gradient_accumulation_fusion: true
 bias_dropout_fusion: true
@@ -32,7 +32,7 @@ attention_backend: "auto"
 
 # Position Embedding
 position_embedding_type: "rope"
-rotary_base: 10000
+rotary_base: 100000
 rotary_percent: 1.0
 untie_embeddings_and_output_weights: true
 
@@ -52,14 +52,23 @@ adam_beta1: 0.9
 adam_beta2: 0.95
 adam_eps: 1.e-8
 clip_grad: 1.0
-weight_decay: 0.05
+weight_decay: 0.1
 
 # SCHEDULER
 min_lr: 0.0
 lr_decay_style: WSD
 lr_wsd_decay_style: linear
-lr_warmup_iters: 2000 # Fixed for all.
-lr_wsd_decay_iters: 3000
+lr_warmup_iters: 4000
+train_iters: 1192093 # 10T tokens / (seq_len 4096 * gbs 2048) ≈ 1,192,092.896
+lr_wsd_decay_iters: 238476  # = train_iters (1192383) * cooldown_decay_fraction (0.2)
+lr: 0.00035
+
+
+
+# BASE TRAINING
+micro_batch_size: 4
+global_batch_size: 2048
+seed: 1234
 
 # TRAINING, PARALLELISM
 recompute_activations: True
@@ -86,9 +95,10 @@ profile_step_start: 5
 profile_step_end: 12
 
 # EVALS
-# Eval interval scales inversely with global batch size,
-# calibrated so that gbsz=1024 evals every 200 iterations.
-eval_interval: "${oc.eval:'int(204800 // ${backend.megatron.global_batch_size})'}"
+# tok/s = 2800 tok/s/GPU * 1024 GPUs = 2,867,200; tok/iter = 2048 * 4096 = 8,388,608
+# iters/job (24h) = 2,867,200 * 86400 / 8,388,608 = 29,531.25 ≈ 29,531; interval = 29,531 / 12 = 2,460.916  ≈ 2461
+
+eval_interval: 2400
 eval_iters: 100
 
 # LOGGING
@@ -104,14 +114,8 @@ tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
 # CHECKPOINT FORMAT
 ckpt_format: "torch_dist"
-# Checkpoint interval scales inversely with global batch size,
-# calibrated so that gbsz=1024 saves every 500 iterations.
-save_interval: "${oc.eval:'int(512000 // ${backend.megatron.global_batch_size})'}"
+# tok/s = 2800 tok/s/GPU * 1024 GPUs = 2,867,200; tok/iter = 2048 * 4096 = 8,388,608
+# iters/job (24h) = 2,867,200 * 86400 / 8,388,608 = 29,531.25 ≈ 29,531; interval = 29,531 / 12 = 2,460.916  ≈ 2461
+save_interval: 2400
 save: ${job.base_output_dir}/checkpoints
 load: ${.save}
-
-# Base training configuration (overridden by sweep)
-micro_batch_size: 1    # overridden by sweep
-global_batch_size: 1024  # overridden by sweep
-lr: 0.0006
-seed: 1234
