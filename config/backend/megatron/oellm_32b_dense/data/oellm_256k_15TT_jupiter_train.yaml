@@ -1,18 +1,18 @@
 # @package backend.megatron
 # Dataset related settings for the 32B dense run
 max_position_embeddings: ${.seq_length}
-split: '99,1,0'
+split: '998,2,0'
 create_attention_mask_in_dataloader: false
 
 # Data paths
-data_args_path: #.../15T_datamix.txt
+data_args_path: /e/data1/datasets/playground/mmlaion/oellm/flagship_datamix.txt
 
 # Tokenizer
 tokenizer_type: HuggingFaceTokenizer
-tokenizer_model: /e/project1/e-ext-2025e02-108/production_training/oellm_32b_dense/tokenizer_256k/
+tokenizer_model: /e/data1/datasets/playground/mmlaion/oellm/oellm_tokenizer_256k
 
 
 seq_length: 4096
 dataloader_type: "cyclic"
-num_workers: 4
+num_workers: 16
 num_dataset_builder_threads: 64

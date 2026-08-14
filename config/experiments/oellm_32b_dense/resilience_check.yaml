@@ -1,0 +1,173 @@
+# @package _global_
+#
+# HOT-SPARE VALIDATION on JUPITER — small, cheap, on purpose.
+#
+# Allocate 3 nodes, train on 2 (world = 8 GPUs), hold 1 idle as a spare. Kill an
+# ACTIVE node mid-run and check that the spare takes its place at the SAME world
+# size and training resumes from a checkpoint.
+#
+# WHY THIS RUN EXISTS
+# -------------------
+# `nemo_26.04.sif` ships the BARRIER build of nvidia-resiliency-ext, where the
+# spare/standby split is the default rendezvous behaviour rather than an opt-in
+# flag (see the notes in oellm_32b_dense.yaml). That is the mechanism the 514-node
+# flagship depends on, and it is NOT the mechanism the Leonardo saboteur runs
+# exercised — those used an older NVRx with --ft-restart-policy min-healthy and a
+# patched use_infra_group_rank. So it has never been tested on this stack.
+#
+# The node we kill is SLURM_NODEID 1 — an ACTIVE node that is NOT the highest
+# ranked one. That is deliberate: losing a middle node is exactly the case that
+# used to fail with "Invalid infrastructure rank" on the old rendezvous.
+#
+# WHAT TO CHECK IN THE LOG
+# ------------------------
+#  1. RESERVE     "and 1 standby ranks [...]" at startup -> 2 active + 1 standby
+#  2. FAULT       "[saboteur] node=1 ... firing after 180s"
+#  3. PROMOTION   the world re-forms at 8 GPUs (NOT shrunk to 4), and there is
+#                 NO "Invalid infrastructure rank"
+#  4. RELOAD      it resumes from a checkpoint, not "start from random"
+#  5. CONTINUITY  the loss right after the reload is close to the loss at the
+#                 reloaded iteration. A wrong-shard reload shows up as a spike
+#                 toward ln(vocab) — this is the check that catches "it resumed,
+#                 but from the wrong weights".
+#
+# Cost: 3 nodes x ~20 min ~= 4 GPU-hours. Cancel as soon as check 5 is visible.
+#
+# TO RUN IT WITHOUT A FAULT (control run, confirms the reserve forms at all):
+#   -o 'slurm.env.SABOTEUR_NODE=-1'
+defaults:
+  - /backend: megatron_ftlauncher_localaddr
+  - /container: jupiter
+  - /slurm: jupiter_ftlauncher_saboteur
+  # NB /job: default, NOT auto_cancel. auto_cancel cancels the job after ~5 min
+  # of log inactivity — and a spare promotion plus checkpoint reload is exactly
+  # a quiet gap. It would kill the run at the moment we want to observe.
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: [base, qwen3_125M]
+  - _self_
+
+job:
+  name: oellm_32b_dense_resilience_check
+  base_output_dir: /e/scratch/e-sta-openeurollm/production_training/${job.name}
+  # spelled out because /job: default templates these on the sweep ${index}
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+  chain_repeat: 1
+
+backend:
+  aux:
+    active_nodes: 2   # world = 2 x 4 = 8 GPUs, FIXED across the promotion
+    spare_nodes: 1
+    # Short timeouts on purpose: this is a tiny model, so a real hang should be
+    # caught fast. (The flagship widens these — different problem, 2056 ranks.)
+    ft_timeout_setup: 900
+    ft_timeout_step: 120
+    ft_timeout_checkpointing: 300
+    ft_timeout_out_of_section: 300
+
+  torchrun_args:
+    # MIN = active world size, MAX = active + standby -> "2:3", not "2:2".
+    # "2:2" caps arrivals at 2 and the 3rd node is rejected, closing the
+    # rendezvous (job 1354729). See the long note in oellm_32b_dense.yaml.
+    nnodes: "${backend.aux.active_nodes}:${oc.addi:${backend.aux.active_nodes},${backend.aux.spare_nodes}}"
+    max_restarts: "10"   # a promotion consumes one
+
+  megatron:
+    # --- same parallel SHAPE as the flagship, at 1/1000 the size --------------
+    # TP=4 intra-node, PP=2 inter-node, DP=1. PP spanning nodes is the part that
+    # actually exercises inter-node P2P through the promotion.
+    tensor_model_parallel_size: 4
+    pipeline_model_parallel_size: 2
+    sequence_parallel: true
+    use_distributed_optimizer: true
+    micro_batch_size: 1
+    global_batch_size: 8
+    train_iters: 2000
+    lr: 0.001
+    eval_interval: 1000
+    eval_iters: 0
+    log_interval: 1
+
+    # --- fault tolerance ------------------------------------------------------
+    enable_ft_package: true
+    calc_ft_timeouts: true
+    inprocess_restart: false   # a spare promotion is a JOB-level restart
+
+    # --- checkpointing: frequent, so the reload is quick and check 5 is sharp --
+    save: ${job.base_output_dir}/ckpt
+    load: ${.save}
+    ckpt_format: torch_dist
+    save_interval: 400
+    non_persistent_ckpt_type: "global"
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
+    # NOT 20. Measured on the control run (job 1354846): a non-persistent save
+    # costs ~35 s EVEN FOR THIS 125M MODEL
+    #   save-checkpoint-non-persistent ...: (33389.67, 33389.72)
+    # i.e. it is fixed shared-FS/metadata overhead, not bytes. At every 20 iters
+    # that was 38 saves x 35 s = 22 min of a 30 min job, against ~6 min of actual
+    # training, and the run hit the wall clock at iteration 760/2000.
+    non_persistent_save_interval: 200
+    async_save: false          # finalise before a fault can interrupt the write
+    no_load_optim: false
+    no_load_rng: false
+    # NVRx "local" checkpointing is deliberately NOT used: it would need
+    # `replication` to survive a node loss, and the NVRx replication collective
+    # crashes on JUPITER (it works on Leonardo).
+    replication: false
+
+    # --- mock data: this is a launcher/rendezvous test, not a data test -------
+    mock_data: true
+    data_path: null
+    tokenizer_type: NullTokenizer
+    tokenizer_model: null
+    vocab_size: 8192
+    wandb_project: ""
+
+  env:
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+    TORCH_CPP_LOG_LEVEL: "error"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    # If this run hangs on the first inter-node P2P instead of training, it is
+    # the known GH200 GDRDMA issue, not a fault-tolerance problem — set
+    # NCCL_NET_GDR_LEVEL=0 and retry. Left ON here because the flagship wants
+    # GDR on and we would rather find out now.
+
+container:
+  # MUST be pinned: /container: jupiter still defaults to
+  # MegatronTraining-JUPITER_aarch64_202603120039.sif, which is gone from the
+  # cache (job 1354682 died in 46 s on exactly that). And the point of this test
+  # is the FLAGSHIP container's ft_launcher, so use the flagship's image.
+  image: /e/project1/e-sta-openeurollm/container/nemo_26.04.sif
+
+slurm:
+  env:
+    # HARD ASSERT in this Megatron for TP>1 / CP>1 (arguments.py:959, not the
+    # softer FSDP warning at :935). Job 1354729 died on it in every rank.
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    UB_SKIPMC: "1"
+    # >>> ARMED <<< permanent loss of ONE active node (self-selected; see
+    # scripts/saboteur_nodeloss.sh). Node 0 is skipped as the rendezvous store
+    # host, and an atomic claim in SABOTEUR_CLAIM_DIR guarantees exactly one
+    # node fires — with only 1 spare, two simultaneous losses would kill the job
+    # for legitimate reasons and tell us nothing.
+    # The delay runs from the srun task shell, NOT the first training iteration,
+    # so it must cover container start + NCCL init (~240 s measured on job
+    # 1354846) AND leave enough training for at least one rolling checkpoint to
+    # exist — otherwise the promoted world has nothing to reload and the run
+    # cold-starts, which tests the wrong thing. 600 s = ~6 min of training
+    # = ~400 iterations = 2 rolling checkpoints at the interval set above.
+    SABOTEUR_DELAY: "600"
+    SABOTEUR_CLAIM_DIR: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_resilience_check/saboteur
+    SABOTEUR_SKIP_NODE0: "1"
+  sbatch:
+    nodes: ${oc.addi:${backend.aux.active_nodes},${backend.aux.spare_nodes}}
+    # 45 min: ~4 min startup + 10 min to the fault + promotion/reload + enough
+    # post-recovery iterations to judge loss continuity. The control run died on
+    # a 30 min limit before it could have shown any of that.
+    time: "00:45:00"
+    account: e-sta-openeurollm
+    job_name: null
+  name: "job_${oc.timestring:}"

@@ -196,6 +196,7 @@ def _ensure_state_store(
 
     session_dir = monitor_state_dir / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
+    time.sleep(0.5)
     store = JobFileStore(session_dir)
     LOGGER.info("Created monitoring session directory: %s", session_dir)
     return store, session_id

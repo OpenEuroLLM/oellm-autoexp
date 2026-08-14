@@ -24,7 +24,9 @@ gradient_accumulation_fusion: true
 bias_dropout_fusion: true
 masked_softmax_fusion: true
 async_tensor_model_parallel_allreduce: true
-accumulate_allreduce_grads_in_fp32: true
+# accumulate_allreduce_grads_in_fp32: deliberately NOT set here — the experiment
+# drives reduction precision with the single flag grad_reduce_in_bf16, and
+# Megatron derives this one from it (arguments.py:742-747).
 
 # ATTENTION
 num_attention_heads: 64
@@ -57,13 +59,19 @@ clip_grad: 1.0
 weight_decay: 0.05
 
 # SCHEDULER
-min_lr: 0.0
+# The horizon (train_*, warmup, wsd tail) lives in the EXPERIMENT config, because
+# it differs per run and because a GBS rampup forces SAMPLE-based training:
+# Megatron asserts train_iters is None / lr_warmup_iters == 0 / lr_decay_iters is
+# None as soon as train_samples is set (arguments.py:796-806), and refuses
+# --rampup-batch-size entirely for iteration-based training (arguments.py:791).
+# So the iteration-based knobs are neutral here and the experiment picks one mode.
+min_lr: 0.0                 # WSD decays to zero
 lr_decay_style: WSD
 lr_wsd_decay_style: linear
-lr_warmup_iters: 4000 # TODO
-train_iters: 100 # TODO
-lr_wsd_decay_iters: 10 # TODO
-lr: 0.00035 # TODO
+lr: 0.0002                  # peak LR
+lr_warmup_iters: 0          # sample-based warmup by default -> set in experiment
+train_iters: null           # -> experiment sets train_samples (or train_iters)
+lr_wsd_decay_iters: null    # -> experiment sets lr_wsd_decay_samples
 
 # TRAINING, PARALLELISM
 recompute_activations: False
@@ -80,7 +88,12 @@ use_distributed_optimizer: True
 
 # COMM OPTIONS
 distributed_backend: nccl
-distributed_timeout_minutes: 30
+# 30 min was too tight: it is the watchdog on the STARTUP barrier too, and any
+# dataset index still missing from the cache is built while every other rank
+# waits in an ALLREDUCE — that is what killed the first prebuild (job 1354000).
+# At 2056 ranks the init collectives alone deserve more headroom. Hang detection
+# is the FT rank monitor's job now, so a longer watchdog costs little.
+distributed_timeout_minutes: 60
 
 # PROFILE
 profile: False
@@ -90,8 +103,14 @@ profile_step_start: 5
 profile_step_end: 12
 
 # EVALS
-eval_interval: null # TODO
-eval_iters: 100
+# 10 eval iters every 10k train iters = 168 M tokens per eval, ~0.03% of compute.
+# Sized against the held-out split, not against time: the run consumes
+# (train_iters/eval_interval + 1) * eval_iters * GBS = 15.1 B valid tokens in
+# total, vs the ~30 B that split '998,2,0' holds out (see the data config).
+# NB eval_interval, eval_iters AND split all feed the VALID-split dataset cache
+# key, so changing any of them forces a valid-index rebuild.
+eval_interval: 10000
+eval_iters: 10
 
 # LOGGING
 log_interval: 1
@@ -104,7 +123,34 @@ wandb_save_dir: "${job.base_output_dir}"
 tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
 # CHECKPOINT FORMAT
+# Two tiers (see the experiment config for the rationale and the intervals):
+#   persistent     -> ${save}, kept forever, feeds conversion + downstream eval
+#   non-persistent -> rotating, latest only, exists purely to resume from
 ckpt_format: "torch_dist"
-save_interval: 2400 # TODO
+# ASYNC: keep the ~450 GB write off the critical path. Measured on the 125M
+# resilience run (job 1354846), a SYNC non-persistent save cost ~35 s
+# (save-checkpoint-non-persistent: 33389 ms) — almost all fixed shared-FS
+# overhead rather than bytes, so at 32B it does not shrink and would otherwise
+# be paid in full at every interval.
+#   * async_save only works with ckpt_format: torch_dist (set above).
+#   * use_persistent_ckpt_worker keeps one background worker rather than forking
+#     per save, which is what makes it cheap at 2048 ranks.
+#   * ckpt_assume_constant_structure lets Megatron cache the sharding metadata
+#     across saves — the structure never changes in a fixed-world run, and this
+#     removes a large part of the per-save metadata cost.
+# NB the finalization is still blocking on a clean exit: training.py calls
+# maybe_finalize_async_save(blocking=True, terminate=True) on the way out, so a
+# 12 h chunk still pays one full write at the end — budget for it in
+# exit_duration_in_mins.
+async_save: true
+use_persistent_ckpt_worker: true
+ckpt_assume_constant_structure: true
+save_interval: 32000
 save: ${job.base_output_dir}/checkpoints
 load: ${.save}
+non_persistent_ckpt_type: "global"
+non_persistent_global_ckpt_dir: ${job.base_output_dir}/checkpoints_rolling
+non_persistent_save_interval: 500
+# resume must restore optimizer + RNG (explicit: base_defaults leaves these null)
+no_load_optim: false
+no_load_rng: false

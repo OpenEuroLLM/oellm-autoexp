@@ -31,13 +31,26 @@ defaults:
 #   * `torchrun` -> `ft_launcher`.
 #   * Rendezvous MUST be c10d (ft_launcher rejects rdzv_backend=static) -> use a
 #     shared rdzv_id and DON'T pass node_rank/master_addr/master_port.
-#   * FT section timeouts are hardcoded here (NOT routed through torchrun_args)
+#   * FT section timeouts are spliced in here (NOT routed through torchrun_args)
 #     because the cliargs resolver rewrites `_`->`-`. NVRX 0.5.0 names them
 #     `--ft-rank-section-timeouts` / `--ft-rank-out-of-section-timeout` (the
 #     `--ft-param-*` form from newer docs is rejected as unrecognized on 0.5.0).
 #     With `--calc-ft-timeouts` (experiment) Megatron refines + persists them.
+#     They come from `aux` below so an experiment can widen them WITHOUT
+#     restating this whole escaped string; the defaults are unchanged, so the
+#     existing Leonardo configs behave exactly as before.
+#     Widen them for large jobs: at O(1000) ranks, startup and a multi-hundred-GB
+#     torch_dist save can exceed the defaults and be misread as a hang, which
+#     turns a slow-but-healthy job into a restart loop.
 dist_cmd: "ft_launcher ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n  %',' %',\
- ${oc.cliargs:${.torchrun_args}}}}\\\n  --ft-rank-section-timeouts=setup:600,step:180,checkpointing:420 \\\n  --ft-rank-out-of-section-timeout=300 \\\n   ${.launcher_script}"
+ ${oc.cliargs:${.torchrun_args}}}}\\\n  --ft-rank-section-timeouts=setup:${.aux.ft_timeout_setup},step:${.aux.ft_timeout_step},checkpointing:${.aux.ft_timeout_checkpointing} \\\n  --ft-rank-out-of-section-timeout=${.aux.ft_timeout_out_of_section} \\\n   ${.launcher_script}"
+
+aux:
+  # FT rank-monitor section timeouts, in seconds. Override per experiment.
+  ft_timeout_setup: 600
+  ft_timeout_step: 180
+  ft_timeout_checkpointing: 420
+  ft_timeout_out_of_section: 300
 
 torchrun_args:
   nproc_per_node: ${slurm.sbatch.gpus_per_node}
