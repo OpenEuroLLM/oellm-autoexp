@@ -1,0 +1,40 @@
+# @package backend.megatron
+#
+# Production schedule for the 32B dense flagship run — SAMPLE-BASED.
+#
+# WHY SAMPLES AND NOT ITERATIONS
+# ------------------------------
+# Megatron refuses `--rampup-batch-size` for iteration-based training
+# (arguments.py:791) and, once `train_samples` is set, asserts that train_iters
+# is None, lr_decay_iters is None and lr_warmup_iters == 0 (arguments.py:796).
+# Keeping the whole family of runs in samples means the GBS-rampup variant
+# differs from the no-rampup variant by exactly ONE added key, and every variant
+# sees the same LR at the same *token* count.
+#
+# WHY THIS IS ITS OWN CONFIG GROUP
+# --------------------------------
+# The Megatron dataset cache key includes `num_samples` per split
+# (megatron_dataset.py:61) — so the index/shuffle caches are only shared between
+# two runs if `train_samples`, `global_batch_size`, `eval_interval` and
+# `eval_iters` all match. The data-cache PREBUILD job must therefore use exactly
+# these numbers, which is why they live here instead of inline in the experiment.
+# Changing anything in this file invalidates the (expensive) 15 T train index.
+#
+# 1 sample = seq_length = 4096 tokens.
+
+global_batch_size: 4096            # 16.78 M tokens/iter
+train_samples: 3661824000          # 15.00 T tokens = 894,000 iters at GBS 4096
+lr_warmup_samples: 16384000        #   67 B tokens =   4,000 iters at GBS 4096
+lr_wsd_decay_samples: 366182400    # 10% tail      =  89,400 iters at GBS 4096
+
+# sample-based mode requires the iteration-based twins to stay off
+train_iters: null
+lr_warmup_iters: 0
+lr_decay_iters: null
+lr_wsd_decay_iters: null
+
+# Shared across ALL variants on purpose (NOT keyed on job.name): the index files
+# are content-hashed internally, so one directory serves the prebuild job and
+# every training variant. Keying it on the run name would make each variant
+# rebuild the 15 T train index from scratch.
+data_cache_path: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense/data_cache

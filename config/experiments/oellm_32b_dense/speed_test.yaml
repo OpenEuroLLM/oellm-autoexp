@@ -1,0 +1,66 @@
+# @package _global_
+#
+# STEP 1 of the flagship rollout: throughput shakeout.
+#
+# This is the PRODUCTION config with `exit_interval: 50` bolted on — not a
+# separate small run. That matters for two reasons:
+#   * the dataset cache key includes num_samples per split, so keeping
+#     train_samples / GBS / eval_* at production values means this job reuses the
+#     prebuilt 15 T index instead of building a second one;
+#   * it exercises the real parallelism, the real ft_launcher path and the real
+#     514-node allocation, which is what we actually want to measure.
+#
+# Checkpointing is OFF (save: null) so the 50 iters measure pure step time. Once
+# the step time is settled, run this again with save enabled for one interval to
+# time a ~450 GB torch_dist write — that number sets the FT `checkpointing`
+# section timeout and the exit_duration_in_mins margin.
+#
+# Read off: iteration time, TFLOP/s/GPU, and the memory high-water mark.
+defaults:
+  - oellm_32b_dense
+  # NO FAULT TOLERANCE for the throughput test. Two reasons:
+  #   * the ft_launcher rank monitor's `setup` section timeout is hardcoded at
+  #     600 s in config/backend/megatron_ftlauncher_localaddr.yaml. Bringing up
+  #     2056 ranks and mmapping a 15 T blend index plausibly takes longer, and
+  #     the monitor would read that as a hang and restart the worker group —
+  #     turning a throughput measurement into a restart loop.
+  #   * a speed test should measure speed. FT gets validated separately by the
+  #     3-node saboteur shakeout.
+  # `override` because the parent already picked a /backend.
+  - override /backend: megatron_torchrun_localaddr
+  - _self_
+
+backend:
+  aux:
+    variant: "speed50"
+    # No FT -> no spare to promote, so allocate exactly the active set. This is
+    # NOT cosmetic: slurm.sbatch.nodes feeds torchrun's nnodes, and 514 nodes
+    # would give world 2056, DP = 2056/(TP4*PP2) = 257, and GBS 4096 is not
+    # divisible by mbs*DP = 257 -> Megatron asserts before the first step.
+    spare_nodes: 0
+  # plain torchrun: fixed world, no elastic "N:N" form, no ft_launcher args.
+  # These must be restated because hydra MERGES torchrun_args with the parent's.
+  torchrun_args:
+    nnodes: ${slurm.sbatch.nodes}
+    max_restarts: "0"
+  megatron:
+    # the ft rank monitor and its timeout calculation need ft_launcher
+    enable_ft_package: false
+    calc_ft_timeouts: false
+    exit_interval: 50
+    # no checkpoints: `load` follows `save` via interpolation, so both go away
+    save: null
+    non_persistent_ckpt_type: null
+    non_persistent_global_ckpt_dir: null
+    non_persistent_save_interval: null
+    # keep the throughput sweeps out of the production wandb project
+    wandb_project: oellm_32b_dense_speed
+
+job:
+  # 1 = no chaining (schema.py types this as int, so `null` is rejected)
+  chain_repeat: 1
+
+slurm:
+  sbatch:
+    # short wall time -> much better queue priority on the booster partition
+    time: "00:40:00"

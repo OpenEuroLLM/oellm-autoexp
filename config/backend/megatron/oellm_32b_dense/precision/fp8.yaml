@@ -1,0 +1,98 @@
+# @package backend.megatron
+#
+# FP8 precision for the 32B flagship — a SEPARATE, OPT-IN group because this is
+# a numerics change, not a throughput knob. It buys a large speedup, but an FP8
+# divergence at 8 T tokens costs the whole run, so it must be justified by loss
+# curves and not by TFLOPS.
+#
+# Layer it onto any experiment in this family via the DEFAULTS LIST:
+#   defaults:
+#     - oellm_32b_dense          # or speed_test, warmup_lr_only, ...
+#     - /backend/megatron/oellm_32b_dense/precision: fp8
+#     - _self_
+# (see experiments/oellm_32b_dense/fp8.yaml and fp8_speed_test.yaml)
+#
+# NB you CANNOT add this group from the CLI: hydra resolves a `+group=option`
+# override relative to the experiment's own directory, so
+# `+backend/megatron/oellm_32b_dense/precision=fp8` looks for
+# `experiments/oellm_32b_dense/backend/...` and fails with MissingConfigException.
+# For a one-off, set the values directly instead:
+#   -o backend.megatron.fp8=hybrid -o backend.megatron.fp8_recipe=tensorwise \
+#   -o backend.megatron.first_last_layers_bf16=true
+#
+# The defaults below are chosen for STABILITY FIRST. The speed-oriented knobs
+# are listed at the bottom, switched off, to be enabled only once the loss
+# curves are shown to match bf16.
+#
+# ---------------------------------------------------------------------------
+# fp8: "hybrid" = e4m3 in the forward pass, e5m2 in the backward. This is the
+# standard training recipe: e5m2's wider exponent range matters for gradients,
+# e4m3's extra mantissa bit matters for activations. "e4m3" everywhere is for
+# inference, not training.
+fp8: hybrid
+
+# =========================================================================
+# FP8 AND CUDA GRAPHS ARE MUTUALLY EXCLUSIVE HERE. Pick a branch.
+# =========================================================================
+# Tensorwise (current) scaling recomputes the scale from each tensor every step.
+# CUDA graphs bake the FP8 metadata in at capture time (cuda_graphs.py:664
+# save_fp8_tensors(..., self.fp8_recipe) / :735 restore_fp8_tensors), so on
+# replay the metadata no longer matches and TE aborts every rank with
+#     AssertionError: Saved FP8 metadata does not match operation's FP8 metadata
+# (job 1366290; 1366300 died alongside it with an illegal memory access inside
+# TE's split_overlap_ag). Megatron does NOT guard the combination — it fails at
+# runtime, ~5 min into a 512-node allocation.
+#
+# BRANCH A (set below) — VERIFIED WORKING at 512 nodes:
+#     fp8_recipe: tensorwise + cuda_graph_impl: none
+#   No amax lag at all: the scale comes from the tensor being cast, which is the
+#   right property for a run whose main risk is a loss/grad-norm spike.
+#   Cost: forecloses fp8_param_gather (arguments.py:1178 hard-asserts
+#   `not fp8_param_gather or fp8_recipe == "delayed"`), and gives up CUDA graphs
+#   — worth ~1% on the earlier 1.8B runs and never demonstrated for this config.
+#
+# BRANCH B (UNVERIFIED — reasoned from source, not measured) — if you want CUDA
+# graphs and/or fp8_param_gather back:
+#     -o backend.megatron.fp8_recipe=delayed \
+#     -o backend.megatron.fp8_amax_history_len=1024 \
+#     -o backend.megatron.fp8_amax_compute_algo=max \
+#     -o backend.megatron.cuda_graph_impl=local
+#   Delayed keeps amax/scale in FIXED buffers updated in place, which is what
+#   makes it graph-safe. Use a LONG history with `max` — the schema default is
+#   fp8_amax_history_len=1 ("use last step's amax", no smoothing), which is the
+#   fragile setting and is what the failed runs used.
+fp8_recipe: tensorwise
+
+# Required by the tensorwise branch above. This OVERRIDES the parent config,
+# where CUDA graphs may be enabled for the bf16 runs.
+cuda_graph_impl: none
+
+# Keep the first and last transformer layers in bf16. These are the layers
+# whose activation ranges are least well-behaved (embedding-adjacent at the
+# start, logit-adjacent at the end, and this model has a 262k vocab with UNTIED
+# output weights). Standard FP8 practice, small throughput cost, meaningful
+# insurance.
+first_last_layers_bf16: true
+num_layers_at_start_in_bf16: 1
+num_layers_at_end_in_bf16: 1
+
+# ---------------------------------------------------------------------------
+# SPEED KNOBS — deliberately OFF until FP8 stability is established.
+# ---------------------------------------------------------------------------
+# fp8_param_gather stores parameters in FP8 for the distributed-optimizer
+# all-gather, halving that communication. At DP=128 with overlap_param_gather
+# on, the param gather is a real cost, so this is the most promising remaining
+# throughput lever. But it changes what the optimizer gathers, not just how
+# fast — so it is a numerics change too. Enable AFTER the loss curves match:
+#   -o backend.megatron.fp8_param_gather=true
+# REQUIRES fp8_recipe: delayed (arguments.py:1178 asserts it), so it is NOT
+# available on branch A — enabling it here without also switching to delayed
+# fails at argument validation.
+fp8_param_gather: false
+
+# NB mbs=4 is worth RE-TESTING under FP8. It was ruled out on memory alone
+# (OOM at both 8 and 512 nodes with bf16 activations, dying with 160 MiB left).
+# FP8 roughly halves activation memory, and mbs has won at every step measured
+# (1->2 was +4.4% at PP=2, +2.8% at PP=4), so it is likely the largest
+# remaining gain if it now fits:
+#   -o backend.megatron.micro_batch_size=4
