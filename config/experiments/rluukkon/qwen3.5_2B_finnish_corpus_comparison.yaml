@@ -1,0 +1,120 @@
+# @package _global_
+# Finnish single-corpus comparison for Qwen3.5-2B-Base.
+# Each sweep member trains for 2B tokens with the calibrated 1e-4 learning rate.
+defaults:
+  - ../base
+  - /backend: megatron
+  - /container: mi325x
+  - /slurm: mi325x
+  - /sweep: none
+  - /backend/megatron: [qwen3_5_2B]
+  - _self_
+
+slurm:
+  sbatch:
+    partition: amd-tw-verification
+    nodes: 1
+    time: 0-12:00:00
+    open_mode: append
+
+  env:
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    WANDB_MODE: "online"
+    WANDB_API_KEY: "local"
+    FASTTRACKML_URL: "http://tus1-vm-amd-k8s-001:5000"
+    PYTHONPATH: "/shared_silo/scratch/rluukkon/wandb_shim:${oc.env:PWD}"
+    OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
+    APPTAINER_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+    SINGULARITY_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+
+  launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
+    export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
+    ulimit -n 65536 ; export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; export AITER_JIT_DIR=/tmp/$USER/aiter_jit_dir ; \\\n\
+    export TRITON_CACHE_DIR=/tmp/triton-$SLURM_JOB_ID ; export TORCHINDUCTOR_CACHE_DIR=/tmp/torchinductor-$SLURM_JOB_ID ; \\\n\
+    ${oc.select:container.runtime,apptainer} exec --rocm --overlay /shared_silo/scratch/containers/fla-overla-for-primus-v26.1.img:ro ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} \
+    ${oc.select:container.image,container.sif}"
+
+container:
+  image: /shared_silo/scratch/containers/primus_v26.1.sif
+
+backend:
+  megatron:
+    log_throughput: true
+    log_interval: 1
+    log_progress: true
+
+    # Replaced per sweep member below. Prefixes omit .bin/.idx.
+    data_path:
+      - 1.0
+      - /DATASET_PATH_PLACEHOLDER
+    data_cache_path: /shared_silo/scratch/rluukkon/data/.cache
+    split: "989,10,1"
+    num_workers: 7
+
+    global_batch_size: 240
+    micro_batch_size: 6
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    use_distributed_optimizer: true
+
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1e-8
+    weight_decay: 0.01
+    clip_grad: 1.0
+
+    # 2B tokens with the learning rate selected by the HPLT 4 calibration.
+    train_iters: ${oc.eval:'-(-2_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    lr: 1e-4
+    min_lr: 1e-5
+    lr_warmup_iters: ${oc.eval:'max(12, int(${.train_iters} * 0.05))'}
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: ${oc.eval:'int(${.train_iters} * 0.20)'}
+    lr_decay_iters: ${.train_iters}
+
+    save_interval: ${oc.eval:'max(1, int(${.train_iters} / 2))'}
+    save_extra_steps:
+      - ${oc.eval:'int(${backend.megatron.train_iters} * 0.80)'}
+      - ${backend.megatron.train_iters}
+    ckpt_format: torch_dist
+    save: ${job.base_output_dir}/checkpoints
+
+    load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-2B-Base
+    finetune: true
+    no_load_optim: true
+    no_load_rng: true
+
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    wandb_save_dir: ${job.base_output_dir}/wandb
+    wandb_project: "moe-exploration"
+    wandb_exp_name: "qwen3_5_2B_fi_corpus_${stage}_${oc.env:SLURM_JOB_ID,local}"
+
+job:
+  name: qwen3_5_2B_fi_corpus_${stage}_${slurm.env.MACHINE_NAME}
+
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        - stage: hplt4
+          backend.megatron.data_path:
+            - 1.0
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt4.0_fi_cleaned_merged/hplt4.0_fi_cleaned_text_document
+        - stage: hplt3
+          backend.megatron.data_path:
+            - 1.0
+            - /DATASET_PATH_PLACEHOLDER/hplt3_fi
+        - stage: hplt2
+          backend.megatron.data_path:
+            - 1.0
+            - /DATASET_PATH_PLACEHOLDER/hplt2_fi
+        - stage: mt_nemotron
+          backend.megatron.data_path:
+            - 1.0
+            - /DATASET_PATH_PLACEHOLDER/mt_nemotron_fi
+        - stage: finepdfs_edu
+          backend.megatron.data_path:
+            - 1.0
+            - /DATASET_PATH_PLACEHOLDER/finepdfs_edu_fi
