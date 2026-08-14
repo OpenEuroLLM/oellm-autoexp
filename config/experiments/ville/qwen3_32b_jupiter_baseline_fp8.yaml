@@ -41,8 +41,6 @@ backend:
     overlap_grad_reduce: true
     overlap_param_gather: true
     tp_comm_overlap: true
-    use_sharp: true
-    ddp_bucket_size: 80000000 # Adjust this with nodes
     cross_entropy_loss_fusion: true
     cross_entropy_fusion_impl: te
 
@@ -82,4 +80,3 @@ slurm:
     nodes: 16
     time: "00:30:00"
     comment: "NVIDIA_GPU_CLOCKS=1980"
-    network: 'sharp'

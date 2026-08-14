@@ -1,6 +1,6 @@
 # @package _global_
-# This is the best performing config according to the sweeps standing at ~413 TFLOPS with 16 nodes
-# Baseline as of 03.8.2026
+# This is the best performing config according to the sweeps standing at ~422 TFLOPS with 16 nodes
+# Baseline as of 13.8.2026
 defaults:
   - /experiments/base
   - /backend: megatron_torchrun_localaddr
