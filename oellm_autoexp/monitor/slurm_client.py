@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 import yaml
 
 from compoconf import ConfigInterface, register, asdict
@@ -74,6 +75,14 @@ class SlurmClient(JobClientInterface):
             job.slurm.script_path,
             job.slurm.name,
         )
+        # Nobody creates the log directory for a job name that has never run:
+        # sbatch does NOT create the --output directory (the job dies at launch
+        # with "Unable to open file"), and the config dump below would raise
+        # FileNotFoundError. The %j placeholder only ever sits in the FILENAME,
+        # so the parent directory is already final here.
+        for path in (job.log_path, job.config_path):
+            if path:
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
         job_id = self._client.submit(job.slurm)
         LOGGER.info(f"Submitted job ({job_id}): {job.slurm.name}")
         # The current.* symlinks are (re)pointed by the monitor when the job goes

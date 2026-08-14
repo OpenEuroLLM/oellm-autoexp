@@ -196,7 +196,6 @@ def _ensure_state_store(
 
     session_dir = monitor_state_dir / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
-    time.sleep(0.5)
     store = JobFileStore(session_dir)
     LOGGER.info("Created monitoring session directory: %s", session_dir)
     return store, session_id
@@ -418,7 +417,16 @@ def chain_submit_jobs(
     )
 
     submitted_job_ids: list[str] = []
-    prev_slurm_id: str | None = None
+    # Slurm id of the PREVIOUS repeat of each job, keyed on the job's identity
+    # (its pre-suffix job_id, i.e. the sweep point). `chain_repeat` exists to
+    # continue ONE job across the wall-clock limit, so repeat i+1 of a job must
+    # depend on repeat i OF THE SAME JOB — not on whatever happened to be
+    # submitted before it. A single shared `prev_slurm_id` chained every sweep
+    # arm to the previous arm, turning an N-arm sweep with chain_repeat=R into
+    # one strictly sequential N*R chain (observed: a 7-arm sweep with
+    # chain_repeat=2 ran 1 job at a time, 13 held on "(Dependency)", turning a
+    # ~24 h sweep into ~7 days).
+    prev_slurm_id_by_job: dict[str, str] = {}
 
     jobs_to_submit: list[tuple[JobPlan, str | None]] = []
     for job in plan.jobs:
@@ -430,6 +438,10 @@ def chain_submit_jobs(
 
     for job, repeat_suffix in jobs_to_submit:
         record = _build_job_record(plan, job, session_id)
+        # Identity of this job WITHOUT the _rN chain suffix. Taken from the
+        # record rather than parsed back out of the suffixed id, so a job whose
+        # own name contains "_r" cannot be mis-grouped.
+        chain_key = record.job_id
         if repeat_suffix:
             record = replace(record, job_id=record.job_id + repeat_suffix)
 
@@ -440,6 +452,7 @@ def chain_submit_jobs(
             continue
 
         slurm_cfg = record.definition.slurm
+        prev_slurm_id = prev_slurm_id_by_job.get(chain_key)
         if prev_slurm_id is not None:
             slurm_cfg.sbatch.dependency = f"afterany:{prev_slurm_id}"
             record = replace(record, definition=replace(record.definition, slurm=slurm_cfg))
@@ -453,7 +466,7 @@ def chain_submit_jobs(
             )
             store.upsert(record)
             submitted_job_ids.append(record.job_id)
-            prev_slurm_id = f"DRY-{record.job_id}"
+            prev_slurm_id_by_job[chain_key] = f"DRY-{record.job_id}"
             continue
 
         try:
@@ -475,7 +488,7 @@ def chain_submit_jobs(
         )
         store.upsert(record)
         submitted_job_ids.append(record.job_id)
-        prev_slurm_id = slurm_job_id
+        prev_slurm_id_by_job[chain_key] = slurm_job_id
         LOGGER.info(
             "chain_submit_jobs: submitted '%s' as Slurm job %s (dependency: %s)",
             record.job_id,
