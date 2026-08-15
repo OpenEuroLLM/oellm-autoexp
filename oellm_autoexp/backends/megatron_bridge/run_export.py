@@ -347,6 +347,7 @@ def run_export(
     keep_staging: bool = False,
     derive_hf_arch: str | None = None,
     megatron_config: Path | dict | None = None,
+    max_shard_size: str = "5GB",
 ) -> None:
     """Run the full 4-step conversion pipeline.
 
@@ -403,7 +404,7 @@ def run_export(
                 outdir=generated_dir,
             )
         LOGGER.info("Step 1/4: build dummy HF model from %s + %s", config_dir, reference_tokenizer)
-        build_dummy_model(config_dir, reference_tokenizer, dummy_dir)
+        build_dummy_model(config_dir, reference_tokenizer, dummy_dir, max_shard_size=max_shard_size)
 
         LOGGER.info(
             "Step 2/4: skipped (we call bridge.export_ckpt directly, no run_config.yaml needed)"
@@ -576,6 +577,11 @@ def _parse() -> argparse.Namespace:
     ap.add_argument(
         "--keep-staging", action="store_true", help="Preserve temp staging dir for debugging"
     )
+    ap.add_argument(
+        "--max-shard-size",
+        default="5GB",
+        help="Max shard size for the HF export (e.g. '5GB'); applied via the dummy reference model's save_pretrained, whose shard layout the real export mirrors.",
+    )
     return ap.parse_args()
 
 
@@ -592,6 +598,7 @@ def main() -> int:
         keep_staging=args.keep_staging,
         derive_hf_arch=args.derive_hf_arch,
         megatron_config=args.megatron_config,
+        max_shard_size=args.max_shard_size,
     )
     return 0
 

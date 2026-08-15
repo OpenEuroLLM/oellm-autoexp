@@ -239,3 +239,117 @@ $OUTPUT_DIR/chain_qwen3_bridge_train_eval_<cluster>_1/   # convert (sbatch + log
 $OUTPUT_DIR/chain_qwen3_bridge_train_eval_<cluster>_2/   # eval
     eval/<timestamp>/results/<hash>_<ts>.json             # per-task lm-eval output
 ```
+
+## Standalone batch conversion + HF Hub upload
+
+The chain above assumes convert is one stage of an orchestrated
+train→convert→eval pipeline. For publishing checkpoints from an
+**already-running** training job (no orchestrator chain, no eval), use
+`scripts/mass_convert_checkpoints.py` + `scripts/upload_to_hf.py` instead.
+Built for the OpenEuroLLM Prelude 9B ("baby") release, but cluster/model
+agnostic.
+
+### What's new here versus the chain's `run_export`
+
+- **`--max-shard-size`** on `run_export.py` / `create_dummy_model.py`
+  (default `5GB`). The real export mirrors the dummy reference model's
+  shard layout, so this must be set on the dummy model's `save_pretrained`
+  call, not just the real one; that's why it threads through both files.
+- **`validate_export.py`**: loads the converted HF checkpoint and runs a
+  canonical-prompt generation battery (multilingual, EU languages) as a
+  post-conversion sanity check, writing a `validation.json` next to the
+  checkpoint.
+- **`convert_and_validate_task.py`**: single-checkpoint Slurm task entry
+  point. Reads one entry from a JSON manifest (by `--task-index` or
+  `$SLURM_PROCID`), runs convert then validate in-process, skips convert if
+  the output dir already exists.
+- **`scripts/mass_convert_checkpoints.py`**: discovers `iter_*` dirs across
+  one or more `--checkpoints-dir`, groups the ones not yet converted into
+  Slurm jobs (`--group-size` checkpoints per job, one task per checkpoint),
+  and submits them respecting a QOS's per-user job cap. Idempotent: re-run
+  any time to pick up new checkpoints; already-converted ones are skipped.
+  `--singularity-bind` (repeatable) is required and cluster-specific; there's
+<!-- google-doc-style-ignore -->
+  no default. Pass `--hf-repo-id` when multiple operators each convert into
+  their own `--output-dir` against the same run (a scratch dir generally
+  can't be shared across HPC accounts): a checkpoint already published as a
+  complete branch on that repo is skipped too, even if this operator's own
+  `--output-dir` has never seen it, so nobody redundantly reconverts what
+  someone else already finished.
+<!-- google-doc-style-resume -->
+- **`scripts/upload_to_hf.py`**: pushes each converted `<output-dir>/<iter>/`
+  to its own branch (`iter_NNNNNNN`) of a target HF Hub repository, by way of
+  `upload_large_folder` (resumable). A branch only counts as complete if it
+  actually has the weight files, `config.json`, and `validation.json`, not
+  just whether the branch ref exists, so a crash or network blip mid-upload
+  gets retried automatically rather than silently treated as done.
+
+### Prerequisites beyond the common ones above
+
+- **Submodule over HTTPS**: if the account cloning `oellm-autoexp` has no
+  GitHub SSH key registered (common for a shared HPC project account), the
+  `Megatron-Bridge` submodule clone fails with `Permission denied
+  (publickey)`. Fix before `git submodule update`:
+
+  ```bash
+  git config submodule.submodules/Megatron-Bridge.url \
+      https://github.com/OpenEuroLLM/Megatron-Bridge.git
+  git submodule update --init submodules/Megatron-Bridge
+  ```
+
+- **Tokenizer**: `run_export.py` needs a working `tokenizer.json` for the
+  target tokenizer. If `transformers` falls back to a TikToken parser on a
+  raw SentencePiece `.model` file (missing `sentencepiece` in the
+  container), the repository's own
+  `oellm_autoexp/postprocess/resources/megatron_bridge/tokenizers/…/tokenizer.json`
+  should already cover this for the standard OpenEuroLLM tokenizers; verify
+  it's present and loads before assuming a manual copy is needed.
+- **Login-node Python**: the discovery/submission steps in
+  `mass_convert_checkpoints.py` need Python ≥ 3.7 (`from __future__ import
+  annotations`, f-strings); Leonardo's login-node default `python3` is 3.6.
+  Use `python3.11` (`module load python/3.11.7`) directly.
+<!-- google-doc-style-ignore -->
+  Without `--hf-repo-id`, no container is needed for this step, since it
+  only touches the local file system and `subprocess`. `upload_to_hf.py`,
+  and `mass_convert_checkpoints.py` whenever `--hf-repo-id` is passed, need
+  `huggingface_hub` and must run inside the training container
+  (`singularity exec … python3 scripts/mass_convert_checkpoints.py …`).
+<!-- google-doc-style-resume -->
+- **HF Hub token**: `upload_to_hf.py --token-file` defaults to
+  `~/.cache/huggingface/token`; make sure it holds a token with write
+<!-- google-doc-style-ignore -->
+  access to the target `--repo-id`.
+<!-- google-doc-style-resume -->
+
+### Example: full backfill, then incremental catch-up
+
+<!-- google-doc-style-ignore -->
+```bash
+# One-off backfill of everything already on disk, batched for throughput
+# (2-job QOS cap x group-size 16 = 32 checkpoints converting in parallel).
+# --singularity-bind has no default: list whatever this cluster's containers
+# need bound; --hf-repo-id is optional, only needed when more than one
+# operator converts into their own separate --output-dir for the same run.
+python3.11 scripts/mass_convert_checkpoints.py \
+    --checkpoints-dir /leonardo_scratch/fast/<project>/production_training/<run>/checkpoints \
+    --training-config /leonardo_scratch/fast/<project>/production_training/<run>/logs/current.yaml \
+    --output-dir /leonardo_scratch/large/userexternal/$USER/<run>-ckpts \
+    --container-image /leonardo_work/<project>/container_images/<training>.sif \
+    --singularity-bind /leonardo_scratch --singularity-bind /leonardo --singularity-bind /leonardo_work/ \
+    --hf-repo-id <org>/<repo> \
+    --account <SLURM_ACCOUNT> --qos boost_qos_dbg --max-concurrent-jobs 2 --group-size 16
+
+# Push everything converted so far to the Hub, one branch per iteration:
+singularity exec --bind /leonardo_scratch --bind /leonardo --bind /leonardo_work \
+    /leonardo_work/<project>/container_images/<training>.sif \
+    python3 scripts/upload_to_hf.py \
+    --output-dir /leonardo_scratch/large/userexternal/$USER/<run>-ckpts \
+    --repo-id <org>/<repo>
+
+# Ongoing: re-invoke with --group-size 1 as new checkpoints appear, so each
+# gets its own Slurm job. That lets a caller chain a single-checkpoint
+# upload job onto each conversion job by way of `sbatch --dependency=afterok:<jobid>`
+# instead of polling. See the `checkpoint_watcher` tool in oellm-monitoring
+# for a periodic wrapper that does exactly this end to end.
+```
+<!-- google-doc-style-resume -->
