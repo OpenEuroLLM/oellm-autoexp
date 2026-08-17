@@ -1,0 +1,37 @@
+# @package _global_
+#
+# STEP 2 of the flagship rollout: is LR warmup ALONE enough to avoid spikes?
+#
+# Constant GBS 4096 from iteration 0, production LR schedule, run for a few
+# thousand iterations. If the loss/grad-norm stays clean here, no batch-size
+# rampup is needed and the flagship can start from this very run — checkpoints
+# are ON and the schedule is the full 15 T one, so "continue" is literally
+# `exit_interval: null` and a resubmit against the same base_output_dir.
+#
+# WHAT TO WATCH: grad-norm spikes, loss discontinuities, and the number of
+# skipped/NaN iterations, over the warmup and ~2k iterations past it.
+#
+# SWEEP THE WARMUP by overriding backend.aux.warmup_iters_equiv — it flows into
+# both lr_warmup_samples and the run name, so each warmup length lands in its own
+# output dir automatically:
+#   ... -o 'backend.aux.warmup_iters_equiv=1000'
+#   ... -o 'backend.aux.warmup_iters_equiv=8000'
+defaults:
+  - oellm_32b_dense
+  - _self_
+
+backend:
+  aux:
+    # LR warmup expressed as "iterations at full GBS" — the readable unit — and
+    # converted to samples below, because the run is sample-based.
+    warmup_iters_equiv: 4000
+    variant: "wuonly${.warmup_iters_equiv}"
+  megatron:
+    lr_warmup_samples: ${oc.muli:${backend.aux.warmup_iters_equiv},${backend.megatron.global_batch_size}}
+    # warmup + ~2k iterations of steady state. Remove to let this become the
+    # production run. NB the 11.5 h exit_duration_in_mins may hit first.
+    exit_interval: 6000
+
+job:
+  # early experiment: single 12 h job, no chaining
+  chain_repeat: 1

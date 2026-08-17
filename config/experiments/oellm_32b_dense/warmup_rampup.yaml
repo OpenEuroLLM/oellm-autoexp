@@ -1,0 +1,56 @@
+# @package _global_
+#
+# STEP 3 of the flagship rollout: LR warmup + GLOBAL BATCH SIZE RAMPUP.
+#
+# Only run this if `warmup_lr_only` turned out spiky — the rampup exists purely
+# to buy stability, and it costs throughput (small GBS = few microbatches per DP
+# rank = poor comm overlap and a fat pipeline bubble).
+#
+# HOW MEGATRON'S RAMPUP ACTUALLY WORKS (num_microbatches_calculator.py:436-490)
+# ----------------------------------------------------------------------------
+#   rampup_batch_size: [start, increment, ramp_samples]
+#   num_increments = (GBS - start) / increment          # must divide exactly
+#   plateau length = ramp_samples / num_increments      # in SAMPLES, not iters
+#   GBS(consumed) = start + floor(consumed / plateau) * increment
+# It is a STAIRCASE, not a single jump and not a smooth ramp: with the values
+# below, 7 increments -> 8 plateaus of 524,288 samples each.
+#
+#   plateau  GBS   tokens/iter  iters in plateau
+#   -------  ----  -----------  ----------------
+#      1      512     2.10 M          1024
+#      2     1024     4.19 M           512
+#      3     1536     6.29 M           341
+#      4     2048     8.39 M           256
+#      5     2560    10.49 M           205
+#      6     3072    12.58 M           171
+#      7     3584    14.68 M           146
+#      -     4096    16.78 M      (constant from here)
+#   ramp total: 3,670,016 samples = 15.0 B tokens over ~2,655 iterations.
+#
+# GRANULARITY FLOOR: every GBS value on the staircase must be divisible by
+# micro_batch_size * DP, or Megatron asserts (line 474). DP = 2048/(TP*PP*CP), so
+# the floor is 256 at PP=2 and 64 at PP=8. `decrease_batch_size_if_needed` does
+# NOT buy a finer ramp — it just rounds the running GBS down to the same
+# multiple (line 486). Lower `rampup_start` once the parallelism is fixed.
+defaults:
+  - oellm_32b_dense
+  - _self_
+
+backend:
+  aux:
+    warmup_iters_equiv: 4000
+    rampup_start: 512        # first GBS. Must be a multiple of mbs * DP.
+    rampup_increment: 512    # (4096 - 512) / 512 = 7 increments, exactly
+    rampup_samples: 3670016  # 7 * 524,288 -> 15.0 B tokens of ramp
+    variant: "ramp${.rampup_start}x${.rampup_increment}o${.rampup_samples}"
+  megatron:
+    lr_warmup_samples: ${oc.muli:${backend.aux.warmup_iters_equiv},${backend.megatron.global_batch_size}}
+    rampup_batch_size:
+      - "${backend.aux.rampup_start}"
+      - "${backend.aux.rampup_increment}"
+      - "${backend.aux.rampup_samples}"
+    # ramp (~2,655 iters) + ~3.3k iterations of steady state
+    exit_interval: 6000
+
+job:
+  chain_repeat: 1
