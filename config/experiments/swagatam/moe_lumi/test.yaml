@@ -22,8 +22,8 @@ index: 0
 stage: "" # Will be overridden by sweep
 
 job:
-  name: "sparse_lumi_test" # Will be overridden by sweep with stage and hyperparameter info
-  base_output_dir: "/scratch/project_462001516/users/swagatam/oellm-autoexp/results/0.4B_ne_sparse_experts_${backend.megatron.num_experts}_topk_${backend.megatron.moe_router_topk}_PP_${backend.megatron.pipeline_model_parallel_size}/training/${job.name}"
+  name: "0.4B_ne_sparse_experts_${backend.megatron.num_experts}topk${backend.megatron.moe_router_topk}_PP${backend.megatron.pipeline_model_parallel_size}"
+  base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
   log_path: ${slurm.sbatch.error}
 
 backend:
@@ -47,8 +47,8 @@ backend:
     # save_interval: 10000000
     # save: null
     # load: null
-    wandb_exp_name: "test_sparse_throughput" # Will be overridden by sweep with stage and hyperparameter info
-    wandb_project: "" # Disabled
+    wandb_exp_name: "${job.name}" # Will be overridden by sweep with stage and hyperparameter info
+    wandb_project: "moe_router_stability" # Disabled
     wandb_entity: openeurollm-project
     wandb_save_dir: "${job.base_output_dir}"
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
