@@ -1,6 +1,30 @@
 defaults:
  - default
 
+# RESTART-ON-ERROR job policy.
+#
+# Same failure signatures as config/job/auto_cancel.yaml, but split by whether a
+# retry could possibly help:
+#
+#   CancelAction  — configuration / data faults. A retry lands on the SAME config
+#                   and fails identically, so restarting would just loop.
+#   RestartAction — infrastructure faults that are node-local and transient. A
+#                   fresh allocation is a genuinely different draw.
+#
+# WHY FAIL FAST: on 2026-08-14 job 1374701 died at 17:32:59 with
+# "Failed to CUDA calloc async" but was only cancelled at 17:41:22 — ~8 min x
+# 1024 nodes = ~136 node-hours spent idling on an already-diagnosed failure.
+#
+# CAUTION — RestartAction has NO restart cap of its own (RestartActionConfig
+# carries only class_name/reason, and _restart_job preserves `attempts` without
+# testing it). If the cluster is broadly unhealthy, a restartable pattern can
+# relaunch indefinitely. That is why only node-local faults are restartable and
+# everything config-shaped cancels. Watch `attempts` in monitor_state if a job
+# seems to relaunch repeatedly.
+#
+# KEEP IN SYNC WITH config/job/auto_cancel.yaml — the list is duplicated because
+# Hydra REPLACES lists on merge, so a shared include plus additions would
+# silently drop entries.
 log_events:
   - name: finished_training
     pattern: "[after training is done]"
@@ -14,12 +38,151 @@ log_events:
     action:
       class_name: FinishAction
       reason: "Test Evaluation Finished"
+
+  # === FATAL: configuration / data faults -> CANCEL (never restart) =========
+
+  # Launcher rejected an argument. torchrun_args forwards ANY key as `--<key>`,
+  # so a typo only fails at RUN time on the full allocation. Killed job 1374593
+  # (1024 nodes) in 34 s: "ft_launcher: error: unrecognized arguments: --rdvz-backend"
+  - name: err_unrecognized_argument
+    pattern: "unrecognized arguments"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "Launcher rejected an argument (check torchrun_args/ft args)"
+
+  - name: err_disk_quota
+    pattern: "Disk quota exceeded|Errno 122"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Disk quota exceeded — free space or move checkpoints to scratch"
+
+  - name: err_fp8_metadata
+    pattern: "Saved FP8 metadata does not match"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "FP8 recipe/CUDA-graph mismatch — set cuda_graph_impl: none"
+
+  - name: err_dataset_cache_corrupt
+    pattern: "mmap length is greater than file size|ValueError: cannot reshape array"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Corrupt dataset cache — run scripts/check_data_cache.py --repair"
+
+  - name: err_infra_rank
+    pattern: "Invalid infrastructure rank"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "NVRx infrastructure rank invalid — check use_infra_group_rank"
+
+  # Model genuinely does not fit. Distinct from the CUDA-context OOM below,
+  # which is an occupied GPU rather than a sizing problem — hence cancel, not
+  # restart: a new allocation will not make the model smaller.
+  - name: err_torch_oom
+    pattern: "torch\\.cuda\\.OutOfMemoryError|CUDA out of memory\\. Tried to allocate"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Model OOM — reduce micro_batch_size or raise TP/PP"
+
+  # === INFRASTRUCTURE: node-local and transient -> RESTART ==================
+
+  # CUDA context / NCCL buffer allocation failed because the GPU was ALREADY
+  # occupied by a leftover process. Killed 1374701 and 1373119. A different
+  # allocation is a different set of nodes, so retrying is meaningful.
+  - name: err_cuda_alloc_init
+    pattern: "Failed to CUDA calloc|AcceleratorError: CUDA error: out of memory|cudaErrorMemoryAllocation"
+    pattern_type: regex
+    action:
+      class_name: RestartAction
+      reason: "GPU occupied at init (leftover process) — retrying on new nodes"
+
+  # torch's DYNAMIC c10d rendezvous collapsing at scale (killed 1371705/1371721
+  # at 1024 nodes). Restartable because it is partly load-dependent — but if it
+  # recurs, the real fix is rdzv_backend=static (torchrun) rather than retries.
+  - name: err_rendezvous
+    # NB RendezvousClosedError is deliberately ABSENT. It is not the 1024-node
+    # rendezvous collapse — ft_launcher agents emit it during a NORMAL fault-
+    # tolerant restart cycle, when the rendezvous is closed and re-formed.
+    # Matching it cancelled healthy job 1379130 at iteration 4204/8000
+    # (2026-08-15 02:23) even though its log had ZERO genuine error hits —
+    # i.e. this pattern defeated the fault tolerance it was meant to protect.
+    # Only the "cannot reach the store" forms belong here.
+    pattern: "RendezvousConnectionError|DistNetworkError"
+    pattern_type: regex
+    action:
+      class_name: RestartAction
+      reason: "Rendezvous failure — retrying (consider static rdzv for torchrun)"
+
+  # Transformer Engine userbuffers TP-overlap spin-wait: a peer stopped
+  # answering. Hung 1373198 for 20 min without finishing iteration 1. A clean
+  # run emits ZERO of these (verified on 1373121), so this is unambiguous.
+  - name: err_userbuffers_stall
+    pattern: "userbuffers\\.cu.*expecting [0-9]+ got [0-9]+"
+    pattern_type: regex
+    action:
+      class_name: RestartAction
+      reason: "userbuffers TP-overlap stall — peer rank unresponsive, retrying"
+
+  - name: err_nccl_timeout
+    pattern: "Watchdog caught collective operation timeout|unhandled cuda error|NCCL error"
+    pattern_type: regex
+    action:
+      class_name: RestartAction
+      reason: "NCCL collective timeout/abort — retrying"
+
+
+  # CUDA illegal memory access / hard C++ abort. THE 4-HOUR LESSON (2026-08-14):
+  # job 1375720 hit this right after iteration 100, then ft_launcher restart-
+  # looped all 4096 ranks ~8 times without ever getting past init, burning
+  # ~4 h x 1024 nodes (~4000 node-hours) before SLURM finally called NODE_FAIL.
+  # NONE of the other patterns matched it, and the log kept GROWING (251 MB of
+  # repeated startup banners) so the inactivity fallback could never fire either.
+  # A GPU that has taken an IMA generally needs a reset, so relaunching in place
+  # is futile — stop, and let a fresh allocation be a fresh draw.
+  - name: err_cuda_illegal_access
+    pattern: "illegal memory access|cudaErrorIllegalAddress"
+    pattern_type: regex
+    action:
+      class_name: RestartAction
+      reason: "CUDA illegal memory access — GPU needs reset, not a relaunch"
+
+  # Unhandled C++ exception escaping to std::terminate (seen alongside the IMA
+  # above). Distinct pattern because the AcceleratorError text can be truncated
+  # or interleaved across 4096 ranks while this line survives intact.
+  - name: err_cpp_terminate
+    pattern: "terminate called after throwing an instance of"
+    pattern_type: substring
+    action:
+      class_name: RestartAction
+      reason: "Unhandled C++ exception — worker aborted"
+
+  # SLURM tore the allocation down because a node died under us.
+  - name: err_node_failure
+    pattern: "DUE TO NODE FAILURE|Node failure on"
+    pattern_type: regex
+    action:
+      class_name: RestartAction
+      reason: "SLURM node failure in the allocation"
+
+  - name: err_child_failed
+    pattern: "ChildFailedError"
+    pattern_type: substring
+    action:
+      class_name: RestartAction
+      reason: "Worker process failed — retrying"
+
   - name: error
     pattern: "Exited with exit code 1"
     pattern_type: substring
     action:
       class_name: RestartAction
       reason: ""
+
   # TIME LIMIT IS ALREADY HANDLED IN DEPENDENCY CHAIN
   # - name: time_limit
   #   pattern: "DUE TO TIME LIMIT"
@@ -30,11 +193,12 @@ log_events:
   - name: inactive
     pattern_type: inactivity
     # Restart only after the log has been silent for >=5 consecutive polls AND
-    # >=300s of real elapsed time (both must hold). At the default 60s poll
-    # interval these coincide (~5 min); the time floor keeps it correct if the
-    # poll interval changes or a poll is skipped.
+    # >=1200s of real elapsed time (both must hold). 1200s (not 300s) because a
+    # 1024-node startup plus a multi-hundred-GB checkpoint save can legitimately
+    # exceed 5 min of silence. Last line of defence — the patterns above should
+    # catch every failure we have actually seen, far sooner.
     inactivity_polls: 5
-    inactivity_timeout_s: 300
+    inactivity_timeout_s: 1200
     action:
       class_name: RestartAction
       reason: "Inactive Log"

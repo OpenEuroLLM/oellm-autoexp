@@ -1,0 +1,147 @@
+# JUPITER node-exclusion list.
+#
+# Format: one node per line (comma/whitespace separated also accepted); blank
+# lines and lines starting with '#' are ignored. Read by oc.exclude_nodes at
+# submission time (config/slurm/jupiter_autoexclude.yaml) -> #SBATCH --exclude=
+#
+# NB the resolver only strips '#' at the START of a line — it does NOT strip
+# trailing comments. `jpbo-034-38   # 20/35` parses as THREE nodes and produces a
+# garbage --exclude. Keep annotations on their own comment lines.
+#
+# THIS IS TECHNICAL DEBT BY CONSTRUCTION. Every entry permanently removes a node
+# from consideration until someone deletes the line. Prune aggressively: SLURM
+# already refuses to schedule onto DRAINED nodes, so an entry only does work in
+# the window after an admin resumes a node whose root cause was not fixed.
+# Recheck with:  sinfo -n <node> -o "%T %E"
+#
+# ---------------------------------------------------------------------------
+# 2026-08-14 — non-converging prolog-requeue loop on 1024-node jobs
+# ---------------------------------------------------------------------------
+# Identified by correlating the allocations of 35 failed/requeued attempts
+# (jobs 1371705 1371721 1373119 1374127 1374701 1374593 1374252 1373198) against
+# NHC drain records. Baseline expectation for a random node is ~6.5 appearances
+# (1024/5500 nodes x 35 attempts); everything below is well above that.
+#
+# NOTE the reasons: almost all are HOST MEMORY exhaustion, not GPU or fabric
+# faults — the signature of leftover processes from a prior job, not broken
+# hardware. They also cluster by chassis (121-*, 104-*, 064-*, 120-*), i.e. one
+# job's residue spread across a rack. If these are resumed without the residue
+# being cleared they will fail again, which is what this list is for.
+#
+# All were drained 17:03-17:12 on 2026-08-14, AFTER most of the failures.
+#
+# check_hw_physmem_free (not enough RAM free)
+#   jpbo-034-38  20/35 attempts   <- worst offender
+#   jpbo-103-05  15/35
+#   jpbo-120-18  10/35
+#   jpbo-120-27  10/35
+jpbo-034-38
+jpbo-103-05
+jpbo-120-18
+jpbo-120-27
+
+# check_free_memory_per_numa_node (free memory below threshold)
+#   jpbo-121-03  19/35
+#   jpbo-121-09  18/35
+#   jpbo-035-32  11/35
+#   jpbo-121-21  11/35
+#   jpbo-121-27  11/35
+#   jpbo-063-36  10/35
+#   jpbo-064-03  10/35
+#   jpbo-064-06  10/35
+#   jpbo-064-15  10/35
+#   jpbo-104-11   8/35
+#   jpbo-104-17   6/35
+#   jpbo-104-20   6/35
+#   jpbo-104-23   6/35
+jpbo-121-03
+jpbo-121-09
+jpbo-035-32
+jpbo-121-21
+jpbo-121-27
+jpbo-063-36
+jpbo-064-03
+jpbo-064-06
+jpbo-064-15
+jpbo-104-11
+jpbo-104-17
+jpbo-104-20
+jpbo-104-23
+
+# check_residual_mounts (residual squashfuse mount — leftover apptainer state)
+#   jpbo-044-15   5/35
+jpbo-044-15
+
+# ---------------------------------------------------------------------------
+# Known-bad from earlier the same day (not from the requeue loop)
+# ---------------------------------------------------------------------------
+# XID 48 = uncorrectable double-bit GPU ECC. Was in job 1370589's allocation,
+# the 1024-node run whose throughput showed 4x variance (min 74 / median 289 /
+# max 310) against a clean re-run's 342.6 +/-2%. A single degraded GPU stalls
+# every collective, which is that signature exactly.
+jpbo-114-47
+
+# ---------------------------------------------------------------------------
+# 2026-08-14 evening — NODE_FAIL that killed the 1024-node 8k stability run
+# ---------------------------------------------------------------------------
+# Job 1375720 took a CUDA illegal memory access just after iteration 100, then
+# ft_launcher restart-looped all 4096 ranks for ~4 h before SLURM reported
+#     srun: error: Node failure on jpbo-060-24
+# and cancelled the allocation (NODE_FAIL). An IMA is consistent with failing
+# GPU memory, and this node then failed outright, so it is excluded pending
+# confirmation it is healthy again.
+jpbo-060-24
+
+# ---------------------------------------------------------------------------
+# 2026-08-15 ~03:07 — NVLink/GPU hardware fault, killed 1024-node run 1380817
+# ---------------------------------------------------------------------------
+# rank 3221 (= node index 805 of the allocation) raised
+#     CUDA error: Invalid access of peer GPU memory over nvlink or a hardware
+#     error   (cudaErrorContained)
+# NHC drained the node 6 minutes later, independently confirming the mapping:
+#     check_gpu_remapped_rows_pending: row remapping pending flag activated,
+#     please restart the node or reset the GPU 00000019:01:00.0
+# Pending row remapping = failing GPU memory. Three nodes were drained for this
+# same reason within an hour (jpbo-020-09, jpbo-055-06, jpbo-096-37).
+jpbo-096-37
+
+# ---------------------------------------------------------------------------
+# 2026-08-17 ~12:28 — GPU occupied at init, killed 1024-node VPP arm 1395207
+# ---------------------------------------------------------------------------
+# Two minutes into the allocation, task 1011 died in Megatron's
+# _initialize_distributed at torch.cuda.set_device():
+#     torch.AcceleratorError: CUDA error: out of memory   (cudaErrorMemoryAllocation)
+#     srun: error: jpbo-120-36: task 1011: Exited with exit code 1
+# This matches the err_cuda_alloc_init signature in config/job/auto_cancel.yaml,
+# whose stated cause is "GPU occupied at init (leftover process)". THAT IS NOT
+# WHAT HAPPENED HERE — NHC drained the node ~25 min later with:
+#     check_rpcRmApiAlloc_failed: NVRM: rpcRmApiAlloc_GSP: GspRmAlloc failed on GPU0
+# i.e. the GPU's GSP firmware channel is wedged, so EVERY allocation on GPU0
+# fails, including the very first CUDA context. Same symptom, different cause:
+# residue clears when the prior job's processes are reaped, a wedged GSP needs a
+# node reset. So this entry is NOT prunable on the "residue" argument that covers
+# jpbo-120-18 / jpbo-120-27 in the same chassis — keep it until the node has been
+# reset and has passed NHC.
+#
+# Consequence at this scale: with --max-restarts 0 the agent did not retry, and
+# the remaining 1023 agents blocked in static rendezvous, so the job produced
+# ZERO iterations while holding 1024 nodes.
+jpbo-120-36
+
+# ---------------------------------------------------------------------------
+# 2026-08-17 ~12:39 — NODE_FAIL killed 1024-node VPP arm B (job 1395206)
+# ---------------------------------------------------------------------------
+# 13 min into the allocation, still in startup (ZERO iterations logged, ZERO
+# application errors), SLURM killed the whole job:
+#     srun: error: Node failure on jpbo-026-42
+#     slurmstepd: error: *** JOB 1395206 ON jpbo-003-17 CANCELLED ... DUE TO
+#                 NODE FAILURE ***
+# sinfo confirms:  jpbo-026-42  down*  2026-08-17T12:39:53  "Not responding".
+#
+# UNLIKE jpbo-120-36 this node IS currently down, so SLURM will not schedule it
+# and this entry is a no-op until an admin resumes it — which is exactly the
+# window the file covers, since "Not responding" has no recorded root cause.
+# PRUNE THIS ONE FIRST when tidying: a single unexplained node crash is weaker
+# evidence than the repeat offenders above. Recheck with:
+#     sinfo -n jpbo-026-42 -o "%T %E"
+jpbo-026-42

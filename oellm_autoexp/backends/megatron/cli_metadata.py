@@ -3159,6 +3159,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "dataloader_prefetch_factor": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Number of batches each dataloader worker keeps prefetched.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "object_storage_cache_path": MegatronArgMetadata(
         arg_type=str,
         default=None,
@@ -7335,6 +7343,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "num_workers": MegatronActionSpec(
         option_strings=("--num-workers",), action_type="store", nargs=None, const=None, default=2
+    ),
+    "dataloader_prefetch_factor": MegatronActionSpec(
+        option_strings=("--dataloader-prefetch-factor",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "object_storage_cache_path": MegatronActionSpec(
         option_strings=("--object-storage-cache-path",),

@@ -394,6 +394,7 @@ num_layers_per_virtual_pipeline_stage: null  # Number of layers per virtual pipe
 num_query_groups: 1
 num_virtual_stages_per_pipeline_rank: null  # Number of virtual pipeline stages per pipeline parallelism rank
 num_workers: 2  # Dataloader number of workers.
+dataloader_prefetch_factor: null  # Batches each dataloader worker keeps prefetched. Deepens the buffer absorbing parallel-filesystem read-latency spikes WITHOUT adding concurrent readers (unlike num_workers). Requires num_workers > 0. null = torch default (2). OELLM patch: megatron/training/datasets/data_samplers.py.
 object_storage_cache_path: null  # Path to cache index files when using s3 or msc dataloader
 one_logger_async: false  # If set, forces one_logger to use async mode.
 one_logger_project: megatron-lm  # The one-logger project name. Will ignore if --no-one-logger is set

@@ -1,0 +1,40 @@
+defaults:
+  - jupiter
+  - _self_
+
+# JUPITER variant that automatically avoids known-bad nodes.
+#
+# Mirrors config/slurm/leonardo_autoexclude.yaml. The oc.exclude_nodes resolver
+# reads the file below at SCRIPT-GENERATION time (registered with
+# use_cache=False, so every submission re-reads the current on-disk list), and
+# emits `#SBATCH --exclude=<nodes>`. A missing or empty file resolves to null and
+# the directive is omitted entirely — so adding this to the defaults is a no-op
+# until the list has content.
+#
+# The path comes from $JUPITER_EXCLUDE_NODES so the monitor's AppendToFileAction
+# and this resolver share one source of truth. It falls back to a REPO-TRACKED
+# file rather than the Leonardo-style $HOME/.oellm_autoexp/ default, because on
+# JUPITER we sync the repo to the cluster: a tracked list travels with the code,
+# is reviewable in git, and cannot silently differ between the login node and a
+# workstation. Set the env var if you want a per-user list instead.
+#
+# WHY THIS EXISTS (2026-08-14)
+# ---------------------------
+# 1024-node jobs entered a non-converging requeue loop: 13+ attempts, each
+# RUNNING 2-8 s then REQUEUED with ExitCode 0:54. Cause is site-side, not ours:
+#     Prolog[0]   = /usr/sbin/nhc
+#     PrologFlags = Alloc,Contain,DeferBatch,ForceRequeueOnFail
+# so any node failing the health check requeues the WHOLE job. Normally the
+# failing node is drained and the loop converges after a few attempts; it did
+# not, because the nodes were only drained at 17:03-17:12, well after most of
+# the failed attempts, and stayed allocatable in between.
+#
+# CAVEAT ON USING THIS LIST
+# -------------------------
+# SLURM already refuses to schedule onto DRAINED nodes, so while these nodes stay
+# drained this file changes nothing. Its value is the window after an admin
+# resumes a node whose underlying condition was never fixed. Correspondingly it
+# is technical debt: prune entries once nodes are confirmed healthy, or large
+# jobs will slowly lose scheduling candidates for no reason.
+sbatch:
+  exclude: ${oc.exclude_nodes:${oc.env:JUPITER_EXCLUDE_NODES,${oc.env:PROJECT_DIR,.}/config/exclude/jupiter_exclude_nodes.txt}}

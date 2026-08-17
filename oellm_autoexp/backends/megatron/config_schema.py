@@ -1192,6 +1192,11 @@ class MegatronConfig(ConfigInterface):
     # Dataloader number of workers.
     num_workers: int = 2
 
+    # OELLM PATCH: batches each dataloader worker keeps prefetched. Deepens the
+    # buffer that absorbs parallel-filesystem read-latency spikes WITHOUT adding
+    # concurrent readers (unlike num_workers). None = torch default (2).
+    dataloader_prefetch_factor: int | None = None
+
     # Reset posistion ids after end-of-document token.
     reset_position_ids: bool = False
 

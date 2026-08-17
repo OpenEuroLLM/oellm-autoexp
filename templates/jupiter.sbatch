@@ -9,6 +9,7 @@
 # ml CUDA/13
 # ml NCCL/default-CUDA-13
 module purge
+ulimit -c 0
 
 echo "Launching {job_name} on JUPITER"
 srun {srun_opts}bash -c '{launcher_cmd} {command}'
