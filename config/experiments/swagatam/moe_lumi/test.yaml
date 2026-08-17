@@ -32,6 +32,10 @@ backend:
     ### lumi specific configs
     masked_softmax_fusion: False
     gradient_accumulation_fusion: False
+    # ROCm/LUMI: these fused kernels segfault on ROCm, must be disabled (see speed_test_lumi / megatron_sanity_check)
+    bias_dropout_fusion: False
+    bias_swiglu_fusion: False
+    apply_rope_fusion: False
     num_workers: 6 # Ville's suggestion since otherwise all of the 7 available CPUs per tasks would have a dataloader
     num_dataset_builder_threads: 6
     trust_remote_code: True
@@ -84,6 +88,9 @@ backend:
 slurm:
   env:
     MASTER_PORT: "9999"
+    # ROCm/LUMI: disable AITER rope backend (see megatron_sanity_check). Must live under
+    # slurm.env because the LUMI launcher only exports slurm.env, not backend.env.
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
   srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
   sbatch:
     nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
