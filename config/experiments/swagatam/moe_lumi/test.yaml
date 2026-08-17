@@ -22,7 +22,7 @@ index: 0
 stage: "" # Will be overridden by sweep
 
 job:
-  name: "0.4B_ne_sparse_experts_${backend.megatron.num_experts}topk${backend.megatron.moe_router_topk}_PP${backend.megatron.pipeline_model_parallel_size}"
+  name: "${backend.megatron.aux.model_name}_experts${backend.megatron.num_experts}_topk${backend.megatron.moe_router_topk}_PP${backend.megatron.pipeline_model_parallel_size}"
   base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
   log_path: ${slurm.sbatch.error}
 
@@ -36,12 +36,16 @@ backend:
     bias_dropout_fusion: False
     bias_swiglu_fusion: False
     apply_rope_fusion: False
+    # log_progress writes <save>/progress.txt at job START, before Megatron creates
+    # the checkpoints/ dir (only made at first save) -> FileNotFoundError on a fresh
+    # output dir. The orchestrator doesn't use progress.txt, so disable it.
+    log_progress: False
     num_workers: 6 # Ville's suggestion since otherwise all of the 7 available CPUs per tasks would have a dataloader
     num_dataset_builder_threads: 6
     trust_remote_code: True
     ### lumi specific configs end
 
-    train_iters: 100
+    # train_iters / lr_wsd_decay_iters are set per-stage by the inline sweep below.
     # eval_iters: 1
     # eval_interval: 1000
     # save_interval: 10000000
@@ -68,8 +72,8 @@ backend:
     seq_length: 4096
     max_position_embeddings: 4096
     #train_iters: 5
-    lr_warmup_iters: 50
-    lr_wsd_decay_iters: 1
+    # lr_warmup_iters: 50
+    # lr_wsd_decay_iters set per-stage by the inline sweep below.
     
     #eval_interval: 1000000000
     #save_interval: 1000000000
@@ -102,3 +106,93 @@ slurm:
     error: "${job.base_output_dir}/logs/stderr-%j.log"
   srun:
     kill_on_bad_exit: "1 "
+
+
+# ==============================================================================
+# INLINE SWEEP: a single HP point + single load-balancing/routing combo, with a
+# pull-based stable -> decay(50BT) cooldown. This is the z-loss sweep
+# (sweep/multilingual_scaling/sparse_scaling/qwen3_sparse_0.4B_ne_z_loss_sweep.yaml)
+# trimmed to ONE combo and ONE decay -- no expanded grid, no intermediate decays.
+#
+#   * GROUP 1  : one lr / global_batch_size / micro_batch_size / tokens
+#   * GROUP 1b : one load-balancing type / z-loss coeff / topk / shared-expert
+#   * GROUP 2  : token budget = 50BT -> {stable, decay50BT} (decay branches at 80% = 40BT)
+#
+# => 2 sweep points total. Escaped "\${...}" defers interpolation to per-point
+# resolution (unescaped during sweep expansion), same as the reference sweeps.
+# NOTE: 50BT is a placeholder budget; it will not finish in the 30-min slurm slot.
+# Lower backend.megatron.aux.tokens (both places) for a quick smoke test.
+# ==============================================================================
+sweep:
+  type: product
+
+  groups:
+    # GROUP 0: dynamic job name + wandb name, unique per stage/combo (so the
+    # stable and decay get distinct base_output_dir / no checkpoint collisions).
+    - type: list
+      configs:
+        - job.name: "\\${backend.megatron.aux.model_name}_experts\\${backend.megatron.num_experts}_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_topk\\${backend.megatron.moe_router_topk}_lbt\\${backend.megatron.moe_router_load_balancing_type}_aux\\${backend.megatron.moe_aux_loss_coeff}_zloss\\${backend.megatron.moe_z_loss_coeff}_\\${stage}\\${backend.megatron.aux.job_horizon_suffix}"
+          backend.megatron.wandb_exp_name: "\\${job.name}"
+
+    # GROUP 1: single hyperparameter combo (lr / gbsz / micro bsz / tokens=50BT).
+    - type: list
+      configs:
+        - backend.megatron.lr: 1.e-2  # very high lr
+          backend.megatron.global_batch_size: 128
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.aux.tokens: 50_000_000_000
+
+    # GROUP 1b: single load-balancing / routing combo. Swap these to change the
+    # ablation. topk4 = 4 routed experts, no shared expert (size nulled).
+    - type: list
+      configs:
+        - backend.megatron.moe_router_load_balancing_type: aux_loss
+          backend.megatron.moe_aux_loss_coeff: 1.e-2
+          backend.megatron.moe_z_loss_coeff: 1.e-3
+          backend.megatron.moe_router_topk: 4
+          backend.megatron.moe_shared_expert_intermediate_size: null
+
+    # GROUP 2: pull-based multi-stage -> 1 stable + 1 decay(50BT).
+    - type: list
+      configs:
+        # STABLE PHASE: train to aux.tokens (=50BT), no LR decay. Saves a branching
+        # checkpoint at 80% (=40BT) via save_extra_steps (save_step_br_4 is the 50B
+        # slot), which the decay below branches from.
+        - stage: stable
+          backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+          backend.megatron.lr_wsd_decay_iters: 0
+          backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+          # Horizon suffix for job.name: "<tokens_in_BT>BT" (here "50BT").
+          backend.megatron.aux.job_horizon_suffix: "\\${oc.eval:'str(\\${backend.megatron.aux.tokens}//1_000_000_000)+\"BT\"'}"
+          # Branching checkpoint at 80% of 50BT (the only branch point we need).
+          backend.megatron.aux.save_step_br_4: "\\${oc.eval:'int(((50_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+
+        # NESTED GROUP: the single cooldown/decay stage. Loads the stable sibling's
+        # 40BT branching checkpoint and decays LR over the last 20% of its iters.
+        - type: list
+          defaults:
+            backend.megatron.aux.decay_fraction: "\\${backend.megatron.aux.cooldown_decay_fraction}"
+            backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+            backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
+            backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+
+            # Checkpoint loading: pick up the stable sibling's checkpoint at the
+            # branch iter (start_iter == 80% == save_step_br_4).
+            backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/checkpoints"
+            backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter}"
+            backend.megatron.override_opt_param_scheduler: true
+
+            # Start when the stable's branching checkpoint exists.
+            job.start_condition:
+              class_name: FileExistsCondition
+              path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(\\${backend.megatron.aux.start_iter}).zfill(7)'}"
+
+            # Cancel the decay if the stable sibling crashed.
+            job.cancel_condition:
+              class_name: LogPatternCondition
+              log_path: "\\${sibling.stable.job.log_path_current}"
+              pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+
+          configs:
+            - stage: decay50BT
+              backend.megatron.aux.tokens: 50_000_000_000

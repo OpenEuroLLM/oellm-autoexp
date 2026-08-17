@@ -140,6 +140,10 @@ seed: 1234
 # Stable phase keeps aux.tokens = per-combo max_decay_tokens from Group 1;
 # decay stages override aux.tokens to their specific budget (6B...300B).
 aux:
+  # Model size identifier, used as the job.name / output-dir prefix so it tracks
+  # this model definition (edit here, not in the experiment/sweep configs). The
+  # expert count is appended separately from num_experts.
+  model_name: "0.4B_ne"
   tokens: 300_000_000_000       # overridden by sweep (Group 1 sets per-combo default)
   max_tokens: 300_000_000_000   # per-combo max_decay_tokens; only used by val sweeps (end-dedup filter)
   decay_fraction: 0.0           # overridden in decay stage defaults
