@@ -1,0 +1,137 @@
+# @package _global_
+#
+# 1.7B BATCH-RAMPUP TEST — CONTROL ARM (flat GBS 2048, no rampup).
+#
+# WHY AT 1.7B
+# -----------
+# The question "does a batch-size rampup reduce loss-spike MAGNITUDE during
+# warmup?" is a mechanism question, and mechanism questions belong at small
+# scale. Today's ledger makes the case: three of the five expensive failures on
+# the 32B run were mechanical and would have reproduced identically at a
+# fraction of the cost —
+#   fp8_param_gather breaking checkpointing   also reproduced at 16 nodes,
+#                                             but found at 1024: ~5000 node-hours
+#   VPP "M >= PP" ValueError                  pure config, cost 3 restart
+#                                             cycles on 1026 nodes
+#   the --rdvz-backend typo                   pure config, 1026 nodes
+# Only spike MAGNITUDE and the infrastructure effects (FS jitter, rendezvous
+# scaling, node-failure rate) genuinely need the full scale.
+#
+# WHAT IS HELD IDENTICAL TO THE FLAGSHIP
+# --------------------------------------
+# Same data blend, same 256k tokenizer, same FP8 recipe, same optimizer and LR
+# shape — so a result here is about batch schedule, not about a different setup.
+# FP8 is kept deliberately: at GBS 128 the FP8 arm's worst spike was 57.7%
+# versus 14.0% for the bf16 baseline, so FP8 appears to AMPLIFY spikes. Dropping
+# it risks failing to reproduce the phenomenon at all.
+#
+# MODEL: qwen3_1.7B (28 layers, hidden 2048, ffn 6144, 16 heads / 8 KV groups).
+# With the 256k tokenizer and tied embeddings that is ~1.4B body + ~0.5B
+# embedding ~= 1.9B, i.e. "1.8B-class" as asked.
+#
+# PARALLELISM: TP=1, PP=1.
+#   * PP=1 removes the virtual-pipeline constraint entirely (M >= PP), which is
+#     what forced the 32B rampup to disable VPP. Here the batch floor is simply
+#     mbs * DP.
+#   * 32 nodes -> world 128 -> DP 128, mbs 2 -> floor = 256, which is exactly the
+#     rampup start used by the ramp arm. Every ramp stage (256..2048, step 256)
+#     is divisible by 256.
+#   * pipeline_model_parallel_layout MUST be nulled: the parent declares eight
+#     virtual stages summing to 64 layers, which is meaningless for 28 layers.
+#
+# DATASET CACHE: train_samples is left at the production 3,661,824,000 so the
+# TRAIN index num_samples is unchanged and the prebuilt 15 T blend index is
+# reused. Only the valid split re-derives (it depends on train_iters and GBS)
+# and that index is ~1000x smaller, so it builds in minutes.
+#
+# BUDGET: 4000 steps x 2048 x 4096 = 33.6 B tokens ~= 3.8e20 FLOPs; at ~300
+# TFLOP/s/GPU on 128 GPUs that is ~2.8 h. The ramp arm is matched on SAMPLES,
+# not steps, so it costs about the same.
+defaults:
+  - oellm_32b_dense
+  - _self_
+
+backend:
+  aux:
+    active_nodes: 32
+    spare_nodes: 0
+    variant: "rt1p7b-flat"
+
+  megatron:
+    # === MODEL: qwen3_1.7B geometry (overrides the 32B's) ====================
+    num_layers: 28
+    hidden_size: 2048
+    ffn_hidden_size: 6144
+    num_attention_heads: 16
+    num_query_groups: 8
+    kv_channels: 128
+
+    # === PARALLELISM ========================================================
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    # the parent's 8-virtual-stage layout describes 64 layers; invalid here
+    pipeline_model_parallel_layout: null
+    num_layers_per_virtual_pipeline_stage: null
+    context_parallel_size: 1
+    sequence_parallel: false
+    # TP=1 -> no tensor-parallel comm to overlap
+    tp_comm_overlap: false
+    # PP=1 -> embedding wgrad deferral is invalid. The parent sets this true
+    # (oellm_32b_dense.yaml:159) and Megatron raises at setup:
+    #   ValueError: Cannot defer embedding wgrad compute when pipeline model
+    #               parallel is not used
+    # That killed jobs 1385132/1385134, which then ft-restart-looped through
+    # 29 setup cycles on 32 nodes each before being cancelled.
+    defer_embedding_wgrad_compute: false
+
+    micro_batch_size: 2
+
+    # === SCHEDULE ===========================================================
+    # GBS 2048 x 4096 = 8.39 M tokens/iter.
+    global_batch_size: 2048
+    # 2000 steps of LR warmup at GBS 2048. NB lr_warmup_samples is SAMPLE-based
+    # (training.py:1108), which is what makes the ramp arm comparable: both arms
+    # follow the same LR-vs-samples curve even though the ramp arm needs more
+    # optimizer steps to consume them.
+    lr_warmup_samples: 4096000
+    exit_interval: 4000
+
+    # 256k-vocab logits are the memory hot spot here
+    # (mbs 2 x seq 4096 x 256000 x 2 B = 4.2 GB per microbatch)
+    cross_entropy_loss_fusion: true
+
+    # === CHECKPOINTS ========================================================
+    # Only crash insurance for a ~3 h run; keep them off the critical path and
+    # out of the way of the 32B runs' directories.
+    save: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints
+    non_persistent_global_ckpt_dir: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints_rolling
+    save_interval: 2000
+    non_persistent_save_interval: 1000
+
+    wandb_project: oellm_1p7b_rampup_test
+
+job:
+  chain_repeat: 1
+
+slurm:
+  sbatch:
+    time: "06:00:00"
+
+# One arm. FP8 settings mirror the flagship candidate exactly; fp8_param_gather
+# stays false because it breaks checkpoint saving (CUDA illegal memory access in
+# the async worker — see stability_check_nodes1024.yaml).
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.variant: "rt1p7b-flat"
+          backend.megatron.output_z_loss_coeff: 1.e-4
+          backend.megatron.fp8: hybrid
+          backend.megatron.fp8_recipe: delayed
+          backend.megatron.cuda_graph_impl: none
+          backend.megatron.fp8_param_gather: false
+          backend.megatron.first_last_layers_bf16: false
+          backend.megatron.fp8_amax_history_len: 1024
+          backend.megatron.fp8_amax_compute_algo: max

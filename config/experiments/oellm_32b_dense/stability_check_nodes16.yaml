@@ -1,0 +1,202 @@
+# @package _global_
+#
+# CHEAP STABILITY SWEEP — 16 nodes, GBS 128, 8k steps per variant.
+#
+# 8k, not 4k: the point is to see the run AFTER warmup, not just through it.
+# With a 4k-warmup arm a 4000-step run would end exactly as the LR reaches its
+# peak, so it would show the ramp and nothing else — and post-warmup, at full LR
+# in the constant phase, is where spikes actually live. 8k leaves 6k post-warmup
+# steps for the 2k arm and 4k for the 4k arm.
+#
+# WHY THIS IS A VALID PROXY FOR THE FLAGSHIP
+# ------------------------------------------
+# Throughput and optimizer behaviour track MICROBATCHES PER DP RANK and TOKENS
+# PER GPU, not node count. At 16 nodes with GBS=128:
+#     world 64, TP=4, PP=4  ->  DP = 4
+#     m = 128/(2*4) = 16                      <- production is 4096/(2*128) = 16
+#     tokens/GPU/iter = 128*4096/64 = 8192    <- production is 4096*4096/2048 = 8192
+# So each GPU does exactly the production amount of work per step, with the same
+# pipeline occupancy. What DIFFERS is data parallelism (DP 4 vs 128), so the
+# gradient all-reduce is much smaller and the effective batch is 32x smaller —
+# gradient NOISE is therefore much higher here than in production. That makes
+# this a CONSERVATIVE spike test: a setting that is stable at GBS 128 is not
+# guaranteed stable at 4096, but a setting that spikes here is a real warning.
+#
+# Cost: ~5.4 s/iter x 8000 = ~12 h per variant on 16(+1) nodes — i.e. right AT
+# the JUPITER wall limit, so each variant is chained over 2 jobs (chain_repeat)
+# and resumes from the rolling checkpoint. Step time should actually come in a
+# little under production's 5390 ms, since DP=4 makes the gradient all-reduce
+# far smaller than production's DP=128.
+#
+# CACHE: at GBS=128, train_iters = 28,608,000 and the valid split resolves to
+# num_samples = 3,662,080 — the SAME index already built for GBS 32/64/128. No
+# rebuild, and the variants are safe to run concurrently (see the concurrency
+# warning in data_cache_prebuild.yaml).
+#
+# WHAT EACH VARIANT ISOLATES (one change from the baseline, except where noted)
+# ---------------------------------------------------------------------------
+#   sc-base            2k warmup, no z-loss, fp32 grad accumulation, bf16
+#   sc-warmup4k        warmup 2k -> 4k          (the "2k vs 4k" comparison is
+#                                                sc-base vs sc-warmup4k)
+#   sc-zloss1e-3       output (LM head) z-loss 1e-3
+#   sc-zloss1e-4       output (LM head) z-loss 1e-4
+#   sc-bf16acc-fp32rs  bf16 gradient accumulation WITH fp32 reduce-scatter
+#   sc-fp8hybrid       FP8 hybrid (tensorwise + CUDA graphs off — the combination
+#                      verified at 512 nodes; see the precision/fp8 group for why
+#                      graphs and tensorwise are mutually exclusive)
+#
+# NB the baseline IS the 2k-warmup arm, so "2k vs 4k" costs one extra run rather
+# than two. If you want the baseline to sit at some other warmup, change
+# backend.aux.warmup_steps below and add an explicit 2k arm to the sweep.
+#
+# WATCH: lm loss, grad norm, "number of skipped iterations" and "number of nan
+# iterations" per step, compared at EQUAL STEPS across variants (all arms see
+# identical data order — same seed, same GBS, same index).
+defaults:
+  - oellm_32b_dense
+  - _self_
+
+backend:
+  aux:
+    active_nodes: 16
+    spare_nodes: 0
+    warmup_steps: 2000      # baseline warmup, in STEPS at this GBS
+    variant: "sc-base"
+
+  megatron:
+    global_batch_size: 128
+
+    # Warmup expressed in steps at THIS GBS. NB the run stays sample-based, so
+    # this is steps * GBS. At GBS=128 that is 2000 steps = 1.05 B tokens, versus
+    # production's 4000 steps = 67 B tokens: the LR RAMP SHAPE per optimizer
+    # step is matched, the token count deliberately is not.
+    lr_warmup_samples: ${oc.muli:${backend.aux.warmup_steps},${backend.megatron.global_batch_size}}
+
+    # train_samples stays at the production 15 T so the WSD decay tail is far
+    # away and every arm runs in the constant-LR phase after warmup — which is
+    # the regime the flagship spends 90% of its life in.
+    exit_interval: 8000
+
+    # A variant does not fit in one 12 h job, so it MUST be resumable:
+    #   - persistent every 4000 (2 checkpoints, kept)
+    #   - rolling every 1000 for the actual resume; rotating, so disk stays
+    #     bounded at one checkpoint rather than 8 x ~450 GB per variant
+    # async_save is inherited, so these writes are off the critical path.
+    save_interval: 4000
+    non_persistent_save_interval: 1000
+
+    # === CHECKPOINTS ON SCRATCH, NOT PROJECT ================================
+    # A checkpoint of this model is ~442 GB. project1 is at 19.3 / 20 TiB soft
+    # quota (hard 22 TiB), i.e. ~0.7 TiB of headroom — so the first arm to write
+    # filled it and the rest died with
+    #     OSError: [Errno 122] Disk quota exceeded
+    # (job 1368420). Note `df` shows the FILESYSTEM (6.7 P free) and hides this
+    # entirely; the limit is the per-project quota.
+    # Sweep checkpoints are transient — nothing downstream consumes them, and
+    # their only job is resuming the chain — so they belong on scratch
+    # (~100 TiB free). Logs, wandb and tensorboard stay under base_output_dir on
+    # project1, where they are small and durable.
+    # `load` follows `save` by interpolation in the model config, so overriding
+    # save alone redirects the resume path too.
+    save: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints
+    non_persistent_global_ckpt_dir: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints_rolling
+
+    # eval_interval stays at 10000 (> 8000) on purpose: lowering it would change
+    # the valid-split num_samples and force an index rebuild. Train loss and
+    # grad norm are the instruments here.
+
+    # === PIN THE BASELINE ====================================================
+    # These are set EXPLICITLY rather than inherited. The parent config is being
+    # actively tuned (grad-reduce precision and CUDA graphs have both changed
+    # more than once), and a sweep whose arms "differ by one setting" is
+    # meaningless if the setting they differ FROM moves underneath it. Pinning
+    # here means every arm below is exactly one change from a fixed reference,
+    # and re-running this sweep next week compares like with like.
+    grad_reduce_in_bf16: false                       # baseline = fp32 grad accumulation
+    ddp_reduce_scatter_with_fp32_accumulation: false
+    output_z_loss_coeff: null                        # baseline = no z-loss
+    fp8: null                                        # baseline = bf16
+
+    # CUDA graphs OFF for the whole sweep. They are a ~1% throughput feature and
+    # they are INCOMPATIBLE with FP8 tensorwise (jobs 1366290/1366300). Leaving
+    # them on for the bf16 arms would force the FP8 arm to differ by two things
+    # at once — precision AND graphs — which is exactly the confound this sweep
+    # exists to avoid.
+    cuda_graph_impl: none
+
+    # wandb checks
+    wandb_project: oellm_32b_dense_stability_speed_checks
+
+job:
+  # ~12 h of training does not fit one job. Two chained 12 h jobs: the first
+  # saves and exits at exit_duration_in_mins (11.5 h, inherited), the second
+  # resumes from the rolling checkpoint and runs to exit_interval 8000.
+  chain_repeat: 2
+
+slurm:
+  sbatch:
+    time: "12:00:00"
+
+# ---------------------------------------------------------------------------
+# The sweep. Each arm sets `variant`, which flows into job.name and therefore
+# into base_output_dir / wandb / tensorboard — so no arm can resume from
+# another's checkpoint.
+# ---------------------------------------------------------------------------
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.variant: "sc-base"
+
+        - backend.aux.variant: "sc-warmup4k"
+          backend.aux.warmup_steps: 4000
+
+        - backend.aux.variant: "sc-zloss1e-3"
+          backend.megatron.output_z_loss_coeff: 1.e-3
+
+        - backend.aux.variant: "sc-zloss1e-4"
+          backend.megatron.output_z_loss_coeff: 1.e-4
+
+        # bf16 gradient accumulation, but the DDP reduce-scatter accumulates in
+        # fp32. NB grad_reduce_in_bf16 forces accumulate_allreduce_grads_in_fp32
+        # to False inside Megatron (arguments.py:742); the fp32 accumulation
+        # here is specifically in the reduce-scatter.
+        - backend.aux.variant: "sc-bf16acc-fp32rs"
+          backend.megatron.grad_reduce_in_bf16: true
+          backend.megatron.ddp_reduce_scatter_with_fp32_accumulation: true
+
+        # --- FP8, ACCURATE ARM ------------------------------------------------
+        # Graphs are already off for the whole sweep (see the pinned baseline),
+        # so this differs from the baseline by PRECISION ONLY. tensorwise is the
+        # recipe verified at 512 nodes; tensorwise + CUDA graphs aborts every
+        # rank with "Saved FP8 metadata does not match operation's FP8 metadata"
+        # (jobs 1366290 / 1366300). Current scaling cannot lag, and the first and
+        # last transformer layers stay in bf16.
+        - backend.aux.variant: "sc-fp8-tensorwise"
+          backend.megatron.fp8: hybrid
+          backend.megatron.fp8_recipe: tensorwise
+          backend.megatron.first_last_layers_bf16: true
+
+        # --- FP8, FAST ARM ----------------------------------------------------
+        # The other end of the accuracy/speed trade: delayed scaling, FP8 param
+        # all-gather (halves that communication at DP=128 — the main remaining
+        # FP8 throughput lever, and it REQUIRES delayed: arguments.py:1178 asserts
+        # `not fp8_param_gather or fp8_recipe == "delayed"`), and no bf16
+        # first/last layers, so the whole stack is FP8.
+        #
+        # !! fp8_amax_history_len is left at the Megatron DEFAULT of 1, i.e.
+        # "scale from the previous step's amax, no smoothing". That is the
+        # fragile setting: on a step where activations jump, the scale is one
+        # step stale, which is how delayed-scaling runs produce infs. If this arm
+        # diverges, re-run it with a proper history BEFORE concluding anything
+        # about delayed scaling itself:
+        #     backend.megatron.fp8_amax_history_len: 1024
+        #     backend.megatron.fp8_amax_compute_algo: max
+        - backend.aux.variant: "sc-fp8-delayed-pg"
+          backend.megatron.fp8: hybrid
+          backend.megatron.fp8_recipe: delayed
+          backend.megatron.cuda_graph_impl: none
+          backend.megatron.fp8_param_gather: true
+          backend.megatron.first_last_layers_bf16: false

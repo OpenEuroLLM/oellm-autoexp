@@ -1,0 +1,81 @@
+# @package _global_
+#
+# 1.7B @ GBS 4096 — DISCRIMINATOR: is the 32B warmup spike caused by BATCH SIZE
+# or by MODEL SCALE?
+#
+# THE OBSERVATION TO EXPLAIN
+# --------------------------
+# The 32B run at GBS 4096 produced a genuine catastrophic spike during LR warmup:
+#     iter 1739: lm loss jumped +4.59 IN ONE STEP (~2.8 -> 7.40), grad norm 236.5
+# The 1.7B runs at GBS 2048 show nothing of the kind — largest single-step rise
+# +0.108 (flat) and +0.348 (ramp), i.e. ~40x smaller and indistinguishable from
+# ordinary batch noise:
+#
+#     run                  largest 1-step loss rise   grad norm there
+#     1.7B flat GBS 2048            +0.108                 0.69
+#     1.7B ramp 256->2048           +0.348                 3.44
+#     32B  GBS 4096                 +4.590               236.48
+#
+# So the rampup experiment at 1.7B could not answer the stability question: the
+# control had no spike to mitigate. Two candidate causes remain, and they imply
+# opposite decisions for the flagship:
+#     BATCH-SIZE driven  -> a rampup is the right mitigation
+#     MODEL-SCALE driven -> a rampup may do nothing, and only the 32B can test it
+#
+# THE TEST
+# --------
+# Identical to rampup_test_1p7b.yaml (the flat control) except global_batch_size
+# 2048 -> 4096. One variable. lr_warmup_samples stays at 4,096,000 so the
+# LR-versus-SAMPLES curve is unchanged and only the batch differs — the same
+# matching principle used for the ramp arm.
+#
+#   samples budget : 8,192,000 (as both 1.7B arms) -> 2000 steps at GBS 4096
+#   parallelism    : unchanged; DP=128, mbs=2 -> M = 4096/256 = 16 (was 8)
+#   per-GPU memory : unchanged (mbs is what sets it; only M grows)
+#   cost           : same token budget as the flat control, ~3.5 h on 32 nodes
+#                    ~= 112 node-hours, versus ~7000 for the 1024-node rampup
+#
+# HOW TO READ IT
+# --------------
+# Compare the largest single-step loss rise against the flat control's +0.108.
+#   * A rise of order +1 or more, with grad norm in the tens-to-hundreds,
+#     reproduces the 32B behaviour -> the spike is BATCH-driven, and the rampup
+#     belongs in the flagship without needing the 1024-node validation.
+#   * A rise still around +0.1 means GBS 4096 is not sufficient to cause it at
+#     this model size -> the spike is SCALE-driven, the 1.7B convergence result
+#     may not transfer either, and the only honest test is at 32B.
+defaults:
+  - rampup_test_1p7b
+  - _self_
+
+backend:
+  megatron:
+    # THE one variable
+    global_batch_size: 4096
+    # 8,192,000 samples / 4096 = 2000 steps (same sample budget as both 1.7B arms)
+    exit_interval: 2000
+    # lr_warmup_samples deliberately NOT changed (4,096,000): same LR-vs-samples
+    # curve as the control, so only the batch differs.
+
+slurm:
+  sbatch:
+    time: "06:00:00"
+
+# Restate the sweep so `variant` takes — the parent's arm pins it and sweep arms
+# apply after this file's backend.aux block. Wrong variant => same job.name =>
+# same checkpoint dir as the control. Verify with --dry-run.
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.variant: "rt1p7b-flat-gbs4096"
+          backend.megatron.output_z_loss_coeff: 1.e-4
+          backend.megatron.fp8: hybrid
+          backend.megatron.fp8_recipe: delayed
+          backend.megatron.cuda_graph_impl: none
+          backend.megatron.fp8_param_gather: false
+          backend.megatron.first_last_layers_bf16: false
+          backend.megatron.fp8_amax_history_len: 1024
+          backend.megatron.fp8_amax_compute_algo: max

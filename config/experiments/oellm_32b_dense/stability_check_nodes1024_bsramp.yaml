@@ -1,0 +1,163 @@
+# @package _global_
+#
+# BATCH-SIZE RAMPUP ARM — the one-variable counterpart to the completed
+# no-rampup run (job 1380848, 8000 steps, 297.3 TFLOP/s median).
+#
+# ============================================================================
+# WHY, FROM THE DATA
+# ============================================================================
+# Detrended spike analysis (loss vs the median of a CENTERED 51-iteration
+# window, so it is robust to the loss trend — a trailing baseline manufactures
+# false excursions during the steep warmup descent), over the LR-warmup phase:
+#
+#   run                   GBS   >3%   >5%   WORST SPIKE
+#   1024n fp8 (no ramp)  4096   139    77      185.3%   <-
+#   sc-base               128   233    60       14.0%
+#   sc-fp8-tensorwise     128   234    55       57.7%
+#   sc-zloss1e-4          128   227    68       23.1%
+#
+# The two batch sizes differ in OPPOSITE directions on two axes:
+#   * FREQUENCY of small excursions is HIGHER at GBS 128 — intrinsic gradient
+#     noise from a 32x smaller batch, and harmless.
+#   * MAGNITUDE of the worst excursion is far higher at GBS 4096: 185% versus
+#     14-58%. Nothing at GBS 128 comes close to the 185% event.
+# Magnitude carries divergence risk, so large-batch warmup is the riskier
+# regime and a rampup places that window where excursions are ~4-13x milder.
+# (An earlier analysis of mine used grad-norm COUNTS and concluded the two were
+# equally spiky — counts measure frequency and miss magnitude entirely.)
+#
+# Caveat: every run so far recorded 0 skipped and 0 nan iterations, so no spike
+# has yet cost an update. This derisks the 40-day flagship; nothing is broken.
+#
+# ============================================================================
+# WHY VPP IS DISABLED HERE  (this is the whole reason for the config below)
+# ============================================================================
+# First attempt (job 1384533) died at the first train_step, then ft_launcher
+# restart-looped it through 3 full setup cycles:
+#     ValueError: The number of contiguous micro-batches in a virtual pipeline
+#                 stage should range in [PP=4 , M=1]
+# From megatron/core/pipeline_parallel/schedules.py:975 the INTERLEAVED schedule
+# requires  PP <= microbatch_group_size_per_vp_stage <= M , and that setting
+# defaults to PP. So it needs M >= PP.
+#
+# Megatron's own report for this job:  world 4096, TP=4, PP=4 -> DP=256
+# (i.e. 4096/TP = 1024 ranks, which decompose as DP 256 x PP 4).
+#     M = GBS / (mbs * DP) = GBS / 512
+#     M >= PP = 4  ->  GBS >= 2048     <- floor WITH interleaving
+# That floor is half the production batch, so the deepest possible ramp would be
+# a 2x (2048->4096) — nowhere near the 32x contrast that motivates this test.
+#
+# VPP is not set directly: `pipeline_model_parallel_layout` declares EIGHT
+# virtual stages and arguments.py:548 sets VPP = num_stages // PP = 8/4 = 2.
+# Setting the layout to null makes Megatron fall back to a uniform split (64
+# layers / PP 4 = 16 per stage) with NO interleaving, so the non-interleaved
+# 1F1B schedule is used and the constraint becomes just M >= 1, i.e.
+#     GBS >= mbs * DP = 512.       <- the start we actually want
+#
+# Per-rank layer counts barely move, so memory should be comparable:
+#     interleaved  stages 9,8,8,8,8,8,8,7 -> per PP rank 17,16,16,15
+#     uniform                              -> per PP rank 16,16,16,16
+#
+# THIS COSTS THROUGHPUT, NOT FIDELITY. Interleaving reorders microbatch
+# execution but accumulates the SAME gradients, so loss and grad-norm
+# trajectories are unaffected; only the pipeline bubble grows (roughly 3/8
+# rather than 3/16 at M=8). Since this run measures SPIKE MAGNITUDE and not
+# TFLOP/s, that is an acceptable trade — but DO NOT compare this run's
+# throughput against 1380848.
+#
+# ============================================================================
+# THE RAMP
+# ============================================================================
+#   --rampup-batch-size 512 512 8192000
+#     start      512 samples = 2.10 M tokens/iter   (the "start around 2 M" target)
+#     increment  512 samples
+#     ramp       8,192,000 samples = lr_warmup_samples, so the batch ramp spans
+#                the same TOKEN budget as the LR warmup
+#
+# INCREMENT IS NOT FREE. Every intermediate global batch must be divisible by
+# mbs*DP = 512, so start and increment are both 512 and the stages are
+# 512,1024,1536,2048,2560,3072,3584,4096 — all valid. A rounder-looking 256
+# would produce sizes Megatron rejects.
+#
+# STEP MATH — READ BEFORE COMPARING.
+# Exact semantics from megatron/core/num_microbatches_calculator.py:
+#     num_increments              = (4096 - 512) / 512 = 7      <- SEVEN, not 8
+#     rampup_samples_per_increment= 8192000 / 7 = 1,170,286 samples
+#     GBS = 512 + int(consumed_samples / 1170286) * 512
+# Equal SAMPLES per plateau, so the STEP count halves as the batch doubles:
+#
+#     plateau  GBS   tokens/iter   steps   cum steps
+#        1      512     2.10 M      2286      2286
+#        2     1024     4.19 M      1143      3429
+#        3     1536     6.29 M       762      4190
+#        4     2048     8.39 M       571      4762
+#        5     2560    10.49 M       457      5219
+#        6     3072    12.58 M       381      5600
+#        7     3584    14.68 M       327      5927
+#     then GBS 4096 for the remaining ~2073 of the 8000 steps.
+#
+# THE KEY PROPERTY: plateau 1 lasts 2286 steps, so the ENTIRE 2000-step LR
+# warmup runs at GBS 512 — deliberately, since that is the window holding the
+# 185% spike. The cost is that only ~2073 of 8000 steps run at full batch, so
+# this run says less about steady state than 1380848 did.
+#
+# ============================================================================
+# WHAT WOULD SETTLE IT
+# ============================================================================
+# Compare the detrended worst-spike magnitude over steps 1-2000 against
+# 1380848's 185.3%. Landing near the GBS-128 arms (14-58%) confirms that batch
+# size drives spike magnitude and a rampup belongs in the flagship. Another
+# ~185% excursion means batch size is not the driver and the rampup can be
+# dropped.
+defaults:
+  - stability_check_nodes1024
+  - _self_
+
+backend:
+  megatron:
+    # Ramp start / increment / ramp-up samples. Requires sample-based training
+    # (train_samples), which prod_15TT.yaml already sets.
+    rampup_batch_size: ["512", "512", "8192000"]
+
+    # Disable interleaving so the batch floor drops from 2048 to 512 (see above).
+    # null -> uniform 16 layers per PP stage, non-interleaved 1F1B.
+    pipeline_model_parallel_layout: null
+    num_layers_per_virtual_pipeline_stage: null
+
+job:
+  chain_repeat: 1
+
+# ---------------------------------------------------------------------------
+# THE SWEEP MUST BE RESTATED, NOT INHERITED.
+#
+# The parent's single arm pins `backend.aux.variant: sc-fp8-zloss1e-4-nobsramp`,
+# and a sweep arm is applied AFTER the `backend.aux` block of this file — so
+# setting `variant` in backend.aux here is silently overridden. That is not
+# cosmetic: variant feeds job.name, which feeds base_output_dir AND the
+# checkpoint paths, so the run would inherit the COMPLETED no-rampup run's
+# directory and resume from its iter_0008000 checkpoint instead of starting
+# fresh. That is exactly what happened to job 1384514 (cancelled during startup
+# before it wrote anything; the 8000-step checkpoint survived intact).
+#
+# NB `scripts/render_config.py` does NOT apply sweep arms, so it shows the
+# pre-sweep name and cannot catch this. Verify with `--dry-run` instead.
+#
+# Keep in sync with stability_check_nodes1024.yaml if that file's arm changes.
+# ---------------------------------------------------------------------------
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.variant: "sc-fp8-zloss1e-4-bsramp"
+          backend.megatron.output_z_loss_coeff: 1.e-4
+          backend.megatron.fp8: hybrid
+          backend.megatron.fp8_recipe: delayed
+          backend.megatron.cuda_graph_impl: none
+          # false — fp8_param_gather breaks checkpoint saving with a CUDA
+          # illegal memory access in the async worker (see the parent config).
+          backend.megatron.fp8_param_gather: false
+          backend.megatron.first_last_layers_bf16: false
+          backend.megatron.fp8_amax_history_len: 1024
+          backend.megatron.fp8_amax_compute_algo: max

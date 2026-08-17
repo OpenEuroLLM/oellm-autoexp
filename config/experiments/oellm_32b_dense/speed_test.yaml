@@ -43,6 +43,23 @@ backend:
   torchrun_args:
     nnodes: ${slurm.sbatch.nodes}
     max_restarts: "0"
+    # STATIC rendezvous, not the c10d DYNAMIC one inherited from
+    # megatron_torchrun.yaml. Dynamic c10d makes all N agents negotiate through a
+    # single TCPStore on $MASTER_ADDR; that holds at 512 nodes (job 1364573) and
+    # breaks at 1024 — jobs 1371705 and 1371721 both died ~10.5 min into startup,
+    # zero iterations, with ~100 of 1024 agents raising
+    #     torch.distributed.elastic.rendezvous.api.RendezvousConnectionError
+    #     torch.distributed.DistNetworkError
+    # from dynamic_rendezvous.py:next_rendezvous.
+    # Static needs no negotiation at all: the world size is fixed and known, each
+    # agent takes its rank straight from --node-rank ($SLURM_NODEID) and connects
+    # to the store at --master-addr/--master-port. Those three args are ALREADY
+    # passed by megatron_torchrun.yaml and are simply ignored under c10d, so this
+    # is a one-line switch onto arguments that are already correct.
+    # NB this is only available here BECAUSE the speed test drops FT: ft_launcher
+    # rejects rdzv_backend=static and must use c10d (which resolves to NVRx's
+    # barrier rendezvous, a different implementation that does scale to 1024).
+    rdzv_backend: static
   megatron:
     # the ft rank monitor and its timeout calculation need ft_launcher
     enable_ft_package: false

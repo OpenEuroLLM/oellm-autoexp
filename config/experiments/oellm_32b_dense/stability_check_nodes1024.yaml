@@ -1,0 +1,231 @@
+# @package _global_
+#
+# PRODUCTION-SCALE STABILITY RUN — 1024 nodes, GBS 4096, 8k steps.
+#
+# NOT a proxy. This is the real flagship configuration, run long enough to see
+# whether it spikes. Its sibling stability_check_nodes16.yaml is the cheap
+# 16-node proxy that screens settings first; this file runs the survivor at
+# full scale, where the effective batch (16.8 M tokens) and the DP all-reduce
+# (DP=256) are the ones the 40-day run will actually have.
+#
+# 8k steps, not 4k: the point is to see the run AFTER warmup, not just through
+# it. Warmup here is 2000 steps, so 8k leaves 6k post-warmup steps at full LR in
+# the constant phase — which is where spikes actually live.
+#
+# SHAPE AT 1024 NODES
+# -------------------
+#     world 4096, TP=4, PP=4  ->  DP = 256
+#     m = 4096/(2*256) = 8            <- HALF of the 16 at 512 nodes
+#     tokens/GPU/iter = 4096*4096/4096 = 4096
+# Doubling nodes at fixed GBS halves both the microbatch count per DP rank and
+# the per-GPU work, which costs per-GPU efficiency (measured: "a bit slower but
+# reasonable" — the 512-node reference was 316.7 TFLOP/s/GPU at m=16). Total
+# throughput still goes up, roughly 1.8x rather than 2x.
+#
+# Cost: ~3 s/iter x 8000 = ~6.7 h on 1024 nodes = ~6900 node-hours. That FITS IN
+# ONE 12 h JOB, which is why chain_repeat is 1 here and 2 in the 16-node file.
+#
+# CACHE: at GBS=4096, train_iters = 894,000 and the valid split resolves to
+# num_samples = 3,686,400 — exactly what the prebuild (job 1356283) already
+# built. No index rebuild.
+#
+# WARMUP IS STEP-MATCHED TO THE 16-NODE SWEEP, NOT TOKEN-MATCHED
+# --------------------------------------------------------------
+# warmup_steps=2000 means 33.6 B tokens here versus 1.05 B at 16 nodes (32x, the
+# GBS ratio). The LR ramp SHAPE per optimizer step is what carries across; the
+# token counts deliberately do not.
+#
+# THE ARM
+# -------
+#   sc-fp8-zloss1e-4-nobsramp   the production candidate: FP8 hybrid on the FAST
+#     recipe (delayed + fp8_param_gather + no bf16 first/last layers) with LM-head
+#     z-loss 1e-4, and NO batch-size rampup — recent papers do not use one, so the
+#     ramp is skipped rather than ablated.
+#     NB this is a CANDIDATE CONFIG, not an ablation arm: it changes several
+#     things at once relative to the pinned baseline below, so a difference
+#     against baseline will not attribute to any single one of them. The 16-node
+#     sweep is where settings get isolated.
+#
+# WATCH: lm loss, grad norm, "number of skipped iterations" and "number of nan
+# iterations" per step.
+defaults:
+  - oellm_32b_dense
+  - _self_
+
+backend:
+  aux:
+    active_nodes: 1024
+    # 2 HOT SPARES (was 0). Allocate 1026, train on 1024, and let ft_launcher
+    # promote a spare when a node dies instead of the whole job failing.
+    # Justified empirically: this run was killed three times in one night by
+    # single-node hardware faults, each time losing everything since the last
+    # checkpoint —
+    #     1375720  IMA + node failure on jpbo-060-24
+    #     1380817  NVLink peer-access fault on jpbo-096-37 (row remapping pending)
+    # and three nodes cluster-wide were drained for pending GPU row remapping
+    # within one hour. At 1024 nodes we draw ~19% of the machine per attempt, so
+    # catching a failing node is likely, not exceptional.
+    # NB nnodes renders as ACTIVE:ACTIVE+SPARES (1024:1026) — the BARRIER
+    # rendezvous form for JUPITER's NVRx build, INVERTED versus the legacy one.
+    # This also exercises the exact resilience path the 40-day flagship depends
+    # on, which is worth validating here rather than in production.
+    spare_nodes: 2
+    warmup_steps: 2000      # baseline warmup, in STEPS at this GBS
+    variant: "sc-base"
+
+  # NO rendezvous override here — this run launches under ft_launcher, which
+  # REQUIRES c10d and REJECTS static (see config/backend/megatron_ftlauncher_localaddr.yaml).
+  # The static-rendezvous fix belongs to the *torchrun* speed-test path only
+  # (config/experiments/oellm_32b_dense/speed_test.yaml), where torch's DYNAMIC
+  # c10d rendezvous collapses at 1024 agents. ft_launcher asks for c10d too, but
+  # on JUPITER's NVRx build that resolves to the BARRIER rendezvous, which does
+  # scale to 1024 — job 1370589 came up on 1024 nodes and ran 36 min.
+  #
+  # A `torchrun_args: {rdvz_backend: "static"}` block here killed job 1374593 in
+  # 34 s, every rank exit code 2:
+  #     ft_launcher: error: unrecognized arguments: --rdvz-backend
+  # Two faults in one line: the key was misspelled (rdvz vs rdzv) AND the value
+  # would have been rejected anyway. NB the cliargs resolver forwards ANY key in
+  # torchrun_args as `--<key with _ -> ->`, so a typo becomes an unrecognized
+  # launcher flag rather than a config error — it fails at run time, on 1024
+  # nodes, not at render time.
+  megatron:
+    global_batch_size: 4096
+
+    # Warmup expressed in steps at THIS GBS. NB the run stays sample-based, so
+    # this is steps * GBS. At GBS=4096 that is 2000 steps = 8,192,000 samples =
+    # 33.6 B tokens. Step-matched to the 16-node sweep (same 2000 steps there =
+    # 1.05 B tokens); the LR ramp SHAPE per optimizer step is what carries over.
+    lr_warmup_samples: ${oc.muli:${backend.aux.warmup_steps},${backend.megatron.global_batch_size}}
+
+    # train_samples stays at the production 15 T so the WSD decay tail is far
+    # away and every arm runs in the constant-LR phase after warmup — which is
+    # the regime the flagship spends 90% of its life in.
+    exit_interval: 8000
+
+    # The run DOES fit in one 12 h job here (~6.7 h), so these are for crash
+    # recovery rather than planned continuation:
+    #   - persistent every 4000 (2 checkpoints, kept)
+    #   - rolling every 1000, rotating, so disk stays bounded at one checkpoint
+    #     rather than 8 x ~450 GB
+    # Matters more at this scale than at 16 nodes: an unrecoverable failure 6 h
+    # in costs ~6000 node-hours. async_save is inherited, so the writes are off
+    # the critical path.
+    save_interval: 4000
+    # 1000, not 100: at ~442 GB per save, every-100 means 80 saves across the
+    # 8000-step run. Even at ~60 s each that is ~80 min of a ~6.7 h run (~20%),
+    # and it multiplies exposure to the checkpoint path that just cost us a day.
+    # The run fits in ONE 12 h job, so these saves are crash insurance, not
+    # planned continuation — 8 of them is plenty.
+    non_persistent_save_interval: 1000
+
+    # === CHECKPOINTS ON SCRATCH, NOT PROJECT ================================
+    # A checkpoint of this model is ~442 GB. project1 is at 19.3 / 20 TiB soft
+    # quota (hard 22 TiB), i.e. ~0.7 TiB of headroom — so the first arm to write
+    # filled it and the rest died with
+    #     OSError: [Errno 122] Disk quota exceeded
+    # (job 1368420). Note `df` shows the FILESYSTEM (6.7 P free) and hides this
+    # entirely; the limit is the per-project quota.
+    # Sweep checkpoints are transient — nothing downstream consumes them, and
+    # their only job is resuming the chain — so they belong on scratch
+    # (~100 TiB free). Logs, wandb and tensorboard stay under base_output_dir on
+    # project1, where they are small and durable.
+    # `load` follows `save` by interpolation in the model config, so overriding
+    # save alone redirects the resume path too.
+    save: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints
+    non_persistent_global_ckpt_dir: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints_rolling
+
+    # eval_interval stays at 10000 (> 8000) on purpose: lowering it would change
+    # the valid-split num_samples and force an index rebuild. Train loss and
+    # grad norm are the instruments here.
+
+    # === PIN THE BASELINE ====================================================
+    # These are set EXPLICITLY rather than inherited. The parent config is being
+    # actively tuned (grad-reduce precision and CUDA graphs have both changed
+    # more than once), and a sweep whose arms "differ by one setting" is
+    # meaningless if the setting they differ FROM moves underneath it. Pinning
+    # here means every arm below is exactly one change from a fixed reference,
+    # and re-running this sweep next week compares like with like.
+    grad_reduce_in_bf16: false                       # baseline = fp32 grad accumulation
+    ddp_reduce_scatter_with_fp32_accumulation: false
+    output_z_loss_coeff: null                        # baseline = no z-loss
+    fp8: null                                        # baseline = bf16
+
+    # CUDA graphs OFF. A ~1% throughput feature, and INCOMPATIBLE with FP8
+    # tensorwise (jobs 1366290/1366300 aborted every rank with "Saved FP8
+    # metadata does not match operation's FP8 metadata"). The arm below uses the
+    # delayed recipe, which IS graph-safe, but graphs stay off so this run is
+    # comparable to the 16-node sweep, which has them off throughout.
+    cuda_graph_impl: none
+
+    # wandb checks
+    wandb_project: oellm_32b_dense_stability_speed_checks
+
+job:
+  # 1, NOT 2 (and not 0). At 1024 nodes 8000 steps is ~6.7 h, so the run fits in
+  # a single 12 h job and needs no continuation — unlike the 16-node sweep, where
+  # 8000 steps is ~12 h and the second job finishes the tail.
+  # With chain_repeat: 2 here the first job would exit at iteration 8000 via
+  # exit_interval, the second would resume from that checkpoint and, since
+  # exit_interval fires on `iteration % 8000 == 0`, run on to 16000 — doubling
+  # the run and ~7000 node-hours.
+  # 0 is worse than wrong: run_autoexp.py:305 computes use_chain from
+  # `chain_repeat > 1`, so 0 takes the non-chained path and happens to submit
+  # once — but under --chain, or alongside any other job with chain_repeat > 1,
+  # chain_submit_jobs loops `range(0)` and silently submits NOTHING for this job.
+  chain_repeat: 1
+
+slurm:
+  sbatch:
+    time: "12:00:00"
+
+# ---------------------------------------------------------------------------
+# The sweep — one arm today. `variant` flows into job.name and therefore into
+# base_output_dir / wandb / tensorboard, so adding arms later cannot make them
+# collide or resume from each other's checkpoints.
+# ---------------------------------------------------------------------------
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        #
+        # --- FP8, FAST RECIPE + z-loss ----------------------------------------
+        # The speed end of the FP8 trade: delayed scaling, FP8 param all-gather
+        # (halves that communication at DP=256 — the main remaining FP8
+        # throughput lever, and it REQUIRES delayed: arguments.py:1178 asserts
+        # `not fp8_param_gather or fp8_recipe == "delayed"`), and no bf16
+        # first/last layers, so the whole stack is FP8.
+        #
+        # amax history is set to 1024 with `max` rather than left at Megatron's
+        # DEFAULT of 1 + most_recent. The default means "scale from the previous
+        # step's amax, no smoothing", which lags whenever activations jump — the
+        # fragile setting, and how delayed-scaling runs produce infs. A 1024-step
+        # window with `max` covers a spike instead of chasing it one step late.
+        # If this arm still diverges, that is evidence about FP8 itself rather
+        # than about the amax window.
+        - backend.aux.variant: "sc-fp8-zloss1e-4-nobsramp"
+          backend.megatron.output_z_loss_coeff: 1.e-4
+          backend.megatron.fp8: hybrid
+          backend.megatron.fp8_recipe: delayed
+          backend.megatron.cuda_graph_impl: none
+          # DISABLED 2026-08-14 — fp8_param_gather BREAKS CHECKPOINT SAVING.
+          # Every run with it set died at its FIRST rolling save with a CUDA
+          # illegal memory access inside the async checkpoint worker
+          # (dist_checkpointing/strategies/async_utils.py -> filesystem_async.py
+          # -> preload_fn -> torch.cuda.synchronize):
+          #     1375720  1024n  save@100   IMA, then a 4 h ft_launcher restart
+          #                                loop (~4500 node-hours)
+          #     1379026  1024n  save@100   IMA, different allocation -> not hardware
+          #     1376031    16n  save@1000  hung, 0 successful saves, 103 IMA lines
+          # Control, identical but WITHOUT it (sc-fp8-tensorwise): 6 successful
+          # saves, 0 IMA lines, still running past iteration 6900.
+          # NB the failing arms also differ in fp8_recipe/first_last_layers_bf16,
+          # so this is not a single-variable isolation — but fp8_param_gather is
+          # what changes how params are STORED for the all-gather, i.e. exactly
+          # what a save has to serialize. Re-enable only once a save is proven.
+          backend.megatron.fp8_param_gather: false
+          backend.megatron.first_last_layers_bf16: false
+          backend.megatron.fp8_amax_history_len: 1024
+          backend.megatron.fp8_amax_compute_algo: max

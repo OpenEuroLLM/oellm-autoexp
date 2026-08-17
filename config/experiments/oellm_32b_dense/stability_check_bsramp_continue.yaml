@@ -1,0 +1,229 @@
+# @package _global_
+#
+# TWO-STAGE: reshard-convert the phase-1 checkpoint, then continue at 1024 nodes.
+#
+#   stage=convert    256 nodes.  Loads the phase-1 checkpoint (saved with the
+#                    DEFAULT dp_reshardable optimizer format at DP=64), trains a
+#                    handful of steps, and re-saves into a SEPARATE project
+#                    folder with dist_ckpt_optim_fully_reshardable, which is the
+#                    only format Megatron will reshard.
+#   stage=continue  1024 nodes.  Loads the converted checkpoint at DP=256 and
+#                    runs to iteration 8000, gated on the converted checkpoint
+#                    actually existing.
+#
+# ============================================================================
+# WHY A CONVERSION STAGE IS NEEDED AT ALL
+# ============================================================================
+# The first attempt at this continuation (job 1390472, 1025 nodes) died in
+# _load_non_persistent_base_checkpoint with 13,382 ranks reporting:
+#     CheckpointingException: Global shape mismatch for loaded
+#       (torch.Size([98304000])) and expected ((276582912,)) for key
+#       optimizer.distributed.dp_group_idx_0.gbuf_idx_0....bucket_idx_0.param
+# and metadata showing  distrib_optim_sharding_type: 'dp_reshardable'.
+#
+# The DistributedOptimizer's bucket layout is tied to the DP structure it was
+# saved with, so going DP 64 -> 256 invalidates the global shapes. Megatron
+# accepts exactly ONE format for resharding
+# (distrib_optimizer.py:102):
+#     checkpoint_fully_reshardable_formats = {'fully_reshardable'}
+# and 'dp_reshardable' — despite the name — is not in it.
+#
+# CRUCIALLY THIS IS DECIDED AT SAVE TIME, so no load-side flag can rescue the
+# existing checkpoint. Hence a stage that re-saves it.
+#
+# Cost of the format: fully_reshardable "gathers all DistributedOptimizer
+# buffers on DP rank 0" instead of saving fully in parallel, so saves are
+# slower than the 31-132 s we measured with dp_reshardable. That is affordable
+# for one conversion; whether it is affordable for the flagship's every-1000-step
+# rolling saves is a separate measurement worth doing before enabling it there.
+# If the convert stage hits host/device memory limits, add
+#     backend.megatron.distrib_optim_fully_reshardable_mem_efficient: true
+# (Gloo + single-rank save; slower still).
+#
+# ============================================================================
+# PATHS — THE CONVERSION WRITES TO A DIFFERENT PROJECT FOLDER
+# ============================================================================
+# Source (read-only here): the phase-1 run's directories, written at DP=64.
+#   persistent : .../production_training/<run>/checkpoints            (iter 4000)
+#   rolling    : .../production_training/<run>/checkpoints_rolling    (iter 5000, 6000)
+# Megatron picks the NEWEST across both tiers, so pointing at both is what makes
+# the conversion start from 6000 rather than 4000.
+#
+# Target: a separate tree, so a failed conversion can never damage phase 1.
+#   .../production_training_reshard/<run>/checkpoints
+#
+# NB `load` normally follows `save` by interpolation in the model config; both
+# are set EXPLICITLY per stage here precisely to break that coupling — the
+# convert stage must read from one tree and write to another.
+#
+# WANDB IDENTITY IS PRESERVED. wandb_exp_name is pinned to the phase-1 run name
+# (no $SLURM_JOB_ID suffix, unlike the inherited default) so both stages report
+# into the same wandb run as phase 1 and the curves stay continuous.
+defaults:
+  - stability_check_nodes256_bsramp
+  # ==========================================================================
+  # NODE EXCLUSION — REQUIRED AT 1024 NODES, AND ITS ABSENCE IS WHY THIS HUNG
+  # ==========================================================================
+  # The parent chain resolves /slurm: jupiter, which applies NO --exclude. Two
+  # continuation attempts died of it:
+  #
+  #   job 1392564  allocated jpbo-103-05 AND jpbo-104-11, both already on the
+  #                known-bad list. ft_launcher restarted the worker group ~4x
+  #                (the per-rank tokenizer banner appears ~4268 times against an
+  #                expected 4096 = one per rank) and hung every time.
+  #   job 1392777  drew no known-bad node, but exactly ONE node's four ranks
+  #                never reached tokenizer construction: the banner appears
+  #                1023 times for each of local ranks 0-3 instead of 1024. All
+  #                1024 nodes reached the launcher, so the node came up and then
+  #                stopped, blocking the collective. 23 min of nothing.
+  #
+  # For scale: the 1024-node stability run that COMPLETED 8000 steps (job
+  # 1380848) reached iteration 1 in 7m26s. Anything past ~15 min with no
+  # dataset-build milestone is stuck, not slow.
+  - override /slurm: jupiter_autoexclude
+  - _self_
+
+backend:
+  aux:
+    # defaults for the convert stage; the continue stage overrides to 1024
+    active_nodes: 256
+    spare_nodes: 0
+
+  megatron:
+    # The whole point: write a checkpoint that can be resharded to any DP.
+    # Set on BOTH stages — otherwise the continue stage's own save at 8000 would
+    # revert to dp_reshardable and we would be back where we started.
+    dist_ckpt_optim_fully_reshardable: true
+
+    # keep the same wandb run as phase 1 (default appends _$SLURM_JOB_ID)
+    wandb_exp_name: "oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256"
+
+job:
+  chain_repeat: 1
+
+slurm:
+  sbatch:
+    time: "06:00:00"
+
+# ---------------------------------------------------------------------------
+# Two stages. `filter: true` keeps them as a list of distinct jobs rather than a
+# cartesian product, and the continue stage waits on a FileExistsCondition
+# against the converted checkpoint's tracker file.
+# ---------------------------------------------------------------------------
+sweep:
+  type: list
+  filter: true
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ------------------------------------------------------------------
+        # STAGE 1 — CONVERT (256 nodes, DP=64: the DP the checkpoint was saved
+        # with, so no resharding is required to READ it)
+        # ------------------------------------------------------------------
+        - stage: convert
+          # distinct variant -> distinct job.name -> distinct base_output_dir, so the
+          # two stages do not overwrite each other's logs/sbatch. Checkpoint paths
+          # are set explicitly below and wandb_exp_name is pinned, so splitting the
+          # name here costs nothing.
+          backend.aux.variant: "sc-fp8-zloss1e-4-bsramp256-convert"
+          backend.aux.active_nodes: 256
+          backend.megatron.output_z_loss_coeff: 1.e-4
+          backend.megatron.fp8: hybrid
+          backend.megatron.fp8_recipe: delayed
+          backend.megatron.cuda_graph_impl: none
+          backend.megatron.fp8_param_gather: false
+          backend.megatron.first_last_layers_bf16: false
+          backend.megatron.fp8_amax_history_len: 1024
+          backend.megatron.fp8_amax_compute_algo: max
+
+          # READ THE ROLLING TIER DIRECTLY. The first attempt (job 1391152) pointed
+          # `load` at the persistent dir and the rolling dir at
+          # non_persistent_global_ckpt_dir, assuming Megatron would pick the newest
+          # of the two. IT DID NOT — it loaded the persistent tracker's 5928 and
+          # trained 82 steps to reach 6010. Harmless there, but we want 6000
+          # exactly, so point `load` straight at the rolling directory (its
+          # latest_checkpointed_iteration.txt reads 6000) and switch the
+          # non-persistent machinery off entirely so nothing competes with it.
+          backend.megatron.load: "/e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_rolling"
+          backend.megatron.non_persistent_global_ckpt_dir: null
+          backend.megatron.non_persistent_ckpt_type: null
+          # WRITE to the separate reshard tree
+          backend.megatron.save: "/e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_reshard"
+
+          # Resume at 6000, train 10 steps, save at 6010, exit at 6010.
+          # (exit_interval fires on iteration % exit_interval == 0.)
+          # MEMORY-EFFICIENT SAVE — REQUIRED, not optional. Job 1391152 loaded and
+          # trained fine, then died IN THE SAVE: 102 x `Cuda failure 2 'out of
+          # memory'` inside the all_gather at
+          #   checkpointing.py:547 -> fully_parallel.py:93/121
+          #   -> exchange_utils.py:216 determine_main_replica_uniform_distribution
+          #   -> distributed_c10d.py:4017 all_gather
+          # with 62,668 MiB already reserved. fully_reshardable gathers every
+          # DistributedOptimizer buffer onto DP rank 0 (~24 GB of optimizer state
+          # here), which does not fit alongside the resident model. This flag moves
+          # that gather to Gloo/host memory and serialises it to a single rank.
+          # Slower, but this is a one-off conversion.
+          backend.megatron.distrib_optim_fully_reshardable_mem_efficient: true
+
+          # SYNCHRONOUS SAVE for the conversion. The mem-efficient path cut the
+          # save-time OOMs from 102 to 3, and the three that remained were in the
+          # ASYNC checkpoint worker (multiprocessing/process.py ->
+          # torch.cuda.synchronize) — the same forked-CUDA subsystem that produced
+          # the fp8_param_gather illegal memory access earlier. A synchronous save
+          # removes that worker entirely. The cost is that the save blocks the
+          # training loop, which is irrelevant for a one-off conversion that only
+          # runs 10 steps.
+          backend.megatron.async_save: false
+          backend.megatron.use_persistent_ckpt_worker: false
+
+          # resume at 6000, train 10 steps, save at 6010, exit
+          backend.megatron.save_interval: 6010
+          backend.megatron.exit_interval: 6010
+          # No rolling saves here — they would land in the phase-1 rolling dir
+          # that non_persistent_global_ckpt_dir still points at for LOADING.
+          backend.megatron.non_persistent_save_interval: null
+
+          slurm.sbatch.time: "01:00:00"
+
+        # ------------------------------------------------------------------
+        # STAGE 2 — CONTINUE (1024 nodes, DP=256: this is the resharding step
+        # the converted format exists to permit)
+        # ------------------------------------------------------------------
+        - stage: continue
+          backend.aux.variant: "sc-fp8-zloss1e-4-bsramp256-continue"
+          backend.aux.active_nodes: 1024
+          # SPARE NODES — the other half of why this hung. Inherited from the
+          # 256-node parent as 0, giving `--nnodes 1024:1024`; the 1024-node run
+          # that completed 8000 steps used `--nnodes 1024:1026` off a 1026-node
+          # allocation. On the JUPITER nemo_26.04 NVRx BARRIER build the range is
+          # ACTIVE:ACTIVE+SPARES (inverted vs the legacy elastic meaning), so
+          # this asks SLURM for 1026 and runs a fixed world of 1024, leaving two
+          # warm reserves. Without them a single stuck node has no replacement
+          # and the whole job blocks on it — exactly what job 1392777 did.
+          backend.aux.spare_nodes: 2
+          backend.megatron.output_z_loss_coeff: 1.e-4
+          backend.megatron.fp8: hybrid
+          backend.megatron.fp8_recipe: delayed
+          backend.megatron.cuda_graph_impl: none
+          backend.megatron.fp8_param_gather: false
+          backend.megatron.first_last_layers_bf16: false
+          backend.megatron.fp8_amax_history_len: 1024
+          backend.megatron.fp8_amax_compute_algo: max
+
+          # Read AND write the reshard tree from here on
+          backend.megatron.load: "/e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_reshard"
+          backend.megatron.save: "/e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_reshard"
+          backend.megatron.non_persistent_global_ckpt_dir: "/e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_rolling_reshard"
+
+          # resume at 6010, run to 8000
+          backend.megatron.exit_interval: 8000
+          backend.megatron.save_interval: 8000
+          backend.megatron.non_persistent_save_interval: 500
+
+          # Do not launch until the converted checkpoint is actually on disk.
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "/e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_reshard/latest_checkpointed_iteration.txt"
+
+          slurm.sbatch.time: "06:00:00"

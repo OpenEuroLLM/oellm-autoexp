@@ -1,0 +1,169 @@
+# @package _global_
+#
+# 512-NODE WARMUP / STABILITY RUN AT lr 3e-4 — does the production candidate
+# survive warmup at a HIGHER peak LR?
+#
+# ============================================================================
+# WHAT THIS IS
+# ============================================================================
+# Exactly the `sc-fp8-zloss1e-4-nobsramp` recipe that ran at 1024 nodes (jobs
+# 1379130 / 1380848) — FP8 hybrid + delayed scaling, amax history 1024 with
+# `max`, LM-head z-loss 1e-4, NO batch-size rampup, fp32 grad accumulation,
+# CUDA graphs off, checkpoints on — with two changes and nothing else:
+#
+#     active_nodes  1024 -> 512
+#     lr            2e-4 -> 3e-4
+#
+# 8000 steps at GBS 4096, warmup 2000 steps, all inherited unchanged.
+#
+# WHY 3e-4 IS THE INTERESTING NUMBER: peak LR started at 4e-4, was lowered to
+# 2e-4 on 2026-08-13, and 2e-4 is where the catastrophic warmup spike appeared
+# (iteration 1739, lm loss +4.590 in ONE step, grad norm 236.5). If z-loss and
+# the FP8 amax window have actually bought stability, the payoff is being able
+# to push LR back UP — a higher peak LR is worth real loss at fixed tokens. This
+# run asks whether 3e-4 is reachable, so it is a step TOWARD the original 4e-4
+# rather than a retreat.
+#
+# READ-OFF, same instrument as every other arm in this family: the largest
+# single-step loss rise across the warmup window, plus grad norm and the
+# skipped/NaN iteration counts. Calibration:
+#     32B GBS 4096, lr 2e-4, no ramp   +4.590   (the failure)
+#     32B GBS 128  (16 nodes)          +0.1 to +0.4
+#     1.7B GBS 2048 / ramp             +0.108 / +0.348
+#
+# ============================================================================
+# NODE COUNT IS NOT A CONFOUND, BUT WALL CLOCK IS TIGHT
+# ============================================================================
+# 512 vs 1024 nodes does not change the mathematics — the gradient is averaged
+# over the same global batch however many ranks contribute; only the reduction
+# tree and floating-point ordering differ, which cannot create or suppress a
+# +4.59 loss jump. DP = 2048/(TP4*PP4) = 128, so M = 4096/(2*128) = 16
+# microbatches, which satisfies the interleaved schedule's M % PP == 0 and is
+# actually a BETTER-conditioned pipeline than 1024 nodes (M=8).
+#
+# WHAT DOES CHANGE IS RUNTIME. Same GBS over half the GPUs is ~2x per step:
+#     1024 nodes, measured (job 1380848)   2,868 ms/iter -> 8000 steps = 6.4 h
+#      512 nodes, projected                ~4,485 ms/iter -> 8000 steps = 10.0 h
+# (projection cross-checked two ways: 2x the 1024-node sustained rate, and the
+# 512-node FP8 shakeout of 3,900 ms/iter scaled by the 1.15x shakeout->sustained
+# factor measured at 1024.) Plus ~10 min startup and ~8 rolling saves, call it
+# ~10.4 h against a 12 h JUPITER cap and the inherited exit_duration_in_mins of
+# 690 (11.5 h). It fits, but the margin is ~1.5 h rather than the ~5 h the
+# 1024-node run enjoyed, so a slow allocation or a spare promotion could push it
+# over.
+#
+# DO NOT "FIX" THAT WITH job.chain_repeat: 2. exit_interval fires on
+# `iteration % 8000 == 0`, so a second job would resume from the 8000-step
+# checkpoint and run on to 16000 — doubling the run. See the parent's note. If
+# this does time out, the answer is to resume deliberately with a raised
+# exit_interval, not to chain.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/stability_check_nodes512_lr3e-4
+defaults:
+  - stability_check_nodes1024
+  - _self_
+
+backend:
+  aux:
+    active_nodes: 512
+    # spare_nodes stays 2 (inherited) -> allocates 514, trains 512, and
+    # nnodes renders as 512:514, the BARRIER-rendezvous form for JUPITER's NVRx
+    # build. Hot spares earned their place here: single-node hardware faults
+    # killed the 1024-node run three times in one night.
+
+    # === lr_tag MUST MOVE WITH megatron.lr ==================================
+    # job.name is "oellm_32b_dense_${variant}_gbs${GBS}_lr${lr_tag}", so lr_tag
+    # names base_output_dir, the checkpoint paths, wandb and tensorboard. If it
+    # were left at 2e-4 this run would write into the 2e-4 tree and, because
+    # `load` follows `save`, could RESUME from a 2e-4 checkpoint — silently
+    # turning an LR ablation into a mid-run LR change. That failure has already
+    # happened once in this family (job 1384514 resumed from the wrong arm's
+    # iter_0008000).
+    lr_tag: "3e-4"
+
+    # === VARIANT IS DERIVED, NOT TYPED =====================================
+    # warmup_steps is what the sweep varies, so the run name interpolates it
+    # rather than restating it. Same principle as the fp8 precision group: a
+    # directory name that is COMPUTED from the setting can never disagree with
+    # what was actually run, whereas a hand-written tag drifts the first time
+    # someone edits one line and not the other. Each arm therefore lands in its
+    # own base_output_dir / checkpoints / wandb run automatically.
+    # NB the sweep arms below deliberately do NOT set backend.aux.variant —
+    # an arm-level variant would win over this line and collapse all three arms
+    # into one output tree, which is how job 1384514 resumed from the wrong
+    # arm's checkpoint.
+    variant: "sc-fp8-zloss1e-4-nobsramp-n512-wu${.warmup_steps}"
+
+  megatron:
+    # The actual change under test. Peak LR; min_lr stays 0.0 and the WSD shape,
+    # warmup length (2000 steps = 8,192,000 samples) and 15 T train_samples are
+    # all inherited, so this is a pure peak-LR move.
+    lr: 0.0003
+
+    # Restated, not changed — the run is 8k steps as asked, and stating it here
+    # means a future edit to the parent cannot silently change the length of
+    # this comparison.
+    exit_interval: 8000
+
+# ---------------------------------------------------------------------------
+# THE SWEEP: WARMUP LENGTH, 2k / 3k / 4k STEPS
+# ---------------------------------------------------------------------------
+# warmup_steps is expressed in STEPS at this GBS and the parent converts it:
+#     lr_warmup_samples = warmup_steps * global_batch_size
+# so the arms are 8,192,000 / 12,288,000 / 16,384,000 samples
+# (= 33.6 / 50.3 / 67.1 B tokens). The run stays sample-based; steps are just
+# the readable unit. NB 4000 steps is exactly the prod_15TT default
+# (lr_warmup_samples: 16384000), so that arm doubles as the production setting
+# measured at the new LR.
+#
+# EVERY ARM STILL RUNS 8000 STEPS, which is what makes them comparable: the
+# longest warmup (4000) still gets 4000 steps of post-warmup steady state, and
+# the spike being hunted appeared at iteration 1739 — inside warmup for all
+# three arms. Read off the largest single-step loss rise, and WHERE it falls
+# relative to each arm's own warmup end.
+#
+# The sweep must be RESTATED in full: OmegaConf REPLACES lists rather than
+# merging them, so inheriting the parent and adding nothing would leave this
+# file with the parent's single 2e-4 arm. Every FP8 setting below is copied
+# verbatim from that arm and is IDENTICAL across the three — warmup_steps is
+# the only thing that moves. Deliberately no backend.aux.variant here; see the
+# note on the derived variant above.
+# ---------------------------------------------------------------------------
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.warmup_steps: 2000
+          backend.megatron.output_z_loss_coeff: 1.e-4
+          backend.megatron.fp8: hybrid
+          backend.megatron.fp8_recipe: delayed
+          backend.megatron.cuda_graph_impl: none
+          # STAYS FALSE — fp8_param_gather breaks checkpoint saving (CUDA
+          # illegal memory access in the async worker; jobs 1375720, 1379026,
+          # 1376031). Re-enable only once a save is proven.
+          backend.megatron.fp8_param_gather: false
+          backend.megatron.first_last_layers_bf16: false
+          backend.megatron.fp8_amax_history_len: 1024
+          backend.megatron.fp8_amax_compute_algo: max
+
+        - backend.aux.warmup_steps: 3000
+          backend.megatron.output_z_loss_coeff: 1.e-4
+          backend.megatron.fp8: hybrid
+          backend.megatron.fp8_recipe: delayed
+          backend.megatron.cuda_graph_impl: none
+          backend.megatron.fp8_param_gather: false
+          backend.megatron.first_last_layers_bf16: false
+          backend.megatron.fp8_amax_history_len: 1024
+          backend.megatron.fp8_amax_compute_algo: max
+
+        - backend.aux.warmup_steps: 4000
+          backend.megatron.output_z_loss_coeff: 1.e-4
+          backend.megatron.fp8: hybrid
+          backend.megatron.fp8_recipe: delayed
+          backend.megatron.cuda_graph_impl: none
+          backend.megatron.fp8_param_gather: false
+          backend.megatron.first_last_layers_bf16: false
+          backend.megatron.fp8_amax_history_len: 1024
+          backend.megatron.fp8_amax_compute_algo: max

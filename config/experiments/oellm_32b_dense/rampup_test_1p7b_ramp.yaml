@@ -1,0 +1,96 @@
+# @package _global_
+#
+# 1.7B BATCH-RAMPUP TEST — RAMP ARM.
+#
+# One variable versus rampup_test_1p7b.yaml (the flat control): the batch
+# schedule. Same model, same data, same tokenizer, same FP8 recipe, same
+# LR-vs-SAMPLES curve, same total sample budget.
+#
+# THE RAMP
+# --------
+#   --rampup-batch-size 256 256 4096000
+#     start      256 samples = 1.05 M tokens/iter
+#     increment  256 samples
+#     ramp       4,096,000 samples == lr_warmup_samples, so the batch ramp and
+#                the LR warmup finish at the SAME point
+#
+# Every stage (256,512,...,1792,2048) is a multiple of mbs*DP = 2*128 = 256, so
+# all are valid. PP=1 here, so there is no virtual-pipeline M >= PP floor to
+# work around — unlike the 32B case, where the floor was 2048 and VPP had to be
+# switched off to start at 512.
+#
+# STEP MATH (megatron/core/num_microbatches_calculator.py):
+#   num_increments = (2048-256)/256 = 7           <- SEVEN, not 8
+#   samples/plateau = 4096000/7 = 585,143
+#   equal SAMPLES per plateau, so STEPS halve as the batch doubles:
+#
+#     plateau   GBS   steps   cum
+#        1      256   2286   2286
+#        2      512   1143   3429
+#        3      768    762   4190
+#        4     1024    571   4762
+#        5     1280    457   5219
+#        6     1536    381   5600
+#        7     1792    327   5927
+#
+# WHY exit_interval IS 8000 HERE AND 4000 IN THE CONTROL
+# ------------------------------------------------------
+# The arms are matched on SAMPLES, not steps — that is the only matching that
+# makes them comparable, because lr_warmup_samples is sample-based so both arms
+# see the same LR at the same sample count.
+#     control: 4000 steps x 2048              = 8,192,000 samples
+#     ramp   : 4,096,000 (ramp) + 2000 x 2048 = 8,192,000 samples at step ~7927
+# So 8000 steps here buys the same token budget and the same LR trajectory, and
+# the two runs cost roughly the same compute. Comparing them at equal STEP
+# number would compare different points of both the LR schedule and the data.
+#
+# HOW TO READ THE RESULT
+# ----------------------
+# Detrended spike magnitude (loss vs the median of a CENTERED 51-iteration
+# window — a trailing window manufactures false excursions during the steep
+# warmup descent) over the warmup, i.e. samples 0..4,096,000:
+#     control window: steps 1-2000
+#     ramp    window: steps 1-5927
+# If the ramp arm's worst excursion is materially smaller than the control's,
+# batch size drives spike magnitude and a rampup belongs in the flagship.
+# If they match, batch size is not the driver and the 32B rampup can be dropped
+# — which would save ~7000 node-hours of 1024-node time.
+#
+# Reference from the 32B runs, for calibration:
+#     GBS 4096 (1024n)  worst warmup excursion 185.3%
+#     GBS  128 (16n)    worst warmup excursion 14.0 / 23.1 / 57.7%
+defaults:
+  - rampup_test_1p7b
+  - _self_
+
+backend:
+  megatron:
+    rampup_batch_size: ["256", "256", "4096000"]
+    # sample-matched to the control's 8,192,000 (ramp completes at ~5927)
+    exit_interval: 8000
+
+slurm:
+  sbatch:
+    time: "08:00:00"
+
+# Restate the sweep so `variant` actually takes: the parent's arm pins
+# backend.aux.variant and sweep arms are applied AFTER this file's backend.aux
+# block, so setting it there is silently overridden — and variant feeds
+# job.name, hence base_output_dir and the checkpoint paths. Getting this wrong
+# would make the ramp arm resume from the control's checkpoints.
+# Verify with --dry-run; render_config.py does not apply sweep arms.
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.variant: "rt1p7b-ramp"
+          backend.megatron.output_z_loss_coeff: 1.e-4
+          backend.megatron.fp8: hybrid
+          backend.megatron.fp8_recipe: delayed
+          backend.megatron.cuda_graph_impl: none
+          backend.megatron.fp8_param_gather: false
+          backend.megatron.first_last_layers_bf16: false
+          backend.megatron.fp8_amax_history_len: 1024
+          backend.megatron.fp8_amax_compute_algo: max
