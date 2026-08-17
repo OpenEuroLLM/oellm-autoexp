@@ -1,0 +1,97 @@
+# @package _global_
+
+# 0.9B NE sparse Qwen3-like model training with pull-based multi-stage cooldown on Marenostrum
+# Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.4B_ne_experts_32 # model configs
+  # - /backend/megatron/: speed_test_lumi # data + rocm stuff for lumi
+  - _self_
+
+container:
+  env:
+    WANDB_TAGS: "lumi"
+
+index: 0
+stage: "" # Will be overridden by sweep
+
+job:
+  name: "sparse_lumi_test" # Will be overridden by sweep with stage and hyperparameter info
+  base_output_dir: "/scratch/project_462001516/users/swagatam/oellm-autoexp/results/0.4B_ne_sparse_experts_${backend.megatron.num_experts}_topk_${backend.megatron.moe_router_topk}_PP_${backend.megatron.pipeline_model_parallel_size}/training/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+
+    ### lumi specific configs
+    masked_softmax_fusion: False
+    gradient_accumulation_fusion: False
+    num_workers: 6 # Ville's suggestion since otherwise all of the 7 available CPUs per tasks would have a dataloader
+    num_dataset_builder_threads: 6
+    trust_remote_code: True
+    ### lumi specific configs end
+
+    train_iters: 100
+    # eval_iters: 1
+    # eval_interval: 1000
+    # save_interval: 10000000
+    # save: null
+    # load: null
+    wandb_exp_name: "test_sparse_throughput" # Will be overridden by sweep with stage and hyperparameter info
+    wandb_project: "" # Disabled
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    # Data-related configs (LUMI)
+    data_args_path: /scratch/project_462000963/users/vitiugin/datamix-tools/datamix4-lumi.txt
+    split: "99,1,0"
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    data_cache_path: /scratch/project_462001516/users/swagatam/cache/MEGATRON_262k # Adjust it to your own directory
+
+    # LUMI hipBLASLt workarounds: "Unable to find any suitable algorithms" in these GEMM shapes
+    # moe_router_dtype: null
+    # moe_grouped_gemm: False
+    
+    # For quick testing
+    seq_length: 4096
+    max_position_embeddings: 4096
+    #train_iters: 5
+    lr_warmup_iters: 50
+    lr_wsd_decay_iters: 1
+    
+    #eval_interval: 1000000000
+    #save_interval: 1000000000
+
+    # Base training configuration (for stable phase)
+    micro_batch_size: 2 # Will be overridden by sweep
+    global_batch_size: 128  # Will be overridden by sweep
+    lr: 1.e-4  # Will be overridden by sweep
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "1"
+    TRITON_HOME: /tmp/triton_cache
+
+
+slurm:
+  env:
+    MASTER_PORT: "9999"
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
+    # qos: "boost_qos_dbg"
+    account: "project_462001516"
+    partition: standard-g
+    time: "00:30:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "
