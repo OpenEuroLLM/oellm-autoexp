@@ -117,7 +117,7 @@ backend:
     # and it multiplies exposure to the checkpoint path that just cost us a day.
     # The run fits in ONE 12 h job, so these saves are crash insurance, not
     # planned continuation — 8 of them is plenty.
-    non_persistent_save_interval: 1000
+    non_persistent_save_interval: 125
 
     # === CHECKPOINTS ON SCRATCH, NOT PROJECT ================================
     # A checkpoint of this model is ~442 GB. project1 is at 19.3 / 20 TiB soft

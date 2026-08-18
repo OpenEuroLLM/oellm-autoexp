@@ -70,6 +70,7 @@ backend:
     # nnodes renders as 512:514, the BARRIER-rendezvous form for JUPITER's NVRx
     # build. Hot spares earned their place here: single-node hardware faults
     # killed the 1024-node run three times in one night.
+    spare_nodes: 2
 
     # === lr_tag MUST MOVE WITH megatron.lr ==================================
     # job.name is "oellm_32b_dense_${variant}_gbs${GBS}_lr${lr_tag}", so lr_tag
@@ -105,6 +106,15 @@ backend:
     # this comparison.
     exit_interval: 8000
 
+    fp8: hybrid
+    fp8_recipe: delayed
+    cuda_graph_impl: none
+    output_z_loss_coeff: 1e-4
+    fp8_param_gather: false
+    first_last_layers_bf16: false
+    fp8_amax_history_len: 1024
+    fp8_amax_compute_algo: max
+
 # ---------------------------------------------------------------------------
 # THE SWEEP: WARMUP LENGTH, 2k / 3k / 4k STEPS
 # ---------------------------------------------------------------------------
@@ -136,34 +146,7 @@ sweep:
     - type: list
       configs:
         - backend.aux.warmup_steps: 2000
-          backend.megatron.output_z_loss_coeff: 1.e-4
-          backend.megatron.fp8: hybrid
-          backend.megatron.fp8_recipe: delayed
-          backend.megatron.cuda_graph_impl: none
-          # STAYS FALSE — fp8_param_gather breaks checkpoint saving (CUDA
-          # illegal memory access in the async worker; jobs 1375720, 1379026,
-          # 1376031). Re-enable only once a save is proven.
-          backend.megatron.fp8_param_gather: false
-          backend.megatron.first_last_layers_bf16: false
-          backend.megatron.fp8_amax_history_len: 1024
-          backend.megatron.fp8_amax_compute_algo: max
 
         - backend.aux.warmup_steps: 3000
-          backend.megatron.output_z_loss_coeff: 1.e-4
-          backend.megatron.fp8: hybrid
-          backend.megatron.fp8_recipe: delayed
-          backend.megatron.cuda_graph_impl: none
-          backend.megatron.fp8_param_gather: false
-          backend.megatron.first_last_layers_bf16: false
-          backend.megatron.fp8_amax_history_len: 1024
-          backend.megatron.fp8_amax_compute_algo: max
 
         - backend.aux.warmup_steps: 4000
-          backend.megatron.output_z_loss_coeff: 1.e-4
-          backend.megatron.fp8: hybrid
-          backend.megatron.fp8_recipe: delayed
-          backend.megatron.cuda_graph_impl: none
-          backend.megatron.fp8_param_gather: false
-          backend.megatron.first_last_layers_bf16: false
-          backend.megatron.fp8_amax_history_len: 1024
-          backend.megatron.fp8_amax_compute_algo: max

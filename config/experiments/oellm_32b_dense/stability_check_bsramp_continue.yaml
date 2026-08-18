@@ -192,7 +192,7 @@ sweep:
         # ------------------------------------------------------------------
         - stage: continue
           backend.aux.variant: "sc-fp8-zloss1e-4-bsramp256-continue"
-          backend.aux.active_nodes: 1024
+          backend.aux.active_nodes: 512
           # SPARE NODES — the other half of why this hung. Inherited from the
           # 256-node parent as 0, giving `--nnodes 1024:1024`; the 1024-node run
           # that completed 8000 steps used `--nnodes 1024:1026` off a 1026-node
@@ -219,7 +219,7 @@ sweep:
           # resume at 6010, run to 8000
           backend.megatron.exit_interval: 8000
           backend.megatron.save_interval: 8000
-          backend.megatron.non_persistent_save_interval: 500
+          backend.megatron.non_persistent_save_interval: 125
 
           # Do not launch until the converted checkpoint is actually on disk.
           job.start_condition:

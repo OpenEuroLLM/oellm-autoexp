@@ -145,3 +145,12 @@ jpbo-120-36
 # evidence than the repeat offenders above. Recheck with:
 #     sinfo -n jpbo-026-42 -o "%T %E"
 jpbo-026-42
+# 2026-08-17 speed-scaling stalls: jobs hung at dataset load with no error.
+# jpbo-075-09 NHC: check_fs_mount /e/project1 not mounted -- job logs live
+#   on /e/project1, so its ranks block and the whole collective goes silent.
+# jpbo-074-31 NHC: check_link_downed_counters Link Downed threshold exceeded
+#   (mlx5_0: 2 / mlx5_1: 2) -- IB path degraded.
+# Both were drained by SLURM only AFTER the damage; excluding them guards
+# against them returning to service still faulty.
+jpbo-075-09
+jpbo-074-31

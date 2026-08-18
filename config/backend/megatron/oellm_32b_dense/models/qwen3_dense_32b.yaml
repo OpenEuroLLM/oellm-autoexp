@@ -150,7 +150,7 @@ save: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints
 non_persistent_global_ckpt_dir: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints_rolling
 load: ${.save}
 non_persistent_ckpt_type: "global"
-non_persistent_save_interval: 500
+non_persistent_save_interval: 125
 # resume must restore optimizer + RNG (explicit: base_defaults leaves these null)
 no_load_optim: false
 no_load_rng: false
