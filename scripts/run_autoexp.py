@@ -211,6 +211,36 @@ def _parse_subset(spec: str | None) -> set[int]:
     return indices
 
 
+def _resume_command(args, session_id: str) -> str:
+    """Command that re-attaches a monitor to an already-submitted session.
+
+    monitor_autoexp.py re-reads the per-job state files in the session
+    directory, so resuming does NOT resubmit anything -- it picks the
+    existing SLURM job ids back up and keeps applying the same log-event
+    policy.
+    """
+    parts = ["python scripts/monitor_autoexp.py", f"--session {session_id}"]
+    state_dir = str(getattr(args, "monitor_state_dir", "") or "")
+    # only worth printing when it is not the default the script already assumes
+    if state_dir and state_dir not in ("./monitor_state", "monitor_state"):
+        parts.append(f"--monitor-state-dir {state_dir}")
+    return " ".join(parts)
+
+
+def _print_resume_hint(resume_cmd: str, res, *, reason: str) -> None:
+    """Tell the user how to get monitoring back.
+
+    Cheap to print, expensive to lose.
+    """
+    n = len(getattr(res, "submitted_job_ids", []) or [])
+    bar = "=" * 78
+    print(f"\n{bar}")
+    print(f"  {n} job(s) submitted, session {res.session_id}  [{reason}]")
+    print("  To continue monitoring these runs, run from the repo root:")
+    print(f"      {resume_cmd}")
+    print(f"{bar}\n", flush=True)
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     configure_logging(not args.no_verbose, args.debug)
@@ -314,11 +344,24 @@ def main(argv: list[str] | None = None) -> None:
     else:
         res = submit_jobs(plan, no_error_catching=args.debug, local_mode=args.local)
 
+    resume_cmd = _resume_command(args, res.session_id)
+
     if args.no_monitor or args.submit_and_exit:
         res.loop.observe_once()
+        _print_resume_hint(resume_cmd, res, reason="not monitoring")
         exit(0)
 
-    run_loop(res.loop)
+    # Print the resume command BEFORE the loop starts, not only on the way out:
+    # if the terminal dies, the session is killed by a timeout, or the ssh
+    # connection drops, the exit path may never run and the session id would be
+    # lost. It is also echoed on Ctrl-C below, which is the common case.
+    _print_resume_hint(resume_cmd, res, reason="monitoring now")
+    try:
+        run_loop(res.loop)
+    except KeyboardInterrupt:
+        print("\n[interrupted] Jobs were NOT cancelled -- they keep running in SLURM.")
+        _print_resume_hint(resume_cmd, res, reason="interrupted")
+        exit(130)
 
 
 if __name__ == "__main__":
