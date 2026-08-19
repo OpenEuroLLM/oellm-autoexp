@@ -122,7 +122,7 @@ backend:
     # Megatron forces it False anyway, and when you flip this to false Megatron
     # auto-enables fp32 accumulation (arguments.py:744). Setting both would just
     # make the config lie about what is running.
-    grad_reduce_in_bf16: true
+    grad_reduce_in_bf16: false
     # ddp_reduce_scatter_with_fp32_accumulation: true #?
 
     # Manual garbage collection
@@ -269,7 +269,7 @@ slurm:
   # A dead node's srun TASK must not tear the whole step down: without this,
   # slurm kills the surviving tasks on the first bad exit and ft_launcher never
   # gets the chance to re-rendezvous and promote a spare.
-  srun_opts: "--kill-on-bad-exit=0 "
+  srun_opts: "--kill-on-bad-exit=0 --no-kill"
   sbatch:
     # ACTIVE + SPARES. backend.aux.active_nodes is what actually trains.
     nodes: ${oc.addi:${backend.aux.active_nodes},${backend.aux.spare_nodes}}

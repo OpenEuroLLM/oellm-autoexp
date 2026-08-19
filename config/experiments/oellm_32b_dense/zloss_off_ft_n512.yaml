@@ -1,0 +1,54 @@
+# @package _global_
+#
+# 2x2 CELL 3 of 4: NO z-loss, WITH ft_launcher. 512 nodes, GBS 4096, FP8.
+#
+# The 6% production gap has two candidate causes and they are PERFECTLY
+# CONFOUNDED in all 209 runs measured so far: every run without z-loss used
+# torchrun, every run with z-loss used ft_launcher. Nothing in the existing data
+# can separate them, so the 2x2 has to be completed by measurement:
+#
+#                    torchrun            ft_launcher
+#   no z-loss        417.7  (1397791)    THIS RUN
+#   z-loss 1e-4      cell 4              392.4  (1400372)
+#
+# This cell isolates Z-LOSS: same launcher as production, z-loss removed.
+#   result ~417  -> z-loss is the whole gap, ft_launcher is free
+#   result ~392  -> z-loss is free, ft_launcher is the whole gap
+#   in between   -> both contribute; the split is readable directly
+#
+# wgrad_deferral_limit is left at the production 0. The 32 variant was measured
+# (job 1406720) at 384.1, i.e. 2.1% SLOWER than baseline, so the earlier
+# bf16-derived +4.8% did not transfer to FP8 and there is no reason to carry it.
+#
+# No checkpoint is written: `save` must be a real path (save: null does not work
+# in this chain), so the intervals are pushed past the 100-iteration exit.
+defaults:
+  - stability_check_nodes512_lr3e-4
+  - _self_
+
+backend:
+  aux:
+    active_nodes: 512
+    variant: "abtest-nozloss-ft-n512"
+  megatron:
+    output_z_loss_coeff: null     # <-- THE ONE CHANGE vs the 392.4 baseline
+    wgrad_deferral_limit: 0
+    exit_interval: 100
+    save: "/e/scratch/e-sta-openeurollm/production_training/abtest_n512/checkpoints"
+    save_interval: 100000
+    non_persistent_save_interval: 100000
+    non_persistent_global_ckpt_dir: null
+    load: null
+
+job:
+  chain_repeat: 0
+slurm:
+  sbatch:
+    time: "00:45:00"
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.warmup_steps: 2000

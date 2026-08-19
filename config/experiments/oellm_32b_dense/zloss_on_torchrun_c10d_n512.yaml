@@ -1,0 +1,68 @@
+# @package _global_
+#
+# SEPARATING "ft_launcher" FROM "c10d RENDEZVOUS". 512 nodes, GBS 4096, FP8.
+#
+# ============================================================================
+# WHY THIS RUN EXISTS — A FLAW IN THE PREVIOUS 2x2
+# ============================================================================
+# The completed 2x2 gave:
+#
+#                    torchrun (static rdzv)   ft_launcher (c10d rdzv)
+#   no z-loss        417.7  (1397791)         402.0  (1407137)
+#   z-loss 1e-4      406.3  (1407138)         392.4  (1400372)
+#
+# and was read as "ft_launcher costs ~3.5%". That reading is NOT clean: the two
+# launcher columns differ in TWO ways, not one.
+#
+#   ft_launcher  ->  rendezvous backend c10d   (ft_launcher REJECTS static)
+#   torchrun     ->  rendezvous backend static (chosen because dynamic c10d
+#                    collapsed at 1024 nodes: jobs 1371705 / 1371721 died ~10.5
+#                    min into startup with RendezvousConnectionError on ~100 of
+#                    1024 agents)
+#
+# So the measured 3.5% is "ft_launcher AND c10d" versus "torchrun AND static".
+#
+# Reading the NVRx source makes the FT-daemon explanation look weak. Both
+# rank_monitor_client.start_section() and end_section() reduce to
+# _send_section_msg_impl(), which:
+#   * returns immediately if the section is not in rank_section_timeouts
+#     ("IPC is skipped and local timing data collection is also skipped"),
+#   * otherwise does ONE write_object_to_ipc_socket() to a local Unix socket,
+#   * and does NOT await a response -- skip_section_response defaults to true,
+#     documented as "true unidirectional communication".
+# No CUDA sync, no collective, no barrier, no file I/O. Two local socket writes
+# per iteration cannot plausibly cost 3.5% of a 4.4 s step (~150 ms).
+#
+# That leaves the rendezvous/wiring as the prime suspect, and this run tests it.
+#
+# ============================================================================
+# WHAT CHANGES — EXACTLY ONE THING vs job 1407138 (406.3)
+# ============================================================================
+#     rdzv_backend  static -> c10d
+#
+# Everything else is inherited from zloss_on_torchrun_n512: plain torchrun, NO
+# fault tolerance, z-loss 1e-4, wgrad 0, 512 nodes (no spares), 100 iterations,
+# checkpoint intervals pushed past the exit so nothing is written.
+#
+#   result ~392  -> the cost is the c10d rendezvous / process wiring, and the FT
+#                   daemon is nearly free. ft_launcher would then be cheap to
+#                   keep, and the 3.5% is not the price of fault tolerance.
+#   result ~406  -> rendezvous is free and the FT machinery really does cost
+#                   ~3.5%, despite the source reading above.
+#
+# c10d IS SAFE AT 512 NODES. Dynamic c10d is what broke at 1024; at 512 it is
+# the backend job 1364573 ran on successfully. Do not copy this config to 1024.
+defaults:
+  - zloss_on_torchrun_n512
+  - _self_
+
+backend:
+  aux:
+    variant: "abtest-zloss-torchrun-c10d-n512"
+  torchrun_args:
+    # THE ONE CHANGE. megatron_torchrun.yaml already passes --master-addr /
+    # --master-port / --node-rank, which static uses and c10d ignores, so this
+    # is a genuine one-line switch.
+    rdzv_backend: c10d
+  megatron:
+    save: "/e/scratch/e-sta-openeurollm/production_training/abtest_n512_c10d/checkpoints"

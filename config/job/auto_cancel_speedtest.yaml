@@ -1,0 +1,268 @@
+defaults:
+ - default
+
+# SPEED-TEST job policy: identical to auto_cancel.yaml EXCEPT the inactivity
+# floor is 300s instead of 1200s. See the `inactive` entry at the bottom for why
+# that is safe here and what it is guarding against.
+#
+# Duplicated from auto_cancel.yaml rather than inheriting it because Hydra
+# REPLACES lists on merge, so a `defaults: - auto_cancel` plus a partial
+# log_events override would silently drop every other pattern. KEEP IN SYNC.
+#
+# CANCEL-ON-ERROR job policy.
+#
+# Every known failure signature below terminates the job immediately instead of
+# letting it idle until the inactivity timeout fires. That gap is expensive: on
+# 2026-08-14 job 1374701 died at 17:32:59 ("Failed to CUDA calloc async") but was
+# only cancelled at 17:41:22 — ~8 min x 1024 nodes = ~136 node-hours burned
+# waiting for a failure that had already printed its cause. At 1024 nodes the
+# inactivity timeout is the single most expensive thing in this file.
+#
+# KEEP IN SYNC WITH config/job/auto_restart.yaml. The pattern list is duplicated
+# rather than shared because Hydra REPLACES lists on merge, so a shared include
+# plus per-file additions would silently drop entries. Same patterns there, but
+# infrastructure faults use RestartAction instead of CancelAction.
+#
+# Patterns are matched against NEW log text each poll (cursor-based), so they
+# fire when the line first appears — well before srun's trailing
+# "Exited with exit code 1".
+log_events:
+  - name: finished_training
+    pattern: "[after training is done]"
+    pattern_type: substring
+    action:
+      class_name: FinishAction
+      reason: "Training finished"
+  - name: finish
+    pattern: ".*validation loss.*on test set.*"
+    pattern_type: regex
+    action:
+      class_name: FinishAction
+      reason: "Test Evaluation Finished"
+
+  # === FATAL: configuration / data faults ==================================
+  # A retry lands on the same config and fails identically, so these cancel
+  # even under the auto_restart policy.
+
+  # Launcher rejected an argument. Note torchrun_args forwards ANY key as
+  # `--<key>`, so a typo becomes an unrecognized flag that only fails at RUN
+  # time, on the full allocation. Killed job 1374593 (1024 nodes) in 34 s:
+  #     ft_launcher: error: unrecognized arguments: --rdvz-backend
+  - name: err_unrecognized_argument
+    pattern: "unrecognized arguments"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "Launcher rejected an argument (check torchrun_args/ft args)"
+
+  # Filesystem quota. Killed the whole 16-node sweep on 2026-08-14 (job 1368420)
+  # when project1 filled: OSError: [Errno 122] Disk quota exceeded.
+  - name: err_disk_quota
+    pattern: "Disk quota exceeded|Errno 122"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Disk quota exceeded — free space or move checkpoints to scratch"
+
+  # FP8 recipe incompatible with CUDA graphs (tensorwise + graphs). Aborted
+  # every rank of jobs 1366290 and 1366300.
+  - name: err_fp8_metadata
+    pattern: "Saved FP8 metadata does not match"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "FP8 recipe/CUDA-graph mismatch — set cuda_graph_impl: none"
+
+  # Truncated or corrupt Megatron dataset index (.npy shorter than its header
+  # claims). Seen while building the 15 T blend cache.
+  - name: err_dataset_cache_corrupt
+    pattern: "mmap length is greater than file size|ValueError: cannot reshape array"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Corrupt dataset cache — run scripts/check_data_cache.py --repair"
+
+  # NVRx rank-assignment misconfiguration; never resolves by retrying.
+  - name: err_infra_rank
+    pattern: "Invalid infrastructure rank"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "NVRx infrastructure rank invalid — check use_infra_group_rank"
+
+  # Model genuinely does not fit (micro_batch_size / parallelism). Distinct from
+  # the CUDA-context OOM below, which is an occupied GPU, not a sizing problem.
+  - name: err_torch_oom
+    pattern: "torch\\.cuda\\.OutOfMemoryError|CUDA out of memory\\. Tried to allocate"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Model OOM — reduce micro_batch_size or raise TP/PP"
+
+  # === INFRASTRUCTURE: transient, node-local ===============================
+  # Under auto_restart these become RestartAction; here the policy is to stop.
+
+  # CUDA context / NCCL buffer allocation failed because the GPU was ALREADY
+  # occupied (leftover process from a prior job). Killed 1374701 and 1373119.
+  - name: err_cuda_alloc_init
+    pattern: "Failed to CUDA calloc|AcceleratorError: CUDA error: out of memory|cudaErrorMemoryAllocation"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "GPU occupied at init (leftover process) — retry elsewhere"
+
+  # torch's DYNAMIC c10d rendezvous collapsing at scale. Killed 1371705/1371721
+  # at 1024 nodes (~100 of 1024 agents). Fixed for torchrun by rdzv_backend=static.
+  - name: err_rendezvous
+    # NB RendezvousClosedError is deliberately ABSENT. It is not the 1024-node
+    # rendezvous collapse — ft_launcher agents emit it during a NORMAL fault-
+    # tolerant restart cycle, when the rendezvous is closed and re-formed.
+    # Matching it cancelled healthy job 1379130 at iteration 4204/8000
+    # (2026-08-15 02:23) even though its log had ZERO genuine error hits —
+    # i.e. this pattern defeated the fault tolerance it was meant to protect.
+    # Only the "cannot reach the store" forms belong here.
+    pattern: "RendezvousConnectionError|DistNetworkError"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Rendezvous failure — static rdzv (torchrun) / barrier (ft_launcher)"
+
+  # Transformer Engine userbuffers TP-overlap spin-wait: a peer stopped
+  # answering. Hung job 1373198 for 20 min without ever finishing iteration 1.
+  # A clean run emits ZERO of these (verified on 1373121), so this is unambiguous.
+  - name: err_userbuffers_stall
+    pattern: "userbuffers\\.cu.*expecting [0-9]+ got [0-9]+"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "userbuffers TP-overlap stall — peer rank unresponsive"
+
+  # NCCL collective hang / abort.
+  - name: err_nccl_timeout
+    pattern: "Watchdog caught collective operation timeout|unhandled cuda error|NCCL error"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "NCCL collective timeout/abort"
+
+
+  # CUDA illegal memory access / hard C++ abort. THE 4-HOUR LESSON (2026-08-14):
+  # job 1375720 hit this right after iteration 100, then ft_launcher restart-
+  # looped all 4096 ranks ~8 times without ever getting past init, burning
+  # ~4 h x 1024 nodes (~4000 node-hours) before SLURM finally called NODE_FAIL.
+  # NONE of the other patterns matched it, and the log kept GROWING (251 MB of
+  # repeated startup banners) so the inactivity fallback could never fire either.
+  # A GPU that has taken an IMA generally needs a reset, so relaunching in place
+  # is futile — stop, and let a fresh allocation be a fresh draw.
+  - name: err_cuda_illegal_access
+    pattern: "illegal memory access|cudaErrorIllegalAddress"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "CUDA illegal memory access — GPU needs reset, not a relaunch"
+
+  # Unhandled C++ exception escaping to std::terminate (seen alongside the IMA
+  # above). Distinct pattern because the AcceleratorError text can be truncated
+  # or interleaved across 4096 ranks while this line survives intact.
+  - name: err_cpp_terminate
+    pattern: "terminate called after throwing an instance of"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "Unhandled C++ exception — worker aborted"
+
+  # SLURM tore the allocation down because a node died under us.
+  - name: err_node_failure
+    pattern: "DUE TO NODE FAILURE|Node failure on"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "SLURM node failure in the allocation"
+
+  # Generic worker death — last-resort fail-fast, still far earlier than the
+  # inactivity timeout.
+  - name: err_child_failed
+    pattern: "ChildFailedError"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "Worker process failed"
+
+  # srun's trailing summary. Kept last: by the time this appears the specific
+  # patterns above have usually already fired.
+  - name: error
+    pattern: "Exited with exit code 1"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: ""
+
+  # TIME LIMIT IS ALREADY HANDLED IN DEPENDENCY CHAIN
+  - name: time_limit
+    pattern: "DUE TO TIME LIMIT"
+    pattern_type: substring
+    action:
+      class_name: FinishAction
+      reason: ""
+  - name: inactive
+    pattern_type: inactivity
+    # 300s, NOT the 1200s of auto_cancel.yaml. The production policy uses 1200
+    # because a 1024-node startup plus a multi-hundred-GB checkpoint save can
+    # legitimately be silent for minutes. SPEED TESTS SET save: null, so the
+    # checkpoint half of that justification does not apply and the floor can come
+    # down by 4x.
+    #
+    # This is the failure it exists for: job 1397496 (fp8strong, 512 nodes) got
+    # through distributed init, tokenizer and kernel compilation, then went
+    # COMPLETELY SILENT for 12 minutes with zero iterations and zero error text.
+    # No regex could catch it — there was nothing to match. It burned ~14 min x
+    # 512 nodes before a human noticed. At 300s it would have been cancelled ~9
+    # minutes earlier, saving ~75 node-hours on that one job.
+    #
+    # RESIDUAL FALSE-POSITIVE RISK: a legitimate large-scale startup can be slow
+    # — we have seen a healthy 512-node arm spend ~20 min before iteration 1 —
+    # and it is NOT established that such a startup never has a >5 min silent
+    # stretch. inactivity_polls: 5 is the guard: five consecutive silent polls
+    # AND 300s must both hold. If healthy arms start getting cancelled during
+    # startup, raise this rather than removing the check.
+    # 300s WAS TOO AGGRESSIVE AND KILLED HEALTHY JOBS. On 2026-08-17 it
+    # cancelled two 512-node arms (1398091 fp8small-strong-1b7-n512, 1398095
+    # fp8small-strong-7b-n512) while they were legitimately LOADING ~2079 cached
+    # per-prefix dataset indices — an operation that emits no log output for
+    # 6+ minutes at that scale. Neither job was hung; both were making progress.
+    #
+    # 900s is chosen from measurement, not guesswork:
+    #   longest observed HEALTHY silence  ~6 min  (512-node index load)
+    #   the hang this exists to catch     12 min  (job 1397496)
+    # 900s sits between them. It still catches a genuine hang well before the
+    # 20-50 min wall times these arms use, without touching a slow startup.
+    #
+    # DO NOT lower this again without first measuring the silent-startup
+    # distribution at 512+ nodes; the failure mode is silent and expensive.
+    inactivity_polls: 5
+    inactivity_timeout_s: 900
+    action:
+      class_name: CancelAction
+      reason: "Inactive Log"
+
+state_events:
+  - name: "failed"
+    transition: ["RUNNING", "FAILED"]
+    action:
+      class_name: FinishAction
+      reason: "Job failed"
+  - name: "timeout"
+    transition: ["RUNNING", "TIMEOUT"]
+    action:
+      class_name: FinishAction
+      reason: "Job timed out"
+  - name: "timeout"
+    transition: ["COMPLETING", "TIMEOUT"]
+    action:
+      class_name: FinishAction
+      reason: "Job timed out"
+  - name: "cancelled"
+    transition: ["RUNNING", "CANCELLED"]
+    action:
+      class_name: FinishAction
+      reason: "Job cancelled"

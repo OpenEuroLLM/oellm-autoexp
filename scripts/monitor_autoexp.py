@@ -103,9 +103,17 @@ def main(argv: list[str] | None = None) -> None:
 
     slurm_client = SlurmClient(SlurmClientConfig())
     local_client = LocalCommandClient(LocalCommandClientConfig())
-    session_dir = Path(args.session_dir) or Path(args.monitor_state_dir) / args.session
+    # NB `Path(x) or fallback` does NOT work here: Path(None) raises TypeError
+    # before the `or` is ever evaluated, so --session alone always crashed with
+    #   TypeError: argument should be a str or an os.PathLike ... not 'NoneType'
+    # and only --session-dir was usable.
+    if args.session_dir:
+        session_dir = Path(args.session_dir)
+    else:
+        session_dir = Path(args.monitor_state_dir) / args.session
     if not session_dir.exists():
         print(f"Session directory {session_dir} does not exist.")
+        raise SystemExit(2)
     loop = MonitorLoop(
         store=JobFileStore(str(session_dir)),
         slurm_client=slurm_client,

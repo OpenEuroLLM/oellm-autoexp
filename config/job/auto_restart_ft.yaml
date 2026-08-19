@@ -1,0 +1,315 @@
+defaults:
+ - default
+
+# RESTART-ON-ERROR policy for FAULT-TOLERANT (ft_launcher) runs.
+#
+# This is auto_restart.yaml's split (cancel vs restart) applied to
+# auto_cancel_ft.yaml's principle (do not fight the recovery layer). Three tiers
+# instead of two:
+#
+#   ft_launcher handles it   -> NOT MATCHED AT ALL. A rank-level fault appears in
+#                               the log and is then RECOVERED in-job. Matching it
+#                               does not detect failure, it CAUSES it.
+#   CancelAction             -> config/data faults. Identical on every retry,
+#                               in-job or in a fresh allocation.
+#   RestartAction            -> faults that kill the whole ALLOCATION, so
+#                               ft_launcher never gets a turn. A fresh allocation
+#                               is a genuinely different draw.
+#
+# THE TIER THAT DOES NOT EXIST HERE, AND WHY
+# ------------------------------------------
+# These strings are DELIBERATELY ABSENT — they are what ft_launcher recovers
+# from, and matching them killed five healthy runs:
+#     RendezvousClosedError / DistNetworkError / ChildFailedError
+#     terminate called after throwing an instance of
+#     Watchdog caught collective operation timeout / unhandled cuda error
+#     illegal memory access / userbuffers.cu ... expecting N got M
+#     Exited with exit code 1
+# In every case the monitor cancelled 8-48 s AFTER ft_launcher had already
+# logged "Worker group UNHEALTHY. 50/50 attempts left; will restart worker
+# group" — i.e. during ft's FIRST recovery attempt:
+#     1379130  1024n  it 4204  RendezvousClosedError x1986, ZERO real errors
+#     1380778  1024n  it 3101  terminate called            (gap 48 s)
+#     1400373   514n  it  683  cudaErrorContained          (gap 30 s)
+#     1401367  1026n  it 6500  NCCL error                  (gap  8 s)
+#     1391152   258n  it 6010  NCCL error                  (gap 43 s)
+# Use config/job/auto_restart.yaml for NON-FT runs (torchrun speed tests), where
+# there is no recovery layer and those patterns are the fastest honest signal.
+#
+# WHAT REPLACES THEM: the `progress` events at the bottom. Under ft_launcher the
+# only trustworthy failure signals are (a) SLURM says the job is dead,
+# (b) TRAINING stopped advancing, (c) a fault that makes progress impossible.
+# Note (b) is NOT log inactivity: an ft restart loop keeps writing setup
+# banners, so job 1375720 grew a 251 MB log over 4 h while pinned at iteration
+# 100 and the inactivity streak never accumulated a single count.
+#
+# RESTART CAP. RestartAction has no cap of its own (_restart_job preserves
+# `attempts` without testing it), so EVERY RestartAction below carries a
+# MaxAttemptsCondition. attempts starts at 1 on the first submission, so
+# max_attempts: 4 means "up to 3 restarts, 4 allocations total".
+#
+# KEEP IN SYNC WITH config/job/auto_cancel_ft.yaml for the CancelAction tier.
+log_events:
+  - name: finished_training
+    pattern: "[after training is done]"
+    pattern_type: substring
+    action:
+      class_name: FinishAction
+      reason: "Training finished"
+  - name: finish
+    pattern: ".*validation loss.*on test set.*"
+    pattern_type: regex
+    action:
+      class_name: FinishAction
+      reason: "Test Evaluation Finished"
+
+  # === CANCEL: config / data faults ========================================
+  # Forward progress is impossible no matter how many times anything retries, so
+  # failing fast beats waiting out any timeout.
+
+  # Launcher rejected an argument. torchrun_args forwards ANY key as `--<key>`,
+  # so a typo only fails at RUN time, on the full allocation. Killed job 1374593
+  # (1024 nodes) in 34 s: `ft_launcher: error: unrecognized arguments: --rdvz-backend`
+  - name: err_unrecognized_argument
+    pattern: "unrecognized arguments"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "Launcher rejected an argument (check torchrun_args/ft args)"
+
+  - name: err_disk_quota
+    pattern: "Disk quota exceeded|Errno 122"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Disk quota exceeded — free space or move checkpoints to scratch"
+
+  - name: err_fp8_metadata
+    pattern: "Saved FP8 metadata does not match"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "FP8 recipe/CUDA-graph mismatch — set cuda_graph_impl: none"
+
+  - name: err_dataset_cache_corrupt
+    pattern: "mmap length is greater than file size|ValueError: cannot reshape array"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Corrupt dataset cache — run scripts/check_data_cache.py --repair"
+
+  - name: err_infra_rank
+    pattern: "Invalid infrastructure rank"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "NVRx infrastructure rank invalid — check use_infra_group_rank"
+
+  - name: err_torch_oom
+    pattern: "torch\\.cuda\\.OutOfMemoryError|CUDA out of memory\\. Tried to allocate"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Model OOM — reduce micro_batch_size or raise TP/PP"
+
+  # Setup-time configuration errors. These raise on EVERY ft restart, so they
+  # produce an unbounded in-job relaunch loop that the transient patterns
+  # deliberately ignore and that a log-activity check cannot see (the log keeps
+  # growing with fresh setup banners). Observed:
+  #   "should range in [PP=..., M=...]"      VPP needs M >= PP   (job 1384533,
+  #                                          3 setup cycles on 1026 nodes)
+  #   "Cannot defer embedding wgrad compute" needs PP > 1        (jobs 1385132/
+  #                                          1385134, 29 cycles on 32 nodes)
+  # Specific strings, not a bare "ValueError", to avoid matching benign text.
+  - name: err_setup_config_invalid
+    pattern: "should range in \\[PP=|Cannot defer embedding wgrad compute|is not divisible by|must be divisible by"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Setup-time config error — will fail identically on every restart"
+
+  # Checkpoint cannot be loaded into this parallelism. Killed job 1390472
+  # (1025 nodes) with 13,382 ranks reporting a global shape mismatch on a
+  # dp_reshardable optimizer state going DP 64 -> 256. Resharding is decided at
+  # SAVE time, so no retry and no load-side flag can rescue it.
+  - name: err_ckpt_reshard
+    pattern: "CheckpointingException|Global shape mismatch for loaded"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Checkpoint not loadable at this DP — re-save with dist_ckpt_optim_fully_reshardable"
+
+  # === RESTART: the allocation is gone, ft_launcher never got a turn =======
+  # SLURM tears the step down on a node failure, so the hot spares die with it.
+  # This is THE most expensive failure in the campaign (jobs 1375720 at 1024n
+  # after 4:25, 1400371 at 514n after 5:09) and the only honest response is a
+  # fresh allocation.
+  #
+  # NB the three events below share one trigger and ORDER MATTERS: append must
+  # run before propagate (so the file already holds the node), and the
+  # RestartAction must be LAST (a terminal effect ends log processing for this
+  # poll).
+
+  # 1) Record the dead node so future submissions avoid it.
+  #    CAVEAT: this does NOT change the job about to be restarted. `--exclude` is
+  #    resolved by Hydra at PLAN time and baked into the stored SlurmConfig, and
+  #    _restart_job re-renders from that stored config. The append benefits the
+  #    next `run_autoexp` invocation and the propagate step below.
+  - name: node_failure_append
+    pattern: "Node failure on ([\\w-]+)"
+    pattern_type: regex
+    extract_groups:
+      node: 1
+    match_once: true
+    action:
+      class_name: AppendToFileAction
+      path: ${oc.env:JUPITER_EXCLUDE_NODES,${oc.env:PROJECT_DIR,.}/config/exclude/jupiter_exclude_nodes.txt}
+      content: "{node}"
+
+  # 2) Push the updated list onto every PENDING chain sibling (scontrol update).
+  #    Pending is the only state SLURM lets us edit live.
+  - name: node_failure_propagate
+    pattern: "Node failure on ([\\w-]+)"
+    pattern_type: regex
+    match_once: true
+    action:
+      class_name: UpdateChainExcludesAction
+      exclude_file: ${oc.env:JUPITER_EXCLUDE_NODES,${oc.env:PROJECT_DIR,.}/config/exclude/jupiter_exclude_nodes.txt}
+
+  # 3) Resubmit into a fresh allocation, resuming from the rolling checkpoint.
+  - name: node_failure_restart
+    pattern: "DUE TO NODE FAILURE|Node failure on"
+    pattern_type: regex
+    condition:
+      class_name: MaxAttemptsCondition
+      max_attempts: 4
+    action:
+      class_name: RestartAction
+      reason: "SLURM node failure — fresh allocation is a fresh draw"
+
+  # === PROGRESS: the job is alive, noisy, and not training =================
+  # This is what the transient patterns above used to (wrongly) catch, done
+  # correctly: it asks whether the ITERATION COUNTER moved, not whether the log
+  # grew. See LogEventConfig.progress_* and MonitorLoop._process_progress_event.
+
+  # SHORT WINDOW, mode=increase. Resets on ANY movement of the counter — a
+  # resume from checkpoint jumps it backwards and that still counts, so a
+  # healthy ft restart never trips this. What it catches:
+  #   * startup hangs with zero iterations ever (1392564: 4 rendezvous cycles,
+  #     43 MB, 36 min, 0 iterations; 1392777: one node's 4 ranks never reached
+  #     tokenizer construction, 23 min of nothing)
+  #   * a wedged step (1373198: 243 userbuffers spin-wait lines, 0 iterations)
+  #
+  # 20 polls / 1200 s = 20 min at the 60 s poll interval. Calibration:
+  #   * healthy 1024-node startup to iteration 1 = 7 m 26 s (job 1380848)
+  #   * a healthy in-job ft restart (teardown + rendezvous + setup + ckpt
+  #     reload) measured ~5 min at 512 nodes (job 1401313, 08:12 -> 08:16)
+  #   * stability_check_bsramp_continue.yaml's own rule of thumb: "anything past
+  #     ~15 min with no dataset-build milestone is stuck, not slow"
+  # RAISE THIS if you ever run with a synchronous (non-async) checkpoint save or
+  # an eval_interval inside the run — both are legitimate multi-minute gaps in
+  # iteration output. With async_save and eval_interval > exit_interval (the
+  # current 32B setup) there is no such gap.
+  - name: stalled_iterations
+    pattern: "iteration +([0-9]+)/"
+    pattern_type: progress
+    progress_mode: increase
+    progress_polls: 20
+    progress_timeout_s: 1200
+    condition:
+      class_name: MaxAttemptsCondition
+      max_attempts: 4
+    action:
+      class_name: RestartAction
+      reason: "No iteration progress for 20 min — stuck, not slow"
+
+  # LONG WINDOW, mode=max. Resets only when the HIGH-WATER MARK advances, so
+  # re-running iterations the job has already done is not progress. This is the
+  # 1375720 shape: 7 setup cycles over 4 h, 6144 restart lines, 251 MB of log,
+  # never past iteration 100 — each cycle looked like movement to the check
+  # above (~4500 node-hours).
+  #
+  # The window MUST exceed the time needed to redo the work lost to the last
+  # rolling checkpoint, or a healthy restart trips it:
+  #     non_persistent_save_interval x seconds-per-iteration + restart overhead
+  # At the current 512-node settings (1000 iters x ~4.4 s) that is ~73 min, so
+  # 7200 s leaves ~45 min of margin. RETUNE THIS WHENEVER
+  # non_persistent_save_interval CHANGES — at the 1024-node setting of 125 it
+  # could safely drop to ~1800 s and catch the loop 90 min sooner.
+  - name: stalled_high_water
+    pattern: "iteration +([0-9]+)/"
+    pattern_type: progress
+    progress_mode: max
+    progress_polls: 120
+    progress_timeout_s: 7200
+    condition:
+      class_name: MaxAttemptsCondition
+      max_attempts: 4
+    action:
+      class_name: RestartAction
+      reason: "No net iteration progress for 2 h — restart loop, not recovery"
+
+  - name: time_limit
+    pattern: "DUE TO TIME LIMIT"
+    pattern_type: substring
+    action:
+      class_name: FinishAction
+      reason: ""
+
+  # Last-resort backstop for a job that produces NO output at all — an fs hang,
+  # a wedged container start, a truncated log. The progress events above cover
+  # everything that is merely stuck; this covers "the file stopped existing as a
+  # signal". Kept at 1200 s because a 1024-node startup plus a ~442 GB
+  # checkpoint save can legitimately exceed 5 minutes of quiet.
+  # NB with a 60 s poll the AND gate means ~21 polls, not 5 — count and elapsed
+  # are both measured from the first silent poll.
+  - name: inactive
+    pattern_type: inactivity
+    inactivity_polls: 5
+    inactivity_timeout_s: 1200
+    condition:
+      class_name: MaxAttemptsCondition
+      max_attempts: 4
+    action:
+      class_name: RestartAction
+      reason: "Inactive Log"
+
+state_events:
+  # NODE_FAIL passes through the client verbatim: _check_sacct_for_missing_jobs
+  # normalizes only CANCELLED/COMPLETED/FAILED/TIMEOUT, so this transition is
+  # reachable. It is the backstop for the log-based node_failure_restart above —
+  # whichever fires first wins, and the log line is usually seconds earlier.
+  - name: "node_fail"
+    transition: ["RUNNING", "NODE_FAIL"]
+    condition:
+      class_name: MaxAttemptsCondition
+      max_attempts: 4
+    action:
+      class_name: RestartAction
+      reason: "SLURM NODE_FAIL — fresh allocation"
+  - name: "failed"
+    transition: ["RUNNING", "FAILED"]
+    condition:
+      class_name: MaxAttemptsCondition
+      max_attempts: 4
+    action:
+      class_name: RestartAction
+      reason: "Job failed — retry in a fresh allocation"
+  # TIMEOUT is not a failure: the 12 h wall is expected and the dependency chain
+  # already carries the run forward. Restarting here would double-submit.
+  - name: "timeout"
+    transition: ["RUNNING", "TIMEOUT"]
+    action:
+      class_name: FinishAction
+      reason: "Job timed out"
+  - name: "timeout_completing"
+    transition: ["COMPLETING", "TIMEOUT"]
+    action:
+      class_name: FinishAction
+      reason: "Job timed out"
+  # An operator scancel must stay dead. Restarting here would fight the human.
+  - name: "cancelled"
+    transition: ["RUNNING", "CANCELLED"]
+    action:
+      class_name: FinishAction
+      reason: "Job cancelled"

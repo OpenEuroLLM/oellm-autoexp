@@ -74,11 +74,22 @@ sweep:
             sleep 10
             echo "slurmstepd: error: *** JOB 12345 CANCELLED DUE TO TIME LIMIT ***"
 
-        # inactive  (>=5 silent polls AND >=300s -> CancelAction)
-        # A genuinely silent stall: the monitor should scancel it after ~5-6 min.
+        # inactive  (>=5 silent polls AND >=1200s -> CancelAction)
+        # A genuinely silent stall, shortened to ~1 min so the test is cheap.
+        #
+        # THE INDEX IS POSITIONAL AND THEREFORE FRAGILE. Hydra addresses list
+        # elements by position, not by name, so this couples the test to the
+        # ORDER of log_events in config/job/auto_cancel.yaml. It has already
+        # broken once: index 4 was `inactive` when this sweep was written, and
+        # after the error patterns were added it became `err_fp8_metadata`, so
+        # the override silently landed on the wrong event and this job ran with
+        # the production 1200s window instead of 60s.
+        # tests/unit/test_bash_backend.py recomputes the index from the YAML and
+        # fails with the correct value if they drift again — believe the test,
+        # not this comment.
         - job.name: "auto_cancel__cancel_on_silent_stall"
-          job.log_events.4.inactivity_timeout_s: 60
-          job.log_events.4.inactivity_polls: 1
+          job.log_events.18.inactivity_timeout_s: 60
+          job.log_events.18.inactivity_polls: 1
           backend.command: |
             echo "[dummy] training started"
             echo "[dummy] going silent now (no further output)"

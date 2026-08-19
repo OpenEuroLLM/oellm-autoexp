@@ -57,7 +57,8 @@ class JobRuntime:
     condition_state: dict[str, Any] = field(default_factory=dict)
     action_state: dict[str, Any] = field(default_factory=dict)
     # Persisted EventRecords keyed by stable event_key, surviving across polls.
-    # Currently used to accumulate inactivity streaks (count + timestamps).
+    # Used to accumulate inactivity streaks and no-progress streaks (count +
+    # timestamps, plus the last observed counter for progress events).
     events: dict[str, Any] = field(default_factory=dict)
     last_status: str | None = None
     final_state: str | None = None  # "finished", "cancelled", or None for active jobs
@@ -375,9 +376,10 @@ class MonitorLoop:
         now = time.time()
         had_activity = bool(new_text)
 
-        # Process each log event configuration (already parsed). Inactivity
-        # events must be evaluated every poll (including when there is no new
-        # text); pattern events only when there is new text to scan.
+        # Process each log event configuration (already parsed). Inactivity and
+        # progress events must be evaluated every poll (including when there is
+        # no new text — for progress, an empty slice IS the no-movement signal);
+        # pattern events only when there is new text to scan.
         log_events = getattr(definition, "log_events", None) or []
         for idx, event_cfg in enumerate(log_events):
             if event_cfg.action is None:
@@ -388,6 +390,14 @@ class MonitorLoop:
             if event_cfg.pattern_type == "inactivity":
                 effect = self._process_inactivity_event(
                     job, log_event, idx, had_activity=had_activity, now=now
+                )
+                if effect in ("finished", "cancelled", "restart"):
+                    return effect
+                continue
+
+            if event_cfg.pattern_type == "progress":
+                effect = self._process_progress_event(
+                    job, log_event, idx, new_text=new_text, now=now
                 )
                 if effect in ("finished", "cancelled", "restart"):
                     return effect
@@ -486,6 +496,104 @@ class MonitorLoop:
         action = event_cfg.action.instantiate(BaseMonitorAction)
         if not self._evaluate_event_condition(job, record, event_cfg.condition, action_id):
             return "continue"
+
+        result = action.execute(self._action_context(record, job))
+        self._update_action_state(job, action_id, result)
+        # Clear the streak so it must re-accumulate before firing again.
+        runtime.events.pop(key, None)
+        return self._handle_action_result(job, result)
+
+    def _process_progress_event(
+        self,
+        job: JobRecord,
+        log_event: LogEvent,
+        idx: int,
+        *,
+        new_text: str,
+        now: float,
+    ) -> str:
+        """Accumulate a FORWARD-PROGRESS stall streak and fire its action.
+
+        The inactivity check only asks whether the log grew, so it cannot see a
+        job that is dead but noisy: an ft_launcher restart loop emits fresh
+        setup banners forever (job 1375720 wrote 251 MB over 4 h while pinned at
+        iteration 100), and a job whose ranks never finish startup keeps
+        printing per-rank banners with zero iterations (jobs 1392564, 1392777).
+        This parses a counter out of the log instead and asks whether TRAINING
+        advanced.
+
+        Streak bookkeeping mirrors :meth:`_process_inactivity_event`: a
+        persistent EventRecord keyed by the stable ``progress_metadata`` key,
+        ``count`` counting consecutive polls without movement and
+        ``first_seen_ts``/``last_seen_ts`` bounding the real elapsed time. The
+        observed counter lives in ``payload`` (never in the key). A poll in
+        which the counter moved resets the streak in place — the record is kept
+        so the tracked value survives.
+        """
+        runtime = job.runtime
+        definition = job.definition
+        event_cfg = log_event.config
+        metadata = log_event.progress_metadata()
+        key = ":".join(event_key(job.job_id, event_cfg.name, metadata))
+
+        last_value, max_value, raw = log_event.observe_progress(new_text)
+
+        stored = runtime.events.get(key)
+        if stored is None:
+            action_state = runtime.action_state.get(f"log:{event_cfg.name}:{idx}", {})
+            record = EventRecord(
+                event_id=build_event_id(job.job_id, event_cfg.name, metadata),
+                name=event_cfg.name,
+                source="log",
+                count=0,
+                first_seen_ts=now,
+                last_seen_ts=now,
+                payload=dict(metadata),
+                metadata={
+                    "job_id": job.job_id,
+                    "job_name": definition.name,
+                    "last_action_ts": float(action_state.get("last_action_ts", 0.0)),
+                },
+            )
+        else:
+            record = EventRecord(**stored)
+
+        advanced = _progress_advanced(event_cfg, record, last_value, max_value)
+        if advanced:
+            # Movement: restart the streak from this poll, keeping the record so
+            # the tracked counter is not lost.
+            record.count = 0
+            record.first_seen_ts = now
+        else:
+            record.count += 1
+        record.last_seen_ts = now
+        if raw is not None:
+            record.payload["progress_raw"] = raw
+        runtime.events[key] = asdict(record)
+
+        if advanced:
+            return "continue"
+
+        elapsed_s = record.last_seen_ts - record.first_seen_ts
+        if not log_event.progress_qualifies(count=record.count, elapsed_s=elapsed_s):
+            return "continue"
+
+        action_id = f"log:{event_cfg.name}:{idx}"
+        action = event_cfg.action.instantiate(BaseMonitorAction)
+        if not self._evaluate_event_condition(job, record, event_cfg.condition, action_id):
+            return "continue"
+
+        LOGGER.info(
+            "Progress stall on job %s (%s): '%s' stuck at %s for %d polls / %.0fs (mode=%s) -> %s",
+            job.job_id,
+            runtime.runtime_job_id,
+            event_cfg.name,
+            record.payload.get("progress_raw", "<never seen>"),
+            record.count,
+            elapsed_s,
+            event_cfg.progress_mode,
+            type(action).__name__,
+        )
 
         result = action.execute(self._action_context(record, job))
         self._update_action_state(job, action_id, result)
@@ -830,6 +938,41 @@ class MonitorLoop:
             LOGGER.info(f"Submitted Slurm job {job_id}")
         except Exception as e:
             LOGGER.error(f"Failed to submit Slurm job: {e}")
+
+
+def _progress_advanced(
+    event_cfg: LogEventConfig,
+    record: EventRecord,
+    last_value: float | None,
+    max_value: float | None,
+) -> bool:
+    """Did the progress counter move this poll? Updates ``record.payload``.
+
+    ``increase`` compares against the PREVIOUS observation and accepts any
+    change, including the backwards jump of a resume from checkpoint — a
+    healthy ft_launcher restart must not look like a stall.
+    ``max`` compares against the running maximum, so re-running iterations the
+    job has already done does NOT count as progress.
+
+    A counter seen for the first time counts as movement, which starts the clock
+    at the first iteration rather than at job submission. A job that never emits
+    a match never moves, so its streak accumulates from the first poll — that is
+    what catches a startup hang.
+    """
+    if event_cfg.progress_mode == "max":
+        if max_value is None:
+            return False
+        previous = record.payload.get("progress_max")
+        record.payload["progress_max"] = (
+            max_value if previous is None else max(float(previous), max_value)
+        )
+        return previous is None or max_value > float(previous)
+
+    if last_value is None:
+        return False
+    previous = record.payload.get("progress_last")
+    record.payload["progress_last"] = last_value
+    return previous is None or last_value != float(previous)
 
 
 def _normalize_job_definition(job: JobRecord) -> None:

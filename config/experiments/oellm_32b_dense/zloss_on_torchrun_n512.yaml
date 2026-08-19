@@ -1,0 +1,68 @@
+# @package _global_
+#
+# 2x2 CELL 4 of 4: WITH z-loss, NO ft_launcher (plain torchrun). 512n, FP8.
+#
+# Companion to zloss_off_ft_n512.yaml; see that file for the 2x2 and why the
+# existing 209 runs cannot separate z-loss from launcher (they are perfectly
+# confounded: no-z-loss => torchrun, z-loss => ft_launcher, without exception).
+#
+# This cell isolates THE LAUNCHER: production recipe including z-loss, run under
+# plain torchrun instead of ft_launcher.
+#   result ~417  -> ft_launcher is the whole gap, z-loss is free
+#   result ~392  -> ft_launcher is free, z-loss is the whole gap
+#
+# SWITCHING THE LAUNCHER IS NOT A ONE-LINE OVERRIDE. Three things travel with it,
+# all copied from speed_test.yaml which already does this correctly:
+#
+#   spare_nodes: 0        no FT means no spare to promote. slurm.sbatch.nodes
+#                         feeds torchrun's --nnodes, so leaving 2 spares gives
+#                         world 2056, DP = 2056/(4*4) = 128.5 -> Megatron asserts
+#                         before the first step.
+#   torchrun_args         restated in full because Hydra MERGES this mapping with
+#                         the parent's ft_launcher args rather than replacing it.
+#   enable_ft_package     the FT rank monitor and its timeout calculation require
+#   calc_ft_timeouts      ft_launcher; both must be off or startup fails.
+#
+# rdzv_backend: static is safe at 512 nodes (job 1364573) and is what the
+# torchrun speed tests used. Dynamic c10d is the one that collapses at 1024.
+#
+# THIS IS A MEASUREMENT CONFIG ONLY. It has no fault tolerance, so it must not be
+# used for a real 15 T-token run.
+defaults:
+  - stability_check_nodes512_lr3e-4
+  - override /backend: megatron_torchrun_localaddr
+  - _self_
+
+backend:
+  aux:
+    active_nodes: 512
+    spare_nodes: 0
+    variant: "abtest-zloss-torchrun-n512"
+  torchrun_args:
+    nnodes: ${slurm.sbatch.nodes}
+    max_restarts: "0"
+    rdzv_backend: static
+  megatron:
+    output_z_loss_coeff: 1.e-4    # kept, as in production
+    wgrad_deferral_limit: 0
+    enable_ft_package: false
+    calc_ft_timeouts: false
+    exit_interval: 100
+    save: "/e/scratch/e-sta-openeurollm/production_training/abtest_n512_tr/checkpoints"
+    save_interval: 100000
+    non_persistent_save_interval: 100000
+    non_persistent_global_ckpt_dir: null
+    load: null
+
+job:
+  chain_repeat: 0
+slurm:
+  sbatch:
+    time: "00:45:00"
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.warmup_steps: 2000

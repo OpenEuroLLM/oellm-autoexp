@@ -1,0 +1,80 @@
+defaults:
+  - jupiter_autoexclude
+  - _self_
+
+# JUPITER + node exclusion + SURVIVE A NODE FAILURE.
+#
+# Use this for ft_launcher runs with hot spares (backend.aux.spare_nodes > 0).
+# It is jupiter_autoexclude.yaml plus the one thing that makes those spares
+# reachable: --no-kill.
+#
+# WHY --no-kill
+# -------------
+# By default SLURM terminates the whole job step when a node in the allocation
+# dies. That happens BEFORE ft_launcher's rendezvous notices anything, so the
+# standby ranks we paid for are killed alongside the workers and the run is
+# simply over:
+#     1375720  1024n  4:25  srun: error: Node failure on jpbo-060-24 -> NODE_FAIL
+#     1400371   514n  5:09  srun: error: Node failure on jpbo-107-45 -> NODE_FAIL
+#     1395206  1024n  0:13  srun: error: Node failure on jpbo-026-42 -> NODE_FAIL
+# `--kill-on-bad-exit=0` does NOT cover this: it governs a task exiting with a
+# bad RETURN CODE, not a node disappearing. `--no-kill` (-k) is the option that
+# tells SLURM to leave the remaining tasks running when a node fails, which is
+# the precondition for ft_launcher to re-form the rendezvous and promote a
+# standby (ft_rendezvous_barrier.py assigns ranks [0, world_size) active and
+# [world_size, ..) standby).
+#
+# BOTH HALVES ARE REQUIRED. `#SBATCH --no-kill` covers the batch job; `srun
+# --no-kill` covers the step. Setting only one leaves the other at the default.
+#
+# ============================ srun_args, NOT srun_opts =====================
+# `--no-kill` is set below via `srun_args`, the MAPPING form, because the string
+# form does not compose: Hydra REPLACES a string on merge, so
+# config/experiments/oellm_32b_dense/oellm_32b_dense.yaml's
+#     slurm:
+#       srun_opts: "--kill-on-bad-exit=0 "
+# is composed after this group (`_self_` last) and would silently drop a
+# `srun_opts` set here. A mapping merges key-by-key instead, so this file's
+# `no_kill` and the experiment's `kill_on_bad_exit` can coexist.
+#
+# The experiment should therefore move its own flag over as well:
+#     slurm:
+#       srun_args:
+#         kill_on_bad_exit: 0
+# Until it does, its `srun_opts` string still works — build_replacements renders
+# `srun_args` first and appends `srun_opts` verbatim, so both arrive.
+#
+# NB the separate `srun:` block in config/slurm/jupiter.yaml is LEGACY AND DEAD
+# (nothing has ever rendered it — see SrunConfig). Do not add flags there.
+#
+# Verify before trusting it — grep the generated script:
+#     grep -e '^srun ' -e 'SBATCH --no-kill' <base_output_dir>/job_*.sbatch
+# ===========================================================================
+#
+# DELIBERATELY NOT SET: `--requeue`. JUPITER's PrologFlags already carry
+# ForceRequeueOnFail, and that is what produced the non-converging requeue loop
+# documented in jupiter_autoexclude.yaml (13+ attempts, each RUNNING 2-8 s).
+# Adding an explicit requeue on top would make a bad allocation loop harder to
+# stop, and the restart policy (config/job/auto_restart_ft.yaml) already
+# resubmits deliberately, with a MaxAttemptsCondition cap.
+#
+# PAIR THIS WITH A PROGRESS CHECK. --no-kill removes the mechanism that used to
+# end a broken job early, so a run that wedges after losing a node will now hold
+# the allocation until the 12 h wall instead of dying at minute 5. That is only
+# a good trade if something notices: use config/job/auto_restart_ft.yaml, whose
+# `progress` events cancel/restart on a stalled iteration counter. Enabling
+# --no-kill WITHOUT a progress check is strictly worse than the status quo.
+#
+# STILL UNVALIDATED: an actual spare promotion on JUPITER. No log in the
+# 2026-08 campaign shows one, and job 1401367 registered only 1 standby from a
+# 1026-node allocation with spare_nodes: 2. Run the 3-node (2 active + 1 spare)
+# saboteur shakeout (scripts/saboteur_nodeloss.sh) before relying on this for a
+# 40-day run — see the notes at the bottom of
+# config/experiments/oellm_32b_dense/oellm_32b_dense.yaml.
+srun_args:
+  no_kill: true
+
+sbatch:
+  # Renders as a bare `#SBATCH --no-kill` (generator.py:25 emits the flag alone
+  # for a True value, and maps _ -> -).
+  no_kill: true

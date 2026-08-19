@@ -1,0 +1,132 @@
+# @package _global_
+#
+# DOES `wgrad_deferral_limit: 32` RECOVER THE 6% PRODUCTION GAP? 512 nodes.
+#
+# ============================================================================
+# THE GAP
+# ============================================================================
+# The 512-node FP8 speed test and the 512-node production stability runs do not
+# agree, at the same geometry (GBS 4096, TP=4/PP=4/VPP=2, mbs=2, FP8 hybrid +
+# delayed, fp32 grad accumulation):
+#
+#     speedscale_fp8strong-n512_gbs4096   job 1397791   417.6 TFLOP/s  4083 ms
+#     sc-fp8-zloss1e-4-nobsramp-n512      job 1400372   392.4 TFLOP/s  4345 ms
+#                                                       ------------- -6.0%
+#
+# A full column diff of the two rendered configs (dump/all_runs_speed.csv) shows
+# only SIX differing settings, of which lr and exit_interval cannot affect
+# throughput:
+#
+#     setting                        speed test   stability
+#     output_z_loss_coeff            absent       1e-4        <- costs ~2.2%
+#     wgrad_deferral_limit           32           0           <- costs ~4.8%
+#     non_persistent_save_interval   off          1000        noise
+#     save_interval                  32000        4000        noise
+#     launcher (sbatch, not a arg)   torchrun     ft_launcher  UNMEASURED
+#
+# Controlled A/B pairs from the same CSV (one setting differing, same geometry):
+#     z-loss None -> 1e-4        338.9 -> 331.5  @16n    -2.2%
+#     wgrad  32   -> 0           335.8 -> 320.4  @512n   -4.8%
+#     save intervals             six pairs               -0.2..-1.9% (noise)
+#
+# CAVEAT ON THOSE PAIRS: they are all **bf16** runs. No FP8-vs-FP8 pair isolates
+# either knob, so the magnitudes are indicative. Directionally z-loss should cost
+# MORE under FP8, not less: it is an fp32 reduction over 256k-vocab logits and is
+# not FP8-accelerated, so its relative share grows as everything else speeds up.
+#
+# ============================================================================
+# WHAT THIS RUN CHANGES — EXACTLY ONE THING
+# ============================================================================
+# Built on stability_check_nodes512_lr3e-4, so it keeps EVERYTHING the
+# production recipe has, including the two things that are NOT being tested:
+#
+#     z-loss 1e-4     KEPT. It is a deliberate stability mechanism added after
+#                     the warmup loss spikes. Its ~2.2% is a price, not a bug,
+#                     and trading run stability for 2% on a 15 T-token run is a
+#                     bad deal. This run must therefore land BELOW the 417.6
+#                     speed test even if the fix works perfectly.
+#     ft_launcher     KEPT. Its cost is unmeasured, and swapping it here would
+#                     confound the wgrad result with a launcher change. If a gap
+#                     remains after this run, THAT is the next experiment.
+#
+# and changes only:
+#
+#     wgrad_deferral_limit  0 -> 32
+#
+# so the comparison against job 1400372 (392.4) is clean.
+#
+# WHY 32 IS SAFE HERE, NOT A GUESS: wgrad_deferral_limit: 0 means "defer ALL
+# micro-batches" (model_parallel_config.py:295), so the last pipeline stage holds
+# an embedding_activation_buffer + grad_output_buffer entry for every one of the
+# M micro-batches until the flush. That is why it OOM'd at 88.6 GiB when M grew
+# to 64 in the scaling sweep. This run has M = GBS/(mbs*DP) = 4096/(2*128) = 16,
+# so a cap of 32 is ABOVE the actual micro-batch count and cannot change
+# numerics at all — it only removes the unbounded case.
+#
+# ============================================================================
+# READ-OFF
+# ============================================================================
+#     ~411 TFLOP/s  -> the fix recovers the wgrad share; the residual vs 417.6
+#                      is z-loss (~2.2%) plus whatever ft_launcher costs.
+#     ~392 TFLOP/s  -> no effect at FP8; the bf16-measured 4.8% did not transfer,
+#                      and the gap is z-loss + ft_launcher + something unfound.
+#     >417 TFLOP/s  -> unexpected; suspect the comparison, not the machine.
+#
+# 100 iterations. No checkpoint is ever written -- `save` has to be a real path
+# (save: null does not work in this chain), so the intervals are pushed to
+# 100000 instead, far past the exit at iteration 100. The measurement is
+# therefore pure step time. Everything else is inherited untouched.
+defaults:
+  - stability_check_nodes512_lr3e-4
+  - _self_
+
+backend:
+  aux:
+    active_nodes: 512
+    variant: "wgradfix-n512"
+
+  megatron:
+    # ---- THE ONE CHANGE UNDER TEST -----------------------------------------
+    wgrad_deferral_limit: 32
+
+    # ---- speed-test framing, not part of the comparison ---------------------
+    # 100 iterations is enough for a stable median (the 512-node arms in the
+    # scaling sweep used 90-100 and reported p10-p90 bands under 1%).
+    exit_interval: 100
+    # NO CHECKPOINT IS WRITTEN, BUT `save` MUST STILL BE A REAL PATH.
+    # `save: null` does not work in this chain, so instead the intervals are set
+    # far beyond the run length: the job exits at iteration 100 and the first
+    # save would be at 100000, so nothing is ever written. That keeps the
+    # measurement free of a ~450 GB write while satisfying the config.
+    #
+    # The path is a DEDICATED directory, not the production tree: even though it
+    # will not be written, pointing a throwaway speed test at the flagship's
+    # checkpoint dir is an unnecessary risk.
+    save: "/e/scratch/e-sta-openeurollm/production_training/wgradfix_n512_speedtest/checkpoints"
+    save_interval: 100000
+    non_persistent_save_interval: 100000
+    non_persistent_global_ckpt_dir: null
+    # `load` must NOT follow `save` here -- there is nothing to resume from, and
+    # resuming would defeat the point of a clean 100-iteration measurement.
+    load: null
+
+job:
+  chain_repeat: 0
+
+slurm:
+  sbatch:
+    # 100 iters x ~4.3 s = ~8 min, plus startup. >=256-node jobs are silent for
+    # 8+ min during NCCL sync and kernel compilation (see memory
+    # jupiter_startup_silence.md), so the wall has to cover a slow draw.
+    time: "00:45:00"
+
+# The parent sweeps four warmup lengths; this is a single measurement, so
+# collapse it to one arm. warmup_steps only affects the LR schedule, which does
+# not touch throughput over 100 iterations.
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.warmup_steps: 2000
