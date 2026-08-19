@@ -55,8 +55,9 @@ backend:
 
     data_path:
       - /e/project1/e-sta-openeurollm/harmsen1/datasets/FineWeb/fineweb-10BT_text_document
-    data_cache_path: /e/fscratch/e-sta-openeurollm/komulainen1/cache/${job.name}/
-    tokenizer_model: /e/fscratch/e-sta-openeurollm/komulainen1/hf_cache/hub/models--openeurollm--tokenizer-256k/snapshots/ac1ce776f8a78fc7aa96dfc91ffc1ae6966b2fa1
+    data_cache_path: /e/scratch/e-sta-openeurollm/vanosch1/cache/${job.name}/
+    tokenizer_model: /e/project1/e-ext-2025e02-108/production_training/oellm_32b_dense/tokenizer_256k
+
 
   env:
     TOKENIZERS_PARALLELISM: "false"
