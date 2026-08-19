@@ -150,3 +150,14 @@ sweep:
         - backend.aux.warmup_steps: 3000
 
         - backend.aux.warmup_steps: 4000
+
+        - backend.aux.warmup_steps: 10000
+
+        - backend.aux.warmup_steps: 4000
+          backend.megatron.fp8: null  # no FP8
+          backend.aux.variant: "sc-bf16-zloss1e-4-nobsramp-n512-wu4000"
+
+        - backend.aux.warmup_steps: 20000
+          backend.megatron.check_for_spiky_loss: true
+          backend.megatron.check_for_large_grads: true
+          backend.megatron.rerun_mode: "validate_results"
