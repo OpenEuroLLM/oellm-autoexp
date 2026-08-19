@@ -1,6 +1,5 @@
 class_name: Container
-image: /scratch/project_465002530/containers/AutoExp_2026-07-02.sif
-# image: /appl/local/laifs/containers/lumi-multitorch-u24r70f21m50t210-20260731_122833/lumi-multitorch-plus-u24r70f21m50t210-20260731_122833.sif
+image: /scratch/project_462001516/users/swagatam/containers/AutoExp_2026-07-02.sif
 runtime: singularity
 bind:
   [

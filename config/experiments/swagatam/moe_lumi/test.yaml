@@ -81,7 +81,7 @@ backend:
     # Base training configuration (for stable phase)
     micro_batch_size: 2 # Will be overridden by sweep
     global_batch_size: 128  # Will be overridden by sweep
-    lr: 1.e-4  # Will be overridden by sweep
+    lr: 5.e-3  # Will be overridden by sweep
 
   env:
     TOKENIZERS_PARALLELISM: "false"
@@ -97,7 +97,8 @@ slurm:
     USE_ROCM_AITER_ROPE_BACKEND: "0"
   srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
   sbatch:
-    nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
+    # nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
+    nodes: 4
     # qos: "boost_qos_dbg"
     account: "project_462001516"
     partition: standard-g
