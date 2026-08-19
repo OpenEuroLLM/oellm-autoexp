@@ -84,7 +84,51 @@ def test_auto_cancel_sweep_expands_to_per_event_bash_jobs():
     def _inactive(job):
         return next(e for e in job.config.job.log_events if e.name == "inactive")
 
+    # The override is POSITIONAL (`job.log_events.<i>.inactivity_*`), because
+    # Hydra cannot address a list element by name. That coupling has broken
+    # once already: index 4 was `inactive` when the sweep was written and became
+    # `err_fp8_metadata` after the error patterns were added, so the override
+    # silently landed on the wrong event. Recompute it here so a future drift
+    # fails with the index to use rather than with a bare value mismatch.
+    _assert_stall_override_targets_inactive()
+
     stall = _inactive(by_name["auto_cancel__cancel_on_silent_stall"])
     assert (stall.inactivity_polls, stall.inactivity_timeout_s) == (1, 60.0)
+
+    # The other jobs keep whatever auto_cancel.yaml currently sets; read it from
+    # the file rather than pinning a literal, so tuning the production policy
+    # does not fail an unrelated test.
     default = _inactive(by_name["auto_cancel__finish_training"])
-    assert (default.inactivity_polls, default.inactivity_timeout_s) == (5, 300.0)
+    policy_inactive = _auto_cancel_events()[1]
+    assert (default.inactivity_polls, default.inactivity_timeout_s) == (
+        policy_inactive["inactivity_polls"],
+        float(policy_inactive["inactivity_timeout_s"]),
+    )
+
+
+def _auto_cancel_events() -> tuple[int, dict]:
+    """Return (index, event) of the `inactive` entry in auto_cancel.yaml."""
+    import yaml
+
+    policy = yaml.safe_load((REPO_CONFIG_DIR / "job" / "auto_cancel.yaml").read_text())
+    for idx, event in enumerate(policy["log_events"]):
+        if event["name"] == "inactive":
+            return idx, event
+    raise AssertionError("auto_cancel.yaml has no 'inactive' log event")
+
+
+def _assert_stall_override_targets_inactive() -> None:
+    """The sweep's positional override must point at the `inactive` event."""
+    import re
+
+    import yaml
+
+    expected_idx, _ = _auto_cancel_events()
+    sweep_text = (REPO_CONFIG_DIR / "experiments" / "tests" / "auto_cancel_sweep.yaml").read_text()
+    used = {int(m) for m in re.findall(r"job\.log_events\.(\d+)\.inactivity_", sweep_text)}
+    assert used, "auto_cancel_sweep.yaml no longer overrides the inactivity thresholds"
+    assert used == {expected_idx}, (
+        f"auto_cancel_sweep.yaml pokes log_events index {sorted(used)} but 'inactive' is now "
+        f"at index {expected_idx} in config/job/auto_cancel.yaml — the override is landing on "
+        f"'{yaml.safe_load((REPO_CONFIG_DIR / 'job' / 'auto_cancel.yaml').read_text())['log_events'][min(used)]['name']}'"
+    )

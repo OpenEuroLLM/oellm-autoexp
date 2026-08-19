@@ -326,7 +326,7 @@ class LogEventConfig(EventConfig):
     """Configuration for a log-triggered event and action."""
 
     pattern: str = ""
-    pattern_type: Literal["substring", "regex", "inactivity"] = "substring"
+    pattern_type: Literal["substring", "regex", "inactivity", "progress"] = "substring"
     extract_groups: dict[str, int | str] = field(default_factory=dict)
     match_once: bool = True
     # For pattern_type == "inactivity": minimum number of consecutive polls
@@ -335,6 +335,29 @@ class LogEventConfig(EventConfig):
     # its default disables that half of the check.
     inactivity_polls: int = 1
     inactivity_timeout_s: float = 0.0
+    # For pattern_type == "progress": ``pattern`` is always treated as a REGEX
+    # and must contain a capturing group holding a number that grows while the
+    # job is healthy — Megatron's iteration counter, `iteration +([0-9]+)/`.
+    # The streak counts consecutive polls in which that number did NOT move;
+    # ``progress_polls`` / ``progress_timeout_s`` gate the action with the same
+    # AND semantics as the inactivity pair above.
+    #
+    # WHY THIS IS NOT THE INACTIVITY CHECK: inactivity only asks whether the log
+    # GREW. A job stuck in an ft_launcher restart loop keeps emitting fresh
+    # setup banners, so it is never inactive — job 1375720 grew a 251 MB log
+    # over 4 h while pinned at iteration 100 — but its counter does not move.
+    progress_group: int | str = 1
+    # increase: the streak resets whenever the newest value DIFFERS from the
+    #   previous one. A resume from checkpoint jumps the counter BACKWARDS, and
+    #   that still counts as movement, so this is safe with a short window. It
+    #   detects "no iterations at all" and "iterations frozen".
+    # max: the streak resets only when the running MAXIMUM advances. This also
+    #   catches a loop that keeps re-running the same iterations forever, but
+    #   the window must exceed the time needed to redo the work lost to the last
+    #   rolling checkpoint, or a healthy restart trips it.
+    progress_mode: Literal["increase", "max"] = "increase"
+    progress_polls: int = 1
+    progress_timeout_s: float = 0.0
 
 
 @dataclass
@@ -359,11 +382,12 @@ class LogEvent:
         """Check if event triggers in the given log text, return metadata for
         each match.
 
-        Inactivity events are time/poll based rather than text based and are
-        handled separately by the monitor loop (see ``inactivity_qualifies``);
-        this method only matches substring/regex patterns.
+        Inactivity and progress events are streak based rather than
+        match-once-and-fire, and are handled separately by the monitor loop (see
+        ``inactivity_qualifies`` / ``progress_qualifies``); this method only
+        matches substring/regex patterns.
         """
-        if self.config.pattern_type == "inactivity":
+        if self.config.pattern_type in ("inactivity", "progress"):
             return []
         triggers = []
         for match in self._iter_matches(log_text):
@@ -389,6 +413,59 @@ class LogEvent:
         if count < self.config.inactivity_polls:
             return False
         if self.config.inactivity_timeout_s > 0 and elapsed_s < self.config.inactivity_timeout_s:
+            return False
+        return True
+
+    def progress_metadata(self) -> dict[str, Any]:
+        """Stable metadata identifying this progress streak.
+
+        Must NOT contain the observed counter: ``event_key`` hashes this dict,
+        so a value in here would mint a new streak every time the counter moved.
+        The observed values live in the record's ``payload`` instead.
+        """
+        metadata = dict(self.config.metadata)
+        metadata["progress"] = True
+        return metadata
+
+    def observe_progress(self, log_text: str) -> tuple[float | None, float | None, str | None]:
+        """Extract the progress counter from *new* log text.
+
+        Returns ``(last, max, raw)`` over every match in this poll's slice, or
+        ``(None, None, None)`` when the text holds no usable match — which is
+        itself the signal that nothing advanced. ``last`` drives
+        ``progress_mode: increase`` (it is the job's current position, including
+        after a backwards jump on resume) and ``max`` drives
+        ``progress_mode: max``.
+        """
+        pattern = re.compile(self.config.pattern, flags=re.MULTILINE)
+        values: list[float] = []
+        raw: str | None = None
+        for match in pattern.finditer(log_text):
+            try:
+                token = match.group(self.config.progress_group)
+            except (IndexError, KeyError):
+                continue
+            if token is None:
+                continue
+            try:
+                values.append(float(token))
+            except (TypeError, ValueError):
+                continue
+            raw = token
+        if not values:
+            return None, None, None
+        return values[-1], max(values), raw
+
+    def progress_qualifies(self, *, count: int, elapsed_s: float) -> bool:
+        """Return True when a no-progress streak has lasted long enough to act.
+
+        ``count`` consecutive polls without movement AND ``elapsed_s`` real
+        seconds must both meet their thresholds (each half disabled when its
+        threshold is left at the default).
+        """
+        if count < self.config.progress_polls:
+            return False
+        if self.config.progress_timeout_s > 0 and elapsed_s < self.config.progress_timeout_s:
             return False
         return True
 
