@@ -35,7 +35,7 @@ def build_sbatch_directives(config: SlurmConfig) -> list[str]:
 def build_srun_flags(config: SlurmConfig) -> str:
     flags: list[str] = []
     srun_values = asdict(config.srun)
-    del srun_values["_non_strict"]
+    srun_values.pop("_non_strict", None)
     for key, value in srun_values.items():
         if value is None:
             continue
