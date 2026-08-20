@@ -47,10 +47,12 @@ backend:
 
     # train_iters / lr_wsd_decay_iters are set per-stage by the inline sweep below.
     # eval_iters: 1
-    # eval_interval: 1000
-    # save_interval: 10000000
+    eval_interval: 100
+    save_interval: 10
+    exit_interval: 15
     # save: null
-    # load: null
+    load: "./"
+
     wandb_exp_name: "${job.name}" # Will be overridden by sweep with stage and hyperparameter info
     wandb_project: "moe_router_stability" # Disabled
     wandb_entity: openeurollm-project
@@ -63,8 +65,8 @@ backend:
     tokenizer_type: HuggingFaceTokenizer
     tokenizer_model: openeurollm/tokenizer-256k
     data_cache_path: /scratch/project_462001516/users/swagatam/cache/MEGATRON_262k # Adjust it to your own directory
-
     # LUMI hipBLASLt workarounds: "Unable to find any suitable algorithms" in these GEMM shapes
+
     # moe_router_dtype: null
     # moe_grouped_gemm: False
     
@@ -101,7 +103,7 @@ slurm:
     nodes: 4
     # qos: "boost_qos_dbg"
     account: "project_462001516"
-    partition: standard-g
+    partition: dev-g
     time: "00:30:00"
     output: "${job.base_output_dir}/logs/stdout-%j.log"
     error: "${job.base_output_dir}/logs/stderr-%j.log"

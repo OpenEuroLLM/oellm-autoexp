@@ -22,7 +22,7 @@ index: 0
 stage: "" # Will be overridden by sweep
 
 job:
-  name: "0.4B_ne_sparse_experts_${backend.megatron.num_experts}topk${backend.megatron.moe_router_topk}_PP${backend.megatron.pipeline_model_parallel_size}_lr${backend.megatron.lr}_fail_fast"
+  name: "0.4B_ne_sparse_experts_${backend.megatron.num_experts}topk${backend.megatron.moe_router_topk}_PP${backend.megatron.pipeline_model_parallel_size}_${stage}_lr${backend.megatron.lr}"
   base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
   log_path: ${slurm.sbatch.error}
 
@@ -40,12 +40,16 @@ backend:
     trust_remote_code: True
     ### lumi specific configs end
 
-    train_iters: 50000
+    # Short paired runs with checkpoints suitable for scripts/moe post-hoc comparison.
+    train_iters: 1000
     eval_iters: 100
-    # eval_interval: 1000
-    # save_interval: 10000000
-    # save: null
-    # load: null
+    eval_interval: 400
+    save_interval: 1000000000 
+    load: "./"
+    # save_extra_steps: [100]
+    
+    no_save_optim: True
+    no_save_rng: True
     wandb_exp_name: "${job.name}" # Will be overridden by sweep with stage and hyperparameter info
     wandb_project: "moe_router_metric_dev" # Disabled
     wandb_entity: openeurollm-project
@@ -58,7 +62,8 @@ backend:
     split: "99,1,0"
     tokenizer_type: HuggingFaceTokenizer
     tokenizer_model: openeurollm/tokenizer-256k
-    data_cache_path: /scratch/project_462001516/users/swagatam/cache/MEGATRON_262k # Adjust it to your own directory
+    data_cache_path: /scratch/project_462001516/users/swagatam/cache/MEGATRON_262k/${job.name}
+
 
     # LUMI hipBLASLt workarounds: "Unable to find any suitable algorithms" in these GEMM shapes
     # moe_router_dtype: null
@@ -71,8 +76,7 @@ backend:
     lr_warmup_iters: 5
     lr_wsd_decay_iters: 1
     
-    #eval_interval: 1000000000
-    #save_interval: 1000000000
+
 
     # Base training configuration (for stable phase)
     micro_batch_size: 2 # Will be overridden by sweep
@@ -88,6 +92,26 @@ backend:
     TOKENIZERS_PARALLELISM: "false"
     HF_HUB_OFFLINE: "1"
     TRITON_HOME: /tmp/triton_cache
+
+
+# Healthy baseline versus a 10x learning-rate overshoot intended to trigger router collapse.
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - stage: healthy
+          backend.megatron.lr: 1.e-4
+          backend.megatron.moe_aux_loss_coeff: 1.e-3
+        - stage: high_lr_failure
+          backend.megatron.lr: 1.e-3
+          backend.megatron.moe_aux_loss_coeff: 1.e-3
+        - stage: high_lr_failure_no_aux_loss
+          backend.megatron.lr: 1.e-3
+          backend.megatron.moe_aux_loss_coeff: 1.e-8
+        - stage: high_lr_3eminus3_no_aux_loss
+          backend.megatron.lr: 3.e-3
+          backend.megatron.moe_aux_loss_coeff: 1.e-8
 
 
 slurm:
