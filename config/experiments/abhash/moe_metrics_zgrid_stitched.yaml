@@ -1,0 +1,175 @@
+# @package _global_
+#
+# MoE post-hoc metrics for the 0.4B nexp32 z-loss / load-balancing GRID, STITCHED
+# with the 80B-token WSD decay branch:
+#   trajectory = stable trunk checkpoints (--load, up to the 80% branch at iter
+#   0122070) followed by the matching decay80BT anneal (--moe-load-decay,
+#   iters 0124000..0152588). Saturation reference = final annealed 152588 ckpt.
+#
+# The decay80BT runs continue the GLOBAL iteration count (branch at 0122070 =
+# 80% of the 152588-iter/80B schedule), so stable+decay form a monotonic
+# trajectory and the existing --moe-load-decay stitch logic truncates the still
+# growing stable trunk at the branch automatically (decay wins on overlap).
+#
+# Grid axes: routing {topk4, topk3+1shared} x LB {aux_loss, global_aux_loss}
+#            x zloss coeff. Only cells whose decay80BT reached iter_0152588 are
+#            listed here (5 as of 2026-07-28); add the rest as they complete.
+#
+# Same data as the multilingual runs: openeurollm-256k tokenizer (<eos>=2),
+# multilingual val blend. Checkpoints are torch_dist -> resharded to TP1/PP1.
+#
+# Submit (validate one first, then the rest):
+#   python scripts/run_autoexp.py --config-name=experiments/abhash/moe_metrics_zgrid_stitched --array-subset 0 --dry-run
+#   sbatch results/moe_analysis_zgrid_stitched/<out_name>/job.sbatch   # per file, after checking account
+#
+defaults:
+  - /backend: 'null'
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: default
+  - /sweep: none
+  - _self_
+
+index: 0
+stage: ""
+
+metadata:
+  # Per-run sweep variables (overridden by the explicit sweep points below).
+  size_dir: 0.4B_ne_sparse_experts_32_topk_4
+  stable_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.001_gbsz128_topk4_lbtaux_loss_zloss0.002_stable120BT
+  decay_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.001_gbsz128_topk4_lbtaux_loss_zloss0.002_decay80BT
+  out_name: topk4_aux_z0.002_stitch_decay80BT
+
+  # Constants.
+  exp_root: /leonardo_work/OELLM_prod2026/experiments/sparse_multilingual_scaling
+  tokenizer_model: /leonardo_work/OELLM_prod2026/users/shaldar0/tokenizers/openeurollm-tokenizer-256k
+  blend_file: scripts/moe/blends/multilingual_val_1TT_option4.sh
+  analysis_root: results/moe_analysis_zgrid_stitched
+
+  # Derived.
+  load_path: ${metadata.exp_root}/${metadata.size_dir}/training/${metadata.stable_tag}/checkpoints
+  decay_path: ${metadata.exp_root}/${metadata.size_dir}/training/${metadata.decay_tag}/checkpoints
+  out_dir: ${metadata.analysis_root}/${metadata.out_name}
+
+job:
+  base_output_dir: ${metadata.out_dir}
+  name: moe_zgrid_${metadata.out_name}
+
+# NullBackend runs base_command + extra_cli_args. Per-point extra_cli_args
+# carries --moe-load-decay pointing at the decay80BT checkpoints.
+backend:
+  extra_cli_args:
+    - --moe-load-decay
+    - ${metadata.decay_path}
+  base_command:
+    - python
+    - scripts/moe/compute_moe_metrics.py
+    - --tensor-model-parallel-size
+    - "1"
+    - --pipeline-model-parallel-size
+    - "1"
+    - --load
+    - ${metadata.load_path}
+    - --use-checkpoint-args
+    - --ckpt-format
+    - torch_dist
+    - --tokenizer-type
+    - HuggingFaceTokenizer
+    - --tokenizer-model
+    - ${metadata.tokenizer_model}
+    - --no-bias-dropout-fusion
+    - --moe-data-type
+    - megatron_indexed
+    - --moe-megatron-blend-file
+    - ${metadata.blend_file}
+    - --moe-eod-token
+    - "2"
+    - --moe-batch-size
+    - "1"
+    - --moe-seq-length
+    - "4096"
+    # 1221 * 1 * 4096 = 5,001,216 tokens (~5.0M) sampled from the val blend.
+    - --moe-num-batches
+    - "1221"
+    - --moe-compare-ckpts-every
+    - "1000"
+    - --moe-output-json
+    - ${metadata.out_dir}/saturation.json
+    - --moe-coactivation-output
+    - ${metadata.out_dir}/coactivation.json
+    - --moe-token-count-output
+    - ${metadata.out_dir}/token_counts.json
+    - --moe-activation-norm-output
+    - ${metadata.out_dir}/expert_activation_norms.json
+    - --moe-routing-gif
+    - ${metadata.out_dir}/expert_routing.gif
+    - --moe-routing-gif-layers
+    - "first,mid,last"
+    - --moe-routing-gif-frame-ms
+    - "250"
+    - --moe-plot
+    - --moe-plot-dir
+    - ${metadata.out_dir}
+
+container:
+  image: /leonardo_work/OELLM_prod2026/container_images/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif
+  env:
+    WANDB_MODE: offline
+    MACHINE_NAME: LEONARDO
+    PYTHONPATH: "."
+    TMPDIR: ${oc.env:TMPDIR,/tmp}
+    HF_HOME: ${oc.env:HF_HOME,/tmp}
+    HF_HUB_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+
+slurm:
+  sbatch:
+    # AIAFC (AI Factory) grant — pinned so these jobs never bill OELLM_prod2026.
+    account: aifac_5c0_092
+    partition: boost_usr_prod
+    nodes: 1
+    ntasks_per_node: 1
+    gpus_per_node: 1
+    gres: "gpu:1"
+    cpus_per_task: 8
+    # ~5M eval tokens => ~6x more forward passes/checkpoint than the 0.8M runs.
+    time: "20:00:00"
+    job_name: null
+  srun:
+    cpus_per_task: 8
+  env:
+    SLURM_CPUS_PER_TASK: "8"
+    MASTER_PORT: "$((20000 + SLURM_JOB_ID % 10000))"
+
+# One job per READY (stable120BT + complete decay80BT) grid cell.
+#   Index map:
+#     0: topk4  aux        zloss0.002
+#     1: topk4  aux        zloss0.004
+#     2: topk4  global_aux zloss0.002
+#     3: topk4  global_aux zloss0.004
+#     4: topk3+1 aux       zloss0.002
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        - metadata.size_dir: 0.4B_ne_sparse_experts_32_topk_4
+          metadata.stable_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.001_gbsz128_topk4_lbtaux_loss_zloss0.002_stable120BT
+          metadata.decay_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.001_gbsz128_topk4_lbtaux_loss_zloss0.002_decay80BT
+          metadata.out_name: topk4_aux_z0.002_stitch_decay80BT
+        - metadata.size_dir: 0.4B_ne_sparse_experts_32_topk_4
+          metadata.stable_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.001_gbsz128_topk4_lbtaux_loss_zloss0.004_stable120BT
+          metadata.decay_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.001_gbsz128_topk4_lbtaux_loss_zloss0.004_decay80BT
+          metadata.out_name: topk4_aux_z0.004_stitch_decay80BT
+        - metadata.size_dir: 0.4B_ne_sparse_experts_32_topk_4
+          metadata.stable_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.001_gbsz128_topk4_lbtglobal_aux_loss_zloss0.002_stable120BT
+          metadata.decay_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.001_gbsz128_topk4_lbtglobal_aux_loss_zloss0.002_decay80BT
+          metadata.out_name: topk4_global_z0.002_stitch_decay80BT
+        - metadata.size_dir: 0.4B_ne_sparse_experts_32_topk_4
+          metadata.stable_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.001_gbsz128_topk4_lbtglobal_aux_loss_zloss0.004_stable120BT
+          metadata.decay_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.001_gbsz128_topk4_lbtglobal_aux_loss_zloss0.004_decay80BT
+          metadata.out_name: topk4_global_z0.004_stitch_decay80BT
+        - metadata.size_dir: 0.4B_ne_sparse_experts_32_topk_3
+          metadata.stable_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.001_gbsz128_topk3_lbtaux_loss_zloss0.002_stable120BT
+          metadata.decay_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.001_gbsz128_topk3_lbtaux_loss_zloss0.002_decay80BT
+          metadata.out_name: topk3_aux_z0.002_stitch_decay80BT

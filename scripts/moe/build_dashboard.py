@@ -1249,7 +1249,9 @@ APP_JS = r"""(async function() {
     slots: [],          // [{canvas, ctx, status, frames, w, h, layer, url}]
     frame: 0,
     playing: true,
-    fps: 8,
+    fps: 4,
+    maxLoops: 3,        // play through 3 times, then stop (no endless replay)
+    loopsPlayed: 0,
     raf: null,
     lastTickAt: 0,
     slider: null,
@@ -1287,7 +1289,20 @@ APP_JS = r"""(async function() {
       _master.lastTickAt = now;
       const total = maxFrames();
       if (total > 0) {
-        _master.frame = (_master.frame + 1) % total;
+        const next = _master.frame + 1;
+        if (next >= total) {
+          // Completed one pass. Stop after maxLoops instead of looping forever.
+          _master.loopsPlayed += 1;
+          if (_master.loopsPlayed >= _master.maxLoops) {
+            _master.frame = total - 1;   // rest on the final frame
+            renderAllSlots();
+            pausePlayback();
+            return;
+          }
+          _master.frame = 0;
+        } else {
+          _master.frame = next;
+        }
         renderAllSlots();
       }
     }
@@ -1298,6 +1313,11 @@ APP_JS = r"""(async function() {
     if (_master.playing && _master.raf) return;
     _master.playing = true;
     _master.lastTickAt = 0;
+    // Fresh 3-play run: reset the counter, and restart from the top if the
+    // previous run had already finished on the last frame.
+    _master.loopsPlayed = 0;
+    const _total = maxFrames();
+    if (_total > 0 && _master.frame >= _total - 1) _master.frame = 0;
     if (_master.playBtn) _master.playBtn.textContent = '❚❚ Pause';
     if (_master.raf) cancelAnimationFrame(_master.raf);
     _master.raf = requestAnimationFrame(tick);
@@ -1384,7 +1404,7 @@ APP_JS = r"""(async function() {
       const speedSel = document.createElement('select');
       speedSel.className = 'speed-sel';
       speedSel.title = 'Playback speed (fps)';
-      [4, 8, 12, 20, 30].forEach(f => {
+      [2, 4, 8, 12, 20, 30].forEach(f => {
         const o = document.createElement('option');
         o.value = f; o.textContent = `${f} fps`;
         if (f === _master.fps) o.selected = true;

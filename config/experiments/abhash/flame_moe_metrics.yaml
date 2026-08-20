@@ -1,0 +1,141 @@
+# @package _global_
+#
+# Post-hoc MoE router metrics for the CMU-FLAME FLAME-MoE family.
+#
+# These are Megatron torch_dist checkpoints (64 experts, top-8, shared experts,
+# seq 2048, trained on DCLM with the EleutherAI/pythia-12b tokenizer == the
+# GPT-NeoX-20B BPE). torch_dist reloads under any layout, so we run TP=1/PP=1/EP=1
+# and let --use-checkpoint-args pull all architecture fields from common.pt.
+#
+# One sbatch job per model. Submit with the driver (avoids the monitor_state race):
+#   bash scripts/moe/submit_flame_metrics.sh
+#
+# Single model interactively:
+#   export SLURM_ACCOUNT=OELLM_prod2026
+#   export SLURM_PARTITION=boost_usr_prod
+#   export OELLM_CONTAINERS_DIR=/leonardo_work/OELLM_prod2026/container_images
+#   export HF_HOME=/tmp     # unused in megatron_indexed mode, but base.yaml expects it
+#   python scripts/run_autoexp.py \
+#     --config-name=experiments/abhash/flame_moe_metrics \
+#     metadata.model=FLAME-MoE-38M-100M sweep=none
+#
+# Tokenizer: we use FLAME's actual training tokenizer, EleutherAI/pythia-12b, via
+# HuggingFaceTokenizer (its tokenizer.json, downloaded locally by download_flame_moe.sh).
+# IMPORTANT: --no-use-tokenizer-model-from-checkpoint-args is required — that flag
+# defaults True and would otherwise force FLAME's saved tokenizer_model path (a hub id
+# / CMU-local path) over ours at init (megatron/training/checkpointing.py:1456).
+#
+# Eval data: we reuse the gpt-neox-20b-tokenized Nemotron .idx AS-IS. We verified the
+# gpt-neox-20b and pythia-12b tokenizers are byte-identical (same 50254 vocab, 50009
+# merges, pre-tokenizer, specials), so the stored token IDs are already exactly what
+# pythia-12b would produce — no detokenize/retokenize needed (it would be an identity
+# op). Prove it on the actual data first with:
+#   python scripts/moe/verify_idx_tokenizer_equiv.py \
+#     --idx-path <idx_data> --neox-tokenizer <neox dir> --pythia-tokenizer <pythia dir>
+# In megatron_indexed mode the tokenizer object is not used to tokenize anyway
+# (eod=0, vocab_size from the checkpoint); it only needs to build cleanly at init.
+#
+defaults:
+  - /backend: 'null'
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: default
+  - /sweep: none
+  - _self_
+
+index: 0
+stage: ""
+
+metadata:
+  # Overridden per-model by the submit driver.
+  model: FLAME-MoE-38M-100M
+
+  # Where download_flame_moe.sh placed the checkpoints.
+  flame_root: /leonardo_scratch/large/userexternal/ajha0001/flame_moe
+  load_dir: ${metadata.flame_root}/${metadata.model}
+
+  # Shared eval data (gpt-neox-20b-tokenized .idx; IDs == pythia-12b, verified).
+  idx_data: /leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-LUMI-sample-valid/high-all
+  # FLAME's training tokenizer (EleutherAI/pythia-12b), fetched by download_flame_moe.sh.
+  pythia_tokenizer: /leonardo_scratch/large/userexternal/ajha0001/tokenizers/pythia-12b
+
+  analysis_root: results/moe_analysis_flame
+  out_dir: ${metadata.analysis_root}/${metadata.model}
+
+job:
+  base_output_dir: ${metadata.out_dir}
+  name: flame_moe_metrics_${metadata.model}
+
+backend:
+  base_command:
+    - python
+    - scripts/moe/compute_moe_metrics.py
+    - --load
+    - ${metadata.load_dir}
+    - --use-checkpoint-args
+    - --ckpt-format
+    - torch_dist
+    - --tokenizer-type
+    - HuggingFaceTokenizer
+    - --tokenizer-model
+    - ${metadata.pythia_tokenizer}
+    # keep our pythia tokenizer; don't let the checkpoint's saved tokenizer_model win
+    - --no-use-tokenizer-model-from-checkpoint-args
+    - --no-bias-dropout-fusion
+    - --moe-data-type
+    - megatron_indexed
+    - --moe-megatron-data-path
+    - ${metadata.idx_data}
+    - --moe-batch-size
+    - "1"
+    - --moe-seq-length
+    - "2048"
+    - --moe-num-batches
+    - "200"
+    # every=1 discovers ALL iter_* dirs: multi-ckpt models -> saturation evolution
+    # + routing GIF; single-ckpt models -> final metrics only (compare list empty).
+    - --moe-compare-ckpts-every
+    - "1"
+    - --moe-output-json
+    - ${metadata.out_dir}/saturation.json
+    - --moe-coactivation-output
+    - ${metadata.out_dir}/coactivation.json
+    - --moe-token-count-output
+    - ${metadata.out_dir}/token_counts.json
+    - --moe-activation-norm-output
+    - ${metadata.out_dir}/expert_activation_norms.json
+    - --moe-routing-gif
+    - ${metadata.out_dir}/expert_routing.gif
+    - --moe-routing-gif-layers
+    - "first,mid,last"
+    - --moe-routing-gif-frame-ms
+    - "250"
+    - --moe-plot
+    - --moe-plot-dir
+    - ${metadata.out_dir}
+
+container:
+  image: /leonardo_work/OELLM_prod2026/container_images/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif
+  env:
+    WANDB_MODE: offline
+    MACHINE_NAME: LEONARDO
+    PYTHONPATH: "."
+    TMPDIR: ${oc.env:TMPDIR,/tmp}
+    HF_HOME: ${oc.env:HF_HOME,/tmp}
+
+# 1 GPU. Largest model (1.7B-10.3B, ~10.3B total params bf16 ~21GB) fits one A100
+# 64GB and has 10 ckpts to sweep, so allow more wall time than the 30M default.
+slurm:
+  sbatch:
+    nodes: 1
+    ntasks_per_node: 1
+    gpus_per_node: 1
+    gres: "gpu:1"
+    cpus_per_task: 8
+    time: "04:00:00"
+    job_name: null
+  srun:
+    cpus_per_task: 8
+  env:
+    SLURM_CPUS_PER_TASK: "8"
+    MASTER_PORT: "$((20000 + SLURM_JOB_ID % 10000))"

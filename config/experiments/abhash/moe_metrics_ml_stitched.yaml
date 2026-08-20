@@ -1,0 +1,212 @@
+# @package _global_
+#
+# MoE post-hoc metrics for the multilingual sparse-scaling runs, STITCHED:
+#   one trajectory per model scale = stable checkpoints (--load) followed by the
+#   matching 120B-token decay branch (--moe-load-decay). The saturation reference
+#   is the final *decayed* 120B checkpoint. For scales with no 120B decay run we
+#   show the stable run alone (extra_cli_args left empty).
+#
+# Stable/decay are matched by (nexp, lr, gbsz). Only the 120B decay is used.
+#   0.1B nexp8   lr0.002 gbsz256   stable300BT + decay120BT   (stitched)
+#   0.4B nexp32  lr0.001 gbsz128   stable120BT                (stable-only; decay still training)
+#   0.9B nexp64  lr0.002 gbsz512   stable300BT + decay120BT   (stitched)
+#
+# Checkpoints are torch_dist -> load resharded to TP1/PP1 on one GPU. The
+# pre-tokenized val blend needs only the eod id (openeurollm-256k <eos> = 2).
+#
+# Submit (validate one first, then the rest):
+#   python scripts/run_autoexp.py --config-name=experiments/abhash/moe_metrics_ml_stitched --array-subset 0 --dry-run
+#   sbatch results/moe_analysis_ml_stitched/<out_name>/job.sbatch   # per file, after checking account
+#
+defaults:
+  - /backend: 'null'
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: default
+  - /sweep: none
+  - _self_
+
+index: 0
+stage: ""
+
+metadata:
+  # Per-run sweep variables (overridden by the explicit sweep points below).
+  size_dir: 0.9B_ne_sparse_experts_64_topk_4_PP_2
+  stable_tag: qwen3_sparse_0.9B_ne_nexp64_lr0.002_gbsz512_stable300BT
+  out_name: 0.9B_nexp64_stitched_120BT
+
+  # Constants.
+  exp_root: /leonardo_work/OELLM_prod2026/experiments/sparse_multilingual_scaling
+  tokenizer_model: /leonardo_work/OELLM_prod2026/users/shaldar0/tokenizers/openeurollm-tokenizer-256k
+  blend_file: scripts/moe/blends/multilingual_val_1TT_option4.sh
+  analysis_root: results/moe_analysis_ml_stitched
+
+  # Derived.
+  load_path: ${metadata.exp_root}/${metadata.size_dir}/training/${metadata.stable_tag}/checkpoints
+  out_dir: ${metadata.analysis_root}/${metadata.out_name}
+
+job:
+  base_output_dir: ${metadata.out_dir}
+  name: moe_mls_${metadata.out_name}
+
+# NullBackend runs base_command + extra_cli_args. The per-point extra_cli_args
+# carries the optional --moe-load-decay (empty list => stable-only).
+backend:
+  extra_cli_args: []
+  base_command:
+    - python
+    - scripts/moe/compute_moe_metrics.py
+    - --tensor-model-parallel-size
+    - "1"
+    - --pipeline-model-parallel-size
+    - "1"
+    - --load
+    - ${metadata.load_path}
+    - --use-checkpoint-args
+    - --ckpt-format
+    - torch_dist
+    - --tokenizer-type
+    - HuggingFaceTokenizer
+    - --tokenizer-model
+    - ${metadata.tokenizer_model}
+    - --no-bias-dropout-fusion
+    - --moe-data-type
+    - megatron_indexed
+    - --moe-megatron-blend-file
+    - ${metadata.blend_file}
+    - --moe-eod-token
+    - "2"
+    - --moe-batch-size
+    - "1"
+    - --moe-seq-length
+    - "4096"
+    - --moe-num-batches
+    - "200"
+    - --moe-compare-ckpts-every
+    - "1000"
+    - --moe-output-json
+    - ${metadata.out_dir}/saturation.json
+    - --moe-coactivation-output
+    - ${metadata.out_dir}/coactivation.json
+    - --moe-token-count-output
+    - ${metadata.out_dir}/token_counts.json
+    - --moe-activation-norm-output
+    - ${metadata.out_dir}/expert_activation_norms.json
+    - --moe-routing-gif
+    - ${metadata.out_dir}/expert_routing.gif
+    - --moe-routing-gif-layers
+    - "first,mid,last"
+    - --moe-routing-gif-frame-ms
+    - "250"
+    - --moe-plot
+    - --moe-plot-dir
+    - ${metadata.out_dir}
+
+container:
+  image: /leonardo_work/OELLM_prod2026/container_images/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif
+  env:
+    WANDB_MODE: offline
+    MACHINE_NAME: LEONARDO
+    PYTHONPATH: "."
+    TMPDIR: ${oc.env:TMPDIR,/tmp}
+    HF_HOME: ${oc.env:HF_HOME,/tmp}
+    HF_HUB_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+
+slurm:
+  sbatch:
+    # AIAFC (AI Factory) grant — pinned so these jobs never bill OELLM_prod2026.
+    account: aifac_5c0_092
+    partition: boost_usr_prod
+    nodes: 1
+    ntasks_per_node: 1
+    gpus_per_node: 1
+    gres: "gpu:1"
+    cpus_per_task: 8
+    # Stitched trajectories sweep many checkpoints (stable + decay); give headroom.
+    time: "10:00:00"
+    job_name: null
+  srun:
+    cpus_per_task: 8
+  env:
+    SLURM_CPUS_PER_TASK: "8"
+    MASTER_PORT: "$((20000 + SLURM_JOB_ID % 10000))"
+
+# One job per (scale, lr, gbsz) training config. Stitched where a 120B decay
+# branch exists (matched on lr+gbsz); stable-only otherwise. 0.2B is omitted
+# entirely (no checkpoints on disk for any of its 4 configs as of 2026-07-21).
+#
+# Index map (submit status in comments):
+#   0: 0.1B lr0.002 gbsz256  stitched   (running 50004619)
+#   1: 0.4B lr0.001 gbsz128  stitched   (RUN — decay120BT now complete)
+#   2: 0.9B lr0.002 gbsz512  stitched   (DONE — on dashboard)
+#   3: 0.1B lr0.001 gbsz32   stable12BT   (RUN)
+#   4: 0.1B lr0.001 gbsz64   stable50BT   (RUN)
+#   5: 0.1B lr0.002 gbsz128  stable300BT  (RUN)
+#   6: 0.4B lr0.001 gbsz64   stable50BT   (RUN)
+#   7: 0.4B lr0.002 gbsz256  stable300BT  (RUN)
+#   8: 0.4B lr0.002 gbsz512  stable300BT  (RUN)
+#   9: 0.9B lr0.0005 gbsz128 stable120BT  (RUN)
+#  10: 0.9B lr0.0005 gbsz64  stable50BT   (RUN)
+#  11: 0.9B lr0.001 gbsz256  stable300BT  (RUN)
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        # ---- stitched (stable + 120B decay) ----
+        - metadata.size_dir: 0.1B_ne_sparse_experts_8_topk_4
+          metadata.stable_tag: qwen3_sparse_0.1B_ne_nexp8_lr0.002_gbsz256_stable300BT
+          metadata.out_name: 0.1B_nexp8_stitched_120BT
+          backend.extra_cli_args:
+            - --moe-load-decay
+            - /leonardo_work/OELLM_prod2026/experiments/sparse_multilingual_scaling/0.1B_ne_sparse_experts_8_topk_4/training/qwen3_sparse_0.1B_ne_nexp8_lr0.002_gbsz256_decay120BT/checkpoints
+        - metadata.size_dir: 0.4B_ne_sparse_experts_32_topk_4
+          metadata.stable_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.001_gbsz128_stable120BT
+          metadata.out_name: 0.4B_nexp32_stitched_120BT
+          backend.extra_cli_args:
+            - --moe-load-decay
+            - /leonardo_work/OELLM_prod2026/experiments/sparse_multilingual_scaling/0.4B_ne_sparse_experts_32_topk_4/training/qwen3_sparse_0.4B_ne_nexp32_lr0.001_gbsz128_decay120BT/checkpoints
+        - metadata.size_dir: 0.9B_ne_sparse_experts_64_topk_4_PP_2
+          metadata.stable_tag: qwen3_sparse_0.9B_ne_nexp64_lr0.002_gbsz512_stable300BT
+          metadata.out_name: 0.9B_nexp64_stitched_120BT
+          backend.extra_cli_args:
+            - --moe-load-decay
+            - /leonardo_work/OELLM_prod2026/experiments/sparse_multilingual_scaling/0.9B_ne_sparse_experts_64_topk_4_PP_2/training/qwen3_sparse_0.9B_ne_nexp64_lr0.002_gbsz512_decay120BT/checkpoints
+        # ---- stable-only (no 120B decay branch) ----
+        - metadata.size_dir: 0.1B_ne_sparse_experts_8_topk_4
+          metadata.stable_tag: qwen3_sparse_0.1B_ne_nexp8_lr0.001_gbsz32_stable12BT
+          metadata.out_name: 0.1B_nexp8_lr0.001_gbsz32_stable12BT
+          backend.extra_cli_args: []
+        - metadata.size_dir: 0.1B_ne_sparse_experts_8_topk_4
+          metadata.stable_tag: qwen3_sparse_0.1B_ne_nexp8_lr0.001_gbsz64_stable50BT
+          metadata.out_name: 0.1B_nexp8_lr0.001_gbsz64_stable50BT
+          backend.extra_cli_args: []
+        - metadata.size_dir: 0.1B_ne_sparse_experts_8_topk_4
+          metadata.stable_tag: qwen3_sparse_0.1B_ne_nexp8_lr0.002_gbsz128_stable300BT
+          metadata.out_name: 0.1B_nexp8_lr0.002_gbsz128_stable300BT
+          backend.extra_cli_args: []
+        - metadata.size_dir: 0.4B_ne_sparse_experts_32_topk_4
+          metadata.stable_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.001_gbsz64_stable50BT
+          metadata.out_name: 0.4B_nexp32_lr0.001_gbsz64_stable50BT
+          backend.extra_cli_args: []
+        - metadata.size_dir: 0.4B_ne_sparse_experts_32_topk_4
+          metadata.stable_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.002_gbsz256_stable300BT
+          metadata.out_name: 0.4B_nexp32_lr0.002_gbsz256_stable300BT
+          backend.extra_cli_args: []
+        - metadata.size_dir: 0.4B_ne_sparse_experts_32_topk_4
+          metadata.stable_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.002_gbsz512_stable300BT
+          metadata.out_name: 0.4B_nexp32_lr0.002_gbsz512_stable300BT
+          backend.extra_cli_args: []
+        - metadata.size_dir: 0.9B_ne_sparse_experts_64_topk_4_PP_2
+          metadata.stable_tag: qwen3_sparse_0.9B_ne_nexp64_lr0.0005_gbsz128_stable120BT
+          metadata.out_name: 0.9B_nexp64_lr0.0005_gbsz128_stable120BT
+          backend.extra_cli_args: []
+        - metadata.size_dir: 0.9B_ne_sparse_experts_64_topk_4_PP_2
+          metadata.stable_tag: qwen3_sparse_0.9B_ne_nexp64_lr0.0005_gbsz64_stable50BT
+          metadata.out_name: 0.9B_nexp64_lr0.0005_gbsz64_stable50BT
+          backend.extra_cli_args: []
+        - metadata.size_dir: 0.9B_ne_sparse_experts_64_topk_4_PP_2
+          metadata.stable_tag: qwen3_sparse_0.9B_ne_nexp64_lr0.001_gbsz256_stable300BT
+          metadata.out_name: 0.9B_nexp64_lr0.001_gbsz256_stable300BT
+          backend.extra_cli_args: []

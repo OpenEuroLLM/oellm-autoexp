@@ -445,6 +445,27 @@ def add_metrics_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser
             "(the directory containing high-all.bin and high-all.idx)."
         ),
     )
+    group.add_argument(
+        "--moe-megatron-blend-file",
+        type=str,
+        default=None,
+        help=(
+            "Path to a Megatron-style blend spec ('weight path weight path ...', "
+            "whitespace/newline separated, same format as a training data-mix .sh). "
+            "Documents are sampled across the listed IndexedDataset prefixes in "
+            "proportion to their weights. Mutually exclusive with --moe-megatron-data-path."
+        ),
+    )
+    group.add_argument(
+        "--moe-eod-token",
+        type=int,
+        default=None,
+        help=(
+            "End-of-document token id used as the inter-document separator for "
+            "megatron_indexed data. Defaults to 0 (GPT-NeoX). Set to match the "
+            "tokenizer used to pre-tokenize the data (e.g. 2 for openeurollm-256k <eos>)."
+        ),
+    )
     group.add_argument("--moe-prompts-file", type=str, default=None)
     group.add_argument(
         "--moe-dataset-name",
@@ -846,58 +867,134 @@ def _load_hf_dataset_texts(
     return texts
 
 
+def _parse_megatron_blend_file(blend_file: str) -> List[Tuple[float, str]]:
+    """Parse a Megatron-style blend spec ('weight path weight path ...',
+    whitespace/newline separated) into a list of (weight, path_prefix) pairs.
+
+    This is the same format as a training data-mix .sh (a flat sequence of
+    alternating float weights and path prefixes). Blank lines and '#' comments
+    are ignored. Weights are returned as given (not normalized)."""
+    text = Path(blend_file).expanduser().read_text()
+    tokens: List[str] = []
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line:
+            tokens.extend(line.split())
+    if len(tokens) % 2 != 0:
+        raise ValueError(
+            f"Blend file {blend_file} has an odd token count ({len(tokens)}); "
+            "expected alternating 'weight path' pairs."
+        )
+    pairs: List[Tuple[float, str]] = []
+    for i in range(0, len(tokens), 2):
+        pairs.append((float(tokens[i]), tokens[i + 1]))
+    if not pairs:
+        raise ValueError(f"Blend file {blend_file} contained no 'weight path' pairs.")
+    return pairs
+
+
 def _build_megatron_indexed_batches(
-    path_prefix: str,
+    path_prefix: Optional[str],
     batch_size: int,
     seq_length: int,
     num_batches: int,
     eod_token: int,
     seed: int,
     device: torch.device,
+    blend_file: Optional[str] = None,
 ) -> List[torch.Tensor]:
-    """Read pre-tokenized tokens from a Megatron IndexedDataset and pack them
-    into [num_batches, batch_size, seq_length] long tensors.
+    """Read pre-tokenized tokens from one or more Megatron IndexedDatasets and
+    pack them into [num_batches, batch_size, seq_length] long tensors.
 
-    Documents are shuffled with `seed`, concatenated with `eod_token` separators,
-    and sliced into seq_length chunks. The last partial chunk is padded with eod.
+    Single source (`path_prefix`): documents are shuffled with `seed`,
+    concatenated with `eod_token` separators, and sliced into seq_length chunks.
+
+    Blend (`blend_file`): the total token budget is split across sources in
+    proportion to their weights; each source contributes shuffled documents from
+    its own share, then all sources' streams are concatenated. This reproduces
+    the training data-mix sampling ratios. The last partial chunk is padded with
+    eod in both cases.
     """
     from megatron.core.datasets.indexed_dataset import IndexedDataset  # noqa: E402
 
-    base = Path(path_prefix).expanduser()
-    if not Path(str(base) + ".bin").is_file() or not Path(str(base) + ".idx").is_file():
-        raise FileNotFoundError(
-            f"Megatron IndexedDataset prefix not found ({base}.bin / {base}.idx)."
-        )
-    _log_info(f"Opening Megatron IndexedDataset: {base}")
-    ds = IndexedDataset(str(base), multimodal=False, mmap=True)
-    n_docs = len(ds)
-    _log_info(f"IndexedDataset has {n_docs:,} documents")
-
     needed_tokens = num_batches * batch_size * seq_length
-    rng = np.random.default_rng(seed)
-    order = rng.permutation(n_docs)
+
+    # Resolve the list of (weight, prefix) sources.
+    if blend_file:
+        sources = _parse_megatron_blend_file(blend_file)
+        total_w = sum(w for w, _ in sources)
+        if total_w <= 0:
+            raise ValueError(f"Blend weights in {blend_file} sum to {total_w}.")
+    else:
+        if not path_prefix:
+            raise ValueError("Either path_prefix or blend_file is required.")
+        sources = [(1.0, path_prefix)]
+        total_w = 1.0
 
     buf = np.empty(needed_tokens + seq_length, dtype=np.int64)
     cursor = 0
-    docs_used = 0
-    for doc_id in order:
+    total_docs_used = 0
+    rng = np.random.default_rng(seed)
+
+    for src_idx, (weight, prefix) in enumerate(sources):
         if cursor >= needed_tokens:
             break
-        tokens = np.asarray(ds.get(int(doc_id)), dtype=np.int64)
-        n = tokens.size
-        if n == 0:
-            continue
-        end = cursor + n
-        if end > buf.size:
-            end = buf.size
-            n = end - cursor
-        buf[cursor:end] = tokens[:n]
-        cursor = end
-        # Insert EOD between documents to mirror Megatron training behavior.
-        if cursor < buf.size:
-            buf[cursor] = eod_token
-            cursor += 1
-        docs_used += 1
+        base = Path(prefix).expanduser()
+        if not Path(str(base) + ".bin").is_file() or not Path(str(base) + ".idx").is_file():
+            raise FileNotFoundError(
+                f"Megatron IndexedDataset prefix not found ({base}.bin / {base}.idx)."
+            )
+        # This source's token share of the remaining budget. The last source
+        # takes whatever budget is left so rounding never leaves a shortfall.
+        if src_idx == len(sources) - 1:
+            src_budget = needed_tokens - cursor
+        else:
+            src_budget = int(round(needed_tokens * (weight / total_w)))
+        src_end = min(cursor + src_budget, needed_tokens)
+
+        ds = IndexedDataset(str(base), multimodal=False, mmap=True)
+        n_docs = len(ds)
+        # Independent shuffle per source (seed offset keeps runs reproducible).
+        order = np.random.default_rng(seed + src_idx + 1).permutation(n_docs)
+        docs_used = 0
+        bad_docs = 0
+        for doc_id in order:
+            if cursor >= src_end:
+                break
+            # A corrupt/truncated .bin can have an .idx entry whose offset runs
+            # past the buffer; skip that document rather than aborting the whole
+            # eval (surfaces at larger token budgets that read deeper into the
+            # per-source shuffle order).
+            try:
+                tokens = np.asarray(ds.get(int(doc_id)), dtype=np.int64)
+            except (ValueError, IndexError, OSError) as exc:
+                bad_docs += 1
+                if bad_docs <= 3:
+                    _log_info(
+                        f"    skipping unreadable doc {int(doc_id)} in {base.name}: {exc}"
+                    )
+                continue
+            n = tokens.size
+            if n == 0:
+                continue
+            end = cursor + n
+            if end > buf.size:
+                end = buf.size
+                n = end - cursor
+            buf[cursor:end] = tokens[:n]
+            cursor = end
+            # Insert EOD between documents to mirror Megatron training behavior.
+            if cursor < buf.size:
+                buf[cursor] = eod_token
+                cursor += 1
+            docs_used += 1
+        total_docs_used += docs_used
+        if blend_file:
+            _log_info(
+                f"  [{src_idx + 1}/{len(sources)}] {base.name}: w={weight:.6f} "
+                f"target={src_budget:,} tok, {docs_used:,} docs, {n_docs:,} available"
+                + (f", {bad_docs:,} skipped(bad)" if bad_docs else "")
+            )
 
     if cursor < needed_tokens:
         # Not enough docs covered the request — pad tail with eod.
@@ -908,7 +1005,7 @@ def _build_megatron_indexed_batches(
     flat = flat.view(num_batches, batch_size, seq_length).to(device)
     _log_success(
         f"Built {num_batches} batches × {batch_size} × {seq_length} tokens "
-        f"from {docs_used:,} documents"
+        f"from {total_docs_used:,} documents across {len(sources)} source(s)"
     )
     return [flat[i] for i in range(num_batches)]
 
@@ -1809,10 +1906,16 @@ def main() -> None:
         vocab_size = args.padded_vocab_size
         _log_info("Using random inputs")
     elif use_megatron_indexed:
-        # GPT-NeoX-20B vocab uses 0 as <|endoftext|>, matching Megatron training defaults.
-        eod_token = 0
+        # EOD separator between concatenated documents. Defaults to 0 (GPT-NeoX
+        # <|endoftext|>); override with --moe-eod-token to match the tokenizer
+        # used to pre-tokenize the data (e.g. 2 for openeurollm-256k <eos>).
+        eod_token = args.moe_eod_token if args.moe_eod_token is not None else 0
         vocab_size = args.padded_vocab_size
-        _log_info(f"Using Megatron IndexedDataset: {args.moe_megatron_data_path}")
+        _log_info(
+            f"Using Megatron IndexedDataset "
+            f"(eod_token={eod_token}, "
+            f"source={args.moe_megatron_blend_file or args.moe_megatron_data_path})"
+        )
     else:
         eod_token = tokenizer.eod
         vocab_size = args.padded_vocab_size or tokenizer.vocab_size
@@ -1834,8 +1937,15 @@ def main() -> None:
     if decay_dir:
         decay_discovered = _discover_ckpt_steps(decay_dir, args.moe_compare_ckpts_every)
 
+    # The decay branch forks off the stable run at its first iter and supersedes it
+    # from there on, so stable iters past the branch point belong to a different
+    # (longer) trajectory and must not be stitched in.
+    branch_step = min(decay_discovered) if decay_discovered else None
+
     step_to_dir: Dict[int, str] = {}
     for s in stable_discovered:
+        if branch_step is not None and s > branch_step:
+            continue
         step_to_dir[s] = load_dir
     for s in decay_discovered:
         step_to_dir[s] = decay_dir  # decay wins on overlap
@@ -1876,9 +1986,14 @@ def main() -> None:
 
     # Build once so all compared checkpoints see exactly the same token inputs.
     if use_megatron_indexed:
-        if not args.moe_megatron_data_path:
+        if not args.moe_megatron_data_path and not args.moe_megatron_blend_file:
             raise ValueError(
-                "--moe-megatron-data-path is required for --moe-data-type megatron_indexed"
+                "--moe-megatron-data-path or --moe-megatron-blend-file is required "
+                "for --moe-data-type megatron_indexed"
+            )
+        if args.moe_megatron_data_path and args.moe_megatron_blend_file:
+            raise ValueError(
+                "Pass only one of --moe-megatron-data-path / --moe-megatron-blend-file."
             )
         token_batches = _build_megatron_indexed_batches(
             args.moe_megatron_data_path,
@@ -1888,6 +2003,7 @@ def main() -> None:
             eod_token,
             args.moe_seed,
             device,
+            blend_file=args.moe_megatron_blend_file,
         )
     else:
         token_batches = _build_token_batches(

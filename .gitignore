@@ -232,3 +232,6 @@ slurm_jupiter.sh
 slurm_juwels.sh
 logs/
 output/
+
+# Built dashboard staging dir (separate git repo for GitHub Pages)
+_publish/

@@ -1,0 +1,150 @@
+# @package _global_
+#
+# Low-LR (lr0.0001) stable-only z-grid analysis, 0.8M-token eval budget
+# (--moe-num-batches 200). These two runs have ONLY a stable80BT trunk — no
+# decay branch — so there is no --moe-load-decay here; --load points at the
+# stable checkpoints and the saturation reference is the highest stable iter
+# (iter_0088000, latest=88000).
+#
+# Cells (both aux_loss, zloss0.004, lr0.0001, gbsz128, stable80BT):
+#   0: topk3+1shared
+#   1: topk4
+#
+# Separate output root (results/moe_analysis_lowlr_stable_800k) so it never
+# clashes with the stitched decay roots. Tokenizer/blend/account are identical
+# to the other z-grid configs.
+#
+# Submit (from the REPO ROOT):
+#   python scripts/run_autoexp.py --config-name=experiments/abhash/moe_metrics_lowlr_stable_800k --dry-run
+#   sbatch results/moe_analysis_lowlr_stable_800k/<out_name>/job.sbatch
+#
+defaults:
+  - /backend: 'null'
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: default
+  - /sweep: none
+  - _self_
+
+index: 0
+stage: ""
+
+metadata:
+  # Per-run sweep variables (overridden by the explicit sweep points below).
+  size_dir: 0.4B_ne_sparse_experts_32_topk_3
+  stable_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.0001_gbsz128_topk3_lbtaux_loss_zloss0.004_stable80BT
+  out_name: topk3_aux_z0.004_lr0.0001_stable80BT
+
+  # Constants.
+  exp_root: /leonardo_work/OELLM_prod2026/experiments/sparse_multilingual_scaling
+  tokenizer_model: /leonardo_work/OELLM_prod2026/users/shaldar0/tokenizers/openeurollm-tokenizer-256k
+  blend_file: scripts/moe/blends/multilingual_val_1TT_option4.sh
+  analysis_root: results/moe_analysis_lowlr_stable_800k
+
+  # Derived.
+  load_path: ${metadata.exp_root}/${metadata.size_dir}/training/${metadata.stable_tag}/checkpoints
+  out_dir: ${metadata.analysis_root}/${metadata.out_name}
+
+job:
+  base_output_dir: ${metadata.out_dir}
+  name: moe_lowlr_${metadata.out_name}
+
+# NullBackend runs base_command + extra_cli_args. Stable-only: no
+# --moe-load-decay, so extra_cli_args is empty.
+backend:
+  extra_cli_args: []
+  base_command:
+    - python
+    - scripts/moe/compute_moe_metrics.py
+    - --tensor-model-parallel-size
+    - "1"
+    - --pipeline-model-parallel-size
+    - "1"
+    - --load
+    - ${metadata.load_path}
+    - --use-checkpoint-args
+    - --ckpt-format
+    - torch_dist
+    - --tokenizer-type
+    - HuggingFaceTokenizer
+    - --tokenizer-model
+    - ${metadata.tokenizer_model}
+    - --no-bias-dropout-fusion
+    - --moe-data-type
+    - megatron_indexed
+    - --moe-megatron-blend-file
+    - ${metadata.blend_file}
+    - --moe-eod-token
+    - "2"
+    - --moe-batch-size
+    - "1"
+    - --moe-seq-length
+    - "4096"
+    # 200 * 1 * 4096 = 819,200 tokens (~0.8M) sampled from the val blend.
+    - --moe-num-batches
+    - "200"
+    - --moe-compare-ckpts-every
+    - "1000"
+    - --moe-output-json
+    - ${metadata.out_dir}/saturation.json
+    - --moe-coactivation-output
+    - ${metadata.out_dir}/coactivation.json
+    - --moe-token-count-output
+    - ${metadata.out_dir}/token_counts.json
+    - --moe-activation-norm-output
+    - ${metadata.out_dir}/expert_activation_norms.json
+    - --moe-routing-gif
+    - ${metadata.out_dir}/expert_routing.gif
+    - --moe-routing-gif-layers
+    - "first,mid,last"
+    - --moe-routing-gif-frame-ms
+    - "250"
+    - --moe-plot
+    - --moe-plot-dir
+    - ${metadata.out_dir}
+
+container:
+  image: /leonardo_work/OELLM_prod2026/container_images/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif
+  env:
+    WANDB_MODE: offline
+    MACHINE_NAME: LEONARDO
+    PYTHONPATH: "."
+    TMPDIR: ${oc.env:TMPDIR,/tmp}
+    HF_HOME: ${oc.env:HF_HOME,/tmp}
+    HF_HUB_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+
+slurm:
+  sbatch:
+    # AIAFC (AI Factory) grant — pinned so these jobs never bill OELLM_prod2026.
+    account: aifac_5c0_092
+    partition: boost_usr_prod
+    nodes: 1
+    ntasks_per_node: 1
+    gpus_per_node: 1
+    gres: "gpu:1"
+    cpus_per_task: 8
+    # 0.8M eval tokens — original budget.
+    time: "10:00:00"
+    job_name: null
+  srun:
+    cpus_per_task: 8
+  env:
+    SLURM_CPUS_PER_TASK: "8"
+    MASTER_PORT: "$((20000 + SLURM_JOB_ID % 10000))"
+
+# One job per lr0.0001 stable-only cell.
+#   Index map:
+#     0: topk3+1 aux zloss0.004  (size_dir ..._topk_3)
+#     1: topk4    aux zloss0.004  (size_dir ..._topk_4)
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        - metadata.size_dir: 0.4B_ne_sparse_experts_32_topk_3
+          metadata.stable_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.0001_gbsz128_topk3_lbtaux_loss_zloss0.004_stable80BT
+          metadata.out_name: topk3_aux_z0.004_lr0.0001_stable80BT
+        - metadata.size_dir: 0.4B_ne_sparse_experts_32_topk_4
+          metadata.stable_tag: qwen3_sparse_0.4B_ne_nexp32_lr0.0001_gbsz128_topk4_lbtaux_loss_zloss0.004_stable80BT
+          metadata.out_name: topk4_aux_z0.004_lr0.0001_stable80BT
