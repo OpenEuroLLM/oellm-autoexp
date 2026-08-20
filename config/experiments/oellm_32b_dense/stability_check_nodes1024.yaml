@@ -132,8 +132,8 @@ backend:
     # project1, where they are small and durable.
     # `load` follows `save` by interpolation in the model config, so overriding
     # save alone redirects the resume path too.
-    save: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints
-    non_persistent_global_ckpt_dir: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints_rolling
+    save: /e/scratch/e-sta-openeurollm/pre_production_training/${job.name}/checkpoints
+    non_persistent_global_ckpt_dir: /e/scratch/e-sta-openeurollm/pre_production_training/${job.name}/checkpoints_rolling
 
     # eval_interval stays at 10000 (> 8000) on purpose: lowering it would change
     # the valid-split num_samples and force an index rebuild. Train loss and

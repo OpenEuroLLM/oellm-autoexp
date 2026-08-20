@@ -49,7 +49,7 @@ defaults:
 
 job:
   name: oellm_32b_dense_resilience_check
-  base_output_dir: /e/scratch/e-sta-openeurollm/production_training/${job.name}
+  base_output_dir: /e/scratch/e-sta-openeurollm/pre_production_training/${job.name}
   # spelled out because /job: default templates these on the sweep ${index}
   log_path: ${.base_output_dir}/logs/slurm-%j.log
   log_path_current: ${.base_output_dir}/logs/current.log
@@ -160,7 +160,7 @@ slurm:
     # cold-starts, which tests the wrong thing. 600 s = ~6 min of training
     # = ~400 iterations = 2 rolling checkpoints at the interval set above.
     SABOTEUR_DELAY: "600"
-    SABOTEUR_CLAIM_DIR: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_resilience_check/saboteur
+    SABOTEUR_CLAIM_DIR: /e/scratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense_resilience_check/saboteur
     SABOTEUR_SKIP_NODE0: "1"
   sbatch:
     nodes: ${oc.addi:${backend.aux.active_nodes},${backend.aux.spare_nodes}}

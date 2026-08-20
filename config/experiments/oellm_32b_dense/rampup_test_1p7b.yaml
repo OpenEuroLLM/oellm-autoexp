@@ -103,8 +103,8 @@ backend:
     # === CHECKPOINTS ========================================================
     # Only crash insurance for a ~3 h run; keep them off the critical path and
     # out of the way of the 32B runs' directories.
-    save: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints
-    non_persistent_global_ckpt_dir: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints_rolling
+    save: /e/scratch/e-sta-openeurollm/pre_production_training/${job.name}/checkpoints
+    non_persistent_global_ckpt_dir: /e/scratch/e-sta-openeurollm/pre_production_training/${job.name}/checkpoints_rolling
     save_interval: 2000
     non_persistent_save_interval: 1000
 

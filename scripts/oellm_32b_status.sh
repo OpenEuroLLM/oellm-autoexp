@@ -2,7 +2,7 @@
 # Status snapshot for the oellm_32b_dense campaign: 1024-node speed test,
 # 1024-node 8k stability run, and the seven 16-node stability arms.
 # Run ON jupiter (needs squeue/sacct + the production_training tree).
-BASE=/e/project1/e-sta-openeurollm/production_training
+BASE=/e/project1/e-sta-openeurollm/pre_production_training
 STEPS_TARGET=${STEPS_TARGET:-8000}
 
 iters_of() {   # $1 = log path -> "iter/target"

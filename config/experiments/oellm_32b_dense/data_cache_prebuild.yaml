@@ -64,7 +64,7 @@ defaults:
 
 job:
   name: "oellm_32b_dense_data_cache_prebuild"
-  base_output_dir: /e/project1/e-sta-openeurollm/production_training/${job.name}
+  base_output_dir: /e/project1/e-sta-openeurollm/pre_production_training/${job.name}
   log_path: ${.base_output_dir}/logs/slurm-%j.log
   log_path_current: ${.base_output_dir}/logs/current.log
   config_path: ${.base_output_dir}/logs/config-%j.yaml

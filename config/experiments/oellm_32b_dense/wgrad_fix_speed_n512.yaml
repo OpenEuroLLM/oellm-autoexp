@@ -102,7 +102,7 @@ backend:
     # The path is a DEDICATED directory, not the production tree: even though it
     # will not be written, pointing a throwaway speed test at the flagship's
     # checkpoint dir is an unnecessary risk.
-    save: "/e/scratch/e-sta-openeurollm/production_training/wgradfix_n512_speedtest/checkpoints"
+    save: "/e/scratch/e-sta-openeurollm/pre_production_training/wgradfix_n512_speedtest/checkpoints"
     save_interval: 100000
     non_persistent_save_interval: 100000
     non_persistent_global_ckpt_dir: null

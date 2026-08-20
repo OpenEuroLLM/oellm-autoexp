@@ -37,4 +37,4 @@ lr_wsd_decay_iters: null
 # are content-hashed internally, so one directory serves the prebuild job and
 # every training variant. Keying it on the run name would make each variant
 # rebuild the 15 T train index from scratch.
-data_cache_path: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense/data_cache
+data_cache_path: /e/scratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense/data_cache

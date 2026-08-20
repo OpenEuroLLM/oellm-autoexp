@@ -10,7 +10,7 @@
 #
 # Exit reasons are printed as "EVENT: ...".
 set -u
-B=/e/project1/e-sta-openeurollm/production_training
+B=/e/project1/e-sta-openeurollm/pre_production_training
 SPEED_JOB=${SPEED_JOB:-}
 STAB_JOB=${STAB_JOB:-}
 POLL=${POLL:-300}

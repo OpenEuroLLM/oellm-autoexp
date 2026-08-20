@@ -65,4 +65,4 @@ backend:
     # is a genuine one-line switch.
     rdzv_backend: c10d
   megatron:
-    save: "/e/scratch/e-sta-openeurollm/production_training/abtest_n512_c10d/checkpoints"
+    save: "/e/scratch/e-sta-openeurollm/pre_production_training/abtest_n512_c10d/checkpoints"

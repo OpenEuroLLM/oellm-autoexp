@@ -48,7 +48,7 @@ backend:
     enable_ft_package: false
     calc_ft_timeouts: false
     exit_interval: 100
-    save: "/e/scratch/e-sta-openeurollm/production_training/abtest_n512_tr/checkpoints"
+    save: "/e/scratch/e-sta-openeurollm/pre_production_training/abtest_n512_tr/checkpoints"
     save_interval: 100000
     non_persistent_save_interval: 100000
     non_persistent_global_ckpt_dir: null

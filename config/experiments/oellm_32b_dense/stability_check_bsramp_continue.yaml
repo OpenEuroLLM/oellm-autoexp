@@ -145,11 +145,11 @@ sweep:
           # exactly, so point `load` straight at the rolling directory (its
           # latest_checkpointed_iteration.txt reads 6000) and switch the
           # non-persistent machinery off entirely so nothing competes with it.
-          backend.megatron.load: "/e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_rolling"
+          backend.megatron.load: "/e/scratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_rolling"
           backend.megatron.non_persistent_global_ckpt_dir: null
           backend.megatron.non_persistent_ckpt_type: null
           # WRITE to the separate reshard tree
-          backend.megatron.save: "/e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_reshard"
+          backend.megatron.save: "/e/scratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_reshard"
 
           # Resume at 6000, train 10 steps, save at 6010, exit at 6010.
           # (exit_interval fires on iteration % exit_interval == 0.)
@@ -212,9 +212,9 @@ sweep:
           backend.megatron.fp8_amax_compute_algo: max
 
           # Read AND write the reshard tree from here on
-          backend.megatron.load: "/e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_reshard"
-          backend.megatron.save: "/e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_reshard"
-          backend.megatron.non_persistent_global_ckpt_dir: "/e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_rolling_reshard"
+          backend.megatron.load: "/e/scratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_reshard"
+          backend.megatron.save: "/e/scratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_reshard"
+          backend.megatron.non_persistent_global_ckpt_dir: "/e/scratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_rolling_reshard"
 
           # resume at 6010, run to 8000
           backend.megatron.exit_interval: 8000
@@ -224,6 +224,6 @@ sweep:
           # Do not launch until the converted checkpoint is actually on disk.
           job.start_condition:
             class_name: FileExistsCondition
-            path: "/e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_reshard/latest_checkpointed_iteration.txt"
+            path: "/e/scratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense_sc-fp8-zloss1e-4-bsramp256_gbs4096_lr2e-4/checkpoints_reshard/latest_checkpointed_iteration.txt"
 
           slurm.sbatch.time: "06:00:00"

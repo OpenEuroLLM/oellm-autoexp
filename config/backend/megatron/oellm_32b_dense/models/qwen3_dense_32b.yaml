@@ -146,8 +146,8 @@ async_save: true
 use_persistent_ckpt_worker: true
 ckpt_assume_constant_structure: true
 save_interval: 32000
-save: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints
-non_persistent_global_ckpt_dir: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints_rolling
+save: /e/scratch/e-sta-openeurollm/pre_production_training/${job.name}/checkpoints
+non_persistent_global_ckpt_dir: /e/scratch/e-sta-openeurollm/pre_production_training/${job.name}/checkpoints_rolling
 load: ${.save}
 non_persistent_ckpt_type: "global"
 non_persistent_save_interval: 125

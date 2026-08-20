@@ -193,7 +193,7 @@ Recompute the steady-state medians from any run's log (this is exactly how the t
 produced — median over iterations 4..N):
 
 ```bash
-LOG=/e/project1/e-sta-openeurollm/production_training/<run>/logs/slurm-<jobid>.log
+LOG=/e/project1/e-sta-openeurollm/pre_production_training/<run>/logs/slurm-<jobid>.log
 sed 's/^\[[^]]*\]: *//' "$LOG" \
   | grep -oE 'elapsed time per iteration \(ms\): [0-9.]+|TFLOP/s/GPU\): [0-9.]+|Tok/s/GPU\): [0-9.]+|mem usages: [0-9.]+'
 ```

@@ -161,3 +161,5 @@ sweep:
           # backend.megatron.check_for_spiky_loss: true
           # backend.megatron.check_for_large_grads: true
           # backend.megatron.rerun_mode: "validate_results"
+
+        - backend.aux.warmup_steps: 6000

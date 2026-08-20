@@ -34,7 +34,7 @@ backend:
     output_z_loss_coeff: null     # <-- THE ONE CHANGE vs the 392.4 baseline
     wgrad_deferral_limit: 0
     exit_interval: 100
-    save: "/e/scratch/e-sta-openeurollm/production_training/abtest_n512/checkpoints"
+    save: "/e/scratch/e-sta-openeurollm/pre_production_training/abtest_n512/checkpoints"
     save_interval: 100000
     non_persistent_save_interval: 100000
     non_persistent_global_ckpt_dir: null

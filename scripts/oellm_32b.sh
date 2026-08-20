@@ -38,7 +38,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-: "${OELLM_MONITOR_STATE_DIR:=/e/project1/e-sta-openeurollm/production_training/_monitor_state}"
+: "${OELLM_MONITOR_STATE_DIR:=/e/project1/e-sta-openeurollm/pre_production_training/_monitor_state}"
 
 umask 002
 mkdir -p "$OELLM_MONITOR_STATE_DIR"
