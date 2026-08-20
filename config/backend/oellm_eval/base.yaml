@@ -1,0 +1,21 @@
+# @package backend
+
+# Default evaluation surface — override per experiment.
+models: []
+task_groups:
+  - open-sci-0.01
+tasks: null
+n_shot: null
+eval_csv_path: null
+
+# Runtime
+limit: null
+verbose: false
+download_only: false
+skip_checks: false
+trust_remote_code: true
+lm_eval_include_path: null
+slurm_template_var: null
+max_array_len: 128
+dry_run: false
+extra_cli_args: []

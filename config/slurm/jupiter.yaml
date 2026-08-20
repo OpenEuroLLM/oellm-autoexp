@@ -23,14 +23,16 @@ env:
   HF_ALLOW_CODE_EVAL: "1"
   HF_DATASETS_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
-  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep \"Address: \" | sed \"s/Address: //\" | tail) "
+  # default to 0 for non-array jobs (avoid the empty-string int('') in NVRx 0.6.0).
+  # NB: must avoid ${...} here — OmegaConf treats it as an interpolation; use $(...).
+  SLURM_ARRAY_TASK_ID: "$(test -n \"$SLURM_ARRAY_TASK_ID\" && echo \"$SLURM_ARRAY_TASK_ID\" || echo 0)"
+  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep \"Address: \" | sed \"s/Address: //\" | tail -n1 | tr -d '[:space:]')"
   MASTER_PORT: "20074"
   NUM_NODES: "$SLURM_JOB_NUM_NODES"
   GPUS_PER_NODE: "4"
   NUM_GPUS_PER_NODE: "4"
   NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
   ARCH: "$(uname -m)"
-  SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
   PYTHONUNBUFFERED: "1"
   PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
   PYTORCH_ALLOC_CONF: "expandable_segments:True"
@@ -43,7 +45,7 @@ env:
   NCCL_IB_DISABLE: "0"
   NCCL_IB_RETRY_CNT: "20"
   NCCL_IB_HCA: mlx5_0,mlx5_1,mlx5_2,mlx5_3
-  GLOO_SOCKET_IFNAME: ib0
+  # GLOO_SOCKET_IFNAME: ib0 # necessary on JUWELS to handle GLOO CPU communication related errors; on JUPITER, this is not required
   GLOO_SOCKET_FAMILY: AF_INET
   TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
   OMP_NUM_THREADS: "$SLURM_CPUS_PER_TASK"

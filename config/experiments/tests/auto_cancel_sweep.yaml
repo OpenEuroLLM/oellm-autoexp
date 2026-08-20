@@ -1,0 +1,98 @@
+# @package _global_
+
+# Test sweep for config/job/auto_cancel.yaml. Each sweep job runs the dummy
+# backend with a different bash command (echo + sleep) that emulates a training
+# outcome -- clean finish, restart-on-error, time-limit, silent stall (cancel),
+# and the srun-error spam that the monitor fails to cancel. Submit + monitor it
+# like any experiment and watch each job take the expected action.
+
+defaults:
+  - /backend: bash
+  - /container: none      # pure bash, no singularity wrapper
+  - /slurm: leonardo
+  - /job: auto_cancel
+  - /sweep: none
+  - _self_
+
+job:
+  name: "auto_cancel_test"   # overridden per sweep entry
+  base_output_dir: ${oc.env:OUTPUT_DIR,./output}/auto_cancel_tests/${job.name}
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+  chain_repeat: 1
+
+slurm:
+  # No container -> run the command directly under `srun bash -c`.
+  launcher_cmd: ""
+  sbatch:
+    nodes: 1
+    time: "00:08:00"
+
+  # make the sbatch script unique for every re-run
+  name: "job_${oc.timestring:}"
+
+sweep:
+  # One job per event in config/job/auto_cancel.yaml, each with a different
+  # `backend.command` (BashBackend). Commands run under `srun bash -c
+  # '<command>'`, so: NO single quotes (use double quotes) and NO `${...}`
+  # (OmegaConf would interpolate it). `command` is a string (not a list) so the
+  # sweep serializer quotes it and it round-trips through Hydra cleanly.
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # finished_training  ("[after training is done]" -> FinishAction)
+        - job.name: "auto_cancel__finish_training"
+          backend.command: |
+            echo "[dummy] training"
+            sleep 10
+            echo "[after training is done]"
+
+        # finish  (regex ".*validation loss.*on test set.*" -> FinishAction)
+        - job.name: "auto_cancel__finish_eval"
+          backend.command: |
+            echo "[dummy] training"
+            sleep 10
+            echo "validation loss at iteration 100 on test set: 2.345"
+
+        # error  ("Exited with exit code 1" -> CancelAction)
+        # NOTE: restarts every attempt by design (the command always errors);
+        # cancel the job once you have seen a couple of restarts.
+        - job.name: "auto_cancel__restart_on_error"
+          backend.command: |
+            echo "[dummy] training"
+            sleep 10
+            echo "Exited with exit code 1"
+
+        # time_limit  ("DUE TO TIME LIMIT" -> FinishAction)
+        - job.name: "auto_cancel__finish_on_time_limit"
+          backend.command: |
+            echo "[dummy] training"
+            sleep 10
+            echo "slurmstepd: error: *** JOB 12345 CANCELLED DUE TO TIME LIMIT ***"
+
+        # inactive  (>=5 silent polls AND >=300s -> CancelAction)
+        # A genuinely silent stall: the monitor should scancel it after ~5-6 min.
+        - job.name: "auto_cancel__cancel_on_silent_stall"
+          job.log_events.4.inactivity_timeout_s: 60
+          job.log_events.4.inactivity_polls: 1
+          backend.command: |
+            echo "[dummy] training started"
+            echo "[dummy] going silent now (no further output)"
+            sleep 300
+
+        # KNOWN GAP: an srun error followed by a stall that keeps emitting sporadic
+        # output. Every new line resets the inactivity streak, so CancelAction
+        # never fires and the job runs until the wall-clock TIME LIMIT. This is the
+        # baby_9b_dense incident -- expected to NOT be cancelled by inactivity.
+        - job.name: "auto_cancel__srun_spam_not_cancelled"
+          backend.command: |
+            echo "[dummy] training"
+            echo "srun: error: nid001234: task 13: Exited with exit code 137"
+            for i in $(seq 1 120); do
+              echo "srun: error: communication retry $i (no training progress)"
+              sleep 30
+            done

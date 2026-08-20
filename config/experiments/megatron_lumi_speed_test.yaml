@@ -19,9 +19,5 @@ backend:
     save: null
     load: null
 
-slurm:
-  env:
-    HF_HOME: /scratch/project_462000963/user/korbi/huggingface
-
 job:
   name: megatron_lumi_speed_test

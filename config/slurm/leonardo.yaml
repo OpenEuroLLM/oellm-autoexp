@@ -23,7 +23,8 @@ env:
   HF_ALLOW_CODE_EVAL: "1"
   HF_DATASETS_OFFLINE: "1"
   TRANSFORMERS_OFFLINE: "1"
-  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep \"Address: \" | sed \"s/Address: //\" | tail) "
+  SLURM_ARRAY_TASK_ID: "$(test -n \"$SLURM_ARRAY_TASK_ID\" && echo \"$SLURM_ARRAY_TASK_ID\" || echo 0)"
+  MASTER_ADDR: "$(nslookup $(scontrol show hostnames \"$SLURM_JOB_NODELIST\" | head -n 1) | grep \"Address: \" | sed \"s/Address: //\" | tail -n1 | tr -d '[:space:]')"
   MASTER_PORT: "20074"
   NUM_NODES: "$SLURM_JOB_NUM_NODES"
   GPUS_PER_NODE: "4"
@@ -31,10 +32,14 @@ env:
   NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
   ARCH: "$(uname -m)"
   SLURM_CPUS_PER_TASK: "32"
-  SLURM_ARRAY_TASK_ID: "$SLURM_ARRAY_TASK_ID"
   NCCL_IB_TIMEOUT: "120"
   TRITON_LIBCUDA_PATH: "/usr/local/cuda/lib64/stubs"
-  OMP_NUM_THREADS: "1"
+  OMP_NUM_THREADS: "16"
+  CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+  CUDA_VISIBLE_DEVICES: "0,1,2,3"
+  TORCHDYNAMO_DISABLE: "1"
+  UB_SKIPMC: "1"
 sbatch:
   nodes: 1
   ntasks_per_node: 1
@@ -42,5 +47,7 @@ sbatch:
   gpus_per_node: 4
   cpus_per_task: 32
   gres: "gpu:4"
+  account: ${oc.env:SLURM_ACCOUNT, OELLM_prod2026}
+  partition: ${oc.env:SLURM_PARTITION, boost_usr_prod}
   time: "24:00:00"
   qos: ${oc.env:SLURM_QOS,null}

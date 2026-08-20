@@ -28,10 +28,12 @@ class SbatchConfig(NonStrictDataclass):
     """Configuration for sbatch options."""
 
     account: str | None = None
+    job_name: str | None = None
     nodes: int | None = None
     partition: str | None = None
     qos: str | None = None
     time: str = "0-01:00:00"
+    dependency: str | None = None
 
 
 @dataclass(kw_only=True)
@@ -70,7 +72,9 @@ class SlurmConfig(ConfigInterface):
     command: list[str] = field(default_factory=list)
     srun: SrunConfig = field(default_factory=SrunConfig)
     sbatch: SbatchConfig = field(default_factory=SbatchConfig)
-    sbatch_extra_directives: list[str] = field(default_factory=list)
+    sbatch_extra_directives: list[str] = field(
+        default_factory=list
+    )  # deprecated, just add to sbatch
     test_only: bool = False
 
     def __post_init__(self):
@@ -96,6 +100,9 @@ class SlurmClientInterface(Protocol):  # pragma: no cover - protocol definitions
         ...
 
     def squeue(self) -> dict[str, str]:  # pragma: no cover
+        ...
+
+    def update_excludes(self, job_id: str, nodelist: str) -> None:  # pragma: no cover
         ...
 
     def get_job(self, job_id: str):  # pragma: no cover

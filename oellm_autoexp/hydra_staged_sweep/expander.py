@@ -31,7 +31,7 @@ def expand_sweep(config: SweepConfig) -> list[SweepPoint]:
 
     Supports composable groups format.
     """
-    if config is None:
+    if config is None or isinstance(config, dict):
         points = [SweepPoint(index=0, parameters=[])]
         return points
     LOGGER.debug("Starting sweep expansion")

@@ -1,0 +1,15 @@
+# @package _global_
+
+postprocess:
+  convert_hf:
+    class_name: MegatronToHFStep
+    architecture: qwen3
+    torch_ckpt_dir: ${job.base_output_dir}/torch/${oc.pad_iter:${backend.megatron.ckpt_step}}
+    hf_output_dir: ${job.base_output_dir}/hf/${oc.pad_iter:${backend.megatron.ckpt_step}}
+    target_tensor_parallel_size: 1
+    target_pipeline_parallel_size: 1
+    target_params_dtype: bf16
+    num_key_value_heads: ${backend.megatron.num_query_groups}
+    model_type: qwen3
+    architecture_class: Qwen3ForCausalLM
+    tokenizer_name: /e/data1/datasets/playground/mmlaion/shared/oellm_shared_evals/models/Qwen/Qwen3-1.7B-Base

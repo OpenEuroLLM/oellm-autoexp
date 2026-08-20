@@ -233,5 +233,10 @@ slurm_juwels.sh
 logs/
 output/
 
+dump/
+*.distcp
+outputs/megatron_marenostrum_speed_test/*
+outputs/data_cache/*
+
 # Built dashboard staging dir (separate git repo for GitHub Pages)
 _publish/

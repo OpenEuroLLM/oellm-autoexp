@@ -4,10 +4,13 @@ Single CLI surface for planning sweeps, launching jobs (directly or by way of co
 
 ## Your own experiments
 
-For you own experiments, first create your own branch `exp_YOURNAME`. Add a folder `config/experiments/YOURNAME`. Then, within that folder you can add your own experiment composition files (see the existing ones), with `# @package _global_` as header to ensure it's located at the top-level of the config. You can then run your experiment with:
+For you own experiments, first create your own branch `exp_YOURNAME`. Add a folder `config/experiments/YOURNAME`. Within that folder you can add your own experiment composition files (see the existing ones), with `# @package _global_` as header to ensure it's located at the top-level of the config. You can then run your experiment with:
 ```bash
-PYTHONPATH=. python scripts/run_autoexp_container.py --config-ref experiments/YOURNAME/myexperiment
+PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/YOURNAME/myexperiment
 ```
+
+### Your experiment time / budget
+Note that run_autoexp.py will now give GPU-h estimates (for the whole submission) and ask for confirmation if a certain limit is exceeded. You can use the omegaconf resolver "slurm.sbatch.time=${oc.slurmtime:TIME_IN_SECONDS}" to convert your estimated time (including buffer) in seconds to actual slurm time limits - so you can now calculate the slurm time easily from the actual requirement during setup rather than always assuming a very high number. Without restarts the precalculated time should always be greater or equal your actual budget needed.
 
 
 ## Using this repository
@@ -18,6 +21,8 @@ git clone https://github.com/OpenEuroLLM/oellm-autoexp.git --recurse-submodules
 Then, install it to have the basic requirements installed:
 ```bash
 pip install -e .
+# or by way of uv
+uv sync
 ```
 
 ### Environment variables
@@ -33,18 +38,25 @@ The environment variables used in the `config/` here are:
 - $CONTAINER_CACHE_DIR  : directory containing container images
 
 
+## Bring you own container
+
+If you have your own container, just use the cli override: `container.image=PATH_TO_YOUR_CONTAINER` or define it in your experiment yaml.
+
 ## Cluster setup: LUMI notes
-- Install prerequisites outside the container (rccl-tuner, cray-python, etc.) following the LUMI docs. (SEE: https://github.com/sfantao/rccl-tuner.git)
-- Build the Megatron container from the provided defs (see `container/megatron/MegatronTrainingLumi.def.in`) so the correct ROCm + network tuning ends up inside the image.
-- Export the usual SLURM/paths (at a minimum `SLURM_ACCOUNT`, `SLURM_PARTITION[_DEBUG]`, `CONTAINER_CACHE_DIR`, `OUTPUT_DIR`) in your profile—scripts read them automatically.
-### Quickstart using pre-configured enviroment and default values,
+- HF_HOME should be set to the shared one in the project scratch.
+- Containers lie in /scratch/project_465002530/containers/ and the image meant for autoExp is AutoExp_*.sif
 
+### UV environment and sanity check
+```
     git clone https://github.com/OpenEuroLLM/oellm-autoexp.git --recurse-submodules
-    # using uv
+    # Install uv
     curl -LsSf https://astral.sh/uv/install.sh | sh
-    # uv creates a python virtual environment matching pyproject.toml-file on the fly. inode-count for env ~2k.
-    SLURM_ACCOUNT=project_462000963 SLURM_PARTITION=dev-g uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/megatron_lumi_speed_test.yaml
-
+    # Make sure the uv binary is in $PATH
+    uv sync
+    # uv creates a python virtual environment matching to .venv by default based on pyproject.toml-file. Inode-count for the env ~2k.
+    # Use the speed test config to confirm everything's working. The job should finish in ~5 mins and have throughput of around 70 tflops and 5.8k TKS/GCD/S
+    SLURM_ACCOUNT=project_465002530 SLURM_PARTITION=dev-g uv run python scripts/run_autoexp.py --config-name experiments/megatron_lumi_speed_test
+```
 
 ## Cluster setup: MARENOSTRUM notes
 You need to install oellm-autoexp or its requirements in a conda environment to run it on MARENOSTRUM. To do this:
@@ -60,7 +72,7 @@ You need to install oellm-autoexp or its requirements in a conda environment to 
 ## Cluster setup: LEONARDO notes
 For LEONARDO, all should work with a pre-built container image. To build a container image on LEONARDO, please run these commands:
 - Download the pytorch base image from nvcr.io: `singularity build --sandbox --fix-perms --force $CONTAINER_CACHE_DIR/pytorch__25.10-py3_sandbox docker://nvcr.io/nvidia/pytorch:25.10-py3`
-- Build the user-base container (in `container`), but from a compute node: `python build_container_user.py --backend megatron --definition MegatronTrainingNoRoot --append-date --container-cmd singularity --base-image $CONTAINER_CACHE_DIR/pytorch__25.10-py3_sandbox`
+- Build the user-base container (in `container`), but from a compute node (default partition): `python build_container_user.py --backend megatron --definition MegatronTrainingNoRoot --append-date --container-cmd singularity --base-image $CONTAINER_CACHE_DIR/pytorch__25.10-py3_sandbox`
 Otherwise, on the login node you run out of resources and get killed.
 Make sure also to have datasets and tokenizers downloaded before starting a job, as there is no web connection on the compute nodes.
 
@@ -81,31 +93,88 @@ python container/build_container_user.py \
 
 
 ## Supercomputer setup: JUWELS Booster / JUPITER
-To be tested.
-See also the predecessors https://github.com/SLAMPAI/megatron-autoexp ([Notes](https://iffmd.fz-juelich.de/yAbNVj9eQz647elSwlyHXQ)) and https://github.com/SLAMPAI/autoexperiment for hints.
-Testing for JUPITER: see the [JUPITER Notes](https://iffmd.fz-juelich.de/BoygWCOZRciXluqqcDQ1oQ)
-Tokenization (tested at JSC, is generic): https://github.com/marianna13/megatron-lm-parallel-data
-Containers:
-- JUPITER `/p/data1/mmlaion/shared/containers/pytorch_24.09-py3_arm_transformers_latest.sif`
-- JUWELS/JURECA `/p/data1/mmlaion/shared/containers/pytorch_24.09-py3.sif ; pytorch_25.03-py3.sif`
-- inspect container:
-```bash
-CONTAINER_IMAGE="image"
-apptainer shell ${CONTAINER_IMAGE}
-```
-
+Tested, please use the `container/build_container.sh` script with the latest/matching Megatron definition file.
 
 ## Quick Recipes
 
 ### Single job / Sweep debugging
 ```bash
-# Plan + submit + monitor in one go (manifest written to outputs/manifests/)
+# Plan + submit + monitor in one go (manifest written to outputs/manifests/, use `--help` for options, for example no submission)
 python scripts/run_autoexp.py --config-name experiments/default
 
-# Prefer explicit plan/submit?
-python scripts/render_config.py  --config-name experiments/default
-python scripts/submit_autoexp.py  --config-name experiments/default
 ```
+
+### Training → conversion → evaluation chain (Megatron-Bridge + oellm-evals)
+
+A reference chain that trains in Megatron-LM, converts the
+torch_dist checkpoint to HuggingFace by way of Megatron-Bridge, and runs
+lm-eval-harness through `oellm-eval schedule` lives under
+`config/experiments/korbi/chain_qwen3_bridge_train_eval_<cluster>.yaml`
+for jupiter, juwels, leonardo, and lumi.
+
+The two new backends are:
+
+- **`megatron_bridge`** — `MegatronBridgeBackend`. Runs
+  `python -m oellm_autoexp.backends.megatron_bridge.run_export …`
+  inside the training container; reuses the SIF, no separate bridge
+  image is needed thanks to runtime shims in `run_export.py`
+  (`nvidia_resiliency_ext.__version__`,
+  `_clean_metadata_for_serialization`, a `LayerWiseDistributedOptimizer`
+  placeholder) plus the `container/megatron/patch_bridge_lazy_imports.py`
+  source patch applied once per checkout.
+- **`oellm_eval`** — `OELLMEvalBackend`. Wraps `oellm-eval schedule
+  --local true …` so the eval runs inside the SLURM job allocated by
+  oellm-autoexp (no extra sbatch from oellm-evals). Reads task definitions
+  from `submodules/oellm_evals/oellm/resources/task-groups.yaml`.
+
+Once per checkout, on a login node with internet, run the installer:
+
+```bash
+# Auto-detects the cluster from hostname; pass --cluster NAME to override.
+# Adds --prefetch to also pre-cache the eval datasets into HF_HOME.
+bash scripts/install_eval_env.sh --prefetch
+```
+
+That single script:
+
+- builds the right Python environment for the cluster — `uv venv` on
+  juwels/jupiter, `pip install --user` inside the eval container on
+  leonardo, `pip install --target` inside the rocm container on lumi
+- installs `oellm-evals` with the `[eval]` / `[eval-base]` extras from
+  `submodules/oellm_evals/pyproject.toml` (single source of truth for the
+  lm-eval dep set), plus `oellm-autoexp` and the `compoconf==0.1.14` pin
+- applies `container/megatron/patch_bridge_lazy_imports.py` so
+  `from megatron.bridge import AutoBridge` is tolerant of missing model
+  bridges
+- pulls the Qwen3-0.6B tokenizer's heavy files into
+  `oellm_autoexp/postprocess/resources/megatron_bridge/`
+- with `--prefetch`, calls `scripts/prefetch_datasets.py` inside the
+  matching env so HF datasets land in the cache layout the eval stage
+  will actually read from
+
+Set `HF_HOME` to the cluster-appropriate location before running with
+`--prefetch` — on Leonardo this is the dotted `.cache/huggingface` dir
+(because oellm-evals's eval script hardcodes
+`HF_DATASETS_CACHE=$HF_HOME/datasets` and Leonardo's `lm_eval` reads from
+that legacy layout); see
+[`docs/bridge_eval_setup.md`](docs/bridge_eval_setup.md) for the per-cluster
+values.
+
+Then submit a chain experiment as usual:
+
+```bash
+PYTHONPATH=. python scripts/run_autoexp.py \
+    --config-name experiments/korbi/chain_qwen3_bridge_train_eval_<cluster>
+```
+
+The orchestrator submits train, waits for `latest_checkpointed_iteration.txt`
+under the train output, submits convert, then submits eval once the HF
+`model.safetensors` appears. Each stage's logs land under
+`$OUTPUT_DIR/chain_qwen3_bridge_train_eval_<cluster>_{0,1,2}/`; per-task
+eval results are written to `…_2/eval/<timestamp>/results/<hash>_<ts>.json`.
+
+Per-cluster env / venv / container prerequisites for both backends are in
+[`docs/bridge_eval_setup.md`](docs/bridge_eval_setup.md).
 
 ### Monitoring sessions
 - Every submission drops `<monitoring_state_dir>/<session_id>/<job_id>.json`. Resuming is symmetric:
@@ -134,7 +203,7 @@ sweep:
       backend.megatron.global_batch_size: [64, 128, 256]
 ```
 
-This creates 9 jobs (3 × 3 grid) with all combinations of learning rates and batch sizes. Within sweep always escape omegaconf interpolations as `\\${...}`, as otherwise the value from outside the sweep will be taken (but this way you can reference those).
+This creates 9 jobs (3 × 3 grid) with all combinations of learning rates and batch sizes. Within sweep always escape omegaconf interpolations as `\\${...}`, as otherwise the value from outside the sweep will be taken (but this way you can reference those values also if needed).
 
 ### Composable Sweeps (Groups Format)
 
@@ -261,14 +330,14 @@ Before running, visualize the execution plan:
 
 ```bash
 # Visualize the multi-stage DAG structure
-python scripts/visualize_plan.py --config-ref experiments/my_experiment
+python scripts/visualize_plan.py --config-name experiments/my_experiment
 
 # Limit jobs shown per stage
-python scripts/visualize_plan.py --config-ref experiments/my_experiment \
+python scripts/visualize_plan.py --config-name experiments/my_experiment \
     --max-jobs-per-stage 5
 
 # With Hydra overrides
-python scripts/visualize_plan.py --config-ref experiments/my_experiment \
+python scripts/visualize_plan.py --config-name experiments/my_experiment \
     backend.megatron.lr=1e-4
 ```
 
