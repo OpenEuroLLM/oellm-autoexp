@@ -49,7 +49,7 @@ backend:
   # ===========================================================================
   aux:
     active_nodes: 512   # nodes actually training -> world = 2048 GPUs, DP = 2048/(TP*PP*CP)
-    # spare_nodes: 2      # idle standbys held inside the same allocation - ignore as without ftlauncher
+    spare_nodes: 0      # idle standbys held inside the same allocation - ignore as without ftlauncher
     # --- run identity (feeds job.name) ---------------------------------------
     variant: "prod"     # ablation tag; override per variant config
     lr_tag: "2e-4"      # human-readable form of megatron.lr, for the run name
