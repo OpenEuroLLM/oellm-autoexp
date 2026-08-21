@@ -1,0 +1,460 @@
+# @package _global_
+
+# 32B dense Qwen3-like model training
+
+defaults:
+  # ft_launcher instead of torchrun: overprovision the allocation and keep a
+  # couple of idle HOT SPARES inside it, so a permanent node failure is absorbed
+  # by promoting a spare (job-level restart *inside the same allocation*)
+  # instead of the job dying and going back into the 512-node queue.
+  - /backend: megatron_torchdist_localaddr
+  - /container: jupiter
+  - /slurm: jupiter_autoexclude
+  - /job: auto_restart_ckptreset
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/oellm_32b_dense/models: qwen3_dense_32b
+  - /backend/megatron/oellm_32b_dense/data: oellm_256k_15TT_jupiter_train
+  # sample-based schedule + the shared data_cache_path. Shared with the cache
+  # prebuild job so both produce/consume the SAME dataset index.
+  - /backend/megatron/oellm_32b_dense/schedule: prod_15TT
+  - _self_
+
+job:
+  # Run identity. Every variant gets its OWN name -> own base_output_dir -> own
+  # checkpoints/wandb/tensorboard, so a warmup/rampup sweep can never resume from
+  # a sibling's checkpoint. Tag pieces come from backend.aux (see below).
+  name: "oellm_32b_dense_${backend.aux.variant}_gbs${backend.megatron.global_batch_size}_lr${backend.aux.lr_tag}"
+  base_output_dir: /e/project1/e-sta-openeurollm/pre_production_training/${job.name}
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+  # production: chain 3 x 12 h. The early ablation configs override this to 1.
+  chain_repeat: 3
+
+backend:
+  # ===========================================================================
+  # FIXED-WORLD HOT SPARE ("allocate 514, train on 512")
+  # ---------------------------------------------------------------------------
+  # World size stays 512*4 = 2048 across a spare promotion, so TP*PP*CP*DP and
+  # the global batch size never change (mandatory: an elastic reshard would
+  # silently change GBS mid-run).
+  #   * nnodes = ACTIVE:ACTIVE  -> MAX caps the active count; the extra allocated
+  #     nodes park as spares. NB "N:M" with M>N is ELASTIC (runs M), not reserve.
+  #   * ft_restart_policy=min-healthy -> reserve mode (promote a spare on failure).
+  #   * a promotion is a JOB-LEVEL restart -> training resumes from the last
+  #     checkpoint, so `save_interval` bounds the work lost per node failure.
+  # PREREQUISITES (see notes at the bottom of this file) — verify before scaling.
+  # ===========================================================================
+  aux:
+    active_nodes: 512   # nodes actually training -> world = 2048 GPUs, DP = 2048/(TP*PP*CP)
+    # spare_nodes: 2      # idle standbys held inside the same allocation - ignore as without ftlauncher
+    # --- run identity (feeds job.name) ---------------------------------------
+    variant: "prod"     # ablation tag; override per variant config
+    lr_tag: "2e-4"      # human-readable form of megatron.lr, for the run name
+    warmup_steps: 8000
+    # --- FT rank-monitor section timeouts, seconds ---------------------------
+    # Widened from the backend defaults (600/180/420/300) for 2056 ranks. These
+    # are HANG DETECTORS, not deadlines: exceeding one makes the monitor declare
+    # the rank dead and restart the group, so at this scale a too-tight value
+    # turns a slow-but-healthy phase into a restart loop. Cost of being generous
+    # is only a slower reaction to a real hang.
+    #   setup         : container start + rendezvous + model/optimizer init +
+    #                   mmapping the 15 T blend index across 2056 ranks
+    #   step          : one iteration (expect ~4 s; 900 s tolerates a 200x stall)
+    #   checkpointing : a ~450 GB torch_dist write to shared scratch
+    # Replace with measured values once the speed test reports real numbers;
+    # --calc-ft-timeouts then refines and persists them after a good run.
+    # - ft_timeout_setup: 3600  # no ftlauncher
+    # - ft_timeout_step: 900
+    # - ft_timeout_checkpointing: 1800
+    # - ft_timeout_out_of_section: 900
+
+  torchrun_args:
+    # nnodes = ACTIVE : ACTIVE+SPARES  (i.e. "512:514", NOT "512:512").
+    # In the barrier rendezvous MIN is the training world size and MAX is
+    # "active + standby" (ft_rendezvous_barrier.py:1406): a node assigned a rank
+    # < min_nodes starts workers, one assigned >= min_nodes parks as standby.
+    # MAX == MIN caps ARRIVALS at 512, so the 2 surplus allocated nodes are
+    # rejected and the whole rendezvous closes:
+    #   "Maximum number of nodes (2) exceeded. Active participant count would be
+    #    3" -> RendezvousClosedError -> every agent exits 1.
+    # That is what killed job 1354729. NB this is INVERTED versus the legacy
+    # rendezvous the Leonardo configs use, where MIN:MAX with MAX>MIN meant
+    # ELASTIC (run MAX active) — do not carry that intuition over.
+    nnodes: "${backend.aux.active_nodes}:${oc.addi:${backend.aux.active_nodes},${backend.aux.spare_nodes}}"
+    max_restarts: "50"   # each spare promotion consumes one restart
+
+  megatron:
+    # === BOTH OFF BECAUSE THIS CONFIG NO LONGER LAUNCHES UNDER ft_launcher ====
+    # These two are the ft_launcher rank monitor (heartbeat + hang detection in
+    # seconds, rather than waiting for the NCCL watchdog). They are not merely
+    # useless under torchrun — they are FATAL. `--enable-ft-package` makes every
+    # rank call ft_integration.setup() -> RankMonitorClient.init_workload_
+    # monitoring(), which requires FT_RANK_MONITOR_IPC_SOCKET, and ONLY
+    # ft_launcher sets that variable. Under `python -m torch.distributed.run`
+    # every rank dies in setup with
+    #     RankMonitorClientError: FT_RANK_MONITOR_IPC_SOCKET env variable
+    #     should be set in a process that is running RankMonitorClient
+    # and the job then collapses into ncclRemoteError / "Connection refused" as
+    # the surviving ranks fail to reach the dead ones — which is the symptom you
+    # actually see in the log, three screens below the real cause.
+    #
+    # MEASURED 2026-08-21: this killed job 1436657 (512 nodes, 2049 rank
+    # failures) and its 4-node reproduction 1436792, both in under 4 minutes.
+    # The defaults list above switched to /backend: megatron_torchdist_localaddr
+    # and dropped spare_nodes, but these two stayed true.
+    #
+    # THE RULE, already stated in every other torchrun config in this family
+    # (zloss_on_torchrun_n512.yaml:24, speed_ablation_n512.yaml:28,
+    # speed_test.yaml:65, container_smoke_1node.yaml:83): ft_launcher and these
+    # flags travel together. Flip them back to true IF AND ONLY IF the defaults
+    # list goes back to /backend: megatron_ftlauncher_localaddr — at which point
+    # spare_nodes and the ft_timeout_* block have to come back too.
+    enable_ft_package: false
+    calc_ft_timeouts: false
+    # Irrelevant while the FT package is off (it selects job-level vs in-process
+    # restart WITHIN the FT package), kept false so re-enabling ft_launcher
+    # restores the previous behaviour rather than silently changing it.
+    inprocess_restart: false
+
+    wandb_project: oellm_32b_dense
+    wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
+    # data_cache_path is set by the /backend/megatron/oellm_32b_dense/schedule
+    # group — deliberately NOT per-run, see that file.
+
+
+    # EXIT safely on signal
+    exit_signal_handler: true
+    # JUPITER wall limit is 12 h -> save + exit at 11.5 h, leaving 30 min for the
+    # final torch_dist write and teardown.
+    exit_duration_in_mins: 690
+
+    # run setup. GBS / train_samples / warmup / wsd tail come from the schedule
+    # config group (see defaults above).
+    #
+    # mbs=2, not 1: measured +4.4% at PP=2 and +2.8% at PP=4, at production-
+    # equivalent per-GPU work (8-node probes, 8192 tok/GPU/iter). Larger
+    # microbatches beat more of them — at fixed GBS, going 1->2 HALVES the
+    # microbatch count per DP rank and still wins. mbs=4 is not an option: it
+    # OOMs at both PP=2 and PP=4 (95 GiB card, died with 160 MiB left to
+    # allocate), so 2 is the ceiling.
+    micro_batch_size: 2
+
+    # Manual garbage collection
+    manual_gc_interval: 50  # 50 is megatron's default if manual_gc = true
+    manual_gc: true
+
+    # DATA
+    dataloader_type: single
+    padded_vocab_size: 262144
+
+    # PP=4 (VPP=2 — the 8-stage layout below divides by PP). Best measured
+    # config at the fixed GBS=4096: 350.3 TFLOP/s/GPU vs 333.7 for PP=2/mbs=1
+    # and 348.4 for PP=2/mbs=2, at the SAME 51% allocated memory. PP=8 is much
+    # worse (302.6) — pipeline overhead outweighs the extra amortization.
+    # Side benefit: DP drops 256 -> 128 at 512 nodes, which halves the GBS
+    # rampup floor (mbs*DP) from 256 to 128 for the warmup_rampup ablation.
+    # NB PP=4 is less exercised than PP=2 (the throughput reference, the
+    # resilience test and the 411 TFLOPS run all used PP=2). To fall back:
+    #   -o backend.megatron.pipeline_model_parallel_size=2
+    # which keeps 2.2 of the 2.5 days saved with no new parallelism shape.
+    pipeline_model_parallel_size: 4
+    pipeline_model_parallel_layout: "Et\\*9\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*7L"
+    tensor_model_parallel_size: 4
+    sequence_parallel: true
+
+    use_distributed_optimizer: true
+    num_distributed_optimizer_instances: 1  #!
+
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    tp_comm_overlap: true
+
+    # additional #!
+    defer_embedding_wgrad_compute: true
+    # overlap_param_gather_with_optimizer_step: true # not supported dist ckpt
+    cuda_graph_impl: "local"
+
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: te
+
+    # async checkpointing
+    async_save: true
+    use_persistent_ckpt_worker: true
+    ckpt_assume_constant_structure: true
+
+    # === NO EMERGENCY CHECKPOINT ON A DETECTED FAILURE =======================
+    # Default is `validate_results`, which on a rejected result (NaN/Inf/large
+    # grads) sets checkpoint_requested, SAVES, and exits, so the job restarts and
+    # re-runs the step on a different GPU to tell SDC from a real fault.
+    # That save is unsafe here: it is an ASYNC save taken at the moment of
+    # divergence, and it races the shutdown. When the job is then cancelled or
+    # restarted mid-write you get a truncated checkpoint — that is where
+    # iter_0001025 (only common.pt, 48 KB) came from, and the shard-short
+    # iter_0003000. The checkpoint is also worth little even when it completes:
+    # it captures the state that just produced a NaN.
+    #
+    # `disabled` DOES NOT lose the NaN guard. rerun_state_machine.py:~490 keeps
+    # validating and raises RuntimeError instead ("If reruns are disabled, still
+    # validate the result and throw a RuntimeError if it is rejected"), naming
+    # rank/node/device/iteration. So divergence still stops the job loudly and
+    # immediately, it just does not write a checkpoint on the way down.
+    #
+    # WHAT IS GIVEN UP: the SDC protocol (rerun in place, then on another GPU).
+    # Justified by the measurements — of 17 distinct validation events across the
+    # recent 512-node runs, 15 were NaN/Inf, i.e. genuine numerical divergence
+    # where re-running on different hardware proves nothing. Revisit if silent
+    # corruption is ever actually suspected.
+    rerun_mode: disabled
+
+    # updates from the stability + speed tests
+    non_persistent_save_interval: 125
+    save_interval: 4000
+    global_batch_size: 4096
+    lr_warmup_samples: ${oc.muli:${backend.aux.warmup_steps},${backend.megatron.global_batch_size}}
+
+    save: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints
+    non_persistent_global_ckpt_dir: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints_rolling
+
+    grad_reduce_in_bf16: false               # baseline = fp32 grad accumulation
+    ddp_reduce_scatter_with_fp32_accumulation: false
+    output_z_loss_coeff: 1e-4
+    fp8: hybrid
+    cuda_graph_scope: full
+    fp8_recipe: delayed
+    fp8_param_gather: false
+    first_last_layers_bf16: false
+    fp8_amax_history_len: 1024
+    fp8_amax_compute_algo: max
+    # rampup_batch_size: ["1024", "1024", "8192000"]   # TBD
+
+    lr: 3e-4
+
+
+  env:
+    # the ft rank monitor needs NCCL errors surfaced by the c10d watchdog fast,
+    # instead of hanging until the collective times out
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+    # silence the c10d waitForInput timeout spam during a restart
+    TORCH_CPP_LOG_LEVEL: "error"
+    # NVRx SIDECAR — uncomment if `nemo_26.04.sif` does not already ship
+    # nvidia-resiliency-ext >= 0.6.0 *with* `use_infra_group_rank=False`:
+    #   SIDE=/e/scratch/e-sta-openeurollm/nvrx06/site
+    #   apptainer exec <sif> bash -c "PIP_USER=0 python -m pip install \
+    #     --no-cache-dir --no-deps --target=$SIDE 'nvidia-resiliency-ext==0.6.0'"
+    #   # then patch use_infra_group_rank -> False in the sidecar copy
+    # backend.env is the LAST `--env PYTHONPATH=` apptainer sees, so it wins.
+    # PYTHONPATH: "${oc.env:NVRX_SIDECAR,/e/scratch/e-sta-openeurollm/nvrx06/site}:.:submodules/Megatron-LM"
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/nemo_26.04.sif
+  # MUST be pinned alongside the image override. config/container/jupiter.yaml
+  # defaults this to /usr/bin/python, which was correct for the OLD
+  # MegatronTraining-JUPITER image it still names — but in nemo_26.04.sif the
+  # real environment is /opt/venv:
+  #     /usr/bin/python       -> no wandb
+  #     /opt/venv/bin/python  -> wandb 0.26.0, torch 2.11.0a0+nv26.02, TE
+  #
+  # This was DORMANT until fault tolerance was dropped. ft_launcher is a console
+  # script whose shebang points at the venv interpreter, so it bypassed
+  # container.python entirely; switching to `python -m torch.distributed.run`
+  # made the field live for the first time and it pointed at the wrong
+  # interpreter. Symptom (jobs 1436257/1436291/1436325, all 0 iterations):
+  #     global_vars.py:194 _set_wandb_writer -> import wandb
+  #     ModuleNotFoundError: No module named 'wandb'
+  # on the LAST rank only (the import is gated on rank == world_size-1), after
+  # which every other rank reports the downstream
+  #     ncclRemoteError: ... remote process exiting prematurely
+  # which is noise, not the cause.
+  #
+  # Scoped HERE and not in config/container/jupiter.yaml on purpose: 39 configs
+  # inherit that file and some still use the old image, which has no /opt/venv.
+  python: /opt/venv/bin/python
+
+slurm:
+  env:
+    HF_HOME: /e/scratch/e-sta-openeurollm/hf_cache/${oc.env:USER}
+
+    # === ADOPTED FROM THE KNOWN-GOOD 32B THROUGHPUT REFERENCE =================
+    # branch jupiter_qwen32B_throughput,
+    # config/experiments/ville/qwen3_32b_jupiter_baseline.yaml — ~413 TFLOPS at
+    # 16 nodes on THIS container (nemo_26.04.sif) with the same TP=4 / PP=2 /
+    # VPP=4 shape. Everything that differed between that config and this one was
+    # environment, not model or parallelism.
+    #
+    # NB that reference does NOT set NCCL_NET_GDR_LEVEL (so GDR is ON there and
+    # fine) and it runs tp_comm_overlap: true — which rules out both of the
+    # hypotheses I raised for the 512-node stall.
+    #
+    # NVLink SHARP: a known multi-node hang source on GH200. The reference
+    # disables it deliberately.
+    NCCL_NVLS_ENABLE: "0"
+    SHARP_SMX_SOCK_ADDR_FAMILY: ipv4
+    # avoids the caching-allocator record_streams path
+    TORCH_AVOID_RECORD_STREAMS: "1"
+    TORCH_NCCL_SHOW_EAGER_INIT_P2P_SERIALIZATION_WARNING: "FALSE"
+    # must be a DIRECTORY (Triton passes it to gcc as -L)
+    TRITON_LIBCUDA_PATH: /usr/local/cuda/compat/lib.real
+    TOKENIZERS_PARALLELISM: "false"
+
+    # Kill tqdm progress bars. They are NOT rank-gated: Megatron's CUDA-graph
+    # capture (cuda_graphs.py:263) opens a tqdm bar on EVERY rank, and with
+    # torchrun `--tee 3` all 2048 of them stream through srun's IO at ~18
+    # updates/s each. srun cannot drain that, so it gives up with
+    #   "eio_handle_mainloop: Abandoning IO 60 secs after job shutdown initiated"
+    # and TRUNCATES the log — job 1365562 exited 0 in 8:15 (well inside its
+    # 40 min limit) but lost its throughput numbers mid-capture.
+    # With tqdm disabled, cuda_graphs.py:275 falls back to logging every 100th
+    # graph: 2 lines per rank instead of 160 bar updates.
+    # Same failure shape as the NCCL_DEBUG=info funnel — at 2048 ranks nothing
+    # chatty may go through the shared stdout path.
+    TQDM_DISABLE: "1"
+    PYTHONWARNINGS: "ignore::UserWarning"
+
+    # NCCL logging: WARN to a PER-HOST FILE, not info to stdout. At 2048 ranks
+    # `NCCL_DEBUG: info` funnels verbose output from every rank through
+    # `--tee 3` into ONE log file on the shared FS — the 512-node attempt
+    # (job 1356626) reached 28 MB and then froze. That is a credible stall in
+    # its own right, and it is absent at 2 nodes, which matches the observed
+    # scale-dependence. Per-host files keep the detail without the funnel.
+    NCCL_DEBUG: WARN
+    NCCL_DEBUG_SUBSYS: ALL
+    NCCL_DEBUG_FILE: ${job.base_output_dir}/nccl-%h.log
+    # GH200 is Hopper (arch < 10), so the TP>1 + sequence_parallel serialisation
+    # requirement still applies (arguments.py:935). Megatron only WARNS, it does
+    # not assert — without this the TP=4 comm/GEMM overlap silently does not
+    # overlap and the speed numbers are wrong. config/slurm/jupiter.yaml does not
+    # set it (leonardo.yaml does), so every JUPITER experiment sets it itself.
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    # required for tp_comm_overlap (userbuffers) on this stack
+    UB_SKIPMC: "1"
+
+    # --- JIT / compile caches: NODE-LOCAL, never the shared FS ----------------
+    # All of these default into the shared HOME ($HOME/.cache/torch_extensions,
+    # $HOME/.triton, $HOME/.nv/ComputeCache). At 2048 ranks that means 2048
+    # processes hammering one shared-FS directory, and torch's cpp_extension
+    # build in particular serialises on a LOCKFILE ("baton") there — a textbook
+    # multi-minute-to-indefinite startup stall, invisible in the log because the
+    # compile prints nothing while it waits.
+    # /dev/shm is RAM-backed, node-local, and already in container.bind. Each
+    # node then compiles its own copy (512 compiles instead of 1) which is
+    # cheap locally and, crucially, lock-free across nodes.
+    # NB /dev/shm is wiped between jobs, so every job pays the compile once.
+    # The Titan experiments on JUPITER already do this for triton/inductor;
+    # the Megatron configs never picked it up.
+    TRITON_CACHE_DIR: /dev/shm/${oc.env:USER}/triton_cache
+    TORCHINDUCTOR_CACHE_DIR: /dev/shm/${oc.env:USER}/inductor_cache
+    TORCH_EXTENSIONS_DIR: /dev/shm/${oc.env:USER}/torch_extensions
+    CUDA_CACHE_PATH: /dev/shm/${oc.env:USER}/nv_compute_cache
+
+    #additional optimizations!
+    PYTORCH_CUDA_ALLOC_CONF: "garbage_collection_threshold:0.8"
+    PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.8"
+  # A dead node's srun TASK must not tear the whole step down: without this,
+  # slurm kills the surviving tasks on the first bad exit and ft_launcher never
+  # gets the chance to re-rendezvous and promote a spare.
+  srun_opts: "--kill-on-bad-exit=0 --no-kill"
+  sbatch:
+    # ACTIVE + SPARES. backend.aux.active_nodes is what actually trains.
+    nodes: ${oc.addi:${backend.aux.active_nodes},${backend.aux.spare_nodes}}
+    time: "12:00:00"   # JUPITER wall limit
+    account: e-sta-openeurollm
+
+    # slurm signal to process to stop training and checkpoint right before time limit
+    signal: "TERM@240"
+    comment: "NVIDIA_GPU_CLOCKS=1980"
+
+  # make the sbatch script unique for every re-run
+  name: "job_${oc.timestring:}"
+
+# =============================================================================
+# HOT SPARE — CONTAINER CHECKED 2026-08-13
+# =============================================================================
+# `nemo_26.04.sif` ships the BARRIER build of nvidia-resiliency-ext. Read off
+# the container with (read-only, no writes):
+#
+#   apptainer exec /e/project1/e-sta-openeurollm/container/nemo_26.04.sif \
+#     ft_launcher --help | grep -e "--ft-restart-policy" -e "--ft-rdzv-impl"
+#
+# Result:  --ft-restart-policy {any-failed}      (deprecated; min-healthy GONE)
+#          --ft-rdzv-impl {barrier,legacy}       (barrier = default)
+#
+# Consequences, and why this config looks the way it does:
+#   * NO `ft_restart_policy` in torchrun_args — argparse would reject
+#     'min-healthy' and the job would die at launch. The Leonardo-era configs
+#     (config/experiments/korbi/megatron_moe_hotspare_reference_leonardo.yaml)
+#     ran against an older NVRx whose CLI still had it; do not copy from them.
+#   * NO NVRx sidecar and NO source patch. `use_infra_group_rank` only exists in
+#     the deprecated legacy rendezvous; on the barrier impl it is moot, so the
+#     "Invalid infrastructure rank" failure mode for a mid-node loss is gone.
+#     backend.env.PYTHONPATH above stays commented out.
+#   * The hot spare is simply what the barrier rendezvous does:
+#     ft_rendezvous_barrier.py::_assign_group_ranks() sorts participants by
+#     infra_rank and assigns ranks [0, world_size) ACTIVE and [world_size, ..)
+#     STANDBY. With nnodes=512:512 and 514 allocated that is 512 + 2 standby.
+#     Look for "... and 2 standby ranks [...]" in the rank-0 log to confirm.
+#
+# Independent of all that: `srun --kill-on-bad-exit=0` (set above) so a dead
+# task doesn't take the whole step with it.
+#
+# STILL UNVALIDATED ON JUPITER: an actual spare promotion. The barrier path is
+# the default mechanism but was never the thing the Leonardo saboteur exercised.
+# Run the 3-node (2 active + 1 spare) saboteur shakeout before trusting it for
+# 40 days — it is cheap now that there is no sidecar to build.
+#
+# Also unverified at this scale: the hardcoded FT section timeouts in
+# config/backend/megatron_ftlauncher_localaddr.yaml
+# (setup:600, step:180, checkpointing:420, out-of-section:300). At 2048 ranks,
+# startup and a ~450 GB torch_dist save may exceed setup:600 / checkpointing:420
+# and be misread as a hang -> restart loop. `--calc-ft-timeouts` refines and
+# persists them after a good run, but the FIRST run uses these values. Confirm
+# against the shakeout run and override `backend.dist_cmd` if they are too tight.
+#
+# Recommended shakeout before 514 nodes: reproduce the Leonardo test on JUPITER
+# at 3 nodes (2 active + 1 spare) with the saboteur, then rerun at ~34 nodes
+# (32 active + 2 spare) with the real model config.
+#
+# =============================================================================
+# CHECKPOINT TIERS (set in the model config, sizes are for THIS model)
+# =============================================================================
+# One 32B torch_dist checkpoint is ~450 GB (bf16 weights + fp32 master + Adam
+# m/v, ~14 B/param).
+#   persistent      save_interval 32000  -> ~28 checkpoints over 15 T, ~12.6 TB.
+#                   Never deleted: this is what checkpoint conversion and the
+#                   downstream eval jobs read, so the paths must stay stable.
+#   non-persistent  non_persistent_save_interval 500 -> rotating, latest only,
+#                   in ${base_output_dir}/checkpoints_rolling. This is what a
+#                   spare promotion / requeue actually resumes from, so it — not
+#                   save_interval — bounds the work lost per failure (~35 min).
+# `load` points at the persistent dir; Megatron picks whichever of the two is
+# newer (checkpointing.py:1078).
+# NB non_persistent_ckpt_type is "global" (plain torch_dist in a rotating dir),
+# NOT NVRx "local": local checkpoints would need `replication` to survive a node
+# loss, and the NVRx replication collective CRASHES on JUPITER (works on
+# Leonardo). Revisit if that gets fixed — /dev/shm local ckpts would be far
+# cheaper than 450 GB to shared scratch every 500 iters.
+#
+# =============================================================================
+# PARALLELISM NOTES
+# =============================================================================
+# pipeline_model_parallel_layout's EIGHT pipe-separated stages (9+8+8+8+8+8+8+7
+# = 64 layers, E on the first, L on the last) are VIRTUAL stages, not PP stages:
+# arguments.py:548 only requires num_stages % PP == 0 and then sets
+# virtual_pipeline_model_parallel_size = num_stages // PP. At PP=4 that means
+# VPP=4 (interleaved 1F1B), which is consistent and intended.
+#   world 2048, TP=4, PP=2 -> DP = 256, 4096/(1*256) = 16 microbatches.
+# The GBS rampup floor is mbs * DP = 256 (1.05 M tokens), well below the
+# rampup_start of 512 used in warmup_rampup — that variant is safe as written,
+# and can go finer if wanted.
+#
+# =============================================================================
+# ONE OPEN INCONSISTENCY (left as-is — decide before warmup_lr_only)
+# =============================================================================
+# grad_reduce_in_bf16 and accumulate_allreduce_grads_in_fp32 are both true, but
+# they are mutually exclusive and bf16 SILENTLY WINS: arguments.py:742 does
+# `if args.grad_reduce_in_bf16: accumulate_allreduce_grads_in_fp32 = False`.
+# So this run reduces gradients in bf16 while the config reads as fp32 — a bad
+# footing for a spike investigation. Harmless for the throughput test; pick one
+# before the stability runs.
