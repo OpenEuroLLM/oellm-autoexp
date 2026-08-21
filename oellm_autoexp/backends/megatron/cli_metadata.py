@@ -3943,6 +3943,20 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "scaler_wd_mult": MegatronArgMetadata(
+        arg_type=float,
+        default=0.0,
+        help='Multiplier on --weight-decay for "scalers": 1-D non-bias params, i.e. every '
+        "learnable norm gain (RMSNorm/LayerNorm weights, the qk-layernorm gains, and the "
+        "TE-fused *.layer_norm_weight tensors). Default 0.0 reproduces the historical "
+        "behaviour of excluding all 1-D params from weight decay, which leaves those gains "
+        "with no restoring force: attention logits scale with gamma_q * gamma_k and the "
+        "output z-loss does not see them. Use 1.0 to decay scalers like every other weight "
+        "(as OLMo 2/3 do), or a fraction for weaker decay. Biases are always excluded.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "scatter_gather_tensors_in_pipeline": MegatronArgMetadata(
         arg_type=bool,
         default=True,
@@ -8001,6 +8015,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "scaler_wd_mult": MegatronActionSpec(
+        option_strings=("--scaler-wd-mult",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.0,
     ),
     "scatter_gather_tensors_in_pipeline": MegatronActionSpec(
         option_strings=("--no-scatter-gather-tensors-in-pipeline",),

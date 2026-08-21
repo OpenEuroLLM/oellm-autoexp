@@ -66,11 +66,31 @@ defaults:
 backend:
   aux:
     active_nodes: 512
-    # spare_nodes stays 2 (inherited) -> allocates 514, trains 512, and
-    # nnodes renders as 512:514, the BARRIER-rendezvous form for JUPITER's NVRx
-    # build. Hot spares earned their place here: single-node hardware faults
-    # killed the 1024-node run three times in one night.
-    spare_nodes: 2
+    # === 0, NOT 2, BECAUSE THIS NO LONGER LAUNCHES UNDER ft_launcher =========
+    # It used to read 2: allocate 514, train 512, and let nnodes render as
+    # "512:514" — the BARRIER-rendezvous form for JUPITER's NVRx build, where
+    # MIN=active and the surplus nodes park as standby. Hot spares had earned
+    # their place: single-node hardware faults killed the 1024-node run three
+    # times in one night.
+    #
+    # That form is meaningless, and actively harmful, now that the parent uses
+    # /backend: megatron_torchdist_localaddr. Rendered as-is it produced
+    #     #SBATCH --nodes=514        --nnodes 512:514      --rdzv-backend static
+    # i.e. an ELASTIC range handed to torchrun's STATIC rendezvous, which wants
+    # one fixed world size. There is no standby concept under torchrun, so the
+    # 2 surplus nodes cannot be promoted and are at best paid for and idle.
+    # "N:N" is the form proven to work — the 4-node shakeout (job 1436912) ran
+    # 13 healthy iterations with "4:4".
+    #
+    # CONSEQUENCE TO ACCEPT: with no ft_launcher there are no hot spares at all,
+    # so ONE node failure now ends the whole 512-node job and the only recovery
+    # is the RestartAction tier in /job: auto_restart_ckptreset. That makes the
+    # node-exclusion list (config/exclude/jupiter_exclude_nodes.txt) matter more
+    # than it did, not less.
+    #
+    # Set this back to 2 IF AND ONLY IF the parent's defaults list returns to
+    # /backend: megatron_ftlauncher_localaddr.
+    spare_nodes: 0
 
     # === lr_tag MUST MOVE WITH megatron.lr ==================================
     # job.name is "oellm_32b_dense_${variant}_gbs${GBS}_lr${lr_tag}", so lr_tag
@@ -163,3 +183,45 @@ sweep:
           # backend.megatron.rerun_mode: "validate_results"
 
         - backend.aux.warmup_steps: 6000
+
+        - backend.aux.warmup_steps: 2000
+          backend.megatron.adam_beta2: 0.9
+          backend.aux.variant: "sc-fp8-zloss1e-4-nobsramp-n512-adamb20.9-wu2000"
+
+        - backend.aux.warmup_steps: 2000
+          backend.megatron.adam_eps: 1e-10
+          backend.aux.variant: "sc-fp8-zloss1e-4-nobsramp-n512-adame1em10-wu2000"
+          # backend.megatron.cuda_graph_scope: full
+
+        - backend.aux.warmup_steps: 2000
+          backend.megatron.adam_eps: 1e-12
+          backend.aux.variant: "sc-fp8-zloss1e-4-nobsramp-n512-adame1em12-wu2000"
+          backend.megatron.cuda_graph_scope: full
+
+        - backend.aux.warmup_steps: 4000
+          backend.megatron.adam_eps: 1e-8
+          backend.aux.variant: "sc-fp8-zloss1e-4-nobsramp-n512-adame1em8-normeps1e-6-wu4000"
+          backend.megatron.cuda_graph_scope: full
+          backend.megatron.norm_epsilon: 1e-6
+
+        - backend.aux.warmup_steps: 2000
+          backend.aux.embedding_init_method_std: 1.
+          backend.aux.variant: "sc-fp8-zloss1e-4-nobsramp-n512-eims1-wu2000"
+
+        - backend.aux.warmup_steps: 4000
+          backend.megatron.adam_eps: 1e-8
+          backend.aux.variant: "sc-fp8-zloss1e-4-nobsramp-n512-adame1em8-normeps1e-8-wu4000"
+          backend.megatron.cuda_graph_scope: full
+          backend.megatron.norm_epsilon: 1e-8
+
+        - backend.aux.variant: "sc-fp8-zloss1e-4-bsramp512-wu4000"
+          backend.aux.warmup_steps: 4000
+          backend.megatron.output_z_loss_coeff: 1.e-4
+          # false — fp8_param_gather breaks checkpoint saving (CUDA illegal
+          # memory access in the async worker); see the parent config.
+          backend.megatron.rampup_batch_size: ["1024", "1024", "8192000"]
+          backend.megatron.exit_interval: 8000
+
+        - backend.aux.variant: "sc-fp8-zloss1e-4-nobsramp-n512-wds1-wu4000"
+          backend.aux.warmup_steps: 4000
+          backend.megatron.scaler_wd_mult: 1.0
