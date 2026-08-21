@@ -7,10 +7,10 @@ defaults:
   # couple of idle HOT SPARES inside it, so a permanent node failure is absorbed
   # by promoting a spare (job-level restart *inside the same allocation*)
   # instead of the job dying and going back into the 512-node queue.
-  - /backend: megatron_ftlauncher_localaddr
+  - /backend: megatron_torchdist_localaddr
   - /container: jupiter
-  - /slurm: jupiter
-  - /job: auto_cancel
+  - /slurm: jupiter_autoexclude
+  - /job: auto_restart_ckptreset
   - /sweep: none
   - /backend/megatron: base
   - /backend/megatron/oellm_32b_dense/models: qwen3_dense_32b
@@ -49,7 +49,7 @@ backend:
   # ===========================================================================
   aux:
     active_nodes: 512   # nodes actually training -> world = 2048 GPUs, DP = 2048/(TP*PP*CP)
-    spare_nodes: 2      # idle standbys held inside the same allocation
+    # spare_nodes: 2      # idle standbys held inside the same allocation - ignore as without ftlauncher
     # --- run identity (feeds job.name) ---------------------------------------
     variant: "prod"     # ablation tag; override per variant config
     lr_tag: "2e-4"      # human-readable form of megatron.lr, for the run name
@@ -65,10 +65,10 @@ backend:
     #   checkpointing : a ~450 GB torch_dist write to shared scratch
     # Replace with measured values once the speed test reports real numbers;
     # --calc-ft-timeouts then refines and persists them after a good run.
-    ft_timeout_setup: 3600
-    ft_timeout_step: 900
-    ft_timeout_checkpointing: 1800
-    ft_timeout_out_of_section: 900
+    # - ft_timeout_setup: 3600  # no ftlauncher
+    # - ft_timeout_step: 900
+    # - ft_timeout_checkpointing: 1800
+    # - ft_timeout_out_of_section: 900
 
   torchrun_args:
     # nnodes = ACTIVE : ACTIVE+SPARES  (i.e. "512:514", NOT "512:512").
@@ -86,11 +86,36 @@ backend:
     max_restarts: "50"   # each spare promotion consumes one restart
 
   megatron:
-    # heartbeat + hang detection via the ft_launcher rank monitor (seconds,
-    # rather than waiting for the NCCL watchdog)
-    enable_ft_package: true
-    calc_ft_timeouts: true
-    # spare promotion is a job-level restart, not an in-process one
+    # === BOTH OFF BECAUSE THIS CONFIG NO LONGER LAUNCHES UNDER ft_launcher ====
+    # These two are the ft_launcher rank monitor (heartbeat + hang detection in
+    # seconds, rather than waiting for the NCCL watchdog). They are not merely
+    # useless under torchrun — they are FATAL. `--enable-ft-package` makes every
+    # rank call ft_integration.setup() -> RankMonitorClient.init_workload_
+    # monitoring(), which requires FT_RANK_MONITOR_IPC_SOCKET, and ONLY
+    # ft_launcher sets that variable. Under `python -m torch.distributed.run`
+    # every rank dies in setup with
+    #     RankMonitorClientError: FT_RANK_MONITOR_IPC_SOCKET env variable
+    #     should be set in a process that is running RankMonitorClient
+    # and the job then collapses into ncclRemoteError / "Connection refused" as
+    # the surviving ranks fail to reach the dead ones — which is the symptom you
+    # actually see in the log, three screens below the real cause.
+    #
+    # MEASURED 2026-08-21: this killed job 1436657 (512 nodes, 2049 rank
+    # failures) and its 4-node reproduction 1436792, both in under 4 minutes.
+    # The defaults list above switched to /backend: megatron_torchdist_localaddr
+    # and dropped spare_nodes, but these two stayed true.
+    #
+    # THE RULE, already stated in every other torchrun config in this family
+    # (zloss_on_torchrun_n512.yaml:24, speed_ablation_n512.yaml:28,
+    # speed_test.yaml:65, container_smoke_1node.yaml:83): ft_launcher and these
+    # flags travel together. Flip them back to true IF AND ONLY IF the defaults
+    # list goes back to /backend: megatron_ftlauncher_localaddr — at which point
+    # spare_nodes and the ft_timeout_* block have to come back too.
+    enable_ft_package: false
+    calc_ft_timeouts: false
+    # Irrelevant while the FT package is off (it selects job-level vs in-process
+    # restart WITHIN the FT package), kept false so re-enabling ft_launcher
+    # restores the previous behaviour rather than silently changing it.
     inprocess_restart: false
 
     wandb_project: oellm_32b_dense
@@ -168,6 +193,30 @@ backend:
     use_persistent_ckpt_worker: true
     ckpt_assume_constant_structure: true
 
+    # === NO EMERGENCY CHECKPOINT ON A DETECTED FAILURE =======================
+    # Default is `validate_results`, which on a rejected result (NaN/Inf/large
+    # grads) sets checkpoint_requested, SAVES, and exits, so the job restarts and
+    # re-runs the step on a different GPU to tell SDC from a real fault.
+    # That save is unsafe here: it is an ASYNC save taken at the moment of
+    # divergence, and it races the shutdown. When the job is then cancelled or
+    # restarted mid-write you get a truncated checkpoint — that is where
+    # iter_0001025 (only common.pt, 48 KB) came from, and the shard-short
+    # iter_0003000. The checkpoint is also worth little even when it completes:
+    # it captures the state that just produced a NaN.
+    #
+    # `disabled` DOES NOT lose the NaN guard. rerun_state_machine.py:~490 keeps
+    # validating and raises RuntimeError instead ("If reruns are disabled, still
+    # validate the result and throw a RuntimeError if it is rejected"), naming
+    # rank/node/device/iteration. So divergence still stops the job loudly and
+    # immediately, it just does not write a checkpoint on the way down.
+    #
+    # WHAT IS GIVEN UP: the SDC protocol (rerun in place, then on another GPU).
+    # Justified by the measurements — of 17 distinct validation events across the
+    # recent 512-node runs, 15 were NaN/Inf, i.e. genuine numerical divergence
+    # where re-running on different hardware proves nothing. Revisit if silent
+    # corruption is ever actually suspected.
+    rerun_mode: disabled
+
 
   env:
     # the ft rank monitor needs NCCL errors surfaced by the c10d watchdog fast,
@@ -186,6 +235,28 @@ backend:
 
 container:
   image: /e/project1/e-sta-openeurollm/container/nemo_26.04.sif
+  # MUST be pinned alongside the image override. config/container/jupiter.yaml
+  # defaults this to /usr/bin/python, which was correct for the OLD
+  # MegatronTraining-JUPITER image it still names — but in nemo_26.04.sif the
+  # real environment is /opt/venv:
+  #     /usr/bin/python       -> no wandb
+  #     /opt/venv/bin/python  -> wandb 0.26.0, torch 2.11.0a0+nv26.02, TE
+  #
+  # This was DORMANT until fault tolerance was dropped. ft_launcher is a console
+  # script whose shebang points at the venv interpreter, so it bypassed
+  # container.python entirely; switching to `python -m torch.distributed.run`
+  # made the field live for the first time and it pointed at the wrong
+  # interpreter. Symptom (jobs 1436257/1436291/1436325, all 0 iterations):
+  #     global_vars.py:194 _set_wandb_writer -> import wandb
+  #     ModuleNotFoundError: No module named 'wandb'
+  # on the LAST rank only (the import is gated on rank == world_size-1), after
+  # which every other rank reports the downstream
+  #     ncclRemoteError: ... remote process exiting prematurely
+  # which is noise, not the cause.
+  #
+  # Scoped HERE and not in config/container/jupiter.yaml on purpose: 39 configs
+  # inherit that file and some still use the old image, which has no /opt/venv.
+  python: /opt/venv/bin/python
 
 slurm:
   env:

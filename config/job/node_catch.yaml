@@ -1,0 +1,171 @@
+defaults:
+ - default
+
+# ============================================================================
+# NODE-CATCHING job policy — harvest bad nodes, never fight the allocation.
+# ============================================================================
+#
+# The sibling of config/job/autoexclude.yaml (Leonardo) and of the
+# node_failure_* events in config/job/auto_restart_ft.yaml, specialised for a
+# campaign whose PURPOSE is to find bad nodes rather than to finish training:
+#
+#   autoexclude.yaml        one Leonardo signature, one node, restart the chain
+#   auto_restart_ft.yaml    harvest a node failure as a side effect of training
+#   THIS FILE               harvest EVERY node a failure line names, take a
+#                           fresh draw, and never restart in place
+#
+# THREE DIFFERENCES FROM auto_restart_ft.yaml, all deliberate
+# -----------------------------------------------------------
+# 1. `match_once: false` on the append events. auto_restart_ft.yaml records ONE
+#    node because one NODE_FAIL ends the allocation anyway. A 512-node probe
+#    routinely finds several bad nodes in a single draw, and match_once: true
+#    would silently throw all but the first away. The monitor fires the action
+#    once per match, and AppendToFileAction dedups on write.
+#
+# 2. Terminal actions are FinishAction, never RestartAction. Restarting is
+#    pointless here — and worse, actively harmful: `--exclude` is resolved by
+#    Hydra at PLAN time and baked into the stored SlurmConfig, so _restart_job
+#    re-renders the OLD exclusion list and can draw the node we just blacklisted
+#    right back. Finishing lets the pre-queued `afterany` chain advance to the
+#    next job, whose ExcNodeList the propagate event below has already updated
+#    via scontrol. Draw N+1 therefore really does avoid draw N's findings.
+#
+# 3. No progress/iteration events. There is no iteration counter to watch; the
+#    probe either prints its verdicts and exits or it hangs, and the inactivity
+#    backstop covers the hang.
+#
+# WHAT IS *NOT* A VALID ATTRIBUTION, AND WHY IT IS NOT HERE
+# --------------------------------------------------------
+# 1. slurmstepd: error: *** JOB 1395206 ON jpbo-003-17 CANCELLED ... DUE TO
+#                NODE FAILURE ***
+#    The node named there is the BATCH node (the allocation's first node, where
+#    slurmstepd runs), NOT the node that failed — in that very job the culprit
+#    was jpbo-026-42, named on a different line. Regexing it would blacklist a
+#    healthy node on every node failure, and would preferentially blacklist
+#    whatever node SLURM likes to put first.
+# 2. srun: error: <node>: task N: Exited with exit code 1
+#    Correct for ONE dead node, catastrophic for a dead JOB — see the long note
+#    where that event would otherwise sit, below.
+#
+# THE LOG IS ONLY HALF THE EVIDENCE. JUPITER's PrologFlags carry
+# ForceRequeueOnFail, so a node that fails the health check requeues the whole
+# job BEFORE the batch script runs: no log, no line, nothing for any regex to
+# match, and the only record is the per-attempt NodeList in
+# `sacct --duplicates`. That half is scripts/run_autoexclude_jupiter.py's job —
+# this file cannot see it, by construction.
+log_events:
+  # === 1) APPEND: every node a line can honestly be attributed to ===========
+  # Listed before the propagate event so the file already holds the new nodes
+  # when the scontrol push runs.
+
+  # 1a) The probe's own verdict (scripts/nodecheck.sh). Format is load-bearing:
+  #     "[nodecheck] FAIL <node>: <reason>".
+  - name: nodecheck_fail_append
+    pattern: '\[nodecheck\] FAIL ([\w-]+):'
+    pattern_type: regex
+    extract_groups:
+      node: 1
+    match_once: false
+    action:
+      class_name: AppendToFileAction
+      path: ${oc.env:JUPITER_EXCLUDE_NODES,${oc.env:PROJECT_DIR,.}/config/exclude/jupiter_exclude_nodes.txt}
+      content: "{node}"
+
+  # 1b) SLURM tore the allocation down because a node died. The single most
+  #     expensive failure in the 2026-08 campaign (jobs 1375720, 1400371,
+  #     1395206) and the least ambiguous attribution there is.
+  - name: node_failure_append
+    pattern: 'Node failure on ([\w-]+)'
+    pattern_type: regex
+    extract_groups:
+      node: 1
+    match_once: false
+    action:
+      class_name: AppendToFileAction
+      path: ${oc.env:JUPITER_EXCLUDE_NODES,${oc.env:PROJECT_DIR,.}/config/exclude/jupiter_exclude_nodes.txt}
+      content: "{node}"
+
+  # ===== NOT AN EVENT: `srun: error: <node>: task N: Exited with exit code` ===
+  # It looks like the best attribution available, and for a SINGLE dead node it
+  # is — one such line is how jpbo-120-36 (wedged GSP firmware) was identified:
+  #     srun: error: jpbo-120-36: task 1011: Exited with exit code 1
+  # But when a DISTRIBUTED job dies, every rank exits nonzero and srun prints
+  # the line for the entire allocation. Measured over the 2026-08-18.. training
+  # logs, that pattern named 830 DISTINCT NODES. As an append event it would
+  # have written most of the fleet into the exclusion file, one poll at a time,
+  # and the propagate step would have pushed that onto every queued sibling.
+  #
+  # The distinguishing feature is a COUNT (one node named = a fault; hundreds =
+  # a crash), and a LogEvent cannot express one: it fires per match, with no
+  # view of how many matches the poll produced. So the pattern lives in
+  # scripts/run_autoexclude_jupiter.py instead, where DIRECT_PATTERNS caps it at
+  # 3 distinct nodes per log. Do not add it back here.
+
+  # === 2) PROPAGATE: push the updated list onto the queued draws ============
+  # PENDING is the only state SLURM lets us edit live, which is exactly what the
+  # pre-queued afterany chain is. One pattern covers both append events above:
+  # the action re-reads the whole file, so it does not matter which one fired.
+  - name: exclude_propagate
+    pattern: '\[nodecheck\] FAIL [\w-]+:|Node failure on [\w-]+'
+    pattern_type: regex
+    match_once: true
+    action:
+      class_name: UpdateChainExcludesAction
+      exclude_file: ${oc.env:JUPITER_EXCLUDE_NODES,${oc.env:PROJECT_DIR,.}/config/exclude/jupiter_exclude_nodes.txt}
+
+  # === 3) TERMINAL: end this draw, let the chain advance ====================
+  # MUST BE LAST — a terminal effect ends log processing for this poll, so any
+  # append that has not run yet would be lost.
+
+  # The probe's own end marker (printed by rank 0 after a drain delay).
+  - name: sweep_complete
+    pattern: "[nodecheck] SWEEP COMPLETE"
+    pattern_type: substring
+    action:
+      class_name: FinishAction
+      reason: "Node sweep complete — advancing to the next draw"
+
+  # Config faults kill the campaign rather than burning R draws on a typo.
+  - name: err_unrecognized_argument
+    pattern: "unrecognized arguments"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "Launcher rejected an argument — fix the config, not the fleet"
+
+  # Backstop for a draw that produces nothing at all. Short window (5 polls AND
+  # 300 s) because unlike a training job there is no legitimate multi-minute
+  # quiet phase: the probe uses no container, no NCCL, no checkpoint. If it has
+  # said nothing for 5 minutes the allocation is wedged, and the honest response
+  # is to stop paying for it and take the next draw.
+  - name: inactive
+    pattern_type: inactivity
+    inactivity_polls: 5
+    inactivity_timeout_s: 300
+    action:
+      class_name: FinishAction
+      reason: "Probe silent for 5 min — allocation wedged, advancing"
+
+state_events:
+  # Every terminal state finishes rather than restarts: a draw is one sample,
+  # and the next sample is already queued behind it.
+  - name: "node_fail"
+    transition: ["RUNNING", "NODE_FAIL"]
+    action:
+      class_name: FinishAction
+      reason: "SLURM NODE_FAIL — node recorded, advancing to the next draw"
+  - name: "failed"
+    transition: ["RUNNING", "FAILED"]
+    action:
+      class_name: FinishAction
+      reason: "Job failed — advancing to the next draw"
+  - name: "timeout"
+    transition: ["RUNNING", "TIMEOUT"]
+    action:
+      class_name: FinishAction
+      reason: "Job timed out"
+  - name: "cancelled"
+    transition: ["RUNNING", "CANCELLED"]
+    action:
+      class_name: FinishAction
+      reason: "Job cancelled"

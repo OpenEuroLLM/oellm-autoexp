@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import re
+import sys
 import time
 from typing import Any, Literal
 
@@ -202,6 +203,247 @@ class AppendToFileAction(BaseMonitorAction):
             status="success",
             message=f"appended '{line}' to {path}",
             metadata={"appended": True, "path": str(path), "line": line},
+        )
+
+
+def _ensure_megatron_importable() -> None:
+    """Put the Megatron submodule on sys.path if it is not already importable.
+
+    A torch_dist ``.metadata`` is a pickle referencing megatron.core classes, so
+    ``read_metadata()`` raises ModuleNotFoundError unless megatron is importable.
+    The monitor venv does NOT have it by default — verified on JUPITER, where the
+    check only succeeded with ``PYTHONPATH=.:submodules/Megatron-LM``. Rather
+    than require callers to set the environment, resolve it relative to this
+    file so the check works however the monitor was launched.
+    """
+    try:
+        import megatron.core  # noqa: F401
+
+        return
+    except Exception:
+        pass
+    candidate = Path(__file__).resolve().parents[2] / "submodules" / "Megatron-LM"
+    if candidate.is_dir() and str(candidate) not in sys.path:
+        sys.path.append(str(candidate))
+
+
+def _torch_dist_missing_files(path: Path) -> list[str] | None:
+    """Return shard files that ``.metadata`` promises but that are absent.
+
+    ``None`` means the metadata could not be read at all, which callers MUST
+    treat as "unverifiable" rather than "fine" — see ``checkpoint_is_complete``.
+    """
+    try:  # imported lazily: the monitor must not hard-depend on torch
+        _ensure_megatron_importable()
+        from torch.distributed.checkpoint import FileSystemReader
+    except Exception:  # pragma: no cover - torch not installed in this env
+        return None
+    try:
+        metadata = FileSystemReader(path).read_metadata()
+        expected = {info.relative_path for info in metadata.storage_data.values()}
+    except Exception:  # pragma: no cover - truncated/corrupt metadata
+        return None
+    return sorted(name for name in expected if not (path / name).exists())
+
+
+def checkpoint_status(path: Path) -> tuple[str, str]:
+    """Classify a torch_dist checkpoint as complete / incomplete /
+    unverifiable.
+
+    THREE STATES, NOT TWO, and the third one is the point.
+
+    `.metadata` alone is not sufficient: on 2026-08-19 ``iter_0003000`` carried a
+    valid `.metadata` while 927 of its shards were absent and every rank died
+    with FileNotFoundError. So the promised file list is checked against disk.
+
+    But when the metadata cannot be READ we must not guess. An earlier version
+    fell back to comparing shard counts against sibling ``iter_*`` directories,
+    which is actively dangerous: a tree can legitimately hold checkpoints written
+    at DIFFERENT WORLD SIZES (2026-08-19: 4096 files at world 2048 next to 8192
+    files at world 4096), and the heuristic would call a perfectly complete
+    checkpoint "short" and quarantine good state. Unverifiable now stops the
+    machinery and asks for a human instead.
+    """
+    if not path.is_dir():
+        return "incomplete", "not a directory"
+    if not (path / ".metadata").is_file():
+        # Written LAST by the coordinator, so its absence means the save never
+        # finished. NB it is a dotfile: plain `ls` hides it.
+        return "incomplete", "no .metadata (save never finalised)"
+    # NB pathlib's "*" DOES match leading dots, and the in-flight shards are
+    # written as ".__<rank>_<n>.distcp.tmp", so dedupe rather than concatenate.
+    leftovers = set(path.glob("*.distcp.tmp")) | set(path.glob(".*.distcp.tmp"))
+    if leftovers:
+        return "incomplete", f"{len(leftovers)} unfinished .tmp shards"
+    if not (path / "common.pt").is_file():
+        return "incomplete", "no common.pt"
+
+    missing = _torch_dist_missing_files(path)
+    if missing is None:
+        return "unverifiable", ".metadata present but unreadable (torch/megatron unavailable?)"
+    if missing:
+        return "incomplete", f"{len(missing)} shard(s) named in .metadata are absent"
+    return "complete", f"verified against .metadata ({len(list(path.glob('*.distcp')))} shards)"
+
+
+def checkpoint_is_complete(path: Path) -> tuple[bool, str]:
+    """Backwards-compatible boolean wrapper.
+
+    Unverifiable counts as NOT complete.
+    """
+    status, reason = checkpoint_status(path)
+    return status == "complete", reason
+
+
+@dataclass
+class QuarantineCheckpointActionConfig(ConfigInterface):
+    """Move a corrupt checkpoint aside and roll the tracker back to a valid
+    one.
+
+    Automates the manual recovery: rename ``iter_N`` to ``failed_iter_N`` and
+    rewrite ``latest_checkpointed_iteration.txt`` to the newest checkpoint that
+    actually loads, so a following ``RestartAction`` resumes instead of dying on
+    the same file again.
+
+    ONLY FOR GENUINELY INCOMPLETE CHECKPOINTS (missing shards / no ``.metadata``).
+    Do NOT wire this to a world-size mismatch — ``rerun_state_machine_state/
+    shard_<rank>_<world>`` missing means the checkpoint is FINE and the job's node
+    count is wrong; quarantining would discard good state and roll back for
+    nothing. That signature gets its own CancelAction.
+
+    Chain it BEFORE the RestartAction for the same pattern, as
+    config/job/autoexclude.yaml does for node exclusion.
+    """
+
+    class_name: str = "QuarantineCheckpointAction"
+    # Checkpoint tree holding the iter_* directories and the tracker file.
+    # Supports {var} templating.
+    checkpoint_dir: str = ""
+    # Iteration to quarantine; normally "{iteration}" captured via extract_groups.
+    # If it does not resolve to an int, the tracker's current value is used.
+    iteration: str = "{iteration}"
+    quarantine_prefix: str = "failed_"
+    tracker_name: str = "latest_checkpointed_iteration.txt"
+    # Refuse to quarantine once this many checkpoints have already been moved
+    # aside in this tree. Without a cap, a persistent fault walks backwards
+    # through every checkpoint one restart at a time.
+    max_rollbacks: int = 2
+    # Report what would happen and change nothing.
+    dry_run: bool = False
+
+
+@register
+class QuarantineCheckpointAction(BaseMonitorAction):
+    config: QuarantineCheckpointActionConfig
+
+    def execute(self, context: ActionContext) -> ActionResult:
+        root = Path(context.render(self.config.checkpoint_dir)).expanduser()
+        prefix = self.config.quarantine_prefix
+        tracker = root / self.config.tracker_name
+
+        if not root.is_dir():
+            return ActionResult(status="failed", message=f"checkpoint dir not found: {root}")
+
+        already = sorted(p.name for p in root.glob(f"{prefix}iter_*"))
+        if len(already) >= self.config.max_rollbacks:
+            return ActionResult(
+                status="failed",
+                message=(
+                    f"refusing to quarantine: {len(already)} checkpoint(s) already moved aside "
+                    f"in {root} (max_rollbacks={self.config.max_rollbacks}). Investigate manually."
+                ),
+                metadata={"quarantined": already},
+            )
+
+        # Which iteration is bad? Prefer the captured group, fall back to tracker.
+        raw = context.render(self.config.iteration).strip()
+        bad_iter: int | None = None
+        if raw.isdigit():
+            bad_iter = int(raw)
+        elif tracker.is_file():
+            current = tracker.read_text().strip()
+            if current.isdigit():
+                bad_iter = int(current)
+        if bad_iter is None:
+            return ActionResult(
+                status="failed",
+                message=f"could not determine the failing iteration (raw={raw!r}, tracker={tracker})",
+            )
+
+        bad_dir = root / f"iter_{bad_iter:07d}"
+
+        # CHOOSE THE RESUME POINT BEFORE TOUCHING ANYTHING. If the rename came
+        # first and the search then refused, the tracker would be left pointing
+        # at a directory that no longer exists — a worse state than the one we
+        # started in. Nothing is mutated until a verified target is in hand.
+        candidates = sorted(
+            (p for p in root.glob("iter_*") if p.is_dir() and p != bad_dir),
+            key=lambda p: int(p.name.split("_")[-1]),
+            reverse=True,
+        )
+        actions: list[str] = []
+        rejected: list[str] = []
+        for candidate in candidates:
+            status, why = checkpoint_status(candidate)
+            if status == "unverifiable":
+                # STOP. Do not skip past it (it may be perfectly good, and
+                # rolling further back would discard real training), and do not
+                # resume from it (it may be broken). Neither guess is safe, so
+                # hand it to a human with the reason.
+                return ActionResult(
+                    status="failed",
+                    message=(
+                        f"cannot verify {candidate.name} in {root}: {why}. "
+                        f"Refusing to choose a resume point. Check it by hand with "
+                        f'`python -c "from torch.distributed.checkpoint import FileSystemReader; '
+                        f"print(FileSystemReader('{candidate}').read_metadata())\"` "
+                        f"(needs megatron.core importable), then set "
+                        f"{self.config.tracker_name} yourself."
+                    ),
+                    metadata={
+                        "quarantined_iteration": bad_iter,
+                        "unverifiable": candidate.name,
+                        "rejected": rejected,
+                    },
+                )
+            if status == "complete":
+                iteration = int(candidate.name.split("_")[-1])
+                # Verified target in hand — now, and only now, mutate the tree.
+                if bad_dir.is_dir():
+                    moved = root / f"{prefix}iter_{bad_iter:07d}"
+                    if self.config.dry_run:
+                        actions.append(f"would rename {bad_dir.name} -> {moved.name}")
+                    else:
+                        bad_dir.rename(moved)
+                        actions.append(f"renamed {bad_dir.name} -> {moved.name}")
+                else:
+                    actions.append(f"{bad_dir.name} already absent")
+                if self.config.dry_run:
+                    actions.append(f"would set {tracker.name} -> {iteration} ({why})")
+                else:
+                    tracker.write_text(f"{iteration}\n")
+                    actions.append(f"set {tracker.name} -> {iteration} ({why})")
+                LOGGER.warning("checkpoint recovery in %s: %s", root, "; ".join(actions))
+                return ActionResult(
+                    status="success",
+                    message="; ".join(actions),
+                    metadata={
+                        "checkpoint_dir": str(root),
+                        "quarantined_iteration": bad_iter,
+                        "resume_iteration": iteration,
+                        "rejected": rejected,
+                        "dry_run": self.config.dry_run,
+                    },
+                )
+            rejected.append(f"{candidate.name}: {why}")
+
+        return ActionResult(
+            status="failed",
+            message=(
+                f"no loadable checkpoint left in {root} after quarantining iter_{bad_iter:07d}; "
+                f"rejected: {rejected or 'none found'}"
+            ),
+            metadata={"quarantined_iteration": bad_iter, "rejected": rejected},
         )
 
 

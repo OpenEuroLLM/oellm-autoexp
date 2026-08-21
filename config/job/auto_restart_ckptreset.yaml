@@ -1,0 +1,271 @@
+defaults:
+ - default
+
+# RESTART-ON-ERROR **plus** AUTOMATIC CHECKPOINT ROLLBACK.
+#
+# config/job/auto_restart.yaml with three added events that recover from the one
+# failure a plain restart cannot fix: a checkpoint that EXISTS but cannot be
+# LOADED. Restarting on that loops forever, because every attempt reads the same
+# broken file.
+#
+# WHAT IT AUTOMATES (previously done by hand):
+#   1. rename  iter_N -> failed_iter_N
+#   2. rewrite latest_checkpointed_iteration.txt to the newest checkpoint that
+#      actually loads
+#   3. restart, which then resumes from that checkpoint
+#
+# ============================================================================
+# WHY THIS FILE DUPLICATES THE WHOLE LIST INSTEAD OF INHERITING IT
+# ============================================================================
+# `defaults: - auto_restart` DOES NOT WORK. Hydra REPLACES lists on merge, so
+# declaring `log_events` here drops every inherited pattern. Measured, not
+# assumed: with `defaults: - auto_restart` this file composed to 3 events
+# instead of 21 — all 18 restart/cancel patterns silently gone. Same reason
+# auto_cancel.yaml and auto_restart.yaml duplicate each other.
+# KEEP IN SYNC WITH config/job/auto_restart.yaml.
+#
+# ============================================================================
+# TWO FAILURES THAT LOOK ALIKE AND NEED OPPOSITE TREATMENT
+# ============================================================================
+#   FileNotFoundError .../iter_N/__x_y.distcp
+#       The checkpoint is genuinely incomplete — `.metadata` promises shards
+#       that were never written. Quarantine and roll back. Seen 2026-08-19:
+#       iter_0003000 had a valid `.metadata` and only 3169 of 4096 shards, and
+#       job 1411123 logged 77,925 identical FileNotFoundErrors (312 MB) before
+#       being killed by hand.
+#
+#   Missing key ... rerun_state_machine_state/shard_<rank>_<world>
+#       The checkpoint is FINE; the JOB is wrong. That key encodes the world
+#       size (rerun_state_machine.py:782-787 wraps it in a ShardedObject whose
+#       global shape IS the world size), so it cannot reshard — unlike the model
+#       and optimizer tensors, which can. It means "resumed at a different node
+#       count". Quarantining would discard good state and roll back for nothing,
+#       so it CANCELS with an explanation instead.
+#
+# ORDERING MATTERS. The checkpoint events sit FIRST, ahead of the generic
+# `err_child_failed` / `error` restart patterns, because a failed load also
+# prints "Exited with exit code 1" — if the generic restart fired first the job
+# would relaunch onto the same broken checkpoint without the rollback.
+log_events:
+  # === CHECKPOINT RECOVERY (must precede the generic restart patterns) =======
+
+  # 1) quarantine the unloadable checkpoint. `match_once` is load-bearing: the
+  #    triggering error is printed by EVERY rank (77,925 times in the incident
+  #    above), and without it the action would fire thousands of times.
+  - name: ckpt_corrupt_quarantine
+    pattern: "No such file or directory: '[^']*/iter_(\\d+)/__\\d+_\\d+\\.distcp'"
+    pattern_type: regex
+    extract_groups:
+      iteration: 1
+    match_once: true
+    action:
+      class_name: QuarantineCheckpointAction
+      # `load` follows `save` by interpolation, so this is the tree the job will
+      # read from on the restart below.
+      checkpoint_dir: ${backend.megatron.save}
+      iteration: "{iteration}"
+      quarantine_prefix: "failed_"
+      # Bounds the damage: a persistent fault would otherwise walk backwards
+      # through every checkpoint, one restart at a time. Once hit, the action
+      # fails loudly and leaves the tree alone. Nothing is ever DELETED, only
+      # renamed, so a wrong call is reversible.
+      max_rollbacks: 2
+
+  # 2) ... then restart, so the job resumes from the rolled-back tracker.
+  - name: ckpt_corrupt_restart
+    pattern: "No such file or directory: '[^']*/iter_(\\d+)/__\\d+_\\d+\\.distcp'"
+    pattern_type: regex
+    match_once: true
+    action:
+      class_name: RestartAction
+      reason: "checkpoint quarantined; resuming from last loadable checkpoint"
+
+  # 3) world-size mismatch: do NOT quarantine — cancel and explain.
+  - name: err_ckpt_world_size_mismatch
+    pattern: "Missing key in checkpoint state_dict: rerun_state_machine_state/shard_\\d+_(\\d+)"
+    pattern_type: regex
+    extract_groups:
+      ckpt_world: 1
+    match_once: true
+    action:
+      class_name: CancelAction
+      reason: "Checkpoint written at a different world size — resume at the node count that wrote it"
+
+  # === everything below is copied verbatim from auto_restart.yaml ============
+  - name: finished_training
+    pattern: "[after training is done]"
+    pattern_type: substring
+    action:
+      class_name: FinishAction
+      reason: "Training finished"
+  - name: finish
+    pattern: ".*validation loss.*on test set.*"
+    pattern_type: regex
+    action:
+      class_name: FinishAction
+      reason: "Test Evaluation Finished"
+
+  # === FATAL: configuration / data faults -> CANCEL (never restart) =========
+  - name: err_unrecognized_argument
+    pattern: "unrecognized arguments"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "Launcher rejected an argument (check torchrun_args/ft args)"
+
+  # LAUNCHER/FT-PACKAGE MISMATCH. `enable_ft_package: true` makes every rank call
+  # ft_integration.setup() -> RankMonitorClient.init_workload_monitoring(), which
+  # needs FT_RANK_MONITOR_IPC_SOCKET — and ONLY ft_launcher sets it. Run that
+  # under `python -m torch.distributed.run` and all ranks die in setup.
+  #
+  # THIS MUST CANCEL, NOT RESTART, AND IT PREVIOUSLY DID NEITHER. The failure
+  # cascades: dead ranks make the survivors raise ncclRemoteError / "Connection
+  # refused", which matches err_nccl_timeout below -> RestartAction. So the
+  # monitor RESTARTED a config fault that is identical on every attempt, while
+  # torchrun's own --max-restarts 50 looped the worker group underneath it.
+  # Measured 2026-08-21: job 1436657 (512 nodes, 2049 rank failures) and its
+  # 4-node reproduction 1436792/1436840. Listed BEFORE the NCCL patterns so the
+  # real cause wins the race — log events are evaluated in order.
+  #
+  # Specificity checked against the real logs: 34 hits on the failing run, 0 on
+  # a healthy ft_launcher run, and 0 on the benign
+  # "INFO: ... FT_LAUNCHER_IPC_SOCKET env varialble is not set" line, which is a
+  # DIFFERENT variable and is only informational.
+  - name: err_ft_package_without_ft_launcher
+    pattern: "RankMonitorClientError|FT_RANK_MONITOR_IPC_SOCKET env variable should be set"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "enable_ft_package/calc_ft_timeouts are on but the launcher is not ft_launcher"
+
+  - name: err_disk_quota
+    pattern: "Disk quota exceeded|Errno 122"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Disk quota exceeded — free space or move checkpoints to scratch"
+
+  - name: err_fp8_metadata
+    pattern: "Saved FP8 metadata does not match"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "FP8 recipe/CUDA-graph mismatch — set cuda_graph_impl: none"
+
+  - name: err_dataset_cache_corrupt
+    pattern: "mmap length is greater than file size|ValueError: cannot reshape array"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Corrupt dataset cache — run scripts/check_data_cache.py --repair"
+
+  - name: err_infra_rank
+    pattern: "Invalid infrastructure rank"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "NVRx infrastructure rank invalid — check use_infra_group_rank"
+
+  - name: err_torch_oom
+    pattern: "torch\\.cuda\\.OutOfMemoryError|CUDA out of memory\\. Tried to allocate"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Model OOM — reduce micro_batch_size or raise TP/PP"
+
+  # === INFRASTRUCTURE: node-local and transient -> RESTART ==================
+  - name: err_cuda_alloc_init
+    pattern: "Failed to CUDA calloc|AcceleratorError: CUDA error: out of memory|cudaErrorMemoryAllocation"
+    pattern_type: regex
+    action:
+      class_name: RestartAction
+      reason: "GPU occupied at init (leftover process) — retrying on new nodes"
+
+  - name: err_rendezvous
+    # RendezvousClosedError is deliberately ABSENT — ft_launcher emits it during
+    # a NORMAL fault-tolerant restart cycle, and matching it cancelled healthy
+    # job 1379130 at iteration 4204/8000.
+    pattern: "RendezvousConnectionError|DistNetworkError"
+    pattern_type: regex
+    action:
+      class_name: RestartAction
+      reason: "Rendezvous failure — retrying (consider static rdzv for torchrun)"
+
+  - name: err_userbuffers_stall
+    pattern: "userbuffers\\.cu.*expecting [0-9]+ got [0-9]+"
+    pattern_type: regex
+    action:
+      class_name: RestartAction
+      reason: "userbuffers TP-overlap stall — peer rank unresponsive, retrying"
+
+  - name: err_nccl_timeout
+    pattern: "Watchdog caught collective operation timeout|unhandled cuda error|NCCL error"
+    pattern_type: regex
+    action:
+      class_name: RestartAction
+      reason: "NCCL collective timeout/abort — retrying"
+
+  - name: err_cuda_illegal_access
+    pattern: "illegal memory access|cudaErrorIllegalAddress"
+    pattern_type: regex
+    action:
+      class_name: RestartAction
+      reason: "CUDA illegal memory access — GPU needs reset, not a relaunch"
+
+  - name: err_cpp_terminate
+    pattern: "terminate called after throwing an instance of"
+    pattern_type: substring
+    action:
+      class_name: RestartAction
+      reason: "Unhandled C++ exception — worker aborted"
+
+  - name: err_node_failure
+    pattern: "DUE TO NODE FAILURE|Node failure on"
+    pattern_type: regex
+    action:
+      class_name: RestartAction
+      reason: "SLURM node failure in the allocation"
+
+  - name: err_child_failed
+    pattern: "ChildFailedError"
+    pattern_type: substring
+    action:
+      class_name: RestartAction
+      reason: "Worker process failed — retrying"
+
+  - name: error
+    pattern: "Exited with exit code 1"
+    pattern_type: substring
+    action:
+      class_name: RestartAction
+      reason: ""
+
+  - name: inactive
+    pattern_type: inactivity
+    inactivity_polls: 5
+    inactivity_timeout_s: 1200
+    action:
+      class_name: RestartAction
+      reason: "Inactive Log"
+
+# =============================================================================
+# NO state_events HERE — DELIBERATE, AND THE WHOLE REASON THIS POLICY WORKS
+# =============================================================================
+# auto_restart.yaml restarts on the RUNNING->FAILED transition. That preempts
+# log analysis: a checkpoint-load failure kills the job in ~90 s, the monitor
+# sees the state change before it has read WHY, and relaunches onto the same
+# broken checkpoint. Measured — in one test run this produced 6 restarts with
+# ZERO log events fired and no quarantine, even though the log contained 20
+# FileNotFoundErrors naming the exact iteration. An earlier run of the SAME
+# config recovered correctly, purely because a log poll happened to land first;
+# i.e. state-driven restart makes recovery a coin flip.
+#
+# With state_events removed, every restart decision comes from the log, so the
+# ordering above (checkpoint events before the generic "Exited with exit code 1")
+# actually decides the outcome.
+#
+# COST OF THIS CHOICE: a job that dies without writing any matching line no
+# longer restarts instantly. It is still covered — the `inactive` event fires
+# once the dead log has been silent for 5 polls / 1200 s. Slower, but it cannot
+# relaunch into a fault it has not diagnosed, which is the failure mode this
+# policy exists to stop.

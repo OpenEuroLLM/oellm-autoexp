@@ -51,6 +51,20 @@ log_events:
       class_name: CancelAction
       reason: "Launcher rejected an argument (check torchrun_args/ft args)"
 
+  # LAUNCHER/FT-PACKAGE MISMATCH — `enable_ft_package: true` under a NON-ft
+  # launcher. Only ft_launcher sets FT_RANK_MONITOR_IPC_SOCKET, so every rank
+  # dies in ft_integration.setup(). Must be listed BEFORE err_nccl_timeout: the
+  # dead ranks make the survivors raise ncclRemoteError, which that pattern
+  # matches, so without this the monitor restarts a fault that is identical on
+  # every attempt. See the fuller note in config/job/auto_restart_ckptreset.yaml
+  # (kept in sync by hand — Hydra REPLACES lists on merge).
+  - name: err_ft_package_without_ft_launcher
+    pattern: "RankMonitorClientError|FT_RANK_MONITOR_IPC_SOCKET env variable should be set"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "enable_ft_package/calc_ft_timeouts are on but the launcher is not ft_launcher"
+
   - name: err_disk_quota
     pattern: "Disk quota exceeded|Errno 122"
     pattern_type: regex

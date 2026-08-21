@@ -200,12 +200,14 @@ log_events:
   #     tokenizer construction, 23 min of nothing)
   #   * a wedged step (1373198: 243 userbuffers spin-wait lines, 0 iterations)
   #
-  # 20 polls / 1200 s = 20 min at the 60 s poll interval. Calibration:
-  #   * healthy 1024-node startup to iteration 1 = 7 m 26 s (job 1380848)
-  #   * a healthy in-job ft restart (teardown + rendezvous + setup + ckpt
-  #     reload) measured ~5 min at 512 nodes (job 1401313, 08:12 -> 08:16)
-  #   * stability_check_bsramp_continue.yaml's own rule of thumb: "anything past
-  #     ~15 min with no dataset-build milestone is stuck, not slow"
+  # 20 polls / 1200 s = 20 min at the 60 s poll interval. Calibrated against the
+  # worst gaps MEASURED across eight healthy runs by replaying their logs:
+  #   * startup -> iteration 1:      max 10.4 min (job 1401367, 1026 nodes)
+  #   * gap between iterations:      max  5.4 min (job 1401313, an ft restart)
+  #   * everything else:             under 2.3 min
+  # so 20 min is ~2x the worst observed case. Do not cut it much finer: the
+  # memory note on >=256-node startups ("logs NOTHING for 8+ min during NCCL
+  # sync + kernel compile; never cancel before 15 min") is the real floor.
   # RAISE THIS if you ever run with a synchronous (non-async) checkpoint save or
   # an eval_interval inside the run — both are legitimate multi-minute gaps in
   # iteration output. With async_save and eval_interval > exit_interval (the
@@ -229,25 +231,31 @@ log_events:
   # never past iteration 100 — each cycle looked like movement to the check
   # above (~4500 node-hours).
   #
-  # The window MUST exceed the time needed to redo the work lost to the last
-  # rolling checkpoint, or a healthy restart trips it:
+  # THE WINDOW IS TIED TO non_persistent_save_interval. After a restart the
+  # counter rewinds to the last rolling checkpoint, and until it climbs back the
+  # high-water mark does not move — so the window must exceed
   #     non_persistent_save_interval x seconds-per-iteration + restart overhead
-  # At the current 512-node settings (1000 iters x ~4.4 s) that is ~73 min, so
-  # 7200 s leaves ~45 min of margin. RETUNE THIS WHENEVER
-  # non_persistent_save_interval CHANGES — at the 1024-node setting of 125 it
-  # could safely drop to ~1800 s and catch the loop 90 min sooner.
+  # RETUNE IT WHENEVER THAT INTERVAL CHANGES. At 125 iters x ~4.4 s = ~9 min plus
+  # a ~5 min restart (measured: job 1401313 restarted 08:12 and was back at
+  # iteration 3001 by 08:16) the worst case is ~15 min, so 1800 s is 2x margin.
+  # It was 7200 s while the interval was 1000; commit 77d0587 cut it to 125.
+  #
+  # Verified by replaying the real logs (60 s poll, exact state machine):
+  #   1375720 (stuck 4 h at iteration 100)  fires at t+30 min, was t+134 at 7200 s
+  #   7 healthy runs incl. 1400372 (8 h, 5 ft restart cycles)  never fires
+  # Largest observed no-net-progress stretch on a healthy run: 5.9 min.
   - name: stalled_high_water
     pattern: "iteration +([0-9]+)/"
     pattern_type: progress
     progress_mode: max
-    progress_polls: 120
-    progress_timeout_s: 7200
+    progress_polls: 30
+    progress_timeout_s: 1800
     condition:
       class_name: MaxAttemptsCondition
       max_attempts: 4
     action:
       class_name: RestartAction
-      reason: "No net iteration progress for 2 h — restart loop, not recovery"
+      reason: "No net iteration progress for 30 min — restart loop, not recovery"
 
   - name: time_limit
     pattern: "DUE TO TIME LIMIT"
