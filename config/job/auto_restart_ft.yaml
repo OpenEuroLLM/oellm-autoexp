@@ -163,7 +163,7 @@ log_events:
     match_once: true
     action:
       class_name: AppendToFileAction
-      path: ${oc.env:JUPITER_EXCLUDE_NODES,${oc.env:PROJECT_DIR,.}/config/exclude/jupiter_exclude_nodes.txt}
+      path: ${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}
       content: "{node}"
 
   # 2) Push the updated list onto every PENDING chain sibling (scontrol update).
@@ -174,7 +174,7 @@ log_events:
     match_once: true
     action:
       class_name: UpdateChainExcludesAction
-      exclude_file: ${oc.env:JUPITER_EXCLUDE_NODES,${oc.env:PROJECT_DIR,.}/config/exclude/jupiter_exclude_nodes.txt}
+      exclude_file: ${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}
 
   # 3) Resubmit into a fresh allocation, resuming from the rolling checkpoint.
   - name: node_failure_restart

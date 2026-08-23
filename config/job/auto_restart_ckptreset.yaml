@@ -91,6 +91,54 @@ log_events:
       class_name: CancelAction
       reason: "Checkpoint written at a different world size — resume at the node count that wrote it"
 
+  # 4) checkpoint that cannot be OPENED AT ALL -> cancel, never restart.
+  #
+  # DISTINCT FROM (1). Event 1 is a checkpoint whose SHARDS are short: the loader
+  # opens it, reads `.metadata`, and then fails on a named `iter_N/__x_y.distcp`.
+  # That message carries the iteration, so QuarantineCheckpointAction can rename
+  # it and roll the tracker back. THIS event is the case where the loader never
+  # gets that far, and the message carries NO iteration to quarantine — so the
+  # quarantine machinery is not merely unhelpful here, it is inapplicable.
+  #
+  # Both raises come from dist_checkpointing/validation.py:
+  #   :231  "Checkpoint directory {dir} does not exist"
+  #         {dir} is the RESOLVED path and is `None` when Megatron decided a
+  #         checkpoint exists (a tracker file says so) but could not resolve one.
+  #   :235  "{dir} is not a distributed checkpoint"
+  #         raised when maybe_load_config() returns None, i.e. `.metadata` is
+  #         ABSENT. torch_dist writes `.metadata` LAST, as the commit marker, so
+  #         this is the signature of a save that was interrupted.
+  #
+  # MEASURED 2026-08-23, run sc-fp8-zloss1e-4-n512-jjopt-nobsramp-wu10000: SIX
+  # jobs in one hour (1465307/1465393/1465418/1465460/1465467/1465554), each
+  # dying in load with 2049 x "Checkpoint directory None does not exist" and then
+  # ~12,656 Gloo connectFullMesh errors as the survivors lost the dead ranks.
+  # None of the checkpoint events above matched, so `err_child_failed` ->
+  # RestartAction won the race and relaunched into the identical state, forever.
+  # Both rolling checkpoints were `common.pt` + 4088 .distcp and NO `.metadata`.
+  #
+  # WHY CANCEL AND NOT QUARANTINE: quarantining walks backwards one checkpoint
+  # per restart, and when the tree holds only unloadable checkpoints that walk
+  # ends at "no checkpoint at all" — which does not fail, it SILENTLY RESTARTS
+  # TRAINING FROM SCRATCH. Stopping and telling a human is the safe outcome.
+  # NB :235 does embed the directory (hence the iteration), so a future
+  # quarantine-on-this-signature is possible — but only once there is a proven
+  # loadable checkpoint to fall back to.
+  #
+  # SPECIFICITY: anchored on "CheckpointingException:" on purpose. A FRESH run
+  # with an empty `load` dir logs
+  #     "Failed to inspect checkpoint in <dir>: <dir> is not a MLM or NeMo
+  #      sharded checkpoint!"
+  # and then starts from scratch, healthily. Matching that string would cancel
+  # every first-ever run in the family, so it is deliberately NOT matched.
+  - name: err_ckpt_unloadable
+    pattern: "CheckpointingException: Checkpoint directory .* does not exist|CheckpointingException: .* is not a distributed checkpoint"
+    pattern_type: regex
+    match_once: true
+    action:
+      class_name: CancelAction
+      reason: "Checkpoint exists but cannot be opened (missing .metadata / unresolvable dir) — a restart re-reads the same broken tree"
+
   # === everything below is copied verbatim from auto_restart.yaml ============
   - name: finished_training
     pattern: "[after training is done]"
@@ -219,6 +267,51 @@ log_events:
       class_name: RestartAction
       reason: "Unhandled C++ exception — worker aborted"
 
+  # === NODE FAILURE: RECORD, PROPAGATE, THEN RESTART ========================
+  # These three fire in order on the same log line, and the order matters: the
+  # append must land before the propagate reads the file, and both must happen
+  # before the restart re-renders.
+  #
+  # WHY THIS WAS MISSING (added 2026-08-23). This policy only ever had the
+  # RestartAction below. The append/propagate pair lives in auto_restart_ft.yaml
+  # and did not come along when the flagship moved off ft_launcher onto
+  # /backend: megatron_torchdist_localaddr. The consequence on a 40-day run is
+  # that a node SLURM has just NAMED as failed is restarted away from and then
+  # remains fully eligible for the very next allocation — the run can draw the
+  # same dead node repeatedly, and the exclusion list this whole apparatus feeds
+  # never learns anything during the one run that needs it most.
+  #
+  # 1) Record the node. AppendToFileAction writes a BARE NAME with no comment,
+  #    so entries added here are the unannotated ones; run
+  #    scripts/run_autoexclude_jupiter.py afterwards to give them evidence, or
+  #    prune them if they turn out to be innocent.
+  - name: node_failure_append
+    pattern: "Node failure on ([\\w-]+)"
+    pattern_type: regex
+    extract_groups:
+      node: 1
+    match_once: true
+    action:
+      class_name: AppendToFileAction
+      path: ${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}
+      content: "{node}"
+
+  # 2) Push the updated list onto every PENDING chain sibling. Production runs
+  #    chain_repeat: 3, so segments 2 and 3 are already queued and their sbatch
+  #    scripts were rendered UP FRONT — the baked-in `#SBATCH --exclude=` is the
+  #    list as it stood at submission. PENDING is the only state SLURM lets us
+  #    edit, so this is the only way the queued segments learn about a node that
+  #    died during segment 1.
+  - name: node_failure_propagate
+    pattern: "Node failure on ([\\w-]+)"
+    pattern_type: regex
+    match_once: true
+    action:
+      class_name: UpdateChainExcludesAction
+      exclude_file: ${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}
+
+  # 3) Resubmit into a fresh allocation, resuming from the rolling checkpoint.
+  #    Kept LAST and kept exactly as it was.
   - name: err_node_failure
     pattern: "DUE TO NODE FAILURE|Node failure on"
     pattern_type: regex

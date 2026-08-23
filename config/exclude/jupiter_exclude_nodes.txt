@@ -1,8 +1,28 @@
-# JUPITER node-exclusion list.
+# JUPITER node-exclusion list — SNAPSHOT, NOT THE LIVE FILE (since 2026-08-23).
+#
+# ###########################################################################
+# EDITING THIS FILE CHANGES NOTHING. Jobs read the shared project copy:
+#
+#     /e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt
+#
+# (overridable with $JUPITER_EXCLUDE_NODES). That is what oc.exclude_nodes
+# resolves, what the monitor appends to mid-run, and what
+# scripts/run_autoexclude_jupiter.py curates. See the rationale block in
+# config/slurm/jupiter_autoexclude.yaml for why it moved out of the repo — in
+# short, a git-tracked file with a runtime writer drifts by construction, and
+# `git checkout main` was able to silently change which nodes a 512-node job
+# avoids.
+#
+# This copy is kept ONLY so the per-entry evidence comments stay reviewable and
+# diffable in git. Refresh it with:
+#     rsync jupiter:/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt \
+#           config/exclude/
+# and commit the result. To CHANGE the live list, edit it on JUPITER through
+# scripts/run_autoexclude_jupiter.py (update / prune), then snapshot back here.
+# ###########################################################################
 #
 # Format: one node per line (comma/whitespace separated also accepted); blank
-# lines and lines starting with '#' are ignored. Read by oc.exclude_nodes at
-# submission time (config/slurm/jupiter_autoexclude.yaml) -> #SBATCH --exclude=
+# lines and lines starting with '#' are ignored.
 #
 # NB the resolver only strips '#' at the START of a line — it does NOT strip
 # trailing comments. `jpbo-034-38   # 20/35` parses as THREE nodes and produces a
@@ -30,15 +50,26 @@
 #
 # All were drained 17:03-17:12 on 2026-08-14, AFTER most of the failures.
 #
+# PRUNED 2026-08-23, all 18 of them, before the 32B production submit. Every one
+# reads healthy in sinfo now (`prune` confirmed: idle or allocated, no reason),
+# and the argument for pruning is the diagnosis recorded above — RESIDUE, not
+# hardware. Leftover processes are reaped when the node is reallocated, so nine
+# days and many jobs later there is nothing left for these entries to guard
+# against, while each one permanently shrinks the pool a 512-node job draws from.
+# The hardware faults further down (ECC, pending row remapping, wedged GSP) were
+# deliberately NOT pruned on the same pass: those need a node reset, and sinfo
+# reporting them schedulable is not evidence the root cause was fixed.
+# If any of them fails again, the campaign will re-catch it.
+#
 # check_hw_physmem_free (not enough RAM free)
 #   jpbo-034-38  20/35 attempts   <- worst offender
 #   jpbo-103-05  15/35
 #   jpbo-120-18  10/35
 #   jpbo-120-27  10/35
-jpbo-034-38
-jpbo-103-05
-jpbo-120-18
-jpbo-120-27
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-034-38
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-103-05
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-120-18
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-120-27
 
 # check_free_memory_per_numa_node (free memory below threshold)
 #   jpbo-121-03  19/35
@@ -54,23 +85,23 @@ jpbo-120-27
 #   jpbo-104-17   6/35
 #   jpbo-104-20   6/35
 #   jpbo-104-23   6/35
-jpbo-121-03
-jpbo-121-09
-jpbo-035-32
-jpbo-121-21
-jpbo-121-27
-jpbo-063-36
-jpbo-064-03
-jpbo-064-06
-jpbo-064-15
-jpbo-104-11
-jpbo-104-17
-jpbo-104-20
-jpbo-104-23
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-121-03
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-121-09
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-035-32
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-121-21
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-121-27
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-063-36
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-064-03
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-064-06
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-064-15
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-104-11
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-104-17
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-104-20
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-104-23
 
 # check_residual_mounts (residual squashfuse mount — leftover apptainer state)
 #   jpbo-044-15   5/35
-jpbo-044-15
+# [pruned 2026-08-23: residue fault, node healthy again in sinfo] jpbo-044-15
 
 # ---------------------------------------------------------------------------
 # Known-bad from earlier the same day (not from the requeue loop)
@@ -154,3 +185,62 @@ jpbo-026-42
 # against them returning to service still faulty.
 jpbo-075-09
 jpbo-074-31
+
+# instant node fail
+jpbo-111-44
+
+# ---------------------------------------------------------------------------
+# 2026-08-23 — scripts/run_autoexclude_jupiter.py update
+# ---------------------------------------------------------------------------
+# Selection: user poeppel1 since 2026-08-18, name~oellm_32b_dense
+# 117 allocation attempts, 7 failing, fleet 5085 nodes.
+# Campaign failure rate 0.292; a random node is expected in ~0.81 of the failing draws. Statistical entries below clear a Bonferroni-corrected conditional-failure p <= 0.05
+# OR carry an independent NHC/health drain reason from sinfo.
+# NOTE: pre-production refresh before the 32B prod submit; rack guard active
+#
+# DIED UNDER US — SLURM drained/downed this node while it was running one of
+# the failing jobs below. No log line needed; the timestamps are the evidence.
+#   jpbo-063-13  drained DRAIN during job 1403625 (2026-08-18T11:52:35, +225s vs job end): Epilog error
+#   jpbo-107-45  drained DOWN* during job 1400371 (2026-08-18T05:21:34, +0s vs job end): Not responding
+jpbo-063-13
+jpbo-107-45
+#
+# STATISTICAL — this node was in several failing allocations. Weaker evidence
+# than a named failure; prune these first if the fleet gets tight. Entries with
+# a sinfo reason rest on an independent instrument (NHC); those without rest
+# only on our own counts and cleared the fleet-corrected bar.
+#   jpbo-067-11  failed 5 of its 8 draws (p=0.052, fleet-corrected 1) | sinfo: Kill task failed
+#   jpbo-119-05  failed 2 of its 2 draws (p=0.085, fleet-corrected 1) | sinfo: Kill task failed
+#   jpbo-091-05  failed 2 of its 4 draws (p=0.33, fleet-corrected 1) | sinfo: Kill task failed
+#   jpbo-118-38  failed 2 of its 6 draws (p=0.56, fleet-corrected 1) | sinfo: Kill task failed
+jpbo-067-11
+jpbo-119-05
+jpbo-091-05
+jpbo-118-38
+
+# ---------------------------------------------------------------------------
+# 2026-08-23 — node_catch campaign (jobs 1466300-1466307), ABORTED after 4 draws
+# ---------------------------------------------------------------------------
+# The campaign was stopped deliberately: scripts/nodecheck.sh failed any GPU
+# whose LIFETIME uncorrectable-ECC counter was > 0, and that counter never
+# resets, so it flags hardware that a row remap retired long ago. Across four
+# 512-node draws it failed 94 DISTINCT NODES, every single one on that check and
+# not one of them on the row-remap check that says the HBM is failing NOW. The
+# distribution gives it away: 38 nodes at aggregate=1, 13 at =2, 14 at =3.
+# 71 of those had already been appended live by the monitor before the abort;
+# they are NOT in this file, and that is intentional.
+#
+# nodecheck.sh now fails on VOLATILE (errors this boot) and only warns on
+# aggregate below NODECHECK_ECC_AGG_FAIL=64. Re-applying that bar to the same
+# campaign logs leaves exactly the four nodes below — real outliers, orders of
+# magnitude above the fleet's healthy 1-20 range. Kept because a 40-day run has
+# no reason to schedule onto them.
+#
+#   jpbo-099-19  uncorrectable ECC aggregate=2429
+#   jpbo-063-45  uncorrectable ECC aggregate=93
+#   jpbo-099-03  uncorrectable ECC aggregate=90
+#   jpbo-082-44  uncorrectable ECC aggregate=75
+jpbo-099-19
+jpbo-063-45
+jpbo-099-03
+jpbo-082-44

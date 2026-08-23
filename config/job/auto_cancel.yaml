@@ -56,6 +56,21 @@ log_events:
       class_name: CancelAction
       reason: "Disk quota exceeded — free space or move checkpoints to scratch"
 
+  # Checkpoint present but unopenable — the loader fails before it reads a
+  # single shard, so the message names no iteration and nothing can be
+  # quarantined. `.metadata` is written LAST by torch_dist, so its absence is the
+  # signature of an interrupted save. Anchored on "CheckpointingException:" so it
+  # cannot match the benign "is not a MLM or NeMo sharded checkpoint" that every
+  # from-scratch run logs. See config/job/auto_restart_ckptreset.yaml for the
+  # full derivation.
+  - name: err_ckpt_unloadable
+    pattern: "CheckpointingException: Checkpoint directory .* does not exist|CheckpointingException: .* is not a distributed checkpoint"
+    pattern_type: regex
+    match_once: true
+    action:
+      class_name: CancelAction
+      reason: "Checkpoint exists but cannot be opened (missing .metadata / unresolvable dir) — a restart re-reads the same broken tree"
+
   # FP8 recipe incompatible with CUDA graphs (tensorwise + graphs). Aborted
   # every rank of jobs 1366290 and 1366300.
   - name: err_fp8_metadata

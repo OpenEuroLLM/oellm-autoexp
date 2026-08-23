@@ -12,11 +12,30 @@ defaults:
 # until the list has content.
 #
 # The path comes from $JUPITER_EXCLUDE_NODES so the monitor's AppendToFileAction
-# and this resolver share one source of truth. It falls back to a REPO-TRACKED
-# file rather than the Leonardo-style $HOME/.oellm_autoexp/ default, because on
-# JUPITER we sync the repo to the cluster: a tracked list travels with the code,
-# is reviewable in git, and cannot silently differ between the login node and a
-# workstation. Set the env var if you want a per-user list instead.
+# and this resolver share one source of truth. Set the env var for a per-user
+# list; the fallback is the SHARED PROJECT FILE.
+#
+# IT USED TO FALL BACK TO THE REPO-TRACKED COPY, AND THAT WAS WRONG (2026-08-23).
+# The argument for a tracked list — it travels with the code and is reviewable in
+# git — ignores that this file has a RUNTIME WRITER. The monitor appends to it
+# mid-run, so the live list is whatever is on the cluster, while git holds
+# whatever was last committed, and the two drift by construction: the 32B branch
+# carried 25 entries at HEAD against 18 curated in the working tree, and `main`
+# carried ZERO. Being git-tracked also meant `git checkout main` (or a stray
+# `git stash` / `git checkout .`) silently changed which nodes a 512-node
+# production job avoids — a VCS operation must not be able to do that. And a
+# repo-relative path is per-checkout, so a colleague submitting from their own
+# clone was reading a different file entirely.
+#
+# The shared path sits in production_training/, whose DEFAULT ACLs already grant
+# rwx to the production team (jitsev1, komulainen1, poeppel1, vanosch1, pyysalo1,
+# taubert2) and propagate to newly created files — so the monitor can append no
+# matter whose account the run is under. `shared/` cannot: it grants write to
+# poeppel1 alone.
+#
+# The repo copy is KEPT, as documentation rather than as the source of truth:
+# commit snapshots of it so the per-entry evidence comments stay reviewable and
+# diffable in git. Just never let it be what a job reads.
 #
 # WHY THIS EXISTS (2026-08-14)
 # ---------------------------
@@ -37,4 +56,4 @@ defaults:
 # is technical debt: prune entries once nodes are confirmed healthy, or large
 # jobs will slowly lose scheduling candidates for no reason.
 sbatch:
-  exclude: ${oc.exclude_nodes:${oc.env:JUPITER_EXCLUDE_NODES,${oc.env:PROJECT_DIR,.}/config/exclude/jupiter_exclude_nodes.txt}}
+  exclude: ${oc.exclude_nodes:${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}}

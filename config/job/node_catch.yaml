@@ -68,7 +68,7 @@ log_events:
     match_once: false
     action:
       class_name: AppendToFileAction
-      path: ${oc.env:JUPITER_EXCLUDE_NODES,${oc.env:PROJECT_DIR,.}/config/exclude/jupiter_exclude_nodes.txt}
+      path: ${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}
       content: "{node}"
 
   # 1b) SLURM tore the allocation down because a node died. The single most
@@ -82,7 +82,7 @@ log_events:
     match_once: false
     action:
       class_name: AppendToFileAction
-      path: ${oc.env:JUPITER_EXCLUDE_NODES,${oc.env:PROJECT_DIR,.}/config/exclude/jupiter_exclude_nodes.txt}
+      path: ${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}
       content: "{node}"
 
   # ===== NOT AN EVENT: `srun: error: <node>: task N: Exited with exit code` ===
@@ -111,7 +111,7 @@ log_events:
     match_once: true
     action:
       class_name: UpdateChainExcludesAction
-      exclude_file: ${oc.env:JUPITER_EXCLUDE_NODES,${oc.env:PROJECT_DIR,.}/config/exclude/jupiter_exclude_nodes.txt}
+      exclude_file: ${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}
 
   # === 3) TERMINAL: end this draw, let the chain advance ====================
   # MUST BE LAST — a terminal effect ends log processing for this poll, so any

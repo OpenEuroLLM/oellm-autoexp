@@ -252,6 +252,19 @@ def oc_exclude_nodes(path: str, sep: str = ",") -> str | None:
     """
     target = Path(str(path)).expanduser()
     if not target.exists():
+        # WARN, do not fail. Returning None is correct — a site with no list
+        # should not have an --exclude directive — but staying silent about it
+        # is not: the list now lives OUTSIDE the repo (a shared project path on
+        # JUPITER), so a moved, renamed or archived file, or an unmounted
+        # /e/project1, turns into a 512-node job submitted with NO exclusions at
+        # all, and nothing anywhere says so. A typo in the path looks identical
+        # to "we deliberately have no list".
+        LOGGER.warning(
+            "oc.exclude_nodes: %s does not exist — no --exclude directive will be "
+            "emitted for this job. If a list was expected, check the path or "
+            "$JUPITER_EXCLUDE_NODES.",
+            target,
+        )
         return None
     nodes: list[str] = []
     seen: set[str] = set()
