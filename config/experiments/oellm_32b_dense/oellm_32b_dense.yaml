@@ -31,7 +31,9 @@ job:
   config_path: ${.base_output_dir}/logs/config-%j.yaml
   config_path_current: ${.base_output_dir}/logs/current.yaml
   # production: chain 3 x 12 h. The early ablation configs override this to 1.
-  chain_repeat: 3
+  est_step_time_s: 4.2
+  est_steps: ${oc.coalesce:${backend.megatron.exit_interval},${backend.megatron.train_iters},${oc.divi:${backend.megatron.train_samples},${backend.megatron.global_batch_size}}}
+  est_startup_min: 10
 
 backend:
   # ===========================================================================
@@ -216,6 +218,8 @@ backend:
     # where re-running on different hardware proves nothing. Revisit if silent
     # corruption is ever actually suspected.
     rerun_mode: disabled
+
+    exit_interval: 100  # ensures this is just a test
 
 
   env:

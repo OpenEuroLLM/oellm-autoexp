@@ -30,8 +30,11 @@ job:
   log_path_current: ${.base_output_dir}/logs/current.log
   config_path: ${.base_output_dir}/logs/config-%j.yaml
   config_path_current: ${.base_output_dir}/logs/current.yaml
-  # production: chain 3 x 12 h. The early ablation configs override this to 1.
-  chain_repeat: 3
+
+  # get estimated total runtime
+  est_step_time_s: 4.2  # from previous speed experiments
+  est_steps: ${oc.coalesce:${backend.megatron.exit_interval},${backend.megatron.train_iters},${oc.divi:${backend.megatron.train_samples},${backend.megatron.global_batch_size}}}
+  est_startup_min: 10
 
 backend:
   # ===========================================================================
@@ -53,7 +56,7 @@ backend:
     # --- run identity (feeds job.name) ---------------------------------------
     variant: "prod"     # ablation tag; override per variant config
     lr_tag: "3e-4"      # human-readable form of megatron.lr, for the run name
-    warmup_steps: 8000
+    warmup_steps: 10000
     # --- FT rank-monitor section timeouts, seconds ---------------------------
     # Widened from the backend defaults (600/180/420/300) for 2056 ranks. These
     # are HANG DETECTORS, not deadlines: exceeding one makes the monitor declare
