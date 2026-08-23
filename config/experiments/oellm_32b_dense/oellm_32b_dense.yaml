@@ -334,6 +334,39 @@ slurm:
     TORCH_EXTENSIONS_DIR: /dev/shm/${oc.env:USER}/torch_extensions
     CUDA_CACHE_PATH: /dev/shm/${oc.env:USER}/nv_compute_cache
 
+    # === THE CACHE THIS LIST FORGOT: PYTHON BYTECODE =========================
+    # Triton, Inductor, torch extensions and the CUDA compute cache above are all
+    # redirected away from shared storage because concurrent writers race. The
+    # `.pyc` cache was never included, and it races the same way — Python writes
+    # bytecode next to the source, which inside the container means the
+    # `--writable-tmpfs` overlay, shared by the 4 ranks on a node.
+    #
+    # MEASURED 2026-08-22, job 1457594 (512 nodes, run jjopt-wu10000): at the
+    # iteration-3500 checkpoint save (20:17:58) EIGHT ranks raised
+    #     File ".../sympy/polys/polyfuncs.py", line 10, in <module>
+    #     File "<frozen importlib._bootstrap_external>", line 753, _compile_bytecode
+    #     EOFError: marshal data too short
+    # i.e. a TRUNCATED .pyc. That import runs in the ASYNC CHECKPOINT WORKER, so
+    # the worker died at import and the parent stayed blocked in
+    # multiprocessing/connection.py::recv_bytes (visible in the faulthandler dump
+    # at the end of that log).
+    #
+    # THE DAMAGE IS NOT THE CRASH, IT IS THE SILENT HALF-WRITTEN CHECKPOINT.
+    # Saves 3500 and 3625 wrote common.pt + 4088 .distcp (442 GB each) and then
+    # never finalized, so `.metadata` — which torch_dist writes LAST, as the
+    # commit marker — was never written and the rolling dir never rotated. The
+    # tracker still advanced to 3625, so every later job resolved an unopenable
+    # checkpoint and died with
+    #     CheckpointingException: Checkpoint directory None does not exist
+    # 14+ jobs restart-looped on that before the err_ckpt_unloadable event was
+    # added to config/job/auto_restart*.yaml.
+    #
+    # DONTWRITEBYTECODE rather than PYTHONPYCACHEPREFIX: a prefix on /dev/shm is
+    # still shared by the 4 ranks of a node, so it narrows the race instead of
+    # removing it. Cost is recompiling imports each process; against a startup
+    # that already spends ~17 s on fused kernels that is not measurable.
+    PYTHONDONTWRITEBYTECODE: "1"
+
     #additional optimizations!
     PYTORCH_CUDA_ALLOC_CONF: "garbage_collection_threshold:0.8"
     PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.8"

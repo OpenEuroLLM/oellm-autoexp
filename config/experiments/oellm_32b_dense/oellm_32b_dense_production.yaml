@@ -25,7 +25,7 @@ job:
   # checkpoints/wandb/tensorboard, so a warmup/rampup sweep can never resume from
   # a sibling's checkpoint. Tag pieces come from backend.aux (see below).
   name: "oellm_32b_dense_${backend.aux.variant}_gbs${backend.megatron.global_batch_size}_lr${backend.aux.lr_tag}"
-  base_output_dir: /e/project1/e-sta-openeurollm/pre_production_training/${job.name}
+  base_output_dir: /e/project1/e-sta-openeurollm/production_training/${job.name}
   log_path: ${.base_output_dir}/logs/slurm-%j.log
   log_path_current: ${.base_output_dir}/logs/current.log
   config_path: ${.base_output_dir}/logs/config-%j.yaml
@@ -52,7 +52,7 @@ backend:
     spare_nodes: 0      # idle standbys held inside the same allocation - ignore as without ftlauncher
     # --- run identity (feeds job.name) ---------------------------------------
     variant: "prod"     # ablation tag; override per variant config
-    lr_tag: "2e-4"      # human-readable form of megatron.lr, for the run name
+    lr_tag: "3e-4"      # human-readable form of megatron.lr, for the run name
     warmup_steps: 8000
     # --- FT rank-monitor section timeouts, seconds ---------------------------
     # Widened from the backend defaults (600/180/420/300) for 2056 ranks. These
@@ -161,12 +161,12 @@ backend:
     #   -o backend.megatron.pipeline_model_parallel_size=2
     # which keeps 2.2 of the 2.5 days saved with no new parallelism shape.
     pipeline_model_parallel_size: 4
-    pipeline_model_parallel_layout: "Et\\*9\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*7L"
+    pipeline_model_parallel_layout: "Et\\*5\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*3L"
     tensor_model_parallel_size: 4
     sequence_parallel: true
 
     use_distributed_optimizer: true
-    num_distributed_optimizer_instances: 1  #!
+    num_distributed_optimizer_instances: 1
 
     overlap_grad_reduce: true
     overlap_param_gather: true
@@ -175,7 +175,7 @@ backend:
     # additional #!
     defer_embedding_wgrad_compute: true
     # overlap_param_gather_with_optimizer_step: true # not supported dist ckpt
-    cuda_graph_impl: "local"
+    cuda_graph_impl: none
 
     cross_entropy_loss_fusion: true
     cross_entropy_fusion_impl: te
@@ -348,6 +348,27 @@ slurm:
     TORCHINDUCTOR_CACHE_DIR: /dev/shm/${oc.env:USER}/inductor_cache
     TORCH_EXTENSIONS_DIR: /dev/shm/${oc.env:USER}/torch_extensions
     CUDA_CACHE_PATH: /dev/shm/${oc.env:USER}/nv_compute_cache
+
+    # === THE CACHE THIS LIST FORGOT: PYTHON BYTECODE =========================
+    # Same reasoning as the four redirects above — concurrent writers race on a
+    # shared cache — for the one cache that was never redirected. Python writes
+    # `.pyc` next to the source, which inside the container is the
+    # `--writable-tmpfs` overlay shared by the 4 ranks on a node.
+    #
+    # MEASURED 2026-08-22, job 1457594 (512 nodes): at the iteration-3500 save,
+    # eight ranks hit `EOFError: marshal data too short` importing sympy — a
+    # TRUNCATED .pyc — inside the ASYNC CHECKPOINT WORKER. The worker died at
+    # import, the parent blocked forever in multiprocessing recv_bytes, and the
+    # two saves in flight wrote all 4088 shards but never wrote `.metadata`
+    # (torch_dist writes it LAST, as the commit marker). The tracker still
+    # advanced, so every later job died with
+    #     CheckpointingException: Checkpoint directory None does not exist
+    # and restart-looped. See the full derivation in oellm_32b_dense.yaml and the
+    # matching fail-fast event `err_ckpt_unloadable` in config/job/.
+    #
+    # For a 40-day run this is the difference between losing one interval and
+    # losing every checkpoint written after the worker wedged.
+    PYTHONDONTWRITEBYTECODE: "1"
 
     #additional optimizations!
     PYTORCH_CUDA_ALLOC_CONF: "garbage_collection_threshold:0.8"
