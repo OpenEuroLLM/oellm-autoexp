@@ -1296,11 +1296,16 @@ def cmd_campaign(args: argparse.Namespace) -> int:
     NOTHING, and then curates an empty window and reports success — which looks
     exactly like a clean run that found no bad nodes. Feed it instead:
 
-        printf 'y\\n' | setsid nohup python scripts/run_autoexclude_jupiter.py \\
+        printf 'y\\ny\\n' | setsid nohup python scripts/run_autoexclude_jupiter.py \\
             campaign --config-name experiments/oellm_32b_dense/node_catch_n512 \\
             --apply > dump/nodecatch.log 2>&1 &
 
-    (A second `Really proceed?` prompt appears above 5000 GPU-h; two lines then.)
+    TWO LINES, NOT ONE, FOR THE 512-NODE CAMPAIGN. run_autoexp asks a SECOND
+    `Really proceed?` above 5000 GPU-h, and node_catch_n512 is 5,461 (8 draws x
+    512 nodes x 4 GPUs x 20 min) now that the estimator prices chain repeats —
+    it used to quote 683, i.e. one draw, and slipped under the second gate. So:
+
+        printf 'y\\ny\\n' | setsid nohup python ... &
     """
     started = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     cmd = [

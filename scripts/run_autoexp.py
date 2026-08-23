@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -175,20 +176,150 @@ def _parse_slurm_time(time_str: str) -> float:
     return days * 24 + h + m / 60 + s / 3600
 
 
-def _compute_gpu_hours(plan: ExecutionPlan) -> float:
-    """Sum GPU-hours across all jobs in the plan."""
+def _fmt_hm(hours: float) -> str:
+    """Hours as a compact human duration: 0.14 -> '8m', 11.5 -> '11h30m'."""
+    if hours <= 0:
+        return "0m"
+    total_min = int(round(hours * 60))
+    h, m = divmod(total_min, 60)
+    if h and m:
+        return f"{h}h{m:02d}m"
+    return f"{h}h" if h else f"{m}m"
+
+
+def _derive_steps(job_config) -> int | None:
+    """How many iterations one segment of this job will run, from the backend.
+
+    Order matters and mirrors what actually stops a Megatron run first:
+    `exit_interval` ends it after N iterations regardless of the schedule, so it
+    wins; otherwise the schedule length bounds it (`train_iters`, or
+    `train_samples / global_batch_size` for the sample-based configs this repo
+    uses). Returns None when nothing says — a bash probe or a `skip_train` job
+    has no steps, and the caller then falls back to the wall clock.
+    """
+    mg = getattr(getattr(job_config, "backend", None), "megatron", None)
+    if mg is None:
+        return None
+    exit_interval = getattr(mg, "exit_interval", None)
+    if exit_interval:
+        return int(exit_interval)
+    train_iters = getattr(mg, "train_iters", None)
+    if train_iters:
+        return int(train_iters)
+    train_samples = getattr(mg, "train_samples", None)
+    gbs = getattr(mg, "global_batch_size", None)
+    if train_samples and gbs:
+        return int(train_samples) // int(gbs)
+    return None
+
+
+def _full_run_hours(job) -> tuple[float, int] | None:
+    """Total stepping hours for this job's WHOLE schedule, ignoring the wall.
+
+    Returns (hours, steps), or None when no measured step time was given. This
+    is the number that answers "how long until 15 T tokens are done", which the
+    per-segment figure cannot: a production run is capped at its 12 h wall and
+    resumes from a checkpoint, so the segment length says nothing about the
+    finish date.
+    """
+    jc = job.config.job
+    step_time = getattr(jc, "est_step_time_s", None)
+    if not step_time:
+        return None
+    steps = getattr(jc, "est_steps", None) or _derive_steps(job.config)
+    if not steps:
+        return None
+    startup_h = float(getattr(jc, "est_startup_min", 0.0) or 0.0) / 60.0
+    return startup_h + int(steps) * float(step_time) / 3600.0, int(steps)
+
+
+def _job_segment_hours(job) -> tuple[float, str]:
+    """Wall-clock hours ONE allocation of this job will actually consume.
+
+    Returns (hours, basis) where basis names whichever limit bound it,
+    so the gate can say what it assumed instead of quoting a bare
+    number.
+    """
+    sbatch = job.config.slurm.sbatch
+    time_str = str(getattr(sbatch, "time", "1:00:00") or "1:00:00")
+    try:
+        wall = _parse_slurm_time(time_str)
+    except (ValueError, IndexError):
+        wall = 0.0
+
+    limits: list[tuple[float, str]] = [(wall, "--time")]
+
+    # Megatron's own self-imposed deadline, when it is tighter than the wall
+    # (production sets 690 min against a 12 h limit to leave room for the final
+    # checkpoint write).
+    mg = getattr(getattr(job.config, "backend", None), "megatron", None)
+    exit_mins = getattr(mg, "exit_duration_in_mins", None) if mg is not None else None
+    if exit_mins:
+        limits.append((float(exit_mins) / 60.0, "exit_duration_in_mins"))
+
+    jc = job.config.job
+    step_time = getattr(jc, "est_step_time_s", None)
+    if step_time:
+        steps = getattr(jc, "est_steps", None) or _derive_steps(job.config)
+        if steps:
+            startup_h = float(getattr(jc, "est_startup_min", 0.0) or 0.0) / 60.0
+            limits.append((startup_h + steps * float(step_time) / 3600.0, "est_step_time_s"))
+
+    return min(limits, key=lambda kv: kv[0])
+
+
+def _job_segments(job, repeat: int = 1) -> tuple[int, str]:
+    """How many allocations this job really takes, and why.
+
+    A training run does not stop when the queued jobs run out — it exits at the
+    wall, gets restarted (by the monitor, by the chain, or by hand) and resumes
+    from its checkpoint until the SCHEDULE is done. So the number of allocations
+    is driven by the schedule length, not by how many happen to be queued now.
+    Pricing only what is queued understated the 512-node production run by 31x:
+    3 segments quoted, ~93 actually needed.
+
+    Deliberately rough. It ignores per-segment startup, checkpoint-reload cost
+    and crash restarts, so it is a floor — the point is to be the right ORDER OF
+    MAGNITUDE at the gate, not to predict a finish date.
+    """
+    effective_repeat = (
+        repeat if repeat > 1 else int(getattr(job.config.job, "chain_repeat", 1) or 1)
+    )
+    segment_h, _ = _job_segment_hours(job)
+    full = _full_run_hours(job)
+    if full and segment_h > 0 and full[0] > segment_h:
+        return max(effective_repeat, math.ceil(full[0] / segment_h)), "to finish the schedule"
+    return effective_repeat, "queued"
+
+
+def _compute_gpu_hours(plan: ExecutionPlan, repeat: int = 1) -> tuple[float, list[str]]:
+    """Sum GPU-hours across all jobs in the plan, returning (total, notes).
+
+    THREE THINGS THIS GETS RIGHT THAT THE OLD VERSION DID NOT:
+
+      * THE RUN RESTARTS UNTIL THE SCHEDULE IS DONE. See _job_segments.
+      * CHAIN REPEATS ARE REAL ALLOCATIONS. `plan.jobs` holds one entry per
+        sweep point; `chain_repeat` is expanded later, in orchestrator.py's
+        `effective_repeat` loop, into R submitted jobs. Pricing only the plan
+        understated an 8-draw node_catch campaign by 8x (quoted 683 GPU-h,
+        really up to 5,464).
+      * A JOB DOES NOT ALWAYS RUN TO ITS WALL CLOCK. `exit_interval` /
+        `exit_duration_in_mins` stop it earlier, and with a measured
+        `job.est_step_time_s` that is now priced instead of the wall.
+    """
     total = 0.0
+    bases: set[str] = set()
     for job in plan.jobs:
         sbatch = job.config.slurm.sbatch
         nodes = int(getattr(sbatch, "nodes", 1) or 1)
         gpus_per_node = int(getattr(sbatch, "gpus_per_node", 1) or 1)
-        time_str = str(getattr(sbatch, "time", "1:00:00") or "1:00:00")
-        try:
-            hours = _parse_slurm_time(time_str)
-        except (ValueError, IndexError):
-            hours = 0.0
-        total += hours * nodes * gpus_per_node
-    return total
+        hours, basis = _job_segment_hours(job)
+        segments, why = _job_segments(job, repeat)
+        bases.add(basis)
+        if segments > 1:
+            bases.add(f"x{segments} segments {why}")
+        total += hours * nodes * gpus_per_node * segments
+    return total, sorted(bases)
 
 
 def _parse_subset(spec: str | None) -> set[int]:
@@ -285,6 +416,67 @@ def main(argv: list[str] | None = None) -> None:
         subset_indices=subset_indices or None,
     )
 
+    # Cost estimate BEFORE the dry-run branch, so `--dry-run` shows it too.
+    # It used to sit after, which made the estimate unreachable in exactly the
+    # mode you would use to decide whether a campaign is affordable — and left
+    # the `not args.dry_run` guard on the prompt below as dead code.
+    gpu_hours, est_bases = _compute_gpu_hours(plan, repeat=getattr(args, "repeat", 1) or 1)
+    n_jobs = len(plan.jobs)
+    # Name the binding assumption. "assuming full slurm time" was a lie whenever
+    # exit_interval or a measured step time was in play, and said nothing about
+    # chain repeats at all.
+    basis = ", ".join(est_bases) if est_bases else "--time"
+    print(
+        f"Plan: {n_jobs} job(s) — estimated {gpu_hours:,.0f} GPU-h total ({basis})"
+        + (f" approx. ({gpu_hours / n_jobs:,.0f} GPU-h each)" if n_jobs > 1 else "")
+    )
+
+    # RUNTIME, not just cost. GPU-h answers "can I afford it"; this answers
+    # "when do I get results", which is the number you actually want when
+    # deciding whether to sit and wait for a dry-run-verified plan.
+    cli_repeat = getattr(args, "repeat", 1) or 1
+    for idx, job in enumerate(plan.jobs):
+        seg_h, seg_basis = _job_segment_hours(job)
+        reps = (
+            cli_repeat if cli_repeat > 1 else int(getattr(job.config.job, "chain_repeat", 1) or 1)
+        )
+        label = getattr(job.config.job, "name", None) or f"job {idx}"
+        chain = f" x{reps} chained = {_fmt_hm(seg_h * reps)}" if reps > 1 else ""
+        print(f"  runtime {_fmt_hm(seg_h)}/segment{chain}  [{seg_basis}]  {label}")
+        # When the schedule outlasts the allocation, the segment length is not
+        # the answer to "when is it done" — say how many segments it takes.
+        full = _full_run_hours(job)
+        if full and full[0] > seg_h * reps * 1.001:
+            total_h, steps = full
+            segments = math.ceil(total_h / seg_h) if seg_h > 0 else 0
+            print(
+                f"    full schedule: {steps:,} steps = {total_h / 24:.1f} days of stepping"
+                f" -> ~{segments} segments of {_fmt_hm(seg_h)}"
+                f" ({reps} queued now, so ~{max(0, math.ceil(segments / reps))} resubmissions)"
+            )
+        if idx >= 7 and n_jobs > 9:
+            print(f"  ... {n_jobs - idx - 1} more job(s)")
+            break
+    if n_jobs > 1:
+        # Arms of a sweep run CONCURRENTLY when the scheduler has room, so the
+        # sum is an upper bound on wall clock, not a prediction. Say so rather
+        # than printing a total that reads like a delivery date.
+        longest = max(_job_segment_hours(j)[0] for j in plan.jobs)
+        print(
+            f"  -> wall clock between {_fmt_hm(longest)} (all arms concurrent) and "
+            f"{_fmt_hm(sum(_job_segment_hours(j)[0] for j in plan.jobs))} (fully serial), "
+            "excluding queue time"
+        )
+
+    # Fire only when NO step time was configured — not merely when some other
+    # limit happened to bind. Production supplies one and is still capped by
+    # exit_duration_in_mins, which is not a reason to tell the user to supply one.
+    if not any(getattr(j.config.job, "est_step_time_s", None) for j in plan.jobs):
+        print(
+            "  NB priced at the wall clock. If this job exits early, set "
+            "job.est_step_time_s (+ job.est_startup_min) from a measured run."
+        )
+
     if args.dry_run:
         script_paths = render_job_scripts(plan)
         if script_paths:
@@ -292,13 +484,8 @@ def main(argv: list[str] | None = None) -> None:
             for p in script_paths:
                 print(f"  {p}")
         exit(0)
-    gpu_hours = _compute_gpu_hours(plan)
-    n_jobs = len(plan.jobs)
-    print(
-        f"Plan: {n_jobs} job(s) — estimated {gpu_hours:.1f} GPU-h total - assuming full slurm time and no restarts"
-        + (f" approx. ({gpu_hours / n_jobs:.1f} GPU-h each)" if n_jobs > 1 else "")
-    )
-    if gpu_hours > 100 and not args.dry_run:
+
+    if gpu_hours > 100:
         if n_jobs >= 5:
             jobs_comment = "Have you checked a single job with --array-subset to confirm it works?"
         else:

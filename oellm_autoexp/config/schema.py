@@ -92,6 +92,30 @@ class SlurmJobConfig(SlurmJobConfigBase):
     base_output_dir: str = field(default_factory=MISSING)
     chain_repeat: int = 1
 
+    # --- submit-gate cost estimate ------------------------------------------
+    # All optional and estimate-only: nothing here reaches SLURM or the trainer,
+    # it only sharpens the "~N GPU-h. Proceed?" gate in run_autoexp.py.
+    #
+    # WHY IT EXISTS. The gate used to price every job at its FULL --time, which
+    # is right for a run that trains to its wall clock and badly wrong for a
+    # measurement run that exits after a fixed number of iterations. The
+    # 1024-node PP/VPP campaign was quoted 35,499 GPU-h and actually cost 9,404,
+    # because `exit_interval: 50` ends each arm in 8-10 min of a 40 min wall.
+    # A gate that overstates by 4x gets clicked through, which defeats it.
+    #
+    # Set est_step_time_s from a MEASURED step time and the estimate becomes
+    #     per segment = min(--time, exit_duration_in_mins, startup + steps*step)
+    # Steps are taken from est_steps, else derived from the backend
+    # (exit_interval -> train_iters -> train_samples/global_batch_size), so for
+    # the common measurement case only est_step_time_s has to be set.
+    est_step_time_s: float | None = None
+    # Steps this ONE job segment runs. Leave None to derive from the backend.
+    est_steps: int | None = None
+    # Container start + rendezvous + init before iteration 1. NOT negligible at
+    # scale: >=256-node jobs on JUPITER are silent for 8+ min before the first
+    # step, which dominates the cost of any short measurement run.
+    est_startup_min: float = 0.0
+
 
 @dataclass(kw_only=True)
 class RootConfig(StagedSweepRoot):

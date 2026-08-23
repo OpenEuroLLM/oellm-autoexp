@@ -9,3 +9,17 @@ slurm: ${slurm}  # ! do not change this
 
 start_condition: null
 cancel_condition: null
+
+# --- submit-gate cost/runtime estimate (estimate-only, never reaches SLURM) ---
+# Declared here with null defaults so a plain `job.est_step_time_s=4.2` override
+# works. Hydra runs the config in STRUCT mode, so a key absent from the yaml
+# tree can only be set with the `+` append form even when the dataclass has the
+# field — same trap as `+slurm.env.KEY=val`.
+#
+# Set est_step_time_s from a MEASURED step time and run_autoexp prices the job
+# as min(--time, exit_duration_in_mins, est_startup_min + steps*est_step_time_s)
+# instead of assuming it runs to the wall. Steps come from est_steps if set,
+# else from the backend (exit_interval -> train_iters -> train_samples/GBS).
+est_step_time_s: null
+est_steps: null
+est_startup_min: 0.0
