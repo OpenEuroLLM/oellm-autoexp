@@ -6,7 +6,8 @@ create_attention_mask_in_dataloader: false
 
 # Data paths
 # data_args_path: /e/data1/datasets/playground/mmlaion/oellm/flagship_datamix.txt  # superseeded
-data_args_path: /e/data1/datasets/playground/mmlaion/oellm/flagship_datamix_option9.txt
+# data_args_path: /e/data1/datasets/playground/mmlaion/oellm/flagship_datamix_option9.txt
+data_args_path: /e/data1/datasets/playground/mmlaion/oellm/flagship_datamix_option5.txt # switch Aug 24 2026
 
 # Tokenizer
 tokenizer_type: HuggingFaceTokenizer
