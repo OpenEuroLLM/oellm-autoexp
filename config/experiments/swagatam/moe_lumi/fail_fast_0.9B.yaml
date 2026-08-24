@@ -114,9 +114,9 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 1.e-8
         - stage: high_lr_aux_loss
           backend.megatron.lr: 3.e-3
-          backend.megatron.moe_aux_loss_coeff: 1.e-8
+          backend.megatron.moe_aux_loss_coeff: 1.e-2
         - stage: high_lr_no_aux_loss
-          backend.megatron.lr: 3.e-3
+          backend.megatron.lr: 1.e-3
           backend.megatron.moe_aux_loss_coeff: 1.e-8
 
 
