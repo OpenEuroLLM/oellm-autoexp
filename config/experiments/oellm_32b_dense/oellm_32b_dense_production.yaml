@@ -152,6 +152,9 @@ backend:
     # DATA
     dataloader_type: single
     padded_vocab_size: 262144
+    num_workers: 32  # extend for less data loading induced drops
+    dataloader_prefetch_factor: 8  # extend for less data loading induced drops
+    log_interval: 5  # extend from 1 to 5 for less writeout pressure
 
     # PP=4 (VPP=2 — the 8-stage layout below divides by PP). Best measured
     # config at the fixed GBS=4096: 350.3 TFLOP/s/GPU vs 333.7 for PP=2/mbs=1
