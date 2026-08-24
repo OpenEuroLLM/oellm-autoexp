@@ -37,6 +37,73 @@ inheritance. A 16-group layout gives PP=4 → VPP=4.
 median): 1380848 = 297.3 TF / 1428 tok/s / 2868 ms over 8000 iterations; 1379130 = 297.4 /
 1429 / 2867 over 4204. Expect ~13% below the shakeout figure in production.
 
+### 1024 nodes — PP x VPP campaign, 2026-08-22 (production settings)
+
+Sessions 1787349257 / 1787354842, configs `speed_pp_vpp_n1024.yaml` and
+`speed_pp_vpp_n1024_nocg.yaml`. **These are the first 1024-node numbers taken on the settings
+the flagship actually ships**: fp32 gradient accumulation, z-loss 1e-4, fp8 hybrid + delayed.
+Every row in the table above was taken with bf16 grad reduction and no z-loss, so *do not
+compare across the two tables* — compare within this one, against `pp4-vpp2` (the production
+config).
+
+| job | shape | graphs | TFLOP/s/GPU | Tok/s/GPU | ms/iter | mem | vs prod |
+|---|---|---|---|---|---|---|---|
+| **1451776** | **PP=4/VPP=4** | **off** | **313.7** | **1507.1** | **2717.8** | **0.6491** | **+2.5%** |
+| 1451774 | PP=4/VPP=4 | local | 311.4 | 1495.7 | 2738.5 | 0.8726 | +1.8% |
+| 1451772 | PP=4/VPP=2 | local | 306.0 | 1470.1 | 2786.3 | 0.6990 | ref (production) |
+| 1452155 | PP=8/VPP=4 | off | 300.3 | 1442.6 | 2839.3 | 0.6473 | −1.9% |
+| 1452151 | PP=8/VPP=8 | off | 282.0 | 1354.9 | 3023.2 | 0.6933 | −7.8% |
+| 1452153 | PP=16/VPP=4 | off | 232.3 | 1115.9 | 3670.6 | 0.8087 | −24.1% |
+| 1452154 | PP=8/VPP=4 + `overlap_p2p_comm_warmup_flush` | off | 170.7 | 819.8 | 4996.6 | 0.6466 | −44.2% |
+| 1451775 | PP=8/VPP=4 + `overlap_p2p_comm_warmup_flush` | local | 165.3 | 793.9 | 5159.6 | 0.9262 | −46.0% |
+
+Did not produce a number: PP=4/VPP=8 and PP=8/VPP=8 and PP=16/VPP=4 OOM'd with graphs ON
+(see finding 6); PP=8/VPP=4 (1451778) and PP=4/VPP=8 (1452152) each stalled in a *startup*
+phase — userbuffers registration and fused-kernel compile respectively — and were cancelled by
+the monitor. PP=4/VPP=8 is therefore still unmeasured after two attempts.
+Campaign cost: 5,319 + 4,085 = **9,404 GPU-h** (the submit gate quoted 35,499; it assumes the
+full 40 min wall, but `exit_interval: 50` exits each arm after ~8-10 min).
+
+### Cross-check against the parallel `_jj` campaign (wandb `oellm_32b_dense_throughput_opt`)
+
+A second 1024-node campaign ran the same week under
+`/e/project1/e-sta-openeurollm/pre_production_training_jj/`. Its configs were recovered from the
+rendered sbatch with `scripts/korbi/megatron_args_to_yaml.py` and diffed against ours: at
+identical geometry the **only** throughput-relevant difference is `output_z_loss_coeff`
+(unset there, `1e-4` here). TP, PP, layout, mbs, GBS, fp8 settings, graphs-off and fp32 grad
+accumulation are byte-identical, so the two campaigns are comparable after one correction.
+
+| arm | job | PP | VPP | z-loss | raw TFLOP/s | z-loss-adj | mem | it |
+|---|---|---|---|---|---|---|---|---|
+| `jj pp4-vpp4-do4` | 1453106 | 4 | 4 | off | 326.9 | 313.8 | 0.6084 | 8 |
+| `jj pp4-vpp4-do1` | 1453099 | 4 | 4 | off | 326.8 | 313.7 | 0.5785 | 8 |
+| `jj pp8-vpp2-do1` | 1454332 | 8 | 2 | off | 320.1 | 307.2 | **0.5149** | 8 |
+| `pp4-vpp4-nocudagraph` | 1451776 | 4 | 4 | **on** | 313.7 | 313.7 | 0.6491 | 50 |
+| `pp8-vpp4-nocg` | 1452155 | 8 | 4 | **on** | 300.3 | 300.3 | 0.6473 | 50 |
+
+Adjustment factor is 1.042, taken from the one exactly-matched pair (1453099 vs 1451776). The
+512-node ablation puts z-loss at 2.79% (`speed_ablation_n512.yaml`, jobs 1397791/1407138), so the
+true cost is somewhere in 2.8-4.2% and the residual is run-to-run spread plus the fact that the
+`_jj` arms use `exit_interval: 8` — a median over 5 samples against our 47. **Treat the adjusted
+column as +-3%.** z-loss also costs ~7 memory points (0.5785 vs 0.6491 at identical geometry),
+which is the 262k-vocab logit reduction.
+
+Three things this settles that our own sweep could not:
+
+1. **PP=8/VPP=2 is the memory-efficient near-tie, and we wrongly skipped it.** 307.2 adjusted vs
+   313.7, that is −2% (inside noise) at **mem 0.5149 vs 0.6491**. It was dropped from
+   `speed_pp_vpp_n1024.yaml` on the modelled bubble (21.9%, the worst of any arm) — but finding 5
+   shows the bubble is not what decides this, so the reasoning that excluded it was wrong.
+2. **At PP=8 the VPP optimum is 2, not 4** (307.2 vs 300.3), the opposite of PP=4 (VPP=4 beats
+   VPP=2). Consistent with p2p dominance: p2p scales as `0.084 GB * PP * VPP`, so the deeper
+   interleave costs more at PP=8 than the bubble it buys back.
+3. **HSDP does nothing at 1024 nodes.** `num_distributed_optimizer_instances` 4 vs 1 is
+   326.9 vs 326.8 (jobs 1453106/1453099, verified single-variable). Same null result as at 512
+   nodes; it can come off the follow-up list.
+
+Best-known 1024-node configuration therefore stays **PP=4 / VPP=4 / graphs off**, with
+**PP=8 / VPP=2 / graphs off** as the choice if memory headroom matters more than ~2%.
+
 ## 512 nodes (2048 GPUs)
 
 | job | shape | precision / notes | TFLOP/s/GPU | Tok/s/GPU | ms/iter | mem | days@15T |
@@ -137,6 +204,64 @@ per iteration while compute per iteration halves as node count doubles — a sma
 relative at 512, +6.8% at 1024.
 
 **Practical:** if fp32 grad accumulation is wanted for stability, 512 nodes gives it for free.
+
+### 5. PP=4 is the optimum, and raising PP is monotonically WORSE (2026-08-22)
+
+The 2026-08-17 reading of finding 1 was that PP=8 lost because the 8-group layout collapsed VPP
+to 1, and that PP=8 with a real interleave would win by halving the distributed-optimizer
+traffic. **That was measured and it is false.** At matched VPP=4 and graphs off:
+
+| PP | DP | M | params/GPU | DP-opt GB/GPU/iter | p2p GB/GPU/iter | TFLOP/s |
+|---|---|---|---|---|---|---|
+| 4 | 256 | 8 | 2.05 B | 12.3 | 1.34 | **313.7** |
+| 8 | 128 | 16 | 1.03 B | 6.2 | 2.68 | 300.3 |
+| 16 | 64 | 32 | 0.51 B | 3.1 | 5.37 | 232.3 |
+
+The optimizer traffic really does halve and quarter, and it does not help: throughput falls
+monotonically. PP=16 has the *least* DP traffic of any shape ever run here and is the worst
+geometry measured at 1024 nodes. So the premise that DP comm dominates the iteration at this
+scale is wrong — pipeline depth and p2p do. Note PP=16 also has the *highest* memory (0.8087)
+despite a quarter of the parameters, which is the p2p buffers and 64 model chunks.
+
+Corollary for the arithmetic in `speed_test_vpp1024.yaml`: at 1024 nodes with TP=4/mbs=2/GBS=4096
+the microbatch count is tied to PP (`M = 2*PP`), so the bubble `(PP-1)/(VPP*M)` reduces to
+`~1/(2*VPP)` and is essentially PP-independent. PP therefore has no bubble lever at all here —
+only the DP/p2p trade, which it loses.
+
+**VPP=4 is the sweet spot.** VPP 2 -> 4 buys +1.8% (306.0 -> 311.4, both with graphs), which is
+inside the 2.7% noise floor and well below the +3.9% seen in bf16 without z-loss. VPP 4 -> 8
+costs −7.8% at PP=8. Deeper interleaving has stopped paying by 4.
+
+### 6. CUDA graphs are a pure loss at 1024 nodes — and they cost four arms
+
+Jobs 1451774 / 1451776 differ only in `cuda_graph_impl`:
+
+| graphs | TFLOP/s | mem |
+|---|---|---|
+| `local` | 311.4 | 0.8726 |
+| `none` | 313.7 | 0.6491 |
+
+**0.7% slower and 22.4 memory points more expensive.** The memory is what matters: three arms
+OOM'd outright, reporting how much of the card sat in graph private pools —
+PP=4/VPP=8 25.95 GiB, PP=8/VPP=8 36.53 GiB, PP=16/VPP=4 54.84 GiB.
+
+The graph *count* is constant across all of these — `layers_per_rank * M * 2 = (64/PP) * (2*PP) * 2
+= 256` regardless of PP or VPP. What grows is the number of POOLS: `cuda_graphs.py:1175` indexes
+`fwd_mempools[vpp_rank]`, that is one forward mempool per virtual stage, so nothing is reused across
+chunks. `cuda_graph_use_single_mempool` exists in `TransformerConfig` but has no CLI argument in
+this Megatron and cannot be reached from the config system.
+
+**Recommendation: `cuda_graph_impl: none` at 1024 nodes.** The production config sets `local`.
+
+### 7. `overlap_p2p_comm_warmup_flush` is a 1.76x PESSIMIZATION — do not enable it
+
+Jobs 1452154 / 1452155, same PP=8/VPP=4 shape, graphs off, identical memory (0.6466 vs 0.6473),
+only the flag differs: **170.7 vs 300.3 TFLOP/s**. It reproduced with graphs on (165.3, job
+1451775), so it is the flag and not an interaction.
+
+NB the first reading of job 1451775 blamed allocator thrash, because it ran at mem 0.9262 against
+`PYTORCH_CUDA_ALLOC_CONF=garbage_collection_threshold:0.8`. The graphs-off control at mem 0.6466
+rules that out — the memory pressure was real but incidental.
 
 ### 4. Scaling: 1024 nodes buys wall clock, not efficiency
 

@@ -225,3 +225,26 @@ sweep:
         - backend.aux.variant: "sc-fp8-zloss1e-4-nobsramp-n512-wds1-wu4000"
           backend.aux.warmup_steps: 4000
           backend.megatron.scaler_wd_mult: 1.0
+
+        - backend.megatron.pipeline_model_parallel_layout: "Et\\*5\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*3L"
+          backend.aux.warmup_steps: 10000
+          backend.aux.variant: "sc-fp8-zloss1e-4-n512-jjopt-nobsramp-wu10000"
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.cuda_graph_impl: none
+          backend.megatron.overlap_grad_reduce: true
+          backend.megatron.overlap_param_gather: true
+          backend.megatron.num_distributed_optimizer_instances: 1
+          backend.aux.active_nodes: 512
+          slurm.sbatch.nodes: 512
+
+        - backend.megatron.pipeline_model_parallel_layout: "Et\\*5\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*3L"
+          backend.aux.warmup_steps: 10000
+          backend.megatron.exit_interval: 5000
+          backend.aux.variant: "sc-fp8-zloss1e-4-n512-dataprod"
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.cuda_graph_impl: none
+          backend.megatron.overlap_grad_reduce: true
+          backend.megatron.overlap_param_gather: true
+          backend.megatron.num_distributed_optimizer_instances: 1
+          backend.aux.active_nodes: 512
+          slurm.sbatch.nodes: 512
