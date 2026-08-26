@@ -1223,15 +1223,11 @@ class MegatronConfig(ConfigInterface):
     # this: the GPT layer specs pin attn_mask_type to causal and TE only reads attention_mask
     # for padding/arbitrary mask types, so the dataloader mask is silently discarded. This also
     # restarts RoPE at every document boundary, making reset_position_ids redundant. Folds the
-    # micro-batch into one packed sequence, so it currently requires PP=1 and CP=1.
+    # micro-batch into one packed sequence, so it currently requires CP=1. cu_seqlens is
+    # derived for the whole iteration on the reading stage and broadcast once BEFORE the
+    # pipeline schedule -- per-microbatch inside get_batch deadlocks against the p2p chain
+    # (job 1494386). Requires apply_rope_fusion when position_embedding_type is rope.
     packed_doc_attention: bool = False
-
-    # OELLM PATCH: derive cu_seqlens for the whole iteration on the reading stage and
-    # broadcast it once before the pipeline schedule runs, rather than having every stage
-    # read the dataloader. Trades ~PP x readers for a one-iteration prefetch stash. The
-    # collective MUST precede the schedule -- per-microbatch inside get_batch deadlocks
-    # against the p2p chain (job 1494386).
-    packed_doc_attention_scatter: bool = False
 
     # OELLM PATCH: print this rank's cu_seqlens for the first N get_batch calls, so stage
     # agreement can be checked from the logs. A runtime cross-check is impossible -- a

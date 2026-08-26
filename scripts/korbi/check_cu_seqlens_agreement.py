@@ -46,7 +46,8 @@ LINE_RE = re.compile(
 
 
 def parse(paths, tp_size=None, dp_size=None):
-    """{(call, vp, dp): {(pp, tp, rank): (max_seqlen, cu_seqlens)}}
+    """({(call, vp, dp): {(pp, tp, rank): (max_seqlen, cu_seqlens)}},
+    saw_dp_field)
 
     GROUPED BY DATA-PARALLEL REPLICA, which the first version of this
     script did not do -- it compared every rank against every other and
@@ -68,6 +69,7 @@ def parse(paths, tp_size=None, dp_size=None):
     DP=1, and warned about in main().
     """
     records = defaultdict(dict)
+    saw_dp_field = False
     for path in paths:
         for line in path.read_text(errors="replace").splitlines():
             m = LINE_RE.search(line)
@@ -76,6 +78,7 @@ def parse(paths, tp_size=None, dp_size=None):
             rank = int(m["rank"])
             if m.groupdict().get("dp") is not None:
                 dp = int(m["dp"])
+                saw_dp_field = True
             elif tp_size and dp_size:
                 dp = (rank // tp_size) % dp_size
             else:
@@ -83,7 +86,7 @@ def parse(paths, tp_size=None, dp_size=None):
             key = (int(m["call"]), m["vp"], dp)
             who = (int(m["pp"]), int(m["tp"]), rank)
             records[key][who] = (int(m["max_seqlen"]), m["cu"])
-    return records
+    return records, saw_dp_field
 
 
 def main() -> int:
@@ -109,7 +112,7 @@ def main() -> int:
     missing = [p for p in args.logs if not p.is_file()]
     for p in missing:
         print(f"NOT A FILE  {p}")
-    records = parse(
+    records, saw_dp_field = parse(
         [p for p in args.logs if p.is_file()],
         tp_size=args.tensor_parallel_size,
         dp_size=args.data_parallel_size,
@@ -130,7 +133,7 @@ def main() -> int:
             "WARNING: only one pipeline stage in these logs -- this check is vacuous.\n"
             "         Point it at a PP>1 run, and make sure the log captures all ranks."
         )
-    if replicas == [0] and not args.data_parallel_size:
+    if not saw_dp_field and not args.data_parallel_size:
         # Every rank fell into one bucket. Fine at DP=1, and a guaranteed false FAIL
         # otherwise, because DP replicas legitimately read different documents.
         print(

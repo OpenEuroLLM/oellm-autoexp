@@ -3322,7 +3322,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "packed_doc_attention": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="Disable cross-document attention by handing Transformer Engine cu_seqlens (thd/varlen attention) instead of a dense mask. Note that --reset-attention-mask does NOT achieve this: the GPT layer specs pin attn_mask_type to causal and TE only reads attention_mask for padding and arbitrary mask types, so the dataloader mask is silently discarded. This also restarts RoPE at every document boundary, making --reset-position-ids redundant. Folds the micro-batch into one packed sequence, so it currently requires PP=1 and CP=1. OELLM patch, see pretrain_gpt.py.",
+        help="Disable cross-document attention by handing Transformer Engine cu_seqlens (thd/varlen attention) instead of a dense mask. Note that --reset-attention-mask does NOT achieve this: the GPT layer specs pin attn_mask_type to causal and TE only reads attention_mask for padding and arbitrary mask types, so the dataloader mask is silently discarded. This also restarts RoPE at every document boundary, making --reset-position-ids redundant. Folds the micro-batch into one packed sequence, so it currently requires CP=1. OELLM patch, see pretrain_gpt.py.",
         choices=None,
         nargs=0,
         element_type=None,
@@ -3333,14 +3333,6 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help="With --packed-doc-attention, print this rank's cu_seqlens for the first N calls to get_batch. cu_seqlens is a few dozen bytes, so logging it is far cheaper than any runtime cross-check -- and unlike a collective it cannot deadlock against the pipeline p2p chain. Every rank sharing a tensor-parallel index must print identical values for a given call index; verify with scripts/korbi/check_cu_seqlens_agreement.py. OELLM patch, see pretrain_gpt.py.",
         choices=None,
         nargs=None,
-        element_type=None,
-    ),
-    "packed_doc_attention_scatter": MegatronArgMetadata(
-        arg_type=bool,
-        default=False,
-        help="With --packed-doc-attention, derive cu_seqlens for the whole iteration on the reading stage and broadcast it over the model-parallel group in ONE collective before the pipeline schedule runs, instead of having every stage read the dataloader and derive it locally. Trades ~PP x the dataloader readers for a prefetch stash of one iteration of micro-batches. NB the collective must happen before the schedule: doing it per-microbatch inside get_batch deadlocks against the p2p activation chain. OELLM patch, see megatron/training/packed_doc_attention.py.",
-        choices=None,
-        nargs=0,
         element_type=None,
     ),
     "padded_vocab_size": MegatronArgMetadata(
@@ -7527,13 +7519,6 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0,
-    ),
-    "packed_doc_attention_scatter": MegatronActionSpec(
-        option_strings=("--packed-doc-attention-scatter",),
-        action_type="store_true",
-        nargs=0,
-        const=True,
-        default=False,
     ),
     "padded_vocab_size": MegatronActionSpec(
         option_strings=("--padded-vocab-size",),

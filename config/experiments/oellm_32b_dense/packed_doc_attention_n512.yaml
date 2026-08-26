@@ -38,12 +38,15 @@
 # ============================================================================
 # THE CONFOUND TO WATCH
 # ============================================================================
-# packed_doc_attention makes EVERY pipeline stage build the dataset, because each
-# derives cu_seqlens locally. At PP=4/VPP=2 that is ~4x the dataloader readers,
-# hitting the shared data cache rather than local disk. So a throughput
-# difference here is "cu_seqlens attention cost PLUS dataloader amplification",
-# not the kernel cost alone. If the packed arm is slower, check the
-# batch-generator timer before blaming the attention kernel.
+# STALE AS WRITTEN -- kept because it explains the numbers this run produced.
+# When this ran, packed_doc_attention made EVERY pipeline stage build the dataset,
+# because each derived cu_seqlens locally: at PP=4/VPP=2 that is ~4x the dataloader
+# readers, hitting the shared data cache rather than local disk. So a throughput
+# difference here is "cu_seqlens attention cost PLUS dataloader amplification", not
+# the kernel cost alone; if the packed arm is slower, check the batch-generator
+# timer before blaming the attention kernel. That amplification is GONE now -- only
+# the endpoint stages read, and cu_seqlens is broadcast once per iteration -- so a
+# re-run would not carry this confound.
 #
 # Read off ms/iter and tok/s/GPU, never TFLOP/s: Megatron's FLOP formula assumes
 # full causal attention and will overstate the packed arm.

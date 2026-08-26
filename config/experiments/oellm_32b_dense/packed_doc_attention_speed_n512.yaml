@@ -1,5 +1,14 @@
 # @package _global_
 #
+# ALREADY RUN (job 1498007). The RESULT stands: preventing cross-document
+# attention costs nothing at this shape -- -2.8% against the unmasked control,
+# inside a +-3.2% noise floor.
+#
+# Re-runnable, but not identical to what ran: the per-stage cu_seqlens derivation
+# these packed arms used has since been deleted in favour of the one broadcast,
+# so a re-run measures the broadcast on all four arms. The fifth arm, which was
+# the broadcast under its old flag, has been removed as a duplicate.
+#
 # ============================================================================
 # WHAT DOES PREVENTING CROSS-DOCUMENT ATTENTION COST AT PRODUCTION SHAPE?
 # ============================================================================
@@ -165,11 +174,6 @@ backend:
     # points per arm, enough to drop the first few and still average.
     exit_interval: 50
 
-    # Local mode: every stage derives cu_seqlens from its own read. Scatter was
-    # measured 14.7-34.1% SLOWER at 2 nodes (identical losses, so it is purely a
-    # cost) because its prefetch is a blocking phase that cannot overlap compute.
-    # Left explicit so nobody has to remember which way the default points.
-    packed_doc_attention_scatter: false
 
 job:
   chain_repeat: 1
@@ -231,8 +235,9 @@ sweep:
           backend.megatron.packed_doc_attention: true
           backend.megatron.pipeline_model_parallel_layout: "Et\\*9\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*7L"
 
-        # ---- arm 4: the production layout, via scatter ----------------------
-        # ADDED 2026-08-26, after arm 1 (vpp4-packed, local) DIED in the dataset
+        # ---- arm 4: REMOVED ---------------------------------------------------
+        # This was the production layout run "via scatter", added 2026-08-26 after
+        # arm 1 (vpp4-packed, then the per-stage derivation) DIED in the dataset
         # build:
         #     gpt_dataset.py:485 _build_document_sample_shuffle_indices
         #     numpy/core/memmap.py:268 -> OSError [Errno 12] Cannot allocate memory
@@ -241,23 +246,15 @@ sweep:
         # ~2.7k mappings per chunk, ~11k at VPP=4, far under vm.max_map_count
         # (65530). It is mapped BYTES. The data cache holds 704 GB over 18,685
         # files averaging 38 MB; one dataset build maps ~2.7k of them, ~103 GB,
-        # and LOCAL mode does that ONCE PER MODEL CHUNK:
+        # and the per-stage mode did that ONCE PER MODEL CHUNK:
         #     VPP=2 -> 2 chunks -> ~206 GB   fits in the ~472 GB of CPU RAM
         #     VPP=4 -> 4 chunks -> ~412 GB   does not
         # which is exactly the pass/fail boundary arms 2/3 and 0/1 measured, with
-        # chunk count the only variable between them.
+        # chunk count the only variable between them. The broadcast reads on the
+        # ENDPOINT stages only, so the builds per rank drop from VPP to ~1 -- it
+        # ran, confirming the bytes-per-chunk account.
         #
-        # Scatter reads the dataloader on the ENDPOINT stages only, so the builds
-        # per rank drop from VPP to ~1 and the mapped bytes with them. If the
-        # bytes-per-chunk account is right this MUST run; if it dies the same way,
-        # the account is wrong and the reads are not what exhausts the node.
-        #
-        # NB scatter is not a free fix even if it works -- measured 14.7-34.1%
-        # slower than local at 2 nodes, because its prefetch is a blocking phase
-        # that cannot hide behind compute. Read this arm as "does the production
-        # layout run at all, and at what price", not as a candidate default.
-        #
-        #   --array-subset 4
-        - backend.aux.variant: "pdaspeed-vpp4-packed-scatter"
-          backend.megatron.packed_doc_attention: true
-          backend.megatron.packed_doc_attention_scatter: true
+        # The arm is gone because it is now UNEXPRESSIBLE: the flag that selected
+        # it was deleted along with the mode it switched off, so it would simply
+        # re-run "pdaspeed-vpp4-packed" above under a second name. Dropping it
+        # keeps --array-subset indices meaningful; arms 0-3 are unchanged.
