@@ -1,11 +1,14 @@
 class_name: Container
-image: /scratch/project_462001516/users/swagatam/containers/AutoExp_2026-07-02.sif
+# image: /scratch/project_462001516/users/swagatam/containers/AutoExp_2026-07-02.sif
+# image: /pfs/lustref1/appl/local/laifs/containers/lumi-multitorch-u24r70f21m50t210-20260807_115122/lumi-multitorch-full-u24r70f21m50t210-20260807_115122.sif
+image: /appl/local/laifs/containers/lumi-multitorch-u24r70f21m50t210-20260807_115122/lumi-multitorch-plus-u24r70f21m50t210-20260807_115122.sif
 runtime: singularity
 bind:
   [
     "/boot/config-6.4.0-150600.23.73_15.0.14-cray_shasta_c",
     "/pfs/",
     "${oc.env:PWD}",
+    "/project/project_462001516/rluukkon/rccl-tuner",
     "/scratch/",
     "/flash/",
   ]
@@ -14,4 +17,5 @@ env:
   WANDB_MODE: "online"
   MACHINE_NAME: "LUMI"
   PYTHONPATH: "."
+
 python: "python3"

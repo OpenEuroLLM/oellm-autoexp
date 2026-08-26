@@ -1,0 +1,161 @@
+# @package _global_
+#
+# LUMI adaptation of exp_abhash/config/experiments/abhash/moe_metrics_multilingual.yaml.
+#
+# This evaluates the 0.4B MoE router checkpoints produced by
+# config/experiments/swagatam/moe_lumi/fail_fast.yaml under
+# /scratch/project_462001516/experiments/moe_router_metric_dev.
+# This uses the same pre-tokenized multilingual blend and sampling weights as
+# training. It emits routing load, activation-norm, saturation, coactivation,
+# and routing-animation artifacts.
+#
+# Submit one smoke-test run:
+#   NUM_BATCHES=5 SEQ_LENGTH=512 \
+#     python scripts/run_autoexp.py \
+#       --config-name=experiments/abhash/moe_metrics_multilingual_0.4b \
+#       --array-subset 0
+#
+# Submit all runs with the defaults below:
+#   python scripts/run_autoexp.py \
+#     --config-name=experiments/abhash/moe_metrics_multilingual_0.4b
+#
+# Optional path overrides:
+#   export MOE_METRICS_04B_EXP_ROOT=/scratch/.../moe_router_metric_dev
+#   export MOE_METRICS_04B_ANALYSIS_ROOT=/scratch/.../moe_metrics_dashboard
+
+defaults:
+  - /backend: 'null'
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - _self_
+
+index: 0
+stage: ""
+
+metadata:
+  # Per-run values overridden by the sweep below.
+  run_tag: 0.4B_ne_sparse_experts_32topk4_PP1_healthy_lr0.0001
+  compare_ckpts: 100,200,400,600,800,1000
+
+  exp_root: ${oc.env:MOE_METRICS_04B_EXP_ROOT,/scratch/project_462001516/experiments/moe_router_metric_dev}
+  analysis_root: ${oc.env:MOE_METRICS_04B_ANALYSIS_ROOT,/scratch/project_462001516/experiments/moe_router_metric_dev/moe_metrics_dashboard}
+  blend_file: /scratch/project_462000963/users/vitiugin/datamix-tools/datamix4-lumi.txt
+
+  load_path: ${metadata.exp_root}/${metadata.run_tag}/checkpoints
+  out_dir: ${metadata.analysis_root}/${metadata.run_tag}
+
+job:
+  name: moe_metrics_${metadata.run_tag}
+  base_output_dir: ${metadata.out_dir}
+  log_path: ${slurm.sbatch.error}
+
+# NullBackend executes this command directly in the configured LUMI container.
+backend:
+  base_command:
+    - python3
+    - scripts/moe/compute_moe_metrics.py
+    - --tensor-model-parallel-size
+    - "1"
+    - --pipeline-model-parallel-size
+    - "1"
+    - --expert-model-parallel-size
+    - "1"
+    - --load
+    - ${metadata.load_path}
+    - --use-checkpoint-args
+    - --ckpt-format
+    - torch_dist
+    - --bf16
+    - --no-use-tokenizer-model-from-checkpoint-args
+    - --tokenizer-type
+    - NullTokenizer
+    - --vocab-size
+    - "262272"
+    - --no-bias-dropout-fusion
+    - --no-bias-swiglu-fusion
+    - --no-rope-fusion
+    - --no-masked-softmax-fusion
+    - --moe-data-type
+    - megatron_indexed
+    - --moe-megatron-blend-file
+    - ${metadata.blend_file}
+    - --moe-eod-token
+    - "2"
+    - --moe-batch-size
+    - "1"
+    - --moe-seq-length
+    - ${oc.env:SEQ_LENGTH,2048}
+    - --moe-num-batches
+    - ${oc.env:NUM_BATCHES,100}
+    - --moe-compare-ckpts
+    - ${metadata.compare_ckpts}
+    - --moe-output-json
+    - ${metadata.out_dir}/saturation.json
+    - --moe-coactivation-output
+    - ${metadata.out_dir}/coactivation.json
+    - --moe-coactivation-top-n
+    - "32"
+    - --moe-token-count-output
+    - ${metadata.out_dir}/token_counts.json
+    - --moe-activation-norm-output
+    - ${metadata.out_dir}/expert_activation_norms.json
+    - --moe-routing-gif
+    - ${metadata.out_dir}/expert_routing.gif
+    - --moe-routing-gif-layers
+    - "first,mid,last"
+    - --moe-routing-gif-frame-ms
+    - "250"
+    - --moe-plot
+    - --moe-plot-dir
+    - ${metadata.out_dir}
+
+container:
+  env:
+    WANDB_MODE: offline
+    MACHINE_NAME: LUMI
+    PYTHONPATH: ".:submodules/Megatron-LM"
+    HF_HUB_OFFLINE: "1"
+    TOKENIZERS_PARALLELISM: "false"
+
+slurm:
+  env:
+    MASTER_PORT: "$((20000 + SLURM_JOB_ID % 10000))"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    WANDB_MODE: offline
+    MACHINE_NAME: LUMI
+    PYTHONPATH: ".:submodules/Megatron-LM"
+    HF_HUB_OFFLINE: "1"
+    TOKENIZERS_PARALLELISM: "false"
+  sbatch:
+    account: project_462001516
+    partition: dev-g
+    nodes: 1
+    ntasks_per_node: 1
+    gpus_per_node: 1
+    gres: "gpu:1"
+    cpus_per_task: 7
+    mem: "64G"
+    time: "02:00:00"
+    output: "${job.base_output_dir}/stdout-%j.log"
+    error: "${job.base_output_dir}/stderr-%j.log"
+    job_name: null
+  srun:
+    cpus_per_task: 7
+    kill_on_bad_exit: "1 "
+
+# One job per checkpoint run. Index order is stable for --array-subset.
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        - metadata.run_tag: 0.4B_ne_sparse_experts_32topk4_PP1_healthy_lr0.0001
+          metadata.compare_ckpts: 100,200,400,600,800,1000
+        - metadata.run_tag: 0.4B_ne_sparse_experts_32topk4_PP1_high_lr_failure_lr0.001
+          metadata.compare_ckpts: 100,200,400,600,800,1000
+        - metadata.run_tag: 0.4B_ne_sparse_experts_32topk4_PP1_high_lr_failure_no_aux_loss_lr0.001
+          metadata.compare_ckpts: 100,200,400,600,800,1000
+        - metadata.run_tag: 0.4B_ne_sparse_experts_32topk4_PP1_high_lr_3eminus3_no_aux_loss_lr0.003
+          metadata.compare_ckpts: 100,200,400,600,800,1000

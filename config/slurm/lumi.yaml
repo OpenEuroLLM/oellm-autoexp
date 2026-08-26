@@ -20,10 +20,16 @@ env:
   MASTER_PORT: "20074"
   WORLD_SIZE: ${oc.muli:${..sbatch.nodes},${..sbatch.ntasks_per_node}}
   HSA_ENABLE_SDMA: 0
+  # LUMI's inter-node GPU fabric is the HSN Slingshot interface. Restrict
+  # RCCL/NCCL to HSN so it does not select a management interface.
   NCCL_SOCKET_IFNAME: "hsn0,hsn1,hsn2,hsn3"
-  NCCL_NET_GDR_LEVEL: "PHB"
-  NVTE_DEBUG: "0"
-  NVTE_DEBUG_LEVEL: "0"
+  # NCCL_NET_GDR_LEVEL: "PHB"
+  NCCL_NET_GDR_LEVEL: "0"
+  NCCL_TUNER_PLUGIN: "/project/project_462001516/rluukkon/rccl-tuner/librccl-tuner.so"
+  NCCL_DEBUG: "INFO"
+  NCCL_DEBUG_SUBSYS: "INIT,NET"
+  # NVTE_DEBUG: "0"
+  # NVTE_DEBUG_LEVEL: "0"
 sbatch:
   nodes: 1
   ntasks_per_node: 8

@@ -75,7 +75,7 @@ backend:
     #train_iters: 5
     lr_warmup_iters: 5
     lr_wsd_decay_iters: 1
-    
+    use_distributed_optimizer: True
 
 
     # Base training configuration (for stable phase)
@@ -90,7 +90,7 @@ backend:
 
   env:
     TOKENIZERS_PARALLELISM: "false"
-    HF_HUB_OFFLINE: "1"
+    HF_HUB_OFFLINE: "0"
     TRITON_HOME: /tmp/triton_cache
 
 
@@ -123,12 +123,12 @@ slurm:
   srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
   sbatch:
     # nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
-    nodes: 8
+    nodes: 2
     # qos: "boost_qos_dbg"
     account: "project_462001516"
     partition: dev-g
     # partition: standard-g
-    time: "02:00:00"
+    time: "01:00:00"
     output: "${job.base_output_dir}/logs/stdout-%j.log"
     error: "${job.base_output_dir}/logs/stderr-%j.log"
   srun:
