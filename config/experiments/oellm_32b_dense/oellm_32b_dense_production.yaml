@@ -387,7 +387,7 @@ slurm:
     # ACTIVE + SPARES. backend.aux.active_nodes is what actually trains.
     nodes: ${oc.addi:${backend.aux.active_nodes},${backend.aux.spare_nodes}}
     time: "12:00:00"   # JUPITER wall limit
-    account: e-sta-openeurollm
+    account: e-ext-2025e02-108  # e-sta-openeurollm, superseded Aug 25th 2026
 
     # slurm signal to process to stop training and checkpoint right before time limit
     signal: "TERM@240"
