@@ -1,0 +1,263 @@
+# @package _global_
+#
+# ============================================================================
+# WHAT DOES PREVENTING CROSS-DOCUMENT ATTENTION COST AT PRODUCTION SHAPE?
+# ============================================================================
+# 512 nodes, FP8, production parallelism. Four arms: ctrl/packed at VPP=4 (the
+# production layout) and the same pair at VPP=2.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/packed_doc_attention_speed_n512
+#
+# ============================================================================
+# WHY THIS RUN EXISTS
+# ============================================================================
+# Everything measured so far was 1-2 nodes on a 28-layer stand-in, and the
+# result did not generalise cleanly (2026-08-25/26, steady iteration,
+# packed vs plain causal):
+#
+#     PP=4 1F1B, DP=1,  7 layers/rank    -0.9%     (no cost)
+#     TP=2 PP=4, DP=1,  7 layers/rank    -0.7%     (no cost)
+#     PP=2 VPP=1, DP=2, 14 layers/rank   +3.5%
+#     PP=2 VPP=2, DP=2, 14 layers/rank   +5.0%
+#
+# The isolating arm (PP=2 at VPP=1 vs VPP=2) says VPP is worth only ~1.5 of
+# those 5 points. The larger ~4.4-point step came from PP=4 -> PP=2, which also
+# changed DP (1 -> 2) and layers/rank (7 -> 14), so the small-scale runs cannot
+# tell those three apart.
+#
+# Production is the corner none of them sat in: PP=4, VPP=4, DP=128, 16
+# layers/rank. On the two dimensions that actually tracked the penalty -- DP>1
+# and layers/rank -- it resembles the PP=2 arms, not the PP=4 arm that measured
+# free. So the honest planning number is "at least 5%, extrapolated", and this
+# run replaces it with a measurement.
+#
+# The VPP=2 pair is here because it isolates VPP at the scale that matters:
+# (arm1 - arm0) vs (arm3 - arm2) is the same contrast the 1-node isolating run
+# made, but at DP=128 and 16 layers/rank. Both layouts are shippable, so
+# whichever wins is directly actionable.
+#
+# ============================================================================
+# THE SECOND THING THIS MEASURES, AND IT MAY MATTER MORE
+# ============================================================================
+# In local mode (the default, and the one that wins) EVERY pipeline stage builds
+# the dataset so it can derive cu_seqlens itself, and there is one data iterator
+# PER MODEL CHUNK. At PP=4/VPP=4 that is 16 chunk-dataloaders per DP replica.
+# With TP=4 only tensor-parallel rank 0 reads, i.e. one reading rank per node,
+# so each reading node runs 4 chunk-dataloaders x num_workers=32 = 128 worker
+# processes against 288 CPUs -- and 512 nodes of that hit the shared data cache
+# at once.
+#
+# That amplification has never been measured above 2 nodes. It was "not
+# measurable at all" at small scale, which is exactly the kind of cost that only
+# appears on a shared filesystem. If the packed arms are slow HERE but the step
+# time is fine, suspect the dataloader before the attention kernel: compare the
+# ms/iteration spread rather than the mean, and check for data-loading stalls.
+#
+# ============================================================================
+# WHAT IS PRODUCTION-LIKE AND WHAT DELIBERATELY IS NOT
+# ============================================================================
+# PRODUCTION-LIKE: 512 nodes, TP=4, PP=4, mbs=2, GBS=4096, sequence parallel,
+# FP8 hybrid with the DELAYED recipe, fp32 gradient accumulation, z-loss on,
+# tp_comm_overlap, cuda graphs off, and the production dataloader settings
+# (num_workers 32, prefetch 8, log_interval 5). Those all move throughput, so a
+# comparison run with any of them different measures the wrong thing.
+#
+# NOT PRODUCTION: no checkpoints (save: null, inherited from speed_test), a
+# separate wandb project, output under pre_production_training, and NO
+# AUTO-RESTART. A speed test that silently restarts reports the wrong number and
+# hides the failure that caused it; /job: auto_cancel_speedtest stops on error
+# instead. That override is also load-bearing for a second reason -- see below.
+#
+# ============================================================================
+# TWO THINGS THAT WILL BITE IF THEY ARE CHANGED
+# ============================================================================
+# 1. RUN THIS FROM THE CHECKOUT THAT HAS THE PATCHED MEGATRON.
+#    --packed-doc-attention is an OELLM patch. The submodule in the main
+#    oellm-autoexp checkout sits on a different commit WITHOUT it, so the flag
+#    would reach a Megatron that has never heard of it and every rank would die
+#    in argparse with "unrecognized arguments: --packed-doc-attention".
+#    Confirm before submitting:
+#      grep -c packed_doc_attention submodules/Megatron-LM/pretrain_gpt.py
+#
+# 2. `override /job: auto_cancel_speedtest` IS REQUIRED, NOT A PREFERENCE.
+#    speed_test sets `save: null`, and auto_restart_ckptreset's
+#    QuarantineCheckpointAction interpolates ${backend.megatron.save} into a
+#    string field. With save null the config does not render at all:
+#      ValueError: Tried to parse None to <class 'str'>
+#                  at key job.log_events.0.action.checkpoint_dir
+#    fp8_speed_test.yaml has this bug today and cannot be submitted as-is.
+defaults:
+  - fp8_speed_test
+  # No restarts: a speed test must report the run it actually did.
+  - override /job: auto_cancel_speedtest
+  - _self_
+
+backend:
+  aux:
+    active_nodes: 512
+    spare_nodes: 0
+    variant: "pdaspeed"   # per-arm suffix comes from the sweep below
+
+  megatron:
+    # --- production parallelism -------------------------------------------
+    # PP=4 with a SIXTEEN-group layout. VPP is DERIVED, never set directly:
+    # arguments.py:548 sets virtual_pipeline_model_parallel_size = num_stages
+    # // PP, so 16 groups at PP=4 is VPP=4. The layout is 1 embedding + 64
+    # transformer layers + 1 output head, same as production.
+    tensor_model_parallel_size: 4
+    pipeline_model_parallel_size: 4
+    pipeline_model_parallel_layout: "Et\\*5\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*3L"
+    sequence_parallel: true
+    micro_batch_size: 2
+    global_batch_size: 4096
+
+    # --- production FP8 recipe --------------------------------------------
+    # The /precision: fp8 group that fp8_speed_test pulls in defaults to
+    # `tensorwise` and turns on first_last_layers_bf16. Production runs
+    # `delayed` with the whole stack in FP8, and the two are not interchangeable
+    # for a throughput number.
+    fp8: hybrid
+    fp8_recipe: delayed
+    fp8_param_gather: false
+    first_last_layers_bf16: false
+    num_layers_at_start_in_bf16: 0
+    num_layers_at_end_in_bf16: 0
+    fp8_amax_history_len: 1024
+    fp8_amax_compute_algo: max
+
+    # --- fp32 gradient accumulation ---------------------------------------
+    # Stated explicitly because the pair is a known footgun: arguments.py:742
+    # does `if grad_reduce_in_bf16: accumulate_allreduce_grads_in_fp32 = False`,
+    # so bf16 wins silently whenever it is on and the config still READS as
+    # fp32. Production reduces in fp32; bf16 would make these numbers optimistic.
+    grad_reduce_in_bf16: false
+    accumulate_allreduce_grads_in_fp32: true
+    ddp_reduce_scatter_with_fp32_accumulation: false
+
+    # --- everything else that moves throughput ----------------------------
+    # z-loss is NOT free: measured 2.8-4.2% and ~7 memory points. Production
+    # ships it, so the baseline has to carry it too.
+    output_z_loss_coeff: 1e-4
+    use_distributed_optimizer: true
+    num_distributed_optimizer_instances: 1
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    tp_comm_overlap: true
+    defer_embedding_wgrad_compute: true
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: te
+    manual_gc: true
+    manual_gc_interval: 50
+    # --packed-doc-attention asserts this: cu_seqlens changes length with the
+    # document count of every microbatch, which would force graph recapture.
+    cuda_graph_impl: none
+
+    # --- production dataloader settings ------------------------------------
+    # These matter more than usual here: the packed arms multiply the number of
+    # readers, so the baseline must use the same per-reader settings or the
+    # comparison measures num_workers rather than packing.
+    dataloader_type: single
+    num_workers: 32
+    dataloader_prefetch_factor: 8
+    log_interval: 5
+
+    # 50 iterations at ~4.2 s is ~3.5 min of stepping. log_interval 5 gives 10
+    # points per arm, enough to drop the first few and still average.
+    exit_interval: 50
+
+    # Local mode: every stage derives cu_seqlens from its own read. Scatter was
+    # measured 14.7-34.1% SLOWER at 2 nodes (identical losses, so it is purely a
+    # cost) because its prefetch is a blocking phase that cannot overlap compute.
+    # Left explicit so nobody has to remember which way the default points.
+    packed_doc_attention_scatter: false
+
+job:
+  chain_repeat: 1
+  # 512 nodes x 4 GPUs, ~10 min startup + 50 x 4.2 s. Without these the submit
+  # gate prices every arm at the full 40 min wall and quotes ~4x the real cost.
+  est_step_time_s: 4.2
+  est_startup_min: 10
+  est_steps: 50
+
+slurm:
+  sbatch:
+    # e-sta-openeurollm was superseded 2026-08-25; the base config still names
+    # the old one, so it has to be restated here or the jobs bill the wrong
+    # account.
+    account: e-sta-openeurollm
+    # Short wall for booster priority. 40 min against a ~14 min arm leaves room
+    # for the >=256-node startup silence (8+ min is normal; never read a stall
+    # into anything under 15 min).
+    time: "00:40:00"
+
+# ============================================================================
+# THE ARMS
+# ============================================================================
+# Read the result as TWO differences, not four numbers:
+#
+#   arm1 - arm0   cost of packing at the production layout (VPP=4)
+#   arm3 - arm2   cost of packing at VPP=2
+#
+# and then compare those two differences to each other -- that is the VPP
+# contrast, now at DP=128 and 16 layers/rank instead of DP=2 and 14.
+#
+# Compare tok/s/GPU or ms/iteration, NEVER TFLOP/s: Megatron's FLOP formula
+# assumes full causal attention, so the packed arms do strictly less work than
+# it credits them with and their TFLOP/s reads high for the wrong reason.
+#
+# STAGE IT. Run the production pair first and only spend the rest if it is
+# interesting:
+#   --array-subset 0,1     # VPP=4 ctrl vs packed  (the number we actually need)
+#   --array-subset 2,3     # VPP=2 pair, for the VPP contrast
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ---- production layout: 16 groups / PP=4 -> VPP=4 --------------------
+        - backend.aux.variant: "pdaspeed-vpp4-ctrl"
+          backend.megatron.packed_doc_attention: false
+
+        - backend.aux.variant: "pdaspeed-vpp4-packed"
+          backend.megatron.packed_doc_attention: true
+
+        # ---- 8 groups / PP=4 -> VPP=2, to isolate VPP at this scale ----------
+        - backend.aux.variant: "pdaspeed-vpp2-ctrl"
+          backend.megatron.packed_doc_attention: false
+          backend.megatron.pipeline_model_parallel_layout: "Et\\*9\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*7L"
+
+        - backend.aux.variant: "pdaspeed-vpp2-packed"
+          backend.megatron.packed_doc_attention: true
+          backend.megatron.pipeline_model_parallel_layout: "Et\\*9\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*7L"
+
+        # ---- arm 4: the production layout, via scatter ----------------------
+        # ADDED 2026-08-26, after arm 1 (vpp4-packed, local) DIED in the dataset
+        # build:
+        #     gpt_dataset.py:485 _build_document_sample_shuffle_indices
+        #     numpy/core/memmap.py:268 -> OSError [Errno 12] Cannot allocate memory
+        #
+        # Not mapping COUNT -- 452 blend prefixes x 3 index memmaps x 2 splits is
+        # ~2.7k mappings per chunk, ~11k at VPP=4, far under vm.max_map_count
+        # (65530). It is mapped BYTES. The data cache holds 704 GB over 18,685
+        # files averaging 38 MB; one dataset build maps ~2.7k of them, ~103 GB,
+        # and LOCAL mode does that ONCE PER MODEL CHUNK:
+        #     VPP=2 -> 2 chunks -> ~206 GB   fits in the ~472 GB of CPU RAM
+        #     VPP=4 -> 4 chunks -> ~412 GB   does not
+        # which is exactly the pass/fail boundary arms 2/3 and 0/1 measured, with
+        # chunk count the only variable between them.
+        #
+        # Scatter reads the dataloader on the ENDPOINT stages only, so the builds
+        # per rank drop from VPP to ~1 and the mapped bytes with them. If the
+        # bytes-per-chunk account is right this MUST run; if it dies the same way,
+        # the account is wrong and the reads are not what exhausts the node.
+        #
+        # NB scatter is not a free fix even if it works -- measured 14.7-34.1%
+        # slower than local at 2 nodes, because its prefetch is a blocking phase
+        # that cannot hide behind compute. Read this arm as "does the production
+        # layout run at all, and at what price", not as a candidate default.
+        #
+        #   --array-subset 4
+        - backend.aux.variant: "pdaspeed-vpp4-packed-scatter"
+          backend.megatron.packed_doc_attention: true
+          backend.megatron.packed_doc_attention_scatter: true

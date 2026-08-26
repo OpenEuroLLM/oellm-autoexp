@@ -2,7 +2,6 @@
 # Dataset related settings for the 32B dense run
 max_position_embeddings: ${.seq_length}
 split: '998,2,0'
-create_attention_mask_in_dataloader: false
 
 # Data paths
 # data_args_path: /e/data1/datasets/playground/mmlaion/oellm/flagship_datamix.txt  # superseeded
@@ -13,8 +12,23 @@ data_args_path: /e/data1/datasets/playground/mmlaion/oellm/flagship_datamix_opti
 tokenizer_type: HuggingFaceTokenizer
 tokenizer_model: /e/data1/datasets/playground/mmlaion/oellm/oellm_tokenizer_256k
 
-
 seq_length: 4096
 dataloader_type: "cyclic"
 num_workers: 16
 num_dataset_builder_threads: 64
+
+# Cross-document attention. The three flags below are INERT on this stack and were removed
+# on Aug 25th 2026:
+#   - reset_attention_mask builds a dense [b, 1, s, s] mask in the dataloader, but the GPT
+#     layer specs pin attn_mask_type to `causal` and TE only reads attention_mask for
+#     padding/arbitrary mask types, so the mask is discarded before it reaches the kernel.
+#   - reset_position_ids only feeds learned_absolute embeddings; this model is RoPE, whose
+#     frequencies come from arange(0, seq_length) and never see position_ids.
+#   - create_attention_mask_in_dataloader therefore only cost a 67 MB tril per sample in each
+#     of the 16 workers plus a 16 MB TP broadcast per microbatch, for nothing.
+# The working mechanism is packed_doc_attention (cu_seqlens / thd varlen attention), which
+# masks documents in the kernel AND restarts RoPE per document. It currently requires PP=1,
+# so it is off here -- the production schedule runs PP=4.
+# See config/experiments/oellm_32b_dense/CROSS_DOC_ATTENTION.md.
+create_attention_mask_in_dataloader: false
+packed_doc_attention: false

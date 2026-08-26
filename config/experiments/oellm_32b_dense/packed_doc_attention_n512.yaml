@@ -1,0 +1,106 @@
+# @package _global_
+#
+# 512-NODE A/B: what does cu_seqlens document masking actually cost at scale?
+#
+# ============================================================================
+# NOT SUBMITTED AUTOMATICALLY -- READ THE RESOLUTION LIMIT FIRST
+# ============================================================================
+# SPEED_RESULTS.md: "the run-to-run spread at this scale is 2.7%, so differences
+# under ~3% are not real". That governs what this experiment can answer:
+#
+#   ONE pair  (2 jobs,  ~1600 GPU-h) -> answers "is the cost worse than ~3%?"
+#                                       It CANNOT quote a number below that.
+#   TWO pairs (4 jobs,  ~3300 GPU-h) -> a within-arm repeat, so the effect can be
+#                                       separated from the 2.7% spread and an
+#                                       actual figure quoted.
+#
+# The 1.7B measurement suggested ~6.5%, which would clear the 3% bar -- but that
+# number is itself n=1 per arm on different nodes, and 1.7B has a smaller
+# attention FLOP share than 32B, so it does not predict this result. Do not
+# assume the effect is large enough to see with one pair.
+#
+# To run two pairs, duplicate the two sweep entries with `-r2` variants; the run
+# directory name carries the variant, so repeats do not collide.
+#
+# ============================================================================
+# DESIGN
+# ============================================================================
+# Base is speed_ablation_n512: 512 nodes, TP=4 / PP=4 / VPP=2 (derived from the
+# 8-group layout), mbs=2, GBS=4096, fp8 hybrid, sequence-parallel, tp_comm_overlap,
+# cuda_graph_impl already none (which packed_doc_attention requires anyway).
+# That is the production shape, and it reuses the prebuilt 15T index.
+#
+# The two arms differ ONLY in packed_doc_attention. Every correctness interaction
+# in this shape has been checked at 1-2 nodes first -- PP>1 both schedules, the
+# TP broadcast, sequence-parallel, fp8 and userbuffers. See CROSS_DOC_ATTENTION.md
+# for the ladder. What is NOT yet checked at any scale is the scale itself.
+#
+# ============================================================================
+# THE CONFOUND TO WATCH
+# ============================================================================
+# packed_doc_attention makes EVERY pipeline stage build the dataset, because each
+# derives cu_seqlens locally. At PP=4/VPP=2 that is ~4x the dataloader readers,
+# hitting the shared data cache rather than local disk. So a throughput
+# difference here is "cu_seqlens attention cost PLUS dataloader amplification",
+# not the kernel cost alone. If the packed arm is slower, check the
+# batch-generator timer before blaming the attention kernel.
+#
+# Read off ms/iter and tok/s/GPU, never TFLOP/s: Megatron's FLOP formula assumes
+# full causal attention and will overstate the packed arm.
+#
+# WANT THE DATALOADER COST ISOLATED? `batch-generator` is a log_level=2 timer
+# (pretrain_gpt.py:329), so it needs `timing_log_level: 2`. Deliberately NOT set
+# here: base_defaults warns that levels 1-2 can themselves increase iteration
+# time, which would contaminate the throughput numbers this config exists to
+# produce. Two clean options, both costing extra:
+#
+#   * add a third arm, packed + timing_log_level 2, and read batch-generator off
+#     it alone (~450 GPU-h);
+#   * or run the pair at level 2 -- the ctrl-vs-packed DELTA stays valid because
+#     both arms are perturbed equally, but the absolute ms/iter is then not
+#     comparable to SPEED_RESULTS.md, which was measured at level 0.
+#
+# At 2 nodes the amplification was not measurable at all: packed (4 stages
+# reading) ran 75.8/74.2 s against the control's 78.3 s, and two runs of the SAME
+# packed config differed by 2.2% -- the same order as the effect. That is "no
+# penalty visible", not "penalty bounded", and 2 nodes is not 512 where the reads
+# hit a shared filesystem.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/packed_doc_attention_n512 --dry-run
+#   python scripts/korbi/preflight_megatron_args.py <rendered sbatch>   # ALWAYS
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/packed_doc_attention_n512
+#
+#   python scripts/korbi/compare_doc_attention_arms.py \
+#       --run-glob 'oellm_32b_dense_pda512-{arm}_*' --arms ctrl,packed \
+#       --pair ctrl:packed --warmup 4
+defaults:
+  - speed_ablation_n512
+  - _self_
+
+backend:
+  megatron:
+    # 50 iterations matches the SPEED_RESULTS methodology (steady state = median
+    # over iterations 4..N, discarding warmup). speed_ablation_n512 uses 100;
+    # halving it halves the cost and 50 is what every published row here used.
+    exit_interval: 50
+    # log every iteration so the step-time distribution is visible, not just a mean
+    log_interval: 1
+
+job:
+  chain_repeat: 1
+  # PP=4/VPP=2 bf16 baseline at 512n is 5385 ms/iter (job 1364573); fp8 is faster
+  # (~3900 ms, job 1365865). Price on the fp8 number since this config is fp8.
+  est_step_time_s: 3.9
+  est_steps: 50
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.variant: "pda512-ctrl"
+          backend.megatron.packed_doc_attention: false
+
+        - backend.aux.variant: "pda512-packed"
+          backend.megatron.packed_doc_attention: true

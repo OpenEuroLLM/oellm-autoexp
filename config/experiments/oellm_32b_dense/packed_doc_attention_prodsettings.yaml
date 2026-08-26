@@ -1,0 +1,68 @@
+# @package _global_
+#
+# 2-NODE PRODUCTION-SETTINGS GATE for --packed-doc-attention.
+# Last cheap check before spending ~1600 GPU-h at 512 nodes.
+#
+# ============================================================================
+# WHAT IS STILL UNTESTED
+# ============================================================================
+# The 512-node A/B will inherit speed_ablation_n512's settings, which turn on two
+# things no packed_doc_attention run has exercised yet:
+#
+#   fp8: hybrid        TE runs the GEMMs in fp8. Attention itself stays bf16
+#                      unless fp8_dpa is set, so in principle qkv_format='thd'
+#                      never meets fp8 -- but "in principle" is not a test, and
+#                      finding out at 512 nodes costs ~800 GPU-h per arm.
+#
+#   tp_comm_overlap    Userbuffers. Reasoned safe: initialize.py:262-270 sizes
+#                      them as [(seq_length * micro_batch_size) // CP, hidden],
+#                      i.e. a flattened TOKEN count, which is exactly what the
+#                      fold preserves ([s, b, h] -> [b*s, 1, h] has the same b*s).
+#                      Verified here anyway, because a wrong userbuffer size is
+#                      the kind of thing that corrupts silently rather than
+#                      raising. Needs UB_SKIPMC=1, inherited from
+#                      oellm_32b_dense.yaml.
+#
+# ============================================================================
+# THE CHECK
+# ============================================================================
+# Same within-parallelism pair as the other gates -- absolute losses are NOT
+# comparable to any other shape, because initialize.py:415 seeds per pipeline
+# rank:
+#
+#     delta == 0        -> cu_seqlens not reaching the stages. FAIL.
+#     delta ~1E-03      -> masking active under fp8 + tp_comm_overlap. PASS.
+#     delta > 1E-01/NaN -> fp8 or userbuffer corruption. FAIL.
+#
+# fp8 adds its own numerical noise, so the ctrl/packed delta here may sit a bit
+# further from the bf16 gates' ~1E-03. Order of magnitude is what matters; zero
+# and NaN are the failures.
+#
+# Cost: 2 arms x 2 nodes x ~10 min.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/packed_doc_attention_prodsettings
+defaults:
+  - packed_doc_attention_tp
+  - _self_
+
+backend:
+  megatron:
+    # The two additions under test. Everything else is inherited from
+    # packed_doc_attention_tp (TP=2, PP=4, sequence_parallel, 2 nodes).
+    fp8: hybrid
+    fp8_recipe: delayed
+    fp8_amax_history_len: 1024
+    fp8_amax_compute_algo: max
+    tp_comm_overlap: true
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.variant: "pdaprod-fp8ub-ctrl"
+          backend.megatron.packed_doc_attention: false
+
+        - backend.aux.variant: "pdaprod-fp8ub-packed"
+          backend.megatron.packed_doc_attention: true
