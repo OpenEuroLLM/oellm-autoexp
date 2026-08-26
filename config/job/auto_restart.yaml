@@ -39,6 +39,36 @@ log_events:
       class_name: FinishAction
       reason: "Test Evaluation Finished"
 
+  # === WALL-CLOCK SEGMENT ROLLOVER -> RESTART (chain-free continuation) ======
+  # `exit_duration_in_mins` ends a segment with sys.exit(0) -> SLURM COMPLETED
+  # -> monitor/loop.py:236 marks the run "finished" and training silently stops
+  # mid-schedule (job 1487924 stopped at iteration 19183/894000). This is the
+  # alternative to chain_repeat: no pre-queued siblings to clean up when a
+  # segment fails, at the price of re-queueing from scratch each time.
+  #
+  # The pattern alone proves the schedule is UNFINISHED: 'exiting program after
+  # N minutes' is printed inside the training loop (training.py:2070) and is
+  # followed by sys.exit at :2651, so 'after training is done' (:781, reached
+  # only when train() RETURNS) can never also appear. finished_training above
+  # therefore remains the sole authority on real completion.
+  # Deliberately excludes 'exiting program at iteration N' (exit_interval — a
+  # user-requested bounded run) and '...after receiving SIGTERM.' (looks like a
+  # deliberate scancel). See config/job/auto_restart_ckptreset.yaml for the full
+  # derivation — kept in sync by hand, Hydra REPLACES lists on merge.
+  #
+  # MaxAttemptsCondition is mandatory here: RestartAction has no cap (see the
+  # CAUTION in the header) and this event fires on every HEALTHY segment, not
+  # only on failures. It counts all attempts, error restarts included.
+  - name: exit_duration_rollover
+    pattern: "exiting program after [0-9.]+ minutes"
+    pattern_type: regex
+    condition:
+      class_name: MaxAttemptsCondition
+      max_attempts: 150
+    action:
+      class_name: RestartAction
+      reason: "exit_duration_in_mins reached mid-schedule — resuming the next segment from the last checkpoint"
+
   # === FATAL: configuration / data faults -> CANCEL (never restart) =========
 
   # Launcher rejected an argument. torchrun_args forwards ANY key as `--<key>`,

@@ -153,6 +153,51 @@ log_events:
       class_name: FinishAction
       reason: "Test Evaluation Finished"
 
+  # === WALL-CLOCK SEGMENT ROLLOVER -> RESTART (chain-free continuation) ======
+  #
+  # `exit_duration_in_mins` ends a segment with sys.exit(0), so SLURM reports
+  # COMPLETED and the monitor's terminal branch (monitor/loop.py:236) marks the
+  # run "finished" — training silently stops with the schedule barely started.
+  # Cost 2026-08-25: job 1487924 stopped at iteration 19183/894000 (2.1 %) after
+  # a flawless 11.5 h and nothing was resubmitted.
+  #
+  # WHY THE PATTERN ALONE PROVES "NOT DONE" — no iteration arithmetic needed.
+  # The two exits are emitted from mutually exclusive code paths in
+  # megatron/training/training.py:
+  #   * checkpoint_and_decide_exit() runs INSIDE the `while iteration <
+  #     train_iters` loop. On the duration branch it prints
+  #     'exiting program after <train_time> minutes' (:2070) and returns True,
+  #     train() breaks out and calls sys.exit(exit_code) at :2651 — so
+  #     'after training is done' is NEVER reached.
+  #   * a genuinely finished schedule leaves the loop by its own condition with
+  #     should_exit False, train() RETURNS, and :781 prints
+  #     'after training is done'.
+  # So this line can only ever be printed with iterations still to go, and
+  # finished_training above stays the sole authority on real completion.
+  #
+  # Deliberately does NOT match the two sibling messages:
+  #   'exiting program at iteration N'  (:2086, exit_interval) — that is a
+  #       user-requested bounded run (see the fp8.yaml override); restarting it
+  #       would defeat the point.
+  #   'exiting program after receiving SIGTERM.' (:2015) — indistinguishable
+  #       from a deliberate scancel.
+  #
+  # MaxAttemptsCondition is the runaway guard the header of auto_restart.yaml
+  # asks for: RestartAction has no cap of its own, and unlike an error pattern
+  # this one fires on EVERY healthy segment, so without a ceiling the run would
+  # relaunch forever. It counts ALL attempts (error restarts included) and lives
+  # in monitor_state, so it resets if the monitor session is restarted.
+  # 15 TT at ~9.4k iterations per 11.5 h segment needs ~95 segments.
+  - name: exit_duration_rollover
+    pattern: "exiting program after [0-9.]+ minutes"
+    pattern_type: regex
+    condition:
+      class_name: MaxAttemptsCondition
+      max_attempts: 150
+    action:
+      class_name: RestartAction
+      reason: "exit_duration_in_mins reached mid-schedule — resuming the next segment from the last checkpoint"
+
   # === FATAL: configuration / data faults -> CANCEL (never restart) =========
   - name: err_unrecognized_argument
     pattern: "unrecognized arguments"
