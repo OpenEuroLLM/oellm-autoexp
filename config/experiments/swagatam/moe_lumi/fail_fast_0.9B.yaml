@@ -1,6 +1,6 @@
 # @package _global_
 
-# 0.9B NE sparse Qwen3-like model training with pull-based multi-stage cooldown on Marenostrum
+# 0.9B NE sparse Qwen3-like model training on LUMI
 # Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
 
 defaults:
@@ -22,7 +22,7 @@ index: 0
 stage: "" # Will be overridden by sweep
 
 job:
-  name: "${backend.megatron.aux.model_name}_experts_${backend.megatron.num_experts}topk${backend.megatron.moe_router_topk}_PP${backend.megatron.pipeline_model_parallel_size}_${stage}_lr${backend.megatron.lr}"
+  name: "0.9B_ne_sparse_experts_${backend.megatron.num_experts}topk${backend.megatron.moe_router_topk}_PP${backend.megatron.pipeline_model_parallel_size}_${stage}_lr${backend.megatron.lr}"
   base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
   log_path: ${slurm.sbatch.error}
 
@@ -41,18 +41,17 @@ backend:
     ### lumi specific configs end
 
     # Short paired runs with checkpoints suitable for scripts/moe post-hoc comparison.
-    train_iters: 2000  # 2B tokens
+    train_iters: 1000
     eval_iters: 100
-    eval_interval: 100
-    save_interval: 400 
-    save: ${job.base_output_dir}/checkpoints
-    load: ${.save}
+    eval_interval: 400
+    save_interval: 1000000000
+    load: "./"
     # save_extra_steps: [100]
     
     no_save_optim: True
     no_save_rng: True
     wandb_exp_name: "${job.name}" # Will be overridden by sweep with stage and hyperparameter info
-    wandb_project: "moe_router_metric_dev_0.9B" # Disabled
+    wandb_project: "moe_router_metric_dev_0.9B"
     wandb_entity: openeurollm-project
     wandb_save_dir: "${job.base_output_dir}"
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
@@ -73,7 +72,7 @@ backend:
     # For quick testing
     seq_length: 4096
     max_position_embeddings: 4096
-    lr_warmup_iters: 200
+    lr_warmup_iters: 5
     lr_wsd_decay_iters: 1
     
 
@@ -84,7 +83,7 @@ backend:
     
     lr: 1.e-4  # Will be overridden by sweep
     # fail fast configs
-    moe_aux_loss_coeff: 1.e-2
+    moe_aux_loss_coeff: 1.e-3
     # moe_z_loss_coeff: ""
     # fail fast configs end
 
@@ -94,29 +93,23 @@ backend:
     TRITON_HOME: /tmp/triton_cache
 
 
-# Healthy baseline versus a 10x learning-rate overshoot intended to trigger router collapse.
+# Healthy baseline versus learning-rate overshoots intended to trigger router collapse.
 sweep:
   type: product
   groups:
     - type: list
       configs:
-        - stage: low_lr_aux_loss
+        - stage: healthy
           backend.megatron.lr: 1.e-4
-          backend.megatron.moe_aux_loss_coeff: 1.e-2
-        - stage: low_lr_no_aux_loss
-          backend.megatron.lr: 1.e-4
-          backend.megatron.moe_aux_loss_coeff: 1.e-8
-        - stage: mid_lr_aux_loss
-          backend.megatron.lr: 5.e-4
-          backend.megatron.moe_aux_loss_coeff: 1.e-2
-        - stage: mid_lr_no_aux_loss
-          backend.megatron.lr: 5.e-4
-          backend.megatron.moe_aux_loss_coeff: 1.e-8
-        - stage: high_lr_aux_loss
-          backend.megatron.lr: 3.e-3
-          backend.megatron.moe_aux_loss_coeff: 1.e-2
-        - stage: high_lr_no_aux_loss
+          backend.megatron.moe_aux_loss_coeff: 1.e-3
+        - stage: high_lr_failure
           backend.megatron.lr: 1.e-3
+          backend.megatron.moe_aux_loss_coeff: 1.e-3
+        - stage: high_lr_failure_no_aux_loss
+          backend.megatron.lr: 1.e-3
+          backend.megatron.moe_aux_loss_coeff: 1.e-8
+        - stage: high_lr_3eminus3_no_aux_loss
+          backend.megatron.lr: 3.e-3
           backend.megatron.moe_aux_loss_coeff: 1.e-8
 
 
@@ -129,12 +122,12 @@ slurm:
   srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
   sbatch:
     # nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
-    nodes: 8
+    nodes: 2
     # qos: "boost_qos_dbg"
     account: "project_462001516"
     # partition: dev-g
-    partition: standard-g
-    time: "03:00:00"
+    partition: dev-g
+    time: "01:00:00"
     output: "${job.base_output_dir}/logs/stdout-%j.log"
     error: "${job.base_output_dir}/logs/stderr-%j.log"
   srun:
