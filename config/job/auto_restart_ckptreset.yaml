@@ -182,18 +182,29 @@ log_events:
   #   'exiting program after receiving SIGTERM.' (:2015) — indistinguishable
   #       from a deliberate scancel.
   #
-  # MaxAttemptsCondition is the runaway guard the header of auto_restart.yaml
-  # asks for: RestartAction has no cap of its own, and unlike an error pattern
-  # this one fires on EVERY healthy segment, so without a ceiling the run would
-  # relaunch forever. It counts ALL attempts (error restarts included) and lives
-  # in monitor_state, so it resets if the monitor session is restarted.
-  # 15 TT at ~9.4k iterations per 11.5 h segment needs ~95 segments.
+  # RUNAWAY GUARD. RestartAction has no cap of its own, and unlike an error
+  # pattern this one fires on EVERY healthy segment, so without a ceiling the run
+  # would relaunch forever.
+  #
+  # GENEROUS BY DESIGN, and now genuinely so. This is the benign event — hitting
+  # it means a segment completed 11.5 h of healthy training — so it gets a wide
+  # budget, in deliberate contrast to the tight budget on the stall events below.
+  # That split is only possible because this counts THIS event's own fires:
+  # under the old MaxAttemptsCondition every event shared one job-wide counter,
+  # so a generous rollover ceiling was also a generous stall ceiling.
+  #
+  # 150, NOT 50: a 15 TT schedule at ~9.4k iterations per 11.5 h segment needs
+  # ~91 rollovers (the submit-gate estimate agrees: "x91 segments"). 50 would
+  # stop the flagship at ~24 days, a little over halfway, and it would stop
+  # QUIETLY. 150 leaves ~60 spare for the resubmissions that error restarts and
+  # requeues add. State lives in monitor_state, so it resets if the monitor
+  # session is restarted.
   - name: exit_duration_rollover
     pattern: "exiting program after [0-9.]+ minutes"
     pattern_type: regex
     condition:
-      class_name: MaxAttemptsCondition
-      max_attempts: 150
+      class_name: MaxActionFiresCondition
+      max_fires: 150
     action:
       class_name: RestartAction
       reason: "exit_duration_in_mins reached mid-schedule — resuming the next segment from the last checkpoint"
@@ -252,6 +263,36 @@ log_events:
       class_name: CancelAction
       reason: "Corrupt dataset cache — run scripts/check_data_cache.py --repair"
 
+  # ATTENTION-BACKEND ENV vs --attention-backend. TE asserts when the NVTE_*_ATTN
+  # env vars contradict the backend Megatron resolved. The te218-fa3 container
+  # ships FA3 and the memory note "FA3 present != FA3 used" leads to pinning
+  # NVTE_FUSED_ATTN=0 to force it — but with `attention_backend: auto` Megatron
+  # expects 1 and every rank dies in argument validation.
+  # MEASURED 2026-08-28, job 1522580 (512 nodes): 2049 hits, one per rank, ZERO
+  # iterations, killed by hand after 24 min and 252 MB.
+  # CANCEL, never restart: the env is baked into the sbatch, so it is identical
+  # on every attempt.
+  - name: err_attention_backend_env
+    pattern: "NVTE_(FUSED|FLASH|UNFUSED)_ATTN set to [0-9]+, but expected [0-9]+ for attention backend"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "NVTE_*_ATTN env contradicts attention_backend — unset the env vars or set attention_backend explicitly"
+
+  # TE REFUSES TO UNPICKLE FP8 EXTRA STATE. Delayed-scaling FP8 metadata is a
+  # Python pickle; recent TE will not load it without an explicit opt-in. Hit
+  # when resuming an older checkpoint under a newer TE.
+  # MEASURED 2026-08-28, job 1523600 (512 nodes): 4098 hits, ZERO iterations,
+  # killed by hand after 28 min and 382 MB.
+  # CANCEL: the checkpoint is not corrupt, so quarantining it would throw away
+  # good state; the fix is a deliberate human decision about trusting it.
+  - name: err_te_pickled_extra_state
+    pattern: "Refusing to load pickled Transformer Engine extra state"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "TE will not unpickle FP8 extra state from this checkpoint — decide explicitly whether to enable unsafe loading"
+
   - name: err_infra_rank
     pattern: "Invalid infrastructure rank"
     pattern_type: substring
@@ -283,6 +324,21 @@ log_events:
     action:
       class_name: RestartAction
       reason: "Rendezvous failure — retrying (consider static rdzv for torchrun)"
+
+  # GLOO MESH COLLAPSE. Always a SECONDARY symptom: some rank died for a real
+  # reason, and the survivors then fail to form the gloo mesh during
+  # initialize_model_parallel(). It is the single loudest line in this codebase's
+  # failure history — 99k hits on job 1522580, 149k on 1523600, 58k on 1512329 —
+  # and it is what makes a dead job look ALIVE to the inactivity check.
+  # Deliberately placed AFTER every CANCEL pattern above so a diagnosable root
+  # cause (NVTE env, TE extra state, OOM, checkpoint) still wins the race; this
+  # only fires when nothing more specific matched.
+  - name: err_gloo_mesh
+    pattern: "Gloo connectFullMesh failed"
+    pattern_type: substring
+    action:
+      class_name: RestartAction
+      reason: "Gloo mesh collapsed after a rank died — retrying on a fresh allocation"
 
   - name: err_userbuffers_stall
     pattern: "userbuffers\\.cu.*expecting [0-9]+ got [0-9]+"
@@ -377,6 +433,136 @@ log_events:
     action:
       class_name: RestartAction
       reason: ""
+
+  # === FORWARD-PROGRESS STALL: "dead but noisy" ==============================
+  #
+  # THE HOLE THESE CLOSE. Every event above waits for a STRING; `inactive` waits
+  # for SILENCE. A job that is dead but still logging satisfies neither, so it
+  # ran unbounded until a human noticed. Ported from auto_restart_ft.yaml, which
+  # has had these since the ft_launcher era — they simply never came along when
+  # the flagship moved onto /backend: megatron_torchdist_localaddr, and this file
+  # is a hand-maintained copy (see the header), so the gap went unnoticed.
+  #
+  # MEASURED ON THIS POLICY, 2026-08-28, all three killed by hand:
+  #   1512329  512 nodes, 5 h 02 m, 411 MB, 21 iteration lines. 98.9 % of the
+  #            file was written AFTER the last training step. ~10,300 GPU-h.
+  #   1522580  512 nodes, 24 m, 252 MB, ZERO iterations.
+  #   1523600  512 nodes, 28 m, 382 MB, ZERO iterations.
+  # 1522580 and 1523600 contain ZERO "ChildFailedError" and ZERO "Exited with
+  # exit code 1" — torchrun only raises those once max_restarts is exhausted —
+  # so not one pattern above could fire, while ~100-150k Gloo lines kept the log
+  # growing so `inactive` could not fire either. These events are the only thing
+  # in this file that would have caught them.
+  #
+  # The counter is Megatron's own iteration line, `iteration    35065/  894000`,
+  # emitted every log_interval (5) iterations, i.e. roughly every 21 s at the
+  # measured 4.13 s/iter on 512 nodes.
+
+  # SHORT WINDOW, mode=increase. Resets on ANY movement, so a resume that jumps
+  # the counter BACKWARDS still counts and a healthy restart never trips this.
+  # Catches: startup hangs that never reach iteration 1 (the 1522580 / 1523600
+  # shape) and a wedged step.
+  #
+  # 20 polls x 60 s = 20 min. RE-VALIDATED 2026-08-28 by replaying the four
+  # healthy 512-node production logs (1486215, 1487924, 1506525, 1516079 —
+  # ~43 h of training) against this exact window, using the timestamps Megatron
+  # embeds in its own iteration lines:
+  #   startup -> first iteration   6.1 / 6.6 / 6.6 / 6.3 min   (very consistent)
+  #   in-run gaps > 5 min          NONE, except 1516079's 11.5 min and 8.5 min
+  #   verdict                      all four quiet, none fires
+  # and against the three broken ones, all of which fire at ~20 min:
+  #   1512329  287.9 min of no progress  -> saves ~4.5 h x 512 nodes (~9,200 GPU-h)
+  #   1522580   24.2 min, zero iterations
+  #   1523600   28.1 min, zero iterations
+  #
+  # THE 11.5 MIN OUTLIER IS THE BINDING CONSTRAINT and it is worth knowing what
+  # it was: NOT an eval and NOT a checkpoint, but a torchrun-internal worker
+  # group restart (4096 ranks re-printing startup banners) that then recovered.
+  # It leaves only 1.7x margin — but max_restarts is now 0 in the production
+  # config precisely so that cannot happen, which restores the margin to ~3x
+  # over the 6.6 min startup. IF max_restarts IS EVER RAISED AGAIN, RAISE THIS
+  # WINDOW TOO.
+  #
+  # The hard floor is the memory note that >=256-node jobs log NOTHING for 8+
+  # min during NCCL sync and kernel compile — do not cut this finer. Checked
+  # against this run's schedule: async_save is on so save_interval 4000 does not
+  # block, and eval_interval 10000 x eval_iters 10 is well under a minute of
+  # forward-only work, so neither opens a 20 min gap. RAISE IT if async_save is
+  # ever turned off or eval_iters grows a lot.
+  - name: stalled_iterations
+    pattern: "iteration +([0-9]+)/"
+    pattern_type: progress
+    progress_mode: increase
+    progress_polls: 20
+    progress_timeout_s: 1200
+    condition:
+      # PER-EVENT budget, not the job-wide attempt counter. A stall is a real
+      # fault: retry it a few times in case it was transient, then stop. Three
+      # restarts costs at most ~1 h of stalled wall clock before the giveup
+      # event below cancels and asks for a human.
+      #
+      # This MUST NOT be MaxAttemptsCondition. That reads the job's TOTAL
+      # attempts, which on this policy is dominated by the ~91 healthy
+      # exit_duration_rollover restarts a 15 TT schedule needs — so
+      # `max_attempts: 3` would mean "stop reacting to stalls once the run has
+      # restarted 3 times for any reason", i.e. dead from segment 4 onward.
+      class_name: MaxActionFiresCondition
+      max_fires: 3
+    action:
+      class_name: RestartAction
+      reason: "No iteration progress for 20 min — stuck, not slow"
+
+  # LONG WINDOW, mode=max. Resets only when the HIGH-WATER MARK advances, so
+  # re-running iterations already done is not progress. Catches a restart loop
+  # that cycles forever without ever getting past the same iteration — each cycle
+  # looks like movement to the check above.
+  #
+  # WINDOW TIED TO non_persistent_save_interval (125). After a rewind the counter
+  # must climb back before the high-water mark moves, so the window must exceed
+  #     125 x ~4.13 s (~8.6 min) + restart overhead (~5 min) ~= 14 min.
+  # 1800 s is ~2x that. RETUNE WHENEVER non_persistent_save_interval CHANGES.
+  #
+  # Largely belt-and-braces now that max_restarts is 0 (a rewind inside one job
+  # can no longer happen — the job dies and the monitor resubmits with a fresh
+  # log and cleared streaks). Kept because it is the only guard if max_restarts
+  # is ever raised again or this policy is used under ft_launcher.
+  - name: stalled_high_water
+    pattern: "iteration +([0-9]+)/"
+    pattern_type: progress
+    progress_mode: max
+    progress_polls: 30
+    progress_timeout_s: 1800
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 3
+    action:
+      class_name: RestartAction
+      reason: "No net iteration progress for 30 min — restart loop, not recovery"
+
+  # GIVE UP AND ASK A HUMAN. Load-bearing: a budget makes an event STOP ACTING,
+  # it does not stop the JOB. Without this, the 4th stall would find both events
+  # above exhausted and nothing else watching — the run would sit burning 512
+  # nodes exactly as jobs 1512329/1522580/1523600 did, which is the failure this
+  # whole block exists to prevent. A budget with no terminal case is worse than
+  # no budget.
+  #
+  # UNBUDGETED ON PURPOSE, and it can only ever fire once (CancelAction is
+  # terminal). Ordered AFTER both events above, so while either still has budget
+  # it returns "restart" first and this is never reached.
+  #
+  # mode=max, 30 min: strictly the more general guard, so one event covers both
+  # cases. A frozen counter never advances its high-water mark, and neither does
+  # a restart loop that keeps rewinding — whereas mode=increase would be reset
+  # by each rewind.
+  - name: stalled_giveup
+    pattern: "iteration +([0-9]+)/"
+    pattern_type: progress
+    progress_mode: max
+    progress_polls: 30
+    progress_timeout_s: 1800
+    action:
+      class_name: CancelAction
+      reason: "Still not progressing after 3 stall restarts — stopping so a human can look instead of burning the allocation"
 
   - name: inactive
     pattern_type: inactivity

@@ -87,7 +87,60 @@ backend:
     # rendezvous the Leonardo configs use, where MIN:MAX with MAX>MIN meant
     # ELASTIC (run MAX active) — do not carry that intuition over.
     nnodes: "${backend.aux.active_nodes}:${oc.addi:${backend.aux.active_nodes},${backend.aux.spare_nodes}}"
-    max_restarts: "50"   # each spare promotion consumes one restart
+    # ZERO — recovery is handled OUTSIDE the job, by the monitor.
+    #
+    # This was "50" (one per spare promotion), which is dead weight now that
+    # spare_nodes: 0 and the launcher is torchrun rather than ft_launcher: there
+    # is no spare to promote, so every one of those 50 restarts re-runs the SAME
+    # allocation into the SAME fault. Worse, it actively BLINDS the monitor.
+    #
+    # MEASURED 2026-08-28, three jobs on 512 nodes:
+    #   1512329  5 h 02 m, 411 MB of log, 21 iteration lines (98.9 % of the file
+    #            written AFTER the last training step), ~10,300 GPU-h
+    #   1522580  24 m, 252 MB, ZERO iterations. Real cause: an AssertionError on
+    #            NVTE_FUSED_ATTN, printed once per rank.
+    #   1523600  28 m, 382 MB, ZERO iterations. Real cause: TE refusing to load a
+    #            pickled extra state.
+    # All three had to be killed by hand.
+    #
+    # WHY THE MONITOR COULD NOT SEE THEM. torchrun only raises ChildFailedError
+    # once max_restarts is EXHAUSTED. At 50 restarts x ~25 min that never happens
+    # inside a 12 h wall, so 1522580 and 1523600 contain ZERO "ChildFailedError"
+    # and ZERO "Exited with exit code 1" — neither err_child_failed nor `error`
+    # can fire. Meanwhile each retry re-emits the full rank banner set (99k and
+    # 149k "Gloo connectFullMesh failed" lines respectively), so the log never
+    # stops growing and the `inactive` event cannot fire either. The job is dead,
+    # noisy, and invisible.
+    #
+    # At 0, the first fault propagates immediately: torchrun raises
+    # ChildFailedError, the agent exits 1, and the monitor's existing pattern
+    # events read the REAL error out of a log that is ~1000x smaller and act on
+    # it. Combined with the stalled_iterations / stalled_high_water progress
+    # events added to config/job/auto_restart_ckptreset.yaml, a stall that
+    # matches no pattern at all is still caught within 20 min.
+    #
+    # WHAT THIS COSTS — measured, not hand-waved. In-job restarts DO sometimes
+    # recover: healthy job 1516079 absorbed two of them (11.5 min at iteration
+    # 26250, 8.5 min at 26625 — 4096 ranks re-emitting startup banners) and went
+    # on to complete its full 11.5 h segment. Across ~43 h of healthy production
+    # logs (1486215/1487924/1506525/1516079) that is 2 in-job recoveries, so
+    # roughly one per 20 h. At 0 each of those instead becomes a full
+    # resubmission: queue wait (observed 0 min to 21 h on this account, the long
+    # tail being hidden reservations) + ~6.6 min startup + up to
+    # non_persistent_save_interval=125 iterations of redone work.
+    #
+    # ACCEPTED DELIBERATELY: silent burns cost ~11,000 GPU-h across the three
+    # jobs above, and a resubmission is at least VISIBLE and bounded. If the
+    # queue wait turns out to dominate, the middle ground is 2-3 rather than
+    # back to 50 — that still caps the noise at a few retries, and the progress
+    # events now catch a restart loop (stalled_high_water, 30 min, mode=max)
+    # regardless of what this is set to.
+    #
+    # SIDE EFFECT ON THE STALL THRESHOLD: with 0, an in-job restart can no
+    # longer open an 11.5 min hole in the iteration stream, so the worst gap a
+    # healthy run should show reverts to the ~6.6 min startup — 3x margin under
+    # the 20 min stalled_iterations window instead of 1.7x.
+    max_restarts: "0"
 
   megatron:
     # === DOCUMENT MASKING + FLASHATTENTION 3 =================================

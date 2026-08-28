@@ -116,8 +116,43 @@ def test_policy_has_capped_rollover_after_the_finish_events(policy):
     assert event["action"]["class_name"] == "RestartAction"
     # RestartAction has no cap of its own and this event fires on every HEALTHY
     # segment, so the ceiling is mandatory rather than defensive.
-    assert event["condition"]["class_name"] == "MaxAttemptsCondition"
-    assert event["condition"]["max_attempts"] > 1
+    #
+    # It must be the PER-EVENT budget, not the job-wide MaxAttemptsCondition.
+    # With a shared counter, this benign event's ~91 healthy rollovers would
+    # spend the tight budget the stall events depend on and silently disable
+    # them a few segments in.
+    assert event["condition"]["class_name"] == "MaxActionFiresCondition"
+    # A 15 TT schedule needs ~91 rollovers, so the ceiling must clear that with
+    # room for the extra resubmissions error restarts add.
+    assert event["condition"]["max_fires"] >= 100
+
+
+@pytest.mark.parametrize("policy", ["auto_restart", "auto_restart_ckptreset"])
+def test_stall_events_are_tightly_budgeted_and_end_in_a_cancel(policy):
+    """The rollover is generous; a stall must not be — and when the stall
+    budget runs out something must still stop the job, or the blind spot
+    returns."""
+    config_dir = Path(__file__).resolve().parents[2] / "config"
+    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
+        cfg = compose(config_name="autoexp", overrides=[f"job={policy}"])
+
+    events = {e["name"]: e for e in cfg.job.log_events}
+    names = [e["name"] for e in cfg.job.log_events]
+
+    for stall in ("stalled_iterations", "stalled_high_water"):
+        cond = events[stall]["condition"]
+        assert cond["class_name"] == "MaxActionFiresCondition"
+        assert cond["max_fires"] <= 5, "a stall is a real fault; retry it a few times, not 150"
+        assert cond["max_fires"] < events["exit_duration_rollover"]["condition"]["max_fires"]
+
+    # A budget makes an event stop ACTING, not the job stop RUNNING. Without a
+    # terminal case the run would sit unwatched exactly as job 1512329 did.
+    giveup = events["stalled_giveup"]
+    assert giveup["action"]["class_name"] == "CancelAction"
+    assert giveup.get("condition") is None, "the giveup must not itself be budgeted"
+    # Ordered last, so while either stall event still has budget it restarts first.
+    assert names.index("stalled_giveup") > names.index("stalled_iterations")
+    assert names.index("stalled_giveup") > names.index("stalled_high_water")
 
 
 # --------------------------------------------------------------------------- #

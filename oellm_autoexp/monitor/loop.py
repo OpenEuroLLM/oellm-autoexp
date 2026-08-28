@@ -714,6 +714,17 @@ class MonitorLoop:
             event=event,
             job_metadata=self._build_job_metadata(job),
             attempts=job.runtime.attempts,
+            # PER-EVENT budget input, distinct from `attempts` above.
+            # `attempts` is the JOB-WIDE restart counter, so a MaxAttemptsCondition
+            # on one event is really a ceiling on restarts from EVERY cause — on a
+            # chained run dominated by healthy wall-clock rollovers that silently
+            # disables the stricter events a few segments in. `action_fires`
+            # counts only THIS event's own action executions (see
+            # _update_action_state) and survives restarts because _restart_job
+            # preserves action_state. Consumed by MaxActionFiresCondition.
+            # Threaded via `extra` rather than the event metadata because
+            # Composite/And/Or/Not all forward `extra` to their children already.
+            extra={"action_fires": int(action_state.get("fire_count", 0))},
             state=condition_state,
             started_ts=condition_state.get("started_ts"),
         )
@@ -800,12 +811,20 @@ class MonitorLoop:
         state = runtime.action_state.setdefault(action_id, {})
         state["last_action_ts"] = time.time()
         state["last_status"] = result.status
+        # Per-event budget counter read back by MaxActionFiresCondition. Counted
+        # here rather than inside the condition because the condition is only a
+        # GATE — a child of an And/Or may be evaluated on a poll where the action
+        # never runs, so counting at check time would over-count. This runs
+        # exactly once per actual execution. Preserved across restarts by
+        # _restart_job, which deliberately keeps action_state.
+        state["fire_count"] = int(state.get("fire_count", 0)) + 1
         LOGGER.info(
-            "Action executed for job '%s' [%s]: special=%s status=%s%s",
+            "Action executed for job '%s' [%s]: special=%s status=%s fires=%d%s",
             job.job_id,
             action_id,
             result.special,
             result.status,
+            state["fire_count"],
             f" reason='{result.message}'" if result.message else "",
         )
 

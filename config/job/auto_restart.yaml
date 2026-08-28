@@ -56,15 +56,21 @@ log_events:
   # deliberate scancel). See config/job/auto_restart_ckptreset.yaml for the full
   # derivation — kept in sync by hand, Hydra REPLACES lists on merge.
   #
-  # MaxAttemptsCondition is mandatory here: RestartAction has no cap (see the
-  # CAUTION in the header) and this event fires on every HEALTHY segment, not
-  # only on failures. It counts all attempts, error restarts included.
+  # A budget is mandatory here: RestartAction has no cap (see the CAUTION in the
+  # header) and this event fires on every HEALTHY segment, not only on failures.
+  #
+  # GENEROUS BY DESIGN, in deliberate contrast to the tight budget on the stall
+  # events near the bottom of this file. That split is only possible because
+  # MaxActionFiresCondition counts THIS event's own fires; the job-wide
+  # MaxAttemptsCondition would make one number serve both.
+  # 150 not 50: a 15 TT schedule needs ~91 rollovers, so 50 would stop the run
+  # around halfway, and quietly.
   - name: exit_duration_rollover
     pattern: "exiting program after [0-9.]+ minutes"
     pattern_type: regex
     condition:
-      class_name: MaxAttemptsCondition
-      max_attempts: 150
+      class_name: MaxActionFiresCondition
+      max_fires: 150
     action:
       class_name: RestartAction
       reason: "exit_duration_in_mins reached mid-schedule — resuming the next segment from the last checkpoint"
@@ -133,6 +139,23 @@ log_events:
       class_name: CancelAction
       reason: "Corrupt dataset cache — run scripts/check_data_cache.py --repair"
 
+  # See config/job/auto_restart_ckptreset.yaml for the measured evidence behind
+  # these two (jobs 1522580 and 1523600, 512 nodes, zero iterations each). Both
+  # CANCEL: the fault is identical on every attempt.
+  - name: err_attention_backend_env
+    pattern: "NVTE_(FUSED|FLASH|UNFUSED)_ATTN set to [0-9]+, but expected [0-9]+ for attention backend"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "NVTE_*_ATTN env contradicts attention_backend — unset the env vars or set attention_backend explicitly"
+
+  - name: err_te_pickled_extra_state
+    pattern: "Refusing to load pickled Transformer Engine extra state"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "TE will not unpickle FP8 extra state from this checkpoint — decide explicitly whether to enable unsafe loading"
+
   - name: err_infra_rank
     pattern: "Invalid infrastructure rank"
     pattern_type: substring
@@ -178,6 +201,17 @@ log_events:
     action:
       class_name: RestartAction
       reason: "Rendezvous failure — retrying (consider static rdzv for torchrun)"
+
+  # Always a SECONDARY symptom of a rank that already died, and the loudest line
+  # in this codebase's failure history (99k/149k/58k hits on jobs 1522580/
+  # 1523600/1512329) — it is what makes a dead job look ALIVE to the inactivity
+  # check. Placed after every CANCEL pattern so a diagnosable root cause wins.
+  - name: err_gloo_mesh
+    pattern: "Gloo connectFullMesh failed"
+    pattern_type: substring
+    action:
+      class_name: RestartAction
+      reason: "Gloo mesh collapsed after a rank died — retrying on a fresh allocation"
 
   # Transformer Engine userbuffers TP-overlap spin-wait: a peer stopped
   # answering. Hung 1373198 for 20 min without finishing iteration 1. A clean
@@ -251,6 +285,59 @@ log_events:
   #   action:
   #     class_name: RestartAction
   #     reason: ""
+
+  # === FORWARD-PROGRESS STALL: "dead but noisy" ==============================
+  # Every event above waits for a STRING; `inactive` below waits for SILENCE. A
+  # job that is dead but still logging satisfies neither. Full rationale, the
+  # calibration data, and the three measured incidents are documented in
+  # config/job/auto_restart_ckptreset.yaml — keep the two files in sync.
+  #
+  # NB max_attempts is 150 here for the same reason as there: the condition reads
+  # the job's TOTAL attempt count, so a low ceiling silently disables the stall
+  # detector a few segments into a long chained run.
+  - name: stalled_iterations
+    pattern: "iteration +([0-9]+)/"
+    pattern_type: progress
+    progress_mode: increase
+    progress_polls: 20
+    progress_timeout_s: 1200
+    condition:
+      # PER-EVENT budget. MUST NOT be MaxAttemptsCondition — that counts the
+      # job's TOTAL attempts, so a small ceiling here would be spent by healthy
+      # rollover restarts and silently disable the stall detector.
+      class_name: MaxActionFiresCondition
+      max_fires: 3
+    action:
+      class_name: RestartAction
+      reason: "No iteration progress for 20 min — stuck, not slow"
+
+  - name: stalled_high_water
+    pattern: "iteration +([0-9]+)/"
+    pattern_type: progress
+    progress_mode: max
+    progress_polls: 30
+    progress_timeout_s: 1800
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 3
+    action:
+      class_name: RestartAction
+      reason: "No net iteration progress for 30 min — restart loop, not recovery"
+
+  # Terminal case for the two budgets above: a budget makes an event stop ACTING,
+  # not the job stop RUNNING. Without this the 4th stall would go unwatched.
+  # Unbudgeted, ordered last, mode=max so it covers a frozen counter and a
+  # rewinding restart loop alike.
+  - name: stalled_giveup
+    pattern: "iteration +([0-9]+)/"
+    pattern_type: progress
+    progress_mode: max
+    progress_polls: 30
+    progress_timeout_s: 1800
+    action:
+      class_name: CancelAction
+      reason: "Still not progressing after 3 stall restarts — stopping so a human can look instead of burning the allocation"
+
   - name: inactive
     pattern_type: inactivity
     # Restart only after the log has been silent for >=5 consecutive polls AND

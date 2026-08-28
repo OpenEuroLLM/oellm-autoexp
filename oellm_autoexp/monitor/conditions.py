@@ -119,6 +119,59 @@ class MaxAttemptsCondition(BaseCondition):
 
 
 @dataclass
+class MaxActionFiresConditionConfig(ConditionConfigMixin, ConfigInterface):
+    class_name: str = "MaxActionFiresCondition"
+    max_fires: int = 3
+
+
+@register
+class MaxActionFiresCondition(BaseCondition):
+    """Cap how many times THIS event's own action may run.
+
+    The per-event counterpart to :class:`MaxAttemptsCondition`, which reads the
+    JOB-WIDE ``runtime.attempts``. That distinction is the whole point: on a
+    chained production run the job-wide counter is dominated by healthy
+    wall-clock rollovers (a 15 TT schedule needs ~91 of them), so a
+    ``MaxAttemptsCondition: 4`` meant to say "give up after 4 stalls" actually
+    says "stop reacting to stalls once the run has restarted 4 times for ANY
+    reason" — i.e. it disables itself around segment 5 and the failure it guards
+    becomes invisible again. This counts only this event's executions, so
+    different events get genuinely independent budgets: generous for a benign
+    rollover, tight for a real fault.
+
+    The count lives in ``action_state[action_id]["fire_count"]`` (incremented by
+    the monitor loop after each execution) and is passed in via
+    ``context.extra["action_fires"]``. It survives restarts, because
+    ``_restart_job`` preserves ``action_state``.
+
+    ONLY MEANINGFUL ON EVENT CONDITIONS. ``start``/``cancel``/``finish``
+    conditions are not tied to an action, so ``action_fires`` is absent there and
+    this passes unconditionally — use MaxAttemptsCondition for those.
+
+    NB exhausting the budget makes the event STOP ACTING, it does not stop the
+    job. If the event is the only thing watching for a fault, pair it with a
+    lower-priority event carrying a CancelAction so the run ends loudly instead
+    of going unwatched.
+    """
+
+    config: MaxActionFiresConditionConfig
+
+    def check(self, context: ConditionContext) -> ConditionResult:
+        fires = int(context.extra.get("action_fires", 0))
+        if fires < self.config.max_fires:
+            return ConditionResult(
+                passed=True,
+                message=f"{fires}/{self.config.max_fires} fires used",
+                metadata={"action_fires": fires},
+            )
+        return ConditionResult(
+            passed=False,
+            message=f"action fired {fires} times >= limit {self.config.max_fires}",
+            metadata={"action_fires": fires},
+        )
+
+
+@dataclass
 class CooldownConditionConfig(ConditionConfigMixin, ConfigInterface):
     class_name: str = "CooldownCondition"
     cooldown_seconds: float = 60.0
@@ -438,6 +491,7 @@ __all__ = [
     "ConditionResult",
     "AlwaysTrueCondition",
     "MaxAttemptsCondition",
+    "MaxActionFiresCondition",
     "CooldownCondition",
     "TimeoutCondition",
     "FileExistsCondition",
