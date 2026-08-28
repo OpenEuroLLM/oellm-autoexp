@@ -589,17 +589,35 @@ class LogEventConfig(EventConfig):
     # setup banners, so it is never inactive — job 1375720 grew a 251 MB log
     # over 4 h while pinned at iteration 100 — but its counter does not move.
     progress_group: int | str = 1
-    # increase: the streak resets whenever the newest value DIFFERS from the
-    #   previous one. A resume from checkpoint jumps the counter BACKWARDS, and
-    #   that still counts as movement, so this is safe with a short window. It
-    #   detects "no iterations at all" and "iterations frozen".
-    # max: the streak resets only when the running MAXIMUM advances. This also
-    #   catches a loop that keeps re-running the same iterations forever, but
-    #   the window must exceed the time needed to redo the work lost to the last
-    #   rolling checkpoint, or a healthy restart trips it.
-    progress_mode: Literal["increase", "max"] = "increase"
+    # WHAT COUNTS AS PROGRESS, i.e. what resets the streak:
+    #
+    # any_change: ANY different value. A resume from checkpoint jumps the
+    #   counter BACKWARDS and that still counts, so this cannot be tripped by a
+    #   healthy restart and is safe with a short window. Answers "is the
+    #   training loop emitting iterations at all?" — it catches a frozen counter
+    #   and a job that never reaches iteration 1.
+    #
+    # furthest: only a value HIGHER than any seen before. Redoing iterations the
+    #   run has already done is not progress, so this additionally catches a loop
+    #   that keeps replaying the same range forever. The window must exceed the
+    #   time needed to redo the work lost to the last rolling checkpoint (plus
+    #   startup, if the streak spans a restart) or a healthy restart trips it.
+    #
+    # NB `any_change` was called `increase`, which was actively misleading: it
+    #   accepts a DECREASE too, and must, for the resume case above. `furthest`
+    #   was called `max`, which named the implementation rather than the
+    #   question. Both legacy spellings are still accepted and normalised in
+    #   __post_init__ so an older persisted job record still parses — without
+    #   that, JobFileStore.load_all() swallows the ValueError and the job
+    #   silently disappears from the monitor.
+    progress_mode: Literal["any_change", "furthest", "increase", "max"] = "any_change"
     progress_polls: int = 1
     progress_timeout_s: float = 0.0
+
+    def __post_init__(self):
+        legacy = {"increase": "any_change", "max": "furthest"}
+        if self.progress_mode in legacy:
+            self.progress_mode = legacy[self.progress_mode]
 
 
 @dataclass
@@ -675,9 +693,9 @@ class LogEvent:
         Returns ``(last, max, raw)`` over every match in this poll's slice, or
         ``(None, None, None)`` when the text holds no usable match — which is
         itself the signal that nothing advanced. ``last`` drives
-        ``progress_mode: increase`` (it is the job's current position, including
+        ``progress_mode: any_change`` (it is the job's current position, including
         after a backwards jump on resume) and ``max`` drives
-        ``progress_mode: max``.
+        ``progress_mode: furthest``.
         """
         pattern = re.compile(self.config.pattern, flags=re.MULTILINE)
         values: list[float] = []

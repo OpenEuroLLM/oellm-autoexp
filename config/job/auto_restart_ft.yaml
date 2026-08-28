@@ -192,7 +192,7 @@ log_events:
   # correctly: it asks whether the ITERATION COUNTER moved, not whether the log
   # grew. See LogEventConfig.progress_* and MonitorLoop._process_progress_event.
 
-  # SHORT WINDOW, mode=increase. Resets on ANY movement of the counter — a
+  # SHORT WINDOW, mode=any_change. Resets on ANY movement of the counter — a
   # resume from checkpoint jumps it backwards and that still counts, so a
   # healthy ft restart never trips this. What it catches:
   #   * startup hangs with zero iterations ever (1392564: 4 rendezvous cycles,
@@ -212,10 +212,10 @@ log_events:
   # an eval_interval inside the run — both are legitimate multi-minute gaps in
   # iteration output. With async_save and eval_interval > exit_interval (the
   # current 32B setup) there is no such gap.
-  - name: stalled_iterations
+  - name: iteration_counter_frozen
     pattern: "iteration +([0-9]+)/"
     pattern_type: progress
-    progress_mode: increase
+    progress_mode: any_change
     progress_polls: 20
     progress_timeout_s: 1200
     condition:
@@ -225,7 +225,7 @@ log_events:
       class_name: RestartAction
       reason: "No iteration progress for 20 min — stuck, not slow"
 
-  # LONG WINDOW, mode=max. Resets only when the HIGH-WATER MARK advances, so
+  # LONG WINDOW, mode=furthest. Resets only when the run reaches a NEW FURTHEST iteration, so
   # re-running iterations the job has already done is not progress. This is the
   # 1375720 shape: 7 setup cycles over 4 h, 6144 restart lines, 251 MB of log,
   # never past iteration 100 — each cycle looked like movement to the check
@@ -233,7 +233,7 @@ log_events:
   #
   # THE WINDOW IS TIED TO non_persistent_save_interval. After a restart the
   # counter rewinds to the last rolling checkpoint, and until it climbs back the
-  # high-water mark does not move — so the window must exceed
+  # furthest iteration reached does not move — so the window must exceed
   #     non_persistent_save_interval x seconds-per-iteration + restart overhead
   # RETUNE IT WHENEVER THAT INTERVAL CHANGES. At 125 iters x ~4.4 s = ~9 min plus
   # a ~5 min restart (measured: job 1401313 restarted 08:12 and was back at
@@ -244,10 +244,10 @@ log_events:
   #   1375720 (stuck 4 h at iteration 100)  fires at t+30 min, was t+134 at 7200 s
   #   7 healthy runs incl. 1400372 (8 h, 5 ft restart cycles)  never fires
   # Largest observed no-net-progress stretch on a healthy run: 5.9 min.
-  - name: stalled_high_water
+  - name: stuck_below_furthest_iteration
     pattern: "iteration +([0-9]+)/"
     pattern_type: progress
-    progress_mode: max
+    progress_mode: furthest
     progress_polls: 30
     progress_timeout_s: 1800
     condition:

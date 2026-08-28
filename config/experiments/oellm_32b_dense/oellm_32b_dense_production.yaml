@@ -115,7 +115,7 @@ backend:
     # At 0, the first fault propagates immediately: torchrun raises
     # ChildFailedError, the agent exits 1, and the monitor's existing pattern
     # events read the REAL error out of a log that is ~1000x smaller and act on
-    # it. Combined with the stalled_iterations / stalled_high_water progress
+    # it. Combined with the iteration_counter_frozen / stuck_below_furthest_iteration progress
     # events added to config/job/auto_restart_ckptreset.yaml, a stall that
     # matches no pattern at all is still caught within 20 min.
     #
@@ -133,13 +133,13 @@ backend:
     # jobs above, and a resubmission is at least VISIBLE and bounded. If the
     # queue wait turns out to dominate, the middle ground is 2-3 rather than
     # back to 50 — that still caps the noise at a few retries, and the progress
-    # events now catch a restart loop (stalled_high_water, 30 min, mode=max)
+    # events now catch a restart loop (stuck_below_furthest_iteration, 30 min, mode=max)
     # regardless of what this is set to.
     #
     # SIDE EFFECT ON THE STALL THRESHOLD: with 0, an in-job restart can no
     # longer open an 11.5 min hole in the iteration stream, so the worst gap a
     # healthy run should show reverts to the ~6.6 min startup — 3x margin under
-    # the 20 min stalled_iterations window instead of 1.7x.
+    # the 20 min iteration_counter_frozen window instead of 1.7x.
     max_restarts: "0"
 
   megatron:

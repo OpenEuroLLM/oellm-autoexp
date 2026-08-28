@@ -347,10 +347,10 @@ log_events:
   # NB max_attempts is 150 here for the same reason as there: the condition reads
   # the job's TOTAL attempt count, so a low ceiling silently disables the stall
   # detector a few segments into a long chained run.
-  - name: stalled_iterations
+  - name: iteration_counter_frozen
     pattern: "iteration +([0-9]+)/"
     pattern_type: progress
-    progress_mode: increase
+    progress_mode: any_change
     progress_polls: 20
     progress_timeout_s: 1200
     condition:
@@ -363,11 +363,11 @@ log_events:
       class_name: RestartAction
       reason: "No iteration progress for 20 min — stuck, not slow"
 
-  - name: stalled_high_water
+  - name: stuck_below_furthest_iteration
     pattern: "iteration +([0-9]+)/"
     pattern_type: progress
-    progress_mode: max
-    # 40 polls / 2400 s, WIDENED from 30/1800 when the high-water mark started
+    progress_mode: furthest
+    # 40 polls / 2400 s, WIDENED from 30/1800 when the furthest-iteration record started
     # being carried across restarts (loop.py:_restart_job). elapsed_s now sums
     # the ACTIVE no-progress time on BOTH sides of a restart, so the healthy
     # rollover has to fit inside the window end to end:
@@ -388,16 +388,16 @@ log_events:
 
   # Terminal case for the two budgets above: a budget makes an event stop ACTING,
   # not the job stop RUNNING. Without this the 4th stall would go unwatched.
-  # Unbudgeted, ordered last, mode=max so it covers a frozen counter and a
+  # Unbudgeted, ordered last, mode=furthest so it covers a frozen counter and a
   # rewinding restart loop alike.
-  - name: stalled_giveup
+  - name: stuck_below_furthest_iteration_cancel
     pattern: "iteration +([0-9]+)/"
     pattern_type: progress
-    progress_mode: max
-    # MUST EXCEED 3 x the stalled_high_water window. Both streaks are carried
-    # across restarts, but high_water's is popped each time it fires while this
+    progress_mode: furthest
+    # MUST EXCEED 3 x the stuck_below_furthest_iteration window. Both streaks are carried
+    # across restarts, but stuck_below_furthest_iteration's is popped each time it fires while this
     # one keeps accumulating -- so with a smaller window this would cancel after
-    # the FIRST high_water restart instead of the third, silently voiding the
+    # the FIRST stuck_below_furthest_iteration restart instead of the third, silently voiding the
     # max_fires: 3 above. 3 x 40 = 120, so 130 polls / 7800 s.
     progress_polls: 130
     progress_timeout_s: 7800

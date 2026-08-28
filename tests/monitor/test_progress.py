@@ -73,7 +73,7 @@ def test_progress_metadata_is_stable_and_marked():
     assert md["progress"] is True
     assert md["k"] == "v"
     assert event.progress_metadata() == md
-    assert "progress_last" not in md and "progress_raw" not in md
+    assert "last_value" not in md and "progress_raw" not in md
 
 
 def test_observe_progress_returns_last_and_max():
@@ -84,9 +84,9 @@ def test_observe_progress_returns_last_and_max():
     assert (last, mx, raw) == (3460.0, 3460.0, "3460")
 
 
-def test_observe_progress_last_differs_from_max_after_a_resume():
+def test_observe_last_value_differs_from_max_after_a_resume():
     """A restart rewinds the counter: `last` is the current position (3001),
-    `max` is still the high-water mark (3460)."""
+    `furthest` is still the furthest value reached (3460)."""
     cfg = LogEventConfig(name="stalled", pattern_type="progress", pattern=ITER_PATTERN)
     event = LogEvent(cfg)
     text = _iter_line(3460) + "…ft_launcher restarted the worker group…\n" + _iter_line(3001)
@@ -144,7 +144,7 @@ def _blank_record() -> EventRecord:
     return EventRecord(event_id="e", name="stalled", source="log", count=0, payload={})
 
 
-@pytest.mark.parametrize("mode", ["increase", "max"])
+@pytest.mark.parametrize("mode", ["any_change", "furthest"])
 def test_progress_advanced_first_sighting_counts_as_movement(mode):
     """The clock starts at the first iteration, not at job submission."""
     cfg = LogEventConfig(
@@ -154,7 +154,7 @@ def test_progress_advanced_first_sighting_counts_as_movement(mode):
     assert _progress_advanced(cfg, rec, 10.0, 10.0) is True
 
 
-@pytest.mark.parametrize("mode", ["increase", "max"])
+@pytest.mark.parametrize("mode", ["any_change", "furthest"])
 def test_progress_advanced_no_match_never_moves(mode):
     """A job that emits no counter at all never moves, in either mode — this is
     what catches a startup hang (jobs 1392564, 1392777: zero iterations)."""
@@ -166,20 +166,20 @@ def test_progress_advanced_no_match_never_moves(mode):
     assert _progress_advanced(cfg, rec, None, None) is False
 
 
-def test_increase_mode_tolerates_a_resume_rewind():
+def test_any_change_mode_tolerates_a_resume_rewind():
     """3460 -> 3001 is a healthy ft_launcher restart, not a stall."""
     cfg = LogEventConfig(
-        name="stalled", pattern_type="progress", pattern=ITER_PATTERN, progress_mode="increase"
+        name="stalled", pattern_type="progress", pattern=ITER_PATTERN, progress_mode="any_change"
     )
     rec = _blank_record()
     _progress_advanced(cfg, rec, 3460.0, 3460.0)
     assert _progress_advanced(cfg, rec, 3001.0, 3460.0) is True
-    assert rec.payload["progress_last"] == 3001.0
+    assert rec.payload["last_value"] == 3001.0
 
 
-def test_increase_mode_flags_a_frozen_counter():
+def test_any_change_mode_flags_a_frozen_counter():
     cfg = LogEventConfig(
-        name="stalled", pattern_type="progress", pattern=ITER_PATTERN, progress_mode="increase"
+        name="stalled", pattern_type="progress", pattern=ITER_PATTERN, progress_mode="any_change"
     )
     rec = _blank_record()
     _progress_advanced(cfg, rec, 100.0, 100.0)
@@ -187,26 +187,26 @@ def test_increase_mode_flags_a_frozen_counter():
     assert _progress_advanced(cfg, rec, 100.0, 100.0) is False
 
 
-def test_max_mode_rejects_re_running_the_same_iterations():
-    """The 1375720 shape: every cycle replays 1..100 and dies. `increase` sees
+def test_furthest_mode_rejects_re_running_the_same_iterations():
+    """The 1375720 shape: every cycle replays 1..100 and dies. `any_change` sees
     movement, `max` does not — which is the whole reason the mode exists."""
-    increase = LogEventConfig(
-        name="stalled", pattern_type="progress", pattern=ITER_PATTERN, progress_mode="increase"
+    any_change = LogEventConfig(
+        name="stalled", pattern_type="progress", pattern=ITER_PATTERN, progress_mode="any_change"
     )
     mx = LogEventConfig(
-        name="stalled", pattern_type="progress", pattern=ITER_PATTERN, progress_mode="max"
+        name="stalled", pattern_type="progress", pattern=ITER_PATTERN, progress_mode="furthest"
     )
     rec_i, rec_m = _blank_record(), _blank_record()
 
-    _progress_advanced(increase, rec_i, 100.0, 100.0)
+    _progress_advanced(any_change, rec_i, 100.0, 100.0)
     _progress_advanced(mx, rec_m, 100.0, 100.0)
     # Next cycle replays 1..100.
-    assert _progress_advanced(increase, rec_i, 100.0, 100.0) is False
+    assert _progress_advanced(any_change, rec_i, 100.0, 100.0) is False
     assert _progress_advanced(mx, rec_m, 100.0, 100.0) is False
-    # Mid-cycle the position moves but the high-water mark does not.
-    assert _progress_advanced(increase, rec_i, 50.0, 50.0) is True
+    # Mid-cycle the position moves but the furthest value reached does not.
+    assert _progress_advanced(any_change, rec_i, 50.0, 50.0) is True
     assert _progress_advanced(mx, rec_m, 50.0, 50.0) is False
-    assert rec_m.payload["progress_max"] == 100.0
+    assert rec_m.payload["furthest_value"] == 100.0
 
     # Genuine new ground resets both.
     assert _progress_advanced(mx, rec_m, 101.0, 101.0) is True
@@ -244,7 +244,7 @@ def _make_job(
     *,
     progress_polls: int = 1,
     progress_timeout_s: float = 0.0,
-    progress_mode: str = "increase",
+    progress_mode: str = "any_change",
 ) -> tuple[JobRecord, Path]:
     """A local sleep job whose only log event restarts on a progress stall.
 
@@ -364,11 +364,11 @@ def test_startup_hang_with_no_iterations_ever(tmp_path, client):
     assert _reload(store).runtime.attempts == 2
 
 
-def test_resume_rewind_does_not_trip_increase_mode(tmp_path, client):
+def test_resume_rewind_does_not_trip_any_change_mode(tmp_path, client):
     """A healthy in-job restart rewinds the counter to the last checkpoint; the
     default mode must treat that as progress, not as a stall."""
     store = JobFileStore(tmp_path / "state")
-    record, log_path = _make_job(tmp_path, progress_polls=2, progress_mode="increase")
+    record, log_path = _make_job(tmp_path, progress_polls=2, progress_mode="any_change")
     store.upsert(record)
     monitor = MonitorLoop(store, local_client=client, show_poll_state=False, no_error_catching=True)
 
@@ -389,18 +389,19 @@ def test_resume_rewind_does_not_trip_increase_mode(tmp_path, client):
     assert _streak_count(job) == 0
 
 
-def test_max_mode_fires_on_a_net_zero_restart_loop(tmp_path, client):
+def test_furthest_mode_fires_on_a_net_zero_restart_loop(tmp_path, client):
     """Same rewind, but `max` mode: replaying already-done iterations is not
-    progress, so a loop that never gets past its high-water mark is caught."""
+    progress, so a loop that never gets past the furthest iteration it reached
+    is caught."""
     store = JobFileStore(tmp_path / "state")
-    record, log_path = _make_job(tmp_path, progress_polls=2, progress_mode="max")
+    record, log_path = _make_job(tmp_path, progress_polls=2, progress_mode="furthest")
     store.upsert(record)
     monitor = MonitorLoop(store, local_client=client, show_poll_state=False, no_error_catching=True)
 
     monitor.observe_once()  # submit
     with log_path.open("a", encoding="utf-8") as fh:
         fh.write(_iter_line(3460))
-    monitor.observe_once()  # high-water mark 3460
+    monitor.observe_once()  # furthest reached 3460
 
     for value in (3001, 3002):
         with log_path.open("a", encoding="utf-8") as fh:
@@ -436,3 +437,58 @@ def test_progress_timeout_gates_the_poll_count(tmp_path, client, monkeypatch):
     clock.advance(180.0)
     monitor.observe_once()  # elapsed 360 >= 300 -> restart
     assert _reload(store).runtime.attempts == 2
+
+
+@pytest.mark.parametrize(
+    "legacy, expected",
+    [("increase", "any_change"), ("max", "furthest")],
+)
+def test_legacy_progress_mode_spellings_are_normalised(legacy, expected):
+    """`increase`/`max` were renamed; older persisted job records still use
+    them.
+
+    They must still PARSE. JobFileStore.load_all() swallows a ValueError and
+    `continue`s, so a rejected value would not raise — the job would just
+    silently vanish from the monitor's store, which is the failure mode this
+    whole module exists to prevent. 41 such records existed on JUPITER at the
+    time of the rename.
+    """
+    cfg = LogEventConfig(
+        name="stalled",
+        pattern_type="progress",
+        pattern=ITER_PATTERN,
+        progress_mode=legacy,
+    )
+    assert cfg.progress_mode == expected
+
+
+def test_a_legacy_record_still_round_trips_through_the_store(tmp_path):
+    """End-to-end: a stored job using the old spelling must reload, not vanish."""
+    from oellm_autoexp.monitor.submission import LocalJobConfig
+
+    store = JobFileStore(tmp_path / "state")
+    definition = LocalJobConfig(
+        name="trainer",
+        command=["true"],
+        log_path=str(tmp_path / "train.log"),
+        log_events=[
+            LogEventConfig(
+                name="stalled",
+                pattern_type="progress",
+                pattern=ITER_PATTERN,
+                progress_mode="max",  # legacy spelling
+                action=RestartActionConfig(reason="no net progress"),
+            )
+        ],
+    )
+    store.upsert(JobRecord(job_id="job", definition=definition, runtime=JobRuntime()))
+
+    # Rewrite the persisted file with the legacy value, as an old monitor would have.
+    path = store.path_for("job")
+    raw = path.read_text(encoding="utf-8").replace('"furthest"', '"max"')
+    path.write_text(raw, encoding="utf-8")
+    assert '"max"' in path.read_text(encoding="utf-8")
+
+    jobs = store.load_all()
+    assert len(jobs) == 1, "a legacy record must not be silently dropped"
+    assert jobs[0].definition.log_events[0].progress_mode == "furthest"

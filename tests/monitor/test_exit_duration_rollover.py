@@ -139,7 +139,7 @@ def test_stall_events_are_tightly_budgeted_and_end_in_a_cancel(policy):
     events = {e["name"]: e for e in cfg.job.log_events}
     names = [e["name"] for e in cfg.job.log_events]
 
-    for stall in ("stalled_iterations", "stalled_high_water"):
+    for stall in ("iteration_counter_frozen", "stuck_below_furthest_iteration"):
         cond = events[stall]["condition"]
         assert cond["class_name"] == "MaxActionFiresCondition"
         assert cond["max_fires"] <= 5, "a stall is a real fault; retry it a few times, not 150"
@@ -147,12 +147,16 @@ def test_stall_events_are_tightly_budgeted_and_end_in_a_cancel(policy):
 
     # A budget makes an event stop ACTING, not the job stop RUNNING. Without a
     # terminal case the run would sit unwatched exactly as job 1512329 did.
-    giveup = events["stalled_giveup"]
+    giveup = events["stuck_below_furthest_iteration_cancel"]
     assert giveup["action"]["class_name"] == "CancelAction"
     assert giveup.get("condition") is None, "the giveup must not itself be budgeted"
     # Ordered last, so while either stall event still has budget it restarts first.
-    assert names.index("stalled_giveup") > names.index("stalled_iterations")
-    assert names.index("stalled_giveup") > names.index("stalled_high_water")
+    assert names.index("stuck_below_furthest_iteration_cancel") > names.index(
+        "iteration_counter_frozen"
+    )
+    assert names.index("stuck_below_furthest_iteration_cancel") > names.index(
+        "stuck_below_furthest_iteration"
+    )
 
 
 # --------------------------------------------------------------------------- #

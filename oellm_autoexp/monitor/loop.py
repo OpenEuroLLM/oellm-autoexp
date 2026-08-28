@@ -557,18 +557,17 @@ class MonitorLoop:
             )
         else:
             record = EventRecord(**stored)
-            # A record carried across a restart by _restart_job keeps its
-            # high-water mark and its banked no-progress time, but its clock
-            # spans a queue wait in which no poll ran. Slide first_seen_ts
-            # forward so elapsed_s resumes from the ACTIVE time already banked
-            # and the PENDING gap contributes nothing: elapsed_s then measures
-            # time the job spent RUNNING without net progress, summed across
-            # restarts, which is what catches a restart loop.
-            # `count` needs no adjustment — it only ever advanced on polls that
-            # read a log.
-            if record.payload.pop("progress_reanchor", False):
-                banked = max(0.0, record.last_seen_ts - record.first_seen_ts)
-                record.first_seen_ts = now - banked
+            # This record was kept across a restart by _restart_job, so its clock
+            # was left running through a wait that may have been hours (21 h on
+            # job 1512329). Restart the clock here, at the first poll that has a
+            # log to read, from the amount it had already accumulated — so
+            # elapsed_s keeps measuring time the job spent RUNNING without
+            # reaching a new furthest iteration, and the wait to be scheduled
+            # adds nothing to it. `count` needs no such fix: it only ever
+            # advanced on a poll that read a log.
+            if record.payload.pop("clock_paused_for_requeue", False):
+                already_counted = max(0.0, record.last_seen_ts - record.first_seen_ts)
+                record.first_seen_ts = now - already_counted
 
         advanced = _progress_advanced(event_cfg, record, last_value, max_value)
         if advanced:
@@ -936,44 +935,45 @@ class MonitorLoop:
         # Streak records refer to the old run's log; clear so inactivity has to
         # re-accumulate against the fresh log.
         #
-        # EXCEPT the HIGH-WATER MARK of a progress_mode: max streak, which is a
-        # plain number and not log state. Without it, a restart LOOP is invisible
-        # to the progress events: every cycle wipes the streak, so it never
-        # reaches its 20/30 min window and the only bound left is the blunt
-        # per-event restart budget. Carrying the mark means a job that keeps
-        # relaunching and never gets back past the iteration it already reached
-        # is finally detectable as "no NET progress", which is exactly what
-        # progress_mode: max is for.
+        # A `progress_mode: furthest` record is the exception: it is kept, so the
+        # question "has this run ever got past iteration N?" survives into the
+        # next attempt. Answering it across attempts is the only way to see a
+        # RESTART LOOP -- a run that relaunches over and over and never reaches
+        # new ground. Drop the record and each attempt starts from nothing, so a
+        # loop whose attempts die after ~7 min could never reach a 40-poll
+        # window, and the fast loop is the shape that actually happens (six jobs
+        # in one hour, 2026-08-23).
         #
-        # THE COUNT AND THE ACCUMULATED TIME ARE CARRIED TOO; only the QUEUE GAP
-        # is dropped. Zeroing them here would defeat the whole point: a loop
-        # whose cycles each die in ~7 min would reset the streak every cycle and
-        # could never reach a 30-poll window, so the fast loop -- the shape that
-        # actually happens (six jobs in one hour, 2026-08-23) -- would stay
-        # invisible. What must NOT be carried is wall-clock time spent PENDING:
-        # _process_log_events returns early while the new job's log does not
-        # exist, so no poll runs during the wait, and folding it into elapsed_s
-        # would make the AND in progress_qualifies degrade to its poll-count
-        # half. The record is flagged, and the first poll that actually sees a
-        # log re-anchors it so elapsed_s continues from the ACTIVE time already
-        # banked (see _process_progress_event).
+        # THREE THINGS ARE KEPT, and each is meaningless without the others:
+        #   furthest_value  the furthest iteration this run has ever reached
+        #   count           polls so far that did not beat it
+        #   elapsed         time so far that did not beat it
+        # Keeping only the first would look right and detect nothing, because
+        # progress_qualifies gates on the other two.
         #
-        # `count` is naturally queue-immune: it only increments on a poll that
-        # read a log, so it already measures polls spent RUNNING.
+        # WHAT IS DELIBERATELY NOT KEPT is the time the job spends waiting to be
+        # scheduled. `count` excludes it for free -- it only advances on a poll
+        # that actually read a log, and _process_log_events returns early while
+        # the next attempt's log does not exist yet. `elapsed` does not, so the
+        # record is flagged here and the first poll that does see a log restarts
+        # the clock from the time already accumulated (see
+        # _process_progress_event). Skipping that, a 21 h queue wait (job
+        # 1512329) would land in `elapsed` and the AND in progress_qualifies
+        # would quietly collapse to its poll-count half.
         #
-        # progress_last is NOT carried: progress_mode: increase treats the
-        # backwards jump of a resume as movement on purpose, so it must start
-        # fresh.
+        # last_value belongs to `progress_mode: any_change`, which treats the
+        # backwards jump of a resume as progress on purpose -- so it must start
+        # fresh, and those records are dropped like any other.
         carried: dict[str, Any] = {}
         for key, stored in runtime.events.items():
             payload = (stored or {}).get("payload") or {}
-            if "progress_max" not in payload:
+            if "furthest_value" not in payload:
                 continue
             record = dict(stored)
             record["payload"] = {
-                k: v for k, v in payload.items() if k not in ("progress_last", "progress_raw")
+                k: v for k, v in payload.items() if k not in ("last_value", "progress_raw")
             }
-            record["payload"]["progress_reanchor"] = True
+            record["payload"]["clock_paused_for_requeue"] = True
             carried[key] = record
         runtime.events.clear()
         runtime.events.update(carried)
@@ -1023,7 +1023,7 @@ def _progress_advanced(
     ``increase`` compares against the PREVIOUS observation and accepts any
     change, including the backwards jump of a resume from checkpoint — a
     healthy ft_launcher restart must not look like a stall.
-    ``max`` compares against the running maximum, so re-running iterations the
+    ``max`` compares against the furthest value seen so far, so re-running iterations the
     job has already done does NOT count as progress.
 
     A counter seen for the first time counts as movement, which starts the clock
@@ -1031,19 +1031,19 @@ def _progress_advanced(
     a match never moves, so its streak accumulates from the first poll — that is
     what catches a startup hang.
     """
-    if event_cfg.progress_mode == "max":
+    if event_cfg.progress_mode == "furthest":
         if max_value is None:
             return False
-        previous = record.payload.get("progress_max")
-        record.payload["progress_max"] = (
+        previous = record.payload.get("furthest_value")
+        record.payload["furthest_value"] = (
             max_value if previous is None else max(float(previous), max_value)
         )
         return previous is None or max_value > float(previous)
 
     if last_value is None:
         return False
-    previous = record.payload.get("progress_last")
-    record.payload["progress_last"] = last_value
+    previous = record.payload.get("last_value")
+    record.payload["last_value"] = last_value
     return previous is None or last_value != float(previous)
 
 

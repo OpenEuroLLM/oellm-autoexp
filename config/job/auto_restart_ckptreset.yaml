@@ -524,7 +524,7 @@ log_events:
   # emitted every log_interval (5) iterations, i.e. roughly every 21 s at the
   # measured 4.13 s/iter on 512 nodes.
 
-  # SHORT WINDOW, mode=increase. Resets on ANY movement, so a resume that jumps
+  # SHORT WINDOW, mode=any_change. Resets on ANY movement, so a resume that jumps
   # the counter BACKWARDS still counts and a healthy restart never trips this.
   # Catches: startup hangs that never reach iteration 1 (the 1522580 / 1523600
   # shape) and a wedged step.
@@ -555,10 +555,10 @@ log_events:
   # block, and eval_interval 10000 x eval_iters 10 is well under a minute of
   # forward-only work, so neither opens a 20 min gap. RAISE IT if async_save is
   # ever turned off or eval_iters grows a lot.
-  - name: stalled_iterations
+  - name: iteration_counter_frozen
     pattern: "iteration +([0-9]+)/"
     pattern_type: progress
-    progress_mode: increase
+    progress_mode: any_change
     progress_polls: 20
     progress_timeout_s: 1200
     condition:
@@ -578,13 +578,13 @@ log_events:
       class_name: RestartAction
       reason: "No iteration progress for 20 min — stuck, not slow"
 
-  # LONG WINDOW, mode=max. Resets only when the HIGH-WATER MARK advances, so
+  # LONG WINDOW, mode=furthest. Resets only when the run reaches a NEW FURTHEST iteration, so
   # re-running iterations already done is not progress. Catches a restart loop
   # that cycles forever without ever getting past the same iteration — each cycle
   # looks like movement to the check above.
   #
   # WINDOW TIED TO non_persistent_save_interval (125). After a rewind the counter
-  # must climb back before the high-water mark moves, so the window must exceed
+  # must climb back before it reaches a new furthest iteration, so the window must exceed
   #     125 x ~4.13 s (~8.6 min) + restart overhead (~5 min) ~= 14 min.
   # 1800 s is ~2x that. RETUNE WHENEVER non_persistent_save_interval CHANGES.
   #
@@ -592,11 +592,11 @@ log_events:
   # can no longer happen — the job dies and the monitor resubmits with a fresh
   # log and cleared streaks). Kept because it is the only guard if max_restarts
   # is ever raised again or this policy is used under ft_launcher.
-  - name: stalled_high_water
+  - name: stuck_below_furthest_iteration
     pattern: "iteration +([0-9]+)/"
     pattern_type: progress
-    progress_mode: max
-    # 40 polls / 2400 s, WIDENED from 30/1800 when the high-water mark started
+    progress_mode: furthest
+    # 40 polls / 2400 s, WIDENED from 30/1800 when the furthest-iteration record started
     # being carried across restarts (loop.py:_restart_job). elapsed_s now sums
     # the ACTIVE no-progress time on BOTH sides of a restart, so the healthy
     # rollover has to fit inside the window end to end:
@@ -626,18 +626,18 @@ log_events:
   # terminal). Ordered AFTER both events above, so while either still has budget
   # it returns "restart" first and this is never reached.
   #
-  # mode=max, 30 min: strictly the more general guard, so one event covers both
-  # cases. A frozen counter never advances its high-water mark, and neither does
-  # a restart loop that keeps rewinding — whereas mode=increase would be reset
+  # mode=furthest: strictly the more general guard, so one event covers both
+  # cases. A frozen counter never reaches a new furthest iteration, and neither does
+  # a restart loop that keeps rewinding — whereas mode=any_change would be reset
   # by each rewind.
-  - name: stalled_giveup
+  - name: stuck_below_furthest_iteration_cancel
     pattern: "iteration +([0-9]+)/"
     pattern_type: progress
-    progress_mode: max
-    # MUST EXCEED 3 x the stalled_high_water window. Both streaks are carried
-    # across restarts, but high_water's is popped each time it fires while this
+    progress_mode: furthest
+    # MUST EXCEED 3 x the stuck_below_furthest_iteration window. Both streaks are carried
+    # across restarts, but stuck_below_furthest_iteration's is popped each time it fires while this
     # one keeps accumulating -- so with a smaller window this would cancel after
-    # the FIRST high_water restart instead of the third, silently voiding the
+    # the FIRST stuck_below_furthest_iteration restart instead of the third, silently voiding the
     # max_fires: 3 above. 3 x 40 = 120, so 130 polls / 7800 s.
     progress_polls: 130
     progress_timeout_s: 7800
