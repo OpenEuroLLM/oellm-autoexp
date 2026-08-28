@@ -1,0 +1,4 @@
+interface:
+  display_name: "Megatron TensorBoard"
+  short_description: "Extract normalized Megatron event scalars"
+  default_prompt: "Use $megatron-tensorboard to extract MoE metrics from these event files."

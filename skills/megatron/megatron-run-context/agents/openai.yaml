@@ -1,0 +1,4 @@
+interface:
+  display_name: "Megatron Run Context"
+  short_description: "Normalize Megatron run artifacts and context"
+  default_prompt: "Use $megatron-run-context to create a portable context for this training run."

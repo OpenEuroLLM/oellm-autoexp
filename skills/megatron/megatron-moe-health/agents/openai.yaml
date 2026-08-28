@@ -1,0 +1,4 @@
+interface:
+  display_name: "Megatron MoE Health"
+  short_description: "Diagnose MoE run health from artifacts"
+  default_prompt: "Use $megatron-moe-health to analyze this Megatron MoE run."

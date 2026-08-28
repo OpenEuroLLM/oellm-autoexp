@@ -1,0 +1,4 @@
+interface:
+  display_name: "Megatron TensorWave"
+  short_description: "Inspect Megatron runs on TensorWave safely"
+  default_prompt: "Use $megatron-tensorwave to inspect this TensorWave Megatron run without changing it."
