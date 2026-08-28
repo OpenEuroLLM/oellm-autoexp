@@ -146,7 +146,7 @@ backend:
     micro_batch_size: 2
 
     # Manual garbage collection
-    manual_gc_interval: 50  # 50 is megatron's default if manual_gc = true
+    manual_gc_interval: 137  # 50 is megatron's default if manual_gc = true
     manual_gc: true
 
     # DATA
@@ -184,9 +184,7 @@ backend:
     cuda_graph_impl: none
 
     cross_entropy_loss_fusion: true
-    cross_entropy_fusion_impl: te
-
-    # async checkpointing
+    cross_entropy_fusion_impl: native
     async_save: true
     use_persistent_ckpt_worker: true
     ckpt_assume_constant_structure: true
@@ -228,7 +226,6 @@ backend:
     ddp_reduce_scatter_with_fp32_accumulation: false
     output_z_loss_coeff: 1e-4
     fp8: hybrid
-    cuda_graph_scope: full
     fp8_recipe: delayed
     fp8_param_gather: false
     first_last_layers_bf16: false

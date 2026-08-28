@@ -154,7 +154,7 @@ backend:
     tp_comm_overlap: true
     defer_embedding_wgrad_compute: true
     cross_entropy_loss_fusion: true
-    cross_entropy_fusion_impl: te
+    cross_entropy_fusion_impl: native
     manual_gc: true
     manual_gc_interval: 50
     # --packed-doc-attention asserts this: cu_seqlens changes length with the
@@ -221,18 +221,18 @@ sweep:
       configs:
         # ---- production layout: 16 groups / PP=4 -> VPP=4 --------------------
         - backend.aux.variant: "pdaspeed-vpp4-ctrl"
-          backend.megatron.packed_doc_attention: false
+          backend.megatron.dataloader_inter_document_masking: false
 
         - backend.aux.variant: "pdaspeed-vpp4-packed"
-          backend.megatron.packed_doc_attention: true
+          backend.megatron.dataloader_inter_document_masking: true
 
         # ---- 8 groups / PP=4 -> VPP=2, to isolate VPP at this scale ----------
         - backend.aux.variant: "pdaspeed-vpp2-ctrl"
-          backend.megatron.packed_doc_attention: false
+          backend.megatron.dataloader_inter_document_masking: false
           backend.megatron.pipeline_model_parallel_layout: "Et\\*9\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*7L"
 
         - backend.aux.variant: "pdaspeed-vpp2-packed"
-          backend.megatron.packed_doc_attention: true
+          backend.megatron.dataloader_inter_document_masking: true
           backend.megatron.pipeline_model_parallel_layout: "Et\\*9\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*7L"
 
         # ---- arm 4: REMOVED ---------------------------------------------------

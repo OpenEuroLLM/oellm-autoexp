@@ -37,7 +37,6 @@ job:
 # Default backend.megatron tweaks shared by the train stage.
 backend:
   megatron:
-    legacy_tokenizer: false
     train_iters: 1000
     lr_warmup_iters: 50
     lr_decay_iters: 1000

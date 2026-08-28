@@ -62,7 +62,7 @@ sweep:
     - type: list
       configs:
         - backend.aux.variant: "pdaprod-fp8ub-ctrl"
-          backend.megatron.packed_doc_attention: false
+          backend.megatron.dataloader_inter_document_masking: false
 
         - backend.aux.variant: "pdaprod-fp8ub-packed"
-          backend.megatron.packed_doc_attention: true
+          backend.megatron.dataloader_inter_document_masking: true

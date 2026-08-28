@@ -188,9 +188,7 @@ backend:
     cuda_graph_impl: "local"
 
     cross_entropy_loss_fusion: true
-    cross_entropy_fusion_impl: te
-
-    # async checkpointing
+    cross_entropy_fusion_impl: native
     async_save: true
     use_persistent_ckpt_worker: true
     ckpt_assume_constant_structure: true
