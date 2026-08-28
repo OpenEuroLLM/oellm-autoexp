@@ -17,10 +17,22 @@ defaults:
 #
 # CAUTION — RestartAction has NO restart cap of its own (RestartActionConfig
 # carries only class_name/reason, and _restart_job preserves `attempts` without
-# testing it). If the cluster is broadly unhealthy, a restartable pattern can
-# relaunch indefinitely. That is why only node-local faults are restartable and
-# everything config-shaped cancels. Watch `attempts` in monitor_state if a job
-# seems to relaunch repeatedly.
+# testing it), so any bound has to come from a `condition:`. That is also why
+# only node-local faults are restartable and everything config-shaped cancels.
+#
+# Every RestartAction below is now bounded by a MaxActionFiresCondition — a
+# PER-EVENT budget, so a benign event's allowance cannot be spent by an
+# unrelated fault (which is what the job-wide MaxAttemptsCondition did). Two
+# things to know before changing one:
+#   * events are evaluated IN ORDER and a blocked condition falls through, so
+#     bounding one event while a later event matches the same log bounds
+#     nothing — budget the whole group or none of it;
+#   * a spent budget stops the EVENT, not the JOB. Where the job would still be
+#     alive and burning (the stall events), the budget is paired with a
+#     terminal CancelAction; where the job is already dying (the generic tier),
+#     it simply ends.
+# Watch `fire_count` per action in monitor_state if a job seems to relaunch
+# repeatedly.
 #
 # KEEP IN SYNC WITH config/job/auto_cancel.yaml — the list is duplicated because
 # Hydra REPLACES lists on merge, so a shared include plus additions would
@@ -181,6 +193,9 @@ log_events:
   - name: err_cuda_alloc_init
     pattern: "Failed to CUDA calloc|AcceleratorError: CUDA error: out of memory|cudaErrorMemoryAllocation"
     pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "GPU occupied at init (leftover process) — retrying on new nodes"
@@ -198,6 +213,9 @@ log_events:
     # Only the "cannot reach the store" forms belong here.
     pattern: "RendezvousConnectionError|DistNetworkError"
     pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "Rendezvous failure — retrying (consider static rdzv for torchrun)"
@@ -209,6 +227,9 @@ log_events:
   - name: err_gloo_mesh
     pattern: "Gloo connectFullMesh failed"
     pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "Gloo mesh collapsed after a rank died — retrying on a fresh allocation"
@@ -219,6 +240,9 @@ log_events:
   - name: err_userbuffers_stall
     pattern: "userbuffers\\.cu.*expecting [0-9]+ got [0-9]+"
     pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "userbuffers TP-overlap stall — peer rank unresponsive, retrying"
@@ -226,6 +250,9 @@ log_events:
   - name: err_nccl_timeout
     pattern: "Watchdog caught collective operation timeout|unhandled cuda error|NCCL error"
     pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "NCCL collective timeout/abort — retrying"
@@ -242,6 +269,9 @@ log_events:
   - name: err_cuda_illegal_access
     pattern: "illegal memory access|cudaErrorIllegalAddress"
     pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "CUDA illegal memory access — GPU needs reset, not a relaunch"
@@ -252,6 +282,9 @@ log_events:
   - name: err_cpp_terminate
     pattern: "terminate called after throwing an instance of"
     pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "Unhandled C++ exception — worker aborted"
@@ -260,13 +293,29 @@ log_events:
   - name: err_node_failure
     pattern: "DUE TO NODE FAILURE|Node failure on"
     pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "SLURM node failure in the allocation"
 
+  # === GENERIC RESTART TIER: BOUNDED AS A GROUP ==============================
+  # err_gloo_mesh, err_child_failed and `error` all match the SAME rank-death
+  # log (job 1512329 has all three markers), and _process_log_events falls
+  # through to the next event when a condition blocks the action -- so capping
+  # only one of them is theatre, the next unbudgeted event takes the restart
+  # over. The effective ceiling is the SUM: 25+25+25 = 75 cycles for a
+  # gloo-shaped fault, ~half a day at the 6 cycles/hour measured in the real
+  # loop of 2026-08-23. A runaway backstop, deliberately not a tight bound:
+  # these are the PRIMARY recovery path. Full reasoning in
+  # config/job/auto_restart_ckptreset.yaml.
   - name: err_child_failed
     pattern: "ChildFailedError"
     pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "Worker process failed — retrying"
@@ -274,6 +323,9 @@ log_events:
   - name: error
     pattern: "Exited with exit code 1"
     pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: ""
@@ -347,6 +399,9 @@ log_events:
     # catch every failure we have actually seen, far sooner.
     inactivity_polls: 5
     inactivity_timeout_s: 1200
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "Inactive Log"

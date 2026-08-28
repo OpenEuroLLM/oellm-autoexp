@@ -238,3 +238,31 @@ def test_max_attempts_stops_the_rollover_loop(tmp_path, client):
     job = _run(tmp_path, client, line=REAL_EXIT_LINE, polls=6, max_attempts=2)
     assert job.runtime.attempts == 2
     assert job.runtime.final_state == "finished"
+
+
+@pytest.mark.parametrize("policy", ["auto_restart", "auto_restart_ckptreset"])
+def test_every_restart_action_is_bounded(policy):
+    """No unbounded RestartAction may exist in a restart policy.
+
+    RestartAction has no cap of its own, so an event without a `condition:` can
+    relaunch a 512-node job forever. The trap this pins is that bounding SOME
+    events is not enough: `_process_log_events` evaluates events in order and
+    falls through when a condition blocks the action, so one unbudgeted event
+    that matches the same dying-job log silently takes over every restart the
+    budgeted ones refused. See
+    test_action_budgets.test_an_unbudgeted_catchall_below_defeats_a_budget_above.
+    """
+    config_dir = Path(__file__).resolve().parents[2] / "config"
+    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
+        cfg = compose(config_name="autoexp", overrides=[f"job={policy}"])
+
+    unbounded = [
+        e["name"]
+        for e in cfg.job.log_events
+        if (e.get("action") or {}).get("class_name") == "RestartAction"
+        and not (e.get("condition") or {})
+    ]
+    assert not unbounded, (
+        f"unbounded RestartAction(s) in {policy}: {unbounded}. "
+        "Add a MaxActionFiresCondition, or the whole group's budgets are void."
+    )

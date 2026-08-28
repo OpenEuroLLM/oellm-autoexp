@@ -76,6 +76,9 @@ log_events:
     pattern: "No such file or directory: '[^']*/iter_(\\d+)/__\\d+_\\d+\\.distcp'"
     pattern_type: regex
     match_once: true
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 5
     action:
       class_name: RestartAction
       reason: "checkpoint quarantined; resuming from last loadable checkpoint"
@@ -311,6 +314,9 @@ log_events:
   - name: err_cuda_alloc_init
     pattern: "Failed to CUDA calloc|AcceleratorError: CUDA error: out of memory|cudaErrorMemoryAllocation"
     pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "GPU occupied at init (leftover process) — retrying on new nodes"
@@ -321,6 +327,9 @@ log_events:
     # job 1379130 at iteration 4204/8000.
     pattern: "RendezvousConnectionError|DistNetworkError"
     pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "Rendezvous failure — retrying (consider static rdzv for torchrun)"
@@ -333,9 +342,17 @@ log_events:
   # Deliberately placed AFTER every CANCEL pattern above so a diagnosable root
   # cause (NVTE env, TE extra state, OOM, checkpoint) still wins the race; this
   # only fires when nothing more specific matched.
+  #
+  # BUDGETED, and so are err_child_failed / `error` below — see the note there.
+  # This one is the most exposed of the three: with max_restarts: 0 a rank that
+  # dies during initialize_model_parallel() produces this line first, so it now
+  # handles most startup-death faults ahead of the generic catch-alls.
   - name: err_gloo_mesh
     pattern: "Gloo connectFullMesh failed"
     pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "Gloo mesh collapsed after a rank died — retrying on a fresh allocation"
@@ -343,6 +360,9 @@ log_events:
   - name: err_userbuffers_stall
     pattern: "userbuffers\\.cu.*expecting [0-9]+ got [0-9]+"
     pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "userbuffers TP-overlap stall — peer rank unresponsive, retrying"
@@ -350,6 +370,9 @@ log_events:
   - name: err_nccl_timeout
     pattern: "Watchdog caught collective operation timeout|unhandled cuda error|NCCL error"
     pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "NCCL collective timeout/abort — retrying"
@@ -357,6 +380,9 @@ log_events:
   - name: err_cuda_illegal_access
     pattern: "illegal memory access|cudaErrorIllegalAddress"
     pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "CUDA illegal memory access — GPU needs reset, not a relaunch"
@@ -364,6 +390,9 @@ log_events:
   - name: err_cpp_terminate
     pattern: "terminate called after throwing an instance of"
     pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "Unhandled C++ exception — worker aborted"
@@ -416,13 +445,47 @@ log_events:
   - name: err_node_failure
     pattern: "DUE TO NODE FAILURE|Node failure on"
     pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "SLURM node failure in the allocation"
 
+  # === GENERIC RESTART TIER: BOUNDED AS A GROUP ==============================
+  #
+  # WHY ALL THREE CARRY A BUDGET, NOT JUST err_gloo_mesh. These events all match
+  # the SAME rank-death log -- job 1512329 contains 58,077 "Gloo connectFullMesh
+  # failed", 10 "ChildFailedError" and 5 "Exited with exit code 1" -- and
+  # _process_log_events falls through to the next event when a condition blocks
+  # the action. So capping only the first one is theatre: the restart is simply
+  # taken over by the next unbudgeted event in the list. Pinned by
+  # test_an_unbudgeted_catchall_below_defeats_a_budget_above.
+  #
+  # EFFECTIVE CEILING is therefore the SUM over the events a given fault matches:
+  # a gloo-shaped startup death is bounded by 25+25+25 = 75 restart cycles. At
+  # the ~6 cycles/hour measured during the real loop of 2026-08-23 (jobs
+  # 1465307..1465554) that caps a runaway at roughly half a day, instead of
+  # forever. It is a RUNAWAY BACKSTOP, deliberately not a tight bound.
+  #
+  # WHY 25 AND NOT 3. Unlike a stall, these are the PRIMARY recovery path --
+  # with max_restarts: 0 every transient infra fault now comes through here, and
+  # the healthy history suggests roughly one restart per 20 h, i.e. ~50 over a
+  # 43-day campaign spread across these events. A tight budget would strand the
+  # run on an ordinary bad node. 25 from a SINGLE cause, though, is itself a
+  # signal worth stopping for.
+  #
+  # NO GIVEUP EVENT NEEDED HERE, unlike the stall events. A stall leaves the job
+  # ALIVE and burning, so declining to restart must be paired with a cancel.
+  # These fire on a job that is already dying, so once the budgets are spent the
+  # job simply ends and the monitor marks the run terminal (loop.py:236) -- the
+  # allocation is released either way.
   - name: err_child_failed
     pattern: "ChildFailedError"
     pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "Worker process failed — retrying"
@@ -430,6 +493,9 @@ log_events:
   - name: error
     pattern: "Exited with exit code 1"
     pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: ""
@@ -568,6 +634,9 @@ log_events:
     pattern_type: inactivity
     inactivity_polls: 5
     inactivity_timeout_s: 1200
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "Inactive Log"

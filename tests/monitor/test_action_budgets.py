@@ -217,3 +217,62 @@ def test_fire_count_survives_restarts(tmp_path, client):
     job = _cycle(monitor, store, log_path, "STALL")
     assert _fires(job, "log:strict:0") == 3
     assert job.runtime.attempts == before
+
+
+def _make_shadowed_job(tmp_path: Path, *, budgeted_limit: int):
+    """Two events matching the SAME log line: the first budgeted, the second not.
+
+    This is the shape of the generic restart tier -- err_gloo_mesh, then
+    err_child_failed, then `error` -- all of which match a single rank-death log
+    (job 1512329 contains all three markers).
+    """
+    log_path = tmp_path / "train.log"
+    log_path.write_text("", encoding="utf-8")
+    definition = LocalJobConfig(
+        name="trainer",
+        command=["sleep", "120"],
+        log_path=str(log_path),
+        log_events=[
+            LogEventConfig(
+                name="specific",
+                pattern_type="substring",
+                pattern="BOOM",
+                condition=MaxActionFiresConditionConfig(max_fires=budgeted_limit),
+                action=RestartActionConfig(reason="specific"),
+            ),
+            LogEventConfig(
+                name="catchall",
+                pattern_type="substring",
+                pattern="BOOM",
+                action=RestartActionConfig(reason="catch-all"),
+            ),
+        ],
+    )
+    return JobRecord(job_id="job", definition=definition, runtime=JobRuntime()), log_path
+
+
+def test_an_unbudgeted_catchall_below_defeats_a_budget_above(tmp_path, client):
+    """A budget only bounds the run if EVERY event that matches the same log is
+    bounded.
+
+    Capping err_gloo_mesh while err_child_failed / `error` stay unbudgeted does
+    nothing: the same log line falls through to the next matching event and
+    restarts anyway. Pins the reason the whole generic tier carries a budget.
+    """
+    store = JobFileStore(tmp_path / "state")
+    record, log_path = _make_shadowed_job(tmp_path, budgeted_limit=1)
+    store.upsert(record)
+    monitor = MonitorLoop(store, local_client=client, show_poll_state=False, no_error_catching=True)
+
+    monitor.observe_once()  # submit
+
+    job = _cycle(monitor, store, log_path, "BOOM")
+    assert _fires(job, "log:specific:0") == 1
+    assert _fires(job, "log:catchall:1") == 0, "the specific event should win while it has budget"
+
+    # Budget spent. The job still restarts -- via the catch-all underneath.
+    before = job.runtime.attempts
+    job = _cycle(monitor, store, log_path, "BOOM")
+    assert _fires(job, "log:specific:0") == 1, "budget held"
+    assert _fires(job, "log:catchall:1") == 1, "...but the catch-all took over"
+    assert job.runtime.attempts == before + 1, "so the restart happened regardless"
