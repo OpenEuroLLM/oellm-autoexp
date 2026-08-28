@@ -82,6 +82,10 @@ backend:
     # fail fast configs
     moe_aux_loss_coeff: 1.e-3
     # moe_z_loss_coeff: ""
+    moe_expert_viability_metrics: True
+    # Masked-layer validation is declared but not implemented yet on this branch.
+    moe_masked_layer_validation: False
+    moe_masked_layer_eval_iters: 8
     # fail fast configs end
 
   env:

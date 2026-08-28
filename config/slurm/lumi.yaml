@@ -13,7 +13,7 @@ srun:
   wait: 60
   jobid: "$SLURM_JOB_ID"
 launcher_env_passthrough: true
-env:
+env:  
   WANDB_MODE: online
   MACHINE_NAME: LUMI
   MASTER_ADDR: '$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'
@@ -24,7 +24,7 @@ env:
   # RCCL/NCCL to HSN so it does not select a management interface.
   NCCL_SOCKET_IFNAME: "hsn0,hsn1,hsn2,hsn3"
   NCCL_NET_GDR_LEVEL: "0"
-  NCCL_TUNER_PLUGIN: "/project/project_462001516/rluukkon/rccl-tuner/librccl-tuner.so"
+  NCCL_TUNER_PLUGIN: "/project/project_462001516/users/rluukkon/rccl-tuner/librccl-tuner.so"
 sbatch:
   nodes: 1
   ntasks_per_node: 8

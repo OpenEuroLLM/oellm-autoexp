@@ -1,0 +1,125 @@
+# @package _global_
+#
+# 40BT 0.4B MoE runs for router health monitoring on LUMI standard-g (8 nodes).
+#
+# Compared to fail_fast.yaml (1000 iters, ~1B tokens), this config trains for
+# 40B tokens (~38k iters) so you can watch router metrics evolve and spot
+# delayed collapse (healthy-looking early, failure modes later).
+#
+# Submit healthy baseline only:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/swagatam/moe_lumi/router_stability_long \
+#     --array-subset 0 --submit-and-exit
+#
+# Submit both healthy + high-LR contrast:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/swagatam/moe_lumi/router_stability_long \
+#     --submit-and-exit
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.4B_ne_experts_32
+  - _self_
+
+container:
+  env:
+    WANDB_TAGS: "lumi,router_stability_long,40BT"
+
+index: 0
+stage: ""
+
+job:
+  name: "0.4B_ne_sparse_experts_${backend.megatron.num_experts}topk${backend.megatron.moe_router_topk}_PP${backend.megatron.pipeline_model_parallel_size}_${stage}_lr${backend.megatron.lr}_40BT"
+  base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    ### lumi specific configs
+    masked_softmax_fusion: False
+    gradient_accumulation_fusion: False
+    bias_dropout_fusion: False
+    bias_swiglu_fusion: False
+    apply_rope_fusion: False
+    log_progress: False
+    num_workers: 6
+    num_dataset_builder_threads: 6
+    trust_remote_code: True
+    ### lumi specific configs end
+
+    # 40BT at gbsz=256, seq_length=4096 -> 38147 iters.
+    train_iters: "${oc.eval:'(40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})'}"
+    eval_iters: 100
+    # ~1BT between evals at gbsz=256, seq_length=4096 -> 954 iters.
+    eval_interval: "${oc.eval:'(1_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})'}"
+    save_interval: "${oc.eval:'int(512000 // ${backend.megatron.global_batch_size})'}"
+    load: "./"
+
+    no_save_optim: True
+    no_save_rng: True
+    wandb_exp_name: "${job.name}"
+    wandb_project: "moe_router_stability_long"
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    data_args_path: null
+    per_split_data_args_path: /scratch/project_462001516/multilingual_dataset/datamix4-per-split.json
+    split: null
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    data_cache_path: /scratch/project_462001516/users/swagatam/cache/MEGATRON_262k/${job.name}
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    lr_warmup_iters: 2000
+    lr_wsd_decay_iters: "${oc.eval:'int(((40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})) * 0.2)'}"
+    use_distributed_optimizer: True
+
+    micro_batch_size: 2
+    global_batch_size: 256
+
+    lr: 1.e-4
+    moe_aux_loss_coeff: 1.e-3
+    moe_expert_viability_metrics: True
+    moe_masked_layer_validation: True
+    moe_masked_layer_eval_iters: 8
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "0"
+    TRITON_HOME: /tmp/triton_cache
+
+# Healthy baseline plus one high-LR contrast over the full 40BT horizon.
+# Add more stages from fail_fast.yaml if you want the no-aux-loss ablations too.
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - stage: healthy
+          backend.megatron.lr: 1.e-4
+          backend.megatron.moe_aux_loss_coeff: 1.e-3
+        - stage: high_lr_failure
+          backend.megatron.lr: 1.e-3
+          backend.megatron.moe_aux_loss_coeff: 1.e-3
+
+slurm:
+  env:
+    MASTER_PORT: "9999"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: 8
+    account: "project_462001516"
+    partition: standard-g
+    time: "48:00:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "

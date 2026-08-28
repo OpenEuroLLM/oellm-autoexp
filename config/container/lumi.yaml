@@ -8,7 +8,7 @@ bind:
     "/boot/config-6.4.0-150600.23.73_15.0.14-cray_shasta_c",
     "/pfs/",
     "${oc.env:PWD}",
-    "/scratch/project_462001516/rluukkon/rccl-tuner",
+    "/scratch/project_462001516/users/rluukkon/rccl-tuner",
     "/scratch/",
     "/flash/",
   ]
