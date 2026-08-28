@@ -596,14 +596,24 @@ log_events:
     pattern: "iteration +([0-9]+)/"
     pattern_type: progress
     progress_mode: max
-    progress_polls: 30
-    progress_timeout_s: 1800
+    # 40 polls / 2400 s, WIDENED from 30/1800 when the high-water mark started
+    # being carried across restarts (loop.py:_restart_job). elapsed_s now sums
+    # the ACTIVE no-progress time on BOTH sides of a restart, so the healthy
+    # rollover has to fit inside the window end to end:
+    #     tail of the finishing segment (final save/shutdown)   ~3 min
+    #   + new job startup to its first iteration line            6.6 min (measured)
+    #   + climbing back past the old mark, <=125 iters x 4.13 s  ~8.6 min
+    #   = ~18 min
+    # 2400 s is ~2x that. RETUNE IT if non_persistent_save_interval (125) grows,
+    # or if startup gets slower at a larger node count.
+    progress_polls: 40
+    progress_timeout_s: 2400
     condition:
       class_name: MaxActionFiresCondition
       max_fires: 3
     action:
       class_name: RestartAction
-      reason: "No net iteration progress for 30 min — restart loop, not recovery"
+      reason: "No net iteration progress for 40 min of running — restart loop, not recovery"
 
   # GIVE UP AND ASK A HUMAN. Load-bearing: a budget makes an event STOP ACTING,
   # it does not stop the JOB. Without this, the 4th stall would find both events
@@ -624,8 +634,13 @@ log_events:
     pattern: "iteration +([0-9]+)/"
     pattern_type: progress
     progress_mode: max
-    progress_polls: 30
-    progress_timeout_s: 1800
+    # MUST EXCEED 3 x the stalled_high_water window. Both streaks are carried
+    # across restarts, but high_water's is popped each time it fires while this
+    # one keeps accumulating -- so with a smaller window this would cancel after
+    # the FIRST high_water restart instead of the third, silently voiding the
+    # max_fires: 3 above. 3 x 40 = 120, so 130 polls / 7800 s.
+    progress_polls: 130
+    progress_timeout_s: 7800
     action:
       class_name: CancelAction
       reason: "Still not progressing after 3 stall restarts — stopping so a human can look instead of burning the allocation"
