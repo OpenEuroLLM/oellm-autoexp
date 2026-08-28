@@ -7,6 +7,45 @@ import pytest
 import oellm_autoexp._libs  # noqa: F401
 
 
+def pytest_configure(config):
+    """Fail fast, and legibly, when the tests are running against the wrong
+    env.
+
+    `uv run pytest` silently falls back to whatever `pytest` is first on PATH if
+    the project venv has no pytest of its own. With a conda env active that
+    means a DIFFERENT interpreter and a different, older dependency set — and
+    the resulting failures point nowhere near the real cause.
+
+    Observed 2026-08-28: `.venv` had no pytest, so `uv run pytest` used
+    ~/.miniconda3/envs/oellm (python 3.12, compoconf 0.1.16) while pyproject
+    requires compoconf>=0.2.2. compoconf < 0.2.1 defines a ``__reduce__`` that
+    rebuilds configs from ``asdict(self)``, which flattens NESTED configs into
+    plain dicts, so four sweep tests failed with things like
+    "'dict' object has no attribute 'base_output_dir'" — four cryptic symptoms
+    of one environment mismatch. Fix: `uv pip install --python .venv/bin/python
+    -e ".[dev]"`.
+
+    Checked by BEHAVIOUR rather than version string, so it stays true if the
+    same regression ever reappears under a different version number.
+    """
+    import compoconf
+
+    if "__reduce__" in compoconf.ConfigInterface.__dict__:
+        try:
+            from importlib.metadata import version
+
+            found = version("compoconf")
+        except Exception:  # pragma: no cover - diagnostics only
+            found = "unknown"
+        raise pytest.UsageError(
+            f"compoconf {found} at {compoconf.__file__} defines a __reduce__ that "
+            f"flattens nested configs on pickle; pyproject requires >=0.2.2.\n"
+            f"Interpreter: {sys.executable} (python {sys.version.split()[0]}).\n"
+            f"If that is not this project's .venv, pytest was resolved from PATH "
+            f'(e.g. an active conda env). Fix with:\n  uv pip install --python .venv/bin/python -e ".[dev]"'
+        )
+
+
 @pytest.fixture(autouse=True)
 def ensure_megatron_stub(monkeypatch):
     try:
