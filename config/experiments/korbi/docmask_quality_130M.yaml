@@ -1,0 +1,161 @@
+# @package _global_
+#
+# ============================================================================
+# DOES DOCUMENT MASKING ACTUALLY HELP? A full 0.13B run, masked vs not.
+# ============================================================================
+# Everything measured so far shows masking RUNS — at PP=4, VPP=4, CP=2, 512
+# nodes, across save and resume. None of it shows masking is WORTH anything,
+# and none of it runs longer than 50 iterations:
+#
+#     512-node speed (1516809)      50 iterations   <- the longest, ever
+#     PP gate (1516065)             20
+#     CP=2 (1517313)                20
+#     checkpoint write / resume     10 / 5
+#
+# No small model has ever trained with it at all. So two questions are open and
+# this answers both with one run:
+#
+#   1. DOES IT STAY UP? 50 steps is not evidence about 11445. Masking itself is
+#      per-microbatch and stateless — the scatter stash is reset every iteration
+#      — so there is no obvious accumulation mechanism. What a long run actually
+#      probes is the things that vary: cu_seqlens length changes every
+#      microbatch, so attention kernel shapes vary, and any recompilation,
+#      fragmentation or degenerate document distribution in a far-off data shard
+#      only shows up with distance.
+#
+#   2. IS IT BETTER? This is the whole reason the feature exists and it is
+#      completely unmeasured. Every OELLM flagship run to date trained with full
+#      cross-document attention (see CROSS_DOC_ATTENTION.md — reset_attention_mask
+#      never reached the kernel), so "masking helps" has been an assumption, not
+#      a result, for the entire project.
+#
+# ============================================================================
+# WHY THE DATA GROUP IS OVERRIDDEN
+# ============================================================================
+# data_nemonicco_jupiter points valid_data_path at a prefix that no longer
+# exists, and the workaround used elsewhere in this directory is to validate on
+# the TRAIN prefix. That is harmless where nothing reads the validation loss —
+# but here the validation loss IS the result, and validating on training data
+# would measure fit rather than generalisation, which is precisely the axis
+# masking is supposed to move.
+#
+# data_nemonicco_split_jupiter uses `split: 99,1,0` on the same corpus, so the
+# builder holds out a genuine 1% validation slice that neither arm trains on.
+#
+# ============================================================================
+# READ-OFF
+# ============================================================================
+#   STABILITY   both arms reach iteration 11445 and exit 0. Watch the masked arm
+#               for a growing gap in ms/iter, which would mean kernel-shape
+#               churn rather than a fixed cost.
+#   QUALITY     VALIDATION loss, masked vs control, at equal tokens. This is the
+#               number that decides whether masking goes into production for any
+#               reason other than correctness.
+#   SANITY      the two arms must DIVERGE from iteration 1 — identical curves
+#               would mean masking silently did nothing, which is the failure
+#               mode this whole feature exists to rule out (reset_attention_mask
+#               looked enabled for months and was inert).
+#
+# Read tok/s/GPU for cost, never TFLOP/s: with varlen accounting the masked arm
+# legitimately reports fewer FLOPs for the same work (~0.203 vs 0.208 TF/tok
+# across every shape measured so far).
+#
+# 2 arms x 2 nodes x ~2.5 h = ~40 GPU-h.
+#
+#   scripts/oellm_32b.sh --config-name experiments/korbi/docmask_quality_130M
+#   #   --array-subset 0   # control
+#   #   --array-subset 1   # masking on
+defaults:
+  - megatron_niccolo_130M_smoke_jupiter
+  # Genuine held-out validation. See above — this is load-bearing here in a way
+  # it was not for the parity and interop configs.
+  - override /backend/megatron: [base, data_nemonicco_split_jupiter]
+  - override /job: auto_cancel
+  - _self_
+
+aux:
+  experiment_group: "docmask_quality_130M"
+
+# PINNED: /container: jupiter still names MegatronTraining-JUPITER_aarch64_-
+# 202603120039.sif, which has been DELETED. Anything inheriting it dies in 15 s
+# with "could not open image" (job 1518845).
+container:
+  image: /e/project1/e-sta-openeurollm/container/nemo_26.04.sif
+
+backend:
+  megatron:
+    # Full 6 B-token schedule, inherited (train_iters ~= 11445). NOT truncated:
+    # a short run cannot answer either question, and overriding train_iters
+    # breaks the LR schedule outright (lr_warmup_iters is 2000, so a shorter
+    # schedule trips optimizer_param_scheduler.py:74 before the first step —
+    # job 1519150).
+    exit_interval: null
+
+    # 0.19 refuses the TE fused CE path; pin native on both arms so the CE
+    # implementation is held fixed and masking is the only variable.
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: native
+
+    # LOWERED FROM THE INHERITED 7. Document masking adds a cu_seqlens tensor
+    # padded to (seq_length + 1) PER SAMPLE, i.e. ~+14% to what each dataloader
+    # worker holds in shared memory. This config was already close to the limit:
+    # micro_batch_size 16 x seq_length 4096 is ~1.84 MB per batch against the
+    # 32B flagship's 0.46 MB, and it asks for 7 workers where the flagship uses
+    # the default 2 — roughly 14x the footprint. The masked arm therefore died
+    # in ~2.5 min with
+    #     RuntimeError: DataLoader worker killed by signal: Bus error.
+    #     It is possible that dataloader's workers are out of shared memory.
+    # while the control ran fine (job 1521137 vs 1521138).
+    #
+    # Set on BOTH arms, not just the masked one: the loss comparison would
+    # survive a mismatch (worker count changes neither data order nor content —
+    # the sampler is deterministic in data_parallel_rank and consumed_samples),
+    # but ms/iter would not, and a throughput number nobody can trust is worse
+    # than none.
+    #
+    # NB this is a property of the DATALOADER SHAPE, not of scale: the 32B
+    # flagship is unaffected at mbs 2 with 2 workers.
+    num_workers: 2
+
+    # Validation is the RESULT here, so it has to actually run — unlike every
+    # other config in this port, which pushes eval_interval past the horizon.
+    eval_interval: 500
+    eval_iters: 50
+    log_interval: 50
+
+    wandb_project: oellm_docmask_quality
+
+job:
+  name: "niccolo130M_docmask_${aux.additional_tag}"
+  chain_repeat: 1
+  est_step_time_s: 0.7
+  est_startup_min: 6
+  est_steps: 11445
+
+slurm:
+  sbatch:
+    nodes: 2
+    # ~2.2 h of stepping at 0.7 s/iter, plus startup, plus validation every 500
+    # iterations. 4 h leaves room without being so long it stops backfilling.
+    time: "04:00:00"
+
+# ---------------------------------------------------------------------------
+# ONE VARIABLE. Same seed, same data, same order, same CE — so a difference in
+# the validation curve is attributable to the attention mask and nothing else.
+# ---------------------------------------------------------------------------
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ---- arm 0: CONTROL — full causal attention across document bounds --
+        # What every OELLM run has actually trained with to date.
+        #   --array-subset 0
+        - aux.additional_tag: "ctrl"
+          backend.megatron.dataloader_inter_document_masking: false
+
+        # ---- arm 1: document masking ----------------------------------------
+        #   --array-subset 1
+        - aux.additional_tag: "masked"
+          backend.megatron.dataloader_inter_document_masking: true

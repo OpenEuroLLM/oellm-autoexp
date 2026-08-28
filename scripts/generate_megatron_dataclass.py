@@ -14,6 +14,13 @@ from unittest.mock import MagicMock
 # Mock all transformer_engine submodules before any imports
 te_mock = MagicMock()
 sys.modules["transformer_engine"] = te_mock
+
+# mcore 0.19 reads te.__version__ at import time
+# (tensor_parallel/generalized_tensor_parallelism.py:48 does Version(te.__version__)), and a
+# bare MagicMock raises AttributeError for dunders. Pin it to the TE that the deployment
+# container actually ships (nemo_26.04 -> 2.14.0) so any version-gated default here matches
+# what will really run, rather than an arbitrary mock value.
+te_mock.__version__ = "2.14.0"
 sys.modules["transformer_engine.pytorch"] = MagicMock()
 sys.modules["transformer_engine.pytorch.router"] = MagicMock()
 sys.modules["transformer_engine.pytorch.distributed"] = MagicMock()
@@ -105,6 +112,16 @@ def _type_name(value: Any, *, default: str = "None") -> str:
     return default
 
 
+def _is_multi_nargs(nargs: Any) -> bool:
+    """True when argparse will collect MORE THAN ONE value into a list.
+
+    `nargs` may be a string ("+", "*", "?") or an integer count. Only the string forms were
+    handled originally, so an integer nargs (Megatron uses nargs=3 for --rampup-batch-size)
+    was typed as a scalar.
+    """
+    return isinstance(nargs, int) and not isinstance(nargs, bool) and nargs > 1
+
+
 def _type_repr(meta: MegatronArgMetadata, default: Any) -> tuple[str, set[str]]:
     imports: set[str] = set()
     base_type = meta.arg_type
@@ -126,17 +143,28 @@ def _type_repr(meta: MegatronArgMetadata, default: Any) -> tuple[str, set[str]]:
             literals = ", ".join(_literal_token(option) for option in meta.choices)
             imports.add("Literal")
             type_repr = f"Literal[{literals}]"
-    elif base_type is bool:
+    elif base_type is bool and not _is_multi_nargs(meta.nargs):
         type_repr = "bool"
-    elif base_type is int:
+    elif base_type is int and not _is_multi_nargs(meta.nargs):
         type_repr = "int"
-    elif base_type is float:
+    elif base_type is float and not _is_multi_nargs(meta.nargs):
         type_repr = "float"
-    elif base_type is str:
+    elif base_type is str and not _is_multi_nargs(meta.nargs):
         type_repr = "str"
-    elif base_type is list or meta.nargs in {"+", "*"}:
+    elif base_type is list or meta.nargs in {"+", "*"} or _is_multi_nargs(meta.nargs):
+        # element_type is only populated when argparse reported arg_type=list. For a FIXED
+        # multi-value arg (nargs=3, arg_type=int -- e.g. --rampup-batch-size) argparse reports
+        # the ELEMENT type as arg_type, so fall back to that rather than to Any; otherwise the
+        # field is emitted as a scalar `int` and every config passing a list fails to parse
+        # with "Could not convert [512, 512, 3670016] to <class 'int'>".
         elem_type = meta.element_type or (
-            type(default[0]) if isinstance(default, list) and default else Any
+            type(default[0])
+            if isinstance(default, list) and default
+            else (
+                base_type
+                if _is_multi_nargs(meta.nargs) and base_type in {int, float, bool, str}
+                else Any
+            )
         )
         if elem_type is Any:
             imports.add("Any")
@@ -200,18 +228,33 @@ def generate_dataclass(
     needs_field = False
     typing_imports: set[str] = set()
 
+    # A single dest can have SEVERAL argparse actions -- Megatron pairs store_true with a
+    # store_false sharing `dest` to make a tri-state flag (e.g.
+    # --yarn-correction-range-round-to-int / --no-...). Emitting one field per ACTION would
+    # declare the same dataclass attribute twice, so dedupe by dest.
+    seen_dests: set[str] = set()
     for action in parser._actions:  # noqa: SLF001
         name = getattr(action, "dest", None)
         if not name or name == "help" or name in excluded:
             continue
         if name not in metadata or name not in defaults:
             continue
+        if name in seen_dests:
+            continue
+        seen_dests.add(name)
         if keyword.iskeyword(name):
             continue  # pragma: no cover - not expected currently
         meta = metadata[name]
         default = defaults[name]
 
         type_repr, type_imports = _type_repr(meta, default)
+        # Those tri-state flags default to None, and _type_repr reports the action's type
+        # (bool), which yields an un-instantiable `x: bool = None`. compoconf rejects it at
+        # parse time: "Tried to parse None to <class 'bool'>". Widen to Optional whenever the
+        # default really is None.
+        if default is None and type_repr not in ("Any",) and "Optional" not in type_repr:
+            type_repr = f"Optional[{type_repr}]"
+            type_imports = set(type_imports) | {"Optional"}
         typing_imports.update(type_imports)
         default_repr, default_imports = _format_default(name, default)
         if "field" in default_imports:

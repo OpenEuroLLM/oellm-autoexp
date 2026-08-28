@@ -1,0 +1,169 @@
+Bootstrap: localimage
+From: ${BASE_IMAGE}
+
+# ============================================================================
+# nemo_26.04 + Transformer Engine 2.18, AND NOTHING ELSE
+# ============================================================================
+# Deliberately minimal. The point is to get ONE upstream fix -- TE PR #3193,
+# "Fix the numerical issue with the Fused CE loss" (merged 2026-07-09,
+# 01bbe3ee) -- into an image that is otherwise byte-identical to the one the
+# flagship already runs on.
+#
+# WHY THE FIX MATTERS HERE. oellm_32b_dense_production.yaml sets
+# cross_entropy_loss_fusion: true + cross_entropy_fusion_impl: te, and Megatron
+# calls parallel_cross_entropy(logits, labels, 0.0, False, tp_group) --
+# reduce_loss=False, i.e. the unreduced/external-grad path -- on --bf16 logits.
+# Pre-fix, forward wrote the gradient IN PLACE into the BF16 input and saved
+# that; backward then applied the per-token scale. So the FP32 gradient was
+# rounded to BF16 BEFORE being scaled. Post-fix a separate FP32 grad_input is
+# saved and scaled in FP32. That is exactly our configuration.
+#
+# The fix is NOT free: the saved tensor goes from a reused BF16 buffer to a
+# fresh FP32 one of logits shape. At production (seq 4096, mbs 2, padded vocab
+# 262144, TP=4) that is 8192 x 65536 = 537 M elements, so roughly +2.1 GB on
+# the loss-computing pipeline stage. At PP=4 that stage is often the
+# memory-tightest, so measure before adopting.
+#
+# WHY v2.18 SPECIFICALLY. Verified against every release tag by GitHub compare:
+# the commit is absent from v2.14, v2.14.1, v2.15, v2.16, v2.16.1, v2.17 and
+# v2.17.1, and present in v2.18. There is no earlier release to take instead,
+# and no cherry-pick is needed.
+#
+# ============================================================================
+# WHY NOT A "PROPERLY UPDATED" CONTAINER
+# ============================================================================
+# Because we already ran that experiment and it was unreadable. nemo_26.06
+# moved CUDA 13.1->13.2, torch 2.11->2.12, TE 2.14->2.16 and NCCL together;
+# the result was numerically identical but 1.5% slower with 22% slower
+# checkpointing (jobs 1394822 / 1394823), and nothing in that bundle could be
+# attributed to any one component. If the question is "does the CE fix change
+# our loss and what does it cost", the answer only means something when TE is
+# the ONLY thing that moved.
+#
+# Bootstrap is `localimage` rather than `docker` on purpose: it derives from
+# the exact .sif the flagship runs, so the base cannot drift, and it needs no
+# nvcr.io credentials (nvcr.io answers 401 from JUPITER without auth).
+#
+# THIS DEF DELIBERATELY DOES NOT BAKE THE REPO IN. Every other def in this
+# directory does (`%files ${REPO_ROOT} /workspace/oellm-autoexp`) and points
+# PYTHONPATH at the baked copy. The flagship does the opposite -- it BIND-MOUNTS
+# the repo and sets PYTHONPATH=.:submodules/Megatron-LM at launch. Baking the
+# repo here would change the delivery model as well as TE, which is the confound
+# this whole def exists to avoid. Keep it a drop-in for nemo_26.04.sif.
+#
+# PURGE THE HOST ENVIRONMENT BEFORE BUILDING OR PROBING. JUPITER login shells
+# activate an Lmod stack and a personal venv, and apptainer passes both through
+# by default. A probe run without --cleanenv reports the HOST python: doing that
+# here showed "TE 2.12.0, cudnn-frontend 1.17.0, transformers 4.57.3", none of
+# which is in the image (it is 2.14.0 / 1.22.1 / 5.3.0). The same leakage can
+# reach a build's %post, so purge first and probe with --cleanenv, always.
+#
+#   module --force purge
+#   BASE_IMAGE=/e/project1/e-sta-openeurollm/container/nemo_26.04.sif \
+#   ./container/build_container.sh --backend megatron \
+#       --definition MegatronTraining-JUPITER-te218 --append-date \
+#       --output /e/project1/e-sta-openeurollm/container
+#
+#   apptainer exec --cleanenv <image>.sif python -c \
+#       "import transformer_engine as te; print(te.__version__)"
+# ============================================================================
+
+%labels
+    Author OpenSci
+    Version 0.1.0
+    Base ${BASE_IMAGE}
+    Description nemo_26.04 with Transformer Engine 2.18 (TE PR #3193, fused-CE numerics)
+    TEVersion 2.18.0
+    Upstream https://github.com/NVIDIA/TransformerEngine/pull/3193
+
+%post
+    set -eu
+
+    # Hopper only. GH200 is sm_90; without this TE compiles for every
+    # architecture it knows about and the build takes hours instead of minutes.
+    export NVTE_CUDA_ARCHS=90
+    # Do not drag in the JAX/Flax half of TE.
+    export NVTE_FRAMEWORK=pytorch
+    # Grace has 72 cores; an unbounded ninja fan-out OOMs the build.
+    export MAX_JOBS=32
+    export PIP_NO_CACHE_DIR=1
+
+    python3 -c "import torch; print('base torch:', torch.__version__, '| CUDA', torch.version.cuda)"
+    # Metadata only -- importing TE dlopens libcuda.so.1, which is absent during
+    # a build. Same reason the %test below is static.
+    python3 -c "from importlib.metadata import version; print('base TE  :', version('transformer_engine'))" || true
+
+    # Build requirement that 2.18 EXTERNALISED and 2.14 vendored as a submodule.
+    # The base image ships nvidia-cudnn-frontend 1.22.1, below TE 2.18's floor
+    # of 1.25.0, so this upgrade is required and not merely tidy.
+    python3 -m pip install --upgrade "nvidia-cudnn-frontend>=1.25.0"
+
+    # --no-build-isolation below means pip will NOT install pyproject's build
+    # requirements, so they have to be present already. That is the point: an
+    # isolated build would fetch a stock PyPI torch and compile the bindings
+    # against the WRONG ABI, and it would also honour TE's `jax`/`flax` build
+    # requires, which we do not want.
+    python3 -m pip install --upgrade "setuptools>=61.0" wheel "cmake>=3.21" ninja "pybind11[global]"
+
+    # One TE, cleanly replaced. Probed with --cleanenv, the base image has
+    # exactly one install -- /opt/venv/lib/python3.12/site-packages at
+    # 2.14.0+71bbefbf -- and pip metadata agrees with what imports. Uninstall
+    # first anyway so a partial upgrade cannot leave a mixed tree behind.
+    # NO SHELL VARIABLES IN THIS FILE. build_container.sh pipes the def through
+    # envsubst, which replaces every $NAME it finds -- including loop variables it
+    # knows nothing about -- with the empty string. An earlier version looped
+    # over a shell variable and every expansion of it came out empty, so the
+    # command ran as `pip uninstall ""` and logged "ERROR: Invalid requirement"
+    # three times without uninstalling anything.
+    python3 -m pip uninstall -y \
+        transformer_engine transformer_engine_torch transformer_engine_cu13 || true
+
+    # transformer_engine_cu13 ships a prebuilt manylinux_2_28_aarch64 wheel, so
+    # the CUDA core does NOT get compiled here; only transformer_engine_torch is
+    # source-only and it is just the pybind layer against the container's torch.
+    python3 -m pip install --no-build-isolation "transformer_engine[pytorch]==2.18.0"
+
+%test
+    set -eu
+    # STATIC ON PURPOSE -- DO NOT `import transformer_engine` HERE. There is no
+    # GPU and no driver during `apptainer build` (no --nv), and importing TE
+    # dlopens its core library, which links libcuda.so.1:
+    #     OSError: libcuda.so.1: cannot open shared object file
+    # That is not a broken image, it is a broken test -- it failed a build whose
+    # %post had already installed 2.18 correctly. So read the version from
+    # package metadata and the fix from the source file on disk; neither imports
+    # the package.
+    python3 - <<'PYTEST'
+import pathlib, site
+from importlib.metadata import version
+
+reported = version("transformer_engine")
+print("TE version (metadata):", reported)
+assert reported.split("+")[0].startswith("2.18"), f"expected 2.18.x, got {reported}"
+
+hits = []
+for root in site.getsitepackages():
+    hits += list(pathlib.Path(root).glob("transformer_engine/pytorch/cross_entropy.py"))
+assert hits, "transformer_engine/pytorch/cross_entropy.py not found in site-packages"
+
+src = hits[0].read_text()
+# Pre-fix:  loss, inp = cross_entropy_forward(...); ctx.save_for_backward(inp.detach())
+# Post-fix: loss, grad_input = ...;                 ctx.save_for_backward(grad_input.detach())
+assert "save_for_backward(grad_input" in src, (
+    "TE PR #3193 (fused-CE numerics) is NOT present: forward still saves the input "
+    "buffer rather than a separate FP32 grad_input. This image is pointless without it."
+)
+print("PR #3193 present in", hits[0])
+PYTEST
+
+%runscript
+    exec "$@"
+
+%startscript
+    exec "$@"
+
+%help
+    nemo_26.04 with Transformer Engine 2.18 and nothing else changed, so that
+    TE PR #3193 (fused cross-entropy numerics) can be measured as a single
+    variable against nemo_26.04.sif. The repo is NOT baked in -- bind-mount it
+    exactly as the flagship does.

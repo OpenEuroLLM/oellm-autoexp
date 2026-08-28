@@ -1,0 +1,120 @@
+# @package _global_
+#
+# ============================================================================
+# GATE 1 (BLOCKING): can megatron-core 0.19 RESUME the live 0.16 checkpoints?
+# ============================================================================
+# The flagship has real torch_dist checkpoints written by the 0.16 fork. If 0.19
+# cannot load them, moving to 0.19 stops being a config change and becomes a
+# run-boundary decision -- which changes the entire rollout plan. So this runs
+# BEFORE the loss-parity and speed work, because a failure here reorders
+# everything after it.
+#
+# INHERITS THE PRODUCTION CONFIG, NOT THE STABILITY ONE. Loss continuity is the
+# real signal here, and it is only meaningful if the schedule, GBS, data blend
+# and LR at iteration 20000 are byte-identical to what produced the checkpoint.
+# stability_check_nodes16 runs GBS 128 against production's 4096, so its losses
+# would be incomparable no matter how well the load worked.
+#
+# ============================================================================
+# WHAT IS DELIBERATELY DIFFERENT FROM PRODUCTION, AND WHY
+# ============================================================================
+#   nodes      512 -> 16. 16 x 4 = 64 GPUs / (TP4 x PP4) = DP 4.
+#              NOT 4 nodes: at TP4 x PP4 = 16 ranks the world IS one model
+#              replica, so DP=1, and the distributed optimizer shards optimizer
+#              state across DP -- at DP=1 it shards nothing. Each rank then
+#              holds the full fp32 state for its 2 B-param shard (~36 GB before
+#              activations) and OOMs on a 95 GiB card. Measured: allocated
+#              37.7 GB / max 53.3 GB, then "tried to allocate 2.00 GiB"
+#              (jobs 1509385/1509387). DP=4 divides that by four.
+#   save       -> ITS OWN TREE. Production's config sets save == load; inheriting
+#              that unchanged would point this job's writes at the LIVE flagship
+#              checkpoint directory. Saving is also switched off below, but the
+#              path is redirected as well, because one mistake should not be
+#              enough to write into a running 43-day job.
+#   exit       5 iterations. The load either works or it does not; continuity
+#              needs only a handful of steps.
+#
+# ============================================================================
+# THE RESHARDING CAVEAT -- READ BEFORE INTERPRETING A FAILURE
+# ============================================================================
+# The checkpoint was written at DP=128 and is read here at DP=4. torch_dist is
+# designed to reshard, but that means THIS TEST BUNDLES TWO QUESTIONS:
+#     (a) can 0.19 read a 0.16-written checkpoint at all?
+#     (b) does DP 128 -> 4 resharding work?
+# A PASS answers both. A FAILURE does not distinguish them -- rerun at 512 nodes
+# (DP=128, no resharding) before concluding that 0.19 cannot read 0.16.
+#
+# ============================================================================
+# READ-OFF
+# ============================================================================
+#   PASS  log shows it loaded iteration 20000, then logs iterations 20001..20005
+#         whose lm loss sits on production's curve at those iterations (compare
+#         against slurm-1506525.log). Optimizer and RNG must be restored, NOT
+#         reinitialised -- so DO NOT set --finetune or --no-load-optim, and check
+#         the log does not say it is skipping them.
+#   FAIL  a load error, or a loss that jumps (a reinitialised optimizer shows up
+#         as a visible discontinuity, not a rounding difference).
+#
+# NB the loss will not match production to the last digit even on success: DP
+# differs (4 vs 128), so the gradient reduction order differs, and this repo now
+# forces cross_entropy_fusion_impl: native where the checkpoint was produced
+# under te. Expect agreement at the 1E-03 level, not exactness. A DISCONTINUITY
+# is the failure signal, not a small offset.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/ckpt_resume_019
+defaults:
+  - oellm_32b_dense_production
+  # A gate must fail loudly and once. auto_restart_ckptreset would additionally
+  # try to quarantine the checkpoint it failed to load -- against the PRODUCTION
+  # directory this job reads from. Absolutely not.
+  - override /job: auto_cancel
+  - _self_
+
+backend:
+  aux:
+    active_nodes: 16
+    spare_nodes: 0
+    variant: "ckptresume019-n16"
+
+  megatron:
+    # ---- READ the live flagship checkpoints, WRITE nowhere near them ---------
+    # iter_0020000 is complete and immutable: production is past iteration 23000
+    # and its next write goes to iter_0024000, a different directory.
+    load: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4/checkpoints
+    save: /e/scratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense_ckptresume019/checkpoints
+
+    # Never write. save_interval is NOT null -- null with `save` set trips an
+    # assert (it ate jobs 1492415/16/17) -- so push it past exit_interval instead.
+    save_interval: 1000000
+    non_persistent_save_interval: null
+    non_persistent_ckpt_type: null
+
+    # Load either works or it does not; 5 steps is enough to see continuity.
+    exit_interval: 5
+
+    # Same trap as everywhere else: eval_iters 0 does not skip validation, it
+    # starves it to zero samples and asserts in data_samplers.py. Push
+    # eval_interval beyond exit_interval instead.
+    eval_iters: 10
+    eval_interval: 100000000
+
+    wandb_project: oellm_32b_dense_smoke
+
+job:
+  chain_repeat: 1
+  # GBS stays at production's 4096, so at DP=4 M = 4096/(2*4) = 512 microbatches
+  # -- ~32x production's per-rank work per step. Budget minutes per iteration.
+  est_step_time_s: 140.0
+  est_startup_min: 15
+  est_steps: 5
+
+slurm:
+  sbatch:
+    time: "01:30:00"
+
+# One job. The production config carries no sweep, but state this explicitly so
+# a parent gaining one later cannot silently fan this gate out across arms.
+sweep:
+  type: product
+  store_sweep_json: false
+  groups: []

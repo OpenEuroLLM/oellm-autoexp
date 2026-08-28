@@ -1,0 +1,164 @@
+# @package _global_
+#
+# ============================================================================
+# 512-NODE THROUGHPUT ON mcore 0.19, AT PRODUCTION SETTINGS VERBATIM
+# ============================================================================
+# The point is a SINGLE-VARIABLE comparison against the live flagship. Production
+# (job 1506525) is holding 408.1-408.2 TFLOP/s/GPU on the 0.16 stack right now,
+# so that is the number to beat or match.
+#
+# WHY NOT REUSE fp8_speed_test_fp32grad. It is not production-like, in four ways
+# at once -- measured from the argument dumps of 1511086 vs 1506525:
+#
+#                          fp8_speed_test_fp32grad     production
+#   fp8_recipe             tensorwise                  delayed
+#   fp8_amax_history_len   1  (most_recent)            1024  (max)
+#   first_last_layers_bf16 True                        False
+#   pipeline layout        Et*9|t*8|... (8 segments,   Et*5|t*4|... (16 segments,
+#                          PP4 x VPP2)                 PP4 x VPP4)
+#   tp_comm_overlap        (off)                       True
+#
+# It measured 396.5 TF/s/GPU. That is a perfectly good number for what it is --
+# against its own matched baseline (512n tensorwise + bf16 grad, 417.3 TF, job
+# 1366543) it is -5.0%, which is exactly the -5 to -8% that config predicted for
+# fp32 gradient accumulation, and it fills the "512 nodes, fp32 grad under FP8:
+# NO DATA" gap in its header. It says NOTHING about 0.19 vs 0.16, because four
+# other things moved at the same time.
+#
+# INHERITING oellm_32b_dense_production IS THE WHOLE MECHANISM: fp8 recipe, amax
+# history, the 16-segment VPP=4 layout, tp_comm_overlap, GBS, mbs, fp32 grad and
+# the parallelism all come from the file production actually runs, so they cannot
+# drift out of sync with it.
+#
+# ============================================================================
+# THE ONE VARIABLE WE CANNOT REMOVE
+# ============================================================================
+# 0.19 REFUSES cross_entropy_fusion_impl: te -- arguments.py:1654, "Transformer
+# Engine cross entropy loss fusion is disabled due to stability issues". The
+# repo is therefore on `native` while the running flagship is on `te`. So this
+# is mcore 0.16->0.19 AND te->native, not mcore alone.
+#
+# That confound is small and its SIGN is known: our 1-node A/B (jobs 1506575 /
+# 1506576, TP=4) measured native 2.8% FASTER than te, because with z-loss on the
+# TE path pays an extra TP all-reduce for the log-normalizer that native returns
+# for free. So native flatters 0.19 slightly. Read a result at or above 408 TF as
+# "0.19 is fine"; read a result more than ~3% BELOW 408 as a real 0.19
+# regression, because the CE change should have been pushing the other way.
+#
+# ============================================================================
+# SAFETY: THIS MUST NOT TOUCH THE RUNNING FLAGSHIP
+# ============================================================================
+# The production config sets load == save == the LIVE checkpoint directory.
+# Both are overridden below: load is disabled outright (a throughput test wants
+# a fresh init, not a resume) and save is redirected to a scratch tree with
+# saving switched off. auto_cancel replaces auto_restart_ckptreset for the same
+# reason as every other gate -- its QuarantineCheckpointAction would act on
+# ${backend.megatron.save}.
+#
+# ============================================================================
+# READ-OFF
+# ============================================================================
+#   50 iterations at log_interval 5 -> 10 points; drop the first 2-3 (fp8 amax
+#   warm-up with history 1024 needs a few steps, and kernel autotune costs the
+#   first).
+#
+#   TWO SINGLE-VARIABLE COMPARISONS, which is the reason for two arms:
+#     arm 0 vs production's live 408.1 TF (1506525)  -> isolates mcore 0.16->0.19
+#     arm 1 vs arm 0                                 -> isolates document masking
+#                                                       AT production settings
+#   Do not compare arm 1 straight to 408.1; that would mix the two.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/speed_prodsettings_n512_019
+#   # arm 0 already ran as job 1511143 -- to add only the masking arm:
+#   #   --array-subset 1
+defaults:
+  - oellm_32b_dense_production
+  - override /job: auto_cancel
+  - _self_
+
+backend:
+  aux:
+    variant: "speed-prodsettings-n512-mcore019"
+
+  megatron:
+    # ---- do not read or write the flagship's checkpoints --------------------
+    load: null
+    # PER ARM. This used to be one fixed path shared by both arms, and running
+    # them concurrently made them race: exit_interval triggers a save even
+    # though save_interval never fires, both arms wrote the same directory, and
+    # the loser died in teardown with
+    #     FileNotFoundError: [Errno 2] ... os.rename(self, target)
+    # then HUNG holding 512 nodes for 16 minutes (job 1516808, 2026-08-28).
+    # The measurements survived -- all 50 iterations were logged first -- but it
+    # burned ~136 GPU-h and would have silently let one arm resume the other's
+    # checkpoint had save_interval ever fired.
+    save: /e/scratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense_speed_prodsettings_019/${backend.aux.variant}/checkpoints
+    # NOT null -- `save_interval: null` with `save` set trips an assert.
+    save_interval: 1000000
+    non_persistent_save_interval: null
+    non_persistent_ckpt_type: null
+
+    # 50 iterations at ~4.2 s is ~3.5 min of stepping; log_interval 5 gives 10
+    # points, enough to drop the warm-up and still average.
+    exit_interval: 50
+    log_interval: 5
+
+    # eval_iters 0 does NOT skip validation -- it starves the loader to zero
+    # samples and asserts in data_samplers.py. Push eval_interval out instead.
+    eval_iters: 10
+    eval_interval: 100000000
+
+    wandb_project: oellm_32b_dense_speed
+
+    # NB the sweep below sets dataloader_inter_document_masking per arm. The
+    # inherited data config (oellm_256k_15TT_jupiter_train.yaml) leaves it false,
+    # which is what every flagship run so far has actually trained with -- see
+    # CROSS_DOC_ATTENTION.md for why reset_attention_mask never did anything.
+
+job:
+  chain_repeat: 1
+  # Without these the submit gate prices the arm at the full wall.
+  est_step_time_s: 4.2
+  est_startup_min: 12
+  est_steps: 50
+
+slurm:
+  sbatch:
+    # Short wall -> backfills. Measured today: a 70 min 1-node request started in
+    # 22 min while a 12 h one was projected three days out.
+    time: "00:40:00"
+
+# ---------------------------------------------------------------------------
+# ONE VARIABLE between the arms: document masking. Everything else -- fp8
+# delayed/1024/max, the 16-segment VPP=4 layout, tp_comm_overlap, GBS, mbs,
+# fp32 grad -- is inherited from the production config and identical across both.
+# ---------------------------------------------------------------------------
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ---- arm 0: production settings as they stand today -----------------
+        # Variant name matches job 1511143 deliberately, so re-running this file
+        # reproduces that job rather than forking a second output tree.
+        #   --array-subset 0
+        - backend.aux.variant: "speed-prodsettings-n512-mcore019"
+          backend.megatron.dataloader_inter_document_masking: false
+
+        # ---- arm 1: THE PROPOSED NEW PRODUCTION SETTING ---------------------
+        # cu_seqlens document masking: upstream 0.19's dataloader half, plus our
+        # scatter for getting cu_seqlens to the middle pipeline stages and our
+        # p2p buffer fold (OELLM_PORT.md #8 -- both are upstream bugs at PP>1).
+        #
+        # DO NOT RUN THIS BEFORE fp8_speed_test_fp32grad_docmask PASSES AT 16
+        # NODES. That config is the same TP4 x PP4 shape and is where the two
+        # crashes this arm previously hit (jobs 1511146, 1511160) reproduce for
+        # minutes instead of for a 512-node allocation.
+        #
+        # The 0.16 patch measured -2.8% here, inside a +-3.2% noise floor, but
+        # that number does not transfer -- different cu_seqlens derivation, so
+        # a different launch profile. Re-measure.
+        #   --array-subset 1
+        - backend.aux.variant: "speed-prodsettings-n512-mcore019-docmask"
+          backend.megatron.dataloader_inter_document_masking: true

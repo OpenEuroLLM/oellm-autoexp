@@ -18,6 +18,17 @@
 # Read off: iteration time, TFLOP/s/GPU, and the memory high-water mark.
 defaults:
   - oellm_32b_dense
+  # The inherited /job: auto_restart_ckptreset (oellm_32b_dense.yaml:13) wires
+  # QuarantineCheckpointAction with `checkpoint_dir: ${backend.megatron.save}`
+  # (config/job/auto_restart_ckptreset.yaml:65). Speed tests set `save: null`, so that
+  # interpolates to None and the config does not even RENDER:
+  #     ValueError: Tried to parse None to <class 'str'>
+  #             at key job.log_events.0.action.checkpoint_dir
+  # That silently broke fp8_speed_test, fp8_speed_test_fp32grad, speed_test_dataloader
+  # and speed_test_vpp1024 as well, since they all inherit this file. auto_cancel has no
+  # checkpoint action, which is also the right policy: a throughput measurement must not
+  # restart into a loop -- see the fault-tolerance note below.
+  - override /job: auto_cancel
   # NO FAULT TOLERANCE for the throughput test. Two reasons:
   #   * the ft_launcher rank monitor's `setup` section timeout is hardcoded at
   #     600 s in config/backend/megatron_ftlauncher_localaddr.yaml. Bringing up

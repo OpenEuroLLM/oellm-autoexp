@@ -124,8 +124,10 @@ backend:
     tokenizer_type: NullTokenizer
     tokenizer_model: null
     vocab_size: 8192
-    wandb_project: ""
-
+    # null, not "": 0.19 changed this arg's default from "" to None, so an
+    # empty string now DIFFERS from the default and renders as a valueless
+    # `--wandb-project`, which argparse rejects ("expected one argument").
+    wandb_project: null
   env:
     TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
     TORCH_CPP_LOG_LEVEL: "error"

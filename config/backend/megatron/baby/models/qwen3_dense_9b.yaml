@@ -19,7 +19,6 @@ apply_rope_fusion: true
 gradient_accumulation_fusion: true
 bias_dropout_fusion: true
 masked_softmax_fusion: true
-async_tensor_model_parallel_allreduce: true
 accumulate_allreduce_grads_in_fp32: true
 
 # Attention
@@ -38,7 +37,7 @@ untie_embeddings_and_output_weights: true
 
 # Normalization
 normalization: "RMSNorm"
-norm_epsilon: 1.e-5 # rmsnorm epsilon
+layernorm_epsilon: 1.e-5 # rmsnorm epsilon
 qk_layernorm: True # enable qk-norm
 bf16: True
 

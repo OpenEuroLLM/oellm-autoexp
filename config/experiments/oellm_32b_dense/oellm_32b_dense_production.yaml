@@ -90,6 +90,55 @@ backend:
     max_restarts: "50"   # each spare promotion consumes one restart
 
   megatron:
+    # === DOCUMENT MASKING + FLASHATTENTION 3 =================================
+    # A PACKAGE OF THREE SETTINGS: this flag, attention_backend below, and the
+    # te218-fa3 container. Changing any one alone is worse than changing none.
+    #
+    # dataloader_inter_document_masking hands Transformer Engine cu_seqlens so
+    # the varlen kernels skip the off-diagonal blocks, which both stops attention
+    # crossing document boundaries and restarts RoPE per document. NOTE that
+    # --reset-attention-mask does NOT do this and never did: the GPT layer specs
+    # pin attn_mask_type to causal and TE only reads attention_mask for
+    # padding/arbitrary mask types, so the dense mask the dataloader built was
+    # discarded. Every OELLM flagship run before this one trained with FULL
+    # cross-document attention. See CROSS_DOC_ATTENTION.md.
+    #
+    # COST, measured at 512 nodes on production settings (jobs 1516808/1516809):
+    #   control 4193.2 ms/iter 1953.6 tok/s/GPU  ->  masked 4265.8 / 1920.4
+    #   i.e. -1.7% throughput.
+    #
+    # BENEFIT, measured at 0.13B with both checkpoints scored on the SAME masked
+    # objective (jobs 1522068/1522069, iteration 3000): 2.769374 unmasked-trained
+    # vs 2.658771 masked-trained, -0.111 nats, -10.5% perplexity. The naive
+    # comparison in the training logs UNDERSTATES this, because masked evaluation
+    # is 0.030 nats HARDER for a model trained without it. Caveat: the advantage
+    # narrows with training (naive gap 0.087 -> 0.063 -> 0.048 at 3000/4000/6000),
+    # and 0.13B/seq4096 is not 32B/seq8192.
+    #
+    # VALIDATED at PP=4, VPP=2 and VPP=4, CP=2, 512 nodes, and across checkpoint
+    # save/resume including DP resharding. Two upstream bugs had to be fixed for
+    # PP>1 to work at all -- see megatron/training/packed_doc_attention.py.
+    dataloader_inter_document_masking: true
+
+    # FlashAttention 3, and it must be selected EXPLICITLY. Having FA3 in the
+    # image is not enough: TE detects it and still picks cuDNN FusedAttention at
+    # this exact per-TP-rank shape, which costs ~5% (4429.4 vs 4215.8 ms/iter,
+    # same container, same day, jobs 1522579 vs 1523010).
+    #
+    # DO NOT use NVTE_FUSED_ATTN=0 to force it, which is what the container
+    # config suggests. That works for raw TE and Megatron rejects it before
+    # torch.distributed is even up:
+    #     AssertionError: NVTE_FUSED_ATTN set to 0, but expected 1 for attention
+    #     backend type auto. unset NVTE_FLASH_ATTN, NVTE_FUSED_ATTN and
+    #     NVTE_UNFUSED_ATTN. Use the --attention-backend ...
+    # (job 1522580, dead in about a minute). --attention-backend sets those
+    # variables itself and is the only self-consistent route.
+    #
+    # Confirm from the argument dump: `attention_backend ... AttnBackend.flash`.
+    # TE does not log its backend choice at default verbosity, so there is no
+    # "Running with ... backend" line to check.
+    attention_backend: flash
+
     # === BOTH OFF BECAUSE THIS CONFIG NO LONGER LAUNCHES UNDER ft_launcher ====
     # These two are the ft_launcher rank monitor (heartbeat + hang detection in
     # seconds, rather than waiting for the NCCL watchdog). They are not merely
@@ -146,7 +195,7 @@ backend:
     micro_batch_size: 2
 
     # Manual garbage collection
-    manual_gc_interval: 50  # 50 is megatron's default if manual_gc = true
+    manual_gc_interval: 137  # 50 is megatron's default if manual_gc = true
     manual_gc: true
 
     # DATA
@@ -184,9 +233,7 @@ backend:
     cuda_graph_impl: none
 
     cross_entropy_loss_fusion: true
-    cross_entropy_fusion_impl: te
-
-    # async checkpointing
+    cross_entropy_fusion_impl: native
     async_save: true
     use_persistent_ckpt_worker: true
     ckpt_assume_constant_structure: true
@@ -228,7 +275,6 @@ backend:
     ddp_reduce_scatter_with_fp32_accumulation: false
     output_z_loss_coeff: 1e-4
     fp8: hybrid
-    cuda_graph_scope: full
     fp8_recipe: delayed
     fp8_param_gather: false
     first_last_layers_bf16: false
@@ -240,6 +286,35 @@ backend:
 
 
   env:
+    # REQUIRED, OR THE FLAGSHIP CANNOT RESUME AT ALL under the te218 container.
+    # Transformer Engine 2.18 refuses to unpickle the delayed-scaling FP8
+    # metadata it keeps in `_extra_state`, and every rank dies during model
+    # construction, before a single iteration:
+    #     RuntimeError: Refusing to load pickled Transformer Engine extra state
+    #     for TERowParallelLinear. Delayed-scaling FP8 metadata can be stored as
+    #     a Python pickle, and loading it can execute arbitrary code. Only enable
+    #     unsafe loading if this checkpoint is from a trusted source. To load it
+    #     anyway, set NVTE_ALLOW_UNSAFE_PICKLE_EXTRA_STATE=1.
+    # (job 1523600, 512 nodes.) Verified to fix it: job 1523988 loaded the live
+    # flagship checkpoint at iteration 34454 with this set.
+    #
+    # A TE POLICY, not a megatron-core incompatibility, and it arrived with the
+    # CONTAINER rather than with 0.19 -- TE 2.14 in nemo_26.04 has no such
+    # refusal, which is why nothing hit it until te218 was adopted. It applies to
+    # EVERY pre-te218 checkpoint, so it stays needed for as long as any of them
+    # might be resumed.
+    #
+    # DUPLICATED FROM oellm_32b_dense.yaml ON PURPOSE. That file is NOT a parent
+    # of this one -- the two are siblings, and this config's defaults list builds
+    # from /backend, /container and /backend/megatron: base directly. Nothing
+    # here is inherited from it, so a setting that must hold in production has to
+    # be written here as well.
+    #
+    # The trust condition the message asks about is satisfied: these checkpoints
+    # were written by our own runs, with our own code, on this cluster. The
+    # setting is narrowly scoped to unpickling FP8 amax history we produced.
+    NVTE_ALLOW_UNSAFE_PICKLE_EXTRA_STATE: "1"
+
     # the ft rank monitor needs NCCL errors surfaced by the c10d watchdog fast,
     # instead of hanging until the collective times out
     TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
@@ -255,7 +330,30 @@ backend:
     # PYTHONPATH: "${oc.env:NVRX_SIDECAR,/e/scratch/e-sta-openeurollm/nvrx06/site}:.:submodules/Megatron-LM"
 
 container:
-  image: /e/project1/e-sta-openeurollm/container/nemo_26.04.sif
+  # te218-fa3 = nemo_26.04 + Transformer Engine 2.18 + flash-attn v3 (3.0.0).
+  # See config/container/jupiter_te218_fa3.yaml for how it was built.
+  #
+  # ADOPTED FOR FA3 ONLY, AND ONLY TOGETHER WITH attention_backend: flash below.
+  # Measured at 512 nodes with masking on, steady state iter>=15, against the
+  # nemo_26.04 baseline (job 1516809: 4265.8 ms/iter, 1920.4 tok/s/GPU):
+  #
+  #   te218-fa3, attention_backend auto  -> cuDNN   4429.4 ms  1849.5 tok/s  -3.7%
+  #   te218-fa3, attention_backend flash -> FA3     4215.8 ms  1943.2 tok/s  +1.2%
+  #
+  # So this image is a REGRESSION as a drop-in and a small win only with FA3
+  # selected. The two settings are a package; changing one without the other
+  # gives up ~5%.
+  #
+  # NOT adopted for the reason the image was built. te218 exists for TE PR #3193,
+  # the fused cross-entropy precision fix -- which is unreachable on
+  # megatron-core 0.19, since 0.19 asserts on the TE cross-entropy path outright
+  # and we therefore run cross_entropy_fusion_impl: native. Its +2.1 GB cost on
+  # the loss-computing stage is moot for the same reason, and memory confirms it:
+  # 0.7496-0.7499 against the baseline's 0.750, i.e. unchanged.
+  #
+  # Numerics unchanged: FA3 vs the baseline agree to 2.5E-05 worst case over 50
+  # iterations with the sign crossing throughout -- kernel-ordering noise.
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
   # MUST be pinned alongside the image override. config/container/jupiter.yaml
   # defaults this to /usr/bin/python, which was correct for the OLD
   # MegatronTraining-JUPITER image it still names — but in nemo_26.04.sif the

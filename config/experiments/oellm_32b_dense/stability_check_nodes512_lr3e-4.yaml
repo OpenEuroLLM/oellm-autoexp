@@ -196,13 +196,11 @@ sweep:
         - backend.aux.warmup_steps: 2000
           backend.megatron.adam_eps: 1e-12
           backend.aux.variant: "sc-fp8-zloss1e-4-nobsramp-n512-adame1em12-wu2000"
-          backend.megatron.cuda_graph_scope: full
 
         - backend.aux.warmup_steps: 4000
           backend.megatron.adam_eps: 1e-8
           backend.aux.variant: "sc-fp8-zloss1e-4-nobsramp-n512-adame1em8-normeps1e-6-wu4000"
-          backend.megatron.cuda_graph_scope: full
-          backend.megatron.norm_epsilon: 1e-6
+          backend.megatron.layernorm_epsilon: 1e-6
 
         - backend.aux.warmup_steps: 2000
           backend.aux.embedding_init_method_std: 1.
@@ -211,8 +209,7 @@ sweep:
         - backend.aux.warmup_steps: 4000
           backend.megatron.adam_eps: 1e-8
           backend.aux.variant: "sc-fp8-zloss1e-4-nobsramp-n512-adame1em8-normeps1e-8-wu4000"
-          backend.megatron.cuda_graph_scope: full
-          backend.megatron.norm_epsilon: 1e-8
+          backend.megatron.layernorm_epsilon: 1e-8
 
         - backend.aux.variant: "sc-fp8-zloss1e-4-bsramp512-wu4000"
           backend.aux.warmup_steps: 4000
@@ -224,7 +221,8 @@ sweep:
 
         - backend.aux.variant: "sc-fp8-zloss1e-4-nobsramp-n512-wds1-wu4000"
           backend.aux.warmup_steps: 4000
-          backend.megatron.scaler_wd_mult: 1.0
+          backend.megatron.qk_layernorm_wd_mult: 1.0
+          backend.megatron.residual_norm_wd_mult: 1.0
 
         - backend.megatron.pipeline_model_parallel_layout: "Et\\*5\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*3L"
           backend.aux.warmup_steps: 10000

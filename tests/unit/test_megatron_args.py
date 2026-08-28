@@ -60,24 +60,34 @@ def test_extract_default_args_handles_overrides_and_metadata():
     assert metadata["count"].help == "Number of items"
 
 
-def test_packed_doc_attention_toggle_renders():
+def test_inter_document_masking_toggle_renders():
     """The cross-document attention flags must map to the right Megatron CLI
     form.
 
-    packed_doc_attention is a plain store_true, while create_attention_mask_in_dataloader
-    is inverted (--no-create-...), so a naive rendering would emit a flag Megatron rejects.
+    Renamed from test_packed_doc_attention_toggle_renders when the repo moved to
+    megatron-core 0.19: our --packed-doc-attention patch was dropped in favour of
+    upstream's --dataloader-inter-document-masking, which is a superset (it also
+    supports context parallelism and the SFT path).
+
+    dataloader_inter_document_masking is a plain store_true, while
+    create_attention_mask_in_dataloader is inverted (--no-create-...), so a naive
+    rendering would emit a flag Megatron rejects.
     """
 
     def render(cfg):
         return build_cmdline_args(cfg, MEGATRON_ARG_METADATA, MEGATRON_ACTION_SPECS)
 
-    assert render({"packed_doc_attention": True}) == ["--packed-doc-attention"]
-    assert render({"packed_doc_attention": False}) == []
+    assert render({"dataloader_inter_document_masking": True}) == [
+        "--dataloader-inter-document-masking"
+    ]
+    assert render({"dataloader_inter_document_masking": False}) == []
     assert render({"create_attention_mask_in_dataloader": True}) == []
     assert render({"create_attention_mask_in_dataloader": False}) == [
         "--no-create-attention-mask-in-dataloader"
     ]
-    assert render({"packed_doc_attention": True, "create_attention_mask_in_dataloader": False}) == [
-        "--packed-doc-attention",
+    assert render(
+        {"dataloader_inter_document_masking": True, "create_attention_mask_in_dataloader": False}
+    ) == [
+        "--dataloader-inter-document-masking",
         "--no-create-attention-mask-in-dataloader",
     ]

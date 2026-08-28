@@ -36,11 +36,18 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-# `dp=` is optional: it was added to the [PDA] line after this script existed, so logs from
-# before that are still readable (see parse() for how dp is reconstructed for those).
+# `dp=` and `cp=` are both optional, and for the same reason: each was added to the [PDA] line
+# after this script existed. Logs predating either are still readable (see parse() for how dp
+# is reconstructed for those). Making them optional rather than required is what keeps this
+# script able to read the 0.16-fork logs alongside the 0.19 ones.
+#
+# cp is parsed but NOT used to group. Context-parallel ranks split one sample along the
+# sequence; they read the SAME documents, so they must agree with each other exactly as TP and
+# PP ranks must. Grouping by dp alone therefore puts them in one group on purpose -- it is a
+# stronger check, not an oversight.
 LINE_RE = re.compile(
     r"\[PDA\] call=(?P<call>\d+) rank=(?P<rank>\d+) pp=(?P<pp>\d+) tp=(?P<tp>\d+) "
-    r"(?:dp=(?P<dp>\d+) )?vp=(?P<vp>\S+) max_seqlen=(?P<max_seqlen>\d+) "
+    r"(?:dp=(?P<dp>\d+) )?(?:cp=(?P<cp>\d+) )?vp=(?P<vp>\S+) max_seqlen=(?P<max_seqlen>\d+) "
     r"cu_seqlens=(?P<cu>\[[^\]]*\])"
 )
 

@@ -31,4 +31,4 @@ num_dataset_builder_threads: 64
 # so it is off here -- the production schedule runs PP=4.
 # See config/experiments/oellm_32b_dense/CROSS_DOC_ATTENTION.md.
 create_attention_mask_in_dataloader: false
-packed_doc_attention: false
+dataloader_inter_document_masking: false
