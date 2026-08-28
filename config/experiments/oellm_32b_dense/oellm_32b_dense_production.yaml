@@ -286,6 +286,35 @@ backend:
 
 
   env:
+    # REQUIRED, OR THE FLAGSHIP CANNOT RESUME AT ALL under the te218 container.
+    # Transformer Engine 2.18 refuses to unpickle the delayed-scaling FP8
+    # metadata it keeps in `_extra_state`, and every rank dies during model
+    # construction, before a single iteration:
+    #     RuntimeError: Refusing to load pickled Transformer Engine extra state
+    #     for TERowParallelLinear. Delayed-scaling FP8 metadata can be stored as
+    #     a Python pickle, and loading it can execute arbitrary code. Only enable
+    #     unsafe loading if this checkpoint is from a trusted source. To load it
+    #     anyway, set NVTE_ALLOW_UNSAFE_PICKLE_EXTRA_STATE=1.
+    # (job 1523600, 512 nodes.) Verified to fix it: job 1523988 loaded the live
+    # flagship checkpoint at iteration 34454 with this set.
+    #
+    # A TE POLICY, not a megatron-core incompatibility, and it arrived with the
+    # CONTAINER rather than with 0.19 -- TE 2.14 in nemo_26.04 has no such
+    # refusal, which is why nothing hit it until te218 was adopted. It applies to
+    # EVERY pre-te218 checkpoint, so it stays needed for as long as any of them
+    # might be resumed.
+    #
+    # DUPLICATED FROM oellm_32b_dense.yaml ON PURPOSE. That file is NOT a parent
+    # of this one -- the two are siblings, and this config's defaults list builds
+    # from /backend, /container and /backend/megatron: base directly. Nothing
+    # here is inherited from it, so a setting that must hold in production has to
+    # be written here as well.
+    #
+    # The trust condition the message asks about is satisfied: these checkpoints
+    # were written by our own runs, with our own code, on this cluster. The
+    # setting is narrowly scoped to unpickling FP8 amax history we produced.
+    NVTE_ALLOW_UNSAFE_PICKLE_EXTRA_STATE: "1"
+
     # the ft rank monitor needs NCCL errors surfaced by the c10d watchdog fast,
     # instead of hanging until the collective times out
     TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
