@@ -1,0 +1,139 @@
+# @package _global_
+#
+# ============================================================================
+# CONTEXT PARALLELISM x DOCUMENT MASKING — the one path that has never run
+# ============================================================================
+# The 0.16 patch asserted context_parallel_size == 1. The 0.19 port lifts that,
+# and nothing about it has touched a GPU. This is that test.
+#
+# ============================================================================
+# WHAT IS ACTUALLY BEING TESTED, AND WHY IT MIGHT NOT WORK
+# ============================================================================
+# TE's context-parallel thd path has two requirements that GPTDataset does not
+# meet:
+#
+#   1. cu_seqlens_padded must not be None
+#      (context_parallel.py:419, "cu_seqlens_padded is required for THD format!")
+#   2. every document length must be divisible by 2 * cp_size, because
+#      thd_get_partitioned_indices splits each document into 2*cp chunks and
+#      hands rank r chunks r and 2*cp-1-r
+#
+# GPTDataset emits neither: its documents are whatever length the corpus made
+# them, and cu_seqlens_padded only comes from the SFT path. Upstream side-steps
+# this with use_per_sequence_balancing=True — a zigzag over the whole pack —
+# which is NOT the per-document layout TE's thd kernels index with, so it is at
+# best untested and at worst silently wrong.
+#
+# Our answer is packed_doc_attention.snap_cu_seqlens_to_multiple: move each
+# document boundary to the NEAREST multiple of 2*cp. That keeps the token
+# stream and every tensor shape untouched (the alternative — inserting real
+# padding tokens — makes the packed length vary per microbatch and would force
+# variable_seq_lengths on the pipeline), and it makes the per-document zigzag
+# legal. The cost is bounded: at most 2*cp-1 tokens per boundary still attend
+# into the neighbouring document. At CP=2 that is 3 tokens per boundary.
+#
+# The arithmetic is unit-tested (tests/unit_tests/test_packed_doc_attention.py:
+# covering, non-decreasing, divisible, endpoints pinned, short documents
+# absorbed). What is NOT tested anywhere but here is whether TE actually
+# accepts the result.
+#
+# ============================================================================
+# WHY 32 NODES AND NOT 16
+# ============================================================================
+# To hold DP FIXED at 4, which is what makes this comparable to anything.
+# TP4 x PP4 x CP2 = 32 ranks per model replica, so 128 GPUs / 32 = DP 4 —
+# exactly the DP of the 16-node PP gate (jobs 1516064/65). Consequences:
+#
+#   * memory per rank is the gate's, not worse. The distributed optimizer
+#     shards over DP, so a smaller DP would multiply optimizer state per rank —
+#     at 16 nodes CP=2 would give DP=2 and roughly double it against a gate
+#     that already sat at 0.64 utilisation.
+#   * the data ordering is the gate's, because the sampler is deterministic in
+#     data_parallel_rank and consumed_samples. So the losses here are directly
+#     comparable to jobs 1516064/65, not just to each other.
+#
+# Parallelism is otherwise inherited verbatim: TP=4, PP=4 and the 8-segment
+# pipeline_model_parallel_layout (VPP=2). Changing PP would invalidate that
+# layout, and changing TP would change the vocab shard — neither is the
+# variable here.
+#
+# ============================================================================
+# DIVISIBILITY, CHECKED HERE SO A JOB DOES NOT HAVE TO
+# ============================================================================
+#   seq_length          8192, and 8192 % (2*2) == 0   (Megatron's own assert)
+#   packed_length       seq_length * micro_batch_size = 16384
+#                       16384 % (2*2) == 0            (our CP assert)
+#                       16384 % TP 4  == 0            (sequence parallelism)
+#
+# ============================================================================
+# READ-OFF
+# ============================================================================
+#   PASS      both arms log 20 iterations and exit 0. That alone is the
+#             headline: it means TE accepted the snapped cu_seqlens_padded and
+#             the per-document zigzag.
+#   FAIL arm 1 only -> masking under CP specifically. The signatures to expect
+#             are "cu_seqlens_padded is required for THD format!" (the snapping
+#             did not reach TE) or a thd_get_partitioned_indices assert about
+#             divisibility (the snapping did not do what it claims).
+#   FAIL both -> context parallelism at this shape, independent of masking.
+#             That is what arm 0 is for; do not read a both-arms failure as a
+#             masking result.
+#
+#   MASKING ACTIVE is proven at ITERATION 1 and only there: both arms hold
+#   identical initial weights (the seed is seed + 100*pipeline_rank — CP does
+#   not enter it) and read identical data, so an iteration-1 loss difference
+#   can only come from the attention pattern. Later iterations diverge
+#   chaotically and their SIGN flips; do not read those as evidence either way.
+#   The 16-node gate measured -4.6E-04 at iteration 1.
+#
+#   COST      ms/iter and tok/s/GPU, arm 1 vs arm 0. Read tok/s/GPU, never
+#             TFLOP/s.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/cp_docmask_n32
+#   #   --array-subset 0   # CP=2, masking off
+#   #   --array-subset 1   # CP=2, masking on
+defaults:
+  - fp8_speed_test_fp32grad_docmask
+  - _self_
+
+backend:
+  aux:
+    # 128 GPUs / (TP4 x PP4 x CP2) = DP 4. See the header.
+    active_nodes: 32
+    spare_nodes: 0
+
+  megatron:
+    # THE VARIABLE THIS FILE EXISTS FOR. Everything else is inherited.
+    context_parallel_size: 2
+
+job:
+  chain_repeat: 1
+  # The 16-node gate measured 2.33 s/iter at DP=4. CP splits the sequence, so
+  # expect the same order; this only stops the submit gate pricing the full wall.
+  est_step_time_s: 3.0
+  est_startup_min: 10
+  est_steps: 20
+
+# ---------------------------------------------------------------------------
+# ONE VARIABLE. OmegaConf REPLACES lists, so this wipes the parent's sweep
+# entirely and both arms sit at the CP=2 set above.
+# ---------------------------------------------------------------------------
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ---- arm 0: CONTROL. Context parallelism, no masking ---------------
+        # Isolates CP itself. Without it, a failure in arm 1 cannot be
+        # attributed to masking rather than to CP at this shape.
+        #   --array-subset 0
+        - backend.aux.variant: "cp2-docmask-ctrl-n32"
+          backend.megatron.dataloader_inter_document_masking: false
+
+        # ---- arm 1: CP=2 + document masking --------------------------------
+        # The path that has never run: snapped boundaries -> cu_seqlens_padded
+        # -> per-document zigzag -> TE thd context-parallel attention.
+        #   --array-subset 1
+        - backend.aux.variant: "cp2-docmask-on-n32"
+          backend.megatron.dataloader_inter_document_masking: true

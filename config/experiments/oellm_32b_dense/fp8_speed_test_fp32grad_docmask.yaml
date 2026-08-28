@@ -1,0 +1,185 @@
+# @package _global_
+#
+# ============================================================================
+# SMOKE: does mcore 0.19 train at all, and what does its document masking cost?
+# ============================================================================
+# TWO JOBS AT ONCE, deliberately, because the first is a precondition for the
+# second and both are cheap at this size:
+#
+#   1. SMOKE. Nothing has run a training step on megatron-core 0.19 yet. The
+#      port (OELLM_PORT.md) has only been exercised by CPU-side unit tests and
+#      an `import megatron.core` check. If 0.19 cannot complete an optimizer
+#      step at the production parallelism, that has to surface here -- on 16
+#      nodes for minutes -- and not in a 512-node allocation.
+#   2. COST. Prices `--dataloader-inter-document-masking`.
+#
+# ============================================================================
+# THIS IS THE GATE FOR THE PACKED-DOC-ATTENTION PORT. RUN IT FIRST.
+# ============================================================================
+# The first attempt (jobs 1511085 / 1511160) FAILED, twice, at PP=4:
+#
+#   TypeError: 'NoneType' object is not an iterator     ranks 20/24
+#   RuntimeError: expected 3D tensor                    rank 31, in TE's thd rope
+#
+# Both were upstream bugs and both are fixed on `oellm/v0.19` now (OELLM_PORT.md
+# feature #8): middle pipeline stages no longer read the dataloader at all --
+# cu_seqlens is broadcast to them once per iteration -- and the pipeline p2p
+# buffers are folded to match the [1, b*s] packed layout, which is what the 3-D
+# tensor assert was really about.
+#
+# THIS CONFIG IS THE EXACT SHAPE THAT PRODUCED BOTH: TP4 x PP4 x DP4, VPP>1,
+# micro_batch_size > 1. It is deliberately unchanged for that reason. Nothing
+# about the fixes has run on a GPU, so this is where they either work or do not.
+#
+# ============================================================================
+# WHY THE OLD PACKED_DOC_ATTENTION NUMBER DOES NOT TRANSFER
+# ============================================================================
+# The 0.16 patch measured -2.8% at 512 nodes, inside a +-3.2% noise floor (job
+# 1498007). That number is NOT a prediction for this run, for two reasons:
+#
+#   * DIFFERENT cu_seqlens. Ours were derived by scanning for EOD tokens;
+#     upstream builds them in gpt_dataset.py from the document index and merges
+#     per-sample arrays across the micro-batch. Same masking semantics, and now
+#     the same folded [1, b*s] shape, but a different kernel launch profile.
+#   * DIFFERENT SCALE. This runs at DP=4, where M = GBS/(mbs*DP) is far
+#     larger than production's. Every per-microbatch cost is more visible
+#     here and minimally visible at 512 nodes, which is exactly the trap the
+#     scatter-vs-local measurement fell into.
+#
+# So read this arm as "does it work, and is the cost catastrophic", NOT as a
+# production throughput figure. The production number needs 512 nodes --
+# speed_prodsettings_n512_019.yaml arm 1.
+#
+# ============================================================================
+# WHY 16 NODES AND NOT 4
+# ============================================================================
+# TP=4 x PP=4 is 16 ranks = one full model replica, so 4 nodes LOOKS like the
+# cheapest way to run the production shape. It is not: at 4 nodes the world IS
+# one replica, so DP=1 -- and the distributed optimizer shards optimizer state
+# across DP, which at DP=1 means it shards nothing. Each rank then carries the
+# full fp32 state for its 2 B-param shard: ~4 GB bf16 params + 8 GB fp32 master
+# + 16 GB Adam m/v + 8 GB fp32 grads (this config forces fp32 accumulation)
+# ~= 36 GB before a single activation. Measured at 4 nodes: allocated 37.7 GB,
+# max allocated 53.3 GB, then OOM on a 95 GiB card with 1.2 GiB free
+# ("Tried to allocate 2.00 GiB", jobs 1509385 / 1509387).
+#
+# 16 nodes gives DP=4, dividing the optimizer state by four, and is the shape the
+# port notes already name as the intended follow-up. M = 64/(2*4) = 8.
+#
+# ============================================================================
+# READ-OFF
+# ============================================================================
+#   PASS      both arms log iterations and exit 0
+#   FAIL both -> the 0.19 port, not the masking (that is what arm 0 is for)
+#   FAIL arm 1 only -> inter-document masking specifically
+#   ms/iter   arm1 vs arm0 = the masking cost at DP=4 (still an upper bound
+#             relative to production's DP=128, where M is far smaller)
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/fp8_speed_test_fp32grad_docmask
+#   # one arm only:
+#   #   --array-subset 0   # control
+#   #   --array-subset 1   # masking on
+defaults:
+  - fp8_speed_test_fp32grad
+  # NO AUTO-RESTART, AND NOT MERELY BECAUSE A SPEED TEST DOES NOT WANT ONE.
+  # The inherited /job: auto_restart_ckptreset (from oellm_32b_dense.yaml:13)
+  # wires QuarantineCheckpointAction with `checkpoint_dir: ${backend.megatron.save}`
+  # (config/job/auto_restart_ckptreset.yaml:65). Speed tests set `save: null`, so
+  # that interpolates to None and the config does not even RENDER:
+  #     ValueError: Tried to parse None to <class 'str'>
+  #             at key job.log_events.0.action.checkpoint_dir
+  # That breaks fp8_speed_test and fp8_speed_test_fp32grad today, independently
+  # of this file. auto_cancel has no checkpoint action, so it both fixes the
+  # render and is the right policy here: a smoke test must fail FAST and loudly
+  # rather than restart into a loop.
+  - override /job: auto_cancel
+  - _self_
+
+backend:
+  aux:
+    # 16 nodes = 64 GPUs = TP4 x PP4 x DP4.
+    active_nodes: 16
+    spare_nodes: 0
+    # NB the arms below each set backend.aux.variant IN FULL. An arm-level
+    # variant wins over anything derived here, and the two arms MUST land in
+    # different output trees -- when a sweep collapsed into one tree before, the
+    # second arm resumed the first arm's checkpoint and the comparison was junk.
+
+  megatron:
+    # Enough steps that the first few (kernel autotune, fp8 amax warm-up) can be
+    # dropped and still leave a usable mean.
+    exit_interval: 20
+    # Never fires within exit_interval. NOT null: `save_interval: null` with
+    # `save` set trips an assert (it ate jobs 1492415/16/17).
+    save_interval: 1000000
+
+    # M = GBS / (mbs * DP) = 64 / (2 * 1) = 32 microbatches. Small enough to be
+    # quick, large enough that gradient accumulation and the per-microbatch
+    # masking cost both actually happen.
+    global_batch_size: 64
+
+    # Validation must NOT be switched off with eval_iters: 0 -- that does not
+    # skip the validation dataloader, it starves it to zero samples and asserts
+    # in data_samplers.py ("no sample to consume: 0"). Push eval_interval far
+    # beyond train_iters instead: the first term of
+    # (train_iters // eval_interval + 1) * eval_iters * GBS collapses to 1, so
+    # the valid index is 640 samples (seconds to build) and evaluation never
+    # fires because eval_interval also exceeds exit_interval.
+    eval_iters: 10
+    eval_interval: 100000000
+
+    wandb_project: oellm_32b_dense_smoke
+
+job:
+  chain_repeat: 1
+  # ~4 s/iter is the 512-node production figure; at DP=1 a step is far slower,
+  # so this is only here to stop the submit gate pricing each arm at the full
+  # wall. It does not affect what runs.
+  est_step_time_s: 12.0
+  est_startup_min: 10
+  est_steps: 20
+
+slurm:
+  sbatch:
+    # 2h, not the parent's 40 min. The first attempt (jobs 1508337/1508338) FAILED at
+    # 36 min having logged zero iterations: moving to megatron-core 0.19 changed the
+    # dataset cache key (the tokenizer descriptor gained additional_special_tokens,
+    # chat_template, include_special_tokens, trust_remote_code and use_fast, and
+    # `tokenizer` is one of the hashed key attributes), so every 0.16-era index missed
+    # and the run spent its whole wall rebuilding the 15 T train index -- 97 "Build and
+    # save" against 2 "Load".
+    #
+    # data_cache_prebuild now covers the TRAIN index. The VALID index is still built
+    # here, because its num_samples depends on eval_iters/eval_interval/GBS, which this
+    # config deliberately sets differently from the production schedule. That is the
+    # cheap one (640 samples), but it is not free, so leave headroom.
+    time: "02:00:00"
+
+# ---------------------------------------------------------------------------
+# ONE VARIABLE. The parent sweeps node count; this replaces that sweep entirely
+# (OmegaConf REPLACES lists rather than merging), so both arms sit at the 4
+# nodes set above and differ only in the masking flag.
+# ---------------------------------------------------------------------------
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ---- arm 0: CONTROL -- full causal attention across document bounds --
+        # This is what every OELLM run has actually trained with so far; see
+        # CROSS_DOC_ATTENTION.md for why reset_attention_mask never did anything.
+        #   --array-subset 0
+        - backend.aux.variant: "docmask-ctrl-fp32grad-n16"
+          backend.megatron.dataloader_inter_document_masking: false
+
+        # ---- arm 1: cu_seqlens document masking ----------------------------
+        # Builds cu_seqlens in gpt_dataset.py from the document index, resets
+        # per-document position ids, and auto-disables
+        # create_attention_mask_in_dataloader. Middle pipeline stages get
+        # cu_seqlens from the per-iteration broadcast in
+        # megatron/training/packed_doc_attention.py -- they do NOT pull the
+        # batch, which is the upstream behaviour that crashed at PP=4.
+        #   --array-subset 1
+        - backend.aux.variant: "docmask-on-fp32grad-n16"
+          backend.megatron.dataloader_inter_document_masking: true
