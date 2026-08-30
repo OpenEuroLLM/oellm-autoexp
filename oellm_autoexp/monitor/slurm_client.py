@@ -148,6 +148,27 @@ class SlurmClient(JobClientInterface):
         """
         return self._client.squeue()
 
+    def register_job(
+        self,
+        job: SlurmJobConfig,
+        job_id: str,
+        state: str | None = None,
+    ) -> None:
+        """Adopt an already-submitted SLURM job into the underlying client.
+
+        The base client only learns about a job through ``submit()``, and its
+        ``squeue()`` short-circuits to ``{}`` while nothing is tracked. A monitor
+        that re-attaches to a session therefore has to re-register the jobs by
+        hand or it stays blind to SLURM for its whole lifetime.
+
+        Args:
+            job: Stored job definition (carries the SlurmConfig).
+            job_id: SLURM job id, e.g. ``1524558`` or ``1524558_3``.
+            state: Last known state; PENDING is only the placeholder until the
+                next squeue overwrites it.
+        """
+        self._client.register_job(job_id, job.slurm, state=state or "PENDING")
+
     def update_excludes(self, job_id: str, nodelist: str) -> None:
         """Update a pending job's excluded-node list (delegates to
         ``scontrol``).

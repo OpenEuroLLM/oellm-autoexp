@@ -13,7 +13,12 @@ from collections.abc import Iterable
 from uuid import uuid4
 
 
-from oellm_autoexp.orchestrator import run_loop
+from oellm_autoexp.orchestrator import (
+    DEFAULT_STALE_AFTER_S,
+    ensure_no_live_monitor,
+    run_loop,
+    stop_path,
+)
 from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
 from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
 from oellm_autoexp.monitor.loop import JobFileStore, MonitorLoop
@@ -30,6 +35,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--session", default=None)
     parser.add_argument("--session-dir", default=None)
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Start even if another monitor's heartbeat is still fresh. Two "
+        "monitors on one session race on every job record (double sbatch, lost "
+        "log cursors), so only use this when you know the other one is gone.",
+    )
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=None,
+        help="Seconds between polls (default 60). Mainly for tests; a shorter "
+        "interval also shortens the heartbeat refresh, so keep --stale-after above it.",
+    )
+    parser.add_argument(
+        "--stale-after",
+        type=float,
+        default=DEFAULT_STALE_AFTER_S,
+        help="Seconds after which another monitor's heartbeat counts as dead.",
+    )
     args = parser.parse_args(argv)
     if args.session is None and args.session_dir is None:
         print("Error either session or session-dir is required")
@@ -99,7 +124,6 @@ def _parse_subset(spec: str | None) -> set[int]:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    configure_logging(not args.no_verbose, args.debug)
 
     slurm_client = SlurmClient(SlurmClientConfig())
     local_client = LocalCommandClient(LocalCommandClientConfig())
@@ -114,13 +138,50 @@ def main(argv: list[str] | None = None) -> None:
     if not session_dir.exists():
         print(f"Session directory {session_dir} does not exist.")
         raise SystemExit(2)
+
+    # Log to the session dir as well as the console: tmux scrollback dies with
+    # the login node, so this is the only durable record of why a monitor
+    # stopped.
+    configure_logging(not args.no_verbose, args.debug, log_file=session_dir / "monitor.log")
+
+    # Refuse rather than silently clearing: presence of the file IS the stop
+    # request, and the supervisor reads the same file to decide whether to keep
+    # its hands off. Removing it automatically here would let a supervised
+    # relaunch quietly override a stop the user asked for.
+    stop_file = stop_path(session_dir)
+    if stop_file.exists():
+        raise SystemExit(
+            f"Stop requested for this session: {stop_file.read_text().strip()}\n"
+            f"Remove it to resume:  rm {stop_file}"
+        )
+
+    ensure_no_live_monitor(session_dir, stale_after_s=args.stale_after, force=args.force)
+
+    loop_kwargs = {}
+    if args.poll_interval is not None:
+        loop_kwargs["poll_interval_seconds"] = args.poll_interval
     loop = MonitorLoop(
         store=JobFileStore(str(session_dir)),
         slurm_client=slurm_client,
         local_client=local_client,
+        **loop_kwargs,
     )
+    # Attaching to a session we did not submit: the clients have no idea these
+    # jobs exist, and SlurmClient.squeue() returns {} while it tracks nothing.
+    # Without this the monitor runs forever without ever seeing a job status.
+    loop.rehydrate()
 
-    run_loop(loop)
+    outcome = run_loop(loop)
+    if outcome == "signal":
+        print("\n[interrupted] Jobs were NOT cancelled -- they keep running in SLURM.")
+        print(
+            f"Resume with:  rm {stop_file} && python scripts/monitor_autoexp.py --session-dir {session_dir}"
+        )
+        raise SystemExit(130)
+    if outcome == "failed":
+        raise SystemExit(1)
+    if outcome == "stopped":
+        raise SystemExit(0)
 
 
 if __name__ == "__main__":

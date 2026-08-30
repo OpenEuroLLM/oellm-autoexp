@@ -51,6 +51,7 @@ def configure_logging(
     format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt: str = "%Y-%m-%d %H:%M:%S",
     respect_env: bool = True,
+    log_file: str | os.PathLike[str] | None = None,
 ) -> None:
     """Configure logging with optional environment variable support.
 
@@ -68,6 +69,10 @@ def configure_logging(
         format: Log format string
         datefmt: Date format string
         respect_env: If True, check OELLM_LOG_LEVEL environment variable
+        log_file: If given, also append to this file. Used for the monitor's
+            <session_dir>/monitor.log: tmux scrollback dies with the login node,
+            so without a file on the shared filesystem there is no way to find
+            out afterwards why a monitor stopped.
 
     Examples:
         # Use environment variable (if set)
@@ -99,10 +104,19 @@ def configure_logging(
         # Default fallback
         final_level = logging.WARNING
 
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log_file is not None:
+        try:
+            handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+        except OSError:
+            # An unwritable log file must never stop the run; console stays.
+            logging.getLogger(__name__).warning("Could not open log file %s", log_file)
+
     logging.basicConfig(
         level=final_level,
         format=format,
         datefmt=datefmt,
+        handlers=handlers,
         force=True,  # Reconfigure if already configured
     )
 

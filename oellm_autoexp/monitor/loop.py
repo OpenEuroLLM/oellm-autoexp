@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field, MISSING
 from pathlib import Path
@@ -103,10 +104,20 @@ class JobFileStore:
         return jobs
 
     def upsert(self, record: JobRecord) -> None:
+        """Write a job record, atomically.
+
+        A partial file is worse than no file: ``load_all`` silently skips
+        anything it cannot parse, so a torn write makes the job DISAPPEAR from
+        monitoring without a single log line. That is reachable whenever the
+        monitor is killed mid-write -- which the supervisor does on purpose when
+        it decides the monitor is wedged. tmp + rename makes the swap atomic.
+        """
         path = self.path_for(record.job_id)
         payload = asdict(record)
         payload.setdefault("schema_version", SCHEMA_VERSION)
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
 
     def mark_finished(self, job_id: str, final_state: str) -> None:
         """Mark a job as finished or cancelled without deleting it."""
@@ -173,6 +184,39 @@ class MonitorLoop:
             return self._slurm_client
         elif isinstance(job.definition, LocalJobConfig):
             return self._local_client
+
+    def rehydrate(self) -> int:
+        """Re-register already-submitted jobs with their client.
+
+        MUST be called by anything that attaches to a session it did not submit
+        (``scripts/monitor_autoexp.py``), before the first poll.
+
+        The clients only learn about a job through ``submit()``, and
+        ``SlurmClient.squeue()`` short-circuits to ``{}`` while nothing is
+        tracked. So without this a re-attached monitor never sees a status at
+        all: every job stays at ``last_status=None``, the terminal-state branch
+        in :meth:`observe_once` never fires, jobs are never marked finished and
+        the loop never exits. Log events still work (they read files), which is
+        what made the failure so quiet.
+
+        Returns:
+            Number of jobs re-registered.
+        """
+        count = 0
+        for job in self._store.load_all():
+            runtime = job.runtime
+            if not runtime.submitted or not runtime.runtime_job_id:
+                continue
+            client = self._get_client(job)
+            # getattr, not a hard call: JobClientProtocol is structural and
+            # test doubles predating register_job must keep working.
+            register = getattr(client, "register_job", None)
+            if register is None:
+                continue
+            register(job.definition, runtime.runtime_job_id, runtime.last_status)
+            count += 1
+        LOGGER.info("Rehydrated %d already-submitted job(s) from session state", count)
+        return count
 
     def observe_once(self) -> None:
         # Query both clients and merge statuses

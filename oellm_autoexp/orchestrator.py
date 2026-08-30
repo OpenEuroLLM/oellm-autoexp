@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import shlex
+import signal
+import socket
 import subprocess
 import time
 from dataclasses import dataclass, field, MISSING, replace
@@ -151,16 +154,268 @@ def load_monitor_controller(
     )
 
 
-def run_loop(controller: MonitorLoop) -> None:
+# --- Session liveness / control files -------------------------------------
+#
+# Two files in the session directory, deliberately as dumb as possible so they
+# can be inspected and driven from any shell on either side of an ssh hop (the
+# session dir lives on the cluster's shared filesystem):
+#
+#   .monitor.alive  written every poll. Content is "pid host tmux_target"; the
+#                   TIMESTAMP IS THE MTIME, so liveness is a `stat`, not a
+#                   parse. Doubles as the lease: a monitor refuses to start
+#                   while a fresh heartbeat names a different pid@host, which
+#                   is what stops two monitors appearing on two login nodes.
+#   .monitor.stop   presence means stop. Content is a free-text reason. Written
+#                   by the user (`touch`), or by this process on Ctrl-C -- that
+#                   is the ONLY thing that distinguishes "was stopped" from
+#                   "died", and it is what lets the supervisor stand down
+#                   instead of restarting you. NB SIGTERM deliberately does NOT
+#                   write it; see run_loop.
+HEARTBEAT_FILENAME = ".monitor.alive"
+STOP_FILENAME = ".monitor.stop"
+
+# A heartbeat older than this means "no live monitor". Generous on purpose: a
+# GPFS hiccup or a slow squeue must not look like a death.
+DEFAULT_STALE_AFTER_S = 300.0
+
+# Consecutive failing polls before giving up. Exiting (rather than spinning) is
+# deliberate: the supervisor restarts us, and its restart budget then escalates
+# a persistent fault to a human instead of hiding it behind a busy loop.
+MAX_CONSECUTIVE_POLL_FAILURES = 5
+
+_STOP_SIGNAL_RECEIVED: str | None = None
+
+
+def heartbeat_path(session_dir: str | Path) -> Path:
+    return Path(session_dir) / HEARTBEAT_FILENAME
+
+
+def stop_path(session_dir: str | Path) -> Path:
+    return Path(session_dir) / STOP_FILENAME
+
+
+def write_heartbeat(session_dir: str | Path) -> None:
+    """Refresh the liveness file (tmp + rename so a reader never sees a
+    tear)."""
+    path = heartbeat_path(session_dir)
+    target = os.environ.get("AUTOEXP_TMUX_TARGET") or os.environ.get("TMUX_PANE") or "-"
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp.write_text(f"{os.getpid()} {socket.gethostname()} {target}\n", encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:  # a filesystem blip must never kill the monitor
+        LOGGER.warning("Could not write heartbeat %s: %s", path, exc)
+
+
+def read_heartbeat(session_dir: str | Path) -> tuple[int, str, str, float] | None:
+    """Return ``(pid, host, tmux_target, age_seconds)`` or None if absent."""
+    path = heartbeat_path(session_dir)
+    try:
+        parts = path.read_text(encoding="utf-8").split()
+        age = time.time() - path.stat().st_mtime
+    except (OSError, ValueError):
+        return None
+    if not parts:
+        return None
+    try:
+        pid = int(parts[0])
+    except ValueError:
+        return None
+    host = parts[1] if len(parts) > 1 else "?"
+    target = parts[2] if len(parts) > 2 else "-"
+    return pid, host, target, age
+
+
+def stop_requested(session_dir: str | Path) -> str | None:
+    """Return the stop reason if ``.monitor.stop`` exists, else None."""
+    path = stop_path(session_dir)
+    try:
+        return path.read_text(encoding="utf-8").strip() or "no reason given"
+    except OSError:
+        return None
+
+
+def request_stop(session_dir: str | Path, reason: str) -> None:
+    try:
+        stop_path(session_dir).write_text(f"{reason}\n", encoding="utf-8")
+    except OSError as exc:
+        LOGGER.warning("Could not write stop file: %s", exc)
+
+
+def _pid_alive(pid: int) -> bool:
+    """Does this pid exist?
+
+    Only meaningful for a process on THIS host.
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        # PermissionError et al: it exists, we just may not signal it.
+        return True
+    return True
+
+
+def ensure_no_live_monitor(
+    session_dir: str | Path,
+    *,
+    stale_after_s: float = DEFAULT_STALE_AFTER_S,
+    force: bool = False,
+) -> None:
+    """Refuse to start alongside a monitor that is still alive.
+
+    Two monitors on one session race on every read-modify-write of the job
+    records: double sbatch, lost log cursors, duplicate restarts. The heartbeat
+    is on the shared filesystem, so this holds even when the other monitor sits
+    on a login node we cannot reach.
+    """
+    beat = read_heartbeat(session_dir)
+    if beat is None:
+        return
+    pid, host, _target, age = beat
+    if pid == os.getpid() and host == socket.gethostname():
+        return
+    # A crashed monitor leaves a heartbeat that is still FRESH. Checking the pid
+    # before the age is what lets a supervisor relaunch immediately instead of
+    # being locked out for a whole stale window by the corpse of its predecessor.
+    if host == socket.gethostname() and not _pid_alive(pid):
+        LOGGER.info("Heartbeat names pid %s on this host, but it is gone; taking over.", pid)
+        return
+    if age > stale_after_s:
+        LOGGER.info("Ignoring stale heartbeat from %s@%s (%.0fs old)", pid, host, age)
+        return
+    message = (
+        f"A monitor appears to be running for this session: pid {pid} on {host} "
+        f"(heartbeat {age:.0f}s old). Stop it first "
+        f"(touch {stop_path(session_dir)}), or pass --force if you are certain it is gone."
+    )
+    if force:
+        LOGGER.warning("--force given, starting anyway. %s", message)
+        return
+    raise SystemExit(message)
+
+
+def _install_stop_signal_handlers() -> dict[int, object]:
+    """Turn SIGINT/SIGTERM into a flag rather than an exception.
+
+    The point is to finish the poll in progress before exiting: a signal landing
+    inside an sbatch would otherwise leave a submitted job whose id was never
+    recorded. Returns the previous handlers so the caller can restore them.
+    """
+
+    def _handler(signum, _frame):
+        global _STOP_SIGNAL_RECEIVED
+        _STOP_SIGNAL_RECEIVED = signal.Signals(signum).name
+        LOGGER.info("Received %s; finishing the current poll then exiting.", _STOP_SIGNAL_RECEIVED)
+
+    previous: dict[int, object] = {}
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            previous[sig] = signal.signal(sig, _handler)
+        except (ValueError, OSError):
+            # Not the main thread (tests, embedded use): leave signals alone.
+            pass
+    return previous
+
+
+def _restore_signal_handlers(previous: dict[int, object]) -> None:
+    for sig, handler in previous.items():
+        try:
+            signal.signal(sig, handler)
+        except (ValueError, OSError):
+            pass
+
+
+def _sleep_interruptibly(seconds: float) -> None:
+    """Sleep in 1 s slices so a signal is acted on promptly.
+
+    PEP 475 makes ``time.sleep`` resume after a handler returns, so a plain
+    sleep would swallow a SIGTERM for up to a full poll interval.
+    """
+    deadline = time.monotonic() + seconds
+    while _STOP_SIGNAL_RECEIVED is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(1.0, remaining))
+
+
+def run_loop(controller: MonitorLoop) -> str:
+    """Poll until every job is finished, or until asked to stop.
+
+    Returns one of ``"completed"``, ``"stopped"`` (``.monitor.stop`` appeared),
+    ``"signal"`` (SIGINT/SIGTERM) or ``"failed"`` (too many consecutive bad
+    polls). Post-job commands run only on a genuine completion.
+    """
+    global _STOP_SIGNAL_RECEIVED
+    _STOP_SIGNAL_RECEIVED = None
+
     loop = controller
-    while True:
-        active_jobs = list(loop._store.load_all())
-        if not active_jobs:
-            LOGGER.info("All jobs finished.")
-            break
-        loop.observe_once()
-        time.sleep(loop.poll_interval_seconds)
+    session_dir = Path(loop._store.root)
+    previous_handlers = _install_stop_signal_handlers()
+    failures = 0
+    outcome = "completed"
+    try:
+        while True:
+            reason = stop_requested(session_dir)
+            if reason is not None:
+                LOGGER.info("Stop requested (%s); exiting without cancelling jobs.", reason)
+                return "stopped"
+
+            active_jobs = list(loop._store.load_all())
+            if not active_jobs:
+                LOGGER.info("All jobs finished.")
+                break
+
+            write_heartbeat(session_dir)
+            try:
+                loop.observe_once()
+            except Exception:  # a bad poll must never end the monitor
+                failures += 1
+                LOGGER.exception(
+                    "Poll failed (%d/%d consecutive)", failures, MAX_CONSECUTIVE_POLL_FAILURES
+                )
+                if failures >= MAX_CONSECUTIVE_POLL_FAILURES:
+                    LOGGER.error("Giving up after %d consecutive failed polls.", failures)
+                    return "failed"
+            else:
+                failures = 0
+            write_heartbeat(session_dir)
+
+            if _STOP_SIGNAL_RECEIVED is not None:
+                outcome = "signal"
+                break
+            # Back off on repeated failures so a wedged controller is not hammered.
+            delay = loop.poll_interval_seconds * (2**failures if failures else 1)
+            _sleep_interruptibly(min(delay, 600.0))
+            if _STOP_SIGNAL_RECEIVED is not None:
+                outcome = "signal"
+                break
+    finally:
+        _restore_signal_handlers(previous_handlers)
+
+    if outcome == "signal":
+        # SIGINT and SIGTERM mean different things and MUST NOT both record a
+        # stop. SIGINT is a human at a keyboard (Ctrl-C) saying "I am taking
+        # over", so the intent is recorded and a supervisor stands down. SIGTERM
+        # is how a supervisor asks a WEDGED monitor to go away before restarting
+        # it -- recording a stop there would make the supervisor block its own
+        # relaunch, which is exactly what happened in the first end-to-end run.
+        if _STOP_SIGNAL_RECEIVED == "SIGINT":
+            request_stop(session_dir, "stopped by SIGINT (Ctrl-C)")
+        else:
+            LOGGER.info(
+                "Exiting on %s without recording a stop; a supervisor may restart us. "
+                "To stop for good: touch %s",
+                _STOP_SIGNAL_RECEIVED,
+                stop_path(session_dir),
+            )
+        return "signal"
+
+    request_stop(session_dir, "all jobs finished")
     _run_post_job_commands(loop._store)
+    return "completed"
 
 
 def _run_post_job_commands(store: JobFileStore) -> None:

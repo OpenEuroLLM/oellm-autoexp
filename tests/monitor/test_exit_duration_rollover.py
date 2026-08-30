@@ -23,6 +23,7 @@ stays the sole authority on real completion.
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -211,11 +212,36 @@ def _reload(store: JobFileStore) -> JobRecord:
     return jobs[0]
 
 
+def _await_idle(client: LocalCommandClient, timeout: float = 30.0) -> None:
+    """Block until no local job is RUNNING, so the next poll sees a finished
+    one.
+
+    These jobs are REAL subprocesses -- ``python3 -c "print(...)"`` needs ~10 ms
+    to start, print and exit -- while the polls below run back-to-back with
+    nothing in between. Without this the test is a race between interpreter
+    startup and a handful of in-process polls: it wins on an idle machine
+    (12/12) and loses under load, which is exactly how it behaved, failing
+    intermittently in full-suite runs while passing on its own.
+
+    Waiting is also the FAITHFUL thing to do. In production the poll interval is
+    60 s, so a segment that exits has always exited long before the next poll;
+    polling a still-running process is the artificial situation, not this.
+    """
+    deadline = time.monotonic() + timeout
+    while any(state == "RUNNING" for state in client.squeue().values()):
+        if time.monotonic() > deadline:
+            raise AssertionError(f"local job was still running after {timeout:g}s")
+        time.sleep(0.005)
+
+
 def _run(tmp_path, client, *, line: str, polls: int, max_attempts: int = 150) -> JobRecord:
     store = JobFileStore(tmp_path / "state")
     store.upsert(_make_job(tmp_path, line=line, max_attempts=max_attempts))
     monitor = MonitorLoop(store, local_client=client, show_poll_state=False, no_error_catching=True)
     for _ in range(polls):
+        # No-op on the first pass (nothing submitted yet); afterwards it waits
+        # for the segment that the previous poll launched.
+        _await_idle(client)
         monitor.observe_once()
     return _reload(store)
 
