@@ -325,7 +325,18 @@ log_events:
     # RendezvousClosedError is deliberately ABSENT — ft_launcher emits it during
     # a NORMAL fault-tolerant restart cycle, and matching it cancelled healthy
     # job 1379130 at iteration 4204/8000.
-    pattern: "RendezvousConnectionError|DistNetworkError"
+    #
+    # DistBackendError ADDED 2026-08-31. It killed a 512-node job (1565209) at
+    # 12:59, during initialize_model_parallel, with
+    #     DistBackendError: [1] is setting up NCCL communicator and retrieving
+    #     ncclUniqueId from [0] via c10d key-value store by key '0:1', but
+    #     store->get('0:1') got error: Failed to recv, got 0 bytes
+    # and NOTHING here matched: the pattern named DistNetworkError, which is a
+    # DIFFERENT torch exception. Same fault class (c10d store during startup),
+    # same correct response, so it belongs on this event rather than a new one.
+    # An identically-configured sibling (1565251) started fine on another
+    # allocation minutes later, which is what makes it transient.
+    pattern: "RendezvousConnectionError|DistNetworkError|DistBackendError"
     pattern_type: regex
     condition:
       class_name: MaxActionFiresCondition
@@ -376,6 +387,42 @@ log_events:
     action:
       class_name: RestartAction
       reason: "NCCL collective timeout/abort — retrying"
+
+  # NaN / Inf REJECTED BY THE RERUN STATE MACHINE.
+  #
+  # With `rerun_mode: disabled` (production's setting) the validation still runs
+  # and raises instead of writing an emergency checkpoint
+  # (rerun_state_machine.py), so the job dies with
+  #     RuntimeError: Rank 1492, node jpbo-100-24, device 0, iteration 64002:
+  #     Unexpected result nan (message='found NaN in local grad norm ...')
+  # and, before this event existed, nothing matched it -- the fork run died at
+  # 12:16 and simply sat dead.
+  #
+  # THE BUDGET IS DELIBERATELY LOW (3, not the 25 used above) BECAUSE THE
+  # DIAGNOSIS IS AMBIGUOUS:
+  #   * node-local fault -- observed 2026-08-31: a NaN at iteration 64002 on
+  #     jpbo-100-24 did NOT recur when the same checkpoint replayed the same
+  #     data on a different allocation. One restart fixed it.
+  #   * genuine divergence -- historically the COMMON case here: of 17 result
+  #     validation events across recent 512-node runs, 15 were real NaN/Inf.
+  #     Restarting that reproduces it, and at 512 nodes each attempt is
+  #     expensive.
+  # Three attempts is enough to clear a bad node and cheap enough that a real
+  # divergence stops quickly and visibly instead of looping.
+  #
+  # NB at DP=128 each rank sees different microbatches, so a single pathological
+  # SAMPLE also produces a NaN on exactly one rank. "One rank" does not by
+  # itself distinguish hardware from data -- the restart does, because it
+  # replays the identical sample.
+  - name: err_nan_grad_norm
+    pattern: "found NaN in local grad norm|Unexpected result (nan|inf)"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 3
+    action:
+      class_name: RestartAction
+      reason: "NaN/Inf rejected by rerun validation — retrying (bad node vs real divergence)"
 
   - name: err_cuda_illegal_access
     pattern: "illegal memory access|cudaErrorIllegalAddress"
