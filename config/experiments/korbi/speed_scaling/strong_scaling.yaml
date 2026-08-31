@@ -1,0 +1,262 @@
+# @package _global_
+#
+# STRONG SCALING — same problem, more nodes.
+#
+# Fixed 32B model, fixed GBS 4096, fixed TP=4/PP=4/mbs=2. Only the node count
+# varies. This is the classic strong-scaling question: how much faster does ONE
+# unchanged iteration get when you throw more GPUs at it?
+#
+#   nodes  GPUs   DP    M = GBS/(mbs*DP)   tokens/GPU/iter
+#    128    512    32        64                32,768
+#    256   1024    64        32                16,384
+#    512   2048   128        16                 8,192
+#   1024   4096   256         8                 4,096
+#
+# WHAT TO EXPECT, AND WHY IT WILL NOT BE LINEAR
+# ---------------------------------------------
+# At fixed GBS, doubling nodes HALVES the microbatches per DP rank (M). Two
+# things then degrade together:
+#   * pipeline bubble ~ (PP-1)/(M*VPP) — grows as M shrinks
+#   * fixed per-iteration costs (optimizer step, DP all-reduce) amortise over
+#     fewer microbatches
+# Measured already on this cluster (GBS 4096, FP8):
+#     512 nodes  M=16  436.8 TFLOP/s/GPU
+#    1024 nodes  M= 8  342.6 TFLOP/s/GPU     (-22% per GPU for 2x the nodes)
+# and from the 256-node batch ramp, which incidentally swept M at fixed
+# parallelism:
+#     M= 4 235.3 | M= 8 326.3 | M=12 374.5 | M=16 404.7
+#     M=20 424.9 | M=24 439.7 | M=28 449.9
+# So the strong-scaling curve is really the M curve in disguise. The useful
+# output is the PARALLEL EFFICIENCY: total tokens/s versus nodes, normalised to
+# the 128-node point.
+#
+# READ OFF: TFLOP/s/GPU per arm, and aggregate tokens/s. Efficiency at 1024
+# nodes relative to 128 is the number that matters for deciding the flagship's
+# node count.
+#
+# FLOOR: 32B with TP=4/PP=4 occupies 16 GPUs = 4 nodes, so 4 is the smallest
+# possible arm and it runs at DP=1 — the distributed optimizer then has nothing
+# to shard over, so ~24 GB of optimizer state sits on every GPU instead of
+# being split. It should still fit in 95 GB but it is the one arm that might
+# OOM; drop it if so, 8 nodes (DP=2) is safe.
+#
+# COST: 50 iterations per arm plus startup, ~15 min each ->
+# (4+8+16+32+64+128+256+512+1024) x 0.25 h ~= 510 node-hours for the sweep.
+# The four largest arms are ~480 of that; the small end is nearly free.
+defaults:
+  - /experiments/oellm_32b_dense/speed_test
+  # EXCLUDE KNOWN-BAD NODES. speed_test inherits /slurm: jupiter (no exclusion),
+  # which is wrong for a scaling measurement: one sick node in a 1024-node
+  # allocation corrupts the arm, and the whole point of this re-run is a clean
+  # number. The weak-model 64-node arm in the previous round degraded 42% over
+  # its last quartile, which is the signature of exactly that.
+  # 21 nodes currently listed in config/exclude/jupiter_exclude_nodes.txt.
+  - override /slurm: jupiter_autoexclude
+  - _self_
+
+# speed_test already provides: 32B model, exit_interval 50, save: null,
+# torchrun + STATIC rendezvous (c10d dynamic collapses at 1024 agents),
+# spare_nodes 0, bf16 (fp8: null), short wall time.
+# Only the node count varies below.
+
+backend:
+  megatron:
+    global_batch_size: 4096
+    micro_batch_size: 2
+    tensor_model_parallel_size: 4
+    pipeline_model_parallel_size: 4
+    # === DO NOT SET eval_iters: 0 — IT CRASHES ===============================
+    # A previous revision of this file set eval_iters: 0, reasoning that a
+    # throughput probe never evaluates (eval_interval is 10000) so the valid
+    # split could be skipped and its index build avoided.
+    #
+    # THAT CRASHES ON REAL DATA. Megatron builds the valid dataloader
+    # unconditionally, and a zero-sample valid split trips an assert in the
+    # sampler (job 1392775, all 256 ranks):
+    #     training.py:2946  valid_dataloaders.append(build_pretraining_data_loader(...))
+    #     data_samplers.py:133  assert self.total_samples > 0
+    #     AssertionError: no sample to consume: 0
+    #
+    # Leave eval_iters at the inherited production value of 10. Every arm that
+    # has ever completed ran that way, and at GBS 4096 the resulting valid split
+    # (3,686,400 samples) is the one already in the prebuilt cache, so it costs
+    # nothing here: strong scaling holds GBS FIXED, so all nine arms share one
+    # index and none of them build anything.
+    #
+    # (The weak sweeps DO vary GBS and so do need several valid indices. That is
+    # a real startup cost but it is not avoidable this way, and those arms
+    # completed with it.)
+    # === CAP THE DEFERRED-WGRAD BUFFER — required below 256 nodes ============
+    # The flagship sets defer_embedding_wgrad_compute: true with the default
+    # wgrad_deferral_limit: 0, and 0 means "defer ALL micro-batches"
+    # (model_parallel_config.py:295). The last pipeline stage then retains an
+    # embedding_activation_buffer + grad_output_buffer entry for every one of the
+    # M micro-batches until the pipeline flush.
+    #
+    # That is harmless at production scale (M=8) and fatal here, because strong
+    # scaling DELIBERATELY grows M as nodes shrink: M = GBS/(mbs*DP) = 4096/(2*DP).
+    #     n256 DP=64 M=32  -> COMPLETED
+    #     n128 DP=32 M=64  -> OOM, 88.6 GiB allocated of 95 GiB
+    #     n32  DP=8  M=256 -> OOM
+    # The OOM lands in gpt_model.py:606 _postprocess -> the LM-head projection,
+    # and empirically costs ~0.8 GB per deferred micro-batch at this geometry.
+    #
+    # 32 is chosen deliberately, NOT 8: every arm that already completed has
+    # M <= 32 (n256=32, n512=16, n1024=8), so this cap is a NO-OP for them and
+    # they do not need re-running. Arms with M > 32 are bounded at 32 deferred
+    # micro-batches, i.e. ~62 GB, which leaves headroom.
+    #
+    # NB the DP=1 arm (4 nodes) has a SECOND, unrelated memory problem: with
+    # DP=1 the distributed optimizer has nothing to shard over, so ~24 GB of
+    # optimizer state sits on every GPU. 62 + 24 = 86 GB of 95 is very tight and
+    # it may still OOM; if it does, 8 nodes (DP=2) is the real floor.
+    wgrad_deferral_limit: 32
+    # === DO NOT SET mock_data: true HERE — IT IS SLOWER, NOT FASTER ==========
+    # A previous revision set mock_data: true, reasoning that a throughput probe
+    # does not care what the tokens are, so synthetic batches would remove the
+    # index, the cache and the shared-filesystem contention that had killed six
+    # arms with
+    #     ValueError: mmap length is greater than file size
+    # in _build_document_sample_shuffle_indices (a read-during-write race from
+    # launching six jobs at once — scripts/check_data_cache.py reports 2424/2424
+    # prefixes healthy, so the cache itself is fine).
+    #
+    # MOCK DATA DOES NOT SKIP INDEX CONSTRUCTION. MockGPTDataset still builds and
+    # SAVES a sample/shuffle index, sized by train_samples — which this config
+    # inherits at the production 3,661,824,000. Every arm sat in
+    #     "Build and save the MockGPTDataset train indices"
+    # for longer than the entire real-data run of the same arm took end to end
+    # (n8: >4 min and still going, vs 4:19 total on real data), and because all
+    # arms share one path_to_cache they were racing on the SAME mock index —
+    # reproducing the very contention the change was meant to remove. All arms
+    # were cancelled (jobs 1392764-1392774).
+    #
+    # Real data is the fast path here precisely BECAUSE of the prebuilt cache, as
+    # speed_test.yaml's header says: holding train_samples / GBS / eval_* at
+    # production values is what makes a job reuse the 15 T index instead of
+    # building a second one. Do not "optimise" that away.
+    #
+    # The concurrent-build race is fixed by STAGGERING SUBMISSION, not by mock
+    # data. Strong scaling holds GBS fixed at 4096, so all nine arms want the
+    # same index and the first one to start warms it for the rest.
+    #
+    # If synthetic data is ever genuinely wanted, it also needs train_samples
+    # bounded to something near exit_interval * GBS, and it should be validated
+    # on ONE small arm before being put in front of a 1024-node job.
+    wandb_project: oellm_speed_scaling
+
+job:
+  # Tangential project: keep these OUT of the flagship's namespace. The parent's
+  # template is "oellm_32b_dense_${variant}_...", which is both misleading for a
+  # 3.5B arm and would scatter logs through the production_training tree next to
+  # the real 32B runs. base_output_dir derives from job.name, so overriding it
+  # here redirects logs/wandb/tensorboard as well. (save is null in speed_test,
+  # so there are no checkpoint paths to worry about.)
+  name: "speedscale_${backend.aux.variant}_gbs${backend.megatron.global_batch_size}"
+  chain_repeat: 0
+
+slurm:
+  sbatch:
+    # short wall time -> much better booster queue priority
+    time: "00:40:00"
+
+# ===========================================================================
+# PER-ARM ITERATION COUNT — a FIXED count is the wrong design here
+# ===========================================================================
+# The first attempt used the inherited exit_interval: 50 for every arm. At fixed
+# GBS the iteration TIME varies ~200x across the sweep (measured 3.1 s at 1024
+# nodes, 11.2 s at 256 nodes, extrapolating to ~660 s at 4 nodes), so 50
+# iterations means 2.6 minutes of measurement at one end and 9 hours at the
+# other. Two things went wrong as a result:
+#
+#   * the big arms measured for 2.6 min after paying 8-9.5 min of startup, i.e.
+#     78% of the job was overhead;
+#   * the 256-node arm never reached steady state at all. Its per-iteration
+#     series bounced between 178 and 376 for ~40 of its 50 iterations before
+#     settling at 376, so its median came out at 303.6 -- 19% BELOW the true
+#     rate -- and the sweep reported a physically impossible parallel efficiency
+#     of 1.095 at 512 nodes. Discarding the first HALF of the run still leaves
+#     both the 256- and 512-node arms flagged as un-converged.
+#
+# So the counts below target a roughly CONSTANT MEASUREMENT WINDOW (~8-15 min of
+# steady state) rather than a constant iteration count, with headroom for warmup.
+# Startup is 2-9.5 min and grows with node count, so iterations are the cheap
+# part of a job: at 1024 nodes, 3x the iterations costs only ~1.6x the job.
+#
+# The floor is 6 iterations (at 4 nodes): fewer than that and there is nothing
+# left to average once the warmup is dropped. That is tolerable only because at
+# small node counts M is huge (M = 4096/(2*DP) = 2048 at 4 nodes), so a single
+# iteration already averages over thousands of micro-batches and the
+# per-iteration variance is correspondingly tiny -- visible in the data as
+# weakbatch-n8 holding 331 +/- 1 TFLOP/s across all 45 of its iterations.
+#
+# Analyse with a FRACTIONAL warmup skip, since the counts differ per arm:
+#     python scripts/korbi/scaling_plots.py --root ... --skip-frac 0.3 \
+#         --series 'strong=speedscale_strong-n([0-9]+)_'
+# and check the drift% column: any arm flagged NOT CONVERGED needs more
+# iterations, not more smoothing.
+#
+# COST: ~600 node-hours (n1024 ~286, n512 ~132, n256 ~85, everything below 128
+# nodes ~31 combined), against ~510 for the 50-iteration version that produced
+# unusable numbers at two of its three completed arms. The small arms are nearly
+# free despite their long wall times, because they are small.
+# If this needs trimming, halve n512/n1024 to 50/75 iterations -- both converged
+# within a few iterations even on real data (drift 0.1%), so they are the arms
+# that least need the extra length.
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ~660 s/iter. DP=1: the arm most at risk of OOM (unsharded optimizer).
+        - backend.aux.variant: "strong-n4"
+          backend.aux.active_nodes: 4
+          backend.megatron.exit_interval: 6
+          slurm.sbatch.time: "01:40:00"
+        # ~330 s/iter
+        - backend.aux.variant: "strong-n8"
+          backend.aux.active_nodes: 8
+          backend.megatron.exit_interval: 8
+          slurm.sbatch.time: "01:10:00"
+        # ~165 s/iter
+        - backend.aux.variant: "strong-n16"
+          backend.aux.active_nodes: 16
+          backend.megatron.exit_interval: 10
+          slurm.sbatch.time: "00:50:00"
+        # ~83 s/iter
+        - backend.aux.variant: "strong-n32"
+          backend.aux.active_nodes: 32
+          backend.megatron.exit_interval: 14
+          slurm.sbatch.time: "00:40:00"
+        # ~42 s/iter
+        - backend.aux.variant: "strong-n64"
+          backend.aux.active_nodes: 64
+          backend.megatron.exit_interval: 24
+          slurm.sbatch.time: "00:35:00"
+        # ~22 s/iter
+        - backend.aux.variant: "strong-n128"
+          backend.aux.active_nodes: 128
+          backend.megatron.exit_interval: 45
+          slurm.sbatch.time: "00:35:00"
+        # 11.2 s/iter measured. This is the arm that failed to converge in 50.
+        - backend.aux.variant: "strong-n256"
+          backend.aux.active_nodes: 256
+          backend.megatron.exit_interval: 80
+          slurm.sbatch.time: "00:35:00"
+        # 5.1 s/iter measured (confirmed: iters 2-3 of job 1392823 ran at 5.06 s).
+        # WALL TIME IS SET BY STARTUP, NOT BY THE MEASUREMENT. Job 1392823 was
+        # given 00:25:00 and TIMED OUT having completed only 3 iterations: ~20 of
+        # its 25 minutes went to startup, leaving 5 for a measurement that needs
+        # 8.5. Startup at this scale is not predictable from the node count alone
+        # — the 1024-node arm started faster in the same submission round — so the
+        # margin has to absorb a bad draw rather than the expected case.
+        - backend.aux.variant: "strong-n512"
+          backend.aux.active_nodes: 512
+          backend.megatron.exit_interval: 100
+          slurm.sbatch.time: "00:50:00"
+        # 3.1 s/iter measured
+        - backend.aux.variant: "strong-n1024"
+          backend.aux.active_nodes: 1024
+          backend.megatron.exit_interval: 150
+          slurm.sbatch.time: "00:25:00"

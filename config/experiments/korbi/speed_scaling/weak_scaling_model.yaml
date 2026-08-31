@@ -1,0 +1,277 @@
+# @package _global_
+#
+# WEAK SCALING, MODEL AXIS — grow the model with the machine, 1.9B -> 32B.
+#
+# Three quantities are held constant so that only MODEL SIZE varies:
+#     params per GPU     ~1.7-2.2 B     (model-parallel degree grows with model)
+#     tokens per GPU     16,384          per iteration
+#     pipeline bubble    0-4.7%          (see "the trap" below)
+#
+#   nodes  TP  PP    L      h   params   DP     GBS    M  VPP  bubble  tok/GPU
+#     64    1   1   24   2048    1.9 B  256    1024    2   -    0.0%   16,384
+#    128    2   1   28   2560    3.5 B  256    2048    4   -    0.0%   16,384
+#    256    4   1   40   3072    7.2 B  256    4096    8   -    0.0%   16,384
+#    512    4   2   52   4096   16.6 B  256    8192   16   2    3.1%   16,384
+#   1024    4   4   64   5120   31.9 B  256   16384   32   2    4.7%   16,384
+#
+# ============================================================================
+# THE TRAP THIS AVOIDS (an earlier version of this file walked straight into it)
+# ============================================================================
+# Growing a model needs more model-parallelism, and pipeline parallelism carries
+# a bubble of roughly (PP-1)/(M*VPP). If you hold GBS fixed while PP grows, M is
+# fixed too and the bubble explodes:
+#     PP=1  0%   PP=2 12.5%   PP=4 37.5%   PP=8 87.5%
+# and beyond PP=8 with M=8 the pipeline cannot even fill (M < PP). A sweep built that
+# way measures its own parallelism choice, not model scaling — the curve would
+# collapse and the collapse would be an artefact.
+#
+# THE FIX: scale GBS with the model-parallel degree, GBS = 1024 * TP * PP. Then
+#     M = GBS/(mbs*DP) grows in step with PP  -> bubble stays ~constant
+#     tokens/GPU = GBS*seq/world stays constant at 16,384
+# both at once, because world also grows as TP*PP with DP pinned at 256.
+# VPP=2 is enabled wherever PP>1 via num_layers_per_virtual_pipeline_stage
+# (= L/(PP*2)); layer counts are chosen so that divides exactly:
+#     52/(2*2)=13   64/(4*2)=8
+#
+# ============================================================================
+# CAVEATS
+# ============================================================================
+# 1. Geometries are APPROXIMATE size targets using the 32B's proportions
+#    (ffn = 5x hidden, head_dim 128, 8 KV groups), not tuned architectures.
+#    Params from L*(4h^2 + 3hf).
+# 2. The two PP=1 arms cannot use VPP at all, and they also need
+#    defer_embedding_wgrad_compute: false — it raises "Cannot defer embedding
+#    wgrad compute when pipeline model parallel is not used"
+#    (model_parallel_config.py:374). It is off for every arm so they stay
+#    comparable, which costs a little throughput uniformly.
+# 3. Heads must divide TP: 16/20/24/32/64 with TP 1/2/4/4/4. Query groups
+#    8/4/8/8/8 likewise.
+# 3b. The TP=1 arm must also set sequence_parallel: false and
+#    tp_comm_overlap: false. Both are tensor-parallel features, and
+#    arguments.py:930 asserts tp_comm_overlap implies sequence_parallel. The
+#    other arms keep the parent's TP overlap ON so the larger-TP arms are not
+#    artificially penalised — the cost is that the TP=1 point is not perfectly
+#    like-for-like.
+# 4. THE SWEEP IS ANCHORED AT THE TOP AND EXTENDS DOWNWARD. The largest arm is
+#    the production configuration (32B, 1024 nodes); everything else is that
+#    setup scaled down. Nothing here extrapolates past a scale we actually run,
+#    which is why there is no 69B/2048-node arm. With DP pinned at 256 the grid
+#    is nodes = 64*TP*PP, so 64 nodes (TP=1, PP=1) is the natural floor.
+#    NB the 1024-node arm still runs GBS 16384, 4x the production batch — that
+#    is required to hold tokens/GPU constant, not a recommendation.
+# 5. params/GPU drifts 1.74 -> 2.15 B across the sweep because the geometries
+#    are round numbers. Treat a few percent of the trend as noise.
+#
+# IDEAL WEAK SCALING = FLAT TFLOP/s/GPU. With the bubble held constant, a
+# remaining slope is real: larger models gain GEMM arithmetic intensity (pushes
+# UP) but pay more TP all-reduce and PP point-to-point (pushes DOWN).
+#
+# COST: 50 iterations + startup per arm, ~15 min each
+#       production series (64..1024): ~500 node-hours
+#       small series     ( 1..16)   : ~8 node-hours
+# The small series covers the entire 1.9B -> 32B model range for the price of
+# rounding error, so run it first — it will surface geometry or memory problems
+# before you spend anything at scale.
+defaults:
+  - /experiments/oellm_32b_dense/speed_test
+  - _self_
+
+backend:
+  megatron:
+    micro_batch_size: 2
+    # the parent's 8-virtual-stage layout hard-codes 64 layers; each arm sets its
+    # own VPP through num_layers_per_virtual_pipeline_stage instead
+    pipeline_model_parallel_layout: null
+    # required by the PP=1 arms; kept off everywhere for comparability (caveat 2)
+    defer_embedding_wgrad_compute: false
+    # === DO NOT SET eval_iters: 0 — IT CRASHES ===============================
+    # A previous revision set eval_iters: 0 to avoid building a valid-split index
+    # per distinct GBS (the cache key includes num_samples per split, and these
+    # sweeps vary GBS, so several indices are needed).
+    #
+    # THAT CRASHES ON REAL DATA. Megatron builds the valid dataloader
+    # unconditionally, and a zero-sample valid split trips an assert in the
+    # sampler (seen on job 1392775, all 256 ranks):
+    #     training.py:2946  valid_dataloaders.append(build_pretraining_data_loader(...))
+    #     data_samplers.py:133  assert self.total_samples > 0
+    #     AssertionError: no sample to consume: 0
+    #
+    # Every arm of this sweep that completed ran with the inherited production
+    # eval_iters of 10, paying the index-build cost at startup. Leave it alone.
+    # eval_interval is 10000, so no evaluation actually runs during these probes;
+    # eval_iters only sizes the split.
+    wandb_project: oellm_speed_scaling
+
+job:
+  # Tangential project: keep these OUT of the flagship's namespace. The parent's
+  # template is "oellm_32b_dense_${variant}_...", which is both misleading for a
+  # 3.5B arm and would scatter logs through the production_training tree next to
+  # the real 32B runs. base_output_dir derives from job.name, so overriding it
+  # here redirects logs/wandb/tensorboard as well. (save is null in speed_test,
+  # so there are no checkpoint paths to worry about.)
+  name: "speedscale_${backend.aux.variant}_gbs${backend.megatron.global_batch_size}"
+  chain_repeat: 0
+
+slurm:
+  sbatch:
+    time: "00:40:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ==================================================================
+        # SMALL-SCALE SERIES — the same model ladder at DP=4 instead of DP=256,
+        # so it reaches ONE NODE. nodes = TP*PP, GBS = 16*nodes.
+        #
+        # READ THIS AS ITS OWN CURVE, NOT AS AN EXTENSION OF THE ARMS BELOW.
+        # tokens/GPU is still 16,384 and params/GPU still ~1.7-2.1 B, so the
+        # weak-scaling property holds WITHIN this series — but DP is 4 here and
+        # 256 there, so the two series sit at different points on the
+        # data-parallel communication curve and their absolute TFLOP/s are not
+        # directly comparable. Comparing the two series against each other is
+        # itself informative: the gap at equal model size is the cost of the
+        # larger DP all-reduce.
+        #
+        # It is also nearly free: 1+2+4+8+16 = 31 nodes total, ~8 node-hours for
+        # the whole ladder 1.9B -> 32B.
+        # ==================================================================
+        # ~1.9 B on ONE node (4 GPUs), no model parallelism at all
+        - backend.aux.variant: "weakmodel-small-1b9-n1"
+          backend.aux.active_nodes: 1
+          backend.megatron.global_batch_size: 16
+          backend.megatron.tensor_model_parallel_size: 1
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.sequence_parallel: false
+          backend.megatron.tp_comm_overlap: false
+          backend.megatron.num_layers: 24
+          backend.megatron.hidden_size: 2048
+          backend.megatron.ffn_hidden_size: 10240
+          backend.megatron.num_attention_heads: 16
+          backend.megatron.num_query_groups: 8
+
+        # ~3.5 B on 2 nodes
+        - backend.aux.variant: "weakmodel-small-3b5-n2"
+          backend.aux.active_nodes: 2
+          backend.megatron.global_batch_size: 32
+          backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.num_layers: 28
+          backend.megatron.hidden_size: 2560
+          backend.megatron.ffn_hidden_size: 12800
+          backend.megatron.num_attention_heads: 20
+          backend.megatron.num_query_groups: 4
+
+        # ~7.2 B on 4 nodes
+        - backend.aux.variant: "weakmodel-small-7b-n4"
+          backend.aux.active_nodes: 4
+          backend.megatron.global_batch_size: 64
+          backend.megatron.tensor_model_parallel_size: 4
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.num_layers: 40
+          backend.megatron.hidden_size: 3072
+          backend.megatron.ffn_hidden_size: 15360
+          backend.megatron.num_attention_heads: 24
+          backend.megatron.num_query_groups: 8
+
+        # ~16.6 B on 8 nodes, VPP=2 (52/(2*2)=13)
+        - backend.aux.variant: "weakmodel-small-17b-n8"
+          backend.aux.active_nodes: 8
+          backend.megatron.global_batch_size: 128
+          backend.megatron.tensor_model_parallel_size: 4
+          backend.megatron.pipeline_model_parallel_size: 2
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 13
+          backend.megatron.num_layers: 52
+          backend.megatron.hidden_size: 4096
+          backend.megatron.ffn_hidden_size: 20480
+          backend.megatron.num_attention_heads: 32
+          backend.megatron.num_query_groups: 8
+
+        # ~31.9 B on 16 nodes, VPP=2 (64/(4*2)=8)
+        - backend.aux.variant: "weakmodel-small-32b-n16"
+          backend.aux.active_nodes: 16
+          backend.megatron.global_batch_size: 256
+          backend.megatron.tensor_model_parallel_size: 4
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 8
+          backend.megatron.num_layers: 64
+          backend.megatron.hidden_size: 5120
+          backend.megatron.ffn_hidden_size: 25600
+          backend.megatron.num_attention_heads: 64
+          backend.megatron.num_query_groups: 8
+
+        # ==================================================================
+        # PRODUCTION-SCALE SERIES (DP=256), 64 -> 1024 nodes
+        # ==================================================================
+        # ~1.9 B — TP=1, PP=1: no model parallelism at all (the floor)
+        - backend.aux.variant: "weakmodel-1b9-n64"
+          backend.aux.active_nodes: 64
+          backend.megatron.global_batch_size: 1024
+          backend.megatron.tensor_model_parallel_size: 1
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          # TP=1 -> both are tensor-parallel features and must be off (caveat 3b)
+          backend.megatron.sequence_parallel: false
+          backend.megatron.tp_comm_overlap: false
+          backend.megatron.num_layers: 24
+          backend.megatron.hidden_size: 2048
+          backend.megatron.ffn_hidden_size: 10240
+          backend.megatron.num_attention_heads: 16
+          backend.megatron.num_query_groups: 8
+
+        # ~3.5 B — TP=2, PP=1, no pipeline
+        - backend.aux.variant: "weakmodel-3b5-n128"
+          backend.aux.active_nodes: 128
+          backend.megatron.global_batch_size: 2048
+          backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.num_layers: 28
+          backend.megatron.hidden_size: 2560
+          backend.megatron.ffn_hidden_size: 12800
+          backend.megatron.num_attention_heads: 20
+          backend.megatron.num_query_groups: 4
+
+        # ~7.2 B — TP=4, PP=1
+        - backend.aux.variant: "weakmodel-7b-n256"
+          backend.aux.active_nodes: 256
+          backend.megatron.global_batch_size: 4096
+          backend.megatron.tensor_model_parallel_size: 4
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.num_layers: 40
+          backend.megatron.hidden_size: 3072
+          backend.megatron.ffn_hidden_size: 15360
+          backend.megatron.num_attention_heads: 24
+          backend.megatron.num_query_groups: 8
+
+        # ~16.6 B — TP=4, PP=2, VPP=2 (52 / (2*2) = 13)
+        - backend.aux.variant: "weakmodel-17b-n512"
+          backend.aux.active_nodes: 512
+          backend.megatron.global_batch_size: 8192
+          backend.megatron.tensor_model_parallel_size: 4
+          backend.megatron.pipeline_model_parallel_size: 2
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 13
+          backend.megatron.num_layers: 52
+          backend.megatron.hidden_size: 4096
+          backend.megatron.ffn_hidden_size: 20480
+          backend.megatron.num_attention_heads: 32
+          backend.megatron.num_query_groups: 8
+
+        # ~31.9 B — TP=4, PP=4, VPP=2 (64 / (4*2) = 8) — production geometry
+        - backend.aux.variant: "weakmodel-32b-n1024"
+          backend.aux.active_nodes: 1024
+          backend.megatron.global_batch_size: 16384
+          backend.megatron.tensor_model_parallel_size: 4
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 8
+          backend.megatron.num_layers: 64
+          backend.megatron.hidden_size: 5120
+          backend.megatron.ffn_hidden_size: 25600
+          backend.megatron.num_attention_heads: 64
+          backend.megatron.num_query_groups: 8

@@ -10,8 +10,10 @@ untied embeddings), seq 4096, **GBS 4096**, TP=4, CP=1, sequence-parallel on,
 iterations 4..N, discarding warmup. `days@15T` = wall clock to train 15 T tokens at that step
 time, ignoring restarts and checkpoints.
 
-> **Read the caveats at the bottom before quoting any single number.** In particular the
-> run-to-run spread at this scale is **2.7%**, so differences under ~3% are not real.
+> **Read the caveats at the bottom before quoting any single number.** In particular, on a
+> single A/B pair a difference under **~3%** is not significant (σ of one run is 0.92%, so
+> σ of a difference is 1.30% and 3% ≈ 2.3σ). That threshold is **per pair**: an effect
+> reproduced across `k` pairs only needs ≈`3%/√k`.
 
 **VPP is derived, not chosen.** `arguments.py:549` sets
 `VPP = num_layout_groups // PP`, where the groups are the `|`-separated entries of
@@ -91,7 +93,8 @@ which is the 262k-vocab logit reduction.
 Three things this settles that our own sweep could not:
 
 1. **PP=8/VPP=2 is the memory-efficient near-tie, and we wrongly skipped it.** 307.2 adjusted vs
-   313.7, that is −2% (inside noise) at **mem 0.5149 vs 0.6491**. It was dropped from
+   313.7, that is −2% — 1.5σ on one pair, and in any case smaller than the ±3% carried by the
+   z-loss adjustment itself, so **not** a resolved difference — at **mem 0.5149 vs 0.6491**. It was dropped from
    `speed_pp_vpp_n1024.yaml` on the modelled bubble (21.9%, the worst of any arm) — but finding 5
    shows the bubble is not what decides this, so the reasoning that excluded it was wrong.
 2. **At PP=8 the VPP optimum is 2, not 4** (307.2 vs 300.3), the opposite of PP=4 (VPP=4 beats
@@ -156,14 +159,16 @@ Same-session A/B, identical config, only `pipeline_model_parallel_layout` differ
 | 1396484 | 8 groups | 2 | 2556.5 (2538.1–2583.2) | 333.5 | 1602.2 | 0.5518 |
 | 1395802 | 16 groups | 4 | 2459.8 (2442.8–2528.9) | 346.6 | 1665.2 | 0.6063 |
 
-**+3.9%** — above the 2.7% noise floor, but in the "real but marginal" band. Worth ~1 day on a
-26-day 15 T run at 1024 nodes.
+**+3.9%** — above the 2.6% two-sigma bar for a single A/B pair, so real, but in the "real but
+marginal" band. Worth ~1 day on a 26-day 15 T run at 1024 nodes.
 
 Two things to know before reusing this:
 
 - **It is 1024-specific.** The gain comes from the bubble, `(PP−1)/(VPP·M)` with
   `M = GBS/(mbs·DP)`. At 1024 nodes M=8, so VPP=2's bubble is 18.8%. At 512 nodes M=16 and it is
-  already 9.4%, so the modelled VPP=4 gain there is only ~+2.5% — probably under the noise floor.
+  already 9.4%, so the modelled VPP=4 gain there is only ~+2.5% — right at the 2.6% two-sigma
+  bar, that is **borderline, not dismissible**: a single A/B could not resolve it, two or three
+  repeats could (the threshold falls to 2.1% at k=2, 1.7% at k=3).
   **Do not port this to 512 without measuring.**
 - **It costs memory: +5.5 points, ~+10% relative.** An earlier prediction from Megatron source
   (that in-flight microbatches rise 10→18 while layers-per-chunk fall 8→4, so peak activation
@@ -173,8 +178,9 @@ Two things to know before reusing this:
 **VPP=8 (32 groups) is not worth testing.** Measured realisation of the modelled bubble gain was
 only ~34% (predicted +11.5%, got +3.9%) because part of the nominal bubble already overlaps DP
 comm. VPP=8 has half as much bubble left to recover (4.7 points), so ~+1.8% gross, while p2p
-doubles again (~2 points) — net ≈ 0, and below the noise floor, that is not measurable at
-acceptable cost.
+doubles again (~2 points) — net ≈ 0. A null that small is not resolvable at acceptable cost
+(it would take many repeats to separate from zero), and the sign is not even predicted to be
+positive.
 
 ### 3. FP32 gradient accumulation is free at 512 nodes, costs 7.9% at 1024
 
@@ -188,7 +194,7 @@ the argument dump in the log is the only way to confirm what ran.
 | scale | grad | job | recipe | TFLOP/s | ms/iter | mem | delta |
 |---|---|---|---|---|---|---|---|
 | 512 | bf16 | 1366543 | tensorwise | 417.3 | 4087.0 | 0.5797 | ref |
-| 512 | **fp32** | 1396514 | tensorwise | 410.7 | 4152.5 | 0.6236 | **−1.6% (≤ noise)** |
+| 512 | **fp32** | 1396514 | tensorwise | 410.7 | 4152.5 | 0.6236 | **−1.6% (1.2σ, not significant)** |
 | 1024 | bf16 | 1373121 | delayed + param_gather | 342.6 | 2488.9 | 0.6248 | ref |
 | 1024 | **fp32** | 1375942 | delayed + param_gather | 315.6 | 2701.7 | 0.6673 | **−7.9%** |
 | 1024 | **fp32** | 1396982 | tensorwise | 317.8 | 2683.4 | 0.5327 | (cross-recipe check) |
@@ -228,9 +234,12 @@ the microbatch count is tied to PP (`M = 2*PP`), so the bubble `(PP-1)/(VPP*M)` 
 `~1/(2*VPP)` and is essentially PP-independent. PP therefore has no bubble lever at all here —
 only the DP/p2p trade, which it loses.
 
-**VPP=4 is the sweet spot.** VPP 2 -> 4 buys +1.8% (306.0 -> 311.4, both with graphs), which is
-inside the 2.7% noise floor and well below the +3.9% seen in bf16 without z-loss. VPP 4 -> 8
-costs −7.8% at PP=8. Deeper interleaving has stopped paying by 4.
+**VPP=4 is the sweet spot.** VPP 2 -> 4 buys +1.8% (306.0 -> 311.4, both with graphs) — 1.4σ on
+this pair alone, so not significant by itself, and well below the +3.9% seen in bf16 without
+z-loss. It is adopted anyway because it does **not** rest on this pair alone: the same direction
+appears in the bf16 A/B (+3.9%) and in the independent `_jj` campaign, and three consistent
+pairs put the bar at ~1.7%. VPP 4 -> 8 costs −7.8% at PP=8. Deeper interleaving has stopped
+paying by 4.
 
 ### 6. CUDA graphs are a pure loss at 1024 nodes — and they cost four arms
 
@@ -334,9 +343,30 @@ sed -n '/------------------------ arguments/,/end of arguments/p' "$LOG" | sed '
 
 ## Caveats
 
-* **Run-to-run spread at 512 nodes is 2.7%.** Jobs 1365560 and 1365861 are byte-identical
-  configs and measured 320.5 vs 312.2 TFLOP/s. Treat anything under ~3% as noise, and do not
-  compare numbers across sessions when the effect you care about is that small.
+* **Treat a difference under ~3% as noise on a single A/B pair — but 2.7% is not "the
+  spread".** That number was one pair (jobs 1365560 / 1365861, byte-identical configs,
+  320.5 vs 312.2), and two samples estimate a spread badly. Measured properly on
+  2026-08-30 across `dump/all_runs_speed_20260830.csv`:
+
+  | quantity | measured |
+  |---|---|
+  | σ of one run, identical config | **0.92%** (512n production, 16 healthy jobs; 0.81% median CV across 21 repeated configs) |
+  | σ of the *difference* between two single runs | 0.92% × √2 = **1.30%** |
+  | the famous 2.7% pair | **2.0σ** of that difference distribution — an ordinary draw, not an outlier |
+
+  So **the `<3%` rule survives**: 3% is ≈2.3σ on one A/B pair, which is a sound
+  significance threshold. What was wrong is the *justification* — the run-to-run spread
+  is ~0.9%, not 2.7%, and 2.7% was a sample of the difference, not its width.
+
+  **The rule is per-pair, and that is the part people get wrong.** An effect reproduced
+  across `k` independent pairs has a threshold of ≈`3%/√k`: 2.1% at k=2, 1.7% at k=3,
+  1.5% at k=4. A consistent 2% effect seen in four arms is real and must not be waved
+  away with "under the noise floor". Every dismissal in this document was re-checked
+  against 2σ = 2.6% and all of them still stand — see the annotations inline.
+
+  Within-run spread (p10–p90 across iterations of one job) is a different and smaller
+  quantity: median **0.67%**. A long whisker is a stalled iteration, not uncertainty.
+  Details and the derivation live in `config/experiments/korbi/speed_scaling/RESULTS.md`.
 * `TFLOP/s/GPU` is Megatron's own figure and counts recompute FLOPs. No run here uses recompute,
   so it ranks identically to Tok/s/GPU — but do not compare it against runs that do.
 * TFLOP/s is **per GPU**. 1024 nodes has twice the GPUs of 512, so a lower per-GPU number still

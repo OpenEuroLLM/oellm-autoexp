@@ -1,0 +1,137 @@
+# @package _global_
+#
+# THE THREE 1.7B ARMS THAT WILL NOT RUN AT TP=1, re-run at TP=2.
+#
+# WHAT FAILS
+# ----------
+# Three arms hang forever at the dataset barrier — always at exactly 2078 index
+# loads, immediately after the BlendedDataset-TRAIN index and before the
+# BlendedDataset-VALID one. They never reach iteration 1:
+#     fp8small-strong-1b7-n512   (stalled 3/3 attempts)
+#     fp8small-weakbs-1b7-n256   (stalled 2/2 attempts)
+#     fp8small-weakbs-1b7-n512
+#
+# WHAT IT IS NOT — each ruled out by direct measurement, not assumption
+#   * NOT the cluster: fp8small-strong-7b-n512 COMPLETED 100/100 at the same
+#     512 nodes, same GBS 16384, loading the same 2080 indices.
+#   * NOT the dataset/index: the successful 400M and 7B 512-node arms request
+#     byte-identical split sizes (3661824000, 3768320, 163840) and the same
+#     valid-index hash b516b2a59069, and load it fine. BUILD lines = 0
+#     everywhere, so nothing is being constructed.
+#   * NOT node faults: the nodelists of four stalled allocations share ZERO
+#     nodes, and none recurs in >=3 stalled jobs while absent from healthy ones.
+#   * NOT filesystem contention: one stalled arm ran completely alone with an
+#     empty queue, and loaded its 2078 indices in ~50 s before hanging.
+#   * NOT premature judgement: >=256-node jobs are legitimately silent for 8+
+#     min during NCCL sync and kernel compilation, so these were only declared
+#     stalled after >900 s of silence with zero forward progress.
+#
+# WHAT CORRELATES
+# ---------------
+#   M = GBS/(mbs*DP)     DP        outcome
+#   2                    <=512     works   (weakbs-1b7 n8..n128)
+#   >=4                  <=1024    works   (strong-1b7 n8..n256)
+#   1                    2048      works   (400M @ 512, mbs 8)
+#   8                    1024      works   (7B @ 512, TP=2)
+#   2                    >=1024    STALLS  <- all three arms below
+#
+# THE FIX, AND ITS COST
+# ---------------------
+# TP=2 halves DP and doubles M, moving each arm onto a shape already proven on
+# this cluster:
+#     strong-1b7-n512   DP 2048 M2 -> DP 1024 M4  (= strong-1b7-n256, OK 100/100)
+#     weakbs-1b7-n512   DP 2048 M2 -> DP 1024 M4
+#     weakbs-1b7-n256   DP 1024 M2 -> DP  512 M4  (= weakbs-1b7-n128 DP, OK)
+# sequence_parallel goes on with TP>1 — it is what shards the activations.
+#
+# CAPTION THIS HONESTLY. These three points are NOT like-for-like with the rest
+# of the 1.7B family, which runs TP=1: the weak-batch series was designed to hold
+# M constant at 2, and these arms break that at M=4. Report them as "TP=2,
+# required to run at this scale" rather than folding them in silently. The
+# underlying reason M=2 at wide DP hangs is NOT understood — this is a
+# workaround that produces a measurement, not a diagnosis.
+#
+# Variant names are deliberately UNCHANGED so the results land in the existing
+# per-arm directories and the analysis picks them up without a regex change.
+defaults:
+  - /experiments/oellm_32b_dense/speed_test
+  - override /slurm: jupiter_autoexclude
+  - override /job: auto_cancel_speedtest
+  - _self_
+
+backend:
+  megatron:
+    fp8: hybrid
+    fp8_recipe: delayed
+    fp8_param_gather: false
+    first_last_layers_bf16: false
+    fp8_amax_history_len: 1024
+    fp8_amax_compute_algo: max
+    cuda_graph_impl: none
+    grad_reduce_in_bf16: false
+    pipeline_model_parallel_layout: null
+    defer_embedding_wgrad_compute: false
+    eval_iters: 10
+    wgrad_deferral_limit: 32
+    wandb_project: oellm_speed_scaling
+
+job:
+  name: "speedscale_${backend.aux.variant}_gbs${backend.megatron.global_batch_size}"
+  chain_repeat: 0
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.variant: "fp8small-strong-1b7-n512"
+          backend.aux.active_nodes: 512
+          backend.megatron.global_batch_size: 16384
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.sequence_parallel: true
+          backend.megatron.tp_comm_overlap: false
+          backend.megatron.num_layers: 28
+          backend.megatron.hidden_size: 2048
+          backend.megatron.ffn_hidden_size: 6144
+          backend.megatron.num_attention_heads: 16
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 100
+          slurm.sbatch.time: "00:40:00"
+
+        - backend.aux.variant: "fp8small-weakbs-1b7-n512"
+          backend.aux.active_nodes: 512
+          backend.megatron.global_batch_size: 16384
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.sequence_parallel: true
+          backend.megatron.tp_comm_overlap: false
+          backend.megatron.num_layers: 28
+          backend.megatron.hidden_size: 2048
+          backend.megatron.ffn_hidden_size: 6144
+          backend.megatron.num_attention_heads: 16
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 100
+          slurm.sbatch.time: "00:40:00"
+
+        - backend.aux.variant: "fp8small-weakbs-1b7-n256"
+          backend.aux.active_nodes: 256
+          backend.megatron.global_batch_size: 8192
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.sequence_parallel: true
+          backend.megatron.tp_comm_overlap: false
+          backend.megatron.num_layers: 28
+          backend.megatron.hidden_size: 2048
+          backend.megatron.ffn_hidden_size: 6144
+          backend.megatron.num_attention_heads: 16
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 100
+          slurm.sbatch.time: "00:30:00"

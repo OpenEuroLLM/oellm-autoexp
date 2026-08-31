@@ -1,0 +1,108 @@
+# @package _global_
+#
+# DATA-SIDE DIAGNOSTIC — same dataset configuration, 1 and 2 nodes.
+#
+# WHY
+# ---
+# Every 512-node arm of the small sweeps stalled at the FIRST dataset-loading
+# step, and every one of them uses GBS 16384. That batch size implies a valid
+# split of 3,768,320 samples (Megatron logged
+#   Building GPTDataset splits with sizes=(3661824000, 3768320, 163840))
+# whereas the prebuilt cache was made for GBS 4096, whose valid split is
+# 3,686,400. So the stall has two possible explanations that look identical from
+# a 512-node log:
+#
+#   (A) DATA-SIDE: the GBS-16384 blended index does not exist and is being
+#       BUILT from 2424 prefixes. That is slow everywhere and would reproduce
+#       on ONE node.
+#   (B) SCALE-SIDE: the index exists, and 2048 ranks loading ~2079 per-prefix
+#       indices simultaneously saturate the shared filesystem. That would NOT
+#       reproduce on one node.
+#
+# This config distinguishes them. Identical data configuration (same
+# data_args_path, train_samples, eval_iters and GBS 16384) at 1 and 2 nodes:
+#   stalls here      -> (A), the index needs building; this job IS the prebuild
+#   completes fast   -> (B), a contention problem, and the fix is staggering
+#
+# The cache itself is not corrupt: scripts/check_data_cache.py reports
+# 2424/2424 prefixes healthy, and the stalled logs show "Load the ... index
+# from ..." with no "Build and save" lines. But the blended-level indices in
+# the cache are ~42-44k valid / 42.8M train samples, which match NEITHER the
+# 3,768,320 nor the 3,661,824,000 these runs ask for — so a build is plausible.
+#
+# 400M / TP=1 / PP=1 / mbs 8, exit_interval 2: the model is irrelevant here, the
+# point is to reach and clear the dataset stage. At 1 node DP=4 so M=512 and one
+# iteration is ~30 s; two iterations is enough to prove training started.
+#
+# WALL TIME IS DELIBERATELY LONG (4 h / 3 h). If explanation (A) holds, this job
+# must be allowed to finish building the index rather than being killed — it
+# then doubles as the one-node prebuild and every later arm loads it cheaply.
+# For the same reason the 900s stall rule must NOT cancel it, so this config
+# keeps the default /job: auto_cancel (1200s) rather than the speed-test policy.
+#
+# COST: ~5 node-hours worst case. Trivial next to one stalled 512-node arm.
+defaults:
+  - /experiments/oellm_32b_dense/speed_test
+  - override /slurm: jupiter_autoexclude
+  - _self_
+
+backend:
+  megatron:
+    fp8: hybrid
+    fp8_recipe: delayed
+    fp8_param_gather: false
+    first_last_layers_bf16: false
+    fp8_amax_history_len: 1024
+    fp8_amax_compute_algo: max
+    cuda_graph_impl: none
+    grad_reduce_in_bf16: false
+    # PP=1 requires both of these off — see fp8_small_strong.yaml
+    pipeline_model_parallel_layout: null
+    defer_embedding_wgrad_compute: false
+    eval_iters: 10
+    wgrad_deferral_limit: 32
+    wandb_project: oellm_speed_scaling
+
+job:
+  name: "speedscale_${backend.aux.variant}_gbs${backend.megatron.global_batch_size}"
+  chain_repeat: 0
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.variant: "datacheck-400m-n1"
+          backend.aux.active_nodes: 1
+          backend.megatron.global_batch_size: 16384
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.tensor_model_parallel_size: 1
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.sequence_parallel: false
+          backend.megatron.tp_comm_overlap: false
+          backend.megatron.num_layers: 22
+          backend.megatron.hidden_size: 1024
+          backend.megatron.ffn_hidden_size: 3840
+          backend.megatron.num_attention_heads: 16
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 2
+          slurm.sbatch.time: "04:00:00"
+
+        - backend.aux.variant: "datacheck-400m-n2"
+          backend.aux.active_nodes: 2
+          backend.megatron.global_batch_size: 16384
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.tensor_model_parallel_size: 1
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.sequence_parallel: false
+          backend.megatron.tp_comm_overlap: false
+          backend.megatron.num_layers: 22
+          backend.megatron.hidden_size: 1024
+          backend.megatron.ffn_hidden_size: 3840
+          backend.megatron.num_attention_heads: 16
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 2
+          slurm.sbatch.time: "03:00:00"

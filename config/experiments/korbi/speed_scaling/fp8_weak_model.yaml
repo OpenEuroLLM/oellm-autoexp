@@ -1,0 +1,159 @@
+# @package _global_
+#
+# WEAK SCALING, MODEL-SIZE AXIS, in FP8, using the WINNING parallelism per size.
+#
+# DP is fixed at 256 and the model grows with the node count, so MP = TP*PP is
+# pinned by the model at each scale (1, 2, 4, 8, 16). How that MP splits between
+# TP and PP was measured in weak_model_parallelism.yaml (bf16, median TFLOP/s):
+#     3.5B 128n  M=4   TP2/PP1 325.0  >  TP1/PP2 321.9        -> TP2/PP1
+#     7B   256n  M=8   TP2/PP2 321.4  >  TP1/PP4 293.4
+#                                     >  TP4/PP1 272.9        -> TP2/PP2  (+17.8%)
+#     17B  512n  M=16  TP4/PP2 324.2  >  TP2/PP4 292.9*       -> TP4/PP2
+#     32B 1024n  M=32  TP4/PP4 337.7  vs TP2/PP8 OOM          -> TP4/PP4
+# The 7B arm was simply mis-parallelised; fixing it removes the dip that made
+# this series non-monotone.
+#
+# * the 17B alternative was HANDICAPPED: 52 layers / (PP4 * VPP2) = 6.5 is not an
+#   integer, so it ran VPP=1 with an 18.8% bubble against the baseline's 10%, and
+#   lost by about what that handicap alone predicts. TP4/PP2 is "best of those
+#   tested", NOT proven optimal. Settling it needs layers divisible by 8.
+#
+# ASSUMPTION WORTH STATING: the parallelism winners were selected under bf16 and
+# are reused here for FP8. FP8 speeds up compute but not the TP all-reduce, so
+# communication becomes relatively MORE expensive — which should, if anything,
+# favour the low-TP options even more strongly. The ordering is therefore
+# expected to hold, but it has not been re-measured. If a proposal claim rests on
+# the exact split, re-run weak_model_parallelism.yaml with the FP8 block.
+#
+# 100 iterations per arm. Iteration time grows with node count on this axis
+# (M = nodes/32), so this is ~2 min at 128 nodes and ~12 min at 1024.
+#
+# COST: ~625 node-hours, of which the 1024-node arm is ~430.
+defaults:
+  - weak_scaling_model
+  - override /slurm: jupiter_autoexclude
+  # 5-MINUTE STALL DETECTION. The parent chain resolves /job: auto_cancel, whose
+  # inactivity floor is 1200s — tuned for production runs that legitimately go
+  # quiet during multi-hundred-GB checkpoint saves. These speed tests set
+  # save: null, so 300s is safe and catches silent hangs like job 1397496
+  # (512 nodes, 12 min of total log silence, no error text, ~75 node-hours lost).
+  - override /job: auto_cancel_speedtest
+  - _self_
+
+backend:
+  megatron:
+    fp8: hybrid
+    fp8_recipe: delayed
+    fp8_param_gather: false
+    first_last_layers_bf16: false
+    fp8_amax_history_len: 1024
+    fp8_amax_compute_algo: max
+    cuda_graph_impl: none
+    # === FP32 GRADIENT ACCUMULATION — matches the production flagship ========
+    # ONE SWITCH ONLY. Do NOT also set accumulate_allreduce_grads_in_fp32:
+    # Megatron DERIVES it (arguments.py:742-745) and setting both would make this
+    # config lie about what ran:
+    #     if args.grad_reduce_in_bf16:
+    #         args.accumulate_allreduce_grads_in_fp32 = False
+    #     elif not args.accumulate_allreduce_grads_in_fp32 \
+    #          and args.main_grads_dtype == torch.float32:
+    #         args.accumulate_allreduce_grads_in_fp32 = True
+    # main_grads_dtype is fp32 here, so flipping this to false auto-enables fp32
+    # accumulation. The earlier FP8 speed tests (437-438 TFLOP/s) ran WITHOUT it;
+    # the production stability runs run WITH it, and it was measured to cost
+    # 7.8% (315.5 vs 342.3 TFLOP/s at 1024 nodes). Including it here means this
+    # sweep reports SUSTAINED production throughput rather than a speed-test
+    # ceiling the flagship does not actually operate at.
+    #
+    # NEITHER flag appears on the rendered command line — --grad-reduce-in-bf16
+    # is store_true so false omits it, and accumulate_allreduce_grads_in_fp32 is
+    # set inside Megatron. Confirm from the argument dump in the job log, not
+    # from the sbatch.
+    grad_reduce_in_bf16: false
+
+job:
+  name: "speedscale_${backend.aux.variant}_gbs${backend.megatron.global_batch_size}"
+  chain_repeat: 0
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # 1.9B — MP=1, nothing to choose
+        - backend.aux.variant: "fp8weakmodel-1b9-n64"
+          backend.aux.active_nodes: 64
+          backend.megatron.global_batch_size: 1024
+          backend.megatron.tensor_model_parallel_size: 1
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.sequence_parallel: false
+          backend.megatron.tp_comm_overlap: false
+          backend.megatron.num_layers: 24
+          backend.megatron.hidden_size: 2048
+          backend.megatron.ffn_hidden_size: 10240
+          backend.megatron.num_attention_heads: 16
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 100
+          slurm.sbatch.time: "00:25:00"
+
+        # 3.5B — TP2/PP1 won by 1.0%
+        - backend.aux.variant: "fp8weakmodel-3b5-n128"
+          backend.aux.active_nodes: 128
+          backend.megatron.global_batch_size: 2048
+          backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.num_layers: 28
+          backend.megatron.hidden_size: 2560
+          backend.megatron.ffn_hidden_size: 12800
+          backend.megatron.num_attention_heads: 20
+          backend.megatron.num_query_groups: 4
+          backend.megatron.exit_interval: 100
+          slurm.sbatch.time: "00:25:00"
+
+        # 7B — TP2/PP2 + VPP2 won by 17.8%; 40 layers / (2*2) = 10 per stage
+        - backend.aux.variant: "fp8weakmodel-7b-n256"
+          backend.aux.active_nodes: 256
+          backend.megatron.global_batch_size: 4096
+          backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.pipeline_model_parallel_size: 2
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 10
+          backend.megatron.num_layers: 40
+          backend.megatron.hidden_size: 3072
+          backend.megatron.ffn_hidden_size: 15360
+          backend.megatron.num_attention_heads: 24
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 100
+          slurm.sbatch.time: "00:30:00"
+
+        # 17B — TP4/PP2 + VPP2; 52 layers / (2*2) = 13 per stage
+        - backend.aux.variant: "fp8weakmodel-17b-n512"
+          backend.aux.active_nodes: 512
+          backend.megatron.global_batch_size: 8192
+          backend.megatron.tensor_model_parallel_size: 4
+          backend.megatron.pipeline_model_parallel_size: 2
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 13
+          backend.megatron.num_layers: 52
+          backend.megatron.hidden_size: 4096
+          backend.megatron.ffn_hidden_size: 20480
+          backend.megatron.num_attention_heads: 32
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 100
+          slurm.sbatch.time: "00:45:00"
+
+        # 32B — TP4/PP4 + VPP2; 64 layers / (4*2) = 8 per stage. TP2/PP8 OOM'd.
+        - backend.aux.variant: "fp8weakmodel-32b-n1024"
+          backend.aux.active_nodes: 1024
+          backend.megatron.global_batch_size: 16384
+          backend.megatron.tensor_model_parallel_size: 4
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 8
+          backend.megatron.num_layers: 64
+          backend.megatron.hidden_size: 5120
+          backend.megatron.ffn_hidden_size: 25600
+          backend.megatron.num_attention_heads: 40
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 100
+          slurm.sbatch.time: "00:45:00"
