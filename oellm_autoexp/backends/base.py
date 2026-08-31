@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from collections.abc import Sequence
 
-from compoconf import ConfigInterface, register
+from compoconf import ConfigInterface, NonStrictDataclass, register
 
 from oellm_autoexp.config.schema import BackendInterface
 
@@ -59,9 +59,28 @@ class NullBackend(BaseBackend):
         return " ".join(argv)
 
 
-@dataclass(kw_only=True)
-class BashBackendConfig(ConfigInterface):
+# init=False is REQUIRED by NonStrictDataclass (see its docstring); with
+# kw_only=True instead, parsing accepts the extra keys and then __init__ rejects
+# them: "BashBackendConfig.__init__() got an unexpected keyword argument
+# 'megatron'". Matches MegatronBackendConfig / OELLMEvalBackendConfig.
+@dataclass(init=False)
+class BashBackendConfig(NonStrictDataclass, BaseBackendConfig):
     """Backend that runs an arbitrary bash string instead of a real trainer.
+
+    NON-STRICT, like every other backend config (MegatronBackendConfig,
+    MegatronBridgeBackendConfig, OELLMEvalBackendConfig, TitanBackendConfig).
+    It has to be, for this backend to be usable as a per-sweep-point STAGE of a
+    megatron experiment: swapping `backend: bash` on one sweep point does not
+    remove the inherited `backend.megatron` / `backend.aux` /
+    `backend.torchrun_args` subtrees -- Hydra merges rather than replaces -- so a
+    strict parse dies with
+        ValueError: Undefined keys {'megatron', 'torchrun_args', 'aux'} ...
+        for <class BashBackendConfig>: ['class_name', 'command', 'env']
+    This is exactly why OELLMEvalBackendConfig is non-strict, which is what makes
+    the train->eval chain configs work.
+
+    The cost is the usual one: a typo in a bash-backend key is silently accepted
+    rather than rejected.
 
     Useful for exercising the monitor / job-control configs (``auto_cancel``
     etc.) on a real cluster without launching megatron: point ``command`` at a

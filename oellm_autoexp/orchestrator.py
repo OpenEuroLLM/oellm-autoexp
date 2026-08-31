@@ -503,7 +503,11 @@ def _build_job_record(
 
     base_job = job.config.job
 
-    if local_mode:
+    # `local_mode` is the global --local flag (every job in the plan);
+    # `base_job.local` is the per-job opt-in, which is what lets a multi-stage
+    # sweep run a cheap setup stage on the login node while its sibling still
+    # goes to Slurm with 512 nodes.
+    if local_mode or getattr(base_job, "local", False):
         merged_env = {
             **{k: str(v) for k, v in job.config.slurm.env.items()},
             **{k: str(v) for k, v in job.config.backend.env.items()},

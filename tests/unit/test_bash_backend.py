@@ -106,6 +106,115 @@ def test_auto_cancel_sweep_expands_to_per_event_bash_jobs():
     )
 
 
+# ---------------------------------------------------------------------------
+# job.local -- run a stage on the submitting host instead of Slurm
+# ---------------------------------------------------------------------------
+# `--local` has always existed, but it is GLOBAL: submit_jobs passes one
+# local_mode into a loop over every job, so it cannot express "this stage is a
+# filesystem operation, that one needs 512 nodes". `job.local` is the per-job
+# opt-in that makes a mixed plan possible, which is what
+# experiments/oellm_32b_dense/oellm_32b_dense_cont2_from64k needs: its seed
+# stage only symlinks a checkpoint and writes a tracker file.
+
+
+def _plan_for(config_name: str):
+    from oellm_autoexp.config.loader import load_config_reference
+    from oellm_autoexp.config.schema import ConfigSetup, RootConfig
+    from oellm_autoexp.orchestrator import build_execution_plan
+
+    setup = ConfigSetup(pwd=".", config_name=config_name, config_dir=str(REPO_CONFIG_DIR))
+    root = load_config_reference(config_setup=setup, config_class=RootConfig)
+    return build_execution_plan(root, setup)
+
+
+def _records(plan, *, local_mode: bool = False):
+    from oellm_autoexp.orchestrator import _build_job_record
+
+    return [
+        (j.config.job.name, _build_job_record(plan, j, "testsession", local_mode=local_mode))
+        for j in plan.jobs
+    ]
+
+
+def test_job_local_defaults_to_false_and_yields_slurm_jobs():
+    """Nothing becomes a local process by accident.
+
+    `local` has to be declared in config/job/default.yaml as well as on the
+    dataclass: Hydra runs in STRUCT mode, so a key absent from the yaml tree can
+    only be set with the `+` append form even when the field exists -- the same
+    trap the est_* fields carry a comment about.
+    """
+    from oellm_autoexp.monitor.submission import SlurmJobConfig
+
+    plan = _plan_for("experiments/tests/auto_cancel_sweep")
+    for job in plan.jobs:
+        assert job.config.job.local is False
+    for _name, record in _records(plan):
+        assert isinstance(record.definition, SlurmJobConfig)
+
+
+def test_global_local_mode_still_makes_every_job_local():
+    """Regression guard: adding the per-job flag must not break `--local`."""
+    from oellm_autoexp.monitor.submission import LocalJobConfig
+
+    plan = _plan_for("experiments/tests/auto_cancel_sweep")
+    for _name, record in _records(plan, local_mode=True):
+        assert isinstance(record.definition, LocalJobConfig)
+
+
+def test_per_job_local_mixes_local_and_slurm_in_one_plan():
+    """THE POINT OF THE FLAG: one plan, two executors.
+
+    The cont2 fork is a two-stage sweep -- a BashBackend `seed` stage that
+    symlinks the fork checkpoint, and a 512-node `train` stage. Before this flag
+    the only way to run the seed stage off Slurm was `--local`, which would have
+    made the 512-node stage local too.
+    """
+    from oellm_autoexp.monitor.submission import LocalJobConfig, SlurmJobConfig
+
+    plan = _plan_for("experiments/oellm_32b_dense/oellm_32b_dense_cont2_from64k")
+    by_stage = {getattr(j.config, "stage", ""): j for j in plan.jobs}
+    assert {"seed", "train"} <= set(by_stage), f"unexpected stages: {sorted(by_stage)}"
+
+    assert by_stage["seed"].config.job.local is True
+    assert by_stage["train"].config.job.local is False
+
+    kinds = {
+        getattr(j.config, "stage", ""): type(_records(plan)[i][1].definition).__name__
+        for i, j in enumerate(plan.jobs)
+    }
+    assert kinds["seed"] == LocalJobConfig.__name__
+    assert kinds["train"] == SlurmJobConfig.__name__
+
+
+def test_local_job_command_is_the_bash_command_verbatim():
+    """A local BashBackend stage runs its `command` as-is, under `bash -c`.
+
+    This is why no adaptation was needed to move the seed stage off Slurm:
+    _build_job_record wraps `backend.build_launch_command()`, and for
+    BashBackend that is the configured string itself.
+    """
+    from oellm_autoexp.monitor.submission import LocalJobConfig
+
+    plan = _plan_for("experiments/oellm_32b_dense/oellm_32b_dense_cont2_from64k")
+    seed = next(j for j in plan.jobs if getattr(j.config, "stage", "") == "seed")
+    from oellm_autoexp.orchestrator import _build_job_record
+
+    record = _build_job_record(plan, seed, "testsession")
+    assert isinstance(record.definition, LocalJobConfig)
+
+    argv = record.definition.command
+    assert argv[:2] == ["bash", "-c"]
+    # The fork is a symlink + tracker write, and it must be idempotent so a
+    # re-submitted sweep or a monitor restart cannot clobber a live tree.
+    assert "ln -sfn" in argv[2]
+    assert "latest_checkpointed_iteration.txt" in argv[2]
+
+    # Single quotes would break the Slurm path (`bash -c '...'`); the config is
+    # shared between both executors, so the constraint still applies.
+    assert "'" not in seed.config.backend.command
+
+
 def _auto_cancel_events() -> tuple[int, dict]:
     """Return (index, event) of the `inactive` entry in auto_cancel.yaml."""
     import yaml
