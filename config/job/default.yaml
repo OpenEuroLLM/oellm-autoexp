@@ -10,6 +10,13 @@ slurm: ${slurm}  # ! do not change this
 start_condition: null
 cancel_condition: null
 
+# Run on the SUBMITTING HOST instead of Slurm. Per-job counterpart to the global
+# `--local` flag. Declared here (not only on the dataclass) because Hydra runs in
+# STRUCT mode, so a key absent from this tree could otherwise only be set with
+# the `+` append form -- same trap as the est_* fields below.
+# Only for cheap setup stages: no allocation, no accounting, no time limit.
+local: false
+
 # --- submit-gate cost/runtime estimate (estimate-only, never reaches SLURM) ---
 # Declared here with null defaults so a plain `job.est_step_time_s=4.2` override
 # works. Hydra runs the config in STRUCT mode, so a key absent from the yaml
