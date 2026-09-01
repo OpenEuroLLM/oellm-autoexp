@@ -1,0 +1,85 @@
+# @package _global_
+#
+# ============================================================================
+# BUILD THE *TRAINING-SHAPED* DATASET CACHE ON /e/fscratch
+# ============================================================================
+# data_cache_build_fscratch does NOT cover a real training run, and this is easy
+# to miss because it looks like it should.
+#
+# The validation index size is computed two different ways (training.py:4698-4710):
+#
+#   skip_train: true     eval_samples = eval_iters * GBS
+#                                     = 10 * 4096            =    40,960
+#   skip_train: false    eval_samples = (train_iters // eval_interval + 1)
+#                                       * eval_iters * GBS
+#                                     = (894000//10000 + 1) * 10 * 4096
+#                                     = 90 * 40960           = 3,686,400
+#
+# num_samples is part of the cache key (megatron_dataset.py:61), so those are
+# DIFFERENT hashes and different files. data_cache_prebuild -- and therefore
+# data_cache_build_fscratch, which inherits it -- sets `skip_train: true`, so it
+# has only ever built the 40,960 one. That is exactly right for the evaluation
+# probes (stack_numerics_probe_n32) and useless to a training job.
+#
+# Consequence if you skip this: a 512-node training run pointed at the fscratch
+# cache finds its 3.69 M validation index missing and builds it INLINE, inside
+# the allocation, on 2048 ranks. That is the failure this whole prebuild pattern
+# exists to prevent, and it is why jobs 1544311/1544316/1544323 were cancelled
+# for sitting in dataset construction for 27-43 minutes on 32 nodes.
+#
+# The expensive TRAIN index (3,661,824,000 samples) is shared with
+# data_cache_build_fscratch and will already be a cache HIT, so this job only
+# adds the validation and test indices.
+#
+# ============================================================================
+# WHY IT TRAINS ONE ITERATION
+# ============================================================================
+# The 3.69 M sizing is only reachable with `skip_train: false`, which means the
+# training loop runs. `exit_interval: 1` stops it after a single iteration --
+# enough to force dataset construction, cheap because the model is the inherited
+# 2-layer stand-in.
+#
+# It is genuinely one iteration of GBS 4096 on ONE rank with micro_batch_size 1,
+# i.e. 4096 microbatches of a 2-layer / hidden-256 model. Minutes, not seconds.
+# Do NOT "optimise" that by lowering global_batch_size: GBS is IN the sizing
+# formula above, so changing it changes the hash and builds the wrong index.
+#
+# `save: null` is inherited, so the iteration writes no checkpoint.
+#
+# ============================================================================
+# ORDERING -- THIS MUST NOT RUN CONCURRENTLY WITH THE OTHER BUILD
+# ============================================================================
+# Both jobs write the same data_cache_path and share the train index. Running
+# them at the same time is the exact overlap that corrupted the cache before
+# (jobs 1354605 / 1354684), and Megatron's cache-hit test is presence-only, so
+# 0-byte files left behind are treated as valid forever after and the next job
+# dies in numpy.load with "EOFError: No data left in file" (job 1355485).
+#
+#   1. data_cache_build_fscratch              (eval shape, 40,960)
+#   2. THIS, only after that one COMPLETED    (train shape, 3,686,400)
+#
+# If either is interrupted, before re-running:
+#   find /e/fscratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense/data_cache \
+#        -maxdepth 1 -type f -size 0 -delete
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/data_cache_build_fscratch_trainshape
+#   # for the data-order experiment, matching backend.megatron.seed on the run:
+#   scripts/oellm_32b.sh --config-name \
+#       experiments/oellm_32b_dense/data_cache_build_fscratch_trainshape aux.cache_seed=4321
+defaults:
+  - data_cache_build_fscratch
+  - _self_
+
+job:
+  # Distinct from the eval-shape build so the two cannot share an output tree,
+  # and so the logs say which shape was built.
+  name: "oellm_32b_dense_data_cache_build_fscratch_trainshape_seed${aux.cache_seed}"
+
+backend:
+  megatron:
+    # THE POINT OF THIS FILE. With skip_train true the validation index is sized
+    # eval_iters * GBS and the 3.69 M index is unreachable.
+    skip_train: false
+    # Stop immediately after the first iteration; dataset construction has
+    # already happened by then.
+    exit_interval: 1

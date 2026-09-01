@@ -2777,6 +2777,38 @@ class MegatronConfig(ConfigInterface):
     # Save router weight tensors to a .pt sidecar file.
     moe_routing_trace_dump_weights: bool = False
 
+    # Collect per-layer diagnostics every N iterations. 0 disables all of the --diag-*
+    # collectors below. The activation collector is the only expensive one; 100 keeps its
+    # amortised cost under a thousandth of step time.
+    diagnostics_interval: int = 0
+
+    # Scan every weight and gradient for NaN/Inf and print the offending parameter names.
+    # Unlike --check-for-nan-in-loss-and-grad this localises the problem instead of only
+    # aborting on it.
+    diag_nonfinite: bool = False
+
+    # Log mean/std/min/max of every RMSNorm/LayerNorm gain, per layer. Norm gains get
+    # wd_mult=0 by default, so nothing opposes their drift; if they do go extreme the levers
+    # are --residual-norm-wd-mult / --qk-layernorm-wd-mult or zero-centred RMSNorm.
+    diag_norm_gains: bool = False
+
+    # Log the L2 gradient norm of every transformer layer separately, plus
+    # embedding/output_layer. Exposes the early-vs-late layer asymmetry that the single global
+    # grad norm averages away.
+    diag_layer_grad_norms: bool = False
+
+    # Log the RMSNorm denominator sqrt(mean(x^2)) and the mean of the input to every norm,
+    # plus a non-finite count, from the first microbatch of a diagnostic iteration. This is
+    # the one collector with a real cost (bandwidth-bound, ~20 GB of reads for a 64-layer 32B
+    # model).
+    diag_activations: bool = False
+
+    # Track gradient-clipping events on EVERY step (a streak can only be counted that way) and
+    # report the streak length, the fired fraction, the smallest clip coefficient and the
+    # mean/min/max of the pre-clip total norm -- the clip denominator -- over the logging
+    # interval. Free, and independent of --diagnostics-interval.
+    diag_clip_events: bool = False
+
     # Number of top logits to save.
     logits_save_top_k: int | None | None = None
 

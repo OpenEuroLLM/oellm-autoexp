@@ -114,6 +114,12 @@ delay_wgrad_compute: false  # Delay the weight gradient computation to improve b
 delta_offload_bytes_across_pp_ranks: 0  # Difference of offload bytes across PP ranks to balance the offload load. For more details, see the documentation: https://github.com/NVIDIA/Megatron-LM/blob/main/docs/user-guide/features/fine_grained_activation_offloading.md#tuning-parameters.
 deprecated_use_mcore_models: false  # DEPRECATED. Use the implementation from megatron core.Now ignored and mcore models are the default.
 deterministic_mode: false  # If true, code that has deterministic execution will be chosen. This usually means slower execution, but is good for debugging and testing. Defaults to False.
+diag_activations: false  # Log the RMSNorm denominator sqrt(mean(x^2)) and the mean of the input to every norm, plus a non-finite count, from the first microbatch of a diagnostic iteration. This is the one collector with a real cost (bandwidth-bound, ~20 GB of reads for a 64-layer 32B model).
+diag_clip_events: false  # Track gradient-clipping events on EVERY step (a streak can only be counted that way) and report the streak length, the fired fraction, the smallest clip coefficient and the mean/min/max of the pre-clip total norm -- the clip denominator -- over the logging interval. Free, and independent of --diagnostics-interval.
+diag_layer_grad_norms: false  # Log the L2 gradient norm of every transformer layer separately, plus embedding/output_layer. Exposes the early-vs-late layer asymmetry that the single global grad norm averages away.
+diag_nonfinite: false  # Scan every weight and gradient for NaN/Inf and print the offending parameter names. Unlike --check-for-nan-in-loss-and-grad this localises the problem instead of only aborting on it.
+diag_norm_gains: false  # Log mean/std/min/max of every RMSNorm/LayerNorm gain, per layer. Norm gains get wd_mult=0 by default, so nothing opposes their drift; if they do go extreme the levers are --residual-norm-wd-mult / --qk-layernorm-wd-mult or zero-centred RMSNorm.
+diagnostics_interval: 0  # Collect per-layer diagnostics every N iterations. 0 disables all of the --diag-* collectors below. The activation collector is the only expensive one; 100 keeps its amortised cost under a thousandth of step time.
 dino_bottleneck_size: 256  # Bottle neck dimension in dino head
 dino_freeze_last_layer: 1  # Freezing last layer weights
 dino_head_hidden_size: 2048  # Hidden dimension size in dino head
