@@ -1,0 +1,203 @@
+# @package _global_
+#
+# ============================================================================
+# _cont4: IS FP8 THE CAUSE? -- bf16 fork, from BEFORE the turn (iteration 60000)
+# ============================================================================
+# The strongest remaining hypothesis, and the only one whose mechanism matches
+# the symptom: a smooth, spike-free, monotone drift.
+#
+# WHY FP8, WHEN THE FP8 STATE LOOKS HEALTHY
+# -----------------------------------------
+# The offline audit (scripts/korbi/inspect_fp8_amax.py) showed no non-finite
+# values across five checkpoints and `scale == fp8_max/amax` reproducing
+# exactly. That proves the BOOKKEEPING is consistent. It says nothing about
+# whether training IN fp8 is harmless -- quantization error accumulating in the
+# weights would leave every one of those invariants intact.
+#
+# What makes it the leading candidate:
+#   * it degrades gradually, with no excursions -- error accumulation, not an
+#     instability. Every metric we log stays flat: grad norm actually FALLS
+#     (0.512 -> 0.457) across the turn, clip_grad never binds, zero NaN or
+#     skipped iterations.
+#   * forward activations are GROWING: the median fp8 scale_fwd fell
+#     monotonically 610 -> 464 -> 410 -> 382 -> 352 between iterations 40000 and
+#     72000, i.e. amax rose ~1.7x. E4M3 carries 448 of range and delayed scaling
+#     lags by up to fp8_amax_history_len = 1024 steps, so the headroom the
+#     recipe assumes is being eaten.
+#   * it is invisible in everything we have measured, which is exactly the
+#     position this investigation is in.
+#
+# WHAT IS ALREADY DEAD (so this is close to the last first-order candidate)
+#   software stack   probe measured 1.519173 at ckpt 72000 under te218+FA3,
+#                    te218+cuDNN AND nemo_26.04+cuDNN -- identical to 6 dp.
+#   data order       _cont2 reshuffled with seed 4321 and the loss rose anyway.
+#   hardware / SDC   the two degrading allocations shared ZERO nodes.
+#   weight decay     weights RISE (RMS 0.016688 -> 0.017121), so decay is not
+#                    dominating the gradient; and 0.19 still exempts every 1-D
+#                    param, so the port changed nothing.
+#   learning rate    low prior: a rate above threshold produces spikes and a
+#                    RISING gradient norm. We see neither.
+#   masking          under test now by _cont3.
+#
+# ============================================================================
+# WHY FORK FROM 60000 AND NOT 64000
+# ============================================================================
+# 64000 IS the turn. An intervention applied exactly there can only be judged on
+# whether it REVERSES damage that may already be latent in the weights -- and if
+# it fails to, that is indistinguishable from "the hypothesis is wrong".
+#
+# 60000 gives 4000 iterations of runway before the original turned over, so this
+# arm answers the sharper question: does bf16 PREVENT the turn? It is also a
+# persistent checkpoint (save_interval 4000), so nothing rotates it.
+#
+# Control: the flagship's own 60000 -> 74000 curve, already recorded.
+#   bin      60000    62000    64000    66000    68000    70000    72000   74000
+#   loss   1.546738 1.545624 1.544005 1.548968 1.556254 1.560867 1.573184 1.579815
+#
+#   FP8 IMPLICATED   the curve keeps falling past ~64000, or flattens, instead of
+#                    turning up.
+#   FP8 CLEARED      it turns over on the same schedule as the control despite
+#                    bf16, and the cause is neither the data, the stack, the
+#                    hardware nor the numerics format.
+#
+# ============================================================================
+# ONE VARIABLE. EVERYTHING ELSE IS PRODUCTION.
+# ============================================================================
+# seed 1234 (production's own data order -- NOT cont2's 4321), masking ON,
+# te218-fa3 + FlashAttention 3, lr 3e-4, GBS 4096, TP4 x PP4 x VPP4. Only `fp8`
+# changes.
+#
+# The seed-1234 train-shape cache at this path was built by job 1548567
+# (COMPLETED), so this is a cache HIT and needs no prebuild.
+#
+# ============================================================================
+# TWO THINGS TO WATCH ON THE FIRST LAUNCH
+# ============================================================================
+# 1. LOADING AN FP8-WRITTEN CHECKPOINT INTO A bf16 RUN. iter_0060000 carries the
+#    TE `_extra_state` blobs (scale_fwd / amax_history_fwd / ...) that a bf16
+#    model has no use for. Production sets
+#    `dist_ckpt_strictness: assume_ok_unexpected`, which is what should let the
+#    unexpected keys pass -- but this combination has never been run here.
+#    A load-time failure would look like a strictness or extra-state error in
+#    the first minutes. preflight CANNOT catch it; it is a load-path behaviour.
+# 2. THROUGHPUT AND MEMORY. Expect roughly 250-300 TFLOP/s/GPU against
+#    production's ~400, hence est_step_time_s 6.0 below. Memory should not rise
+#    -- fp8 keeps bf16 params AND fp8 copies, so dropping it usually costs less
+#    memory, not more -- but production already sits at 0.847, so check the
+#    first `mem usages` line rather than assuming.
+#
+# ============================================================================
+# HOW TO RUN IT
+# ============================================================================
+# RUN WITH THE MONITOR. The seed stage is a local job whose tracker file the
+# train stage waits on via FileExistsCondition; `--submit-and-exit` evaluates
+# that condition exactly once (run_autoexp.py:538) and the train stage would
+# never be submitted. Keep chain_repeat at 1 -- chain mode bypasses the gate.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/oellm_32b_dense_cont4_bf16_from60k
+defaults:
+  - oellm_32b_dense_cont2_from64k
+  - _self_
+
+aux:
+  # The ORIGINAL flagship tree, 4000 iterations before the turn. READ ONLY.
+  parent_ckpts: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4/checkpoints
+  fork_iter: 60000
+  fork_iter_dir: iter_0060000
+
+  # Carries the whole identity: checkpoint tree, run name and the seed stage's
+  # job name all derive from it in the parent.
+  variant_tag: "prod_dataopt5_cont4_bf16_seed1234"
+
+backend:
+  # NVTE_DEBUG / NVTE_DEBUG_LEVEL WERE HERE AND HAVE BEEN REMOVED. Level 2 prints
+  # the backend-selection block on EVERY attention call on EVERY rank: job
+  # 1576287 produced 8,464,730 "Available backends" lines and a 14.3 GB log
+  # before it was killed, while otherwise running correctly (checkpoint loaded,
+  # FusedAttention selected). At 2048 ranks nothing chatty may go through srun's
+  # shared stdout -- the same failure that froze job 1356626 with
+  # NCCL_DEBUG=info and truncated job 1365562 with tqdm.
+  #
+  # USE IT ONLY ON A SMALL, SHORT JOB (see attn_backend_probe_bf16_1node), never
+  # on 512 nodes.
+
+  megatron:
+    # ---- THE ONE VARIABLE ---------------------------------------------------
+    # null, not false: `fp8` names the recipe ("hybrid"), so absence is how it is
+    # switched off. fp8_recipe / fp8_amax_* / fp8_param_gather /
+    # first_last_layers_bf16 stay at their production values and simply become
+    # inert -- left in place deliberately so the diff against production is ONE
+    # line and flipping fp8 back needs no other edit.
+    fp8: null
+
+    # Production's data order, NOT cont2's 4321 -- this arm must not confound the
+    # numerics question with a different document stream.
+    seed: 1234
+
+    # ---- DIAGNOSTIC, remove once bf16 starts cleanly ------------------------
+    # attn_backend_probe_bf16_1node reproduced this configuration's attention at
+    # small scale FIVE times -- PP=1, PP=4, PP4+VPP4, both containers -- and TE
+    # selected cuDNN FusedAttention every time, in bf16, with masking on. So the
+    # shape is supported and the failure here is caused by something the probe
+    # does not reproduce (num_layers 64, the checkpoint load, the PP flags, or
+    # scale). Rather than guess, make TE state its reason AT the failing config:
+    # at level 2 it prints, per backend, why each was rejected.
+    #
+    # Costs nothing but log volume, and the failing runs die in ~10 min anyway.
+
+    # ---- REQUIRED WITH fp8 OFF. NOT optional, and not a free choice. --------
+    # Production runs `attention_backend: flash` (FA3). In bf16 that combination
+    # has NO valid kernel for the thd/cu_seqlens layout document masking
+    # produces, and because `--attention-backend flash` makes Megatron pin the
+    # NVTE_* variables, Transformer Engine has no fallback to select. Every rank
+    # dies at the first forward with
+    #     ValueError: No dot product attention backend is available for the
+    #     provided inputs.
+    # and the survivors then fail c10d rendezvous, which buries the real cause
+    # under thousands of DistBackendError lines.
+    #
+    # MEASURED 2026-08-31: 7 consecutive 512-node bf16 starts died this way
+    # (1565209/1565895/1566470/1566161/1567010/1573069/1573297, 1024-1536 hits
+    # each), while the fp8 arms cont2 and cont3 have ZERO. The failure is
+    # numerics-dependent, NOT scale-dependent -- an easy thing to get backwards,
+    # because a 32-node fp8 control passes at the same moment a 512-node bf16
+    # job fails, which looks exactly like a scale wall.
+    #
+    # `auto` lets TE select cuDNN FusedAttention, which handles bf16 + thd. This
+    # costs NOTHING scientifically: stack_numerics_probe_n32 measured FA3 and
+    # cuDNN at 1.519173 on identical weights and batches -- identical to six
+    # decimals -- so the FP8 comparison against the flagship stays valid.
+    attention_backend: auto
+
+    # ---- DIAGNOSTICS ---------------------------------------------------------
+    # ⚠ log_max_attention_logit IS NOT FREE AND MUST STAY OFF. It was set here,
+    # described as "pure logging", and it KILLED EIGHT CONSECUTIVE 512-NODE
+    # STARTS (~700 GPU-h). Asking TE for per-head max logits removes every fused
+    # attention kernel:
+    #     Disabling FlashAttention for max_logit
+    #     Disabling FusedAttention as no backend supports the provided input
+    #     Available backends = {FlashAttention=False, FusedAttention=False,
+    #                           UnfusedDotProductAttention=True}
+    # Only unfused remains, which materialises the full attention matrix and
+    # OOMs at production shape. With `attention_backend: flash` it instead dies
+    # as `ValueError: No dot product attention backend is available`.
+    #
+    # WHY IT LOOKED LIKE A bf16 PROBLEM. This flag lived only in the bf16 forks
+    # (cont4 and cont5, which inherits it). cont2, cont3 and every probe had it
+    # False, so "bf16" and "the flag" were perfectly confounded across all eight
+    # failures -- and a 32-node fp8 control passing at the same moment made it
+    # look like a scale wall too. Diagnosed only after setting
+    # NVTE_DEBUG_LEVEL=2, which names the reason in one line.
+    #
+    # The remaining three are genuinely free -- they touch grads/params, not the
+    # attention kernel selection.
+    log_params_norm: true
+    log_num_zeros_in_grad: true
+    check_for_spiky_loss: true
+
+job:
+  chain_repeat: 1
+  # bf16 is markedly slower than fp8; this only prices the submit gate.
+  est_step_time_s: 6.0
+  est_startup_min: 15
+  est_steps: 6900

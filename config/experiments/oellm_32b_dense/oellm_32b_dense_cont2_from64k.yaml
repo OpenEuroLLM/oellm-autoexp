@@ -1,0 +1,349 @@
+# @package _global_
+#
+# ============================================================================
+# _cont2: FORK THE FLAGSHIP FROM ITS LOSS MINIMUM (iteration 64000)
+# ============================================================================
+# Two stages:
+#   stage=seed   BashBackend, 1 node, seconds. Symlinks the fork checkpoint into
+#                THIS run's own checkpoint tree and writes the tracker file.
+#   stage=train  The 32B run, resuming from its OWN tree (load == save) with no
+#                ckpt_step pin, gated on the tracker file appearing.
+#
+# WHY THE SEED STAGE EXISTS -- THE FAILURE IT REMOVES
+# ---------------------------------------------------
+# The obvious way to fork is `load: <parent>` + `ckpt_step: 64000`. That works
+# on the first launch and is subtly broken afterwards: with load != save, the
+# run's OWN PERSISTENT checkpoints are never read again. Megatron resolves the
+# resume point from the LOAD tree's tracker (checkpointing.py:1668-1671), which
+# is the parent's, so the iter_0068000 / iter_0072000 this run writes into its
+# `save` tree are invisible to it. The recovery surface collapses to the rolling
+# checkpoint (125 iterations) plus the fork point -- lose or corrupt the rolling
+# dir and you fall all the way back to 64000, with good checkpoints sitting
+# unused on disk.
+#
+# Seeding makes load == save, the ordinary production arrangement: persistent and
+# rolling both resolve and the newest wins (checkpointing.py:1681-1692), so an
+# intermittent failure costs at most non_persistent_save_interval iterations. It
+# also makes /job: auto_restart_ckptreset safe again -- QuarantineCheckpointAction
+# can then only rename something inside this run's tree, never the parent's.
+#
+# ============================================================================
+# THE RISE THIS FORKS AWAY FROM
+# ============================================================================
+#   bin      60000    62000    64000    66000    68000    70000    72000   74000
+#   loss   1.546738 1.545624 1.544005 1.548968 1.556254 1.560867 1.573184 1.579815
+#   delta   +0.0027  +0.0016   0 (min) +0.0050  +0.0122  +0.0169  +0.0292 +0.0358
+#
+# 2000-iteration means over ~400 logged points each, so bin noise is ~0.0005. Do
+# NOT read the minimum off single logged losses -- they carry ~0.01 of noise and
+# put it at 60005, which is wrong by two checkpoints.
+#
+# Validation confirms it independently: 1.532072 / 1.517015 / 1.502056 /
+# 1.507420 at 40k/50k/60k/70k -- a turn from -0.015 per 10k to +0.005 per 10k.
+#
+# ============================================================================
+# AS WRITTEN THIS IS PREDICTED TO REPRODUCE THE RISE, NOT FIX IT
+# ============================================================================
+# The learning rate is deliberately held at 3e-4 and nothing else differs from
+# the run that produced the table. On resume the data order is deterministic
+# (seed 1234, data_sharding true, consumed_train_samples restored), Adam m/v is
+# restored, and the FP8 amax history and scales are restored with the weights.
+# Kernel non-determinism perturbs individual steps; the TREND reproduces.
+#
+# The one hypothesis a plain restart would have tested is already dead. Silent
+# data corruption fits the symptoms almost perfectly -- gradual, never a NaN,
+# invisible in grad norm and in every checkpoint statistic -- and production runs
+# `rerun_mode: disabled`, which switches the SDC re-run protocol OFF. But the two
+# degrading allocations share ZERO nodes:
+#
+#   1535676  59501-64345  healthy, contains the minimum
+#   1536694  64251-66665  turn begins            |  intersection of these
+#   1537344  66626-75125  rise continues         |  two node sets = 0 nodes
+#
+# No hardware fault spans disjoint allocations. A third will behave like them.
+#
+# SO: SET ONE OF THE CANDIDATES BELOW. Submitting with neither is a re-run.
+# THE CONTROL IS ALREADY PAID FOR -- the flagship's own 64000->74000 segment is
+# recorded in slurm-1536694.log / slurm-1537344.log, so ONE arm is a complete
+# controlled experiment. Compare binned curves against the table above.
+#
+# ============================================================================
+# ALREADY RULED OUT (2026-08-30, offline from the checkpoints, no GPU)
+# ============================================================================
+#   * the 0.16->0.19 + te218 + FA3 stack switch. It happened at iteration 34454
+#     and the loss then IMPROVED for ~25000 iterations.
+#   * FP8 numerics. No non-finite values across five checkpoints, and
+#     scale == fp8_max/amax reproduces exactly.
+#   * weight decay silently enabled on norm gains by the 0.19 port.
+#     `ParamKey.matches` is an OR (optimizer_config.py:89), so all 1-D params
+#     still get wd_mult 0, exactly as our old `scaler_wd_mult: 0.0` did.
+#   * optimization instability. Grad norm FALLS (0.512 -> 0.457), z-loss flat,
+#     zero NaN/skipped iterations, clip_grad never binds.
+#   * attention logit growth. ||gamma_q * gamma_k||/sqrt(head_dim) grows
+#     2.264 -> 2.499 (40k -> 72k) but DECELERATING while the degradation
+#     accelerates -- anti-correlated.
+#   * weight decay dominating the gradient. That needs shrinking weights; weight
+#     RMS instead RISES 0.016688 -> 0.017121 (48k -> 72k).
+#   * hardware / SDC. Disjoint node sets, above.
+#
+# ============================================================================
+# CANDIDATE A -- DATA ORDER
+# ============================================================================
+# MEASURED 2026-08-31 by stack_numerics_probe_n32, which scored checkpoints
+# 60000 and 72000 on IDENTICAL held-out batches:
+#
+#   held-out  60000 -> 72000   1.500890 -> 1.519173   +0.018283
+#   train     60000 -> 72000   1.546738 -> 1.573184   +0.026446
+#   => 69% OF THE TRAIN RISE IS REAL MODEL DEGRADATION
+#
+# (Sanity: the probe reads 1.500890 at 60000 against production's own logged
+# 1.502056 -- different sample subsets, agreeing to 1.2E-03.)
+#
+# THIS SUPERSEDES AN EARLIER, WRONG READING. Comparing production's logged
+# validation (60k->70k, +0.0054) against the train rise over the same window
+# (+0.0141) suggested a 2.6:1 decoupling and that a MAJORITY of the rise was
+# train-stream difficulty rather than model damage. That comparison was
+# misleading: it used a shorter window, before the rise steepened, and the two
+# series are scored on different sample subsets. Measured properly on identical
+# batches over the same window, most of the rise IS the model getting worse.
+#
+# So this arm does NOT test "is the data merely harder". It tests whether the
+# specific documents the deterministic order serves after 64000 are actively
+# DAMAGING -- bad data degrades weights, and that damage persists. Reshuffling
+# avoids that stretch without touching the recipe.
+#
+#     backend.megatron.seed: 4321        # NB `seed`, NOT `random_seed`
+#
+# Megatron feeds args.seed into GPTDatasetConfig(random_seed=...), so the name in
+# the config dump is not the name you set. Needs its OWN cache build first
+# (~1 h, 1 node), because random_seed is in the cache key:
+#     scripts/oellm_32b.sh --config-name \
+#         experiments/oellm_32b_dense/data_cache_build_fscratch aux.cache_seed=4321
+#
+# ============================================================================
+# CANDIDATE B -- LEARNING RATE
+# ============================================================================
+# 3e-4 is constant and stays constant for another ~730,000 iterations -- WSD
+# decay does not begin until 3295.64 M samples (~iteration 804,600) and we are at
+# 262 M. Everything measurable inflates smoothly while the loss turns over, with
+# no instability, which is what a rate above the sustainable level looks like.
+#
+#     backend.aux.lr_tag: "1.5e-4"       # cosmetic, feeds job.name
+#     backend.megatron.lr: 1.5e-4
+#     backend.megatron.override_opt_param_scheduler: true
+#
+# The override is MANDATORY. Without it the job dies on arrival:
+#     AssertionError: OptimizerParamScheduler: class input value 0.00015 and
+#     checkpoint value 0.0003 for learning rate do not match
+# (optimizer_param_scheduler.py:333). It also resets the WHOLE schedule from the
+# arguments -- max_lr, min_lr, warmup, decay style and decay steps -- which is
+# safe here only because everything except `lr` is inherited unchanged and
+# 64000 * 4096 = 262.1 M samples is far past lr_warmup_samples 40.96 M.
+#
+# ============================================================================
+# HOW TO RUN IT -- THE MONITOR IS REQUIRED
+# ============================================================================
+# Stage ordering is enforced by the train stage's start_condition, NOT by the
+# DAG (edges from ${sibling...} order CONFIG RESOLUTION, not execution) and NOT
+# by Slurm dependencies (those are keyed per-job for chain_repeat, and
+# orchestrator.py:676-683 documents why they must not be reused across arms).
+#
+# start_condition is evaluated in the monitor loop for unsubmitted jobs
+# (loop.py:317-321). So:
+#
+#   * RUN WITH THE MONITOR. `--submit-and-exit` and `--no-monitor` call
+#     observe_once() exactly once (run_autoexp.py:538); the train stage's
+#     condition is false at that instant, it is never retried, and only the seed
+#     stage would ever be submitted.
+#   * KEEP chain_repeat AT 1. use_chain (run_autoexp.py:524) routes to
+#     chain_submit_jobs, which submits everything up front as a Slurm dependency
+#     chain and bypasses start_condition entirely.
+#
+# Resilience across the 12 h wall comes from /job: auto_restart_ckptreset's
+# RestartAction -- which is how production already recovers -- not from chaining.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/oellm_32b_dense_cont2_from64k
+#
+# ============================================================================
+# READ-OFF
+# ============================================================================
+#   FIXED      binned loss at 66000/68000/70000 sits at or below 1.544005
+#              instead of climbing to 1.548968 / 1.556254 / 1.560867.
+#   NOT FIXED  it tracks the control, and whatever you varied is eliminated.
+# Compare on BINS, not single points.
+defaults:
+  - oellm_32b_dense_production
+  - _self_
+
+aux:
+  # ---- the parent run, READ ONLY -------------------------------------------
+  parent_ckpts: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4/checkpoints
+  fork_iter: 64000
+  # Megatron writes iter_%07d, so the directory name is zero-padded.
+  fork_iter_dir: iter_0064000
+
+  # ---- this run's own tree --------------------------------------------------
+  # HARDCODED rather than derived from ${job.name}: the seed stage runs
+  # BashBackend, so it has no backend.megatron and cannot resolve production's
+  # name pattern. One literal both stages agree on is the simplest thing that
+  # works; save, load and the rolling dir are all built from it below.
+  # SINGLE SOURCE OF TRUTH for this fork's identity. The checkpoint tree, the
+  # run name and the seed stage's job name all derive from it, so a child config
+  # (e.g. oellm_32b_dense_cont3_oldsettings) overrides ONE value and cannot end
+  # up writing its seed-stage logs into this run's directory or claiming the
+  # wrong fork iteration in its name.
+  #
+  # The SEED IS IN IT on purpose: a fork at a different data order must not
+  # share a checkpoint tree with this one, and the data seed is invisible in
+  # every other part of the path.
+  variant_tag: "prod_dataopt5_cont2_seed4321"
+  cont2_root: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_${aux.variant_tag}
+
+  # The dataset index cache, moved to /e/fscratch.
+  # data_cache_build_fscratch MUST have completed first -- a new path is a clean
+  # cache MISS, and Megatron's response to a miss is to build the 15 T index
+  # inline, which on this job means doing it on 512 nodes.
+  fscratch_cache: /e/fscratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense/data_cache
+
+backend:
+  aux:
+    variant: ${aux.variant_tag}
+    # UNCHANGED at 3e-4. This fork varies the DATA ORDER only -- see CANDIDATE A.
+    lr_tag: "3e-4"
+
+  megatron:
+    # ---- load == save: an ordinary run over its OWN tree ---------------------
+    # No ckpt_step. On the first launch the tracker the seed stage wrote says
+    # 64000; after that this run's own checkpoints take over normally.
+    load: ${aux.cont2_root}/checkpoints
+    save: ${aux.cont2_root}/checkpoints
+    non_persistent_global_ckpt_dir: ${aux.cont2_root}/checkpoints_rolling
+    # If the seed stage did not run, fail loudly rather than starting a 32B model
+    # from random init -- a fresh-init loss is a plausible-looking number, which
+    # is what makes that failure mode dangerous.
+    exit_on_missing_checkpoint: true
+
+    data_cache_path: ${aux.fscratch_cache}
+
+    # ---- THE VARIABLE: CANDIDATE A, data order ------------------------------
+    # `seed`, NOT `random_seed` -- Megatron feeds args.seed into
+    # GPTDatasetConfig(random_seed=...), so the name in the config dump is not
+    # the name you set here.
+    #
+    # MUST MATCH the cache build's aux.cache_seed, or this 512-node job finds a
+    # clean cache MISS and rebuilds the 15 T index inside its own allocation:
+    #   scripts/oellm_32b.sh --config-name \
+    #       experiments/oellm_32b_dense/data_cache_build_fscratch_trainshape \
+    #       aux.cache_seed=4321
+    # Measured cost of one cache shape: 170 GB / 3622 files / ~50 min on 1 node.
+    seed: 4321
+
+    # The learning rate is deliberately NOT changed here. To test CANDIDATE B
+    # instead, set BOTH of these (the override is mandatory, or it asserts on
+    # arrival) and revert `seed` to the production 1234:
+    # lr: 1.5e-4
+    # override_opt_param_scheduler: true
+
+    # Everything else -- masking, FA3, the te218 container, fp8 hybrid/delayed/
+    # 1024/max, TP4 x PP4 x VPP4, GBS 4096, mbs 2, fp32 grad accumulation,
+    # weight decay, z-loss -- is inherited from production UNCHANGED.
+
+job:
+  # MUST stay 1 -- see "HOW TO RUN IT". chain_repeat > 1 bypasses the gate.
+  chain_repeat: 1
+  est_step_time_s: 4.2
+  est_startup_min: 15
+  # One 11.5 h segment (exit_duration_in_mins 690), for the submit gate only;
+  # production's expression would coalesce to the full 894000.
+  est_steps: 9800
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ================== stage 1: seed the checkpoint tree ==================
+        # Runs in SECONDS on one node. Symlinks rather than copies: the
+        # checkpoint is ~443 GB over ~4098 files on a filesystem where plain
+        # `ls` times out for us. Megatron never rewrites checkpoint files in
+        # place, and QuarantineCheckpointAction renames the SYMLINK, never the
+        # parent's directory, so sharing the target is safe.
+        - stage: seed
+          # `slurm.launcher_cmd: ""` (below) is what removes the apptainer
+          # wrapper and gives a plain `srun bash -c ...`, which is all a symlink
+          # needs. The container group is deliberately NOT swapped to `none`:
+          # config/container/none.yaml is literally `null`, which would normally
+          # make schema.py:156 skip its MACHINE_NAME assert -- but production
+          # sets container.image/python in its BODY, and that merges back on top
+          # of the null, leaving a container with no `env` and failing the
+          # assert with KeyError: 'MACHINE_NAME'. Inheriting the jupiter
+          # container keeps both sides at JUPITER, and the image is simply
+          # unused once launcher_cmd is empty.
+          backend: bash
+          # NOT auto_restart_ckptreset: its QuarantineCheckpointAction resolves
+          # ${backend.megatron.save}, which does not exist under BashBackend.
+          job: auto_cancel
+
+          # Explicit, because production's job.name interpolates
+          # ${backend.megatron.global_batch_size} and ${backend.aux.*}, and the
+          # bash backend has neither.
+          # Derived, so a child config that repoints the fork cannot inherit
+          # a name claiming the wrong run or the wrong iteration.
+          job.name: "oellm_32b_dense_seed_it${aux.fork_iter}_${aux.variant_tag}"
+          job.est_steps: 1
+          job.est_step_time_s: 60
+          job.est_startup_min: 2
+
+          # RUN ON THE LOGIN NODE, not Slurm. This stage creates one symlink and
+          # writes a 6-byte tracker file -- it has no business holding an
+          # allocation. As a Slurm job it completed in 11 s (job 1549594), so the
+          # win is not runtime: it is that a local stage runs INSIDE the monitor
+          # loop, so the train stage's FileExistsCondition clears on the next
+          # tick and the whole fork is one command. Submitted as two Slurm jobs
+          # you must wait for stage 0 to finish before stage 1 can be submitted,
+          # because the condition is evaluated at submit time.
+          #
+          # Safe here precisely because the work is trivial: no allocation, no
+          # Slurm accounting, no cgroup, no time limit. Never set this on
+          # anything that needs GPUs.
+          job.local: true
+
+          # Single quotes are impossible here (the template wraps the whole
+          # command in `bash -c '...'`) and shell ${VAR} would be eaten by
+          # OmegaConf -- plain $VAR is fine. The ${aux.*} below are DELIBERATE:
+          # they resolve at render time to literal paths.
+          #
+          # Idempotent: re-running the sweep, or a monitor restart, must not
+          # fail or clobber. The tracker file is the marker.
+          backend.command: |
+            set -eu
+            SRC="${aux.parent_ckpts}/${aux.fork_iter_dir}"
+            DST="${aux.cont2_root}/checkpoints"
+            TRACKER="$DST/latest_checkpointed_iteration.txt"
+            if [ -e "$TRACKER" ]; then
+              echo "[seed] $TRACKER exists -- already seeded, nothing to do"
+              exit 0
+            fi
+            if [ ! -f "$SRC/.metadata" ]; then
+              echo "[seed] FATAL: no .metadata in $SRC -- refusing to seed from an incomplete checkpoint"
+              exit 1
+            fi
+            mkdir -p "$DST"
+            ln -sfn "$SRC" "$DST/${aux.fork_iter_dir}"
+            echo "${aux.fork_iter}" > "$TRACKER"
+            echo "[seed] linked $SRC to $DST/${aux.fork_iter_dir}"
+            echo "[seed] wrote $TRACKER = ${aux.fork_iter}"
+
+          slurm.launcher_cmd: ""
+          slurm.sbatch.nodes: 1
+          slurm.sbatch.time: "00:15:00"
+          slurm.sbatch.job_name: null
+
+        # ====================== stage 2: the training run ======================
+        - stage: train
+          # THE RUNTIME GATE. Nothing else orders these two stages -- see
+          # "HOW TO RUN IT" in the header.
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "${aux.cont2_root}/checkpoints/latest_checkpointed_iteration.txt"

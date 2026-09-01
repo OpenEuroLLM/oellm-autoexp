@@ -1,0 +1,146 @@
+# @package _global_
+#
+# ============================================================================
+# _cont3: FORK WITH THE PRE-SWITCH SETTINGS -- NO MASKING, OLD CONTAINER
+# ============================================================================
+# The LAST untested piece of the iteration-34454 switch.
+#
+# That switch changed four things at once: megatron-core 0.16 -> 0.19, the
+# container nemo_26.04 -> te218-fa3, attention cuDNN -> FlashAttention 3, and
+# cross-document masking OFF -> ON. stack_numerics_probe_n32 has since killed
+# three of the four by direct measurement -- checkpoint 72000 scored 1.519173 on
+# identical batches under te218+FA3, te218+cuDNN AND nemo_26.04+cuDNN, identical
+# to six decimals.
+#
+# MASKING WAS NEVER TESTED. It could not be: every probe arm deliberately kept
+# masking ON, because turning it off changes the OBJECTIVE and the losses stop
+# being comparable. So it survives as a live hypothesis, and it is the one that
+# best fits the shape of the failure -- a change whose harm accumulates rather
+# than appearing at once, which is why the loss could keep improving for ~25000
+# iterations after 34454 and only then turn over.
+#
+# This config reverts the masking + container + attention package together, as
+# it was before the switch, and continues from a kept checkpoint.
+#
+# ============================================================================
+# ⚠ THE LOSS LEVEL WILL JUMP. COMPARE SLOPES, NOT VALUES.
+# ============================================================================
+# dataloader_inter_document_masking: false removes the cu_seqlens restriction, so
+# the model may attend across document boundaries again and RoPE no longer
+# restarts per document. That is an easier next-token task: the 0.13B matched
+# evaluation measured masked scoring as +0.030 nats HARDER for the same weights.
+#
+# So this run's loss will step DOWN at the fork by something of that order and
+# then follow its own curve. That step is an artefact of the objective change and
+# says nothing about the hypothesis.
+#
+#   THE QUESTION IS ONLY: does the loss still RISE?
+#
+#   HYPOTHESIS CONFIRMED   the slope flattens or turns negative -- i.e. with
+#                          masking off the degradation stops. Masking is then
+#                          implicated and the flagship's masking decision has to
+#                          be revisited.
+#   HYPOTHESIS DEAD        it keeps climbing at ~+0.003 per 1000 iterations,
+#                          matching the control, despite the level shift.
+#
+# Fit a slope over >= 4000 iterations of 2000-iteration bins; do not eyeball two
+# points, and do not compare this run's absolute loss against the control table.
+#
+# ============================================================================
+# A FULL REVERT TO THE PRE-SWITCH CONFIGURATION
+# ============================================================================
+# Everything that can be put back is put back: masking OFF, nemo_26.04, cuDNN
+# attention, AND production's own data order (seed 1234). It forks from the
+# flagship's own iteration 64000, so the model, the optimizer state and the
+# document stream are all exactly what the original run had at its minimum.
+#
+# That makes the flagship's recorded 64000->74000 curve a like-for-like control
+# with ONE difference -- the settings package -- instead of several.
+#
+#   WHAT IS *NOT* REVERTED, AND WHY
+#   megatron-core 0.19   The submodule is 0.19 and the checkpoint was written by
+#                        it. Going back to the 0.16 fork is not a config change,
+#                        and 0.16 has never read a 0.19 checkpoint. Eliminated by
+#                        measurement anyway -- see the probe result above.
+#   learning rate        3e-4, as everywhere in this investigation.
+#
+# NOTE THIS IS THE MIRROR OF _cont2. Same fork point, same control, opposite
+# variable: cont2 changes the data order and keeps the new settings; cont3 keeps
+# the data order and reverts the settings. Between them they cover both halves
+# of what changed, and each is one arm against a control already paid for.
+#
+# ============================================================================
+# THE FORK POINT
+# ============================================================================
+# iteration 64000 of the ORIGINAL run -- a PERSISTENT checkpoint (save_interval
+# 4000), so nothing rotates it and the seed stage's symlink is stable.
+#
+# To fork from somewhere else instead, set aux.fork_iter and aux.fork_iter_dir
+# TOGETHER -- the second is the zero-padded directory name Megatron writes
+# (iter_%07d) and nothing derives one from the other. Preserved ROLLING
+# checkpoints of the cont2 run (65000, 65500, 65625, 66000, ... captured by
+# scripts/korbi/keep_rolling_ckpt.sh) live under its checkpoints_keep/, but
+# forking from those reintroduces seed-4321 history and breaks the clean
+# comparison this config is built for.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/oellm_32b_dense_cont3_oldsettings
+#
+# RUN IT WITH THE MONITOR. The seed stage is a local job whose tracker file the
+# train stage waits on via FileExistsCondition; `--submit-and-exit` evaluates
+# that condition exactly once (run_autoexp.py:538) and the train stage would
+# never be submitted. Keep chain_repeat at 1 -- chain mode bypasses the gate.
+defaults:
+  - oellm_32b_dense_cont2_from64k
+  - _self_
+
+aux:
+  # THE ORIGINAL FLAGSHIP TREE, at its loss minimum. READ ONLY.
+  #
+  # NOT the cont2 keep-tree: forking from a cont2 checkpoint would carry
+  # seed-4321 history in the weights and in consumed_train_samples, which is
+  # exactly the confound this arm exists to avoid. Starting from the same 64000
+  # the flagship itself turned over from makes the flagship's own 64000->74000
+  # curve a like-for-like control.
+  parent_ckpts: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4/checkpoints
+  fork_iter: 64000
+  fork_iter_dir: iter_0064000
+
+  # ONE override carries this fork's whole identity: the parent defines
+  # cont2_root, backend.aux.variant AND the seed stage's job.name in terms of
+  # variant_tag. Setting cont2_root or backend.aux.variant directly instead
+  # would leave the seed stage still named after cont2 and writing its logs into
+  # cont2's output tree.
+  variant_tag: "prod_dataopt5_cont3_oldsettings_seed1234"
+
+backend:
+  megatron:
+    # ---- REVERT THE DATA ORDER TOO -------------------------------------------
+    # cont2 sets 4321 to test the data-order hypothesis. This arm is the
+    # OPPOSITE experiment: keep production's data stream exactly as it was and
+    # change only the pre/post-34454 settings package. With 1234 the documents
+    # served after 64000 are the SAME ones the flagship saw, so any difference
+    # is attributable to masking/container/attention rather than to the data.
+    #
+    # The seed-1234 train-shape cache at this path was built by job 1548567
+    # (COMPLETED, 17:50), so this is a cache HIT and needs no prebuild.
+    seed: 1234
+
+    # ---- THE REVERT: the pre-34454 package, all three parts together --------
+    # Reverting one without the others is worse than reverting none: the
+    # production config notes FA3-vs-cuDNN is worth ~5% throughput and the two
+    # are a package.
+    dataloader_inter_document_masking: false
+    # cuDNN FusedAttention, which is what `auto` selects at this shape on GH200.
+    # NOT `flash`, which arrived with te218-fa3.
+    attention_backend: auto
+
+container:
+  # nemo_26.04: TE 2.14, no FA3. Set in the BODY, not via `override /container:`
+  # -- oellm_32b_dense_production.yaml assigns container.image/python in its own
+  # body, and a body assignment beats a defaults-group override, so a group
+  # override would silently leave this on te218-fa3 and revert nothing.
+  image: /e/project1/e-sta-openeurollm/container/nemo_26.04.sif
+  # MUST be pinned alongside the image: config/container/jupiter.yaml defaults to
+  # /usr/bin/python, which is not the venv that has wandb and the TE this stack
+  # needs.
+  python: /opt/venv/bin/python
