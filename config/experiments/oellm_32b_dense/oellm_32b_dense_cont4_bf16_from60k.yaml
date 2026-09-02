@@ -97,6 +97,29 @@
 #   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/oellm_32b_dense_cont4_bf16_from60k
 defaults:
   - oellm_32b_dense_cont2_from64k
+  # CANCEL, DO NOT AUTO-RESTART. Overrides the production default of
+  # /job: auto_restart_ckptreset (oellm_32b_dense_production.yaml:13).
+  #
+  # WHY, for a one-shot arm: auto_restart_ckptreset wires
+  # QuarantineCheckpointAction, which RENAMES any checkpoint it fails to load to
+  # failed_iter_*. cont2's header argues that is safe once seeding makes
+  # load == save, because it can then only touch this run's own tree -- true, but
+  # this run's own tree is the problem: checkpoints_rolling/iter_0063125 is the
+  # ONLY copy of iterations 60369-63220 (the persistent tier holds just 60000 and
+  # 60369). One spurious load failure would quarantine 3000 iterations of bf16
+  # training that cost ~8 h on 512 nodes.
+  #
+  # WHAT IT COSTS: no automatic resubmission. Combined with max_restarts: "0"
+  # this arm has NO automatic recovery at all -- an NCCL watchdog hang, which is
+  # exactly what killed the first attempt at 03:38, ends the job. That is
+  # acceptable here and not in production: non_persistent_save_interval is 125,
+  # so a manual resubmit loses at most 125 iterations, and this is a single
+  # 8h22m segment somebody is watching rather than a 15 T-token schedule.
+  #
+  # Switch back to auto_restart_ckptreset only once 68000 has been reached and
+  # written a persistent checkpoint, i.e. once the rolling tier stops being
+  # irreplaceable.
+  - override /job: auto_cancel
   - _self_
 
 aux:
@@ -104,6 +127,29 @@ aux:
   parent_ckpts: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4/checkpoints
   fork_iter: 60000
   fork_iter_dir: iter_0060000
+
+  # ---- data loading moved to fscratch ---------------------------------------
+  # SEMANTICALLY A NO-OP, verified rather than assumed:
+  #   * weights and per-dataset relative paths in the new datamix are
+  #     byte-identical to flagship_datamix_option5.txt -- only the root moved.
+  #   * sampled .bin files match old vs new on size, and .idx files are
+  #     BYTE-IDENTICAL, so document boundaries -- and therefore sample order at
+  #     a fixed seed -- are unchanged.
+  # What changes is only WHICH filesystem serves the reads.
+  datamix: /e/project1/e-sta-openeurollm/production_training/oellm_32b_dense/flagship_datamix_option5_fscratch.txt
+
+  # Rebuilt by data_cache_build_fscratch_v2 (job 1616718, 1h11m): 452 train +
+  # 452 valid datasets, 3,622 files, 170 GB, no zero-length files.
+  #
+  # The rebuild was MANDATORY, not hygiene: the cache filename is an md5 over
+  # the ABSOLUTE dataset_path (megatron_dataset.py:60) plus random_seed /
+  # sequence_length / split / split_matrix / tokenizer (:164). Moving the blend
+  # root invalidates every entry. Built at seed 1234 to match this run's seed --
+  # a cache built at cont2's 4321 would miss and rebuild inline on 512 nodes.
+  #
+  # Cache hit CONFIRMED by job 1617811: reached checkpoint load in <2.5 min with
+  # zero dataset-construction lines, against 71 min for the cold build.
+  fscratch_cache: /e/fscratch/e-sta-openeurollm/production_training/oellm_32b_dense/cache
 
   # Carries the whole identity: checkpoint tree, run name and the seed stage's
   # job name all derive from it in the parent.
@@ -195,9 +241,78 @@ backend:
     log_num_zeros_in_grad: true
     check_for_spiky_loss: true
 
+    # ---- STOP AT 68000. THIS IS THE WHOLE POINT OF THE RESUME. --------------
+    # The first attempt (job 1580164) ran 60251 -> 63220 and died at 03:38 to an
+    # NCCL watchdog timeout -- infrastructure, not numerics -- 4.6 h into an
+    # 11.5 h wall. It stopped 3405 iterations SHORT of the flagship's turn, so
+    # it proved nothing about the hypothesis it exists to test.
+    #
+    # 68000 is the target for three reasons:
+    #   * it clears the flagship's break (~66625) by 1375 iterations, far enough
+    #     that a flat bf16 curve there is not luck;
+    #   * save_interval is 4000, so it lands ON a persistent checkpoint, and the
+    #     exit path saves one anyway (training.py:3519-3536 saves before exiting
+    #     when `args.save and not saved_checkpoint`);
+    #   * the flagship's own 68000 is already scored held-out -- 1.511213 in fp8,
+    #     against 1.495481 at 64000 -- so the arms compare directly, and a bf16
+    #     eval of THIS checkpoint reads against 1.494178 / 1.517163 on one scale.
+    #
+    # Megatron's test is a pure modulo: `iteration % args.exit_interval == 0`
+    # (training.py:3520-3521). It is NOT "run N more steps".
+    #
+    # ⚠ CONSEQUENCE: chain_repeat MUST STAY 1. A second segment would resume at
+    # 68000, fail the modulo at 68001, and run to 136000 -- 68000 iterations of
+    # unattended 512-node time. Do not raise it to "get more margin"; margin
+    # comes from the monitor, not from more segments.
+    #
+    # The run resumes at 63125 (see the checkpoint note below), so this is 4875
+    # steps ~= 7.6 h at the 5.58 s/iter this arm actually measured -- comfortably
+    # inside one 11.5 h segment.
+    exit_interval: 68000
+    data_args_path: ${aux.datamix}
+
+    # NB `exit_interval` is the sanctioned way to shorten a sample-based run:
+    # once train_samples is set Megatron asserts train_iters is None
+    # (arguments.py:786-806), so train_iters is not available as a lever.
+
+# ---------------------------------------------------------------------------
+# RESUME POINT -- 63125, NOT 60000
+# ---------------------------------------------------------------------------
+# Re-running this config does NOT restart the arm. Two mechanisms cover it:
+#   * the seed step is guarded on its own tracker
+#     (`if [ -e "$TRACKER" ]; then exit 0`), and that file exists and reads
+#     60000, so the fork is a no-op on re-render -- it will not relink or reset.
+#   * `--load` is the persistent tree (tracker 60000) and
+#     `--non-persistent-global-ckpt-dir` the rolling tree (tracker 63125);
+#     Megatron takes whichever is NEWER (checkpointing.py:1078) -> 63125.
+#
+# ⚠ checkpoints_rolling/iter_0063125 is the ONLY copy of iterations 60369-63220.
+# The persistent tier holds just 60000 and 60369. Do not prune the rolling tier
+# before this arm has passed 68000 and written a persistent checkpoint there.
+#
+# ---------------------------------------------------------------------------
+# WHY max_restarts IS NOT RAISED HERE
+# ---------------------------------------------------------------------------
+# It is tempting, because a watchdog hang is exactly what killed the first
+# attempt. Do not. `max_restarts: "0"` is inherited from
+# oellm_32b_dense_production.yaml:143 and is a MEASURED decision, not an
+# oversight: at 50, torchrun only raises ChildFailedError once restarts are
+# exhausted, which never happens inside a 12 h wall, so the monitor goes blind
+# and the job burns silently (1512329 / 1522580 / 1523600, ~11,000 GPU-h). That
+# file names 2-3 as the middle ground if queue wait ever dominates -- never 50.
+#
+# There is deliberately NO automatic recovery on this arm: /job is overridden to
+# auto_cancel in the defaults list above, so the monitor CANCELS on a known
+# failure signature rather than resubmitting. A hang therefore ends the job and
+# you resubmit by hand, losing at most non_persistent_save_interval = 125
+# iterations. That is the accepted trade for not letting
+# QuarantineCheckpointAction anywhere near checkpoints_rolling/iter_0063125.
 job:
-  chain_repeat: 1
+  chain_repeat: 1          # MUST stay 1 -- see the exit_interval note above
   # bf16 is markedly slower than fp8; this only prices the submit gate.
   est_step_time_s: 6.0
   est_startup_min: 15
-  est_steps: 6900
+  # 63125 -> 68000. Explicit, because production's est_steps expression
+  # (oellm_32b_dense_production.yaml:36) coalesces exit_interval FIRST and would
+  # otherwise price this arm at the full 68000 steps.
+  est_steps: 4875

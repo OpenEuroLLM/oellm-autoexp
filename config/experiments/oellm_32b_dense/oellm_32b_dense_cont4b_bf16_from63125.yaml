@@ -1,0 +1,60 @@
+# @package _global_
+#
+# ============================================================================
+# cont4b -- cont4 continued from 63,125, in OUR OWN TREE
+# ============================================================================
+# Identical experiment to oellm_32b_dense_cont4_bf16_from60k. The only change is
+# WHERE it writes and WHERE it starts.
+#
+# WHY THIS EXISTS
+# ---------------
+# cont4's tree is owned by poeppel1. It is group-writable, so writing there is
+# permitted -- but the run would write into `checkpoints_rolling/`, which is a
+# CAPPED tier that deletes older entries as it advances. `iter_0063125` is the
+# ONLY copy of iterations 60,369-63,220; nothing else on disk has them. Resuming
+# in place puts the sole copy of 3,000 iterations inside the tier that is
+# designed to overwrite itself.
+#
+# Forking to our own tree removes that entirely: poeppel1's tree becomes READ
+# ONLY, and every byte this run produces lands under our own variant_tag.
+#
+# WHAT CHANGES vs cont4
+#   fork point   63,125 instead of 60,000. This is where cont4 actually got to
+#                (job 1580164, before the NCCL watchdog hang), so starting here
+#                does not redo 3,125 iterations of bf16 training.
+#   parent tree  poeppel1's checkpoints_rolling/, not the flagship tree.
+#   output tree  ..._cont4b_bf16_seed1234, created fresh and owned by us.
+#
+# Everything else -- bf16, seed 1234, exit_interval 68000, fscratch datamix and
+# cache, 512 nodes, auto_cancel, max_restarts 0 -- is inherited unchanged.
+#
+# THE SEED STAGE SYMLINKS, IT DOES NOT COPY
+# -----------------------------------------
+# The inherited seed stage does `ln -sfn $SRC $DST/iter_0063125`, so until this
+# run writes its own `iter_0064000` (~1.5 h in, at save_interval 4000) it DEPENDS
+# on poeppel1's rolling entry still existing. Nothing of his is running, so
+# nothing will roll it -- but if you want that window closed, copy the 442 GB
+# instead of symlinking before submitting. After 64,000 is written the link no
+# longer matters.
+#
+# VERIFIED before writing this file:
+#   iter_0063125  2048 .distcp + .metadata, 442 GB -- byte-for-byte the same
+#                 shape as the known-good persistent iter_0060000.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/oellm_32b_dense_cont4b_bf16_from63125
+#
+# 63,125 -> 68,000 = 4,875 steps, 512 nodes, ~8h20m, ~17,100 GPU-h.
+# ============================================================================
+defaults:
+  - oellm_32b_dense_cont4_bf16_from60k
+  - _self_
+
+aux:
+  # READ ONLY. cont4's rolling tier, where 63,125 lives. This run never writes
+  # here -- the seed stage only reads it, and `save` points at our own tree.
+  parent_ckpts: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_cont4_bf16_seed1234/checkpoints_rolling
+  fork_iter: 63125
+  fork_iter_dir: iter_0063125
+
+  # Moves job.name AND cont2_root (load / save / rolling) onto a fresh tree.
+  variant_tag: "prod_dataopt5_cont4b_bf16_seed1234"
