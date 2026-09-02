@@ -1,0 +1,22 @@
+# @package _global_
+# JUPITER scan of the 17 surviving flagship checkpoints strictly before 60k.
+
+defaults:
+  - checkpoint_stats_jupiter
+  - _self_
+
+aux:
+  run_id: "checkpoint_scan_prior_${oc.timestring:}"
+
+job:
+  name: oellm_32b_prior_checkpoint_scan
+
+backend:
+  command: |
+    bash "$SLURM_SUBMIT_DIR/scripts/run_prior_checkpoint_scan_jupiter.sh" "${job.base_output_dir}/artifacts"
+
+slurm:
+  # The prior-only pass reads 17 checkpoints instead of five.
+  sbatch:
+    time: "24:00:00"
+  name: ${aux.run_id}
