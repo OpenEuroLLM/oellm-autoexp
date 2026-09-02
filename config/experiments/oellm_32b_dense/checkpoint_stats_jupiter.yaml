@@ -1,0 +1,82 @@
+# @package _global_
+#
+# Full named-parameter and optimizer-state checkpoint scan on JUPITER.
+#
+# Inherit the production experiment first so this diagnostic uses the exact
+# production container override, /e and /dev/shm binds, trusted FP8 extra-state
+# loading, JUPITER environment, partition/account, and bad-node exclusion list.
+# Replace only the trainer and recovery policy: this is a one-node, read-only
+# Bash diagnostic and must never quarantine or mutate a production checkpoint.
+#
+# Default mode scans every named model parameter in the flagship and BF16
+# control, then builds a matched comparison. Optimizer buckets are a separate,
+# heavier pass:
+#
+#   scripts/oellm_32b.sh --config-name \
+#     experiments/oellm_32b_dense/checkpoint_stats_jupiter --submit-and-exit
+#
+#   scripts/oellm_32b.sh --config-name \
+#     experiments/oellm_32b_dense/checkpoint_stats_jupiter \
+#     --submit-and-exit aux.mode=optimizer_all
+#
+# Artifacts:
+#   /e/project1/e-sta-openeurollm/production_training/
+#     oellm_32b_checkpoint_scan/runs/<SLURM_JOB_ID>/
+
+defaults:
+  - oellm_32b_dense_production
+  - override /backend: bash
+  - override /job: default
+  - _self_
+
+aux:
+  # model_flagship | model_bf16 | model_all | optimizer_flagship |
+  # optimizer_bf16 | optimizer_all | all
+  mode: model_all
+
+job:
+  name: oellm_32b_checkpoint_scan
+  base_output_dir: /e/project1/e-sta-openeurollm/production_training/${job.name}
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+  chain_repeat: 1
+  est_step_time_s: 1
+  est_steps: 1
+  est_startup_min: 120
+
+backend:
+  # BashBackend.command is embedded inside bash -c single quotes. Keep this
+  # free of literal single quotes and put all non-trivial shell logic in the
+  # versioned runner script.
+  command: |
+    bash "$SLURM_SUBMIT_DIR/scripts/run_checkpoint_scan_jupiter.sh" "${aux.mode}" "${job.base_output_dir}/runs/$SLURM_JOB_ID"
+
+slurm:
+  # Keep the production launcher_cmd and environment. The scanner is CPU-only,
+  # but one GPU makes libcuda available for TE checkpoint metadata imports and
+  # matches the production container's supported launch path.
+  sbatch:
+    nodes: 1
+    ntasks: 1
+    ntasks_per_node: 1
+    gpus_per_node: 1
+    time: "12:00:00"
+    signal: null
+    job_name: null
+  srun:
+    cpus_per_task: 288
+    exclusive: true
+    wait: 60
+  # Training-specific failure handling is unnecessary for a single read-only
+  # process and can obscure its exit status.
+  srun_opts: "--kill-on-bad-exit=1"
+  name: "checkpoint_scan_${oc.timestring:}"
+  env:
+    # The inherited production environment describes a four-GPU training node.
+    # Keep its launcher/environment intact, but make topology variables agree
+    # with this diagnostic's one-GPU allocation.
+    GPUS_PER_NODE: "1"
+    NUM_GPUS_PER_NODE: "1"
+    NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
