@@ -1,0 +1,43 @@
+# @package _global_
+# Two-rank reproducer for Transformer Engine CE mutating logits after a TP logsumexp forward.
+#
+# Submit from the oellm-autoexp repository root:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --submit-and-exit \
+#     --config-name experiments/rluukkon/te_ce_logsumexp_mutation_jupiter
+#
+# Render without submitting:
+#   uv run --python 3.12 python scripts/run_autoexp.py --dry-run \
+#     --config-name experiments/rluukkon/te_ce_logsumexp_mutation_jupiter
+defaults:
+  - ../base
+  - /backend: null
+  - /container: jupiter
+  - /slurm: jupiter
+  - /sweep: none
+  - _self_
+
+job:
+  name: te_ce_logsumexp_mutation
+
+slurm:
+  sbatch:
+    nodes: 1
+    ntasks_per_node: 1
+    gpus_per_node: 2
+    gres: "gpu:2"
+    cpus_per_task: 72
+    time: "00:10:00"
+  srun:
+    cpus_per_task: 72
+
+backend:
+  class_name: NullBackend
+  env:
+    PYTHONPATH: ".:submodules/Megatron-LM"
+  base_command:
+    - torchrun
+    - --standalone
+    - --nnodes=1
+    - --nproc_per_node=${slurm.sbatch.gpus_per_node}
+    - scripts/diagnose_te_ce_logsumexp_mutation.py
