@@ -46,9 +46,12 @@ extra-state setting from `oellm_32b_dense_production.yaml`. Artifacts are
 written to:
 
 ```text
-/e/project1/e-sta-openeurollm/production_training/
-  oellm_32b_checkpoint_scan/runs/<SLURM_JOB_ID>/
+/e/home/jusers/luukkonen1/jupiter/e-sta-workdir/oellm-autoexp/
+  checkpoint_scan_<TIMESTAMP>/artifacts/
 ```
+
+The same unique `checkpoint_scan_<TIMESTAMP>` directory also contains the
+rendered config and SLURM logs under `logs/`.
 
 Available `aux.mode` values are `model_flagship`, `model_bf16`, `model_all`,
 `optimizer_flagship`, `optimizer_bf16`, `optimizer_all`, and `all`.
