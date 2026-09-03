@@ -993,6 +993,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "diag_swap_checkpoint": MegatronArgMetadata(
+        arg_type=str,
+        default=None,
+        help="Diagnostics only: after the checkpoint load, reload the model tensors selected by --diag-swap-keys from this torch_dist checkpoint (checkpoint surgery for probes).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "diag_swap_keys": MegatronArgMetadata(
+        arg_type=str,
+        default=None,
+        help="Comma-separated regexes matched against the checkpoint keys (global layer numbering) selecting the tensors to reload from --diag-swap-checkpoint.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "diag_layer_grad_norms": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -7524,6 +7540,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "diag_token_loss_dir": MegatronActionSpec(
         option_strings=("--diag-token-loss-dir",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "diag_swap_checkpoint": MegatronActionSpec(
+        option_strings=("--diag-swap-checkpoint",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "diag_swap_keys": MegatronActionSpec(
+        option_strings=("--diag-swap-keys",),
         action_type="store",
         nargs=None,
         const=None,

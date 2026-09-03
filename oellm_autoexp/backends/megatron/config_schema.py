@@ -2847,6 +2847,11 @@ class MegatronConfig(ConfigInterface):
     # fixed batch: <dir>/it<iteration>_dp<rank>_cp<rank>.npz on every diagnostic iteration.
     diag_token_loss_dir: str | None = None
 
+    # Checkpoint surgery for probes: after the load, reload the tensors whose checkpoint key
+    # matches one of the comma-separated regexes from this torch_dist checkpoint.
+    diag_swap_checkpoint: str | None = None
+    diag_swap_keys: str | None = None
+
     # Number of top logits to save.
     logits_save_top_k: int | None | None = None
 
