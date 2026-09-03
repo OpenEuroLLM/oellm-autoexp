@@ -1,0 +1,63 @@
+# @package _global_
+#
+# Restore the real flagship model+optimizer checkpoint, inspect layer 0's
+# attention-input RMSNorm optimizer group, and exit before data loading/training.
+# All diagnostic outputs live in the user's JUPITER work directory; the
+# production checkpoint tree is read-only input.
+
+defaults:
+  - oellm_32b_dense_production
+  - override /job: default
+  - _self_
+
+aux:
+  run_id: "norm_param_group_check_${oc.timestring:}"
+  checkpoint_root: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4/checkpoints
+
+job:
+  name: oellm_32b_norm_param_group_check
+  base_output_dir: /e/home/jusers/luukkonen1/jupiter/e-sta-workdir/oellm-autoexp/${aux.run_id}
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+  chain_repeat: 1
+  est_step_time_s: 1
+  est_steps: 1
+  est_startup_min: 60
+
+backend:
+  launcher_script: ./scripts/check_norm_param_group.py
+  env:
+    # Paths below are already isolated from production, so keep them instead
+    # of the wrapper's generic /tmp fallback.
+    NORM_WD_CHECK_ALLOW_TRAINING_IO: "1"
+  aux:
+    active_nodes: 4
+    spare_nodes: 0
+    variant: normwdcheck
+  megatron:
+    # Read the actual production model and optimizer state. Keep this separate
+    # from every output path below so the diagnostic cannot write into it.
+    load: ${aux.checkpoint_root}
+    no_load_optim: false
+    no_load_rng: false
+
+    save: ${job.base_output_dir}/checkpoints
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/checkpoints_rolling
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    wandb_save_dir: ${job.base_output_dir}/wandb
+    wandb_project: null
+    wandb_exp_name: null
+    wandb_entity: null
+    log_progress: false
+    async_save: false
+    use_persistent_ckpt_worker: false
+
+slurm:
+  sbatch:
+    nodes: ${backend.aux.active_nodes}
+    time: "02:00:00"
+    signal: null
+    job_name: null
+  name: ${aux.run_id}

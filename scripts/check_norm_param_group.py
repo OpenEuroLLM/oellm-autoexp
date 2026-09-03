@@ -14,6 +14,9 @@ requires effective weight decay to be zero.  Environment variables:
 * ``NORM_WD_TOLERANCE``: absolute comparison tolerance (default: ``1e-15``).
 * ``NORM_WD_CHECK_CONTINUE``: set to ``1`` to continue training after success.
 * ``NORM_WD_CHECK_ENTRYPOINT``: alternate training entrypoint.
+* ``NORM_WD_CHECK_ALLOW_TRAINING_IO``: retain the original save/logging paths
+  in check-only mode. Checkpoint loading is always retained so the assertion
+  examines the restored optimizer; only outputs are redirected by default.
 
 Example autoexp override::
 
@@ -55,6 +58,56 @@ def _parameter_names(model_chunks: list[Any]) -> dict[int, str]:
     return names
 
 
+def _remove_cli_option(argv: list[str], option: str, *, takes_value: bool) -> list[str]:
+    result = [argv[0]]
+    index = 1
+    while index < len(argv):
+        argument = argv[index]
+        if argument == option:
+            index += 2 if takes_value else 1
+            continue
+        if takes_value and argument.startswith(option + "="):
+            index += 1
+            continue
+        result.append(argument)
+        index += 1
+    return result
+
+
+def _redirect_training_output(argv: list[str]) -> tuple[list[str], Path]:
+    job_id = os.environ.get("SLURM_JOB_ID", str(os.getpid()))
+    scratch = Path("/tmp") / f"oellm-norm-wd-check-{job_id}"
+
+    for option in (
+        "--save",
+        "--non-persistent-global-ckpt-dir",
+        "--non-persistent-local-ckpt-dir",
+        "--tensorboard-dir",
+        "--wandb-save-dir",
+        "--wandb-project",
+        "--wandb-exp-name",
+        "--wandb-entity",
+    ):
+        argv = _remove_cli_option(argv, option, takes_value=True)
+
+    for option in ("--log-progress", "--async-save", "--use-persistent-ckpt-worker"):
+        argv = _remove_cli_option(argv, option, takes_value=False)
+
+    # No checkpoint should be written because check-only mode exits directly
+    # after optimizer construction. Redirect these paths as a second guard.
+    argv.extend(
+        [
+            "--save",
+            str(scratch / "checkpoints"),
+            "--non-persistent-global-ckpt-dir",
+            str(scratch / "checkpoints_rolling"),
+            "--tensorboard-dir",
+            str(scratch / "tensorboard"),
+        ]
+    )
+    return argv, scratch
+
+
 def main() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     megatron_root = repo_root / "submodules" / "Megatron-LM"
@@ -80,9 +133,18 @@ def main() -> None:
     tolerance = float(os.environ.get("NORM_WD_TOLERANCE", "1e-15"))
     continue_training = _env_flag("NORM_WD_CHECK_CONTINUE")
 
+    if not continue_training and not _env_flag("NORM_WD_CHECK_ALLOW_TRAINING_IO"):
+        sys.argv, scratch = _redirect_training_output(sys.argv)
+        if os.environ.get("RANK", "0") == "0":
+            print(
+                "NORM_WD_CHECK retained checkpoint loading and redirected "
+                f"save/log paths to {scratch}",
+                flush=True,
+            )
+
     original_get_param_groups = optimizer_module._get_param_groups
-    original_get_optimizer = training_module.get_megatron_optimizer
-    local_matches: list[dict[str, Any]] = []
+    original_setup_model_and_optimizer = training_module.setup_model_and_optimizer
+    captured_matches: list[dict[str, Any]] = []
 
     def checked_get_param_groups(
         model_chunks: list[Any], config: Any, config_overrides: Any
@@ -97,23 +159,93 @@ def main() -> None:
             for parameter in group["params"]:
                 name = names.get(id(parameter))
                 if name is not None and pattern.search(name):
-                    local_matches.append(
+                    captured_matches.append(
                         {
-                            "rank": dist.get_rank(),
                             "parameter": name,
+                            "parameter_object": parameter,
                             "shape": list(parameter.shape),
                             "group_index": group_index,
-                            "base_weight_decay": base_weight_decay,
-                            "wd_mult": wd_mult,
-                            "effective_weight_decay": effective_weight_decay,
-                            "lr_mult": float(group.get("lr_mult", 1.0)),
-                            "max_lr": float(group.get("max_lr", config.lr)),
+                            "preload_wd_mult": wd_mult,
+                            "preload_effective_weight_decay": effective_weight_decay,
                         }
                     )
         return groups
 
-    def checked_get_optimizer(*args: Any, **kwargs: Any) -> Any:
-        optimizer = original_get_optimizer(*args, **kwargs)
+    def leaf_optimizers(optimizer: Any) -> list[Any]:
+        chained = getattr(optimizer, "chained_optimizers", None)
+        if chained is None:
+            return [optimizer]
+        leaves: list[Any] = []
+        for child in chained:
+            leaves.extend(leaf_optimizers(child))
+        return leaves
+
+    def find_runtime_group(
+        optimizer: Any, parameter: Any, fallback_index: int
+    ) -> tuple[Any, Any]:
+        leaves = leaf_optimizers(optimizer)
+        for leaf in leaves:
+            mapping = getattr(leaf, "model_param_group_index_map", None)
+            if mapping is not None and parameter in mapping:
+                group_index = mapping[parameter][0]
+                return leaf.optimizer.param_groups[group_index], leaf
+
+        candidates = {id(parameter)}
+        main_parameter = getattr(parameter, "main_param", None)
+        if main_parameter is not None:
+            candidates.add(id(main_parameter))
+        for leaf in leaves:
+            inner_optimizer = getattr(leaf, "optimizer", None)
+            if inner_optimizer is None:
+                continue
+            for group in inner_optimizer.param_groups:
+                if any(id(group_parameter) in candidates for group_parameter in group["params"]):
+                    return group, leaf
+
+        # DistributedOptimizer keeps globally aligned empty groups. On a DP
+        # rank that owns no shard of this small gain, the original group index
+        # still identifies the correct runtime group.
+        if len(leaves) == 1 and fallback_index < len(leaves[0].optimizer.param_groups):
+            return leaves[0].optimizer.param_groups[fallback_index], leaves[0]
+        raise RuntimeError("Could not map the matched norm gain to a runtime optimizer group")
+
+    def checked_setup_model_and_optimizer(*args: Any, **kwargs: Any) -> Any:
+        # This call includes checkpoint restore. Inspecting after it returns is
+        # important: optimizer state loading can restore param-group metadata.
+        result = original_setup_model_and_optimizer(*args, **kwargs)
+        _, optimizer, _ = result
+        if optimizer is None:
+            raise RuntimeError("Norm weight-decay check requires an optimizer")
+        runtime_args = training_module.get_args()
+        checkpoint_requested = runtime_args.load is not None
+        checkpoint_iteration = int(getattr(runtime_args, "iteration", 0))
+        if not checkpoint_requested:
+            raise RuntimeError(
+                "Norm weight-decay check requires --load so it can inspect a restored checkpoint"
+            )
+
+        local_matches: list[dict[str, Any]] = []
+        for captured in captured_matches:
+            group, leaf = find_runtime_group(
+                optimizer,
+                captured["parameter_object"],
+                captured["group_index"],
+            )
+            local_matches.append(
+                {
+                    "rank": dist.get_rank(),
+                    "parameter": captured["parameter"],
+                    "shape": captured["shape"],
+                    "group_index": captured["group_index"],
+                    "configured_weight_decay": float(leaf.config.weight_decay),
+                    "wd_mult": float(group.get("wd_mult", 1.0)),
+                    "effective_weight_decay": float(group.get("weight_decay", 0.0)),
+                    "lr_mult": float(group.get("lr_mult", 1.0)),
+                    "lr": float(group.get("lr", 0.0)),
+                    "checkpoint_load_path": runtime_args.load,
+                    "checkpoint_iteration": checkpoint_iteration,
+                }
+            )
 
         local_found = len(local_matches)
         local_bad = sum(
@@ -180,10 +312,10 @@ def main() -> None:
                 )
             raise SystemExit(0)
 
-        return optimizer
+        return result
 
     optimizer_module._get_param_groups = checked_get_param_groups
-    training_module.get_megatron_optimizer = checked_get_optimizer
+    training_module.setup_model_and_optimizer = checked_setup_model_and_optimizer
 
     # Preserve the original Megatron CLI exactly; runpy executes its normal
     # __main__ path after the two optimizer hooks above are installed.
