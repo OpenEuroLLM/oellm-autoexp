@@ -57,6 +57,9 @@ backend:
 slurm:
   sbatch:
     nodes: ${backend.aux.active_nodes}
+    # Diagnostic jobs use the personal/default JUPITER allocation, not the
+    # production config's e-ext account override.
+    account: e-sta-openeurollm
     time: "02:00:00"
     signal: null
     job_name: null

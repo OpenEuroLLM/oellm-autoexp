@@ -22,6 +22,7 @@ LATE = (
     / "checkpoint_scan_20260902_162252_497/artifacts/model/comparison"
 )
 OUTPUT = ROOT / "docs/fp8-loss-turn/checkpoint-weight-analysis-by-block.html"
+NORM_CSV = ROOT / "docs/fp8-loss-turn/data/norm_layer_trajectories.csv"
 
 COLORS = {
     "attention": "#f97316",
@@ -86,6 +87,78 @@ def weighted_group_rms(rows: list[dict[str, str]], run: str) -> dict[tuple[int, 
             sum(int(v["numel"]) * float(v["global_rms"]) ** 2 for v in values) / count
         )
     return result
+
+
+def write_norm_trajectories(rows: list[dict[str, str]]) -> None:
+    """Write one analysis-ready CSV for every normalization vector."""
+    norm_names = {
+        "decoder.layers.self_attention.linear_qkv.layer_norm_weight": "attention_input_norm",
+        "decoder.layers.mlp.linear_fc1.layer_norm_weight": "pre_mlp_norm",
+        "decoder.layers.self_attention.q_layernorm.weight": "q_norm",
+        "decoder.layers.self_attention.k_layernorm.weight": "k_norm",
+        "decoder.final_layernorm.weight": "final_norm",
+    }
+    selected = []
+    for row in rows:
+        if row["tensor"] not in norm_names or row["run"] not in {"flagship_prior", "flagship", "bf16"}:
+            continue
+        run = "flagship" if row["run"] in {"flagship_prior", "flagship"} else "bf16"
+        selected.append((run, row))
+    baselines = {}
+    for run, row in selected:
+        key = (run, row["tensor"], int(row["layer"]))
+        candidate = (int(row["iteration"]), float(row["rms"]))
+        if key not in baselines or candidate[0] < baselines[key][0]:
+            baselines[key] = candidate
+    selected.sort(
+        key=lambda item: (
+            0 if item[0] == "flagship" else 1,
+            int(item[1]["iteration"]),
+            norm_names[item[1]["tensor"]],
+            int(item[1]["layer"]),
+        )
+    )
+    fields = [
+        "run",
+        "iteration",
+        "norm_family",
+        "tensor",
+        "layer",
+        "numel",
+        "gain_rms",
+        "gain_abs_max",
+        "baseline_iteration",
+        "gain_rms_ratio_to_baseline",
+        "finite_frac",
+        "zero_frac",
+        "sample_relative_delta_rms",
+        "sample_cosine",
+        "sample_sign_flip_frac",
+    ]
+    with NORM_CSV.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for run, row in selected:
+            baseline_iteration, baseline_rms = baselines[(run, row["tensor"], int(row["layer"]))]
+            writer.writerow(
+                {
+                    "run": run,
+                    "iteration": row["iteration"],
+                    "norm_family": norm_names[row["tensor"]],
+                    "tensor": row["tensor"],
+                    "layer": row["layer"],
+                    "numel": row["numel"],
+                    "gain_rms": row["rms"],
+                    "gain_abs_max": row["abs_max"],
+                    "baseline_iteration": baseline_iteration,
+                    "gain_rms_ratio_to_baseline": f'{float(row["rms"]) / baseline_rms:.9g}',
+                    "finite_frac": row["finite_frac"],
+                    "zero_frac": row["zero_frac"],
+                    "sample_relative_delta_rms": row["sample_relative_delta_rms"],
+                    "sample_cosine": row["sample_cosine"],
+                    "sample_sign_flip_frac": row["sample_sign_flip_frac"],
+                }
+            )
 
 
 def svg_line_chart(
@@ -412,6 +485,7 @@ def build() -> None:
 
     # Norm layer-0 trajectory, used as a compact factual callout.
     combined_tensors = read_csv(PRIOR / "tensor_trajectories.csv") + late_tensors
+    write_norm_trajectories(combined_tensors)
     layer0 = {
         (r["run"], int(r["iteration"])): float(r["rms"])
         for r in combined_tensors
@@ -574,7 +648,7 @@ def build() -> None:
   </div>
   <div class="card hero-bottom">
     <h3>Evidence base</h3>
-    <p class="sources">Complete scans of 515 logical tensors and 773 channel groups per checkpoint; 33,890,653,184 named parameters. Flagship: 4k–75,126. BF16 control: 60k, 64k, 68k. Statistics are exact for RMS/extrema and deterministic samples for directional drift. Generated from <code>family_summary.csv</code>, <code>tensor_trajectories.csv</code>, and <code>channel_trajectories.csv</code> on 2026-09-02.</p>
+    <p class="sources">Complete scans of 515 logical tensors and 773 channel groups per checkpoint; 33,890,653,184 named parameters. Flagship: 4k–75,126. BF16 control: 60k, 64k, 68k. Statistics are exact for RMS/extrema and deterministic samples for directional drift. Generated from <code>family_summary.csv</code>, <code>tensor_trajectories.csv</code>, and <code>channel_trajectories.csv</code>. Consolidated norm data: <code>data/norm_layer_trajectories.csv</code>.</p>
     <div class="legend"><span><i style="background:var(--attention)"></i>Attention</span><span><i style="background:var(--mlp)"></i>MLP</span><span><i style="background:var(--norm)"></i>Normalization</span><span><i style="background:var(--embed)"></i>Embedding + head</span></div>
   </div>
 </section>
