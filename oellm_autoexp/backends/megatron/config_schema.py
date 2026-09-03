@@ -2839,6 +2839,14 @@ class MegatronConfig(ConfigInterface):
     # batches of iteration Y).
     diag_consumed_train_samples: int | None = None
 
+    # Output-layer logit statistics (mean/std/min/max, per-token max logit, log Z) on
+    # diagnostic iterations (forward hook on the output layer).
+    diag_logit_stats: bool = False
+
+    # Per-token CE loss / label / mask / log Z / max logit dump for checkpoint probes on a
+    # fixed batch: <dir>/it<iteration>_dp<rank>_cp<rank>.npz on every diagnostic iteration.
+    diag_token_loss_dir: str | None = None
+
     # Number of top logits to save.
     logits_save_top_k: int | None | None = None
 

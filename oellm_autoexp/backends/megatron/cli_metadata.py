@@ -977,6 +977,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "diag_logit_stats": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Log mean/std/min/max of the output-layer logits, the mean per-token max logit and the mean/std of the per-token log-partition log Z on diagnostic iterations (forward hook on the output layer).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "diag_token_loss_dir": MegatronArgMetadata(
+        arg_type=str,
+        default=None,
+        help="Diagnostics only: on every diagnostic iteration write the per-token CE loss, label, loss mask, log Z and max logit of every microbatch to <dir>/it<iteration>_dp<rank>_cp<rank>.npz (TP rank 0 of the last pipeline stage). For checkpoint probes on a fixed batch.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "diag_layer_grad_norms": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -7494,6 +7510,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "diag_consumed_train_samples": MegatronActionSpec(
         option_strings=("--diag-consumed-train-samples",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "diag_logit_stats": MegatronActionSpec(
+        option_strings=("--diag-logit-stats",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "diag_token_loss_dir": MegatronActionSpec(
+        option_strings=("--diag-token-loss-dir",),
         action_type="store",
         nargs=None,
         const=None,
