@@ -969,6 +969,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "diag_consumed_train_samples": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Diagnostics only: after the checkpoint load, position the training dataloader at this consumed-sample count instead of the checkpoint's own. Lets a probe run the weights of iteration X on the batches of iteration Y (Y * global batch size).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "diag_layer_grad_norms": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -7463,6 +7471,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "te_debug_log_dir": MegatronActionSpec(
         option_strings=("--te-debug-log-dir",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "diag_consumed_train_samples": MegatronActionSpec(
+        option_strings=("--diag-consumed-train-samples",),
         action_type="store",
         nargs=None,
         const=None,

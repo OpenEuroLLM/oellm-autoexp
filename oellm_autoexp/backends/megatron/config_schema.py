@@ -2824,6 +2824,11 @@ class MegatronConfig(ConfigInterface):
     # Directory for the nvdlfw_inspect logs; defaults to <tensorboard-dir>/te_debug.
     te_debug_log_dir: str | None = None
 
+    # Diagnostics only: after the checkpoint load, position the training dataloader at this
+    # consumed-sample count instead of the checkpoint's own (weights of iteration X on the
+    # batches of iteration Y).
+    diag_consumed_train_samples: int | None = None
+
     # Number of top logits to save.
     logits_save_top_k: int | None | None = None
 
