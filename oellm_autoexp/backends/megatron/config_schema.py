@@ -2817,6 +2817,13 @@ class MegatronConfig(ConfigInterface):
     # and output gradient of the four TE GEMMs of every layer.
     diag_fp8_meta: bool = False
 
+    # nvdlfw_inspect feature YAML applied to every Transformer Engine module. Writes PER-RANK
+    # statistics files, so use it only on small probes (<= 16 nodes).
+    te_debug_config: str | None = None
+
+    # Directory for the nvdlfw_inspect logs; defaults to <tensorboard-dir>/te_debug.
+    te_debug_log_dir: str | None = None
+
     # Number of top logits to save.
     logits_save_top_k: int | None | None = None
 

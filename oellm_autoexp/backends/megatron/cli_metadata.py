@@ -953,6 +953,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "te_debug_config": MegatronArgMetadata(
+        arg_type=str,
+        default=None,
+        help="nvdlfw_inspect feature YAML applied to every Transformer Engine module (LogTensorStats, LogFp8TensorStats, ...). Writes PER-RANK statistics files, so use it only on small probes (<= 16 nodes).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "te_debug_log_dir": MegatronArgMetadata(
+        arg_type=str,
+        default=None,
+        help="Directory for the nvdlfw_inspect logs; defaults to <tensorboard-dir>/te_debug.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "diag_layer_grad_norms": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -7437,6 +7453,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "te_debug_config": MegatronActionSpec(
+        option_strings=("--te-debug-config",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
+    "te_debug_log_dir": MegatronActionSpec(
+        option_strings=("--te-debug-log-dir",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "diag_layer_grad_norms": MegatronActionSpec(
         option_strings=("--diag-layer-grad-norms",),

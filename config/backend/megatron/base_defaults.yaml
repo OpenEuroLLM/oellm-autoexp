@@ -730,6 +730,8 @@ te_precision_config_file: null  # Configuration file to select per-module precis
 te_rng_tracker: false  # Use the Transformer Engine version of the random number generator. Required for CUDA graphs support.
 tensor_model_parallel_size: 1  # Intra-layer model parallelism. Splits tensors across GPU ranks.
 tensor_parallel_num_weight_shards: null  # Total number of shards each weight is split into across the tensor-parallel + GTP axes (i.e. ``tensor_model_parallel_size * gtp_weight_remat_size``). This is the user-facing knob: it must be ``>= tensor_model_parallel_size`` and divisible by it. When None it defaults to ``tensor_model_parallel_size`` (no GTP sharding). It is the source of truth and implies ``gtp_weight_remat_size = tensor_parallel_num_weight_shards // tensor_model_parallel_size`` (resolved in ``__post_init__``).
+te_debug_config: null  # nvdlfw_inspect feature YAML applied to every Transformer Engine module (LogTensorStats, LogFp8TensorStats, ...). Writes PER-RANK statistics files, so use it only on small probes (<= 16 nodes).
+te_debug_log_dir: null  # Directory for the nvdlfw_inspect logs; defaults to <tensorboard-dir>/te_debug.
 tensorboard_dir: null  # Write TensorBoard logs to this directory.
 tensorboard_log_interval: 1  # Report to tensorboard interval.
 tensorboard_queue_size: 1000  # Size of the tensorboard queue for pending events and summaries before one of the 'add' calls forces a flush to disk.
