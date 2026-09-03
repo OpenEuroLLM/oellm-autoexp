@@ -1147,6 +1147,16 @@ class MegatronConfig(ConfigInterface):
     # it.
     residual_norm_wd_mult: float = 0.0
 
+    # Multiplier on --weight-decay for the word-embedding matrix. 1.0 = decay like every other
+    # weight (Megatron default); 0.0 = no decay on the embeddings (OLMo 2/3, Levanter/Marin).
+    # The untied output layer is not affected.
+    embedding_wd_mult: float = 1.0
+
+    # Loading an optimizer checkpoint after a multiplier created a NEW param group (e.g.
+    # embedding_wd_mult mid-run): map the new group onto the structurally equivalent saved group
+    # and keep the current overrides instead of raising. Needed for the embedding arm at 512 nodes.
+    allow_new_param_groups_on_load: bool = False
+
     # Gradient clipping based on global L2 norm.
     clip_grad: float = 1.0
 
