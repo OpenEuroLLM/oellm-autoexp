@@ -652,6 +652,8 @@ rerun_mode: validate_results  # choices: ['disabled', 'validate_results', 'repor
 reset_attention_mask: false  # Reset self attention mask after end-of-document token.
 reset_position_ids: false  # Reset posistion ids after end-of-document token.
 residual_norm_wd_mult: 0.0  # Multiplier on --weight-decay for the remaining norm gains: every 1-D non-bias param that is NOT a qk-layernorm gain, i.e. the residual-stream norms (input_layernorm, pre_mlp_layernorm, the final layernorm, and the TE-fused *.layer_norm_weight tensors). The final layernorm gain matters most, since it multiplies the LM head input directly. Default 0.0 = no decay. Use 1.0 to decay like every other weight (as OLMo 2/3 do), or a fraction for weaker decay. Biases are always excluded. Together with --qk-layernorm-wd-mult this generalises --apply-wd-to-qk-layernorm, so they are mutually exclusive with it.
+embedding_wd_mult: 1.0  # 1.0 = decay the word embeddings like every other weight; 0.0 = exclude them (OLMo 2/3, Levanter/Marin)
+allow_new_param_groups_on_load: false  # load a param group created mid-run (e.g. embedding_wd_mult) from the structurally equivalent saved group
 result_rejected_tracker_filename: null  # Optional name of file tracking `result_rejected` events.
 retriever_report_topk_accuracies: []  # Which top-k accuracies to report (e.g. '1 5 20')
 retriever_score_scaling: false  # Whether to scale retriever scores by inverse square root of hidden size

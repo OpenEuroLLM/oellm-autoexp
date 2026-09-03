@@ -11074,6 +11074,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=0.0,
     ),
+    "embedding_wd_mult": MegatronActionSpec(
+        option_strings=("--embedding-wd-mult",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
+    ),
+    "allow_new_param_groups_on_load": MegatronActionSpec(
+        option_strings=("--allow-new-param-groups-on-load",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "result_rejected_tracker_filename": MegatronActionSpec(
         option_strings=("--result-rejected-tracker-filename",),
         action_type="store",
