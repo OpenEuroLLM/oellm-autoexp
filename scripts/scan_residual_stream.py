@@ -71,6 +71,22 @@ def cos(a, b):
     return torch.nn.functional.cosine_similarity(a, b, dim=0).item()
 
 
+def add_rounding(hidden, branch):
+    """Measure error from adding a BF16 branch to a BF16 residual stream."""
+    exact = hidden.float() + branch.float()
+    rounded = (hidden + branch).float()
+    error = rounded - exact
+    branch_f = branch.float()
+    return {
+        "unchanged_frac": (rounded == hidden.float()).float().mean().item(),
+        "rel_l2": (error.norm() / exact.norm().clamp_min(1e-30)).item(),
+        "err_over_branch_l2": (error.norm() / branch_f.norm().clamp_min(1e-30)).item(),
+        "retained_branch_l2": (
+            (rounded - hidden.float()).norm() / branch_f.norm().clamp_min(1e-30)
+        ).item(),
+    }
+
+
 def first(*objs):
     """The first tensor in here.
 
@@ -125,11 +141,13 @@ def attach(model):
                 h = live.pop((idx, "h_in"), None)
                 if h is not None and h.shape == t.shape:
                     r["attn_cos"] = cos(t, h)
+                    r.update({f"attn_add_{k}": v for k, v in add_rounding(h, t).items()})
             elif what == "mlp":
                 r["mlp_rms"] = rms(t)
                 h = live.pop((idx, "h_mid"), None)
                 if h is not None and h.shape == t.shape:
                     r["mlp_cos"] = cos(t, h)
+                    r.update({f"mlp_add_{k}": v for k, v in add_rounding(h, t).items()})
             else:
                 r["h_out_rms"] = rms(t)
 
@@ -174,10 +192,18 @@ COLS = [
     "attn_rms",
     "attn_ratio",
     "attn_cos",
+    "attn_add_unchanged_frac",
+    "attn_add_rel_l2",
+    "attn_add_err_over_branch_l2",
+    "attn_add_retained_branch_l2",
     "h_mid_rms",
     "mlp_rms",
     "mlp_ratio",
     "mlp_cos",
+    "mlp_add_unchanged_frac",
+    "mlp_add_rel_l2",
+    "mlp_add_err_over_branch_l2",
+    "mlp_add_retained_branch_l2",
     "h_out_rms",
     "attn_gain_rms",
     "mlp_gain_rms",

@@ -8,11 +8,18 @@ the swap or was there all along. This reads every checkpoint we still have.
 
 scale = fp8_max / amax, so a FALLING scale means the activations are GROWING.
 
-Needs a GPU node: TE writes _extra_state as a pickle whose unpickling imports
-megatron.core -> transformer_engine -> libcuda.so.1.
+Needs the NVIDIA driver visible, not a compute node: TE writes _extra_state as a
+pickle whose unpickling imports megatron.core -> transformer_engine ->
+libcuda.so.1. The JUPITER login nodes DO have a GH200 and do have libcuda, so
+`apptainer exec --nv` is enough. `--nv` is what binds the host driver libraries
+into the container; omit it and the import fails with
+`libcuda.so.1: cannot open shared object file` even on a machine that has a GPU,
+which reads exactly like "no GPU here" and is the trap this note exists to
+prevent. Nothing in this script calls into CUDA; it only needs the import to
+succeed.
 
-  srun -A e-sta-openeurollm -p booster -N 1 -n 1 --gres=gpu:1 -t 00:30:00 \
-    apptainer exec --nv /e/project1/e-sta-openeurollm/container/\
+  # login node, no allocation
+  apptainer exec --nv /e/project1/e-sta-openeurollm/container/\
 MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif \
     python3 scripts/scan_fp8_amax.py <checkpoints-dir> --csv docs/64k-debug/data/fp8_amax.csv
 """
@@ -91,10 +98,9 @@ def decode(blob):
     # checkpoint read that way looked like it had no FP8 state at all.
     #
     # So try the real classes first; that works whenever transformer_engine
-    # imports (on a login node, put a stub libcuda.so.1 on LD_LIBRARY_PATH --
-    # TE dlopens it RTLD_LAZY and nothing here ever calls into CUDA). Fall back
-    # to the stubbing unpickler only when the real import is unavailable, and
-    # accept its result only if it actually produced a dict.
+    # imports, which on a login node means running under `apptainer exec --nv`.
+    # Fall back to the stubbing unpickler only when the real import is
+    # unavailable, and accept its result only if it actually produced a dict.
     try:
         return pickle.loads(t)
     except Exception:
