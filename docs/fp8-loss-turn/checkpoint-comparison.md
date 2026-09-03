@@ -56,6 +56,20 @@ rendered config and SLURM logs under `logs/`.
 Available `aux.mode` values are `model_flagship`, `model_bf16`, `model_all`,
 `optimizer_flagship`, `optimizer_bf16`, `optimizer_all`, and `all`.
 
+The already-submitted `model_all` job starts at 60,000. Launch a separate
+autoexp job for only the 17 earlier flagship checkpoints with:
+
+```bash
+scripts/oellm_32b.sh \
+  --config-name experiments/oellm_32b_dense/checkpoint_stats_prior_jupiter \
+  --submit-and-exit
+```
+
+The derived config invokes `scripts/run_prior_checkpoint_scan_jupiter.sh` in
+the same production container/environment. It scans 4,000 through 57,940, uses
+4,000 as its baseline, and writes to a separate
+`checkpoint_scan_prior_<TIMESTAMP>/artifacts` directory.
+
 ## 1. Inventory before loading
 
 Run this first for one checkpoint from each tree and confirm that the embedding,
