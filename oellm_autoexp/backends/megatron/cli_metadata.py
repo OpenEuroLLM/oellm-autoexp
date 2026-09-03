@@ -937,6 +937,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "diag_weight_stats": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Log min/max/mean/rms of every linear_qkv / linear_proj / linear_fc1 / linear_fc2 weight matrix per layer, plus the embedding and output layer. One pass over the local weight shards and three small all-reduces over the model-parallel group on a diagnostic iteration.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "diag_fp8_meta": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Log the FP8 delayed-scaling window-max amax and current scale of the GEMM input, weight and output gradient of the four TE GEMMs of every layer. Empty under recipes without per-tensor state (blockwise, mxfp8) and for bf16 layers.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "diag_layer_grad_norms": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -7403,6 +7419,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "diag_clip_events": MegatronActionSpec(
         option_strings=("--diag-clip-events",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "diag_weight_stats": MegatronActionSpec(
+        option_strings=("--diag-weight-stats",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "diag_fp8_meta": MegatronActionSpec(
+        option_strings=("--diag-fp8-meta",),
         action_type="store_true",
         nargs=0,
         const=True,

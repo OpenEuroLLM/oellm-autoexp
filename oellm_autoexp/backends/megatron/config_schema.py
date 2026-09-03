@@ -2809,6 +2809,14 @@ class MegatronConfig(ConfigInterface):
     # interval. Free, and independent of --diagnostics-interval.
     diag_clip_events: bool = False
 
+    # Log min/max/mean/rms of every linear_qkv / linear_proj / linear_fc1 / linear_fc2 weight
+    # matrix per layer, plus the embedding and output layer.
+    diag_weight_stats: bool = False
+
+    # Log the FP8 delayed-scaling window-max amax and current scale of the GEMM input, weight
+    # and output gradient of the four TE GEMMs of every layer.
+    diag_fp8_meta: bool = False
+
     # Number of top logits to save.
     logits_save_top_k: int | None | None = None
 
