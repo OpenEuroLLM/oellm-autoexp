@@ -13,7 +13,7 @@ MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif \
     python3 scripts/scan_norm_gains.py \
       /e/scratch/e-sta-openeurollm/production_training/\
 oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4/checkpoints \
-      --csv docs/fp8-loss-turn/data/norm_gains.csv
+      --csv docs/64k-debug/data/norm_gains.csv
 """
 
 import argparse

@@ -106,11 +106,11 @@ def title(ax, txt):
     ax.set_title(txt, color=INK, fontsize=11, loc="left", pad=26)
 
 
-gains = series("docs/fp8-loss-turn/data/norm_gains.csv", "tensor", "mean")
-floor = series("docs/fp8-loss-turn/data/norm_gains.csv", "tensor", "min")
-amax = series("docs/fp8-loss-turn/data/fp8_amax.csv", "layer", "amax_act")
-wgt = series("docs/fp8-loss-turn/data/fp8_amax.csv", "layer", "amax_wgt")
-loss = binned_loss("docs/fp8-loss-turn/data/loss.csv")
+gains = series("docs/64k-debug/data/norm_gains.csv", "tensor", "mean")
+floor = series("docs/64k-debug/data/norm_gains.csv", "tensor", "min")
+amax = series("docs/64k-debug/data/fp8_amax.csv", "layer", "amax_act")
+wgt = series("docs/64k-debug/data/fp8_amax.csv", "layer", "amax_wgt")
+loss = binned_loss("docs/64k-debug/data/loss.csv")
 
 fig, axes = plt.subplots(
     5,
@@ -239,5 +239,5 @@ fig.suptitle(
     y=0.989,
 )
 fig.tight_layout(rect=(0, 0, 1, 0.972))
-fig.savefig("docs/fp8-loss-turn/drift_evidence.png", dpi=150, facecolor=SURF)
-print("wrote docs/fp8-loss-turn/drift_evidence.png")
+fig.savefig("docs/64k-debug/drift_evidence.png", dpi=150, facecolor=SURF)
+print("wrote docs/64k-debug/drift_evidence.png")

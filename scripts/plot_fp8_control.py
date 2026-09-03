@@ -5,7 +5,7 @@ cont4b forks from the flagship at iteration 63,125 and runs the identical
 schedule and data in bf16. Anything that happens in BOTH runs is not caused by
 FP8. Three measures, one panel each.
 
-    python3 scripts/plot_fp8_control.py    # -> docs/fp8-loss-turn/fp8_control.png
+    python3 scripts/plot_fp8_control.py    # -> docs/64k-debug/fp8_control.png
 """
 
 import collections
@@ -19,7 +19,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-D = "docs/fp8-loss-turn/data"
+D = "docs/64k-debug/data"
 BREAK, FORK, LO, HI = 66625, 63125, 64000, 68000
 FLAG_C, BF16_C = "#2a78d6", "#eb6834"  # categorical slots 1 and 2
 INK, INK2, MUTED, SURF = "#0b0b0b", "#52514e", "#b5b3ad", "#fcfcfb"
@@ -156,5 +156,5 @@ fig.text(
     fontsize=9,
 )
 fig.tight_layout(rect=(0, 0, 1, 0.88))
-fig.savefig("docs/fp8-loss-turn/fp8_control.png", dpi=150, facecolor=SURF)
-print("wrote docs/fp8-loss-turn/fp8_control.png")
+fig.savefig("docs/64k-debug/fp8_control.png", dpi=150, facecolor=SURF)
+print("wrote docs/64k-debug/fp8_control.png")

@@ -37,7 +37,7 @@ TENSORS = [
 ]
 
 
-def load(path="docs/fp8-loss-turn/data/weight_stats.csv"):
+def load(path="docs/64k-debug/data/weight_stats.csv"):
     acc = collections.defaultdict(lambda: collections.defaultdict(list))
     for r in csv.DictReader(open(path)):
         for m in ("wmax", "wrms"):
@@ -155,8 +155,8 @@ fig.text(
     fontsize=9,
 )
 fig.tight_layout(rect=(0, 0, 1, 0.89))
-fig.savefig("docs/fp8-loss-turn/weight_control.png", dpi=150, facecolor=SURF)
-print("wrote docs/fp8-loss-turn/weight_control.png")
+fig.savefig("docs/64k-debug/weight_control.png", dpi=150, facecolor=SURF)
+print("wrote docs/64k-debug/weight_control.png")
 
 
 # The fork is a free correctness check: cont4 continues from the flagship's own

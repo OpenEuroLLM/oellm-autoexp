@@ -10,12 +10,12 @@ the RMS so outlier growth can be told apart from bulk growth.
 
 One checkpoint per invocation, so several can run in parallel (the reader is
 single-threaded at ~0.14 GB/s); concatenate the per-checkpoint files into
-docs/fp8-loss-turn/data/weight_stats.csv afterwards. Weights are stacked [num_layers, out, in], so
+docs/64k-debug/data/weight_stats.csv afterwards. Weights are stacked [num_layers, out, in], so
 dim 0 is the layer index; slices are cast one layer at a time to keep the fp32
 copy small.
 
   apptainer exec <sif> python3 scripts/scan_weight_stats.py <iter_dir> \
-      --run flagship --csv docs/fp8-loss-turn/data/weight_stats.csv
+      --run flagship --csv docs/64k-debug/data/weight_stats.csv
 
 Checkpoints written before the 2026-08-28 stack swap carry a metadata pickle
 that imports megatron.core -> transformer_engine -> libcuda.so.1, which a login

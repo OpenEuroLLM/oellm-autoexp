@@ -14,7 +14,7 @@ megatron.core -> transformer_engine -> libcuda.so.1.
   srun -A e-sta-openeurollm -p booster -N 1 -n 1 --gres=gpu:1 -t 00:30:00 \
     apptainer exec --nv /e/project1/e-sta-openeurollm/container/\
 MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif \
-    python3 scripts/scan_fp8_amax.py <checkpoints-dir> --csv docs/fp8-loss-turn/data/fp8_amax.csv
+    python3 scripts/scan_fp8_amax.py <checkpoints-dir> --csv docs/64k-debug/data/fp8_amax.csv
 """
 
 import argparse
