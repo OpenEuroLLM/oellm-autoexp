@@ -1172,12 +1172,113 @@ noise.
    rising loss rather than its cause. Their extrema coincide at 4,000-step
    resolution, which cannot separate the two orderings. This is the same
    objection this document raises against item 19 and it applies here unchanged.
+   Item 38 dates the loss turn to ~66,500, so "minimum at 64,000" here means
+   "minimum in the last bin before the turn", not a coincidence of extrema.
 2. **Per-step oscillation is invisible.** Each `dW` sums 4,000 updates, so the
    edge-of-stability signature averages out inside one interval. A negative
    cosine at this scale means large-scale reversal, not per-step bouncing.
    Item 23 is untouched by this result. Resolving it needs the 500-step cadence.
 3. The cosine is negative throughout, including in healthy training, so its sign
    carries no information on its own. Only the trend does.
+
+---
+
+### 37. Adam second moment and the eps-floored fraction
+
+**Status: WIP**
+
+**Question:** Item 36 shows the step size turning, but `||dW||` is the outcome of
+`m / (sqrt(v) + eps)`. Does the optimizer state itself change at the turn, and is
+`eps` involved?
+
+**Evidence:**
+[../../scripts/scan_optimizer_state.py](../../scripts/scan_optimizer_state.py)
+at `--buckets 80`, which is **all 80 buckets and all 33.893B parameters**, on
+nine checkpoints. Array job `1650780`, nine tasks, ~40 min each. The `frac_*`
+columns are computed on the full buffers, not the 2M-element percentile sample,
+so the numel-weighted means below are exact. Data `.optparts/opt_00*.csv`.
+
+| iter | 44k | 48k | 52k | 56k | 60k | 64k | 68k | 72k | 75,126 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `frac sqrt(v) < 10eps` | .9119 | .8867 | .9184 | .9237 | .9152 | .8825 | .7590 | .7441 | **.5485** |
+| `sqrt(v)` p01 (e-9) | 9.30 | 9.49 | 9.42 | 9.32 | 9.79 | 10.49 | 15.90 | 16.25 | 19.59 |
+| `sqrt(v)` p50 (e-8) | 5.33 | 5.49 | 5.16 | 5.01 | 5.14 | 5.45 | 7.40 | 7.57 | 9.44 |
+| `sqrt(v)` p99 (e-7) | 6.90 | 7.21 | 6.80 | 6.61 | 6.73 | 7.24 | 7.35 | 7.49 | 8.20 |
+| `rel_step_p50` | 4.157 | 4.273 | 3.989 | 3.913 | 3.881 | **3.639** | 4.153 | 4.027 | 4.358 |
+
+Before the turn the eps-floored fraction is a stationary wiggle: band
+0.8825–0.9237, alternating sign, rate never exceeding 0.008 per 1,000 iterations.
+After it the rates are −0.031, −0.004 and −0.063 per 1,000. Two of those three
+are four to eight times outside the entire pre-turn band.
+
+**What moves is the lower half of the second-moment distribution.** From 64,000
+the 1st percentile rises 87% and the median 73%, while the 99th moves 13%.
+`sqrt_v_rms` is tail-dominated and reads flat throughout, which is why item 19
+never reported this despite holding it in the same rows.
+
+`rel_step_p50` bottoms at 64,000 and then leaves its pre-turn band upward,
+independently reproducing item 36 from a different measurement: item 36
+differences weights between checkpoints, this reads `m` and `v` inside one.
+
+**Open issue:** Four things.
+
+1. **Causality is not established**, exactly as in item 36.
+2. **The minimum at 64,000 is within scatter.** `step_p50` at 64,000 is 0.0057
+   below the pre-turn floor, and the pre-turn series already contains a +0.006
+   excursion at 48,000. Only the post-turn rise is clearly outside the band.
+3. **The decline is not smooth.** The 68k→72k rate, −0.004 per 1,000, sits
+   inside the pre-turn band. Dropping 68,000 entirely still leaves 64k→72k at
+   −0.017 per 1,000, twice the band, so the trend does not depend on it.
+4. **The step rise cannot be decomposed.** It grows while median `sqrt(v)` grows
+   73%, which requires median `|m|` to grow too, but the scanner records only
+   `m_rms` (flat to declining, 4.28e-7 → 4.17e-7) and an RMS and a median can
+   move oppositely. Adding `m_p01/p50/p99` is a one-line change and a free
+   re-run on checkpoints already staged.
+
+Per-bucket, 77/80 fall over 64k→75,126 with median −0.328. That count alone is
+not the evidence: the pre-turn control interval 56k→60k also has 72/80 falling,
+with median −0.0025. Buckets move together; only the magnitude separates them,
+by a factor of about 130.
+
+---
+
+### 38. Dating the turn from per-step loss
+
+**Status: Closed**
+
+**Question:** Items 35, 36 and 37 all report extrema "at exactly 64,000". All
+three are measured on checkpoints spaced 4,000 apart. Where is the turn actually?
+
+**Evidence:** Per-step `lm loss` from the 18 production logs, 15,033 points,
+binned at 500 iterations.
+
+| bin | 62–62.5k | 63.5–64k | 64–64.5k | 64.5–65k | 65–65.5k | 65.5–66k | 66–66.5k | 66.5–67k | 67–67.5k | 67.5–68k |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| loss | 1.5455 | 1.5448 | 1.5443 | **1.5435** | 1.5437 | 1.5445 | 1.5444 | 1.5464 | 1.5500 | 1.5550 |
+
+The loss is flat within ±0.0015 from 62,000 through 66,500, then rises at an
+accelerating rate. **The upward turn is at ~66,500, not 64,000.** 64,000 carries
+no feature; the minimum 500-bin is 64,500–65,000 and every bin in the plateau is
+within noise of it.
+
+**Conclusion:** No result in this document localises the turn to 64,000. Items
+35, 36 and 37 place it in the interval 64,000–68,000, which is all their
+checkpoint spacing permits, and 64,000 is the label on the earliest bin of a
+change that begins later. Their findings stand; their dating does not.
+
+This does not conflict with item 27. That item fits against a *decreasing*
+baseline, where falling short of the expected decline is already a departure — a
+plateau is such a departure. The turn measured here is the different and later
+event where the loss stops falling and starts rising.
+
+The restart at 66,625 (items 20, 27) falls inside the 66,500–67,000 bin where
+the rise begins. There is still no discontinuity across it: the two production
+logs overlap at 66,630–66,665 and agree to the fifth decimal, against ±0.008 of
+per-step scatter. Recorded as an association, not a mechanism.
+
+**Cost of not knowing this:** the first LR arm was scoped to stop at 66,000 on a
+misreading of a forward-binned control table, and so ran entirely inside the
+plateau. 5,142 GPU-h measuring a window with no signal in it.
 
 ---
 
@@ -1304,6 +1405,14 @@ re-derived from logs alone silently omits that segment.
   minimum exactly at 64,000 and rises afterward (item 36). Training remains
   paused.
 
+- **2026-09-04** Scanning the optimizer state over 100% of the model confirms the
+  eps-floored fraction collapsing 0.88 to 0.55 after the turn, a second correlate
+  from a different measurement (item 37). Binning the per-step loss at 500
+  iterations dates the turn to ~66,500 and shows 64,000 carries no feature, so
+  the "exactly 64,000" in items 35–37 is checkpoint spacing, not localisation
+  (item 38). A Megatron fork patch was needed before any LR could be changed on
+  resume; the 1.76e-4 arm runs to 70,000 as job `1656733`.
+
 ---
 
 ## Current assessment
@@ -1312,6 +1421,13 @@ re-derived from logs alone silently omits that segment.
 
 - The regression is present in held-out loss and BF16 evaluation.
 - It is smooth and begins before the visible crossing near 66k.
+- **The upward turn is at ~66,500.** Binned per-step loss is flat within ±0.0015
+  from 62,000 through 66,500, and 64,000 carries no feature. Every "at exactly
+  64,000" in items 35–37 is the label on a 4,000-spaced bin (item 38).
+- Two independent correlates turn in the 64,000–68,000 interval: relative step
+  size `||dW||/||W||` (item 36) and the Adam eps-floored fraction, which
+  collapses 0.88 to 0.55 over 100% of parameters (item 37). Neither establishes
+  causal direction.
 - No scheduled configuration, learning-rate, batch-size, or restart event occurs
   at the turn.
 - The same post-60k pattern continues with BF16, a different post-64k data order,
