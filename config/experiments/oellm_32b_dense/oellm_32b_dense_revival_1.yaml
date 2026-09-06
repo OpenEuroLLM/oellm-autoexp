@@ -76,13 +76,16 @@ backend:
     data_args_path: ${aux.datamix}
     data_cache_path: ${aux.fscratch_cache}
     # --- logging: everything the campaign's monitoring pilot reads ---
-    # Segment end (2026-09-06): the timed exit counts from the python start (about 1.3 min after the job
-    # start on JUPITER) and a persistent save of this model takes ~3 s at 512 nodes (442 GiB, 2050 files),
-    # so the segment trains until ~6.7 min before the 12 h wall; SLURM's TERM@240 with --exit-signal-handler
-    # is the backstop (save + 'exiting program after receiving SIGTERM.', restarted by the policy's
-    # sigterm_rollover), and a segment that hits the wall anyway is restarted from its last complete
-    # checkpoint (time_limit_rollover). 690 -> 712 recovers ~22 min (~300 iterations) per segment.
-    exit_duration_in_mins: 712
+    # Segment end (2026-09-06): the timed exit is THE mechanism that ends a segment with a checkpoint. It
+    # counts from the python start (about 1.3 min after the job start on JUPITER) and a persistent save of
+    # this model takes ~3 s at 512 nodes (442 GiB, 2050 files), so the segment trains until ~8.7 min before
+    # the 12 h wall. SLURM's TERM@240 with --exit-signal-handler is only a best-effort backstop: the launch
+    # runs under torchrun, whose elastic agent terminates the workers ~30 s after SIGTERM (4-node smoke
+    # 1691088: the exit checkpoint started 2 s after the signal and was cut off), so a signalled segment ends
+    # FAILED and is restarted by the policy from whatever checkpoint completed (sigterm_rollover /
+    # err_child_failed); a segment that hits the wall is restarted from its last complete checkpoint
+    # (time_limit_rollover). 690 -> 710 recovers ~20 min (~290 iterations) per segment.
+    exit_duration_in_mins: 710
     wandb_project: oellm_32b_dense
     wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
     log_params_norm: true

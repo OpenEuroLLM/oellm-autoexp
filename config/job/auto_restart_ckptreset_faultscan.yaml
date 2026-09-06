@@ -239,6 +239,16 @@ log_events:
   # first, SIGKILL after KillWait), so it must not be mistaken for a rollover:
   # SLURM writes '*** JOB <id> ON <node> CANCELLED AT <ts> ***' into the log on
   # scancel and '... CANCELLED AT <ts> DUE TO TIME LIMIT ***' at the wall limit.
+  # CAVEAT (4-node Megatron smoke 1691088, 2026-09-06): under torchrun the elastic
+  # agent handles SIGTERM itself and terminates the workers ~30 s later, so the
+  # exit checkpoint only completes if one iteration plus the save fit in that
+  # window (production: ~4 s + ~3 s; the smoke's 17 s + 40 s did not), and the
+  # job ends FAILED with the agent's SignalException traceback either way. The
+  # timed exit (exit_duration_in_mins) therefore stays the primary mechanism;
+  # sigterm_rollover is a backstop that restarts from whatever checkpoint
+  # completed. A relay that signals only the workers (batch-script trap +
+  # `srun --overlap pkill -TERM -f pretrain_gpt.py`) would make the signal
+  # path real; untested as of 2026-09-06.
   # Observed on JUPITER (1-node dummy, job 1691075, 2026-09-06): the delivery of
   # `--signal=TERM@N` itself is logged by slurmstepd as
   # '*** STEP <id>.0 ON <node> CANCELLED AT <ts> ***' (STEP, no JOB line), so
