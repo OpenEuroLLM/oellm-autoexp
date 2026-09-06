@@ -30,7 +30,9 @@ backend:
   megatron:
     global_batch_size: 128
     micro_batch_size: 1
-    load: ${aux.run_root}/training_ckpts/checkpoints
+    # load == save as in production: the smoke tree is seeded with a symlink to the production 76k checkpoint
+    # (a separate --load tree would win the tracker comparison and restart every segment from 76000)
+    load: ${aux.smoke_root}/training_ckpts/checkpoints
     save: ${aux.smoke_root}/training_ckpts/checkpoints
     non_persistent_global_ckpt_dir: ${aux.smoke_root}/training_ckpts/checkpoints_rolling
     save_interval: 2
