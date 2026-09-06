@@ -107,6 +107,8 @@ slurm:
     # booster, 12 h (QoS part_booster MaxWall 12:00:00; 24 h segments need the largebooster partition, which
     # is undocumented and administratively DOWN as of 2026-09-06: oellm_32b_dense_revival_1_24h.yaml)
     time: "12:00:00"
-    # B: = batch shell only; the relay template's trap forwards SIGTERM to the Megatron workers (not to the
-    # torchrun agents), so the signal backstop ends the segment with a checkpoint and exit 0 (4-node smoke)
-    signal: "B:TERM@240"
+    # B: = batch shell only, USR1 (a batch-shell TERM makes slurmstepd print the JOB CANCELLED line that the
+    # policy reads as a scancel); the relay template's trap forwards SIGTERM to the Megatron rank processes
+    # (not to the torchrun agents), so the signal backstop ends the segment with a complete checkpoint and
+    # exit 0 (4-node smokes 1692221 and 1692553 -> 1692688)
+    signal: "B:USR1@240"
