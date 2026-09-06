@@ -28,6 +28,7 @@
 defaults:
   - /experiments/oellm_32b_dense/oellm_32b_dense_production
   - override /job: auto_restart_ckptreset_faultscan
+  - override /slurm: jupiter_autoexclude_relay   # worker-only SIGTERM relay (templates/jupiter_relay.sbatch, 2026-09-06)
   - _self_
 
 aux:
@@ -106,4 +107,6 @@ slurm:
     # booster, 12 h (QoS part_booster MaxWall 12:00:00; 24 h segments need the largebooster partition, which
     # is undocumented and administratively DOWN as of 2026-09-06: oellm_32b_dense_revival_1_24h.yaml)
     time: "12:00:00"
-    signal: "TERM@240"
+    # B: = batch shell only; the relay template's trap forwards SIGTERM to the Megatron workers (not to the
+    # torchrun agents), so the signal backstop ends the segment with a checkpoint and exit 0 (4-node smoke)
+    signal: "B:TERM@240"
