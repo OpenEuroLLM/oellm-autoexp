@@ -295,6 +295,27 @@ log_events:
       exclude_file: ${job.restart_exclude_file}
       reason: "Wall-clock limit hit before the exit checkpoint — resuming from the last complete checkpoint"
 
+  # ---- Checkpoint hook (2026-09-06): evaluations once a checkpoint is available --------------
+  # Megatron prints 'successfully saved checkpoint from iteration N to <dir> in torch_dist format'
+  # for persistent saves (the rolling ones go to a *_rolling dir and do not match: the pattern
+  # requires the dir to end in /checkpoints). The job's checkpoint_hook_command runs when N is a
+  # multiple of checkpoint_hook_every, with {iteration} and {ckpt_dir} filled in; it detaches the
+  # real work (conversion + evaluation arrays) so the monitor is not blocked. Never terminal.
+  - name: checkpoint_saved
+    pattern: "successfully saved checkpoint from iteration\\s+(?P<iteration>\\d+) to (?P<ckpt_dir>\\S+/checkpoints) "
+    pattern_type: regex
+    extract_groups:
+      iteration: iteration
+      ckpt_dir: ckpt_dir
+    condition:
+      class_name: IterationMultipleCondition
+      key: iteration
+      every: ${job.checkpoint_hook_every}
+    action:
+      class_name: RunCommandAction
+      command: ${job.checkpoint_hook_command}
+      timeout_s: 120
+
   - name: exit_duration_rollover
     pattern: "exiting program after [0-9.]+ minutes"
     pattern_type: regex

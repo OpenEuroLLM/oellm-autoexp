@@ -124,6 +124,13 @@ class SlurmJobConfig(SlurmJobConfigBase):
     # carries nodes excluded since plan time. Empty = off.
     restart_pre_command: str = ""
     restart_exclude_file: str = ""
+    # Checkpoint hook (policy event `checkpoint_saved`): shell command run by the monitor when the
+    # training log reports a persistent checkpoint whose iteration is a multiple of
+    # `checkpoint_hook_every` (0 = off). Templated with {iteration}, {ckpt_dir}, {job_id},
+    # {job_name}; it must return quickly (detach long work, e.g. an evaluation chain, with
+    # `setsid nohup ... &`), the monitor waits at most the action's timeout for it.
+    checkpoint_hook_command: str = ""
+    checkpoint_hook_every: int = 0
 
 
 @dataclass(kw_only=True)

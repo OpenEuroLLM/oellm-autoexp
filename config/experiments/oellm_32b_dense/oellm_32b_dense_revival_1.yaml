@@ -52,6 +52,10 @@ job:
   # node-fault attribution before every resubmission + exclusion refresh (config/job/auto_restart_ckptreset_faultscan.yaml)
   restart_pre_command: "cd ${aux.campaign}/.. && python3 ${aux.campaign}/helper_scripts/node_fault_registry.py scan --job {runtime_job_id} --logs '{log_dir}/slurm-*.log' --apply --export ${aux.campaign}/results/nodes"
   restart_exclude_file: ${aux.exclude_file}
+  # evaluations once a checkpoint is available (operator, 2026-09-06): every 4k persistent checkpoint ->
+  # eval/eval_checkpoint.sh (bridge view, HF conversion job, oellm-eval arrays), detached from the monitor
+  checkpoint_hook_every: 4000
+  checkpoint_hook_command: "setsid nohup bash ${aux.campaign}/eval/eval_checkpoint.sh {iteration} {ckpt_dir} > ${aux.campaign}/results/eval/trigger_{iteration}.log 2>&1 < /dev/null &"
 
 backend:
   aux:
