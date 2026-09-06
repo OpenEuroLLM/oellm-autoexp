@@ -168,6 +168,7 @@ class MonitorLoop:
         no_error_catching: bool = False,
     ) -> None:
         _import_registry()
+        self._pending_restart_hooks: dict[str, dict[str, Any]] = {}
         self._store = store
         self._slurm_client = slurm_client
         self._local_client = local_client
@@ -676,10 +677,66 @@ class MonitorLoop:
             self._store.mark_finished(job.job_id, "cancelled")
             return True
         if effect == "restart":
+            self._run_restart_hooks(job, runtime_id)
             self._restart_job(job)
             self._store.upsert(job)
             return True
         return False
+
+    def _run_restart_hooks(self, job: JobRecord, runtime_id: str | None) -> None:
+        """Before a resubmission: run the RestartAction's ``pre_command`` (e.g.
+        a node-fault scan of the failed job's log that updates the exclusion
+        file) and refresh ``slurm.sbatch.exclude`` from ``exclude_file`` so the
+        re-rendered sbatch carries every node excluded since plan time."""
+        hooks = self._pending_restart_hooks.pop(job.job_id, None) or {}
+        pre_command = (hooks.get("pre_command") or "").strip()
+        exclude_file = (hooks.get("exclude_file") or "").strip()
+        if not pre_command and not exclude_file:
+            return
+        variables = self._build_job_metadata(job)
+        variables["runtime_job_id"] = runtime_id or job.runtime.runtime_job_id or ""
+        try:
+            variables["log_path"] = str(self._resolve_log_path(job))
+        except Exception:  # pragma: no cover - best effort
+            variables["log_path"] = ""
+        if pre_command:
+            import subprocess
+
+            from oellm_autoexp.monitor.utils.template import replace_braced_keys
+
+            try:
+                command = replace_braced_keys(pre_command, variables)
+            except KeyError:
+                command = pre_command
+            timeout = float(hooks.get("pre_command_timeout_s") or 900.0)
+            LOGGER.info("restart hook: running pre_command for %s: %s", job.job_id, command)
+            try:
+                proc = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=timeout)
+                tail = (proc.stdout + proc.stderr).strip().splitlines()[-8:]
+                LOGGER.info("restart hook: pre_command exit %s | %s", proc.returncode, " / ".join(tail))
+            except subprocess.TimeoutExpired:
+                LOGGER.warning("restart hook: pre_command timed out after %ss", timeout)
+            except Exception as exc:  # pragma: no cover - never block the restart
+                LOGGER.warning("restart hook: pre_command failed: %s", exc)
+        if exclude_file and isinstance(job.definition, SlurmJobConfig):
+            try:
+                nodelist = oc_exclude_nodes(exclude_file)  # comma-joined string (or None)
+                if isinstance(nodelist, (list, tuple)):
+                    nodelist = ",".join(nodelist)
+                sbatch = job.definition.slurm.sbatch
+                before = getattr(sbatch, "exclude", None)
+                if nodelist:
+                    setattr(sbatch, "exclude", nodelist)
+                    LOGGER.info(
+                        "restart hook: exclusion list refreshed from %s: %d node(s) (was %s)",
+                        exclude_file,
+                        nodelist.count(",") + 1,
+                        (str(before).count(",") + 1) if before else 0,
+                    )
+                else:
+                    LOGGER.info("restart hook: exclusion file %s empty; sbatch exclude unchanged", exclude_file)
+            except Exception as exc:  # pragma: no cover
+                LOGGER.warning("restart hook: could not refresh the exclusion list: %s", exc)
 
     def _status_action(self, job: JobRecord, old_status: str | None, new_status: str | None) -> str:
         """Process state transition events.
@@ -890,6 +947,9 @@ class MonitorLoop:
         """
         # Handle special actions
         if result.special == "restart":
+            # the RestartAction's hooks (pre_command, exclude_file) are consumed
+            # by _apply_effect right before the resubmission
+            self._pending_restart_hooks[job.job_id] = dict(result.metadata or {})
             return "restart"
 
         if result.special == "cancel":

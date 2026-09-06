@@ -1,0 +1,795 @@
+# @package job
+# auto_restart_ckptreset + node-fault attribution before every resubmission.
+#
+# Identical to auto_restart_ckptreset.yaml (which see) except that every
+# RestartAction carries two hooks, consumed by MonitorLoop._run_restart_hooks
+# right before the resubmission:
+#   pre_command   a shell command run on the failed job's log BEFORE the restart;
+#                 here the campaign's node-fault registry, which attributes the
+#                 failure to a node with corroboration rules (rank-local CUDA/Xid
+#                 errors, rerun rejections, SLURM node failures, nodecheck FAILs,
+#                 srun task exits only with corroboration) and appends the node
+#                 to the shared exclusion list with a traceable comment.
+#   exclude_file  the exclusion list re-read at that moment, so the re-rendered
+#                 sbatch carries every node excluded since plan time (the stored
+#                 SlurmConfig is otherwise frozen at plan time; the original
+#                 AppendToFile/UpdateChainExcludes pair only reaches PENDING
+#                 chain siblings).
+# Both come from job.restart_pre_command / job.restart_exclude_file so an
+# experiment config sets them once. {runtime_job_id} and {log_path} are filled
+# in by the monitor.
+#
+defaults:
+ - default
+
+# RESTART-ON-ERROR **plus** AUTOMATIC CHECKPOINT ROLLBACK.
+#
+# config/job/auto_restart.yaml with three added events that recover from the one
+# failure a plain restart cannot fix: a checkpoint that EXISTS but cannot be
+# LOADED. Restarting on that loops forever, because every attempt reads the same
+# broken file.
+#
+# WHAT IT AUTOMATES (previously done by hand):
+#   1. rename  iter_N -> failed_iter_N
+#   2. rewrite latest_checkpointed_iteration.txt to the newest checkpoint that
+#      actually loads
+#   3. restart, which then resumes from that checkpoint
+#
+# ============================================================================
+# WHY THIS FILE DUPLICATES THE WHOLE LIST INSTEAD OF INHERITING IT
+# ============================================================================
+# `defaults: - auto_restart` DOES NOT WORK. Hydra REPLACES lists on merge, so
+# declaring `log_events` here drops every inherited pattern. Measured, not
+# assumed: with `defaults: - auto_restart` this file composed to 3 events
+# instead of 21 — all 18 restart/cancel patterns silently gone. Same reason
+# auto_cancel.yaml and auto_restart.yaml duplicate each other.
+# KEEP IN SYNC WITH config/job/auto_restart.yaml.
+#
+# ============================================================================
+# TWO FAILURES THAT LOOK ALIKE AND NEED OPPOSITE TREATMENT
+# ============================================================================
+#   FileNotFoundError .../iter_N/__x_y.distcp
+#       The checkpoint is genuinely incomplete — `.metadata` promises shards
+#       that were never written. Quarantine and roll back. Seen 2026-08-19:
+#       iter_0003000 had a valid `.metadata` and only 3169 of 4096 shards, and
+#       job 1411123 logged 77,925 identical FileNotFoundErrors (312 MB) before
+#       being killed by hand.
+#
+#   Missing key ... rerun_state_machine_state/shard_<rank>_<world>
+#       The checkpoint is FINE; the JOB is wrong. That key encodes the world
+#       size (rerun_state_machine.py:782-787 wraps it in a ShardedObject whose
+#       global shape IS the world size), so it cannot reshard — unlike the model
+#       and optimizer tensors, which can. It means "resumed at a different node
+#       count". Quarantining would discard good state and roll back for nothing,
+#       so it CANCELS with an explanation instead.
+#
+# ORDERING MATTERS. The checkpoint events sit FIRST, ahead of the generic
+# `err_child_failed` / `error` restart patterns, because a failed load also
+# prints "Exited with exit code 1" — if the generic restart fired first the job
+# would relaunch onto the same broken checkpoint without the rollback.
+log_events:
+  # === CHECKPOINT RECOVERY (must precede the generic restart patterns) =======
+
+  # 1) quarantine the unloadable checkpoint. `match_once` is load-bearing: the
+  #    triggering error is printed by EVERY rank (77,925 times in the incident
+  #    above), and without it the action would fire thousands of times.
+  - name: ckpt_corrupt_quarantine
+    pattern: "No such file or directory: '[^']*/iter_(\\d+)/__\\d+_\\d+\\.distcp'"
+    pattern_type: regex
+    extract_groups:
+      iteration: 1
+    match_once: true
+    action:
+      class_name: QuarantineCheckpointAction
+      # `load` follows `save` by interpolation, so this is the tree the job will
+      # read from on the restart below.
+      checkpoint_dir: ${backend.megatron.save}
+      iteration: "{iteration}"
+      quarantine_prefix: "failed_"
+      # Bounds the damage: a persistent fault would otherwise walk backwards
+      # through every checkpoint, one restart at a time. Once hit, the action
+      # fails loudly and leaves the tree alone. Nothing is ever DELETED, only
+      # renamed, so a wrong call is reversible.
+      max_rollbacks: 2
+
+  # 2) ... then restart, so the job resumes from the rolled-back tracker.
+  - name: ckpt_corrupt_restart
+    pattern: "No such file or directory: '[^']*/iter_(\\d+)/__\\d+_\\d+\\.distcp'"
+    pattern_type: regex
+    match_once: true
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 5
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "checkpoint quarantined; resuming from last loadable checkpoint"
+
+  # 3) world-size mismatch: do NOT quarantine — cancel and explain.
+  - name: err_ckpt_world_size_mismatch
+    pattern: "Missing key in checkpoint state_dict: rerun_state_machine_state/shard_\\d+_(\\d+)"
+    pattern_type: regex
+    extract_groups:
+      ckpt_world: 1
+    match_once: true
+    action:
+      class_name: CancelAction
+      reason: "Checkpoint written at a different world size — resume at the node count that wrote it"
+
+  # 4) checkpoint that cannot be OPENED AT ALL -> cancel, never restart.
+  #
+  # DISTINCT FROM (1). Event 1 is a checkpoint whose SHARDS are short: the loader
+  # opens it, reads `.metadata`, and then fails on a named `iter_N/__x_y.distcp`.
+  # That message carries the iteration, so QuarantineCheckpointAction can rename
+  # it and roll the tracker back. THIS event is the case where the loader never
+  # gets that far, and the message carries NO iteration to quarantine — so the
+  # quarantine machinery is not merely unhelpful here, it is inapplicable.
+  #
+  # Both raises come from dist_checkpointing/validation.py:
+  #   :231  "Checkpoint directory {dir} does not exist"
+  #         {dir} is the RESOLVED path and is `None` when Megatron decided a
+  #         checkpoint exists (a tracker file says so) but could not resolve one.
+  #   :235  "{dir} is not a distributed checkpoint"
+  #         raised when maybe_load_config() returns None, i.e. `.metadata` is
+  #         ABSENT. torch_dist writes `.metadata` LAST, as the commit marker, so
+  #         this is the signature of a save that was interrupted.
+  #
+  # MEASURED 2026-08-23, run sc-fp8-zloss1e-4-n512-jjopt-nobsramp-wu10000: SIX
+  # jobs in one hour (1465307/1465393/1465418/1465460/1465467/1465554), each
+  # dying in load with 2049 x "Checkpoint directory None does not exist" and then
+  # ~12,656 Gloo connectFullMesh errors as the survivors lost the dead ranks.
+  # None of the checkpoint events above matched, so `err_child_failed` ->
+  # RestartAction won the race and relaunched into the identical state, forever.
+  # Both rolling checkpoints were `common.pt` + 4088 .distcp and NO `.metadata`.
+  #
+  # WHY CANCEL AND NOT QUARANTINE: quarantining walks backwards one checkpoint
+  # per restart, and when the tree holds only unloadable checkpoints that walk
+  # ends at "no checkpoint at all" — which does not fail, it SILENTLY RESTARTS
+  # TRAINING FROM SCRATCH. Stopping and telling a human is the safe outcome.
+  # NB :235 does embed the directory (hence the iteration), so a future
+  # quarantine-on-this-signature is possible — but only once there is a proven
+  # loadable checkpoint to fall back to.
+  #
+  # SPECIFICITY: anchored on "CheckpointingException:" on purpose. A FRESH run
+  # with an empty `load` dir logs
+  #     "Failed to inspect checkpoint in <dir>: <dir> is not a MLM or NeMo
+  #      sharded checkpoint!"
+  # and then starts from scratch, healthily. Matching that string would cancel
+  # every first-ever run in the family, so it is deliberately NOT matched.
+  - name: err_ckpt_unloadable
+    pattern: "CheckpointingException: Checkpoint directory .* does not exist|CheckpointingException: .* is not a distributed checkpoint"
+    pattern_type: regex
+    match_once: true
+    action:
+      class_name: CancelAction
+      reason: "Checkpoint exists but cannot be opened (missing .metadata / unresolvable dir) — a restart re-reads the same broken tree"
+
+  # === everything below is copied verbatim from auto_restart.yaml ============
+  - name: finished_training
+    pattern: "[after training is done]"
+    pattern_type: substring
+    action:
+      class_name: FinishAction
+      reason: "Training finished"
+  - name: finish
+    pattern: ".*validation loss.*on test set.*"
+    pattern_type: regex
+    action:
+      class_name: FinishAction
+      reason: "Test Evaluation Finished"
+
+  # === WALL-CLOCK SEGMENT ROLLOVER -> RESTART (chain-free continuation) ======
+  #
+  # `exit_duration_in_mins` ends a segment with sys.exit(0), so SLURM reports
+  # COMPLETED and the monitor's terminal branch (monitor/loop.py:236) marks the
+  # run "finished" — training silently stops with the schedule barely started.
+  # Cost 2026-08-25: job 1487924 stopped at iteration 19183/894000 (2.1 %) after
+  # a flawless 11.5 h and nothing was resubmitted.
+  #
+  # WHY THE PATTERN ALONE PROVES "NOT DONE" — no iteration arithmetic needed.
+  # The two exits are emitted from mutually exclusive code paths in
+  # megatron/training/training.py:
+  #   * checkpoint_and_decide_exit() runs INSIDE the `while iteration <
+  #     train_iters` loop. On the duration branch it prints
+  #     'exiting program after <train_time> minutes' (:2070) and returns True,
+  #     train() breaks out and calls sys.exit(exit_code) at :2651 — so
+  #     'after training is done' is NEVER reached.
+  #   * a genuinely finished schedule leaves the loop by its own condition with
+  #     should_exit False, train() RETURNS, and :781 prints
+  #     'after training is done'.
+  # So this line can only ever be printed with iterations still to go, and
+  # finished_training above stays the sole authority on real completion.
+  #
+  # Deliberately does NOT match the two sibling messages:
+  #   'exiting program at iteration N'  (:2086, exit_interval) — that is a
+  #       user-requested bounded run (see the fp8.yaml override); restarting it
+  #       would defeat the point.
+  #   'exiting program after receiving SIGTERM.' (:2015) — indistinguishable
+  #       from a deliberate scancel.
+  #
+  # RUNAWAY GUARD. RestartAction has no cap of its own, and unlike an error
+  # pattern this one fires on EVERY healthy segment, so without a ceiling the run
+  # would relaunch forever.
+  #
+  # GENEROUS BY DESIGN, and now genuinely so. This is the benign event — hitting
+  # it means a segment completed 11.5 h of healthy training — so it gets a wide
+  # budget, in deliberate contrast to the tight budget on the stall events below.
+  # That split is only possible because this counts THIS event's own fires:
+  # under the old MaxAttemptsCondition every event shared one job-wide counter,
+  # so a generous rollover ceiling was also a generous stall ceiling.
+  #
+  # 150, NOT 50: a 15 TT schedule at ~9.4k iterations per 11.5 h segment needs
+  # ~91 rollovers (the submit-gate estimate agrees: "x91 segments"). 50 would
+  # stop the flagship at ~24 days, a little over halfway, and it would stop
+  # QUIETLY. 150 leaves ~60 spare for the resubmissions that error restarts and
+  # requeues add. State lives in monitor_state, so it resets if the monitor
+  # session is restarted.
+  - name: exit_duration_rollover
+    pattern: "exiting program after [0-9.]+ minutes"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 150
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "exit_duration_in_mins reached mid-schedule — resuming the next segment from the last checkpoint"
+
+  # === FATAL: configuration / data faults -> CANCEL (never restart) =========
+  - name: err_unrecognized_argument
+    pattern: "unrecognized arguments"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "Launcher rejected an argument (check torchrun_args/ft args)"
+
+  # LAUNCHER/FT-PACKAGE MISMATCH. `enable_ft_package: true` makes every rank call
+  # ft_integration.setup() -> RankMonitorClient.init_workload_monitoring(), which
+  # needs FT_RANK_MONITOR_IPC_SOCKET — and ONLY ft_launcher sets it. Run that
+  # under `python -m torch.distributed.run` and all ranks die in setup.
+  #
+  # THIS MUST CANCEL, NOT RESTART, AND IT PREVIOUSLY DID NEITHER. The failure
+  # cascades: dead ranks make the survivors raise ncclRemoteError / "Connection
+  # refused", which matches err_nccl_timeout below -> RestartAction. So the
+  # monitor RESTARTED a config fault that is identical on every attempt, while
+  # torchrun's own --max-restarts 50 looped the worker group underneath it.
+  # Measured 2026-08-21: job 1436657 (512 nodes, 2049 rank failures) and its
+  # 4-node reproduction 1436792/1436840. Listed BEFORE the NCCL patterns so the
+  # real cause wins the race — log events are evaluated in order.
+  #
+  # Specificity checked against the real logs: 34 hits on the failing run, 0 on
+  # a healthy ft_launcher run, and 0 on the benign
+  # "INFO: ... FT_LAUNCHER_IPC_SOCKET env varialble is not set" line, which is a
+  # DIFFERENT variable and is only informational.
+  - name: err_ft_package_without_ft_launcher
+    pattern: "RankMonitorClientError|FT_RANK_MONITOR_IPC_SOCKET env variable should be set"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "enable_ft_package/calc_ft_timeouts are on but the launcher is not ft_launcher"
+
+  - name: err_disk_quota
+    pattern: "Disk quota exceeded|Errno 122"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Disk quota exceeded — free space or move checkpoints to scratch"
+
+  - name: err_fp8_metadata
+    pattern: "Saved FP8 metadata does not match"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "FP8 recipe/CUDA-graph mismatch — set cuda_graph_impl: none"
+
+  - name: err_dataset_cache_corrupt
+    pattern: "mmap length is greater than file size|ValueError: cannot reshape array"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Corrupt dataset cache — run scripts/check_data_cache.py --repair"
+
+  # ATTENTION-BACKEND ENV vs --attention-backend. TE asserts when the NVTE_*_ATTN
+  # env vars contradict the backend Megatron resolved. The te218-fa3 container
+  # ships FA3 and the memory note "FA3 present != FA3 used" leads to pinning
+  # NVTE_FUSED_ATTN=0 to force it — but with `attention_backend: auto` Megatron
+  # expects 1 and every rank dies in argument validation.
+  # MEASURED 2026-08-28, job 1522580 (512 nodes): 2049 hits, one per rank, ZERO
+  # iterations, killed by hand after 24 min and 252 MB.
+  # CANCEL, never restart: the env is baked into the sbatch, so it is identical
+  # on every attempt.
+  - name: err_attention_backend_env
+    pattern: "NVTE_(FUSED|FLASH|UNFUSED)_ATTN set to [0-9]+, but expected [0-9]+ for attention backend"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "NVTE_*_ATTN env contradicts attention_backend — unset the env vars or set attention_backend explicitly"
+
+  # TE REFUSES TO UNPICKLE FP8 EXTRA STATE. Delayed-scaling FP8 metadata is a
+  # Python pickle; recent TE will not load it without an explicit opt-in. Hit
+  # when resuming an older checkpoint under a newer TE.
+  # MEASURED 2026-08-28, job 1523600 (512 nodes): 4098 hits, ZERO iterations,
+  # killed by hand after 28 min and 382 MB.
+  # CANCEL: the checkpoint is not corrupt, so quarantining it would throw away
+  # good state; the fix is a deliberate human decision about trusting it.
+  - name: err_te_pickled_extra_state
+    pattern: "Refusing to load pickled Transformer Engine extra state"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "TE will not unpickle FP8 extra state from this checkpoint — decide explicitly whether to enable unsafe loading"
+
+  - name: err_infra_rank
+    pattern: "Invalid infrastructure rank"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "NVRx infrastructure rank invalid — check use_infra_group_rank"
+
+  - name: err_torch_oom
+    pattern: "torch\\.cuda\\.OutOfMemoryError|CUDA out of memory\\. Tried to allocate"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Model OOM — reduce micro_batch_size or raise TP/PP"
+
+  # === INFRASTRUCTURE: node-local and transient -> RESTART ==================
+  - name: err_cuda_alloc_init
+    pattern: "Failed to CUDA calloc|AcceleratorError: CUDA error: out of memory|cudaErrorMemoryAllocation"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "GPU occupied at init (leftover process) — retrying on new nodes"
+
+  - name: err_rendezvous
+    # RendezvousClosedError is deliberately ABSENT — ft_launcher emits it during
+    # a NORMAL fault-tolerant restart cycle, and matching it cancelled healthy
+    # job 1379130 at iteration 4204/8000.
+    #
+    # DistBackendError ADDED 2026-08-31. It killed a 512-node job (1565209) at
+    # 12:59, during initialize_model_parallel, with
+    #     DistBackendError: [1] is setting up NCCL communicator and retrieving
+    #     ncclUniqueId from [0] via c10d key-value store by key '0:1', but
+    #     store->get('0:1') got error: Failed to recv, got 0 bytes
+    # and NOTHING here matched: the pattern named DistNetworkError, which is a
+    # DIFFERENT torch exception. Same fault class (c10d store during startup),
+    # same correct response, so it belongs on this event rather than a new one.
+    # An identically-configured sibling (1565251) started fine on another
+    # allocation minutes later, which is what makes it transient.
+    pattern: "RendezvousConnectionError|DistNetworkError|DistBackendError"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "Rendezvous failure — retrying (consider static rdzv for torchrun)"
+
+  # GLOO MESH COLLAPSE. Always a SECONDARY symptom: some rank died for a real
+  # reason, and the survivors then fail to form the gloo mesh during
+  # initialize_model_parallel(). It is the single loudest line in this codebase's
+  # failure history — 99k hits on job 1522580, 149k on 1523600, 58k on 1512329 —
+  # and it is what makes a dead job look ALIVE to the inactivity check.
+  # Deliberately placed AFTER every CANCEL pattern above so a diagnosable root
+  # cause (NVTE env, TE extra state, OOM, checkpoint) still wins the race; this
+  # only fires when nothing more specific matched.
+  #
+  # BUDGETED, and so are err_child_failed / `error` below — see the note there.
+  # This one is the most exposed of the three: with max_restarts: 0 a rank that
+  # dies during initialize_model_parallel() produces this line first, so it now
+  # handles most startup-death faults ahead of the generic catch-alls.
+  - name: err_gloo_mesh
+    pattern: "Gloo connectFullMesh failed"
+    pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "Gloo mesh collapsed after a rank died — retrying on a fresh allocation"
+
+  - name: err_userbuffers_stall
+    pattern: "userbuffers\\.cu.*expecting [0-9]+ got [0-9]+"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "userbuffers TP-overlap stall — peer rank unresponsive, retrying"
+
+  - name: err_nccl_timeout
+    pattern: "Watchdog caught collective operation timeout|unhandled cuda error|NCCL error"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "NCCL collective timeout/abort — retrying"
+
+  # NaN / Inf REJECTED BY THE RERUN STATE MACHINE.
+  #
+  # With `rerun_mode: disabled` (production's setting) the validation still runs
+  # and raises instead of writing an emergency checkpoint
+  # (rerun_state_machine.py), so the job dies with
+  #     RuntimeError: Rank 1492, node jpbo-100-24, device 0, iteration 64002:
+  #     Unexpected result nan (message='found NaN in local grad norm ...')
+  # and, before this event existed, nothing matched it -- the fork run died at
+  # 12:16 and simply sat dead.
+  #
+  # THE BUDGET IS DELIBERATELY LOW (3, not the 25 used above) BECAUSE THE
+  # DIAGNOSIS IS AMBIGUOUS:
+  #   * node-local fault -- observed 2026-08-31: a NaN at iteration 64002 on
+  #     jpbo-100-24 did NOT recur when the same checkpoint replayed the same
+  #     data on a different allocation. One restart fixed it.
+  #   * genuine divergence -- historically the COMMON case here: of 17 result
+  #     validation events across recent 512-node runs, 15 were real NaN/Inf.
+  #     Restarting that reproduces it, and at 512 nodes each attempt is
+  #     expensive.
+  # Three attempts is enough to clear a bad node and cheap enough that a real
+  # divergence stops quickly and visibly instead of looping.
+  #
+  # NB at DP=128 each rank sees different microbatches, so a single pathological
+  # SAMPLE also produces a NaN on exactly one rank. "One rank" does not by
+  # itself distinguish hardware from data -- the restart does, because it
+  # replays the identical sample.
+  - name: err_nan_grad_norm
+    pattern: "found NaN in local grad norm|Unexpected result (nan|inf)"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 3
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "NaN/Inf rejected by rerun validation — retrying (bad node vs real divergence)"
+
+  - name: err_cuda_illegal_access
+    pattern: "illegal memory access|cudaErrorIllegalAddress"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "CUDA illegal memory access — GPU needs reset, not a relaunch"
+
+  - name: err_cpp_terminate
+    pattern: "terminate called after throwing an instance of"
+    pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "Unhandled C++ exception — worker aborted"
+
+  # === NODE FAILURE: RECORD, PROPAGATE, THEN RESTART ========================
+  # These three fire in order on the same log line, and the order matters: the
+  # append must land before the propagate reads the file, and both must happen
+  # before the restart re-renders.
+  #
+  # WHY THIS WAS MISSING (added 2026-08-23). This policy only ever had the
+  # RestartAction below. The append/propagate pair lives in auto_restart_ft.yaml
+  # and did not come along when the flagship moved off ft_launcher onto
+  # /backend: megatron_torchdist_localaddr. The consequence on a 40-day run is
+  # that a node SLURM has just NAMED as failed is restarted away from and then
+  # remains fully eligible for the very next allocation — the run can draw the
+  # same dead node repeatedly, and the exclusion list this whole apparatus feeds
+  # never learns anything during the one run that needs it most.
+  #
+  # 1) Record the node. AppendToFileAction writes a BARE NAME with no comment,
+  #    so entries added here are the unannotated ones; run
+  #    scripts/run_autoexclude_jupiter.py afterwards to give them evidence, or
+  #    prune them if they turn out to be innocent.
+  - name: node_failure_append
+    pattern: "Node failure on ([\\w-]+)"
+    pattern_type: regex
+    extract_groups:
+      node: 1
+    match_once: true
+    action:
+      class_name: AppendToFileAction
+      path: ${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}
+      content: "{node}"
+
+  # 2) Push the updated list onto every PENDING chain sibling. Production runs
+  #    chain_repeat: 3, so segments 2 and 3 are already queued and their sbatch
+  #    scripts were rendered UP FRONT — the baked-in `#SBATCH --exclude=` is the
+  #    list as it stood at submission. PENDING is the only state SLURM lets us
+  #    edit, so this is the only way the queued segments learn about a node that
+  #    died during segment 1.
+  - name: node_failure_propagate
+    pattern: "Node failure on ([\\w-]+)"
+    pattern_type: regex
+    match_once: true
+    action:
+      class_name: UpdateChainExcludesAction
+      exclude_file: ${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}
+
+  # 3) Resubmit into a fresh allocation, resuming from the rolling checkpoint.
+  #    Kept LAST and kept exactly as it was.
+  - name: err_node_failure
+    pattern: "DUE TO NODE FAILURE|Node failure on"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "SLURM node failure in the allocation"
+
+  # === GENERIC RESTART TIER: BOUNDED AS A GROUP ==============================
+  #
+  # WHY ALL THREE CARRY A BUDGET, NOT JUST err_gloo_mesh. These events all match
+  # the SAME rank-death log -- job 1512329 contains 58,077 "Gloo connectFullMesh
+  # failed", 10 "ChildFailedError" and 5 "Exited with exit code 1" -- and
+  # _process_log_events falls through to the next event when a condition blocks
+  # the action. So capping only the first one is theatre: the restart is simply
+  # taken over by the next unbudgeted event in the list. Pinned by
+  # test_an_unbudgeted_catchall_below_defeats_a_budget_above.
+  #
+  # EFFECTIVE CEILING is therefore the SUM over the events a given fault matches:
+  # a gloo-shaped startup death is bounded by 25+25+25 = 75 restart cycles. At
+  # the ~6 cycles/hour measured during the real loop of 2026-08-23 (jobs
+  # 1465307..1465554) that caps a runaway at roughly half a day, instead of
+  # forever. It is a RUNAWAY BACKSTOP, deliberately not a tight bound.
+  #
+  # WHY 25 AND NOT 3. Unlike a stall, these are the PRIMARY recovery path --
+  # with max_restarts: 0 every transient infra fault now comes through here, and
+  # the healthy history suggests roughly one restart per 20 h, i.e. ~50 over a
+  # 43-day campaign spread across these events. A tight budget would strand the
+  # run on an ordinary bad node. 25 from a SINGLE cause, though, is itself a
+  # signal worth stopping for.
+  #
+  # NO GIVEUP EVENT NEEDED HERE, unlike the stall events. A stall leaves the job
+  # ALIVE and burning, so declining to restart must be paired with a cancel.
+  # These fire on a job that is already dying, so once the budgets are spent the
+  # job simply ends and the monitor marks the run terminal (loop.py:236) -- the
+  # allocation is released either way.
+  - name: err_child_failed
+    pattern: "ChildFailedError"
+    pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "Worker process failed — retrying"
+
+  - name: error
+    pattern: "Exited with exit code 1"
+    pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: ""
+
+  # === FORWARD-PROGRESS STALL: "dead but noisy" ==============================
+  #
+  # THE HOLE THESE CLOSE. Every event above waits for a STRING; `inactive` waits
+  # for SILENCE. A job that is dead but still logging satisfies neither, so it
+  # ran unbounded until a human noticed. Ported from auto_restart_ft.yaml, which
+  # has had these since the ft_launcher era — they simply never came along when
+  # the flagship moved onto /backend: megatron_torchdist_localaddr, and this file
+  # is a hand-maintained copy (see the header), so the gap went unnoticed.
+  #
+  # MEASURED ON THIS POLICY, 2026-08-28, all three killed by hand:
+  #   1512329  512 nodes, 5 h 02 m, 411 MB, 21 iteration lines. 98.9 % of the
+  #            file was written AFTER the last training step. ~10,300 GPU-h.
+  #   1522580  512 nodes, 24 m, 252 MB, ZERO iterations.
+  #   1523600  512 nodes, 28 m, 382 MB, ZERO iterations.
+  # 1522580 and 1523600 contain ZERO "ChildFailedError" and ZERO "Exited with
+  # exit code 1" — torchrun only raises those once max_restarts is exhausted —
+  # so not one pattern above could fire, while ~100-150k Gloo lines kept the log
+  # growing so `inactive` could not fire either. These events are the only thing
+  # in this file that would have caught them.
+  #
+  # The counter is Megatron's own iteration line, `iteration    35065/  894000`,
+  # emitted every log_interval (5) iterations, i.e. roughly every 21 s at the
+  # measured 4.13 s/iter on 512 nodes.
+
+  # SHORT WINDOW, mode=any_change. Resets on ANY movement, so a resume that jumps
+  # the counter BACKWARDS still counts and a healthy restart never trips this.
+  # Catches: startup hangs that never reach iteration 1 (the 1522580 / 1523600
+  # shape) and a wedged step.
+  #
+  # 20 polls x 60 s = 20 min. RE-VALIDATED 2026-08-28 by replaying the four
+  # healthy 512-node production logs (1486215, 1487924, 1506525, 1516079 —
+  # ~43 h of training) against this exact window, using the timestamps Megatron
+  # embeds in its own iteration lines:
+  #   startup -> first iteration   6.1 / 6.6 / 6.6 / 6.3 min   (very consistent)
+  #   in-run gaps > 5 min          NONE, except 1516079's 11.5 min and 8.5 min
+  #   verdict                      all four quiet, none fires
+  # and against the three broken ones, all of which fire at ~20 min:
+  #   1512329  287.9 min of no progress  -> saves ~4.5 h x 512 nodes (~9,200 GPU-h)
+  #   1522580   24.2 min, zero iterations
+  #   1523600   28.1 min, zero iterations
+  #
+  # THE 11.5 MIN OUTLIER IS THE BINDING CONSTRAINT and it is worth knowing what
+  # it was: NOT an eval and NOT a checkpoint, but a torchrun-internal worker
+  # group restart (4096 ranks re-printing startup banners) that then recovered.
+  # It leaves only 1.7x margin — but max_restarts is now 0 in the production
+  # config precisely so that cannot happen, which restores the margin to ~3x
+  # over the 6.6 min startup. IF max_restarts IS EVER RAISED AGAIN, RAISE THIS
+  # WINDOW TOO.
+  #
+  # The hard floor is the memory note that >=256-node jobs log NOTHING for 8+
+  # min during NCCL sync and kernel compile — do not cut this finer. Checked
+  # against this run's schedule: async_save is on so save_interval 4000 does not
+  # block, and eval_interval 10000 x eval_iters 10 is well under a minute of
+  # forward-only work, so neither opens a 20 min gap. RAISE IT if async_save is
+  # ever turned off or eval_iters grows a lot.
+  - name: iteration_counter_frozen
+    pattern: "iteration +([0-9]+)/"
+    pattern_type: progress
+    progress_mode: any_change
+    progress_polls: 20
+    progress_timeout_s: 1200
+    condition:
+      # PER-EVENT budget, not the job-wide attempt counter. A stall is a real
+      # fault: retry it a few times in case it was transient, then stop. Three
+      # restarts costs at most ~1 h of stalled wall clock before the giveup
+      # event below cancels and asks for a human.
+      #
+      # This MUST NOT be MaxAttemptsCondition. That reads the job's TOTAL
+      # attempts, which on this policy is dominated by the ~91 healthy
+      # exit_duration_rollover restarts a 15 TT schedule needs — so
+      # `max_attempts: 3` would mean "stop reacting to stalls once the run has
+      # restarted 3 times for any reason", i.e. dead from segment 4 onward.
+      class_name: MaxActionFiresCondition
+      max_fires: 3
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "No iteration progress for 20 min — stuck, not slow"
+
+  # LONG WINDOW, mode=furthest. Resets only when the run reaches a NEW FURTHEST iteration, so
+  # re-running iterations already done is not progress. Catches a restart loop
+  # that cycles forever without ever getting past the same iteration — each cycle
+  # looks like movement to the check above.
+  #
+  # WINDOW TIED TO non_persistent_save_interval (125). After a rewind the counter
+  # must climb back before it reaches a new furthest iteration, so the window must exceed
+  #     125 x ~4.13 s (~8.6 min) + restart overhead (~5 min) ~= 14 min.
+  # 1800 s is ~2x that. RETUNE WHENEVER non_persistent_save_interval CHANGES.
+  #
+  # Largely belt-and-braces now that max_restarts is 0 (a rewind inside one job
+  # can no longer happen — the job dies and the monitor resubmits with a fresh
+  # log and cleared streaks). Kept because it is the only guard if max_restarts
+  # is ever raised again or this policy is used under ft_launcher.
+  - name: stuck_below_furthest_iteration
+    pattern: "iteration +([0-9]+)/"
+    pattern_type: progress
+    progress_mode: furthest
+    # 40 polls / 2400 s, WIDENED from 30/1800 when the furthest-iteration record started
+    # being carried across restarts (loop.py:_restart_job). elapsed_s now sums
+    # the ACTIVE no-progress time on BOTH sides of a restart, so the healthy
+    # rollover has to fit inside the window end to end:
+    #     tail of the finishing segment (final save/shutdown)   ~3 min
+    #   + new job startup to its first iteration line            6.6 min (measured)
+    #   + climbing back past the old mark, <=125 iters x 4.13 s  ~8.6 min
+    #   = ~18 min
+    # 2400 s is ~2x that. RETUNE IT if non_persistent_save_interval (125) grows,
+    # or if startup gets slower at a larger node count.
+    progress_polls: 40
+    progress_timeout_s: 2400
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 3
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "No net iteration progress for 40 min of running — restart loop, not recovery"
+
+  # GIVE UP AND ASK A HUMAN. Load-bearing: a budget makes an event STOP ACTING,
+  # it does not stop the JOB. Without this, the 4th stall would find both events
+  # above exhausted and nothing else watching — the run would sit burning 512
+  # nodes exactly as jobs 1512329/1522580/1523600 did, which is the failure this
+  # whole block exists to prevent. A budget with no terminal case is worse than
+  # no budget.
+  #
+  # UNBUDGETED ON PURPOSE, and it can only ever fire once (CancelAction is
+  # terminal). Ordered AFTER both events above, so while either still has budget
+  # it returns "restart" first and this is never reached.
+  #
+  # mode=furthest: strictly the more general guard, so one event covers both
+  # cases. A frozen counter never reaches a new furthest iteration, and neither does
+  # a restart loop that keeps rewinding — whereas mode=any_change would be reset
+  # by each rewind.
+  - name: stuck_below_furthest_iteration_cancel
+    pattern: "iteration +([0-9]+)/"
+    pattern_type: progress
+    progress_mode: furthest
+    # MUST EXCEED 3 x the stuck_below_furthest_iteration window. Both streaks are carried
+    # across restarts, but stuck_below_furthest_iteration's is popped each time it fires while this
+    # one keeps accumulating -- so with a smaller window this would cancel after
+    # the FIRST stuck_below_furthest_iteration restart instead of the third, silently voiding the
+    # max_fires: 3 above. 3 x 40 = 120, so 130 polls / 7800 s.
+    progress_polls: 130
+    progress_timeout_s: 7800
+    action:
+      class_name: CancelAction
+      reason: "Still not progressing after 3 stall restarts — stopping so a human can look instead of burning the allocation"
+
+  - name: inactive
+    pattern_type: inactivity
+    inactivity_polls: 5
+    inactivity_timeout_s: 1200
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "Inactive Log"
+
+# =============================================================================
+# NO state_events HERE — DELIBERATE, AND THE WHOLE REASON THIS POLICY WORKS
+# =============================================================================
+# auto_restart.yaml restarts on the RUNNING->FAILED transition. That preempts
+# log analysis: a checkpoint-load failure kills the job in ~90 s, the monitor
+# sees the state change before it has read WHY, and relaunches onto the same
+# broken checkpoint. Measured — in one test run this produced 6 restarts with
+# ZERO log events fired and no quarantine, even though the log contained 20
+# FileNotFoundErrors naming the exact iteration. An earlier run of the SAME
+# config recovered correctly, purely because a log poll happened to land first;
+# i.e. state-driven restart makes recovery a coin flip.
+#
+# With state_events removed, every restart decision comes from the log, so the
+# ordering above (checkpoint events before the generic "Exited with exit code 1")
+# actually decides the outcome.
+#
+# COST OF THIS CHOICE: a job that dies without writing any matching line no
+# longer restarts instantly. It is still covered — the `inactive` event fires
+# once the dead log has been silent for 5 polls / 1200 s. Slower, but it cannot
+# relaunch into a fault it has not diagnosed, which is the failure mode this
+# policy exists to stop.

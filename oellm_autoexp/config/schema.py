@@ -116,6 +116,15 @@ class SlurmJobConfig(SlurmJobConfigBase):
     # step, which dominates the cost of any short measurement run.
     est_startup_min: float = 0.0
 
+    # --- restart hooks (consumed by the RestartAction of the job policy) -----
+    # Shell command the monitor runs on the failed job's log right before a
+    # resubmission ({runtime_job_id} and {log_path} are filled in), e.g. a
+    # node-fault scan that appends attributable nodes to the exclusion list;
+    # and the exclusion list re-read at that moment so the re-rendered sbatch
+    # carries nodes excluded since plan time. Empty = off.
+    restart_pre_command: str = ""
+    restart_exclude_file: str = ""
+
 
 @dataclass(kw_only=True)
 class RootConfig(StagedSweepRoot):

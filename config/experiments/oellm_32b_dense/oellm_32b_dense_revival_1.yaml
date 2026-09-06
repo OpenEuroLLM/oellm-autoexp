@@ -1,0 +1,95 @@
+# @package _global_
+#
+# 32B dense flagship, revival 1: continuation of oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4
+# from the decoupled-head arm's 76k checkpoint with the output layer + embeddings at 2e-4
+# (--decoupled-lr) and the body at 3e-4, everything else the production recipe.
+#
+# Why: from ~66.6k the production loss rose in every token-frequency bucket rarer than 1e-4
+# while the head's rows drifted; a head learning rate of 2e-4 from the 64k checkpoint stopped
+# the increase, kept the frequent-token accuracy and led production downstream on all task
+# groups over 64k-76k (campaign oellm_32B_loss-increase_debug, reports/analysis_2026-09-03.md
+# section 6l, monitoring plan reports/monitoring_plan_restart.md).
+#
+# Lineage of the checkpoint tree (seeded by helper_scripts/checkpoint_mirror_watchdog.sh import):
+#   production 64k -> arm head 2e-4: 64.5k 65k 65.5k 66k 68k 70k 72k 73k 74k 75k 76k (same seed,
+#   same data order, same batches consumed as production up to 76,000). The arm ran the diag
+#   Megatron branch oellm/v0.19-jitsev1-diag (patches 0001-0009) in the production container.
+#
+# Layout (fscratch, mode 700 + ACLs for production/eligible_users):
+#   <run>/training_core   logs, tensorboard, wandb (offline), sbatch scripts, monitor state
+#   <run>/training_ckpts  checkpoints (persistent, every 4k) + checkpoints_rolling (every 125)
+# The checkpoint watchdog mirrors every persistent checkpoint to /e/data1 and keeps 3 live.
+#
+# Launch (login node, our checkout, branch prod/oellm_32b_dense_revival_1):
+#   export JUPITER_EXCLUDE_NODES=/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt
+#   PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/oellm_32b_dense/oellm_32b_dense_revival_1 --dry-run
+#   PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/oellm_32b_dense/oellm_32b_dense_revival_1 \
+#       --monitor-state-dir <run>/training_core/_monitor_state        # in tmux: the monitor restarts the run
+defaults:
+  - /experiments/oellm_32b_dense/oellm_32b_dense_production
+  - override /job: auto_restart_ckptreset_faultscan
+  - _self_
+
+aux:
+  run_root: /e/fscratch/e-sta-openeurollm/production/32b_dense_revival_1_body-3e-4_head-2e-4
+  head_lr: 2e-4
+  datamix: /e/project1/e-sta-openeurollm/production_training/oellm_32b_dense/flagship_datamix_option5_fscratch.txt
+  fscratch_cache: /e/fscratch/e-sta-openeurollm/production_training/oellm_32b_dense/cache
+  campaign: /e/project1/laionize/jitsev1_jupiter/workloads/oellm-workflows/oellm_32B_loss-increase_debug
+  exclude_file: ${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}
+
+job:
+  name: "oellm_32b_dense_revival_1_body-3e-4_head-2e-4"
+  base_output_dir: ${aux.run_root}/training_core
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+  chain_repeat: 1
+  est_step_time_s: 4.3
+  est_startup_min: 12
+  # node-fault attribution before every resubmission + exclusion refresh (config/job/auto_restart_ckptreset_faultscan.yaml)
+  restart_pre_command: "cd ${aux.campaign}/.. && python3 ${aux.campaign}/helper_scripts/node_fault_registry.py scan --job {runtime_job_id} --logs '{log_path}' --apply --export ${aux.campaign}/results/nodes"
+  restart_exclude_file: ${aux.exclude_file}
+
+backend:
+  aux:
+    variant: "revival_1"
+  megatron:
+    # --- the intervention: head (embeddings + output layer) at 2e-4, body at 3e-4 ---
+    decoupled_lr: ${aux.head_lr}
+    decoupled_min_lr: 0.0
+    # the checkpoint carries the arm's three optimizer groups and production's WSD scheduler
+    # state; with identical CLI values the override reproduces the same schedule (as the arms)
+    override_opt_param_scheduler: true
+    allow_new_param_groups_on_load: true
+    # --- checkpoint tree (seeded 64k-76k; latest_checkpointed_iteration.txt = 76000) ---
+    load: ${aux.run_root}/training_ckpts/checkpoints
+    save: ${aux.run_root}/training_ckpts/checkpoints
+    non_persistent_global_ckpt_dir: ${aux.run_root}/training_ckpts/checkpoints_rolling
+    save_interval: 4000
+    non_persistent_save_interval: 125
+    exit_on_missing_checkpoint: true
+    # --- data on fscratch (the production mix; cache mirrored to /e/data1 as well) ---
+    data_args_path: ${aux.datamix}
+    data_cache_path: ${aux.fscratch_cache}
+    # --- logging: everything the campaign's monitoring pilot reads ---
+    wandb_project: oellm_32b_dense
+    wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
+    log_params_norm: true
+    log_num_zeros_in_grad: true
+    log_memory_to_tensorboard: true
+    diagnostics_interval: 100
+    diag_norm_gains: true
+    diag_layer_grad_norms: true
+    diag_activations: true
+    diag_clip_events: true
+    diag_nonfinite: true
+    diag_weight_stats: true
+    diag_fp8_meta: true
+    diag_logit_stats: true
+
+slurm:
+  sbatch:
+    time: "12:00:00"
+    signal: "TERM@240"
