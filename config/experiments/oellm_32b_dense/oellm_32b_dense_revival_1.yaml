@@ -87,6 +87,10 @@ backend:
     # err_child_failed); a segment that hits the wall is restarted from its last complete checkpoint
     # (time_limit_rollover). 690 -> 710 recovers ~20 min (~290 iterations) per segment.
     exit_duration_in_mins: 710
+    # per-phase timers (forward-backward, all-grads-sync, params-all-gather, optimizer sub-steps) every
+    # log_interval, min/max across ranks, also to TensorBoard/W&B; level 1 needs no extra barriers (level 2
+    # would break the pipeline overlap). Operator, 2026-09-06, to attribute the 3 % slowdown of segment 2.
+    timing_log_level: 1
     wandb_project: oellm_32b_dense
     wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
     log_params_norm: true
