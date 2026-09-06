@@ -1,0 +1,52 @@
+# @package _global_
+# 1-node dummy for the segment-end rules of auto_restart_ckptreset_faultscan.yaml (2026-09-06):
+# scripts/sigterm_dummy_trainer.py runs through the production launch chain (srun -> bash -c -> apptainer
+# exec -> python) with a 6 min wall time and `--signal=TERM@90`, so every segment ends by SIGTERM; the
+# trainer saves a checkpoint, prints Megatron's 'exiting program after receiving SIGTERM.' and exits 0;
+# the monitor's `sigterm_rollover` rule must resubmit and the next segment must load the signal
+# checkpoint. 600 iterations of 1 s need three segments (two rollovers); the last prints
+# '[after training is done]' -> finished. Cost: 3 x 6 min on one node.
+#
+#   cd oellm-autoexp-dev && SLURM_ACCOUNT=e-ext-2025e02-108 PYTHONPATH=. \
+#     python scripts/run_autoexp.py --config-name experiments/tests/sigterm_rollover_dummy \
+#     --monitor-state-dir /e/fscratch/e-sta-openeurollm/jj1/sigterm_dummy/_monitor_state
+defaults:
+  - /backend: bash
+  - /container: jupiter
+  - /slurm: jupiter_autoexclude
+  - /job: auto_restart_ckptreset_faultscan
+  - /sweep: none
+  - _self_
+
+aux:
+  root: /e/fscratch/e-sta-openeurollm/jj1/sigterm_dummy
+  repo: /e/fscratch/e-sta-openeurollm/jj1/oellm-autoexp-dev
+
+job:
+  name: sigterm_rollover_dummy
+  base_output_dir: ${aux.root}/training_core
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+  restart_pre_command: "echo dummy fault scan for job {runtime_job_id} ({log_path})"
+  restart_exclude_file: ${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}
+  est_step_time_s: 1
+  est_steps: 600
+  est_startup_min: 1
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif   # the production image
+
+backend:
+  # keys the production policy interpolates (${backend.megatron.*}); the bash backend accepts extra keys
+  megatron:
+    save: ${aux.root}/checkpoints
+  command: "python3 ${aux.repo}/scripts/sigterm_dummy_trainer.py --ckpt-dir ${aux.root}/checkpoints --iters 600 --tick 1 --save-every 30 --save-seconds 3"
+
+slurm:
+  sbatch:
+    nodes: 1
+    partition: booster
+    time: "00:06:00"
+    signal: "TERM@90"

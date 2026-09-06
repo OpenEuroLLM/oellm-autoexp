@@ -202,6 +202,34 @@ log_events:
   # QUIETLY. 150 leaves ~60 spare for the resubmissions that error restarts and
   # requeues add. State lives in monitor_state, so it resets if the monitor
   # session is restarted.
+  # ---- Segment end by SIGTERM (2026-09-06; rationale in auto_restart_ckptreset_faultscan.yaml) ----
+  - name: operator_cancel
+    pattern: "\\*\\*\\* JOB [0-9]+ ON \\S+ CANCELLED AT [0-9T:.-]+ \\*\\*\\*"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Job cancelled with scancel (SLURM cancel line without DUE TO TIME LIMIT) — not restarting"
+
+  - name: sigterm_rollover
+    pattern: "exiting program after receiving SIGTERM."
+    pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 150
+    action:
+      class_name: RestartAction
+      reason: "SIGTERM before the wall-clock limit: checkpoint saved by the signal handler — resuming the next segment"
+
+  - name: time_limit_rollover
+    pattern: "CANCELLED AT [0-9T:.-]+ DUE TO TIME LIMIT"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 20
+    action:
+      class_name: RestartAction
+      reason: "Wall-clock limit hit before the exit checkpoint — resuming from the last complete checkpoint"
+
   - name: exit_duration_rollover
     pattern: "exiting program after [0-9.]+ minutes"
     pattern_type: regex

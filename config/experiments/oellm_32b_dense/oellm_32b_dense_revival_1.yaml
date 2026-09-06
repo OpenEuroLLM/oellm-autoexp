@@ -76,6 +76,13 @@ backend:
     data_args_path: ${aux.datamix}
     data_cache_path: ${aux.fscratch_cache}
     # --- logging: everything the campaign's monitoring pilot reads ---
+    # Segment end (2026-09-06): the timed exit counts from the python start (about 1.3 min after the job
+    # start on JUPITER) and a persistent save of this model takes ~3 s at 512 nodes (442 GiB, 2050 files),
+    # so the segment trains until ~6.7 min before the 12 h wall; SLURM's TERM@240 with --exit-signal-handler
+    # is the backstop (save + 'exiting program after receiving SIGTERM.', restarted by the policy's
+    # sigterm_rollover), and a segment that hits the wall anyway is restarted from its last complete
+    # checkpoint (time_limit_rollover). 690 -> 712 recovers ~22 min (~300 iterations) per segment.
+    exit_duration_in_mins: 712
     wandb_project: oellm_32b_dense
     wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
     log_params_norm: true

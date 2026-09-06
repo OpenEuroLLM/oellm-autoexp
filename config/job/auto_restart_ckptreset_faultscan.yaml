@@ -226,6 +226,62 @@ log_events:
   # QUIETLY. 150 leaves ~60 spare for the resubmissions that error restarts and
   # requeues add. State lives in monitor_state, so it resets if the monitor
   # session is restarted.
+  # ---- Segment end by SIGTERM (2026-09-06) ------------------------------------
+  # The sbatch asks SLURM for `--signal=TERM@<margin>` and Megatron's
+  # --exit-signal-handler turns the signal into a checkpoint save plus
+  # 'exiting program after receiving SIGTERM.' and sys.exit(0)
+  # (training.py:3642). That is the wall-clock backstop of exit_duration_in_mins,
+  # which counts from the python start (a slow container start moves the timed
+  # exit later): with both, a segment trains until minutes before the limit and
+  # still leaves a checkpoint, instead of stopping at a conservative timer.
+  #
+  # A deliberate scancel prints the SAME Megatron line (SLURM sends SIGTERM
+  # first, SIGKILL after KillWait), so it must not be mistaken for a rollover:
+  # SLURM writes '*** JOB <id> ON <node> CANCELLED AT <ts> ***' into the log on
+  # scancel and '... CANCELLED AT <ts> DUE TO TIME LIMIT ***' at the wall limit.
+  # Observed on JUPITER (1-node dummy, job 1691075, 2026-09-06): the delivery of
+  # `--signal=TERM@N` itself is logged by slurmstepd as
+  # '*** STEP <id>.0 ON <node> CANCELLED AT <ts> ***' (STEP, no JOB line), so
+  # `operator_cancel` must match the JOB line only; scancel prints both.
+  # Rules are evaluated in list order and the first terminal effect wins
+  # (loop.py _process_log_events), so `operator_cancel` sits before
+  # `sigterm_rollover`: a cancelled job stays cancelled, a signalled segment
+  # rolls over, a segment that hit the wall before its exit checkpoint rolls
+  # over from the last complete checkpoint (the tracker file is only updated
+  # after a successful save). The monitor's own CancelAction/RestartAction
+  # cancellations print the JOB line into the OLD job's log, which is not read
+  # again after a restart (runtime.log_cursor and the %j log path move on).
+  - name: operator_cancel
+    pattern: "\\*\\*\\* JOB [0-9]+ ON \\S+ CANCELLED AT [0-9T:.-]+ \\*\\*\\*"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Job cancelled with scancel (SLURM cancel line without DUE TO TIME LIMIT) — not restarting"
+
+  - name: sigterm_rollover
+    pattern: "exiting program after receiving SIGTERM."
+    pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 150
+    action:
+      class_name: RestartAction
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "SIGTERM before the wall-clock limit: checkpoint saved by the signal handler — resuming the next segment"
+
+  - name: time_limit_rollover
+    pattern: "CANCELLED AT [0-9T:.-]+ DUE TO TIME LIMIT"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 20
+    action:
+      class_name: RestartAction
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
+      reason: "Wall-clock limit hit before the exit checkpoint — resuming from the last complete checkpoint"
+
   - name: exit_duration_rollover
     pattern: "exiting program after [0-9.]+ minutes"
     pattern_type: regex
