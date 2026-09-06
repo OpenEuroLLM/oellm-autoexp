@@ -515,6 +515,13 @@ class RestartActionConfig(ConfigInterface):
     # re-rendered sbatch carries nodes excluded since plan time (the stored
     # SlurmConfig is otherwise frozen at plan time).
     exclude_file: str = ""
+    # Defer the resubmission until the job has left the queue instead of
+    # cancelling it: a graceful segment end (exit_duration_in_mins, SIGTERM)
+    # prints its 'exiting program ...' line BEFORE the async checkpoint write
+    # completes, so cancelling on that line cuts the very checkpoint the next
+    # segment should load (smoke 1691431, 2026-09-06). Stall/error rules keep
+    # the default and cancel the hung job.
+    wait_for_job_end: bool = False
 
 
 @register
@@ -531,6 +538,7 @@ class RestartAction(BaseMonitorAction):
                 "pre_command": self.config.pre_command,
                 "pre_command_timeout_s": self.config.pre_command_timeout_s,
                 "exclude_file": self.config.exclude_file,
+                "wait_for_job_end": self.config.wait_for_job_end,
             },
         )
 

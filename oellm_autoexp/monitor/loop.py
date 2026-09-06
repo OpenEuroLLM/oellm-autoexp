@@ -63,6 +63,8 @@ class JobRuntime:
     events: dict[str, Any] = field(default_factory=dict)
     last_status: str | None = None
     final_state: str | None = None  # "finished", "cancelled", or None for active jobs
+    # RestartAction hooks parked until the job leaves the queue (wait_for_job_end)
+    deferred_restart: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(kw_only=True)
@@ -239,6 +241,8 @@ class MonitorLoop:
                 self._update_current_symlinks(job)
             status_effect = self._status_action(job, runtime.last_status, new_status)
             runtime.last_status = new_status
+            if runtime.deferred_restart and self._resume_deferred_restart(job, runtime_id):
+                continue
             if self._apply_effect(job, status_effect, runtime_id):
                 continue
             if not runtime.submitted:
@@ -677,11 +681,49 @@ class MonitorLoop:
             self._store.mark_finished(job.job_id, "cancelled")
             return True
         if effect == "restart":
+            hooks = self._pending_restart_hooks.get(job.job_id) or {}
+            if hooks.get("wait_for_job_end") and self._job_active(job):
+                # graceful exit in progress: the async checkpoint write may still
+                # be running behind the 'exiting program' line; resubmit once the
+                # job has left the queue (observe_once -> _resume_deferred_restart)
+                job.runtime.deferred_restart = dict(self._pending_restart_hooks.pop(job.job_id))
+                self._store.upsert(job)
+                LOGGER.info(
+                    "Job %s: restart deferred until runtime job %s has ended (status %s)",
+                    job.job_id, runtime_id, job.runtime.last_status,
+                )
+                return True
             self._run_restart_hooks(job, runtime_id)
             self._restart_job(job)
             self._store.upsert(job)
             return True
         return False
+
+    # SLURM states in which a job still occupies (or waits for) resources
+    ACTIVE_STATES = frozenset({
+        "PENDING", "RUNNING", "COMPLETING", "CONFIGURING", "SUSPENDED", "REQUEUED",
+        "RESIZING", "STAGE_OUT", "SIGNALING", "REQUEUE_HOLD", "REQUEUE_FED", "RESV_DEL_HOLD",
+    })
+
+    def _job_active(self, job: JobRecord) -> bool:
+        return (job.runtime.last_status or "") in self.ACTIVE_STATES
+
+    def _resume_deferred_restart(self, job: JobRecord, runtime_id: str | None) -> bool:
+        """Resubmit a job whose restart was deferred (wait_for_job_end) once its
+        runtime job has left the queue. Returns True when the job was restarted
+        or is still waiting (the caller stops processing it for this poll)."""
+        if not job.runtime.deferred_restart:
+            return False
+        if self._job_active(job):
+            self._store.upsert(job)
+            return True
+        self._pending_restart_hooks[job.job_id] = dict(job.runtime.deferred_restart)
+        job.runtime.deferred_restart = {}
+        LOGGER.info("Job %s: runtime job %s ended (%s): running the deferred restart", job.job_id, runtime_id, job.runtime.last_status)
+        self._run_restart_hooks(job, runtime_id)
+        self._restart_job(job)
+        self._store.upsert(job)
+        return True
 
     def _run_restart_hooks(self, job: JobRecord, runtime_id: str | None) -> None:
         """Before a resubmission: run the RestartAction's ``pre_command`` (e.g.

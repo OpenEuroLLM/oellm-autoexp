@@ -276,6 +276,7 @@ log_events:
       max_fires: 150
     action:
       class_name: RestartAction
+      wait_for_job_end: true
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
       reason: "SIGTERM before the wall-clock limit: checkpoint saved by the signal handler — resuming the next segment"
@@ -288,6 +289,7 @@ log_events:
       max_fires: 20
     action:
       class_name: RestartAction
+      wait_for_job_end: true
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
       reason: "Wall-clock limit hit before the exit checkpoint — resuming from the last complete checkpoint"
@@ -300,6 +302,7 @@ log_events:
       max_fires: 150
     action:
       class_name: RestartAction
+      wait_for_job_end: true
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}

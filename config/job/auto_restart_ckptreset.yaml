@@ -218,6 +218,7 @@ log_events:
       max_fires: 150
     action:
       class_name: RestartAction
+      wait_for_job_end: true
       reason: "SIGTERM before the wall-clock limit: checkpoint saved by the signal handler — resuming the next segment"
 
   - name: time_limit_rollover
@@ -228,6 +229,7 @@ log_events:
       max_fires: 20
     action:
       class_name: RestartAction
+      wait_for_job_end: true
       reason: "Wall-clock limit hit before the exit checkpoint — resuming from the last complete checkpoint"
 
   - name: exit_duration_rollover
@@ -238,6 +240,7 @@ log_events:
       max_fires: 150
     action:
       class_name: RestartAction
+      wait_for_job_end: true
       reason: "exit_duration_in_mins reached mid-schedule — resuming the next segment from the last checkpoint"
 
   # === FATAL: configuration / data faults -> CANCEL (never restart) =========
