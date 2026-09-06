@@ -43,6 +43,9 @@ backend:
     # smoke loads weights only, as the token-loss probes do
     no_load_optim: true
     no_load_rng: true
+    # gbs 128 needs its own validation index; the production cache is not ours to write, this directory
+    # holds symlinks to every production cache entry plus the indices of the campaign's small runs
+    data_cache_path: /e/fscratch/e-sta-openeurollm/jj1/data_cache_link
     wandb_project: oellm_32b_dense_loss-increase_debug   # keep the smoke out of the production project
 
 slurm:
