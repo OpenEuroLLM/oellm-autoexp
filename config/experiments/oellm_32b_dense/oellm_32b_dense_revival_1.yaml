@@ -67,7 +67,9 @@ backend:
     load: ${aux.run_root}/training_ckpts/checkpoints
     save: ${aux.run_root}/training_ckpts/checkpoints
     non_persistent_global_ckpt_dir: ${aux.run_root}/training_ckpts/checkpoints_rolling
-    save_interval: 4000
+    # persistent checkpoints every 2k from the second segment on (operator, 2026-09-06): +88 TiB on data1 over
+    # the run (helper_scripts/checkpoint_storage_calc.py), three live on fscratch whatever the interval
+    save_interval: 2000
     non_persistent_save_interval: 125
     exit_on_missing_checkpoint: true
     # --- data on fscratch (the production mix; cache mirrored to /e/data1 as well) ---
@@ -91,5 +93,7 @@ backend:
 
 slurm:
   sbatch:
+    # booster, 12 h (QoS part_booster MaxWall 12:00:00; 24 h segments need the largebooster partition, which
+    # is undocumented and administratively DOWN as of 2026-09-06: oellm_32b_dense_revival_1_24h.yaml)
     time: "12:00:00"
     signal: "TERM@240"
