@@ -72,3 +72,23 @@ def test_flag_with_ended_job_restarts_at_once():
     loop._pending_restart_hooks["j"] = {"wait_for_job_end": True}
     assert loop._apply_effect(job, "restart", "123") is True
     assert loop.restarted == ["j"]
+
+
+def test_cancel_first_cancels_now_and_defers_the_resubmission():
+    job, client = make_job("RUNNING"), FakeClient()
+    loop = make_loop(job, client)
+    loop._pending_restart_hooks["j"] = {"pre_command": "scan", "exclude_file": "", "wait_for_job_end": False, "cancel_first": True}
+    assert loop._apply_effect(job, "restart", "123") is True
+    assert client.cancelled == ["123"] and loop.restarted == []          # killed now, not resubmitted yet
+    assert job.runtime.deferred_restart.get("cancel_first") is True
+    job.runtime.last_status = "CANCELLED"
+    assert loop._resume_deferred_restart(job, "123") is True
+    assert loop.restarted == ["j"] and loop.hooks_run == ["123"]         # hooks (scan) run after the end
+
+
+def test_cancel_first_on_an_ended_job_restarts_at_once():
+    job, client = make_job("FAILED"), FakeClient()
+    loop = make_loop(job, client)
+    loop._pending_restart_hooks["j"] = {"cancel_first": True}
+    assert loop._apply_effect(job, "restart", "123") is True
+    assert client.cancelled == [] and loop.restarted == ["j"]

@@ -90,3 +90,24 @@ def test_faultscan_policy_hooks_every_restart_action():
     with initialize_config_dir(config_dir=str(config_dir), version_base=None):
         base = compose(config_name="autoexp", overrides=["job=auto_restart_ckptreset"])
     assert [e["name"] for e in cfg.job.log_events] == [e["name"] for e in base.job.log_events]
+
+
+def test_restart_hook_variables_include_log_dir(tmp_path):
+    """The pre_command may scan the run's whole log directory ({log_dir}), not only the failed job's log:
+    the lines that name a faulty node are written after the kill (2026-09-06, jobs 1692960/1693057)."""
+    import oellm_autoexp.monitor.loop as loop_mod
+    from oellm_autoexp.monitor.loop import JobRecord, JobRuntime, MonitorLoop
+    loop = MonitorLoop.__new__(MonitorLoop)
+    log = tmp_path / "logs" / "slurm-7.log"; log.parent.mkdir(); log.write_text("x")
+    job = JobRecord(job_id="j", definition=SimpleNamespace(name="n", slurm=SimpleNamespace(sbatch=SimpleNamespace(exclude=""))), runtime=JobRuntime(submitted=True, runtime_job_id="7"))
+    loop._pending_restart_hooks = {"j": {"pre_command": "echo {runtime_job_id} {log_dir}", "exclude_file": ""}}
+    loop._build_job_metadata = lambda j: {}
+    loop._resolve_log_path = lambda j: log
+    import subprocess
+    seen = {}; orig = subprocess.run
+    subprocess.run = lambda cmd, **kw: (seen.setdefault("cmd", cmd), SimpleNamespace(returncode=0, stdout="", stderr=""))[1]
+    try:
+        loop._run_restart_hooks(job, "7")
+    finally:
+        subprocess.run = orig
+    assert f"7 {log.parent}" in str(seen["cmd"])

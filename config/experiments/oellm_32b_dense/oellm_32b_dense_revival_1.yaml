@@ -50,7 +50,7 @@ job:
   est_step_time_s: 4.3
   est_startup_min: 12
   # node-fault attribution before every resubmission + exclusion refresh (config/job/auto_restart_ckptreset_faultscan.yaml)
-  restart_pre_command: "cd ${aux.campaign}/.. && python3 ${aux.campaign}/helper_scripts/node_fault_registry.py scan --job {runtime_job_id} --logs '{log_path}' --apply --export ${aux.campaign}/results/nodes"
+  restart_pre_command: "cd ${aux.campaign}/.. && python3 ${aux.campaign}/helper_scripts/node_fault_registry.py scan --job {runtime_job_id} --logs '{log_dir}/slurm-*.log' --apply --export ${aux.campaign}/results/nodes"
   restart_exclude_file: ${aux.exclude_file}
 
 backend:

@@ -682,6 +682,13 @@ class MonitorLoop:
             return True
         if effect == "restart":
             hooks = self._pending_restart_hooks.get(job.job_id) or {}
+            if hooks.get("cancel_first") and runtime_id and self._job_active(job):
+                # kill the hung/faulty job now and resubmit once it has left the
+                # queue: the hooks then scan a complete log (post-kill lines incl.)
+                self._get_client(job).cancel(runtime_id)
+                hooks["wait_for_job_end"] = True
+                self._pending_restart_hooks[job.job_id] = hooks
+                LOGGER.info("Job %s: runtime job %s cancelled first; resubmission after it has left the queue", job.job_id, runtime_id)
             if hooks.get("wait_for_job_end") and self._job_active(job):
                 # graceful exit in progress: the async checkpoint write may still
                 # be running behind the 'exiting program' line; resubmit once the
@@ -739,6 +746,7 @@ class MonitorLoop:
         variables["runtime_job_id"] = runtime_id or job.runtime.runtime_job_id or ""
         try:
             variables["log_path"] = str(self._resolve_log_path(job))
+            variables["log_dir"] = str(Path(variables["log_path"]).parent)
         except Exception:  # pragma: no cover - best effort
             variables["log_path"] = ""
         if pre_command:

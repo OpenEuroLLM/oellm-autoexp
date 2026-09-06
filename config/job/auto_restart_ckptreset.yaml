@@ -81,6 +81,7 @@ log_events:
       max_fires: 5
     action:
       class_name: RestartAction
+      cancel_first: true
       reason: "checkpoint quarantined; resuming from last loadable checkpoint"
 
   # 3) world-size mismatch: do NOT quarantine — cancel and explain.
@@ -350,6 +351,7 @@ log_events:
       max_fires: 25
     action:
       class_name: RestartAction
+      cancel_first: true
       reason: "GPU occupied at init (leftover process) — retrying on new nodes"
 
   - name: err_rendezvous
@@ -374,6 +376,7 @@ log_events:
       max_fires: 25
     action:
       class_name: RestartAction
+      cancel_first: true
       reason: "Rendezvous failure — retrying (consider static rdzv for torchrun)"
 
   # GLOO MESH COLLAPSE. Always a SECONDARY symptom: some rank died for a real
@@ -397,6 +400,7 @@ log_events:
       max_fires: 25
     action:
       class_name: RestartAction
+      cancel_first: true
       reason: "Gloo mesh collapsed after a rank died — retrying on a fresh allocation"
 
   - name: err_userbuffers_stall
@@ -407,6 +411,7 @@ log_events:
       max_fires: 25
     action:
       class_name: RestartAction
+      cancel_first: true
       reason: "userbuffers TP-overlap stall — peer rank unresponsive, retrying"
 
   - name: err_nccl_timeout
@@ -417,6 +422,7 @@ log_events:
       max_fires: 25
     action:
       class_name: RestartAction
+      cancel_first: true
       reason: "NCCL collective timeout/abort — retrying"
 
   # NaN / Inf REJECTED BY THE RERUN STATE MACHINE.
@@ -453,6 +459,7 @@ log_events:
       max_fires: 3
     action:
       class_name: RestartAction
+      cancel_first: true
       reason: "NaN/Inf rejected by rerun validation — retrying (bad node vs real divergence)"
 
   - name: err_cuda_illegal_access
@@ -463,6 +470,7 @@ log_events:
       max_fires: 25
     action:
       class_name: RestartAction
+      cancel_first: true
       reason: "CUDA illegal memory access — GPU needs reset, not a relaunch"
 
   - name: err_cpp_terminate
@@ -473,6 +481,7 @@ log_events:
       max_fires: 25
     action:
       class_name: RestartAction
+      cancel_first: true
       reason: "Unhandled C++ exception — worker aborted"
 
   # === NODE FAILURE: RECORD, PROPAGATE, THEN RESTART ========================
@@ -528,6 +537,7 @@ log_events:
       max_fires: 25
     action:
       class_name: RestartAction
+      cancel_first: true
       reason: "SLURM node failure in the allocation"
 
   # === GENERIC RESTART TIER: BOUNDED AS A GROUP ==============================
@@ -566,6 +576,7 @@ log_events:
       max_fires: 25
     action:
       class_name: RestartAction
+      cancel_first: true
       reason: "Worker process failed — retrying"
 
   - name: error
@@ -576,6 +587,7 @@ log_events:
       max_fires: 25
     action:
       class_name: RestartAction
+      cancel_first: true
       reason: ""
 
   # === FORWARD-PROGRESS STALL: "dead but noisy" ==============================
@@ -654,6 +666,7 @@ log_events:
       max_fires: 3
     action:
       class_name: RestartAction
+      cancel_first: true
       reason: "No iteration progress for 20 min — stuck, not slow"
 
   # LONG WINDOW, mode=furthest. Resets only when the run reaches a NEW FURTHEST iteration, so
@@ -691,6 +704,7 @@ log_events:
       max_fires: 3
     action:
       class_name: RestartAction
+      cancel_first: true
       reason: "No net iteration progress for 40 min of running — restart loop, not recovery"
 
   # GIVE UP AND ASK A HUMAN. Load-bearing: a budget makes an event STOP ACTING,
@@ -732,6 +746,7 @@ log_events:
       max_fires: 25
     action:
       class_name: RestartAction
+      cancel_first: true
       reason: "Inactive Log"
 
 # =============================================================================

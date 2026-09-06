@@ -522,6 +522,13 @@ class RestartActionConfig(ConfigInterface):
     # segment should load (smoke 1691431, 2026-09-06). Stall/error rules keep
     # the default and cancel the hung job.
     wait_for_job_end: bool = False
+    # For hangs and faults: cancel the running job NOW, then wait for it to leave
+    # the queue before the hooks run and the job is resubmitted. The log is then
+    # complete, so the node-fault scan sees the lines written after the kill
+    # (e.g. a rank's cudaErrorLaunchFailure that names the faulty node; jobs
+    # 1692960/1693057 on 2026-09-06 were restarted twice onto the same bad node
+    # because the scan ran before the cancel). No-op when the job has already ended.
+    cancel_first: bool = False
 
 
 @register
@@ -539,6 +546,7 @@ class RestartAction(BaseMonitorAction):
                 "pre_command_timeout_s": self.config.pre_command_timeout_s,
                 "exclude_file": self.config.exclude_file,
                 "wait_for_job_end": self.config.wait_for_job_end,
+                "cancel_first": self.config.cancel_first,
             },
         )
 
