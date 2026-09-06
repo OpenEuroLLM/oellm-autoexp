@@ -38,6 +38,11 @@ backend:
     exit_interval: 76008
     exit_duration_in_mins: 3
     defer_embedding_wgrad_compute: false   # OOMs at small DP (probe experience, job 1630850)
+    # the distributed-optimizer state cannot be resharded from DP 128 to DP 1 (job 1685897: global shape
+    # mismatch on optimizer.distributed.*); the 512-node production resume keeps the arm's layout, so the
+    # smoke loads weights only, as the token-loss probes do
+    no_load_optim: true
+    no_load_rng: true
     wandb_project: oellm_32b_dense_loss-increase_debug   # keep the smoke out of the production project
 
 slurm:
