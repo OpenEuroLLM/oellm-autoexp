@@ -11,6 +11,7 @@
 #     --monitor-state-dir /e/fscratch/e-sta-openeurollm/jj1/revival_1_smoke/_monitor_state_sigterm
 defaults:
   - oellm_32b_dense_revival_1_smoke
+  - override /slurm: jupiter_autoexclude_relay   # worker-only SIGTERM relay (templates/jupiter_relay.sbatch)
   - _self_
 
 job:
@@ -27,4 +28,4 @@ backend:
 slurm:
   sbatch:
     time: "00:14:00"
-    signal: "TERM@240"
+    signal: "B:USR1@240"   # batch shell only, USR1 (no SLURM cancel line); the template's trap forwards SIGTERM to the rank processes
