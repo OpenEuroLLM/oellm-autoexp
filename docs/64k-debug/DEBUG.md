@@ -1282,6 +1282,87 @@ plateau. 5,142 GPU-h measuring a window with no signal in it.
 
 ---
 
+### 39. Lowering the learning rate at 64,000
+
+**Status: WIP**
+
+**Question:** Items 36 and 37 find the step size turning with the loss, but at
+4,000-step resolution a step that grows *because* the loss is rising cannot be
+told from a loss that rises *because* the step grew. Lowering the only term that
+sets step size, changing nothing else, is the intervention the correlation
+cannot make.
+
+**Evidence:** One arm at `lr` 1.76e-4 forked from the flagship at iteration
+64,000 and run to 70,000 -- jobs `1651437` and `1656733`, 512 nodes, ~14,700
+GPU-h, `save_interval` 500. Config
+[../../config/experiments/oellm_32b_dense/oellm_32b_dense_lrdose_base.yaml](../../config/experiments/oellm_32b_dense/oellm_32b_dense_lrdose_base.yaml).
+The control is the flagship's own 3e-4 segment; it was not re-run. Both series
+are referenced to their own 65,500–66,000 bin, which is after the arm's LR-drop
+transient had decayed to −0.0013 and before the turn at ~66,500 (item 38).
+
+| bin | 66–66.5k | 66.5–67k | 67–67.5k | 67.5–68k | 68–68.5k | 68.5–69k | 69–69.5k | 69.5–70k |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| control 3e-4 | −0.0001 | +0.0019 | +0.0055 | +0.0105 | **+0.0134** | +0.0132 | +0.0104 | +0.0099 |
+| arm 1.76e-4 | −0.0018 | −0.0032 | −0.0038 | −0.0046 | −0.0057 | −0.0055 | −0.0063 | −0.0067 |
+| gap | −0.0017 | −0.0051 | −0.0094 | −0.0151 | **−0.0190** | −0.0187 | −0.0166 | −0.0166 |
+
+**At 1.76e-4 the regression does not occur in the window where it occurs at
+3e-4.** The arm is not still improving either: its last four bins span 0.0012
+against a ~0.001 noise floor, so it has flattened. The control rose and stayed
+up.
+
+**Update geometry at 500-step spacing.** The same measurement as item 36, run
+over this arm's 13 checkpoints -- array job `1709393`, exact over all 33.893B
+parameters. Data `data/update_direction_lr1p76e-4.csv`.
+
+| interval | 64.0–64.5k | 65.5–66k | 67.5–68k | 68–68.5k | 68.5–69k | 69–69.5k | 69.5–70k |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `\|dW\|/\|W\|` | 0.069529 | **0.067619** | 0.067679 | 0.067968 | 0.068037 | 0.068142 | 0.068352 |
+| `cos` with previous | — | −0.0371 | −0.0467 | −0.0468 | −0.0483 | −0.0489 | −0.0487 |
+
+**The arm reproduces the update-geometry turn but not the loss turn.** Relative
+step size bottoms at 65,500–66,000 and then rises monotonically over the last
+four intervals, +1.1% from the minimum, while directional persistence degrades
+throughout. Over those same last 2,000 iterations the loss is flat: −0.0057,
+−0.0055, −0.0063, −0.0067 from baseline, a 0.0012 spread against a ~0.001 floor.
+
+**Step-size growth and cosine degradation are therefore not sufficient to
+produce the loss rise.** They continue here in a run that does not regress. This
+is a negative result for the mechanism item 36 implied, and it does not depend
+on any cross-run comparison.
+
+Cross-run magnitude comparison is in fact not available: the control has no
+500-spaced checkpoints, and `\|dW\|` over 500 steps is not comparable in level to
+`\|dW\|` over 4,000. Only within-run shape is trustworthy here. What this does
+newly establish is the 500-step scatter, ~0.4% across the flat region, which
+item 36 could not measure; it puts the +1.1% rise at about 2.5x scatter.
+
+**Open issue:** Three things.
+
+1. **This does not attribute the effect to LR.** Lowering LR reduces loss on its
+   own, so "LR drives the turn" and "lower LR is simply gentler" both predict
+   exactly this table. Only the ordering 1e-4 flatter than 1.76e-4 flatter than
+   3e-4 separates them. The 1e-4 arm is built and patched but was deliberately
+   not submitted, so this arm is a demonstration that the turn is avoidable at
+   lower LR, not a measurement of what causes it.
+2. **The gap stops growing.** It peaks at −0.0190 near 68,250 and settles to
+   −0.0166, partly because the control itself falls back (+0.0134 to +0.0099).
+   The effect is about 0.017 ± 0.002 over this window, not a widening
+   divergence, and the control's own trace here is not monotone.
+3. **6,000 iterations is short.** Nothing here says the arm would not turn later
+   at its own, lower, step size.
+
+**Method note:** changing `lr` on resume required a patch to the Megatron
+submodule (`match_saved_param_group`, commit `bc89ad3ff`). Upstream `27e312ca1`
+(#4705) put `max_lr` in the tuple used to match saved param groups, so any LR
+change fails every lookup and dies in `distrib_optimizer.py` with a bare
+`KeyError`. `override_opt_param_scheduler` does not help -- it is read after the
+optimizer has already loaded. The patch also overwrites `max_lr` from the live
+group, because `get_lr` reads `param_group.get('max_lr', self.max_lr)` and a
+group left holding the checkpoint's value runs silently at the old LR.
+
+---
+
 ## Run index
 
 Run names are deterministic: `<run-directory-name>_<SLURM_JOB_ID>`. Logs are at
@@ -1413,6 +1494,12 @@ re-derived from logs alone silently omits that segment.
   (item 38). A Megatron fork patch was needed before any LR could be changed on
   resume; the 1.76e-4 arm runs to 70,000 as job `1656733`.
 
+- **2026-09-07** The 1.76e-4 arm completed at 70,000. It does not reproduce the
+  regression: flat where the control rises +0.0099 to +0.0134 (item 39). The
+  1e-4 arm was deliberately not submitted, so the established result is that the
+  turn is avoidable at a lower LR, not that LR causes it. Training remains
+  paused.
+
 ---
 
 ## Current assessment
@@ -1428,6 +1515,15 @@ re-derived from logs alone silently omits that segment.
   size `||dW||/||W||` (item 36) and the Adam eps-floored fraction, which
   collapses 0.88 to 0.55 over 100% of parameters (item 37). Neither establishes
   causal direction.
+- **The turn is avoidable.** Forking at 64,000 at `lr` 1.76e-4 instead of 3e-4,
+  the loss flattens instead of rising: over 66,000 to 70,000 the control gains
+  +0.0099 while the arm loses 0.0067 (item 39). This does not show LR *causes*
+  the turn -- a lower LR lowers loss regardless -- and the second arm that would
+  have separated those was not run.
+- **Update-geometry change is not sufficient for the loss rise.** In the 1.76e-4
+  arm, `||dW||/||W||` turns upward and the cosine keeps degrading while the loss
+  stays flat (item 39), so items 36 and 37 measure something that accompanies the
+  regression rather than something that forces it.
 - No scheduled configuration, learning-rate, batch-size, or restart event occurs
   at the turn.
 - The same post-60k pattern continues with BF16, a different post-64k data order,
