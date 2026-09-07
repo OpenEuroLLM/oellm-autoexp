@@ -1,0 +1,31 @@
+# @package _global_
+# 4-node Megatron check of the segment end by SIGTERM (2026-09-06): the revival smoke (real 32B model,
+# gbs 128, seeded smoke tree) with a 14 min wall time and `--signal=TERM@240`, the timed exit out of reach
+# (60 min) and sparse regular saves, so the segment ends by the signal handler's checkpoint
+# ('exiting program after receiving SIGTERM.'); the monitor's `sigterm_rollover` rule must resubmit and the
+# next segment must load that checkpoint. Stop the monitor once the second segment has loaded.
+#
+#   cd oellm-autoexp-dev && SLURM_ACCOUNT=e-ext-2025e02-108 PYTHONPATH=.:submodules/Megatron-LM \
+#     JUPITER_EXCLUDE_NODES=/e/fscratch/e-sta-openeurollm/jj1/revival_1_smoke/exclude_nodes_smoke.txt \
+#     python scripts/run_autoexp.py --config-name experiments/oellm_32b_dense/oellm_32b_dense_revival_1_smoke_sigterm \
+#     --monitor-state-dir /e/fscratch/e-sta-openeurollm/jj1/revival_1_smoke/_monitor_state_sigterm
+defaults:
+  - oellm_32b_dense_revival_1_smoke
+  - override /slurm: jupiter_autoexclude_relay   # worker-only SIGTERM relay (templates/jupiter_relay.sbatch)
+  - _self_
+
+job:
+  name: "oellm_32b_dense_revival_1_smoke_sigterm"
+  est_steps: 30
+
+backend:
+  megatron:
+    exit_duration_in_mins: 60
+    exit_interval: 76400
+    save_interval: 50
+    non_persistent_save_interval: 5
+
+slurm:
+  sbatch:
+    time: "00:14:00"
+    signal: "B:USR1@240"   # batch shell only, USR1 (no SLURM cancel line); the template's trap forwards SIGTERM to the rank processes

@@ -1,0 +1,122 @@
+# @package _global_
+#
+# 32B dense flagship, revival 1: continuation of oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4
+# from the decoupled-head arm's 76k checkpoint with the output layer + embeddings at 2e-4
+# (--decoupled-lr) and the body at 3e-4, everything else the production recipe.
+#
+# Why: from ~66.6k the production loss rose in every token-frequency bucket rarer than 1e-4
+# while the head's rows drifted; a head learning rate of 2e-4 from the 64k checkpoint stopped
+# the increase, kept the frequent-token accuracy and led production downstream on all task
+# groups over 64k-76k (campaign oellm_32B_loss-increase_debug, reports/analysis_2026-09-03.md
+# section 6l, monitoring plan reports/monitoring_plan_restart.md).
+#
+# Lineage of the checkpoint tree (seeded by helper_scripts/checkpoint_mirror_watchdog.sh import):
+#   production 64k -> arm head 2e-4: 64.5k 65k 65.5k 66k 68k 70k 72k 73k 74k 75k 76k (same seed,
+#   same data order, same batches consumed as production up to 76,000). The arm ran the diag
+#   Megatron branch oellm/v0.19-jitsev1-diag (patches 0001-0009) in the production container.
+#
+# Layout (fscratch, mode 700 + ACLs for production/eligible_users):
+#   <run>/training_core   logs, tensorboard, wandb (offline), sbatch scripts, monitor state
+#   <run>/training_ckpts  checkpoints (persistent, every 4k) + checkpoints_rolling (every 125)
+# The checkpoint watchdog mirrors every persistent checkpoint to /e/data1 and keeps 3 live.
+#
+# Launch (login node, our checkout, branch prod/oellm_32b_dense_revival_1):
+#   export JUPITER_EXCLUDE_NODES=/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt
+#   PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/oellm_32b_dense/oellm_32b_dense_revival_1 --dry-run
+#   PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/oellm_32b_dense/oellm_32b_dense_revival_1 \
+#       --monitor-state-dir <run>/training_core/_monitor_state        # in tmux: the monitor restarts the run
+defaults:
+  - /experiments/oellm_32b_dense/oellm_32b_dense_production
+  - override /job: auto_restart_ckptreset_faultscan
+  - override /slurm: jupiter_autoexclude_relay   # worker-only SIGTERM relay (templates/jupiter_relay.sbatch, 2026-09-06)
+  - _self_
+
+aux:
+  run_root: /e/fscratch/e-sta-openeurollm/production/32b_dense_revival_1_body-3e-4_head-2e-4
+  head_lr: 2e-4
+  datamix: /e/project1/e-sta-openeurollm/production_training/oellm_32b_dense/flagship_datamix_option5_fscratch.txt
+  fscratch_cache: /e/fscratch/e-sta-openeurollm/production_training/oellm_32b_dense/cache
+  campaign: /e/project1/laionize/jitsev1_jupiter/workloads/oellm-workflows/oellm_32B_loss-increase_debug
+  exclude_file: ${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}
+
+job:
+  name: "oellm_32b_dense_revival_1_body-3e-4_head-2e-4"
+  base_output_dir: ${aux.run_root}/training_core
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+  chain_repeat: 1
+  est_step_time_s: 4.3
+  est_startup_min: 12
+  # node-fault attribution before every resubmission + exclusion refresh (config/job/auto_restart_ckptreset_faultscan.yaml)
+  restart_pre_command: "cd ${aux.campaign}/.. && python3 ${aux.campaign}/helper_scripts/node_fault_registry.py scan --job {runtime_job_id} --logs '{log_dir}/slurm-*.log' --apply --export ${aux.campaign}/results/nodes"
+  restart_exclude_file: ${aux.exclude_file}
+  # evaluations once a checkpoint is available (operator, 2026-09-06): every 4k persistent checkpoint ->
+  # eval/eval_checkpoint.sh (bridge view, HF conversion job, oellm-eval arrays), detached from the monitor
+  checkpoint_hook_every: 4000
+  checkpoint_hook_command: "setsid nohup bash ${aux.campaign}/eval/eval_checkpoint.sh {iteration} {ckpt_dir} > ${aux.campaign}/results/eval/trigger_{iteration}.log 2>&1 < /dev/null &"
+
+backend:
+  aux:
+    variant: "revival_1"
+  megatron:
+    # --- the intervention: head (embeddings + output layer) at 2e-4, body at 3e-4 ---
+    decoupled_lr: ${aux.head_lr}
+    decoupled_min_lr: 0.0
+    # the checkpoint carries the arm's three optimizer groups and production's WSD scheduler
+    # state; with identical CLI values the override reproduces the same schedule (as the arms)
+    override_opt_param_scheduler: true
+    allow_new_param_groups_on_load: true
+    # --- checkpoint tree (seeded 64k-76k; latest_checkpointed_iteration.txt = 76000) ---
+    load: ${aux.run_root}/training_ckpts/checkpoints
+    save: ${aux.run_root}/training_ckpts/checkpoints
+    non_persistent_global_ckpt_dir: ${aux.run_root}/training_ckpts/checkpoints_rolling
+    # persistent checkpoints every 2k from the second segment on (operator, 2026-09-06): +88 TiB on data1 over
+    # the run (helper_scripts/checkpoint_storage_calc.py), three live on fscratch whatever the interval
+    save_interval: 2000
+    non_persistent_save_interval: 125
+    exit_on_missing_checkpoint: true
+    # --- data on fscratch (the production mix; cache mirrored to /e/data1 as well) ---
+    data_args_path: ${aux.datamix}
+    data_cache_path: ${aux.fscratch_cache}
+    # --- logging: everything the campaign's monitoring pilot reads ---
+    # Segment end (2026-09-06): the timed exit is THE mechanism that ends a segment with a checkpoint. It
+    # counts from the python start (about 1.3 min after the job start on JUPITER) and a persistent save of
+    # this model takes ~3 s at 512 nodes (442 GiB, 2050 files), so the segment trains until ~8.7 min before
+    # the 12 h wall. SLURM's TERM@240 with --exit-signal-handler is only a best-effort backstop: the launch
+    # runs under torchrun, whose elastic agent terminates the workers ~30 s after SIGTERM (4-node smoke
+    # 1691088: the exit checkpoint started 2 s after the signal and was cut off), so a signalled segment ends
+    # FAILED and is restarted by the policy from whatever checkpoint completed (sigterm_rollover /
+    # err_child_failed); a segment that hits the wall is restarted from its last complete checkpoint
+    # (time_limit_rollover). 690 -> 710 recovers ~20 min (~290 iterations) per segment.
+    exit_duration_in_mins: 710
+    # per-phase timers (forward-backward, all-grads-sync, params-all-gather, optimizer sub-steps) every
+    # log_interval, min/max across ranks, also to TensorBoard/W&B; level 1 needs no extra barriers (level 2
+    # would break the pipeline overlap). Operator, 2026-09-06, to attribute the 3 % slowdown of segment 2.
+    timing_log_level: 1
+    wandb_project: oellm_32b_dense
+    wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
+    log_params_norm: true
+    log_num_zeros_in_grad: true
+    log_memory_to_tensorboard: true
+    diagnostics_interval: 100
+    diag_norm_gains: true
+    diag_layer_grad_norms: true
+    diag_activations: true
+    diag_clip_events: true
+    diag_nonfinite: true
+    diag_weight_stats: true
+    diag_fp8_meta: true
+    diag_logit_stats: true
+
+slurm:
+  sbatch:
+    # booster, 12 h (QoS part_booster MaxWall 12:00:00; 24 h segments need the largebooster partition, which
+    # is undocumented and administratively DOWN as of 2026-09-06: oellm_32b_dense_revival_1_24h.yaml)
+    time: "12:00:00"
+    # B: = batch shell only, USR1 (a batch-shell TERM makes slurmstepd print the JOB CANCELLED line that the
+    # policy reads as a scancel); the relay template's trap forwards SIGTERM to the Megatron rank processes
+    # (not to the torchrun agents), so the signal backstop ends the segment with a complete checkpoint and
+    # exit 0 (4-node smokes 1692221 and 1692553 -> 1692688)
+    signal: "B:USR1@240"

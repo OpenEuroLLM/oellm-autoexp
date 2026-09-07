@@ -172,6 +172,39 @@ class MaxActionFiresCondition(BaseCondition):
 
 
 @dataclass
+class IterationMultipleConditionConfig(ConditionConfigMixin, ConfigInterface):
+    class_name: str = "IterationMultipleCondition"
+    # the event variable holding the iteration (a named regex group of the log event)
+    key: str = "iteration"
+    # fire only when that iteration is a multiple of `every` (0 = never: the hook is off)
+    every: int = 0
+
+
+@register
+class IterationMultipleCondition(BaseCondition):
+    """Pass when the event's iteration (extracted from the log line) is a multiple of ``every``.
+
+    Built for checkpoint hooks: Megatron prints 'successfully saved checkpoint from iteration N'
+    for every persistent checkpoint; an evaluation of each 2k checkpoint would be too much, one
+    every 4k or 8k is what the downstream trajectories use. ``every: 0`` disables the hook.
+    """
+
+    config: IterationMultipleConditionConfig
+
+    def check(self, context: ConditionContext) -> ConditionResult:
+        if not self.config.every or self.config.every <= 0:
+            return ConditionResult(passed=False, message="hook disabled (every = 0)")
+        raw = context.variables.get(self.config.key)
+        try:
+            it = int(str(raw).replace(",", ""))
+        except (TypeError, ValueError):
+            return ConditionResult(passed=False, message=f"no integer {self.config.key} in the event ({raw!r})")
+        if it % self.config.every == 0:
+            return ConditionResult(passed=True, message=f"iteration {it} is a multiple of {self.config.every}", metadata={"iteration": it})
+        return ConditionResult(passed=False, message=f"iteration {it} is not a multiple of {self.config.every}")
+
+
+@dataclass
 class CooldownConditionConfig(ConditionConfigMixin, ConfigInterface):
     class_name: str = "CooldownCondition"
     cooldown_seconds: float = 60.0

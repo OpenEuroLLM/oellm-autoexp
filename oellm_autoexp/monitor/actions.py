@@ -505,6 +505,30 @@ class NewJobAction(BaseMonitorAction):
 class RestartActionConfig(ConfigInterface):
     class_name: str = "RestartAction"
     reason: str = "restarting job"
+    # Shell command run by the monitor BEFORE the job is resubmitted (templated
+    # with the action-context variables plus {runtime_job_id} and {log_path});
+    # e.g. a node-fault scan of the failed job's log that appends attributable
+    # nodes to the exclusion file. Its exit code is logged, never fatal.
+    pre_command: str = ""
+    pre_command_timeout_s: float = 900.0
+    # Node-exclusion list re-read right before the resubmission so the
+    # re-rendered sbatch carries nodes excluded since plan time (the stored
+    # SlurmConfig is otherwise frozen at plan time).
+    exclude_file: str = ""
+    # Defer the resubmission until the job has left the queue instead of
+    # cancelling it: a graceful segment end (exit_duration_in_mins, SIGTERM)
+    # prints its 'exiting program ...' line BEFORE the async checkpoint write
+    # completes, so cancelling on that line cuts the very checkpoint the next
+    # segment should load (smoke 1691431, 2026-09-06). Stall/error rules keep
+    # the default and cancel the hung job.
+    wait_for_job_end: bool = False
+    # For hangs and faults: cancel the running job NOW, then wait for it to leave
+    # the queue before the hooks run and the job is resubmitted. The log is then
+    # complete, so the node-fault scan sees the lines written after the kill
+    # (e.g. a rank's cudaErrorLaunchFailure that names the faulty node; jobs
+    # 1692960/1693057 on 2026-09-06 were restarted twice onto the same bad node
+    # because the scan ran before the cancel). No-op when the job has already ended.
+    cancel_first: bool = False
 
 
 @register
@@ -516,7 +540,62 @@ class RestartAction(BaseMonitorAction):
             special="restart",
             status="success",
             message=self.config.reason,
+            action_config=self.config,
+            metadata={
+                "pre_command": self.config.pre_command,
+                "pre_command_timeout_s": self.config.pre_command_timeout_s,
+                "exclude_file": self.config.exclude_file,
+                "wait_for_job_end": self.config.wait_for_job_end,
+                "cancel_first": self.config.cancel_first,
+            },
         )
+
+
+@dataclass
+class RunCommandActionConfig(ConfigInterface):
+    """Run a shell command as a side effect of a log/state event (never terminal).
+
+    ``command`` is templated with the action-context variables ({job_id},
+    {job_name}, extracted groups, ...). Output is captured and logged.
+    """
+
+    class_name: str = "RunCommandAction"
+    command: str = ""
+    timeout_s: float = 900.0
+    cwd: str = ""
+
+
+@register
+class RunCommandAction(BaseMonitorAction):
+    config: RunCommandActionConfig
+
+    def execute(self, context: ActionContext) -> ActionResult:
+        import subprocess
+
+        command = context.render(self.config.command).strip()
+        if not command:
+            return ActionResult(status="failed", message="empty command")
+        try:
+            proc = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=self.config.timeout_s,
+                cwd=self.config.cwd or None,
+            )
+            tail = (proc.stdout + proc.stderr).strip().splitlines()[-5:]
+            msg = f"command exit {proc.returncode}: {command} | " + " / ".join(tail)
+            LOGGER.info("RunCommandAction: %s", msg)
+            return ActionResult(
+                status="success" if proc.returncode == 0 else "failed",
+                message=msg,
+                metadata={"returncode": proc.returncode, "command": command},
+            )
+        except subprocess.TimeoutExpired:
+            msg = f"command timed out after {self.config.timeout_s}s: {command}"
+            LOGGER.warning("RunCommandAction: %s", msg)
+            return ActionResult(status="failed", message=msg)
 
 
 @dataclass
@@ -804,6 +883,8 @@ __all__ = [
     "NewJobActionConfig",
     "RestartActionConfig",
     "RestartAction",
+    "RunCommandActionConfig",
+    "RunCommandAction",
     "FinishActionConfig",
     "FinishAction",
     "CancelActionConfig",

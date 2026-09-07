@@ -115,10 +115,17 @@ delta_offload_bytes_across_pp_ranks: 0  # Difference of offload bytes across PP 
 deprecated_use_mcore_models: false  # DEPRECATED. Use the implementation from megatron core.Now ignored and mcore models are the default.
 deterministic_mode: false  # If true, code that has deterministic execution will be chosen. This usually means slower execution, but is good for debugging and testing. Defaults to False.
 diag_activations: false  # Log the RMSNorm denominator sqrt(mean(x^2)) and the mean of the input to every norm, plus a non-finite count, from the first microbatch of a diagnostic iteration. This is the one collector with a real cost (bandwidth-bound, ~20 GB of reads for a 64-layer 32B model).
+diag_consumed_train_samples: null  # Diagnostics only: after the checkpoint load, position the training dataloader at this consumed-sample count instead of the checkpoint's own (weights of iteration X on the batches of iteration Y).
+diag_logit_stats: false  # Log mean/std/min/max of the output-layer logits, the mean per-token max logit and the mean/std of the per-token log Z on diagnostic iterations.
+diag_token_loss_dir: null  # Diagnostics only: per-token CE loss / label / mask / log Z / max logit dump of every microbatch on every diagnostic iteration (checkpoint probes on a fixed batch).
+diag_swap_checkpoint: null  # Diagnostics only: after the load, reload the tensors selected by diag_swap_keys from this torch_dist checkpoint (checkpoint surgery for probes).
+diag_swap_keys: null  # Comma-separated regexes on the checkpoint keys (global layer numbering) selecting the tensors to reload from diag_swap_checkpoint.
 diag_clip_events: false  # Track gradient-clipping events on EVERY step (a streak can only be counted that way) and report the streak length, the fired fraction, the smallest clip coefficient and the mean/min/max of the pre-clip total norm -- the clip denominator -- over the logging interval. Free, and independent of --diagnostics-interval.
+diag_fp8_meta: false  # Log the FP8 delayed-scaling window-max amax and current scale of the GEMM input, weight and output gradient of the four TE GEMMs of every layer. Empty under recipes without per-tensor state (blockwise, mxfp8) and for bf16 layers.
 diag_layer_grad_norms: false  # Log the L2 gradient norm of every transformer layer separately, plus embedding/output_layer. Exposes the early-vs-late layer asymmetry that the single global grad norm averages away.
 diag_nonfinite: false  # Scan every weight and gradient for NaN/Inf and print the offending parameter names. Unlike --check-for-nan-in-loss-and-grad this localises the problem instead of only aborting on it.
 diag_norm_gains: false  # Log mean/std/min/max of every RMSNorm/LayerNorm gain, per layer. Norm gains get wd_mult=0 by default, so nothing opposes their drift; if they do go extreme the levers are --residual-norm-wd-mult / --qk-layernorm-wd-mult or zero-centred RMSNorm.
+diag_weight_stats: false  # Log min/max/mean/rms of every linear_qkv / linear_proj / linear_fc1 / linear_fc2 weight matrix per layer, plus the embedding and output layer. One pass over the local weight shards and three small all-reduces over the model-parallel group on a diagnostic iteration.
 diagnostics_interval: 0  # Collect per-layer diagnostics every N iterations. 0 disables all of the --diag-* collectors below. The activation collector is the only expensive one; 100 keeps its amortised cost under a thousandth of step time.
 dino_bottleneck_size: 256  # Bottle neck dimension in dino head
 dino_freeze_last_layer: 1  # Freezing last layer weights
@@ -649,6 +656,8 @@ rerun_mode: validate_results  # choices: ['disabled', 'validate_results', 'repor
 reset_attention_mask: false  # Reset self attention mask after end-of-document token.
 reset_position_ids: false  # Reset posistion ids after end-of-document token.
 residual_norm_wd_mult: 0.0  # Multiplier on --weight-decay for the remaining norm gains: every 1-D non-bias param that is NOT a qk-layernorm gain, i.e. the residual-stream norms (input_layernorm, pre_mlp_layernorm, the final layernorm, and the TE-fused *.layer_norm_weight tensors). The final layernorm gain matters most, since it multiplies the LM head input directly. Default 0.0 = no decay. Use 1.0 to decay like every other weight (as OLMo 2/3 do), or a fraction for weaker decay. Biases are always excluded. Together with --qk-layernorm-wd-mult this generalises --apply-wd-to-qk-layernorm, so they are mutually exclusive with it.
+embedding_wd_mult: 1.0  # 1.0 = decay the word embeddings like every other weight; 0.0 = exclude them (OLMo 2/3, Levanter/Marin)
+allow_new_param_groups_on_load: false  # load a param group created mid-run (e.g. embedding_wd_mult) from the structurally equivalent saved group
 result_rejected_tracker_filename: null  # Optional name of file tracking `result_rejected` events.
 retriever_report_topk_accuracies: []  # Which top-k accuracies to report (e.g. '1 5 20')
 retriever_score_scaling: false  # Whether to scale retriever scores by inverse square root of hidden size
@@ -728,6 +737,8 @@ te_precision_config_file: null  # Configuration file to select per-module precis
 te_rng_tracker: false  # Use the Transformer Engine version of the random number generator. Required for CUDA graphs support.
 tensor_model_parallel_size: 1  # Intra-layer model parallelism. Splits tensors across GPU ranks.
 tensor_parallel_num_weight_shards: null  # Total number of shards each weight is split into across the tensor-parallel + GTP axes (i.e. ``tensor_model_parallel_size * gtp_weight_remat_size``). This is the user-facing knob: it must be ``>= tensor_model_parallel_size`` and divisible by it. When None it defaults to ``tensor_model_parallel_size`` (no GTP sharding). It is the source of truth and implies ``gtp_weight_remat_size = tensor_parallel_num_weight_shards // tensor_model_parallel_size`` (resolved in ``__post_init__``).
+te_debug_config: null  # nvdlfw_inspect feature YAML applied to every Transformer Engine module (LogTensorStats, LogFp8TensorStats, ...). Writes PER-RANK statistics files, so use it only on small probes (<= 16 nodes).
+te_debug_log_dir: null  # Directory for the nvdlfw_inspect logs; defaults to <tensorboard-dir>/te_debug.
 tensorboard_dir: null  # Write TensorBoard logs to this directory.
 tensorboard_log_interval: 1  # Report to tensorboard interval.
 tensorboard_queue_size: 1000  # Size of the tensorboard queue for pending events and summaries before one of the 'add' calls forces a flush to disk.

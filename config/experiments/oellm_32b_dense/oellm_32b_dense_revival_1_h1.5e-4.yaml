@@ -1,0 +1,23 @@
+# @package _global_
+#
+# 32B dense flagship, revival 1, LR step at a segment boundary (plan 1): head (embeddings +
+# output layer) 2e-4 -> 1.5e-4, body unchanged at 3e-4. Same job name and checkpoint tree as
+# oellm_32b_dense_revival_1.yaml (the run continues from its latest checkpoint); the new
+# value takes effect through --override-opt_param-scheduler, exactly as the arm and the
+# revival took theirs.
+#
+# Why (2026-09-07 02:00): from the arm's 76k the held-out total loss rose monotonically over
+# the 80k/84k/88k/90k probes (+0.007 nats), the rarest bucket +0.017..+0.028, z-loss plateau
+# at 66.3, and Global-MMLU stepped down 1.5 points at 88k across 17 of 18 languages: the
+# constellation that preceded the production run's turn after 64k (campaign
+# oellm_32B_loss-increase_debug, results/production/bucket_report_76k-90k.md,
+# results/eval/lineage_selected.md).
+#
+# Apply at a boundary: CONFIG=experiments/oellm_32b_dense/oellm_32b_dense_revival_1_h1.5e-4
+#   helper_scripts/switch_revival_segment.sh arm   (or production/revival_ctl.sh stop; start)
+defaults:
+  - /experiments/oellm_32b_dense/oellm_32b_dense_revival_1
+  - _self_
+
+aux:
+  head_lr: 1.5e-4
