@@ -17,6 +17,29 @@ cancel_condition: null
 # Only for cheap setup stages: no allocation, no accounting, no time limit.
 local: false
 
+# --- monitor hooks referenced by the restart policies ------------------------
+# All four are OFF by default and are declared here for the same STRUCT-mode
+# reason as `local` above -- but here it is not a convenience, it is required:
+# config/job/auto_restart_ckptreset.yaml and auto_restart_ckptreset_faultscan.yaml
+# INTERPOLATE ${job.checkpoint_hook_every} and friends in their event tables, so
+# a config that does not set them fails to COMPOSE with
+#   InterpolationKeyError: Interpolation key 'job.checkpoint_hook_every' not found
+# rather than falling back to the dataclass defaults. That broke every config
+# using those policies except oellm_32b_dense_revival_1, which sets the pair in
+# its own body -- including oellm_32b_dense_production and all its children.
+#
+# checkpoint_hook_*  run a command when the log reports a persistent checkpoint
+#                    whose iteration is a multiple of `every` (0 = off).
+#                    Templated with {iteration}, {ckpt_dir}, {job_id}, {job_name};
+#                    must return fast, so detach long work with `setsid nohup ... &`.
+# restart_*          command run on the failed job's log before a resubmission
+#                    ({runtime_job_id}, {log_path}), e.g. a node-fault scan, and
+#                    the exclusion list re-read at that moment. Empty = off.
+checkpoint_hook_every: 0
+checkpoint_hook_command: ""
+restart_pre_command: ""
+restart_exclude_file: ""
+
 # --- submit-gate cost/runtime estimate (estimate-only, never reaches SLURM) ---
 # Declared here with null defaults so a plain `job.est_step_time_s=4.2` override
 # works. Hydra runs the config in STRUCT mode, so a key absent from the yaml
