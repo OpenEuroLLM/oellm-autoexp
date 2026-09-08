@@ -1,0 +1,149 @@
+# @package _global_
+#
+# ============================================================================
+# _cont6: PRODUCTION SETTINGS + FULL DIAGNOSTICS, from the minimum (64000)
+# ============================================================================
+# EVERY configuration variable has now been eliminated by experiment. This arm
+# stops varying things and instead INSTRUMENTS the degradation as it happens.
+#
+#   software stack   3 probe arms scored ckpt 72000 at 1.519173 -- identical to
+#                    6 dp under te218+FA3, te218+cuDNN and nemo_26.04+cuDNN.
+#   data order       _cont2 (seed 4321, full cache rebuild) degraded anyway.
+#   masking/container/attention
+#                    _cont3 reverted all three; +0.00162/1k vs cont2's
+#                    +0.00198/1k -- indistinguishable.
+#   FP8              _cont4 ran bf16 and turned over at the SAME iteration:
+#                      bin        64000     66000     68000     70000
+#                      bf16     1.539210  1.539937  1.548043  1.553522
+#                      fp8      1.544005  1.548968  1.556254  1.560867
+#                    bf16 sits ~0.0045 lower throughout -- a real quality gain
+#                    from dropping fp8 -- but degrades on the same schedule.
+#                    FP8 costs loss; it does NOT cause the turn.
+#   hardware / SDC   the two degrading allocations shared ZERO nodes.
+#
+# So the cause is not in the configuration. It is in the training dynamics, and
+# the only way forward is to watch the right quantities while it happens rather
+# than reconstruct them from checkpoints afterwards.
+#
+# ============================================================================
+# WHAT THE DIAGNOSTICS ADD OVER CHECKPOINT ARCHAEOLOGY
+# ============================================================================
+# The offline analysis (scripts/korbi/inspect_norm_gains.py, gamma_layer_plot.py)
+# could only sample persistent checkpoints, 4000 iterations apart, and had to
+# infer per-layer behaviour from stored weights. It found a real signal -- norm
+# gains reversing toward gamma = 1.0 in a contiguous band, q/k-norm exactly
+# 0/64 reversals from 20000 through 68000 and then both turning up -- but the
+# onset LAGGED the loss minimum by 4000-8000 iterations, which is more
+# consistent with the gains RESPONDING to the degradation than causing it.
+#
+# 4000-iteration spacing cannot resolve a 4000-iteration lag. These collectors
+# run every `diagnostics_interval` iterations, i.e. 40x finer, and measure
+# quantities that checkpoints do not contain at all (activations, per-layer
+# gradient norms, clip events).
+#
+#   diag_norm_gains        mean/std/min/max of every RMSNorm/LayerNorm gain, per
+#                          layer -- the gamma question, at 100x resolution.
+#   diag_layer_grad_norms  per-layer L2 grad norm. The global grad norm FALLS
+#                          across the turn (0.512 -> 0.457); this shows whether
+#                          that is uniform or an early/late-layer asymmetry the
+#                          global figure averages away.
+#   diag_activations       RMSNorm denominator sqrt(mean(x^2)) and mean input to
+#                          every norm. The fp8 amax told us activations grow
+#                          ~1.7x; this measures them directly and in bf16 terms.
+#   diag_clip_events       clip streaks, fired fraction, smallest clip
+#                          coefficient, pre-clip total norm. FREE and runs on
+#                          EVERY step regardless of diagnostics_interval.
+#   diag_nonfinite         localises any NaN/Inf to a parameter name instead of
+#                          only aborting.
+#
+# ============================================================================
+# LOG VOLUME -- WHY THIS IS SAFE AND NVTE_DEBUG WAS NOT
+# ============================================================================
+# `NVTE_DEBUG_LEVEL=2` killed job 1576287 with 8,464,730 lines / 14.3 GB,
+# because it printed per ATTENTION CALL per RANK. These collectors fire once per
+# `diagnostics_interval` iterations on rank 0's writer path, so at interval 100
+# and ~5 s/iteration that is a handful of lines every ~8 minutes.
+#
+# `diagnostics_interval: 0` is the default and DISABLES every --diag-* collector
+# except clip_events -- setting the booleans without it does nothing.
+#
+# diag_activations is the only one with real cost (bandwidth-bound, ~20 GB of
+# reads for a 64-layer 32B model). At interval 100 its amortised cost is under a
+# thousandth of step time, which is why 100 rather than 10.
+#
+# ⚠ log_max_attention_logit IS DELIBERATELY ABSENT. It is not a logging flag in
+# any useful sense: asking TE for max logits removes every fused attention
+# kernel, leaving only unfused, which OOMs at production shape. It cost eight
+# 512-node starts (~700 GPU-h). Do not add it here.
+#
+# ============================================================================
+# THE NEW DATA MIX -- CACHE REBUILD REQUIRED
+# ============================================================================
+# The shared data group now points at flagship_datamix_option5_fscratch.txt
+# (switched Sep 01 2026): the same 452 shards with the same weights, moved from
+# /e/scratch/.../training/ to /e/fscratch/.../training_v2/training/.
+#
+# `dataset_path` is part of the cache key (megatron_dataset.py:57-71), so every
+# index is a MISS at the new paths even though the content is identical. Run
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/data_cache_build_fscratch_trainshape
+# and let it FINISH first -- otherwise this job builds the 15 T index inline on
+# 512 nodes. That build config already resolves to the new mix; it needs no edit.
+#
+# The sample ORDER should be unchanged: per-dataset shuffles are keyed on the
+# seed and sample counts, not on paths. Only the cache filenames move.
+#
+# ============================================================================
+# SETTINGS: PRODUCTION, UNMODIFIED
+# ============================================================================
+# fp8 hybrid (NOT bf16 -- cont4 answered that), masking on, FA3, te218-fa3,
+# lr 3e-4, GBS 4096, TP4 x PP4 x VPP4, seed 1234. The ONLY differences from the
+# flagship are the diagnostics and the fork point.
+#
+# So the flagship's own recorded 64000->74000 curve remains the control:
+#   bin      64000    66000    68000    70000    72000    74000
+#   loss   1.544005 1.548968 1.556254 1.560867 1.573184 1.579815
+# This arm is EXPECTED to reproduce that. It is an instrumentation run, not an
+# intervention -- if it does not reproduce, that is itself a finding.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/oellm_32b_dense_cont6_diag_from64k
+#
+# RUN WITH THE MONITOR -- the seed stage is a local job whose tracker the train
+# stage gates on via FileExistsCondition, evaluated once under
+# `--submit-and-exit`. Keep chain_repeat at 1; chain mode bypasses the gate.
+defaults:
+  - oellm_32b_dense_cont2_from64k
+  - _self_
+
+aux:
+  # The ORIGINAL flagship tree at its minimum. READ ONLY.
+  parent_ckpts: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4/checkpoints
+  fork_iter: 64000
+  fork_iter_dir: iter_0064000
+
+  variant_tag: "prod_dataopt5_cont6_diag_seed1234"
+
+backend:
+  megatron:
+    # Production's data order. cont2 sets 4321 to test the data hypothesis;
+    # that is answered, so this reverts to the flagship's own stream.
+    seed: 1234
+
+    # fp8 is NOT overridden -- it inherits production's `hybrid`. cont4 settled
+    # the bf16 question and this arm is deliberately the standard recipe.
+
+    # ---- THE POINT OF THIS RUN ----------------------------------------------
+    # The gate. Without it every --diag-* boolean below is inert.
+    diagnostics_interval: 100
+    diag_norm_gains: true
+    diag_layer_grad_norms: true
+    diag_activations: true
+    diag_nonfinite: true
+    # Free, and runs every step independently of the interval -- a clip STREAK
+    # can only be counted that way.
+    diag_clip_events: true
+
+    # Stock Megatron diagnostics. These touch grads/params, not attention
+    # kernel selection, so they are genuinely free.
+    log_params_norm: true
+    log_num_zeros_in_grad: true
+    check_for_spiky_loss: true

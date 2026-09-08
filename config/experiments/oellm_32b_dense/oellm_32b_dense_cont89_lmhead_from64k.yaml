@@ -1,0 +1,276 @@
+# @package _global_
+#
+# ============================================================================
+# _cont8 / _cont9: TWO WAYS TO CONTROL THE LM HEAD, from the minimum (64000)
+# ============================================================================
+# One config, three stages: a single local seed job that creates BOTH forks'
+# checkpoint trees, then one 512-node training arm each.
+#
+#   --array-subset 0   seed    local, seconds, seeds both trees
+#   --array-subset 1   cont8   output z-loss, with its gradient actually applied
+#   --array-subset 2   cont9   z-loss off, final-logit softcapping instead
+#
+# Both fork from the flagship's own iteration 64000 with production's data order
+# (seed 1234), so the flagship's recorded 64000->74000 curve is a control that
+# was already paid for, and the two arms are directly comparable to each other.
+#
+# ============================================================================
+# WHY THE LM HEAD, AND WHY NOW
+# ============================================================================
+# Three independent results point at the output distribution:
+#
+#   * from ~66.6k the loss rose in EVERY token-frequency bucket rarer than 1e-4
+#     while the head's rows drifted (campaign oellm_32B_loss-increase_debug).
+#   * the rare-token unembedding rows decay at exactly the weight-decay rate,
+#     p1 1.40 -> 0.68 by 75k, while the frequent rows grow (the motivation for
+#     --embedding-wd-mult, commit a37fd59b0).
+#   * decoupling the head's learning rate to 2e-4 stopped the increase to 76k
+#     and then stopped working: over 80k-90k the held-out loss rose +0.007, the
+#     rarest bucket +0.017..+0.028, and Global-MMLU stepped down 1.5 points at
+#     88k across 17 of 18 languages.
+#
+# A lower head learning rate slows the drift without bounding it, which is what
+# "postponed, not fixed" looks like. Both arms here bound it instead.
+#
+# ============================================================================
+# ⚠ THE z-LOSS HAS NEVER ACTUALLY RUN. READ THIS BEFORE INTERPRETING EITHER ARM
+# ============================================================================
+# Production runs cross_entropy_loss_fusion with cross_entropy_fusion_impl
+# native, i.e. megatron/core/fusions/fused_cross_entropy.py, which rounds the
+# cross-entropy gradient to bf16 BEFORE adding the z-loss gradient to it. For a
+# non-target vocabulary entry both terms carry the same softmax factor, so their
+# ratio is a CONSTANT r = 2 * coeff * logZ -- identical for every token and every
+# entry. bf16 keeps 8 significant bits, so a value already on the bf16 grid
+# cannot move unless perturbed by more than half an ulp, at least 2**-9 =
+# 1.953e-3 relative. At coeff 1e-4 and logZ ~ 8, r = 1.6e-3.
+#
+#   coeff     r          elements moved / 131,072,000    z-grad delivered
+#   1.00e-4   1.60e-3                 0                       0.0000
+#   1.22e-4   1.95e-3                 0                       0.0000
+#   1.30e-4   2.08e-3        11,439,340                       ~0.9
+#
+# A cliff at r = 2**-9, measured by scripts/korbi/zloss_bf16_probe.py. The logged
+# mean(logZ**2) dates the switch-off: 144.1 at 4k puts logZ near 12 and r above
+# the cliff; 66.2 at 24k and 62-66 ever since put it below. The term was live
+# early, drove logZ down, and in doing so turned itself off.
+#
+# TWO CONSEQUENCES FOR THIS CONFIG
+#   * cont8 is not "improve the z-loss precision". It is the first run in which
+#     the LM-head z-loss exists at all.
+#   * cont9 looks like two changes -- remove the z-loss, add softcapping -- but
+#     the thing being removed was doing nothing, so it is a ONE-variable
+#     experiment against the same control.
+#
+# It also means DEBUG.md item 17's "flat auxiliary loss" is not evidence of
+# stability; a working regularizer pulls logZ down. And it is a latent
+# nonstationarity in every existing arm: the cliff is at logZ = 9.77, so a run
+# whose logZ drifts past that switches its z-loss on with no config change.
+#
+# ============================================================================
+# WHAT TO READ, PER ARM
+# ============================================================================
+# The primary signal is `output_z_loss` = mean(logZ**2), which both arms log
+# (cont9 through --log-output-logsumexp, since it has no coefficient). It is
+# coefficient-independent, so it is directly comparable across arms and against
+# the control's 59-67 and revival_1's 66.3 plateau.
+#
+#   cont8  REGULARIZER LIVE      mean(logZ**2) moves off 62-66 within a few
+#                                hundred iterations. If it does NOT, the flag
+#                                did not take effect and nothing else here is
+#                                interpretable -- check the arg dump for
+#                                --output-z-loss-fp32-grad-accum first.
+#   cont9  CAP BINDS             --diag-logit-stats shows the per-token max
+#                                logit compressing. If it does not move, c=30
+#                                is too loose, not the hypothesis wrong.
+#   EITHER SUPPORTED             the train-loss slope flattens against the
+#                                control below.
+#   EITHER DEAD                  logZ comes down and the loss still rises at
+#                                ~+0.003/1000, which would make logit growth a
+#                                symptom rather than the cause.
+#
+# ⚠ BOTH ARMS STEP THE LOSS LEVEL AT THE FORK. cont8 switches on a regularizer
+# that has been inert for 64000 iterations; cont9 changes the objective, and
+# tanh compression shrinks the logit gaps, which flattens the distribution and
+# RAISES cross-entropy for a head trained without the cap -- expect roughly
+# +0.02 to +0.05 nats, comparable to the whole degradation being chased. Fit
+# slopes over >= 4000 iterations of 2000-iteration bins, exactly as with cont3's
+# masking revert. Do not compare absolute loss against the control table:
+#
+#   bin      64000    66000    68000    70000    72000    74000
+#   loss   1.544005 1.548968 1.556254 1.560867 1.573184 1.579815
+#
+# ============================================================================
+# CHOOSING c FOR cont9
+# ============================================================================
+# 30.0 is the Gemma 2 final-logit value and the setting already smoke-tested in
+# config/experiments/korbi/megatron_zloss_softcap_test_jupiter.yaml (100
+# iterations, <1% throughput). At this model's logZ ~ 8 it is a GENTLE dose:
+# tanh(8/30) = 0.261 against 8/30 = 0.267, about a 2.4% squash on the bulk, and
+# a real constraint only on the tail (a logit of 20 is pulled to 16.5). If
+# --diag-logit-stats shows no movement, 15.0 roughly doubles the pressure. Do
+# not go below ~10, or the cap stops being a regularizer and becomes a ceiling
+# on the confidence the model needs to express.
+#
+# ============================================================================
+# DELIBERATELY NOT IN THIS CONFIG
+# ============================================================================
+#   --embedding-wd-mult 0.0   the third LM-head lever, and arguably the most
+#                             direct one: it stops the rare-token rows decaying
+#                             instead of controlling the normalizer they are
+#                             measured against. Left out because it would
+#                             confound both arms; it deserves its own.
+#   --decoupled-lr            revival_1 already carries it. Adding it here would
+#                             mean these arms no longer share a control with the
+#                             flagship's 64000 curve.
+#   --diag-token-loss-dir     a frozen-weight probe tool. It writes a per-token
+#                             npz per microbatch per DP rank on every diagnostic
+#                             iteration, which is not a 512-node setting.
+#
+# ============================================================================
+# REVIEW POINTS
+# ============================================================================
+#   1. FORK POINT. 64000 is the original turn and keeps the paid-for control.
+#      The alternative is 76000+ on revival_1's tree, where the problem has
+#      RETURNED under a decoupled head -- that would test whether either lever
+#      rescues a run the head LR alone could not, at the cost of the clean
+#      control. This config takes 64000.
+#   2. FILESYSTEM. Inherited from cont2: /e/scratch/.../production_training.
+#      revival_1 deliberately moved to /e/fscratch with mode 700 + ACLs. Worth
+#      matching if these are meant to sit beside it.
+#   3. CHECKPOINT CADENCE. save_interval is production's 4000. DEBUG.md asks for
+#      ~500 through the suspect interval; revival_1 uses 2000 persistent + 125
+#      rolling. 4000 will not localize an internal change.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/oellm_32b_dense_cont89_lmhead_from64k --array-subset 0
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/oellm_32b_dense_cont89_lmhead_from64k --array-subset 1
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/oellm_32b_dense_cont89_lmhead_from64k --array-subset 2
+#
+# RUN WITH THE MONITOR, or submit stage 0 and wait: each train stage gates on
+# its own tracker via FileExistsCondition, which `--submit-and-exit` evaluates
+# exactly once. Keep chain_repeat at 1; chain mode bypasses the gate.
+#
+# The /e/fscratch dataset index cache must already exist -- see cont6's header.
+defaults:
+  - oellm_32b_dense_cont6_diag_from64k
+  - _self_
+
+aux:
+  # Both arms fork from the ORIGINAL flagship tree at its loss minimum, READ
+  # ONLY. Inherited from cont6: parent_ckpts, fork_iter 64000, fork_iter_dir.
+  #
+  # variant_tag is set PER ARM in the sweep below; these two are what the single
+  # seed stage needs to know, since it creates both trees before either arm runs.
+  tag8: "prod_dataopt5_cont8_zlossfp32_seed1234"
+  tag9: "prod_dataopt5_cont9_softcap30_seed1234"
+  root8: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_${aux.tag8}
+  root9: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_${aux.tag9}
+
+backend:
+  megatron:
+    # ---- shared instrumentation, on top of cont6's diag package -------------
+    # These four arrived with the jitsev1-diag patches and are what make the LM
+    # head observable at all. diag_logit_stats is the one this experiment turns
+    # on for its own sake: logit mean/std/min/max, per-token max logit, and
+    # logZ mean/std, from a forward hook on the output layer.
+    diag_logit_stats: true
+    diag_weight_stats: true
+    diag_fp8_meta: true
+    # Prove the Adam state actually in effect after the fork, rather than
+    # trusting that the checkpoint's betas/eps match the arguments -- they are
+    # silently restored from the checkpoint otherwise (commit 752021198).
+    log_params_norm: true
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ============== stage 0: seed BOTH checkpoint trees ==================
+        # One local job, seconds, no allocation. Symlinks rather than copies:
+        # the checkpoint is ~443 GB over ~4098 files. Megatron never rewrites
+        # checkpoint files in place, and QuarantineCheckpointAction renames the
+        # SYMLINK, never the parent's directory, so sharing the target is safe.
+        #
+        # Doing both arms in one job is what keeps this a three-stage sweep:
+        # each train arm gates on its OWN tracker, both written here.
+        #   --array-subset 0
+        - stage: seed
+          backend: bash
+          # NOT auto_restart_ckptreset: its QuarantineCheckpointAction resolves
+          # ${backend.megatron.save}, which BashBackend does not have.
+          job: auto_cancel
+          job.name: "oellm_32b_dense_seed_it${aux.fork_iter}_cont89"
+          job.est_steps: 1
+          job.est_step_time_s: 60
+          job.est_startup_min: 2
+          # Login node, not Slurm: two symlinks and two 6-byte files. The win is
+          # not runtime but that a local stage runs INSIDE the monitor loop, so
+          # both FileExistsConditions clear on the next tick and the whole fork
+          # is one command.
+          job.local: true
+          # Single quotes are impossible (the template wraps the command in
+          # `bash -c '...'`) and shell ${VAR} would be eaten by OmegaConf; plain
+          # $VAR is fine. The ${aux.*} resolve at render time to literal paths.
+          # Idempotent: the tracker file is the marker, so a monitor restart or
+          # a re-run must not clobber.
+          backend.command: |
+            set -eu
+            SRC="${aux.parent_ckpts}/${aux.fork_iter_dir}"
+            if [ ! -f "$SRC/.metadata" ]; then
+              echo "[seed] FATAL: no .metadata in $SRC -- refusing to seed from an incomplete checkpoint"
+              exit 1
+            fi
+            for DST in "${aux.root8}/checkpoints" "${aux.root9}/checkpoints"; do
+              TRACKER="$DST/latest_checkpointed_iteration.txt"
+              if [ -e "$TRACKER" ]; then
+                echo "[seed] $TRACKER exists -- already seeded, skipping"
+                continue
+              fi
+              mkdir -p "$DST"
+              ln -sfn "$SRC" "$DST/${aux.fork_iter_dir}"
+              echo "${aux.fork_iter}" > "$TRACKER"
+              echo "[seed] linked $SRC to $DST/${aux.fork_iter_dir}"
+              echo "[seed] wrote $TRACKER = ${aux.fork_iter}"
+            done
+
+        # ====== stage 1 / cont8: the z-loss, with its gradient applied =======
+        # output_z_loss_coeff stays at production's 1e-4. This does not change
+        # the regularizer's strength; it makes the strength it already had reach
+        # the weights. Preferred over raising the coefficient past 1.22e-4,
+        # which would conflate "make it real" with "make it stronger" and would
+        # leave the arm one logZ drift from the same silent switch.
+        #
+        # Costs one fp32 logits shard held slightly longer in the loss backward
+        # (2.1 GB at [4096, 2, 256000/4]); the sum is done in place on the
+        # kernel's own softmax buffer, so there is no second allocation.
+        #   --array-subset 1
+        - stage: train
+          aux.variant_tag: ${aux.tag8}
+          backend.megatron.output_z_loss_fp32_grad_accum: true
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "${aux.root8}/checkpoints/latest_checkpointed_iteration.txt"
+
+        # ====== stage 2 / cont9: softcapping instead of the z-loss ===========
+        # Applied on the local tensor-parallel logit shard (tanh is elementwise,
+        # so no communication) after MuP scaling and before the loss, so it
+        # bounds the logits that actually reach the cross-entropy.
+        #
+        # log_output_logsumexp keeps mean(logZ**2) in the logs now that there is
+        # no coefficient to produce it. Forward-only: the log-normalizer is
+        # detached, and both cross-entropy Functions call
+        # ctx.set_materialize_grads(False), so their backward sees
+        # grad_logsumexp=None rather than a zero-filled fp32 tensor the size of
+        # the logits shard.
+        #   --array-subset 2
+        - stage: train
+          aux.variant_tag: ${aux.tag9}
+          backend.megatron.final_logit_softcapping: 30.0
+          # Off. Inert in the control anyway, so this is bookkeeping that makes
+          # the intent explicit rather than a second experimental variable.
+          backend.megatron.output_z_loss_coeff: null
+          backend.megatron.log_output_logsumexp: true
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "${aux.root9}/checkpoints/latest_checkpointed_iteration.txt"
