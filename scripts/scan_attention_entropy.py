@@ -182,28 +182,62 @@ def patch_attention(head_stride):
 
 
 def load_weights(model, ckpt):
-    """Load a torch_dist checkpoint that has no `common.pt`.
+    """Load one checkpoint.
 
-    These were saved as raw torch_dist shards, so megatron's
-    dist_checkpointing.load() refuses them -- it wants a common.pt that is not
-    there. Read them with plain DCP instead. Megatron stacks the per-layer
-    tensors into one [num_layers, ...] tensor, so each stacked tensor is read
-    once and scattered across that layer's parameters; reading per-parameter
-    would re-read a 33 GB tensor 64 times.
+    Thin wrapper over load_weights_avg.
+    """
+    return load_weights_avg(model, [ckpt])
+
+
+def load_weights_avg(model, ckpts):
+    """Load the MEAN of one or more torch_dist checkpoints into `model`.
+
+    With a single checkpoint this is an ordinary load. With several it computes
+    the uniform average of the weights, which is the LAWA surrogate for LR decay:
+    under a WSD stable phase the iterates oscillate across the valley while
+    progress continues along its floor, so an average of widely spaced iterates
+    can be better than any of them. That is the discriminator between "the model
+    is getting worse" and "the model is oscillating and we are measuring the
+    oscillation" -- the two readings imply opposite decisions and every metric in
+    DEBUG.md so far is taken on single stable-phase iterates.
+
+    Averaging happens here rather than by writing an averaged checkpoint because
+    each stacked tensor is up to 33 GB in bf16; accumulating in place costs one
+    fp32 accumulator plus one bf16 read buffer and writes nothing to disk.
+
+    The accumulator is fp32 on purpose: bf16 carries about three decimal digits,
+    and summing several of them loses precision comparable to the differences
+    being averaged.
     """
     import torch.distributed.checkpoint as dcp
 
-    reader = dcp.FileSystemReader(str(ckpt))
-    meta = reader.read_metadata().state_dict_metadata
-    sd = model.state_dict()
+    ckpts = list(ckpts)
+    readers = [dcp.FileSystemReader(str(c)) for c in ckpts]
+    metas = [r.read_metadata().state_dict_metadata for r in readers]
 
+    # These averages are only meaningful within one model definition. A key or
+    # shape that moved between checkpoints means they are not the same model and
+    # the mean of them is not a model at all.
+    base = metas[0]
+    # Not every metadata entry is a tensor: DCP stores non-tensor objects as
+    # BytesStorageMetadata, which has no `.size`. Those carry no weights, so
+    # they are skipped rather than compared.
+    tensor_keys = [k for k, v in base.items() if "_extra_state" not in k and hasattr(v, "size")]
+    for c, m in zip(ckpts[1:], metas[1:]):
+        for k in tensor_keys:
+            assert k in m, f"{c} is missing {k}"
+            assert tuple(m[k].size) == tuple(base[k].size), (
+                f"{c} has {k} at {tuple(m[k].size)}, expected {tuple(base[k].size)}"
+            )
+
+    sd = model.state_dict()
     plan = {}
     for mk in sd:
         if "_extra_state" in mk:
             continue
         m = re.match(r"(decoder\.layers)\.(\d+)\.(.*)", mk)
         ck, idx = (f"{m.group(1)}.{m.group(3)}", int(m.group(2))) if m else (mk, None)
-        if ck in meta:
+        if ck in base and hasattr(base[ck], "size"):
             plan.setdefault(ck, []).append((idx, mk))
 
     missing = [
@@ -214,17 +248,32 @@ def load_weights(model, ckpt):
     if missing:
         print(f"  warning: {len(missing)} params not in checkpoint, e.g. {missing[:3]}")
 
+    n = len(readers)
+    if n > 1:
+        print(f"  averaging {n} checkpoints: {', '.join(c.name for c in ckpts)}", flush=True)
+
     for ck, targets in plan.items():
-        m = meta[ck]
-        buf = {ck: torch.empty(m.size, dtype=m.properties.dtype)}
-        dcp.load(buf, storage_reader=reader)
-        t = buf[ck]
+        prop = base[ck]
+        if n == 1:
+            buf = {ck: torch.empty(prop.size, dtype=prop.properties.dtype)}
+            dcp.load(buf, storage_reader=readers[0])
+            acc = buf[ck]
+        else:
+            acc = torch.zeros(tuple(prop.size), dtype=torch.float32)
+            for reader, meta in zip(readers, metas):
+                buf = {ck: torch.empty(meta[ck].size, dtype=meta[ck].properties.dtype)}
+                dcp.load(buf, storage_reader=reader)
+                acc.add_(buf[ck])
+                del buf
+            acc.div_(n)
         for idx, mk in targets:
-            src = t if idx is None else t[idx]
+            src = acc if idx is None else acc[idx]
             sd[mk].copy_(src.to(device=sd[mk].device, dtype=sd[mk].dtype))
-        del buf, t
+        del acc
+
     print(
-        f"  loaded {sum(len(v) for v in plan.values())} params from {len(plan)} checkpoint tensors"
+        f"  loaded {sum(len(v) for v in plan.values())} params from {len(plan)} "
+        f"checkpoint tensors, averaged over {n}"
     )
 
 

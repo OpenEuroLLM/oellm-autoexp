@@ -75,7 +75,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from scan_attention_entropy import build_config, load_weights  # noqa: E402
+from scan_attention_entropy import build_config, load_weights_avg  # noqa: E402
 
 # Position-within-document bins for the label token. Low bins are where a
 # masking fault would show: with the block mask a token at position 0 has only
@@ -147,7 +147,12 @@ def build_mask(docid_in, mode, device):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("ckpt", type=Path)
+    ap.add_argument(
+        "ckpt",
+        type=Path,
+        nargs="+",
+        help="one iter_* directory, or several to score their WEIGHT AVERAGE",
+    )
     ap.add_argument("--config", required=True, help="the run's frozen config-<job>.yaml")
     ap.add_argument("--datamix", required=True)
     ap.add_argument("--csv", type=Path, required=True)
@@ -223,9 +228,15 @@ def main():
         .cuda()
         .eval()
     )
-    load_weights(model, args.ckpt)
+    load_weights_avg(model, args.ckpt)
 
-    it = int(re.search(r"\d+", args.ckpt.name).group())
+    # For an average there is no single iteration. Label it with the mean of the
+    # averaged iterations so the row sorts into the series, and record the exact
+    # membership separately -- avg(64k,72k) and iteration 68,000 are different
+    # models and must never collide in a CSV.
+    iters = [int(re.search(r"\d+", c.name).group()) for c in args.ckpt]
+    it = sum(iters) // len(iters)
+    tag = "+".join(str(i) for i in iters) if len(iters) > 1 else str(it)
     modes = ["block", "dense"] if args.mask == "both" else [args.mask]
     dump = defaultdict(list) if args.dump else None
     pos_ids = torch.arange(args.seq_len, device="cuda").unsqueeze(0)
@@ -306,6 +317,10 @@ def main():
                         binn[(lo, hi)] += int(m.sum())
             row = {
                 "iter": it,
+                # Exact membership. For a single checkpoint this equals `iter`;
+                # for an average it is "64000+72000", which must never be
+                # confused with the real iterate 68,000.
+                "ckpt": tag,
                 "source": src,
                 "mask": mode,
                 "weight": f"{weight:.6f}",
@@ -339,6 +354,7 @@ def main():
             source_names=np.array(names),
             mode_names=np.array(modes),
             iteration=np.array(it),
+            ckpt=np.array(tag),
             **{k: np.concatenate(dump[k]) for k in ("entropy", "top_prob") if dump.get(k)},
         )
         print(f"iter {it}: {len(np.concatenate(dump['loss'])):,} token losses -> {args.dump}")

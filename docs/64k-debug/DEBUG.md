@@ -623,7 +623,7 @@ part of item 5.
 
 ### 22. Distributed-optimizer sharding
 
-**Status: WIP**
+**Status: Closed**
 
 **Question:** Did changing `data_parallel_sharding_strategy` from `no_shard` to
 `optim_grads_params` affect reductions or optimizer state?
@@ -633,11 +633,18 @@ and small-scale gradient probes do not exercise the 512-node data-parallel path.
 Timing is weak evidence against it because training improved for many iterations
 after the change.
 
-**Open issue:** A small-scale loss divergence between sharding modes would be
-ambiguous because reduction order is expected to change. Prefer a controlled
-one-step comparison of reduced gradients, optimizer state, and parameter updates
-against a higher-precision reference. If possible, reproduce the production
-topology or its reduction groups.
+**Conclusion:** The flag was never reachable, so the change was a no-op. In this
+Megatron, `data_parallel_sharding_strategy` appears in exactly one place outside
+`megatron/core/distributed/fsdp/` -- `megatron/core/optimizer/__init__.py:1126`
+-- and that reference sits inside `if ddp_config.use_megatron_fsdp:`. The run has
+`use_megatron_fsdp: false`, `use_torch_fsdp2: false` and
+`use_layer_wise_distributed_optimizer: false`, so `FullyShardedDataParallel` is
+never constructed. Item 36 independently corroborates this by reading
+`optimizer.distributed.*.param`, which is the plain DistributedOptimizer flat
+buffer layout and not an FSDP shard.
+
+No controlled comparison is needed and the planned one is withdrawn. This also
+shortens the list of changes at iteration 34,455 by one.
 
 ### 23. Curvature and Adam edge of stability
 
@@ -1363,6 +1370,141 @@ group left holding the checkpoint's value runs silently at the old LR.
 
 ---
 
+### 40. Weight-norm growth against the loss, at 5-step resolution
+
+**Status: WIP**
+
+**Question:** Items 36 and 37 date their extrema from checkpoints 4,000 apart and
+cannot order cause and effect. `params_norm` is logged every 5 iterations, which
+is 800x finer. Does `||W||` growth lead the loss, or follow it?
+
+**Evidence:** `log_params_norm` is **off in production** -- 0 of 18 slurm logs
+contain `params norm` -- so this channel exists only for revival 1, which turned
+it on. 5,823 points over 76,001 to 105,095, binned at 500 and differenced so
+neither series carries a trend.
+
+| correlation with change in loss | r | t (55 df) |
+|---|---:|---:|
+| change in `\|\|W\|\|` | **+0.602** | **+5.59** |
+| change in grad norm | -0.087 | -0.65 |
+| change in `num_zeros_in_grad` | -0.179 | -1.35 |
+
+The weight-norm channel is significant at p < 1e-6 and the other two are null.
+Grad norm being null is the prediction of item 36 restated: Adam divides gradient
+magnitude out. `num_zeros_in_grad` is flat at 1.18% of parameters (399M to 401M)
+across the whole span, which closes a channel DEBUG.md has never examined.
+
+**Lead/lag, which is what the 5-step resolution buys:**
+
+| k | -4 | -3 | -2 | **-1** | 0 | +1 | +2 | +3 | +4 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| r | +.525 | +.603 | +.652 | **+.664** | +.602 | +.219 | +.042 | -.240 | -.361 |
+
+`k > 0` means `||W||` leads the loss, and the correlation collapses there. The
+peak is at k = -1 at 500-iteration bins and k = 0 at 250. **Weight-norm growth is
+contemporaneous with or lags the loss and never leads it**, so it joins items 36
+and 37 as an accompaniment rather than a driver.
+
+**Open issue:** the leading alternative is data composition -- a stretch of harder
+documents would raise the loss and change gradient structure together, giving
+exactly a k near 0 correlation. It cannot be excluded from one run, and
+production has no `params_norm` to compare against. Turning `log_params_norm` on
+is free and belongs in every future run.
+
+---
+
+### 41. Weight growth exponents by tensor type
+
+**Status: Closed**
+
+**Question:** Merrill et al. predict transformer weight norms grow as `t^0.5`.
+Adam's relative update scale goes as `1/||W||`, so any tensor growing faster than
+that is losing effective learning rate faster than the theory allows. Do the
+tensor types diverge?
+
+**Evidence:** `data/weight_stats.csv`, run `flagship`, six time points (8k,
+34,454, 60k, 64k, 68k, 75,126), fitting `log(wrms)` against `log t` per tensor
+per layer. Reported as exponents, not ratios.
+
+| tensor | mean exponent | min | max | vs `t^0.5` |
+|---|---:|---:|---:|---|
+| `self_attention.linear_qkv` | 0.264 | 0.038 | 0.336 | sub |
+| `mlp.linear_fc1` | 0.311 | 0.262 | 0.349 | sub |
+| `mlp.linear_fc2` | **0.646** | 0.560 | 0.680 | **super** |
+| `self_attention.linear_proj` | **0.652** | 0.535 | 0.737 | **super** |
+
+**The split is input versus output projection, not MLP versus attention.** Both
+blocks contain one sub-`t^0.5` matrix that reads from the residual stream and one
+super-`t^0.5` matrix that writes to it, with nearly identical exponents across
+the two blocks. The two residual-writing matrices are losing effective LR about
+2.4x faster than the two residual-reading ones, and the gap widens as `t^0.37`.
+
+By depth the asymmetry is uniform, except that `qkv` falls monotonically from
+0.312 in layers 0-7 to 0.190 in layers 56-63, so deep attention inputs retain the
+most effective LR of anything in the network.
+
+| layer band | fc1 | fc2 | proj | qkv |
+|---|---:|---:|---:|---:|
+| 0-7 | 0.331 | 0.670 | 0.679 | 0.312 |
+| 24-39 | 0.307 | 0.637 | 0.651 | 0.265 |
+| 56-63 | 0.294 | 0.653 | 0.609 | 0.190 |
+
+**Correction to a companion note.** `revival_notes.md` H-A reports only `qkv`
+(0.28) and `fc2` (0.64) and reads them as "the MLP is progressively freezing
+relative to attention". With all four tensors that reading does not survive:
+`fc1` is the slowest-growing MLP matrix and `proj` the fastest-growing attention
+one, which is the opposite pairing. The remedy H-A proposes (norm-gain weight
+decay, its T2-C) is designed against an asymmetry that is not the one present.
+
+This is a description of the trajectory, not a driver: the exponents are fitted
+across 8k to 75k and show no feature at the turn.
+
+---
+
+### 42. What the training data stream actually was
+
+**Status: WIP**
+
+**Question:** Every data test so far (items 5, 21, 34) scores the model on a
+*clean* datamix or reasons about the *designed* mixture. Nothing had checked the
+bytes actually fed to the model.
+
+**Evidence, and it is clean at the turn:**
+
+* **Shards untouched.** All 904 files in the blend (452 `.bin` + 452 `.idx`,
+  54.41 TB) carry a single mtime of 2026-08-11, before the run's 2026-08-24 to
+  08-30 window. None missing, none zero length.
+* **No index activity near the turn.** Every write under `data_cache_path` is
+  dated 08-26 or earlier. Mapping logs to iterations puts 08-26 at iteration
+  ~26,000; the turn is at 66,500, reached on 08-30.
+
+**But the data order changed twice inside the first 26,000 iterations**, and this
+is not recorded anywhere. Each dataset has several cache keys, from three causes:
+
+1. **Root migration.** `/e/data1/datasets/playground/mmlaion/...` to
+   `/e/scratch/e-sta-openeurollm/...`; the absolute path is part of the key.
+2. **Sample allocation changed.** Same dataset, `num_samples` 3,779,158 to
+   3,336,123, a 12% shift, so either the blend weights or `train_samples` moved.
+3. **Tokenizer metadata changed.** Two keys differ *only* in the serialised
+   `tokenizer` dict -- identical `tokenizer_path`, but one records `vocab_file`
+   and the other `chat_template`. A Megatron-side change in how the tokenizer
+   describes itself, not a different tokenizer.
+
+Any of these invalidates the md5, forces a full index rebuild, and produces a new
+shuffle. Cause 3 is the dangerous shape: a cosmetic change to a metadata dict
+silently reorders 15 T tokens of training data.
+
+**Conclusion:** this does not explain the regression -- it is ~40,000 iterations
+early and the binned loss descends smoothly through it. It is a process defect
+for the restart recipe: pin the cache key, or assert it is unchanged on resume.
+
+**Open issue:** the third part of this test is unrun. Instantiating the
+dataloader offline at the `consumed_samples` for iterations 40,000 and 70,000 and
+comparing token-frequency histograms, document lengths and packing would be the
+direct check; the above is the file-level and metadata-level check only.
+
+---
+
 ## Run index
 
 Run names are deterministic: `<run-directory-name>_<SLURM_JOB_ID>`. Logs are at
@@ -1500,6 +1642,16 @@ re-derived from logs alone silently omits that segment.
   turn is avoidable at a lower LR, not that LR causes it. Training remains
   paused.
 
+- **2026-09-08** Revival 1 (head 2e-4 by way of `--decoupled-lr`, body 3e-4) reached
+  105,095. It mitigates but does not fix: drift is +0.00099 per 1,000 from 82k
+  against production's +0.00416, but healthy is negative. A CPU-only pass closed
+  items 22 and the stray-position-embedding question, resolved the `||W||`
+  discrepancy in favour of item 36, and added items 40 (weight-norm growth
+  correlates with the loss at r = +0.60 but never leads it), 41 (growth exponents
+  split input versus output projection, not MLP versus attention) and 42 (the
+  data stream is clean at the turn, but the index was rebuilt twice before
+  26,000). Checkpoint averaging is queued behind a machine maintenance window.
+
 ---
 
 ## Current assessment
@@ -1508,6 +1660,10 @@ re-derived from logs alone silently omits that segment.
 
 - The regression is present in held-out loss and BF16 evaluation.
 - It is smooth and begins before the visible crossing near 66k.
+- Two config suspicions are excluded by inspection: `data_parallel_sharding_strategy`
+  is unreachable without FSDP (item 22), and no learned position-embedding tensor
+  exists in any checkpoint, so `add_position_embedding: true` is inert alongside
+  RoPE -- the only embedding key is `embedding.word_embeddings.weight`.
 - **The upward turn is at ~66,500.** Binned per-step loss is flat within ±0.0015
   from 62,000 through 66,500, and 64,000 carries no feature. Every "at exactly
   64,000" in items 35–37 is the label on a 4,000-spaced bin (item 38).
