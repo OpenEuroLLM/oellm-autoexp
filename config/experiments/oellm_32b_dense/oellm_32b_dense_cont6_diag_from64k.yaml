@@ -84,10 +84,23 @@
 # /e/scratch/.../training/ to /e/fscratch/.../training_v2/training/.
 #
 # `dataset_path` is part of the cache key (megatron_dataset.py:57-71), so every
-# index is a MISS at the new paths even though the content is identical. Run
-#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/data_cache_build_fscratch_trainshape
-# and let it FINISH first -- otherwise this job builds the 15 T index inline on
-# 512 nodes. That build config already resolves to the new mix; it needs no edit.
+# index is a MISS at the new paths even though the content is identical.
+#
+# NO REBUILD IS NEEDED ANY MORE -- it already exists. The index for the fscratch
+# mix at the production seed was built on Sep 1-2 and lives at
+#   /e/fscratch/e-sta-openeurollm/production_training/oellm_32b_dense/cache
+# 452 train descriptions, all random_seed 1234, all with dataset_path under
+# /e/fscratch/.../training_v2/. It is the cache oellm_32b_dense_revival_1 has run
+# against since Sep 2, and since Sep 2026 it is also what the shared
+# schedule/prod_15TT.yaml points at, so this arm inherits it and needs no
+# override of its own.
+#
+# ⚠ aux.fscratch_cache is overridden BELOW for exactly this reason. cont2 defines
+# it as .../pre_production_training/oellm_32b_dense/data_cache, which holds both
+# seeds but is keyed on the OLD /e/scratch/.../training/ paths -- so inheriting it
+# unchanged pairs the fscratch mix with a cache that cannot match it, and the job
+# builds the 15 T index inline on 512 nodes. That is the failure this header used
+# to warn about, reintroduced by the path move rather than avoided by it.
 #
 # The sample ORDER should be unchanged: per-dataset shuffles are keyed on the
 # seed and sample counts, not on paths. Only the cache filenames move.
@@ -121,6 +134,12 @@ aux:
   fork_iter_dir: iter_0064000
 
   variant_tag: "prod_dataopt5_cont6_diag_seed1234"
+
+  # cont2 points this at the pre_production directory, which is keyed on the OLD
+  # /e/scratch dataset paths and therefore cannot serve the fscratch mix. Same
+  # value as schedule/prod_15TT.yaml and revival_1; stated explicitly because
+  # cont2 derives data_cache_path from it and would otherwise win.
+  fscratch_cache: /e/fscratch/e-sta-openeurollm/production_training/oellm_32b_dense/cache
 
 backend:
   megatron:

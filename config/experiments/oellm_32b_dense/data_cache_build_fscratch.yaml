@@ -89,8 +89,16 @@ aux:
   # this cache entirely and rebuild inside its own allocation.
   cache_seed: 1234
 
-  # Mirrors the /e/scratch layout exactly, with the filesystem swapped.
-  fscratch_cache: /e/fscratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense/data_cache
+  # The directory the 32B runs actually read, i.e. the same value as
+  # schedule/prod_15TT.yaml. A build that writes anywhere else is wasted work:
+  # the index key includes `dataset_path`, so it is not enough for the SHAPE to
+  # match, the training job has to be pointed at this exact directory too.
+  #
+  # This used to mirror the /e/scratch layout with the filesystem swapped
+  # (.../pre_production_training/oellm_32b_dense/data_cache). That directory is
+  # keyed on the OLD /e/scratch/.../training/ shard paths and cannot serve the
+  # fscratch mix, so it is dead weight -- 340 GB of it.
+  fscratch_cache: /e/fscratch/e-sta-openeurollm/production_training/oellm_32b_dense/cache
 
 job:
   # Seed in the name so two data orders cannot share an output directory (and so

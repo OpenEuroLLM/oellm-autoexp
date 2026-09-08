@@ -37,4 +37,24 @@ lr_wsd_decay_iters: null
 # are content-hashed internally, so one directory serves the prebuild job and
 # every training variant. Keying it on the run name would make each variant
 # rebuild the 15 T train index from scratch.
-data_cache_path: /e/scratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense/data_cache
+#
+# MOVED TO /e/fscratch Sep 2026, together with the shards. The index key includes
+# `dataset_path` (megatron_dataset.py `_key_config_attributes`), so the switch of
+# data_args_path to flagship_datamix_option5_fscratch.txt -- whose shards live
+# under /e/fscratch/.../training_v2/ -- invalidated EVERY entry in the old
+# directory. Leaving this on /e/scratch therefore did not merely read a stale
+# cache, it turned every run into a clean miss, and Megatron answers a miss by
+# building the 15 T train index inline, inside the training allocation.
+#
+# The directory below is the one that matches: 452 train descriptions, all at
+# random_seed 1234 and all with dataset_path under
+# /e/fscratch/e-sta-openeurollm/training_v2/. Verified by reading the cache's own
+# *-GPTDataset-train-description.txt files, which record the exact config each
+# index was built from. It is also the cache oellm_32b_dense_revival_1 has been
+# running against since Sep 2.
+#
+# The old /e/scratch directory (875 GB) and
+# /e/fscratch/.../pre_production_training/.../data_cache (340 GB, seeds 1234 AND
+# 4321) are both keyed on the OLD /e/scratch/.../training/ paths and are dead
+# weight for anything using the fscratch mix. Do not point new runs at either.
+data_cache_path: /e/fscratch/e-sta-openeurollm/production_training/oellm_32b_dense/cache
