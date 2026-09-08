@@ -204,6 +204,15 @@ sweep:
           job.est_steps: 1
           job.est_step_time_s: 60
           job.est_startup_min: 2
+          # The slurm block is inert while job.local is true, but the SUBMIT GATE
+          # still prices the stage from it -- and production's 512 nodes turn two
+          # symlinks into a reported "102 GPU-h", which is both alarming and
+          # wrong. Pinning one node makes the plan read honestly, and keeps the
+          # stage sane if it is ever run as a real Slurm job.
+          slurm.launcher_cmd: ""
+          slurm.sbatch.nodes: 1
+          slurm.sbatch.time: "00:15:00"
+          slurm.sbatch.job_name: null
           # Login node, not Slurm: two symlinks and two 6-byte files. The win is
           # not runtime but that a local stage runs INSIDE the monitor loop, so
           # both FileExistsConditions clear on the next tick and the whole fork
