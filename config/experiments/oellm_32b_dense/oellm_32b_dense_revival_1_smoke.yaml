@@ -1,0 +1,56 @@
+# @package _global_
+#
+# Smoke test of the revival-1 pipeline on 4 nodes (TP4 x PP4 = 16 GPUs, DP 1, gbs 128):
+# loads the seeded 76k checkpoint from the production tree (read only), saves to a scratch
+# tree, exits after --exit-duration-in-mins so the monitor's rollover restart resubmits it
+# (with the node-fault scan and the exclusion refresh), resumes from its own checkpoint and
+# finishes at exit_interval. Cost: 4 nodes x ~30 min. Never writes into the production tree.
+#
+#   JUPITER_EXCLUDE_NODES=<test list> PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_dense/oellm_32b_dense_revival_1_smoke \
+#       --monitor-state-dir <smoke root>/_monitor_state
+defaults:
+  - oellm_32b_dense_revival_1
+  - _self_
+
+aux:
+  smoke_root: /e/fscratch/e-sta-openeurollm/jj1/revival_1_smoke
+
+job:
+  name: "oellm_32b_dense_revival_1_smoke"
+  base_output_dir: ${aux.smoke_root}/training_core
+  est_step_time_s: 25
+  est_steps: 8
+  est_startup_min: 10
+
+backend:
+  aux:
+    active_nodes: 4
+    variant: "revival_1_smoke"
+  megatron:
+    global_batch_size: 128
+    micro_batch_size: 1
+    # load == save as in production: the smoke tree is seeded with a symlink to the production 76k checkpoint
+    # (a separate --load tree would win the tracker comparison and restart every segment from 76000)
+    load: ${aux.smoke_root}/training_ckpts/checkpoints
+    save: ${aux.smoke_root}/training_ckpts/checkpoints
+    non_persistent_global_ckpt_dir: ${aux.smoke_root}/training_ckpts/checkpoints_rolling
+    save_interval: 2
+    non_persistent_save_interval: 2
+    exit_interval: 76008
+    exit_duration_in_mins: 3
+    defer_embedding_wgrad_compute: false   # OOMs at small DP (probe experience, job 1630850)
+    # the distributed-optimizer state cannot be resharded from DP 128 to DP 1 (job 1685897: global shape
+    # mismatch on optimizer.distributed.*); the 512-node production resume keeps the arm's layout, so the
+    # smoke loads weights only, as the token-loss probes do
+    no_load_optim: true
+    no_load_rng: true
+    # gbs 128 needs its own validation index; the production cache is not ours to write, this directory
+    # holds symlinks to every production cache entry plus the indices of the campaign's small runs
+    data_cache_path: /e/fscratch/e-sta-openeurollm/jj1/data_cache_link
+    wandb_project: oellm_32b_dense_loss-increase_debug   # keep the smoke out of the production project
+
+slurm:
+  sbatch:
+    time: "00:45:00"
+    signal: "TERM@120"

@@ -1,0 +1,11 @@
+# JUPITER with the node-exclusion list AND the worker-only SIGTERM relay (templates/jupiter_relay.sbatch).
+# Use with `sbatch.signal: "B:TERM@<margin>"`: SLURM signals the batch shell only, whose trap forwards SIGTERM
+# to the Megatron worker processes on every node (not to torchrun's elastic agents, which would tear the
+# workers down ~30 s after a SIGTERM before their exit checkpoint completes). Megatron's
+# --exit-signal-handler saves and exits 0, the job ends COMPLETED, the policy's sigterm_rollover resubmits.
+# Introduced 2026-09-06 after the 4-node smoke 1691088 showed the agent behaviour with a plain TERM@240.
+defaults:
+  - jupiter_autoexclude
+  - _self_
+
+template_path: "templates/jupiter_relay.sbatch"

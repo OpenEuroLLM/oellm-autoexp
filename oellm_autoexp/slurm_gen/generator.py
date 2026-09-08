@@ -15,6 +15,24 @@ def build_sbatch_directives(config: SlurmConfig) -> list[str]:
     sbatch_values = asdict(config.sbatch)
     sbatch_values.pop("_non_strict", None)
 
+    # Re-read the node-exclusion list HERE, at render time. The resolver that
+    # first produced `sbatch.exclude` runs when the config is resolved, which for
+    # a restart happened at plan time; the monitor's refresh hook mutates a copy
+    # that does not reach this builder. Reading the file again is the only point
+    # that is guaranteed to see every node excluded since, including the one whose
+    # failure triggered this very resubmission.
+    exclude_file = getattr(config, "exclude_file", None)
+    if exclude_file:
+        from oellm_autoexp.hydra_staged_sweep.config.resolvers import oc_exclude_nodes
+
+        current = oc_exclude_nodes(str(exclude_file))
+        if isinstance(current, (list, tuple)):
+            current = ",".join(current)
+        if current:
+            sbatch_values["exclude"] = current
+        # a missing or empty file leaves whatever was already resolved in place:
+        # losing the list entirely is far worse than using a slightly stale one
+
     jobname_present = False
     for key, value in sbatch_values.items():
         if key == "job_name" and value is not None:

@@ -1,0 +1,20 @@
+# @package _global_
+#
+# 32B dense flagship, revival 1, LR step at a segment boundary (plan 2, the stronger brake):
+# body 3e-4 -> 2.5e-4 and head (embeddings + output layer) 2e-4 -> 1.5e-4. Same job name and
+# checkpoint tree as oellm_32b_dense_revival_1.yaml; both values take effect through
+# --override-opt_param-scheduler (WSD stable phase continues at the new plateau; the decay
+# start moves with it). Rationale: see oellm_32b_dense_revival_1_h1.5e-4.yaml.
+#
+# Apply at a boundary: CONFIG=experiments/oellm_32b_dense/oellm_32b_dense_revival_1_b2.5e-4_h1.5e-4
+#   helper_scripts/switch_revival_segment.sh arm   (or production/revival_ctl.sh stop; start)
+defaults:
+  - /experiments/oellm_32b_dense/oellm_32b_dense_revival_1
+  - _self_
+
+aux:
+  head_lr: 1.5e-4
+
+backend:
+  megatron:
+    lr: 2.5e-4

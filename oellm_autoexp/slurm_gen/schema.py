@@ -80,6 +80,17 @@ class SlurmConfig(ConfigInterface):
             rendered ahead of ``srun_opts``. See :class:`SrunConfig`.
         srun: LEGACY, NOT RENDERED. See :class:`SrunConfig`.
         sbatch: sbatch configuration.
+        exclude_file: Optional path to a node-exclusion list. When set, the
+            ``--exclude`` directive is resolved FROM THIS FILE AT RENDER TIME,
+            overriding any ``sbatch.exclude`` baked in earlier. A restart
+            re-renders the script but reuses the already-resolved config, so a
+            node excluded after the first submission would otherwise never
+            reach the resubmitted job: job 1711267 was submitted at 22:19:42 on
+            2026-09-07 with 28 nodes, two seconds after the monitor had
+            refreshed the list to 30, and without the node whose failure had
+            just ended the previous job. A missing or empty file leaves any
+            existing ``sbatch.exclude`` untouched, so a bad path can never
+            silently drop the exclusions.
         sbatch_extra_directives: Extra sbatch directives.
     """
 
@@ -90,6 +101,7 @@ class SlurmConfig(ConfigInterface):
     name: str = "job"
     script_path: str | None = None
     log_path: str | None = None
+    exclude_file: str | None = None
     array: bool = False
     launcher_cmd: str = ""
     srun_opts: str = ""

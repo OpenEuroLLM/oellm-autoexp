@@ -55,5 +55,14 @@ defaults:
 # resumes a node whose underlying condition was never fixed. Correspondingly it
 # is technical debt: prune entries once nodes are confirmed healthy, or large
 # jobs will slowly lose scheduling candidates for no reason.
+# `exclude_file` makes the sbatch builder re-read this list WHEN IT RENDERS THE
+# SCRIPT. The resolver below runs when the config is resolved, which for a restart
+# was plan time, so on its own it cannot carry a node excluded since. Job 1711267
+# went out on 2026-09-07 at 22:19:42 with 28 nodes, two seconds after the monitor
+# had refreshed the list to 30, and without the node whose failure had just ended
+# the previous job. Both are kept: the resolver seeds the value, the render-time
+# read is what makes a resubmission current, and an unreadable file falls back to
+# the resolved value rather than dropping the exclusions.
+exclude_file: ${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}
 sbatch:
   exclude: ${oc.exclude_nodes:${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}}

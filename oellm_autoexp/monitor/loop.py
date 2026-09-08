@@ -63,6 +63,8 @@ class JobRuntime:
     events: dict[str, Any] = field(default_factory=dict)
     last_status: str | None = None
     final_state: str | None = None  # "finished", "cancelled", or None for active jobs
+    # RestartAction hooks parked until the job leaves the queue (wait_for_job_end)
+    deferred_restart: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(kw_only=True)
@@ -168,6 +170,7 @@ class MonitorLoop:
         no_error_catching: bool = False,
     ) -> None:
         _import_registry()
+        self._pending_restart_hooks: dict[str, dict[str, Any]] = {}
         self._store = store
         self._slurm_client = slurm_client
         self._local_client = local_client
@@ -238,6 +241,8 @@ class MonitorLoop:
                 self._update_current_symlinks(job)
             status_effect = self._status_action(job, runtime.last_status, new_status)
             runtime.last_status = new_status
+            if runtime.deferred_restart and self._resume_deferred_restart(job, runtime_id):
+                continue
             if self._apply_effect(job, status_effect, runtime_id):
                 continue
             if not runtime.submitted:
@@ -676,10 +681,112 @@ class MonitorLoop:
             self._store.mark_finished(job.job_id, "cancelled")
             return True
         if effect == "restart":
+            hooks = self._pending_restart_hooks.get(job.job_id) or {}
+            if hooks.get("cancel_first") and runtime_id and self._job_active(job):
+                # kill the hung/faulty job now and resubmit once it has left the
+                # queue: the hooks then scan a complete log (post-kill lines incl.)
+                self._get_client(job).cancel(runtime_id)
+                hooks["wait_for_job_end"] = True
+                self._pending_restart_hooks[job.job_id] = hooks
+                LOGGER.info("Job %s: runtime job %s cancelled first; resubmission after it has left the queue", job.job_id, runtime_id)
+            if hooks.get("wait_for_job_end") and self._job_active(job):
+                # graceful exit in progress: the async checkpoint write may still
+                # be running behind the 'exiting program' line; resubmit once the
+                # job has left the queue (observe_once -> _resume_deferred_restart)
+                job.runtime.deferred_restart = dict(self._pending_restart_hooks.pop(job.job_id))
+                self._store.upsert(job)
+                LOGGER.info(
+                    "Job %s: restart deferred until runtime job %s has ended (status %s)",
+                    job.job_id, runtime_id, job.runtime.last_status,
+                )
+                return True
+            self._run_restart_hooks(job, runtime_id)
             self._restart_job(job)
             self._store.upsert(job)
             return True
         return False
+
+    # SLURM states in which a job still occupies (or waits for) resources
+    ACTIVE_STATES = frozenset({
+        "PENDING", "RUNNING", "COMPLETING", "CONFIGURING", "SUSPENDED", "REQUEUED",
+        "RESIZING", "STAGE_OUT", "SIGNALING", "REQUEUE_HOLD", "REQUEUE_FED", "RESV_DEL_HOLD",
+    })
+
+    def _job_active(self, job: JobRecord) -> bool:
+        return (job.runtime.last_status or "") in self.ACTIVE_STATES
+
+    def _resume_deferred_restart(self, job: JobRecord, runtime_id: str | None) -> bool:
+        """Resubmit a job whose restart was deferred (wait_for_job_end) once its
+        runtime job has left the queue. Returns True when the job was restarted
+        or is still waiting (the caller stops processing it for this poll)."""
+        if not job.runtime.deferred_restart:
+            return False
+        if self._job_active(job):
+            self._store.upsert(job)
+            return True
+        self._pending_restart_hooks[job.job_id] = dict(job.runtime.deferred_restart)
+        job.runtime.deferred_restart = {}
+        LOGGER.info("Job %s: runtime job %s ended (%s): running the deferred restart", job.job_id, runtime_id, job.runtime.last_status)
+        self._run_restart_hooks(job, runtime_id)
+        self._restart_job(job)
+        self._store.upsert(job)
+        return True
+
+    def _run_restart_hooks(self, job: JobRecord, runtime_id: str | None) -> None:
+        """Before a resubmission: run the RestartAction's ``pre_command`` (e.g.
+        a node-fault scan of the failed job's log that updates the exclusion
+        file) and refresh ``slurm.sbatch.exclude`` from ``exclude_file`` so the
+        re-rendered sbatch carries every node excluded since plan time."""
+        hooks = self._pending_restart_hooks.pop(job.job_id, None) or {}
+        pre_command = (hooks.get("pre_command") or "").strip()
+        exclude_file = (hooks.get("exclude_file") or "").strip()
+        if not pre_command and not exclude_file:
+            return
+        variables = self._build_job_metadata(job)
+        variables["runtime_job_id"] = runtime_id or job.runtime.runtime_job_id or ""
+        try:
+            variables["log_path"] = str(self._resolve_log_path(job))
+            variables["log_dir"] = str(Path(variables["log_path"]).parent)
+        except Exception:  # pragma: no cover - best effort
+            variables["log_path"] = ""
+        if pre_command:
+            import subprocess
+
+            from oellm_autoexp.monitor.utils.template import replace_braced_keys
+
+            try:
+                command = replace_braced_keys(pre_command, variables)
+            except KeyError:
+                command = pre_command
+            timeout = float(hooks.get("pre_command_timeout_s") or 900.0)
+            LOGGER.info("restart hook: running pre_command for %s: %s", job.job_id, command)
+            try:
+                proc = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=timeout)
+                tail = (proc.stdout + proc.stderr).strip().splitlines()[-8:]
+                LOGGER.info("restart hook: pre_command exit %s | %s", proc.returncode, " / ".join(tail))
+            except subprocess.TimeoutExpired:
+                LOGGER.warning("restart hook: pre_command timed out after %ss", timeout)
+            except Exception as exc:  # pragma: no cover - never block the restart
+                LOGGER.warning("restart hook: pre_command failed: %s", exc)
+        if exclude_file and isinstance(job.definition, SlurmJobConfig):
+            try:
+                nodelist = oc_exclude_nodes(exclude_file)  # comma-joined string (or None)
+                if isinstance(nodelist, (list, tuple)):
+                    nodelist = ",".join(nodelist)
+                sbatch = job.definition.slurm.sbatch
+                before = getattr(sbatch, "exclude", None)
+                if nodelist:
+                    setattr(sbatch, "exclude", nodelist)
+                    LOGGER.info(
+                        "restart hook: exclusion list refreshed from %s: %d node(s) (was %s)",
+                        exclude_file,
+                        nodelist.count(",") + 1,
+                        (str(before).count(",") + 1) if before else 0,
+                    )
+                else:
+                    LOGGER.info("restart hook: exclusion file %s empty; sbatch exclude unchanged", exclude_file)
+            except Exception as exc:  # pragma: no cover
+                LOGGER.warning("restart hook: could not refresh the exclusion list: %s", exc)
 
     def _status_action(self, job: JobRecord, old_status: str | None, new_status: str | None) -> str:
         """Process state transition events.
@@ -890,6 +997,9 @@ class MonitorLoop:
         """
         # Handle special actions
         if result.special == "restart":
+            # the RestartAction's hooks (pre_command, exclude_file) are consumed
+            # by _apply_effect right before the resubmission
+            self._pending_restart_hooks[job.job_id] = dict(result.metadata or {})
             return "restart"
 
         if result.special == "cancel":

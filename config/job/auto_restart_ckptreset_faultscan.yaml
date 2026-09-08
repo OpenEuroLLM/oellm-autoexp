@@ -1,3 +1,24 @@
+# @package job
+# auto_restart_ckptreset + node-fault attribution before every resubmission.
+#
+# Identical to auto_restart_ckptreset.yaml (which see) except that every
+# RestartAction carries two hooks, consumed by MonitorLoop._run_restart_hooks
+# right before the resubmission:
+#   pre_command   a shell command run on the failed job's log BEFORE the restart;
+#                 here the campaign's node-fault registry, which attributes the
+#                 failure to a node with corroboration rules (rank-local CUDA/Xid
+#                 errors, rerun rejections, SLURM node failures, nodecheck FAILs,
+#                 srun task exits only with corroboration) and appends the node
+#                 to the shared exclusion list with a traceable comment.
+#   exclude_file  the exclusion list re-read at that moment, so the re-rendered
+#                 sbatch carries every node excluded since plan time (the stored
+#                 SlurmConfig is otherwise frozen at plan time; the original
+#                 AppendToFile/UpdateChainExcludes pair only reaches PENDING
+#                 chain siblings).
+# Both come from job.restart_pre_command / job.restart_exclude_file so an
+# experiment config sets them once. {runtime_job_id} and {log_path} are filled
+# in by the monitor.
+#
 defaults:
  - default
 
@@ -82,6 +103,9 @@ log_events:
     action:
       class_name: RestartAction
       cancel_first: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "checkpoint quarantined; resuming from last loadable checkpoint"
 
   # 3) world-size mismatch: do NOT quarantine — cancel and explain.
@@ -203,7 +227,41 @@ log_events:
   # QUIETLY. 150 leaves ~60 spare for the resubmissions that error restarts and
   # requeues add. State lives in monitor_state, so it resets if the monitor
   # session is restarted.
-  # ---- Segment end by SIGTERM (2026-09-06; rationale in auto_restart_ckptreset_faultscan.yaml) ----
+  # ---- Segment end by SIGTERM (2026-09-06) ------------------------------------
+  # The sbatch asks SLURM for `--signal=TERM@<margin>` and Megatron's
+  # --exit-signal-handler turns the signal into a checkpoint save plus
+  # 'exiting program after receiving SIGTERM.' and sys.exit(0)
+  # (training.py:3642). That is the wall-clock backstop of exit_duration_in_mins,
+  # which counts from the python start (a slow container start moves the timed
+  # exit later): with both, a segment trains until minutes before the limit and
+  # still leaves a checkpoint, instead of stopping at a conservative timer.
+  #
+  # A deliberate scancel prints the SAME Megatron line (SLURM sends SIGTERM
+  # first, SIGKILL after KillWait), so it must not be mistaken for a rollover:
+  # SLURM writes '*** JOB <id> ON <node> CANCELLED AT <ts> ***' into the log on
+  # scancel and '... CANCELLED AT <ts> DUE TO TIME LIMIT ***' at the wall limit.
+  # CAVEAT (4-node Megatron smoke 1691088, 2026-09-06): under torchrun the elastic
+  # agent handles SIGTERM itself and terminates the workers ~30 s later, so the
+  # exit checkpoint only completes if one iteration plus the save fit in that
+  # window (production: ~4 s + ~3 s; the smoke's 17 s + 40 s did not), and the
+  # job ends FAILED with the agent's SignalException traceback either way. The
+  # timed exit (exit_duration_in_mins) therefore stays the primary mechanism;
+  # sigterm_rollover is a backstop that restarts from whatever checkpoint
+  # completed. A relay that signals only the workers (batch-script trap +
+  # `srun --overlap pkill -TERM -f pretrain_gpt.py`) would make the signal
+  # path real; untested as of 2026-09-06.
+  # Observed on JUPITER (1-node dummy, job 1691075, 2026-09-06): the delivery of
+  # `--signal=TERM@N` itself is logged by slurmstepd as
+  # '*** STEP <id>.0 ON <node> CANCELLED AT <ts> ***' (STEP, no JOB line), so
+  # `operator_cancel` must match the JOB line only; scancel prints both.
+  # Rules are evaluated in list order and the first terminal effect wins
+  # (loop.py _process_log_events), so `operator_cancel` sits before
+  # `sigterm_rollover`: a cancelled job stays cancelled, a signalled segment
+  # rolls over, a segment that hit the wall before its exit checkpoint rolls
+  # over from the last complete checkpoint (the tracker file is only updated
+  # after a successful save). The monitor's own CancelAction/RestartAction
+  # cancellations print the JOB line into the OLD job's log, which is not read
+  # again after a restart (runtime.log_cursor and the %j log path move on).
   - name: operator_cancel
     pattern: "\\*\\*\\* JOB [0-9]+ ON \\S+ CANCELLED AT [0-9T:.-]+ \\*\\*\\*"
     pattern_type: regex
@@ -220,6 +278,8 @@ log_events:
     action:
       class_name: RestartAction
       wait_for_job_end: true
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "SIGTERM before the wall-clock limit: checkpoint saved by the signal handler — resuming the next segment"
 
   - name: time_limit_rollover
@@ -231,6 +291,8 @@ log_events:
     action:
       class_name: RestartAction
       wait_for_job_end: true
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "Wall-clock limit hit before the exit checkpoint — resuming from the last complete checkpoint"
 
   # ---- Checkpoint hook (2026-09-06): evaluations once a checkpoint is available --------------
@@ -263,6 +325,9 @@ log_events:
     action:
       class_name: RestartAction
       wait_for_job_end: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "exit_duration_in_mins reached mid-schedule — resuming the next segment from the last checkpoint"
 
   # === FATAL: configuration / data faults -> CANCEL (never restart) =========
@@ -373,6 +438,9 @@ log_events:
     action:
       class_name: RestartAction
       cancel_first: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "GPU occupied at init (leftover process) — retrying on new nodes"
 
   - name: err_rendezvous
@@ -398,6 +466,9 @@ log_events:
     action:
       class_name: RestartAction
       cancel_first: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "Rendezvous failure — retrying (consider static rdzv for torchrun)"
 
   # GLOO MESH COLLAPSE. Always a SECONDARY symptom: some rank died for a real
@@ -422,6 +493,9 @@ log_events:
     action:
       class_name: RestartAction
       cancel_first: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "Gloo mesh collapsed after a rank died — retrying on a fresh allocation"
 
   - name: err_userbuffers_stall
@@ -433,6 +507,9 @@ log_events:
     action:
       class_name: RestartAction
       cancel_first: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "userbuffers TP-overlap stall — peer rank unresponsive, retrying"
 
   - name: err_nccl_timeout
@@ -444,6 +521,9 @@ log_events:
     action:
       class_name: RestartAction
       cancel_first: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "NCCL collective timeout/abort — retrying"
 
   # NaN / Inf REJECTED BY THE RERUN STATE MACHINE.
@@ -481,6 +561,9 @@ log_events:
     action:
       class_name: RestartAction
       cancel_first: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "NaN/Inf rejected by rerun validation — retrying (bad node vs real divergence)"
 
   - name: err_cuda_illegal_access
@@ -492,6 +575,9 @@ log_events:
     action:
       class_name: RestartAction
       cancel_first: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "CUDA illegal memory access — GPU needs reset, not a relaunch"
 
   - name: err_cpp_terminate
@@ -503,6 +589,9 @@ log_events:
     action:
       class_name: RestartAction
       cancel_first: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "Unhandled C++ exception — worker aborted"
 
   # === NODE FAILURE: RECORD, PROPAGATE, THEN RESTART ========================
@@ -559,6 +648,9 @@ log_events:
     action:
       class_name: RestartAction
       cancel_first: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "SLURM node failure in the allocation"
 
   # === GENERIC RESTART TIER: BOUNDED AS A GROUP ==============================
@@ -598,6 +690,9 @@ log_events:
     action:
       class_name: RestartAction
       cancel_first: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "Worker process failed — retrying"
 
   - name: error
@@ -609,6 +704,9 @@ log_events:
     action:
       class_name: RestartAction
       cancel_first: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: ""
 
   # === FORWARD-PROGRESS STALL: "dead but noisy" ==============================
@@ -688,6 +786,9 @@ log_events:
     action:
       class_name: RestartAction
       cancel_first: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "No iteration progress for 20 min — stuck, not slow"
 
   # LONG WINDOW, mode=furthest. Resets only when the run reaches a NEW FURTHEST iteration, so
@@ -726,6 +827,9 @@ log_events:
     action:
       class_name: RestartAction
       cancel_first: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "No net iteration progress for 40 min of running — restart loop, not recovery"
 
   # GIVE UP AND ASK A HUMAN. Load-bearing: a budget makes an event STOP ACTING,
@@ -768,6 +872,9 @@ log_events:
     action:
       class_name: RestartAction
       cancel_first: true
+      # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
+      pre_command: ${job.restart_pre_command}
+      exclude_file: ${job.restart_exclude_file}
       reason: "Inactive Log"
 
 # =============================================================================
