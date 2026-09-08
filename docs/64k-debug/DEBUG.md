@@ -1478,25 +1478,41 @@ bytes actually fed to the model.
   dated 08-26 or earlier. Mapping logs to iterations puts 08-26 at iteration
   ~26,000; the turn is at 66,500, reached on 08-30.
 
-**But the data order changed twice inside the first 26,000 iterations**, and this
-is not recorded anywhere. Each dataset has several cache keys, from three causes:
+**The consumed mixture is exactly the specified one.** Reading `num_samples`
+out of all 452 cache descriptions and comparing the implied weight against the
+datamix production actually used (`data_args_path` in the frozen config, whose
+*contents* point at `/e/scratch` even though the file lives on `/e/data1`), every
+dataset deviates by 0.2122% -- median, mean and maximum all equal, so the spread
+is zero. That is renormalisation, not distortion: the datamix weights sum to
+1.002127 and 1/1.002127 = 0.997877. Total `num_samples` exceeds `train_samples`
+by 0.5%, matching `mid_level_dataset_surplus: 0.005`. No source was
+over- or under-sampled.
 
-1. **Root migration.** `/e/data1/datasets/playground/mmlaion/...` to
-   `/e/scratch/e-sta-openeurollm/...`; the absolute path is part of the key.
-2. **Sample allocation changed.** Same dataset, `num_samples` 3,779,158 to
-   3,336,123, a 12% shift, so either the blend weights or `train_samples` moved.
-3. **Tokenizer metadata changed.** Two keys differ *only* in the serialised
-   `tokenizer` dict -- identical `tokenizer_path`, but one records `vocab_file`
-   and the other `chat_template`. A Megatron-side change in how the tokenizer
-   describes itself, not a different tokenizer.
+**But the index was rebuilt once mid-run, and the cause is alarming.** Each of
+the 452 production datasets has exactly two cached builds, 08-24 18:00 and 08-26
+16:00-17:00. Comparing them field by field across all 452: `num_samples` differs
+in **0**, and the *only* field that differs, in **452 of 452**, is `tokenizer`.
+The `tokenizer_path` is identical; what changed is the serialised metadata dict,
+one build recording `vocab_file` and the other `chat_template`. That is a
+Megatron-side change in how the tokenizer describes itself, not a different
+tokenizer.
 
-Any of these invalidates the md5, forces a full index rebuild, and produces a new
-shuffle. Cause 3 is the dangerous shape: a cosmetic change to a metadata dict
-silently reorders 15 T tokens of training data.
+The dict is part of the md5 that keys the cache, so a cosmetic change to it
+invalidated the entire 15 T index and produced a new shuffle -- a different data
+order from a change that altered nothing about the data. 08-26 maps to iteration
+~19,000-26,000.
+
+**Correction.** An earlier version of this item listed three rebuild causes,
+including a root migration and a 12% shift in `num_samples`. Both came from
+comparing production's build against a `/e/data1`-rooted build that predates the
+run and belongs to something else. Within production's own root there is one
+rebuild and one cause.
 
 **Conclusion:** this does not explain the regression -- it is ~40,000 iterations
 early and the binned loss descends smoothly through it. It is a process defect
 for the restart recipe: pin the cache key, or assert it is unchanged on resume.
+A library upgrade must not be able to re-shuffle the training data as a side
+effect of renaming a metadata field.
 
 **Open issue:** the third part of this test is unrun. Instantiating the
 dataloader offline at the `consumed_samples` for iterations 40,000 and 70,000 and
@@ -1649,8 +1665,9 @@ re-derived from logs alone silently omits that segment.
   discrepancy in favour of item 36, and added items 40 (weight-norm growth
   correlates with the loss at r = +0.60 but never leads it), 41 (growth exponents
   split input versus output projection, not MLP versus attention) and 42 (the
-  data stream is clean at the turn, but the index was rebuilt twice before
-  26,000). Checkpoint averaging is queued behind a machine maintenance window.
+  data stream is clean at the turn, the consumed mixture matches the datamix
+  exactly, but a tokenizer metadata rename re-shuffled the whole index at
+  ~19,000-26,000). Checkpoint averaging is queued behind a maintenance window.
 
 ---
 
