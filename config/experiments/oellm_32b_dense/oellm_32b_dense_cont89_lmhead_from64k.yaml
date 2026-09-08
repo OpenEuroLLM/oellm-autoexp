@@ -114,17 +114,43 @@
 # ============================================================================
 # DELIBERATELY NOT IN THIS CONFIG
 # ============================================================================
-#   --embedding-wd-mult 0.0   the third LM-head lever, and arguably the most
-#                             direct one: it stops the rare-token rows decaying
-#                             instead of controlling the normalizer they are
-#                             measured against. Left out because it would
-#                             confound both arms; it deserves its own.
+# Every --diag-* collector Jenia's patches 0001-0009 added is ON, including the
+# per-token dump. What is left off is left off for a reason, and the first entry
+# is the one worth not misreading: it is not a diagnostic.
+#
+#   --embedding-wd-mult 0.0   NOT A DIAGNOSTIC -- an intervention, and the third
+#                             LM-head lever. Arguably the most direct one: it
+#                             stops the rare-token rows decaying instead of
+#                             controlling the normalizer they are measured
+#                             against. Turning it on here would put a second
+#                             variable in each arm and make neither readable. It
+#                             deserves its own arm. (--allow-new-param-groups-on-
+#                             load only matters once you change a multiplier
+#                             mid-run, so it stays off with it.)
 #   --decoupled-lr            revival_1 already carries it. Adding it here would
 #                             mean these arms no longer share a control with the
 #                             flagship's 64000 curve.
-#   --diag-token-loss-dir     a frozen-weight probe tool. It writes a per-token
-#                             npz per microbatch per DP rank on every diagnostic
-#                             iteration, which is not a 512-node setting.
+#   --te-debug-config         nvdlfw_inspect writes PER-RANK statistics files and
+#                             its own commit documents it as a <= 16-node tool.
+#                             At 512 nodes that is 2048 ranks writing, which is
+#                             the shape of the NVTE_DEBUG_LEVEL=2 incident that
+#                             produced a 14 GB log and cost job 1576287.
+#   --diag-consumed-train-samples
+#                             repositions the dataloader to an arbitrary consumed
+#                             count. Its own commit says "Never for real
+#                             training"; here it would break the data order that
+#                             makes these arms comparable to the control.
+#   --diag-swap-checkpoint / --diag-swap-keys
+#                             checkpoint surgery -- loads selected tensors from a
+#                             DIFFERENT checkpoint into the running model. A
+#                             probe tool; in a training run it silently changes
+#                             the weights.
+#
+# Not listed because it needs no flag: patch 0005 re-applies --adam-beta1/2 and
+# --adam-eps after the checkpoint load and prints every param group's effective
+# lr / wd / betas / eps on rank 0. It is unconditional, so these runs already
+# prove the optimizer settings actually in force rather than assuming the
+# checkpoint's matched the arguments.
 #
 # ============================================================================
 # REVIEW POINTS
@@ -175,6 +201,30 @@ backend:
     diag_logit_stats: true
     diag_weight_stats: true
     diag_fp8_meta: true
+
+    # ---- the rare-token signal, measured LIVE --------------------------------
+    # Per-token label, CE loss, loss mask, log Z and max logit for every
+    # microbatch, written once per diagnostic iteration by TP rank 0 of the last
+    # pipeline stage, one npz per DP rank (diagnostics.py creates the directory).
+    # Bucketing those labels by corpus frequency is what turns this into the
+    # "every bucket rarer than 1e-4 is rising" curve -- the observation that put
+    # the LM head under suspicion -- except measured DURING the run instead of
+    # reconstructed from checkpoints afterwards.
+    #
+    # VOLUME, at this geometry: DP = 512*4/(TP4*PP4) = 128, so 4096/(2*128) = 16
+    # microbatches per rank per step, i.e. 2*4096*16 = 131,072 tokens per rank
+    # per diagnostic iteration at 17 bytes each = ~2.2 MB, times 128 ranks =
+    # ~285 MB per diagnostic iteration. At interval 100 and ~4.2 s/step that is
+    # ~98 diagnostic iterations per 11.5 h segment: ~28 GB and ~12,500 files per
+    # arm per segment. Sizeable next to the 443 GB checkpoints, but the FILE
+    # COUNT is the part to watch on this filesystem.
+    #
+    # It does NOT replace scripts/scan_loss_breakdown.py. That scores checkpoints
+    # on byte-identical tokens, which is what makes its per-source and per-bucket
+    # deltas comparable at all; this sees different data every iteration, so it
+    # is only readable in aggregate over ~16.8 M tokens per diagnostic iteration.
+    # The trade is resolution: 100 iterations here against 4000 there.
+    diag_token_loss_dir: ${aux.cont2_root}/token_loss
     # Prove the Adam state actually in effect after the fork, rather than
     # trusting that the checkpoint's betas/eps match the arguments -- they are
     # silently restored from the checkpoint otherwise (commit 752021198).
