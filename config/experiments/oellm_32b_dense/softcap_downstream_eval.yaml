@@ -159,6 +159,12 @@ backend:
 # schema validation -- VenvConfig has no `image` or `bind`.
 
 slurm:
+  # Same workaround as the training arms: since the 2026-09-03 Slurm upgrade, srun
+  # intermittently cannot create its process reservation on booster
+  # (PSI_spawnRsrvtn), and at one node it failed roughly half the time. These stages
+  # are one task running plain python -- no MPI -- so --mpi=none costs nothing and
+  # avoids it. Remove once the site confirms the spawn regression is fixed.
+  srun_opts: "--mpi=none"
   sbatch:
     job_name: null
     nodes: 1
