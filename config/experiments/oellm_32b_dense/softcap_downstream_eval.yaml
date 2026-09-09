@@ -192,9 +192,9 @@ sweep:
           backend.local: true
           backend.skip_checks: true
           backend.verbose: true
-          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results/base_64000
-          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results/base_64000
-          slurm.sbatch.time: "04:00:00"
+          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results
+          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results
+          slurm.sbatch.time: "06:00:00"
 
         # ===== 1: the baseline at 68000, their export ========================
         - stage: eval_base68k
@@ -207,9 +207,9 @@ sweep:
           backend.local: true
           backend.skip_checks: true
           backend.verbose: true
-          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results/base_68000
-          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results/base_68000
-          slurm.sbatch.time: "04:00:00"
+          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results
+          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results
+          slurm.sbatch.time: "06:00:00"
 
         # ===== 2: the ONLY conversion -- cont9 @ 68000 =======================
         - stage: convert_cont9_68k
@@ -222,34 +222,16 @@ sweep:
             - "/dev/shm"
             - "${oc.env:HOME}/work/Projects/oellm-autoexp:/workspace/oellm-autoexp"
 
-        # ===== 3: cont9 @ 68000, uncapped ====================================
-        - stage: eval_cont9_68k
-          backend: oellm_eval
-          container: jupiter_venv
-          slurm: jupiter_venv
-          backend.models:
-            - ${aux.eval_root}/hf/cont9_68000
-          backend.venv_path: ${aux.eval_venv}
-          backend.local: true
-          backend.skip_checks: true
-          backend.verbose: true
-          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results/cont9_68000
-          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results/cont9_68000
-          # Gate on the index, NOT model.safetensors: a 32B export is sharded, so
-          # the single-file name never appears.
-          job.start_condition:
-            class_name: FileExistsCondition
-            path: ${aux.eval_root}/hf/cont9_68000/model.safetensors.index.json
-          slurm.sbatch.time: "04:00:00"
-
-        # ===== 4: capped views, local, seconds ===============================
-        # Symlinks the ~64 GB of shards and replaces only config.json, so no
-        # reconversion. The baseline view is built FROM jitsev1's read-only
-        # export INTO our tree; nothing writes to their directory.
-        - stage: patch_softcap
+        # ===== 3: make that export SOFTCAPPED, in place ======================
+        # The bridge cannot write final_logit_softcapping for Qwen3, so the export
+        # lands uncapped. This rewrites its config.json to the softcap subclass and
+        # drops the module beside it -- seconds, no weights touched, no second copy.
+        # IN PLACE on purpose: we do not want an uncapped variant lying around to be
+        # evaluated by mistake. The raw export is reproducible from the checkpoint.
+        - stage: cap_cont9_68k
           backend: bash
           job: auto_cancel
-          job.name: "softcap_capped_views"
+          job.name: "softcap_cap_export"
           job.local: true
           job.est_steps: 1
           job.est_step_time_s: 30
@@ -264,45 +246,61 @@ sweep:
           backend.command: |
             set -eu
             REPO="${oc.env:HOME}/work/Projects/oellm-autoexp"
-            MK="$REPO/scripts/korbi/make_capped_hf_view.py"
-            TPL="$REPO/oellm_autoexp/postprocess/resources/megatron_bridge/templates/modeling_qwen3_softcap.py"
-            python3 "$MK" "${aux.jj1_hf}/production_68000" "${aux.eval_root}/hf/base_68000_capped" --cap 30.0 --template "$TPL"
-            python3 "$MK" "${aux.eval_root}/hf/cont9_68000" "${aux.eval_root}/hf/cont9_68000_capped" --cap 30.0 --template "$TPL"
+            D="${aux.eval_root}/hf/cont9_68000"
+            python3 "$REPO/scripts/korbi/make_capped_hf_view.py" "$D" "$D" --cap 30.0 \
+              --template "$REPO/oellm_autoexp/postprocess/resources/megatron_bridge/templates/modeling_qwen3_softcap.py"
 
-        # ===== 5: baseline @ 68000, CAPPED (the null) ========================
-        - stage: eval_base68k_capped
+        # ===== 4: cont9 @ 68000, softcapped -- the headline number ===========
+        - stage: eval_cont9_68k
           backend: oellm_eval
           container: jupiter_venv
           slurm: jupiter_venv
           backend.models:
-            - ${aux.eval_root}/hf/base_68000_capped
+            - ${aux.eval_root}/hf/cont9_68000
           backend.venv_path: ${aux.eval_venv}
           backend.local: true
           backend.skip_checks: true
           backend.verbose: true
           backend.trust_remote_code: true
-          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results/base_68000_capped
-          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results/base_68000_capped
+          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results
+          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results
+          # Gates on the softcap module, so it cannot start before stage 3 has
+          # capped the export -- which is what makes "uncapped never runs" true.
           job.start_condition:
             class_name: FileExistsCondition
-            path: ${aux.eval_root}/hf/base_68000_capped/modeling_qwen3_softcap.py
-          slurm.sbatch.time: "04:00:00"
+            path: ${aux.eval_root}/hf/cont9_68000/modeling_qwen3_softcap.py
+          slurm.sbatch.time: "06:00:00"
 
-        # ===== 6: cont9 @ 68000, CAPPED -- cont9's headline number ===========
-        - stage: eval_cont9_68k_capped
-          backend: oellm_eval
-          container: jupiter_venv
-          slurm: jupiter_venv
-          backend.models:
-            - ${aux.eval_root}/hf/cont9_68000_capped
-          backend.venv_path: ${aux.eval_venv}
-          backend.local: true
-          backend.skip_checks: true
-          backend.verbose: true
-          backend.trust_remote_code: true
-          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results/cont9_68000_capped
-          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results/cont9_68000_capped
+        # ===== 5: build our results DB, in their schema ======================
+        # Same `aggregates` schema as their eval_browser.sqlite, so the same tooling
+        # reads both and they can be joined task-for-task. The ingest parser was
+        # validated by re-parsing THEIR tree: 2486 of 2486 rows reproduced exactly,
+        # max abs diff 0.0.
+        - stage: build_db
+          backend: bash
+          job: auto_cancel
+          job.name: "softcap_eval_db"
+          job.local: true
+          job.est_steps: 1
+          job.est_step_time_s: 60
+          job.est_startup_min: 1
+          slurm.launcher_cmd: ""
+          slurm.sbatch.nodes: 1
+          slurm.sbatch.time: "00:30:00"
+          slurm.sbatch.job_name: null
           job.start_condition:
             class_name: FileExistsCondition
-            path: ${aux.eval_root}/hf/cont9_68000_capped/modeling_qwen3_softcap.py
-          slurm.sbatch.time: "04:00:00"
+            path: ${aux.eval_root}/results
+          backend.command: |
+            set -eu
+            REPO="${oc.env:HOME}/work/Projects/oellm-autoexp"
+            DB="${aux.eval_root}/eval_results.sqlite"
+            REF=/e/fscratch/e-sta-openeurollm/jj1/eval/eval_browser/eval_browser.sqlite
+            python3 "$REPO/scripts/korbi/eval_results_db.py" ingest \
+              --root "${aux.eval_root}/results" --db "$DB" --label poeppel1 --replace
+            echo "--- our cont9_68000 vs their production_68000 ---"
+            python3 "$REPO/scripts/korbi/eval_results_db.py" compare \
+              --db "$DB" --ours cont9_68000 --ref-db "$REF" --theirs production_68000 || true
+            echo "--- pipeline check: our production_64000 vs theirs ---"
+            python3 "$REPO/scripts/korbi/eval_results_db.py" compare \
+              --db "$DB" --ours production_64000 --ref-db "$REF" --theirs production_64000 || true

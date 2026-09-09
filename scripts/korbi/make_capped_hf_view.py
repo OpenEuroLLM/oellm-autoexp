@@ -46,11 +46,13 @@ def main() -> int:
         print(f"FATAL: template not found: {args.template}", file=sys.stderr)
         return 1
 
+    in_place = args.dst.resolve() == args.src.resolve()
     args.dst.mkdir(parents=True, exist_ok=True)
 
     # Symlink everything except config.json, which is replaced, and the module we drop in.
+    # In-place: the files are already there, so only config.json and the module change.
     linked = 0
-    for entry in sorted(args.src.iterdir()):
+    for entry in [] if in_place else sorted(args.src.iterdir()):
         if entry.name in ("config.json", "modeling_qwen3_softcap.py"):
             continue
         target = args.dst / entry.name
@@ -68,8 +70,9 @@ def main() -> int:
 
     shutil.copyfile(args.template, args.dst / "modeling_qwen3_softcap.py")
 
-    print(f"[capped-view] {args.dst}")
-    print(f"[capped-view]   symlinked {linked} file(s) from {args.src}")
+    print(f"[capped-view] {args.dst}{' (IN PLACE)' if in_place else ''}")
+    if not in_place:
+        print(f"[capped-view]   symlinked {linked} file(s) from {args.src}")
     print(f"[capped-view]   architectures {original_arch} -> [{ARCH!r}]")
     print(f"[capped-view]   final_logit_softcapping = {args.cap}")
     print("[capped-view]   NOTE: loading this requires trust_remote_code=True")
