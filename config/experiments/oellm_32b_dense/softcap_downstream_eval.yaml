@@ -3,100 +3,119 @@
 # ============================================================================
 # DOES THE SOFTCAP'S TRAIN-LOSS WIN SHOW UP DOWNSTREAM?
 # ============================================================================
-# cont9 (final_logit_softcapping 30.0, z-loss off) looks good on train loss
-# against the flagship's own 64000->74000 curve. Train loss is not the claim
-# anyone cares about, so this scores the checkpoints on the eval suite instead.
+# cont9 (final_logit_softcapping 30.0, z-loss off) looks good on train loss.
+# Train loss is not the claim anyone cares about, so this scores it on the eval
+# suite against the flagship -- on the same tasks, and through the same exports,
+# the existing production series was measured with.
 #
-# Four points, each a Megatron -> HF conversion followed by an oellm-eval run:
-#
-#   --array-subset 0,1   baseline @ 64000   convert, eval   (shared origin)
-#   --array-subset 2,3   baseline @ 68000   convert, eval
-#   --array-subset 4,5   cont9    @ 68000   convert, eval   (the comparison)
-#   --array-subset 6,7   cont9    @ 64000   convert, eval   (PIPELINE CONTROL)
-#
-# ============================================================================
-# THE 64000 PAIR IS A CONTROL, NOT A COMPARISON
-# ============================================================================
-# cont9's iter_0064000 is a SYMLINK to the flagship's own iter_0064000 -- the
-# seed stage links rather than copies. The two directories are the same bytes,
-# so subsets 0/1 and 6/7 evaluate an identical model.
-#
-# That is worth spending compute on precisely because it is redundant. It tests
-# the thing every downstream claim here rests on: that convert -> eval is
-# deterministic and that the pipeline does not treat the two runs differently.
-# The two arms reach it by different `megatron_config_path` files -- cont9's
-# records `final_logit_softcapping: 30.0`, the flagship's does not -- so if the
-# export is in any way sensitive to that setting, these two scores diverge on
-# weights that cannot possibly differ. Any difference at subsets 2/3 vs 4/5 is
-# only readable if this pair matches.
-#
-# It also means the arms have a provably identical starting point, so a
-# difference at 68000 is attributable to the 4000 steps in between and nothing
-# else.
+#   --array-subset 0   eval  production @ 64000   shared origin + PIPELINE CHECK
+#   --array-subset 1   eval  production @ 68000   the baseline
+#   --array-subset 2   convert cont9  @ 68000     the only conversion needed
+#   --array-subset 3   eval  cont9     @ 68000    uncapped
+#   --array-subset 4   build capped views         local, seconds
+#   --array-subset 5   eval  production @ 68000   CAPPED
+#   --array-subset 6   eval  cont9     @ 68000    CAPPED
 #
 # ============================================================================
-# ⚠ THE EXPORT DOES NOT CARRY THE SOFTCAP. READ BEFORE INTERPRETING.
+# WHAT WE ARE MEASURING AGAINST
+# ============================================================================
+# jitsev1's eval workspace already holds 42 HF conversions and a results
+# database at /e/fscratch/e-sta-openeurollm/jj1/eval/eval_browser/eval_browser.sqlite
+# (queryable read-only; arms production / revival1 / head2e-4 / head1.5e-4 /
+# bf16). Its production arm covers 21 iterations from 4000 to 75126, including
+# both of ours:
+#
+#   task_group            64000     68000     delta
+#   global-mmlu-eu        0.5613    0.5526    -0.0088   (1116 tasks)
+#   open-sci-0.01         0.6505    0.6428    -0.0078   (73 tasks)
+#   belebele-eu-5-shot    0.8107    0.7892    -0.0215   (24 tasks)
+#
+# So the degradation IS already visible downstream on every group. That is the
+# effect cont9 has to beat, and a far better baseline than this config could
+# produce on its own. Two consequences, and they are why it looks like this:
+#
+#   * NO BASELINE CONVERSIONS. production_64000 and production_68000 are already
+#     exported. Re-converting would cost two 32B conversions and make the
+#     comparison depend on whether our bridge run matches theirs. Subsets 0 and
+#     1 evaluate THEIR exports directly.
+#   * TASK GROUPS ARE PINNED to the three above -- not the `oellm-multilingual`
+#     super-group, which pulls in flores, mgsm, include and generic-multilingual,
+#     tasks their production series has no numbers for.
+#
+# SUBSET 0 IS A PIPELINE CHECK, not a data point. It runs their production_64000
+# export through OUR eval and should reproduce 0.5613 / 0.6505 / 0.8107. If it
+# does, every cont9 number here is comparable to their whole series -- revival1
+# and the head-LR arms included -- not just to subset 1. If it does not, the
+# harnesses differ and only within-this-config comparisons hold.
+#
+# It doubles as the shared origin: cont9's iter_0064000 is a SYMLINK to the
+# flagship's, so production_64000 IS cont9 at its fork point. There is no fourth
+# model to convert.
+#
+# ============================================================================
+# THE EXPORT DOES NOT CARRY THE SOFTCAP. READ BEFORE INTERPRETING.
 # ============================================================================
 # `final_logit_softcapping` exists in Megatron-Bridge only for Gemma 2 and
-# Gemma-VL (`models/gemma/gemma2_bridge.py:52-53`). The Qwen3 HF config has no
-# such field at all -- checked against the vendored
-# resources/megatron_bridge/configs/Qwen/Qwen3-32B/config.json, which has no key
-# containing "cap". So the exported cont9 model applies NO cap at inference.
+# Gemma-VL, and the Qwen3 HF config has no such field, so an exported cont9 runs
+# UNCAPPED unless something puts the cap back.
 #
-# What that does to the numbers:
+#   ARGMAX / ACCURACY tasks are unaffected: c*tanh(x/c) is strictly monotone, so
+#   logit order within a token is preserved exactly (verified).
+#   LIKELIHOOD tasks are not. Measured on a realistic logit distribution, capped
+#   and uncapped log-probabilities differ by up to 6.6 nats, and multiple-choice
+#   options can reorder.
 #
-#   ARGMAX / ACCURACY tasks are unaffected. c*tanh(x/c) is strictly monotone, so
-#   it preserves the ordering of logits within a token's distribution. Greedy
-#   generation and per-token argmax are identical capped or not.
+# The bias is not neutral: cont9's weights were shaped WITH the cap compressing
+# them, so scoring uncapped can make it look overconfident -- against the arm
+# under test, on exactly the metrics the question is about. Hence the 2x2:
 #
-#   LIKELIHOOD tasks are NOT. Most of open-sci-0.01 scores multiple choice by
-#   comparing summed continuation log-probabilities, and those come from a
-#   softmax whose normalizer changes when the logits are uncapped. Options can
-#   reorder.
+#                        eval uncapped     eval CAPPED
+#     production @ 68k   subset 1          subset 5
+#     cont9      @ 68k   subset 3          subset 6
 #
-#   And the direction is not neutral. cont9's weights were shaped WITH the cap
-#   compressing them, so the model may have learned larger raw logits to
-#   compensate. Scoring it uncapped then makes it look overconfident, which
-#   costs it on likelihood metrics. That is a bias AGAINST cont9, not noise.
+#     6 vs 3   what the cap is worth at inference on cont9's own weights
+#     6 vs 5   what TRAINING with the cap did, both scored under one objective
+#     5 vs 1   the null: does capping help a model never trained with it
 #
-# So: read the accuracy-style metrics as a fair comparison, and treat the
-# likelihood-style ones as a lower bound on cont9 until the cap is either added
-# to the export or shown not to matter.
-#
-# HOW TO TELL WHETHER IT MATTERS: the run's own --diag-logit-stats records the
-# per-token max logit and logZ. If cont9's raw (pre-cap) max logit tracks the
-# baseline's, the uncapped export is close to what was trained and the concern
-# is small. If it has grown substantially, these likelihood numbers understate
-# cont9 and the honest next step is a capped evaluation rather than a rerun.
+# cont9's headline number is SUBSET 6 -- the model as trained and as it would be
+# deployed. Subset 3 measures it off its own objective.
 #
 # ============================================================================
-# WHAT IS BEING CONVERTED
+# THE TOKENIZER IS NOT INTERCHANGEABLE
 # ============================================================================
-# The architecture is Qwen3-shaped and matches Qwen3-32B's dimensions exactly:
-# 64 layers, hidden 5120, 64 heads over 8 KV groups, head_dim 128, ffn 25600,
-# RMSNorm, RoPE (base 100000), SwiGLU, qk_layernorm, no biases, untied
-# embeddings. So `derive_hf_arch: qwen3` with `hf_model: Qwen/Qwen3-32B` as the
-# reference; the real dimensions come from each run's own megatron config, not
-# from the reference, which is why the 256k vocabulary is not a problem.
+# The first three conversions (jobs 1735753/54/55) died in the bridge's tokenizer
+# probe, before touching a weight:
+#
+#   ValueError: Error parsing line b'\x0e' in .../oellm_tokenizer_256k/tokenizer.model
+#
+# The flagship tokenizer is a slow LlamaTokenizer -- SentencePiece, no
+# tokenizer.json -- and the bridge container's transformers routes it through the
+# TIKTOKEN converter. A directory that already has tokenizer.json avoids that.
+#
+# But not just any such directory. run_export.py's `_vocab_size_of` returns
+# len(tokenizer), and this model's padded_vocab_size is 262144. jitsev1's
+# tokenizer_256k_hf gives len 262144. Rebuilding one from the SentencePiece
+# source with save_pretrained keeps the extra added token and gives 262145,
+# which would write vocab_size 262145 into config.json and mis-size the output
+# layer -- silently, in an export that otherwise looks fine.
+# scripts/korbi/make_fast_tokenizer.py rebuilds an equivalent and refuses if
+# len(tok) is not 262144.
 #
 #   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/softcap_downstream_eval --array-subset 0
-#   ... through 7. Conversions (even subsets) must finish before their eval;
-#   each eval gates on its own export via FileExistsCondition, so under the
-#   monitor the whole thing is one command.
+#   ... through 6. Subset 2 must finish before 3; subset 4 before 5 and 6. Each
+#   gates on its own input via FileExistsCondition, so under the monitor this is
+#   one command.
 #
 # ============================================================================
 # REVIEW POINTS
 # ============================================================================
-#   1. RESOURCES ARE GUESSES. A 32B bf16 export is ~64 GB of weights; the 125M
-#      chain config this is modelled on used one GPU and 30 minutes. 4 GPUs and
-#      2 h for convert, 4 h for eval are deliberate over-allocation. Trim once
-#      the first conversion reports its real cost.
-#   2. TASK GROUP. `open-sci-0.01` is inherited. `dclm-core-22` is the other
-#      vendored group (config/backend/oellm_eval/dclm.yaml) and is the heavier,
-#      more discriminative suite -- worth switching to if the light suite cannot
-#      separate the arms.
-#   3. Only 68000 exists for cont9 right now. 72000 lands at ~4000 more steps
-#      and would make the trend readable rather than a two-point difference.
+#   1. Resources are still guesses -- 4 GPUs, 2 h for the one conversion, 4 h per
+#      eval. global-mmlu-eu is 1116 tasks and is the long pole; adjust after the
+#      first eval reports.
+#   2. Only 68000 exists for cont9. 72000 would turn a two-point difference into
+#      a trend, and their production series already has 72000 to compare against.
+#   3. dclm-core-rest is in their database too (3.538 -> 3.4713) but its metric is
+#      not an accuracy, so it is left out rather than mixed into the table above.
 defaults:
   - /backend: megatron_bridge
   - /container: jupiter
@@ -105,49 +124,26 @@ defaults:
   - /sweep: none
   - _self_
 
-aux:
-  # READ ONLY. The flagship's own tree and cont9's fork.
-  base_ckpts: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4/checkpoints
-  cont9_ckpts: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_cont9_softcap30_seed1234/checkpoints
-
-  # Each run's own recorded arguments, which is where derive_hf_arch reads the
-  # real dimensions. `current.yaml` is a symlink to the latest config-<jobid>,
-  # so it follows the run rather than pinning one job.
-  base_cfg: /e/project1/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4/logs/current.yaml
-  cont9_cfg: /e/project1/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_cont9_softcap30_seed1234_gbs4096_lr3e-4/logs/current.yaml
-
-  # Everything this comparison writes, in one place.
-  eval_root: /e/scratch/e-sta-openeurollm/production_training/softcap_downstream_eval
-
-  # The 256k tokenizer AS A FAST (tokenizer.json) DIRECTORY, and specifically the
-  # one jitsev1's eval workspace uses. Two separate reasons, both load-bearing:
-  #
-  # 1. The flagship's own SentencePiece directory CANNOT be read by the bridge
-  #    container: converting slow -> fast it routes tokenizer.model through the
-  #    TIKTOKEN converter and dies with "Error parsing line b'\\x0e'". That is what
-  #    killed jobs 1735753/54/55, at the tokenizer probe, before any weight was read.
-  #
-  # 2. run_export.py's _vocab_size_of returns len(tokenizer), and the model's
-  #    padded_vocab_size is 262144. This directory gives len 262144. A tokenizer
-  #    rebuilt from the SentencePiece source with save_pretrained instead keeps the
-  #    extra added token and gives len 262145, which would write vocab_size 262145
-  #    into config.json and mis-size the output layer -- silently.
-  #
-  # Using jitsev1's directory also means these exports are produced exactly the way
-  # the production_* exports we compare against were.
-  # scripts/korbi/make_fast_tokenizer.py can rebuild an equivalent one, but check
-  # len(tok) == 262144 before trusting it.
-  tokenizer: /e/fscratch/e-sta-openeurollm/jj1/eval/tokenizer_256k_hf
-  bridge_image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-bridge-bridge_aarch64_202605191331.sif
-  eval_venv: ${oc.env:OELLM_EVAL_VENV,"${oc.env:HOME}/work/venv"}
-
 index: 0
 stage: "convert"
 
+aux:
+  # ---- READ ONLY: jitsev1's exports and tokenizer --------------------------
+  jj1_hf: /e/fscratch/e-sta-openeurollm/jj1/eval/hf
+  tokenizer: /e/fscratch/e-sta-openeurollm/jj1/eval/tokenizer_256k_hf
+
+  # ---- OURS: everything this comparison writes -----------------------------
+  eval_root: /e/fscratch/e-sta-openeurollm/poeppel1/eval/softcap_downstream
+
+  # ---- the one thing not already converted ---------------------------------
+  cont9_ckpts: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_cont9_softcap30_seed1234/checkpoints
+  cont9_cfg: /e/project1/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_cont9_softcap30_seed1234_gbs4096_lr3e-4/logs/current.yaml
+
+  bridge_image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-bridge-bridge_aarch64_202605191331.sif
+  eval_venv: ${oc.env:OELLM_EVAL_VENV,"${oc.env:HOME}/work/venv"}
+
 job:
   name: "softcap_downstream_eval"
-  # Per-stage outputs go to hf_path / EVAL_*_DIR below, so this only needs to be
-  # stable; the generator suffixes logs with the sweep index.
   base_output_dir: ${aux.eval_root}/logs/${index}_${stage}
 
 backend:
@@ -157,11 +153,10 @@ backend:
   bridge_root: "/workspace/oellm-autoexp/submodules/Megatron-Bridge"
   resources: "/workspace/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge"
 
-# NOTE: the bridge container is set PER CONVERT STAGE, not here. A body
+# NOTE: the bridge container is set on the CONVERT stage only, not here. A body
 # assignment beats a defaults-group override, so `container.image` in this block
 # would merge on top of the eval stages' `container: jupiter_venv` and fail
-# schema validation -- VenvConfig has no `image` or `bind`. Same trap as
-# oellm_32b_dense_cont3_oldsettings documents for the training container.
+# schema validation -- VenvConfig has no `image` or `bind`.
 
 slurm:
   sbatch:
@@ -175,64 +170,48 @@ sweep:
   store_sweep_json: true
   groups:
     - type: list
+      # Applied to every stage below. Pinned to exactly the groups jitsev1's
+      # production series has numbers for, so results are comparable rather than
+      # merely adjacent. Ignored by the convert and patch stages.
+      defaults:
+        backend.task_groups:
+          - open-sci-0.01
+          - global-mmlu-eu
+          - belebele-eu-5-shot
       configs:
-        # ================= baseline @ 64000 -- the shared origin =============
-        - stage: convert_base64k
-          backend.megatron_path: ${aux.base_ckpts}/iter_0064000
-          backend.megatron_config_path: ${aux.base_cfg}
-          backend.hf_path: ${aux.eval_root}/hf/base_64000
-          container.image: ${aux.bridge_image}
-          container.bind:
-            - "/e"
-            - "/dev/shm"
-            - "${oc.env:HOME}/work/Projects/oellm-autoexp:/workspace/oellm-autoexp"
+        # ===== 0: THEIR production_64000 through OUR eval -- pipeline check ===
+        # Expect 0.5613 / 0.6505 / 0.8107. Also the shared origin: cont9's
+        # iter_0064000 is a symlink to the flagship's, so this IS cont9 at fork.
         - stage: eval_base64k
           backend: oellm_eval
           container: jupiter_venv
           slurm: jupiter_venv
           backend.models:
-            - ${aux.eval_root}/hf/base_64000
+            - ${aux.jj1_hf}/production_64000
           backend.venv_path: ${aux.eval_venv}
           backend.local: true
           backend.skip_checks: true
           backend.verbose: true
           backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results/base_64000
           backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results/base_64000
-          # Gate on the index, NOT on model.safetensors: a 32B export is sharded
-          # (HF splits above ~5 GB), so the single-file name never appears.
-          job.start_condition:
-            class_name: FileExistsCondition
-            path: ${aux.eval_root}/hf/base_64000/model.safetensors.index.json
           slurm.sbatch.time: "04:00:00"
 
-        # ===================== baseline @ 68000 =============================
-        - stage: convert_base68k
-          backend.megatron_path: ${aux.base_ckpts}/iter_0068000
-          backend.megatron_config_path: ${aux.base_cfg}
-          backend.hf_path: ${aux.eval_root}/hf/base_68000
-          container.image: ${aux.bridge_image}
-          container.bind:
-            - "/e"
-            - "/dev/shm"
-            - "${oc.env:HOME}/work/Projects/oellm-autoexp:/workspace/oellm-autoexp"
+        # ===== 1: the baseline at 68000, their export ========================
         - stage: eval_base68k
           backend: oellm_eval
           container: jupiter_venv
           slurm: jupiter_venv
           backend.models:
-            - ${aux.eval_root}/hf/base_68000
+            - ${aux.jj1_hf}/production_68000
           backend.venv_path: ${aux.eval_venv}
           backend.local: true
           backend.skip_checks: true
           backend.verbose: true
           backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results/base_68000
           backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results/base_68000
-          job.start_condition:
-            class_name: FileExistsCondition
-            path: ${aux.eval_root}/hf/base_68000/model.safetensors.index.json
           slurm.sbatch.time: "04:00:00"
 
-        # ============ cont9 (softcap) @ 68000 -- THE COMPARISON ==============
+        # ===== 2: the ONLY conversion -- cont9 @ 68000 =======================
         - stage: convert_cont9_68k
           backend.megatron_path: ${aux.cont9_ckpts}/iter_0068000
           backend.megatron_config_path: ${aux.cont9_cfg}
@@ -242,6 +221,8 @@ sweep:
             - "/e"
             - "/dev/shm"
             - "${oc.env:HOME}/work/Projects/oellm-autoexp:/workspace/oellm-autoexp"
+
+        # ===== 3: cont9 @ 68000, uncapped ====================================
         - stage: eval_cont9_68k
           backend: oellm_eval
           container: jupiter_venv
@@ -254,65 +235,17 @@ sweep:
           backend.verbose: true
           backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results/cont9_68000
           backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results/cont9_68000
+          # Gate on the index, NOT model.safetensors: a 32B export is sharded, so
+          # the single-file name never appears.
           job.start_condition:
             class_name: FileExistsCondition
             path: ${aux.eval_root}/hf/cont9_68000/model.safetensors.index.json
           slurm.sbatch.time: "04:00:00"
 
-        # ========= cont9 @ 64000 -- IDENTICAL WEIGHTS, PIPELINE CONTROL ======
-        # Same bytes as base_64000 (symlink), reached through cont9's config,
-        # which carries final_logit_softcapping. Must score identically to
-        # subset 1. If it does not, the export is sensitive to a setting that
-        # cannot affect these weights, and nothing else here is interpretable.
-        - stage: convert_cont9_64k
-          backend.megatron_path: ${aux.cont9_ckpts}/iter_0064000
-          backend.megatron_config_path: ${aux.cont9_cfg}
-          backend.hf_path: ${aux.eval_root}/hf/cont9_64000
-          container.image: ${aux.bridge_image}
-          container.bind:
-            - "/e"
-            - "/dev/shm"
-            - "${oc.env:HOME}/work/Projects/oellm-autoexp:/workspace/oellm-autoexp"
-        - stage: eval_cont9_64k
-          backend: oellm_eval
-          container: jupiter_venv
-          slurm: jupiter_venv
-          backend.models:
-            - ${aux.eval_root}/hf/cont9_64000
-          backend.venv_path: ${aux.eval_venv}
-          backend.local: true
-          backend.skip_checks: true
-          backend.verbose: true
-          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results/cont9_64000
-          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results/cont9_64000
-          job.start_condition:
-            class_name: FileExistsCondition
-            path: ${aux.eval_root}/hf/cont9_64000/model.safetensors.index.json
-          slurm.sbatch.time: "04:00:00"
-
-        # =====================================================================
-        # CAPPED EVALUATION -- subsets 8, 9, 10
-        # =====================================================================
-        # The export runs uncapped (see the header). These add the missing half
-        # of a 2x2 at iteration 68000:
-        #
-        #                        eval uncapped        eval CAPPED
-        #   baseline @ 68000     subset 3             subset 9
-        #   cont9    @ 68000     subset 5             subset 10
-        #
-        # which separates two things a single comparison cannot:
-        #   subset 10 vs 5   what the cap is worth AT INFERENCE on cont9's own
-        #                    weights, i.e. how much subset 5 understated it.
-        #   subset 10 vs 9   what TRAINING with the cap did to the weights, both
-        #                    models scored under the same capped objective.
-        #   subset 9 vs 3    whether capping helps a model never trained with it,
-        #                    which is the null this rests against.
-        #
-        # cont9's own number is subset 10: that is the model as it was trained
-        # and as it would be deployed. Subset 5 measures it off its objective.
-        #
-        # No reconversion. The view symlinks the ~64 GB of shards and replaces
-        # only config.json, so this stage is seconds and runs on the login node.
+        # ===== 4: capped views, local, seconds ===============================
+        # Symlinks the ~64 GB of shards and replaces only config.json, so no
+        # reconversion. The baseline view is built FROM jitsev1's read-only
+        # export INTO our tree; nothing writes to their directory.
         - stage: patch_softcap
           backend: bash
           job: auto_cancel
@@ -325,21 +258,18 @@ sweep:
           slurm.sbatch.nodes: 1
           slurm.sbatch.time: "00:15:00"
           slurm.sbatch.job_name: null
-          # Only runs once BOTH 68000 exports exist; it gates on cont9's because
-          # that conversion is submitted last of the two.
           job.start_condition:
             class_name: FileExistsCondition
             path: ${aux.eval_root}/hf/cont9_68000/model.safetensors.index.json
           backend.command: |
             set -eu
             REPO="${oc.env:HOME}/work/Projects/oellm-autoexp"
+            MK="$REPO/scripts/korbi/make_capped_hf_view.py"
             TPL="$REPO/oellm_autoexp/postprocess/resources/megatron_bridge/templates/modeling_qwen3_softcap.py"
-            for NAME in base_68000 cont9_68000; do
-              SRC="${aux.eval_root}/hf/$NAME"
-              DST="$SRC"_capped
-              python3 "$REPO/scripts/korbi/make_capped_hf_view.py" "$SRC" "$DST" --cap 30.0 --template "$TPL"
-            done
+            python3 "$MK" "${aux.jj1_hf}/production_68000" "${aux.eval_root}/hf/base_68000_capped" --cap 30.0 --template "$TPL"
+            python3 "$MK" "${aux.eval_root}/hf/cont9_68000" "${aux.eval_root}/hf/cont9_68000_capped" --cap 30.0 --template "$TPL"
 
+        # ===== 5: baseline @ 68000, CAPPED (the null) ========================
         - stage: eval_base68k_capped
           backend: oellm_eval
           container: jupiter_venv
@@ -358,6 +288,7 @@ sweep:
             path: ${aux.eval_root}/hf/base_68000_capped/modeling_qwen3_softcap.py
           slurm.sbatch.time: "04:00:00"
 
+        # ===== 6: cont9 @ 68000, CAPPED -- cont9's headline number ===========
         - stage: eval_cont9_68k_capped
           backend: oellm_eval
           container: jupiter_venv
