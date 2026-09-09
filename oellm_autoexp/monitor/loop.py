@@ -749,6 +749,24 @@ class MonitorLoop:
             variables["log_dir"] = str(Path(variables["log_path"]).parent)
         except Exception:  # pragma: no cover - best effort
             variables["log_path"] = ""
+        if hooks.get("nccl_peer_scan") and exclude_file and variables.get("log_path"):
+            # This hook runs after cancellation/teardown, never in the critical
+            # cancellation path. A broken scanner must not block recovery.
+            import subprocess
+            import sys
+
+            try:
+                proc = subprocess.run(
+                    [sys.executable, str(Path(__file__).with_name("nccl_peers.py")),
+                     "--job", variables["runtime_job_id"],
+                     "--log-root", str(Path(variables["log_path"]).parent.parent),
+                     "--exclude-file", exclude_file, "--apply"],
+                    capture_output=True, text=True, timeout=60,
+                )
+                LOGGER.info("NCCL peer scan exit %s | %s", proc.returncode,
+                            (proc.stdout + proc.stderr)[-8000:])
+            except Exception as exc:
+                LOGGER.warning("NCCL peer scan failed; continuing recovery: %s", exc)
         if pre_command:
             import subprocess
 
