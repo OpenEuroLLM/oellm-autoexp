@@ -119,7 +119,25 @@ aux:
   # Everything this comparison writes, in one place.
   eval_root: /e/scratch/e-sta-openeurollm/production_training/softcap_downstream_eval
 
-  tokenizer: /e/data1/datasets/playground/mmlaion/oellm/oellm_tokenizer_256k
+  # The 256k tokenizer AS A FAST (tokenizer.json) DIRECTORY, and specifically the
+  # one jitsev1's eval workspace uses. Two separate reasons, both load-bearing:
+  #
+  # 1. The flagship's own SentencePiece directory CANNOT be read by the bridge
+  #    container: converting slow -> fast it routes tokenizer.model through the
+  #    TIKTOKEN converter and dies with "Error parsing line b'\\x0e'". That is what
+  #    killed jobs 1735753/54/55, at the tokenizer probe, before any weight was read.
+  #
+  # 2. run_export.py's _vocab_size_of returns len(tokenizer), and the model's
+  #    padded_vocab_size is 262144. This directory gives len 262144. A tokenizer
+  #    rebuilt from the SentencePiece source with save_pretrained instead keeps the
+  #    extra added token and gives len 262145, which would write vocab_size 262145
+  #    into config.json and mis-size the output layer -- silently.
+  #
+  # Using jitsev1's directory also means these exports are produced exactly the way
+  # the production_* exports we compare against were.
+  # scripts/korbi/make_fast_tokenizer.py can rebuild an equivalent one, but check
+  # len(tok) == 262144 before trusting it.
+  tokenizer: /e/fscratch/e-sta-openeurollm/jj1/eval/tokenizer_256k_hf
   bridge_image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-bridge-bridge_aarch64_202605191331.sif
   eval_venv: ${oc.env:OELLM_EVAL_VENV,"${oc.env:HOME}/work/venv"}
 
