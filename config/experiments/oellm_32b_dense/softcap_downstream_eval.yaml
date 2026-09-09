@@ -271,3 +271,89 @@ sweep:
             class_name: FileExistsCondition
             path: ${aux.eval_root}/hf/cont9_64000/model.safetensors.index.json
           slurm.sbatch.time: "04:00:00"
+
+        # =====================================================================
+        # CAPPED EVALUATION -- subsets 8, 9, 10
+        # =====================================================================
+        # The export runs uncapped (see the header). These add the missing half
+        # of a 2x2 at iteration 68000:
+        #
+        #                        eval uncapped        eval CAPPED
+        #   baseline @ 68000     subset 3             subset 9
+        #   cont9    @ 68000     subset 5             subset 10
+        #
+        # which separates two things a single comparison cannot:
+        #   subset 10 vs 5   what the cap is worth AT INFERENCE on cont9's own
+        #                    weights, i.e. how much subset 5 understated it.
+        #   subset 10 vs 9   what TRAINING with the cap did to the weights, both
+        #                    models scored under the same capped objective.
+        #   subset 9 vs 3    whether capping helps a model never trained with it,
+        #                    which is the null this rests against.
+        #
+        # cont9's own number is subset 10: that is the model as it was trained
+        # and as it would be deployed. Subset 5 measures it off its objective.
+        #
+        # No reconversion. The view symlinks the ~64 GB of shards and replaces
+        # only config.json, so this stage is seconds and runs on the login node.
+        - stage: patch_softcap
+          backend: bash
+          job: auto_cancel
+          job.name: "softcap_capped_views"
+          job.local: true
+          job.est_steps: 1
+          job.est_step_time_s: 30
+          job.est_startup_min: 1
+          slurm.launcher_cmd: ""
+          slurm.sbatch.nodes: 1
+          slurm.sbatch.time: "00:15:00"
+          slurm.sbatch.job_name: null
+          # Only runs once BOTH 68000 exports exist; it gates on cont9's because
+          # that conversion is submitted last of the two.
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: ${aux.eval_root}/hf/cont9_68000/model.safetensors.index.json
+          backend.command: |
+            set -eu
+            REPO="${oc.env:HOME}/work/Projects/oellm-autoexp"
+            TPL="$REPO/oellm_autoexp/postprocess/resources/megatron_bridge/templates/modeling_qwen3_softcap.py"
+            for NAME in base_68000 cont9_68000; do
+              SRC="${aux.eval_root}/hf/$NAME"
+              DST="$SRC"_capped
+              python3 "$REPO/scripts/korbi/make_capped_hf_view.py" "$SRC" "$DST" --cap 30.0 --template "$TPL"
+            done
+
+        - stage: eval_base68k_capped
+          backend: oellm_eval
+          container: jupiter_venv
+          slurm: jupiter_venv
+          backend.models:
+            - ${aux.eval_root}/hf/base_68000_capped
+          backend.venv_path: ${aux.eval_venv}
+          backend.local: true
+          backend.skip_checks: true
+          backend.verbose: true
+          backend.trust_remote_code: true
+          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results/base_68000_capped
+          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results/base_68000_capped
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: ${aux.eval_root}/hf/base_68000_capped/modeling_qwen3_softcap.py
+          slurm.sbatch.time: "04:00:00"
+
+        - stage: eval_cont9_68k_capped
+          backend: oellm_eval
+          container: jupiter_venv
+          slurm: jupiter_venv
+          backend.models:
+            - ${aux.eval_root}/hf/cont9_68000_capped
+          backend.venv_path: ${aux.eval_venv}
+          backend.local: true
+          backend.skip_checks: true
+          backend.verbose: true
+          backend.trust_remote_code: true
+          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results/cont9_68000_capped
+          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results/cont9_68000_capped
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: ${aux.eval_root}/hf/cont9_68000_capped/modeling_qwen3_softcap.py
+          slurm.sbatch.time: "04:00:00"
