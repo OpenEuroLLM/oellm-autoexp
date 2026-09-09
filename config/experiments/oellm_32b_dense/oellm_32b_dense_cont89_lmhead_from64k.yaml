@@ -230,6 +230,38 @@ backend:
     # silently restored from the checkpoint otherwise (commit 752021198).
     log_params_norm: true
 
+slurm:
+  # ---- WORKAROUND for the 2026-09-09 booster spawn failure -------------------
+  # Since the 2026-09-03 Slurm upgrade (25.05.9-1.20260903git791df5b.el9), srun
+  # intermittently cannot create its process reservation:
+  #     PSI: doSpawn: spawn to node <N> failed: ""
+  #     Could not spawn 'bash' process <N>: Invalid argument
+  #     spawnSingleExecutable: PSI_spawnRsrvtn() failed
+  # Seven consecutive 512-node launches died this way in under 40 s
+  # (1722558, 1722560, 1722602, 1723628, 1725617, 1728069, 1728086).
+  #
+  # `--mpi=none` avoids it. Measured, not guessed -- two 512-node spawn probes
+  # submitted together, identical but for this flag:
+  #     control      FAILED, 512 of 512 nodes "Could not spawn"
+  #     --mpi=none   OK, 512 of 512 ranks spawned
+  # and at one node, 6/6 with the flag against 5/23 for four other variants in
+  # the same batch. See /e/project1/e-sta-openeurollm/poeppel1/probe_psi/.
+  #
+  # It is safe HERE because nothing in this stack uses MPI: srun starts exactly
+  # one task per node (--ntasks-per-node=1) and torchrun spawns the four local
+  # ranks itself, with rdzv_backend=static, i.e. MASTER_ADDR/MASTER_PORT rather
+  # than PMI. The flag only tells srun not to set up an MPI environment those
+  # processes never ask for. It is NOT a fix for the underlying site bug, and a
+  # job that genuinely needed PMI would have to wait for that to be resolved.
+  #
+  # REMOVE THIS once the site confirms the spawn regression is fixed; keeping it
+  # indefinitely would hide a future recurrence.
+  #
+  # String form REPLACES rather than merges, so the two inherited flags are
+  # repeated here on purpose: --kill-on-bad-exit=0 and --no-kill are what let a
+  # single rank fail without tearing the step down.
+  srun_opts: "--kill-on-bad-exit=0 --no-kill --mpi=none"
+
 sweep:
   type: list
   store_sweep_json: true
