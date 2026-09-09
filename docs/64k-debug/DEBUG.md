@@ -673,17 +673,55 @@ operator on a small model before interpreting the 32B result.
 
 ### 24. Rank collapse and functional loss of capacity
 
-**Status: WIP**
+**Status: Closed**
 
 **Question:** Are weights or activations becoming low-rank as training proceeds?
 
 **Current evidence:** No decoder weight matrix shrinks, and row norms do not show
 a large dead population. Those checks do not measure functional activation rank.
 
-**Open issue:** Measure stable rank of representative weight matrices, but give
-higher priority to activation covariance, effective rank, and per-neuron SwiGLU
-gate/up/product statistics on real production batches. A neuron can be
-functionally inactive even when its weight-row norm is nonzero.
+**Evidence:**
+[../../scripts/scan_activation_capacity.py](../../scripts/scan_activation_capacity.py)
+on real packed batches under the block-diagonal training mask. Array job
+`1727523`, five checkpoints, 5m41s each. Every arm scored exactly 131,072
+identical tokens, so this is a paired comparison. Residual-stream covariance is
+centered -- uncentered would be dominated by the stream's large mean component
+and would report healthy rank for one fixed vector plus noise. SwiGLU activity is
+the RMS of each neuron at `linear_fc2`'s input, which under a gated linear unit
+is the gate*up product; the dead threshold is relative to each layer's own median
+so it stays comparable as the activation scale drifts (item 14 has `linear_fc2`
+max/RMS going 6.0 to 48.2). Data `.act/*.csv`.
+
+Entropy rank of the centered residual covariance, hidden size 5,120:
+
+| layer | prod 44k | prod 64k | prod 72k | revival 80k | revival 104k |
+|---|---:|---:|---:|---:|---:|
+| 8 | 42.9 | 26.9 | 24.2 | 9.3 | **6.6** |
+| 16 | 553.0 | 397.6 | 320.2 | 153.1 | **135.5** |
+| 24 | 1701 | 1639 | 1566 | 1378 | 1391 |
+| 32 | 1295 | 1258 | 1266 | 1232 | 1194 |
+| 48 | 955 | 921 | 907 | 950 | 948 |
+| 56 | 684 | 731 | 732 | 825 | **940** |
+
+SwiGLU dead-neuron fraction, mean over all 64 layers: 0.0000%, 0.0001%, 0.0001%,
+0.0004%, 0.0019%. At 25,600 neurons per layer that peak is half a neuron.
+
+**Conclusion:** Neither failure mode is present as a cause of the turn.
+
+* **No neuron death.** The dead fraction never leaves the noise floor.
+* **Rank collapse is real but not turn-specific.** Early layers fall hard --
+  layer 8 by 6.5x, layer 16 by 4x -- but the collapse runs at the same rate or
+  faster while the loss is descending normally. Per 1,000 iterations, layer 8
+  moves -1.86% over the healthy 44k-64k interval against -1.29% over the turn
+  interval 64k-72k. Only layers 16 and 24 accelerate (1.7x and 3.1x), against
+  layer 8 decelerating: two of nine layers with no error bars is not a signal.
+* **It is not global.** Layer 56 gains rank throughout (684 to 940) and layers
+  32-48 are flat. This is depth-wise redistribution, not capacity loss.
+
+The large absolute finding is worth recording separately: early layers operate at
+entropy rank 7 to 43 out of 5,120, and the last layer at ~1. That is the known
+outlier-dimension behaviour of trained transformers, it is a property of the
+whole run, and it has no bearing on the turn.
 
 ### 25. Embedding and output-layer collapse
 
@@ -1677,6 +1715,10 @@ re-derived from logs alone silently omits that segment.
 
 - The regression is present in held-out loss and BF16 evaluation.
 - It is smooth and begins before the visible crossing near 66k.
+- **Capacity is intact.** No SwiGLU neuron death at any checkpoint, and the
+  residual-stream rank collapse in early layers proceeds at the same rate or
+  faster during healthy descent, while late layers gain rank (item 24). Loss of
+  functional capacity is not the cause of the turn.
 - Two config suspicions are excluded by inspection: `data_parallel_sharding_strategy`
   is unreachable without FSDP (item 22), and no learned position-embedding tensor
   exists in any checkpoint, so `add_position_embedding: true` is inert alongside
