@@ -36,6 +36,13 @@ def main() -> int:
     ap.add_argument("dst", type=Path, help="capped view to create")
     ap.add_argument("--cap", type=float, required=True, help="final_logit_softcapping value")
     ap.add_argument("--template", type=Path, required=True, help="modeling_qwen3_softcap.py")
+    ap.add_argument(
+        "--torch-dtype",
+        default=None,
+        help="set config.json torch_dtype (e.g. bfloat16). Megatron-Bridge leaves it None, "
+        "and transformers then defaults to FP32 -- 128 GB for a 32B model, which does not "
+        "fit one GH200. jitsev1's exports record bfloat16.",
+    )
     args = ap.parse_args()
 
     src_cfg = args.src / "config.json"
@@ -66,6 +73,8 @@ def main() -> int:
     cfg["architectures"] = [ARCH]
     cfg["auto_map"] = AUTO_MAP
     cfg["final_logit_softcapping"] = args.cap
+    if args.torch_dtype:
+        cfg["torch_dtype"] = args.torch_dtype
     (args.dst / "config.json").write_text(json.dumps(cfg, indent=2) + "\n")
 
     shutil.copyfile(args.template, args.dst / "modeling_qwen3_softcap.py")
@@ -75,6 +84,8 @@ def main() -> int:
         print(f"[capped-view]   symlinked {linked} file(s) from {args.src}")
     print(f"[capped-view]   architectures {original_arch} -> [{ARCH!r}]")
     print(f"[capped-view]   final_logit_softcapping = {args.cap}")
+    if args.torch_dtype:
+        print(f"[capped-view]   torch_dtype = {args.torch_dtype}")
     print("[capped-view]   NOTE: loading this requires trust_remote_code=True")
     return 0
 

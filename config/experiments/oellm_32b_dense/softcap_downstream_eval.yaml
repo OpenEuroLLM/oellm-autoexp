@@ -356,7 +356,7 @@ sweep:
             set -eu
             REPO="${oc.env:HOME}/work/Projects/oellm-autoexp"
             D="${aux.eval_root}/hf/cont9_68000"
-            python3 "$REPO/scripts/korbi/make_capped_hf_view.py" "$D" "$D" --cap 30.0 \
+            python3 "$REPO/scripts/korbi/make_capped_hf_view.py" "$D" "$D" --cap 30.0 --torch-dtype bfloat16 \
               --template "$REPO/oellm_autoexp/postprocess/resources/megatron_bridge/templates/modeling_qwen3_softcap.py"
 
         # ===== 4: cont9 @ 68000, softcapped -- the headline number ===========
