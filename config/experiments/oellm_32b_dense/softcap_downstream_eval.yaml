@@ -10,11 +10,11 @@
 #
 #   --array-subset 0   eval  production @ 64000   shared origin + PIPELINE CHECK
 #   --array-subset 1   eval  production @ 68000   the baseline
-#   --array-subset 2   convert cont9  @ 68000     the only conversion needed
-#   --array-subset 3   eval  cont9     @ 68000    uncapped
-#   --array-subset 4   build capped views         local, seconds
-#   --array-subset 5   eval  production @ 68000   CAPPED
-#   --array-subset 6   eval  cont9     @ 68000    CAPPED
+#   --array-subset 2   stage a loadable checkpoint view (local, seconds)
+#   --array-subset 3   convert cont9  @ 68000     the only conversion needed
+#   --array-subset 4   cap that export in place   (local, seconds)
+#   --array-subset 5   eval  cont9     @ 68000    SOFTCAPPED -- the headline
+#   --array-subset 6   build the results DB
 #
 # ============================================================================
 # WHAT WE ARE MEASURING AGAINST
@@ -138,6 +138,15 @@ aux:
   # ---- the one thing not already converted ---------------------------------
   cont9_ckpts: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_cont9_softcap30_seed1234/checkpoints
   cont9_cfg: /e/project1/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_cont9_softcap30_seed1234_gbs4096_lr3e-4/logs/current.yaml
+
+  # Reference common.pt, borrowed from jitsev1's staged production_68000 view. Our
+  # training checkpoints do not contain one, and Megatron-Bridge needs it: it holds
+  # the Megatron args the exporter builds its model from. Its `args` describe the
+  # ARCHITECTURE, not the weights, and cont9 is architecturally identical to the
+  # flagship, so it transfers -- make_megatron_view.py verifies that against the
+  # checkpoint's own .metadata rather than trusting it.
+  ref_common_pt: /e/fscratch/e-sta-openeurollm/jj1/eval/views/production_68000/iter_0068000/common.pt
+  view_root: /e/fscratch/e-sta-openeurollm/poeppel1/eval/views
 
   bridge_image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-bridge-bridge_aarch64_202605191331.sif
   eval_venv: ${oc.env:OELLM_EVAL_VENV,"${oc.env:HOME}/work/venv"}
@@ -276,9 +285,38 @@ sweep:
           backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/base
           slurm.sbatch.time: "06:00:00"
 
-        # ===== 2: the ONLY conversion -- cont9 @ 68000 =======================
+        # ===== 2: stage a loadable VIEW of the checkpoint =====================
+        # Symlinks all 2049 files and adds a real common.pt. Without it the bridge
+        # infers the model from the derived HF config, its _extra_state covers 5 of
+        # 64 layers, and the load dies with "59 ShardedObject are missing" ~12
+        # minutes in -- jobs 1736104, 1740243, 1740301. Local and seconds: a 442 GB
+        # checkpoint is linked, never copied.
+        - stage: view_cont9_68k
+          backend: bash
+          job: auto_cancel
+          job.name: "softcap_megatron_view"
+          job.local: true
+          job.est_steps: 1
+          job.est_step_time_s: 30
+          job.est_startup_min: 1
+          slurm.launcher_cmd: ""
+          slurm.sbatch.nodes: 1
+          slurm.sbatch.time: "00:15:00"
+          slurm.sbatch.job_name: null
+          backend.command: |
+            set -eu
+            REPO="${oc.env:HOME}/work/Projects/oellm-autoexp"
+            python3 "$REPO/scripts/korbi/make_megatron_view.py" \
+              "${aux.cont9_ckpts}/iter_0068000" \
+              "${aux.view_root}/cont9_68000/iter_0068000" \
+              --common-pt "${aux.ref_common_pt}"
+
+        # ===== 3: the ONLY conversion -- cont9 @ 68000, FROM THE VIEW =========
         - stage: convert_cont9_68k
-          backend.megatron_path: ${aux.cont9_ckpts}/iter_0068000
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: ${aux.view_root}/cont9_68000/iter_0068000/common.pt
+          backend.megatron_path: ${aux.view_root}/cont9_68000/iter_0068000
           backend.megatron_config_path: ${aux.cont9_cfg}
           backend.hf_path: ${aux.eval_root}/hf/cont9_68000
           # ONE GPU. With 4, the dist-checkpoint load plan covered only 5 of 64
