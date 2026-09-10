@@ -197,6 +197,21 @@ sweep:
         # 19,509,228 bytes, 2106 and 72 files, no dangling symlinks). Using their
         # copies rather than re-downloading also means we score on the same bytes
         # they did, which is part of why the numbers are comparable.
+        # CONTAINER, not the bare venv. Our venv's torch fails cuDNN SDPA on GH200
+        # ("No valid execution plans built"), which made jobs 1736102/03 exit 0 with
+        # 113 errors and zero results. jitsev1 hit the same thing (their
+        # results_failed_cudnn/) and run inside this image instead.
+        #
+        # EVAL_CONTAINER_IMAGE is a FILENAME resolved under EVAL_BASE_DIR
+        # (oellm/utils.py:59), and outputs also land at
+        # EVAL_BASE_DIR/results/<export>/<task_group>/<run_ts>/results/ -- which is
+        # exactly the layout eval_results_db.py ingests. Pointing EVAL_BASE_DIR at a
+        # results-only directory broke both at once.
+        backend.env.EVAL_CONTAINER_IMAGE: MegatronTraining-JUPITER-eval_aarch64_202608131040.sif
+        # QUOTES ARE PART OF THE VALUE. slurm_gen emits `export KEY=VALUE`
+        # verbatim, so a multi-word value without them sets SINGULARITY_ARGS=--nv
+        # and then tries to RUN `--contain` as a command.
+        backend.env.SINGULARITY_ARGS: '"--nv --contain --env PYTHONNOUSERSITE=1 --env SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"'
         backend.env.HF_HOME: /e/project1/jureap59/poeppel1/cache
         backend.env.HF_HUB_OFFLINE: "1"
         backend.env.HF_DATASETS_OFFLINE: "1"
@@ -210,12 +225,14 @@ sweep:
           slurm: jupiter_venv
           backend.models:
             - ${aux.jj1_hf}/production_64000
-          backend.venv_path: ${aux.eval_venv}
-          backend.local: true
+          # local:false -> oellm-eval submits its own array jobs that run INSIDE the
+          # container. local:true forces venv mode (the backend asserts venv_path),
+          # which is the broken path. venv_path is therefore unset on purpose.
+          backend.local: false
           backend.skip_checks: true
           backend.verbose: true
-          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results
-          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results
+          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/base
+          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/base
           slurm.sbatch.time: "06:00:00"
 
         # ===== 1: the baseline at 68000, their export ========================
@@ -225,12 +242,14 @@ sweep:
           slurm: jupiter_venv
           backend.models:
             - ${aux.jj1_hf}/production_68000
-          backend.venv_path: ${aux.eval_venv}
-          backend.local: true
+          # local:false -> oellm-eval submits its own array jobs that run INSIDE the
+          # container. local:true forces venv mode (the backend asserts venv_path),
+          # which is the broken path. venv_path is therefore unset on purpose.
+          backend.local: false
           backend.skip_checks: true
           backend.verbose: true
-          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results
-          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results
+          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/base
+          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/base
           slurm.sbatch.time: "06:00:00"
 
         # ===== 2: the ONLY conversion -- cont9 @ 68000 =======================
@@ -238,6 +257,12 @@ sweep:
           backend.megatron_path: ${aux.cont9_ckpts}/iter_0068000
           backend.megatron_config_path: ${aux.cont9_cfg}
           backend.hf_path: ${aux.eval_root}/hf/cont9_68000
+          # ONE GPU. With 4, the dist-checkpoint load plan covered only 5 of 64
+          # layers and failed with "59 ShardedObject are missing" (job 1736104).
+          # The checkpoint is fine -- its metadata is identical to the baseline's,
+          # 701 keys and 385 _extra_state. A 32B bf16 model fits one GH200, and the
+          # chain config this is modelled on uses 1.
+          slurm.sbatch.gpus_per_node: 1
           container.image: ${aux.bridge_image}
           container.bind:
             - "/e"
@@ -279,13 +304,15 @@ sweep:
           slurm: jupiter_venv
           backend.models:
             - ${aux.eval_root}/hf/cont9_68000
-          backend.venv_path: ${aux.eval_venv}
-          backend.local: true
+          # local:false -> oellm-eval submits its own array jobs that run INSIDE the
+          # container. local:true forces venv mode (the backend asserts venv_path),
+          # which is the broken path. venv_path is therefore unset on purpose.
+          backend.local: false
           backend.skip_checks: true
           backend.verbose: true
           backend.trust_remote_code: true
-          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/results
-          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/results
+          backend.env.EVAL_BASE_DIR: ${aux.eval_root}/base
+          backend.env.EVAL_OUTPUT_DIR: ${aux.eval_root}/base
           # Gates on the softcap module, so it cannot start before stage 3 has
           # capped the export -- which is what makes "uncapped never runs" true.
           job.start_condition:
@@ -312,14 +339,14 @@ sweep:
           slurm.sbatch.job_name: null
           job.start_condition:
             class_name: FileExistsCondition
-            path: ${aux.eval_root}/results
+            path: ${aux.eval_root}/base/results
           backend.command: |
             set -eu
             REPO="${oc.env:HOME}/work/Projects/oellm-autoexp"
             DB="${aux.eval_root}/eval_results.sqlite"
             REF=/e/fscratch/e-sta-openeurollm/jj1/eval/eval_browser/eval_browser.sqlite
             python3 "$REPO/scripts/korbi/eval_results_db.py" ingest \
-              --root "${aux.eval_root}/results" --db "$DB" --label poeppel1 --replace
+              --root "${aux.eval_root}/base/results" --db "$DB" --label poeppel1 --replace
             echo "--- our cont9_68000 vs their production_68000 ---"
             python3 "$REPO/scripts/korbi/eval_results_db.py" compare \
               --db "$DB" --ours cont9_68000 --ref-db "$REF" --theirs production_68000 || true
