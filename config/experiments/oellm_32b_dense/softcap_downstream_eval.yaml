@@ -177,7 +177,15 @@ slurm:
   sbatch:
     job_name: null
     nodes: 1
-    gpus_per_node: 4
+    # ONE GPU. lm-eval puts the whole model on cuda:0 -- every task logs "Model
+    # parallel was set to False ... device map was set to {'': 'cuda:0'}" -- so
+    # gpus_per_node: 4 reserved four and used one. oellm-eval passes this through
+    # as GPUS_PER_NODE, which also drives --gres and its MULTI_GPU_FLAG, and that
+    # flag only engages accelerate's data-parallel path under an accelerate
+    # launch, which this is not; --model_args carries no parallelize or device
+    # map either. The model is 67.78 GB bf16 in a 96 GB GH200, so one fits, and
+    # the conversion already runs on one.
+    gpus_per_node: 1
     time: "02:00:00"
 
 sweep:
@@ -245,6 +253,12 @@ sweep:
         # both load, without it both fail, and HF_DATASETS_OFFLINE makes no
         # difference either way. jitsev1's working runs set it; we did not, which is
         # why all 42 multilingual tasks failed in both attempts.
+        # config/backend/oellm_eval.yaml sets this from ${slurm.sbatch.gpus_per_node},
+        # but that interpolation resolves against the top-level slurm node and came
+        # out 4 even with the stage pinned to 1. GPUS_PER_NODE is what the GENERATED
+        # array script uses for its own --gres and GPU_DEVICES, so it has to be
+        # right here or each task reserves four GPUs and uses cuda:0.
+        backend.env.GPUS_PER_NODE: "1"
         backend.env.HF_DATASETS_CACHE: /e/fscratch/e-sta-openeurollm/poeppel1/eval/hf_home/datasets
         backend.env.HF_HUB_OFFLINE: "1"
         backend.env.HF_DATASETS_OFFLINE: "1"
