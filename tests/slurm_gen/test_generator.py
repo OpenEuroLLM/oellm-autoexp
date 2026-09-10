@@ -204,3 +204,58 @@ class TestMergeSlurmConfig:
         assert merged["sbatch"]["nodes"] == 4
         assert merged["sbatch"]["partition"] == "gpu"
         assert merged["array"] is False
+
+
+class TestExcludeFileRereadAtRenderTime:
+    """`--exclude` must come from the file as it is WHEN THE SCRIPT IS
+    RENDERED.
+
+    A restart re-renders the sbatch but reuses the config resolved at plan time, so a node
+    excluded after the first submission never reached the resubmitted job: 1711267 went out
+    two seconds after the monitor logged a 30-node refresh, carrying 28 and missing the node
+    whose failure had just ended the previous job.
+    """
+
+    def test_current_file_overrides_a_stale_exclude(self, tmp_path: Path) -> None:
+        listing = tmp_path / "exclude.txt"
+        listing.write_text("# excluded\njpbo-052-11\njpbo-079-14\n")
+        config = make_config(tmp_path)
+        config.exclude_file = str(listing)
+        config.sbatch = SbatchConfig(exclude="jpbo-052-11")  # stale: written before the failure
+        directives = build_sbatch_directives(config)
+        line = next(d for d in directives if d.startswith("#SBATCH --exclude="))
+        assert "jpbo-079-14" in line
+        assert "jpbo-052-11" in line
+
+    def test_missing_file_keeps_the_existing_exclusions(self, tmp_path: Path) -> None:
+        config = make_config(tmp_path)
+        config.exclude_file = str(tmp_path / "does-not-exist.txt")
+        config.sbatch = SbatchConfig(exclude="jpbo-052-11")
+        directives = build_sbatch_directives(config)
+        line = next(d for d in directives if d.startswith("#SBATCH --exclude="))
+        assert line == "#SBATCH --exclude=jpbo-052-11"
+
+    def test_empty_file_keeps_the_existing_exclusions(self, tmp_path: Path) -> None:
+        listing = tmp_path / "exclude.txt"
+        listing.write_text("# nothing but a comment\n\n")
+        config = make_config(tmp_path)
+        config.exclude_file = str(listing)
+        config.sbatch = SbatchConfig(exclude="jpbo-052-11")
+        directives = build_sbatch_directives(config)
+        line = next(d for d in directives if d.startswith("#SBATCH --exclude="))
+        assert line == "#SBATCH --exclude=jpbo-052-11"
+
+    def test_without_exclude_file_nothing_changes(self, tmp_path: Path) -> None:
+        config = make_config(tmp_path)
+        config.sbatch = SbatchConfig(exclude="jpbo-052-11")
+        directives = build_sbatch_directives(config)
+        line = next(d for d in directives if d.startswith("#SBATCH --exclude="))
+        assert line == "#SBATCH --exclude=jpbo-052-11"
+
+    def test_file_alone_is_enough_when_no_exclude_was_resolved(self, tmp_path: Path) -> None:
+        listing = tmp_path / "exclude.txt"
+        listing.write_text("jpbo-079-14\n")
+        config = make_config(tmp_path)
+        config.exclude_file = str(listing)
+        directives = build_sbatch_directives(config)
+        assert "#SBATCH --exclude=jpbo-079-14" in directives

@@ -505,6 +505,30 @@ class NewJobAction(BaseMonitorAction):
 class RestartActionConfig(ConfigInterface):
     class_name: str = "RestartAction"
     reason: str = "restarting job"
+    # Shell command run by the monitor BEFORE the job is resubmitted (templated
+    # with the action-context variables plus {runtime_job_id} and {log_path});
+    # e.g. a node-fault scan of the failed job's log that appends attributable
+    # nodes to the exclusion file. Its exit code is logged, never fatal.
+    pre_command: str = ""
+    pre_command_timeout_s: float = 900.0
+    # Node-exclusion list re-read right before the resubmission so the
+    # re-rendered sbatch carries nodes excluded since plan time (the stored
+    # SlurmConfig is otherwise frozen at plan time).
+    exclude_file: str = ""
+    # Defer the resubmission until the job has left the queue instead of
+    # cancelling it: a graceful segment end (exit_duration_in_mins, SIGTERM)
+    # prints its 'exiting program ...' line BEFORE the async checkpoint write
+    # completes, so cancelling on that line cuts the very checkpoint the next
+    # segment should load (smoke 1691431, 2026-09-06). Stall/error rules keep
+    # the default and cancel the hung job.
+    wait_for_job_end: bool = False
+    # For hangs and faults: cancel the running job NOW, then wait for it to leave
+    # the queue before the hooks run and the job is resubmitted. The log is then
+    # complete, so the node-fault scan sees the lines written after the kill
+    # (e.g. a rank's cudaErrorLaunchFailure that names the faulty node; jobs
+    # 1692960/1693057 on 2026-09-06 were restarted twice onto the same bad node
+    # because the scan ran before the cancel). No-op when the job has already ended.
+    cancel_first: bool = False
 
 
 @register
@@ -516,7 +540,63 @@ class RestartAction(BaseMonitorAction):
             special="restart",
             status="success",
             message=self.config.reason,
+            action_config=self.config,
+            metadata={
+                "pre_command": self.config.pre_command,
+                "pre_command_timeout_s": self.config.pre_command_timeout_s,
+                "exclude_file": self.config.exclude_file,
+                "wait_for_job_end": self.config.wait_for_job_end,
+                "cancel_first": self.config.cancel_first,
+            },
         )
+
+
+@dataclass
+class RunCommandActionConfig(ConfigInterface):
+    """Run a shell command as a side effect of a log/state event (never
+    terminal).
+
+    ``command`` is templated with the action-context variables ({job_id},
+    {job_name}, extracted groups, ...). Output is captured and logged.
+    """
+
+    class_name: str = "RunCommandAction"
+    command: str = ""
+    timeout_s: float = 900.0
+    cwd: str = ""
+
+
+@register
+class RunCommandAction(BaseMonitorAction):
+    config: RunCommandActionConfig
+
+    def execute(self, context: ActionContext) -> ActionResult:
+        import subprocess
+
+        command = context.render(self.config.command).strip()
+        if not command:
+            return ActionResult(status="failed", message="empty command")
+        try:
+            proc = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=self.config.timeout_s,
+                cwd=self.config.cwd or None,
+            )
+            tail = (proc.stdout + proc.stderr).strip().splitlines()[-5:]
+            msg = f"command exit {proc.returncode}: {command} | " + " / ".join(tail)
+            LOGGER.info("RunCommandAction: %s", msg)
+            return ActionResult(
+                status="success" if proc.returncode == 0 else "failed",
+                message=msg,
+                metadata={"returncode": proc.returncode, "command": command},
+            )
+        except subprocess.TimeoutExpired:
+            msg = f"command timed out after {self.config.timeout_s}s: {command}"
+            LOGGER.warning("RunCommandAction: %s", msg)
+            return ActionResult(status="failed", message=msg)
 
 
 @dataclass
@@ -589,17 +669,35 @@ class LogEventConfig(EventConfig):
     # setup banners, so it is never inactive — job 1375720 grew a 251 MB log
     # over 4 h while pinned at iteration 100 — but its counter does not move.
     progress_group: int | str = 1
-    # increase: the streak resets whenever the newest value DIFFERS from the
-    #   previous one. A resume from checkpoint jumps the counter BACKWARDS, and
-    #   that still counts as movement, so this is safe with a short window. It
-    #   detects "no iterations at all" and "iterations frozen".
-    # max: the streak resets only when the running MAXIMUM advances. This also
-    #   catches a loop that keeps re-running the same iterations forever, but
-    #   the window must exceed the time needed to redo the work lost to the last
-    #   rolling checkpoint, or a healthy restart trips it.
-    progress_mode: Literal["increase", "max"] = "increase"
+    # WHAT COUNTS AS PROGRESS, i.e. what resets the streak:
+    #
+    # any_change: ANY different value. A resume from checkpoint jumps the
+    #   counter BACKWARDS and that still counts, so this cannot be tripped by a
+    #   healthy restart and is safe with a short window. Answers "is the
+    #   training loop emitting iterations at all?" — it catches a frozen counter
+    #   and a job that never reaches iteration 1.
+    #
+    # furthest: only a value HIGHER than any seen before. Redoing iterations the
+    #   run has already done is not progress, so this additionally catches a loop
+    #   that keeps replaying the same range forever. The window must exceed the
+    #   time needed to redo the work lost to the last rolling checkpoint (plus
+    #   startup, if the streak spans a restart) or a healthy restart trips it.
+    #
+    # NB `any_change` was called `increase`, which was actively misleading: it
+    #   accepts a DECREASE too, and must, for the resume case above. `furthest`
+    #   was called `max`, which named the implementation rather than the
+    #   question. Both legacy spellings are still accepted and normalised in
+    #   __post_init__ so an older persisted job record still parses — without
+    #   that, JobFileStore.load_all() swallows the ValueError and the job
+    #   silently disappears from the monitor.
+    progress_mode: Literal["any_change", "furthest", "increase", "max"] = "any_change"
     progress_polls: int = 1
     progress_timeout_s: float = 0.0
+
+    def __post_init__(self):
+        legacy = {"increase": "any_change", "max": "furthest"}
+        if self.progress_mode in legacy:
+            self.progress_mode = legacy[self.progress_mode]
 
 
 @dataclass
@@ -675,9 +773,9 @@ class LogEvent:
         Returns ``(last, max, raw)`` over every match in this poll's slice, or
         ``(None, None, None)`` when the text holds no usable match — which is
         itself the signal that nothing advanced. ``last`` drives
-        ``progress_mode: increase`` (it is the job's current position, including
+        ``progress_mode: any_change`` (it is the job's current position, including
         after a backwards jump on resume) and ``max`` drives
-        ``progress_mode: max``.
+        ``progress_mode: furthest``.
         """
         pattern = re.compile(self.config.pattern, flags=re.MULTILINE)
         values: list[float] = []
@@ -786,6 +884,8 @@ __all__ = [
     "NewJobActionConfig",
     "RestartActionConfig",
     "RestartAction",
+    "RunCommandActionConfig",
+    "RunCommandAction",
     "FinishActionConfig",
     "FinishAction",
     "CancelActionConfig",

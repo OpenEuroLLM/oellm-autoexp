@@ -44,6 +44,21 @@ class BaseJob:
     array_len: int = 1
     base_config: Any = field(default_factory=dict)
 
+    # Run this job as a LOCAL process on the submitting host instead of
+    # submitting it to Slurm. Per-JOB counterpart to the global `--local` flag,
+    # which applies to every job in the plan and so cannot express "this stage
+    # is a filesystem operation, that one needs 512 nodes".
+    #
+    # Intended for cheap setup stages -- e.g. the seed stage of
+    # experiments/oellm_32b_dense/oellm_32b_dense_cont2_from64k, which just
+    # symlinks a checkpoint and writes a tracker file. Combined with a
+    # BashBackend the local command is the backend's `command` verbatim, so no
+    # adaptation is needed.
+    #
+    # Do NOT set this on anything that needs an allocation: it runs on the login
+    # node, with no Slurm accounting, cgroup or time limit.
+    local: bool = False
+
 
 @dataclass(kw_only=True)
 class SlurmJobConfig(BaseJob, ConfigInterface):

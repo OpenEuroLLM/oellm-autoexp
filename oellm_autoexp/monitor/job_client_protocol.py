@@ -99,6 +99,26 @@ class JobClientProtocol(Protocol):
         """
         ...
 
+    def register_job(
+        self,
+        job: BaseJob,
+        job_id: str,
+        state: str | None = None,
+    ) -> None:  # pragma: no cover
+        """Adopt an already-submitted job into this client's tracking.
+
+        Called when a monitor re-attaches to a session it did not submit (see
+        ``MonitorLoop.rehydrate``). Backends that cannot adopt a foreign job
+        (local processes: the Popen handle died with the previous monitor) may
+        make this a no-op.
+
+        Args:
+            job: The job definition, as stored in the session state.
+            job_id: The backend's own id for the running job.
+            state: Last known status, if any, else the backend's default.
+        """
+        ...
+
     def update_excludes(self, job_id: str, nodelist: str) -> None:  # pragma: no cover
         """Update a pending job's excluded-node list.
 

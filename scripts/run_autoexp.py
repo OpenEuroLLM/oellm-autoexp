@@ -26,6 +26,7 @@ from oellm_autoexp.orchestrator import (
     submit_jobs,
     chain_submit_jobs,
     run_loop,
+    stop_path,
 )
 from oellm_autoexp.utils.logging_config import configure_logging
 
@@ -543,12 +544,24 @@ def main(argv: list[str] | None = None) -> None:
     # connection drops, the exit path may never run and the session id would be
     # lost. It is also echoed on Ctrl-C below, which is the common case.
     _print_resume_hint(resume_cmd, res, reason="monitoring now")
+    # Ctrl-C no longer raises: run_loop turns SIGINT/SIGTERM into a flag so the
+    # poll in progress finishes (a signal landing inside an sbatch would
+    # otherwise leave a submitted job whose id was never recorded) and records
+    # the stop in <session_dir>/.monitor.stop, which is how a supervisor tells
+    # "was stopped" from "died". KeyboardInterrupt is still caught for the
+    # window before the loop installs its handlers.
     try:
-        run_loop(res.loop)
+        outcome = run_loop(res.loop)
     except KeyboardInterrupt:
+        outcome = "signal"
+    if outcome == "signal":
         print("\n[interrupted] Jobs were NOT cancelled -- they keep running in SLURM.")
+        print(f"  Clear the stop request first:  rm {stop_path(res.state_store.root)}")
         _print_resume_hint(resume_cmd, res, reason="interrupted")
         exit(130)
+    if outcome == "failed":
+        _print_resume_hint(resume_cmd, res, reason="monitor gave up after repeated failures")
+        exit(1)
 
 
 if __name__ == "__main__":

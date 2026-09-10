@@ -87,9 +87,11 @@ sweep:
         # tests/unit/test_bash_backend.py recomputes the index from the YAML and
         # fails with the correct value if they drift again — believe the test,
         # not this comment.
+        # Drifted 4 -> 18 -> 19. 19 is `inactive` as of 2026-08-26; an event was
+        # inserted ahead of it and the override was landing on `time_limit`.
         - job.name: "auto_cancel__cancel_on_silent_stall"
-          job.log_events.18.inactivity_timeout_s: 60
-          job.log_events.18.inactivity_polls: 1
+          job.log_events.19.inactivity_timeout_s: 60
+          job.log_events.19.inactivity_polls: 1
           backend.command: |
             echo "[dummy] training started"
             echo "[dummy] going silent now (no further output)"
