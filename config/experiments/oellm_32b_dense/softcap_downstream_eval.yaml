@@ -309,7 +309,8 @@ sweep:
             python3 "$REPO/scripts/korbi/make_megatron_view.py" \
               "${aux.cont9_ckpts}/iter_0068000" \
               "${aux.view_root}/cont9_68000/iter_0068000" \
-              --common-pt "${aux.ref_common_pt}"
+              --common-pt "${aux.ref_common_pt}" \
+              --set-tokenizer "${aux.tokenizer}"
 
         # ===== 3: the ONLY conversion -- cont9 @ 68000, FROM THE VIEW =========
         - stage: convert_cont9_68k

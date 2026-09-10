@@ -93,6 +93,15 @@ def main() -> int:
     ap.add_argument("dst", type=Path, help="view directory to create")
     ap.add_argument("--common-pt", type=Path, required=True, help="reference common.pt")
     ap.add_argument(
+        "--set-tokenizer",
+        type=Path,
+        default=None,
+        help="rewrite args.tokenizer_model in the emitted common.pt. Megatron-Bridge "
+        "rebuilds the vocabulary from this path; if it cannot load the tokenizer it pads a "
+        "degenerate vocab up to make_vocab_size_divisible_by (128) and the export gets "
+        "128-row embeddings while config.json still claims the real size.",
+    )
+    ap.add_argument(
         "--skip-verify",
         action="store_true",
         help="do not check the reference architecture against the checkpoint metadata",
@@ -128,7 +137,17 @@ def main() -> int:
         target.symlink_to(entry.resolve())
         linked += 1
 
-    shutil.copyfile(args.common_pt, args.dst / "common.pt")
+    if args.set_tokenizer:
+        import torch
+
+        blob = torch.load(args.common_pt, map_location="cpu", weights_only=False)
+        old = getattr(blob.get("args"), "tokenizer_model", None)
+        blob["args"].tokenizer_model = str(args.set_tokenizer)
+        torch.save(blob, args.dst / "common.pt")
+        print(f"[view]   tokenizer_model {old}")
+        print(f"[view]                -> {args.set_tokenizer}")
+    else:
+        shutil.copyfile(args.common_pt, args.dst / "common.pt")
 
     print(f"[view] {args.dst}")
     print(f"[view]   symlinked {linked} entries from {args.src}")
