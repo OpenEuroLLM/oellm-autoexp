@@ -76,6 +76,45 @@ _STDERR = re.compile(r"_stderr$")
 _SKIP_KEYS = {"name", "alias", "sample_len", "samples"}
 
 
+def build_task_group_map(spec: Path | None):
+    """Task -> task_group, from oellm-evals' task-groups.yaml.
+
+    Needed because the results JSON records `model_name` but NOT the group, and the
+    output layout depends on how oellm-eval was invoked: one call per (model, group)
+    nests as <export>/<task_group>/<run_ts>/results/, while one call for several
+    groups produces a flat <run_ts>/results/. Deriving the group from the task makes
+    the ingest independent of that.
+    """
+    if not spec or not spec.is_file():
+        return {}, []
+    import yaml
+
+    doc = yaml.safe_load(spec.read_text()) or {}
+    groups = doc.get("task_groups", doc)
+    exact, prefixes = {}, []
+    for group, body in (groups or {}).items():
+        tasks = body.get("tasks") if isinstance(body, dict) else body
+        for t in tasks or []:
+            name = t.get("task") if isinstance(t, dict) else t
+            if not name:
+                continue
+            exact[name] = group
+            # Leaf subtasks are reported individually (mmlu -> mmlu_anatomy, ...),
+            # so a scheduled task name is also a prefix for its own subtasks.
+            prefixes.append((name + "_", group))
+    prefixes.sort(key=lambda kv: -len(kv[0]))
+    return exact, prefixes
+
+
+def resolve_task_group(task: str, exact, prefixes, fallback):
+    if task in exact:
+        return exact[task]
+    for pref, group in prefixes:
+        if task.startswith(pref):
+            return group
+    return fallback
+
+
 def split_export(export: str):
     """`cont9_68000` -> ("cont9", 68000).
 
@@ -138,17 +177,27 @@ def cmd_ingest(args) -> int:
         print(f"FATAL: no such results root: {root}", file=sys.stderr)
         return 1
 
-    files = sorted(root.glob("*/*/*/results/*.json"))
+    # Both layouts: <export>/<task_group>/<run_ts>/results/ and flat <run_ts>/results/.
+    files = sorted(set(root.glob("*/*/*/results/*.json")) | set(root.glob("*/results/*.json")))
     files = [f for f in files if not f.name.startswith("samples_")]
     if not files:
         print(f"FATAL: no results JSON under {root}/<export>/<task_group>/<run_ts>/results/")
         return 1
 
+    exact, prefixes = build_task_group_map(Path(args.task_groups) if args.task_groups else None)
+
     rows, sources = [], []
     for path in files:
         run_ts = path.parent.parent.name
-        task_group = path.parent.parent.parent.name
-        export = path.parent.parent.parent.parent.name
+        parts = path.relative_to(root).parts
+        # Nested layout has <export>/<task_group>/<run_ts>/results/<file>; flat has 3 parts.
+        path_group = parts[1] if len(parts) >= 5 else None
+        path_export = parts[0] if len(parts) >= 5 else None
+        try:
+            model_name = json.loads(path.read_text()).get("model_name") or ""
+        except Exception:
+            model_name = ""
+        export = (Path(model_name).name if model_name else None) or path_export or run_ts
         arm, iteration = split_export(export)
         rel = str(path.relative_to(root))
         n_before = len(rows)
@@ -159,7 +208,11 @@ def cmd_ingest(args) -> int:
                     arm=arm,
                     iteration=iteration,
                     root=args.label,
-                    task_group=task_group,
+                    # The directory is authoritative when present: the same task can
+                    # sit in two groups with different values (hellaswag scores
+                    # differently under open-sci-0.01 and dclm-core-rest). Derive from
+                    # the task only for the flat layout, where there is no group dir.
+                    task_group=path_group or resolve_task_group(task, exact, prefixes, None),
                     run_ts=run_ts,
                     task=task,
                     parent=None,
@@ -259,6 +312,11 @@ def main() -> int:
     ing.add_argument("--db", required=True, help="sqlite file to create or extend")
     ing.add_argument("--label", default="poeppel1", help="value for the `root` column")
     ing.add_argument("--replace", action="store_true", help="drop this label's rows first")
+    ing.add_argument(
+        "--task-groups",
+        default="submodules/oellm_evals/oellm/resources/task-groups.yaml",
+        help="task-groups.yaml used to map task -> task_group",
+    )
     ing.set_defaults(func=cmd_ingest)
 
     cmp_ = sub.add_parser("compare", help="diff one export against one in another DB")

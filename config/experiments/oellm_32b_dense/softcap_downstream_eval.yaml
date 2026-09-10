@@ -219,7 +219,16 @@ sweep:
         # verbatim, so a multi-word value without them sets SINGULARITY_ARGS=--nv
         # and then tries to RUN `--contain` as a command.
         backend.env.SINGULARITY_ARGS: '"--nv --contain --env PYTHONNOUSERSITE=1 --env SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"'
-        backend.env.HF_HOME: /e/project1/jureap59/poeppel1/cache
+        # MUST live under the same tree as the outputs. The container runs with
+        # --contain, so only the bind paths oellm-eval computes are visible, and
+        # /e/project1/jureap59/poeppel1/cache is a SYMLINK into /e/scratch/jureap59
+        # -- a different project root, which is not bound. Inside the container the
+        # symlink dangled, HF_HOME looked empty, and all 42 multilingual tasks died
+        # with "Couldn't reach 'CohereForAI/Global-MMLU' on the Hub
+        # (OfflineModeIsEnabled)" while the array still reported COMPLETED.
+        # The 12 open-sci-0.01 tasks passed only because that container ships their
+        # datasets itself.
+        backend.env.HF_HOME: /e/fscratch/e-sta-openeurollm/poeppel1/eval/hf_home
         backend.env.HF_HUB_OFFLINE: "1"
         backend.env.HF_DATASETS_OFFLINE: "1"
       configs:
