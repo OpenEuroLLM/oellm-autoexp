@@ -1145,6 +1145,9 @@ class MegatronConfig(ConfigInterface):
     # fraction for weaker decay. Biases are always excluded. Together with --qk-layernorm-wd-
     # mult this generalises --apply-wd-to-qk-layernorm, so they are mutually exclusive with
     # it.
+    # Separate final decoder norm WD; None preserves residual-norm inheritance.
+    final_norm_wd_mult: float | None = None
+
     residual_norm_wd_mult: float = 0.0
 
     # Multiplier on --weight-decay for the word-embedding matrix. 1.0 = decay like every other
