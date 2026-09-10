@@ -1,0 +1,235 @@
+# @package _global_
+#
+# 32B dense Qwen3-like flagship — clean production line (v2).
+#
+# Forked from 6c7e27d, i.e. the stack that ran 0-34,455 healthy:
+#   Megatron-LM  e7c9d4dd  (0.16 lineage)
+#   container    nemo_26.04.sif
+#   masking      OFF
+# The 0.19 / TE-2.18 upgrade and the inter-document masking work are NOT on this
+# line. Do not raise the submodule pin without regenerating cli_metadata.py,
+# config_schema.py and base_defaults.yaml — 0.19 renames norm_epsilon ->
+# layernorm_epsilon and drops async_tensor_model_parallel_allreduce, so a bare
+# pin bump silently changes the model.
+#
+# Shared settings only. Runnable entry points are production.yaml and smoke.yaml.
+
+defaults:
+  - /backend: megatron_torchdist_localaddr
+  - /container: jupiter
+  - /slurm: jupiter_autoexclude
+  - /job: auto_restart_ckptreset
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/oellm_32b_dense/models: qwen3_dense_32b
+  - /backend/megatron/oellm_32b_dense/data: oellm_256k_15TT_jupiter_train
+  # Sample-based schedule: GBS, train_samples, warmup and the WSD tail. Its
+  # data_cache_path is overridden below (see STORAGE ROOT); the rest of the
+  # group must stay untouched because those numbers are in the cache key.
+  - /backend/megatron/oellm_32b_dense/schedule: prod_15TT
+  - _self_
+
+backend:
+  aux:
+    active_nodes: 512          # world = active_nodes * 4 GPUs
+    variant: "v2"              # ablation tag, feeds job.name
+    lr_tag: "1.75e-4"
+    warmup_steps: 10000
+
+  torchrun_args:
+    nnodes: "${backend.aux.active_nodes}"
+    # Recovery belongs to the MONITOR, not to torchrun. A torchrun-level restart
+    # re-enters the same allocation with the same (possibly faulty) nodes and
+    # burns wall clock silently; the monitor cancels, rescans the log for
+    # attributable nodes, extends the exclusion list and resubmits.
+    max_restarts: "0"
+
+  megatron:
+    # ft_launcher and these two flags travel together. Under `python -m
+    # torch.distributed.run` (which is what megatron_torchdist_localaddr uses)
+    # --enable-ft-package makes every rank require FT_RANK_MONITOR_IPC_SOCKET,
+    # which only ft_launcher sets, and the job dies in setup.
+    enable_ft_package: false
+    calc_ft_timeouts: false
+    inprocess_restart: false
+
+    # --- cross-document masking: OFF -------------------------------------
+    # reset_attention_mask / reset_position_ids are inert on this stack anyway
+    # (the GPT layer specs pin attn_mask_type to causal, and RoPE never reads
+    # position_ids), and building the mask costs a 67 MB tril per sample in each
+    # worker. Left explicit so the intent is visible rather than inherited.
+    reset_attention_mask: false
+    reset_position_ids: false
+    create_attention_mask_in_dataloader: false
+
+    # === STORAGE ROOT: ExaFLASH (fscratch), not ExaSTORE ====================
+    # Both values are overridden HERE, in _self_, because it is the only
+    # position that unconditionally wins: the data group is composed before
+    # the schedule group, and prod_15TT.yaml owns data_cache_path.
+    #
+    # They MUST move together. The Megatron dataset cache key is a hash of
+    # {dataset_path, num_samples, split, seed, sequence_length, tokenizer},
+    # so a datamix rooted at /e/fscratch has different keys from one rooted at
+    # /e/scratch and needs its own cache directory.
+    #
+    # VERIFIED 2026-09-09: the fscratch cache holds a per-dataset train index
+    # for all 452 datasets (1808 files = 452 x 4) whose num_samples match the
+    # scratch cache exactly (e.g. 2,772,091 for finepdfs spa_Latn shard_0000),
+    # i.e. it was built with these prod_15TT numbers. Pointing here is a cache
+    # HIT, not a rebuild.
+    #
+    # NB the TOKENIZER deliberately stays on /e/data1: it is part of the cache
+    # key, so moving it would invalidate every index in that directory. It is
+    # read once at startup, so it is not on the hot path anyway.
+    data_args_path: /e/project1/e-sta-openeurollm/production_training/oellm_32b_dense/flagship_datamix_option5_fscratch.txt
+    data_cache_path: /e/fscratch/e-sta-openeurollm/production_training/oellm_32b_dense/cache
+
+    exit_signal_handler: true
+    exit_duration_in_mins: 690   # 12 h wall limit, 30 min for the final write
+
+    # mbs=2, not 1: measured +4.4% at PP=2 and +2.8% at PP=4 at production-
+    # equivalent per-GPU work. mbs=4 OOMs on a 95 GiB card at both PP=2 and PP=4.
+    micro_batch_size: 2
+    manual_gc: true
+    manual_gc_interval: 50
+
+    # DATA
+    dataloader_type: single
+    padded_vocab_size: 262144
+    num_workers: 32
+    dataloader_prefetch_factor: 8
+    log_interval: 5
+
+    # PP=4 / VPP=2. Best measured at fixed GBS=4096: 350.3 TFLOP/s/GPU vs 333.7
+    # (PP=2/mbs=1) and 348.4 (PP=2/mbs=2) at the same 51% allocated memory;
+    # PP=8 is much worse (302.6). Fall back with
+    #   -o backend.megatron.pipeline_model_parallel_size=2
+    pipeline_model_parallel_size: 4
+    pipeline_model_parallel_layout: "Et\\*5\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*3L"
+    tensor_model_parallel_size: 4
+    sequence_parallel: true
+
+    use_distributed_optimizer: true
+    num_distributed_optimizer_instances: 1
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    tp_comm_overlap: true
+    defer_embedding_wgrad_compute: true
+    cuda_graph_impl: none
+
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: te
+
+    async_save: true
+    use_persistent_ckpt_worker: true
+    ckpt_assume_constant_structure: true
+
+    # No emergency checkpoint on a detected failure. The default
+    # (validate_results) takes an ASYNC save at the moment of divergence and
+    # races the shutdown, which is where the truncated iter_0001025 came from.
+    # `disabled` keeps the NaN guard — rerun_state_machine still validates and
+    # raises RuntimeError naming rank/node/device/iteration — it just does not
+    # write a checkpoint on the way down.
+    rerun_mode: disabled
+
+    non_persistent_save_interval: 125
+    save_interval: 4000
+    global_batch_size: 4096
+    lr_warmup_samples: ${oc.muli:${backend.aux.warmup_steps},${backend.megatron.global_batch_size}}
+
+    grad_reduce_in_bf16: false     # fp32 grad accumulation
+    ddp_reduce_scatter_with_fp32_accumulation: false
+    # OFF (null = Megatron's default). The 0-34,455 production segment and
+    # every run in that family carried 1e-4; this line is a deliberate
+    # departure from that baseline, not an oversight. Set to 1e-4 to restore.
+    output_z_loss_coeff: null
+
+    fp8: hybrid
+    fp8_recipe: delayed
+    fp8_param_gather: false
+    first_last_layers_bf16: false
+    fp8_amax_history_len: 1024
+    fp8_amax_compute_algo: max
+    cuda_graph_scope: full
+
+    # 1.75e-4, not the 3e-4 of the oellm_32b_dense production family.
+    # Keep aux.lr_tag in sync -- it only feeds job.name, so a mismatch
+    # silently mislabels checkpoints, tensorboard and wandb.
+    lr: 1.75e-4
+
+  env:
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+    TORCH_CPP_LOG_LEVEL: "error"
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/nemo_26.04.sif
+  # MUST be pinned alongside the image. config/container/jupiter.yaml defaults
+  # to /usr/bin/python, which in this image has no wandb; the real environment
+  # is /opt/venv. Scoped here because other configs still use the old image.
+  python: /opt/venv/bin/python
+
+slurm:
+  env:
+    HF_HOME: /e/scratch/e-sta-openeurollm/hf_cache/${oc.env:USER}
+
+    # NVLink SHARP is a known multi-node hang source on GH200.
+    NCCL_NVLS_ENABLE: "0"
+    SHARP_SMX_SOCK_ADDR_FAMILY: ipv4
+    TORCH_AVOID_RECORD_STREAMS: "1"
+    TORCH_NCCL_SHOW_EAGER_INIT_P2P_SERIALIZATION_WARNING: "FALSE"
+    TRITON_LIBCUDA_PATH: /usr/local/cuda/compat/lib.real   # a DIRECTORY (gcc -L)
+    TOKENIZERS_PARALLELISM: "false"
+
+    # Nothing chatty may cross the shared stdout path at 2048 ranks.
+    # tqdm is NOT rank-gated (cuda_graphs.py opens a bar on every rank); with
+    # torchrun --tee 3 that is 2048 streams, srun abandons IO and TRUNCATES the
+    # log. NCCL_DEBUG=info funnels the same way and froze job 1356626 at 28 MB,
+    # so debug output goes to a PER-HOST file instead.
+    TQDM_DISABLE: "1"
+    PYTHONWARNINGS: "ignore::UserWarning"
+    NCCL_DEBUG: WARN
+    NCCL_DEBUG_SUBSYS: ALL
+    NCCL_DEBUG_FILE: ${job.base_output_dir}/nccl-%h.log
+
+    # GH200 is Hopper (arch < 10), so the TP>1 + sequence_parallel serialisation
+    # requirement applies. Megatron only WARNS: without this the TP=4 comm/GEMM
+    # overlap silently does not overlap. config/slurm/jupiter.yaml does not set
+    # it, so every JUPITER experiment must.
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    UB_SKIPMC: "1"                      # required for tp_comm_overlap (userbuffers)
+
+    # --- JIT / compile caches: NODE-LOCAL, never the shared FS ---------------
+    # These default into shared HOME; at 2048 ranks torch's cpp_extension build
+    # serialises on a lockfile there, which is a multi-minute-to-indefinite
+    # startup stall that prints nothing while it waits. /dev/shm is RAM-backed,
+    # node-local and already in container.bind.
+    TRITON_CACHE_DIR: /dev/shm/${oc.env:USER}/triton_cache
+    TORCHINDUCTOR_CACHE_DIR: /dev/shm/${oc.env:USER}/inductor_cache
+    TORCH_EXTENSIONS_DIR: /dev/shm/${oc.env:USER}/torch_extensions
+    CUDA_CACHE_PATH: /dev/shm/${oc.env:USER}/nv_compute_cache
+
+    # Python bytecode is the cache that list forgot. Python writes .pyc next to
+    # the source, which inside the container is the --writable-tmpfs overlay
+    # shared by the 4 ranks on a node. MEASURED 2026-08-22 (job 1457594, 512
+    # nodes): eight ranks hit "EOFError: marshal data too short" on a TRUNCATED
+    # .pyc inside the ASYNC CHECKPOINT WORKER; the worker died at import, the
+    # parent blocked forever, and the saves in flight wrote all 4088 shards but
+    # never the .metadata commit marker -- so every later job died with
+    # "Checkpoint directory None does not exist" and restart-looped.
+    PYTHONDONTWRITEBYTECODE: "1"
+
+    PYTORCH_CUDA_ALLOC_CONF: "garbage_collection_threshold:0.8"
+    PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.8"
+
+  # A dead node's srun TASK must not tear the whole step down.
+  srun_opts: "--kill-on-bad-exit=0 --no-kill"
+
+  sbatch:
+    nodes: ${backend.aux.active_nodes}
+    time: "12:00:00"                 # JUPITER wall limit
+    account: e-ext-2025e02-108
+    signal: "TERM@240"               # stop + checkpoint before the time limit
+    comment: "NVIDIA_GPU_CLOCKS=1980"
+
+  # make the sbatch script unique for every re-run
+  name: "job_${oc.timestring:}"

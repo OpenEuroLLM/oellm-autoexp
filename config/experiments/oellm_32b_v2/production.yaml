@@ -1,0 +1,38 @@
+# @package _global_
+#
+# 32B dense flagship, 512 nodes, 15 T tokens FROM SCRATCH.
+#
+#   python scripts/run_autoexp.py +experiments=oellm_32b_v2/production
+#
+# Prerequisite: the data cache must already be built with the SAME
+# /backend/megatron/oellm_32b_dense/schedule group (prod_15TT), or the first
+# job spends hours building the 15 T train index under the wall clock.
+
+defaults:
+  - /experiments/oellm_32b_v2/base
+  - _self_
+
+job:
+  # Every variant gets its own name -> own base_output_dir -> own checkpoints,
+  # so no run can ever resume from a sibling's checkpoint.
+  name: "oellm_32b_v2_${backend.aux.variant}_gbs${backend.megatron.global_batch_size}_lr${backend.aux.lr_tag}"
+  base_output_dir: /e/project1/e-sta-openeurollm/production_training/${job.name}
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+
+  est_step_time_s: 4.2
+  est_steps: ${oc.coalesce:${backend.megatron.exit_interval},${backend.megatron.train_iters},${oc.divi:${backend.megatron.train_samples},${backend.megatron.global_batch_size}}}
+  est_startup_min: 10
+
+backend:
+  aux:
+    active_nodes: 512
+    variant: "prod"
+
+  megatron:
+    wandb_project: oellm_32b_v2
+    wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
+    save: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints
+    non_persistent_global_ckpt_dir: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints_rolling

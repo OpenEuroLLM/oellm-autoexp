@@ -1,0 +1,47 @@
+# @package _global_
+#
+# Pipeline smoke test: same code path, same container, same parallelism SHAPE
+# reduced to 16 nodes and 50 iterations. Run this before every production
+# launch — it catches container, rendezvous, data-cache and checkpoint-write
+# breakage in ~20 minutes instead of in the 512-node queue.
+#
+#   python scripts/run_autoexp.py +experiments=oellm_32b_v2/smoke
+#
+# NB it writes to its own scratch tree and its own wandb project, so it can
+# never touch a production checkpoint.
+
+defaults:
+  - /experiments/oellm_32b_v2/base
+  - _self_
+
+job:
+  name: "oellm_32b_v2_smoke"
+  base_output_dir: /e/scratch/e-sta-openeurollm/smoke/${job.name}
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+
+  est_step_time_s: 4.2
+  est_steps: 50
+  est_startup_min: 10
+
+backend:
+  aux:
+    active_nodes: 16
+    variant: "smoke"
+
+  megatron:
+    # PP=4 * TP=4 = 16 GPUs per replica, so 16 nodes (64 GPUs) gives DP=4 —
+    # the production parallelism shape, just fewer data-parallel replicas.
+    exit_interval: 50
+    log_interval: 1
+    eval_interval: 999999
+    eval_iters: 0
+    # Exercise the real checkpoint path (a write AND a reload) inside the run.
+    save_interval: 25
+    non_persistent_save_interval: 10
+    wandb_project: oellm_32b_v2_smoke
+    wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
+    save: ${job.base_output_dir}/checkpoints
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/checkpoints_rolling
