@@ -10,6 +10,13 @@ slurm: ${slurm}  # ! do not change this
 start_condition: null
 cancel_condition: null
 
+# Run on the SUBMITTING HOST instead of Slurm. Per-job counterpart to the global
+# `--local` flag. Declared here (not only on the dataclass) because Hydra runs in
+# STRUCT mode, so a key absent from this tree could otherwise only be set with
+# the `+` append form -- same trap as the est_* fields below.
+# Only for cheap setup stages: no allocation, no accounting, no time limit.
+local: false
+
 # --- submit-gate cost/runtime estimate (estimate-only, never reaches SLURM) ---
 # Declared here with null defaults so a plain `job.est_step_time_s=4.2` override
 # works. Hydra runs the config in STRUCT mode, so a key absent from the yaml
@@ -23,3 +30,15 @@ cancel_condition: null
 est_step_time_s: null
 est_steps: null
 est_startup_min: 0.0
+
+# --- restart / checkpoint hooks (consumed by the job policy's RestartAction) --
+# Declared here with inert defaults for the same STRUCT-mode reason as the
+# est_* fields above: config/job/auto_restart_ckptreset.yaml interpolates
+# ${job.checkpoint_hook_every}, so without a declaration in this tree every
+# experiment using that policy must set all four or composition dies with
+# "Interpolation key 'job.checkpoint_hook_every' not found".
+# Empty / 0 = off, which is the behaviour when nothing overrides them.
+restart_pre_command: ""
+restart_exclude_file: ""
+checkpoint_hook_command: ""
+checkpoint_hook_every: 0
