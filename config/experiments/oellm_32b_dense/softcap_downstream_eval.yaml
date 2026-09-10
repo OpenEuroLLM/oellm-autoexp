@@ -229,6 +229,14 @@ sweep:
         # The 12 open-sci-0.01 tasks passed only because that container ships their
         # datasets itself.
         backend.env.HF_HOME: /e/fscratch/e-sta-openeurollm/poeppel1/eval/hf_home
+        # HF_DATASETS_CACHE IS REQUIRED, and HF_HOME does not imply it. datasets
+        # 4.4.1 will not resolve CohereForAI/Global-MMLU or facebook/belebele from
+        # the cache on HF_HOME alone -- it goes to the Hub and dies with
+        # OfflineModeIsEnabled. Verified in the container: with HF_DATASETS_CACHE
+        # both load, without it both fail, and HF_DATASETS_OFFLINE makes no
+        # difference either way. jitsev1's working runs set it; we did not, which is
+        # why all 42 multilingual tasks failed in both attempts.
+        backend.env.HF_DATASETS_CACHE: /e/fscratch/e-sta-openeurollm/poeppel1/eval/hf_home/datasets
         backend.env.HF_HUB_OFFLINE: "1"
         backend.env.HF_DATASETS_OFFLINE: "1"
       configs:
