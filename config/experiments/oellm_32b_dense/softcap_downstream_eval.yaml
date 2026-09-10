@@ -207,6 +207,13 @@ sweep:
         # EVAL_BASE_DIR/results/<export>/<task_group>/<run_ts>/results/ -- which is
         # exactly the layout eval_results_db.py ingests. Pointing EVAL_BASE_DIR at a
         # results-only directory broke both at once.
+        # config/backend/oellm_eval.yaml pins QUEUE_LIMIT=1, which is right for
+        # local mode (capacity is forced to 1 there anyway) and fatal for scheduling
+        # mode: capacity is QUEUE_LIMIT minus jobs already in OUR queue, so with a
+        # training job running it was 1-1=0 and oellm-eval scheduled nothing --
+        # "No remaining queue capacity" -- while still exiting 0.
+        # 250 is JUPITER's own default (oellm/resources/clusters.yaml:33).
+        backend.env.QUEUE_LIMIT: "250"
         backend.env.EVAL_CONTAINER_IMAGE: MegatronTraining-JUPITER-eval_aarch64_202608131040.sif
         # QUOTES ARE PART OF THE VALUE. slurm_gen emits `export KEY=VALUE`
         # verbatim, so a multi-word value without them sets SINGULARITY_ARGS=--nv
