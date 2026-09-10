@@ -1,0 +1,13 @@
+defaults:
+  - /experiments/oellm_32b_v2/base
+  - /experiments/oellm_32b_v2/fusedce_baseline
+  - _self_
+
+backend:
+  aux:
+    variant: "fusedce_patched"
+
+# 
+container:
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218_aarch64.sif
+  python: "/opt/venv/bin/python"
