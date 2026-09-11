@@ -121,6 +121,31 @@ def _install_tokenizer_override(tokenizer_path: str | Path) -> None:
     _mlm_args._tokenizer_config_from_args = _patched
 
 
+def _install_single_rank_pipeline_layout_override(model_load_save):
+    """Clear a training-only custom pipeline layout during single-rank export.
+
+    Bridge resets PP and VPP for a single-rank load, but currently leaves
+    ``pipeline_model_parallel_layout`` on the TransformerConfig. MCore then uses
+    the first virtual stage from that stale layout instead of constructing all
+    layers. Return the original loader so the caller can restore it afterward.
+    """
+    original = model_load_save.load_model_config
+
+    def _patched(*args, **kwargs):
+        model_cfg, mlm_args = original(*args, **kwargs)
+        layout = getattr(model_cfg, "pipeline_model_parallel_layout", None)
+        if layout is not None:
+            LOGGER.info(
+                "Clearing checkpoint pipeline_model_parallel_layout for single-rank export"
+            )
+            model_cfg.pipeline_model_parallel_layout = None
+            model_cfg.virtual_pipeline_model_parallel_size = None
+        return model_cfg, mlm_args
+
+    model_load_save.load_model_config = _patched
+    return original
+
+
 def _share_embeddings_from_config(megatron: dict) -> bool | None:
     """Resolve whether input embeddings and the output layer are tied.
 
@@ -228,10 +253,7 @@ def _run_convert(
 
     try:
         from megatron.bridge import AutoBridge
-        from megatron.bridge.training.model_load_save import (
-            load_megatron_model as _load_megatron_model,
-            temporary_distributed_context,
-        )
+        from megatron.bridge.training import model_load_save as _model_load_save
     except ImportError as exc:
         raise RuntimeError(
             "Megatron-Bridge is not importable in this Python environment. "
@@ -262,13 +284,19 @@ def _run_convert(
     for _var in ("MASTER_ADDR", "MASTER_PORT"):
         if os.environ.pop(_var, None) is not None:
             LOGGER.info("Cleared %s so a free port is auto-selected for conversion", _var)
-    with temporary_distributed_context(backend="gloo"):
-        megatron_model = _load_megatron_model(
-            str(megatron_path),
-            model_type="gpt",
-            use_cpu_init=True,
-            skip_temp_dist_context=True,
+    with _model_load_save.temporary_distributed_context(backend="gloo"):
+        original_load_model_config = _install_single_rank_pipeline_layout_override(
+            _model_load_save
         )
+        try:
+            megatron_model = _model_load_save.load_megatron_model(
+                str(megatron_path),
+                model_type="gpt",
+                use_cpu_init=True,
+                skip_temp_dist_context=True,
+            )
+        finally:
+            _model_load_save.load_model_config = original_load_model_config
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
