@@ -16,7 +16,7 @@ defaults:
 
 job:
   name: "oellm_32b_v2_smoke"
-  base_output_dir: /e/scratch/e-sta-openeurollm/smoke/${job.name}
+  base_output_dir: /e/scratch/e-sta-openeurollm/production_training/smoke/${job.name}
   log_path: ${.base_output_dir}/logs/slurm-%j.log
   log_path_current: ${.base_output_dir}/logs/current.log
   config_path: ${.base_output_dir}/logs/config-%j.yaml
@@ -42,5 +42,5 @@ backend:
     non_persistent_save_interval: 10
     wandb_project: oellm_32b_v2_smoke
     wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
-    save: ${job.base_output_dir}/checkpoints
-    non_persistent_global_ckpt_dir: ${job.base_output_dir}/checkpoints_rolling
+    save: null
+    non_persistent_global_ckpt_dir: null
