@@ -114,7 +114,10 @@ backend:
     overlap_grad_reduce: true
     overlap_param_gather: true
     tp_comm_overlap: true
-    defer_embedding_wgrad_compute: true
+    # MUST stay false. With overlap_grad_reduce the output layer's DP reduce-scatter is
+    # launched before the deferred wgrad GEMMs are added, so its gradient is wrong.
+    # Confirmed 2026-09-11, job 1760228 (smoke/defer_wgrad_test): every 32B run before v2 had it on.
+    defer_embedding_wgrad_compute: false
     cuda_graph_impl: none
 
     cross_entropy_loss_fusion: true
