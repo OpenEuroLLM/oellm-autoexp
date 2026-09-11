@@ -80,78 +80,44 @@ def _stage_checkpoint(
     return staged
 
 
-def _tokenizer_load_blocker(tok_model: str) -> str | None:
-    """Return a reason string if the baked ``tokenizer_model`` can't be loaded
-    here (so it should be redirected to the reference tokenizer), else
-    ``None``.
+def _install_tokenizer_override(tokenizer_path: str | Path) -> None:
+    """Make Bridge use the converter's tokenizer instead of checkpoint args.
 
-    Two failure modes, both fatal to Bridge's ``build_tokenizer`` (which only
-    needs the vocab size during load):
-
-    1. The path is absent — typical for checkpoints trained on another cluster
-       that bake an absolute ``/gpfs/...`` path. Bridge treats it as a Hub repo
-       id and raises an ``HFValidationError``.
-    2. The path exists but is a *SentencePiece-only* tokenizer dir (a
-       ``tokenizer.model`` with no ``tokenizer.json``). Loading it via
-       ``AutoTokenizer`` needs the ``sentencepiece`` package, which isn't in the
-       conversion container; transformers then falls back to a TikToken parser
-       that chokes on the binary ``.model`` (``ValueError: Error parsing line``).
-    """
-    p = Path(tok_model)
-    if not p.exists():
-        return "absent on this filesystem"
-    if p.is_dir() and not (p / "tokenizer.json").exists():
-        return "a SentencePiece-only dir (no tokenizer.json; needs sentencepiece)"
-    if p.is_file() and p.suffix == ".model":
-        return "a raw SentencePiece .model (needs sentencepiece)"
-    return None
-
-
-def _install_tokenizer_fallback(fallback_dir: Path) -> None:
-    """Redirect a checkpoint's baked tokenizer path to a local dir when it
-    can't be loaded in this container.
-
-    Bridge's ``build_tokenizer`` is called only to compute the (padded) vocab
-    size while loading the model, so any tokenizer with the same vocab works. We
-    monkeypatch ``_tokenizer_config_from_args`` so that, when the baked
-    ``tokenizer_model`` is unusable here (see ``_tokenizer_load_blocker`` —
-    either missing, or a SentencePiece-only dir/file the container can't parse),
-    it is swapped for ``fallback_dir`` (the local reference tokenizer staged for
-    this conversion, which has the correct vocab *and* a ``tokenizer.json`` so it
-    loads without sentencepiece). Checkpoints whose paths load fine are left
-    untouched.
+    Megatron restores ``tokenizer_model`` from checkpoint args by default. That
+    saved path may be inaccessible even when it exists on the host (for example,
+    when it is outside the container's bind mounts). Bridge only needs the
+    tokenizer while loading to determine vocabulary metadata, and the converter
+    input is already authoritative for both generated HF config and final
+    tokenizer assets, so always use it for this intermediate load as well.
     """
     try:
         from megatron.bridge.training.mlm_compat import arguments as _mlm_args
     except Exception as exc:  # noqa: BLE001
-        LOGGER.warning("Tokenizer fallback not installed (mlm_compat import failed: %s)", exc)
+        LOGGER.warning("Tokenizer override not installed (mlm_compat import failed: %s)", exc)
         return
 
-    orig = _mlm_args._tokenizer_config_from_args
-    if getattr(orig, "_oellm_tokenizer_fallback", False):
-        return
+    current = _mlm_args._tokenizer_config_from_args
+    orig = getattr(current, "_oellm_tokenizer_original", current)
+    requested = str(tokenizer_path)
 
     def _patched(args):
         cfg = orig(args)
-        tok_model = getattr(cfg, "tokenizer_model", None)
-        reason = _tokenizer_load_blocker(tok_model) if tok_model else None
-        if reason is not None:
-            LOGGER.warning(
-                "Checkpoint tokenizer_model %r is %s; redirecting to local "
-                "reference tokenizer %s (used only for vocab size).",
-                tok_model,
-                reason,
-                fallback_dir,
+        checkpoint_tokenizer = getattr(cfg, "tokenizer_model", None)
+        if checkpoint_tokenizer != requested:
+            LOGGER.info(
+                "Overriding checkpoint tokenizer_model %r with converter input %s",
+                checkpoint_tokenizer,
+                requested,
             )
             try:
-                cfg.tokenizer_model = str(fallback_dir)
+                cfg.tokenizer_model = requested
             except Exception:  # noqa: BLE001 — frozen dataclass fallback
                 import dataclasses
 
-                cfg = dataclasses.replace(cfg, tokenizer_model=str(fallback_dir))
+                cfg = dataclasses.replace(cfg, tokenizer_model=requested)
         return cfg
 
-    _patched._oellm_tokenizer_fallback = True
+    _patched._oellm_tokenizer_original = orig
     _mlm_args._tokenizer_config_from_args = _patched
 
 
@@ -177,6 +143,7 @@ def _run_convert(
     hf_out: Path,
     extra_env: dict[str, str] | None = None,
     share_embeddings: bool | None = None,
+    tokenizer_path: str | Path | None = None,
 ) -> None:
     """Convert via Bridge's Python API directly.
 
@@ -275,9 +242,10 @@ def _run_convert(
     LOGGER.info("Loading AutoBridge from %s", hf_ref_model)
     bridge = AutoBridge.from_hf_pretrained(str(hf_ref_model), trust_remote_code=True)
 
-    # Heal cross-cluster checkpoints whose baked tokenizer path is absent here.
-    # The reference tokenizer staged into hf_ref_model has the correct vocab.
-    _install_tokenizer_fallback(hf_ref_model)
+    # Checkpoint args contain the tokenizer path used during training, but that
+    # path may be outside this job's permissions or container bind mounts. Make
+    # the explicit converter input authoritative for the intermediate load too.
+    _install_tokenizer_override(tokenizer_path or hf_ref_model)
 
     # AutoBridge.export_ckpt() calls load_megatron_model without passing
     # model_type; for legacy MegatronLM checkpoints (no run_config.yaml) this
@@ -428,7 +396,14 @@ def run_export(
             share_emb = _share_embeddings_from_config(_load_megatron_config(megatron_config))
 
         LOGGER.info("Step 3/4: bridge.export_ckpt (in-process)")
-        _run_convert(bridge_root, megatron_path, dummy_dir, hf_path, share_embeddings=share_emb)
+        _run_convert(
+            bridge_root,
+            megatron_path,
+            dummy_dir,
+            hf_path,
+            share_embeddings=share_emb,
+            tokenizer_path=str(target_tokenizer),
+        )
 
         LOGGER.info("Step 4/4: patch HF export to use target tokenizer %s", target_tokenizer)
         patch_config_and_tokenizer(hf_path=hf_path, tokenizer_path=str(target_tokenizer))
