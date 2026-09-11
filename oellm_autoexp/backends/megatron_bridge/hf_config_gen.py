@@ -37,6 +37,12 @@ def _g(megatron: dict, *keys, default=None):
 def _padded_vocab(raw_vocab: int, megatron: dict) -> int:
     """Apply Megatron's vocab-size padding to match the trained embedding row
     count."""
+    # A resolved training config may carry the exact embedding row count chosen
+    # at model construction time. It is more authoritative than recomputing
+    # from the tokenizer (whose added-token metadata can change independently).
+    explicit = _g(megatron, "padded_vocab_size")
+    if explicit is not None:
+        return int(explicit)
     pad = _g(megatron, "make_vocab_size_divisible_by")
     if pad and pad > 0:
         # Round UP to the next multiple of `pad`.
@@ -96,10 +102,9 @@ def derive_qwen3_hf_config(megatron: dict, vocab_size: int) -> dict[str, Any]:
         "tie_word_embeddings": tie_embeddings,
         "torch_dtype": dtype,
         "use_cache": True,
-        # Megatron pads the embedding rows up to a multiple of
-        # `make_vocab_size_divisible_by` (default 128). The trained
-        # checkpoint has the padded size, so the HF config must report it
-        # to satisfy transformers' shape check on load.
+        # Prefer Megatron's explicit `padded_vocab_size`; otherwise pad the
+        # tokenizer length by `make_vocab_size_divisible_by`. The HF config must
+        # report the trained embedding row count to pass its shape check.
         "vocab_size": _padded_vocab(vocab_size, megatron),
         "sliding_window": None,
         "use_sliding_window": False,

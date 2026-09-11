@@ -1,0 +1,88 @@
+# @package _global_
+#
+# Standalone JUPITER conversion of the production dense 32B Qwen3-like model:
+# Megatron torch_dist -> Hugging Face safetensors via Megatron-Bridge.
+#
+# Submit through scripts/submit_oellm_32b_hf_conversion_jupiter.sh. The wrapper
+# resolves the latest complete checkpoint by default, validates every input,
+# and supplies the environment variables below.
+
+defaults:
+  - ../base
+  - /backend: megatron_bridge
+  - /container: jupiter
+  - /slurm: jupiter
+  - /sweep: none
+  - override /job: default
+  - _self_
+
+aux:
+  iteration: ${oc.env:OELLM_32B_CKPT_ITER}
+
+job:
+  name: "oellm_32b_hf_${aux.iteration}"
+  base_output_dir: ${oc.env:OELLM_32B_CONVERSION_JOB_DIR}
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+  est_step_time_s: 1
+  est_steps: 1
+  est_startup_min: 180
+
+backend:
+  # Dynamic derivation is essential: the production model has Qwen3's 128-dim
+  # heads but a custom 262144-row vocabulary, 4096 context, RoPE base 100000,
+  # RMSNorm epsilon 1e-5, and untied input/output embeddings.
+  derive_hf_arch: qwen3
+  megatron_config_path: ${oc.env:OELLM_32B_TRAINING_CONFIG}
+  megatron_path: ${oc.env:OELLM_32B_CHECKPOINT}
+  hf_path: ${oc.env:OELLM_32B_HF_OUTPUT}
+
+  # With derive_hf_arch enabled this identifies the HF model family only; the
+  # config and tokenizer are taken from the production inputs below.
+  hf_model: Qwen/Qwen3-32B
+  tokenizer: ${oc.env:OELLM_32B_TOKENIZER,/e/data1/datasets/playground/mmlaion/oellm/oellm_tokenizer_256k}
+
+  bridge_root: /workspace/oellm-autoexp/submodules/Megatron-Bridge
+  resources: /workspace/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge
+  env:
+    PYTHONPATH: /workspace/oellm-autoexp/submodules/Megatron-Bridge/src:/workspace/oellm-autoexp
+    PYTHONNOUSERSITE: "1"
+    HF_HOME: /e/scratch/e-sta-openeurollm/hf_cache/${oc.env:USER}
+    HF_HUB_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+    NVTE_ALLOW_UNSAFE_PICKLE_EXTRA_STATE: "1"
+
+container:
+  image: ${oc.env:OELLM_32B_BRIDGE_IMAGE,/e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-bridge-bridge_aarch64_202605191331.sif}
+  bind:
+    - /e
+    - /dev/shm
+    - ${oc.env:OELLM_AUTOEXP_ROOT}:/workspace/oellm-autoexp
+  python: /usr/bin/python
+
+slurm:
+  name: "oellm_32b_hf_${aux.iteration}"
+  env:
+    GPUS_PER_NODE: "1"
+    NUM_GPUS_PER_NODE: "1"
+    NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
+    OMP_NUM_THREADS: "64"
+  sbatch:
+    account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
+    partition: ${oc.env:SLURM_PARTITION,booster}
+    nodes: 1
+    ntasks: 1
+    ntasks_per_node: 1
+    gpus_per_node: 1
+    cpus_per_task: 288
+    exclusive: true
+    time: "06:00:00"
+    signal: null
+    job_name: null
+  srun:
+    cpus_per_task: 288
+    exclusive: true
+    wait: 60
+  srun_opts: "--kill-on-bad-exit=1"

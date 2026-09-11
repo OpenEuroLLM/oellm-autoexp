@@ -41,6 +41,7 @@ from pathlib import Path
 from oellm_autoexp.backends.megatron_bridge.create_dummy_model import build_dummy_model
 from oellm_autoexp.backends.megatron_bridge.hf_config_gen import write_hf_config_dir
 from oellm_autoexp.backends.megatron_bridge.patch_tokenizer import patch_config_and_tokenizer
+from oellm_autoexp.backends.megatron_bridge.validate_export import validate_qwen3_export
 
 LOGGER = logging.getLogger(__name__)
 
@@ -359,17 +360,23 @@ def run_export(
         raise FileExistsError(f"hf-path {hf_path} already exists; refusing to clobber")
     hf_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if derive_hf_arch:
-        config_dir = None  # set below after staging dir is created
-    else:
-        config_dir = _resolve_resource(resources, "configs", hf_model)
-    _ = _resolve_resource(resources, "templates", hf_model) / "run_config.yaml"
-    reference_tokenizer = _resolve_resource(resources, "tokenizers", hf_model)
     target_tokenizer = (
         _resolve_resource(resources, "tokenizers", tokenizer)
         if (resources / "tokenizers" / tokenizer).exists()
         else tokenizer  # fall back to HF Hub id
     )
+    if derive_hf_arch:
+        # The architecture and vocab size come from the training config and the
+        # target tokenizer, so no model-specific vendored config/template is
+        # needed. Reusing the target tokenizer also makes custom-vocab exports
+        # work offline without first copying its heavy tokenizer files into the
+        # resources tree.
+        config_dir = None  # set below after staging dir is created
+        reference_tokenizer = target_tokenizer
+    else:
+        config_dir = _resolve_resource(resources, "configs", hf_model)
+        _ = _resolve_resource(resources, "templates", hf_model) / "run_config.yaml"
+        reference_tokenizer = _resolve_resource(resources, "tokenizers", hf_model)
 
     # Stage on the same (large) filesystem as the final output rather than the
     # default $TMPDIR (/tmp on a Leonardo compute node is tiny). The dummy HF
@@ -425,6 +432,10 @@ def run_export(
 
         LOGGER.info("Step 4/4: patch HF export to use target tokenizer %s", target_tokenizer)
         patch_config_and_tokenizer(hf_path=hf_path, tokenizer_path=str(target_tokenizer))
+
+        if derive_hf_arch == "qwen3":
+            summary = validate_qwen3_export(hf_path)
+            LOGGER.info("Validated Qwen3 HF export: %s", summary)
 
         if keep_staging:
             persist = hf_path.parent / (hf_path.name + ".staging")
