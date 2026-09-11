@@ -1,0 +1,42 @@
+# @package _global_
+#
+# Cheap smoke test for experiments/abhash/prelude_9B_validation_lumi: same model,
+# same checkpoint dir, same datamix, but one checkpoint, 2 nodes and 2 eval
+# iterations on the dev-g partition. Its point is to prove the expensive things
+# early -- that the torch_dist checkpoint loads at TP=4, that padded_vocab_size
+# comes out as 262656, and that the 155-way val blend builds -- before spending
+# ~275 GPU-hours on the full sweep.
+#
+# It also warms config/experiments/abhash's data_cache_path, so the first real
+# job does not pay the index-build cost.
+#
+# Usage:
+#   SLURM_ACCOUNT=project_465002530 \
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/abhash/prelude_9B_validation_lumi_smoke --submit-and-exit
+
+defaults:
+  - /experiments/abhash: prelude_9B_validation_lumi
+  - _self_
+
+sweep:
+  groups:
+    - type: list
+      configs:
+        - stage: smoke
+          job.name: "prelude_9B_val_smoke_iter0120000"
+          backend.megatron.ckpt_step: 120000
+
+backend:
+  megatron:
+    # 2 nodes x 8 GCDs = 16 ranks, TP=4 -> DP=4; 32/(4*4) = 2 micro-batches per iter.
+    global_batch_size: 32
+    micro_batch_size: 4
+    # Overrides validation/common's 204800 // global_batch_size.
+    eval_iters: 2
+
+slurm:
+  sbatch:
+    nodes: 2
+    partition: dev-g
+    time: "0:50:00"

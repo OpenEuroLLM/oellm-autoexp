@@ -1,0 +1,87 @@
+# @package backend.megatron
+
+# 9B dense Qwen3-like model -- the "prelude"/baby_9b_dense production run.
+#
+# Every field below was read back out of the checkpoints themselves
+# (ckpts/iter_0120000/common.pt -> args, cross-checked against
+# modelopt_run_config.yaml), NOT copied from the scaling-law configs. The
+# scaling-law qwen3_dense_*_ne.yaml files differ in three ways that matter for
+# loading these checkpoints, so do not inherit from them:
+#   * untie_embeddings_and_output_weights: True here, False there
+#   * rotary_base: 100000 here, 10000 there
+#   * tensor_model_parallel_size: 4 here, 1 there
+#
+# On tensor_model_parallel_size=4: Megatron derives
+#   padded_vocab_size = ceil(len(tokenizer) / (make_vocab_size_divisible_by * TP))
+#                       * make_vocab_size_divisible_by * TP
+# len(tokenizer) = 262145 (262144 + 1 added token) and make_vocab_size_divisible_by
+# = 128, so only TP=4 reproduces the checkpoints' padded_vocab_size of 262656
+# (TP=1 -> 262272, TP=2 -> 262400, TP=8 -> 263168). A mismatch fails
+# check_checkpoint_args at load time. Change TP only together with
+# make_vocab_size_divisible_by such that the product still rounds 262145 to 262656.
+
+# MODEL
+num_layers: 36
+hidden_size: 4096
+ffn_hidden_size: 12288
+kv_channels: 128
+swiglu: True
+add_bias_linear: False
+add_qkv_bias: False
+init_method_std: 0.02
+
+# Attention
+num_attention_heads: 32
+num_query_groups: 8
+group_query_attention: True
+attention_softmax_in_fp32: True
+use_flash_attn: True
+
+# Position Embedding
+position_embedding_type: "rope"
+rotary_base: 100000
+rotary_percent: 1.0
+untie_embeddings_and_output_weights: True
+
+# Sequence / Dataloader
+max_position_embeddings: ${.seq_length}
+seq_length: 4096
+create_attention_mask_in_dataloader: False
+dataloader_type: "cyclic"
+tokenizer_type: HuggingFaceTokenizer
+make_vocab_size_divisible_by: 128
+
+# Normalization
+normalization: RMSNorm
+norm_epsilon: 1.e-5
+qk_layernorm: True
+bf16: True
+
+# Disable dropout
+attention_dropout: 0.0
+hidden_dropout: 0.0
+
+# PARALLELISM (must match the checkpoints -- see the note above)
+tensor_model_parallel_size: 4
+pipeline_model_parallel_size: 1
+context_parallel_size: 1
+sequence_parallel: True
+use_torch_fsdp2: False
+recompute_activations: False
+
+# COMM OPTIONS
+distributed_backend: nccl
+distributed_timeout_minutes: 60
+
+# CHECKPOINT FORMAT
+ckpt_format: "torch_dist"
+transformer_impl: "transformer_engine"
+
+# LOGGING
+log_interval: 1
+log_progress: True
+log_throughput: True
+tensorboard_queue_size: 5
+log_timers_to_tensorboard: True
+
+seed: 1234

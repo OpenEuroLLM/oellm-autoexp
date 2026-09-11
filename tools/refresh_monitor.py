@@ -19,6 +19,12 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import sys
+
+# Make sibling modules importable when run as a standalone script.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from write_guard import guard_write  # noqa: E402
 
 
 def _reset_runtime(runtime: dict) -> dict:
@@ -90,6 +96,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"  reset {path.name}  ({reason})")
         if not args.dry_run:
             data["runtime"] = _reset_runtime(runtime)
+            guard_write(path)
             path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         reset_count += 1
 

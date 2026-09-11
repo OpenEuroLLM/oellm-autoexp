@@ -1,0 +1,60 @@
+# @package _global_
+# DEMO: filtering — drop runs where warmup exceeds 30% of total training iterations
+
+defaults:
+  - /backend: megatron_torchrun
+  - /sweep: none
+  - _self_
+
+stage: ""
+
+job:
+  name: "mymodel_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_${stage}"
+  base_output_dir: "results/${job.name}"
+
+backend:
+  megatron:
+    # ... model / data / optimizer / logging config ...
+
+    lr_warmup_iters: 200
+    lr_decay_style: WSD
+    save_interval: 500
+    save: ${job.base_output_dir}/checkpoints
+
+    aux:
+      tokens: ???
+      decay_fraction: 0.0
+
+sweep:
+  type: product
+
+  groups:
+    # GROUP 1: LR × GBSZ grid
+    - type: product
+      params:
+        backend.megatron.lr:                [1.0e-4, 3.0e-4, 6.0e-4]
+        backend.megatron.global_batch_size: [128,    256,    512   ]
+
+    # GROUP 2: stages
+    - type: list
+      configs:
+        - stage: stable
+          backend.megatron.aux.tokens: 200_000_000_000
+          backend.megatron.train_iters: "\\${oc.eval:'...'}"
+          backend.megatron.lr_wsd_decay_iters: 0
+
+        - type: list
+          defaults:
+            backend.megatron.aux.decay_fraction: 0.2
+            backend.megatron.train_iters:        "\\${oc.eval:'...'}"
+            backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'...'}"
+            backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/checkpoints"
+          configs:
+            - stage: decay120B
+              backend.megatron.aux.tokens: 120_000_000_000
+            - stage: decay200B
+              backend.megatron.aux.tokens: 200_000_000_000
+
+  # Drop any run where warmup takes ≥30% of total training iterations.
+  # Stable is exempt: decay stages depend on it, so it must always run.
+  filter: "\\${oc.eval:'\"\\${stage}\" == \"stable\" or \\${backend.megatron.lr_warmup_iters} / \\${backend.megatron.train_iters} < 0.3'}"

@@ -40,6 +40,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run", action="store_true", help="Plan and render without submitting jobs"
     )
+    parser.add_argument(
+        "--no-submit",
+        action="store_true",
+        help="Generate sbatch scripts to disk without submitting",
+    )
     parser.add_argument("--no-monitor", action="store_true", help="Submit jobs but skip monitoring")
     parser.add_argument(
         "--submit-and-exit",

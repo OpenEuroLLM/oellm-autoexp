@@ -1,0 +1,56 @@
+# Validation sweep over the eight prelude 9B pretraining checkpoints.
+#
+# This replaces the scaling-law sweep
+# (config/sweep/multilingual_scaling/validation/v2/qwen3_dense_1.26B.yaml), which
+# is a product of an HP grid (lr x gbsz) x 28 stable/decay/branch/end stages and
+# derives every iteration number from a token budget. None of that applies here:
+# there is a single trained model and a fixed set of already-existing
+# checkpoints, so this is a flat list of eight points that differ only in
+# backend.megatron.ckpt_step.
+#
+# ckpt_step makes Megatron load exactly that iteration out of
+# backend.megatron.load instead of consulting
+# latest_checkpointed_iteration.txt (which these checkpoint dirs do not have)
+# -- see submodules/Megatron-LM/megatron/training/checkpointing.py:191.
+#
+# tokens = iter x global_batch_size(2048) x seq_length(4096) at TRAINING time;
+# it is only part of the job name, nothing is derived from it.
+
+type: list
+store_sweep_json: true
+
+groups:
+  - type: list
+    defaults:
+      backend.megatron.wandb_exp_name: "\\${job.name}"
+      # All eight already exist, but keep the pipeline's guard so a job never
+      # starts against a half-written checkpoint dir.
+      job.start_condition:
+        class_name: FileExistsCondition
+        path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.ckpt_step}).zfill(7)'}"
+    configs:
+      - stage: iter0120000
+        job.name: "prelude_9B_val_iter0120000_1TT"
+        backend.megatron.ckpt_step: 120000
+      - stage: iter0237600
+        job.name: "prelude_9B_val_iter0237600_2TT"
+        backend.megatron.ckpt_step: 237600
+      - stage: iter0357600
+        job.name: "prelude_9B_val_iter0357600_3TT"
+        backend.megatron.ckpt_step: 357600
+      - stage: iter0477600
+        job.name: "prelude_9B_val_iter0477600_4TT"
+        backend.megatron.ckpt_step: 477600
+      - stage: iter0595200
+        job.name: "prelude_9B_val_iter0595200_5TT"
+        backend.megatron.ckpt_step: 595200
+      - stage: iter0715200
+        job.name: "prelude_9B_val_iter0715200_6TT"
+        backend.megatron.ckpt_step: 715200
+      - stage: iter0835200
+        job.name: "prelude_9B_val_iter0835200_7TT"
+        backend.megatron.ckpt_step: 835200
+      # Final pretraining checkpoint, pre-anneal.
+      - stage: iter0953312
+        job.name: "prelude_9B_val_iter0953312_8TT"
+        backend.megatron.ckpt_step: 953312

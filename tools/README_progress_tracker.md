@@ -233,7 +233,7 @@ python scripts/validate_sweep_runs.py config/experiments/multilingual_scaling/0.
 ```
 <results_base>/
   <run_name>/
-    job.sbatch                        # SBATCH directives (nodes, --gpus-per-node, --ckpt-step)
+    job.sbatch                        # SBATCH directives (nodes, gpus-per-node, --ckpt-step)
     checkpoints/
       latest_checkpointed_iteration.txt
     logs/

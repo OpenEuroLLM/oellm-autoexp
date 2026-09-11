@@ -1,0 +1,6 @@
+experiment,job_id,state,elapsed,gpus,gpu_hours
+baby_9b_dense,46080270,TIMEOUT,1-00:10:22,1024,24752.9
+baby_9b_dense,46080275,CANCELLED by 132116,00:25:14,1024,430.6
+baby_9b_dense,46417606,TIMEOUT,1-00:10:03,1024,24747.5
+baby_9b_dense,46823240,RUNNING,02:16:05,1024,2322.5
+TOTAL,,,,,52253.6

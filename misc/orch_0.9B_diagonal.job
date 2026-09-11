@@ -1,0 +1,16 @@
+#!/bin/bash
+#SBATCH --job-name=orch_0.9B_diagonal
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=2
+#SBATCH --time=24:00:00
+#SBATCH --output=%x_%j.log
+#SBATCH --account=oellm_prod2026
+#SBATCH --partition=boost_usr_prod
+#SBATCH --qos=normal
+
+source /leonardo_work/OELLM_prod2026/users/donutu00/init.sh
+
+cd /leonardo_work/OELLM_prod2026/users/donutu00/oellm-autoexp
+
+python scripts/monitor_autoexp.py --session-dir ./monitor_state/1779669859

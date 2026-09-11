@@ -1,6 +1,22 @@
 defaults:
  - default
 
+# Mark the job finished without (re)submitting if it already completed in a
+# past attempt's log (e.g. it crashed on distributed teardown right after its
+# final save/eval, before printing its normal completion marker). Checked
+# before start_condition/log_events every poll, so this alone is enough to
+# stop the restart loop for already-completed jobs. Covers both job kinds
+# sharing this template: training (checkpoint saved at train_iters) and
+# validation (eval_interval is disabled during training and train_iters=1
+# during validation, so each check only ever fires for its own job kind).
+finish_condition:
+  class_name: OrCondition
+  conditions:
+    - class_name: ShellCommandCondition
+      command: "grep -qE 'successfully saved checkpoint from iteration[[:space:]]+${backend.megatron.train_iters}[[:space:]]' ${job.base_output_dir}/logs/*.log 2>/dev/null"
+    - class_name: ShellCommandCondition
+      command: "grep -qE 'validation loss.*on (validation|test) set' ${job.base_output_dir}/logs/*.log 2>/dev/null"
+
 log_events:
   - name: finished_training
     pattern: "[after training is done]"
@@ -9,11 +25,11 @@ log_events:
       class_name: FinishAction
       reason: "Training finished"
   - name: finish
-    pattern: ".*validation loss.*on test set.*"
+    pattern: ".*validation loss.*on (validation|test) set.*"
     pattern_type: regex
     action:
       class_name: FinishAction
-      reason: "Test Evaluation Finished"
+      reason: "Validation Evaluation Finished"
   - name: error
     pattern: "Exited with exit code 1"
     pattern_type: substring
@@ -37,7 +53,25 @@ log_events:
     inactivity_timeout_s: 300
     action:
       class_name: RestartAction
-      reason: "Inactive Log"
+      reason: ""
+  - name: connection_failure
+    pattern: "Application launch failed: Communication connection failure"
+    pattern_type: substring
+    action:
+      class_name: RestartAction
+      reason: ""
+  - name: segmentation_fault
+    pattern: "Fatal Python error: Segmentation fault"
+    pattern_type: substring
+    action:
+      class_name: RestartAction
+      reason: ""
+  - name: node_failure
+    pattern: "CANCELLED AT .* DUE TO NODE FAILURE"
+    pattern_type: regex
+    action:
+      class_name: RestartAction
+      reason: "Node failure"
 
 state_events:
   - name: "failed"

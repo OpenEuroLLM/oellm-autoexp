@@ -1,0 +1,16 @@
+#!/bin/bash
+#SBATCH --job-name=orch_val_0.1B
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=2
+#SBATCH --time=30:00
+#SBATCH --output=unorganized/%x_%j.log
+#SBATCH --account=AIFAC_5C0_092
+#SBATCH --partition=boost_usr_prod
+#SBATCH --qos=boost_qos_dbg
+
+source /leonardo_work/OELLM_prod2026/users/donutu00/init.sh
+
+cd /leonardo_work/OELLM_prod2026/users/donutu00/oellm-autoexp
+
+echo y | python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/validation/leo/qwen3_dense_0.21B_sweep_v1 --submit-and-exit

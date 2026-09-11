@@ -31,6 +31,7 @@ if _tools_dir not in sys.path:
     sys.path.insert(0, _tools_dir)
 
 from megatron_throughput_from_logs import load_or_compute_throughput  # noqa: E402
+from write_guard import guard_write  # noqa: E402
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -406,6 +407,7 @@ def main() -> None:
     if args.csv:
         csv_path = Path(args.csv)
         fields = ["run_name", "avg_tflop", "n_low_iters", "time_lost_h", "gpu_h_lost", "num_gpus"]
+        guard_write(csv_path)
         with csv_path.open("w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
             writer.writeheader()

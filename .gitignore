@@ -219,6 +219,9 @@ __marimo__/
 generated/
 
 monitor_state/
+
+figures/
+results/
 # VsCode debugging and other stuff
 .vscode/
 
@@ -232,7 +235,7 @@ slurm_jupiter.sh
 slurm_juwels.sh
 logs/
 output/
-
+outputs/
 dump/
 *.distcp
 outputs/megatron_marenostrum_speed_test/*

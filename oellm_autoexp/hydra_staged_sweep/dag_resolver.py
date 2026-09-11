@@ -407,9 +407,16 @@ _CHAIN_CONTEXT: tuple | None = None
 def _resolve_chain(chain: list[int]) -> tuple[dict[int, JobPlan], dict[int, bool]]:
     """Resolve one dependency chain, in the order given."""
     assert _CHAIN_CONTEXT is not None, "chain context not initialised"
-    (config, points_dict, config_setup, config_class, sibling_index, sweep_filter_expr) = (
-        _CHAIN_CONTEXT
-    )
+    (
+        config,
+        points_dict,
+        config_setup,
+        config_class,
+        sibling_index,
+        sweep_filter_expr,
+        lookup_points,
+        full_points_by_idx,
+    ) = _CHAIN_CONTEXT
 
     resolved_jobs: dict[int, JobPlan] = {}
     filtered_jobs: dict[int, bool] = {}
@@ -429,10 +436,41 @@ def _resolve_chain(chain: list[int]) -> tuple[dict[int, JobPlan], dict[int, bool
         sibling_ids = []
         for pattern in sibling_patterns:
             sibling_point = find_sibling_by_group_path(
-                point, points_dict, pattern, sibling_index=sibling_index
+                point, lookup_points, pattern, sibling_index=sibling_index
             )
             if sibling_point and sibling_point.index in resolved_jobs:
                 sibling_jobs[pattern] = resolved_jobs[sibling_point.index]
+                sibling_ids.append((pattern, sibling_point.index))
+            elif sibling_point and full_points_by_idx is not None:
+                # Sibling not in plan (e.g. decay run in isolation); resolve from point params
+                sibling_param_overrides = []
+                for key, value in sibling_point.parameters.items():
+                    if is_config_group(key, config_setup.config_dir):
+                        sibling_param_overrides.extend(
+                            param_to_cmdlines(
+                                key, value, prefix="", config_dir=config_setup.config_dir
+                            )
+                        )
+                    else:
+                        sibling_param_overrides.extend(
+                            param_to_cmdlines(
+                                key, value, prefix="++", config_dir=config_setup.config_dir
+                            )
+                        )
+                sibling_overrides = (
+                    list(config_setup.overrides)
+                    + [f"++index={sibling_point.index}"]
+                    + sibling_param_overrides
+                )
+                sibling_jobs[pattern] = load_config_reference(
+                    config_dir=config_setup.config_dir,
+                    config_path=config_setup.config_path,
+                    config_name=config_setup.config_name,
+                    overrides=sibling_overrides,
+                    config_class=config_class,
+                )
+                # Must participate in the cache key too, or two points with
+                # different out-of-plan siblings would share a context entry.
                 sibling_ids.append((pattern, sibling_point.index))
 
         # Every point in a chain sees the same siblings, and flattening a
@@ -445,7 +483,9 @@ def _resolve_chain(chain: list[int]) -> tuple[dict[int, JobPlan], dict[int, bool
             # its JobPlan holds the result. Recomposing it here doubled the
             # amount of Hydra composition every staged sweep had to do.
             sibling_job_configs = {
-                sibling_pattern: asdict(sibling_job.config)
+                sibling_pattern: asdict(
+                    sibling_job.config if hasattr(sibling_job, "config") else sibling_job
+                )
                 for sibling_pattern, sibling_job in sibling_jobs.items()
             }
 
@@ -545,14 +585,23 @@ def resolve_sweep_with_dag(
     points: list[SweepPoint] | dict[int, SweepPoint],
     config_setup: ConfigSetup,
     config_class: type = StagedSweepRoot,
+    full_points_by_idx: dict[int, SweepPoint] | None = None,
 ) -> list[JobPlan]:
-    """Pure OmegaConf resolution with DAG ordering."""
+    """Pure OmegaConf resolution with DAG ordering.
+
+    When only a subset of points is being planned, full_points_by_idx should
+    contain all sweep points so sibling configs (e.g. the stable run a decay
+    job interpolates via ${sibling.stable...}) can still be resolved.
+    """
     LOGGER.info(f"Starting DAG resolution for {len(points)} sweep points")
 
     if isinstance(points, list):
         points_dict = {p.index: p for p in points}
     else:
         points_dict = points
+
+    # Siblings may live outside the planned subset; look them up in the full set.
+    lookup_points = full_points_by_idx if full_points_by_idx is not None else points_dict
 
     sibling_index = _build_sibling_index(points_dict)
     dag = build_dependency_dag_from_points(points_dict, sibling_index=sibling_index)
@@ -604,6 +653,8 @@ def resolve_sweep_with_dag(
         config_class,
         sibling_index,
         sweep_filter_expr,
+        lookup_points,
+        full_points_by_idx,
     )
     try:
         chain_results = run_chunks(_resolve_chain, chains, workers)

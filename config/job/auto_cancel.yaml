@@ -9,11 +9,11 @@ log_events:
       class_name: FinishAction
       reason: "Training finished"
   - name: finish
-    pattern: ".*validation loss.*on test set.*"
+    pattern: ".*validation loss.*on (validation|test) set.*"
     pattern_type: regex
     action:
       class_name: FinishAction
-      reason: "Test Evaluation Finished"
+      reason: "Validation Evaluation Finished"
   - name: error
     pattern: "Exited with exit code 1"
     pattern_type: substring

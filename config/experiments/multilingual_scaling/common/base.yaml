@@ -1,0 +1,19 @@
+# @package _global_
+# Shared by every multilingual_scaling experiment, regardless of cluster, size, or stage.
+
+defaults:
+  - /job: auto_restart
+
+index: 0
+stage: "" # Will be overridden by sweep
+
+job:
+  name: "" # Will be overridden by sweep with stage and hyperparameter info
+
+backend:
+  megatron:
+    wandb_exp_name: "" # Will be overridden by sweep with stage and hyperparameter info
+    wandb_project: dense_multilingual_scaling
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"

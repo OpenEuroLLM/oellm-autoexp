@@ -1,0 +1,10 @@
+run_name,iteration,lm_loss,lm_loss_ppl
+eval_dense_qwen3_150M_gpt_neox_lr0.001_gbsz32_beta20.99_decay12BT,91553,2.758214,15.77166
+eval_dense_qwen3_150M_gpt_neox_lr0.001_gbsz32_beta20.99_decay6BT,45777,2.820609,16.78706
+eval_dense_qwen3_150M_gpt_neox_lr0.002_gbsz128_beta20.99_decay20BT,38147,2.726732,15.28285
+eval_dense_qwen3_150M_gpt_neox_lr0.002_gbsz128_beta20.99_decay30BT,57221,2.705373,14.95989
+eval_dense_qwen3_150M_gpt_neox_lr0.002_gbsz128_beta20.99_decay50BT,95368,2.668249,14.41471
+eval_dense_qwen3_150M_gpt_neox_lr0.002_gbsz128_beta20.99_decay80BT,152588,2.646245,14.10099
+eval_dense_qwen3_150M_gpt_neox_lr0.002_gbsz256_beta20.99_decay120BT,114441,2.634049,13.93005
+eval_dense_qwen3_150M_gpt_neox_lr0.002_gbsz256_beta20.99_decay200BT,190735,2.616503,13.68778
+eval_dense_qwen3_150M_gpt_neox_lr0.002_gbsz256_beta20.99_decay300BT,286103,2.604685,13.52696

@@ -1,0 +1,28 @@
+# @package _global_
+# Leonardo-specific infra + policy shared by every multilingual_scaling experiment on this cluster.
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+
+container:
+  env:
+    WANDB_TAGS: "leonardo"
+
+backend:
+  megatron:
+    num_workers: 8 
+
+job:
+  log_path: ${slurm.sbatch.error}
+
+slurm:
+  sbatch:
+    # Max possible allocation on LEO is 64 nodes per job.
+    nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
+    account: AIFAC_5C0_092 # oellm_prod2026 - Strategic or AIFAC_5C0_092 - MoE Grant
+    time: "24:00:00"
+    # Keep the stdout and stderr separate for readability.
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"

@@ -1,0 +1,102 @@
+# @package _global_
+#
+# Validation-loss sweep over the eight prelude 9B pretraining checkpoints on LUMI.
+#
+# Derived from experiments/multilingual_scaling/validation/lumi/qwen3_dense_1.26B_sweep_v2.yaml,
+# but retargeted from the scaling-law grid to a single fixed model:
+#   * model config is prelude/qwen3_dense_9B (read out of the checkpoints, see that
+#     file) instead of multilingual_scaling/qwen3_dense_0.9B_ne
+#   * sweep is a flat list of 8 ckpt_steps instead of the HP-grid x 28-stage product
+#   * load points at this repo's ckpts/ dir; nothing waits on a training run
+#
+# Usage (from the autoexp repo root):
+#   SLURM_ACCOUNT=project_465002530 \
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/abhash/prelude_9B_validation_lumi --dry-run
+# Drop --dry-run (and add --submit-and-exit) to actually submit.
+
+defaults:
+  - /sweep/abhash@sweep: prelude_9B_ckpts
+  - /experiments/multilingual_scaling/common: base
+  - /experiments/multilingual_scaling/cluster: lumi
+  - /backend/megatron/prelude: qwen3_dense_9B
+  - /experiments/multilingual_scaling/validation/common
+  - _self_
+
+job:
+  base_output_dir: "/scratch/project_462001516/abhasjha/prelude-evaluation/validation/${job.name}"
+
+backend:
+  megatron:
+    # ---- checkpoints ----
+    # ckpt_step (set per point by the sweep) selects the iteration inside this dir.
+    load: "/scratch/project_462001516/abhasjha/prelude-evaluation/ckpts"
+    # Never write into the checkpoint dir from an eval-only job.
+    save: null
+    save_interval: 999999999
+
+    # ---- data ----
+    split: '1,99,0'
+    data_args_path: /scratch/project_465002530/datasets/multilingual_oellm/1TT-option-4-val-fixed-lumi.sh
+    # Local copy of openeurollm/tokenizer-256k. Pointed at a directory rather than
+    # the hub id because the cluster config sets HF_HUB_OFFLINE=1 and the shared
+    # HF cache has no config.json for that repo, so hub resolution fails on the
+    # compute nodes. len(tokenizer) = 262145 -> padded_vocab_size 262656 at TP=4,
+    # which is what the checkpoints were written with.
+    tokenizer_model: /scratch/project_462001516/abhasjha/prelude-evaluation/tokenizer-256k
+    data_cache_path: /scratch/project_462001516/abhasjha/prelude-evaluation/cache/megatron_262k_val
+    num_dataset_builder_threads: 1
+
+    # ---- eval shape ----
+    # eval_iters is derived in validation/common as 204800 // global_batch_size,
+    # i.e. a fixed 204800 samples = 838M tokens per checkpoint regardless of gbsz.
+    # At gbsz 512 that is 400 eval iterations.
+    global_batch_size: 512
+    micro_batch_size: 4
+
+    # ---- optimizer/scheduler ----
+    # Unused: validation/common sets skip_train and train_iters: 1, so no step is
+    # ever taken and no_load_optim skips the optimizer state. Megatron's config
+    # schema still requires an lr, so these mirror the training run's values
+    # (lr 3.5e-4, WSD) and warmup is 0 because train_iters is 1.
+    lr: 3.5e-4
+    min_lr: 0.0
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_warmup_iters: 0
+    lr_wsd_decay_iters: 0
+
+    # ---- wandb ----
+    wandb_project: prelude_9B_validation
+
+container:
+  env:
+    HF_HOME: /scratch/project_462001516/abhasjha/hf_home
+
+slurm:
+  env:
+    HF_HOME: /scratch/project_462001516/abhasjha/hf_home
+    # validation/common sets this on container.env, but config/slurm/lumi.yaml's
+    # slurm.env exports WANDB_MODE=online into the job script afterwards and wins.
+    # Repeat it here so the eval job really does stay offline.
+    WANDB_MODE: offline
+    # Megatron hard-asserts this whenever TP>1 or CP>1
+    # (arguments.py:959). The upstream multilingual_scaling LUMI config never
+    # sets it because every scaling-law model runs TP=1; this run needs TP=4.
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    # libfabric memory-registration cache monitor. The default (memhooks)
+    # segfaults inside RCCL collectives on LUMI's CXI provider -- the first run
+    # of this config died with SIGSEGV in the data-parallel all_reduce at
+    # training.py:2702, alongside a "Failed to destroy CXI Service ID" error.
+    # kdreg2 is the supported alternative. The scaling-law configs run TP=1 and
+    # drive far less traffic through libfabric, which is why they never set this.
+    FI_MR_CACHE_MONITOR: "kdreg2"
+  sbatch:
+    # Overrides validation/common's nodes: 1. A 9B forward pass over 838M tokens
+    # is ~4 node-hours on LUMI, which does not fit one node inside the time limit.
+    # 8 nodes x 8 GCDs = 64 ranks; TP=4 -> DP=16, so 512/(4*16) = 8 micro-batches
+    # per eval iteration.
+    nodes: 8
+    partition: standard-g
+    time: "4:00:00"
+    account: ${oc.env:SLURM_ACCOUNT,project_465002530}

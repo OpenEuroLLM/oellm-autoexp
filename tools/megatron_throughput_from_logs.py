@@ -42,6 +42,11 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
+# Make sibling modules importable when run as a standalone script.
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from write_guard import guard_write  # noqa: E402
+
 PATH_WORKERS_NODES = re.compile(r"training_workers(\d+)_nodes(\d+)_disttime")
 
 SBATCH_NODES = re.compile(r"^#SBATCH\s+--nodes[= ](\d+)", re.MULTILINE)
@@ -150,10 +155,32 @@ _AVG_INT_FIELDS = frozenset(
 )
 
 
+# Optional redirect for the throughput cache.  When set, cache files are written
+# under this root instead of inside the run directory, mirroring the run's
+# absolute path so runs from different experiments never collide.  Used to keep
+# the cache out of shared result trees owned by other users.
+_CACHE_ROOT: Path | None = None
+
+
+def set_cache_root(root: str | Path | None) -> None:
+    """Redirect the throughput cache to *root* (None restores in-run caching)."""
+    global _CACHE_ROOT
+    _CACHE_ROOT = Path(root).expanduser() if root else None
+
+
 def _throughput_dir(log_path: Path) -> Path:
-    """Return <run_dir>/throughput/, the sibling of the logs/ directory."""
+    """Return the throughput cache dir for *log_path*.
+
+    By default this is ``<run_dir>/throughput/``, the sibling of the logs/
+    directory.  When a cache root is set via :func:`set_cache_root`, the run
+    directory's absolute path is mirrored beneath that root instead.
+    """
     parent = log_path.parent
-    return (parent.parent if parent.name == "logs" else parent) / "throughput"
+    run_dir = parent.parent if parent.name == "logs" else parent
+    if _CACHE_ROOT is None:
+        return run_dir / "throughput"
+    run_dir = run_dir.resolve()
+    return _CACHE_ROOT / run_dir.relative_to(run_dir.anchor) / "throughput"
 
 
 def _job_id_from_log(log_path: Path) -> str:
@@ -173,6 +200,7 @@ def _parse_all_iters(log_path: Path) -> list[tuple[int, float, float, float]]:
 
 def _save_iters_csv(iters_csv: Path, rows: list[tuple[int, float, float, float]]) -> None:
     try:
+        guard_write(iters_csv)
         iters_csv.parent.mkdir(parents=True, exist_ok=True)
         with iters_csv.open("w", newline="") as f:
             w = csv.writer(f)
@@ -236,6 +264,7 @@ def _upsert_avg_row(
         except OSError:
             pass
     try:
+        guard_write(avg_csv)
         avg_csv.parent.mkdir(parents=True, exist_ok=True)
         with avg_csv.open("w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=list(_AVG_FIELDS))
@@ -477,6 +506,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     ]
     err_fieldnames = ["folder", "experiment", "error"]
 
+    guard_write(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
