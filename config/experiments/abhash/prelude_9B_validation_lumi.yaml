@@ -44,7 +44,17 @@ backend:
     # compute nodes. len(tokenizer) = 262145 -> padded_vocab_size 262656 at TP=4,
     # which is what the checkpoints were written with.
     tokenizer_model: /scratch/project_462001516/abhasjha/prelude-evaluation/tokenizer-256k
-    data_cache_path: /scratch/project_462001516/abhasjha/prelude-evaluation/cache/megatron_262k_val
+    # Per-job cache dir, NOT one shared path. Megatron keys its index cache on the
+    # requested sample counts, so a sweep whose jobs all share a cold cache has
+    # every job racing to build the same 155-dataset index at once; the losers
+    # numpy.load a half-written .npy and die with
+    #   gpt_dataset.py:495 EOFError: No data left in file
+    # which is exactly how 7 of the first 8 jobs failed (SIGTERM at ~3:26, with a
+    # TCPStore "Broken pipe" cascade that is teardown, not the cause).
+    # Isolating per job.name makes the race structurally impossible. The cost is
+    # that each job builds its own index (~25 min and ~2 GB apiece) instead of
+    # reusing one shared build.
+    data_cache_path: /scratch/project_462001516/abhasjha/prelude-evaluation/cache/megatron_262k_val/${job.name}
     num_dataset_builder_threads: 1
 
     # ---- eval shape ----
