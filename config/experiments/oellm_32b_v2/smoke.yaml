@@ -5,13 +5,15 @@
 # launch — it catches container, rendezvous, data-cache and checkpoint-write
 # breakage in ~20 minutes instead of in the 512-node queue.
 #
-#   python scripts/run_autoexp.py +experiments=oellm_32b_v2/smoke
+#   python scripts/run_autoexp.py --config-name experiments/oellm_32b_v2/smoke
 #
-# NB it writes to its own scratch tree and its own wandb project, so it can
-# never touch a production checkpoint.
+# NB it writes to its own scratch tree and its own wandb project, and saves no
+# checkpoints (save: null), so it can never touch a production checkpoint.
 
 defaults:
   - /experiments/oellm_32b_v2/base
+  # auto_restart_ckptreset needs a checkpoint dir (save); the smoke has none.
+  - override /job: default
   - _self_
 
 job:
@@ -35,11 +37,6 @@ backend:
     # the production parallelism shape, just fewer data-parallel replicas.
     exit_interval: 10
     log_interval: 1
-    eval_interval: 999999
-    eval_iters: 0
-    # Exercise the real checkpoint path (a write AND a reload) inside the run.
-    save_interval: 25
-    non_persistent_save_interval: 10
     wandb_project: oellm_32b_v2_smoke
     wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
     save: null
