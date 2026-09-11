@@ -47,7 +47,7 @@ backend:
   bridge_root: /workspace/oellm-autoexp/submodules/Megatron-Bridge
   resources: /workspace/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge
   env:
-    PYTHONPATH: /workspace/oellm-autoexp/submodules/Megatron-Bridge/src:/workspace/oellm-autoexp
+    PYTHONPATH: /workspace/oellm-autoexp/submodules/Megatron-LM:/workspace/oellm-autoexp/submodules/Megatron-Bridge/src:/workspace/oellm-autoexp
     PYTHONNOUSERSITE: "1"
     HF_HOME: /e/scratch/e-sta-openeurollm/hf_cache/${oc.env:USER}
     HF_HUB_OFFLINE: "1"
