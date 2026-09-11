@@ -33,7 +33,7 @@ backend:
   aux:
     active_nodes: 512          # world = active_nodes * 4 GPUs
     variant: "v2"              # ablation tag, feeds job.name
-    lr_tag: "1.75e-4"
+    lr_tag: "1.76e-4"
     warmup_steps: 10000
 
   torchrun_args:
@@ -144,7 +144,7 @@ backend:
     # departure from that baseline, not an oversight. Set to 1e-4 to restore.
     output_z_loss_coeff: null
 
-    fp8: hybrid
+    fp8: null
     fp8_recipe: delayed
     fp8_param_gather: false
     first_last_layers_bf16: false
@@ -152,10 +152,7 @@ backend:
     fp8_amax_compute_algo: max
     cuda_graph_scope: full
 
-    # 1.75e-4, not the 3e-4 of the oellm_32b_dense production family.
-    # Keep aux.lr_tag in sync -- it only feeds job.name, so a mismatch
-    # silently mislabels checkpoints, tensorboard and wandb.
-    lr: 1.75e-4
+    lr: 1.76e-4
 
   env:
     TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"

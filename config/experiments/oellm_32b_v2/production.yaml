@@ -22,7 +22,6 @@ job:
   config_path: ${.base_output_dir}/logs/config-%j.yaml
   config_path_current: ${.base_output_dir}/logs/current.yaml
 
-  est_step_time_s: 4.2
   est_steps: ${oc.coalesce:${backend.megatron.exit_interval},${backend.megatron.train_iters},${oc.divi:${backend.megatron.train_samples},${backend.megatron.global_batch_size}}}
   est_startup_min: 10
 

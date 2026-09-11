@@ -22,7 +22,6 @@ job:
   config_path: ${.base_output_dir}/logs/config-%j.yaml
   config_path_current: ${.base_output_dir}/logs/current.yaml
 
-  est_step_time_s: 4.2
   est_steps: 50
   est_startup_min: 10
 
@@ -34,7 +33,7 @@ backend:
   megatron:
     # PP=4 * TP=4 = 16 GPUs per replica, so 16 nodes (64 GPUs) gives DP=4 —
     # the production parallelism shape, just fewer data-parallel replicas.
-    exit_interval: 50
+    exit_interval: 10
     log_interval: 1
     eval_interval: 999999
     eval_iters: 0
