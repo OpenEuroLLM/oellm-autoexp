@@ -974,6 +974,17 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "embedding_wd_mult": MegatronArgMetadata(
+        arg_type=float,
+        default=1.0,
+        help="Multiplier on --weight-decay for the word-embedding matrix (2-D param whose name "
+        "contains word_embeddings). Default 1.0 = decay like every other weight. 0.0 excludes "
+        "the embeddings from weight decay as OLMo 2/3 and Levanter/Marin do (decay erodes the "
+        "rows of rare tokens). The untied output layer is not affected.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "empty_unused_memory_level": MegatronArgMetadata(
         arg_type=int,
         default=0,
@@ -5568,6 +5579,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "embedding_wd_mult": MegatronActionSpec(
+        option_strings=("--embedding-wd-mult",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
     ),
     "empty_unused_memory_level": MegatronActionSpec(
         option_strings=("--empty-unused-memory-level",),

@@ -182,6 +182,8 @@ class MegatronConfig(ConfigInterface):
     # for weaker decay. Biases are always excluded.
     scaler_wd_mult: float = 0.0
 
+    embedding_wd_mult: float = 1.0
+
     # Initial weight decay coefficient for L2 regularization.
     start_weight_decay: float | None = None
 

@@ -144,6 +144,11 @@ backend:
     # departure from that baseline, not an oversight. Set to 1e-4 to restore.
     output_z_loss_coeff: null
 
+    # Input embedding excluded from weight decay (OLMo 2/3, Levanter/Marin): decay erodes the
+    # rows of rare tokens. Only embedding.word_embeddings.weight; the untied output layer keeps
+    # full decay. Needs the --embedding-wd-mult patch on the Megatron pin.
+    embedding_wd_mult: 0.0
+
     fp8: null
     fp8_recipe: delayed
     fp8_param_gather: false
