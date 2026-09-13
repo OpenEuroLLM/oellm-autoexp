@@ -177,14 +177,14 @@ slurm:
   sbatch:
     job_name: null
     nodes: 1
-    # ONE GPU. lm-eval puts the whole model on cuda:0 -- every task logs "Model
-    # parallel was set to False ... device map was set to {'': 'cuda:0'}" -- so
-    # gpus_per_node: 4 reserved four and used one. oellm-eval passes this through
-    # as GPUS_PER_NODE, which also drives --gres and its MULTI_GPU_FLAG, and that
-    # flag only engages accelerate's data-parallel path under an accelerate
-    # launch, which this is not; --model_args carries no parallelize or device
-    # map either. The model is 67.78 GB bf16 in a 96 GB GH200, so one fits, and
-    # the conversion already runs on one.
+    # ONE GPU for THESE stages -- the conversion (which needs exactly one; four made
+    # the dist-checkpoint load plan cover 5 of 64 layers) and the eval DRIVER, which
+    # only runs `oellm-eval schedule` and submits.
+    #
+    # This does NOT set the width of the eval TASKS. Those come from
+    # backend.env.GPUS_PER_NODE, which the generated array script uses for its own
+    # --gres and GPU_DEVICES, and which is 4 now that the checkout runs lm-eval under
+    # accelerate. Keep the two separate: raising this would widen the conversion too.
     gpus_per_node: 1
     time: "02:00:00"
 
@@ -256,9 +256,27 @@ sweep:
         # config/backend/oellm_eval.yaml sets this from ${slurm.sbatch.gpus_per_node},
         # but that interpolation resolves against the top-level slurm node and came
         # out 4 even with the stage pinned to 1. GPUS_PER_NODE is what the GENERATED
-        # array script uses for its own --gres and GPU_DEVICES, so it has to be
-        # right here or each task reserves four GPUs and uses cuda:0.
-        backend.env.GPUS_PER_NODE: "1"
+        # array script uses for its own --gres and GPU_DEVICES, so it has to be set
+        # here.
+        #
+        # 4, not 1: the eval checkout now carries oellm-evals `feat/lm-eval-data-parallel`
+        # (a3b6598 on jupiter, 9003aaa on kpoeppel/oellm-evals), which launches lm-eval
+        # under `accelerate launch --num_processes $GPUS_PER_NODE --multi_gpu`. Before that
+        # patch the lm-eval branch ran ONE python process, so GPUS_PER_NODE>1 reserved N
+        # GPUs and used cuda:0 -- which is what array 1742632 did for all 54 tasks.
+        #
+        # Verified on job 1747965 (global_mmlu_full_el, the 48:51 single-GPU task):
+        # four processes at ~82.7 GB and 70-100% util, 17:11 wall (2.84x), and results
+        # BIT-IDENTICAL to the 1-GPU run -- all 62 subtasks, max |delta| = 0.0. DP
+        # replicates the model and splits the request list, so one copy must still fit
+        # one GPU: 64 GB bf16 in 96 GB, fine here. If it ever does not, use
+        # parallelize=True in --model_args instead (capacity, not speed).
+        #
+        # REQUIRES the patched checkout. Against an unpatched oellm-evals this silently
+        # reverts to reserving 4 GPUs and using one, so drop it back to "1" in that case.
+        backend.env.GPUS_PER_NODE: "4"
+        # 4 replicas load 4 copies; 96G was sized for one. The node has 878 GB.
+        backend.env.SLURM_MEM: "256G"
         backend.env.HF_DATASETS_CACHE: /e/fscratch/e-sta-openeurollm/poeppel1/eval/hf_home/datasets
         backend.env.HF_HUB_OFFLINE: "1"
         backend.env.HF_DATASETS_OFFLINE: "1"

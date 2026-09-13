@@ -188,8 +188,10 @@ aux:
   # seed stage needs to know, since it creates both trees before either arm runs.
   tag8: "prod_dataopt5_cont8_zlossfp32_seed1234"
   tag9: "prod_dataopt5_cont9_softcap30_seed1234"
+  tag10: "prod_dataopt5_cont9_nozloss_seed1234"
   root8: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_${aux.tag8}
   root9: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_${aux.tag9}
+  root10: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_${aux.tag10}
 
 backend:
   megatron:
@@ -260,7 +262,7 @@ slurm:
   # String form REPLACES rather than merges, so the two inherited flags are
   # repeated here on purpose: --kill-on-bad-exit=0 and --no-kill are what let a
   # single rank fail without tearing the step down.
-  srun_opts: "--kill-on-bad-exit=0 --no-kill --mpi=none"
+  srun_opts: "--kill-on-bad-exit=0 --no-kill --mpi=none --gpu-freq=1980"
 
 sweep:
   type: list
@@ -312,7 +314,7 @@ sweep:
               echo "[seed] FATAL: no .metadata in $SRC -- refusing to seed from an incomplete checkpoint"
               exit 1
             fi
-            for DST in "${aux.root8}/checkpoints" "${aux.root9}/checkpoints"; do
+            for DST in "${aux.root8}/checkpoints" "${aux.root9}/checkpoints" "${aux.root10}/checkpoints"; do
               TRACKER="$DST/latest_checkpointed_iteration.txt"
               if [ -e "$TRACKER" ]; then
                 echo "[seed] $TRACKER exists -- already seeded, skipping"
@@ -365,3 +367,13 @@ sweep:
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.root9}/checkpoints/latest_checkpointed_iteration.txt"
+
+        - stage: train
+          aux.variant_tag: ${aux.tag10}
+          # Off. Inert in the control anyway, so this is bookkeeping that makes
+          # the intent explicit rather than a second experimental variable.
+          backend.megatron.output_z_loss_coeff: null
+          backend.megatron.log_output_logsumexp: true
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "${aux.root10}/checkpoints/latest_checkpointed_iteration.txt"
