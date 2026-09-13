@@ -1,0 +1,193 @@
+# @package _global_
+#
+# ============================================================================
+# VALIDATION GATE FOR THE --diag-* COLLECTORS ON THE 0.16 (v2) STACK
+# ============================================================================
+# megatron/training/diagnostics.py was written and validated on `oellm/v0.19`
+# and BACKPORTED to the 0.16 pin this line runs (Megatron commit "Backport the
+# oellm/v0.19 training diagnostics onto the 0.16 line"). The backport changes
+# the gradient dedup filter -- 0.16 has no `param_is_not_gtp_duplicate` -- so
+# the reduction arithmetic is NOT the code that was validated on GPU, and it
+# has to be re-proved here before anything reads a production `diag/*` curve.
+#
+# 130M on ONE node, ~60 iterations, no checkpoints: the point is the
+# diagnostics, not the model.
+#
+#   python scripts/run_autoexp.py +experiments=oellm_32b_v2/diagnostics_smoke_130M
+#
+# RUN BOTH ARMS. ALWAYS.
+# ----------------------
+# The collectors that can be silently WRONG rather than crash are the ones that
+# reduce across parallel groups, and each arm breaks a different one. Two of the
+# five reduction bugs this module has already had were invisible at TP1/PP1 and
+# produced healthy-looking numbers at PP=2, so a single-shape run proves nothing:
+#
+#   tp1pp1   TP=1 PP=1 DP=4. The distributed optimizer shards every gradient
+#            across 4 DP ranks, so this arm exercises the gbuf_ranges shard-range
+#            path. Wrong ranges -> the per-layer norms count a fraction of each
+#            gradient.
+#
+#   tp2pp2   TP=2 PP=2 DP=1 + sequence_parallel. This arm exercises (a) the
+#            pipeline all-reduce for the norm gains -- layers 9-17 live on the
+#            second stage, so if the global layer numbering came from the
+#            parameter NAME rather than TransformerLayer.layer_number both stages
+#            would report layers 0-8 and collide; (b) the TP-duplicate filter for
+#            the grad norms; and (c) `param_is_not_shared`, which only matters
+#            with tied embeddings at PP>1 -- exactly the filter the backport had
+#            to re-derive against 0.16's two-filter set.
+#
+# HOW TO READ THE RESULT -- the one number that proves it works
+# ------------------------------------------------------------
+# `diag/grad_norm/total_check` recombines the per-layer sums of squares. It must
+# equal Megatron's own independently-computed `grad-norm` on the same iteration.
+#   ratio 1.0   -> shard ranges and duplicate filtering are both right
+#   ratio ~2.0  -> a TP or DP axis is being double-counted
+#   ratio ~0.71 -> pieces are being dropped (sqrt(1/2), i.e. half missing)
+# Check it on BOTH arms; tp1pp1 alone cannot catch a TP bug, and the 1.40597 that
+# caught the missing `param_is_not_shared` on 0.19 was only visible at PP>1.
+#
+# Then confirm the gains look sane: `diag/gain/*/layer_NN/mean` should be ~1.0
+# everywhere this early (gains init to exactly 1.0 and 60 iterations barely move
+# them), and all 18 layers must be present with no gaps in the gain families, in
+# the per-layer grad norms AND in the activations.
+#
+#   python scripts/korbi/check_diagnostics_smoke.py <tensorboard_dir> [...]
+#
+# COST: ~5-9 min of 1 node, twice.
+# ============================================================================
+
+defaults:
+  - /experiments/korbi/megatron_niccolo_130M_smoke_jupiter
+  # The inherited backend launches a bare `torchrun`, whose shebang is
+  # `#!/usr/bin/env python3` -- which interpreter runs is then a PATH accident.
+  # megatron_torchdist_localaddr uses `${container.python} -m
+  # torch.distributed.run`, which is what production runs and leaves nothing to
+  # PATH. Same backend as config/experiments/oellm_32b_v2/base.yaml.
+  - override /backend: megatron_torchdist_localaddr
+  - override /job: auto_cancel
+  - _self_
+
+aux:
+  experiment_group: "v2_diagnostics_smoke"
+  additional_tag: ""
+
+container:
+  # THE v2 STACK'S CONTAINER, not the inherited `/container: jupiter` default.
+  # That default still names the old MegatronTraining-JUPITER image and pins
+  # `python: /usr/bin/python`; in every nemo-derived image that interpreter has
+  # no wandb, and the failure surfaces on the LAST rank only (the import is
+  # gated on rank == world_size-1) with every other rank reporting a downstream
+  # ncclRemoteError that is noise, not the cause.
+  #
+  # Both fields must move together, and they must match base.yaml -- the point
+  # of this test is the stack production runs, not a close-enough one.
+  image: /e/project1/e-sta-openeurollm/container/nemo_26.04.sif
+  python: /opt/venv/bin/python
+
+backend:
+  megatron:
+    # --- fixes to the inherited 130M base, both found by running it ----------
+    # The base's valid_data_path still points at the retired
+    # /e/scratch/projectnucleus/... location. Megatron BUILDS the validation
+    # dataset at startup even though eval_interval below means it is never
+    # consumed, so a dead path is fatal regardless.
+    #
+    # This points at the TRAIN path instead: validation never runs here, so the
+    # only thing the valid set would cost is a first-time sample-index build over
+    # a 212 GB corpus of unknown duration. The train path is already indexed.
+    # Nothing under test depends on which one is used.
+    valid_data_path:
+      - /e/data1/datasets/products/openeurollm/pretokenized/neox/copy_nemotron_downsampled_15p/high-all
+    # The base has 9 heads, which is not divisible by the tp2pp2 arm's TP=2 --
+    # "num_attention_heads (9) must be a multiple of tensor_model_parallel_size
+    # (2)". Set on BOTH arms so the two run the same model. NB
+    # preflight_megatron_args.py does NOT catch this: it raises in
+    # TransformerConfig.__post_init__ at model construction, not in
+    # validate_args. kv_channels stays explicit at 64, so hidden_size need not
+    # equal heads*kv.
+    num_attention_heads: 8
+    num_query_groups: 8
+
+    # PER-ARM dataset cache. The two arms differ only in parallelism, so they
+    # have identical Megatron cache keys (same blend, num_samples, GBS,
+    # seq_length, seed) and, running concurrently, race on the same files in the
+    # inherited shared cache -- which fails as
+    #   safe_numpy_load(path_to_sample_index) -> EOFError: No data left in file
+    # i.e. one arm mmaps a sample index the other is still writing. This inverts
+    # the flagship's deliberate cache SHARING (schedule/prod_15TT.yaml) on
+    # purpose: there the 15 T index costs hours and is worth reusing, here it is
+    # seconds and correctness wins.
+    data_cache_path: ${job.base_output_dir}/data_cache
+
+    # --- what is being tested ------------------------------------------------
+    # 10, not the production 100: this run is only 60 iterations long and we want
+    # several diagnostic points inside it. It is also a multiple of log_interval,
+    # so every collection is emitted on the iteration it was taken (the two are
+    # independent intervals -- see TrainingDiagnostics.emit).
+    diagnostics_interval: 10
+    diag_nonfinite: true
+    diag_norm_gains: true
+    diag_layer_grad_norms: true
+    diag_activations: true
+    diag_clip_events: true
+    diag_weight_stats: true
+    diag_logit_stats: true
+    # NOT enabled here: diag_fp8_meta. The v2 line runs bf16 (`fp8: null`), so
+    # every FP8 slot would stay zero and the emitter would skip it -- the flag
+    # would be exercised only in the sense of proving it does nothing. It needs
+    # an FP8 arm to mean anything, and v2 deliberately has none.
+
+    # --- keep the run short and side-effect free -----------------------------
+    exit_interval: 60
+    log_interval: 10
+    train_iters: 1000          # never reached; exit_interval ends the run
+    lr_warmup_iters: 10        # the inherited 2000 would leave LR ~0 for all 60
+    lr_wsd_decay_iters: 100
+    save_interval: 1000000     # no checkpoints: nothing here is worth keeping
+    # NB eval_iters MUST NOT be 0 -- Megatron asserts "no sample to consume"
+    # rather than skipping validation.
+    eval_iters: 2
+    eval_interval: 1000000
+
+    wandb_project: oellm_32b_v2_diagnostics_smoke
+
+job:
+  name: "v2_diag_smoke_130M_${aux.additional_tag}"
+  base_output_dir: /e/scratch/e-sta-openeurollm/production_training/smoke/${job.name}
+  chain_repeat: 1
+  est_step_time_s: 0.7
+  est_startup_min: 6
+  est_steps: 60
+
+slurm:
+  env:
+    # REQUIRED by the tp2pp2 arm and harmless for the other. GH200 is Hopper
+    # (arch < 10), so Megatron hard-ASSERTS on this whenever TP>1 or CP>1 -- it
+    # is not a warning. config/slurm/jupiter.yaml does not set it, so every
+    # JUPITER experiment has to.
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  sbatch:
+    nodes: 1
+    # Kept tight on purpose: a short 1-node job is far more backfillable, and the
+    # same pair asking for 40 min has been given a start estimate ~3 h out.
+    time: "00:20:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # DP=4: exercises the distributed-optimizer gradient shard ranges.
+        - aux.additional_tag: "tp1pp1"
+          backend.megatron.tensor_model_parallel_size: 1
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.sequence_parallel: false
+        # TP=2 x PP=2: exercises the pipeline all-reduce for the gains, the
+        # TP-duplicate filter and param_is_not_shared for the grad norms, and the
+        # activation-buffer all-reduce that at PP>1 is the difference between
+        # reporting all 18 layers and silently reporting 9 of them.
+        - aux.additional_tag: "tp2pp2"
+          backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.pipeline_model_parallel_size: 2
+          backend.megatron.sequence_parallel: true

@@ -182,6 +182,10 @@ class MegatronConfig(ConfigInterface):
     # for weaker decay. Biases are always excluded.
     scaler_wd_mult: float = 0.0
 
+    # Multiplier on --weight-decay for the word-embedding matrix (2-D param whose name
+    # contains word_embeddings). Default 1.0 = decay like every other weight. 0.0 excludes the
+    # embeddings from weight decay as OLMo 2/3 and Levanter/Marin do (decay erodes the rows of
+    # rare tokens). The untied output layer is not affected.
     embedding_wd_mult: float = 1.0
 
     # Initial weight decay coefficient for L2 regularization.
@@ -1203,9 +1207,9 @@ class MegatronConfig(ConfigInterface):
     # Dataloader number of workers.
     num_workers: int = 2
 
-    # OELLM PATCH: batches each dataloader worker keeps prefetched. Deepens the
-    # buffer that absorbs parallel-filesystem read-latency spikes WITHOUT adding
-    # concurrent readers (unlike num_workers). None = torch default (2).
+    # Number of batches each dataloader worker keeps prefetched. Deepens the buffer that
+    # absorbs parallel-filesystem read-latency spikes without adding more concurrent readers.
+    # Requires --num-workers > 0. Unset = torch default (2).
     dataloader_prefetch_factor: int | None = None
 
     # Reset posistion ids after end-of-document token.
@@ -1771,6 +1775,84 @@ class MegatronConfig(ConfigInterface):
 
     # Set default logging level
     logging_level: int | None = None
+
+    # Collect per-layer diagnostics every N iterations. 0 disables all of the --diag-*
+    # collectors below. The activation collector is the only expensive one; 100 keeps its
+    # amortised cost under a thousandth of step time.
+    diagnostics_interval: int = 0
+
+    # Scan every weight and gradient for NaN/Inf and print the offending parameter names.
+    # Unlike --check-for-nan-in-loss-and-grad this localises the problem instead of only
+    # aborting on it.
+    diag_nonfinite: bool = False
+
+    # Log mean/std/min/max of every RMSNorm/LayerNorm gain, per layer. Norm gains are excluded
+    # from weight decay by default, so nothing opposes their drift.
+    diag_norm_gains: bool = False
+
+    # Log the L2 gradient norm of every transformer layer separately, plus
+    # embedding/output_layer. Exposes the early-vs-late layer asymmetry that the single global
+    # grad norm averages away. Also logs diag/grad_norm/total_check, which MUST equal the
+    # grad-norm Megatron computes independently.
+    diag_layer_grad_norms: bool = False
+
+    # Log the RMSNorm denominator sqrt(mean(x^2)) and the mean of the input to every norm,
+    # plus a non-finite count, from the first microbatch of a diagnostic iteration. This is
+    # the one collector with a real cost (bandwidth-bound, ~20 GB of reads for a 64-layer 32B
+    # model).
+    diag_activations: bool = False
+
+    # Track gradient-clipping events on EVERY step (a streak can only be counted that way) and
+    # report the streak length, the fired fraction, the smallest clip coefficient and the
+    # mean/min/max of the pre-clip total norm -- the clip denominator -- over the logging
+    # interval. Free, and independent of --diagnostics-interval.
+    diag_clip_events: bool = False
+
+    # Log min/max/mean/rms of every linear_qkv / linear_proj / linear_fc1 / linear_fc2 weight
+    # matrix per layer, plus the embedding and output layer. One pass over the local weight
+    # shards and three small all-reduces over the model-parallel group on a diagnostic
+    # iteration.
+    diag_weight_stats: bool = False
+
+    # Log the FP8 delayed-scaling window-max amax and current scale of the GEMM input, weight
+    # and output gradient of the four TE GEMMs of every layer. Empty under recipes without
+    # per-tensor state (blockwise, mxfp8) and for bf16 layers.
+    diag_fp8_meta: bool = False
+
+    # nvdlfw_inspect feature YAML applied to every Transformer Engine module (LogTensorStats,
+    # LogFp8TensorStats, ...). Writes PER-RANK statistics files, so use it only on small
+    # probes (<= 16 nodes). See megatron/training/te_debug.py.
+    te_debug_config: str | None = None
+
+    # Directory for the nvdlfw_inspect logs; defaults to <tensorboard-dir>/te_debug.
+    te_debug_log_dir: str | None = None
+
+    # Log mean/std/min/max of the output-layer logits, the mean per-token max logit and the
+    # mean/std of the per-token log-partition log Z on diagnostic iterations (forward hook on
+    # the output layer). NB these are PRE-softcap: --final-logit-softcapping is applied after
+    # the output layer returns, so the hook cannot see its effect.
+    diag_logit_stats: bool = False
+
+    # Diagnostics only: on every diagnostic iteration write the per-token CE loss, label, loss
+    # mask, log Z and max logit of every microbatch to
+    # <dir>/it<iteration>_dp<rank>_cp<rank>.npz (TP rank 0 of the last pipeline stage). For
+    # checkpoint probes on a fixed batch.
+    diag_token_loss_dir: str | None = None
+
+    # Diagnostics only: after the checkpoint load, reload the model tensors selected by
+    # --diag-swap-keys from this torch_dist checkpoint (checkpoint surgery for probes).
+    diag_swap_checkpoint: str | None = None
+
+    # Comma-separated regexes matched against the checkpoint keys (global layer numbering,
+    # e.g. ^output_layer[.]weight or ^decoder[.]layers[.]@56-63) selecting the tensors to
+    # reload from --diag-swap-checkpoint.
+    diag_swap_keys: str | None = None
+
+    # Diagnostics only: after the checkpoint load, position the training dataloader at this
+    # consumed-sample count instead of the checkpoint's own, so a probe can run the weights of
+    # iteration X on the batches of iteration Y (Y * global batch size). Never use for real
+    # training.
+    diag_consumed_train_samples: int | None = None
 
     # If set, tracks and logs straggler per GPU.
     log_straggler: bool = False

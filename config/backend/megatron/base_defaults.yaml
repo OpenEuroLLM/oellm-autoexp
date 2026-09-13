@@ -75,6 +75,7 @@ data_parallel_sharding_strategy: no_shard  # choices: ['no_shard', 'optim', 'opt
 data_path: null  # The weight and prefix list for a set of train, validation, and testdatasets which split according to --split. The accepted formats are: (1) a single prefix, (2) a list of weight prefix pairs e.g. weight1 prefix1 weight2 prefix2, (3) a list of prefixes e.g. prefix1 prefix2. For (3), weights are inferred from the lengths of the contributing datasets. This argument is exclusive to the other independent --*-data-path arguments.
 data_per_class_fraction: 1.0  # training with fraction of data per class.
 data_sharding: true  # Disable data sharding.
+dataloader_prefetch_factor: null  # Number of batches each dataloader worker keeps prefetched. Deepens the buffer that absorbs parallel-filesystem read-latency spikes without adding more concurrent readers. Requires --num-workers > 0. Unset = torch default (2).
 dataloader_type: null  # choices: ['single', 'cyclic', 'external'] | Single pass vs multiple pass data loader
 ddp_average_in_collective: false  # If set, average directly in data-parallel communication collective.
 ddp_bucket_size: null  # Bucket size for data-parallel communication
@@ -93,6 +94,19 @@ defer_embedding_wgrad_compute: false  # If set, defers the vocabulary projection
 delay_wgrad_compute: false  # Delay the wgrad compute for batch-level overlapping
 deprecated_use_mcore_models: false  # DEPRECATED. Use the implementation from megatron core.Now ignored and mcore models are the default, use --use-legacy-models to not use core models.
 deterministic_mode: false  # Choose code that has deterministic execution. This usually means slower execution, but is good for debugging and testing.
+diag_activations: false  # Log the RMSNorm denominator sqrt(mean(x^2)) and the mean of the input to every norm, plus a non-finite count, from the first microbatch of a diagnostic iteration. This is the one collector with a real cost (bandwidth-bound, ~20 GB of reads for a 64-layer 32B model).
+diag_clip_events: false  # Track gradient-clipping events on EVERY step (a streak can only be counted that way) and report the streak length, the fired fraction, the smallest clip coefficient and the mean/min/max of the pre-clip total norm -- the clip denominator -- over the logging interval. Free, and independent of --diagnostics-interval.
+diag_consumed_train_samples: null  # Diagnostics only: after the checkpoint load, position the training dataloader at this consumed-sample count instead of the checkpoint's own, so a probe can run the weights of iteration X on the batches of iteration Y (Y * global batch size). Never use for real training.
+diag_fp8_meta: false  # Log the FP8 delayed-scaling window-max amax and current scale of the GEMM input, weight and output gradient of the four TE GEMMs of every layer. Empty under recipes without per-tensor state (blockwise, mxfp8) and for bf16 layers.
+diag_layer_grad_norms: false  # Log the L2 gradient norm of every transformer layer separately, plus embedding/output_layer. Exposes the early-vs-late layer asymmetry that the single global grad norm averages away. Also logs diag/grad_norm/total_check, which MUST equal the grad-norm Megatron computes independently.
+diag_logit_stats: false  # Log mean/std/min/max of the output-layer logits, the mean per-token max logit and the mean/std of the per-token log-partition log Z on diagnostic iterations (forward hook on the output layer). NB these are PRE-softcap: --final-logit-softcapping is applied after the output layer returns, so the hook cannot see its effect.
+diag_nonfinite: false  # Scan every weight and gradient for NaN/Inf and print the offending parameter names. Unlike --check-for-nan-in-loss-and-grad this localises the problem instead of only aborting on it.
+diag_norm_gains: false  # Log mean/std/min/max of every RMSNorm/LayerNorm gain, per layer. Norm gains are excluded from weight decay by default, so nothing opposes their drift.
+diag_swap_checkpoint: null  # Diagnostics only: after the checkpoint load, reload the model tensors selected by --diag-swap-keys from this torch_dist checkpoint (checkpoint surgery for probes).
+diag_swap_keys: null  # Comma-separated regexes matched against the checkpoint keys (global layer numbering, e.g. ^output_layer[.]weight or ^decoder[.]layers[.]@56-63) selecting the tensors to reload from --diag-swap-checkpoint.
+diag_token_loss_dir: null  # Diagnostics only: on every diagnostic iteration write the per-token CE loss, label, loss mask, log Z and max logit of every microbatch to <dir>/it<iteration>_dp<rank>_cp<rank>.npz (TP rank 0 of the last pipeline stage). For checkpoint probes on a fixed batch.
+diag_weight_stats: false  # Log min/max/mean/rms of every linear_qkv / linear_proj / linear_fc1 / linear_fc2 weight matrix per layer, plus the embedding and output layer. One pass over the local weight shards and three small all-reduces over the model-parallel group on a diagnostic iteration.
+diagnostics_interval: 0  # Collect per-layer diagnostics every N iterations. 0 disables all of the --diag-* collectors below. The activation collector is the only expensive one; 100 keeps its amortised cost under a thousandth of step time.
 dino_bottleneck_size: 256  # Bottle neck dimension in dino head
 dino_freeze_last_layer: 1  # Freezing last layer weights
 dino_head_hidden_size: 2048  # Hidden dimension size in dino head
@@ -395,7 +409,6 @@ num_layers_per_virtual_pipeline_stage: null  # Number of layers per virtual pipe
 num_query_groups: 1
 num_virtual_stages_per_pipeline_rank: null  # Number of virtual pipeline stages per pipeline parallelism rank
 num_workers: 2  # Dataloader number of workers.
-dataloader_prefetch_factor: null  # Batches each dataloader worker keeps prefetched. Deepens the buffer absorbing parallel-filesystem read-latency spikes WITHOUT adding concurrent readers (unlike num_workers). Requires num_workers > 0. null = torch default (2). OELLM patch: megatron/training/datasets/data_samplers.py.
 object_storage_cache_path: null  # Path to cache index files when using s3 or msc dataloader
 one_logger_async: false  # If set, forces one_logger to use async mode.
 one_logger_project: megatron-lm  # The one-logger project name. Will ignore if --no-one-logger is set
@@ -517,6 +530,8 @@ suggested_communication_unit_size: null  # Specifies the number of elements to c
 swiglu: false  # Use gated linear units and SiLU activation instead of default gelu
 swin_backbone_type: tiny  # choices: ['tiny', 'base', 'h3'] | pretraining objectives
 symmetric_ar_type: null  # choices: ['two_shot', 'one_shot', 'multimem_all_reduce', None] | What type of symmetric all reduce to use. The default is none which is no use of symetric memory
+te_debug_config: null  # nvdlfw_inspect feature YAML applied to every Transformer Engine module (LogTensorStats, LogFp8TensorStats, ...). Writes PER-RANK statistics files, so use it only on small probes (<= 16 nodes). See megatron/training/te_debug.py.
+te_debug_log_dir: null  # Directory for the nvdlfw_inspect logs; defaults to <tensorboard-dir>/te_debug.
 te_rng_tracker: false  # Use the Transformer Engine version of the random number generator. Required for CUDA graphs support.
 tensor_model_parallel_size: 1  # Degree of tensor model parallelism.
 tensorboard_dir: null  # Write TensorBoard logs to this directory.

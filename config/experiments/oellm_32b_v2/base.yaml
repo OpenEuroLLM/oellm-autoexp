@@ -162,6 +162,74 @@ backend:
 
     lr: 1.76e-4
 
+    # === PER-LAYER DIAGNOSTICS — WIRED, OFF, ONE NUMBER FROM ON ==============
+    # megatron/training/diagnostics.py, backported from `oellm/v0.19` onto this
+    # line's 0.16 pin. It exists because the previous flagship's degradation had
+    # to be post-mortemed from checkpoints 4000 iterations apart, which cannot
+    # localise WHEN anything started; every quantity below is free where
+    # training already computes it and impossible to reconstruct afterwards.
+    #
+    # EVERYTHING BELOW IS OFF, and off means the rendered argv is identical to
+    # the run before any of this existed -- verified on the rendered sbatch. The
+    # block is here so that turning it on is a copy-paste of a reviewed set of
+    # values rather than a decision taken under time pressure:
+    #
+    #   python scripts/run_autoexp.py \
+    #       --config-name experiments/oellm_32b_v2/production \
+    #       backend.megatron.diagnostics_interval=100 \
+    #       backend.megatron.diag_nonfinite=true \
+    #       backend.megatron.diag_norm_gains=true \
+    #       backend.megatron.diag_layer_grad_norms=true \
+    #       backend.megatron.diag_activations=true \
+    #       backend.megatron.diag_clip_events=true \
+    #       backend.megatron.diag_weight_stats=true \
+    #       backend.megatron.diag_logit_stats=true
+    #
+    # (run_autoexp.py takes Hydra overrides POSITIONALLY. `-o` is render_config.py's
+    # spelling and run_autoexp.py rejects it with "unrecognized arguments" --
+    # several comments elsewhere in this repo still say `-o` and are wrong.)
+    #
+    # NB THE INTERVAL IS NOT A MASTER SWITCH. Every collector except one is gated
+    # on `diagnostics_interval > 0`; `diag_clip_events` is deliberately NOT
+    # (diagnostics.py: "a STREAK can only be counted by looking at every step"),
+    # so leaving it true with the interval at 0 would still track and emit
+    # diag/clip/* and diag/grad_norm/{mean,max,min}. That is free and arguably
+    # worth having on its own -- but it is a live change to the production run,
+    # so it is a deliberate `true`, not a leftover.
+    #
+    # BEFORE TURNING THESE ON AT 512 NODES, RUN THE GATE. The backport had to re-derive
+    # the gradient dedup filter against 0.16 (no `param_is_not_gtp_duplicate`
+    # here), so the reduction arithmetic is NOT the code validated on GPU for
+    # 0.19. Two of the five reduction bugs this module has already had were
+    # invisible at TP1/PP1 and produced healthy-looking numbers at PP=2 — wrong
+    # `diag/*` curves are worse than none, because they get believed.
+    #
+    #   python scripts/run_autoexp.py \
+    #       --config-name experiments/oellm_32b_v2/diagnostics_smoke_130M
+    #
+    # Both arms must report diag/grad_norm/total_check == Megatron's own
+    # grad-norm at ratio 1.000000. ~10 min of 1 node, twice.
+    #
+    # COST once on: the first four are one pass over parameters plus one small
+    # all-reduce each, on diagnostic iterations only. diag_activations is the
+    # only expensive one (bandwidth-bound, ~20 GB of reads for 64 layers) and at
+    # interval 100 amortises to well under 0.1% of step time. diag_clip_events is
+    # free and deliberately runs on EVERY step: a clip STREAK — the thing that
+    # actually signals an optimizer that has lost the plot — cannot be counted
+    # any other way.
+    diagnostics_interval: 0
+    diag_nonfinite: false
+    diag_norm_gains: false
+    diag_layer_grad_norms: false
+    diag_activations: false
+    diag_clip_events: false
+    diag_weight_stats: false
+    diag_logit_stats: false
+    # Stays false even when the rest go on: this line runs bf16 (`fp8: null`
+    # above), so every FP8 delayed-scaling slot would be zero and the emitter
+    # would skip it. Only meaningful if an FP8 arm is ever added back.
+    diag_fp8_meta: false
+
   env:
     TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
     TORCH_CPP_LOG_LEVEL: "error"
