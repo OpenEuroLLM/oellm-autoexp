@@ -56,10 +56,13 @@ backend:
     train_iters: "${oc.eval:'(40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})'}"
     eval_iters: 100
     # ~1BT between evals at gbsz=256, seq_length=4096 -> 954 iters.
-    eval_interval: "${oc.eval:'(1_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})'}"
+    # eval_interval: "${oc.eval:'(1_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})'}"
+    eval_interval: 10
     save_interval: "${oc.eval:'int(512000 // ${backend.megatron.global_batch_size})'}"
     load: "./"
 
+    moe_grouped_gemm: True
+    use_distributed_optimizer: True
     no_save_optim: True
     no_save_rng: True
     wandb_exp_name: "${job.name}"
@@ -79,10 +82,9 @@ backend:
     max_position_embeddings: 4096
     lr_warmup_iters: 2000
     lr_wsd_decay_iters: "${oc.eval:'int(((40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})) * 0.2)'}"
-    use_distributed_optimizer: True
 
     micro_batch_size: 2
-    global_batch_size: 256
+    global_batch_size: 512
 
     lr: 1.e-4
     moe_aux_loss_coeff: 1.e-3
@@ -110,6 +112,10 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 1.e-3
 
 slurm:
+  # nid005019 has hung mid-run in three separate jobs (21846649, 21848346,
+  # 21931375) with "HW Exception ... GPU Hang" on its first four GCDs.
+  sbatch_extra_directives:
+    - "--exclude=nid005019"
   env:
     MASTER_PORT: "9999"
     USE_ROCM_AITER_ROPE_BACKEND: "0"
@@ -118,7 +124,7 @@ slurm:
     nodes: 8
     account: "project_462001516"
     partition: standard-g
-    time: "48:00:00"
+    time: "1-00:00:00"
     output: "${job.base_output_dir}/logs/stdout-%j.log"
     error: "${job.base_output_dir}/logs/stderr-%j.log"
   srun:

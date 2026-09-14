@@ -1,0 +1,148 @@
+# @package _global_
+#
+# Post-hoc MoE router metrics for the two router_stability_long 0.4B runs.
+# Uses the held-out multilingual val blend over
+#   /pfs/lustrep3/scratch/project_465002530/datasets/multilingual_oellm/val
+# (1TT-option-4-val-fixed-lumi.sh), not the training mix.
+#
+# Submit both jobs:
+#   bash scripts/moe/run_moe_metrics_router_stability.sh
+#   # or
+#   python scripts/run_autoexp.py \
+#     --config-name experiments/swagatam/moe_lumi/router_stability_metrics \
+#     --submit-and-exit
+#
+# Submit healthy only:
+#   bash scripts/moe/run_moe_metrics_router_stability.sh --run healthy
+#
+# Smoke test:
+#   NUM_BATCHES=5 SEQ_LENGTH=512 \
+#     python scripts/run_autoexp.py \
+#       --config-name experiments/swagatam/moe_lumi/router_stability_metrics \
+#       --array-subset 0 --submit-and-exit
+
+defaults:
+  - /backend: 'null'
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - _self_
+
+index: 0
+stage: ""
+
+metadata:
+  run_tag: 0.4B_ne_sparse_experts_32topk4_PP1_healthy_lr0.0001_40BT
+  exp_root: ${oc.env:MOE_METRICS_RS_EXP_ROOT,/scratch/project_462001516/experiments/moe_router_stability_long}
+  analysis_root: ${oc.env:MOE_METRICS_RS_ANALYSIS_ROOT,/scratch/project_462001516/experiments/moe_router_stability_long/moe_metrics_dashboard}
+  blend_file: ${oc.env:MOE_METRICS_RS_BLEND,/scratch/project_465002530/datasets/multilingual_oellm/1TT-option-4-val-fixed-lumi.sh}
+  load_path: ${metadata.exp_root}/${metadata.run_tag}/checkpoints
+  out_dir: ${metadata.analysis_root}/${metadata.run_tag}
+
+job:
+  name: moe_metrics_${metadata.run_tag}
+  base_output_dir: ${metadata.out_dir}
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  base_command:
+    - python3
+    - scripts/moe/compute_moe_metrics.py
+    - --tensor-model-parallel-size
+    - "1"
+    - --pipeline-model-parallel-size
+    - "1"
+    - --expert-model-parallel-size
+    - "1"
+    - --load
+    - ${metadata.load_path}
+    - --use-checkpoint-args
+    - --ckpt-format
+    - torch_dist
+    - --bf16
+    - --no-use-tokenizer-model-from-checkpoint-args
+    - --tokenizer-type
+    - NullTokenizer
+    - --vocab-size
+    - "262272"
+    - --no-bias-dropout-fusion
+    - --no-bias-swiglu-fusion
+    - --no-rope-fusion
+    - --no-masked-softmax-fusion
+    - --moe-data-type
+    - megatron_indexed
+    - --moe-megatron-blend-file
+    - ${metadata.blend_file}
+    - --moe-eod-token
+    - "2"
+    - --moe-batch-size
+    - "1"
+    - --moe-seq-length
+    - ${oc.env:SEQ_LENGTH,4096}
+    - --moe-num-batches
+    - ${oc.env:NUM_BATCHES,100}
+    - --moe-compare-ckpts-every
+    - ${oc.env:COMPARE_EVERY,1000}
+    - --moe-output-json
+    - ${metadata.out_dir}/saturation_results.json
+    - --moe-coactivation-output
+    - ${metadata.out_dir}/coactivation_results.json
+    - --moe-token-count-output
+    - ${metadata.out_dir}/token_counts.json
+    - --moe-activation-norm-output
+    - ${metadata.out_dir}/expert_activation_norms.json
+    - --moe-routing-gif
+    - ${metadata.out_dir}/expert_routing.gif
+    - --moe-routing-gif-layers
+    - "first,mid,last"
+    - --moe-routing-gif-frame-ms
+    - "250"
+    - --moe-plot
+    - --moe-plot-dir
+    - ${metadata.out_dir}
+
+container:
+  env:
+    WANDB_MODE: offline
+    MACHINE_NAME: LUMI
+    PYTHONPATH: ".:submodules/Megatron-LM"
+    HF_HUB_OFFLINE: "1"
+    TOKENIZERS_PARALLELISM: "false"
+
+slurm:
+  # 1-GPU metrics job: skip the 8-GPU RCCL health probe in templates/lumi.sbatch.
+  template_path: templates/base.sbatch
+  env:
+    MASTER_PORT: "$((20000 + SLURM_JOB_ID % 10000))"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    WANDB_MODE: offline
+    MACHINE_NAME: LUMI
+    PYTHONPATH: ".:submodules/Megatron-LM"
+    HF_HUB_OFFLINE: "1"
+    TOKENIZERS_PARALLELISM: "false"
+  sbatch:
+    account: project_462001516
+    partition: dev-g
+    nodes: 1
+    ntasks_per_node: 1
+    gpus_per_node: 1
+    gres: "gpu:1"
+    cpus_per_task: 7
+    mem: "64G"
+    time: "01:00:00"
+    output: "${job.base_output_dir}/stdout-%j.log"
+    error: "${job.base_output_dir}/stderr-%j.log"
+    job_name: null
+  srun:
+    exclusive: null
+    cpus_per_task: 7
+    kill_on_bad_exit: "1 "
+
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        - metadata.run_tag: 0.4B_ne_sparse_experts_32topk4_PP1_healthy_lr0.0001_40BT
+        - metadata.run_tag: 0.4B_ne_sparse_experts_32topk4_PP1_high_lr_failure_lr0.001_40BT

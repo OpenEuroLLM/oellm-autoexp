@@ -58,8 +58,9 @@ backend:
 
 
     # Data-related configs (LUMI)
-    data_args_path: /scratch/project_462000963/users/vitiugin/datamix-tools/datamix4-lumi.txt
-    split: "99,1,0"
+    data_args_path: null
+    per_split_data_args_path: /scratch/project_462001516/multilingual_dataset/datamix4-per-split.json
+    
     tokenizer_type: HuggingFaceTokenizer
     tokenizer_model: openeurollm/tokenizer-256k
     data_cache_path: /scratch/project_462001516/users/swagatam/cache/MEGATRON_262k/${job.name}
@@ -71,8 +72,8 @@ backend:
     #train_iters: 5
     lr_warmup_iters: 5
     lr_wsd_decay_iters: 1
-    use_distributed_optimizer: True
-
+    use_distributed_optimizer: False
+    moe_grouped_gemm: False
 
     # Base training configuration (for stable phase)
     micro_batch_size: 2 # Will be overridden by sweep
@@ -123,7 +124,7 @@ slurm:
   srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
   sbatch:
     # nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
-    nodes: 2
+    nodes: 8
     # qos: "boost_qos_dbg"
     account: "project_462001516"
     partition: dev-g

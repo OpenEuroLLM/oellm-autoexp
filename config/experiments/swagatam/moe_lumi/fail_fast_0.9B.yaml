@@ -58,12 +58,10 @@ backend:
 
 
     # Data-related configs (LUMI)
-    data_args_path: /scratch/project_462000963/users/vitiugin/datamix-tools/datamix4-lumi.txt
-    split: "99,1,0"
-    tokenizer_type: HuggingFaceTokenizer
-    tokenizer_model: openeurollm/tokenizer-256k
-    data_cache_path: /scratch/project_462001516/users/swagatam/cache/MEGATRON_262k/${job.name}
 
+    data_args_path: null
+    per_split_data_args_path: /scratch/project_462001516/multilingual_dataset/datamix4-per-split.json
+    split: "99,1,0"
 
     # LUMI hipBLASLt workarounds: "Unable to find any suitable algorithms" in these GEMM shapes
     # moe_router_dtype: null
