@@ -1,91 +1,81 @@
 # @package _global_
 #
 # ============================================================================
-# REGRESSION GATE: THE --diag-* HOOKS MUST NOT BE ARMED DURING EVALUATION
+# REGRESSION GATE: EVALUATION ON A DIAGNOSTIC ITERATION, ON THE PRODUCTION PATH
 # ============================================================================
-# diagnostics_smoke_130M.yaml validates the REDUCTION ARITHMETIC of the
-# collectors. It cannot catch this, and by construction never will: it sets
-# `eval_interval: 1000000`, so every arm of it — and of the 0.19 gate before it
-# — ran ZERO evals. Everything that has ever been said about these collectors,
-# including "the logit hook does not deadlock at PP>1", was measured on the
-# TRAINING forward only.
+# The 32B v2 flagship hangs silently at iteration 40000 — its first
+# `eval_interval` boundary after the --diag-* collectors were switched on —
+# with no error, in a restart loop (1786629, 1795035, 1795198, 1795608,
+# 1795774, 1797364). Each reaches exactly 40000, prints the
+# `RerunMode.DISABLED` line that opens `evaluate()`, and never prints a
+# validation loss.
 #
-# WHAT IT BROKE
-# -------------
-# `begin_step` arms the hooks for the whole ITERATION and `evaluate()` runs
-# later in the same loop body, so nothing disarmed them for validation. The 32B
-# v2 flagship hung at iteration 40000 — its first `eval_interval` boundary after
-# the collectors were switched on — silently, with no error, five jobs in a row
-# (1786629, 1795035, 1795198, 1795608, 1795774). Each reached exactly 40000,
-# printed the `RerunMode.DISABLED` line that opens `evaluate()`, and never
-# printed a validation loss. Evals at 10000/20000/30000 had all passed in 19.0 s
-# in jobs whose arg dump has no `diag_*` keys at all.
+# WHY THE FIRST VERSION OF THIS GATE WAS WORTHLESS — read this before editing
+# ---------------------------------------------------------------------------
+# It ran TP2 x PP2 with `overlap_param_gather: False`, no VPP and tied
+# embeddings, and it PASSED while production kept hanging. The reason is one
+# line, `training.py:3270`:
 #
-# Fixed by `TrainingDiagnostics.paused()` / `diagnostics_paused()`, wrapped
-# around the `torch.no_grad()` block in `evaluate()`.
+#     def should_disable_forward_pre_hook(args):
+#         return not args.use_megatron_fsdp and args.use_distributed_optimizer \
+#                and args.overlap_param_gather
 #
-# NB `+experiments=...` does NOT compose on this line — it re-enters the 130M
-# base's `/slurm: jupiter` and dies with "Multiple values for slurm". Use the
-# form the README documents (diagnostics_smoke_130M.yaml's header still carries
-# the broken one):
+# `train()` calls `disable_forward_pre_hook(model)` immediately BEFORE the eval
+# and `enable_forward_pre_hook(model)` immediately after (training.py:2722-2750).
+# With `overlap_param_gather: False` neither runs — so the old gate exercised a
+# DIFFERENT eval path than production and could never have reproduced anything.
+# A green run on it meant nothing. Do not weaken these four flags:
+#
+#     use_distributed_optimizer  overlap_param_gather  overlap_grad_reduce
+#     virtual_pipeline_model_parallel_size
+#
+# plus untied embeddings, because production is untied and the diagnostics
+# hooks are installed per module — the set of hooked modules differs.
+#
+# Megatron's param-gather pre-hooks and the --diag-* activation pre-hooks are
+# registered on the SAME modules, and `disable`/`enable_forward_pre_hook`
+# removes and re-registers only Megatron's. That is the interaction production
+# has and the old gate did not.
 #
 #   PYTHONPATH=. python scripts/run_autoexp.py \
 #       --config-name experiments/oellm_32b_v2/diagnostics_eval_gate_130M
 #
-# THE TWO ARMS — the control is what makes this a test and not an anecdote
-# ------------------------------------------------------------------------
-# Both run TP=2 x PP=2 + sequence_parallel on one node. PP>1 is not optional:
-# the suspected mechanisms are a TP all-reduce and a blocking device sync
-# issued from inside a forward hook, and both are only dangerous against a
-# pipeline p2p chain.
+# NB `+experiments=...` does NOT compose here — it re-enters the 130M base's
+# `/slurm: jupiter` and dies with "Multiple values for slurm".
 #
-#   coincide  eval_interval 20, diagnostics_interval 10 -> evals at 20, 40, 60,
-#             EVERY ONE of them a diagnostic iteration. This is the regression
-#             test.
-#   control   eval_interval 23 -> evals at 23 and 46, NEITHER a diagnostic
-#             iteration. Must pass with OR without the fix. Without it the
-#             "coincide" arm alone cannot distinguish "diagnostics break eval"
-#             from "eval is broken on this branch" — which would send the next
-#             person after the wrong bug.
+# THE TWO ARMS
+# ------------
+# Both run TP2 x PP4 x VPP2, DP2 on FOUR nodes, with the production flags above.
 #
-# WHAT THIS GATE HAS AND HAS NOT PROVEN — read before trusting a green run
-# ------------------------------------------------------------------------
-# PROVEN, jobs 1797124 (coincide) and 1797123 (control), 2026-09-14, both
-# COMPLETED 0:0 in 9:26: with the fix, evals ON diagnostic iterations run
-# cleanly, and the collectors are undisturbed by it (`total_check` 1.000000,
-# 18/18 layers, zero non-finites on both arms).
+#   diag    diagnostics ON at interval 10, eval_interval 20 -> evals at 20, 40,
+#           60, EVERY ONE a diagnostic iteration. This is the arm that must
+#           reproduce the hang.
+#   nodiag  identical except every collector OFF. Must pass. Without it, a hang
+#           in the first arm cannot be attributed to the diagnostics rather than
+#           to the production flags this gate newly turns on.
 #
-# NOT PROVEN: that this 130M shape REPRODUCES the hang when the fix is removed.
-# The negative control has not been run, so a green "coincide" is not yet
-# evidence that the gate would CATCH a reintroduced regression — it may be
-# vacuous at this scale (production fires the logit hook 160 times per eval;
-# here it is 32). The hang itself is established at production shape only, by
-# the five 512-node jobs above. Until someone runs this arm against a reverted
-# `evaluate()` and sees it hang, treat a pass as "the fix works", NOT as "the
-# gate has teeth".
+# NB turning the collectors off needs BOTH `diagnostics_interval: 0` AND the
+# booleans false — `diag_clip_events` is deliberately not gated on the interval
+# (diagnostics.py: "a STREAK can only be counted by looking at every step").
 #
 # HOW TO READ THE RESULT
 # ----------------------
-#   grep -c "validation loss at iteration" <log>     coincide 3, control 2
-#   grep "exiting program at iteration 65" <log>     both must reach it
-# NB do NOT grep for `iteration 65/`: log_interval is 10, so the last ITERATION
-# line is 60 and 65 is never logged. The exit line is the one that proves the
-# run finished rather than stopped.
-# A hang shows as neither: the log stops after
+#   grep -c "validation loss at iteration" <log>     3 per passing arm
+#   grep "exiting program at iteration 65" <log>     a passing arm reaches it
+# Do NOT grep for `iteration 65/`: log_interval is 10, so the last iteration
+# line is 60 and 65 is never logged.
+# A hang shows as neither, with the log stopping after
 #   WARNING:megatron.core.rerun_state_machine:Setting RerunStateMachine mode
 #   RerunMode.DISABLED
-# and the job dies on the 20 min wall limit. That single line is the whole
-# tell — count it: a COMPLETED eval prints it 3x (the enter plus the two
+# Count that line: a COMPLETED eval prints it 3x (the enter plus the two
 # restores at training.py:2969-2971), a hung one exactly once.
 #
-# Then confirm the fix did not cost anything the other gate was protecting:
-# `diag/grad_norm/total_check` must still be 1.000000 on the diagnostic
-# iterations that now have an eval hanging off them (20, 40, 60).
+# WHEN IT HANGS, GET THE STACK — that is the point of a 2-node reproduction:
+#   srun --jobid=<id> --overlap -w <node> --ntasks=1 \
+#     apptainer exec --cleanenv --bind /e:/e <image> \
+#     /opt/venv/bin/python -m py_spy dump --pid <rank pid>
 #
-#   python scripts/korbi/check_diagnostics_smoke.py <tensorboard_dir> [...]
-#
-# COST: ~8-10 min of 1 node, twice. Re-run it whenever diagnostics.py or the
-# evaluate() path moves.
+# COST: ~10 min of 4 nodes, twice.
 # ============================================================================
 
 defaults:
@@ -97,33 +87,87 @@ aux:
 
 backend:
   megatron:
-    # PP>1 on BOTH arms — see above. The inherited config sweeps tp1pp1/tp2pp2;
-    # that sweep is replaced wholesale below (Hydra REPLACES lists on merge), so
-    # the parallelism has to be stated here instead of per arm.
+    # --- parallelism: the production SHAPE, not just "PP>1" ------------------
+    # VPP is the axis the old gate missed entirely. num_layers must divide
+    # PP * VPP = 4, so 16 rather than the inherited 18.
     tensor_model_parallel_size: 2
-    pipeline_model_parallel_size: 2
+    # PP=4, like production. NOT 2: `arguments.py:609` rejects the interleaved
+    # schedule at PP<=2 without p2p overlap ("multiple p2p sends and recvs
+    # between same 2 ranks per communication batch"), and PP=4 is production's
+    # value anyway.
+    pipeline_model_parallel_size: 4
+    # VPP=2 the way production expresses it: there is no
+    # `virtual_pipeline_model_parallel_size` key in this schema, the layout
+    # implies it. PP * VPP = 8 chunks over 16 layers = 2 layers each; `E` is the
+    # embedding, `L` the output layer, and the backslash escaping matches
+    # base.yaml because the string is shell-quoted into the argv.
+    pipeline_model_parallel_layout: "Et\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2L"
+    num_layers: 16
     sequence_parallel: true
+    overlap_p2p_comm: true    # production has this on; it also relaxes the PP>2 rule
 
-    # PRODUCTION uses `single`; the inherited 130M base uses `cyclic`. The point
-    # of this gate is to reproduce a production hang, so it takes production's
-    # value. Safe on the sample budget: the valid set is built with
-    # (train_iters // eval_interval + 1) * eval_iters * GBS = 26,112 samples and
-    # the run consumes at most 3 * 4 * 128 = 1,536 of them.
+    # The last production flag this gate was missing. TE's userbuffer comm
+    # overlap wraps exactly the four GEMMs the --diag-* activation pre-hooks are
+    # installed on (linear_qkv / linear_fc1 / linear_proj / linear_fc2), so a
+    # hook and an overlapped GEMM meet on the same module. Needs UB_SKIPMC=1,
+    # set in slurm.env below.
+    tp_comm_overlap: true
+
+    # Untied, like production. With tied embeddings the word embedding lives on
+    # both the first and last stage and the hooked-module set differs.
+    untie_embeddings_and_output_weights: true
+
+    # --- THE FLAGS THAT SELECT THE PRODUCTION EVAL PATH ----------------------
+    # overlap_param_gather is the one that flips should_disable_forward_pre_hook
+    # and therefore decides whether eval is bracketed by
+    # disable/enable_forward_pre_hook at all. The inherited 130M base has it
+    # False, which is exactly why the first gate was vacuous.
+    use_distributed_optimizer: true
+    overlap_param_gather: true
+    overlap_grad_reduce: true
+
+    # DP=2 on 4 nodes (16 GPUs / (TP2 x PP4)). mbs 4 -> 16 microbatches, which is
+    # divisible by PP and >= PP * VPP, both of which the interleaved schedule
+    # requires.
+    micro_batch_size: 4
+
+    # PRODUCTION uses `single`; the inherited 130M base uses `cyclic`.
     dataloader_type: single
 
-    # 4, not the inherited 2: the hook fires once per eval MICROBATCH, and at
-    # GBS 128 / mbs 16 / DP 1 that is 8 per eval iteration. 4 iterations gives 32
-    # firings per eval against production's 160 — enough exposure that a
-    # probabilistic hang is unlikely to be missed, still seconds of runtime.
     eval_iters: 4
-
-    # 65, not the inherited 60, so the third eval of the "coincide" arm (at 60)
-    # is unambiguously INSIDE the run rather than racing the exit_interval check.
     exit_interval: 65
 
-    # Everything under test — diagnostics_interval 10 and the seven collectors —
-    # is inherited from diagnostics_smoke_130M.yaml unchanged. Do not restate it
-    # here; the two gates must exercise the same collector set.
+    # --- ASYNC CHECKPOINTING, because iteration 40000 is THREE things at once --
+    # Production's hang iteration is simultaneously an eval boundary
+    # (eval_interval 10000), a PERSISTENT save boundary (save_interval 4000) and
+    # a rolling save boundary (non_persistent_save_interval 125). The inherited
+    # smoke config writes NO checkpoints at all (`save_interval: 1000000`), so
+    # neither previous version of this gate ever ran a save anywhere near an
+    # eval. The only stack dump the production hang ever produced (job 1786629,
+    # on SIGTERM) showed the PERSISTENT ASYNC CHECKPOINT WORKER processes, and
+    # this tree has a prior incident where that worker died and the parent
+    # blocked forever (job 1457594, truncated .pyc).
+    #
+    # Scaled so the same coincidences occur:
+    #   iter 20, 60  eval + rolling save        (production 10000 / 30000: OK)
+    #   iter 40      eval + rolling + PERSISTENT (production 20000 / 40000)
+    save_interval: 40
+    non_persistent_save_interval: 5
+    # BOTH are required. Setting only the dir leaves non_persistent_ckpt_type
+    # at None and every rank dies at the first rolling save with
+    # "NotImplementedError: Please use local or global non-persistent
+    # checkpoints (got: None)" — raised at SAVE time, so preflight's
+    # validate_args does NOT catch it (jobs 1798353/1798354).
+    non_persistent_ckpt_type: global
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/checkpoints_rolling
+    async_save: true
+    use_persistent_ckpt_worker: true
+    ckpt_assume_constant_structure: true
+
+    # Always start from scratch: `save` and `load` are the same directory here,
+    # so without this a second run of the gate would resume from the iter_40
+    # checkpoint the first run just wrote and never exercise iterations 0-40.
+    load: null
 
     wandb_project: oellm_32b_v2_diagnostics_eval_gate
 
@@ -131,15 +175,32 @@ job:
   name: "v2_diag_evalgate_130M_${aux.additional_tag}"
   est_steps: 65
 
+slurm:
+  env:
+    # Required by tp_comm_overlap (userbuffers) on GH200; the inherited
+    # diagnostics_smoke_130M.yaml already sets CUDA_DEVICE_MAX_CONNECTIONS=1.
+    UB_SKIPMC: "1"
+  sbatch:
+    nodes: 4
+    time: "00:25:00"
+
 sweep:
   type: product
   store_sweep_json: true
   groups:
     - type: list
       configs:
-        # Evals at 20, 40, 60 — all three are diagnostic iterations.
-        - aux.additional_tag: "coincide"
+        # Collectors ON; evals at 20/40/60 all land on diagnostic iterations.
+        - aux.additional_tag: "diag"
           backend.megatron.eval_interval: 20
-        # Evals at 23, 46 — neither is a diagnostic iteration.
-        - aux.additional_tag: "control"
-          backend.megatron.eval_interval: 23
+        # Identical, collectors fully OFF. Interval 0 is NOT enough on its own.
+        - aux.additional_tag: "nodiag"
+          backend.megatron.eval_interval: 20
+          backend.megatron.diagnostics_interval: 0
+          backend.megatron.diag_nonfinite: false
+          backend.megatron.diag_norm_gains: false
+          backend.megatron.diag_layer_grad_norms: false
+          backend.megatron.diag_activations: false
+          backend.megatron.diag_clip_events: false
+          backend.megatron.diag_weight_stats: false
+          backend.megatron.diag_logit_stats: false
