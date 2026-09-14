@@ -3124,6 +3124,34 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "moe_expert_viability_metrics": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Log routed-expert viability diagnostics; requires --moe-per-layer-logging."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "moe_masked_layer_validation": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help=(
+            "Run a rotating paired validation probe that masks one routed MoE layer."
+        ),
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "moe_masked_layer_eval_iters": MegatronArgMetadata(
+        arg_type=int,
+        default=8,
+        help="Dedicated batches for each masked-layer validation probe (default: 8).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "moe_permute_fusion": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -7887,6 +7915,27 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "moe_expert_viability_metrics": MegatronActionSpec(
+        option_strings=("--moe-expert-viability-metrics",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "moe_masked_layer_validation": MegatronActionSpec(
+        option_strings=("--moe-masked-layer-validation",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "moe_masked_layer_eval_iters": MegatronActionSpec(
+        option_strings=("--moe-masked-layer-eval-iters",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=8,
     ),
     "moe_permute_fusion": MegatronActionSpec(
         option_strings=("--moe-permute-fusion",),

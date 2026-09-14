@@ -1584,6 +1584,15 @@ class MegatronConfig(ConfigInterface):
     # Enable per-layer logging for MoE, currently supports auxiliary loss and z loss.
     moe_per_layer_logging: bool = False
 
+    # Log routed-expert viability diagnostics; requires moe_per_layer_logging.
+    moe_expert_viability_metrics: bool = False
+
+    # Run a rotating paired validation probe that masks one routed MoE layer.
+    moe_masked_layer_validation: bool = False
+
+    # Dedicated validation batches used by each masked-layer probe.
+    moe_masked_layer_eval_iters: int = 8
+
     # The type of token dispatcher to use. The default is 'allgather'. Options are
     # 'allgather', 'alltoall'. We recommend using 'alltoall' when applying expert parallelism.
     # For more information, please refer to the documentation in core/moe/README.
