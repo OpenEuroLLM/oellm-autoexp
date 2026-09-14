@@ -21,6 +21,7 @@ from megatron.training.diagnostics import (  # noqa: E402
     TrainingDiagnostics,
     _classify_gain,
     _classify_grad_bucket,
+    diagnostics_paused,
 )
 
 FAILURES = []
@@ -150,6 +151,41 @@ check("diag iteration on a multiple", on._is_diag_iter, True)
 on.begin_step(105)
 check("not a diag iteration otherwise", on._is_diag_iter, False)
 check("emit is empty with nothing collected", on.emit(105, None, None), {})
+
+# --- paused(): the hooks must be disarmed for evaluation --------------------
+# `begin_step` arms the hooks for the whole ITERATION and `evaluate()` runs later
+# in the same loop body, which hung the 32B v2 flagship at iteration 40000 (its
+# first eval boundary after the collectors went on). RESTORING rather than
+# clearing is the load-bearing part: a checkpoint save can follow the eval in the
+# same iteration, and `collect`/`emit` read `_is_diag_iter` too.
+on.begin_step(100)
+with on.paused():
+    check("paused disarms the hooks", on._is_diag_iter, False)
+check("paused restores an armed iteration", on._is_diag_iter, True)
+
+on.begin_step(105)  # not a diagnostic iteration
+with on.paused():
+    check("paused is a no-op when already disarmed", on._is_diag_iter, False)
+check("paused does not ARM a non-diagnostic iteration", on._is_diag_iter, False)
+
+# An exception out of evaluate() must not leave the hooks disarmed for the rest
+# of the run — that would silently stop every later collection.
+on.begin_step(110)
+try:
+    with on.paused():
+        raise RuntimeError("eval blew up")
+except RuntimeError:
+    pass
+check("paused restores after an exception", on._is_diag_iter, True)
+
+# The module-level helper is what evaluate() calls, and it must tolerate being
+# called before setup_diagnostics() — the final eval of a run that never set
+# diagnostics up goes through exactly that path. Raising here would abort the
+# script, so reaching the check at all is the assertion.
+entered = False
+with diagnostics_paused():
+    entered = True
+check("diagnostics_paused is a no-op with no global object", entered, True)
 
 if FAILURES:
     print(f"{len(FAILURES)} FAILURE(S):")

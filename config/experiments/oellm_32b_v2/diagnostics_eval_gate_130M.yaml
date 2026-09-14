@@ -1,0 +1,127 @@
+# @package _global_
+#
+# ============================================================================
+# REGRESSION GATE: THE --diag-* HOOKS MUST NOT BE ARMED DURING EVALUATION
+# ============================================================================
+# diagnostics_smoke_130M.yaml validates the REDUCTION ARITHMETIC of the
+# collectors. It cannot catch this, and by construction never will: it sets
+# `eval_interval: 1000000`, so every arm of it — and of the 0.19 gate before it
+# — ran ZERO evals. Everything that has ever been said about these collectors,
+# including "the logit hook does not deadlock at PP>1", was measured on the
+# TRAINING forward only.
+#
+# WHAT IT BROKE
+# -------------
+# `begin_step` arms the hooks for the whole ITERATION and `evaluate()` runs
+# later in the same loop body, so nothing disarmed them for validation. The 32B
+# v2 flagship hung at iteration 40000 — its first `eval_interval` boundary after
+# the collectors were switched on — silently, with no error, five jobs in a row
+# (1786629, 1795035, 1795198, 1795608, 1795774). Each reached exactly 40000,
+# printed the `RerunMode.DISABLED` line that opens `evaluate()`, and never
+# printed a validation loss. Evals at 10000/20000/30000 had all passed in 19.0 s
+# in jobs whose arg dump has no `diag_*` keys at all.
+#
+# Fixed by `TrainingDiagnostics.paused()` / `diagnostics_paused()`, wrapped
+# around the `torch.no_grad()` block in `evaluate()`.
+#
+# NB `+experiments=...` does NOT compose on this line — it re-enters the 130M
+# base's `/slurm: jupiter` and dies with "Multiple values for slurm". Use the
+# form the README documents (diagnostics_smoke_130M.yaml's header still carries
+# the broken one):
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_v2/diagnostics_eval_gate_130M
+#
+# THE TWO ARMS — the control is what makes this a test and not an anecdote
+# ------------------------------------------------------------------------
+# Both run TP=2 x PP=2 + sequence_parallel on one node. PP>1 is not optional:
+# the suspected mechanisms are a TP all-reduce and a blocking device sync
+# issued from inside a forward hook, and both are only dangerous against a
+# pipeline p2p chain.
+#
+#   coincide  eval_interval 20, diagnostics_interval 10 -> evals at 20, 40, 60,
+#             EVERY ONE of them a diagnostic iteration. This is the regression
+#             test. Before the fix it hangs at iteration 20 and burns the wall
+#             clock; after it, three clean validation losses.
+#   control   eval_interval 23 -> evals at 23 and 46, NEITHER a diagnostic
+#             iteration. Must pass with OR without the fix. Without it the
+#             "coincide" arm alone cannot distinguish "diagnostics break eval"
+#             from "eval is broken on this branch" — which would send the next
+#             person after the wrong bug.
+#
+# HOW TO READ THE RESULT
+# ----------------------
+#   grep -c "validation loss at iteration" <log>     coincide 3, control 2
+#   grep    "iteration *65/" <log>                   both must reach it
+# A hang shows as neither: the log stops after
+#   WARNING:megatron.core.rerun_state_machine:Setting RerunStateMachine mode
+#   RerunMode.DISABLED
+# and the job dies on the 20 min wall limit. That single line is the whole
+# tell — count it: a COMPLETED eval prints it 3x (the enter plus the two
+# restores at training.py:2969-2971), a hung one exactly once.
+#
+# Then confirm the fix did not cost anything the other gate was protecting:
+# `diag/grad_norm/total_check` must still be 1.000000 on the diagnostic
+# iterations that now have an eval hanging off them (20, 40, 60).
+#
+#   python scripts/korbi/check_diagnostics_smoke.py <tensorboard_dir> [...]
+#
+# COST: ~8-10 min of 1 node, twice. Re-run it whenever diagnostics.py or the
+# evaluate() path moves.
+# ============================================================================
+
+defaults:
+  - /experiments/oellm_32b_v2/diagnostics_smoke_130M
+  - _self_
+
+aux:
+  experiment_group: "v2_diagnostics_eval_gate"
+
+backend:
+  megatron:
+    # PP>1 on BOTH arms — see above. The inherited config sweeps tp1pp1/tp2pp2;
+    # that sweep is replaced wholesale below (Hydra REPLACES lists on merge), so
+    # the parallelism has to be stated here instead of per arm.
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 2
+    sequence_parallel: true
+
+    # PRODUCTION uses `single`; the inherited 130M base uses `cyclic`. The point
+    # of this gate is to reproduce a production hang, so it takes production's
+    # value. Safe on the sample budget: the valid set is built with
+    # (train_iters // eval_interval + 1) * eval_iters * GBS = 26,112 samples and
+    # the run consumes at most 3 * 4 * 128 = 1,536 of them.
+    dataloader_type: single
+
+    # 4, not the inherited 2: the hook fires once per eval MICROBATCH, and at
+    # GBS 128 / mbs 16 / DP 1 that is 8 per eval iteration. 4 iterations gives 32
+    # firings per eval against production's 160 — enough exposure that a
+    # probabilistic hang is unlikely to be missed, still seconds of runtime.
+    eval_iters: 4
+
+    # 65, not the inherited 60, so the third eval of the "coincide" arm (at 60)
+    # is unambiguously INSIDE the run rather than racing the exit_interval check.
+    exit_interval: 65
+
+    # Everything under test — diagnostics_interval 10 and the seven collectors —
+    # is inherited from diagnostics_smoke_130M.yaml unchanged. Do not restate it
+    # here; the two gates must exercise the same collector set.
+
+    wandb_project: oellm_32b_v2_diagnostics_eval_gate
+
+job:
+  name: "v2_diag_evalgate_130M_${aux.additional_tag}"
+  est_steps: 65
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # Evals at 20, 40, 60 — all three are diagnostic iterations.
+        - aux.additional_tag: "coincide"
+          backend.megatron.eval_interval: 20
+        # Evals at 23, 46 — neither is a diagnostic iteration.
+        - aux.additional_tag: "control"
+          backend.megatron.eval_interval: 23
