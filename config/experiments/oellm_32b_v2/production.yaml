@@ -24,6 +24,7 @@ job:
 
   est_steps: ${oc.coalesce:${backend.megatron.exit_interval},${backend.megatron.train_iters},${oc.divi:${backend.megatron.train_samples},${backend.megatron.global_batch_size}}}
   est_startup_min: 10
+  est_step_time_s: 5.7
 
 backend:
   aux:
