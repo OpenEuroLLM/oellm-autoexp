@@ -41,18 +41,36 @@
 #
 #   coincide  eval_interval 20, diagnostics_interval 10 -> evals at 20, 40, 60,
 #             EVERY ONE of them a diagnostic iteration. This is the regression
-#             test. Before the fix it hangs at iteration 20 and burns the wall
-#             clock; after it, three clean validation losses.
+#             test.
 #   control   eval_interval 23 -> evals at 23 and 46, NEITHER a diagnostic
 #             iteration. Must pass with OR without the fix. Without it the
 #             "coincide" arm alone cannot distinguish "diagnostics break eval"
 #             from "eval is broken on this branch" — which would send the next
 #             person after the wrong bug.
 #
+# WHAT THIS GATE HAS AND HAS NOT PROVEN — read before trusting a green run
+# ------------------------------------------------------------------------
+# PROVEN, jobs 1797124 (coincide) and 1797123 (control), 2026-09-14, both
+# COMPLETED 0:0 in 9:26: with the fix, evals ON diagnostic iterations run
+# cleanly, and the collectors are undisturbed by it (`total_check` 1.000000,
+# 18/18 layers, zero non-finites on both arms).
+#
+# NOT PROVEN: that this 130M shape REPRODUCES the hang when the fix is removed.
+# The negative control has not been run, so a green "coincide" is not yet
+# evidence that the gate would CATCH a reintroduced regression — it may be
+# vacuous at this scale (production fires the logit hook 160 times per eval;
+# here it is 32). The hang itself is established at production shape only, by
+# the five 512-node jobs above. Until someone runs this arm against a reverted
+# `evaluate()` and sees it hang, treat a pass as "the fix works", NOT as "the
+# gate has teeth".
+#
 # HOW TO READ THE RESULT
 # ----------------------
 #   grep -c "validation loss at iteration" <log>     coincide 3, control 2
-#   grep    "iteration *65/" <log>                   both must reach it
+#   grep "exiting program at iteration 65" <log>     both must reach it
+# NB do NOT grep for `iteration 65/`: log_interval is 10, so the last ITERATION
+# line is 60 and 65 is never logged. The exit line is the one that proves the
+# run finished rather than stopped.
 # A hang shows as neither: the log stops after
 #   WARNING:megatron.core.rerun_state_machine:Setting RerunStateMachine mode
 #   RerunMode.DISABLED
