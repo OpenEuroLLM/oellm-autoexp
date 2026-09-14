@@ -169,66 +169,69 @@ backend:
     # localise WHEN anything started; every quantity below is free where
     # training already computes it and impossible to reconstruct afterwards.
     #
-    # EVERYTHING BELOW IS OFF, and off means the rendered argv is identical to
-    # the run before any of this existed -- verified on the rendered sbatch. The
-    # block is here so that turning it on is a copy-paste of a reviewed set of
-    # values rather than a decision taken under time pressure:
+    # ON, at interval 100 — the SAME interval and the SAME seven collectors the
+    # 0.19 continuation runs used (oellm_32b_dense_revival_1.yaml:103 and
+    # cont6_diag_from64k.yaml:155). Keeping the interval identical matters beyond
+    # taste: a `diag/*` curve from v2 is then directly comparable, step for step,
+    # against the cont8/cont9 curves the instability was characterised on.
     #
-    #   python scripts/run_autoexp.py \
-    #       --config-name experiments/oellm_32b_v2/production \
-    #       backend.megatron.diagnostics_interval=100 \
-    #       backend.megatron.diag_nonfinite=true \
-    #       backend.megatron.diag_norm_gains=true \
-    #       backend.megatron.diag_layer_grad_norms=true \
-    #       backend.megatron.diag_activations=true \
-    #       backend.megatron.diag_clip_events=true \
-    #       backend.megatron.diag_weight_stats=true \
-    #       backend.megatron.diag_logit_stats=true
+    # VALIDATION — the two halves of the matrix, and why they are jointly enough
+    # -------------------------------------------------------------------------
+    # 1. THIS COLLECTOR SET AT PRODUCTION SHAPE, on 0.19: cont8_zlossfp32,
+    #    cont9_nozloss and cont9_softcap30 each logged 5002 diag series over 64
+    #    layers at 512 nodes, TP4 x PP4 x VPP4, untied embeddings. Measured
+    #    2026-09-14 across 261 logged steps: diag/grad_norm/total_check divided
+    #    by Megatron's own grad-norm is 1.000000 at EVERY step of all three.
+    #    That is what clears VPP=4 — which is not a rank axis and so lands in
+    #    reduction arithmetic for a different reason than TP/PP/CP do, and which
+    #    has already been missed once in this tree (the packed-sequence FLOPs
+    #    dedup omitted it and reported 717 TFLOP/s against a control's 367).
+    # 2. THE 0.16-SPECIFIC CHANGES, on this pin: jobs 1785631 (TP1/PP1/DP4) and
+    #    1785630 (TP2/PP2/SP, tied embeddings), 2026-09-14, both total_check
+    #    1.000000, 18/18 layer coverage in every family, zero non-finites.
+    #    Tied-at-PP>1 is the HARD case for `param_is_not_shared`; production is
+    #    untied, i.e. easier for that filter.
     #
-    # (run_autoexp.py takes Hydra overrides POSITIONALLY. `-o` is render_config.py's
-    # spelling and run_autoexp.py rejects it with "unrecognized arguments" --
-    # several comments elsewhere in this repo still say `-o` and are wrong.)
+    # Half 1 covers the shape, half 2 covers the diff. The backport touched three
+    # things (the gtp filter, the tp-duplicate signature, the logsumexp helper)
+    # and none of them is VPP-dependent, so the two halves compose. Re-run
+    # diagnostics_smoke_130M.yaml (both arms, ~10 min of 1 node) if the Megatron
+    # pin ever moves.
     #
-    # NB THE INTERVAL IS NOT A MASTER SWITCH. Every collector except one is gated
-    # on `diagnostics_interval > 0`; `diag_clip_events` is deliberately NOT
+    # THE INTERVAL IS NOT A MASTER SWITCH. Every collector except one is gated on
+    # `diagnostics_interval > 0`; `diag_clip_events` is deliberately NOT
     # (diagnostics.py: "a STREAK can only be counted by looking at every step"),
-    # so leaving it true with the interval at 0 would still track and emit
-    # diag/clip/* and diag/grad_norm/{mean,max,min}. That is free and arguably
-    # worth having on its own -- but it is a live change to the production run,
-    # so it is a deliberate `true`, not a leftover.
+    # so setting the interval back to 0 does NOT silence it — it keeps emitting
+    # diag/clip/* and diag/grad_norm/{mean,max,min}. To disable everything, set
+    # the booleans false as well.
     #
-    # BEFORE TURNING THESE ON AT 512 NODES, RUN THE GATE. The backport had to re-derive
-    # the gradient dedup filter against 0.16 (no `param_is_not_gtp_duplicate`
-    # here), so the reduction arithmetic is NOT the code validated on GPU for
-    # 0.19. Two of the five reduction bugs this module has already had were
-    # invisible at TP1/PP1 and produced healthy-looking numbers at PP=2 — wrong
-    # `diag/*` curves are worse than none, because they get believed.
-    #
-    #   python scripts/run_autoexp.py \
-    #       --config-name experiments/oellm_32b_v2/diagnostics_smoke_130M
-    #
-    # Both arms must report diag/grad_norm/total_check == Megatron's own
-    # grad-norm at ratio 1.000000. ~10 min of 1 node, twice.
-    #
-    # COST once on: the first four are one pass over parameters plus one small
-    # all-reduce each, on diagnostic iterations only. diag_activations is the
-    # only expensive one (bandwidth-bound, ~20 GB of reads for 64 layers) and at
-    # interval 100 amortises to well under 0.1% of step time. diag_clip_events is
-    # free and deliberately runs on EVERY step: a clip STREAK — the thing that
-    # actually signals an optimizer that has lost the plot — cannot be counted
-    # any other way.
-    diagnostics_interval: 0
-    diag_nonfinite: false
-    diag_norm_gains: false
-    diag_layer_grad_norms: false
-    diag_activations: false
-    diag_clip_events: false
-    diag_weight_stats: false
-    diag_logit_stats: false
-    # Stays false even when the rest go on: this line runs bf16 (`fp8: null`
+    # COST: the parameter-pass collectors are one pass plus one small all-reduce
+    # each, on diagnostic iterations only. diag_activations is the only expensive
+    # one (bandwidth-bound, ~20 GB of reads for 64 layers); at interval 100 that
+    # amortises to well under 0.1% of step time, and the three 512-node runs
+    # above carried exactly this set without a throughput complaint.
+    # diag_clip_events is free — it reads a scalar training has already reduced.
+    diagnostics_interval: 100
+    diag_nonfinite: true
+    diag_norm_gains: true
+    diag_layer_grad_norms: true
+    diag_activations: true
+    diag_clip_events: true
+    diag_weight_stats: true
+    diag_logit_stats: true
+    # The one collector deliberately left off: this line runs bf16 (`fp8: null`
     # above), so every FP8 delayed-scaling slot would be zero and the emitter
-    # would skip it. Only meaningful if an FP8 arm is ever added back.
+    # would skip it anyway. Only meaningful if an FP8 arm is ever added back.
     diag_fp8_meta: false
+    # NOT set here, and they should not be: --diag-token-loss-dir,
+    # --diag-swap-checkpoint/--diag-swap-keys and --diag-consumed-train-samples
+    # are PROBE tools for offline checkpoint forensics, not production logging.
+    # cont89_lmhead_from64k.yaml used the token dump legitimately — on a fixed
+    # batch, for a checkpoint comparison. In a 40-day run it is a filesystem
+    # hazard: it writes one .npz per DP rank per diagnostic iteration, i.e. 128
+    # files every 100 steps at this DP, to shared scratch. The swap flags mutate
+    # loaded weights and --diag-consumed-train-samples repositions the
+    # dataloader; both are explicitly "never use for real training".
 
   env:
     TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
