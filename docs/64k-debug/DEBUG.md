@@ -1,18 +1,23 @@
 # The 64k problem: the 32B run gets worse with continued training
 
-**Latest status:** training is paused and the cause is not yet confirmed. The
-held-out loss is best at iteration 64,000 and worsens afterward. The change is
-smooth rather than a failure at one exact step.
+**Latest status:** training is paused and a high-confidence dominant cause has
+been identified. With `defer_embedding_wgrad_compute: true` and
+`overlap_grad_reduce: true`, Megatron can start reducing the untied LM-head
+gradient before the real deferred gradient has been written. A controlled
+reproduction produces the wrong gradient before the first update, while a 32B
+fork with deferral disabled improves immediately and avoids the historical rise
+for more than 8,000 iterations (item 43).
 
-The leading open explanation is an overly aggressive optimization regime:
-constant learning rate, very large batch, and growing curvature or reduced
-plasticity. Production masking, optimizer sharding, FP8 quantization quality,
-and BF16 residual additions still need stronger tests.
+The held-out loss is best at iteration 64,000 and worsens afterward. The flag
+was enabled from iteration 0, so the remaining scientific question is why its
+effect becomes visible only around 60,000--66,500, not what changed at one exact
+step. The evidence is experimental rather than a mathematical proof, but no
+current alternative explains the source trace, controlled reproduction,
+production intervention, and held-out LM-head refit together.
 
 This page is intended to be readable without prior context and is the single
-record for this investigation. The earlier working notes are archived at
-[../archive/fp8-loss-turn/](../archive/fp8-loss-turn/); their conclusions are
-superseded here and their measurements are quoted where they still hold.
+record for this investigation. Earlier conclusions are superseded here, and
+their measurements are quoted where they still hold.
 
 ---
 
@@ -74,10 +79,12 @@ primary record.
 
 ## Potential causes
 
-Each section has one of two statuses:
+Each section has one of three statuses:
 
 - **Closed:** the stated hypothesis has direct evidence against it. The scope of
   the conclusion is written explicitly.
+- **Confirmed:** direct evidence supports the hypothesis strongly enough to use
+  it as the operational explanation. Remaining limitations are stated.
 - **WIP:** the hypothesis is still open, or the existing test is not sufficient.
 
 “Closed” does not mean that a component is ideal. It means that the specific
@@ -743,8 +750,10 @@ No token rows fall below 10% of the median row norm at any measured checkpoint.
 The output RMS remains nearly constant, and all changes are smooth. Data:
 `data/embed_output.csv`.
 
-**Conclusion:** There is no gross embedding or output-layer collapse near the
-turn. Token-frequency-stratified loss remains useful under item 5.
+**Conclusion:** There is no gross embedding or output-layer *norm* collapse near
+the turn. This does not test gradient correctness or whether the head is well
+fitted: item 43 finds both an incorrect LM-head gradient and a refittable loss
+defect that these norm statistics cannot see.
 
 ### 26. Batch size and gradient-noise scale
 
@@ -810,7 +819,7 @@ This closes the measurement question, not the underlying mechanisms.
 
 **Status: WIP**
 
-**Priority:** Leading hypothesis family.
+**Priority:** Secondary after the confirmed gradient-ordering bug in item 43.
 
 **Question:** Is the combination of constant high learning rate, very large
 batch, and unregularized norm gains unsuitable for the full run?
@@ -829,8 +838,10 @@ that several relevant controls do not change over training, while norm gains are
 excluded from weight decay.
 
 **Current evidence:** This family matches the smooth progress dependence and is
-shared by FP8 and BF16. It is still a coherence argument, not a direct
-measurement. A scaling-law LR estimate is informative but not an exact stability
+shared by FP8 and BF16. Lowering the learning rate at 64k suppresses the rise
+(item 39), but every LR arm retains the incorrect deferred-gradient path. The
+result therefore shows mitigation, not that the optimization regime initiated
+the problem. A scaling-law LR estimate is informative but not an exact stability
 threshold.
 
 **Open issue:** Run a controlled learning-rate dose response and the curvature
@@ -1397,6 +1408,12 @@ item 36 could not measure; it puts the +1.1% rise at about 2.5x scatter.
 3. **6,000 iterations is short.** Nothing here says the arm would not turn later
    at its own, lower, step size.
 
+**Interpretation after item 43:** this arm also kept
+`defer_embedding_wgrad_compute: true`. Lowering the learning rate reduced the
+effect of a bad gradient but did not make that gradient correct. The experiment
+remains useful as mitigation evidence, but it no longer supports treating the
+learning rate as the leading cause of the production turn.
+
 **Method note:** changing `lr` on resume required a patch to the Megatron
 submodule (`match_saved_param_group`, commit `bc89ad3ff`). Upstream `27e312ca1`
 (#4705) put `max_lr` in the tuple used to match saved param groups, so any LR
@@ -1559,6 +1576,161 @@ direct check; the above is the file-level and metadata-level check only.
 
 ---
 
+### 43. Deferred LM-head wgrad with overlapped gradient reduction
+
+**Status: Confirmed**
+
+**Question:** Did `defer_embedding_wgrad_compute: true` cause the late loss
+divergence?
+
+**Mechanism:** Yes, in combination with `overlap_grad_reduce: true` on the
+tested Megatron revisions. The model has
+`untie_embeddings_and_output_weights: true`, so despite the flag's name the
+affected production parameter is the **LM head**, not the input embedding.
+The runtime dump from production job `1537344` confirms deferral enabled with
+`wgrad_deferral_limit: 0` (all eligible microbatches), reduction overlap, the
+distributed optimizer, gradient-accumulation fusion, TP/PP/VPP/DP of
+4/4/4/128, and global/micro batch sizes of 4,096/2.
+
+
+The production path runs in this order:
+
+```text
+LM-head backward saves activations and output gradients
+    -> a dummy weight gradient lets the DDP hook mark the parameter ready
+    -> asynchronous reduce-scatter may start
+    -> the pipeline flush computes and adds the real LM-head wgrad later
+```
+
+The distributed optimizer therefore does not reliably receive the intended
+fully data-parallel-averaged gradient. With data-parallel size 128, one rank's
+local estimator can have about 128 times the intended variance, or 11.3 times
+the standard deviation. The actual write races with an asynchronous collective,
+so it can instead be a timing-dependent partial mixture.
+
+Source inspection follows the deferred calculation and dummy gradient in
+[Tensor-parallel layers](../../submodules/Megatron-LM/megatron/core/tensor_parallel/layers.py),
+the ready hook and reduction in
+[distributed DDP](../../submodules/Megatron-LM/megatron/core/distributed/distributed_data_parallel.py)
+and
+[gradient buffers](../../submodules/Megatron-LM/megatron/core/distributed/param_and_grad_buffer.py),
+and the later drain in
+[pipeline schedules](../../submodules/Megatron-LM/megatron/core/pipeline_parallel/schedules.py)
+and [core utilities](../../submodules/Megatron-LM/megatron/core/utils.py).
+
+**Controlled reproduction:** Job `1760228` ran the same seed and mock data on a
+four-layer, four-GPU PP=2/DP=2 model with virtual pipeline stages, an untied LM
+head, the distributed optimizer, and gradient-accumulation fusion.
+
+| arm | defer wgrad | overlap reduction | iteration-1 loss / grad norm | later trajectory |
+|---|---:|---:|---|---|
+| A: reference | off | on | 10.42399 / 0.985 | reference |
+| B: affected | on | on | 10.42399 / **0.994** | diverges from iteration 2 |
+| C: ordering control | on | off | 10.42399 / 0.985 | matches A at printed precision |
+
+The first losses match because no optimizer update has happened. The affected
+arm's gradient norm already differs before that update; disabling reduction
+overlap while retaining deferral restores the reference. This isolates the
+tested failure to **deferral plus overlapped reduction**, not deferral alone.
+Raw logs are under
+`/e/scratch/e-sta-openeurollm/production_training/smoke/defer_wgrad_test/`.
+
+**Production intervention:** A fork resumed from the flagship's persistent
+iteration-64,000 checkpoint, including optimizer state, kept `lr: 3e-4`, and
+changed only:
+
+```yaml
+defer_embedding_wgrad_compute: false
+```
+
+The audit found the same model, optimizer settings, container, learning rate,
+and effective data batches. Per-step losses correlate at `r = 0.75` over
+66.5--70k and `r = 0.84` over 70--71.6k, independently confirming matching
+changes in batch difficulty. The first common logged point, iteration 64,005,
+is 1.544307 with deferral off and 1.545458 with it on.
+
+| interval | fork: defer off | historical control: defer on | fork - control |
+|---|---:|---:|---:|
+| 64--65k | 1.4745 | 1.5440 | -0.0694 |
+| 65--66k | 1.4617 | 1.5440 | -0.0824 |
+| 66--67k | 1.4545 | 1.5455 | -0.0910 |
+| 67--68k | 1.4569 | 1.5526 | -0.0956 |
+| 68--69k | 1.4595 | 1.5578 | -0.0983 |
+| 69--70k | 1.4532 | 1.5547 | -0.1015 |
+| 70--71k | 1.4471 | 1.5591 | -0.1120 |
+| 71--72k | 1.4466 | 1.5627 | -0.1161 |
+| 72,000--72,485, partial | 1.4490 | 1.5682 | -0.1192 |
+
+The response is immediate: the 25-iteration-window gap is -0.012 after 25
+updates and -0.051 after 100. The fork then runs more than 8,000 iterations,
+past the original onset window, without the sustained rise; its gap from the
+control widens in every complete 1,000-iteration bin. The comparison logs are
+under the production directories
+`oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4` and
+`oellm_32b_dense_prod_dataopt5_deferoff_3e-4_i64k_seed1234_gbs4096_lr3e-4`.
+
+**Held-out LM-head refit:** Training loss alone could improve because the output
+layer repairs quickly. Jobs `1769506`--`1769508` froze every other parameter,
+evaluated the same held-out slice of about 168 million tokens, refitted only the
+LM head for 500 correct-gradient steps on unseen post-80k samples, and evaluated
+the slice again.
+
+| checkpoint | own-head loss | after head refit | improvement |
+|---|---:|---:|---:|
+| control 64k | 1.4969 | 1.4491 | 0.0478 |
+| control 72k | 1.5206 | 1.4698 | 0.0508 |
+| defer-off fork 70k | **1.4006** | **1.3990** | 0.0015 |
+
+About 0.05 loss in each affected control is associated directly with a poorly
+fitted head. The post-refit control loss still rises by about 0.021 from 64k to
+72k, so replacing only the head does not repair the late damage: the frozen body
+also becomes worse. Starting from the same 64k weights, the defer-off fork's
+body improves and its own head is already near the refit result. Raw evidence is
+under `/e/scratch/e-sta-openeurollm/production_training/smoke/head_refit/`.
+
+**Conclusion:** The incorrect ordering is demonstrated directly, and disabling
+only the unsafe optimization at production scale immediately changes the
+trajectory. Together with held-out and frozen-body evidence, this makes
+deferred LM-head wgrad plus overlapped reduction the high-confidence, dominant
+cause of the observed divergence.
+
+This is not a 100% mathematical proof: there is one production-scale fork, its
+control is the historical trajectory rather than a concurrent rerun, the fork
+uses a slightly later audited code revision, and a 500-step head refit is a
+finite optimization rather than an exact decomposition. None currently offers
+a plausible alternative explanation for all three experiments.
+
+The flag was enabled from iteration 0. This result therefore explains the
+harmful dynamics but not why they become visible only around 60--66.5k, how a
+noisy head propagates damage into the transformer body, or how much pre-64k
+damage remains in the recovered fork.
+
+The affected ordering is present in official Megatron Core v0.16.0 commit
+`3bec9aa97dda898d16ff5a89bac0ed2b6682b172`, the local reproduction fork, and
+the later 0.19-based production fork. The flag is not a Megatron default; this
+project enabled it in the 32B scaling configuration on 2026-08-14 and copied it
+to production on 2026-08-21. The v2 configuration disables it.
+
+**Operational conclusion:** Preserve gradient-reduction overlap and disable the
+unsafe deferral:
+
+```yaml
+overlap_grad_reduce: true
+defer_embedding_wgrad_compute: false
+```
+
+Add a startup assertion for the unsafe combination and a regression test that
+compares the LM-head gradient or one optimizer update with a non-deferred
+reference. Prefer a checkpoint from the defer-off fork over later affected
+control checkpoints; refitting the head does not remove the measured body
+damage. Reinterpret lower-LR arms as symptom mitigation because they retained
+the invalid gradient path.
+
+The full source and configuration audit is in
+[DEFER_EMBEDDING_WGRAD_BUG.md](DEFER_EMBEDDING_WGRAD_BUG.md).
+
+---
+
 ## Run index
 
 Run names are deterministic: `<run-directory-name>_<SLURM_JOB_ID>`. Logs are at
@@ -1707,142 +1879,103 @@ re-derived from logs alone silently omits that segment.
   exactly, but a tokenizer metadata rename re-shuffled the whole index at
   ~19,000-26,000). Checkpoint averaging is queued behind a maintenance window.
 
+- **2026-09-12:** Source inspection and controlled job `1760228` identify an
+  ordering bug between deferred LM-head wgrad computation and overlapped
+  gradient reduction. A production fork from 64k with deferral disabled improves
+  immediately and remains healthy through 72,485; held-out LM-head refits show
+  both a poorly fitted control head and damage in the frozen body. Item 43 records
+  the bug as the high-confidence dominant cause. Training remains paused.
+
 ---
 
 ## Current assessment
 
 ### What is established
 
-- The regression is present in held-out loss and BF16 evaluation.
-- It is smooth and begins before the visible crossing near 66k.
-- **Capacity is intact.** No SwiGLU neuron death at any checkpoint, and the
-  residual-stream rank collapse in early layers proceeds at the same rate or
-  faster during healthy descent, while late layers gain rank (item 24). Loss of
-  functional capacity is not the cause of the turn.
-- Two config suspicions are excluded by inspection: `data_parallel_sharding_strategy`
-  is unreachable without FSDP (item 22), and no learned position-embedding tensor
-  exists in any checkpoint, so `add_position_embedding: true` is inert alongside
-  RoPE -- the only embedding key is `embedding.word_embeddings.weight`.
-- **The upward turn is at ~66,500.** Binned per-step loss is flat within ±0.0015
-  from 62,000 through 66,500, and 64,000 carries no feature. Every "at exactly
-  64,000" in items 35–37 is the label on a 4,000-spaced bin (item 38).
-- Two independent correlates turn in the 64,000–68,000 interval: relative step
-  size `||dW||/||W||` (item 36) and the Adam eps-floored fraction, which
-  collapses 0.88 to 0.55 over 100% of parameters (item 37). Neither establishes
-  causal direction.
-- **The turn is avoidable.** Forking at 64,000 at `lr` 1.76e-4 instead of 3e-4,
-  the loss flattens instead of rising: over 66,000 to 70,000 the control gains
-  +0.0099 while the arm loses 0.0067 (item 39). This does not show LR *causes*
-  the turn -- a lower LR lowers loss regardless -- and the second arm that would
-  have separated those was not run.
-- **Update-geometry change is not sufficient for the loss rise.** In the 1.76e-4
-  arm, `||dW||/||W||` turns upward and the cosine keeps degrading while the loss
-  stays flat (item 39), so items 36 and 37 measure something that accompanies the
-  regression rather than something that forces it.
-- No scheduled configuration, learning-rate, batch-size, or restart event occurs
-  at the turn.
-- The same post-60k pattern continues with BF16, a different post-64k data order,
-  a largely different node set, and different restart boundaries.
-- FP8 changes the shape of the turn after 60k but not its size: over
-  66,625–70,580 the BF16 slope is the larger of the two, and both branches rise
-  by the same +0.014 from a shared pre-turn baseline. Its possible earlier
-  contribution is not yet isolated.
-- No layer stops contributing. Attention and MLP shares of the residual stream
-  are flat from 24k through the onset, and the stream itself grows smoothly and
-  decelerates (item 33).
-- The regression is global, not localized to any part of the data. Scoring
-  64,000 and 72,000 on identical tokens, all 25 of the heaviest sources are
-  worse, the size of the loss increase tracks each cell's baseline difficulty
-  rather than its source or its position in the document, and the
-  block-minus-dense gap does not widen across the turn (item 34).
-- The regression is a genuine loss of predictive capability. Top-1 accuracy on a
-  fixed token set peaks at 64,000 and falls afterward: paired on identical
-  tokens the net change in correct predictions runs +457, +1,616, -1,531, -1,828
-  per interval, flipping sign exactly at 64,000 with both post-turn intervals
-  individually significant. Entropy, confidence and the calibration gap are all
-  non-monotone across the same window -- 68,000 is a model-wide excursion -- so
-  no confidence or calibration trend is claimed (item 35).
-- There is a correlate, and it is in the geometry of the updates rather than in
-  the gradient. Measured exactly over all 33.9B parameters, the relative step
-  size `||dW||/||W||` declines monotonically to a minimum at exactly iteration
-  64,000 and then reverses and accelerates, while `||W||` grows smoothly with no
-  feature there. Gradient norm cannot show this because Adam divides the
-  gradient magnitude out (item 36).
-- Twenty of the thirty-six items are closed, covering loss measurement,
-  configuration drift, the scheduled learning rate, restart and resume handling,
-  data order, the node set, stack arithmetic, zero-centred gamma, per-channel
-  norm collapse, FP8 overflow, weight decay, the 66,625 restart, dataset epoch
-  boundaries, embedding collapse, functional collapse of any layer, and the
-  distribution of the extra loss over sources and document positions, and
-  confidence or calibration as the explanation
-  (items 1-4, 6-8, 11-13, 16, 20, 21, 25, 27, 28, 30, 33-35).
+- **The dominant cause is the deferred LM-head gradient interacting with
+  overlapped data-parallel reduction** (item 43). The ready hook can launch
+  reduce-scatter on a dummy gradient before the real deferred wgrad is added, so
+  the distributed optimizer does not reliably receive the intended DP-averaged
+  gradient.
+- The affected parameter is the untied output layer, not the input embedding.
+  The production configuration combines deferral with reduction overlap, PP=4,
+  VPP=4, DP=128, the distributed optimizer, and gradient-accumulation fusion.
+- A controlled A/B/C reproduction changes the gradient before the first update
+  only when both deferral and reduction overlap are on. Keeping deferral but
+  turning overlap off matches the non-deferred reference at printed precision.
+- **The production intervention agrees with the source diagnosis.** From the
+  same 64k checkpoint and optimizer state, disabling only deferral at `lr:
+  3e-4` improves the loss immediately and prevents the historical rise through
+  iteration 72,485. The gap reaches -0.1192 in the latest partial bin and widens
+  in every complete 1,000-iteration bin.
+- **The damage is not confined to the output layer.** Refitting only the LM head
+  removes about 0.05 loss from affected 64k and 72k checkpoints, but the
+  post-refit loss still worsens by about 0.021. The defer-off fork is already
+  within 0.0015 of its refit result and its frozen body is substantially better.
+- The causal conclusion is high confidence rather than mathematical certainty:
+  there is one production-scale intervention, the control is historical, the
+  fork uses a later audited revision, and head refitting is finite optimization.
+  No current alternative explains the source ordering, controlled reproduction,
+  32B intervention, and held-out result together.
+- The flag was enabled from iteration 0. It explains the harmful training
+  dynamics, but not why the visible effect appears around 60,000--66,500.
+- Lowering the LR at 64k mitigated the symptom while retaining the incorrect
+  gradient path (item 39). It is not evidence that learning rate rather than the
+  bug caused the turn. Update geometry and Adam-state changes remain useful
+  descriptions of how affected training evolved, not the leading cause.
+- The regression itself remains well established: held-out and BF16 evaluation
+  reproduce it, fixed-token top-1 accuracy falls, and the extra loss is global
+  across sources and document positions. There is no scheduled event, restart
+  discontinuity, node-set dependence, specific post-64k shuffle, gross capacity
+  collapse, or forward FP8-evaluation artifact at the turn.
+- Twenty-four of the 43 hypotheses are closed and item 43 is confirmed. The open
+  items describe secondary contributors, consequences, or unmeasured axes; they
+  are no longer co-equal candidate explanations for the production divergence.
 
-These continuations inherit flagship weights from 60k or 64k. They therefore
-test what is required for the regression to **continue**, not every process that
-may have created the checkpoint state before the fork.
+### Remaining questions, grouped by priority
 
-### Open hypotheses, grouped by priority
+1. **Why the effect is late.** Determine why a gradient error present from the
+   first update remains partly hidden until 60--66.5k. Relevant possibilities
+   include a changing head/body coupling, loss-landscape sensitivity, or
+   accumulation of pre-64k damage.
+2. **How damage propagates and how much remains.** Isolate how a noisy LM head
+   degrades the transformer body and compare recovery from earlier affected
+   checkpoints. The 500-step refit shows that replacing only the head is
+   insufficient.
+3. **Exact implementation boundary.** Establish which Megatron revisions and
+   parallel configurations are affected, then fix the ordering upstream rather
+   than relying indefinitely on a configuration guard.
+4. **Independent causal replication.** A concurrent defer-on/defer-off fork or
+   second seed would remove the principal experimental caveats. It would
+   strengthen confidence, not change the current operational decision.
+5. **Secondary open items.** Production masking equivalence, language/document
+   length/duplicate exposure, backward FP8 error, residual precision, curvature,
+   and gradient-noise scale remain scientifically useful but are lower priority
+   than preventing the demonstrated invalid gradient.
 
-1. **Optimization regime.** Now the only hypothesis with a measured correlate.
-   Relative step size bottoms out at exactly 64,000 and rises afterward, exactly
-   and model-wide, with directional persistence degrading fastest in the last
-   interval (item 36). The weaker sampled version of the same quantity moves
-   +14.9% at the turn (item 19). What is missing is causal ordering: at
-   4,000-step resolution a step that grows because the loss is rising looks
-   identical to a loss that rises because the step grew. The LR dose response is
-   the experiment that separates them.
-2. **Numerical precision:** Forward weight/activation FP8 error and residual-add
-   rounding do not worsen from 60k to 75k on the fixed observer batch. Backward
-   gradients, packed batches, and a possible pre-60k contribution remain open.
-3. **Production objective and distribution:** the objective itself and the
-   distribution of the extra loss are settled by item 34; what remains is
-   implementation correctness, namely PP=4/VPP=4 masking equivalence against a
-   PP=1 reference, and the untested data axes of language, document length, and
-   near-duplicate exposure.
-4. **Representation health:** activation rank, SwiGLU use, and functional
-   plasticity. Functional collapse itself is closed by item 33; what remains is
-   whether the representation is still *usable*, not whether branches still
-   fire.
-5. **Lower-priority open items:** distributed-optimizer sharding and z-loss
-   gradient share.
+### Recommended next actions
 
-### Recommended next experiments
+1. **Keep deferral off wherever reduction overlap is on** for the affected
+   revisions:
 
-1. **Cheap checkpoint evaluations first.** The masking half of this is done
-   (item 34): production versus disabled masking at 64k and 72k shows no
-   widening gap. What is left is BF16 versus FP32 residual additions on real
-   packed batches, and the same per-source scan at 60k and 68k if the shape of
-   the onset rather than its endpoints becomes the question.
-2. **Learning-rate dose response.** Now the highest-value experiment, because
-   item 36 gives it a specific prediction to test rather than a general
-   suspicion: if step growth drives the turn, a lower LR should push the
-   `||dW||/||W||` minimum later and flatten the reversal, and the loss should
-   follow. From the same checkpoint compare `3e-4`, `2e-4` and `1e-4`, with
-   evaluation every 250–500 steps. A lower-LR arm merely decreasing is not
-   decisive because decay normally improves loss. Look for an ordered dose
-   response and recovery toward the earlier trend, and track update geometry in
-   every arm.
-3. **Validate production masking.** Compare PP=1 reference loss and gradients
-   against the PP=4/VPP=4 path on the same minibatch.
-4. **Measure actual updates and backward numerics.** Forward weight/activation
-   SQNR and residual rounding now have endpoint measurements. What remains is
-   FP8 gradient error and parameterwise Adam-update diagnostics; the
-   shard-sampled form of the latter exists (item 19), but the per-parameter and
-   global aggregate does not.
-5. **Run exact preconditioned HVPs** after validating the method on a smaller
-   model.
+   ```yaml
+   overlap_grad_reduce: true
+   defer_embedding_wgrad_compute: false
+   ```
 
-The endpoint rounding result removes the immediate case for spending a 2×2
-continuation on FP32 residual additions. Prioritize a clean learning-rate dose
-response; add a residual-precision arm only if production-packed static checks
-reverse the endpoint result.
-
-For all continuations through the suspect interval, save checkpoints about every
-500 steps. The current 4,000-step cadence is too coarse to localize internal
-changes.
-
-BF16 checkpoints past the turn now exist, from job `1620342` at 68,000 and job
-`1619380` to 70,580. Several open items were written when none did: the weight
-control in item 14 stops at 64,000, and item 32 has no BF16 comparison after the
-onset. Both can be extended from checkpoints already on disk, without new
-training.
+2. **Fail fast on the unsafe combination.** Add a startup assertion until the
+   communication ordering is fixed.
+3. **Add a regression test.** Exercise pipeline parallelism, an untied output
+   layer, the distributed optimizer, gradient-accumulation fusion, deferral, and
+   overlapped reduction. Compare the LM-head gradient or one optimizer update
+   with a non-deferred reference.
+4. **Use the defer-off fork for recovery.** Prefer its checkpoints over later
+   affected control checkpoints; head-only refitting does not remove the
+   measured body degradation. Continue held-out evaluation and retain
+   250--500-step checkpoints through the old onset window.
+5. **Audit related runs and conclusions.** Disable the flag in every matching
+   configuration, and reinterpret LR, optimizer-state, and update-geometry
+   experiments that used the affected path as mitigation or consequence
+   evidence.
+6. **Prepare an upstream report** with the minimal A/B/C reproduction, exact
+   affected commits, source ordering, and regression-test expectation.
