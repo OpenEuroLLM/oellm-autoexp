@@ -96,7 +96,28 @@ backend:
     # DATA
     dataloader_type: single
     padded_vocab_size: 262144
-    num_workers: 32
+    # 8, NOT 32. THIS IS WHAT HUNG THE RUN AT ITERATION 40000, eight times.
+    #
+    # Megatron uses ONE num_workers for BOTH loaders
+    # (`build_pretraining_data_loader`), so at a job's FIRST eval the validation
+    # loader spawns another `num_workers` processes per rank on top of the train
+    # loader's: at 32 that is 64 per rank, 256 per node, ~131,000 across 512
+    # nodes, all cold-reading valid regions of the 452-shard blend off fscratch
+    # at once. 134 of the 256 tp=0 reader ranks then never got a validation
+    # batch, and every other rank blocked in a collective behind them — a silent
+    # global stall with no traceback and no NCCL warning.
+    #
+    # Proven single-variable, 2026-09-15: jobs 1801547 (32) and 1802268 (8) ran
+    # IDENTICAL code from the same checkpoint with diagnostics fully on. 1801547
+    # hung; 1802268 evaluated in 18.6 s (validation loss 1.418344) and trained on.
+    # Located by the hang watchdog's 2048-rank stack dump, not by inference.
+    #
+    # COSTS NOTHING: 5491.8 ms/iteration at 8 vs 5536.3 at 32 (1497 vs 1483
+    # tok/s/GPU), i.e. inside the 0.81% run-to-run noise floor. Do not raise it
+    # back for throughput — there is none to win. If a future line really needs
+    # more train workers, give the VALID loader its own count rather than
+    # raising this one.
+    num_workers: 8
     dataloader_prefetch_factor: 8
     log_interval: 5
 
