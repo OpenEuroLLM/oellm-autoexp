@@ -13,7 +13,7 @@ groups:
       # ---- gbsz 16 ----
       - backend.megatron.lr: 5.e-4
         backend.megatron.global_batch_size: 16
-        backend.megatron.micro_batch_size: 4
+        backend.megatron.micro_batch_size: 2 # 2 (not 4 as in training): must divide gbsz/DP on both 4-GPU (Leonardo) and 8-GPU (LUMI) nodes; eval sample count is unaffected
         backend.megatron.aux.tokens: 6_000_000_000
         backend.megatron.aux.max_tokens: 6_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
@@ -22,7 +22,7 @@ groups:
         backend.megatron.aux.stable_launch_tier:  diagonal
       - backend.megatron.lr: 1.e-3
         backend.megatron.global_batch_size: 16
-        backend.megatron.micro_batch_size: 4
+        backend.megatron.micro_batch_size: 2 # 2 (not 4 as in training): must divide gbsz/DP on both 4-GPU (Leonardo) and 8-GPU (LUMI) nodes; eval sample count is unaffected
         backend.megatron.aux.tokens: 6_000_000_000
         backend.megatron.aux.max_tokens: 6_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
@@ -31,7 +31,7 @@ groups:
         backend.megatron.aux.stable_launch_tier:  cross
       - backend.megatron.lr: 2.e-3
         backend.megatron.global_batch_size: 16
-        backend.megatron.micro_batch_size: 4
+        backend.megatron.micro_batch_size: 2 # 2 (not 4 as in training): must divide gbsz/DP on both 4-GPU (Leonardo) and 8-GPU (LUMI) nodes; eval sample count is unaffected
         backend.megatron.aux.tokens: 6_000_000_000
         backend.megatron.aux.max_tokens: 6_000_000_000
         backend.megatron.aux.center_tokens_set:   "set()"
