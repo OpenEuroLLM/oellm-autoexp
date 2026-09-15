@@ -157,7 +157,7 @@ backend:
     rerun_mode: disabled
 
     non_persistent_save_interval: 125
-    save_interval: 4000
+    save_interval: 2000 # changed from 4000 2026-09-15
     global_batch_size: 4096
     lr_warmup_samples: ${oc.muli:${backend.aux.warmup_steps},${backend.megatron.global_batch_size}}
 
