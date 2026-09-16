@@ -1,0 +1,87 @@
+# @package _global_
+
+# End-to-end cluster test for the node auto-exclusion flow, using the BashBackend
+# (no trainer) so it is cheap to run and easy to reason about.
+#
+# What it exercises
+# -----------------
+# 1. oc.exclude_nodes resolver: slurm=leonardo_autoexclude bakes
+#    `#SBATCH --exclude=<known-bad nodes>` into every NEWLY generated script from
+#    the $LEONARDO_EXCLUDE_NODES file (empty on first launch -> directive omitted).
+# 2. AppendToFileAction: when a job logs a "Communication connection failure",
+#    the node it ran on is appended to that file.
+# 3. UpdateChainExcludesAction: the updated list is pushed onto the still-PENDING
+#    dependency-chained siblings via `scontrol update ... ExcludeNodes=` (the
+#    resolver alone can't help them - their scripts were already generated).
+#
+# How to run (pre-queues a 3-deep dependency chain via chain_repeat)
+# ------------------------------------------------------------------
+#   export LEONARDO_EXCLUDE_NODES=$HOME/.oellm_autoexp/leonardo_exclude_nodes.txt
+#   : > "$LEONARDO_EXCLUDE_NODES"   # start from an empty list for a clean test
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/tests/leonardo_autoexclude_chain --chain
+#
+# What to watch
+# -------------
+#   * `squeue --me` shows 3 chained jobs (afterany), r1 RUNNING, r2/r3 PENDING.
+#   * When r1 prints the failure line, $LEONARDO_EXCLUDE_NODES gains r1's node and
+#     the monitor logs "UpdateChainExcludes: set ExcludeNodes=.. on N pending ...".
+#   * `scontrol show job <r2_id> | grep ExcNodeList` shows the excluded node.
+#   * r2 then starts on a DIFFERENT node and the file keeps growing per attempt.
+#   * Re-launching the experiment now bakes `#SBATCH --exclude=` into the scripts.
+
+defaults:
+  - /backend: bash
+  - /container: none              # pure bash, no singularity wrapper
+  - /slurm: leonardo_autoexclude  # the oc.exclude_nodes-wired Leonardo variant
+  - /job: autoexclude             # append + propagate + finish log events
+  - /sweep: none
+  - _self_
+
+job:
+  name: "autoexclude_chain_test"
+  # Unique per launch (oc.timestring is cached per process, so all chained jobs
+  # in one run share it) so stale logs from a previous run cannot be read by the
+  # monitor - the base_output_dir is otherwise fixed and logs accumulate there.
+  base_output_dir: ${oc.env:OUTPUT_DIR,./output}/autoexclude_tests/${job.name}_${oc.timestring:}
+  # Write logs/config directly under base_output_dir (created by generate_script).
+  # Do NOT use a logs/ subdirectory: nothing creates it for a fresh
+  # base_output_dir, so the config write - and SLURM's --output - would fail with
+  # "No such file or directory".
+  log_path: ${.base_output_dir}/slurm-%j.log
+  config_path: ${.base_output_dir}/config-%j.yaml
+  # Convenience "current" symlinks for tailing. The monitor reads each job's own
+  # per-job log (slurm-<jobid>.log), so a single shared current.log across the
+  # chain is safe: the monitor re-points it to whichever job is RUNNING (see
+  # MonitorLoop._update_current_symlinks). Static path (no ${index}) since this is
+  # not an array job.
+  log_path_current: ${.base_output_dir}/current.log
+  config_path_current: ${.base_output_dir}/current.yaml
+  # Pre-queue a 3-job dependency chain so there are PENDING siblings to update
+  # (run_autoexp auto-enables --chain when chain_repeat > 1).
+  chain_repeat: 3
+
+backend:
+  # Emulate a node hitting a communication failure. $SLURMD_NODENAME is set by
+  # SLURM inside the job to the short node name (e.g. lrdn0387) - the exact form
+  # SLURM's --exclude / ExcludeNodes expects. (Do NOT use $(hostname): on
+  # Leonardo it returns the FQDN lrdn0387.leonardo.local, which SLURM's nodelist
+  # would not match.) $NAME is shell-expanded at runtime and is not an OmegaConf
+  # ${...} interpolation. Use double quotes only (embedded in bash -c '...').
+  command: |
+    echo "[bash] training on node $SLURMD_NODENAME"
+    sleep 30
+    echo "failed on node $SLURMD_NODENAME: Communication connection failure"
+    # Keep the allocation alive after the failure so the monitor observes it
+    # while the chained siblings are still PENDING (a real comm failure also
+    # leaves the step hung). The e2e harness scancels this job during cleanup.
+    sleep 300
+
+slurm:
+  # No container -> run the command directly under `srun bash -c`.
+  launcher_cmd: ""
+  sbatch:
+    nodes: 1
+    time: "00:08:00"
+  # Unique sbatch script name per launch.
+  name: "autoexclude_${oc.timestring:}"

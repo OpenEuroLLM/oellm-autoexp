@@ -287,10 +287,12 @@ def generate_cli_metadata(
 ) -> None:
     specs_lines: list[str] = []
     metadata_lines: list[str] = []
+    metadata_line_dict = dict()
 
     for dest in sorted(metadata.keys()):
-        if dest in excluded:
+        if dest in excluded or dest in metadata_line_dict:
             continue
+        metadata_line_dict[dest] = None
         meta = metadata[dest]
         default_value = defaults.get(dest, meta.default)
         default_repr = (
@@ -317,9 +319,11 @@ def generate_cli_metadata(
         ),
         key=lambda pair: pair[0] or "",
     )
+    processed = {}
     for dest, action in sorted_actions:
-        if not dest or dest == "help" or dest in excluded:
+        if not dest or dest == "help" or dest in excluded or dest in processed:
             continue
+        processed[dest] = None
         option_strings = tuple(action.option_strings)
         default_value = defaults.get(dest, _sanitize_default(action.default))
         specs_lines.append(

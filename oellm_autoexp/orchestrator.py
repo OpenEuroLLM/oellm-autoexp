@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import shlex
+import subprocess
 import time
 from dataclasses import dataclass, field, MISSING, replace
 import hashlib
@@ -13,24 +14,36 @@ from pathlib import Path
 from compoconf import asdict
 
 from oellm_autoexp.hydra_staged_sweep import expand_sweep, resolve_sweep_with_dag
+from oellm_autoexp.hydra_staged_sweep.parallel import run_chunks, split_evenly, worker_count
 from oellm_autoexp.hydra_staged_sweep.expander import SweepPoint
 from oellm_autoexp.hydra_staged_sweep.planner import JobPlan
 
-from oellm_autoexp.monitor.loop import MonitorLoop, JobFileStore, JobRecordConfig, JobRuntimeConfig
+from oellm_autoexp.monitor.loop import MonitorLoop, JobFileStore, JobRecord, JobRuntime
 from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
 from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
 from oellm_autoexp.monitor.submission import SlurmJobConfig, LocalJobConfig
-from oellm_autoexp.slurm_gen import generate_script
+from oellm_autoexp.slurm_gen.generator import generate_script
 
 import oellm_autoexp.backends.megatron_backend  # noqa  - register
+import oellm_autoexp.postprocess.megatron_dist_to_torch  # noqa  - register
+import oellm_autoexp.postprocess.megatron_to_hf  # noqa  - register
+import oellm_autoexp.postprocess.oellm_eval  # noqa  - register
 import oellm_autoexp.backends.titan_backend  # noqa  - register
-from oellm_autoexp.config.schema import RootConfig, ConfigSetup, BackendInterface
+import oellm_autoexp.backends.oellm_eval_backend  # noqa  - register
+import oellm_autoexp.backends.megatron_bridge_backend  # noqa  - register
+from oellm_autoexp.config.schema import (
+    RootConfig,
+    ConfigSetup,
+    BackendInterface,
+    PostProcessStepInterface,
+    ContainerConfig,
+)
 
 
 LOGGER = logging.getLogger(__name__)
 
 
-def stable_hash_hex(s: str) -> str:
+def _stable_hash_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
@@ -91,6 +104,7 @@ def submit_jobs(
     session_id: str | None = None,
     no_error_catching: bool = False,
     local_mode: bool = False,
+    dry_run: bool = False,
 ) -> SubmissionResult:
     store, session_id = _ensure_state_store(plan, session_id=session_id)
     client = slurm_client or SlurmClient(SlurmClientConfig())
@@ -102,6 +116,11 @@ def submit_jobs(
     submitted_job_ids: list[str] = []
     for job in plan.jobs:
         record = _build_job_record(plan, job, session_id, local_mode=local_mode)
+
+        if dry_run and isinstance(record.definition, SlurmJobConfig):
+            path = generate_script(record.definition.slurm)
+            LOGGER.info("DRY RUN - Generated batch script: %s", path)
+            # TODO: Might aswell validate the job script and therein megatron arguments here
         store.upsert(record)
         submitted_job_ids.append(record.job_id)
 
@@ -153,6 +172,27 @@ def run_loop(controller: MonitorLoop) -> None:
             break
         loop.observe_once()
         time.sleep(loop.poll_interval_seconds)
+    _run_post_job_commands(loop._store)
+
+
+def _run_post_job_commands(store: JobFileStore) -> None:
+    """Run new_job postprocess commands for successfully completed jobs."""
+    for job in store.load_all(include_finished=True):
+        post_cmds = (job.definition.metadata or {}).get("post_job_commands", [])
+        if not post_cmds:
+            continue
+        if job.runtime.final_state != "finished":
+            LOGGER.info(
+                "Skipping post-job commands for %s (final state: %s)",
+                job.job_id,
+                job.runtime.final_state,
+            )
+            continue
+        for cmd in post_cmds:
+            LOGGER.info("Running post-job command: %s", cmd)
+            result = subprocess.run(cmd, shell=True)
+            if result.returncode != 0:
+                LOGGER.warning("Post-job command exited with code %d: %s", result.returncode, cmd)
 
 
 def run_loop_sync(controller: MonitorLoop) -> None:
@@ -164,8 +204,6 @@ def _ensure_state_store(
 ) -> tuple[JobFileStore, str]:
     monitor_state_dir = Path(plan.config_setup.monitor_state_dir)
     if not session_id:
-        import time
-
         session_id = str(int(time.time()))
 
     session_dir = monitor_state_dir / session_id
@@ -177,17 +215,37 @@ def _ensure_state_store(
 
 def _build_job_record(
     plan: ExecutionPlan, job: JobPlan, session_id: str, *, local_mode: bool = False
-) -> JobRecordConfig:
+) -> JobRecord:
     if not isinstance(job.config, RootConfig):
         raise ValueError("JobPlan.config must be RootConfig")
 
-    job_name = _resolve_job_name(job.config)
+    job_name = _resolve_job_name(job.config, len(plan.jobs))
 
-    job_hash = stable_hash_hex(json.dumps(asdict(job.config)))[:6]
+    job_hash = _stable_hash_hex(json.dumps(asdict(job.config)))[:6]
     job_id = f"{job_name}_{job_hash}"
 
     backend = job.config.backend.instantiate(BackendInterface)
     launch_cmd = backend.build_launch_command()
+
+    container = job.config.container if isinstance(job.config.container, ContainerConfig) else None
+
+    # Process postprocess steps: same_job → appended to launch command, new_job → run after completion.
+    post_job_commands: list[str] = []
+    for step_name, step_cfg in job.config.postprocess.items():
+        step = step_cfg.instantiate(PostProcessStepInterface)
+        run_mode = step.get_run_mode()
+        if run_mode == "same_job":
+            LOGGER.info("Appending postprocess step '%s' to launch command", step_name)
+            cmd = step.build_command()
+            if container and container.image:
+                cmd = _build_container_exec_prefix(container) + " \\\n    " + cmd
+            launch_cmd = launch_cmd + " && \\\n" + cmd
+        elif run_mode == "new_job":
+            LOGGER.info("Scheduling post-job step '%s' to run after job completes", step_name)
+            post_job_commands.append(step.build_command())
+        else:
+            raise ValueError(f"Unknown run_mode '{run_mode}' for postprocess step '{step_name}'")
+
     script_path = (
         job.config.slurm.script_path or Path(job.config.slurm.script_dir) / f"{job_name}.sbatch"
     )
@@ -215,10 +273,10 @@ def _build_job_record(
         definition = LocalJobConfig(
             name=job_name,
             command=["bash", "-c", f"{env_str} {launch_cmd}"],
-            log_path=str(job.config.job.log_path),
-            log_path_current=str(job.config.job.log_path_current),
-            config_path=str(job.config.job.config_path),
-            config_path_current=str(job.config.job.config_path_current),
+            log_path=job.config.job.log_path,
+            log_path_current=job.config.job.log_path_current,
+            config_path=job.config.job.config_path,
+            config_path_current=job.config.job.config_path_current,
             log_events=list(base_job.log_events),
             state_events=list(base_job.state_events),
             start_condition=base_job.start_condition,
@@ -229,21 +287,22 @@ def _build_job_record(
                 "session_id": session_id,
                 "sweep_index": getattr(job.config, "index", None),
                 "stage": getattr(job.config, "stage", ""),
+                "post_job_commands": post_job_commands,
             },
             base_config=job,
         )
-        return JobRecordConfig(
+        return JobRecord(
             job_id=job_id,
             definition=definition,
-            runtime=JobRuntimeConfig(submitted=False),
+            runtime=JobRuntime(submitted=False),
         )
 
     definition = SlurmJobConfig(
         name=job_name,
-        log_path=str(job.config.job.log_path),
-        log_path_current=str(job.config.job.log_path_current),
-        config_path=str(job.config.job.config_path),
-        config_path_current=str(job.config.job.config_path_current),
+        log_path=job.config.job.log_path,
+        log_path_current=job.config.job.log_path_current,
+        config_path=job.config.job.config_path,
+        config_path_current=job.config.job.config_path_current,
         log_events=list(base_job.log_events),
         state_events=list(base_job.state_events),
         start_condition=base_job.start_condition,
@@ -254,25 +313,40 @@ def _build_job_record(
             "session_id": session_id,
             "sweep_index": getattr(job.config, "index", None),
             "stage": getattr(job.config, "stage", ""),
+            "post_job_commands": post_job_commands,
         },
         slurm=slurm_config,
         base_config=job,
     )
-
-    return JobRecordConfig(
+    return JobRecord(
         job_id=job_id,
         definition=definition,
-        runtime=JobRuntimeConfig(submitted=False),
+        runtime=JobRuntime(submitted=False),
     )
 
 
-def _resolve_job_name(config: RootConfig) -> str:
+def _build_container_exec_prefix(container: ContainerConfig) -> str:
+    parts = [container.runtime, "exec"]
+    for k, v in container.env.items():
+        parts.append(f"--env {shlex.quote(f'{k}={v}')}")
+    parts += ["--nv", "--writable-tmpfs"]
+    if container.pwd:
+        parts.append(f"--pwd {shlex.quote(container.pwd)}")
+    for bind in container.bind:
+        parts.append(f"--bind {bind}")
+    parts.append(shlex.quote(container.image))
+    return " \\\n    ".join(parts)
+
+
+def _resolve_job_name(config: RootConfig, total_jobs: int = 1) -> str:
     base_name = str(config.job.name or "job")
+    if total_jobs <= 1:
+        return base_name
     index = getattr(config, "index", None)
     if index is None:
         return base_name
     index_str = str(index)
-    if index_str in base_name:
+    if f"_{index_str}" in base_name or base_name.endswith(index_str):
         return base_name
     if "%a" in base_name:
         return base_name.replace("%a", index_str)
@@ -280,12 +354,162 @@ def _resolve_job_name(config: RootConfig) -> str:
         return f"{base_name}_{index_str}"
 
 
+_RENDER_CONTEXT: tuple | None = None
+
+
+def _render_chunk(indices: list[int]) -> list[tuple[int, str]]:
+    """Render the scripts for a slice of the plan, in a worker or in-
+    process."""
+    assert _RENDER_CONTEXT is not None, "render context not initialised"
+    plan, session_id = _RENDER_CONTEXT
+    rendered: list[tuple[int, str]] = []
+    for index in indices:
+        record = _build_job_record(plan, plan.jobs[index], session_id)
+        if not isinstance(record.definition, SlurmJobConfig):
+            LOGGER.info("Skipping script render for non-SLURM job '%s'", record.job_id)
+            continue
+        path = generate_script(record.definition.slurm)
+        LOGGER.info("Rendered script: %s", path)
+        rendered.append((index, str(path)))
+    return rendered
+
+
+def render_job_scripts(plan: ExecutionPlan, *, session_id: str = "dry-run") -> list[Path]:
+    """Render sbatch scripts for every job in the plan without submitting.
+
+    Calls the same ``_build_job_record`` path used by real submission so the
+    rendered scripts are byte-for-byte identical to what would be submitted.
+
+    Returns:
+        Ordered list of paths to the written ``.sbatch`` files.
+    """
+    global _RENDER_CONTEXT
+
+    # Each job renders to its own file, so this fans out cleanly. Deal the jobs
+    # round-robin rather than in blocks so the workers stay balanced.
+    indices = list(range(len(plan.jobs)))
+    workers = worker_count(len(indices), len(indices))
+    chunks = split_evenly(indices, workers) if workers > 1 else [indices]
+
+    _RENDER_CONTEXT = (plan, session_id)
+    try:
+        results = [pair for chunk in run_chunks(_render_chunk, chunks, workers) for pair in chunk]
+    finally:
+        _RENDER_CONTEXT = None
+    # Restore plan order, which round-robin scattering broke.
+    return [Path(path) for _, path in sorted(results)]
+
+
+def chain_submit_jobs(
+    plan: ExecutionPlan,
+    *,
+    slurm_client: SlurmClient | None = None,
+    session_id: str | None = None,
+    no_error_catching: bool = False,
+    dry_run: bool = False,
+    repeat: int = 1,
+) -> SubmissionResult:
+    """Submit all jobs to Slurm immediately as a dependency chain.
+
+    Each job in the plan is submitted with
+    --dependency=afterany:<prev_id> so all jobs appear in the Slurm
+    queue from the start and benefit from scheduling priority. With
+    repeat > 1, every job in the plan is submitted repeat times, each
+    run depending on the previous.
+
+    The monitor loop still runs after this call to watch logs and handle
+    restarts, but will not re-submit jobs since they are already marked
+    submitted=True.
+    """
+    store, session_id = _ensure_state_store(plan, session_id=session_id)
+    client = slurm_client or SlurmClient(SlurmClientConfig())
+    local_client = LocalCommandClient(LocalCommandClientConfig())
+    loop = MonitorLoop(
+        store, slurm_client=client, local_client=local_client, no_error_catching=no_error_catching
+    )
+
+    submitted_job_ids: list[str] = []
+    prev_slurm_id: str | None = None
+
+    jobs_to_submit: list[tuple[JobPlan, str | None]] = []
+    for job in plan.jobs:
+        # CLI --repeat > 1 overrides config; otherwise use job.chain_repeat
+        effective_repeat = repeat if repeat > 1 else getattr(job.config.job, "chain_repeat", 1)
+        for i in range(effective_repeat):
+            suffix = f"_r{i + 1}" if effective_repeat > 1 else ""
+            jobs_to_submit.append((job, suffix))
+
+    for job, repeat_suffix in jobs_to_submit:
+        record = _build_job_record(plan, job, session_id)
+        if repeat_suffix:
+            record = replace(record, job_id=record.job_id + repeat_suffix)
+
+        if not isinstance(record.definition, SlurmJobConfig):
+            LOGGER.warning("chain_submit_jobs: skipping non-Slurm job '%s'", record.job_id)
+            store.upsert(record)
+            submitted_job_ids.append(record.job_id)
+            continue
+
+        slurm_cfg = record.definition.slurm
+        if prev_slurm_id is not None:
+            slurm_cfg.sbatch.dependency = f"afterany:{prev_slurm_id}"
+            record = replace(record, definition=replace(record.definition, slurm=slurm_cfg))
+
+        if dry_run:
+            path = generate_script(slurm_cfg)
+            LOGGER.info(
+                "DRY RUN - script: %s  dependency: %s",
+                path,
+                slurm_cfg.sbatch.dependency or "none",
+            )
+            store.upsert(record)
+            submitted_job_ids.append(record.job_id)
+            prev_slurm_id = f"DRY-{record.job_id}"
+            continue
+
+        try:
+            slurm_job_id = client.submit(record.definition)
+        except Exception as exc:
+            LOGGER.error("chain_submit_jobs: failed to submit '%s': %s", record.job_id, exc)
+            store.mark_finished(record.job_id, "cancelled")
+            break
+
+        record = replace(
+            record,
+            runtime=replace(
+                record.runtime,
+                submitted=True,
+                runtime_job_id=slurm_job_id,
+                attempts=1,
+                start_ts=time.time(),
+            ),
+        )
+        store.upsert(record)
+        submitted_job_ids.append(record.job_id)
+        prev_slurm_id = slurm_job_id
+        LOGGER.info(
+            "chain_submit_jobs: submitted '%s' as Slurm job %s (dependency: %s)",
+            record.job_id,
+            slurm_job_id,
+            slurm_cfg.sbatch.dependency or "none",
+        )
+
+    return SubmissionResult(
+        loop=loop,
+        state_store=store,
+        session_id=session_id,
+        submitted_job_ids=submitted_job_ids,
+    )
+
+
 __all__ = [
     "ExecutionPlan",
     "SubmissionResult",
     "build_execution_plan",
     "generate_scripts",
+    "render_job_scripts",
     "submit_jobs",
+    "chain_submit_jobs",
     "load_monitor_controller",
     "run_loop",
     "run_loop_sync",

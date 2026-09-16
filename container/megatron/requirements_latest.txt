@@ -21,6 +21,7 @@ pre-commit
 lm_eval
 compoconf>=0.1.14
 scipy
+sentencepiece
 safetensors
 tabulate
 einops

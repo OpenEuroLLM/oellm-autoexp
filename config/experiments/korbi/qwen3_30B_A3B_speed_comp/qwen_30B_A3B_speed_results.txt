@@ -1,0 +1,63 @@
+backend   EP    PP    compile   AC      BS    nGPUs   status    tok/s/GPU       TFLOPS/GPU  MFU%      Mem(GiB)    Mem%      iters    job_id
+--------  ----  ----  --------  ------  ----  ------  --------  --------------  ----------  --------  ----------  --------  -------  ----------
+titan     4     2     yes       selective  64    8       ok                 5,543       147.8     14.9%    89.6 GiB     94.3%  36       321080
+titan     4     2     yes       selective  64    8       ok                 5,498       146.6     14.8%    88.1 GiB     92.8%  36       321082
+titan     4     2     yes       selective  64    8       ok                 5,446       145.2     14.7%    84.9 GiB     89.4%  36       321069
+titan     4     2     yes       selective  64    8       ok                 5,355       142.8     14.4%    86.0 GiB     90.5%  36       321542
+titan     4     2     yes       selective  128   8       ok                 5,348       142.6     14.4%    82.7 GiB     87.1%  24       321071
+titan     4     2     yes       selective  64    8       ok                 5,297       141.3     14.3%    85.3 GiB     89.8%  36       321541
+titan     4     2     yes       selective  64    8       ok                 5,217       139.1     14.1%    85.0 GiB     89.4%  36       321540
+titan     4     2     yes       selective  128   8       ok                 5,001       133.4     13.5%    85.9 GiB     90.4%  36       321599
+titan     4     2     yes       selective  64    8       ok                 4,976       132.7     13.4%    85.1 GiB     89.5%  36       321539
+titan     4     2     no        selective  64    8       ok                 4,951       132.0     13.3%    90.5 GiB     95.3%  36       321081
+titan     4     2     yes       selective  64    8       ok                 4,920       131.2     13.3%    84.3 GiB     88.8%  36       321601
+titan     4     2     no        selective  64    8       ok                 4,884       130.2     13.2%    87.3 GiB     91.8%  36       321070
+titan     4     2     yes       selective  16    8       ok                 4,554       121.4     12.3%    74.9 GiB     78.8%  36       320956
+titan     4     2     no        selective  16    8       ok                 4,330       115.5     11.7%    75.9 GiB     79.9%  36       320959
+titan     4     2     yes       selective  8     8       ok                 4,315       115.1     11.6%    74.9 GiB     78.8%  36       320958
+megatron  4     2               full    4     8       ok                 5,236       113.9     11.5%           —     84.4%  90       321801
+titan     4     2     yes       full    128   8       ok                 4,186       111.6     11.3%    58.2 GiB     61.3%  16       320957
+megatron  4     2               full    4     8       ok                 5,050       109.8     11.1%           —     85.4%  90       306180
+titan     4     2     yes       full    16    8       ok                 4,058       108.2     10.9%    56.4 GiB     59.3%  36       320927
+megatron  4     2               full    4     8       ok                 4,654       101.2     10.2%           —     89.0%  90       321760
+titan     4     2     yes       full    8     8       ok                 3,783       100.9     10.2%    56.2 GiB     59.1%  36       320928
+titan     4     2     no        full    16    8       ok                 3,729        99.4     10.1%    56.8 GiB     59.8%  36       320926
+titan     4     2     no        selective  64    8       ok                 3,683        98.2      9.9%    87.1 GiB     91.6%  36       321600
+titan     4     2     yes       none    4     8       ok                 3,586        95.6      9.7%    91.1 GiB     95.9%  36       320925
+titan     4     2     no        selective  4     8       ok                 3,580        95.5      9.7%    77.3 GiB     81.3%  36       320923
+megatron  4     2               full    8     8       ok                 4,373        95.2      9.6%           —     95.6%  90       306176
+titan     4     2     no        full    8     8       ok                 3,519        93.8      9.5%    56.2 GiB     59.2%  36       320814
+titan     4     2     no        none    2     8       ok                 3,511        93.6      9.5%    80.7 GiB     85.0%  36       320929
+titan     4     2     yes       full    4     8       ok                 3,294        87.8      8.9%    56.2 GiB     59.1%  36       320812
+titan     4     2     no        full    4     8       ok                 3,100        82.7      8.4%    56.2 GiB     59.2%  36       320813
+titan     4     2     no        none    4     8       ok                 3,053        81.4      8.2%    90.9 GiB     95.7%  36       320924
+megatron  8     1               full    4     8       ok                 3,211        69.8      7.1%           —     95.0%  90       306178
+megatron  8     1               full    4     8       ok                 3,080        67.0      6.8%           —     94.9%  90       311770
+megatron  8     1               full    2     8       ok                 2,954        64.3      6.5%           —     85.3%  90       311769
+megatron  8     1               full    1     8       ok                 2,583        56.2      5.7%           —     81.3%  90       309061
+titan     8     1     no        full    4     8       ok                 1,344        50.5      5.1%    76.2 GiB     80.2%  36       319680
+titan     8     1     no        full    2     8       ok                 1,286        48.3      4.9%    66.4 GiB     69.9%  36       319682
+titan     8     1     no        full    1     8       ok                 1,267        47.5      4.8%    61.8 GiB     65.1%  36       319687
+titan     8     1     no        full    8     8       ok                 1,219        45.7      4.6%    90.3 GiB     95.1%  20       319674
+titan     8     1     no        full    1     8       ok                 1,149        43.1      4.4%    61.8 GiB     65.1%  36       319686
+titan     4     1     no        full    1     8       oom                  OOM         OOM       OOM           —         —           319677
+titan     4     1     no        none    1     8       oom                  OOM         OOM       OOM           —         —           319681
+titan     4     1     no        full    1     8       oom                  OOM         OOM       OOM           —         —           319673
+titan     4     1     no        none    1     8       oom                  OOM         OOM       OOM           —         —           319675
+titan     8     1     no        none    1     8       oom                  OOM         OOM       OOM           —         —           319678
+titan     8     1     no        none    1     8       oom                  OOM         OOM       OOM           —         —           319685
+titan     8     1     no        none    16    8       oom                  OOM         OOM       OOM           —         —           319676
+titan     8     1     no        none    2     8       oom                  OOM         OOM       OOM           —         —           319684
+titan     8     1     no        none    4     8       oom                  OOM         OOM       OOM           —         —           319679
+titan     8     1     no        none    8     8       oom                  OOM         OOM       OOM           —         —           319683
+megatron  4     1               full    1     8       oom                  OOM         OOM       OOM           —         —           309632
+megatron  4     1               none    1     8       oom                  OOM         OOM       OOM           —         —           309631
+megatron  8     1               none    1     8       oom                  OOM         OOM       OOM           —         —           309060
+megatron  4     2               none    4     8       oom                  OOM         OOM       OOM           —         —           306179
+megatron  4     2               selective  4     8       oom                  OOM         OOM       OOM           —         —           306177
+megatron  4     2               none    1     8       oom                  OOM         OOM       OOM           —         —           321759
+megatron  4     2               none    2     8       oom                  OOM         OOM       OOM           —         —           321761
+megatron  4     2               none    2     8       oom                  OOM         OOM       OOM           —         —           321757
+megatron  4     2               none    4     8       oom                  OOM         OOM       OOM           —         —           321789
+megatron  4     2               none    4     8       oom                  OOM         OOM       OOM           —         —           321800
+megatron  4     2               none    4     8       no_data                —           —         —           —         —           321790

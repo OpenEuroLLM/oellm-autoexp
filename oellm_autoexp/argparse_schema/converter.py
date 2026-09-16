@@ -134,7 +134,7 @@ def build_cmdline_args(
             if isinstance(argval, bool) or argval is None:
                 if argval:
                     cli_args.append(arg)
-            if list_sep:
+            elif list_sep:
                 cli_args.append(arg + list_sep + str(argval))
             else:
                 cli_args.append(arg)

@@ -1,0 +1,114 @@
+# @package _global_
+# Multi-node speed sweep for Megatron LLaMA 1.8B-QK-LN on JUPITER (2 nodes, 8 GPUs)
+# Baseline comparison: ~412.5 TFLOPS @ 1 node, TP=1, MBS=6, no recompute, CUDA graphs
+#
+# Sweep axes:
+#   - tensor_parallel_size: 1 (DP=8 pure) vs 2 (intra-node TP, DP=4 across nodes)
+#   - micro_batch_size: 4, 6, 8
+#   Note: sequence_parallel enabled when TP=2 (removes all-gathers at TP≥2)
+#         CUDA_DEVICE_MAX_CONNECTIONS=1 required for TP≥2 (async comm overlap)
+#
+# 1-node results for reference:
+#   TP=1, MBS=6, no recompute, CUDA graphs → 412.5 TFLOPS (optimal)
+#
+# ── Measured results (2 nodes, 8×GH200, CUDA graphs, no recompute) ─────────
+#   TP=1, MBS=4 → 387.6 TFLOPS,  66% mem  (safe)
+#   TP=1, MBS=6 → 405.4 TFLOPS,  91% mem  (OPTIMAL — −1.7% vs 1-node)
+#   TP=1, MBS=8 → OOM (6.14 GiB needed, only 6.0 GiB free at 89 GiB used)
+#   TP=2, MBS=4 → 276.8 TFLOPS,  35% mem  (−29% vs TP=1 MBS=4)
+#   TP=2, MBS=6 → 297.3 TFLOPS,  47% mem  (−27% vs TP=1 MBS=6)
+#   TP=2, MBS=8 → 292.8 TFLOPS,  60% mem
+# Optimal 2-node config: TP=1, MBS=6 → 405.4 TFLOPS (same settings as 1-node optimal)
+#   TP=2, MBS=6                            → 322-345 TFLOPS (comm overhead at TP=2)
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, llama1_8b_qkln, speed_test_jupiter]
+  - /sweep: none
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: "megatron_1.8B_multinode_speed_sweep"
+
+backend:
+  megatron:
+    train_iters: 100
+    log_interval: 1
+    eval_interval: 100000
+    save: null
+    load: null
+    # Optimal 1-node settings carried over:
+    recompute_activations: false
+    recompute_granularity: null
+    sequence_parallel: false  # default; overridden to true for TP=2 configs
+    # CUDA graph settings (require garbage_collection_threshold, not expandable_segments)
+    cuda_graph_impl: local
+    cuda_graph_scope: full
+    check_for_nan_in_loss_and_grad: false
+    use_distributed_optimizer: true
+    micro_batch_size: 6
+    tensor_model_parallel_size: 1
+    cross_entropy_loss_fusion: true
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    PYTORCH_CUDA_ALLOC_CONF: "garbage_collection_threshold:0.8"
+    PYTHONWARNINGS: "ignore::UserWarning"
+
+job:
+  name: meg_1.8B_2node_tp${backend.megatron.tensor_model_parallel_size}_mbs${backend.megatron.micro_batch_size}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+slurm:
+  sbatch:
+    nodes: 2
+    time: "00:20:00"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ── TP=1 (pure DDP across 8 GPUs, grad allreduce crosses nodes) ──────
+        - backend.megatron.tensor_model_parallel_size: 1
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.sequence_parallel: false
+          # Result: 387.6 TFLOPS, 66% mem (job 304578)
+
+        - backend.megatron.tensor_model_parallel_size: 1
+          backend.megatron.micro_batch_size: 6
+          backend.megatron.sequence_parallel: false
+          # Result: 405.4 TFLOPS, 91% mem (job 304581) ← OPTIMAL
+
+        - backend.megatron.tensor_model_parallel_size: 1
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.sequence_parallel: false
+          # Result: OOM — 6.14 GiB needed, ~89 GiB used (job 304580)
+
+        # ── TP=2 (intra-node TP via NVLink, DP=4 across nodes) ──────────────
+        # sequence_parallel=true removes all-gathers in attn/ffn norms
+        # CUDA_DEVICE_MAX_CONNECTIONS=1 required for TP comm overlap
+        - backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.sequence_parallel: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: "1"
+          # Result: 276.8 TFLOPS, 35% mem (job 304582)
+
+        - backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.micro_batch_size: 6
+          backend.megatron.sequence_parallel: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: "1"
+          # Result: 297.3 TFLOPS, 47% mem (job 304579)
+
+        - backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.sequence_parallel: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: "1"
+          # Result: 292.8 TFLOPS, 60% mem (job 304583)

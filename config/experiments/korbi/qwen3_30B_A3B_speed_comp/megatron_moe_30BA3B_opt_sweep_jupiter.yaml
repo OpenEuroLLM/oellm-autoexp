@@ -1,0 +1,139 @@
+# @package _global_
+# Megatron 30BA3B optimization sweep — JUPITER (2 nodes, 8×GH200, EP=4+PP=2)
+#
+# Goal: close the gap vs Titan (5,446 tok/s/GPU) using insights from Titan sweep.
+#
+# Key constraint: DP=1 (8 GPUs = EP=4 × PP=2 × TP=1 × DP=1)
+#   → GBS = mbs × grad_accum_steps (DP drops out)
+#   → GBS=64 throughout (same total compute per optimizer step)
+#
+# Memory model (from prior runs):
+#   model+optimizer (fixed) ≈ 71.4 GiB
+#   activation per unit mbs (full recompute) ≈ 2.43 GiB
+#   activation overhead for no-recompute ≈ +2.22 GiB/unit mbs vs full
+#   (selective ≈ no-recompute: moe_act+layernorm saves only ~0.1 GiB at mbs=4)
+#
+#   Predicted memory:
+#     no-recompute mbs=2: 71.4 + 2*(2.43+2.22) = 80.7 GiB ≈ 84.9% ← safe
+#     no-recompute mbs=1: 71.4 + 1*(2.43+2.22) = 76.1 GiB ≈ 80.1% ← safe
+#
+# Strategy: smaller mbs + no-recompute + more grad-accum steps
+#   Expected gain: no-recompute ~25-30% faster per microbatch vs full-recompute.
+#   With GBS fixed, mbs=2 no-recompute may beat mbs=4 full-recompute significantly.
+#
+# Also tests: alltoall MoE dispatcher (vs current allgather).
+#   alltoall is O(EP) instead of O(EP) allgather but avoids redundant token copies.
+#   Original deadlock was CUDA-graph-init related; disabled graphs may now allow alltoall.
+#
+# ── Prior best ───────────────────────────────────────────────────────────────
+#   EP=4+PP=2, mbs=4, full_recompute, allgather → 5,050 tok/s/GPU, 109.8 TFLOPS, 85.4%
+#
+defaults:
+  - ../../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe_30BA3B]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "megatron_moe_30BA3B_opt_sweep"
+  recompute_tag: "full_recompute"
+  dispatcher_tag: "allgather"
+
+backend:
+  megatron:
+    train_iters: 100
+    log_interval: 1
+    eval_interval: 1000
+    save: null
+    load: null
+    ckpt_step: 0
+    lr: 0.001
+    log_throughput: true
+
+    global_batch_size: 64    # GBS fixed; mbs × grad_accum = 64 (DP=1)
+    micro_batch_size: 4
+    expert_model_parallel_size: 4
+    pipeline_model_parallel_size: 2
+    tensor_model_parallel_size: 1
+
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    recompute_modules: null
+
+    use_distributed_optimizer: true
+    moe_router_dtype: "fp32"
+    moe_token_dispatcher_type: allgather
+
+    data_path:
+      - /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
+    data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+    NCCL_NET_GDR_LEVEL: "0"  # disable GDRDMA — required for PP=2 inter-node P2P
+
+container:
+  # Use pt2510 container — the newer aarch64_202603120039.sif doesn't exist on the cluster.
+  image: /e/scratch/projectnucleus/poeppel1/container_cache/MegatronTraining-JUPITER_pt2510_aarch64_202602262033.sif
+
+job:
+  name: meg_moe_30BA3B_ep${backend.megatron.expert_model_parallel_size}_pp${backend.megatron.pipeline_model_parallel_size}_mbs${backend.megatron.micro_batch_size}_${aux.recompute_tag}_${aux.dispatcher_tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+slurm:
+  sbatch:
+    nodes: 2
+    time: "00:20:00"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ── Baseline: full-recompute mbs=4 allgather (current best, sanity check) ──
+        - aux.recompute_tag: full_recompute
+          aux.dispatcher_tag: allgather
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.recompute_granularity: full
+          backend.megatron.recompute_method: uniform
+          backend.megatron.recompute_num_layers: 1
+          backend.megatron.moe_token_dispatcher_type: allgather
+          # Prior result: 5,050 tok/s/GPU, 109.8 TFLOPS, 85.4% mem (job 306180)
+
+        # ── No-recompute with small mbs RULED OUT: OOM because activation ∝ GBS not mbs ──
+        # Memory: GBS=64, any mbs → same total 64-seq activation → ~89.9 GiB → OOM.
+        # Megatron pre-allocates activation for all GBS/mbs microbatches, each of size mbs×seq.
+        # Total = (GBS/mbs) × mbs × act_per_seq = GBS × act_per_seq = constant regardless of mbs.
+        # → mbs=2,GBS=64 OOMed at 94.5 GiB (same as mbs=4,GBS=64).
+        # Solution: reduce GBS (see configs below).
+
+        # ── No-recompute with minimum valid GBS (round 3) ────────────────────────
+        # DP = world_size / (TP × PP) = 8 / (1 × 2) = 4 (EP orthogonal to DP in Megatron)
+        # GBS must be divisible by mbs × DP = 4 × 4 = 16.
+        # num_microbatches = GBS / 16 must be ≥ PP=2 → minimum GBS = 32.
+        # GBS=16: c10::DistBackendError (1 microbatch < PP=2 pipeline minimum).
+        # GBS=8: AssertionError (not divisible by 16).
+        #
+        # Memory: activation ∝ GBS/DP (= sequences per DP rank processed per step).
+        # GBS=64: 16 sequences/DP-rank, extra = 8.8 GiB.
+        # GBS=32: 8 sequences/DP-rank, extra = 4.4 GiB → total = 81.1 + 4.4 = 85.5 GiB = 90%.
+        # Borderline but should fit with expandable_segments:True.
+        - aux.recompute_tag: no_recompute_gbs32
+          aux.dispatcher_tag: allgather
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.global_batch_size: 32
+          backend.megatron.recompute_granularity: null
+          backend.megatron.recompute_method: null
+          backend.megatron.recompute_num_layers: null
+          backend.megatron.moe_token_dispatcher_type: allgather
+          # Expected: ~90% mem; tok/s = mbs × seq_len / microbatch_time_no_recompute / n_gpus

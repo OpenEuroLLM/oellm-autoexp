@@ -1,0 +1,158 @@
+# @package _global_
+# =============================================================================
+# REFERENCE CONFIG - fixed-world hot-spare with two-tier checkpointing (Leonardo)
+# =============================================================================
+# The "reserve N+spares, run N" scenario: allocate N+1 nodes, train on N at a
+# FIXED world size (and fixed global batch size), hold the extra node(s) idle as
+# hot spares. On a permanent node failure, a spare is promoted in place of the
+# dead node -> the world size and GBS stay constant (no elastic reshard).
+#
+# VALIDATED (Leonardo, 2026-07-08) at 3 alloc / 2 active / 1 spare (world=8):
+#   - fixed-world reserve + spare promotion (min-healthy)          [job 48913125]
+#   - arbitrary-node recovery incl. a middle node                 [job 48879158]
+#   - progress-preserving reload after the swap                   [job 48917163]
+#   - replication collective works on Leonardo (crashed on JUPITER)[job 48941417]
+# RECOVERY SOURCE (verified job 48962918): the spare-swap DOES reload the RECENT
+# LOCAL (RAM) checkpoint via REPLICATION -- the promoted spare fetches the dead
+# node's shard from a replica in another node's RAM over the network; no disk
+# write and no cold-start (confirmed with the global dir cleared). load picks the
+# newer of local vs global (local is more frequent -> usually local).
+# IMPL CAVEAT (not-yet-fast): load-checkpoint is currently ~330 s (should be ~ms
+# for RAM -- the replica gather/load path is slow, and the spare's replica lags the
+# latest local save so recovery rolls back further than expected). NVRx-side tuning.
+# (The wandb artifact-crash-on-local-ckpt that drove restart churn is FIXED at source
+#  -- Megatron submodule 6be53e28f -- so wandb is safe now; no WANDB_MODE workaround.)
+# The infrequent GLOBAL tier below is the durable backstop for whole-job failures.
+#
+# -----------------------------------------------------------------------------
+# THREE DEPLOYMENT REQUIREMENTS (all non-default):
+# 1. NVRx with `use_infra_group_rank=False` so survivor/spare ranks are
+#    re-compacted (else a non-highest node loss crashes "Invalid infrastructure
+#    rank"). Delivered here via a patched NVRx copy prepended to
+#    backend.env.PYTHONPATH (NVRX_SIDECAR, see below). PRODUCTION: bake it into
+#    the container image, or pass it through an --ft-cfg-path FT config.
+# 2. `--ft-restart-policy min-healthy` (reserve mode) + `--nnodes=N:N` (MAX=N caps
+#    the ACTIVE count; extra allocated nodes park as spares). Set via the backend
+#    args below. NB: --nnodes=N:M with M>N runs M active (elastic), NOT reserve.
+# 3. Submit from the repo root (run_autoexp / submit.sh cd for you) so the
+#    relative launcher_script path resolves; and use a VALID account/qos
+#    (2026-07: euhpc_d29_026 + normal|boost_qos_dbg; oellm_prod2026 went invalid).
+# -----------------------------------------------------------------------------
+defaults:
+  - /experiments/base
+  - /backend: megatron_ftlauncher_localaddr
+  - /container: leonardo
+  - /slurm: leonardo_ftlauncher_saboteur      # carries MASTER_ADDR fix, srun --kill-on-bad-exit=0, gated saboteur
+  - /backend/megatron: [base, qwen3_moe]
+  - /sweep: none
+  - _self_
+
+backend:
+  # --- Fixed-world hot-spare launcher args -----------------------------------
+  torchrun_args:
+    nnodes: "2:2"                     # ACTIVE nodes (MAX=active). SCALE: "8:8" for 8 active.
+    max_restarts: "50"                # generous; a spare-swap consumes restarts
+    ft_restart_policy: "min-healthy"  # reserve mode: run min active, hold extras as spares, promote on fail
+
+  megatron:
+    # --- Tiny MoE (validated). SCALE: swap in the real model (see SCALING note) -
+    num_layers: 4
+    hidden_size: 512
+    ffn_hidden_size: 1024
+    num_attention_heads: 8
+    num_query_groups: 2
+    kv_channels: 64
+    max_position_embeddings: 1024
+    num_experts: 8
+    moe_router_topk: 2
+    moe_ffn_hidden_size: 256
+    seq_length: 1024
+    encoder_seq_length: null
+
+    # --- Parallelism (world = ACTIVE_nodes x gpus_per_node, FIXED) -------------
+    # 2 active x 4 GPUs = 8: TP=1, PP=2, EP=2, DP=4. GBS divisible by mbs*DP.
+    # SCALE to 8 active (world=32): keep TP*PP*EP*DP = 32, GBS divisible by mbs*DP.
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 2
+    expert_model_parallel_size: 2
+    sequence_parallel: false
+    use_distributed_optimizer: true
+    moe_router_dtype: "fp32"
+    train_iters: 100000
+    global_batch_size: 48             # FIXED (world is fixed) -> GBS never changes across a swap
+    micro_batch_size: 1
+    eval_interval: 1000
+    lr: 0.001
+    log_interval: 1
+
+    mock_data: true                   # SCALE: point at real data + a real tokenizer
+    data_path: null
+    tokenizer_type: NullTokenizer
+    tokenizer_model: null
+    vocab_size: 8192
+
+    # wandb + local checkpointing: the checkpoint-artifact crash on local ckpts is
+    # FIXED AT SOURCE (Megatron submodule commit 6be53e28f -- non-persistent/local
+    # checkpoints are no longer logged as wandb artifacts). So wandb is now safe
+    # with local checkpointing; leave wandb_project at your real project. If you run
+    # against an UNPATCHED Megatron, set `wandb_project: ""` to disable wandb and
+    # avoid the add_reference("file:///dev/shm/...") crash + restart churn.
+
+    # --- Fault tolerance: JOB-LEVEL hot-spare (ft_launcher heartbeat monitor) --
+    enable_ft_package: true           # fast fault detection (seconds, not the NCCL watchdog)
+    calc_ft_timeouts: true
+    inprocess_restart: false          # spare-swap = job-level restart
+
+    # === TWO-TIER CHECKPOINTING ================================================
+    # Tier 1 - FREQUENT LOCAL (RAM/tmpfs) + REPLICATION (cheap, bounds data loss):
+    #   node-local /dev/shm so save/load avoid the shared-FS stall; replication
+    #   mirrors each rank's shard to a rank on ANOTHER node so a dead node's shard
+    #   survives and the promoted spare can fetch it. /dev/shm = 252 GB on booster
+    #   nodes; with the distributed optimizer each node holds only its shard
+    #   (~14 B/param / DP * replication_factor) so it fits comfortably.
+    non_persistent_ckpt_type: local
+    non_persistent_local_ckpt_dir: /dev/shm/kpoeppel_oellm/local_ckpt
+    non_persistent_save_interval: 20                 # FREQUENT (tune to your iter time)
+    replication: true
+    replication_jump: 4               # = gpus_per_node -> replica lands on the OTHER node (cross-node survival)
+    replication_factor: 2             # 1 original + 1 replica
+    # Tier 2 - INFREQUENT GLOBAL (persistent, durable disk) on shared scratch:
+    #   the backstop for whole-job / multi-node failures, and (today) the ckpt a
+    #   job-level spare-swap actually reloads. Keep it INFREQUENT so it doesn't
+    #   dominate; the local tier bounds per-failure data loss.
+    save: /leonardo_scratch/large/userexternal/kpoeppel/output/hotspare_ref/ckpt
+    load: /leonardo_scratch/large/userexternal/kpoeppel/output/hotspare_ref/ckpt
+    ckpt_step: 0
+    save_interval: 500                # INFREQUENT durable global checkpoint
+    async_save: false                 # sync: finalize before a fault can interrupt
+    no_load_optim: false
+    no_load_rng: false
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+    TORCH_CPP_LOG_LEVEL: "error"
+    # backend.env PYTHONPATH is the LAST `--env PYTHONPATH=` singularity sees, so
+    # it WINS. Prepend the patched-NVRx copy (use_infra_group_rank=False); build it
+    # once per config/slurm/leonardo_ftlauncher.yaml's header. Keep Megatron paths after.
+    PYTHONPATH: "${oc.env:NVRX_SIDECAR,/leonardo_scratch/large/userexternal/kpoeppel/nvrx05_patched}:.:submodules/Megatron-LM"
+
+container:
+  # 2512 image (torch 2.10 / NCCL 2.28.9 / TE 2.10); NVRx overridden to the
+  # patched copy via PYTHONPATH above.
+  image: /leonardo_work/OELLM_prod2026/container_images/OELLM_autoexp_MegatronTrainingNoRoot_base2512_x86_64_202601281510.sif
+
+slurm:
+  sbatch:
+    nodes: 3                          # ACTIVE + SPARES (2 active + 1 spare). SCALE: 9 for 8 active + 1 spare.
+    time: "00:20:00"
+    job_name: null
+  # env.SABOTEUR_* are INERT by default (leonardo_ftlauncher). To fault-inject a
+  # permanent node loss in a TEST, arm them: SABOTEUR_NODE=<active infra rank>,
+  # SABOTEUR_DELAY=<seconds>. Leave unset for real runs.
+
+job:
+  name: megatron_moe_hotspare_reference_leonardo
+  base_output_dir: /leonardo_scratch/large/userexternal/kpoeppel/output/${job.name}

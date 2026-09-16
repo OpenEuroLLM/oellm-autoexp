@@ -1,0 +1,132 @@
+Bootstrap: docker
+From: ${BASE_IMAGE}
+
+%labels
+    Author OpenSci
+    Version 0.2.0
+    Base ${BASE_IMAGE}
+    Description Megatron training (OpenEuroLLM fork) + NVIDIA-NeMo/Megatron-Bridge for HF ckpt conversion. Single image supporting both training and conversion.
+
+%environment
+    export PYTHONNOUSERSITE=1
+    export CUDA_HOME=/usr/local/cuda
+    export PATH=/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/usr/local/cuda/bin
+    # OpenEuroLLM Megatron-LM is the primary `megatron.core` (matches training).
+    # Bridge's src is appended; namespace package merge gives us `megatron.bridge`
+    # without shadowing `megatron.core`.
+    export PYTHONPATH=/workspace/oellm-autoexp/submodules/Megatron-LM:/workspace/oellm-autoexp:/workspace/oellm-autoexp/submodules/Megatron-Bridge/src:${PYTHONPATH}
+    export OELLM_AUTOEXP_CACHE=/workspace/cache
+    export HF_HOME=/workspace/cache/hf
+
+%files
+    ${REPO_ROOT} /workspace/oellm-autoexp
+    ${REQUIREMENTS_PATH} /workspace/${REQUIREMENTS_BASENAME}
+
+%post
+ln -sf /usr/local/cuda/compat/lib.real /usr/local/cuda/compat/lib
+
+
+mkdir -p /workspace/cache
+cd /workspace
+
+pip install --upgrade pip setuptools wheel
+
+python3 /workspace/oellm-autoexp/container/gen_constraints.py \
+    --output /workspace/constraints.installed.txt \
+    --exclude pip setuptools wheel huggingface_hub numpy
+
+if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
+    python3 -m pip install --no-cache-dir \
+        -c /workspace/constraints.installed.txt \
+        -r "/workspace/${REQUIREMENTS_BASENAME}"
+fi
+
+# OpenEuroLLM Megatron-LM is the training fork; keep it as the
+# primary `megatron.core` so checkpoints written by training load cleanly.
+if [ -d "/workspace/oellm-autoexp/submodules/Megatron-LM" ]; then
+    python3 -m pip install --no-cache-dir \
+        -c /workspace/constraints.installed.txt \
+        -e /workspace/oellm-autoexp/submodules/Megatron-LM
+fi
+
+python3 -m pip install --no-cache-dir \
+    -c /workspace/constraints.installed.txt \
+    -e /workspace/oellm-autoexp
+
+python3 -m pip uninstall -y megatron-core || true
+
+cd oellm-autoexp
+pip install -e .[dev]
+
+# --- Megatron-Bridge ---------------------------------------------------------
+# Install with --no-deps so the existing transformer_engine / megatron.core
+# (the OpenEuroLLM fork) stay untouched. Add only the deps Bridge needs that
+# the base image doesn't already provide.
+python3 -m pip install --no-cache-dir --no-deps \
+    -e /workspace/oellm-autoexp/submodules/Megatron-Bridge
+
+python3 -m pip install --no-cache-dir \
+    "nvidia-resiliency-ext>=0.6.0,<0.7" \
+    "nvidia-modelopt" \
+    "qwen-vl-utils" \
+    "mistral-common>=1.10.0" \
+    "peft>=0.18.1" \
+    "flash-linear-attention" \
+    "megatron-energon" || \
+  echo "WARNING: some bridge-only deps failed to install"
+
+# Patch Bridge's `models/__init__.py` so model bridges that reference
+# symbols missing from the OpenEuroLLM Megatron-LM fork (e.g. mamba,
+# certain gemma_vl variants) fail soft at import time instead of breaking
+# `from megatron.bridge import AutoBridge`. Qwen3 + Llama + the other
+# vanilla causal-LM bridges remain importable.
+python3 /workspace/oellm-autoexp/container/megatron/patch_bridge_lazy_imports.py \
+    /workspace/oellm-autoexp/submodules/Megatron-Bridge/src/megatron/bridge/models
+
+# startup script that fixes CUDA symlinks
+mkdir -p /.singularity.d/env
+cat > /.singularity.d/env/99-cuda-fix.sh << 'EOFENV'
+#!/bin/bash
+# Fix CUDA symlinks for Triton when --nv is used
+if [ -f /.singularity.d/libs/libcuda.so.1 ]; then
+mkdir -p /usr/local/cuda/lib64 /usr/local/cuda/compat/lib 2>/dev/null
+ln -sf /.singularity.d/libs/libcuda.so.1 /usr/local/cuda/lib64/libcuda.so.1 2>/dev/null
+ln -sf /usr/local/cuda/lib64/libcuda.so.1 /usr/local/cuda/lib64/libcuda.so 2>/dev/null
+ln -sf /.singularity.d/libs/libcuda.so.1 /usr/local/cuda/compat/lib/libcuda.so.1 2>/dev/null
+ln -sf /usr/local/cuda/compat/lib/libcuda.so.1 /usr/local/cuda/compat/lib/libcuda.so 2>/dev/null
+fi
+export LD_LIBRARY_PATH=/.singularity.d/libs:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+EOFENV
+chmod +x /.singularity.d/env/99-cuda-fix.sh
+
+%runscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%startscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%test
+cd /workspace/oellm-autoexp
+python scripts/run_autoexp.py --help >/dev/null
+# AutoBridge must be importable. Some bundled bridges may warn (mamba etc.)
+# because they reference symbols the OpenEuroLLM Megatron-LM fork lacks;
+# that's fine — the tolerant-import patch absorbs those.
+python -c "from megatron.bridge import AutoBridge; print('AutoBridge OK')"
+
+%help
+    Single image supporting both Megatron training (OpenEuroLLM fork) and
+    Megatron-Bridge-based checkpoint conversion to HuggingFace format.
+
+    Build:
+        container/build_container.sh \\
+            --definition MegatronTraining-JUPITER-bridge \\
+            --additional-tag -bridge \\
+            --append-date
+
+    Run conversion via oellm_autoexp.backends.megatron_bridge_backend.
+    Some bundled Bridge model bridges (mamba, certain VL/Omni variants) are
+    skipped at import time because the OpenEuroLLM Megatron-LM fork lacks
+    symbols upstream Bridge expects. Bridges for Qwen3, Llama, and other
+    causal-LM architectures are unaffected.

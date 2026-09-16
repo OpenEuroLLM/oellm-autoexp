@@ -1,0 +1,11 @@
+# MN5 tokenised Megatron data through MSC with node-local NVMe cache.
+data_path:
+  - msc://gpfs-training-data/gpt-neox-20b/nemotron-cc/1.0/Nemotron-cc-2024-HQ-LUMI-sample-valid/high-all
+data_cache_path: ${oc.env:OUTPUT_DIR}/data_cache
+split: "989,10,1"
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: /gpfs/projects/ehpc533/tokenizers/gpt-neox-20b
+enable_msc: true
+mmap_bin_files: false
+object_storage_cache_path: $TMPDIR/msc_index_cache
+num_workers: 8

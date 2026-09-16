@@ -1,0 +1,126 @@
+# @package _global_
+#
+# Lumi port of chain_qwen3_bridge_train_eval_jupiter.yaml.
+# Reuses the existing MegatronTrainingLumi.sif container for train and
+# bridge (Bridge made importable via patch_bridge_lazy_imports.py applied
+# to the host's submodules/Megatron-Bridge tree, plus a PYTHONPATH
+# override that fronts the OpenEuroLLM Megatron-LM fork). Eval runs inside
+# the laif-rocm container which already has rocm torch + transformers;
+# oellm-evals + lm-eval are installed via `pip install --target` to
+# $HOME/eval_local and added to PYTHONPATH at runtime.
+
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: lumi
+  - /slurm: lumi
+  - /backend/megatron: [base_reference, qwen3_125M]
+  - /sweep: none
+  - override /job: default
+  - _self_
+
+job:
+  name: "chain_qwen3_bridge_train_eval_lumi"
+  base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${.name}_${index}
+
+backend:
+  megatron:
+    legacy_tokenizer: false
+    trust_remote_code: true
+    train_iters: 50
+    lr_warmup_iters: 5
+    lr_decay_iters: 50
+    lr_wsd_decay_iters: 10
+    save_interval: 50
+    eval_interval: 100
+    eval_iters: 1
+    micro_batch_size: 2
+    global_batch_size: 16
+    train_data_path:
+      - /scratch/project_462000963/preprocessed/gpt-neox-20b/common-pile/wikipesto
+    valid_data_path:
+      - /scratch/project_462000963/preprocessed/gpt-neox-20b/common-pile/wikipesto
+    test_data_path:
+      - /scratch/project_462000963/preprocessed/gpt-neox-20b/common-pile/wikipesto
+    data_path: []
+    split: null
+    add_qkv_bias: false
+    add_bias_linear: false
+    untie_embeddings_and_output_weights: false
+    tokenizer_model: "/workspace/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge/tokenizers/Qwen/Qwen3-0.6B"
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  sbatch:
+    job_name: null
+    nodes: 1
+    gpus_per_node: 1
+    ntasks_per_node: 1
+    gres: "gpu:1"
+    mem: "60G"
+    time: "00:30:00"
+    partition: ${oc.env:SLURM_PARTITION_DEBUG,${oc.env:SLURM_PARTITION,small-g}}
+    account: ${oc.env:SLURM_ACCOUNT,project_462000963}
+
+sweep:
+  type: list
+  filter: true
+  groups:
+    - type: list
+      configs:
+        - stage: train
+          # default container.image from /container=lumi
+          container.bind:
+            - "/pfs/"
+            - "/scratch/"
+            - "/flash/"
+            - "${oc.env:HOME}"
+            - "${oc.env:HOME}/Projects/oellm-autoexp:/workspace/oellm-autoexp"
+
+        - stage: convert
+          backend: megatron_bridge
+          slurm: lumi_bridge
+          container.bind:
+            - "/pfs/"
+            - "/scratch/"
+            - "/flash/"
+            - "${oc.env:HOME}"
+            - "${oc.env:HOME}/Projects/oellm-autoexp:/workspace/oellm-autoexp"
+          backend.env.PYTHONPATH: "/workspace/oellm-autoexp/submodules/Megatron-LM:/workspace/oellm-autoexp:/workspace/oellm-autoexp/submodules/Megatron-Bridge/src"
+          backend.hf_model: "Qwen/Qwen3-0.6B"
+          backend.tokenizer: "Qwen/Qwen3-0.6B"
+          backend.derive_hf_arch: "qwen3"
+          backend.megatron_config_path: "\\${sibling.train.job.base_output_dir}/current.yaml"
+          backend.megatron_path: "\\${sibling.train.job.base_output_dir}/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          backend.hf_path: "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          backend.bridge_root: "/workspace/oellm-autoexp/submodules/Megatron-Bridge"
+          backend.resources: "/workspace/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge"
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.train.job.base_output_dir}/latest_checkpointed_iteration.txt"
+          slurm.sbatch.gpus_per_node: 1
+          slurm.sbatch.ntasks_per_node: 1
+          slurm.sbatch.gres: "gpu:1"
+          slurm.sbatch.time: "00:30:00"
+
+        - stage: eval
+          backend: oellm_eval
+          container: lumi_eval
+          slurm: lumi_eval
+          backend.models:
+            - "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}"
+          backend.venv_path: "${oc.env:HOME}/eval_venv_stub"
+          backend.local: true
+          backend.skip_checks: true
+          backend.verbose: true
+          backend.limit: 4
+          backend.env.EVAL_BASE_DIR: "${oc.env:OUTPUT_DIR,./output}/${job.name}_2/eval"
+          backend.env.EVAL_OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}/${job.name}_2/eval"
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.train.job.base_output_dir}/hf/\\${oc.pad_iter:\\${sibling.train.backend.megatron.train_iters}}/model.safetensors"
+          slurm.sbatch.gpus_per_node: 1
+          slurm.sbatch.ntasks_per_node: 1
+          slurm.sbatch.gres: "gpu:1"
+          slurm.sbatch.time: "01:00:00"

@@ -17,7 +17,7 @@ from typing import Literal
 import yaml
 import logging
 
-from compoconf import ConfigInterface, register
+from compoconf import ConfigInterface, register, asdict
 
 from oellm_autoexp.monitor.job_client_protocol import JobClientInterface
 from oellm_autoexp.monitor.utils.paths import resolve_log_path, update_log_symlink
@@ -104,7 +104,7 @@ class LocalCommandClient(JobClientInterface):
                 LOGGER.info(f"Logging Config to: {resolved_config_path}")
                 Path(resolved_config_path).parent.mkdir(parents=True, exist_ok=True)
                 with open(resolved_config_path, "w") as fp:
-                    yaml.dump(job.base_config, fp)
+                    yaml.dump(asdict(job.base_config), fp)
                 if job.config_path_current:
                     config_path_obj = Path(resolved_config_path)
                     update_log_symlink(config_path_obj, Path(job.config_path_current))

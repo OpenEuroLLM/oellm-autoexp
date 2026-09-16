@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, UTC
 from functools import lru_cache
 from math import sqrt as _sqrt
+from pathlib import Path
 from collections.abc import Mapping
 
-from omegaconf import ListConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
 LOGGER = logging.getLogger(__name__)
 
@@ -142,6 +144,56 @@ def _timestring():
     return datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")[:-3]
 
 
+def oc_join(concat: str, args: list[str]) -> str:
+    return concat.join(map(str, args))
+
+
+def oc_split(inp: str, split: str) -> ListConfig:
+    return ListConfig([*inp.split(split)])
+
+
+def oc_template(templ: str, inp: str) -> str:
+    return templ.replace("%", inp)
+
+
+def oc_map_template(templ: str, inps: list[str]) -> list[str]:
+    return [templ.replace("%", str(inp)) for inp in inps]
+
+
+def oc_keymap_template(key: str, templ: str, inps: list[str]) -> list[DictConfig]:
+    return ListConfig([DictConfig({key: templ.replace("%", str(inp))}) for inp in inps])
+
+
+def oc_kvmap_template(templ: str, inps: dict[str, str]):
+    OmegaConf.resolve(inps)
+    return ListConfig(
+        [templ.replace("%k", str(key)).replace("%v", str(val)) for key, val in inps.items()]
+    )
+
+
+def oc_valuemap_template(templ: str, inps: dict[str, str]):
+    OmegaConf.resolve(inps)
+    return DictConfig({key: templ.replace("%v", str(val)) for key, val in inps.items()})
+
+
+def oc_map_extract_key(key: str, inps: dict[str, str]):
+    OmegaConf.resolve(inps)
+    return ListConfig([d[key] for d in inps])
+
+
+def oc_map_cond_template(cond: str, tmpl_if: str, tmpl_else: str, inps: list[str]) -> list[str]:
+    return ListConfig(
+        [
+            tmpl_if.replace("%", inp) if re.match(cond, inp) else tmpl_else.replace("%", inp)
+            for inp in inps
+        ]
+    )
+
+
+def oc_map_eval(inps: ListConfig) -> ListConfig:
+    return ListConfig([_safe_eval(inp) for inp in inps])
+
+
 def oc_if(a: str | int | bool, b: str, c: str):
     if (isinstance(a, str) and a.lower() == "false") or not a:
         return c
@@ -171,6 +223,50 @@ def oc_geq(a: str | int | bool, b: str | int | bool):
 
 def oc_leq(a: str | int | bool, b: str | int | bool):
     return a <= b
+
+
+def oc_slurmtime(seconds: int | float) -> str:
+    seconds = int(seconds)
+    sec = seconds % 60
+    minutes = (seconds // 60) % 60
+    hours = (seconds // 3600) % 24
+    days = seconds // (3600 * 24)
+    return f"{days}-{hours}:{minutes}:{sec}"
+
+
+def oc_exclude_nodes(path: str, sep: str = ",") -> str | None:
+    """Read a node-exclusion list file and return a SLURM nodelist string.
+
+    The file is expected to hold one node name per line; blank lines and lines
+    starting with ``#`` are ignored, and entries may also be comma- or
+    whitespace-separated within a line. Duplicates are dropped while preserving
+    first-seen order. The resulting nodes are joined with ``sep`` (default
+    ``","``) so the value can be dropped straight into ``#SBATCH --exclude=``.
+
+    A missing or effectively empty file yields ``None`` so the caller (e.g. the
+    sbatch directive builder) omits the ``--exclude`` directive entirely rather
+    than emitting an empty one.
+
+    This is registered with ``use_cache=False`` so each config resolution / script
+    generation re-reads the current on-disk list (the monitor grows it over time).
+    """
+    target = Path(str(path)).expanduser()
+    if not target.exists():
+        return None
+    nodes: list[str] = []
+    seen: set[str] = set()
+    for line in target.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        for token in re.split(r"[,\s]+", line):
+            token = token.strip()
+            if token and token not in seen:
+                seen.add(token)
+                nodes.append(token)
+    if not nodes:
+        return None
+    return sep.join(nodes)
 
 
 def _validate_eval_expression(expr: str) -> None:
@@ -220,6 +316,20 @@ def register_default_resolvers(force: bool = False) -> None:
     OmegaConf.register_new_resolver("oc.leq", oc_leq, replace=True)
     OmegaConf.register_new_resolver("oc.geq", oc_geq, replace=True)
     OmegaConf.register_new_resolver("oc.if", oc_if, replace=True)
+    OmegaConf.register_new_resolver("oc.join", oc_join, replace=True)
+    OmegaConf.register_new_resolver("oc.split", oc_split, replace=True)
+    OmegaConf.register_new_resolver("oc.tmpl", oc_template, replace=True)
+    OmegaConf.register_new_resolver("oc.maptmpl", oc_map_template, replace=True)
+    OmegaConf.register_new_resolver("oc.mapkeytmpl", oc_keymap_template, replace=True)
+    OmegaConf.register_new_resolver("oc.mapkeyvaltmpl", oc_kvmap_template, replace=True)
+    OmegaConf.register_new_resolver("oc.mapvaltmpl", oc_valuemap_template, replace=True)
+    OmegaConf.register_new_resolver("oc.mapextractkey", oc_map_extract_key, replace=True)
+    OmegaConf.register_new_resolver("oc.mapcondtmpl", oc_map_cond_template, replace=True)
+    OmegaConf.register_new_resolver("oc.mapeval", oc_map_eval, replace=True)
+    OmegaConf.register_new_resolver("oc.slurmtime", oc_slurmtime, replace=True)
+    OmegaConf.register_new_resolver(
+        "oc.exclude_nodes", oc_exclude_nodes, replace=True, use_cache=False
+    )
 
     _REGISTRATION_SENTINEL["registered"] = True
 

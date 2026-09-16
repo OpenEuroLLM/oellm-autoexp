@@ -1,0 +1,17 @@
+defaults:
+  - leonardo
+  - _self_
+
+# Leonardo variant that automatically avoids known-bad nodes.
+#
+# The monitor appends nodes that hit unrecoverable failures (e.g.
+# "failed on node lrdn0417: Communication connection failure") to the file
+# below via an AppendToFileAction chained off a LogEvent. The oc.exclude_nodes
+# resolver reads that file at script-generation time, so every newly launched
+# run is submitted with `#SBATCH --exclude=<bad nodes>`.
+#
+# The exclusion file path is taken from $LEONARDO_EXCLUDE_NODES (single source
+# of truth shared with the monitor action); it falls back to a per-user default.
+# A missing/empty file resolves to null, so the --exclude directive is omitted.
+sbatch:
+  exclude: ${oc.exclude_nodes:${oc.env:LEONARDO_EXCLUDE_NODES,${oc.env:HOME}/.oellm_autoexp/leonardo_exclude_nodes.txt}}

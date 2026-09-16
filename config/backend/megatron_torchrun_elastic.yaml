@@ -1,0 +1,21 @@
+# Plain elastic `torchrun` (torchelastic) instead of NVRx `ft_launcher`.
+#
+# Purpose: test whether the NVRx-0.6.0 rank-compaction bug (survivors keep their
+# stale infra ranks on a shrink -> "Invalid infrastructure rank N, Expected rank
+# in range [0, K)" when a non-highest node dies) is AVOIDED by torchelastic's
+# c10d dynamic rendezvous, which re-assigns ranks 0..N-1 on every membership
+# change. No NVRx: no --ft-* flags, no ft rank monitor, no 0.6.0 sidecar needed
+# (so also no NVRx local-checkpoint API break).
+#
+# Node-death detection here is via NCCL error propagation (a collective loses a
+# peer -> workers error with TORCH_NCCL_ASYNC_ERROR_HANDLING=1 -> the local
+# agent restarts the group) + the rendezvous keep-alive timeout, rather than
+# ft_launcher's heartbeat monitor. The store host is MASTER_ADDR (rank-0 node),
+# so only kill a NON-rank-0 node.
+defaults:
+  - megatron_ftlauncher_localaddr
+  - _self_
+
+# Same c10d elastic rendezvous as the ft backend, but `torchrun` and no --ft-*.
+dist_cmd: "torchrun ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n  %',' %',\
+ ${oc.cliargs:${.torchrun_args}}}}\\\n   ${.launcher_script}"

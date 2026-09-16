@@ -1,0 +1,191 @@
+# @package _global_
+# Titan MoE 30BA3B throughput sweep — JUPITER (2 nodes, 8×GH200)
+#
+# Architecture: 48 layers, dim=2048, 32 heads, 4 KV heads (GQA),
+#               128 experts, topk=8, expert_dim=768
+# Parallelism:  EP=8, dp_shard=8, efsdp=1 (no expert FSDP), seq_len=4096
+#
+# Baseline from re-run (after titan_custom_config.py import fix, correct 30BA3B model):
+#   compile + full AC + bs=4:  72.6 GiB (76%),  46 TFLOPS at step 10 (compile warmup)
+#   compile + full AC + bs=8:  93.5 GiB (98%),  47 TFLOPS at step 10 (compile warmup, borderline mem)
+#   no-AC all batch sizes:  OOM (model+optimizer ~58 GiB leaves <37 GiB for activations)
+#
+# NOTE on previous sweep results:
+#   titan_moe_30BA3B_speed_sweep_jupiter.yaml results (12–74 GiB, 180–263 TFLOPS)
+#   were from the WRONG model (broken titan_custom_config.py import → small dense model).
+#   Those results are INVALID.
+#
+# This sweep: 1-hour limit to get STEADY-STATE TFLOPS past compile warmup.
+#   Compile warmup for 30BA3B ~15-20 steps × ~30s/step = ~10 min.
+#   At steady state, steps should be <5s. 100 steps should complete in ~30 min.
+#
+# Memory estimates (full AC; activation ~5.2 GiB per local batch above bs=4 base):
+#   bs=4:  72.6 GiB (76%)  ← known from re-run, safe
+#   bs=6:  83.0 GiB (87%)  ← estimated, comfortable
+#   bs=8:  93.5 GiB (98%)  ← known from re-run, borderline (may spike at later steps)
+#
+# Selective AC (mode=selective, option=2): keeps alternating layers in memory.
+#   Activation overhead ≈ half of no-AC → ~11 GiB extra vs full AC at bs=4.
+#   bs=4 selective:  ~84 GiB (88%)
+#   bs=6 selective:  ~95 GiB (>100% likely) → skip
+#
+defaults:
+  - ../../base
+  - /backend: titan
+  - /container: jupiter_titan
+  - /slurm: jupiter
+  - /sweep: none
+  - override /backend/titan/data: nemonicco_jupiter
+  - override /backend/titan/model: qwen3_moe_30BA3B
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: "titan_moe_30BA3B_throughput_sweep"
+  compile_tag: "nocompile"
+
+backend:
+  titan:
+    model:
+      vocab_size: 50304
+      tokenizer_path: /e/project1/projectnucleus/franke5/workspace/titan-train/torchtitan/assets/tokenizer/gpt-neox-20b
+
+    training:
+      steps: 100
+      local_batch_size: 4
+      seq_len: 4096
+      dtype: bfloat16
+
+    metrics:
+      log_freq: 10
+
+    parallelism:
+      tensor_parallel_degree: 1
+      pipeline_parallel_degree: 1
+      expert_parallel_degree: 8
+      data_parallel_replicate_degree: 1
+      data_parallel_shard_degree: 8
+      context_parallel_degree: 1
+
+    activation_checkpoint:
+      mode: full
+
+    benchmarks:
+      wikitext2_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext2/wikitext2
+      wikitext103_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/wikitext103/wikitext103
+      lambada_path: /e/project1/projectnucleus/franke5/data/benchmarks/neox/lambada/lambada
+
+  env:
+    TORCHDYNAMO_DISABLE: "1"
+    PYTHONPATH: .:./submodules/titan-oellm:./submodules/titan-oellm/torchtitan
+    NCCL_SOCKET_FAMILY: "AF_INET"
+    GLOO_SOCKET_FAMILY: "AF_INET"
+    NCCL_SOCKET_IFNAME: "ib0"
+    GLOO_SOCKET_IFNAME: "ib0"
+    NCCL_SOCKET_TIMEOUT: "60000"
+    NCCL_TIMEOUT: "1800"
+    NCCL_IB_TIMEOUT: "100"
+    NCCL_IB_RETRY_CNT: "20"
+    NCCL_ALGO: "Ring"
+    HF_ALLOW_CODE_EVAL: "1"
+    TORCH_HOME: ${oc.env:TORCH_HOME,"/tmp/torch_home"}
+    PYTORCH_KERNEL_CACHE_PATH: ${oc.env:PYTORCH_KERNEL_CACHE_PATH,"/tmp/torch_home/kernels"}
+    TRITON_CACHE_DIR: ${oc.env:TRITON_CACHE_DIR,"/tmp/triton_cache"}
+    TORCHINDUCTOR_CACHE_DIR: ${oc.env:TORCHINDUCTOR_CACHE_DIR,"/tmp/torchinductor_cache"}
+    TORCHINDUCTOR_FX_GRAPH_CACHE: ${oc.env:TORCHINDUCTOR_FX_GRAPH_CACHE,"/tmp/torchinductor_fx_cache"}
+    TORCHINDUCTOR_AUTOGRAD_CACHE: ${oc.env:TORCHINDUCTOR_AUTOGRAD_CACHE,"/tmp/torchinductor_autograd_cache"}
+    TORCH_INDUCTOR_CUDAGRAPH_DISABLE: ${oc.env:TORCH_INDUCTOR_CUDAGRAPH_DISABLE,"1"}
+    PYTORCH_CUDA_ALLOC_CONF: ${oc.env:PYTORCH_CUDA_ALLOC_CONF,"expandable_segments:True"}
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+
+  torchrun_args:
+    nproc_per_node: ${slurm.sbatch.gpus_per_node}
+    nnodes: ${slurm.sbatch.nodes}
+    max_restarts: 0
+    rdzv_backend: "c10d"
+    rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
+    node_rank: "$SLURM_PROCID"
+    master_addr: "$MASTER_ADDR"
+    master_port: "$MASTER_PORT"
+
+job:
+  name: titan_moe_30BA3B_ep8_${aux.compile_tag}_ac${backend.titan.activation_checkpoint.mode}_bs${backend.titan.training.local_batch_size}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+container:
+  bind:
+    - /e/
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+slurm:
+  template_path: "templates/jupiter_mod.sbatch"
+  sbatch:
+    nodes: 2
+    gpus_per_node: 4
+    gres: "gpu:4"
+    cpus_per_task: 72
+    threads_per_core: 1
+    account: ${oc.env:SLURM_ACCOUNT,e-sta-openeurollm}
+    partition: booster
+    time: "01:00:00"   # 1 hour: compile warmup ~10 min; steady state by step 30+
+  srun_opts: "--nodes=$SLURM_NNODES --gres=gpu:4 --cpus-per-task=72 --wait=20 --kill-on-bad-exit=1 --label "
+  env:
+    NUM_NODES: "$SLURM_JOB_NUM_NODES"
+    GPUS_PER_NODE: "4"
+    NUM_GPUS_PER_NODE: "4"
+    NUM_GPUS: "$((NUM_GPUS_PER_NODE*SLURM_NNODES))"
+    SLURM_CPUS_PER_TASK: "72"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ── Config 0: nocompile + full AC + bs=4 (baseline, no compile overhead) ──
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 4
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Expected: ~72.6 GiB (76%), steady-state TFLOPS TBD
+
+        # ── Config 1: compile + full AC + bs=4 ──────────────────────────────────
+        - aux.compile_tag: compile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 4
+          backend.env.TORCHDYNAMO_DISABLE: "0"
+          # Re-run 319695 got 46 TFLOPS at step 10 (warmup); need steady state
+
+        # ── Config 2: nocompile + full AC + bs=6 (~83 GiB estimated) ────────────
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 6
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Expected: ~83 GiB (87%), 1.5× throughput vs bs=4
+
+        # ── Config 3: nocompile + full AC + bs=8 (borderline 93.5 GiB) ─────────
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: full
+          backend.titan.training.local_batch_size: 8
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Re-run 319693 got 47 TFLOPS at step 10 (93.5 GiB, 98%); need steady state
+          # Risk: memory may spike at later steps (optimizer step, grad sync)
+
+        # ── Config 4: nocompile + selective AC + bs=4 ────────────────────────────
+        - aux.compile_tag: nocompile
+          backend.titan.activation_checkpoint.mode: selective
+          backend.titan.activation_checkpoint.selective_ac_option: "2"
+          backend.titan.training.local_batch_size: 4
+          backend.env.TORCHDYNAMO_DISABLE: "1"
+          # Expected: ~84 GiB (88%), ~20% faster than full AC (less recompute)
+
+        # ── Config 5: compile + selective AC + bs=4 ──────────────────────────────
+        - aux.compile_tag: compile
+          backend.titan.activation_checkpoint.mode: selective
+          backend.titan.activation_checkpoint.selective_ac_option: "2"
+          backend.titan.training.local_batch_size: 4
+          backend.env.TORCHDYNAMO_DISABLE: "0"
+          # Expected: ~84 GiB (88%), compile may help more for selective than full AC

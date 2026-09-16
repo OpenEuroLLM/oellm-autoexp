@@ -1,0 +1,8 @@
+train_data_path:
+ - /e/data1/datasets/products/openeurollm/pretokenized/neox/copy_nemotron_downsampled_15p/high-all
+
+split: null
+
+data_path: []
+aux:
+  dataset: nemonicco

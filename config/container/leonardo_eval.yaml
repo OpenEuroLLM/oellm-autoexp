@@ -1,0 +1,17 @@
+class_name: Container
+image: /leonardo_work/OELLM_prod2026/container_images/eval_env-leonardo.sif
+runtime: singularity
+# Includes /workspace/oellm-autoexp because the user-site oellm install
+# was an editable install made from inside the convert container, so its
+# `.pth` file points at /workspace/oellm-autoexp/submodules/oellm_evals/.
+bind:
+  - "/leonardo_scratch"
+  - "/leonardo"
+  - "/leonardo_work"
+  - "${oc.env:HOME}/work/Projects/oellm-autoexp:/workspace/oellm-autoexp"
+env:
+  WANDB_MODE: "offline"
+  MACHINE_NAME: "LEONARDO"
+  HF_HOME: ${oc.env:HF_HOME}
+  HF_HUB_OFFLINE: "1"
+python: "/usr/bin/python"

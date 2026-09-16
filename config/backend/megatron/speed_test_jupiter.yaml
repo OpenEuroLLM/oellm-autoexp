@@ -10,3 +10,5 @@ save: ${job.base_output_dir}
 load: ${job.base_output_dir}
 tensorboard_dir: ${job.base_output_dir}/tensorboard
 log_interval: 10
+# Local tokenizer path for JUPITER (avoids HuggingFace download in offline mode)
+tokenizer_model: /e/project1/projectnucleus/shared/models/EleutherAI/gpt-neox-20b

@@ -1,0 +1,3 @@
+# @package backend
+task_groups:
+  - open-sci-0.01

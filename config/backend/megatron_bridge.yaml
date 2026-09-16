@@ -1,0 +1,17 @@
+defaults:
+  - megatron_bridge: base
+  - _self_
+
+class_name: MegatronBridgeBackend
+
+# Where the Megatron-Bridge submodule lives. Override per-cluster if needed.
+bridge_root: ${oc.env:MEGATRON_BRIDGE_ROOT,submodules/Megatron-Bridge}
+
+# Where the bundled configs / templates / tokenizers live.
+resources: oellm_autoexp/postprocess/resources/megatron_bridge
+
+python_cmd: "python"
+keep_staging: false
+
+env:
+  HF_HOME: ${oc.env:HF_HOME}

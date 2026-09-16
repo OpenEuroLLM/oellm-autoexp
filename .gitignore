@@ -238,3 +238,7 @@ output/
 muon-overlay.img
 
 outputs/throughput_sweep/
+dump/
+*.distcp
+outputs/megatron_marenostrum_speed_test/*
+outputs/data_cache/*

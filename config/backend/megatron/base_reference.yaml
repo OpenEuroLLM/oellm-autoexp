@@ -47,7 +47,6 @@ overlap_p2p_comm: false
 override_opt_param_scheduler: true
 position_embedding_type: rope
 qk_layernorm: true
-rerun_mode: disabled
 save_interval: 2000
 seq_length: 4096
 split: 99,1,0
