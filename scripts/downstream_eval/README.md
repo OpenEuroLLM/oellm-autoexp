@@ -1,7 +1,7 @@
 # Downstream evaluation of Megatron checkpoints
 
 Convert Megatron `torch_dist` checkpoints to HF safetensors, then evaluate them with
-[oellm-eval](https://github.com/OpenEuroLLM/oellm-eval), branch `feat/vllm-data-parallel`:
+[oellm-eval](https://github.com/OpenEuroLLM/oellm-eval) at its released tag `v0.01`:
 12 open-sci lm-eval tasks on the HF backend, and GSM8K / MATH500 / MBPP / HumanEval /
 GPQA-Diamond through vLLM and Evalchemy. oellm-eval is a submodule of this repository, and the scripts refuse to
 run unless it is clean and at the pinned revision.
@@ -10,8 +10,9 @@ Only code lives here. Exports, caches and results live under `WORK_ROOT`.
 
 ## Setup
 
-oellm-eval is a submodule pinned on branch `feat/vllm-data-parallel`. Check it out and install it
-(the scripts import it as a Python package); `EVAL_REPO=<path>` overrides it with your own checkout.
+oellm-eval is a submodule pinned at tag `v0.01`. Check it out and install it (the scripts import
+it as a Python package); `EVAL_REPO=<path>` overrides it with your own checkout. To move the pin,
+check out another revision in `submodules/oellm-eval` and commit the change.
 
 ```bash
 git submodule update --init submodules/oellm-eval
@@ -79,8 +80,9 @@ oellm-eval, which already knows Leonardo, JURECA, JUWELS, LUMI, Snellius and UFA
   not a symlink into another cache: check with `find $HF_HOME -type l`.
 - **fp32 loading.** lm-eval 0.4.10 passes `dtype=`, which transformers 4.53 ignores, so the HF
   launcher is patched to `torch_dtype=bfloat16` (a 32B in fp32 does not fit).
-- **MBPP races.** Concurrent tasks share one `code_eval` temp file; run MBPP with `QUEUE_LIMIT=1`
-  unless the launcher gives each array task its own `HF_METRICS_CACHE`.
+- **MBPP races.** Concurrent tasks share one `code_eval` temp file, so run MBPP with
+  `QUEUE_LIMIT=1`. The same applies to any failed evaluation skipping the rest of its array task.
+  Both are fixed after `v0.01`, so a later pin removes the need for `QUEUE_LIMIT=1`.
 - **`<bos>`.** OpenEuroLLM training data has no `<bos>`, but the tokenizer adds one to every eval
   prompt. Measured on the 32B: few-shot and multiple-choice scores move by less than a point,
   while 0-shot MATH500 and HumanEval swing by up to 12, so compare like with like.
