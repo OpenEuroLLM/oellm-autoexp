@@ -1,8 +1,8 @@
-# Data inputs
-data_path:
-  - ${oc.env:DATA_DIR}/cerebras-SlimPajama-627B/train/small
-data_cache_path: ${oc.env:DATA_DIR}/cache
-split: "989,10,1"
+# MN5 speed test: real gpt-neox-20b tokenised data + local tokenizer.
+defaults:
+  - data_mn5
+  - _self_
+
 lr_warmup_iters: 0
 train_iters: 500
 save_interval: 1000000000

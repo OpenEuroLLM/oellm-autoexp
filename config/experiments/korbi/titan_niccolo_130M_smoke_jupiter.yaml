@@ -26,7 +26,7 @@ aux:
   seq_len: 4096
   gbs: 128
   decay_fraction: 0.2
-  additional_tag: "wd_fix"
+  additional_tag: ""
 
 stage: stable   # overridden by sweep
 

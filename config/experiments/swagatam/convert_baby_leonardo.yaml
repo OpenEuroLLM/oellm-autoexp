@@ -1,0 +1,152 @@
+# @package _global_
+#
+# Convert-only experiment: turn the trained "9B baby" dense Megatron
+# `torch_dist` checkpoint into a HuggingFace checkpoint via Megatron-Bridge,
+# on Leonardo.
+#
+# This is a one-off single checkpoint (it lives under production_training on
+# /leonardo_scratch, with training-config snapshots in a `logs/` subdir), so the
+# paths below are set directly rather than derived from a size/exp_root scheme.
+# Convert a different iteration of the same run by overriding aux.iter, e.g.
+#   python scripts/run_autoexp.py \
+#       --config-name experiments/swagatam/convert_baby_leonardo \
+#       aux.iter=iter_0048000
+#
+# This mirrors the `convert` stage of korbi/chain_qwen3_bridge_train_eval_leonardo.yaml
+# but as a single standalone job (no train/eval siblings) with absolute paths.
+#
+# Prerequisites (one-time, already done in this checkout):
+#   1. submodules/Megatron-Bridge cloned.
+#   2. Bridge made importable:
+#        python container/megatron/patch_bridge_lazy_imports.py \
+#            submodules/Megatron-Bridge/src/megatron/bridge/models
+#   3. 256k tokenizer heavy file present in resources:
+#        cp /leonardo_work/OELLM_prod2026/users/shaldar0/tokenizers/openeurollm-tokenizer-256k/tokenizer.model \
+#           oellm_autoexp/postprocess/resources/megatron_bridge/tokenizers/openeurollm/tokenizer-256k/
+#
+# The convert runs inside the standard Megatron *training* container (Bridge
+# pulls megatron.core from the container; the OpenEuroLLM fork is deliberately
+# kept off PYTHONPATH). Conversion is CPU-based (gloo + use_cpu_init), so a GPU
+# is not strictly required, but we allocate 1 to match the tested path.
+
+defaults:
+  - ../base
+  - /backend: megatron_bridge
+  - /container: leonardo
+  - /slurm: leonardo_bridge
+  - /sweep: none
+  - override /job: default
+  - _self_
+
+# ---------------------------------------------------------------------------
+# Modular knobs — the only things you normally change per conversion. Kept under
+# `aux` (a free-form root dict in the schema) so the strict config parser
+# accepts them; arbitrary top-level keys are rejected. Override on the CLI, e.g.
+#   aux.run_name=... aux.iter=...  (see header for a full example).
+# ---------------------------------------------------------------------------
+aux:
+  # Label for the run (used for job.name). The 9B baby is ~8B params:
+  # num_layers=36, hidden=4096, heads=32, num_query_groups=8 (GQA),
+  # kv_channels=128, ffn=12288, seq_len=4096, 256k tokenizer (trained TP=4).
+  run_name: "baby_9b_dense"
+  iter: "iter_0124800"
+  # Training-config snapshot to read the model arch from. Leave EMPTY to
+  # auto-resolve via the oc.train_config resolver (prefers current.yaml, else
+  # the newest config-*.yaml — so a broken/foreign current.yaml symlink is
+  # handled automatically). Any snapshot of a run carries the same architecture,
+  # which is all derive_hf_arch needs. Set a filename only to force a specific
+  # snapshot, e.g. aux.train_config=config-47681179.yaml
+  train_config: ""
+
+  # Source run dir (read-only, on /leonardo_scratch); its training-config
+  # snapshots live in `${training_dir}/logs` and checkpoints in
+  # `${training_dir}/checkpoints/<iter>`. Converted HF checkpoint + logs go to a
+  # `baby/` folder under the user results tree on /leonardo_work.
+  training_dir: "/leonardo_scratch/fast/OELLM_prod2026/production_training/baby_9b_dense"
+  converted_dir: "/leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp/results/conversions/baby"
+
+job:
+  name: "${aux.run_name}"
+  # Logs / monitor state / rendered config land in the run's hf_converted dir.
+  base_output_dir: "${aux.converted_dir}"
+
+container:
+  # The default container/leonardo.yaml uses ${OELLM_CONTAINERS_DIR,.} which
+  # resolves to "./<sif>" (repo root) when the env var is unset — and the SIF
+  # does NOT live there. Pin an absolute default like the korbi chain does.
+  image: "${oc.env:OELLM_CONTAINERS_DIR,/leonardo_work/OELLM_prod2026/container_images}/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif"
+
+backend:
+  # Generate the HF reference config on the fly from the training config
+  # (derive_hf_arch=qwen3 reads backend.megatron.* out of current.yaml) rather
+  # than relying solely on the vendored resources/configs snapshot.
+  derive_hf_arch: "qwen3"
+  # Reference resources key (template/tokenizer + reference dummy-model config).
+  # run_export looks hf_model up under BOTH resources/templates/ and
+  # resources/tokenizers/, so it must be an existing key. There is no Qwen3-9B-ne
+  # entry, but the baby model uses the same 256k tokenizer as every Qwen3-*-ne
+  # (its tokenizer.model is byte-identical), so we reuse the 0.9B-ne key — same
+  # vocab, and it ships a tokenizer.json so the exported tokenizer loads without
+  # sentencepiece. The actual architecture comes from derive_hf_arch, not here.
+  hf_model: "openeurollm/Qwen3-0.9B-ne"
+  tokenizer: "openeurollm/Qwen3-0.9B-ne"
+
+  # Source Megatron checkpoint + its training config. Snapshots for this run live
+  # in `${training_dir}/logs`, so point oc.train_config there; it auto-picks a
+  # valid snapshot (current.yaml or newest config-*.yaml), or honours
+  # aux.train_config when set explicitly.
+  megatron_path: "${aux.training_dir}/checkpoints/${aux.iter}"
+  megatron_config_path: "${oc.train_config:${aux.training_dir}/logs,${aux.train_config}}"
+
+  # HF output (must NOT already exist; run_export refuses to clobber).
+  hf_path: "${aux.converted_dir}/${aux.iter}"
+
+  # Repo + Bridge live under /leonardo_work, which the container binds by
+  # default, so we use real paths (no /workspace remap needed).
+  bridge_root: "/leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp/submodules/Megatron-Bridge"
+  resources: "/leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge"
+
+  env:
+    # Repo root (for `oellm_autoexp` import) + Bridge src. Intentionally omit
+    # submodules/Megatron-LM so megatron.core resolves to the container's copy,
+    # which matches the symbols Bridge expects.
+    PYTHONPATH: "/leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp:/leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp/submodules/Megatron-Bridge/src"
+    # ~/.local user-site ships an antlr4 that breaks omegaconf inside this
+    # container; skip it.
+    PYTHONNOUSERSITE: "1"
+    # Not actually used by conversion (local tokenizer/config), but the base
+    # backend config references it, so give it a resolvable default.
+    HF_HOME: "${oc.env:HF_HOME,${oc.env:HOME}/.cache/huggingface}"
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    # The base leonardo slurm config exports SLURM_CPUS_PER_TASK=32. With our
+    # sbatch cpus_per_task=N (which sets SLURM_TRES_PER_TASK=cpu:N), srun aborts
+    # with "cpus_per_task set by two different environment variables". Keep this
+    # in sync with sbatch.cpus_per_task below.
+    SLURM_CPUS_PER_TASK: "16"
+  srun:
+    # Base leonardo.yaml renders `srun --cpus-per-task=32`. Our allocation only
+    # has 16 cores (sbatch.cpus_per_task=16), so the step's 32 > 16 and SLURM
+    # refuses to create it ("step's --cpus-per-task value exceeds that of job"),
+    # leaving the job spinning on "Requested nodes are busy". Match the slice.
+    cpus_per_task: 16
+  sbatch:
+    nodes: 1
+    # Conversion is CPU-based (gloo + use_cpu_init): 1 GPU is enough regardless
+    # of model size (it only satisfies TransformerEngine's CUDA-present assert).
+    # The real constraint for the 9B baby is host RAM — the whole ~8B model is
+    # materialised in memory (megatron model + HF export buffer + reference
+    # bridge model can coexist near the end). On a Leonardo boost node (4 GPUs /
+    # 32 cores / ~512 GB) RAM is allotted ~proportional to cores, so we take a
+    # half-node slice: 16 cores (~256 GB) instead of the 8 (~128 GB) used for the
+    # ~1B models. gres and gpus_per_node must agree to avoid a SLURM mismatch.
+    gpus_per_node: 1
+    gres: "gpu:1"
+    cpus_per_task: 16
+    time: "01:00:00"
+    partition: ${oc.env:SLURM_PARTITION_DEBUG,${oc.env:SLURM_PARTITION,boost_usr_prod}}
+    account: AIFAC_5C0_092
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"

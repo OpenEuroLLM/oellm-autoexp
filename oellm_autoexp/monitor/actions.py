@@ -157,6 +157,91 @@ class LogAction(BaseMonitorAction):
 
 
 @dataclass
+class AppendToFileActionConfig(ConfigInterface):
+    """Configuration for an action that appends a line to a file.
+
+    Designed to be chained from a ``LogEvent`` so a matched log line (e.g. a
+    failing node name extracted via ``extract_groups``) can be persisted to an
+    external list - for example the node-exclusion file consumed by the
+    ``oc.exclude_nodes`` resolver.
+    """
+
+    class_name: str = "AppendToFileAction"
+    # Target file path. Supports {var} templating against the action context.
+    path: str = ""
+    # Line to append. Supports {var} templating; defaults to the matched text.
+    content: str = "{match}"
+    # When True, skip appending if an identical (stripped) line already exists.
+    dedup: bool = True
+    # When True, create parent directories for ``path`` if they are missing.
+    create_parents: bool = True
+
+
+@register
+class AppendToFileAction(BaseMonitorAction):
+    config: AppendToFileActionConfig
+
+    def execute(self, context: ActionContext) -> ActionResult:
+        path = Path(context.render(self.config.path)).expanduser()
+        line = context.render(self.config.content).strip()
+        if not line:
+            return ActionResult(status="failed", message="empty content, nothing appended")
+        if self.config.create_parents:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        if self.config.dedup and path.exists():
+            existing = {entry.strip() for entry in path.read_text().splitlines()}
+            if line in existing:
+                return ActionResult(
+                    status="success",
+                    message=f"'{line}' already present in {path}",
+                    metadata={"appended": False, "path": str(path), "line": line},
+                )
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+        return ActionResult(
+            status="success",
+            message=f"appended '{line}' to {path}",
+            metadata={"appended": True, "path": str(path), "line": line},
+        )
+
+
+@dataclass
+class UpdateChainExcludesActionConfig(ConfigInterface):
+    """Propagate the current node-exclusion list to dependency-chained jobs.
+
+    Designed to be chained from the same ``LogEvent`` that appends a failing node
+    to ``exclude_file`` (list the AppendToFileAction event *before* this one so the
+    file already contains the new node). The monitor loop reads ``exclude_file``
+    and runs ``scontrol update JobId=.. ExcNodeList=..`` on every *pending* sibling
+    job in the session, so the queued chain avoids the bad node without
+    regenerating or resubmitting scripts. Running jobs cannot be edited live and
+    are skipped (handle the failing job itself via a RestartAction).
+    """
+
+    class_name: str = "UpdateChainExcludesAction"
+    # File holding the node-exclusion list (same one the AppendToFileAction writes
+    # and the oc.exclude_nodes resolver reads). Supports {var} templating.
+    exclude_file: str = ""
+
+
+@register
+class UpdateChainExcludesAction(BaseMonitorAction):
+    config: UpdateChainExcludesActionConfig
+
+    def execute(self, context: ActionContext) -> ActionResult:
+        # The side effect (iterating the job store + calling scontrol) needs the
+        # monitor's store and SLURM client, so signal the loop via action_config
+        # and hand it the resolved exclude-file path (mirrors NewJobAction).
+        exclude_file = context.render(self.config.exclude_file)
+        return ActionResult(
+            status="success",
+            message="propagate excludes to pending chain jobs",
+            action_config=self.config,
+            metadata={"exclude_file": exclude_file},
+        )
+
+
+@dataclass
 class NewJobActionConfig(ConfigInterface):
     class_name: str = "NewJobAction"
     job_config: JobInterface.cfgtype = field(default_factory=MissingValue)
@@ -244,6 +329,12 @@ class LogEventConfig(EventConfig):
     pattern_type: Literal["substring", "regex", "inactivity"] = "substring"
     extract_groups: dict[str, int | str] = field(default_factory=dict)
     match_once: bool = True
+    # For pattern_type == "inactivity": minimum number of consecutive polls
+    # without new log output, AND minimum real elapsed seconds across that
+    # streak, before the action fires. Both must hold (AND). Leaving a field at
+    # its default disables that half of the check.
+    inactivity_polls: int = 1
+    inactivity_timeout_s: float = 0.0
 
 
 @dataclass
@@ -266,20 +357,40 @@ class LogEvent:
 
     def check_triggers(self, log_text: str) -> list[dict[str, Any]]:
         """Check if event triggers in the given log text, return metadata for
-        each match."""
-        triggers = []
+        each match.
+
+        Inactivity events are time/poll based rather than text based and are
+        handled separately by the monitor loop (see ``inactivity_qualifies``);
+        this method only matches substring/regex patterns.
+        """
         if self.config.pattern_type == "inactivity":
-            if log_text == "":
-                metadata = dict(self.config.metadata)
-                metadata["inactive"]
-                triggers.append()
-        else:
-            for match in self._iter_matches(log_text):
-                metadata = self._build_metadata(match, log_text)
-                triggers.append(metadata)
+            return []
+        triggers = []
+        for match in self._iter_matches(log_text):
+            metadata = self._build_metadata(match, log_text)
+            triggers.append(metadata)
         if self.config.match_once:
             triggers = triggers[:1]
         return triggers
+
+    def inactivity_metadata(self) -> dict[str, Any]:
+        """Stable metadata identifying this inactivity streak."""
+        metadata = dict(self.config.metadata)
+        metadata["inactive"] = True
+        return metadata
+
+    def inactivity_qualifies(self, *, count: int, elapsed_s: float) -> bool:
+        """Return True when an inactivity streak has lasted long enough to act.
+
+        ``count`` consecutive inactive polls AND ``elapsed_s`` real seconds must
+        both meet their configured thresholds (each half disabled when its
+        threshold is left at the default).
+        """
+        if count < self.config.inactivity_polls:
+            return False
+        if self.config.inactivity_timeout_s > 0 and elapsed_s < self.config.inactivity_timeout_s:
+            return False
+        return True
 
     def _iter_matches(self, text: str) -> list:
         """Find all pattern matches in text."""
@@ -348,6 +459,10 @@ __all__ = [
     "ActionContext",
     "BaseMonitorAction",
     "LogAction",
+    "AppendToFileAction",
+    "AppendToFileActionConfig",
+    "UpdateChainExcludesAction",
+    "UpdateChainExcludesActionConfig",
     "NewJobAction",
     "NewJobActionConfig",
     "RestartActionConfig",

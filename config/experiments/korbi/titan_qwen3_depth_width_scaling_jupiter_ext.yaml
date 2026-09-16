@@ -1,0 +1,296 @@
+# @package _global_
+#
+# Depth/width scaling sweep with WSD multi-stage cooldowns.
+# Outer product: [20 architectures] x [3 LR values] x [stable + 5 cooldowns] = 360 jobs
+#
+# Stable phase: 48000 steps (~50B tokens at GBS=256, seq=4096)
+# Cooldowns branch off stable at 80% of their total-step budget and decay for 20%.
+#
+defaults:
+  - ../base
+  - /backend: titan
+  - /container: jupiter_titan
+  - /slurm: jupiter
+  - /sweep: none
+  - override /backend/titan/model: qwen3_base
+  - override /backend/titan/data: nemonicco_jupiter
+  - override /job: auto_restart
+  - _self_
+
+# will be overridden by sweep
+aux:
+  width: 512
+  nheads: 8
+  nkvheads: 2
+  layers: 12
+  ffn_scale: 3
+
+  # Multi-stage config (in steps, not tokens)
+  total_steps: 96000          # ~50B tokens at GBS=256, seq=4096
+  decay_fraction: 0.2
+
+  # Checkpoint steps for cooldown branches: int(cooldown_total_steps * 0.8)
+  extra_steps: "${oc.mapeval:${oc.maptmpl:'int(%*(1-${aux.decay_fraction}))',${oc.mapextractkey:aux.total_steps,${sweep.groups.2.configs.1.configs}}}}"
+
+stage: stable   # overridden by sweep
+
+backend:
+  titan:
+    training:
+      steps: ${aux.total_steps}
+      global_batch_size: 128
+      local_batch_size: 8
+      seq_len: 4096
+
+    model:
+      vocab_size: 50384
+      tokenizer_path: /e/project1/projectnucleus/franke5/workspace/titan-train/torchtitan/assets/tokenizer/gpt-neox-20b
+
+      dim: ${aux.width}
+      hidden_dim: ${oc.muli:${aux.width},${aux.ffn_scale}}
+      n_layers: ${aux.layers}
+      n_heads: ${aux.nheads}
+      n_kv_heads: ${aux.nheads}
+      enable_weight_tying: true
+
+    optimizer:
+      lr: 0.002
+
+    lr_scheduler:
+      scheduler_type: wsd
+      warm_steps: 2000
+      warm_ratio: 0
+      decay_ratio: ${aux.decay_fraction}
+      decay_type: linear
+      min_lr_factor: 0.005    # min_lr = 0.002 * 0.005 = 1e-5
+
+    validation:
+      enable: true
+      freq: 1000
+      steps: 100
+
+    checkpoint:
+      enable: true
+      interval: 4000
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    TORCHDYNAMO_DISABLE: "1"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONPATH: "${oc.env:HOME}/work/Projects/oellm-autoexp:${oc.env:HOME}/work/Projects/oellm-autoexp/submodules/titan-oellm:${oc.env:HOME}/work/Projects/oellm-autoexp/submodules/titan-oellm/torchtitan"
+    NCCL_SOCKET_TIMEOUT: 60000
+    NCCL_TIMEOUT: 1800
+    NCCL_IB_TIMEOUT: 100
+    NCCL_IB_RETRY_CNT: 20
+    NCCL_ALGO: Ring
+
+slurm:
+  sbatch:
+    nodes: 4
+
+job:
+  name: titan_qwen3_dw__W${aux.width}_NH${aux.nheads}_L${aux.layers}_FFNS${aux.ffn_scale}_lr${backend.titan.optimizer.lr}_${stage}
+  base_output_dir: ${oc.concat:${oc.env:OUTPUT_DIR,"./output"}/depth_width_scaling_dense_ext/,${job.name}${oc.if:${slurm.array}, "_${index}", ""}}
+
+sweep:
+  type: product
+
+  groups:
+    # ═══ GROUP 1: Architecture configs (20 configs) ═══
+    - type: list
+      configs:
+      # not as wide
+        - aux.width:  512
+          aux.ffn_scale:  3.2
+          aux.nheads: 24
+          aux.num_kv_heads: 12
+          aux.layers: 24
+
+        - aux.width: 512
+          aux.ffn_scale: 4
+          aux.nheads: 16
+          aux.num_kv_heads: 8
+          aux.layers: 24
+
+        - aux.width: 512
+          aux.ffn_scale: 5
+          aux.nheads: 8
+          aux.num_kv_heads: 4
+          aux.layers: 24
+      # medium
+        - aux.width: 640
+          aux.ffn_scale: 3.2
+          aux.nheads: 24
+          aux.num_kv_heads: 12
+          aux.layers: 16
+
+        - aux.width: 640
+          aux.ffn_scale: 4
+          aux.nheads: 16
+          aux.num_kv_heads: 8
+          aux.layers: 16
+
+        - aux.width: 640
+          aux.ffn_scale: 5
+          aux.nheads: 8
+          aux.num_kv_heads: 4
+          aux.layers: 16
+      # wide
+        - aux.width: 768
+          aux.ffn_scale: 3.2
+          aux.nheads: 24
+          aux.num_kv_heads: 12
+          aux.layers: 11
+
+        - aux.width: 768
+          aux.ffn_scale: 4
+          aux.nheads: 16
+          aux.num_kv_heads: 8
+          aux.layers: 11
+
+        - aux.width: 768
+          aux.ffn_scale: 5
+          aux.nheads: 8
+          aux.num_kv_heads: 4
+          aux.layers: 11
+
+        - aux.width: 512
+          aux.ffn_scale: 3
+          aux.nheads: 16
+          aux.num_kv_heads: 8
+          aux.layers: 12
+
+        - aux.width: 768
+          aux.ffn_scale: 3
+          aux.nheads: 24
+          aux.num_kv_heads: 12
+          aux.layers: 12
+
+        - aux.width: 1024
+          aux.ffn_scale: 3
+          aux.nheads: 32
+          aux.num_kv_heads: 16
+          aux.layers: 12
+          backend.titan.training.local_batch_size: 8
+
+        - aux.width: 512
+          aux.ffn_scale: 3
+          aux.nheads: 16
+          aux.num_kv_heads: 8
+          aux.layers: 24
+
+        - aux.width: 512
+          aux.ffn_scale: 3
+          aux.nheads: 16
+          aux.num_kv_heads: 8
+          aux.layers: 36
+
+    ###########################
+
+        - aux.width: 768
+          aux.ffn_scale: 10.6667
+          aux.nheads: 6
+          aux.num_kv_heads: 3
+          aux.layers: 24
+          backend.titan.training.local_batch_size: 8
+
+        - aux.width: 768
+          aux.ffn_scale: 6
+          aux.nheads: 6
+          aux.num_kv_heads: 3
+          aux.layers: 40
+          backend.titan.training.local_batch_size: 8
+
+        - aux.width: 1024
+          aux.ffn_scale: 6
+          aux.nheads: 8
+          aux.num_kv_heads: 4
+          aux.layers: 21
+          backend.titan.training.local_batch_size: 8
+
+        - aux.width: 640
+          aux.ffn_scale: 6.4
+          aux.nheads: 10
+          aux.num_kv_heads: 5
+          aux.layers: 22
+          backend.titan.training.local_batch_size: 8
+
+        - aux.width: 768
+          aux.ffn_scale: 6.0
+          aux.nheads: 12
+          aux.num_kv_heads: 6
+          aux.layers: 16
+          backend.titan.training.local_batch_size: 8
+
+        - aux.width: 640
+          aux.ffn_scale: 9.6
+          aux.nheads: 10
+          aux.num_kv_heads: 5
+          aux.layers: 16
+          backend.titan.training.local_batch_size: 8
+
+    # ═══ GROUP 2: Learning rate variations ═══
+    - type: list
+      configs:
+        - backend.titan.optimizer.lr: 0.001
+        - backend.titan.optimizer.lr: 0.002
+        - backend.titan.optimizer.lr: 0.004
+
+    # ═══ GROUP 3: Multi-stage (stable + cooldowns) ═══
+    - type: list
+      configs:
+        # ── Stable phase: train for 48000 steps (~50B tokens) ──
+        - stage: stable
+          aux.total_steps: 96000
+          backend.titan.checkpoint.extra_steps: ${aux.extra_steps}
+
+        # ── Cooldown branches: load from stable, decay over remaining steps ──
+        - type: list
+          defaults:
+            # Compute start_step = int(total_steps * 0.8)
+            aux.start_step: "\\${oc.eval:'int(\\${aux.total_steps}*(1-\\${aux.decay_fraction}))'}"
+
+            # LR scheduler plans for exactly the decay window
+            backend.titan.lr_scheduler.lr_steps: "\\${oc.eval:'\\${aux.total_steps} - int(\\${aux.total_steps}*(1-\\${aux.decay_fraction}))'}"
+
+            # Load model + optimizer from stable checkpoint, rebuild LR scheduler fresh
+            backend.titan.checkpoint.initial_load_path: "\\${sibling.stable.job.base_output_dir}/checkpoint/step-\\${aux.start_step}"
+            backend.titan.checkpoint.initial_load_model_only: false
+            backend.titan.checkpoint.exclude_from_loading: [lr_scheduler]
+
+            # Entire run is cooldown/decay (no warmup)
+            backend.titan.lr_scheduler.warm_steps: 0
+            backend.titan.lr_scheduler.warm_ratio: 0
+            backend.titan.lr_scheduler.cooldown_ratio: 1.0
+            backend.titan.lr_scheduler.cooldown_type: linear
+
+            stage: "decay\\${aux.total_steps}"
+
+            # Wait for stable to save the required checkpoint
+            job.start_condition:
+              class_name: FileExistsCondition
+              path: "\\${sibling.stable.job.base_output_dir}/checkpoint/step-\\${aux.start_step}"
+
+            # Cancel if stable job crashes
+            job.cancel_condition:
+              class_name: LogPatternCondition
+              log_path: "\\${sibling.stable.job.log_path_current}"
+              pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+
+          configs:
+            - aux.total_steps: 12000     # ~6B tokens,  decay starts at step 4800
+            - aux.total_steps: 30000    # ~12B tokens, decay starts at step 9600
+            - aux.total_steps: 56000    # ~29B tokens, decay starts at step 22400
+            - aux.total_steps: 96000    # ~50B tokens, decay starts at step 38400
+
+
+#                		Dim	QHeads	KVHeads	HeadDim	FFNDim  Layers
+# 600M ffn	FALSE		768	6	3	128	8192  24
+# 600M deep	FALSE		768	6	3	128	4608  40
+# 600M wide	FALSE		1024	8	4	128	6144  21
+# 300M deep	FALSE		640	10	5	64	4096  22
+# 300M wide	FALSE		768	12	6	64	4608  16
+# 300M ffn	FALSE		640	10	5	64	6144  16

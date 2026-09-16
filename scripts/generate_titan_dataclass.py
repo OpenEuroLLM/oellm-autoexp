@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--base",
-        default="titan_oellm.configs.sci_job_config:JobConfig",
+        default="titan_oellm.configs.oellm_job_config:JobConfig",
         help="Base JobConfig import path (module:attr).",
     )
     parser.add_argument(

@@ -1,0 +1,11 @@
+# MN5 speed test using MSC read-through caching for tokenised data.
+defaults:
+  - data_mn5_msc
+  - _self_
+
+lr_warmup_iters: 0
+train_iters: 500
+save_interval: 1000000000
+save: ${job.base_output_dir}
+load: ${job.base_output_dir}
+tensorboard_dir: ${job.base_output_dir}/tensorboard

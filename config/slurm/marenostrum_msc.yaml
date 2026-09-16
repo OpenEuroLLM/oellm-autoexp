@@ -1,0 +1,14 @@
+defaults:
+  - marenostrum
+  - _self_
+
+template_path: templates/marenostrum_msc.sbatch
+
+env:
+  MSC_CONFIG: "$TMPDIR/msc_config.yaml"
+  MSC_PROFILE_NAME: "gpfs-training-data"
+  MSC_GPFS_BASE_PATH: "/gpfs/projects/ehpc533/preprocessed"
+  MSC_CACHE_DIR: "$TMPDIR/msc_cache"
+  MSC_INDEX_CACHE_PATH: "$TMPDIR/msc_index_cache"
+  MSC_CACHE_SIZE: "150G"
+  MSC_DATASET_PREFIX: "gpt-neox-20b/nemotron-cc/1.0/Nemotron-cc-2024-HQ-LUMI-sample-valid/high-all"

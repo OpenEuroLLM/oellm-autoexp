@@ -1,0 +1,75 @@
+# @package _global_
+# DeepEP cross-node EP=8: NVLink intra-node + InfiniBand RDMA inter-node.
+# Requires deep_ep recompiled with NUM_MAX_NVL_PEERS=4 (JUPITER has 4 GPUs/node).
+# Build: bash scripts/build_deepep_jupiter4gpu.sh (from repo root on JUPITER)
+#
+# Root cause of EP=8 crash: container deep_ep was compiled with NUM_MAX_NVL_PEERS=8
+# (for 8-GPU DGX nodes), causing it to try CUDA IPC for cross-node ranks → crash.
+# With NUM_MAX_NVL_PEERS=4: NVLink/IPC only within 4-GPU node, NVSHMEM/IB for cross-node.
+#
+# EP=8 → each GPU holds 1/8 of experts → ~2B params/GPU → ~33 GiB optimizer state.
+# PP=1 fits (no pipeline parallelism needed).
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base,qwen3_moe_30BA3B]
+  - /sweep: none
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 100
+    global_batch_size: ${oc.muli:${.micro_batch_size},${slurm.sbatch.nodes},${slurm.sbatch.gpus_per_node}}
+    micro_batch_size: 2
+    pipeline_model_parallel_size: 1
+    tensor_model_parallel_size: 1
+    expert_model_parallel_size: 8
+    moe_flex_dispatcher_backend: "deepep"
+    moe_token_dispatcher_type: "flex"
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    use_distributed_optimizer: True
+    moe_router_load_balancing_type: aux_loss
+    moe_router_dtype: fp32
+
+    eval_interval: 1000
+    seq_length: 4096
+    lr: 0.001
+    log_interval: 1
+    data_path:
+     - /e/project1/projectnucleus/franke5/data/datasets/cerebras-SlimPajama-627B/train/merged
+    data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    # Patched deep_ep (NUM_MAX_NVL_PEERS=4) must come first in PYTHONPATH
+    PYTHONPATH: "/e/scratch/projectnucleus/poeppel1/deep_ep_jupiter4gpu:.:submodules/Megatron-LM:/opt/"
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+    PATH: "/usr/local/bin:/usr/bin:/bin"
+    CUDNN_PATH: "/usr/lib/aarch64-linux-gnu"
+    # NVSHMEM_IB_ENABLE_IBGDA: already set by deep_ep/buffer.py during Buffer init
+container:
+  image: /e/scratch/projectnucleus/poeppel1/container_cache/MegatronTraining-JUPITER-deepep-nvshmem_base2510_aarch64_202603310850.sif
+  bind:
+    - /e
+    - /dev/shm
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+slurm:
+  sbatch:
+    nodes: 2
+    time: "00:15:00"
+  env:
+    PYTORCH_CUDA_ALLOC_CONF: ""
+    UB_SKIPMC: "1"
+
+job:
+  name: megatron_moe_qwen30BA3B_jupiter_speed_deepep_rdma_n${slurm.sbatch.nodes}

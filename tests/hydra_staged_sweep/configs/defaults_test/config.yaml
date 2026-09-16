@@ -1,0 +1,28 @@
+# Test configuration for list composition with defaults
+defaults:
+  - basic: default
+  - _self_
+
+
+test: 1
+
+# Sweep configuration to test list composition with config groups
+sweep:
+  type: product
+
+  # Test if we can accumulate config group selections
+  list_composition:
+    - basic
+
+  groups:
+    # First group: select from db configs
+    - type: list
+      configs:
+        - test: "a1"
+          basic: [integrate_a0]
+        - test: "a2"
+          basic: [integrate_a1]
+    # Second group: select from server configs
+    - type: product
+      params:
+        basic: [[integrate_b0],[integrate_b1]]

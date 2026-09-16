@@ -1,0 +1,14 @@
+class_name: Container
+image: /scratch/project_462000963/containers/laif-rocm-6.4.4-pytorch-2.9.1-te-2.4.0-fa-2.8.0-triton-3.2.0.sif
+runtime: singularity
+bind:
+  - "/pfs/"
+  - "/scratch/"
+  - "/flash/"
+  - "${oc.env:HOME}"
+env:
+  WANDB_MODE: "offline"
+  MACHINE_NAME: "LUMI"
+  HF_HOME: ${oc.env:HF_HOME}
+  HF_HUB_OFFLINE: "1"
+python: "/usr/bin/python3"

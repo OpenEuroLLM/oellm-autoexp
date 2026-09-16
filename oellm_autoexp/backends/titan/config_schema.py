@@ -48,7 +48,7 @@ class Model:
     tokenizer_path: str = ""
     converters: list[str] = field(default_factory=list)
     print_after_conversion: bool = False
-    vocab_size: int = 50432
+    vocab_size: Any = None
     mlp_layers: int = 2
     mlp_activation: str = "swiglu"
     qk_norm_type: str = "QKNormPlus"
@@ -56,25 +56,37 @@ class Model:
     tie_embedding: bool = False
     use_flex_attn: bool = False
     attn_mask_type: str = "causal"
-    use_flash_attn: bool = False
-    qk_norm: bool = True
-    rope_theta: float = 1000000
+    attn_gate_type: str = "none"
+    attn_gate_input: str = "x"
+    attn_gate_activation: str = "sigmoid"
+    attn_gate_lowrank_dim: int = 64
+    attn_gate_bias: bool = True
+    qk_norm: Any = None
+    rope_theta: Any = None
     rope_scaling_factor: float = 8.0
     rope_low_freq_factor: float = 1.0
     rope_high_freq_factor: float = 4.0
     rope_original_max_position_embeddings: int = 8192
-    head_dim: int = 128
-    hidden_dim: int = 3072
-    norm_eps: float = 1e-06
-    depth_init: bool = True
-    enable_weight_tying: bool = False
-    moe_enabled: bool = False
-    moe_inter_dim: int = 768
-    dim: int = 768
-    n_layers: int = 12
-    n_heads: int = 6
-    n_kv_heads: int = 6
-    max_seq_len: int = 100000
+    head_dim: Any = None
+    hidden_dim: Any = None
+    norm_eps: Any = None
+    depth_init: Any = None
+    enable_weight_tying: Any = None
+    use_complex_rope: Any = None
+    moe_enabled: Any = None
+    moe_inter_dim: Any = None
+    dim: Any = None
+    n_layers: Any = None
+    n_heads: Any = None
+    n_kv_heads: Any = None
+    max_seq_len: Any = None
+    moe_num_experts: int = 32
+    moe_top_k: int = 8
+    moe_score_func: str = "softmax"
+    moe_route_norm: bool = True
+    moe_route_scale: float = 1.0
+    moe_score_before_experts: bool = False
+    moe_num_shared_experts: int = 0
     qkv_bias: bool = False
     mlp_bias: bool = False
 
@@ -187,6 +199,7 @@ class Checkpoint:
     create_seed_checkpoint: bool = False
     load_only: bool = False
     extra_steps: list[int] = field(default_factory=list)
+    initial_step: int = -1
 
 
 @dataclass
@@ -338,6 +351,7 @@ class SciData:
     dataloader: str = "MMapDataset"
     seed: int = 42
     mask_eot_loss: bool = False
+    eos_id: Any = -1
 
 
 @dataclass

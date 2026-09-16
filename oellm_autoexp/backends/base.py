@@ -59,4 +59,54 @@ class NullBackend(BaseBackend):
         return " ".join(argv)
 
 
-__all__ = ["BaseBackend", "NullBackendConfig"]
+@dataclass(kw_only=True)
+class BashBackendConfig(ConfigInterface):
+    """Backend that runs an arbitrary bash string instead of a real trainer.
+
+    Useful for exercising the monitor / job-control configs (``auto_cancel``
+    etc.) on a real cluster without launching megatron: point ``command`` at a
+    sequence of ``echo`` + ``sleep`` statements that emulate a training log, an
+    ``srun: error``, a stall, a clean finish, and so on.
+
+    Why not ``NullBackend``? ``NullBackend`` *can* run such a command, but its
+    command lives in *list* fields (``base_command``/``extra_cli_args``). The
+    staged-sweep serializer (``param_to_cmdlines``) quotes scalar *string*
+    overrides but emits list elements raw (``[a,b]``), so a multi-token command
+    breaks Hydra override parsing when swept. A single ``command`` *string* is
+    quoted and round-trips cleanly (even multi-line) -- which is what lets
+    ``config/experiments/tests/auto_cancel_sweep.yaml`` sweep over commands.
+
+    ``command`` is rendered straight into ``srun ... bash -c '<command>'`` (see
+    ``templates/base.sbatch``), so it must not contain single quotes; use double
+    quotes inside. ``;`` / ``&&`` / shell loops are all fine.
+    """
+
+    class_name: str = "BashBackend"
+    command: str = 'echo "[bash] no command configured"'
+    env: dict[str, str] = field(default_factory=dict)
+
+
+@register
+class BashBackend(BaseBackend):
+    config: BashBackendConfig
+
+    def validate(self) -> None:  # pragma: no cover - trivial
+        if not self.config.command.strip():
+            raise ValueError("BashBackend.command must be a non-empty bash string")
+        if "'" in self.config.command:
+            # The base sbatch template wraps the command in single quotes.
+            raise ValueError(
+                "BashBackend.command must not contain single quotes "
+                "(it is embedded in `bash -c '...'`); use double quotes instead"
+            )
+
+    def build_launch_command(self) -> str:
+        return self.config.command
+
+
+__all__ = [
+    "BaseBackend",
+    "NullBackendConfig",
+    "BashBackendConfig",
+    "BashBackend",
+]

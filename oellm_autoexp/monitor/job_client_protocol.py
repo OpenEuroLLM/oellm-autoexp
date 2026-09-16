@@ -99,5 +99,17 @@ class JobClientProtocol(Protocol):
         """
         ...
 
+    def update_excludes(self, job_id: str, nodelist: str) -> None:  # pragma: no cover
+        """Update a pending job's excluded-node list.
+
+        Backends without a notion of node exclusion (e.g. local processes) may
+        leave this unimplemented; it is only invoked for SLURM jobs.
+
+        Args:
+            job_id: Job identifier returned by submit().
+            nodelist: Full node list to set as the job's exclusion list.
+        """
+        ...
+
 
 __all__ = ["JobClientProtocol", "JobClientInterface"]

@@ -1,0 +1,48 @@
+# @package _global_
+#
+# Standalone evaluation of an HF checkpoint on JUPITER using oellm-evals.
+#
+# Usage:
+#   export OUTPUT_DIR=...                # where eval results land
+#   export HF_HOME=...                   # local HF cache (must contain models + datasets)
+#   export OELLM_EVAL_VENV=~/work/venv   # venv with lm-eval/lighteval installed
+#   python scripts/run_autoexp.py --config-name experiments/korbi/oellm_eval_only_jupiter \
+#       backend.models='["/path/to/hf/checkpoint"]'
+#
+# The eval runs sequentially inside a single SLURM job allocated by oellm-autoexp
+# (no extra sbatch from oellm-evals, since backend.local=true).
+
+defaults:
+  - /backend: oellm_eval
+  - /container: jupiter_venv
+  - /slurm: jupiter_venv
+  - /job: default
+  - /sweep: none
+  - override /backend/oellm_eval: opensci
+  - _self_
+
+index: 0
+stage: "eval"
+
+job:
+  name: "oellm_eval_only_jupiter"
+  base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${.name}
+
+backend:
+  models:
+    - ${oc.env:OELLM_EVAL_MODEL,"HuggingFaceTB/SmolLM2-135M"}
+  venv_path: ${oc.env:OELLM_EVAL_VENV,"${oc.env:HOME}/work/venv"}
+  local: true
+  # Cap dataset size for a smoke test; remove for full eval.
+  limit: 4
+  skip_checks: true
+  verbose: true
+
+slurm:
+  sbatch:
+    # null so generator falls back to slurm.name (with sweep-index suffix);
+    # the base config's `${job.name}` lacks the `_<index>` the validator expects.
+    job_name: null
+    nodes: 1
+    gpus_per_node: 1
+    time: "00:30:00"

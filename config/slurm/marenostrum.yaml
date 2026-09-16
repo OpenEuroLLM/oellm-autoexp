@@ -51,6 +51,8 @@ env:
   WANDB_DIR: "$TMPDIR"
   WANDB_CACHE_DIR: "$TMPDIR"
   WANDB_INIT_TIMEOUT: "120"
+  TORCHINDUCTOR_CACHE_DIR: "/gpfs/projects/ehpc533/users/bsc474046/torch_cache"
+  TORCHINDUCTOR_FX_GRAPH_CACHE: 1
 
 
 sbatch:
