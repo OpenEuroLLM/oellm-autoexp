@@ -236,3 +236,5 @@ slurm_juwels.sh
 logs/
 output/
 muon-overlay.img
+
+outputs/throughput_sweep/

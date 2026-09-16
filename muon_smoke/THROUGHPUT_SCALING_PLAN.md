@@ -1,90 +1,80 @@
 # Muon throughput → GPU-hour estimate (for grant proposal)
 
-Goal: turn a small number of real, measured throughput numbers on Capella
-into a defensible GPU-hour budget for a Muon scaling-laws study, without
-needing to actually run at full scale first.
+Goal: turn real, measured throughput numbers on Capella into a defensible
+GPU-hour budget for a Muon scaling-laws study.
 
 ## Method
 
-Three axes, kept small and empirical:
-1. **GPU count** (single node only — 1, 2, 4 H100s; all proven working today,
-   no new infra needed).
-2. **Micro batch size** (2, 8, 32 say — find where throughput plateaus before
-   OOM; theoretical footprint at micro_batch=2 was only ~3.2GB/80GB, so there's
-   real headroom unexplored).
-3. **Model size** (0.1B now; 0.4B/0.9B as budget allows — larger models
-   typically show *better* MFU since compute-per-parameter grows faster than
-   fixed overhead, worth having at least one bigger data point).
+- **Per-GPU throughput**: measured directly, real Nemotron-tokenized data,
+  real Qwen3 architecture, Muon optimizer, at 4 model sizes
+  (`06_qwen3_throughput_1gpu.sbatch`).
+- **DP scaling efficiency**: measured directly at 1 vs. 4 GPUs, same model
+  and batch size (`07_qwen3_throughput_4gpu.sbatch`, job 3876406) — not
+  assumed.
+- **GPU-hour formula**: `GPU-hours = Tokens_target / (Throughput_per_GPU ×
+  ScalingEfficiency) / 3600`. This is the *total compute cost* — it doesn't
+  depend on how many GPUs you actually run on, only on throughput and
+  efficiency. Wall-clock time at N GPUs = `GPU-hours / N`.
+- **Token budgets**: the 9-point grid already defined in the
+  `multilingual_scaling` model configs' `aux.center_tokens_set` — 6B, 12B,
+  20B, 30B, 50B, 80B, 120B, 200B, 300B tokens.
 
-From (1)+(2) at fixed model size: real per-GPU throughput (tokens/sec/GPU),
-measured, not estimated.
+## Raw throughput (measured, steady-state mean over 70 iterations, warmup discarded)
 
-From single-node DP scaling (1→4 GPU): a real, measured **DP scaling
-efficiency** number — how close to linear speedup you actually get going from
-1 to 4 GPUs on this cluster with this model/optimizer. This is the number
-that lets you defensibly extrapolate to N nodes *without* having built real
-multi-node infrastructure (which is separate, harder, unverified work — see
-caveat at the bottom).
+| Model | Params | micro_batch_size | Tokens/s/GPU | TFLOP/s/GPU | MFU (H100 989 TFLOPS bf16 peak) |
+|---|---|---|---|---|---|
+| Qwen3-dense 0.1B | 97M | 4 | 98,495 | 77.2 | 7.8% |
+| Qwen3-dense 0.1B | 97M | 16 | 98,378 | 77.1 | 7.8% |
+| Qwen3-dense 0.2B | ~200M | 4 | 82,710 | 134.4 | 13.6% |
+| Qwen3-dense 0.4B | ~400M | 4 | 56,593 | 206.9 | 20.9% |
+| Qwen3-dense 0.9B | ~900M | 4 | 44,191 | 279.3 | 28.2% |
 
-**GPU-hour formula:**
+**DP scaling efficiency** (job 3876406, 0.1B/mbs=4, 4×H100 vs. 1×H100):
+82,751 / 98,495 = **84.0%** — real overhead from Muon's
+`LayerWiseDistributedOptimizer` all-gather sync every iteration. Not yet
+measured beyond 4 GPUs single-node (real multi-node validation is separate,
+unbuilt infrastructure — see Caveat).
 
-```
-GPU-hours = Tokens_target / (Throughput_per_GPU × N_GPUs × ScalingEfficiency) / 3600
-```
+## Compute table — final numbers for the proposal
 
-## What's already measured (real, today)
+GPU-hours per (model size, token budget) cell, 84.0% measured efficiency
+applied throughout.
 
-| Config | Steady-state throughput | Notes |
-|---|---|---|
-| 0.1B, 1×H100, micro_batch=2, global_batch=32 | ~50,000–65,000 tok/s/GPU | job 3846248, `RESULT_qwen3.md` |
-| 0.1B, 4×H100 (dp=4), same batch config | ~45,000–62,000 tok/s/GPU *per device* | job [4-GPU run] — near-linear scaling observed, but noisy/short (50 iters), treat as preliminary |
+| Model | tok/s/GPU (1 GPU) | 6B | 12B | 20B | 30B | 50B | 80B | 120B | 200B | 300B | Row total |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0.1B | 98,495 | 20 | 40 | 67 | 101 | 168 | 269 | 403 | 671 | 1,007 | **2,746** |
+| 0.2B | 82,710 | 24 | 48 | 80 | 120 | 200 | 320 | 480 | 800 | 1,199 | **3,270** |
+| 0.4B | 56,593 | 35 | 70 | 117 | 175 | 292 | 467 | 701 | 1,169 | 1,753 | **4,780** |
+| 0.9B | 44,191 | 45 | 90 | 150 | 224 | 374 | 599 | 898 | 1,497 | 2,245 | **6,121** |
 
-Both runs used `micro_batch_size: 2` — nowhere near this model's memory
-ceiling, so these are **not yet the model's best achievable throughput**,
-just what the smoke tests happened to use.
+**Grand total: 16,918 GPU-hours** (all 4 model sizes × all 9 token budgets).
 
-## Worked example (illustrative, using today's preliminary numbers)
+**Wall-clock at 32 GPUs**: 16,918 / 32 = **529 hours (≈22.0 days)** for the
+full grid.
 
-Target: smallest token budget already baked into the `multilingual_scaling`
-model configs' `aux.center_tokens_set` — 6B tokens, at 64 GPUs (16 nodes),
-assuming a conservative 90% scaling efficiency beyond one node:
+## Key findings
 
-```
-GPU-hours = 6e9 / (58,000 × 64 × 0.9) / 3600 ≈ 32 GPU-hours
-```
-
-For the full 9-point token-budget set already defined in the model configs
-(6B, 12B, 20B, 30B, 50B, 80B, 120B, 200B, 300B), the same formula scales
-roughly linearly with tokens — sum them for a total per-model-size GPU-hour
-ask, then multiply across however many model sizes the scaling-law study
-needs.
-
-**This example uses noisy, unoptimized (micro_batch=2) numbers — treat it as
-a placeholder for the shape of the calculation, not final numbers for the
-proposal.**
-
-## Proposed next runs (to get real numbers to plug in)
-
-Small, scoped, single-node only — no new infrastructure:
-1. Micro-batch sweep at 0.1B, 1×H100: micro_batch = 2, 8, 32 (or until OOM).
-   Find the throughput plateau.
-2. Same sweep at 4×H100, to get a *real* DP scaling-efficiency number instead
-   of the current 1-datapoint estimate.
-3. Repeat (1) at one larger model size (0.4B or 0.9B) to get a second point
-   on the "MFU improves with model size" curve.
-4. Discard first ~5 iterations of every run (compile/warmup skews the mean
-   badly — iteration 1 took 19.5s vs ~0.3s steady-state in the 4-GPU test),
-   run ≥100 iterations, checkpoint saving off (separate cost, skews timing).
-
-That's on the order of 6-8 short runs, each a few minutes on Capella.
+- **MFU climbs steadily with model size**: 7.8% (0.1B) → 28.2% (0.9B) of H100
+  peak. Bigger models are meaningfully more GPU-efficient, not just more
+  expensive per token — worth factoring into which sizes the study
+  prioritizes.
+- **Batch size plateaus early**: 0.1B showed identical throughput at
+  `micro_batch_size=4` and `16` (77.2 vs 77.1 TFLOP/s/GPU) — no benefit past
+  a small batch size at this model scale. Model size is the real lever here,
+  not batch size.
+- **DP scaling has a real, non-trivial cost**: 84% efficiency at just 4 GPUs
+  single-node means ~16% of compute is lost to optimizer-sync overhead
+  already at small scale — worth stating explicitly in the proposal rather
+  than assuming near-linear scaling.
 
 ## Caveat: real multi-node numbers
 
-Everything above extrapolates from single-node (≤4 GPU) data using an
-assumed scaling efficiency. If the proposal needs *measured* multi-node
-throughput rather than an extrapolation, that requires building real
-multi-node SLURM support for Capella first — genuinely new, untested
-infrastructure (dynamic `MASTER_ADDR` resolution across nodes, cross-node
-NCCL, no existing Capella cluster target in this repo to build on). Scoped as
-a separate, bigger task if the extrapolation isn't credible enough for the
-reviewers.
+The 84% efficiency figure is measured at 4 GPUs, single node. It has not
+been measured beyond that — genuine unknown whether it holds, improves, or
+degrades further at real multi-node scale (8, 16, 32 GPUs). Getting that
+would require building real multi-node SLURM support for Capella first —
+new, untested infrastructure (dynamic `MASTER_ADDR` resolution across nodes,
+cross-node NCCL, no existing Capella cluster target in this repo to build
+on). Not done here given the compute budget for this investigation; state
+the 84%-at-4-GPU figure as measured, and multi-node behavior as an open
+question / follow-up in the proposal.
