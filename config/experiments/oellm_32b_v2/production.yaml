@@ -32,7 +32,7 @@ backend:
     variant: "prod"
 
   megatron:
-    wandb_project: oellm_32b_v2
+    wandb_project: oellm_32b_dense_v2
     wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
     save: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints
     non_persistent_global_ckpt_dir: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints_rolling
