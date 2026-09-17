@@ -1,0 +1,117 @@
+# @package _global_
+#
+# ============================================================================
+# LOSS-PATH FIX FORK FROM 60000 -- does anchoring the logits stop the v2 rise?
+# ============================================================================
+# Diagnosis (2026-09-17, from the v2 tensorboard diag/* scalars, 34.5k-62k):
+#   * loss minimum 52-53k (1.458), +0.017 by 61k; grad norm 0.23 -> 0.89 and
+#     >99% of it is the LM head (diag/grad_norm/output_layer); body layers flat.
+#   * layer-61 SwiGLU output absmax 6e4 -> 3e6; residual RMS entering layers
+#     62/63 57 -> 1100 while layers 0-61 stay at 3-50.
+#   * logZ per token 40 -> 68 (z-loss runs sit at ~6-8); final-norm gain max
+#     3.5 -> 6.3; clipping fires on ~25% of steps from 55.5k.
+#   Nothing anchors the logit scale in v2: z-loss is off, norm gains carry no
+#   weight decay, residual is bf16. On top, the TE 2.14 fused CE kernel writes
+#   the softmax into the bf16 logit buffer BEFORE subtracting 1 on the target,
+#   so the target gradient is bf16(bf16(p_y) - 1): exactly 0 for p_y > 0.998
+#   (fixed upstream in TE PR #3193). The flagship ran native fused CE; the 9B
+#   ran unfused. Only v2 ran TE.
+#
+# TWO CHANGES, BOTH IN THE LOSS PATH, NOTHING ELSE:
+#   output_z_loss_coeff: 1e-4        -- the flagship's value
+#   cross_entropy_loss_fusion: false -- unfused vocab_parallel_cross_entropy adds
+#                                       the CE and z-loss gradients in fp32 before
+#                                       the single bf16 cast (fused-ce.md: native
+#                                       casts CE to bf16 first and loses the z term)
+# lr, weight decay, data, seed, parallelism, container: v2's own. The loaded
+# optimizer state and param groups therefore match the checkpoint exactly.
+#
+# FORK POINT 60000: latest persistent v2 checkpoint at the time of writing; the
+# loss damage is still small (+0.017) and the LM head repairs fast, so a fork
+# that works here keeps 60k iterations of progress. If the indicators below do
+# NOT reverse, fall back to iter_0048000 (before the outlier accelerated).
+#
+# READ-OFF, in order of speed (diag interval is 100 steps, so within the first
+# hour):
+#   1. diag/logits/logz_mean          68 -> falls toward single digits
+#   2. diag/grad_norm/output_layer    0.88 -> falls; diag/clip/fired_frac -> 0
+#   3. diag/act/mlp_act/layer_61/absmax  3e6 -> stops climbing
+#   4. lm loss vs v2's own 60-62k bins (1.4745, 1.4745): back toward 1.458 = pass
+# A pass -> promote this tree to production (load == save, raise exit_interval,
+# resubmit; nothing spent is lost). Compare 500-iteration BINS, not points.
+#
+# SEED STAGE (by hand, one symlink + tracker file; ~443 GB over 4098 files, so
+# never copy). Run AFTER the current production job has stopped writing:
+#
+#   ARM=oellm_32b_v2_zloss_unfused_i60k_gbs4096_lr1.76e-4
+#   SRC=/e/scratch/e-sta-openeurollm/production_training/oellm_32b_v2_prod_gbs4096_lr1.76e-4/checkpoints/iter_0060000
+#   DST=/e/scratch/e-sta-openeurollm/production_training/$ARM/checkpoints
+#   test -f "$SRC/.metadata" || { echo "incomplete parent checkpoint"; exit 1; }
+#   mkdir -p "$DST" && ln -sfn "$SRC" "$DST/iter_0060000"
+#   echo 60000 > "$DST/latest_checkpointed_iteration.txt"
+#
+# exit_on_missing_checkpoint is true: a skipped seed kills the job instead of
+# silently training a fresh 32B from random init.
+#
+# SMOKE FIRST (16 nodes, ~20 min): the unfused CE materialises an fp32
+# [4096 x 2 x 65536] softmax per microbatch on the last stage (+2-4 GB; the
+# last stage peaks at ~41 GB of 96, so it fits, but let the smoke prove it):
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_v2/smoke \
+#       backend.megatron.cross_entropy_loss_fusion=false \
+#       backend.megatron.output_z_loss_coeff=1e-4
+#
+# SUBMIT:
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_v2/zloss_unfused_i60k --dry-run
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_v2/zloss_unfused_i60k
+#
+# /job is auto_cancel: no automatic restarts, no QuarantineCheckpointAction that
+# could rename anything under the symlinked parent tree. A hang ends the job and
+# you resubmit by hand; load == save resumes from this arm's newest rolling
+# checkpoint (non_persistent_save_interval 125 inherited).
+# PROMOTION (2026-09-17 18:00): the 60000->63000 segment passed (loss 1.4302 ->
+# 1.4194 in 500-bins, -0.055 vs v2 on identical batches, logZ ~0.5, layer-61
+# absmax flat at 6e4, no clipping). Now run to 86000 as a multi-segment chain:
+# /job is auto_restart_ckptreset (as production), exit_duration_in_mins 690 is
+# inherited, so each 12 h segment checkpoints at ~11.5 h and the MONITOR
+# resubmits it (exit_duration_rollover -> RestartAction). load == save, so every
+# segment resumes from this tree's newest checkpoint. The monitor must stay
+# alive for that: launch through scripts/oellm_32b.sh inside screen/tmux.
+defaults:
+  - /experiments/oellm_32b_v2/base
+  - _self_
+
+job:
+  name: "oellm_32b_v2_${backend.aux.variant}_gbs${backend.megatron.global_batch_size}_lr${backend.aux.lr_tag}"
+  base_output_dir: /e/project1/e-sta-openeurollm/production_training/${job.name}
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+
+backend:
+  aux:
+    active_nodes: 512
+    variant: "zloss_unfused_i60k"
+  megatron:
+    wandb_project: oellm_32b_dense_v2   # same project as production.yaml, for the overlay
+    wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
+    save: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints
+    load: ${.save}
+    non_persistent_global_ckpt_dir: /e/scratch/e-sta-openeurollm/production_training/${job.name}/checkpoints_rolling
+    exit_on_missing_checkpoint: true
+
+    # --- the two changes ---
+    output_z_loss_coeff: 1.0e-4
+    cross_entropy_loss_fusion: false
+    cross_entropy_fusion_impl: native   # inert while fusion is off; never TE again
+
+    exit_interval: 86000           # chain target; raise again to extend
+    # save_interval inherited from base (2000): ~12 persistent x 443 GB over 63k-86k
+
+slurm:
+  sbatch:
+    time: "12:00:00"
