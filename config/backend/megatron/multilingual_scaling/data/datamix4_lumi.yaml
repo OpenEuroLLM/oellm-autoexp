@@ -1,0 +1,11 @@
+# @package backend.megatron
+
+# Megatron v0.19 accepts inline blend strings in the per-split JSON, but does
+# not recursively open blend files named by that JSON. The v19 manifest embeds
+# the contents of datamix4-{train,val}.txt and uses null for the absent test set.
+data_args_path: null
+per_split_data_args_path: /scratch/project_462001516/users/rluukkon/oellm/autoexp_shared_debug/oellm-autoexp/config/backend/megatron/multilingual_scaling/data/datamix4_lumi_per_split_v19.json
+train_data_path: null
+valid_data_path: null
+test_data_path: null
+split: null

@@ -1,0 +1,150 @@
+# @package _global_
+#
+# 40BT 0.4B MoE runs with Muon for router health monitoring on LUMI
+# standard-g (8 nodes).
+#
+# This preserves the healthy/high-LR comparison from router_stability_long.yaml,
+# but hidden 2-D matrix parameters use Muon. Embeddings, output weights, norms,
+# and biases continue to use Adam.
+#
+# Submit the healthy Muon baseline only:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/risto/router_stability_long_muon \
+#     --array-subset 0 --submit-and-exit
+#
+# Submit both healthy + high-LR Muon runs:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/risto/router_stability_long_muon \
+#     --submit-and-exit
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.4B_ne_experts_32
+  - /backend/megatron/multilingual_scaling/data: datamix4_lumi
+  - _self_
+
+container:
+  env:
+    WANDB_TAGS: "lumi,router_stability_long,muon,40BT"
+
+index: 0
+stage: ""
+
+job:
+  name: "0.4B_ne_sparse_muon_experts_${backend.megatron.num_experts}topk${backend.megatron.moe_router_topk}_PP${backend.megatron.pipeline_model_parallel_size}_${stage}_lr${backend.megatron.lr}_40BT"
+  base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    ### lumi specific configs
+    masked_softmax_fusion: False
+    gradient_accumulation_fusion: False
+    bias_dropout_fusion: False
+    bias_swiglu_fusion: False
+    apply_rope_fusion: False
+    log_progress: False
+    num_workers: 6
+    num_dataset_builder_threads: 6
+    trust_remote_code: True
+    ### lumi specific configs end
+
+    # 40BT at gbsz=512, seq_length=4096 -> 19074 iters.
+    train_iters: "${oc.eval:'(40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})'}"
+    eval_iters: 5
+    eval_interval: 100
+    save_interval: "${oc.eval:'int(512000 // ${backend.megatron.global_batch_size})'}"
+    load: "${job.base_output_dir}/checkpoints"
+
+    moe_grouped_gemm: True
+    use_distributed_optimizer: True
+    no_load_optim: True
+    no_load_rng: True
+    # no_save_optim: True
+    # no_save_rng: True
+    wandb_exp_name: "${job.name}"
+    wandb_project: "moe_router_stability_long_muon"
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    data_cache_path: /scratch/project_462001516/users/swagatam/cache/MEGATRON_262k/${job.name}
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    lr_warmup_iters: 2000
+    lr_wsd_decay_iters: "${oc.eval:'int(((40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})) * 0.2)'}"
+
+    micro_batch_size: 2
+    global_batch_size: 32
+
+    lr: 1.e-4
+    moe_aux_loss_coeff: 1.e-3
+    moe_expert_viability_metrics: True
+    moe_masked_layer_validation: True
+    moe_masked_layer_eval_iters: 8
+
+    # Spectral Muon with RMS matching, so the Adam-tuned global LR remains a
+    # sensible starting point. Adam handles scalar/vector and exterior params.
+    optimizer: muon
+    muon_momentum: 0.95
+    muon_nesterov: True
+    muon_scale_mode: spectral
+    muon_fp32_matmul_prec: medium
+    muon_num_ns_steps: 5
+    muon_tp_mode: blockwise
+    muon_split_qkv: True
+    muon_extra_scale_factor: 0.2
+    muon_scalar_optimizer: adam
+    overlap_param_gather_with_optimizer_step: False
+
+    overlap_grad_reduce: True
+    overlap_param_gather: True
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "0"
+    TRITON_HOME: /tmp/triton_cache
+
+
+# Healthy baseline plus one high-LR contrast over the full 40BT horizon.
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - stage: healthy_muon
+          backend.megatron.lr: 1.e-4
+          backend.megatron.moe_aux_loss_coeff: 1.e-3
+        - stage: high_lr_failure_muon
+          backend.megatron.lr: 1.e-3
+          backend.megatron.moe_aux_loss_coeff: 1.e-3
+
+slurm:
+  sbatch_extra_directives:
+    - "--exclude=nid005019"
+  env:
+    PYTHONPATH: "/scratch/project_462001516/users/${oc.env:USER}/python-external/muon:."
+    SINGULARITYENV_PYTHONPATH: "/scratch/project_462001516/users/${oc.env:USER}/python-external/muon:."
+    MASTER_PORT: "9999"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: 4
+    # nodes: 1
+    account: "project_462001516"
+    # partition: standard-g
+    partition: dev-g
+    # time: "0-18:00:00"
+    time: "00:10:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "
