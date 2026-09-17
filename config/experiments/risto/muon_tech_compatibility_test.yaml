@@ -1,0 +1,140 @@
+# @package _global_
+#
+# Short LUMI smoke test: DeepSeek-V3-style ~10B MoE with Muon instead of Adam.
+# Uses the coarse 64-expert / topk=2 / 10-layer slice so the job is cheap.
+# Megatron maps `--optimizer muon --use-distributed-optimizer` onto the
+# layer-wise distributed Muon path (dist_muon is deprecated).
+#
+# Submit:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/risto/muon_tech_compatibility_test \
+#     --submit-and-exit
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: deepseek_v3_sparse_10B_experts_256
+  - _self_
+
+container:
+  env:
+    WANDB_TAGS: "lumi,dsv3_10B,muon,tech_compatibility"
+
+index: 0
+stage: ""
+
+job:
+  name: "10B_dsv3_muon_nexp${backend.megatron.num_experts}_topk${backend.megatron.moe_router_topk}_ffn${backend.megatron.moe_ffn_hidden_size}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}_EP${backend.megatron.expert_model_parallel_size}"
+  base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    ### lumi specific configs
+    masked_softmax_fusion: False
+    gradient_accumulation_fusion: False
+    bias_dropout_fusion: False
+    bias_swiglu_fusion: False
+    apply_rope_fusion: False
+    log_progress: False
+    num_workers: 6
+    num_dataset_builder_threads: 6
+    trust_remote_code: True
+    ### lumi specific configs end
+
+    # Short steady-state throughput window (skip ckpt + eval).
+    train_iters: 50
+    exit_interval: 50
+    eval_iters: 1
+    eval_interval: 100000
+    save_interval: 1000000000
+    save: null
+    load: null
+    no_save_optim: True
+    no_save_rng: True
+    log_interval: 1
+    log_throughput: True
+    moe_per_layer_logging: False
+
+    wandb_exp_name: "${job.name}"
+    wandb_project: "moe_dsv3_10B_muon_tech_compatibility"
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    data_args_path: null
+    # per_split_data_args_path: /scratch/project_462001516/multilingual_dataset/datamix4-per-split.json
+    mock_data: True
+    split: null
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    data_cache_path: /scratch/project_462001516/users/swagatam/cache/MEGATRON_262k/${job.name}
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    lr_warmup_iters: 5
+    lr_wsd_decay_iters: 1
+
+    # 4 nodes × 8 GCD = 32 ranks; TP=1, PP=1, EP=8 → DP=4.
+    # gbsz=64, mbs=2 → 8 microbatches.
+    micro_batch_size: 1
+    global_batch_size: 64
+    lr: 1.e-4
+
+    # Muon for matrix params; Adam remains the scalar optimizer (embeddings/biases/norms).
+    optimizer: muon
+    muon_momentum: 0.95
+    muon_nesterov: False
+    muon_scale_mode: spectral
+    muon_fp32_matmul_prec: medium
+    muon_num_ns_steps: 5
+    muon_tp_mode: blockwise
+    muon_split_qkv: True
+    muon_extra_scale_factor: 1.0
+    muon_scalar_optimizer: adam
+    overlap_param_gather_with_optimizer_step: False
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    expert_tensor_parallel_size: 1
+    expert_model_parallel_size: 8
+    sequence_parallel: True
+    # Required with optimizer=muon: Megatron rewrites this to the layer-wise dist path.
+    use_distributed_optimizer: True
+
+    # Coarse: 64 fat experts, 4× wider, topk=2
+    num_experts: 64
+    moe_ffn_hidden_size: 2048
+    moe_shared_expert_intermediate_size: 512
+    moe_router_topk: 2
+    moe_router_num_groups: 8
+    moe_router_group_topk: 1
+    num_layers: 10
+    moe_layer_freq: "[0]*2+[1]*8"
+
+slurm:
+  sbatch_extra_directives:
+    - "--exclude=nid005019"
+  env:
+    PYTHONPATH: "/scratch/project_462001516/users/${oc.env:USER}/python-external/muon:."
+    SINGULARITYENV_PYTHONPATH: "/scratch/project_462001516/users/${oc.env:USER}/python-external/muon:."
+    TOKENIZERS_PARALLELISM: "false"
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    HF_HUB_OFFLINE: "0"
+    MASTER_PORT: "9999"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    TRITON_HOME: /tmp/triton_cache
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: 1
+    account: "project_462001516"
+    partition: dev-g
+    time: "00:30:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "

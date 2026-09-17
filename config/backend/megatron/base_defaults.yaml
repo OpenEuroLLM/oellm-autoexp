@@ -364,6 +364,16 @@ mtp_loss_scaling_factor: 0.1  # Scaling factor of Multi-Token Prediction (MTP) l
 mtp_num_layers: null  # Number of Multi-Token Prediction (MTP) Layers.MTP extends the prediction scope to multiple future tokens at each position.This MTP implementation sequentially predict additional tokens by using D sequential modules to predict D additional tokens.
 multi_latent_attention: false  # Use multi-latent attention for model.
 multiple_validation_sets: false  # If set, multiple datasets listed in the validation split are evaluated independently with a separate loss for each dataset in the list. This argument requires that no weights are included in the list
+muon_coefficient_type: quintic  # Newton-Schulz coefficient type for the Muon optimizer.
+muon_extra_scale_factor: 1.0  # Additional scale factor for the muon update
+muon_fp32_matmul_prec: medium  # choices: ['low', 'medium', 'high'] | FP32 matmul precision for Newton-Schulz iteration
+muon_momentum: 0.9  # Momentum factor for Muon optimizer
+muon_nesterov: false  # Whether to use Nesterov-style momentum in the internal SGD
+muon_num_ns_steps: 5  # Number of Newton-Schulz steps for Muon optimizer
+muon_scale_mode: spectral  # choices: ['spectral', 'unit_rms_norm', 'shape_scaling'] | Scale mode for Muon optimizer.
+muon_scalar_optimizer: adam  # choices: ['adam', 'lion'] | Optimizer for scalar parameters (embeddings, biases, norms) when using muon.
+muon_split_qkv: true  # Whether to split QKV parameters for Muon optimizer
+muon_tp_mode: blockwise  # choices: ['blockwise', 'duplicated', 'distributed'] | How to perform NS calculation for tensor model parallel weights
 nccl_all_reduce_for_prefill: false  # When using symmeric all reduce kernels this will use regular nccl kernels for prefill. This can be more effecient when prefill is large as the nccl kernels can be more bandwith optimized
 nccl_communicator_config_path: null  # Path to the yaml file with NCCL communicator configurations. The number of min/max thread groups and thread group cluster size of each communicator can be configured by setting `min_ctas`, `max_ctas`, and `cga_cluster_size`.
 nccl_ub: false  # Use the userbuffer registration for DP/FSDP communication buffers.This option will reduce GPU SM usage for the DP/FSDP communication,which is improving the performance of the overlapped computation.
@@ -399,7 +409,7 @@ one_logger_project: megatron-lm  # The one-logger project name. Will ignore if -
 one_logger_run_name: null  # The one-logger run name displayed. Will ignore if --no-one-logger is set
 onnx_safe: null  # Use workarounds for known problems with Torch ONNX exporter
 openai_gelu: false  # Use OpenAIs GeLU implementation. This optionshould not be used unless for backward compatibilityreasons.
-optimizer: adam  # choices: ['adam', 'sgd'] | Optimizer function
+optimizer: adam  # choices: ['adam', 'sgd', 'muon', 'dist_muon', 'lion', 'soap', 'adaptive_muon'] | Optimizer function
 optimizer_cpu_offload: false  # Offload optimizer state to CPU
 optimizer_offload_fraction: 1.0  # Ratio of optimizer state to offload to CPU
 output_bert_embeddings: false  # Output Bert embeddings (via mean pooling) from model, rather than its binary head output or entire hidden batch.

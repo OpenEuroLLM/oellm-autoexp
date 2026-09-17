@@ -197,6 +197,36 @@ class MegatronConfig(ConfigInterface):
     # Momentum factor for sgd
     sgd_momentum: float = 0.9
 
+    # Momentum factor for Muon optimizer
+    muon_momentum: float = 0.9
+
+    # Whether to split QKV parameters for Muon optimizer
+    muon_split_qkv: bool = True
+
+    # Whether to use Nesterov-style momentum in the internal SGD
+    muon_nesterov: bool = False
+
+    # Scale mode for Muon optimizer
+    muon_scale_mode: Literal["spectral", "unit_rms_norm", "shape_scaling"] = "spectral"
+
+    # FP32 matmul precision for Newton-Schulz iteration
+    muon_fp32_matmul_prec: Literal["low", "medium", "high"] = "medium"
+
+    # Newton-Schulz coefficient type for the Muon optimizer
+    muon_coefficient_type: str = "quintic"
+
+    # Number of Newton-Schulz steps for Muon optimizer
+    muon_num_ns_steps: int = 5
+
+    # How to perform NS calculation for tensor model parallel weights
+    muon_tp_mode: Literal["blockwise", "duplicated", "distributed"] = "blockwise"
+
+    # Additional scale factor for the muon update
+    muon_extra_scale_factor: float = 1.0
+
+    # Optimizer for scalar parameters (embeddings, biases, norms) when using muon
+    muon_scalar_optimizer: Literal["adam", "lion"] = "adam"
+
     # Batch size per model instance (local batch size). Global batch size is local batch size
     # times data parallel size times number of micro batches.
     micro_batch_size: int | None = None
@@ -426,7 +456,7 @@ class MegatronConfig(ConfigInterface):
     add_qkv_bias: bool = False
 
     # Optimizer function
-    optimizer: Literal["adam", "sgd"] = "adam"
+    optimizer: Literal["adam", "sgd", "muon", "dist_muon", "lion", "soap", "adaptive_muon"] = "adam"
 
     # Offload optimizer state to CPU
     optimizer_cpu_offload: bool = False
