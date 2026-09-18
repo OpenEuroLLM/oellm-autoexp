@@ -312,7 +312,7 @@ class MegatronConfig(ConfigInterface):
     multi_latent_attention: bool = False
 
     # Type of attention variant to use. Currently support gated_delta_net, mlstm and dsa.
-    experimental_attention_variant: Literal['gated_delta_net', 'mlstm', 'mamba', 'dsa'] | None = None
+    experimental_attention_variant: Literal['gated_delta_net', 'mlstm', 'mamba', 'dsa', 'complex_kda'] | None = None
 
     # Number of DSA indexer heads.
     dsa_indexer_n_heads: int | None = None
@@ -355,6 +355,34 @@ class MegatronConfig(ConfigInterface):
     # word problems) that is provably out of reach for [0, 1]-constrained linear RNNs. See
     # Grazzi et al., "Unlocking State-Tracking in Linear RNNs Through Negative Eigenvalues".
     # Values other than 1.0 and 2.0 are permitted but untested.
+    # Parameterisation of the channel-wise decay gate alpha, for complex_kda. Selects how alpha is
+    # produced from its pre-activation and therefore its range: softplus and sigmoid are unsigned,
+    # signed_sigmoid2 and signed_tanh reach (-1, 1). Only the signed forms permit the reflections and
+    # rotations the extended range exists for.
+    linear_gate_activation: Literal['softplus', 'sigmoid', 'signed_sigmoid2', 'signed_tanh'] = 'signed_sigmoid2'
+
+    # Initialisation of the decay gate, for complex_kda. Signed gates only: shipped starts every
+    # channel at the same point, spread initialises two populations.
+    linear_gate_init_style: Literal['shipped', 'spread'] = 'shipped'
+
+    # Lower bound on the decay gate pre-activation, for complex_kda. Clamps how fast a channel may
+    # forget within one step.
+    linear_gate_lower_bound: float = -5.0
+
+    # Shape of the output gate, for complex_kda. lowrank factorises it through a bottleneck, linear
+    # is a single projection. This changes the parameter count.
+    linear_output_gate: Literal['lowrank', 'linear'] = 'lowrank'
+
+    # Replace the q/k/v SiLU with the identity, for complex_kda. SiLU is bounded below, so it pushes
+    # q/k/v toward the non-negative orthant and restricts which rank-1 update directions are
+    # reachable.
+    linear_drop_qkv_silu: bool = False
+
+    # What the full-attention layers of a complex_kda hybrid are. standard leaves them as the
+    # Megatron attention module; gated_nope makes them output-gated and position-embedding-free, as
+    # in Kimi Linear and Qwen3-Next.
+    linear_hybrid_attention: Literal['standard', 'gated_nope'] = 'standard'
+
     linear_beta_max: float = 1.0
 
     # Shape of the delta-rule step size beta for the gated delta net. beta is
