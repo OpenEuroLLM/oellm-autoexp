@@ -22,6 +22,7 @@ Commands:
   hf NAME...           Render the 12 open-sci lm-eval tasks for those exports
   reasoning [NAME|all] Render GSM8K/MATH500/MBPP etc. via vLLM (never submits; see TASKS=)
   table | plot         Print or draw the result tables (hf and reasoning)
+  publish NAME...      Stage exports for the Hub (upload_hf.py --execute uploads them)
 
 Profiles: MODEL=$MODEL SITE=$SITE   WORK_ROOT=$WORK_ROOT
 USAGE
@@ -137,6 +138,11 @@ reasoning)
     OELLM_ACCOUNT="$ACCOUNT" EVAL_DP="$EVAL_DP" EVAL_TP="$EVAL_TP" \
     CPUS_PER_TASK="$CPUS_PER_TASK" SLURM_MEM="$SLURM_MEM" EVAL_TIME="$EVAL_TIME" \
         "$HERE/reasoning_evals.sh" "${1:-all}"
+    ;;
+publish)
+    [ $# -gt 0 ] || { echo "error: name the exports to publish (see 'list')" >&2; exit 1; }
+    EVAL_WORK_ROOT="$WORK_ROOT" EVAL_EXPORT_ROOT="$EXPORT_ROOT" \
+        python3 "$HERE/upload_hf.py" "$@"
     ;;
 table|plot)
     export EVAL_WORK_ROOT="$WORK_ROOT" EVAL_EXPORT_ROOT="$EXPORT_ROOT" EVAL_SHARED_RUNS="$EVAL_SHARED_RUNS"
