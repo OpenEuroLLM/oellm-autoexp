@@ -2195,6 +2195,26 @@ class MegatronConfig(ConfigInterface):
     # SFT prompt format.
     sft_tokenizer_prompt_format: str = "nemotron-h-aligned"
 
+    # Attention variant used for hybrid linear/full-attention models.
+    experimental_attention_variant: Literal["gated_delta_net", "dsa"] | None = None
+
+    # Frequency between Gated DeltaNet and full-attention layers.
+    linear_attention_freq: Any | None = None
+
+    # Gated DeltaNet dimensions.
+    linear_conv_kernel_dim: int | None = 4
+    linear_key_head_dim: int | None = 128
+    linear_value_head_dim: int | None = 128
+    linear_num_key_heads: int | None = 16
+    linear_num_value_heads: int | None = 32
+
+    # Qwen3.5 gated-attention and normalization options.
+    attention_output_gate: bool = False
+    layernorm_zero_centered_gamma: bool = False
+
+    # Enable a learned gate on the shared MoE expert.
+    moe_shared_expert_gate: bool = False
+
     aux: dict[str, Any] = field(default_factory=dict)
 
 

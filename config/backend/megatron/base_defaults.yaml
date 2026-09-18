@@ -599,3 +599,15 @@ wgrad_deferral_limit: 0  # Number of micro-batches for whichweight gradient comp
 window_attn_skip_freq: null  # Frequency of layers to skip window attention. Accepts either: - An integer N: Represents a (N-1):1 ratio, meaning one full attention layer after (N-1) SWA layers. - A string containing a Python list expression that defines a custom pattern, e.g.: "[1,1,1,0]*3" evaluates to [1,1,1,0,1,1,1,0,1,1,1,0] where 1 indicates SWA and 0 indicates full attention.
 window_size: null  # Window size for window attention. If not provided, window attention will be disabled.
 yaml_cfg: null  # Config file to add additional arguments
+
+# Hybrid Gated DeltaNet/full-attention model options.
+attention_output_gate: false
+experimental_attention_variant: null
+layernorm_zero_centered_gamma: false
+linear_attention_freq: null
+linear_conv_kernel_dim: 4
+linear_key_head_dim: 128
+linear_value_head_dim: 128
+linear_num_key_heads: 16
+linear_num_value_heads: 32
+moe_shared_expert_gate: false

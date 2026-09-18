@@ -1,0 +1,106 @@
+# @package _global_
+#
+# Short Qwen3.5-35B-A3B GDN/MoE bring-up on LUMI.
+# This exercises the 3x Gated DeltaNet + 1x full-attention layer pattern
+# from the HF architecture without committing to a long training run.
+#
+# Submit:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/risto/qwen3.5_moe_35B_A3B_gdn_smoke \
+#     --submit-and-exit
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: [base, qwen3.5_moe_35B_A3B]
+  - _self_
+
+container:
+  env:
+    WANDB_TAGS: "lumi,qwen3.5,35B-A3B,GDN,MoE,smoke"
+
+index: 0
+stage: gdn_smoke
+
+job:
+  name: "qwen3.5_moe_35B_A3B_${stage}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}_EP${backend.megatron.expert_model_parallel_size}"
+  base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    # LUMI/ROCm compatibility.
+    masked_softmax_fusion: false
+    gradient_accumulation_fusion: false
+    bias_dropout_fusion: false
+    bias_swiglu_fusion: false
+    apply_rope_fusion: false
+    tp_comm_overlap: false
+    log_progress: true
+    log_throughput: true
+    num_workers: 6
+    num_dataset_builder_threads: 6
+    trust_remote_code: true
+
+    # Short, mock-data run: no checkpoint or validation I/O.
+    mock_data: true
+    train_iters: 20
+    exit_interval: 20
+    eval_iters: 1
+    eval_interval: 100000
+    save_interval: 1000000000
+    save: null
+    load: null
+    no_save_optim: true
+    no_save_rng: true
+    log_interval: 1
+
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    seq_length: 4096
+    micro_batch_size: 1
+    global_batch_size: 64
+    lr: 1.0e-4
+
+    # 8 nodes × 8 GCD = 64 ranks; TP=2, PP=2, EP=8 → DP=2.
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 2
+    expert_tensor_parallel_size: 1
+    expert_model_parallel_size: 8
+    sequence_parallel: true
+    use_distributed_optimizer: true
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+
+    wandb_exp_name: "${job.name}"
+    wandb_project: "qwen3.5_moe_35B_A3B_gdn"
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "0"
+    TRITON_HOME: /tmp/triton_cache
+
+slurm:
+  sbatch_extra_directives:
+    - "--exclude=nid005019"
+  env:
+    MASTER_PORT: "9999"
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: 2
+    account: "project_462001516"
+    partition: dev-g
+    time: "00:30:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "
