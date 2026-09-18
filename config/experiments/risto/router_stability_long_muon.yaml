@@ -85,7 +85,6 @@ backend:
     micro_batch_size: 2
     global_batch_size: 32
 
-    lr: 1.e-4
     moe_aux_loss_coeff: 1.e-3
     moe_expert_viability_metrics: True
     moe_masked_layer_validation: True
@@ -93,18 +92,27 @@ backend:
 
     # Spectral Muon with RMS matching, so the Adam-tuned global LR remains a
     # sensible starting point. Adam handles scalar/vector and exterior params.
+    
+    lr: 1.e-4
+    muon_scalar_optimizer: adam
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1e-8
+
     optimizer: muon
     muon_momentum: 0.95
     muon_nesterov: True
     muon_scale_mode: spectral
+    muon_coefficient_type: polar_express # 
     muon_fp32_matmul_prec: medium
     muon_num_ns_steps: 5
     muon_tp_mode: blockwise
     muon_split_qkv: True
     muon_extra_scale_factor: 0.2
     muon_scalar_optimizer: adam
-    overlap_param_gather_with_optimizer_step: False
 
+    
+    overlap_param_gather_with_optimizer_step: False
     overlap_grad_reduce: True
     overlap_param_gather: True
 
@@ -131,8 +139,8 @@ slurm:
   sbatch_extra_directives:
     - "--exclude=nid005019"
   env:
-    PYTHONPATH: "/scratch/project_462001516/users/${oc.env:USER}/python-external/muon:."
-    SINGULARITYENV_PYTHONPATH: "/scratch/project_462001516/users/${oc.env:USER}/python-external/muon:."
+    # PYTHONPATH: "/scratch/project_462001516/users/${oc.env:USER}/python-external/muon:."
+    # SINGULARITYENV_PYTHONPATH: "/scratch/project_462001516/users/${oc.env:USER}/python-external/muon:."
     MASTER_PORT: "9999"
     USE_ROCM_AITER_ROPE_BACKEND: "0"
   srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
