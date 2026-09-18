@@ -1,20 +1,22 @@
 # @package _global_
 #
-# 40BT 0.4B MoE runs with Muon for router health monitoring on LUMI
-# standard-g (8 nodes).
+# 40BT 0.4B MoE Muon grid on LUMI: LR × global batch size.
 #
-# This preserves the healthy/high-LR comparison from router_stability_long.yaml,
-# but hidden 2-D matrix parameters use Muon. Embeddings, output weights, norms,
+#   lr:    {5e-4, 1e-3, 5e-3}
+#   gbsz:  {256, 512, 1024}
+#   total: 3 × 3 = 9 jobs
+#
+# Hidden 2-D matrix parameters use Muon. Embeddings, output weights, norms,
 # and biases continue to use Adam.
 #
-# Submit the healthy Muon baseline only:
+# Submit a single combo (index 0 = lr=5e-4, gbsz=256):
 #   uv run --python 3.12 python scripts/run_autoexp.py \
-#     --config-name experiments/risto/router_stability_long_muon \
+#     --config-name experiments/risto/muon_lr_bsz_grid_qwen3_sparse_0.4B_ne_experts_32 \
 #     --array-subset 0 --submit-and-exit
 #
-# Submit both healthy + high-LR Muon runs:
+# Submit the full 9-job grid:
 #   uv run --python 3.12 python scripts/run_autoexp.py \
-#     --config-name experiments/risto/router_stability_long_muon \
+#     --config-name experiments/risto/muon_lr_bsz_grid_qwen3_sparse_0.4B_ne_experts_32 \
 #     --submit-and-exit
 
 defaults:
@@ -30,13 +32,13 @@ defaults:
 
 container:
   env:
-    WANDB_TAGS: "lumi,router_stability_long,muon,40BT"
+    WANDB_TAGS: "lumi,muon_lr_bsz_grid,muon,40BT"
 
 index: 0
 stage: ""
 
 job:
-  name: "0.4B_ne_sparse_muon_experts_${backend.megatron.num_experts}topk${backend.megatron.moe_router_topk}_PP${backend.megatron.pipeline_model_parallel_size}_${stage}_lr${backend.megatron.lr}_40BT"
+  name: "0.4B_ne_sparse_muon_experts_${backend.megatron.num_experts}topk${backend.megatron.moe_router_topk}_PP${backend.megatron.pipeline_model_parallel_size}_gbsz${backend.megatron.global_batch_size}_lr${backend.megatron.lr}_40BT"
   base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
   log_path: ${slurm.sbatch.error}
 
@@ -54,7 +56,7 @@ backend:
     trust_remote_code: True
     ### lumi specific configs end
 
-    # 40BT at gbsz=512, seq_length=4096 -> 19074 iters.
+    # 40BT; iters scale with global_batch_size (seq_length=4096).
     train_iters: "${oc.eval:'(40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})'}"
     eval_iters: 5
     eval_interval: 100
@@ -68,7 +70,7 @@ backend:
     # no_save_optim: True
     # no_save_rng: True
     wandb_exp_name: "${job.name}"
-    wandb_project: "moe_router_stability_long_muon"
+    wandb_project: "moe_muon_lr_bsz_grid"
     wandb_entity: openeurollm-project
     wandb_save_dir: "${job.base_output_dir}"
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
@@ -83,7 +85,7 @@ backend:
     lr_wsd_decay_iters: "${oc.eval:'int(((40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})) * 0.2)'}"
 
     micro_batch_size: 2
-    global_batch_size: 512
+    global_batch_size: 256  # overridden by sweep
 
     moe_aux_loss_coeff: 1.e-3
     moe_expert_viability_metrics: True
@@ -93,7 +95,7 @@ backend:
     # Spectral Muon with RMS matching, so the Adam-tuned global LR remains a
     # sensible starting point. Adam handles scalar/vector and exterior params.
     
-    lr: 1.e-4
+    lr: 5.e-4
     muon_scalar_optimizer: adam
     adam_beta1: 0.9
     adam_beta2: 0.95
@@ -122,18 +124,20 @@ backend:
     TRITON_HOME: /tmp/triton_cache
 
 
-# Healthy baseline plus one high-LR contrast over the full 40BT horizon.
+# 3 × 3 Cartesian product over the full 40BT horizon.
 sweep:
   type: product
   groups:
     - type: list
       configs:
-        - stage: healthy_muon
-          backend.megatron.lr: 1.e-4
-          backend.megatron.moe_aux_loss_coeff: 1.e-3
-        - stage: high_lr_failure_muon
-          backend.megatron.lr: 1.e-3
-          backend.megatron.moe_aux_loss_coeff: 1.e-3
+        - backend.megatron.lr: 5.e-4
+        - backend.megatron.lr: 1.e-3
+        - backend.megatron.lr: 5.e-3
+    - type: list
+      configs:
+        - backend.megatron.global_batch_size: 256
+        - backend.megatron.global_batch_size: 512
+        - backend.megatron.global_batch_size: 1024
 
 slurm:
   sbatch_extra_directives:
