@@ -1,0 +1,81 @@
+# @package backend.megatron
+#
+# Qwen3.5-35B-A3B text-model configuration.
+# Reference HF config:
+# https://huggingface.co/Qwen/Qwen3.5-35B-A3B/blob/main/config.json
+#
+# The HF model has 40 layers arranged as 10 repetitions of:
+#   3 Gated DeltaNet (linear-attention) layers + 1 full-attention layer.
+
+defaults:
+  - qwen3_moe
+  - _self_
+
+# General model settings.
+seq_length: 4096
+max_position_embeddings: 262144
+bf16: true
+init_method_std: 0.02
+
+# TE cross-entropy fusion is disabled on this container because it triggers
+# a runtime stability assertion. Native cross entropy is the safe path.
+cross_entropy_loss_fusion: false
+cross_entropy_fusion_impl: native
+
+# Qwen3.5 text architecture.
+num_layers: 40
+hidden_size: 2048
+ffn_hidden_size: 8192  # Unused by the all-MoE layer pattern; required by MCore.
+num_attention_heads: 16
+num_query_groups: 2
+kv_channels: 256
+
+normalization: RMSNorm
+norm_epsilon: 1.0e-6
+layernorm_zero_centered_gamma: true
+swiglu: true
+add_bias_linear: false
+add_qkv_bias: false
+qk_layernorm: true
+attention_output_gate: true
+attention_dropout: 0.0
+hidden_dropout: 0.0
+attention_softmax_in_fp32: true
+
+# Qwen3.5 uses a 64-dimensional partial rotary embedding.
+position_embedding_type: rope
+rotary_base: 10000000
+rotary_percent: 0.25
+rotary_interleaved: true
+
+# Gated DeltaNet: three linear-attention layers followed by one full-attention
+# layer, repeated across the 40 transformer layers.
+experimental_attention_variant: gated_delta_net
+linear_attention_freq: 4
+linear_conv_kernel_dim: 4
+linear_key_head_dim: 128
+linear_value_head_dim: 128
+linear_num_key_heads: 16
+linear_num_value_heads: 32
+
+# MoE: eight routed experts plus one shared expert per token.
+num_experts: 256
+moe_ffn_hidden_size: 512
+moe_shared_expert_intermediate_size: 512
+moe_shared_expert_gate: true
+moe_router_topk: 8
+moe_router_load_balancing_type: global_aux_loss
+moe_router_dtype: fp32
+moe_router_pre_softmax: false
+moe_aux_loss_coeff: 1.0e-3
+moe_layer_freq: 1
+moe_grouped_gemm: true
+moe_token_dispatcher_type: alltoall
+
+# The current MTP builder does not support experimental attention variants.
+# Disable MTP for the GDN bring-up; supporting Qwen3.5's MTP requires a
+# corresponding Megatron model-builder change.
+mtp_num_layers: null
+
+aux:
+  model_name: "Qwen3.5-35B-A3B"
