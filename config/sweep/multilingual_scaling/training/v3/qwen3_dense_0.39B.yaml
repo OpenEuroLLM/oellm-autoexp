@@ -1,0 +1,314 @@
+type: product
+
+groups:
+  # GROUP 0: job naming.
+  - type: list
+    configs:
+      - job.name: "qwen3_dense_0.2B_ne_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_\\${stage}\\${backend.megatron.aux.job_horizon_suffix}"
+        backend.megatron.wandb_exp_name: "\\${job.name}"
+
+  # GROUP 1: HP grid, one entry per (lr, gbsz) combo, generated from
+  # dense_multilingual_models_scaling_results/hp_selection/v3/remaining_to_be_trained_hp_grid.csv.
+  # split: default 99,1,0; combos flagged in
+  # dense_multilingual_models_scaling_results/training/challenges/data_split_issue/README.md
+  # (Summary 1/2/4) override to 100,0,0 to match the majority/consistent split
+  # already used by that combo's stable trajectory.
+  - type: list
+    defaults:
+      backend.megatron.aux.skip_stable_launch: false
+    configs:
+      # ---- gbsz 64 ----
+      # checkpoint_reuse_run=qwen3_dense_0.2B_ne_lr0.002_gbsz64_stable30B: a stable at 30B already exists,
+      # so aux.tokens is pinned there -- decays branch off that existing checkpoint
+      # via the sibling stable stage instead of retraining a smaller stable from scratch.
+      - backend.megatron.lr: 2.e-3
+        backend.megatron.global_batch_size: 64
+        backend.megatron.micro_batch_size: 4
+        backend.megatron.aux.tokens: 30_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{12_000_000_000, 20_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+        backend.megatron.aux.skip_stable_launch:  true
+        backend.megatron.split:                   "99,1,0"
+
+      # checkpoint_status=no_stable_run: no stable run exists yet for this combo;
+      # aux.tokens=6B launches a fresh one from iter 0.
+      - backend.megatron.lr: 4.e-3
+        backend.megatron.global_batch_size: 64
+        backend.megatron.micro_batch_size: 4
+        backend.megatron.aux.tokens: 6_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+        backend.megatron.split:                   "99,1,0"
+
+
+      # ---- gbsz 128 ----
+      # checkpoint_reuse_run=qwen3_dense_0.2B_ne_lr0.002_gbsz128_stable120B: a stable at 120B already exists,
+      # so aux.tokens is pinned there -- decays branch off that existing checkpoint
+      # via the sibling stable stage instead of retraining a smaller stable from scratch.
+      - backend.megatron.lr: 2.e-3
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 4
+        backend.megatron.aux.tokens: 120_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{12_000_000_000, 20_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
+        backend.megatron.aux.stable_launch_tier:  cross
+        backend.megatron.aux.skip_stable_launch:  true
+        backend.megatron.split:                   "99,1,0"
+
+      # checkpoint_reuse_run=qwen3_dense_0.2B_ne_lr0.004_gbsz128_stable50B: a stable at 50B already exists,
+      # so aux.tokens is pinned there -- decays branch off that existing checkpoint
+      # via the sibling stable stage instead of retraining a smaller stable from scratch.
+      - backend.megatron.lr: 4.e-3
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 4
+        backend.megatron.aux.tokens: 50_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{6_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "{30_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  cross
+        backend.megatron.aux.skip_stable_launch:  true
+        backend.megatron.split:                   "99,1,0"
+
+
+      # ---- gbsz 256 ----
+      # checkpoint_reuse_run=qwen3_dense_0.2B_ne_lr0.001_gbsz256_stable300B: a stable at 300B already exists,
+      # so aux.tokens is pinned there -- decays branch off that existing checkpoint
+      # via the sibling stable stage instead of retraining a smaller stable from scratch.
+      # (CSV named checkpoint_reuse_run=qwen3_dense_0.2B_ne_lr0.001_gbsz256_stable200B, which does not exist on disk;
+      # the 300B run above holds every branch checkpoint these decays need.)
+      - backend.megatron.lr: 1.e-3
+        backend.megatron.global_batch_size: 256
+        backend.megatron.micro_batch_size: 4
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+        backend.megatron.aux.skip_stable_launch:  true
+        backend.megatron.split:                   "99,1,0"
+
+      # checkpoint_reuse_run=qwen3_dense_0.2B_ne_lr0.002_gbsz256_stable300B: a stable at 300B already exists,
+      # so aux.tokens is pinned there -- decays branch off that existing checkpoint
+      # via the sibling stable stage instead of retraining a smaller stable from scratch.
+      - backend.megatron.lr: 2.e-3
+        backend.megatron.global_batch_size: 256
+        backend.megatron.micro_batch_size: 4
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{6_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "{12_000_000_000, 20_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  cross
+        backend.megatron.aux.skip_stable_launch:  true
+        backend.megatron.split:                   "99,1,0"
+
+      # checkpoint_reuse_run=qwen3_dense_0.2B_ne_lr0.004_gbsz256_stable300B: a stable at 300B already exists,
+      # so aux.tokens is pinned there -- decays branch off that existing checkpoint
+      # via the sibling stable stage instead of retraining a smaller stable from scratch.
+      # (CSV named checkpoint_reuse_run=qwen3_dense_0.2B_ne_lr0.004_gbsz256_stable200B, which does not exist on disk;
+      # the 300B run above holds every branch checkpoint these decays need.)
+      - backend.megatron.lr: 4.e-3
+        backend.megatron.global_batch_size: 256
+        backend.megatron.micro_batch_size: 4
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{30_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  cross
+        backend.megatron.aux.skip_stable_launch:  true
+        backend.megatron.split:                   "99,1,0"
+
+
+      # ---- gbsz 512 ----
+      # checkpoint_reuse_run=qwen3_dense_0.2B_ne_lr0.001_gbsz512_stable300B: a stable at 300B already exists,
+      # so aux.tokens is pinned there -- decays branch off that existing checkpoint
+      # via the sibling stable stage instead of retraining a smaller stable from scratch.
+      - backend.megatron.lr: 1.e-3
+        backend.megatron.global_batch_size: 512
+        backend.megatron.micro_batch_size: 4
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{30_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+        backend.megatron.aux.skip_stable_launch:  true
+        backend.megatron.split:                   "99,1,0"
+
+      # checkpoint_reuse_run=qwen3_dense_0.2B_ne_lr0.002_gbsz512_stable300B: a stable at 300B already exists,
+      # so aux.tokens is pinned there -- decays branch off that existing checkpoint
+      # via the sibling stable stage instead of retraining a smaller stable from scratch.
+      - backend.megatron.lr: 2.e-3
+        backend.megatron.global_batch_size: 512
+        backend.megatron.micro_batch_size: 4
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{30_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
+        backend.megatron.aux.stable_launch_tier:  cross
+        backend.megatron.aux.skip_stable_launch:  true
+        backend.megatron.split:                   "99,1,0"
+
+      # checkpoint_reuse_run=qwen3_dense_0.2B_ne_lr0.004_gbsz512_stable300B: a stable at 300B already exists,
+      # so aux.tokens is pinned there -- decays branch off that existing checkpoint
+      # via the sibling stable stage instead of retraining a smaller stable from scratch.
+      - backend.megatron.lr: 4.e-3
+        backend.megatron.global_batch_size: 512
+        backend.megatron.micro_batch_size: 4
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{30_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+        backend.megatron.aux.skip_stable_launch:  true
+        backend.megatron.split:                   "99,1,0"
+
+      # checkpoint_status=no_stable_run: no stable run exists yet for this combo;
+      # aux.tokens=300B launches a fresh one from iter 0.
+      - backend.megatron.lr: 8.e-3
+        backend.megatron.global_batch_size: 512
+        backend.megatron.micro_batch_size: 4
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+        backend.megatron.split:                   "99,1,0"
+
+
+      # ---- gbsz 1024 ----
+      # checkpoint_status=no_stable_run: no stable run exists yet for this combo;
+      # aux.tokens=300B launches a fresh one from iter 0.
+      - backend.megatron.lr: 8.e-3
+        backend.megatron.global_batch_size: 1024
+        backend.megatron.micro_batch_size: 4
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
+        backend.megatron.aux.stable_launch_tier:  cross
+        backend.megatron.split:                   "99,1,0"
+
+
+      # ---- gbsz 2048 ----
+      # checkpoint_reuse_run=qwen3_dense_0.2B_ne_lr0.002_gbsz2048_stable300B: a stable at 300B already exists,
+      # so aux.tokens is pinned there -- decays branch off that existing checkpoint
+      # via the sibling stable stage instead of retraining a smaller stable from scratch.
+      - backend.megatron.lr: 2.e-3
+        backend.megatron.global_batch_size: 2048
+        backend.megatron.micro_batch_size: 4
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{200_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+        backend.megatron.aux.skip_stable_launch:  true
+        backend.megatron.split:                   "99,1,0"
+
+      # checkpoint_reuse_run=qwen3_dense_0.2B_ne_lr0.004_gbsz2048_stable300B: a stable at 300B already exists,
+      # so aux.tokens is pinned there -- decays branch off that existing checkpoint
+      # via the sibling stable stage instead of retraining a smaller stable from scratch.
+      - backend.megatron.lr: 4.e-3
+        backend.megatron.global_batch_size: 2048
+        backend.megatron.micro_batch_size: 4
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{200_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
+        backend.megatron.aux.stable_launch_tier:  cross
+        backend.megatron.aux.skip_stable_launch:  true
+        backend.megatron.split:                   "99,1,0"
+
+      # checkpoint_status=no_stable_run: no stable run exists yet for this combo;
+      # aux.tokens=300B launches a fresh one from iter 0.
+      - backend.megatron.lr: 8.e-3
+        backend.megatron.global_batch_size: 2048
+        backend.megatron.micro_batch_size: 4
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+        backend.megatron.split:                   "99,1,0"
+  # GROUP 2: stages -- 1 stable + 9 decay.
+  - type: list
+    configs:
+      # STABLE PHASE: trains to aux.tokens (this combo's max budget).
+      - stage: stable
+        backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.lr_wsd_decay_iters: 0
+        backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+        backend.megatron.aux.job_horizon_suffix: "\\${oc.eval:'str(\\${backend.megatron.aux.tokens}//1_000_000_000)+\"BT\"'}"
+
+        # ---- Branching checkpoints: iter at 80% of each token budget -----
+        backend.megatron.aux.save_step_br_0: "\\${oc.eval:'int(((6_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_1: "\\${oc.eval:'int(((12_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_2: "\\${oc.eval:'int(((20_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_3: "\\${oc.eval:'int(((30_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_4: "\\${oc.eval:'int(((50_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_5: "\\${oc.eval:'int(((80_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_6: "\\${oc.eval:'int(((120_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_7: "\\${oc.eval:'int(((200_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        backend.megatron.aux.save_step_br_8: "\\${oc.eval:'int(((300_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})) * (1 - \\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+
+        # ---- End checkpoints: iter at 100% of each token budget -----
+        backend.megatron.aux.save_step_end_0: "\\${oc.eval:'(6_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_1: "\\${oc.eval:'(12_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_2: "\\${oc.eval:'(20_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_3: "\\${oc.eval:'(30_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_4: "\\${oc.eval:'(50_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_5: "\\${oc.eval:'(80_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_6: "\\${oc.eval:'(120_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_7: "\\${oc.eval:'(200_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.aux.save_step_end_8: "\\${oc.eval:'(300_000_000_000 + \\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size} - 1) // (\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+
+      # DECAY STAGES: share defaults below.
+      - type: list
+        defaults:
+          backend.megatron.aux.decay_fraction: "\\${backend.megatron.aux.cooldown_decay_fraction}"
+
+          backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+          backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
+          backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+
+          backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/checkpoints"
+          backend.megatron.ckpt_step: "\\${backend.megatron.aux.start_iter}"
+          backend.megatron.override_opt_param_scheduler: true
+
+          # Start when the branching checkpoint exists.
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(\\${backend.megatron.aux.start_iter}).zfill(7)'}"
+
+          # Cancel decay if the stable sibling crashed.
+          job.cancel_condition:
+            class_name: LogPatternCondition
+            log_path: "\\${sibling.stable.job.log_path_current}"
+            pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+
+        configs:
+          # Each decay stage only specifies stage name and its own token budget.
+          - stage: decay6BT
+            backend.megatron.aux.tokens: 6_000_000_000
+          - stage: decay12BT
+            backend.megatron.aux.tokens: 12_000_000_000
+          - stage: decay20BT
+            backend.megatron.aux.tokens: 20_000_000_000
+          - stage: decay30BT
+            backend.megatron.aux.tokens: 30_000_000_000
+          - stage: decay50BT
+            backend.megatron.aux.tokens: 50_000_000_000
+          - stage: decay80BT
+            backend.megatron.aux.tokens: 80_000_000_000
+          - stage: decay120BT
+            backend.megatron.aux.tokens: 120_000_000_000
+          - stage: decay200BT
+            backend.megatron.aux.tokens: 200_000_000_000
+          - stage: decay300BT
+            backend.megatron.aux.tokens: 300_000_000_000
+
+# Filter: tier routing (incl. skip_stable_launch) + warmup guard.
+filter: "\\${oc.eval:'(((\"\\${stage}\" == \"stable\" and (not \\${backend.megatron.aux.skip_stable_launch}) and (\"\\${backend.megatron.aux.priority_tier}\" == \"all\" or \"\\${backend.megatron.aux.priority_tier}\" == \"\\${backend.megatron.aux.stable_launch_tier}\")) or (\"\\${stage}\" != \"stable\" and ((\"\\${backend.megatron.aux.priority_tier}\" == \"all\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set} | \\${backend.megatron.aux.cross_tokens_set} | \\${backend.megatron.aux.diagonal_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"center\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"cross\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.cross_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"diagonal\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.diagonal_tokens_set})))) and (\\${backend.megatron.lr_warmup_iters} / \\${backend.megatron.train_iters} < 0.3))'}"
