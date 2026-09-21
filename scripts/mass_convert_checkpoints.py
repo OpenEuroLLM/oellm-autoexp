@@ -33,6 +33,13 @@ new checkpoints appear), pass --group-size 1 so each checkpoint gets its own
 Slurm job -- this lets a caller chain a dependent upload job
 (sbatch --dependency=afterok:<jobid>) onto each individual conversion job.
 
+Pass --run-label when several distinct training runs feed one Hub repo. Output
+directories (and therefore branches) become "<label>_iter_<N>" instead of bare
+"iter_<N>", e.g. --run-label b1 gives "b1_iter_0224000". Without it, two runs
+that happen to share an iteration number would collide on the same branch and
+one would be silently dropped. Invoke this tool once per run, each with its own
+--run-label and --checkpoints-dir/--training-config.
+
 Pass --hf-repo-id when multiple independent operators each convert into their
 own --output-dir against the same training run (e.g. each running their own
 copy of this tool from their own scratch space, since a scratch dir generally
@@ -60,14 +67,17 @@ def discover_checkpoints(dirs_and_configs, pattern: str):
     for ckpt_dir, config in dirs_and_configs:
         ckpt_dir = Path(ckpt_dir)
         for d in sorted(ckpt_dir.glob(pattern)):
-            if not d.is_dir() or d.name in seen:
+            if d.name in seen:
                 continue
+            # A checkpoint dir can be a symlink into another project's space, which
+            # may be dangling or unreadable for us; stat() then raises. Skip it with
+            # a note rather than taking the whole discovery pass down.
             try:
+                if not d.is_dir():
+                    continue
                 has_metadata = (d / "metadata.json").exists()
-            except PermissionError:
-                print(
-                    f"  skipping {d.name} in {ckpt_dir}: permission denied, cannot check metadata.json"
-                )
+            except OSError as exc:
+                print(f"  skipping {d.name} in {ckpt_dir}: {exc.strerror or exc}")
                 continue
             if not has_metadata:
                 print(
@@ -117,6 +127,23 @@ def hf_complete_iters(repo_id: str) -> set[str]:
     return complete
 
 
+def container_pythonpath(image: str, binds: list[str]) -> str:
+    """PYTHONPATH baked into the container image, or "" if it sets none.
+
+    Training images generally ship a matched Megatron-LM/Megatron-Bridge pair on
+    their own PYTHONPATH. Passing ``--env PYTHONPATH=...`` *replaces* that, which
+    silently removes ``megatron.core``; and putting a separate Megatron-Bridge
+    checkout ahead of the image's shadows it with a version the image's
+    ``megatron.core`` may not match. So read what the image sets and keep it.
+    """
+    cmd = ["singularity", "exec"]
+    for b in binds:
+        cmd += ["--bind", b]
+    cmd += [image, "printenv", "PYTHONPATH"]
+    proc = subprocess.run(cmd, capture_output=True)
+    return proc.stdout.decode().strip() if proc.returncode == 0 else ""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -134,6 +161,12 @@ def main() -> int:
         help="Training config YAML, one per --checkpoints-dir, same order.",
     )
     ap.add_argument("--checkpoint-pattern", default="iter_*")
+    ap.add_argument(
+        "--run-label",
+        default=None,
+        help="Prefix output dirs/branches with this run label: <label>_iter_<N>. "
+        "Required when several runs share one output tree or Hub repo (see module docstring).",
+    )
     ap.add_argument("--output-dir", required=True, type=Path)
     ap.add_argument("--repo-root", default=REPO_ROOT, type=Path)
     ap.add_argument("--bridge-root", default=None, type=Path)
@@ -143,6 +176,13 @@ def main() -> int:
     ap.add_argument("--tokenizer", default="openeurollm/Qwen3-0.9B-ne")
     ap.add_argument("--derive-hf-arch", default="qwen3")
     ap.add_argument("--max-shard-size", default="5GB")
+    ap.add_argument(
+        "--vocab-size",
+        type=int,
+        default=None,
+        help="Override the export vocab size (default: the reference tokenizer's length). "
+        "Needed when the tokenizer has more ids than the trained embedding has rows.",
+    )
     ap.add_argument(
         "--singularity-bind",
         action="append",
@@ -160,11 +200,25 @@ def main() -> int:
     ap.add_argument("--partition", default="boost_usr_prod")
     ap.add_argument("--qos", default="boost_qos_dbg")
     ap.add_argument("--time-limit", default="00:30:00")
+    ap.add_argument(
+        "--reservation",
+        default=None,
+        help="Submit into a Slurm reservation. Useful for quick test rounds on a "
+        "development reservation instead of queueing behind production work.",
+    )
     ap.add_argument("--group-size", type=int, default=16, help="Checkpoints (Slurm tasks) per job")
     ap.add_argument(
         "--max-concurrent-jobs", type=int, default=2, help="Match the QOS's MaxJobsPerUser"
     )
     ap.add_argument("--cpus-per-task", type=int, default=4)
+    ap.add_argument(
+        "--gpu-binding",
+        choices=("gpus-per-task", "gres"),
+        default="gpus-per-task",
+        help="How to ask Slurm for GPUs. Some sites reject --gpus-per-task with "
+        "'Invalid GRES specification' (JUPITER does); use 'gres' there to request "
+        "--gres=gpu:<tasks per node> instead.",
+    )
     ap.add_argument(
         "--gpus-per-node",
         type=int,
@@ -217,17 +271,20 @@ def main() -> int:
     tasks = []
     skipped = 0
     for c in checkpoints:
-        hf_path = args.output_dir / c["iter"]
-        if not args.force and (hf_path.exists() or c["iter"] in already_on_hf):
+        branch = f"{args.run_label}_{c['iter']}" if args.run_label else c["iter"]
+        hf_path = args.output_dir / branch
+        if not args.force and (hf_path.exists() or branch in already_on_hf):
             skipped += 1
             continue
         tasks.append(
             {
                 **c,
+                "branch": branch,
                 "hf_path": str(hf_path),
                 "hf_model": args.hf_model,
                 "tokenizer": args.tokenizer,
                 "derive_hf_arch": args.derive_hf_arch,
+                "vocab_size": args.vocab_size,
                 "bridge_root": str(bridge_root),
                 "resources": str(resources),
                 "validation_json": str(hf_path / "validation.json"),
@@ -250,8 +307,9 @@ def main() -> int:
     )
 
     manifest_paths = []
+    group_prefix = f"{args.run_label}_" if args.run_label else ""
     for gi, group in enumerate(groups):
-        p = args.output_dir / "manifests" / f"group_{gi:03d}.json"
+        p = args.output_dir / "manifests" / f"{group_prefix}group_{gi:03d}.json"
         p.write_text(json.dumps(group, indent=2))
         manifest_paths.append(p)
 
@@ -261,30 +319,44 @@ def main() -> int:
             print(f"  group {gi:03d}: {len(group)} tasks -> {manifest_paths[gi]}")
         return 0
 
+    image_pythonpath = container_pythonpath(args.container_image, args.singularity_bind)
+    if image_pythonpath:
+        print(f"image PYTHONPATH preserved: {image_pythonpath}")
+
     submitted_path = args.output_dir / "manifests" / "submitted_jobs.json"
     submitted = json.loads(submitted_path.read_text()) if submitted_path.exists() else []
     for gi, (group, manifest_path) in enumerate(zip(groups, manifest_paths)):
         n = len(group)
-        jobname = f"ckpt_conv_g{gi:03d}"
+        jobname = f"ckpt_conv_{group_prefix}g{gi:03d}"
         while free_slots(args.qos, args.max_concurrent_jobs) <= 0:
             time.sleep(10)
         binds = " ".join(f"--bind {b}" for b in args.singularity_bind)
+        # Our repo first (for oellm_autoexp), then whatever the image ships
+        # (megatron.core + a matched megatron.bridge), then our own Bridge
+        # checkout only as a fallback for images that carry neither.
+        pythonpath = ":".join(
+            x for x in (str(args.repo_root), image_pythonpath, f"{bridge_root}/src") if x
+        )
         task_cmd = (
             f"singularity exec --nv {binds} "
-            f"--env PYTHONPATH={args.repo_root}:{bridge_root}/src --env PYTHONNOUSERSITE=1 "
+            f"--env PYTHONPATH={pythonpath} --env PYTHONNOUSERSITE=1 "
             f"--env HF_HOME=$HOME/.cache/huggingface --env CUDA_DEVICE_MAX_CONNECTIONS=1 "
             f"{args.container_image} python -m oellm_autoexp.backends.megatron_bridge.convert_and_validate_task "
             f"--manifest {manifest_path} --max-shard-size {args.max_shard_size}"
         )
         ntasks_per_node = min(n, args.gpus_per_node)
+        gpu_opt = (
+            f"--gres=gpu:{ntasks_per_node}" if args.gpu_binding == "gres" else "--gpus-per-task=1"
+        )
         cmd = [
             "sbatch",
             f"--account={args.account}",
             f"--partition={args.partition}",
             f"--qos={args.qos}",
+            *([f"--reservation={args.reservation}"] if args.reservation else []),
             f"--time={args.time_limit}",
             f"--ntasks={n}",
-            "--gpus-per-task=1",
+            gpu_opt,
             f"--cpus-per-task={args.cpus_per_task}",
             f"--ntasks-per-node={ntasks_per_node}",
             f"--job-name={jobname}",
@@ -293,7 +365,13 @@ def main() -> int:
             "--parsable",
             f"--wrap=srun --ntasks={n} bash -c '{task_cmd}'",
         ]
-        jid = subprocess.run(cmd, capture_output=True).stdout.decode().strip()
+        proc = subprocess.run(cmd, capture_output=True)
+        jid = proc.stdout.decode().strip()
+        if proc.returncode != 0 or not jid:
+            sys.exit(
+                f"sbatch failed for {jobname} (exit {proc.returncode}): "
+                f"{proc.stderr.decode().strip() or 'no stderr'}"
+            )
         submitted.append({"jobname": jobname, "jobid": jid, "n": n, "manifest": str(manifest_path)})
         print(f"submitted {jobname} ({n} tasks) -> {jid}")
         submitted_path.write_text(json.dumps(submitted, indent=2))

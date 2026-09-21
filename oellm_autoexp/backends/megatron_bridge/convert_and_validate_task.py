@@ -13,10 +13,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
-from oellm_autoexp.backends.megatron_bridge.run_export import run_export
 from oellm_autoexp.backends.megatron_bridge.validate_export import validate
 
 
@@ -33,6 +33,50 @@ def _parse() -> argparse.Namespace:
     return ap.parse_args()
 
 
+def _pin_local_gpu() -> None:
+    """Give each task its own GPU.
+
+    Sites that reject ``--gpus-per-task`` need a job-level ``--gres=gpu:N``
+    instead, which makes every task on the node see all N devices; each then
+    defaults to ``cuda:0`` and they fight over one card. Conversion hides this
+    because it initialises on CPU, but validation loads the whole model onto the
+    GPU and the second task OOMs. Narrow the visible set to this task's own
+    device, before anything initialises CUDA.
+    """
+    local_id = os.environ.get("SLURM_LOCALID")
+    if local_id is None:
+        return
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    devices = [d for d in visible.split(",") if d] if visible else None
+    if devices and len(devices) > 1:
+        chosen = devices[int(local_id) % len(devices)]
+    elif devices:
+        return  # already narrowed to one device
+    else:
+        chosen = local_id
+    os.environ["CUDA_VISIBLE_DEVICES"] = chosen
+    print(f"  task {local_id}: CUDA_VISIBLE_DEVICES={chosen}")
+
+
+def _free_gpu() -> None:
+    """Drop cached and unreferenced GPU allocations from the conversion
+    stage."""
+    import gc
+
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            before = torch.cuda.memory_allocated() / 2**30
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            after = torch.cuda.memory_allocated() / 2**30
+            print(f"  gpu memory after conversion: {before:.1f} GiB -> {after:.1f} GiB allocated")
+    except ImportError:
+        pass
+
+
 def main() -> int:
     args = _parse()
     task_index = args.task_index if args.task_index is not None else int(os.environ["SLURM_PROCID"])
@@ -47,23 +91,52 @@ def main() -> int:
     task = tasks[task_index]
     it = task["iter"]
     hf_path = Path(task["hf_path"])
+    _pin_local_gpu()
     print(f"[task {task_index}] iter={it} -> {hf_path}")
 
     if hf_path.exists():
         print(f"[task {task_index}] {hf_path} already exists, skipping conversion")
     else:
-        run_export(
-            megatron_path=Path(task["megatron_path"]),
-            hf_path=hf_path,
-            hf_model=task["hf_model"],
-            tokenizer=task["tokenizer"],
-            bridge_root=Path(task["bridge_root"]),
-            resources=Path(task["resources"]),
-            derive_hf_arch=task.get("derive_hf_arch"),
-            megatron_config=Path(task["megatron_config"]),
-            max_shard_size=args.max_shard_size,
-        )
+        # Conversion runs as a child process, not in-process: Megatron-Bridge keeps
+        # live references to the loaded model, so its GPU memory (63 GiB for a 32B)
+        # survives `del`/`empty_cache()` and is still held when validation loads the
+        # export onto the same device. Letting the process exit is the only reliable
+        # way to give it back.
+        cmd = [
+            sys.executable,
+            "-m",
+            "oellm_autoexp.backends.megatron_bridge.run_export",
+            "--megatron-path",
+            task["megatron_path"],
+            "--hf-path",
+            str(hf_path),
+            "--hf-model",
+            task["hf_model"],
+            "--tokenizer",
+            task["tokenizer"],
+            "--bridge-root",
+            task["bridge_root"],
+            "--resources",
+            task["resources"],
+            "--megatron-config",
+            task["megatron_config"],
+            "--max-shard-size",
+            args.max_shard_size,
+        ]
+        if task.get("derive_hf_arch"):
+            cmd += ["--derive-hf-arch", task["derive_hf_arch"]]
+        if task.get("vocab_size") is not None:
+            cmd += ["--vocab-size", str(task["vocab_size"])]
+        proc = subprocess.run(cmd)
+        if proc.returncode != 0:
+            return proc.returncode
         print(f"[task {task_index}] convert done: {it}")
+
+    # Conversion loads the Megatron model onto this GPU, and validation then
+    # loads the HF export onto the same one. A 32B in bf16 is ~64 GB, so with
+    # both resident the second load hits OOM on a 95 GB device. Release the
+    # first before starting the second.
+    _free_gpu()
 
     validate(hf_path, Path(task["validation_json"]))
     print(f"[task {task_index}] validate done: {it}")

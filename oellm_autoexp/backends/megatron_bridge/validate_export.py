@@ -313,6 +313,27 @@ CANONICAL_PROMPTS = {
 }
 
 
+def _vocab_check(tok, embed_rows: int) -> dict:
+    """Compare tokenizer id space against the embedding's row count.
+
+    ``len(tok)`` must not exceed ``embed_rows``, and every special-token id must
+    be addressable. Reported in ``validation.json`` so the published checkpoint
+    carries the evidence.
+    """
+    specials = {
+        name: getattr(tok, name, None)
+        for name in ("bos_token_id", "eos_token_id", "pad_token_id", "unk_token_id")
+    }
+    out_of_range = {n: i for n, i in specials.items() if isinstance(i, int) and i >= embed_rows}
+    return {
+        "embedding_rows": embed_rows,
+        "tokenizer_len": len(tok),
+        "special_token_ids": specials,
+        "out_of_range": out_of_range,
+        "ok": len(tok) <= embed_rows and not out_of_range,
+    }
+
+
 def validate(hf_path: Path, output_json: Path, max_new_tokens: int = 30) -> dict:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -322,6 +343,15 @@ def validate(hf_path: Path, output_json: Path, max_new_tokens: int = 30) -> dict
         str(hf_path), dtype=torch.bfloat16, trust_remote_code=True
     ).cuda()
     model.eval()
+
+    # Generation alone cannot catch a tokenizer that addresses more ids than the
+    # embedding has rows: the extra ids are special tokens the model never emits,
+    # so every prompt still decodes fine while tokenizing a padded batch would
+    # raise. Check the shapes against each other explicitly.
+    embed_rows = int(model.get_input_embeddings().weight.shape[0])
+    vocab = _vocab_check(tok, embed_rows)
+    if not vocab["ok"]:
+        raise ValueError(f"tokenizer/embedding mismatch for {hf_path}: {vocab}")
 
     results = []
     for lang_code, entry in CANONICAL_PROMPTS.items():
@@ -348,7 +378,7 @@ def validate(hf_path: Path, output_json: Path, max_new_tokens: int = 30) -> dict
                 }
             )
 
-    report = {"hf_path": str(hf_path), "status": "ok", "prompts": results}
+    report = {"hf_path": str(hf_path), "status": "ok", "vocab": vocab, "prompts": results}
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     return report

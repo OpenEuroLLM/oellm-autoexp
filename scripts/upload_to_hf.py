@@ -2,11 +2,15 @@
 """Upload converted HF checkpoints to a Hub repo, one branch per training
 iteration.
 
-Each local <output-dir>/<iter>/ directory (as produced by
-mass_convert_checkpoints.py) is pushed to a branch named after that
-iteration (e.g. branch "iter_0002400"), with files at the branch root, so
+Each local <output-dir>/<name>/ directory (as produced by
+mass_convert_checkpoints.py) is pushed to a branch of that same name, with
+files at the branch root, so
 `AutoModelForCausalLM.from_pretrained(repo_id, revision="iter_0002400")`
 just works.
+
+Directory names are "iter_<N>", or "<run-label>_iter_<N>" when the converter
+was given --run-label (several runs sharing one repo, e.g. "b1_iter_0224000").
+Pass --run-label here to upload only one run's checkpoints.
 
 Needs internet access -- run on Leonardo's lrd_all_serial partition (login
 nodes exposed as a schedulable 4h queue), not a compute node.
@@ -22,10 +26,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import shutil
 import time
 from pathlib import Path
 
 from huggingface_hub import HfApi
+
+# "iter_0002400", or "<run-label>_iter_0002400" for multi-run repositories.
+CHECKPOINT_DIR_RE = re.compile(r"^(?:[A-Za-z0-9][A-Za-z0-9.-]*_)?iter_\d+$")
 
 
 def main() -> int:
@@ -43,12 +52,26 @@ def main() -> int:
     )
     ap.add_argument("--token-file", default=str(Path.home() / ".cache" / "huggingface" / "token"))
     ap.add_argument(
-        "--iters", nargs="*", default=None, help="Only these iter names; default: all found"
+        "--iters", nargs="*", default=None, help="Only these dir names; default: all found"
+    )
+    ap.add_argument(
+        "--run-label",
+        default=None,
+        help="Only upload dirs for this run label, i.e. named <label>_iter_<N>. "
+        "Default: every checkpoint dir in --output-dir, whatever its label.",
     )
     ap.add_argument(
         "--force", action="store_true", help="Re-upload even if the branch already looks complete"
     )
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument(
+        "--prune-after-upload",
+        action="store_true",
+        help="Delete a local checkpoint dir once its branch is verified complete on the Hub. "
+        "A full backfill is far larger than a project quota (the 32B is ~64 GB per "
+        "checkpoint), so uploads have to free space as they go. The branch is re-checked "
+        "against the Hub after upload, not merely assumed from a successful call.",
+    )
     ap.add_argument(
         "--watch",
         action="store_true",
@@ -91,10 +114,14 @@ def main() -> int:
         if args.iters:
             found = [args.output_dir / it for it in args.iters]
         else:
+            prefix = f"{args.run_label}_" if args.run_label else None
             found = sorted(
                 d
                 for d in args.output_dir.iterdir()
-                if d.is_dir() and d.name.startswith("iter_") and (d / "validation.json").exists()
+                if d.is_dir()
+                and CHECKPOINT_DIR_RE.match(d.name)
+                and (prefix is None or d.name.startswith(prefix))
+                and (d / "validation.json").exists()
             )
         if args.shard_count > 1:
             found = [d for i, d in enumerate(found) if i % args.shard_count == args.shard_index]
@@ -151,6 +178,14 @@ def main() -> int:
             failures.pop(branch, None)
             write_failures()
             uploaded += 1
+            if args.prune_after_upload:
+                # Re-read the branch from the Hub rather than trusting the upload
+                # call: this deletes the only local copy.
+                if branch_is_complete(branch):
+                    shutil.rmtree(d)
+                    print(f"  pruned local {d}", flush=True)
+                else:
+                    print(f"  NOT pruning {d}: {branch} is not complete on the Hub", flush=True)
         return uploaded, skipped, failed
 
     print("checking existing branches for completeness...")
