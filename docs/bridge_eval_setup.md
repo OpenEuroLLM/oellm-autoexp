@@ -277,8 +277,9 @@ agnostic.
   `--output-dir` has never seen it, so nobody redundantly reconverts what
   someone else already finished.
 <!-- google-doc-style-resume -->
-- **`scripts/upload_to_hf.py`**: pushes each converted `<output-dir>/<iter>/`
-  to its own branch (`iter_NNNNNNN`) of a target HF Hub repository, by way of
+- **`scripts/upload_to_hf.py`**: pushes each converted `<output-dir>/<name>/`
+  to its own branch (`iter_NNNNNNN`, or `<label>_iter_NNNNNNN` when the
+  converter ran with `--run-label`) of a target HF Hub repository, by way of
   `upload_large_folder` (resumable). A branch only counts as complete if it
   actually has the weight files, `config.json`, and `validation.json`, not
   just whether the branch ref exists, so a crash or network blip mid-upload
@@ -353,3 +354,105 @@ singularity exec --bind /leonardo_scratch --bind /leonardo --bind /leonardo_work
 # for a periodic wrapper that does exactly this end to end.
 ```
 <!-- google-doc-style-resume -->
+
+
+### Several training runs in one repository (`--run-label`)
+
+A branch name is the output directory name, and by default that is the
+Megatron iteration directory (`iter_0086000`). That is unambiguous for a
+single run, but not when several runs publish into one repository: two runs
+that reach the same iteration produce the same name, and the second one is
+silently dropped during discovery rather than reported as a conflict.
+
+Pass `--run-label <label>` to `mass_convert_checkpoints.py` and the outputs
+(and therefore branches) become `<label>_iter_NNNNNNN`. Invoke the tool once
+per run, each with its own label and its own
+`--checkpoints-dir`/`--training-config`. `upload_to_hf.py` discovers both the
+bare and the labelled form; pass `--run-label` there to restrict a pass to a
+single run.
+
+The Prelude 9B repository already uses this shape by convention
+(`iter_0953312` for the base run, `anneal300b_iter_0989075` for the anneal
+variant); `--run-label` makes it a first-class option instead of something
+assembled by hand.
+
+### Example: JUPITER, the 32B dense runs
+
+The 32B runs publish to one repository with every run labelled, so no run is
+privileged and a branch always states where it came from:
+
+| label | run | checkpoints |
+|---|---|---|
+| `v1` | `oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4` | 23 |
+| `v2` | `oellm_32b_v2_prod_gbs4096_lr1.76e-4` | 26 |
+| `v2zloss` | `oellm_32b_v2_zloss_unfused_i60k_gbs4096_lr1.76e-4` | 18 |
+| `fork` | `oellm_32b_dense_prod_dataopt5_deferoff_3e-4_i64k_seed1234` | 21 |
+| `b1` | `B1-reborn-production` (jitsev1's reanimation from 64k) | 89 |
+
+What differs from the Leonardo example:
+
+- **Checkpoints and training configs live on different file systems.**
+  `save:` writes to `$SCRATCH`, while `base_output_dir` (and therefore
+  `logs/current.yaml`) is on `$PROJECT`. The two paths do not share a prefix,
+  so they have to be given separately.
+- **`singularity` is Apptainer** under a compatibility name, so the submitted
+  command works unchanged.
+- **`--gpus-per-task` is rejected** by this Slurm (`Invalid GRES
+  specification`), so pass `--gpu-binding gres` to request
+  `--gres=gpu:<tasks per node>` instead.
+- **One bind is enough**: `--singularity-bind /e` covers home, project,
+  scratch and fscratch.
+- **The QOS cap is much higher.** `normal` allows 512 jobs per user with a
+  12 h wall limit, against Leonardo's 2-job debug QOS, so throughput is set by
+  how much of the machine is reasonable to occupy rather than by the cap.
+- **A 32B needs more than the 30 min default**; allow about 1 h per checkpoint,
+  and prefer a tight limit: short jobs backfill far better on a machine that
+  usually has several thousand nodes allocated.
+- **Test rounds belong in the development reservation.** `--reservation
+  develbooster` (8 nodes, `jpbo-101-[01-08]`) starts in seconds instead of
+  queueing behind production work. Production passes leave it off.
+- **The tokenizer needs a `tokenizer.json` before the first conversion.**
+  `openeurollm/tokenizer-256k` publishes only a SentencePiece `tokenizer.model`,
+  and without `sentencepiece` in the image `transformers` falls back to the
+  TikToken parser and fails with `Error parsing line b'\x0e'`. Generate it once
+  on a login node, then restore the tracked metadata, which
+  `save_pretrained` rewrites in passing:
+
+  ```bash
+  uv run --with transformers --with sentencepiece --with protobuf python3 -c \
+    "from transformers import AutoTokenizer as T; p='oellm_autoexp/postprocess/resources/megatron_bridge/tokenizers/openeurollm/tokenizer-256k'; T.from_pretrained(p).save_pretrained(p)"
+  git checkout -- oellm_autoexp/postprocess/resources/megatron_bridge/tokenizers/openeurollm/tokenizer-256k
+  ```
+
+  The result is byte-identical to the `tokenizer.json` published with the 9B.
+- **No outgoing SSH.** Clone over HTTPS with a personal access token, and
+  rewrite any `ssh://` submodule URL (see the submodule note above) before
+  `git submodule update`.
+
+<!-- google-doc-style-ignore -->
+```bash
+# One run. Repeat per label; each writes into the same output tree.
+python3 scripts/mass_convert_checkpoints.py \
+    --run-label b1 \
+    --checkpoints-dir /e/fscratch/e-sta-openeurollm/jj1/reanimation_64k_20260911/B1-reborn-production/training_ckpts/checkpoints \
+    --training-config /e/fscratch/e-sta-openeurollm/jj1/reanimation_64k_20260911/B1-reborn-production/config/autoexp.yaml \
+    --output-dir /e/project1/e-sta-openeurollm/$USER/oellm-32b-ckpts \
+    --container-image /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-bridge-bridge_aarch64_202605191331.sif \
+    --singularity-bind /e \
+    --hf-repo-id openeurollm/oellm-32b \
+    --hf-model Qwen/Qwen3-32B --tokenizer openeurollm/tokenizer-256k \
+    --account e-sta-openeurollm --partition booster --qos normal \
+    --gpu-binding gres --time-limit 03:00:00 --group-size 4 --max-concurrent-jobs 16
+
+# Push what is converted so far, one branch per checkpoint.
+singularity exec --bind /e \
+    /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-bridge-bridge_aarch64_202605191331.sif \
+    python3 scripts/upload_to_hf.py \
+    --output-dir /e/project1/e-sta-openeurollm/$USER/oellm-32b-ckpts \
+    --repo-id openeurollm/oellm-32b
+```
+<!-- google-doc-style-resume -->
+
+A complete pass over all five runs is roughly 180 checkpoints at about 64 GB
+each, which does not fit alongside anything else in a project quota. Convert,
+upload and remove in batches rather than backfilling every export first.
