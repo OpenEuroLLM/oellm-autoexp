@@ -161,6 +161,13 @@ def main() -> int:
             branch = d.name
             if branch in complete_branches and not args.force:
                 skipped += 1
+                # Also reclaim a local copy whose branch was completed by an
+                # earlier pass (or another operator). Without this, anything
+                # published before --prune-after-upload existed, or during an
+                # interrupted round, is skipped forever and keeps its disk.
+                if args.prune_after_upload and d.exists() and branch_is_complete(branch):
+                    shutil.rmtree(d)
+                    print(f"  pruned local {d} (already complete on the Hub)", flush=True)
                 continue
             if args.dry_run:
                 print(f"[dry-run] would create branch {branch} and upload {d}")
