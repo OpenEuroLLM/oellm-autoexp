@@ -109,7 +109,7 @@ backend:
     cross_entropy_loss_fusion: false
     cross_entropy_fusion_impl: native   # inert while fusion is off; never TE again
 
-    exit_interval: 86000           # chain target; raise again to extend
+    exit_interval: 100000           # chain target; raise again to extend, 2026-09-22 raised to 100k
     # save_interval inherited from base (2000): ~12 persistent x 443 GB over 63k-86k
 
 slurm:
