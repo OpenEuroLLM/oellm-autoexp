@@ -2,22 +2,22 @@
 #
 # 40BT 0.4B MoE Muon grid on LUMI: LR × global batch size.
 #
-#   lr:    {5e-4, 1e-3, 5e-3}
-#   gbsz:  {256, 512, 1024}
-#   total: 3 × 3 = 9 jobs
+#   lr:    {1e-3, 5e-3}
+#   gbsz:  {256, 512, 1024, 2048, 4096}
+#   total: 2 × 5 = 10 jobs
+#   ckpts: every 5BT, plus one extra at WSD decay start (32BT / 80%)
 #
 # Hidden 2-D matrix parameters use Muon. Embeddings, output weights, norms,
 # and biases continue to use Adam.
 #
-# Submit a single combo (index 0 = lr=5e-4, gbsz=256):
+# Submit a single combo (index 0 = lr=1e-3, gbsz=256):
 #   uv run --python 3.12 python scripts/run_autoexp.py \
 #     --config-name experiments/risto/muon_lr_bsz_grid_qwen3_sparse_0.4B_ne_experts_32 \
-#     --array-subset 0 --submit-and-exit
+#     --array-subset 0
 #
-# Submit the full 9-job grid:
+# Submit and monitor the full 10-job grid (the process must stay alive for auto_restart):
 #   uv run --python 3.12 python scripts/run_autoexp.py \
 #     --config-name experiments/risto/muon_lr_bsz_grid_qwen3_sparse_0.4B_ne_experts_32 \
-#     --submit-and-exit
 
 defaults:
   - /backend: megatron
@@ -59,14 +59,19 @@ backend:
     # 40BT; iters scale with global_batch_size (seq_length=4096).
     train_iters: "${oc.eval:'(40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})'}"
     eval_iters: 5
-    eval_interval: 100
-    save_interval: "${oc.eval:'int(512000 // ${backend.megatron.global_batch_size})'}"
+    eval_interval: 1000
+    # One checkpoint every 5BT (same ceil formula as train_iters).
+    save_interval: "${oc.eval:'(5_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})'}"
+    # Extra save at WSD decay start. List items are interpolations only; the oc.eval
+    # lives on aux.save_step_br_0 (Hydra cannot oc.eval inside list overrides).
+    save_extra_steps:
+      - "${backend.megatron.aux.save_step_br_0}"
     load: "${job.base_output_dir}/checkpoints"
 
     moe_grouped_gemm: True
     use_distributed_optimizer: True
-    no_load_optim: True
-    no_load_rng: True
+    no_load_optim: False
+    no_load_rng: False
     # no_save_optim: True
     # no_save_rng: True
     wandb_exp_name: "${job.name}"
@@ -81,8 +86,13 @@ backend:
 
     seq_length: 4096
     max_position_embeddings: 4096
-    lr_warmup_iters: 2000
+    # Fixed 2.1BT warmup budget (= 2000 iters at gbsz 256) so warmup costs the same
+    # number of tokens at every batch size instead of growing with it.
+    lr_warmup_iters: "${oc.eval:'(2_097_152_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})'}"
     lr_wsd_decay_iters: "${oc.eval:'int(((40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})) * 0.2)'}"
+    aux:
+      # train_iters - lr_wsd_decay_iters: last stable step before 20% WSD decay.
+      save_step_br_0: "${oc.eval:'((40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})) - int(((40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})) * 0.2)'}"
 
     micro_batch_size: 2
     global_batch_size: 256  # overridden by sweep
@@ -95,7 +105,7 @@ backend:
     # Spectral Muon with RMS matching, so the Adam-tuned global LR remains a
     # sensible starting point. Adam handles scalar/vector and exterior params.
     
-    lr: 5.e-4
+    lr: 1.e-3
     muon_scalar_optimizer: adam
     adam_beta1: 0.9
     adam_beta2: 0.95
@@ -111,7 +121,6 @@ backend:
     muon_tp_mode: blockwise
     muon_split_qkv: True
     muon_extra_scale_factor: 0.2
-    muon_scalar_optimizer: adam
 
     
     overlap_param_gather_with_optimizer_step: False
@@ -124,7 +133,7 @@ backend:
     TRITON_HOME: /tmp/triton_cache
 
 
-# 3 × 3 Cartesian product over the full 40BT horizon.
+# 2 × 5 Cartesian product over the full 40BT horizon.
 sweep:
   type: product
   groups:
@@ -138,6 +147,8 @@ sweep:
         - backend.megatron.global_batch_size: 256
         - backend.megatron.global_batch_size: 512
         - backend.megatron.global_batch_size: 1024
+        - backend.megatron.global_batch_size: 2048
+        - backend.megatron.global_batch_size: 4096
 
 slurm:
   sbatch_extra_directives:
@@ -149,14 +160,16 @@ slurm:
     USE_ROCM_AITER_ROPE_BACKEND: "0"
   srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
   sbatch:
-    nodes: 4
+    nodes: 16
     # nodes: 1
     account: "project_462001516"
-    # partition: standard-g
-    partition: dev-g
-    # time: "0-18:00:00"
-    time: "00:10:00"
+    partition: standard-g
+    # partition: dev-g
+    time: "01-05:00:00"
+    # time: "00:10:00"
     output: "${job.base_output_dir}/logs/stdout-%j.log"
     error: "${job.base_output_dir}/logs/stderr-%j.log"
   srun:
     kill_on_bad_exit: "1 "
+
+

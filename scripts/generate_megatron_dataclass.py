@@ -108,10 +108,13 @@ def _type_name(value: Any, *, default: str = "None") -> str:
 def _type_repr(meta: MegatronArgMetadata, default: Any) -> tuple[str, set[str]]:
     imports: set[str] = set()
     base_type = meta.arg_type
+    # Shape/element inference may fall back to the metadata default, but nullability must
+    # follow the value we actually emit, otherwise we generate e.g. "bool = None".
+    shape_default = default
     if meta.default is not None and default is None:
-        default = meta.default
-    if base_type is None and default is not None:
-        base_type = type(default)
+        shape_default = meta.default
+    if base_type is None and shape_default is not None:
+        base_type = type(shape_default)
 
     if meta.choices:
         # If default is a string but choices are not (e.g., enum converted to string name),
@@ -136,7 +139,7 @@ def _type_repr(meta: MegatronArgMetadata, default: Any) -> tuple[str, set[str]]:
         type_repr = "str"
     elif base_type is list or meta.nargs in {"+", "*"}:
         elem_type = meta.element_type or (
-            type(default[0]) if isinstance(default, list) and default else Any
+            type(shape_default[0]) if isinstance(shape_default, list) and shape_default else Any
         )
         if elem_type is Any:
             imports.add("Any")
@@ -199,11 +202,14 @@ def generate_dataclass(
     fields: list[str] = []
     needs_field = False
     typing_imports: set[str] = set()
+    # A dest can be backed by several actions (e.g. --foo / --no-foo); emit one field only.
+    emitted: set[str] = set()
 
     for action in parser._actions:  # noqa: SLF001
         name = getattr(action, "dest", None)
-        if not name or name == "help" or name in excluded:
+        if not name or name == "help" or name in excluded or name in emitted:
             continue
+        emitted.add(name)
         if name not in metadata or name not in defaults:
             continue
         if keyword.iskeyword(name):
