@@ -93,6 +93,14 @@ sweep:
           job.est_step_time_s: 120
           job.est_startup_min: 1
           job.local: true
+          # Wait until the parent's tracker reaches >= 100000 (6-digit value
+          # starting 1-9). The tracker is written only after the async save is
+          # finalized, so the checkpoint is complete by then.
+          job.start_condition:
+            class_name: FileContentCondition
+            path: "${backend.aux.parent_ckpts}/latest_checkpointed_iteration.txt"
+            mode: regex
+            pattern: "^\\s*(1[0-9]{5}|[2-9][0-9]{5}|[0-9]{7,})\\s*$"
           # Any non-zero exit leaves SEED_FAILED in this job's output dir, which
           # the train stage's cancel_condition watches. (Not the log: a local
           # job can finish between two polls, so current.log may never appear.)
