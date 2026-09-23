@@ -1,0 +1,197 @@
+# @package _global_
+#
+# ============================================================================
+# COOLDOWN OF THE i60k LINE: 100000 -> 120000, 1-sqrt
+# ============================================================================
+# Everything is zloss_unfused_i60k's (model, lr 1.76e-4, z-loss, unfused CE,
+# parallelism, container, /job). Only the LR schedule and the data change:
+#
+#   data_args_path   datamix_jupiter_multilingual1_dominant3.txt (anneal mix)
+#   data_cache_path  its OWN directory (see stage cache below)
+#   train_samples          120000 * GBS   schedule ends at 120k
+#   lr_decay_samples       120000 * GBS   (= train_samples, explicit)
+#   lr_wsd_decay_samples    20000 * GBS   anneal window = 100000 -> 120000
+#   lr_wsd_decay_style     minus_sqrt     lr = max_lr * (1 - sqrt(t / 20000))
+#   exit_interval          120000
+#
+# train_samples CAN move here: the new mix needs a fresh index anyway, and a
+# 120k-iteration index is ~7x smaller to build than the 894k one.
+#
+# override_opt_param_scheduler is REQUIRED: the checkpoint stores
+# lr_decay_steps = 15 T samples, and optimizer_param_scheduler.py asserts
+# class == checkpoint value unless overridden. Everything else it resets
+# (max_lr, min_lr, warmup, decay style) is identical to the parent run.
+#
+# THREE STAGES, ONE COMMAND:
+#   seed  (local, login node) hardlinks the parent's iter_0100000 into this
+#         run's own checkpoint tree and writes its tracker. Hardlinks, not a
+#         symlink: load == save in ONE real directory, so a restart or a
+#         QuarantineCheckpointAction rename only ever touches this tree, never
+#         the parent. Same filesystem (/e/scratch), so no data is copied.
+#   cache (1 node, 1 rank) builds the dataset index for the new mix with a
+#         2-layer stand-in model and skip_train -- the recipe of the former
+#         oellm_32b_dense/data_cache_prebuild.yaml (full 15 T builds took ~1 h
+#         there). The model is not in the cache key; data, schedule, seed,
+#         GBS, eval_interval/eval_iters and split are, and all are shared with
+#         the train stage. Otherwise 512 nodes idle while rank 0 builds it.
+#   train (512 nodes) gated on BOTH: the seed tracker, and the cache job's log
+#         reaching "skipping training", which Megatron prints only after the
+#         train/valid/test indices are written.
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_v2/100k_annealing --dry-run
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_v2/100k_annealing
+#
+# Run the seed only AFTER the i60k run has finished writing iter_0100000; the
+# seed refuses to link unless the parent's tracker has reached 100000.
+#
+# A KILLED CACHE BUILD POISONS THE CACHE (hit test is file presence only,
+# 0-byte files read as hits -> "EOFError: No data left in file"). If the cache
+# stage dies, before re-running it:
+#   find <data_cache_path> -maxdepth 1 -type f -size 0 -delete
+defaults:
+  - zloss_unfused_i60k
+  - _self_
+
+backend:
+  aux:
+    variant: "zloss_unfused_i60k_100kcooldown120k"
+    anneal_start_iter: 100000
+    anneal_end_iter: 120000
+    parent_ckpts: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_v2_zloss_unfused_i60k_gbs${backend.megatron.global_batch_size}_lr${backend.aux.lr_tag}/checkpoints
+    fork_iter_dir: iter_0100000
+  megatron:
+    data_args_path: /e/data1/datasets/playground/mmlaion/oellm/datamix_jupiter_multilingual1_dominant3.txt
+    # Own directory, not the shared production cache the parent is still
+    # reading: a killed build here can then only poison this run's cache.
+    data_cache_path: /e/fscratch/e-sta-openeurollm/production_training/oellm_32b_dense/cache_multilingual1_dominant3
+    train_samples: ${oc.muli:${backend.aux.anneal_end_iter},${backend.megatron.global_batch_size}}
+
+    lr_decay_style: WSD
+    lr_wsd_decay_style: minus_sqrt
+    lr_decay_samples: ${oc.muli:${backend.aux.anneal_end_iter},${backend.megatron.global_batch_size}}
+    lr_wsd_decay_samples: ${oc.muli:${oc.subi:${backend.aux.anneal_end_iter},${backend.aux.anneal_start_iter}},${backend.megatron.global_batch_size}}
+    override_opt_param_scheduler: true
+    exit_interval: ${backend.aux.anneal_end_iter}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ====== stage 0: hardlink the fork checkpoint (login node) ============
+        # No single quotes (template wraps it in bash -c '...') and no shell
+        # ${VAR} (OmegaConf); plain $VAR is fine. Idempotent: the tracker is
+        # the marker. A leftover .partial means an interrupted link -- remove it
+        # by hand (it only holds links, the parent is unaffected) and re-run.
+        - stage: seed
+          backend: bash
+          job: auto_cancel
+          job.name: "oellm_32b_v2_seed_${backend.aux.variant}"
+          job.est_steps: 1
+          job.est_step_time_s: 120
+          job.est_startup_min: 1
+          job.local: true
+          # Any non-zero exit leaves SEED_FAILED in this job's output dir, which
+          # the train stage's cancel_condition watches. (Not the log: a local
+          # job can finish between two polls, so current.log may never appear.)
+          # SEED_DIR is spelled out: ${job.base_output_dir} inside this command
+          # resolves to the TRAIN stage's directory, not this one.
+          backend.command: |
+            set -eu
+            SEED_DIR="/e/project1/e-sta-openeurollm/production_training/oellm_32b_v2_seed_${backend.aux.variant}"
+            MARKER="$SEED_DIR/SEED_FAILED"
+            mkdir -p "$SEED_DIR"
+            rm -f "$MARKER"
+            on_exit() { rc=$?; if [ $rc -ne 0 ]; then touch "$MARKER"; fi; }
+            trap on_exit EXIT
+            SRC="${backend.aux.parent_ckpts}/${backend.aux.fork_iter_dir}"
+            DST="${backend.megatron.save}"
+            TRACKER="$DST/latest_checkpointed_iteration.txt"
+            if [ -e "$TRACKER" ]; then
+              echo "[seed] $TRACKER exists -- already seeded, skipping"
+              exit 0
+            fi
+            PARENT_ITER=$(cat "${backend.aux.parent_ckpts}/latest_checkpointed_iteration.txt")
+            if [ "$PARENT_ITER" -lt ${backend.aux.anneal_start_iter} ] || [ ! -f "$SRC/.metadata" ]; then
+              echo "[seed] FATAL: parent tracker at $PARENT_ITER or no .metadata in $SRC -- refusing to seed"
+              exit 1
+            fi
+            if [ -e "$DST/${backend.aux.fork_iter_dir}.partial" ]; then
+              echo "[seed] FATAL: $DST/${backend.aux.fork_iter_dir}.partial left over from an interrupted seed"
+              exit 1
+            fi
+            mkdir -p "$DST"
+            cp -al "$SRC" "$DST/${backend.aux.fork_iter_dir}.partial"
+            mv "$DST/${backend.aux.fork_iter_dir}.partial" "$DST/${backend.aux.fork_iter_dir}"
+            echo "${backend.aux.anneal_start_iter}" > "$TRACKER"
+            echo "[seed] hardlinked $SRC to $DST/${backend.aux.fork_iter_dir}"
+            echo "[seed] wrote $TRACKER = ${backend.aux.anneal_start_iter}"
+
+        # ====== stage 1: build the dataset index cache (1 node, 1 rank) =======
+        # ONE rank: index building runs on rank 0 while the others wait in a
+        # barrier, and that barrier's NCCL watchdog killed an earlier 4-rank
+        # prebuild (job 1354000). Keys NOT touched here (data, schedule, seed,
+        # GBS, eval_*, split) must stay identical to the train stage.
+        - stage: cache
+          job: auto_cancel
+          job.name: "oellm_32b_v2_datacache_${backend.aux.variant}"
+          job.est_steps: 1
+          job.est_step_time_s: 7200
+          job.est_startup_min: 5
+          # slurm.sbatch.nodes is the real knob; torchrun's nnodes is tied to
+          # an aux value in base.yaml, so it is pinned here as well.
+          backend.torchrun_args.nnodes: 1
+          backend.torchrun_args.nproc_per_node: 1
+          slurm.sbatch.nodes: 1
+          slurm.sbatch.time: "04:00:00"
+          backend.megatron.skip_train: true
+          backend.megatron.distributed_timeout_minutes: 720
+          # no checkpoint in or out, no logging artefacts
+          backend.megatron.load: null
+          backend.megatron.save: null
+          backend.megatron.exit_on_missing_checkpoint: false
+          backend.megatron.non_persistent_ckpt_type: null
+          backend.megatron.non_persistent_global_ckpt_dir: null
+          backend.megatron.non_persistent_save_interval: null
+          backend.megatron.wandb_project: ""
+          backend.megatron.tensorboard_dir: null
+          # stand-in model: irrelevant to the cache key
+          backend.megatron.num_layers: 2
+          backend.megatron.hidden_size: 256
+          backend.megatron.ffn_hidden_size: 512
+          backend.megatron.num_attention_heads: 4
+          backend.megatron.num_query_groups: 4
+          backend.megatron.kv_channels: 64
+          backend.megatron.tensor_model_parallel_size: 1
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.pipeline_model_parallel_layout: null
+          backend.megatron.sequence_parallel: false
+          backend.megatron.tp_comm_overlap: false
+          backend.megatron.overlap_grad_reduce: false
+          backend.megatron.overlap_param_gather: false
+          backend.megatron.micro_batch_size: 1
+          backend.megatron.num_dataset_builder_threads: 64
+
+        # ====== stage 2: the cooldown ==========================================
+        - stage: train
+          job.start_condition:
+            class_name: AndCondition
+            conditions:
+              - class_name: FileExistsCondition
+                path: "${backend.megatron.save}/latest_checkpointed_iteration.txt"
+              - class_name: FileContentCondition
+                path: "/e/project1/e-sta-openeurollm/production_training/oellm_32b_v2_datacache_${backend.aux.variant}/logs/current.log"
+                pattern: "skipping training (--skip-train is on)"
+          # Drop the train stage (never submitted) if a prerequisite fails,
+          # instead of waiting forever. Checked every poll while it is pending.
+          job.cancel_condition:
+            class_name: OrCondition
+            conditions:
+              - class_name: FileExistsCondition
+                path: "/e/project1/e-sta-openeurollm/production_training/oellm_32b_v2_seed_${backend.aux.variant}/SEED_FAILED"
+              - class_name: FileContentCondition
+                path: "/e/project1/e-sta-openeurollm/production_training/oellm_32b_v2_datacache_${backend.aux.variant}/logs/current.log"
+                mode: regex
+                pattern: "Traceback|DUE TO TIME LIMIT|CANCELLED AT|srun: error"
