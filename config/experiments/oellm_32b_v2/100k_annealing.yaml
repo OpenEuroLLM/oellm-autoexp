@@ -64,7 +64,9 @@ backend:
     data_args_path: /e/data1/datasets/playground/mmlaion/oellm/datamix_jupiter_multilingual1_dominant3.txt
     # Own directory, not the shared production cache the parent is still
     # reading: a killed build here can then only poison this run's cache.
-    data_cache_path: /e/fscratch/e-sta-openeurollm/production_training/oellm_32b_dense/cache_multilingual1_dominant3
+    # NOT under /e/fscratch/.../production_training: that tree is vanosch1's,
+    # group read-only, so the build died on makedirs (job 1981483).
+    data_cache_path: /e/fscratch/e-sta-openeurollm/oellm_32b_dense_v2/cache_multilingual1_dominant3
     train_samples: ${oc.muli:${backend.aux.anneal_end_iter},${backend.megatron.global_batch_size}}
 
     lr_decay_style: WSD
