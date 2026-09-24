@@ -57,7 +57,7 @@ backend:
 
   megatron:
     # Architecture: ~34.9B with the 256K tokenizer and untied embeddings.
-    num_layers: 35
+    num_layers: 8
     hidden_size: 3072
     ffn_hidden_size: 8192
     num_attention_heads: 24
@@ -78,7 +78,7 @@ backend:
     moe_router_num_groups: null
     moe_router_group_topk: null
     moe_grouped_gemm: true
-    moe_use_legacy_grouped_gemm: false
+    # moe_use_legacy_grouped_gemm: false
     moe_token_dispatcher_type: alltoall
     moe_permute_fusion: true
     moe_router_fusion: false
@@ -92,7 +92,7 @@ backend:
     swiglu: true
     add_bias_linear: false
     normalization: RMSNorm
-    norm_epsilon: 1.e-6
+    layernorm_epsilon: 1.e-6
     attention_backend: flash
     use_flash_attn: true
     attention_softmax_in_fp32: true
@@ -221,7 +221,7 @@ slurm:
     TRITON_HOME: /tmp/triton_cache
   srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
   sbatch:
-    nodes: 4
+    nodes: 1
     partition: dev-g
     time: "00:30:00"
     output: "${job.base_output_dir}/logs/stdout-%j.log"
