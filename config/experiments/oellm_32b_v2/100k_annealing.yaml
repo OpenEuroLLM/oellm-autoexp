@@ -6,7 +6,8 @@
 # Everything is zloss_unfused_i60k's (model, lr 1.76e-4, z-loss, unfused CE,
 # parallelism, container, /job). Only the LR schedule and the data change:
 #
-#   data_args_path   datamix_jupiter_multilingual1_dominant3.txt (anneal mix)
+#   data_args_path   datamix_jupiter_multilingual1_dominant3_complete.txt
+#                    (anneal mix; see the data block below)
 #   data_cache_path  its OWN directory (see stage cache below)
 #   train_samples          120000 * GBS   schedule ends at 120k
 #   lr_decay_samples       120000 * GBS   (= train_samples, explicit)
@@ -61,7 +62,13 @@ backend:
     parent_ckpts: /e/scratch/e-sta-openeurollm/production_training/oellm_32b_v2_zloss_unfused_i60k_gbs${backend.megatron.global_batch_size}_lr${backend.aux.lr_tag}/checkpoints
     fork_iter_dir: iter_0100000
   megatron:
-    data_args_path: /e/data1/datasets/playground/mmlaion/oellm/datamix_jupiter_multilingual1_dominant3.txt
+    # The _complete mix is the plain one with every prefix moved from
+    # training/collection/flag/ to flag_training_complete/. That tree holds a
+    # symlink per dataset in flag/ plus the 16 mixture-vitae-1.0-nuggets
+    # subsets that were missing on JUPITER, copied from LUMI (2026-09-24,
+    # scripts/korbi/transfer_lumi_to_jupiter.sh). Symlinks, not hardlinks:
+    # the flag/ shards are vanosch1's, and JUPITER refuses to hardlink them.
+    data_args_path: /e/data1/datasets/playground/mmlaion/oellm/datamix_jupiter_multilingual1_dominant3_complete.txt
     # Own directory, not the shared production cache the parent is still
     # reading: a killed build here can then only poison this run's cache.
     # NOT under /e/fscratch/.../production_training: that tree is vanosch1's,
