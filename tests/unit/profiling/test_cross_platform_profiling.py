@@ -267,6 +267,34 @@ class CaptureTests(unittest.TestCase):
         self.assertIn("--trace=cuda,nvtx", nsys)
         self.assertIn("rank1.sqlite", nsys_expected)
 
+    def test_dependent_analysis_script(self) -> None:
+        module = _load_run_profile()
+        options = {
+            "enabled": True,
+            "auto_run": True,
+            "execution": "dependent_slurm",
+            "steady_start_iteration": 5,
+            "canvas": True,
+            "partition": "small",
+            "account": "project_test",
+            "cpus": 4,
+            "memory": "16G",
+            "time": "00:10:00",
+        }
+        with TemporaryDirectory() as raw:
+            output = Path(raw) / "profiling"
+            with mock.patch.dict(os.environ, {"SLURM_JOB_ID": "123"}, clear=False):
+                command = module._analysis_command(
+                    output, options, python_prefix=["uv", "run"]
+                )
+                script = module._render_analysis_sbatch(output, options, command)
+                text = script.read_text(encoding="utf-8")
+        self.assertIn("--stdout", command)
+        self.assertTrue(any(value.endswith("stdout-123.log") for value in command))
+        self.assertIn("#SBATCH --partition=small", text)
+        self.assertIn("#SBATCH --account=project_test", text)
+        self.assertIn("profile-analysis.canvas.tsx", text)
+
     def test_unselected_rank_passes_through(self) -> None:
         module = _load_run_profile()
         with mock.patch.dict(os.environ, {"SLURM_PROCID": "3"}, clear=False):

@@ -11,7 +11,14 @@ capture:
   markers: false
 analysis:
   enabled: false
+  auto_run: false
+  execution: dependent_slurm
   steady_start_iteration: 5
   steady_end_iteration: null
   canvas: false
+  partition: null
+  account: null
+  cpus: 8
+  memory: 32G
+  time: "00:20:00"
 provider_options: {}

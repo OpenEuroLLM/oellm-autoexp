@@ -41,9 +41,16 @@ def wrap_launch_command(config: ProfilingConfig, launch_command: str) -> str:
         _encoded_options(
             {
                 "enabled": config.analysis.enabled,
+                "auto_run": config.analysis.auto_run,
+                "execution": config.analysis.execution,
                 "steady_start_iteration": config.analysis.steady_start_iteration,
                 "steady_end_iteration": config.analysis.steady_end_iteration,
                 "canvas": config.analysis.canvas,
+                "partition": config.analysis.partition,
+                "account": config.analysis.account,
+                "cpus": config.analysis.cpus,
+                "memory": config.analysis.memory,
+                "time": config.analysis.time,
             }
         ),
         "--",

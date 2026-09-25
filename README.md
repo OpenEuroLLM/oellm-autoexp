@@ -114,6 +114,17 @@ uv run scripts/run_autoexp.py --config-name experiments/YOURNAME/myexperiment \
   profiling=nsys 'profiling.ranks=[0]' --submit-and-exit
 ```
 
+To submit analysis automatically as a dependent CPU job:
+
+```bash
+uv run scripts/run_autoexp.py --config-name experiments/YOURNAME/myexperiment \
+  profiling=rocprofv3 'profiling.ranks=[0]' \
+  profiling.analysis.auto_run=true \
+  profiling.analysis.partition=small \
+  profiling.analysis.account=project_123 \
+  --submit-and-exit
+```
+
 Analyze either provider through the same CLI:
 
 ```bash

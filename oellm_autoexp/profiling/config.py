@@ -20,9 +20,20 @@ class CaptureDomainsConfig(ConfigInterface):
 @dataclass(kw_only=True)
 class ProfileAnalysisConfig(ConfigInterface):
     enabled: bool = True
+    auto_run: bool = False
+    execution: str = "dependent_slurm"
     steady_start_iteration: int = 5
     steady_end_iteration: int | None = None
     canvas: bool = False
+    partition: str | None = None
+    account: str | None = None
+    cpus: int = 8
+    memory: str = "32G"
+    time: str = "00:20:00"
+
+    def __post_init__(self) -> None:
+        if self.execution not in {"dependent_slurm", "same_job"}:
+            raise ValueError(f"Unsupported profiling analysis execution: {self.execution}")
 
 
 @dataclass(kw_only=True)
