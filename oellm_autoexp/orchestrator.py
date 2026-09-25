@@ -22,7 +22,7 @@ from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
 from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
 from oellm_autoexp.monitor.submission import SlurmJobConfig, LocalJobConfig
 from oellm_autoexp.slurm_gen.generator import generate_script
-from oellm_autoexp.profiling.capture import wrap_launch_command
+from oellm_autoexp.profiling.capture import analysis_submission_command, wrap_launch_command
 
 import oellm_autoexp.backends.megatron_backend  # noqa  - register
 import oellm_autoexp.postprocess.megatron_dist_to_torch  # noqa  - register
@@ -259,6 +259,7 @@ def _build_job_record(
         log_path=str(job.config.job.log_path),
         command=[launch_cmd],
         env=job.config.slurm.env,
+        after_run_cmd=analysis_submission_command(job.config.profiling),
     )
 
     base_job = job.config.job

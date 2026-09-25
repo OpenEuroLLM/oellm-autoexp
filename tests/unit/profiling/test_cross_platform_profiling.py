@@ -18,8 +18,8 @@ from oellm_autoexp.profiling.analysis import (
     parse_iteration_log,
     select_steady_window,
 )
-from oellm_autoexp.profiling.capture import wrap_launch_command
-from oellm_autoexp.profiling.config import ProfilingConfig
+from oellm_autoexp.profiling.capture import analysis_submission_command, wrap_launch_command
+from oellm_autoexp.profiling.config import ProfileAnalysisConfig, ProfilingConfig
 from oellm_autoexp.profiling.models import ProfilingError
 from oellm_autoexp.profiling.reporting import render_canvas, write_reports
 from oellm_autoexp.profiling.taxonomy import classify_kernel
@@ -244,6 +244,16 @@ class CaptureTests(unittest.TestCase):
         self.assertIn("--ranks 0,2", command)
         self.assertIn("--analysis-options", command)
         self.assertTrue(command.endswith("-- python train.py --x 1"))
+
+    def test_outer_analysis_submission_command(self) -> None:
+        config = ProfilingConfig(
+            provider="rocprofv3",
+            output_dir="/tmp/profile",
+            analysis=ProfileAnalysisConfig(auto_run=True, execution="dependent_slurm"),
+        )
+        command = analysis_submission_command(config)
+        self.assertIn("analyze-*.sbatch", command)
+        self.assertIn("sbatch --dependency=afterok:${SLURM_JOB_ID}", command)
 
     def test_provider_commands(self) -> None:
         module = _load_run_profile()

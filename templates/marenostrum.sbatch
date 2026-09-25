@@ -5,3 +5,5 @@
 
 echo "Launching job {job_name}"
 srun {srun_opts} bash -c '{launcher_cmd} {command}'
+
+{after_run_cmd}

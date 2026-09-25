@@ -176,8 +176,7 @@ def _run_or_submit_analysis(output_dir: Path, options: dict[str, Any]) -> None:
         return
 
     job_id = os.environ.get("SLURM_JOB_ID")
-    sbatch = shutil.which("sbatch")
-    if not job_id or not sbatch:
+    if not job_id:
         print(
             "warning: dependent analysis requested outside Slurm; running in current job",
             file=sys.stderr,
@@ -190,16 +189,10 @@ def _run_or_submit_analysis(output_dir: Path, options: dict[str, Any]) -> None:
         output_dir, options, python_prefix=["uv", "run", "--python", "3.12"]
     )
     script = _render_analysis_sbatch(output_dir, options, command)
-    result = subprocess.run(
-        [sbatch, f"--dependency=afterok:{job_id}", str(script)],
-        capture_output=True,
-        text=True,
-        check=False,
+    print(
+        f"run_profile: prepared dependent analysis script for outer batch shell: {script}",
+        file=sys.stderr,
     )
-    if result.returncode:
-        print(f"warning: failed to submit profiling analysis: {result.stderr}", file=sys.stderr)
-    else:
-        print(f"run_profile: submitted dependent analysis: {result.stdout.strip()}", file=sys.stderr)
 
 
 def build_parser() -> argparse.ArgumentParser:
