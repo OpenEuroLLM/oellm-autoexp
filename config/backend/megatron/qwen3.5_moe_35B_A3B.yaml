@@ -31,7 +31,7 @@ num_query_groups: 2
 kv_channels: 256
 
 normalization: RMSNorm
-norm_epsilon: 1.0e-6
+layernorm_epsilon: 1.0e-6
 layernorm_zero_centered_gamma: true
 swiglu: true
 add_bias_linear: false

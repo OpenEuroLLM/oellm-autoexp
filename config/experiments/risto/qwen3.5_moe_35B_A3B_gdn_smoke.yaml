@@ -23,10 +23,10 @@ container:
     WANDB_TAGS: "lumi,qwen3.5,35B-A3B,GDN,MoE,smoke"
 
 index: 0
-stage: gdn_smoke
+stage: "" 
 
 job:
-  name: "qwen3.5_moe_35B_A3B_${stage}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}_EP${backend.megatron.expert_model_parallel_size}"
+  name: "qwen3.5_moe_35B_A3B_${stage}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}_EP${backend.megatron.expert_model_parallel_size}_moe_comm_overlap_${backend.megatron.overlap_moe_expert_parallel_comm}"
   base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
   log_path: ${slurm.sbatch.error}
 
@@ -58,23 +58,39 @@ backend:
     no_save_rng: true
     log_interval: 1
 
-    tokenizer_type: HuggingFaceTokenizer
-    tokenizer_model: openeurollm/tokenizer-256k
+    # tokenizer_type: HuggingFaceTokenizer
+    # tokenizer_model: openeurollm/tokenizer-256k
     seq_length: 4096
     micro_batch_size: 1
     global_batch_size: 64
     lr: 1.0e-4
 
     # 8 nodes × 8 GCD = 64 ranks; TP=2, PP=2, EP=8 → DP=2.
-    tensor_model_parallel_size: 2
-    pipeline_model_parallel_size: 2
+    # Configs that work: 
+    # TP=1 , PP=2 , EP=8, no recompute, 4 nodes.
+    # TP=2 , PP=1 , EP=8, no recompute, 4 nodes.
+    num_layers: 8
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
     expert_tensor_parallel_size: 1
     expert_model_parallel_size: 8
     sequence_parallel: true
     use_distributed_optimizer: true
-    recompute_granularity: full
-    recompute_method: uniform
-    recompute_num_layers: 1
+    moe_permute_fusion: true
+    # moe_shared_expert_overlap: false
+    overlap_moe_expert_parallel_comm: false
+    # recompute_granularity: selective
+    # recompute_num_layers: 1
+
+    # Change the output head to a tiny linear layer.
+    tokenizer_type: NullTokenizer
+    tokenizer_model: null
+    vocab_size: 8191
+    null_tokenizer_eod_id: 8191
+    null_tokenizer_pad_id: -1
+    make_vocab_size_divisible_by: 128
+
+
 
     wandb_exp_name: "${job.name}"
     wandb_project: "qwen3.5_moe_35B_A3B_gdn"
@@ -82,10 +98,36 @@ backend:
     wandb_save_dir: "${job.base_output_dir}"
     tensorboard_dir: "${job.base_output_dir}/tensorboard"
 
-  env:
-    TOKENIZERS_PARALLELISM: "false"
-    HF_HUB_OFFLINE: "0"
-    TRITON_HOME: /tmp/triton_cache
+### Example of a sweep config:
+
+
+# # 2 × 5 Cartesian product over the full 40BT horizon.
+# sweep:
+#   type: product
+#   groups:
+#     - type: list
+#       configs:
+#         - backend.megatron.lr: 5.e-4
+#         - backend.megatron.lr: 1.e-3
+#         - backend.megatron.lr: 5.e-3
+#     - type: list
+#       configs:
+#         - backend.megatron.global_batch_size: 256
+#         - backend.megatron.global_batch_size: 512
+#         - backend.megatron.global_batch_size: 1024
+#         - backend.megatron.global_batch_size: 2048
+#         - backend.megatron.global_batch_size: 4096
+
+# sweep moe comms overlap
+# sweep:
+#   type: product 
+#   groups:
+#     - type: list
+#       configs:
+#         - backend.megatron.overlap_moe_expert_parallel_comm: true
+#         - backend.megatron.overlap_moe_expert_parallel_comm: false
+
+    
 
 slurm:
   sbatch_extra_directives:
@@ -96,7 +138,7 @@ slurm:
     USE_ROCM_AITER_ROPE_BACKEND: "0"
   srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
   sbatch:
-    nodes: 2
+    nodes: 1
     account: "project_462001516"
     partition: dev-g
     time: "00:30:00"
