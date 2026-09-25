@@ -99,6 +99,32 @@ python scripts/run_autoexp.py --config-name experiments/default
 
 ```
 
+### Cross-platform timeline profiling
+
+Use the normal AutoExp launcher and select the profiler independently of the
+experiment config:
+
+```bash
+# AMD ROCm
+uv run scripts/run_autoexp.py --config-name experiments/YOURNAME/myexperiment \
+  profiling=rocprofv3 'profiling.ranks=[0]' --submit-and-exit
+
+# NVIDIA
+uv run scripts/run_autoexp.py --config-name experiments/YOURNAME/myexperiment \
+  profiling=nsys 'profiling.ranks=[0]' --submit-and-exit
+```
+
+Analyze either provider through the same CLI:
+
+```bash
+uv run scripts/profiling/analyze_profile.py /path/to/job/profiling \
+  --stdout /path/to/stdout.log --config /path/to/config.yaml
+```
+
+The capture manifest selects the provider automatically. Reports include JSON,
+CSV, Markdown, and an optional Cursor Canvas. Timeline profiles do not contain
+the hardware counters required for a measured roofline.
+
 ### Training → conversion → evaluation chain (Megatron-Bridge + oellm-evals)
 
 A reference chain that trains in Megatron-LM, converts the

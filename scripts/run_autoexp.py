@@ -15,12 +15,12 @@ from collections.abc import Iterable
 from uuid import uuid4
 
 from compoconf import asdict
+import yaml
 
 from oellm_autoexp.config.loader import load_config_reference
 from oellm_autoexp.config.schema import ConfigSetup
 from oellm_autoexp.orchestrator import (
     build_execution_plan,
-    generate_scripts,
     ExecutionPlan,
     render_job_scripts,
     submit_jobs,
@@ -198,13 +198,49 @@ def _parse_subset(spec: str | None) -> set[int]:
     return indices
 
 
+def _hydra_value(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, separators=(",", ":"))
+    return str(value)
+
+
+def _flatten_profile_config(prefix: str, value: object) -> list[str]:
+    if isinstance(value, dict):
+        result: list[str] = []
+        for key, nested in value.items():
+            result.extend(_flatten_profile_config(f"{prefix}.{key}", nested))
+        return result
+    return [f"++{prefix}={_hydra_value(value)}"]
+
+
+def _normalize_profiling_overrides(overrides: list[str], config_dir: Path) -> list[str]:
+    """Expand ``profiling=<choice>`` without requiring every experiment default list to change."""
+
+    normalized: list[str] = []
+    for override in overrides:
+        if override.startswith("profiling=") and not override.startswith("+"):
+            choice = override.split("=", 1)[1]
+            path = config_dir / "profiling" / f"{choice}.yaml"
+            if not path.exists():
+                raise ValueError(f"Unknown profiling config {choice!r}: {path} does not exist")
+            payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            normalized.extend(_flatten_profile_config("profiling", payload))
+        else:
+            normalized.append(override)
+    return normalized
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     configure_logging(not args.no_verbose, args.debug)
 
     config_dir = Path(args.config_dir)
 
-    overrides = list(args.overrides)
+    overrides = _normalize_profiling_overrides(list(args.overrides), config_dir)
     if args.local:
         # Force single-node torchrun
         overrides = ["++slurm.sbatch.nodes=1"] + overrides

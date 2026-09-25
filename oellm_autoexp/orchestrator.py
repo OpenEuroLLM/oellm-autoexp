@@ -22,6 +22,7 @@ from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
 from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
 from oellm_autoexp.monitor.submission import SlurmJobConfig, LocalJobConfig
 from oellm_autoexp.slurm_gen.generator import generate_script
+from oellm_autoexp.profiling.capture import wrap_launch_command
 
 import oellm_autoexp.backends.megatron_backend  # noqa  - register
 import oellm_autoexp.postprocess.megatron_dist_to_torch  # noqa  - register
@@ -227,6 +228,7 @@ def _build_job_record(
 
     backend = job.config.backend.instantiate(BackendInterface)
     launch_cmd = backend.build_launch_command()
+    launch_cmd = wrap_launch_command(job.config.profiling, launch_cmd)
 
     container = job.config.container if isinstance(job.config.container, ContainerConfig) else None
 

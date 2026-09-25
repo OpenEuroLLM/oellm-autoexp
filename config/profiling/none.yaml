@@ -1,0 +1,17 @@
+# @package profiling
+provider: none
+mode: timeline
+ranks: [0]
+output_dir: ${job.base_output_dir}/profiling
+capture:
+  kernel: true
+  runtime: true
+  communication: true
+  memory: true
+  markers: false
+analysis:
+  enabled: false
+  steady_start_iteration: 5
+  steady_end_iteration: null
+  canvas: false
+provider_options: {}

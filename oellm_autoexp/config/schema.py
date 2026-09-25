@@ -16,6 +16,7 @@ from typing import Any, TypedDict
 from compoconf import ConfigInterface, RegistrableConfigInterface, register_interface
 
 from oellm_autoexp.postprocess import PostProcessStepInterface
+from oellm_autoexp.profiling.config import ProfilingConfig
 
 # Import base classes from oellm_autoexp.hydra_staged_sweep
 from oellm_autoexp.hydra_staged_sweep.config.schema import (
@@ -123,6 +124,9 @@ class RootConfig(StagedSweepRoot):
     postprocess: dict[str, PostProcessStepInterface.cfgtype] = field(
         default_factory=dict
     )  # optional post-processing steps (e.g. ckpt conversion, eval)
+    profiling: ProfilingConfig = field(
+        default_factory=ProfilingConfig
+    )  # optional provider-neutral timeline profiling
 
     aux: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
