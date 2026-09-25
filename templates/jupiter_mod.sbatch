@@ -11,3 +11,5 @@ ml NCCL/default-CUDA-13
 
 echo "Launching {job_name} on JUPITER"
 srun {srun_opts}bash -c '{launcher_cmd} {command}'
+
+{after_run_cmd}

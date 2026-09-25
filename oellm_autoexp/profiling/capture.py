@@ -58,4 +58,25 @@ def wrap_launch_command(config: ProfilingConfig, launch_command: str) -> str:
     return " ".join(shlex.quote(part) for part in prefix) + " " + launch_command
 
 
-__all__ = ["wrap_launch_command"]
+def analysis_submission_command(config: ProfilingConfig) -> str:
+    """Return an outer-shell command that submits the generated analysis script."""
+
+    if (
+        not config.enabled
+        or not config.analysis.enabled
+        or not config.analysis.auto_run
+        or config.analysis.execution != "dependent_slurm"
+    ):
+        return ""
+    analysis_dir = shlex.quote(f"{config.output_dir}/analysis")
+    return (
+        f'ANALYSIS_SCRIPT=$(ls -t {analysis_dir}/analyze-*.sbatch 2>/dev/null | head -n 1)\n'
+        'if [ -n "$ANALYSIS_SCRIPT" ]; then\n'
+        '  sbatch --dependency=afterok:${SLURM_JOB_ID} "$ANALYSIS_SCRIPT"\n'
+        "else\n"
+        f'  echo "warning: profiling analysis script not found under {analysis_dir}" >&2\n'
+        "fi"
+    )
+
+
+__all__ = ["analysis_submission_command", "wrap_launch_command"]

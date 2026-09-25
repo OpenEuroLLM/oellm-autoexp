@@ -67,3 +67,5 @@ for (( i=0; i<$SLURM_NNODES; i++ )); do
     fi
 done
 wait
+
+{after_run_cmd}

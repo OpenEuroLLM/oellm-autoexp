@@ -64,6 +64,7 @@ def build_replacements(
         "sbatch_directives": "\n".join(build_sbatch_directives(config)),
         "env_exports": env_exports,
         "launcher_cmd": config.launcher_cmd or "",
+        "after_run_cmd": config.after_run_cmd or "",
         "srun_opts": config.srun_opts or build_srun_flags(config),
         "launcher_env_passthrough": str(config.launcher_env_passthrough).lower(),
     }

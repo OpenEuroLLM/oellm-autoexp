@@ -65,6 +65,7 @@ class SlurmConfig(ConfigInterface):
     log_path: str | None = None
     array: bool = False
     launcher_cmd: str = ""
+    after_run_cmd: str = ""
     srun_opts: str = ""
     launcher_env_passthrough: bool = False
     env: dict[str, Any] = field(default_factory=dict)
