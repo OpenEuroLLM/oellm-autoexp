@@ -1,0 +1,216 @@
+# @package _global_
+# Shared base of the Complex-KDA Megatron scaling sweeps (ckda_*.yaml, generated
+# from sweep_spec.yaml by scripts/korbi/gen_ckda_sweep.py). Hand-written; the
+# generated files only add per-point geometry, arm flags and stage schedules.
+#
+# Ported from ComplexKDA lm_scaling/megatron_ext/config/ckda_ladder_jupiter.yaml
+# (github.com/OpenEuroLLM/ComplexKDA), itself the reference's own scaling config
+# (../megatron_niccolo_130M_scaling_jupiter.yaml, arXiv:2608.28308) with these
+# deliberate differences, kept here:
+#   adam_beta2 0.99 -> 0.95   one value across the whole ladder
+#   biases off                outside the (C)KDA layers, which keep fla's own
+#   qk_layernorm off          the default arm; `attn_qknorm` turns it on
+#   ckpt_format torch         torch_dist aborts the save of a 3:1 hybrid with
+#                             "9 ShardedObject are missing" (the attention
+#                             layers' core_attention._extra_state exists in 3 of
+#                             12 layer slots). DP-only, fixed width per chain, so
+#                             nothing is lost. Needs the Megatron fix that makes
+#                             --ckpt-step also pick the distributed-optimizer
+#                             state (checkpointing.py, load_checkpoint).
+# Differences from the ComplexKDA campaign itself:
+#   job auto_restart          stables may span several 12h windows now that the
+#                             trunk is no longer segmented per budget
+#   stage-separated chains    every cell is stable -> firstcd -> contcd, also
+#                             the formerly single-stage `ladder` cells
+defaults:
+  - ../../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter_liger_mamba
+  - /slurm: jupiter
+  - /backend/megatron: [base, data_nemonicco_jupiter]
+  - /sweep: none
+  - override /job: auto_restart
+  - _self_
+
+aux:
+  experiment_group: ckda_megatron
+  # Placeholders so the bare base composes; every sweep point sets them.
+  ladder: none
+  arm: attn
+  size: s47M
+  hidden: 384
+  layers: 12
+  heads: 6
+  # Per-arm tables keyed by size (set by the arm entry; the recipe sets
+  # aux.size): the matched MLP width, and the parameter count Megatron should
+  # print at startup ("number of parameters on (tensor, pipeline) ...").
+  ffn_by_size: {s47M: 1536}
+  params_by_size: {s47M: 0}
+  gbs: 32
+  mbs: 8
+  mbs_key: m8        # = "m<mbs>", the aux.tok_s key (a key segment cannot mix text and interpolation)
+  tokens: 6_000_000_000
+  seq_len: 4096
+  decay_fraction: 0.2
+  start_iter: 0
+  extra_steps: []
+  # tok/s/GPU of this arm, keyed by size then micro-batch (m1, m2, ...); set
+  # per arm entry. Placeholder value for the bare base.
+  tok_s: {s47M: {m8: 100000}}
+  # Un-capped runtime of this point in HOURS; run_autoexp prefers it over
+  # slurm --time for the GPU-h estimate and right-sizes the reservation to
+  # min(12h, 1.5 x true_time). Escaped: resolves per point at final composition.
+  # The end-of-job eval counts as eval_iters/3 steps (forward only): on a
+  # small-budget contcd the 204,800-sequence eval is as long as the decay.
+  true_time: "\\${oc.eval:'(\\${backend.megatron.train_iters} - \\${aux.start_iter} + \\${backend.megatron.eval_iters} / 3.0) * \\${aux.seq_len} * \\${aux.gbs} / (\\${aux.tok_s.\\${aux.size}.\\${aux.mbs_key}} * \\${slurm.sbatch.nodes} * \\${slurm.sbatch.gpus_per_node} * 3600.0)'}"
+  # The ComplexKDA checkout whose vendored `fla` provides
+  # fla.layers.complex_kda_layer (the container's fla predates it).
+  ckda_repo: ${oc.env:CKDA_REPO,/e/project1/e-sta-openeurollm/poeppel1/complex_kda}
+
+backend:
+  megatron:
+    # ---- geometry (per point) ----
+    hidden_size: ${aux.hidden}
+    num_layers: ${aux.layers}
+    num_attention_heads: ${aux.heads}
+    num_query_groups: ${aux.heads}
+    kv_channels: 64
+    ffn_hidden_size: ${aux.ffn_by_size.${aux.size}}
+    padded_vocab_size: 50304
+    untie_embeddings_and_output_weights: false
+    normalization: RMSNorm
+    swiglu: true
+    position_embedding_type: rope   # rotary_base absent: Megatron's 10000, as the reference
+    rotary_percent: 1
+    rotary_scaling_factor: 1
+    qk_layernorm: false
+    add_qkv_bias: false
+    add_bias_linear: false
+    attention_dropout: 0
+    hidden_dropout: 0
+    max_position_embeddings: ${aux.seq_len}
+    seq_length: ${aux.seq_len}
+    tokenizer_model: EleutherAI/gpt-neox-20b
+    tokenizer_type: HuggingFaceTokenizer
+
+    # ---- precision / fusions ----
+    bf16: true
+    accumulate_allreduce_grads_in_fp32: true
+    bias_dropout_fusion: false
+    bias_gelu_fusion: false
+    bias_swiglu_fusion: false
+    gradient_accumulation_fusion: false
+    use_flash_attn: true
+    grad_reduce_in_bf16: false
+
+    # ---- optimizer / WSD ----
+    lr: 0.002                     # per recipe
+    min_lr: 1.0e-05
+    adam_beta2: 0.95
+    weight_decay: 0.1
+    clip_grad: 1
+    head_lr_mult: 1.0
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_warmup_init: 0
+    # The reference's, NOT scaled with the budget.
+    lr_warmup_iters: 2000
+    lr_wsd_decay_iters: 0         # per stage
+
+    # ---- data / batching ----
+    global_batch_size: ${aux.gbs}
+    micro_batch_size: ${aux.mbs}
+    train_iters: "${oc.eval:'(${aux.tokens}+${aux.seq_len}*${aux.gbs}-1)//(${aux.seq_len}*${aux.gbs})'}"
+    dataloader_type: cyclic
+    classes_fraction: 1
+    data_per_class_fraction: 1
+    mask_factor: 1
+    sample_rate: 1
+    num_workers: 7
+    num_dataset_builder_threads: 6
+    # THE CORPUS, pinned here rather than inherited: the data group's paths are
+    # branch-specific (on hybrid_exp the train prefix is a jureap59 directory we
+    # cannot read). Train = the reference's 15% Nemotron-CC downsample; valid =
+    # the same 5% held-out split, from the copy we can read.
+    train_data_path:
+      - /e/data1/datasets/products/openeurollm/pretokenized/neox/copy_nemotron_downsampled_15p/high-all
+    valid_data_path:
+      - /e/project1/e-sta-openeurollm/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all
+    # One index cache PER JOB: points sharing a blend/budget/batch would
+    # otherwise race-build one file (EOFError in numpy.load). Rebuilding is
+    # deterministic (shuffle seeded by --seed), so nothing changes but time.
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/ckda_megatron/${job.name}"
+
+    # ---- eval: once, at the end of each job ----
+    # 204,800 held-out sequences (the reference's 0.838BT set) on the reported
+    # cells (contcd sets eval_iters = 204800 // gbs); trunks and seeds only do
+    # a cheap sanity eval.
+    eval_interval: 1000000000
+    eval_iters: 10
+
+    # ---- parallelism: DP only (complex_kda refuses TP > 1) ----
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    expert_model_parallel_size: 1
+    expert_tensor_parallel_size: 1
+    sequence_parallel: false
+    use_distributed_optimizer: true
+    overlap_p2p_comm: false
+    align_param_gather: false
+
+    # ---- checkpointing ----
+    ckpt_format: torch
+    save: ${job.base_output_dir}
+    save_interval: 1000000000     # per stage
+    save_extra_steps: ${aux.extra_steps}
+    # torch format has no rolling (non-persistent) checkpoint; both off.
+    non_persistent_ckpt_type: null
+    non_persistent_save_interval: null
+
+    # ---- logging ----
+    log_interval: 10
+    log_progress: true
+    log_throughput: true
+    rerun_mode: disabled
+    wandb_project: complex_kda_megatron
+    wandb_exp_name: ${job.name}
+    wandb_save_dir: ${job.base_output_dir}/wandb
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+  env:
+    # Megatron from the checkout, then ComplexKDA's fla ahead of the container's.
+    PYTHONPATH: ".:submodules/Megatron-LM:${aux.ckda_repo}"
+    TOKENIZERS_PARALLELISM: "false"
+    # PINNED via CKDA_HF_HOME rather than ${oc.env:HF_HOME}: a moved login-shell
+    # HF_HOME once pointed 31 queued jobs at a cache without the tokenizer.
+    # NO TRANSFORMERS_CACHE: transformers 4.57 in this image gives it precedence
+    # over HF_HUB_CACHE and it points at an empty dir.
+    HF_HOME: ${oc.env:CKDA_HF_HOME,/e/fscratch/jureap59/poeppel1/cache}
+    HUGGINGFACE_HUB_CACHE: ${oc.env:CKDA_HF_HOME,/e/fscratch/jureap59/poeppel1/cache}/hub
+    # Node-local Triton cache: under $HF_HOME it exhausted the project's inodes
+    # ("Disk quota exceeded" inside chunk_kda_fwd on every linear arm).
+    TRITON_CACHE_DIR: "/tmp/ckda_${oc.env:USER}/triton"
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+    TORCHDYNAMO_DISABLE: "1"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+
+slurm:
+  env:
+    # Multi-node save: rooted NCCL gathers die on the P2P transport across
+    # nodes on JUPITER; ~0 throughput cost (see multilingual main sweep).
+    NCCL_P2P_DISABLE: "1"
+  sbatch:
+    nodes: 1
+    # QOS ceiling (sbatch >12h is rejected). run_autoexp shrinks each
+    # reservation to min(12h, 1.5 x aux.true_time); longer stables chain
+    # across windows via auto_restart.
+    time: "12:00:00"
+
+stage: stable
+
+job:
+  # The ladder is part of the name: two ladders may share (size, gbs, lr) --
+  # e.g. 47M gbs32 in `ladder` and `ladder_finegrained` -- and run separate
+  # trunks, which must not share a W&B/SLURM name.
+  name: ${aux.arm}_${aux.size}_${aux.ladder}_gbs${aux.gbs}_lr${backend.megatron.lr}_${stage}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"

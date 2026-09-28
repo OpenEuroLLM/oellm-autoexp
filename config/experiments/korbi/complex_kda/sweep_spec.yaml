@@ -1,0 +1,222 @@
+# NOT a Hydra config. Input of scripts/korbi/gen_ckda_sweep.py, which writes the
+# committed sweep files next to it (ckda_*.yaml, MODELS.md, BUDGET.md).
+#
+# Edit this, re-run the generator, commit both. The generated YAML is what gets
+# submitted and reviewed; nothing is computed at submit time.
+#
+#   .venv/bin/python scripts/korbi/gen_ckda_sweep.py
+#
+# The sweep is  ARM  x  RECIPE (size|data|gbs|lr). An arm carries its
+# parameter-matched width per size; a recipe is one WSD chain at one size: a
+# stable trunk plus a cooldown per budget branching off it
+# (stable -> firstcd -> contcd).
+
+# ---------------------------------------------------------------------------
+# Sizes: the dense ladder of Ajroldi et al., arXiv:2608.28308 Table 1, verbatim
+# (their fitted b*/eta* laws only hold at their N). `ffn` is the DENSE arm's
+# width and defines the parameter target every other arm is matched to.
+# mbs_cap / min_nodes: largest micro-batch that fits and the smallest width,
+# from the ComplexKDA torchtitan probes (submit_ladder.py MBS_CAP / MIN_NODES).
+# ---------------------------------------------------------------------------
+seq_len: 4096
+vocab_size: 50304          # padded, GPT-NeoX-20B tokenizer
+head_dim: 64
+tie_embeddings: true
+decay_fraction: 0.2
+gpus_per_node: 4
+ffn_multiple: 64           # matched widths snap to this grid
+
+sizes:
+  s47M:  {d_model: 384,  heads: 6,  layers: 12, ffn: 1536, mbs_cap: 16, min_nodes: 1}
+  s124M: {d_model: 576,  heads: 9,  layers: 18, ffn: 2304, mbs_cap: 16, min_nodes: 1}
+  s302M: {d_model: 896,  heads: 14, layers: 20, ffn: 3584, mbs_cap: 8,  min_nodes: 1}
+  s588M: {d_model: 1280, heads: 20, layers: 20, ffn: 5120, mbs_cap: 4,  min_nodes: 2}
+  s983M: {d_model: 1536, heads: 24, layers: 24, ffn: 6144, mbs_cap: 4,  min_nodes: 2}
+  s1p7B: {d_model: 2048, heads: 32, layers: 24, ffn: 8192, mbs_cap: 2,  min_nodes: 4}
+
+# ---------------------------------------------------------------------------
+# Arms. `megatron` is copied verbatim into every model entry; the generator only
+# adds the geometry and the matched ffn. `layout` tells the parameter counter
+# what the stack is built from (must agree with `megatron`, see the generator):
+#   mixer        attention | complex_kda | gated_delta_net
+#   attn_every   hybrid: layer i is full attention iff (i+1) % attn_every == 0
+#                (Megatron's linear_attention_freq); omit for a pure stack
+#   hybrid_attn  standard (Megatron TE attention) | gated_nope (fla, +d^2 gate)
+# `rate_as` names the throughput row in `rates` below.
+#
+# To add an arm: add an entry, re-run the generator. A new mixer type also
+# needs a counter in gen_ckda_sweep.py (MIXER_PARAMS), checked once against the
+# "number of parameters on (tensor, pipeline) model parallel rank (0, 0)" line
+# of a smoke run -- the generated aux.params_by_size[size] is that number.
+# ---------------------------------------------------------------------------
+arms:
+  attn:
+    layout: {mixer: attention}
+    rate_as: attn
+    megatron: {qk_layernorm: false}
+  attn_qknorm:
+    layout: {mixer: attention}
+    rate_as: attn
+    megatron: {qk_layernorm: true}
+  # The complex_kda family is ONE layer; the pairs differ only in the decay
+  # gate (sigmoid: alpha in (0,1) / signed_sigmoid2: alpha in (-1,1)) and beta's
+  # range. q/k/v SiLU dropped campaign-wide (measured: costs the unsigned arms
+  # 0.015-0.021 nats, the signed arms nothing -- per-arm would bias the pair).
+  kda_sig_lowrank:
+    layout: {mixer: complex_kda}
+    rate_as: kda-sig-lowrank
+    megatron: &kda_sig
+      qk_layernorm: false
+      experimental_attention_variant: complex_kda
+      linear_gate_activation: sigmoid
+      linear_gate_init_style: shipped
+      linear_gate_lower_bound: -5.0
+      linear_output_gate: lowrank
+      linear_beta_max: 1.0
+      linear_drop_qkv_silu: true
+  ckda_shipped_lowrank:
+    layout: {mixer: complex_kda}
+    rate_as: ckda-shipped-lowrank
+    megatron: &ckda
+      <<: *kda_sig
+      linear_gate_activation: signed_sigmoid2
+      linear_beta_max: 2.0
+  # Kimi-Linear 3:1 stack; the full-attention layers are output-gated and NoPE
+  # (gated_nope). The gate is d^2 params/attention layer, so `standard` would be
+  # a smaller model under the same name.
+  kda_sig_hybrid_lowrank:
+    layout: {mixer: complex_kda, attn_every: 4, hybrid_attn: gated_nope}
+    rate_as: kda-sig-hybrid-lowrank
+    megatron:
+      <<: *kda_sig
+      linear_attention_freq: 4
+      linear_hybrid_attention: gated_nope
+  ckda_shipped_hybrid_lowrank:
+    layout: {mixer: complex_kda, attn_every: 4, hybrid_attn: gated_nope}
+    rate_as: ckda-shipped-hybrid-lowrank
+    megatron:
+      <<: *ckda
+      linear_attention_freq: 4
+      linear_hybrid_attention: gated_nope
+  # Example of a further arm (Megatron's GatedDeltaNet at fla-equivalent dims).
+  # gdn:
+  #   layout: {mixer: gated_delta_net}
+  #   rate_as: gdn
+  #   megatron:
+  #     qk_layernorm: false
+  #     experimental_attention_variant: gated_delta_net
+  #     linear_key_head_dim: 64
+  #     linear_value_head_dim: 64
+  #     linear_num_key_heads: HEADS      # generator substitutes the size's heads
+  #     linear_num_value_heads: HEADS
+
+# Arms that run by default (order = sweep order). Remove one to drop it
+# everywhere; the models table (MODELS.md) always lists all of them.
+run_arms: [attn, attn_qknorm, kda_sig_lowrank, ckda_shipped_lowrank,
+           kda_sig_hybrid_lowrank, ckda_shipped_hybrid_lowrank]
+
+# ---------------------------------------------------------------------------
+# Recipes: one entry = one chain (shared stable trunk). A run cannot change
+# gbs/lr mid-way, so budgets are grouped by the (gbs, lr) they share.
+# gbs = b*(N,D) of arXiv:2608.28308 Table 2 snapped to its log2 grid; lr is held
+# per size (their eta* snapped to their grid is constant across 6-50BT; the weak
+# D-exponent 0.086 is not allowed to put an lr change on the D axis).
+# Budgets in BT.
+# ---------------------------------------------------------------------------
+ladders:
+  # arXiv budgets 6-50BT at the small sizes (ComplexKDA `ladder`, `ladder_beta`
+  # and `ladder_302M_upper`, now all chained).
+  ladder:
+    - {size: s47M,  gbs: 32,  lr: 0.002, budgets: [6]}
+    - {size: s47M,  gbs: 64,  lr: 0.002, budgets: [12, 20, 30]}
+    - {size: s47M,  gbs: 128, lr: 0.002, budgets: [50]}
+    - {size: s124M, gbs: 64,  lr: 0.001, budgets: [6, 12, 20]}
+    - {size: s124M, gbs: 128, lr: 0.001, budgets: [30, 50]}
+    - {size: s302M, gbs: 64,  lr: 0.001, budgets: [6, 12]}
+    - {size: s302M, gbs: 128, lr: 0.001, budgets: [20, 30, 50]}
+  # ComplexKDA `ladder_medium`, cell for cell.
+  ladder_medium:
+    - {size: s588M, gbs: 64,  lr: 0.0005, budgets: [6, 12]}
+    - {size: s588M, gbs: 128, lr: 0.0005, budgets: [20, 30, 50]}
+    - {size: s983M, gbs: 64,  lr: 0.0005, budgets: [6, 12]}
+    - {size: s983M, gbs: 128, lr: 0.0005, budgets: [20, 30, 50]}
+    - {size: s1p7B, gbs: 64,  lr: 0.0005, budgets: [6]}
+    - {size: s1p7B, gbs: 128, lr: 0.0005, budgets: [12, 20, 30, 50]}
+  # Small-D extension of the small sizes: 1, 1.5, 2, 4BT. b* from the same law:
+  #   47M: 17.7/21.4 -> 16, 24.4/33.6 -> 32;  124M: 20.4 -> 16, 24.6-38.6 -> 32;
+  #   302M: 23.2-43.9 -> 32.
+  # Warmup stays at the reference's fixed 2000 iters; the shortest trunk
+  # (302M, gbs 32, to 1BT: 6104 iters) spends a third of itself warming up.
+  ladder_finegrained:
+    - {size: s47M,  gbs: 16, lr: 0.002, budgets: [1, 1.5]}
+    - {size: s47M,  gbs: 32, lr: 0.002, budgets: [2, 4]}
+    - {size: s124M, gbs: 16, lr: 0.001, budgets: [1]}
+    - {size: s124M, gbs: 32, lr: 0.001, budgets: [1.5, 2, 4]}
+    - {size: s302M, gbs: 32, lr: 0.001, budgets: [1, 1.5, 2, 4]}
+
+# ---------------------------------------------------------------------------
+# Throughput, for node sizing and aux.true_time (-> run_autoexp's GPU-h
+# estimate and slurm reservations). Measured torchtitan tokens/s/GPU on GH200,
+# seq 4096, 4 GPUs (ComplexKDA lm_scaling/token_rate.yaml,
+# gh200_seq4096_titan_g4), keyed {rate_as: {size: {mbs: tok/s/GPU}}}, times one
+# Megatron/torchtitan factor measured at 47M attention mbs 8 (278,213/414,854).
+# An unmeasured mbs takes the next LOWER measured one (pessimistic).
+# ---------------------------------------------------------------------------
+megatron_rate_factor: 0.670636
+rates:
+  attn:
+    s47M:  {1: 62871, 2: 78918, 4: 245083, 8: 414854, 16: 500798}
+    s124M: {1: 43305, 2: 63065, 4: 126598, 8: 221215, 16: 240812}
+    s302M: {1: 33627, 2: 77607, 4: 114755, 8: 116189, 16: 118153}
+    s588M: {1: 38442, 2: 66673, 4: 75182, 8: 78236}
+    s983M: {1: 24079, 2: 44452, 4: 47431, 8: 50135}
+    s1p7B: {1: 25272, 2: 29485, 4: 31566, 8: 33349}
+  gdn:
+    s47M:  {1: 29213, 2: 47082, 4: 129979, 8: 223496, 16: 410691}
+    s124M: {1: 22303, 2: 38566, 4: 76059, 8: 177790, 16: 236009}
+    s302M: {1: 16791, 2: 40897, 4: 70815, 8: 121034, 16: 131017}
+    s588M: {1: 18651, 2: 33611, 4: 64668, 8: 78867}
+    s983M: {1: 15222, 2: 27563, 4: 48353, 8: 51924}
+    s1p7B: {1: 15488, 2: 27059, 4: 32835}
+  kda-sig-lowrank:
+    s47M:  {1: 23594, 2: 57520, 4: 114430, 8: 222337, 16: 381866}
+    s124M: {1: 16204, 2: 37093, 4: 61582, 8: 146470, 16: 196985}
+    s302M: {1: 17248, 2: 32909, 4: 65401, 8: 100122}
+    s588M: {1: 16988, 2: 28775, 4: 53679, 8: 69319}
+    s983M: {1: 14274, 2: 23566, 4: 40596}
+    s1p7B: {1: 13660, 2: 22954, 4: 29477}
+  ckda-shipped-lowrank:
+    s47M:  {1: 22698, 2: 54247, 4: 85933, 8: 164870, 16: 343440}
+    s124M: {1: 16956, 2: 35438, 4: 69204, 8: 131524, 16: 190972}
+    s302M: {1: 11837, 2: 32228, 4: 63795, 8: 96627}
+    s588M: {1: 15468, 2: 31947, 4: 55965, 8: 63515}
+    s983M: {1: 13796, 2: 22844, 4: 38241}
+    s1p7B: {1: 10162, 2: 22334, 4: 28401}
+  kda-sig-hybrid-lowrank:
+    s47M:  {1: 31719, 2: 64210, 4: 119920, 8: 215815, 16: 397524}
+    s124M: {1: 22100, 2: 43429, 4: 70533, 8: 137878, 16: 207384}
+    s302M: {1: 18829, 2: 36146, 4: 63441, 8: 104928, 16: 117394}
+    s588M: {1: 18686, 2: 37114, 4: 61606, 8: 72089}
+    s983M: {1: 12458, 2: 30761, 4: 43703, 8: 47545}
+    s1p7B: {1: 13918, 2: 25690, 4: 30048}
+  ckda-shipped-hybrid-lowrank:
+    s47M:  {1: 26331, 2: 51233, 4: 126042, 8: 249451, 16: 397398}
+    s124M: {1: 20481, 2: 40005, 4: 79681, 8: 158553, 16: 197366}
+    s302M: {1: 18459, 2: 32662, 4: 75117, 8: 104054}
+    s588M: {1: 19219, 2: 31545, 4: 56037, 8: 69099}
+    s983M: {1: 13820, 2: 27055, 4: 40778}
+    s1p7B: {1: 15645, 2: 25068, 4: 28832}
+
+# ---------------------------------------------------------------------------
+# Node sizing per chain (one width for its stable and all its cooldowns, so
+# every checkpoint is read back at the width it was written). Cheapest width
+# (GPU-h, slowest arm) with every cooldown <= cooldown_max_h and the trunk <=
+# stable_max_h; the trunk may span several 12h windows under auto_restart.
+# ---------------------------------------------------------------------------
+sizing:
+  max_nodes: 32
+  cooldown_max_h: 10.0
+  stable_max_h: 24.0
+  # Persistent stable save cadence, in hours of trunk runtime (restart points;
+  # torch-format checkpoints have no rolling non-persistent variant).
+  stable_save_every_h: 3.0
