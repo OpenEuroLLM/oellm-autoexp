@@ -203,7 +203,7 @@ sweep:
           backend.megatron.non_persistent_ckpt_type: null
           backend.megatron.non_persistent_global_ckpt_dir: null
           backend.megatron.non_persistent_save_interval: null
-          backend.megatron.wandb_project: ""
+          backend.megatron.wandb_project: null
           backend.megatron.tensorboard_dir: null
           # stand-in model: irrelevant to the cache key
           backend.megatron.num_layers: 2
