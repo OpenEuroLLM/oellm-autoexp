@@ -14,6 +14,8 @@ surface plus an ``extra_cli_args`` escape hatch.
 from __future__ import annotations
 
 import logging
+import os
+import pathlib
 import shlex
 from dataclasses import dataclass, field
 
@@ -60,6 +62,26 @@ class OELLMEvalBackendConfig(NonStrictDataclass, BaseBackendConfig):
     slurm_template_var: str | None = None
     max_array_len: int = 128
     dry_run: bool = False
+
+    # --- Skip-if-already-evaluated ----------------------------------------
+    # oellm-evals has NO completion detection of its own: lm_eval is invoked
+    # with `--output_path <evals_dir>/$(openssl rand -hex 5).json`
+    # (oellm/resources/template.sbatch), i.e. a fresh random filename every
+    # time, so a rerun cannot notice prior results and simply re-evaluates and
+    # deposits a second JSON. On this sweep that had already produced 3226
+    # redundant evaluations across 2603 (model, task) pairs.
+    #
+    # With this enabled the command is replaced, AT RENDER TIME, by a plain
+    # `echo` when the point's EVAL_OUTPUT_DIR already holds a results JSON.
+    # Each sweep point has its own base_output_dir (run name + stage), so
+    # results there mean *this* point already ran. See _already_evaluated() for
+    # why this is not a shell guard on the command.
+    #
+    # LIMITATION: presence of any results JSON counts as done, so an eval that
+    # crashed part-way through its task list also counts as done -- which is
+    # exactly what happened when 8 generate_until tasks were failing. Re-run
+    # such a point with OELLM_FORCE_EVAL=1 in backend.env (or clear its evals).
+    skip_if_evaluated: bool = False
 
     # Anything not covered by the typed fields above (forwarded verbatim).
     extra_cli_args: list[str] = field(default_factory=list)
@@ -117,7 +139,40 @@ def _build_oellm_cmd(cfg: OELLMEvalBackendConfig) -> str:
     if cfg.extra_cli_args:
         parts.extend(str(arg) for arg in cfg.extra_cli_args)
 
-    return " ".join(parts)
+    cmd = " ".join(parts)
+    if cfg.skip_if_evaluated and _already_evaluated(cfg):
+        return (
+            "echo [skip-if-evaluated] results already present under "
+            f"{(cfg.env or {}).get('EVAL_OUTPUT_DIR', '?')} -- "
+            "set OELLM_FORCE_EVAL=1 in backend.env to re-run"
+        )
+    return cmd
+
+
+def _already_evaluated(cfg: OELLMEvalBackendConfig) -> bool:
+    """True when this point's EVAL_OUTPUT_DIR already holds a results JSON.
+
+    Evaluated in PYTHON at render time, not as a shell prefix on the launch
+    command. The command is appended as argv after `apptainer exec ... <image> \\`
+    in the generated sbatch, so a compound statement there is swallowed as an
+    argument to apptainer and the following `; then` is a hard syntax error --
+    it killed all 50 jobs in seconds, twice. Rendering the decision leaves the
+    command a simple argv in every case.
+
+    Trade-off: the check happens at submission rather than at job start. That is
+    fine here (results do not appear between the two for the same point) and it
+    also surfaces the skip in the rendered script, where it can be read.
+    """
+    env = cfg.env or {}
+    if str(env.get("OELLM_FORCE_EVAL", os.environ.get("OELLM_FORCE_EVAL", "0"))) == "1":
+        return False
+    out = env.get("EVAL_OUTPUT_DIR")
+    if not out:
+        return False
+    try:
+        return any(pathlib.Path(out).glob("*/results/*.json"))
+    except OSError:
+        return False
 
 
 @register
