@@ -152,6 +152,13 @@ def build_hf_config(mcfg: dict[str, Any], vocab_size: int) -> dict[str, Any]:
         "rope_theta": float(mcfg.get("rotary_base") or 10000.0),
         "sliding_window": _sliding_window(mcfg),
         "qk_layernorm": bool(mcfg.get("qk_layernorm", False)),
+        # Qwen3.5 block options. Read from the training run's own current.yaml,
+        # so a run that did not use them exports exactly as before.
+        "attention_output_gate": bool(mcfg.get("attention_output_gate", False)),
+        "layernorm_zero_centered_gamma": bool(
+            mcfg.get("layernorm_zero_centered_gamma", False)
+        ),
+        "partial_rotary_factor": float(mcfg.get("rotary_percent") or 1.0),
         "mixer_types": mixer_types,
         "linear_key_head_dim": mcfg.get("linear_key_head_dim", 128),
         "linear_value_head_dim": mcfg.get("linear_value_head_dim", 128),
@@ -246,21 +253,70 @@ def _gather(state: dict[str, torch.Tensor], prefix: str, sections: list[str]) ->
 
 
 def _split_qkv(
-    w: torch.Tensor, num_heads: int, num_kv_heads: int, head_dim: int
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    w: torch.Tensor,
+    num_heads: int,
+    num_kv_heads: int,
+    head_dim: int,
+    output_gate: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
     """De-interleave Megatron's grouped ``linear_qkv`` weight.
 
     Megatron lays the rows out per query group as
     ``[q_1 … q_{h/g}, k, v]``, each block ``head_dim`` rows tall — not as three
     contiguous q/k/v blocks.
+
+    With ``attention_output_gate`` the projection is widened to
+    ``[q_1 … q_{h/g}, gate_1 … gate_{h/g}, k, v]`` — the gate blocks sit BETWEEN
+    q and k, so a 3-way split would silently return the gate as k and the k as v
+    (see ``attention.py::get_query_key_value_tensors``, whose split_arg_list is
+    ``[q_per_group*d, q_per_group*d, d, d]``). Shapes still line up for a
+    non-gated model, which is why this has to be keyed off the config flag
+    rather than inferred from the tensor.
     """
     hidden = w.shape[1]
     heads_per_group = num_heads // num_kv_heads
-    w = w.reshape(num_kv_heads, heads_per_group + 2, head_dim, hidden)
+    if not output_gate:
+        w = w.reshape(num_kv_heads, heads_per_group + 2, head_dim, hidden)
+        q = w[:, :heads_per_group].reshape(num_heads * head_dim, hidden)
+        k = w[:, heads_per_group].reshape(num_kv_heads * head_dim, hidden)
+        v = w[:, heads_per_group + 1].reshape(num_kv_heads * head_dim, hidden)
+        return q, k, v, None
+
+    w = w.reshape(num_kv_heads, 2 * heads_per_group + 2, head_dim, hidden)
     q = w[:, :heads_per_group].reshape(num_heads * head_dim, hidden)
-    k = w[:, heads_per_group].reshape(num_kv_heads * head_dim, hidden)
-    v = w[:, heads_per_group + 1].reshape(num_kv_heads * head_dim, hidden)
-    return q, k, v
+    gate = w[:, heads_per_group : 2 * heads_per_group].reshape(num_heads * head_dim, hidden)
+    k = w[:, 2 * heads_per_group].reshape(num_kv_heads * head_dim, hidden)
+    v = w[:, 2 * heads_per_group + 1].reshape(num_kv_heads * head_dim, hidden)
+    return q, k, v, gate
+
+
+def assert_finite(state: dict[str, "torch.Tensor"], where: str) -> None:
+    """Refuse to export non-finite weights.
+
+    A checkpoint read while it is still being written (or already being removed)
+    can deserialize into all-NaN tensors WITHOUT raising: the file is complete
+    enough to parse, the values are garbage. That produced a silently dead HF
+    model for mamba2 0.9B/300BT -- lm-eval scored it at chance (0.20 vs ~0.40)
+    and nothing anywhere flagged it. Failing here turns that into a loud error
+    at conversion time, which is the only place it is cheap to catch.
+    """
+    bad = []
+    for name, tensor in state.items():
+        if not hasattr(tensor, "isfinite"):
+            continue
+        if not bool(tensor.isfinite().all()):
+            n_nan = int(tensor.isnan().sum())
+            n_inf = int(tensor.isinf().sum())
+            bad.append(f"{name}: {n_nan} NaN, {n_inf} Inf of {tensor.numel()}")
+        if len(bad) >= 5:
+            break
+    if bad:
+        raise ValueError(
+            f"non-finite weights in {where} -- refusing to export.\n  "
+            + "\n  ".join(bad)
+            + "\nThe source checkpoint is corrupt or was read mid-write; "
+              "re-run the stage that produced it."
+        )
 
 
 def remap_state(
@@ -289,15 +345,18 @@ def remap_state(
         if layer_type in ("full_attention", "sliding_attention"):
             attn = f"{src}.self_attention"
             out[f"{dst}.input_layernorm.weight"] = state[f"{attn}.linear_qkv.layer_norm_weight"]
-            q, k, v = _split_qkv(
+            q, k, v, gate = _split_qkv(
                 state[f"{attn}.linear_qkv.weight"],
                 hf_cfg["num_attention_heads"],
                 hf_cfg["num_key_value_heads"],
                 hf_cfg["head_dim"],
+                output_gate=hf_cfg.get("attention_output_gate", False),
             )
             out[f"{dst}.mixer.q_proj.weight"] = q
             out[f"{dst}.mixer.k_proj.weight"] = k
             out[f"{dst}.mixer.v_proj.weight"] = v
+            if gate is not None:
+                out[f"{dst}.mixer.gate_proj.weight"] = gate
             out[f"{dst}.mixer.o_proj.weight"] = state[f"{attn}.linear_proj.weight"]
             if hf_cfg["qk_layernorm"]:
                 out[f"{dst}.mixer.q_norm.weight"] = state[f"{attn}.q_layernorm.weight"]
@@ -371,6 +430,7 @@ def convert(
 
     mcfg = _megatron_cfg(run_dir)
     state = load_megatron_state(ckpt_dir)
+    assert_finite(state, f"source checkpoint {ckpt_dir}")
     vocab_size = state["embedding.word_embeddings.weight"].shape[0]
     hf_cfg = build_hf_config(mcfg, vocab_size)
     LOGGER.info(
@@ -380,6 +440,9 @@ def convert(
 
     state = unstack_layers(state, hf_cfg["num_hidden_layers"])
     tensors = remap_state(state, hf_cfg)
+    # Re-check after remapping: a bad split/concat could also introduce
+    # non-finite values that were not present in the source tensors.
+    assert_finite(tensors, f"remapped export for {ckpt_dir}")
     tensors = {k: v.to(torch.bfloat16).contiguous() for k, v in tensors.items()}
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -394,8 +457,14 @@ def convert(
         shutil.copy2(_PKG / mod, out_dir / mod)
 
     if tokenizer_dir is not None:
+        # `tokenizer.model` matters: some transformers versions construct the fast
+        # tokenizer by way of the slow LlamaTokenizer, which requires the
+        # sentencepiece file and dies with "expected str, bytes or os.PathLike
+        # object, not NoneType" without it. transformers 5.8.1 loads from
+        # tokenizer.json alone, the eval container's version does not.
         for name in (
             "tokenizer.json",
+            "tokenizer.model",
             "tokenizer_config.json",
             "special_tokens_map.json",
             "added_tokens.json",

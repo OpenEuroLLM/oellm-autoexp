@@ -34,6 +34,7 @@ cached and uncached generation agree.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Optional
 
 import torch
@@ -44,6 +45,26 @@ from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutpu
 from transformers.modeling_utils import PreTrainedModel
 
 from .configuration_oellm_hybrid import OellmHybridConfig
+
+# --------------------------------------------------------------------------
+# torch.cpu.device shim
+# --------------------------------------------------------------------------
+# `fla.utils.custom_device_ctx` calls `torch.cpu.device(...)`. That exists in
+# stock torch wheels but NOT in NVIDIA's NGC builds (e.g. 2.11.0a0+...nv26.02),
+# which is what the eval container inherits from the training image — so every
+# GDN/mLSTM/Mamba2 forward died with
+# `AttributeError: module 'torch.cpu' has no attribute 'device'`
+# while the attention-only variants were unaffected. Installing a no-op context
+# manager here keeps the fix with the exported checkpoint rather than depending
+# on which torch build happens to be present.
+if not hasattr(torch.cpu, "device"):  # pragma: no cover - environment shim
+
+    class _CpuDeviceCtx(contextlib.nullcontext):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__()
+
+    torch.cpu.device = _CpuDeviceCtx
+
 
 # --------------------------------------------------------------------------
 # lazily-imported third-party kernels (identical to the Megatron training path)
@@ -104,18 +125,35 @@ def _rms_norm_gated_cls():
 
 
 class OellmRMSNorm(nn.Module):
-    """RMSNorm with fp32 reductions, matching Megatron/TE."""
+    """RMSNorm with fp32 reductions, matching Megatron/TE.
 
-    def __init__(self, hidden_size: int, eps: float = 1e-5) -> None:
+    ``zero_centered_gamma`` mirrors Megatron's ``layernorm_zero_centered_gamma``
+    (TE's ``zero_centered_gamma``, CLI ``--apply-layernorm-1p``): the checkpoint
+    stores ``gamma - 1`` and the norm applies ``(1 + w)``. Getting this wrong
+    does not raise — every weight is simply off by one — so it is threaded from
+    config at every construction site rather than defaulted per call.
+    """
+
+    def __init__(
+        self, hidden_size: int, eps: float = 1e-5, zero_centered_gamma: bool = False
+    ) -> None:
         super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
+        # Init matches the stored convention: zero-centred checkpoints hold
+        # gamma-1, so an untrained module must start at 0, not 1.
+        self.weight = nn.Parameter(
+            torch.zeros(hidden_size) if zero_centered_gamma else torch.ones(hidden_size)
+        )
         self.variance_epsilon = eps
+        self.zero_centered_gamma = zero_centered_gamma
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         dtype = x.dtype
         x = x.float()
         x = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.variance_epsilon)
-        return (self.weight.float() * x).to(dtype)
+        w = self.weight.float()
+        if self.zero_centered_gamma:
+            w = w + 1.0
+        return (w * x).to(dtype)
 
 
 class OellmMLP(nn.Module):
@@ -172,9 +210,17 @@ class OellmRotaryEmbedding(nn.Module):
 
 
 def _apply_rope(t: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-    # t: [b, h, s, d]; cos/sin: [b, s, d]
+    # t: [b, h, s, d]; cos/sin: [b, s, rot_dim] with rot_dim <= d.
+    # Partial RoPE (Megatron rotary_percent < 1): rotate the leading rot_dim
+    # channels and pass the tail through untouched, exactly as
+    # rope_utils._apply_rotary_pos_emb_bshd does.
     cos = cos.unsqueeze(1).to(t.dtype)
     sin = sin.unsqueeze(1).to(t.dtype)
+    rot_dim = cos.shape[-1]
+    if rot_dim < t.shape[-1]:
+        t, t_pass = t[..., :rot_dim], t[..., rot_dim:]
+        t = t * cos + _rotate_half(t) * sin
+        return torch.cat((t, t_pass), dim=-1)
     return t * cos + _rotate_half(t) * sin
 
 
@@ -254,9 +300,22 @@ class OellmAttention(nn.Module):
         self.v_proj = nn.Linear(config.hidden_size, self.num_kv_heads * self.head_dim, bias=False)
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, config.hidden_size, bias=False)
 
+        # Qwen3.5 output gate: a fourth projection the same shape as q, carved
+        # out of Megatron's widened linear_qkv by the converter.
+        self.gate_proj = (
+            nn.Linear(config.hidden_size, self.num_heads * self.head_dim, bias=False)
+            if getattr(config, "attention_output_gate", False)
+            else None
+        )
+
+        zcg = getattr(config, "layernorm_zero_centered_gamma", False)
         if config.qk_layernorm:
-            self.q_norm = OellmRMSNorm(self.head_dim, eps=config.rms_norm_eps)
-            self.k_norm = OellmRMSNorm(self.head_dim, eps=config.rms_norm_eps)
+            self.q_norm = OellmRMSNorm(
+                self.head_dim, eps=config.rms_norm_eps, zero_centered_gamma=zcg
+            )
+            self.k_norm = OellmRMSNorm(
+                self.head_dim, eps=config.rms_norm_eps, zero_centered_gamma=zcg
+            )
         else:
             self.q_norm = None
             self.k_norm = None
@@ -311,6 +370,14 @@ class OellmAttention(nn.Module):
             out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, scale=self.scaling)
 
         out = out.transpose(1, 2).reshape(b, s, self.num_heads * self.head_dim)
+
+        # Output gate, before o_proj. Megatron does the sigmoid in fp32
+        # (attention.py::_apply_output_gate), which matters at bf16 — evaluate
+        # it the same way or the parity check drifts.
+        if self.gate_proj is not None:
+            gate = self.gate_proj(hidden_states)
+            out = (out.float() * torch.sigmoid(gate.float())).to(out.dtype)
+
         return self.o_proj(out), new_state
 
 
@@ -370,7 +437,11 @@ class OellmGatedDeltaNet(nn.Module):
         )
         self.dt_bias = nn.Parameter(torch.zeros(self.num_value_heads))
         self.A_log = nn.Parameter(torch.zeros(self.num_value_heads))
-        self.out_norm = OellmRMSNorm(self.value_head_dim, eps=config.rms_norm_eps)
+        self.out_norm = OellmRMSNorm(
+            self.value_head_dim,
+            eps=config.rms_norm_eps,
+            zero_centered_gamma=getattr(config, "layernorm_zero_centered_gamma", False),
+        )
         self.out_proj = nn.Linear(self.v_dim, config.hidden_size, bias=False)
 
     def forward(
@@ -703,9 +774,17 @@ class OellmHybridDecoderLayer(nn.Module):
         super().__init__()
         self.layer_type = config.mixer_types[layer_idx]
         self.is_attention = self.layer_type in ("full_attention", "sliding_attention")
-        self.input_layernorm = OellmRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.input_layernorm = OellmRMSNorm(
+            config.hidden_size,
+            eps=config.rms_norm_eps,
+            zero_centered_gamma=getattr(config, "layernorm_zero_centered_gamma", False),
+        )
         self.mixer = _build_mixer(config, self.layer_type)
-        self.post_attention_layernorm = OellmRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.post_attention_layernorm = OellmRMSNorm(
+            config.hidden_size,
+            eps=config.rms_norm_eps,
+            zero_centered_gamma=getattr(config, "layernorm_zero_centered_gamma", False),
+        )
         self.mlp = OellmMLP(config)
 
     def forward(
@@ -754,9 +833,16 @@ class OellmHybridModel(OellmHybridPreTrainedModel):
         self.layers = nn.ModuleList(
             OellmHybridDecoderLayer(config, i) for i in range(config.num_hidden_layers)
         )
-        self.norm = OellmRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.norm = OellmRMSNorm(
+            config.hidden_size,
+            eps=config.rms_norm_eps,
+            zero_centered_gamma=getattr(config, "layernorm_zero_centered_gamma", False),
+        )
         self.rotary_emb = (
-            OellmRotaryEmbedding(config.head_dim, config.rope_theta)
+            OellmRotaryEmbedding(
+                int(config.head_dim * getattr(config, "partial_rotary_factor", 1.0)),
+                config.rope_theta,
+            )
             if config.position_embedding_type == "rope"
             else None
         )
@@ -814,7 +900,19 @@ class OellmHybridModel(OellmHybridPreTrainedModel):
             # The recurrent mixers have no mask interface: zeroing padded
             # positions keeps them from contributing to the state (their
             # value/key projections are bias-free, so a zero input adds zero).
-            hidden_states = hidden_states * attention_mask[..., None].to(hidden_states.dtype)
+            #
+            # `attention_mask` spans past + current tokens ([b, past_len + s]),
+            # while hidden_states covers only the current ones ([b, s, h]). Slice
+            # to the current window before multiplying: broadcasting the full
+            # mask against a 1-token decode step silently EXPANDS it to
+            # [b, past_len + s, h] instead of masking it, which then produced
+            # `kv_len = past_len + (past_len + s)` and blew up in the attention
+            # mask as "size of tensor a (2n-1) must match tensor b (n)".
+            # Only reachable when a padding mask survives, i.e. left-padded
+            # generation batches -- which is why every generate_until task
+            # failed while log-likelihood tasks were fine.
+            cur_mask = attention_mask[:, -s:] if attention_mask.shape[1] >= s else attention_mask
+            hidden_states = hidden_states * cur_mask[..., None].to(hidden_states.dtype)
 
         all_hidden_states: list[torch.Tensor] = []
         for idx, layer in enumerate(self.layers):

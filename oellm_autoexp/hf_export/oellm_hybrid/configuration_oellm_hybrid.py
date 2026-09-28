@@ -58,6 +58,16 @@ class OellmHybridConfig(PretrainedConfig):
         # i attends to j in [i - sliding_window, i], i.e. sliding_window + 1 keys.
         sliding_window: int | None = None,
         qk_layernorm: bool = True,
+        # ---- Qwen3.5 / Qwen3-Next block options (gdn3_qwen35 arm) ----
+        # Sigmoid output gate on the softmax layers: attn_out * sigmoid(gate),
+        # with `gate` a fourth projection the same shape as q.
+        attention_output_gate: bool = False,
+        # Zero-centred RMSNorm: the stored gamma is (gamma - 1), so the norm
+        # applies (1 + w) rather than w. Wrong setting = silently wrong outputs.
+        layernorm_zero_centered_gamma: bool = False,
+        # Partial RoPE: rotate only the first int(head_dim * factor) dims and
+        # pass the rest through (Megatron's `rotary_percent`). 1.0 = full RoPE.
+        partial_rotary_factor: float = 1.0,
         # ---- per-layer mixer assignment ----
         mixer_types: list[str] | None = None,
         # ---- GatedDeltaNet / mLSTM shared head geometry ----
@@ -101,6 +111,9 @@ class OellmHybridConfig(PretrainedConfig):
         self.rope_theta = rope_theta
         self.sliding_window = sliding_window
         self.qk_layernorm = qk_layernorm
+        self.attention_output_gate = attention_output_gate
+        self.layernorm_zero_centered_gamma = layernorm_zero_centered_gamma
+        self.partial_rotary_factor = partial_rotary_factor
 
         if mixer_types is None:
             mixer_types = ["full_attention"] * num_hidden_layers
