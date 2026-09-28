@@ -70,6 +70,14 @@ backend:
     liger_fused_linear_cross_entropy: true
     liger_fused_linear_cross_entropy_chunk_size: 8192
     wandb_project: dense_multilingual_scaling_main_7to1
+    # Throughput fix (tp_debug_* sweep, 2026-08-02): the iteration-time
+    # instability was GPFS mmap read-latency starving the dataloader — the
+    # (CUDA-graph) step blocks on the next batch, so a slow read becomes a 1-18s
+    # iteration spike. Deeper prefetch (16 workers x prefetch_factor 8 = 128
+    # batches ~45s runway) fully absorbs it: 0 stalls >300ms at every scale,
+    # mean batch-generator 736ms -> 1ms at 0.1B. prefetch_factor is set via the
+    # MEGATRON_DATALOADER_PREFETCH_FACTOR env (slurm.env below).
+    num_workers: 16
     # Per-(variant,size,gbs) blend-index cache. num_samples ~= tokens/seq_len is
     # independent of gbs, so all architectures/ladders at a given budget would
     # otherwise share one index file and race-build it (EOFError) at launch.
@@ -78,12 +86,22 @@ backend:
     data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/main_sweep/${aux.variant}_${aux.size}_gbs${aux.gbs}"
 
 slurm:
+  env:
+    # Multi-node checkpoint save fix: the torch distributed-checkpoint coordinator
+    # does a rooted NCCL gather that fails with "NCCL Error 3: internal error" on
+    # NCCL's P2P transport across nodes (single-node worked over NVLink, which is
+    # why the 6B runs never hit it). Disabling P2P routes the gather around the
+    # bug. Measured throughput cost on GH200: ~0 (357 vs 358 ms/iter at 0.1B/2n).
+    NCCL_P2P_DISABLE: "1"
+    # Deeper dataloader prefetch buffer (read by the data_samplers.py patch).
+    # 16 workers x 8 = 128 batches buffered — absorbs GPFS read stalls.
+    MEGATRON_DATALOADER_PREFETCH_FACTOR: "8"
   sbatch:
     nodes: 1
     exclude: jpbo-001-48
     # QOS wall-time ceiling (12h on the booster). This is the CAP; run_autoexp
     # right-sizes each job's actual reservation down to min(this, aux.true_time
-    # x1.1) from the measured throughput. A plain value (not an interpolation)
+    # x1.5) from the measured throughput. A plain value (not an interpolation)
     # keeps it robust through the sibling snapshot; jobs whose true runtime
     # exceeds 12h reserve the full 12h and wall-time-chain via auto_restart.
     time: "12:00:00"
@@ -203,10 +221,14 @@ sweep:
                     job.start_condition:
                       class_name: FileExistsCondition
                       path: "\\${sibling.stable.job.base_output_dir}/iter_\\${oc.eval:'str(\\${aux.start_iter}).zfill(7)'}"
-                    job.cancel_condition:
-                      class_name: LogPatternCondition
-                      log_path: "\\${sibling.stable.job.log_path_current}"
-                      pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+                    # NO cancel_condition on purpose. Watching the stable's log for
+                    # "Traceback|OutOfMemoryError|FATAL ERROR" CANCELLED every cooldown
+                    # of any stable that had a TRANSIENT failure and recovered -- the
+                    # log keeps the traceback from the failed attempt, so a stable with
+                    # attempts>1 (rendezvous/OOM flake then success) silently killed all
+                    # its cooldowns (final_state=cancelled, attempts=0). The
+                    # start_condition already gates on the branch checkpoint, so a
+                    # genuinely-dead stable simply leaves the cooldown WAITING.
                   configs:
                     - aux.tokens: 20_000_000_000
                     - aux.tokens: 30_000_000_000
@@ -221,14 +243,26 @@ sweep:
                     backend.megatron.load: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.experiment_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_firstcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT/"
                     backend.megatron.save: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.experiment_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_firstcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT"
                     backend.megatron.override_opt_param_scheduler: true
+                    # Keep only the endpoint persistently (the fully-decayed model,
+                    # saved by Megatron's end-of-training save); inherit ml_base's
+                    # coarse save_interval so no intermediate persistent saves land.
+                    backend.megatron.save_interval: 1000000000
+                    # Restart resilience via the rolling non-persistent checkpoint,
+                    # scaled to the decay span so there are always >=3 rolling saves
+                    # within the short cooldown. The base cadence (512000//gbs)
+                    # exceeds the decay span for small budgets (e.g. 6BT span ~2289
+                    # < 4000), so a wall-time SIGKILL would re-branch the whole decay
+                    # from firstcd's seed instead of resuming; //3 keeps contcd
+                    # genuinely restart-safe at any budget. (ckpt_type=global is
+                    # inherited from ml_base.)
+                    backend.megatron.non_persistent_save_interval: "\\${oc.eval:'max(1, (\\${backend.megatron.train_iters}-\\${aux.start_iter})//3)'}"
                     stage: "contcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT"
                     job.start_condition:
                       class_name: FileExistsCondition
                       path: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.experiment_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_firstcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT/iter_\\${oc.eval:'str(\\${aux.start_iter}+1).zfill(7)'}"
-                    job.cancel_condition:
-                      class_name: LogPatternCondition
-                      log_path: "\\${sibling.stable.job.log_path_current}"
-                      pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+                    # NO cancel_condition -- see the firstcd note above. A stable that
+                    # recovered from a transient failure would otherwise cancel this
+                    # contcd via the traceback left in its log.
                   configs:
                     - aux.tokens: 20_000_000_000
                     - aux.tokens: 30_000_000_000

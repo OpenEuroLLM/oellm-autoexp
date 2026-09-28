@@ -45,6 +45,11 @@ backend:
   megatron:
     # Placeholder (overridden per ladder by the sweep); base compose needs it set.
     lr: 0.002
+    # Liger fused linear cross-entropy — REQUIRED: the val-loss computation
+    # otherwise materializes the full 262k-vocab logits and OOMs at ~64 GiB
+    # (same as the training runs, which set this). Chunked so it fits 1 node.
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
     # ---- eval-only: no training, no save; load model weights only ----
     skip_train: true
     train_iters: 1

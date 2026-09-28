@@ -152,8 +152,22 @@ backend:
     eval_interval: "${oc.eval:'int(204800 // ${aux.gbs})'}"
     eval_iters: 100
     save: ${job.base_output_dir}
-    save_interval: "${oc.eval:'int(512000 // ${aux.gbs})'}"
-    save_extra_steps: ${aux.extra_steps}   # checkpoint exactly at branch points
+    # Persistent checkpoints are KEPT forever, so restrict them to the milestones
+    # we actually want long-term: the branch points (save_extra_steps below, which
+    # include the stable's final = max branch) and each cooldown's endpoint. A
+    # coarse interval means no intermediate persistent checkpoints ever land — the
+    # ~100+/stable at 512000//gbs that filled scratch with TBs of throwaway state.
+    save_interval: 1000000000
+    save_extra_steps: ${aux.extra_steps}   # persistent checkpoint exactly at each branch point
+    # Restart resilience is provided by Megatron's non-persistent (rolling) global
+    # checkpoint: it overwrites in place (cleanup keeps leave_ckpt_num=1 BEFORE the
+    # new save, so a wall-time SIGKILL always leaves >=1 complete restart point) and
+    # never accumulates. Same cadence as the old save_interval, so the max progress
+    # lost on a hard kill is unchanged. Written under <save>/non_persistent/, which
+    # never interferes with cooldown branch loads (those pin a specific ckpt_step in
+    # the main dir) or the firstcd start_condition (which checks the main-dir iter).
+    non_persistent_ckpt_type: global
+    non_persistent_save_interval: "${oc.eval:'int(512000 // ${aux.gbs})'}"
     ckpt_format: torch_dist
     rerun_mode: disabled
     wandb_project: dense_multilingual_scaling_swa
