@@ -106,6 +106,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "checkpoint quarantined; resuming from last loadable checkpoint"
 
   # 3) world-size mismatch: do NOT quarantine — cancel and explain.
@@ -280,6 +281,7 @@ log_events:
       wait_for_job_end: true
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "SIGTERM before the wall-clock limit: checkpoint saved by the signal handler — resuming the next segment"
 
   - name: time_limit_rollover
@@ -293,6 +295,7 @@ log_events:
       wait_for_job_end: true
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "Wall-clock limit hit before the exit checkpoint — resuming from the last complete checkpoint"
 
   # ---- Checkpoint hook (2026-09-06): evaluations once a checkpoint is available --------------
@@ -328,6 +331,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "exit_duration_in_mins reached mid-schedule — resuming the next segment from the last checkpoint"
 
   # === FATAL: configuration / data faults -> CANCEL (never restart) =========
@@ -441,6 +445,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "GPU occupied at init (leftover process) — retrying on new nodes"
 
   - name: err_rendezvous
@@ -469,6 +474,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "Rendezvous failure — retrying (consider static rdzv for torchrun)"
 
   # GLOO MESH COLLAPSE. Always a SECONDARY symptom: some rank died for a real
@@ -496,6 +502,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "Gloo mesh collapsed after a rank died — retrying on a fresh allocation"
 
   - name: err_userbuffers_stall
@@ -510,6 +517,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "userbuffers TP-overlap stall — peer rank unresponsive, retrying"
 
   - name: err_nccl_timeout
@@ -524,6 +532,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "NCCL collective timeout/abort — retrying"
 
   # NaN / Inf REJECTED BY THE RERUN STATE MACHINE.
@@ -564,6 +573,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "NaN/Inf rejected by rerun validation — retrying (bad node vs real divergence)"
 
   - name: err_cuda_illegal_access
@@ -578,6 +588,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "CUDA illegal memory access — GPU needs reset, not a relaunch"
 
   - name: err_cpp_terminate
@@ -592,6 +603,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "Unhandled C++ exception — worker aborted"
 
   # === NODE FAILURE: RECORD, PROPAGATE, THEN RESTART ========================
@@ -651,6 +663,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "SLURM node failure in the allocation"
 
   # === GENERIC RESTART TIER: BOUNDED AS A GROUP ==============================
@@ -693,6 +706,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "Worker process failed — retrying"
 
   - name: error
@@ -707,6 +721,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: ""
 
   # === FORWARD-PROGRESS STALL: "dead but noisy" ==============================
@@ -789,6 +804,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "No iteration progress for 20 min — stuck, not slow"
 
   # LONG WINDOW, mode=furthest. Resets only when the run reaches a NEW FURTHEST iteration, so
@@ -830,6 +846,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "No net iteration progress for 40 min of running — restart loop, not recovery"
 
   # GIVE UP AND ASK A HUMAN. Load-bearing: a budget makes an event STOP ACTING,
@@ -875,6 +892,7 @@ log_events:
       # revival hooks (see config/job/auto_restart_ckptreset_faultscan.yaml header)
       pre_command: ${job.restart_pre_command}
       exclude_file: ${job.restart_exclude_file}
+      nccl_peer_scan: true
       reason: "Inactive Log"
 
 # =============================================================================

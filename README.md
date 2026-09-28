@@ -2,6 +2,8 @@
 
 Single CLI surface for planning sweeps, launching jobs (directly or by way of containers), and monitoring SLURM runs by way of declarative configs. See `SPEC.md` for platform-wide goals; this README focuses on the workflows you touch every day.
 
+For the validated OELLM 32B B1 reborn Megatron source, use [the pinned B1 release](docs/megatron_versions/b1_reborn_20260925.md). It includes the deferred-head-gradient/overlapped-reduction fix and the source verification commands. [Standalone version packaging and publication](tools/README_megatron_release.md) explains how to release another tested Megatron version without changing live checkouts.
+
 ## Your own experiments
 
 For you own experiments, first create your own branch `exp_YOURNAME`. Add a folder `config/experiments/YOURNAME`. Within that folder you can add your own experiment composition files (see the existing ones), with `# @package _global_` as header to ensure it's located at the top-level of the config. You can then run your experiment with:

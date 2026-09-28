@@ -5315,6 +5315,11 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "final_norm_wd_mult": MegatronArgMetadata(
+        arg_type=float, default=None,
+        help="Separate final decoder norm decay; unset inherits residual multiplier.",
+        choices=None, nargs=None, element_type=None,
+    ),
     "residual_norm_wd_mult": MegatronArgMetadata(
         arg_type=float,
         default=0.0,
@@ -11126,6 +11131,10 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "final_norm_wd_mult": MegatronActionSpec(
+        option_strings=("--final-norm-wd-mult",), action_type="store",
+        nargs=None, const=None, default=None,
     ),
     "residual_norm_wd_mult": MegatronActionSpec(
         option_strings=("--residual-norm-wd-mult",),

@@ -511,6 +511,8 @@ class RestartActionConfig(ConfigInterface):
     # nodes to the exclusion file. Its exit code is logged, never fatal.
     pre_command: str = ""
     pre_command_timeout_s: float = 900.0
+    # Post-failure peer scan in a bounded child process; requires exclude_file.
+    nccl_peer_scan: bool = False
     # Node-exclusion list re-read right before the resubmission so the
     # re-rendered sbatch carries nodes excluded since plan time (the stored
     # SlurmConfig is otherwise frozen at plan time).
@@ -544,6 +546,7 @@ class RestartAction(BaseMonitorAction):
             metadata={
                 "pre_command": self.config.pre_command,
                 "pre_command_timeout_s": self.config.pre_command_timeout_s,
+                "nccl_peer_scan": self.config.nccl_peer_scan,
                 "exclude_file": self.config.exclude_file,
                 "wait_for_job_end": self.config.wait_for_job_end,
                 "cancel_first": self.config.cancel_first,

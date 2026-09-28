@@ -1,0 +1,49 @@
+# @package _global_
+# Tested native CE/z FP32-combination source is pinned by the Megatron submodule.
+# Explicit private output/load/end settings are required; see docs/ce_zloss_fp32.md.
+defaults:
+  - /experiments/oellm_32b_dense/oellm_32b_dense_revival_1
+  - _self_
+
+aux:
+  run_root: ${oc.env:CE_RUN_ROOT}
+
+job:
+  name: ${oc.env:CE_RUN_NAME,oellm-32b-ce-fp32}
+  base_output_dir: ${aux.run_root}/training_core
+  est_steps: ${oc.env:CE_REMAINING_STEPS}
+  est_step_time_s: 4.6
+  est_startup_min: 5
+  # Keep the existing production restart log events, with no implicit external
+  # production evaluation or node-registry writes from a collaborator's run.
+  checkpoint_hook_command: ""
+  restart_pre_command: ""
+
+backend:
+  env:
+    WANDB_MODE: offline
+  megatron:
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: native
+    output_z_loss_coeff: 1e-4
+    load: ${oc.env:CE_LOAD_PATH}
+    save: ${aux.run_root}/training_ckpts/checkpoints
+    non_persistent_global_ckpt_dir: ${aux.run_root}/training_ckpts/checkpoints_rolling
+    no_load_optim: false
+    no_load_rng: false
+    save_interval: 250
+    non_persistent_save_interval: 125
+    exit_interval: ${oc.env:CE_END_STEP}
+    exit_duration_in_mins: null
+    wandb_project: oellm_32b_dense_loss-increase_debug
+    wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
+    wandb_save_dir: ${aux.run_root}/wandb
+    log_interval: 5
+
+slurm:
+  # Required by the post-maintenance JUPITER launcher, validated at TP4/PP4/DP128.
+  srun_opts: "--kill-on-bad-exit=1 --mpi=none --cpus-per-task=288"
+  env:
+    SLURM_MPI_TYPE: none
+  sbatch:
+    time: ${oc.env:CE_WALLTIME,06:00:00}
