@@ -1,0 +1,8 @@
+data_path:
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_pretraining_specialized_v12-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_pretraining_specialized_v12-1_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_pretraining_specialized_v12-2_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_pretraining_specialized_v12-3_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_pretraining_specialized_v12-4_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_pretraining_specialized_v12-5_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_pretraining_specialized_v12-6_text_document

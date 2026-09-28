@@ -1,0 +1,84 @@
+# @package _global_
+
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: default
+  - /sweep: none
+  - /postprocess: [ckpt_dist_to_torch_opensci, ckpt_convert_qwen3, eval_opensci]
+  - /backend/megatron: [base, qwen3_base, qwen3_1.7B, data_mv2_cooldown_marin_ot4]
+  - _self_
+
+index: 0
+stage: "all"
+
+job:
+  name: "qwen3_1.7b_MV1_cooldown_marin_ot4"
+  base_output_dir: ${oc.env:OUTPUT_DIR,"./output"}/${.name}
+
+backend:
+  data_integrity_check: false
+  megatron:
+    lr: 0.004
+    global_batch_size: 1024
+    micro_batch_size: 4
+    train_iters: 23842
+    lr_warmup_iters: 1000
+    lr_decay_iters: 23842
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: 4768
+    min_lr: 0.0
+    weight_decay: 0.05
+    adam_beta2: 0.95
+    init_method_std: 0.02
+    clip_grad: 1.0
+    override_opt_param_scheduler: true
+    finetune: false
+    accumulate_allreduce_grads_in_fp32: false
+
+    bf16: true
+    use_flash_attn: true
+    seq_length: 4096
+
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: /e/data1/datasets/playground/mmlaion/shared/oellm_shared_evals/models/Qwen/Qwen3-1.7B-Base
+    vocab_size: 151936
+    legacy_tokenizer: false
+    split: "1000,0,0"   # train-only: small single/few-shard arms make degenerate valid/test splits.
+    num_workers: 4
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: true
+    distributed_backend: nccl
+    use_distributed_optimizer: true
+    overlap_param_gather: true
+    overlap_grad_reduce: true
+    recompute_activations: true
+
+    ckpt_format: torch_dist
+    ckpt_fully_parallel_save: false  # MUST be false at seq_length 4096 on this arch: true -> distrib_optimizer.py NoneType.dtype crash at save time.
+    async_save: false
+    save_interval: 4768
+    load: /e/data1/datasets/playground/mmlaion/shared/oellm_shared_evals/raj3/checkpoints/qwen3_1.7b_MixtureVitae_100B_base
+    save: ${job.base_output_dir}
+    log_interval: 50
+    log_throughput: true
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    eval_interval: 23842
+    eval_iters: 0
+    ckpt_step: 19074
+
+    aux:
+      model_name: qwen3-1.7B
+      dataset: mv2-cooldown-ablation-jupiter-marin_ot4
+      tokens: 100000000000
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  sbatch:
+    nodes: 64
+    time: "08:00:00"

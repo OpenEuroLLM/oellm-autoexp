@@ -1,0 +1,4 @@
+data_path:
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_sft_math_v4-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_sft_science_v2-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_sft_science_v2-1_text_document

@@ -1,0 +1,24 @@
+data_path:
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t0-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t0-1_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t10-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t10-1_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t1-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t11-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t1-1_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t12-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t13-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t2-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t2-1_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t3-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t3-1_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t4-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t5-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t6-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t6-1_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t6-2_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t7-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t7-1_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t8-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t8-1_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/nemotron_cascade_2_sft_data-t9-0_text_document

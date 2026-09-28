@@ -1,0 +1,7 @@
+data_path:
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/marin_ot4_code-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/marin_ot4_code-1_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/marin_ot4_math-0_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/marin_ot4_math-1_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/marin_ot4_math-2_text_document
+  - /e/data1/datasets/playground/mmlaion/shared/tokenized_data/mv2_queue7-clean/marin_ot4_science-0_text_document
