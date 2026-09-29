@@ -219,6 +219,14 @@ def main() -> int:
         help="Checkpoint grid spacing, e.g. 2000 on the 32B runs, 2400 on prelude",
     )
     ap.add_argument(
+        "--series-tag",
+        default="",
+        help="Suffix for the series directory name. The name already carries window and "
+        "style, so a tag is what keeps otherwise-identical series apart -- most importantly "
+        "when comparing checkpoint granularities, where the same window and style at a "
+        "different --min-iteration-interval would otherwise collide (e.g. 'i4800').",
+    )
+    ap.add_argument(
         "--match-anneal",
         type=Path,
         default=None,
@@ -302,7 +310,7 @@ def main() -> int:
 
     jobs = []
     for window in args.window:
-        series = f"{args.run_label}_wsm{window}_{args.merge_style}"
+        series = f"{args.run_label}_wsm{window}_{args.merge_style}{args.series_tag}"
         out_root = args.output_dir / series / "checkpoints"
         pairs = plan_windows(
             iters, args.min_iteration_interval, window, args.stride, args.end_iteration
