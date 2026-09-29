@@ -101,16 +101,44 @@ def plan_windows(iters: list[int], interval: int, window: int, stride: int, ends
     grid = [i for i in iters if i % interval == 0]
     span = (window - 1) * interval
     if ends:
-        endpoints = [e for e in ends if e in grid]
+        endpoints = [e for e in ends if e in iters]
         missing = sorted(set(ends) - set(endpoints))
         if missing:
-            print(f"  requested endpoints not on the grid, ignored: {missing}")
+            print(f"  requested endpoints not found among checkpoints, ignored: {missing}")
     else:
         eligible = [e for e in grid if (e - span) in grid]
         # Anchor the series at the newest checkpoint and walk back, so the most
         # recent merge point is always present regardless of how the stride divides.
         endpoints = sorted(eligible[::-1][::stride])
-    return [(e - span, e) for e in endpoints]
+    pairs = []
+    for e in endpoints:
+        start = _walk_back(iters, e, interval, window)
+        if start is None:
+            print(f"  endpoint {e}: fewer than {window} checkpoints available, skipped")
+            continue
+        pairs.append((start, e))
+    return pairs
+
+
+def _walk_back(iters: list[int], end: int, interval: int, window: int) -> int | None:
+    """Iteration of the oldest checkpoint the merge tool will select for this
+    window.
+
+    Mirrors the tool's --min-iteration-interval filtering, which walks backward from
+    the target keeping checkpoints at least `interval` apart and always preserving the
+    target itself. Doing the same here means an off-grid endpoint -- the final stable
+    checkpoint is typically one, e.g. iter_0953312 -- yields a --start-checkpoint that
+    selects exactly `window` inputs instead of over- or under-shooting.
+    """
+    selected = [end]
+    cursor = end
+    for i in reversed(iters):
+        if len(selected) == window:
+            break
+        if i <= cursor - interval:
+            selected.append(i)
+            cursor = i
+    return selected[-1] if len(selected) == window else None
 
 
 def free_slots(qos: str, max_concurrent: int) -> int:
@@ -220,7 +248,7 @@ def main() -> int:
         series = f"{args.run_label}_wsm{window}_{args.merge_style}"
         out_root = args.output_dir / series / "checkpoints"
         pairs = plan_windows(
-            grid, args.min_iteration_interval, window, args.stride, args.end_iteration
+            iters, args.min_iteration_interval, window, args.stride, args.end_iteration
         )
         planned, skipped = [], 0
         for start, end in pairs:
