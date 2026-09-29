@@ -138,16 +138,27 @@ class AdapterTests(unittest.TestCase):
                 directory / "rank0_pid2_kernel_trace.csv",
                 [("Cijk_kernel", 0, 10), ("nccl_kernel", 5, 15)],
             )
+            (directory / "rank0_pid2_kernel_stats.csv").write_text(
+                '"Name","Calls","TotalDurationNs","AverageNs","Percentage",'
+                '"MinNs","MaxNs","StdDev"\n'
+                '"kernel",2,20,10,100,5,10,0\n',
+                encoding="utf-8",
+            )
             _write_kernel_trace(
                 directory / "rank1_pid3_kernel_trace.csv", [("worker", 0, 100)] * 3
             )
             adapter = RocprofV3Adapter()
             artifacts = adapter.discover(directory)
             events = list(adapter.iter_kernels(artifacts))
+            with mock.patch.object(
+                adapter, "iter_kernels", side_effect=AssertionError("full scan")
+            ):
+                trace_end = adapter.trace_end_ns(artifacts)
 
         self.assertEqual(artifacts.stem, "rank0_pid2")
         self.assertEqual(events[0].duration_ns, 10)
         self.assertEqual(events[0].stream_id, "2")
+        self.assertEqual(trace_end, 15)
 
     def test_nsys_sqlite_string_join(self) -> None:
         with TemporaryDirectory() as raw:
@@ -171,10 +182,12 @@ class AdapterTests(unittest.TestCase):
             artifacts = adapter.discover(database)
             events = list(adapter.iter_kernels(artifacts))
             summary = analyze(adapter, artifacts)
+            trace_end = adapter.trace_end_ns(artifacts)
 
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].name, "ncclKernel")
         self.assertEqual(events[0].duration_ns, 50)
+        self.assertEqual(trace_end, 150)
         self.assertEqual(summary["provider"], "nsys")
         self.assertEqual(summary["categories"][0]["category"], "communication")
 

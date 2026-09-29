@@ -154,6 +154,21 @@ class NsysAdapter:
         finally:
             connection.close()
 
+    def trace_end_ns(self, artifacts: ProfileArtifacts) -> int:
+        database = artifacts.files["sqlite"]
+        connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+        try:
+            table = self._kernel_table(connection)
+            columns = _columns(connection, table)
+            if "end" not in columns:
+                raise ProfilingError(f"Nsight kernel table {table} lacks end")
+            value = connection.execute(
+                f"SELECT MAX({_quote(columns['end'])}) FROM {_quote(table)}"
+            ).fetchone()[0]
+            return int(value or 0)
+        finally:
+            connection.close()
+
     def supplemental_stats(self, artifacts: ProfileArtifacts) -> dict[str, Any]:
         database = artifacts.files["sqlite"]
         connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)

@@ -217,7 +217,7 @@ def analyze(
 ) -> dict[str, Any]:
     """Analyze normalized events emitted by a provider adapter."""
 
-    trace_end_ns = max((event.end_ns for event in adapter.iter_kernels(artifacts)), default=0)
+    trace_end_ns = adapter.trace_end_ns(artifacts)
     if not trace_end_ns:
         raise ProfilingError(f"No kernel events found in {artifacts.primary}")
     trace_start_ns = (
