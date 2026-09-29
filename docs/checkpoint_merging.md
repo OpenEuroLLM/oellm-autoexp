@@ -33,6 +33,29 @@ Doing it on this side also matters for correctness and cost:
   Merging first and converting only the merged points is far cheaper than
   converting everything and averaging afterwards.
 
+## Match the anneal you are emulating
+
+A merge only emulates a particular anneal if it ends where that anneal forked,
+spans the same tokens, and uses the same decay shape. The schedule is the easy
+one to get wrong: Nemotron merged with `minus-sqrt` because their decay was
+minus-sqrt, not because minus-sqrt is the right default. Prelude decays
+`linear`, so emulating it needs `--merge-style linear`, which this tool
+implements as a uniform average.
+
+All three values are recorded in the anneal run's resolved config, so derive
+them rather than restating them:
+
+```bash
+--match-anneal /path/to/<anneal run>/logs/current.yaml
+```
+
+That reads `train_iters`, `lr_wsd_decay_iters` and `lr_wsd_decay_style`, adds
+`train_iters - lr_wsd_decay_iters` as an endpoint, adds the window spanning the
+decay, and forces the matching style. Pass it once per anneal run, together with
+any extra `--window` values to sweep around the matched one. The fork is
+typically an off-grid checkpoint, since training saves once more when a phase
+ends, and off-grid endpoints are supported.
+
 ## Choosing the window
 
 The WSM paper identifies **merge duration -- the training window -- as the most

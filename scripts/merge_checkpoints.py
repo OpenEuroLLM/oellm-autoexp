@@ -141,6 +141,44 @@ def _walk_back(iters: list[int], end: int, interval: int, window: int) -> int | 
     return selected[-1] if len(selected) == window else None
 
 
+_DECAY_STYLE_TO_MERGE_STYLE = {"linear": "linear", "minus-sqrt": "minus-sqrt"}
+
+
+def read_anneal_config(path: Path, interval: int) -> dict:
+    """Fork iteration, matched window and merge style implied by an anneal
+    run's config.
+
+    A merge emulates an anneal only if it ends where the anneal forked, spans the same
+    number of tokens and uses the same decay shape. All three are recorded in the anneal
+    run's resolved config, so deriving them beats restating them by hand: the fork is
+    train_iters - lr_wsd_decay_iters, and the merge style has to follow
+    lr_wsd_decay_style rather than whichever schedule a paper happened to use.
+    """
+    text = path.read_text()
+    values = {}
+    for key in ("train_iters", "lr_wsd_decay_iters", "lr_wsd_decay_style"):
+        hits = re.findall(rf"^\s*{key}:\s*(\S+)\s*$", text, re.M)
+        if len(hits) != 1:
+            sys.exit(f"{path}: expected exactly one '{key}:' entry, found {len(hits)}")
+        values[key] = hits[0].strip("'\"")
+
+    decay_iters = int(values["lr_wsd_decay_iters"])
+    style_key = values["lr_wsd_decay_style"].replace("_", "-").lower()
+    style = _DECAY_STYLE_TO_MERGE_STYLE.get(style_key)
+    if style is None:
+        sys.exit(
+            f"{path}: decay style {values['lr_wsd_decay_style']!r} has no merge-style "
+            f"equivalent (known: {', '.join(sorted(_DECAY_STYLE_TO_MERGE_STYLE))})"
+        )
+    return {
+        "fork": int(values["train_iters"]) - decay_iters,
+        "decay_iters": decay_iters,
+        # A window of W checkpoints spans W-1 intervals, plus the endpoint itself.
+        "window": max(2, round(decay_iters / interval) + 1),
+        "merge_style": style,
+    }
+
+
 def free_slots(qos: str, max_concurrent: int) -> int:
     out = subprocess.run(
         ["squeue", "-u", os.environ["USER"], "--noheader", "--format", "%q"],
@@ -179,6 +217,14 @@ def main() -> int:
         type=int,
         required=True,
         help="Checkpoint grid spacing, e.g. 2000 on the 32B runs, 2400 on prelude",
+    )
+    ap.add_argument(
+        "--match-anneal",
+        type=Path,
+        default=None,
+        help="An anneal run's resolved config (logs/current.yaml). Adds that anneal's fork "
+        "as an endpoint and its decay length as a window, and forces the matching merge "
+        "style. Use once per anneal run.",
     )
     ap.add_argument(
         "--merge-style",
@@ -230,6 +276,17 @@ def main() -> int:
         help="Print the plan and run the merge tool with --dry-run (validates layouts, writes nothing)",
     )
     args = ap.parse_args()
+
+    if args.match_anneal:
+        matched = read_anneal_config(args.match_anneal, args.min_iteration_interval)
+        args.merge_style = matched["merge_style"]
+        args.end_iteration = sorted({*(args.end_iteration or []), matched["fork"]})
+        args.window = sorted({*args.window, matched["window"]})
+        print(
+            f"matched anneal: forks at {matched['fork']}, decays over "
+            f"{matched['decay_iters']} iterations, style {matched['merge_style']} "
+            f"-> window {matched['window']}"
+        )
 
     iters = discover_iterations(args.checkpoints_dir, args.checkpoint_pattern)
     grid = [i for i in iters if i % args.min_iteration_interval == 0]
