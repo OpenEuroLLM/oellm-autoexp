@@ -17,7 +17,7 @@ from oellm_autoexp.profiling.models import (
     ProfilingError,
     SteadyWindow,
 )
-from oellm_autoexp.profiling.taxonomy import classify_kernel
+from oellm_autoexp.profiling.taxonomy import Classifier, classify_kernel
 
 
 DEFAULT_SHORT_THRESHOLDS_US = (10, 50, 100, 250, 1000)
@@ -167,34 +167,6 @@ def select_steady_window(
     )
 
 
-def _rollup(categories: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    groups = {
-        "communication": {"communication"},
-        "routing_permutation": {"routing_permutation"},
-        "ambiguous_gemm": {"gemm_ambiguous"},
-        "identified_model_compute": {
-            "gated_delta_net",
-            "attention",
-            "normalization",
-            "reduction_softmax",
-        },
-        "other": {"elementwise", "optimizer", "memory", "other"},
-    }
-    return [
-        {
-            "bucket": bucket,
-            "count": sum(int(row["count"]) for row in categories if row["category"] in members),
-            "total_ms": sum(
-                float(row["total_ms"]) for row in categories if row["category"] in members
-            ),
-            "share_pct": sum(
-                float(row["share_pct"]) for row in categories if row["category"] in members
-            ),
-        }
-        for bucket, members in groups.items()
-    ]
-
-
 def recommendations(summary: Mapping[str, Any]) -> list[str]:
     categories = {row["category"]: row for row in summary["categories"]}
     result: list[str] = []
@@ -204,7 +176,7 @@ def recommendations(summary: Mapping[str, Any]) -> list[str]:
         result.append(
             "Communication is a major exposed cost; test overlap with an identical baseline."
         )
-    if summary["overlap"]["communication_overlap_pct"] < 5 and communication >= 5:
+    if summary["communication"]["overlap_pct"] < 5 and communication >= 5:
         result.append(
             "Communication is almost fully serialized with compute; inspect scheduling and dependencies."
         )
@@ -215,7 +187,7 @@ def recommendations(summary: Mapping[str, Any]) -> list[str]:
     under_100 = next(
         (
             row["share_of_dispatches_pct"]
-            for row in summary["short_kernels"]
+            for row in summary["kernel_launches"]["short_distribution"]
             if row["threshold_us"] == 100
         ),
         0,
@@ -239,6 +211,9 @@ def analyze(
     baseline_records: Sequence[IterationRecord] | None = None,
     short_thresholds_us: Sequence[int] = DEFAULT_SHORT_THRESHOLDS_US,
     top: int = 30,
+    classifier: Classifier = classify_kernel,
+    run_config: Mapping[str, Any] | None = None,
+    run_metadata: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Analyze normalized events emitted by a provider adapter."""
 
@@ -270,7 +245,7 @@ def analyze(
         if duration_ns <= 0:
             continue
         first_start_ns = start_ns if first_start_ns is None else min(first_start_ns, start_ns)
-        category = classify_kernel(event.name)
+        category = classifier(event.name)
         by_name.setdefault(event.name, Aggregate(category)).add(duration_ns)
         by_category.setdefault(category, Aggregate(category)).add(duration_ns)
         category_unions[category].add(start_ns, end_ns)
@@ -312,6 +287,34 @@ def analyze(
     overlap_ns = interval_intersection_ns(communication_union, compute_union)
     exposed_smaller_domain_ns = busy_ns - max(communication_ns, compute_ns)
     ideal_window_ns = max(window_ns - exposed_smaller_domain_ns, 1)
+    step_count = steady_window.step_count if steady_window else None
+    config = dict(run_config or {})
+    megatron = config.get("megatron", {})
+    global_batch_size = megatron.get("global_batch_size")
+    sequence_length = megatron.get("seq_length")
+    tokens_per_step = (
+        int(global_batch_size) * int(sequence_length)
+        if global_batch_size and sequence_length
+        else None
+    )
+    for row in category_rows:
+        row["count_per_step"] = row["count"] / step_count if step_count else None
+        row["direct_ms_per_step"] = row["total_ms"] / step_count if step_count else None
+        row["union_ms_per_step"] = row["union_ms"] / step_count if step_count else None
+        row["direct_us_per_token"] = (
+            row["total_ms"] * 1000 / (step_count * tokens_per_step)
+            if step_count and tokens_per_step
+            else None
+        )
+    profile_metrics = dict(steady_window.profile_metrics) if steady_window else {}
+    profile_tokens_per_gpu = profile_metrics.get("median_tokens_per_second_per_gpu")
+    throughput = {
+        **profile_metrics,
+        "tokens_per_step": tokens_per_step,
+        "gpu_seconds_per_million_tokens": (
+            1_000_000 / profile_tokens_per_gpu if profile_tokens_per_gpu else None
+        ),
+    }
 
     baseline: dict[str, Any] = {}
     if baseline_records:
@@ -321,6 +324,10 @@ def analyze(
             steady_window.end_iteration if steady_window else None,
         )
         baseline = dict(baseline_window.profile_metrics)
+        baseline_tokens_per_gpu = baseline.get("median_tokens_per_second_per_gpu")
+        baseline["gpu_seconds_per_million_tokens"] = (
+            1_000_000 / baseline_tokens_per_gpu if baseline_tokens_per_gpu else None
+        )
         profile_tokens = (
             steady_window.profile_metrics.get("median_tokens_per_second_per_gpu")
             if steady_window
@@ -332,30 +339,95 @@ def analyze(
                 100 * (profile_tokens - baseline_tokens) / baseline_tokens
             )
 
+    short_distribution = [
+        {
+            "threshold_us": threshold,
+            "count": count,
+            "share_of_dispatches_pct": 100 * count / dispatch_count,
+        }
+        for threshold, count in sorted(short_counts.items())
+    ]
     summary: dict[str, Any] = {
-        "schema_version": 1,
-        "provider": artifacts.provider,
+        "schema_version": 2,
+        "metadata": {
+            "provider": artifacts.provider,
+            **dict(run_metadata or {}),
+        },
         "artifacts": {
             "root": str(artifacts.root),
             "primary": str(artifacts.primary),
             "stem": artifacts.stem,
             "files": {key: str(path) for key, path in artifacts.files.items()},
         },
+        "workload": {
+            "config": config,
+            "steady_window": {
+                "start_iteration": steady_window.start_iteration if steady_window else None,
+                "end_iteration": steady_window.end_iteration if steady_window else None,
+                "step_count": step_count,
+                "duration_ms": window_ns / 1_000_000,
+                "trace_start_ns": trace_start_ns,
+                "trace_end_ns": trace_end_ns,
+            },
+        },
+        "throughput": throughput,
+        "baseline": baseline,
+        "device": {
+            "busy_ms": busy_ns / 1_000_000,
+            "idle_ms": max(window_ns - busy_ns, 0) / 1_000_000,
+            "busy_pct": 100 * busy_ns / window_ns if window_ns else 0,
+            "summed_kernel_ms": total_direct_ns / 1_000_000,
+            "busy_ms_per_step": busy_ns / 1_000_000 / step_count if step_count else None,
+        },
+        "kernel_launches": {
+            "count": dispatch_count,
+            "per_step": dispatch_count / step_count if step_count else None,
+            "per_token": (
+                dispatch_count / (step_count * tokens_per_step)
+                if step_count and tokens_per_step
+                else None
+            ),
+            "short_distribution": short_distribution,
+        },
+        "communication": {
+            "union_ms": communication_ns / 1_000_000,
+            "compute_union_ms": compute_ns / 1_000_000,
+            "overlap_ms": overlap_ns / 1_000_000,
+            "overlap_pct": 100 * overlap_ns / communication_ns if communication_ns else 0,
+            "exposed_ms": max(communication_ns - overlap_ns, 0) / 1_000_000,
+            "exposed_ms_per_step": (
+                max(communication_ns - overlap_ns, 0) / 1_000_000 / step_count
+                if step_count
+                else None
+            ),
+            "union_ms_per_step": (
+                communication_ns / 1_000_000 / step_count if step_count else None
+            ),
+            "perfect_hiding_speedup_ceiling": window_ns / ideal_window_ns,
+        },
+        "categories": category_rows,
+        "hotspots": kernel_rows[: max(top, 0)],
+        "provider_stats": adapter.supplemental_stats(artifacts),
+        "caveats": [
+            "Category durations are summed kernel time and can exceed wall time.",
+            "Generic GEMMs are semantically ambiguous without markers.",
+            "Hardware roofline status requires counters not present in timeline traces.",
+        ],
+        "_all_kernel_rows": kernel_rows,
+        # Compatibility aliases for schema-v1 report consumers.
+        "provider": artifacts.provider,
         "window": {
             "start_iteration": steady_window.start_iteration if steady_window else None,
             "end_iteration": steady_window.end_iteration if steady_window else None,
-            "step_count": steady_window.step_count if steady_window else None,
+            "step_count": step_count,
             "duration_ms": window_ns / 1_000_000,
             "trace_start_ns": trace_start_ns,
             "trace_end_ns": trace_end_ns,
         },
-        "profile": steady_window.profile_metrics if steady_window else {},
-        "baseline": baseline,
+        "profile": profile_metrics,
         "dispatches": {
             "count": dispatch_count,
-            "per_step": dispatch_count / steady_window.step_count
-            if steady_window and steady_window.step_count
-            else None,
+            "per_step": dispatch_count / step_count if step_count else None,
         },
         "gpu": {
             "busy_ms": busy_ns / 1_000_000,
@@ -372,25 +444,11 @@ def analyze(
             else 0,
             "perfect_hiding_speedup_ceiling": window_ns / ideal_window_ns,
         },
-        "categories": category_rows,
-        "moe_rollup": _rollup(category_rows),
         "top_kernels": kernel_rows[: max(top, 0)],
-        "short_kernels": [
-            {
-                "threshold_us": threshold,
-                "count": count,
-                "share_of_dispatches_pct": 100 * count / dispatch_count,
-            }
-            for threshold, count in sorted(short_counts.items())
-        ],
-        "provider_stats": adapter.supplemental_stats(artifacts),
-        "notes": [
-            "Category durations are summed kernel time and can exceed wall time.",
-            "Generic GEMMs are semantically ambiguous without markers.",
-            "Hardware roofline status requires counters not present in timeline traces.",
-        ],
-        "_all_kernel_rows": kernel_rows,
+        "short_kernels": short_distribution,
+        "notes": [],
     }
+    summary["notes"] = summary["caveats"]
     summary["recommendations"] = recommendations(summary)
     return summary
 

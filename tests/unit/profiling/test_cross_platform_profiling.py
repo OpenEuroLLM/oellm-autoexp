@@ -19,10 +19,11 @@ from oellm_autoexp.profiling.analysis import (
     select_steady_window,
 )
 from oellm_autoexp.profiling.capture import analysis_submission_command, wrap_launch_command
+from oellm_autoexp.profiling.comparison import compare_summaries
 from oellm_autoexp.profiling.config import ProfileAnalysisConfig, ProfilingConfig
 from oellm_autoexp.profiling.models import ProfilingError
 from oellm_autoexp.profiling.reporting import render_canvas, write_reports
-from oellm_autoexp.profiling.taxonomy import classify_kernel
+from oellm_autoexp.profiling.taxonomy import build_classifier, classify_kernel
 
 
 KERNEL_FIELDS = [
@@ -111,6 +112,12 @@ class TaxonomyAndIntervalTests(unittest.TestCase):
         self.assertEqual(left.duration_ns(), 20)
         self.assertEqual(right.duration_ns(), 17)
         self.assertEqual(interval_intersection_ns(left, right), 7)
+
+    def test_generic_taxonomy_does_not_require_moe(self) -> None:
+        generic = build_classifier(["generic"])
+        megatron = build_classifier(["megatron"])
+        self.assertEqual(generic("_permute_kernel"), "other")
+        self.assertEqual(megatron("chunk_gated_delta_rule_fwd_kernel"), "gated_delta_net")
 
 
 class AdapterTests(unittest.TestCase):
@@ -215,13 +222,55 @@ class AnalysisAndReportingTests(unittest.TestCase):
             output = directory / "out"
             write_reports(summary, output, directory / "report.canvas.tsx")
             payload = json.loads((output / "summary.json").read_text())
+            text_report_exists = (output / "report.txt").exists()
 
         categories = {row["category"]: row for row in payload["categories"]}
+        self.assertEqual(payload["schema_version"], 2)
         self.assertAlmostEqual(categories["communication"]["total_ms"], 8.0)
         self.assertAlmostEqual(payload["overlap"]["communication_overlap_pct"], 62.5)
         self.assertAlmostEqual(payload["baseline"]["profile_throughput_delta_pct"], -100 / 6)
         self.assertIn('from "cursor/canvas"', canvas)
         self.assertTrue((output / "summary.json").name == "summary.json")
+        self.assertTrue(text_report_exists)
+
+    def test_profile_comparison_normalizes_and_warns(self) -> None:
+        baseline = {
+            "schema_version": 2,
+            "throughput": {
+                "median_step_ms": 10.0,
+                "median_tokens_per_second_per_gpu": 1000.0,
+                "median_tflops_per_gpu": 20.0,
+                "gpu_seconds_per_million_tokens": 1000.0,
+            },
+            "device": {"busy_pct": 80.0},
+            "kernel_launches": {"per_step": 100.0, "per_token": 0.1},
+            "communication": {
+                "exposed_ms_per_step": 2.0,
+                "overlap_pct": 5.0,
+            },
+            "categories": [
+                {
+                    "category": "communication",
+                    "share_pct": 20.0,
+                    "direct_us_per_token": 2.0,
+                    "direct_ms_per_step": 2.0,
+                }
+            ],
+            "workload": {"config": {"megatron": {"num_layers": 8}}},
+        }
+        candidate = json.loads(json.dumps(baseline))
+        candidate["throughput"]["median_tokens_per_second_per_gpu"] = 1200.0
+        candidate["throughput"]["gpu_seconds_per_million_tokens"] = 833.333
+        candidate["communication"]["exposed_ms_per_step"] = 1.0
+        candidate["workload"]["config"]["megatron"]["num_layers"] = 12
+
+        comparison = compare_summaries(baseline, candidate)
+        metrics = {row["metric"]: row for row in comparison["metrics"]}
+
+        self.assertAlmostEqual(metrics["tokens_per_second_per_gpu"]["delta_pct"], 20.0)
+        self.assertTrue(metrics["gpu_seconds_per_million_tokens"]["favorable"])
+        self.assertEqual(metrics["gpu_busy"]["delta_unit"], "pp")
+        self.assertIn("num_layers differs: 8 vs 12", comparison["comparability_warnings"])
 
 
 class CaptureTests(unittest.TestCase):

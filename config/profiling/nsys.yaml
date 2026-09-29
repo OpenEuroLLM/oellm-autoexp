@@ -15,7 +15,7 @@ analysis:
   execution: dependent_slurm
   steady_start_iteration: 5
   steady_end_iteration: null
-  canvas: true
+  canvas: false
   partition: null
   account: null
   cpus: 8

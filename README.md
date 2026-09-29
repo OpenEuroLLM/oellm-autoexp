@@ -132,6 +132,17 @@ uv run scripts/profiling/analyze_profile.py /path/to/job/profiling \
   --stdout /path/to/stdout.log --config /path/to/config.yaml
 ```
 
+Compare any two summaries with normalized per-step and per-token metrics:
+
+```bash
+uv run scripts/profiling/compare_profiles.py \
+  baseline/summary.json candidate/summary.json
+
+# Machine-readable output for automation
+uv run scripts/profiling/compare_profiles.py \
+  baseline/summary.json candidate/summary.json --format json
+```
+
 The capture manifest selects the provider automatically. Reports include JSON,
 CSV, Markdown, and an optional Cursor Canvas. Timeline profiles do not contain
 the hardware counters required for a measured roofline.

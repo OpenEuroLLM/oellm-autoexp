@@ -11,7 +11,8 @@ from pathlib import Path
 from oellm_autoexp.profiling.adapters import available_adapters, get_adapter
 from oellm_autoexp.profiling.analysis import analyze, parse_iteration_log, select_steady_window
 from oellm_autoexp.profiling.models import ProfilingError
-from oellm_autoexp.profiling.reporting import write_reports
+from oellm_autoexp.profiling.reporting import render_text, write_reports
+from oellm_autoexp.profiling.taxonomy import build_classifier
 
 
 def _manifest(path: Path) -> dict:
@@ -44,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--steady-end", type=int)
     parser.add_argument("--rank", default="rank0")
     parser.add_argument("--top", type=int, default=30)
+    parser.add_argument(
+        "--taxonomy",
+        default="megatron,moe",
+        help="Comma-separated semantic taxonomy plugins (generic is always the fallback)",
+    )
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--canvas-out", type=Path)
     return parser
@@ -78,37 +84,16 @@ def _config_summary(path: Path | None) -> dict:
         "moe_shared_expert_overlap",
         "overlap_moe_expert_parallel_comm",
     )
+    sbatch = root.get("slurm", {}).get("sbatch", {})
+    slurm_env = root.get("slurm", {}).get("env", {})
     return {
         "path": str(path),
+        "model_name": megatron.get("aux", {}).get("model_name"),
         "megatron": {key: megatron.get(key) for key in keys},
-        "nodes": root.get("slurm", {}).get("sbatch", {}).get("nodes"),
+        "nodes": sbatch.get("nodes"),
+        "gpus_per_node": sbatch.get("gpus_per_node"),
+        "world_size": slurm_env.get("WORLD_SIZE"),
     }
-
-
-def _print_summary(summary: dict, top: int) -> None:
-    print(f"Provider: {summary['provider']}")
-    print(f"Trace: {summary['artifacts']['primary']}")
-    print(
-        f"Window {summary['window']['duration_ms'] / 1000:.3f} s; "
-        f"GPU busy {summary['gpu']['busy_pct']:.2f}%; "
-        f"{summary['dispatches']['count']:,} dispatches"
-    )
-    print(
-        f"Communication overlap {summary['overlap']['communication_overlap_pct']:.2f}%; "
-        f"perfect-hiding ceiling {summary['overlap']['perfect_hiding_speedup_ceiling']:.3f}x"
-    )
-    print("\nCategories:")
-    for row in summary["categories"]:
-        print(
-            f"  {row['category']:<24} {row['total_ms'] / 1000:>9.3f} s "
-            f"{row['share_pct']:>6.2f}% n={row['count']:,}"
-        )
-    print(f"\nTop {top} kernels:")
-    for row in summary["top_kernels"][:top]:
-        print(
-            f"  {row['total_ms'] / 1000:>9.3f} s {row['share_pct']:>6.2f}% "
-            f"n={row['count']:<9,} {row['name']}"
-        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -134,20 +119,30 @@ def main(argv: list[str] | None = None) -> int:
             else None
         )
         baseline = parse_iteration_log(args.baseline_stdout) if args.baseline_stdout else None
+        config_summary = _config_summary(args.config)
+        taxonomies = [value for value in args.taxonomy.split(",") if value]
         summary = analyze(
             adapter,
             artifacts,
             steady_window=window,
             baseline_records=baseline,
             top=max(args.top, 0),
+            classifier=build_classifier(taxonomies),
+            run_config=config_summary,
+            run_metadata={
+                "tool_version": manifest.get("tool_version"),
+                "rank": manifest.get("rank"),
+                "hostname": manifest.get("hostname"),
+                "taxonomies": taxonomies,
+            },
         )
-        summary["config"] = _config_summary(args.config)
         output_dir = args.output_dir or artifacts.root / "profile_summary"
         canvas_out = args.canvas_out
         if canvas_out is None and analysis_defaults.get("canvas"):
             canvas_out = output_dir / "profile-analysis.canvas.tsx"
+        terminal_report = render_text(summary, max(args.top, 0))
         write_reports(summary, output_dir, canvas_out)
-        _print_summary(summary, max(args.top, 0))
+        print(terminal_report, end="")
         print(f"\nWrote analysis to {output_dir}")
         if canvas_out:
             print(f"Wrote Canvas to {canvas_out}")
