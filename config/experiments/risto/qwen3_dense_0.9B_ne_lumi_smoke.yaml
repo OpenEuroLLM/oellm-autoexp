@@ -1,0 +1,117 @@
+# @package _global_
+#
+# Short Qwen3-like 0.9B non-embedding dense-model bring-up on LUMI.
+# Uses the multilingual-scaling model/data composition with mock data so the
+# MareNostrum-specific paths in oellm_256k are not accessed.
+#
+# Submit:
+#   uv run --python 3.12 scripts/run_autoexp.py \
+#     --config-name experiments/risto/qwen3_dense_0.9B_ne_lumi_smoke \
+#     --submit-and-exit
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.9B_ne
+  - /backend/megatron/multilingual_scaling/data: oellm_256k
+  - _self_
+
+index: 0
+stage: smoke
+
+job:
+  name: "qwen3_dense_0.9B_ne_${stage}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}"
+  base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+container:
+  env:
+    WANDB_TAGS: "lumi,qwen3,0.9B-ne,dense,smoke"
+
+backend:
+  data_integrity_check: false
+  megatron:
+    # LUMI/ROCm compatibility.
+    masked_softmax_fusion: false
+    gradient_accumulation_fusion: false
+    bias_dropout_fusion: false
+    bias_swiglu_fusion: false
+    apply_rope_fusion: false
+    tp_comm_overlap: false
+    log_progress: false
+    log_throughput: true
+    log_interval: 1
+    log_timers_to_tensorboard: true
+    timing_log_level: 2
+
+    # Mock-data smoke run. Override all filesystem settings inherited from
+    # oellm_256k that point to MareNostrum.
+    mock_data: true
+    data_args_path: null
+    data_path: null
+    train_data_path: null
+    valid_data_path: null
+    test_data_path: null
+    split: null
+    data_cache_path: "/scratch/project_462001516/users/rluukkon/cache/${job.name}"
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    num_workers: 6
+    num_dataset_builder_threads: 6
+    trust_remote_code: true
+
+    seq_length: 4096
+    encoder_seq_length: null
+    micro_batch_size: 8
+    global_batch_size: 64
+
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: false
+    use_distributed_optimizer: true
+
+    train_iters: 20
+    exit_interval: 20
+    lr: 5.0e-4
+    min_lr: 0.0
+    lr_warmup_iters: 5
+    lr_decay_iters: 20
+    lr_decay_style: constant
+
+    eval_iters: 1
+    eval_interval: 100000
+    save_interval: 1000000000
+    save: null
+    load: null
+    no_save_optim: true
+    no_save_rng: true
+
+    wandb_project: qwen3_dense_0.9B_ne_lumi
+    wandb_exp_name: ${job.name}
+    wandb_entity: openeurollm-project
+    wandb_save_dir: ${job.base_output_dir}
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+slurm:
+  sbatch_extra_directives:
+    - "--exclude=nid005019"
+  env:
+    MASTER_PORT: "9999"
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    TRITON_HOME: /tmp/triton_cache
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: 1
+    account: project_462001516
+    partition: dev-g
+    time: "00:30:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "
