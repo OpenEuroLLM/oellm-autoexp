@@ -77,6 +77,7 @@ class CaptureManifest:
     provider: str
     mode: str
     rank: int
+    job_id: str | None
     hostname: str
     command: list[str]
     tool_path: str | None

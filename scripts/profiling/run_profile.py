@@ -247,6 +247,7 @@ def main(argv: list[str] | None = None) -> int:
         provider=args.provider,
         mode=args.mode,
         rank=rank,
+        job_id=os.environ.get("SLURM_JOB_ID"),
         hostname=socket.gethostname(),
         command=command,
         tool_path=executable,

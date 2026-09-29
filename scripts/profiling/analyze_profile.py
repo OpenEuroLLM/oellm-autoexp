@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -34,12 +35,88 @@ def _provider(path: Path, explicit: str | None, manifest: dict) -> str:
     return "rocprofv3"
 
 
+def _artifact_roots(path: Path) -> list[Path]:
+    root = path if path.is_dir() else path.parent
+    roots = [root]
+    if root.name in {"profiling", "rocprof"}:
+        roots.append(root.parent)
+    return roots
+
+
+def _job_id(path: Path, prefix: str, suffix: str) -> str | None:
+    match = re.fullmatch(rf"{re.escape(prefix)}-(\d+){re.escape(suffix)}", path.name)
+    return match.group(1) if match else None
+
+
+def _discover_run_inputs(
+    trace: Path,
+    manifest: dict,
+    stdout: Path | None,
+    config: Path | None,
+) -> tuple[Path | None, Path | None]:
+    """Find a matching stdout/config pair near a run or profiling directory."""
+
+    if stdout is not None and config is not None:
+        return stdout, config
+    stdout_candidates: list[Path] = []
+    config_candidates: list[Path] = []
+    for root in _artifact_roots(trace):
+        stdout_candidates.extend(root.glob("stdout-*.log"))
+        stdout_candidates.extend((root / "logs").glob("stdout-*.log"))
+        config_candidates.extend(root.glob("config-*.yaml"))
+
+    stdout_by_id = {
+        job_id: path
+        for path in stdout_candidates
+        if (job_id := _job_id(path, "stdout", ".log")) is not None
+    }
+    config_by_id = {
+        job_id: path
+        for path in config_candidates
+        if (job_id := _job_id(path, "config", ".yaml")) is not None
+    }
+    preferred_id = str(manifest.get("job_id") or "")
+    explicit_id = (
+        _job_id(stdout, "stdout", ".log")
+        if stdout is not None
+        else _job_id(config, "config", ".yaml") if config is not None else None
+    )
+    selected_id = preferred_id or explicit_id
+    if not selected_id:
+        paired_ids = set(stdout_by_id) & set(config_by_id)
+        if paired_ids:
+            selected_id = max(
+                paired_ids,
+                key=lambda value: max(
+                    stdout_by_id[value].stat().st_mtime,
+                    config_by_id[value].stat().st_mtime,
+                ),
+            )
+    if stdout is None:
+        stdout = stdout_by_id.get(selected_id) if selected_id else None
+        if stdout is None and stdout_candidates:
+            stdout = max(stdout_candidates, key=lambda path: path.stat().st_mtime)
+    if config is None:
+        config = config_by_id.get(selected_id) if selected_id else None
+        if config is None and config_candidates:
+            config = max(config_candidates, key=lambda path: path.stat().st_mtime)
+    return stdout, config
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("trace", type=Path, help="Profiling directory or primary artifact")
     parser.add_argument("--provider", choices=available_adapters())
-    parser.add_argument("--stdout", type=Path, help="Profiled stdout log")
-    parser.add_argument("--config", type=Path, help="Resolved AutoExp config")
+    parser.add_argument(
+        "--stdout",
+        type=Path,
+        help="Profiled stdout log (default: discover near the run directory)",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help="Resolved AutoExp config (default: discover near the run directory)",
+    )
     parser.add_argument("--baseline-stdout", type=Path)
     parser.add_argument("--steady-start", type=int)
     parser.add_argument("--steady-end", type=int)
@@ -103,7 +180,10 @@ def main(argv: list[str] | None = None) -> int:
         provider = _provider(args.trace, args.provider, manifest)
         adapter = get_adapter(provider)
         artifacts = adapter.discover(args.trace, args.rank)
-        records = parse_iteration_log(args.stdout) if args.stdout else None
+        stdout_path, config_path = _discover_run_inputs(
+            args.trace, manifest, args.stdout, args.config
+        )
+        records = parse_iteration_log(stdout_path) if stdout_path else None
         analysis_defaults = manifest.get("analysis_options", {})
         steady_start = args.steady_start or int(
             analysis_defaults.get("steady_start_iteration", 5)
@@ -119,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
             else None
         )
         baseline = parse_iteration_log(args.baseline_stdout) if args.baseline_stdout else None
-        config_summary = _config_summary(args.config)
+        config_summary = _config_summary(config_path)
         taxonomies = [value for value in args.taxonomy.split(",") if value]
         summary = analyze(
             adapter,
@@ -134,6 +214,8 @@ def main(argv: list[str] | None = None) -> int:
                 "rank": manifest.get("rank"),
                 "hostname": manifest.get("hostname"),
                 "taxonomies": taxonomies,
+                "stdout": str(stdout_path) if stdout_path else None,
+                "config": str(config_path) if config_path else None,
             },
         )
         output_dir = args.output_dir or artifacts.root / "profile_summary"

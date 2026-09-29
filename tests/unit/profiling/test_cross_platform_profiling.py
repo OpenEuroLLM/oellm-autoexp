@@ -88,6 +88,15 @@ def _load_run_autoexp():
     return module
 
 
+def _load_analyze_profile():
+    path = Path(__file__).parents[3] / "scripts" / "profiling" / "analyze_profile.py"
+    spec = importlib.util.spec_from_file_location("analyze_profile_test_module", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class TaxonomyAndIntervalTests(unittest.TestCase):
     def test_taxonomy(self) -> None:
         cases = {
@@ -383,6 +392,27 @@ class CaptureTests(unittest.TestCase):
         self.assertIn("++profiling.provider=rocprofv3", overrides)
         self.assertIn("++profiling.capture.kernel=true", overrides)
         self.assertEqual(overrides[-1], "profiling.ranks=[2]")
+
+    def test_run_inputs_are_discovered_as_matching_pair(self) -> None:
+        module = _load_analyze_profile()
+        with TemporaryDirectory() as raw:
+            root = Path(raw)
+            profiling = root / "profiling"
+            logs = root / "logs"
+            profiling.mkdir()
+            logs.mkdir()
+            stdout = logs / "stdout-123.log"
+            config = root / "config-123.yaml"
+            stdout.write_text("profile", encoding="utf-8")
+            config.write_text("config: {}", encoding="utf-8")
+            (logs / "stdout-999.log").write_text("newer but unpaired", encoding="utf-8")
+
+            found_stdout, found_config = module._discover_run_inputs(
+                profiling, {}, None, None
+            )
+
+        self.assertEqual(found_stdout, stdout)
+        self.assertEqual(found_config, config)
 
 
 if __name__ == "__main__":
