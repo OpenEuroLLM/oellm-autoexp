@@ -21,20 +21,23 @@
 # deferred-wgrad BUG from 82k to 156k, so it is NOT the parent any more (the
 # earlier 92k-switch plan existed only to leave that bug before annealing).
 #
-# THREE STAGES, ONE COMMAND:
+# TWO STAGES, ONE COMMAND:
 #   seed    (local, login node) symlink tree of the parent's iter_0100000 in
 #           this run's own checkpoint directory + tracker 100000. Symlinks:
 #           the parent is jitsev1's and JUPITER refuses to hardlink other
 #           users' files. readlink -f in case the parent entry is itself a
 #           link into the /e/data1 mirror (cp -a would copy the link).
-#   cache   (1 node, 1 rank, runs in parallel) builds the index for the
-#           anneal mix + 120k schedule with a 2-layer stand-in model, into
-#           prod_v2's anneal cache (mostly hits -> fast). Kept as a stage so
-#           any missing file is built by 1 rank, not by the 512-node job.
-#   anneal  (512 nodes) 100000 -> 120000, gated on the seed tracker AND the
-#           cache log.
+#   anneal  (512 nodes) 100000 -> 120000, gated on the seed tracker only.
 #
-# ANNEAL CHANGES (cache + anneal stages only, from backend.aux.anneal_*):
+# NO CACHE STAGE: the anneal index (mix, 120k*GBS, seed, split, seq length,
+# tokenizer) is prod_v2's 100k anneal's, already built in its cache by five
+# 'skipping training' prebuilds and read by the v2 anneal (job 2101574). A
+# cache gate only kept the 512-node job out of the queue behind a 1-node job,
+# and a killed cache job's SIGTERM Traceback in current.log cancelled the
+# anneal outright (session 1790618033). Should a file be missing, rank 0 of
+# the anneal builds it (the cache is writable).
+
+# ANNEAL CHANGES (anneal stage only, from backend.aux.anneal_*):
 #   data_args_path   datamix_jupiter_multilingual1_dominant3_complete.txt
 #   data_cache_path  prod_v2's anneal cache (oellm_32b_dense_v2/cache_multilingual1_dominant3)
 #   train_samples          120000 * GBS   schedule ends at 120k
@@ -153,63 +156,7 @@ sweep:
             echo "[seed] symlinked $N_DST files of $SRC into $DST/${backend.aux.fork_iter_dir}"
             echo "[seed] wrote $TRACKER = ${backend.aux.fork_iter}"
 
-        # ====== stage 1: build the anneal dataset index (1 node, 1 rank) ======
-        # ONE rank: index building runs on rank 0 while the others wait in a
-        # barrier, and that barrier's NCCL watchdog killed an earlier 4-rank
-        # prebuild (job 1354000). The data/schedule keys must stay identical to
-        # the anneal stage's -- both read them from backend.aux.anneal_*.
-        - stage: cache
-          job: auto_cancel
-          job.name: "oellm_32b_dense_datacache_${backend.aux.variant}"
-          job.est_steps: 1
-          job.est_step_time_s: 7200
-          job.est_startup_min: 5
-          backend.megatron.data_args_path: ${backend.aux.anneal_data}
-          backend.megatron.data_cache_path: ${backend.aux.anneal_cache}
-          backend.megatron.train_samples: ${backend.aux.anneal_train_samples}
-          backend.megatron.lr_decay_style: WSD
-          backend.megatron.lr_wsd_decay_style: minus_sqrt
-          backend.megatron.lr_decay_samples: ${backend.aux.anneal_train_samples}
-          backend.megatron.lr_wsd_decay_samples: ${backend.aux.anneal_wsd_samples}
-          # slurm.sbatch.nodes is the real knob; torchrun's nnodes is tied to
-          # an aux value in base.yaml, so it is pinned here as well.
-          backend.torchrun_args.nnodes: 1
-          backend.torchrun_args.nproc_per_node: 1
-          slurm.sbatch.nodes: 1
-          slurm.sbatch.time: "04:00:00"
-          backend.megatron.skip_train: true
-          backend.megatron.distributed_timeout_minutes: 720
-          # no checkpoint in or out, no logging artefacts. wandb_project must be
-          # null, not "": an empty string renders as a bare --wandb-project and
-          # argparse aborts ("expected one argument", jobs 2106056/2106757).
-          backend.megatron.load: null
-          backend.megatron.save: null
-          backend.megatron.exit_on_missing_checkpoint: false
-          backend.megatron.non_persistent_ckpt_type: null
-          backend.megatron.non_persistent_global_ckpt_dir: null
-          backend.megatron.non_persistent_save_interval: null
-          backend.megatron.wandb_project: null
-          backend.megatron.tensorboard_dir: null
-          # stand-in model: irrelevant to the cache key
-          backend.megatron.num_layers: 2
-          backend.megatron.hidden_size: 256
-          backend.megatron.ffn_hidden_size: 512
-          backend.megatron.num_attention_heads: 4
-          backend.megatron.num_query_groups: 4
-          backend.megatron.kv_channels: 64
-          backend.megatron.tensor_model_parallel_size: 1
-          backend.megatron.pipeline_model_parallel_size: 1
-          backend.megatron.pipeline_model_parallel_layout: null
-          backend.megatron.sequence_parallel: false
-          backend.megatron.tp_comm_overlap: false
-          backend.megatron.overlap_grad_reduce: false
-          backend.megatron.overlap_param_gather: false
-          backend.megatron.defer_embedding_wgrad_compute: false
-          backend.megatron.fp8: null
-          backend.megatron.micro_batch_size: 1
-          backend.megatron.num_dataset_builder_threads: 64
-
-        # ====== stage 2: the cooldown 100k -> 120k ============================
+        # ====== stage 1: the cooldown 100k -> 120k ============================
         - stage: anneal
           job.name: "oellm_32b_dense_${backend.aux.variant}"
           job.est_steps: ${oc.subi:${backend.aux.anneal_end_iter},${backend.aux.anneal_start_iter}}
@@ -221,24 +168,15 @@ sweep:
           backend.megatron.lr_decay_samples: ${backend.aux.anneal_train_samples}
           backend.megatron.lr_wsd_decay_samples: ${backend.aux.anneal_wsd_samples}
           backend.megatron.exit_interval: ${backend.aux.anneal_end_iter}
+          # Tracker EXISTS, not == anneal_start_iter: the seed writes it only
+          # after a complete link tree, and on every resubmission after the
+          # first segment it already holds a later iteration (an exact-match
+          # gate never released the resume at 101980).
           job.start_condition:
-            class_name: AndCondition
-            conditions:
-              - class_name: FileContentCondition
-                path: "${backend.megatron.save}/latest_checkpointed_iteration.txt"
-                mode: regex
-                pattern: "^\\s*${backend.aux.anneal_start_iter}\\s*$"
-              - class_name: FileContentCondition
-                path: "${aux.b1_root}/oellm_32b_dense_datacache_${backend.aux.variant}/logs/current.log"
-                pattern: "skipping training (--skip-train is on)"
-          # Drop the anneal (never submitted) if a prerequisite fails, instead
-          # of waiting forever. Checked every poll while it is pending.
+            class_name: FileExistsCondition
+            path: "${backend.megatron.save}/latest_checkpointed_iteration.txt"
+          # Drop the anneal (never submitted) if the seed fails, instead of
+          # waiting forever. Checked every poll while it is pending.
           job.cancel_condition:
-            class_name: OrCondition
-            conditions:
-              - class_name: FileExistsCondition
-                path: "${aux.b1_root}/oellm_32b_dense_seed_${backend.aux.variant}/SEED_FAILED"
-              - class_name: FileContentCondition
-                path: "${aux.b1_root}/oellm_32b_dense_datacache_${backend.aux.variant}/logs/current.log"
-                mode: regex
-                pattern: "Traceback|DUE TO TIME LIMIT|CANCELLED AT|srun: error"
+            class_name: FileExistsCondition
+            path: "${aux.b1_root}/oellm_32b_dense_seed_${backend.aux.variant}/SEED_FAILED"
