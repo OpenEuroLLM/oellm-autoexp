@@ -236,3 +236,7 @@ slurm_juwels.sh
 logs/
 output/
 dump/
+
+# uv 
+uv.lock
+core

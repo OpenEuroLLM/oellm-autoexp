@@ -1,0 +1,210 @@
+# @package _global_
+#
+# 40BT 0.4B MoE AngularMuown grid on LUMI: LR × global batch size.
+# Mirror of experiments/risto/muon_lr_bsz_grid_qwen3_sparse_0.4B_ne_experts_32
+# with AngularMuown in place of Muon, for a direct comparison.
+#
+#   gbsz 256, 512:    lr {5e-4, 1e-3}
+#   gbsz 1024, 2048:  lr {1e-3, 5e-3}
+#   total: 8 jobs
+#
+# Hidden 2-D matrix parameters use AngularMuown. Embeddings, output weights,
+# norms, biases and router weights continue to use Adam.
+#
+# Megatron comes from the AngularMuown branch, not submodules/Megatron-LM:
+#   OpenEuroLLM/NVIDIA-Megatron-LM  oellm/v0.19-moe-lumi-angular-muown @ 1f88af5d1
+# (Risto's oellm/v0.19-moe-lumi + one AngularMuown commit). To run it yourself,
+# check out that branch and point backend.aux.megatron_dir at your checkout.
+# The autoexp Megatron arg schema predates AngularMuown and silently drops
+# unknown flags, so --optimizer angular_muown and all --angular-muown-* flags
+# are passed through backend.launcher_script instead of backend.megatron.
+# `optimizer` is deliberately left unset in backend.megatron so autoexp emits
+# no competing --optimizer flag.
+#   
+# Render the sbatch scripts without submitting:
+#   python scripts/run_autoexp.py \
+#     --config-name experiments/laingsam1/angular_muown_lr_bsz_grid_qwen3_sparse_0.4B_ne_experts_32 \
+#     --dry-run
+#
+# Submit a single combo (index 0 = gbsz=256, lr=5e-4):
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/laingsam1/angular_muown_lr_bsz_grid_qwen3_sparse_0.4B_ne_experts_32 \
+#     --array-subset 0 --submit-and-exit
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  # auto_restart: the monitor resubmits on time limit / crash / NaN, as in
+  # Risto's Muon runs (their saved job configs use it).
+  - /job: auto_restart
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.4B_ne_experts_32
+  - /backend/megatron/multilingual_scaling/data: datamix4_lumi
+  - _self_
+
+container:
+  image: /scratch/project_462001516/users/laingsam1/containers/AutoExp_2026-07-02.sif
+  env:
+    WANDB_TAGS: "lumi,angular_muown_lr_bsz_grid,angular_muown,40BT"
+
+index: 0
+stage: ""
+
+job:
+  name: "0.4B_ne_sparse_angular_muown_experts_${backend.megatron.num_experts}topk${backend.megatron.moe_router_topk}_PP${backend.megatron.pipeline_model_parallel_size}_gbsz${backend.megatron.global_batch_size}_lr${backend.megatron.lr}_40BT"
+  base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  aux:
+    # Schedule knobs (see backend.megatron.lr_warmup_iters / eval_interval).
+    lr_warmup_fraction: 0.05
+    eval_every_tokens: 2_500_000_000
+    # Checkout of oellm/v0.19-moe-lumi-angular-muown @ 1f88af5d1 (see header).
+    megatron_dir: /scratch/project_462001516/users/laingsam1/NVIDIA-Megatron-LM-angular
+    # Risto's emerging_optimizers 0.2.0 install: it ships valid package metadata,
+    # which Megatron's version check needs (the overlay's copy has none).
+    emerging_optimizers_dir: /scratch/project_462001516/users/rluukkon/python-external/muon
+    # AngularMuown settings (these match the fork's defaults; spelled out so
+    # each run records them). spectral + 0.2 is the Muon RMS-matching
+    # convention, so Risto's Muon LRs are directly comparable.
+    angular_muown_scale_mode: spectral
+    angular_muown_extra_scale_factor: 0.2
+    angular_muown_momentum: 0.95
+    angular_muown_coefficient_type: simple
+    angular_muown_num_ns_steps: 5
+    angular_muown_fp32_matmul_prec: medium
+    # Internal directional step decay (1 + scale * step) ** -p on top of the
+    # LR schedule; the paper's method. Set p to 0 to disable it.
+    angular_muown_u_decay_scale: 0.001
+    angular_muown_u_decay_p: 1.0
+
+  launcher_script: >-
+    ${backend.aux.megatron_dir}/pretrain_gpt.py
+    --optimizer angular_muown
+    --angular-muown-scale-mode ${backend.aux.angular_muown_scale_mode}
+    --angular-muown-extra-scale-factor ${backend.aux.angular_muown_extra_scale_factor}
+    --angular-muown-momentum ${backend.aux.angular_muown_momentum}
+    --angular-muown-coefficient-type ${backend.aux.angular_muown_coefficient_type}
+    --angular-muown-num-ns-steps ${backend.aux.angular_muown_num_ns_steps}
+    --angular-muown-fp32-matmul-prec ${backend.aux.angular_muown_fp32_matmul_prec}
+    --angular-muown-u-decay-scale ${backend.aux.angular_muown_u_decay_scale}
+    --angular-muown-u-decay-p ${backend.aux.angular_muown_u_decay_p}
+
+  megatron:
+    ### lumi specific configs
+    masked_softmax_fusion: False
+    gradient_accumulation_fusion: False
+    bias_dropout_fusion: False
+    bias_swiglu_fusion: False
+    apply_rope_fusion: False
+    log_progress: False
+    num_workers: 6
+    num_dataset_builder_threads: 6
+    trust_remote_code: True
+    ### lumi specific configs end
+
+    # 40BT; iters scale with global_batch_size (seq_length=4096).
+    train_iters: "${oc.eval:'(40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})'}"
+    eval_iters: 5
+    # Evaluate (incl. MoE masked-layer validation, ~8 min per eval) roughly every
+    # backend.aux.eval_every_tokens, rounded to a multiple of 100 iters so every
+    # eval point lines up with one of Risto's (he used 100). At 2.5B tokens:
+    # gbsz 256/512/1024/2048 -> 2400/1200/600/300 iters. Megatron also evaluates at the end.
+    eval_interval: "${oc.eval:'max(100, round(${backend.aux.eval_every_tokens} / (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size}) / 100) * 100)'}"
+    # 8 checkpoints per run (~every 5B tokens), matching what Risto's Muon runs used.
+    save_interval: "${oc.eval:'-(-${backend.megatron.train_iters} // 8)'}"
+    # One extra checkpoint where the WSD decay starts (ceil(0.8 * train_iters)),
+    # as in Risto's Muon runs, so cooldown variants can branch from it.
+    save_extra_steps:
+      - "${oc.eval:'-(-${backend.megatron.train_iters} * 4 // 5)'}"
+    load: "${job.base_output_dir}/checkpoints"
+
+    moe_grouped_gemm: True
+    use_distributed_optimizer: True
+    # Load optimizer and RNG state on resume, as Risto's Muon runs actually did
+    # (his committed YAML says otherwise, but his run logs show both unset).
+    # AngularMuown keeps its row magnitudes, momentum and u-decay step count in
+    # the optimizer state, so dropping it would restart the u-decay schedule.
+    no_load_optim: False
+    wandb_exp_name: "${job.name}"
+    wandb_project: "moe_angular_muown_lr_bsz_grid"
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    data_cache_path: /scratch/project_462001516/users/laingsam1/cache/MEGATRON_262k/${job.name}
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    # Warmup as a fraction of total steps (backend.aux.lr_warmup_fraction) rather
+    # than Risto's fixed 2000 iters, so every batch size warms up over the same
+    # share of the 40BT budget.
+    lr_warmup_iters: "${oc.eval:'int(${backend.aux.lr_warmup_fraction} * ${backend.megatron.train_iters})'}"
+    lr_wsd_decay_iters: "${oc.eval:'int(((40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})) * 0.2)'}"
+
+    micro_batch_size: 2
+    global_batch_size: 256  # overridden by sweep
+
+    moe_aux_loss_coeff: 1.e-3
+    moe_expert_viability_metrics: True
+    moe_masked_layer_validation: True
+    moe_masked_layer_eval_iters: 8
+
+    lr: 5.e-4  # overridden by sweep
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1e-8
+
+    overlap_param_gather_with_optimizer_step: False
+    overlap_grad_reduce: True
+    overlap_param_gather: True
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "0"
+    TRITON_HOME: /tmp/triton_cache
+
+
+# 8 (gbsz, lr) combos over the full 40BT horizon, from Risto's LRs
+# {5e-4, 1e-3, 5e-3}: the optimal LR grows with batch size, so 5e-3 is skipped
+# at the two smallest batch sizes and 5e-4 at the two largest.
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        # Node counts match Risto's Muon runs: 8 nodes up to gbsz 1024, 16 for 2048.
+        - {backend.megatron.global_batch_size: 256, backend.megatron.lr: 5.e-4, slurm.sbatch.nodes: 8}
+        - {backend.megatron.global_batch_size: 256, backend.megatron.lr: 1.e-3, slurm.sbatch.nodes: 8}
+        - {backend.megatron.global_batch_size: 512, backend.megatron.lr: 5.e-4, slurm.sbatch.nodes: 8}
+        - {backend.megatron.global_batch_size: 512, backend.megatron.lr: 1.e-3, slurm.sbatch.nodes: 8}
+        - {backend.megatron.global_batch_size: 1024, backend.megatron.lr: 1.e-3, slurm.sbatch.nodes: 8}
+        - {backend.megatron.global_batch_size: 1024, backend.megatron.lr: 5.e-3, slurm.sbatch.nodes: 8}
+        - {backend.megatron.global_batch_size: 2048, backend.megatron.lr: 1.e-3, slurm.sbatch.nodes: 16}
+        - {backend.megatron.global_batch_size: 2048, backend.megatron.lr: 5.e-3, slurm.sbatch.nodes: 16}
+
+slurm:
+  sbatch_extra_directives:
+    - "--exclude=nid005019"
+  env:
+    # emerging_optimizers 0.2.0 and the AngularMuown Megatron fork come first so
+    # they win over anything in the container or overlay.
+    PYTHONPATH: "${backend.aux.emerging_optimizers_dir}:${backend.aux.megatron_dir}:."
+    SINGULARITYENV_PYTHONPATH: "${backend.aux.emerging_optimizers_dir}:${backend.aux.megatron_dir}:."
+    MASTER_PORT: "9999"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: 8  # overridden per run by the sweep
+    account: "project_462001516"
+    partition: standard-g
+    time: "02-00:00:00"  # 48h (standard-g max), as in Risto's final Muon jobs
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "
