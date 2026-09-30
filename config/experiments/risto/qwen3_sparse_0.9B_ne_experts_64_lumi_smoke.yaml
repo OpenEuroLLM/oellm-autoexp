@@ -85,24 +85,18 @@ backend:
     num_dataset_builder_threads: 6
     trust_remote_code: true
 
-    seq_length: 4096
-    max_position_embeddings: 4096
+    # seq_length: 4096
+    # max_position_embeddings: 4096
     encoder_seq_length: null
-    max_position_embeddings: 4096
-    micro_batch_size: 8
+    micro_batch_size: 1
     global_batch_size: 64
 
     # Preserve the source model's PP=2/EP=4 topology on one 8-GCD node.
     tensor_model_parallel_size: 1
-<<<<<<< HEAD:config/experiments/risto/qwen3_sparse_0.9B_ne_experts_64_lumi_smoke.yaml
-    pipeline_model_parallel_size: 2
-=======
     pipeline_model_parallel_size: 1
-    expert_model_parallel_size: 8
->>>>>>> 40ca02b (updated configs):config/experiments/risto/qwen3_dense_0.9B_ne_lumi_smoke.yaml
     context_parallel_size: 1
     expert_tensor_parallel_size: 1
-    expert_model_parallel_size: 4
+    expert_model_parallel_size: 8
     sequence_parallel: true
     use_distributed_optimizer: true
 
