@@ -1,12 +1,12 @@
 # @package _global_
 #
-# Short Qwen3-like 0.9B non-embedding dense-model bring-up on LUMI.
+# Short Qwen3-like 0.9B non-embedding 64-expert sparse-model bring-up on LUMI.
 # Uses the multilingual-scaling model/data composition with mock data so the
 # MareNostrum-specific paths in oellm_256k are not accessed.
 #
 # Submit:
 #   uv run --python 3.12 scripts/run_autoexp.py \
-#     --config-name experiments/risto/qwen3_dense_0.9B_ne_lumi_smoke \
+#     --config-name experiments/risto/qwen3_sparse_0.9B_ne_experts_64_lumi_smoke \
 #     --submit-and-exit
 
 defaults:
@@ -16,7 +16,7 @@ defaults:
   - /job: default
   - /sweep: none
   - /backend/megatron: base
-  - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.9B_ne
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.9B_ne_experts_64
   - /backend/megatron/multilingual_scaling/data: oellm_256k
   - _self_
 
@@ -24,13 +24,13 @@ index: 0
 stage: smoke
 
 job:
-  name: "qwen3_dense_0.9B_ne_${stage}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}"
+  name: "qwen3_sparse_0.9B_ne_E${backend.megatron.num_experts}_K${backend.megatron.moe_router_topk}_${stage}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}_EP${backend.megatron.expert_model_parallel_size}"
   base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
   log_path: ${slurm.sbatch.error}
 
 container:
   env:
-    WANDB_TAGS: "lumi,qwen3,0.9B-ne,dense,smoke"
+    WANDB_TAGS: "lumi,qwen3,0.9B-ne,sparse,64-experts,smoke"
 
 backend:
   data_integrity_check: false
@@ -66,13 +66,17 @@ backend:
 
     seq_length: 4096
     encoder_seq_length: null
+    max_position_embeddings: 4096
     micro_batch_size: 8
     global_batch_size: 64
 
+    # Preserve the source model's PP=2/EP=4 topology on one 8-GCD node.
     tensor_model_parallel_size: 1
-    pipeline_model_parallel_size: 1
+    pipeline_model_parallel_size: 2
     context_parallel_size: 1
-    sequence_parallel: false
+    expert_tensor_parallel_size: 1
+    expert_model_parallel_size: 4
+    sequence_parallel: true
     use_distributed_optimizer: true
 
     train_iters: 20
@@ -91,7 +95,7 @@ backend:
     no_save_optim: true
     no_save_rng: true
 
-    wandb_project: qwen3_dense_0.9B_ne_lumi
+    wandb_project: qwen3_sparse_0.9B_ne_lumi
     wandb_exp_name: ${job.name}
     wandb_entity: openeurollm-project
     wandb_save_dir: ${job.base_output_dir}
