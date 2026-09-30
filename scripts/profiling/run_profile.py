@@ -126,7 +126,15 @@ def _analysis_command(
     if job_id:
         stdout = base_dir / "logs" / f"stdout-{job_id}.log"
         config = base_dir / f"config-{job_id}.yaml"
-        command.extend(["--stdout", str(stdout), "--config", str(config)])
+        if stdout.exists():
+            command.extend(["--stdout", str(stdout)])
+        if config.exists():
+            command.extend(["--config", str(config)])
+        else:
+            print(
+                f"warning: config snapshot missing: {config}; using discovery",
+                file=sys.stderr,
+            )
     if options.get("canvas"):
         command.extend(
             ["--canvas-out", str(output_dir / "analysis" / "profile-analysis.canvas.tsx")]

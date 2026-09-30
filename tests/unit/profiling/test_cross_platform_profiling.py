@@ -364,6 +364,10 @@ class CaptureTests(unittest.TestCase):
         }
         with TemporaryDirectory() as raw:
             output = Path(raw) / "profiling"
+            logs = output.parent / "logs"
+            logs.mkdir()
+            (logs / "stdout-123.log").write_text("log", encoding="utf-8")
+            (output.parent / "config-123.yaml").write_text("config: {}\n", encoding="utf-8")
             with mock.patch.dict(os.environ, {"SLURM_JOB_ID": "123"}, clear=False):
                 command = module._analysis_command(
                     output, options, python_prefix=["uv", "run"]
@@ -371,10 +375,30 @@ class CaptureTests(unittest.TestCase):
                 script = module._render_analysis_sbatch(output, options, command)
                 text = script.read_text(encoding="utf-8")
         self.assertIn("--stdout", command)
+        self.assertIn("--config", command)
         self.assertTrue(any(value.endswith("stdout-123.log") for value in command))
+        self.assertTrue(any(value.endswith("config-123.yaml") for value in command))
         self.assertIn("#SBATCH --partition=small", text)
         self.assertIn("#SBATCH --account=project_test", text)
         self.assertIn("profile-analysis.canvas.tsx", text)
+
+    def test_analysis_command_skips_missing_config_snapshot(self) -> None:
+        module = _load_run_profile()
+        with TemporaryDirectory() as raw:
+            output = Path(raw) / "profiling"
+            logs = output.parent / "logs"
+            logs.mkdir()
+            (logs / "stdout-123.log").write_text("log", encoding="utf-8")
+            (output.parent / "config-999.yaml").write_text("config: {}\n", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"SLURM_JOB_ID": "123"}, clear=False):
+                with mock.patch("sys.stderr") as stderr:
+                    command = module._analysis_command(
+                        output, {"steady_start_iteration": 5}, python_prefix=["python"]
+                    )
+        self.assertIn("--stdout", command)
+        self.assertNotIn("--config", command)
+        warning = " ".join(str(call.args[0]) for call in stderr.write.call_args_list)
+        self.assertIn("config snapshot missing", warning)
 
     def test_unselected_rank_passes_through(self) -> None:
         module = _load_run_profile()
