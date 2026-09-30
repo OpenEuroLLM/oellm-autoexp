@@ -23,10 +23,10 @@ defaults:
 
 
 index: 0
-stage: smoke
+stage: optimized
 
 job:
-  name: "qwen3_sparse_0.9B_ne_E${backend.megatron.num_experts}_K${backend.megatron.moe_router_topk}_${stage}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}_EP${backend.megatron.expert_model_parallel_size}"
+  name: "qwen3_sparse_0.9B_ne_E${backend.megatron.num_experts}_K${backend.megatron.moe_router_topk}_${stage}_${backend.megatron.moe_token_dispatcher_type}_ep_overlap_${backend.megatron.overlap_moe_expert_parallel_comm}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}_EP${backend.megatron.expert_model_parallel_size}"
   base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
   log_path: ${slurm.sbatch.error}
 
@@ -100,6 +100,25 @@ backend:
     sequence_parallel: true
     use_distributed_optimizer: true
 
+    # MI250X MoE throughput path. The baseline all-gather dispatcher spent
+    # 43% of direct kernel time in RCCL with essentially no compute overlap.
+    moe_token_dispatcher_type: alltoall
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_per_layer_logging: false
+    overlap_moe_expert_parallel_comm: true
+    high_priority_a2a_comm_stream: true
+
+    # Hide dense/data-parallel optimizer communication where possible.
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+
+    # Deliberately deferred until the basic overlap path is validated:
+    # - moe_router_fusion requires Transformer Engine >= 2.7.
+    # - delay_wgrad_compute requires TE-specific compatibility and overlap.
+    moe_router_fusion: false
+    delay_wgrad_compute: false
+
     train_iters: 20
     exit_interval: 20
     lr: 5.0e-4
@@ -127,7 +146,8 @@ slurm:
     - "--exclude=nid005019"
   env:
     MASTER_PORT: "9999"
-    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    CUDA_DEVICE_MAX_CONNECTIONS: "32"
+    GPU_MAX_HW_QUEUES: "4"
     USE_ROCM_AITER_ROPE_BACKEND: "0"
     TRITON_HOME: /tmp/triton_cache
     # make wandb offline
