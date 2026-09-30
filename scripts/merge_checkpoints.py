@@ -337,8 +337,12 @@ def main() -> int:
     pythonpath = ":".join(str(p) for p in (args.megatron_root,) if p)
     env = f"--env PYTHONNOUSERSITE=1{f' --env PYTHONPATH={pythonpath}' if pythonpath else ''}"
 
-    submitted_path = args.output_dir / "submitted_merges.json"
-    submitted = json.loads(submitted_path.read_text()) if submitted_path.exists() else []
+    # Append-only, one JSON object per line. Sweeps are routinely run concurrently against
+    # one --output-dir (different windows, styles or endpoints), and a read-modify-write of
+    # a single JSON array loses records or raises mid-run when two invocations interleave.
+    # An O_APPEND write of one short line is atomic, so concurrent sweeps cannot corrupt it.
+    submitted_path = args.output_dir / "submitted_merges.jsonl"
+    submitted = 0
 
     for job in jobs:
         start, end = job["start"], job["end"]
@@ -406,11 +410,17 @@ def main() -> int:
                 f"sbatch failed for {jobname} (exit {proc.returncode}): "
                 f"{proc.stderr.decode().strip() or 'no stderr'}"
             )
-        submitted.append(
-            {"jobname": jobname, "jobid": jid, "series": job["series"], "start": start, "end": end}
-        )
+        record = {
+            "jobname": jobname,
+            "jobid": jid,
+            "series": job["series"],
+            "start": start,
+            "end": end,
+        }
+        with submitted_path.open("a") as fh:
+            fh.write(json.dumps(record) + "\n")
+        submitted += 1
         print(f"submitted {jobname} ({window} ckpts, {start}..{end}) -> {jid}")
-        submitted_path.write_text(json.dumps(submitted, indent=2))
 
     if args.dry_run:
         print(f"--dry-run: {len(jobs)} merge(s) planned, nothing submitted")
