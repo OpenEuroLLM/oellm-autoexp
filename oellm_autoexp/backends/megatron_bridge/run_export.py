@@ -95,14 +95,20 @@ def _tokenizer_load_blocker(tok_model: str) -> str | None:
        ``AutoTokenizer`` needs the ``sentencepiece`` package, which isn't in the
        conversion container; transformers then falls back to a TikToken parser
        that chokes on the binary ``.model`` (``ValueError: Error parsing line``).
+    3. The path exists but is unreadable for this account — a checkpoint can
+       bake a tokenizer living in another project's tree, where access is
+       granted per user. ``stat`` then raises rather than reporting absence.
     """
     p = Path(tok_model)
-    if not p.exists():
-        return "absent on this filesystem"
-    if p.is_dir() and not (p / "tokenizer.json").exists():
-        return "a SentencePiece-only dir (no tokenizer.json; needs sentencepiece)"
-    if p.is_file() and p.suffix == ".model":
-        return "a raw SentencePiece .model (needs sentencepiece)"
+    try:
+        if not p.exists():
+            return "absent on this filesystem"
+        if p.is_dir() and not (p / "tokenizer.json").exists():
+            return "a SentencePiece-only dir (no tokenizer.json; needs sentencepiece)"
+        if p.is_file() and p.suffix == ".model":
+            return "a raw SentencePiece .model (needs sentencepiece)"
+    except OSError as exc:
+        return f"not readable here ({exc.strerror or exc})"
     return None
 
 
@@ -258,6 +264,68 @@ def _run_convert(
     except ImportError:
         pass
 
+    # A checkpoint carries the full argument dump of the Megatron-LM that wrote
+    # it. When conversion runs against a newer Megatron-LM, arguments it has
+    # since deprecated can make `TransformerConfig.__post_init__` reject its own
+    # earlier output — e.g. the 32B checkpoints set both `moe_deepep_num_sms` and
+    # `moe_hybridep_num_sms`, which newer cores refuse in favour of a single
+    # `moe_flex_dispatcher_num_sms`. These are MoE dispatch knobs, inert for a
+    # dense model and irrelevant to the weights being exported, so drop the
+    # superseded ones rather than failing the conversion.
+    try:
+        from megatron.bridge.training.mlm_compat import arguments as _mlm_compat_args
+
+        _orig_cfg_from_args = _mlm_compat_args._transformer_config_from_args
+
+        # Export runs one checkpoint per GPU, so the model has to be built whole on
+        # a single rank. The checkpoint's args describe the *training* layout, and
+        # a custom `pipeline_model_parallel_layout` makes the first stage hold only
+        # part of the decoder (the 32B uses `Et*5|t*4|...|t*3L`, so stage 0 has 5 of
+        # 64 layers). Building from that yields a 5-layer model and the strict load
+        # then reports the other 59 shards missing. torch_dist checkpoints reshard
+        # on load, so collapsing the layout to a single rank is the correct request.
+        _SINGLE_RANK_ARGS = {
+            "tensor_model_parallel_size": 1,
+            "pipeline_model_parallel_size": 1,
+            "context_parallel_size": 1,
+            "expert_model_parallel_size": 1,
+            "expert_tensor_parallel_size": 1,
+            "virtual_pipeline_model_parallel_size": None,
+            "num_virtual_stages_per_pipeline_rank": None,
+            "pipeline_model_parallel_layout": None,
+            "decoder_first_pipeline_num_layers": None,
+            "decoder_last_pipeline_num_layers": None,
+            # Training-time comm optimisations that are only valid with the
+            # parallelism just collapsed above, and have no bearing on weights.
+            "sequence_parallel": False,
+            "tp_comm_overlap": False,
+            "async_tensor_model_parallel_allreduce": False,
+            "overlap_p2p_comm": False,
+            "overlap_p2p_comm_warmup_flush": False,
+            "defer_embedding_wgrad_compute": False,
+        }
+
+        def _cfg_from_args_drop_deprecated(args, config_class=None):
+            superseded = ("moe_deepep_num_sms", "moe_hybridep_num_sms")
+            present = [k for k in superseded if getattr(args, k, None) is not None]
+            if len(present) > 1:
+                for k in present[1:]:
+                    LOGGER.warning("Dropping superseded checkpoint arg %s for conversion", k)
+                    setattr(args, k, None)
+            for key, value in _SINGLE_RANK_ARGS.items():
+                if hasattr(args, key) and getattr(args, key) != value:
+                    LOGGER.info("Export layout: %s %s -> %s", key, getattr(args, key), value)
+                    setattr(args, key, value)
+            return (
+                _orig_cfg_from_args(args)
+                if config_class is None
+                else _orig_cfg_from_args(args, config_class)
+            )
+
+        _mlm_compat_args._transformer_config_from_args = _cfg_from_args_drop_deprecated
+    except ImportError:
+        pass
+
     try:
         from megatron.bridge import AutoBridge
         from megatron.bridge.training.model_load_save import (
@@ -343,10 +411,12 @@ def run_export(
     hf_model: str,
     tokenizer: str,
     bridge_root: Path,
+    vocab_size: int | None = None,
     resources: Path,
     keep_staging: bool = False,
     derive_hf_arch: str | None = None,
     megatron_config: Path | dict | None = None,
+    max_shard_size: str = "5GB",
 ) -> None:
     """Run the full 4-step conversion pipeline.
 
@@ -392,7 +462,8 @@ def run_export(
             tok_for_vocab = (
                 str(target_tokenizer) if isinstance(target_tokenizer, Path) else target_tokenizer
             )
-            vocab = _vocab_size_of(tok_for_vocab)
+            vocab = vocab_size if vocab_size is not None else _vocab_size_of(tok_for_vocab)
+            LOGGER.info("Export vocab size: %d", vocab)
             generated_dir = tmp / "generated_hf_config"
             LOGGER.info("Step 1/4 (auto-gen): synthesise HF config for arch=%s", derive_hf_arch)
             config_dir = write_hf_config_dir(
@@ -403,7 +474,7 @@ def run_export(
                 outdir=generated_dir,
             )
         LOGGER.info("Step 1/4: build dummy HF model from %s + %s", config_dir, reference_tokenizer)
-        build_dummy_model(config_dir, reference_tokenizer, dummy_dir)
+        build_dummy_model(config_dir, reference_tokenizer, dummy_dir, max_shard_size=max_shard_size)
 
         LOGGER.info(
             "Step 2/4: skipped (we call bridge.export_ckpt directly, no run_config.yaml needed)"
@@ -576,6 +647,19 @@ def _parse() -> argparse.Namespace:
     ap.add_argument(
         "--keep-staging", action="store_true", help="Preserve temp staging dir for debugging"
     )
+    ap.add_argument(
+        "--max-shard-size",
+        default="5GB",
+        help="Max shard size for the HF export (e.g. '5GB'); applied via the dummy reference model's save_pretrained, whose shard layout the real export mirrors.",
+    )
+    ap.add_argument(
+        "--vocab-size",
+        type=int,
+        default=None,
+        help="Vocab size for the export, overriding the reference tokenizer's length. "
+        "Set this when the tokenizer addresses more ids than the trained embedding has "
+        "rows (the 32B pins padded_vocab_size 262144 while the tokenizer has 262145).",
+    )
     return ap.parse_args()
 
 
@@ -588,10 +672,12 @@ def main() -> int:
         hf_model=args.hf_model,
         tokenizer=args.tokenizer,
         bridge_root=args.bridge_root,
+        vocab_size=args.vocab_size,
         resources=args.resources,
         keep_staging=args.keep_staging,
         derive_hf_arch=args.derive_hf_arch,
         megatron_config=args.megatron_config,
+        max_shard_size=args.max_shard_size,
     )
     return 0
 
