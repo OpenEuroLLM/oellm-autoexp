@@ -135,9 +135,9 @@ backend:
     global_batch_size: 64
 
     # Full recomputation is the conservative 64-GB-GCD starting point.
-    recompute_granularity: full
-    recompute_method: uniform
-    recompute_num_layers: 1
+    # recompute_granularity: full
+    # recompute_method: uniform
+    # recompute_num_layers: 1
 
     # Short steady-state timing window; no evaluation or checkpoint I/O.
     train_iters: 60
@@ -165,7 +165,7 @@ backend:
     log_timers_to_tensorboard: true
     timing_log_level: 2
     moe_per_layer_logging: false
-    wandb_project: latent_moe_35b_lumi_throughput
+    wandb_project: moe-exploration
     wandb_exp_name: ${job.name}
     wandb_entity: openeurollm-project
     wandb_save_dir: ${job.base_output_dir}
@@ -180,6 +180,7 @@ backend:
     log_progress: false
     distributed_backend: nccl
     distributed_timeout_minutes: 60
+    exit_interval: 15
 
 sweep:
   type: product
