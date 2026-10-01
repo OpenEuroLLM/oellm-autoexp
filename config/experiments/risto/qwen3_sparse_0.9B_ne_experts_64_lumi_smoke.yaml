@@ -58,10 +58,17 @@ backend:
   megatron:
     # LUMI/ROCm compatibility.
     masked_softmax_fusion: false
-    gradient_accumulation_fusion: false
+    
+    # grad_acc_fusion causes the following warning:
+    # /opt/src/transformer_engine/transformer_engine/common/gemm/cublaslt_gemm.hip:1225 in function nvte_multi_tensor_gemm: Fallback to cuBLAS grouped GEMM.
+    gradient_accumulation_fusion: false 
+
     bias_dropout_fusion: false
     bias_swiglu_fusion: false
-    apply_rope_fusion: false
+    apply_rope_fusion: true 
+    use_te_activation_func: true
+
+
     tp_comm_overlap: false
     log_progress: false
     log_throughput: true
@@ -107,7 +114,7 @@ backend:
     moe_permute_fusion: true
     moe_per_layer_logging: false
     overlap_moe_expert_parallel_comm: true
-    high_priority_a2a_comm_stream: true
+    high_priority_a2a_comm_stream: false 
 
     # Hide dense/data-parallel optimizer communication where possible.
     overlap_grad_reduce: true
@@ -116,12 +123,12 @@ backend:
     # Deliberately deferred until the basic overlap path is validated:
     # - moe_router_fusion requires Transformer Engine >= 2.7.
     # - delay_wgrad_compute requires TE-specific compatibility and overlap.
-    moe_router_fusion: false
-    delay_wgrad_compute: false
+    moe_router_fusion: true
+    delay_wgrad_compute: true
 
     train_iters: 20
     exit_interval: 20
-    lr: 5.0e-4
+    lr: 5.0e-4  
     min_lr: 0.0
     lr_warmup_iters: 5
     lr_decay_iters: 20
@@ -145,6 +152,9 @@ slurm:
   sbatch_extra_directives:
     - "--exclude=nid005019"
   env:
+    NVTE_USE_CUTLASS_GROUPED_GEMM: "1"
+    NVTE_CUTLASS_GROUPED_GEMM_WARN_FALLBACK: "1"
+ 
     MASTER_PORT: "9999"
     CUDA_DEVICE_MAX_CONNECTIONS: "32"
     GPU_MAX_HW_QUEUES: "4"
@@ -154,7 +164,7 @@ slurm:
     WANDB_MODE: offline
   srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
   sbatch:
-    nodes: 1
+    nodes: 2
     account: project_462001516
     partition: dev-g
     time: "00:30:00"
