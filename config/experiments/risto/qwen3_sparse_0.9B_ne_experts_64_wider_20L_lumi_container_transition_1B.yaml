@@ -101,7 +101,7 @@ backend:
     log_timers_to_tensorboard: true
     timing_log_level: 2
 
-    wandb_project: qwen3_sparse_10B_A0.9B_container_validity
+    wandb_project: megatron-sanity-check
     wandb_exp_name: ${job.name}
     wandb_entity: openeurollm-project
     wandb_save_dir: ${job.base_output_dir}
@@ -118,7 +118,7 @@ slurm:
     NVTE_CUTLASS_GROUPED_GEMM_WARN_FALLBACK: "1"
     USE_ROCM_AITER_ROPE_BACKEND: "0"
     TRITON_HOME: /tmp/triton_cache
-    WANDB_MODE: offline
+    WANDB_MODE: online
   srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
   sbatch:
     nodes: 4
