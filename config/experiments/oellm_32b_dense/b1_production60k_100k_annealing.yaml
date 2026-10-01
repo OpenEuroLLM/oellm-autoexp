@@ -95,6 +95,14 @@ backend:
     anneal_cache: /e/fscratch/e-sta-openeurollm/oellm_32b_dense_v2/cache_multilingual1_dominant3
     anneal_train_samples: ${oc.muli:${backend.aux.anneal_end_iter},${backend.megatron.global_batch_size}}
     anneal_wsd_samples: ${oc.muli:${oc.subi:${backend.aux.anneal_end_iter},${backend.aux.anneal_start_iter}},${backend.megatron.global_batch_size}}
+  megatron:
+    # Phase timers off (the base inherits 1 from revival_1). Level-1 timers run
+    # a global barrier + cuda.synchronize around forward-backward,
+    # all-grads-sync and optimizer every iteration (barrier_with_L1_time
+    # defaults to True), the likely cause of B1's 4.31 s/it vs the flagship's
+    # 4.16 s/it at otherwise matching settings. Logging only, no effect on
+    # numerics; throughput/loss/params-norm/zeros/diag logs are unaffected.
+    timing_log_level: 0
 
 sweep:
   type: list
