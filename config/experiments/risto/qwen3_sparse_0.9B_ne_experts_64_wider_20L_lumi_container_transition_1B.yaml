@@ -1,0 +1,184 @@
+# @package _global_
+#
+# Paired LUMI container/optimization validity run for the wider L20 MoE.
+#
+# Both arms start from the same seed, consume the same data order, and train for
+# approximately 1B tokens. One uses the previous container and conservative
+# kernels; the other uses the new TE 2.15 container and optimized MI250X path.
+#
+# Submit:
+#   uv run --python 3.12 scripts/run_autoexp.py \
+#     --config-name experiments/risto/qwen3_sparse_0.9B_ne_experts_64_wider_20L_lumi_container_transition_1B \
+#     --submit-and-exit
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.9B_ne_experts_64_wider_20L
+  - _self_
+
+index: 0
+stage: ""
+
+job:
+  name: "qwen3_sparse_10B_A0.9B_L20_H2048_container_validity_${stage}"
+  base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+container:
+  env:
+    WANDB_TAGS: "lumi,qwen3,10B,0.9B-active,E64,K4,L20,container-validity"
+
+backend:
+  data_integrity_check: false
+  megatron:
+    # Real LUMI data validates the dataloader and tokenizer in addition to
+    # kernels and distributed state.
+    mock_data: false
+    data_args_path: null
+    per_split_data_args_path: /scratch/project_462001516/multilingual_dataset/datamix4-per-split.json
+    train_data_path: null
+    valid_data_path: null
+    test_data_path: null
+    split: null
+    data_cache_path: "/scratch/project_462001516/users/rluukkon/cache/${job.name}"
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    num_workers: 6
+    num_dataset_builder_threads: 6
+    trust_remote_code: true
+    seq_length: 4096
+    max_position_embeddings: 4096
+    encoder_seq_length: null
+
+    # Four nodes = 32 GCDs. TP1/EP8 gives DP4 and keeps EP groups node-local.
+    micro_batch_size: 1
+    global_batch_size: 64
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    expert_tensor_parallel_size: 1
+    expert_model_parallel_size: 8
+    sequence_parallel: true
+    use_distributed_optimizer: true
+
+    # Training-valid learned routing; forced balancing is benchmark-only.
+    moe_router_force_load_balancing: false
+    moe_router_load_balancing_type: aux_loss
+    moe_aux_loss_coeff: 1.0e-2
+    moe_per_layer_logging: true
+
+    # Both arms use the same optimizer and schedule.
+    optimizer: adam
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 0.1
+    clip_grad: 1.0
+    lr: 5.0e-4
+    min_lr: 0.0
+    lr_warmup_iters: 50
+    lr_decay_iters: 3815
+    lr_decay_style: constant
+
+    eval_iters: 10
+    eval_interval: 382
+    save_interval: 1000000000
+    save: null
+    load: null
+    no_save_optim: true
+    no_save_rng: true
+
+    log_progress: true
+    log_throughput: true
+    log_interval: 10
+    log_timers_to_tensorboard: true
+    timing_log_level: 2
+
+    wandb_project: qwen3_sparse_10B_A0.9B_container_validity
+    wandb_exp_name: ${job.name}
+    wandb_entity: openeurollm-project
+    wandb_save_dir: ${job.base_output_dir}
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+slurm:
+  sbatch_extra_directives:
+    - "--exclude=nid005019"
+  env:
+    MASTER_PORT: "9999"
+    CUDA_DEVICE_MAX_CONNECTIONS: "32"
+    GPU_MAX_HW_QUEUES: "4"
+    NVTE_USE_CUTLASS_GROUPED_GEMM: "1"
+    NVTE_CUTLASS_GROUPED_GEMM_WARN_FALLBACK: "1"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    TRITON_HOME: /tmp/triton_cache
+    WANDB_MODE: offline
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: 4
+    account: project_462001516
+    partition: standard-g
+    time: "04:00:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        # Old-container control: 3815 iterations (~1.000B tokens).
+        - stage: old_container_control_1B
+          container.image: /scratch/project_462001516/users/swagatam/containers/AutoExp_2026-07-02.sif
+          container.env.WANDB_TAGS: "lumi,qwen3,L20,container-validity,old-container,control"
+          backend.megatron.train_iters: 3815
+          backend.megatron.masked_softmax_fusion: false
+          backend.megatron.gradient_accumulation_fusion: false
+          backend.megatron.bias_dropout_fusion: false
+          backend.megatron.bias_swiglu_fusion: false
+          backend.megatron.apply_rope_fusion: false
+          backend.megatron.use_te_activation_func: false
+          backend.megatron.moe_router_fusion: false
+          backend.megatron.moe_grouped_gemm: true
+          backend.megatron.moe_permute_fusion: false
+          backend.megatron.moe_token_dispatcher_type: allgather
+          backend.megatron.overlap_moe_expert_parallel_comm: false
+          backend.megatron.delay_wgrad_compute: false
+          backend.megatron.high_priority_a2a_comm_stream: false
+          backend.megatron.overlap_grad_reduce: false
+          backend.megatron.overlap_param_gather: false
+          backend.megatron.tp_comm_overlap: false
+          slurm.env.CUDA_DEVICE_MAX_CONNECTIONS: "1"
+          slurm.env.GPU_MAX_HW_QUEUES: "1"
+          slurm.env.NVTE_USE_CUTLASS_GROUPED_GEMM: "0"
+
+        # New-container candidate: the same 3815 iterations and data order.
+        - stage: new_container_optimized_1B
+          container.image: /appl/local/laifs/containers/lumi-multitorch-u24r72f21m50t211-20260929_104918/lumi-multitorch-plus-u24r72f21m50t211-20260929_104918.sif
+          container.env.WANDB_TAGS: "lumi,qwen3,L20,container-validity,new-container,optimized"
+          backend.megatron.train_iters: 3815
+          backend.megatron.masked_softmax_fusion: false
+          backend.megatron.gradient_accumulation_fusion: false
+          backend.megatron.bias_dropout_fusion: false
+          backend.megatron.bias_swiglu_fusion: false
+          backend.megatron.apply_rope_fusion: true
+          backend.megatron.use_te_activation_func: true
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.moe_grouped_gemm: true
+          backend.megatron.moe_permute_fusion: true
+          backend.megatron.moe_token_dispatcher_type: alltoall
+          backend.megatron.overlap_moe_expert_parallel_comm: true
+          backend.megatron.delay_wgrad_compute: true
+          backend.megatron.high_priority_a2a_comm_stream: false
+          backend.megatron.overlap_grad_reduce: true
+          backend.megatron.overlap_param_gather: true
+          backend.megatron.tp_comm_overlap: false
+          slurm.env.CUDA_DEVICE_MAX_CONNECTIONS: "32"
+          slurm.env.GPU_MAX_HW_QUEUES: "4"
+          slurm.env.NVTE_USE_CUTLASS_GROUPED_GEMM: "1"
