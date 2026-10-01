@@ -29,10 +29,10 @@ slurm:
   env:
     USE_ROCM_AITER_ROPE_BACKEND: "0"
     WANDB_MODE: "online"
-    # WANDB_API_KEY: "local"
-    # FASTTRACKML_URL: "http://tus1-vm-amd-k8s-001:5000"
+    WANDB_API_KEY: "local"
+    FASTTRACKML_URL: "http://tus1-vm-amd-k8s-001:5000"
     # The dashboard wandb shim is importable through the existing shared-silo bind.
-    # PYTHONPATH: "/shared_silo/scratch/shared/tw-dashboard/wandb_shim:${oc.env:PWD}"
+    PYTHONPATH: "/shared_silo/scratch/shared/tw-dashboard/wandb_shim:${oc.env:PWD}"
     OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
     APPTAINER_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
     SINGULARITY_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
@@ -267,4 +267,138 @@ sweep:
             - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/rahul-sft-data-train_sft_text_document
             # Math (3.846652%)
             - 0.038466520742894
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/Nemotron-CC-Math-v1-4plus_text_document
+
+        # Run 4: exact wd0.01 anchor except for the chat/reasoning sources.
+        # Keep the wd0.01 chat total (1.406476%) while using the version_1
+        # source proportions: 80% Dolci Think and 10% for each Rahul SFT set.
+        - stage: wd_anchor_v1chatsrc
+          backend.megatron.data_path:
+            # Finnish (55.742262%) — wd0.01 sources
+            - 0.269265645200258
+            - /shared_silo/scratch/ttoivone/tokenized/fin/MT-Nemotron-CC-fin_Latn-max-500Btok_text_document
+            - 0.0176945995417312
+            - /shared_silo/scratch/ttoivone/tokenized/fin/FinePDFs-Edu-fin_Latn-max-500Btok_text_document
+            - 0.0028465225349742
+            - /shared_silo/scratch/ttoivone/tokenized/fin/wikipedia-20231101.fi-max-500Btok_text_document
+            - 0.267615853930492
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt3.0_fi_filtered7/train
+            # English (25.926435%) — wd0.01 sources
+            - 0.138479474674418
+            - /shared_silo/scratch/ttoivone/merge/fineweb-edu-sample-350BT-max-500Btok_text_document
+            - 0.109244918909819
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finepdfs-edu/eng_Latn_text_document
+            - 0.0115399562228682
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/wikipedia/wikipedia.en-train_text_document
+            # Code (9.231965%) — wd0.01 sources
+            - 0.0254565264585122
+            - /shared_silo/scratch/ttoivone/tokenized/code/code
+            - 0.0668631233244334
+            - /shared_silo/scratch/ttoivone/tokenized/code/Nemotron-Pretraining-Code-v2-Synthetic-Rewriting-max-500Btok_text_document
+            # FinePhrase (3.846210%) — wd0.01 sources
+            - 0.0117447549688257
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-faq-train_text_document
+            - 0.007763571812841
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-math-train_text_document
+            - 0.007272241197052
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-table-train_text_document
+            - 0.011681527253988
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-tutorial-train_text_document
+            # Chat/reasoning (1.406476%) — version_1 sources only
+            - 0.01125181058151376
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/dolci_think_7B_text_document
+            - 0.001406476322689220
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/rahul_data_train_sft_text_document
+            - 0.001406476322689220
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/rahul-sft-data-train_sft_text_document
+            # Math (3.846652%) — wd0.01 sources
+            - 0.038466520742894
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/nemotron-cc-math/nemotron-cc-math.4plus-train_text_document
+
+        # Run 5: exact wd0.01 anchor with chat/reasoning removed completely.
+        # Renormalize every remaining wd0.01 source by 1 / (1 - 0.0140647632)
+        # so that the blend still represents a full 10BT token budget.
+        - stage: wd_anchor_nochat
+          backend.megatron.data_path:
+            # Finnish (56.537448%) — wd0.01 sources, proportionally renormalized
+            - 0.2731068280727488
+            - /shared_silo/scratch/ttoivone/tokenized/fin/MT-Nemotron-CC-fin_Latn-max-500Btok_text_document
+            - 0.0179470201304949
+            - /shared_silo/scratch/ttoivone/tokenized/fin/FinePDFs-Edu-fin_Latn-max-500Btok_text_document
+            - 0.0028871293253405
+            - /shared_silo/scratch/ttoivone/tokenized/fin/wikipedia-20231101.fi-max-500Btok_text_document
+            - 0.2714335018660847
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt3.0_fi_filtered7/train
+            # English (26.296286%) — wd0.01 sources, proportionally renormalized
+            - 0.1404549401516990
+            - /shared_silo/scratch/ttoivone/merge/fineweb-edu-sample-350BT-max-500Btok_text_document
+            - 0.1108033416752295
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finepdfs-edu/eng_Latn_text_document
+            - 0.0117045783459749
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/wikipedia/wikipedia.en-train_text_document
+            # Code (9.363663%) — wd0.01 sources, proportionally renormalized
+            - 0.0258196740607725
+            - /shared_silo/scratch/ttoivone/tokenized/code/code
+            - 0.0678169527070271
+            - /shared_silo/scratch/ttoivone/tokenized/code/Nemotron-Pretraining-Code-v2-Synthetic-Rewriting-max-500Btok_text_document
+            # FinePhrase (3.901077%) — wd0.01 sources, proportionally renormalized
+            - 0.0119122986285239
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-faq-train_text_document
+            - 0.0078743222914424
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-math-train_text_document
+            - 0.0073759826465413
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-table-train_text_document
+            - 0.0118481689448698
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-tutorial-train_text_document
+            # Math (3.901526%) — wd0.01 source, proportionally renormalized
+            - 0.0390152611532498
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/nemotron-cc-math/nemotron-cc-math.4plus-train_text_document
+
+        # Run 6: version_1 category totals and version_1 source ratios, with
+        # chat/reasoning excluded completely.  The remaining 90% of the V1
+        # blend is renormalized by 1 / 0.9 to retain the full 10BT budget.
+        - stage: v1cats_v1src_nochat
+          backend.megatron.data_path:
+            # Finnish (40.000000%) — V1 source ratios, renormalized
+            - 0.0800000000000000
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/MT-Nemotron-CC-fin_Latn-max-500Btok_text_document
+            - 0.0170000000000000
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/FinePDFs-Edu-fin_Latn-max-500Btok_text_document
+            - 0.0030000000000000
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/wikipedia/wikipedia.fi-train2_text_document
+            - 0.3000000000000000
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt4.0_fi_cleaned/train
+            # English (44.444444%) — V1 source ratios, renormalized
+            - 0.4384444444444444
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/Fineweb-edu/fineweb-edu.en-train2_text_document
+            - 0.0060000000000000
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/wikipedia/wikipedia.en-train2_text_document
+            # Code (5.555556%) — V1 source ratios, renormalized
+            - 0.0263333333333333
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/code_with_template/Nemotron-Pretraining-Code-v2-Synthetic-Rewriting-max-500Btok_text_document
+            - 0.0100000000000000
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/Nemotron-Pretraining-Code-v2-Synthetic-Transpilation-max-500Btok_text_document
+            - 0.0005555555555556
+            - /shared_silo/scratch/ttoivone/tokenized/stack-edu-tokenized/stack-edu-Go-max-500Btok_text_document
+            - 0.0076666666666667
+            - /shared_silo/scratch/ttoivone/tokenized/stack-edu-tokenized/stack-edu-Java-max-500Btok_text_document
+            - 0.0032222222222222
+            - /shared_silo/scratch/ttoivone/tokenized/stack-edu-tokenized/stack-edu-JavaScript-max-500Btok_text_document
+            - 0.0063333333333333
+            - /shared_silo/scratch/ttoivone/tokenized/stack-edu-tokenized/stack-edu-Python-max-500Btok_text_document
+            - 0.0005555555555556
+            - /shared_silo/scratch/ttoivone/tokenized/stack-edu-tokenized/stack-edu-Rust-max-500Btok_text_document
+            - 0.0008888888888889
+            - /shared_silo/scratch/ttoivone/tokenized/stack-edu-tokenized/stack-edu-TypeScript-max-500Btok_text_document
+            # FinePhrase (4.444444%) — V1 source ratios, renormalized
+            - 0.0135555555555556
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-faq.en-train2_text_document
+            - 0.0090000000000000
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-math.en-train2_text_document
+            - 0.0084444444444444
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-table.en-train2_text_document
+            - 0.0134444444444444
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/finephrase/FinePhrase-tutorial.en-train2_text_document
+            # Math (5.555556%) — V1 source, renormalized
+            - 0.0555555555555556
             - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/chat_with_template/Nemotron-CC-Math-v1-4plus_text_document

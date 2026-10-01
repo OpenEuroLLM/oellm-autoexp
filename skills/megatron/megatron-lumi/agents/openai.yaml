@@ -1,0 +1,4 @@
+interface:
+  display_name: "Megatron LUMI"
+  short_description: "Inspect Megatron runs on LUMI safely"
+  default_prompt: "Use $megatron-lumi to inspect this LUMI Megatron run without changing it."

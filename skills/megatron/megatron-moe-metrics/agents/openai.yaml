@@ -1,0 +1,4 @@
+interface:
+  display_name: "Megatron MoE Metrics"
+  short_description: "Interpret and verify MoE metric semantics"
+  default_prompt: "Use $megatron-moe-metrics to explain or verify these Megatron MoE metrics."
