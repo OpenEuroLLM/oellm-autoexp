@@ -1,0 +1,266 @@
+# @package _global_
+# 10BT, FILTERED HPLT4-ENG AS THE ENGLISH PORTION: 2 arms (lr 3e-5, 5e-5).
+#
+# Third English source in the series, alongside
+# qwen3.5_35B_A3B_lr_10BT_english.yaml (fineweb-edu and dclm-baseline).
+# Everything else is identical to those four arms -- same Finnish (30%
+# hplt4.0-fi), same code (30%), same math (10%), seed 1234, gbs 512, 2385 iters,
+# same WSD shape, same pre-anneal save at 1907. Only the English changes.
+#
+# TOKEN-PROPORTIONAL WEIGHTING, measured not assumed. Token counts summed from
+# each .idx sequence-length array:
+#   ia-bsc-edu-2p751    10.481 BT  ( 21.840% of the pair)  -> weight 0.0655226307
+#   ccc-bsc-edu-2p751   37.507 BT  ( 78.160% of the pair)  -> weight 0.2344773693
+#   combined            47.988 BT                          -> sums to 0.30
+# So the larger file contributes proportionally more, i.e. the pair is sampled
+# as if it were one concatenated corpus. 30% of 10BT draws 3.0BT = 6.3% of one
+# epoch, so nothing repeats.
+#
+# THIS BLEND HAS 44 COMPONENTS, not 43: the single fineweb-edu entry is replaced
+# by two. The sub-1000-doc hazard is unchanged (stack-edu-Rust-s5 at 273 docs,
+# PHP-s5 at 754), so split "1000,0,0" + eval_iters 0 remain LOAD-BEARING --
+# under "989,10,1" the test-index build is NON-TERMINATING.
+#
+# NO .val SIBLINGS. Unlike the regmix_trainval_2026-09 tree, these CPT-tree
+# prefixes have no train/val split, so these arms cannot be scored on their OWN
+# held-out English. That is not a blocker but it does change the eval plan: the
+# right comparison across English sources is a COMMON yardstick anyway (all arms
+# scored on the same fixed English .val), since fineweb-edu.val and dclm.val are
+# different data and are not comparable to each other either.
+#
+# COLD INDEX BUILD -- STAGGER. New blend, so new cache keys (~19 min build), and
+# the two arms share identical keys. Submit one, wait for
+# "[after dataloaders are built]", then submit the other.
+#
+# DISK. 2 arms x 2 saves x 453GB = 1.81TB, on top of the 3.6TB the four
+# fineweb-edu/dclm arms are already committed to. Check df before submitting.
+defaults:
+  - base
+  - /backend: megatron
+  - /container: mi325x
+  - /slurm: mi325x
+  - /sweep: none
+  - /backend/megatron: [qwen3_5_moe_35BA3B]
+  - _self_
+
+slurm:
+  sbatch:
+    partition: amd-tw-verification
+    nodes: 2
+    # ~9.5h expected; 20h leaves room for a slow start and node variation.
+    # The partition itself has no time limit.
+    time: 1-12:00:00
+    open_mode: append
+    qos: normal
+    nice: 5000
+
+  launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
+    export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
+    export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; export AITER_JIT_DIR=/tmp/$USER/aiter_jit_dir ; \\\n\
+    ${oc.select:container.runtime,apptainer} exec --rocm --overlay /shared_silo/scratch/containers/fla-overla-for-primus-v26.1.img:ro ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} \
+    ${oc.select:container.image,container.sif}"
+
+  env:
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    WANDB_MODE: "offline"
+    OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
+    APPTAINER_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+    SINGULARITY_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+
+container:
+  image: /shared_silo/scratch/containers/primus_v26.1.sif
+  # ROCm 7.1 signal-pool leak fix (backport of upstream clr 3ad064d, in 7.2.0).
+  # ROCclr ActiveSignal grew its completion-signal pool for every signal whose
+  # timestamp bookkeeping was unharvested -- ~all of them in MoE training -- so
+  # host anon RAM climbed ~70MB/iter/rank, evicted the mmap'd dataset page cache
+  # and collapsed throughput 6x from ~iter 1400. Killed 52244/52246 by timeout.
+  # This list REPLACES the default from config/container/mi325x.yaml, so the
+  # original two entries are repeated here on purpose. Both .so and .so.7 are
+  # needed: torch dlopens the versioned name.
+  bind:
+    - "/shared_silo/scratch"
+    - "${oc.env:PWD}"
+    - "/shared_silo/scratch/dzautner/rocm71_signalpool_fix/libamdhip64.so.7.1-3ad064d:/opt/venv/lib/python3.10/site-packages/torch/lib/libamdhip64.so"
+    - "/shared_silo/scratch/dzautner/rocm71_signalpool_fix/libamdhip64.so.7.1-3ad064d:/opt/venv/lib/python3.10/site-packages/torch/lib/libamdhip64.so.7"
+
+backend:
+  megatron:
+    log_throughput: true
+    log_interval: 10
+    log_progress: true
+
+    # handpicked (== poro2-orig): 30 fi / 30 en / 30 code / 10 math, 43 components.
+    # Lifted verbatim from qwen3.5_35B_A3B_baselines_4BT.yaml:293-378 (weights sum 1.0).
+    # Shared, NOT per-stage, so every arm provably sees the same blend.
+    data_path:
+      - 0.3
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/hplt4.0-fi/hplt4.0_fi_cleaned_text_document.train
+      - 0.0655226307
+      - /shared_silo/scratch/datasets/CPT/hplt4.0-eng/tokenized/tokenizer/Qwen3.5-35B-A3B-Base/ia-bsc-edu-2p751/ia-bsc-edu-2p751_text_document
+      - 0.2344773693
+      - /shared_silo/scratch/datasets/CPT/hplt4.0-eng/tokenized/tokenizer/Qwen3.5-35B-A3B-Base/ccc-bsc-edu-2p751/ccc-bsc-edu-2p751_text_document
+      - 0.1
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/Nemotron-CC-Math/Nemotron-CC-Math-v1-4plus_text_document.train
+      - 0.0213291427
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Markdown-s4_text_document.train
+      - 0.0207927416
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Java-s4_text_document.train
+      - 0.0198750398
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Swift-s3_text_document.train
+      - 0.0198405397
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Go-s3_text_document.train
+      - 0.0197586395
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Python-s4_text_document.train
+      - 0.0197367395
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-PHP-s3_text_document.train
+      - 0.0196509393
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Cpp-s4_text_document.train
+      - 0.0195615391
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-TypeScript-s3_text_document.train
+      - 0.0194583389
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Rust-s3_text_document.train
+      - 0.0173505347
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Shell-s4_text_document.train
+      - 0.0172212344
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Ruby-s3_text_document.train
+      - 0.0141798284
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-JavaScript-s4_text_document.train
+      - 0.0141429283
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-SQL-s4_text_document.train
+      - 0.0117108234
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-C-s4_text_document.train
+      - 0.0095559191
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-C-s3_text_document.train
+      - 0.0066873134
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-SQL-s3_text_document.train
+      - 0.0062493125
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-JavaScript-s3_text_document.train
+      - 0.004011608
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Shell-s3_text_document.train
+      - 0.0039735079
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Ruby-s4_text_document.train
+      - 0.0019671039
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Rust-s4_text_document.train
+      - 0.0018324037
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-TypeScript-s4_text_document.train
+      - 0.0017394035
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Cpp-s3_text_document.train
+      - 0.0016881034
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-PHP-s4_text_document.train
+      - 0.0016701033
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Python-s5_text_document.train
+      - 0.0015702031
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Go-s4_text_document.train
+      - 0.0014343029
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Swift-s4_text_document.train
+      - 0.000999302
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-JavaScript-s5_text_document.train
+      - 0.0005982012
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-SQL-s5_text_document.train
+      - 0.0005730011
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Java-s3_text_document.train
+      - 0.0002337005
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Ruby-s5_text_document.train
+      - 0.0001617003
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-C-s5_text_document.train
+      - 0.0001191002
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Swift-s5_text_document.train
+      - 9.96002e-05
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Markdown-s5_text_document.train
+      - 6.63001e-05
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Shell-s5_text_document.train
+      - 6.27001e-05
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Java-s5_text_document.train
+      - 3.84001e-05
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Cpp-s5_text_document.train
+      - 3.48001e-05
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-TypeScript-s5_text_document.train
+      - 1.8e-05
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Go-s5_text_document.train
+      - 3.6e-06
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-PHP-s5_text_document.train
+      - 3.3e-06
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Rust-s5_text_document.train
+
+    data_cache_path: /shared_silo/scratch/avirtane/data_cache
+    split: "1000,0,0"
+    eval_iters: 0
+    # 54 cold components x 488,448 samples: index build is ~19 min, well past the
+    # inherited 10-minute default. This is a slow build, not the non-terminating
+    # test-split hang -- here the timeout genuinely is the fix.
+    distributed_timeout_minutes: 60
+    num_workers: 7
+
+    # Validated by probe 46339 at exactly these values.
+    global_batch_size: 512
+    micro_batch_size: 2
+    expert_model_parallel_size: 8
+    pipeline_model_parallel_size: 1
+    use_distributed_optimizer: true
+    moe_per_layer_logging: true
+    create_attention_mask_in_dataloader: false
+    moe_grouped_gemm: false
+    moe_token_dispatcher_type: "alltoall"
+    moe_permute_fusion: true
+    moe_shared_expert_overlap: true
+    overlap_moe_expert_parallel_comm: false
+    overlap_param_gather: true
+    overlap_grad_reduce: true
+
+    recompute_activations: true
+    recompute_granularity: full
+
+    adam_beta2: 0.95
+    weight_decay: 0.1
+
+    # 10B tokens at gbs 512: 10e9 / (512*8192) = 2384.2 -> 2385.
+    train_iters: 2385
+    lr_decay_iters: 2385
+    lr_warmup_iters: 100
+    lr_decay_style: WSD
+    # int(2385 * 0.20) = 477. Anneal begins at 2385 - 477 = 1908.
+    lr_wsd_decay_iters: 477
+    lr_wsd_decay_style: linear
+
+    moe_aux_loss_coeff: 0.0001
+    override_opt_param_scheduler: true
+    seed: 1234
+
+    # 1907 = last plateau step (continue from this one). 2385 = final annealed.
+    ckpt_format: torch_dist
+    save_interval: 1000000
+    save_extra_steps:
+      - 1907
+      - 2385
+    save: ${job.base_output_dir}/checkpoints
+
+    load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-35B-A3B-Base
+    finetune: true
+    no_load_optim: true
+    no_load_rng: true
+
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    wandb_save_dir: ${job.base_output_dir}/wandb
+    wandb_project: "moe-exploration"
+    wandb_exp_name: "qwen3_5_35B_A3B_10BTh4e_${stage}_${oc.env:SLURM_JOB_ID,local}"
+
+job:
+  name: qwen3_5_35B_A3B_10BTh4e_${stage}_${slurm.env.MACHINE_NAME}
+
+# 2x2. The two fwe_ arms inherit the shared blend above (fineweb-edu English).
+# The two dclm_ arms override data_path wholesale: identical 43 components with
+# the fineweb-edu path swapped for dclm-baseline at the SAME 0.3 weight.
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        - stage: h4e_lr3e5
+          backend.megatron.lr: 3.0e-5
+          backend.megatron.min_lr: 3.0e-7
+          backend.megatron.router_lr_spec: "1.0e-5"
+
+        - stage: h4e_lr5e5
+          backend.megatron.lr: 5.0e-5
+          backend.megatron.min_lr: 5.0e-7
+          backend.megatron.router_lr_spec: "1.6667e-5"
