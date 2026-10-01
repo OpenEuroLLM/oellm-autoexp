@@ -1,0 +1,80 @@
+# @package _global_
+
+# 0.4B NE sparse Qwen3-like model training with pull-based multi-stage cooldown on Marenostrum
+# Configuration from: https://docs.google.com/spreadsheets/d/17LXPs6O9_6cL7P2KVEJF8LTy5zhy0qLNXEVGRCYOzhY/edit?gid=0#gid=0
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep/anni@sweep: mbs_sweep
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.4B_ne_experts_32 # model configs
+  - /backend/megatron/multilingual_scaling/data: oellm_256k_lumi # full datamix (data_args_path, tokenizer)
+  - _self_
+
+index: 0
+stage: "" # Will be overridden by sweep
+
+job:
+  name: "sparse_throughput_test" # Will be overridden by sweep with stage and hyperparameter info
+  base_output_dir: "/scratch/project_465002530/users/amoisala/oellm-autoexp/config/experiments/anni/0.4B_ne_sparse_experts_${backend.megatron.num_experts}_topk_${backend.megatron.moe_router_topk}_EP_${backend.megatron.expert_model_parallel_size}_mbs_${backend.megatron.micro_batch_size}_nodes_${slurm.sbatch.nodes}/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    train_iters: 50
+    eval_iters: 1
+    eval_interval: 1000
+    save_interval: 10000000
+    save: null
+    load: null
+    wandb_exp_name: "test_sparse_throughput" # Will be overridden by sweep with stage and hyperparameter info
+    wandb_project: "" # Disabled
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    # DATA
+    data_cache_path: "/scratch/project_465002530/users/$USER/megatron_cache/0.4B_ne_sparse_experts_${backend.megatron.num_experts}_topk_${backend.megatron.moe_router_topk}_EP_${backend.megatron.expert_model_parallel_size}_mbs_${backend.megatron.micro_batch_size}_nodes_${slurm.sbatch.nodes}" # unique per run: avoids concurrent-job cache races
+
+    # LUMI hipBLASLt workarounds: "Unable to find any suitable algorithms" in these GEMM shapes
+    moe_router_dtype: null
+
+    # need to be set on lumi for ROCm based models to work
+    add_bias_linear: false
+    gradient_accumulation_fusion: false
+    masked_softmax_fusion: false
+
+    # For quick testing
+    #train_iters: 5
+    lr_warmup_iters: 0 # model default (2000) would exceed 30% of train_iters for a short test run
+    lr_wsd_decay_iters: 1
+    #micro_batch_size: 1    # overridden by sweep
+    #global_batch_size:  64 # overridden by sweep
+    #eval_interval: 1000000000
+    #save_interval: 1000000000
+
+    # Base training configuration (for stable phase)
+    num_workers: 6 # Ville's suggestion since otherwise all of the 7 available CPUs per tasks would have a dataloader
+    num_dataset_builder_threads: 6
+    micro_batch_size: 1 # Will be overridden by sweep
+    global_batch_size: 64  # Will be overridden by sweep
+    lr: 5.e-4  # Will be overridden by sweep
+
+    # eval_interval: 200
+    # save_interval: 500
+
+
+slurm:
+  sbatch:
+ #   nodes: "${oc.eval:'min(64, max(1, int(${backend.megatron.global_batch_size}//(${backend.megatron.micro_batch_size}*${slurm.sbatch.gpus_per_node}))))'}"
+    nodes: 1
+    partition: standard-g
+    account: "project_465002530"
+    time: "00:10:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "
