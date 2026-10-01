@@ -90,7 +90,7 @@ backend:
     # uses random logits and should only be enabled for throughput diagnostics.
     moe_router_force_load_balancing: false
     moe_router_load_balancing_type: aux_loss
-    moe_aux_loss_coeff: 1.0e-2
+    moe_aux_loss_coeff: 1.0e-3
     moe_per_layer_logging: false
 
     train_iters: 20
