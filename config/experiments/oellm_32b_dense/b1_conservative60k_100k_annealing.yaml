@@ -1,0 +1,35 @@
+# @package _global_
+#
+# ============================================================================
+# COOLDOWN OF B1-conservative60k: 100000 -> 120000, 1-sqrt
+# ============================================================================
+# Identical to b1_production60k_100k_annealing (seed + anneal stages, anneal
+# mix, 120k schedule, prod_v2's anneal cache, timing_log_level 0) -- only the
+# parent checkpoint and the run name differ. Inherit, don't copy, so both
+# anneals stay comparable.
+#
+# PARENT: Jenia's B1-conservative60k (W&B oellm_32b_dense_loss-increase_debug,
+# B1_reborn_defer_fix_iter60k_conservative_v1, final segment 5up7fdzf):
+#   seed      oellm_32b_v2_prod_gbs4096_lr1.76e-4 iter_0060000 (the v2 line:
+#             bf16, no FP8, defer off, so never on the deferred-wgrad bug)
+#   60k-70k   lr ramp 3e-5 -> 3e-4, then the B1 recipe on 799ff4e (FP8 hybrid,
+#             fixed deferred wgrad) -- launcher, env and Megatron argv are
+#             identical to B1-production60k's except paths and run names, so
+#             b1_reborn_base describes this run as well
+#   at 100k   loss 1.405 (1k-median), consumed samples 409600000 =
+#             100000 * 4096, lr 3e-4 plateau; iter_0100000 = 2048 shards +
+#             .metadata + metadata.json, same layout as production60k's
+#
+# The v2 anneal (oellm_32b_v2/100k_annealing) starts from the same v2 60k
+# ancestor, so this run vs the v2 anneal compares the two recipes from 60k on.
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_dense/b1_conservative60k_100k_annealing --dry-run
+defaults:
+  - b1_production60k_100k_annealing
+  - _self_
+
+backend:
+  aux:
+    variant: "b1_conservative60k_100kcooldown120k"
+    parent_ckpts: /e/fscratch/e-sta-openeurollm/jj1/reanimation_64k_20260911/B1-conservative60k/training_ckpts/checkpoints
