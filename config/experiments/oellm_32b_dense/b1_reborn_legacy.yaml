@@ -1,0 +1,12 @@
+# @package _global_
+{
+  "defaults": [
+    "/experiments/oellm_32b_dense/b1_reborn_common",
+    "_self_"
+  ],
+  "aux": {
+    "variant": "legacy",
+    "expected_source": "3fc1452853978f7d6ff2add16d887bb6ed30470a",
+    "run_name": "B1_reborn_legacy"
+  }
+}

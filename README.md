@@ -587,3 +587,7 @@ pre-commit install
 This helps keeping the format clean.
 
 If you touch the backend submodule versions, please make sure you re-generate the dataclasses / configs. If you are very eager, and have spare time, you could integrate this re-generation even into the pre-commit config - so that we are on the safe side always.
+
+### Historical and patched B1 reborn launch configurations
+
+See [complete B1 continuation recipes](docs/megatron_versions/b1_launch_recipes.md) for the source-pinned legacy and corrected variants, preparation, restore audits and launch commands.

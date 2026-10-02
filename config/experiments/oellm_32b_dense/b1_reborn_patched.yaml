@@ -1,0 +1,12 @@
+# @package _global_
+{
+  "defaults": [
+    "/experiments/oellm_32b_dense/b1_reborn_common",
+    "_self_"
+  ],
+  "aux": {
+    "variant": "patched",
+    "expected_source": "799ff4e6e1c3f6762283c97cd76ab4eb68073720",
+    "run_name": "B1_defer_patch_reborn"
+  }
+}
