@@ -1,171 +1,156 @@
 # @package _global_
 # Explicit B1 settings, independent of revival_1.
-{
-  "defaults": [
-    "/experiments/oellm_32b_dense/oellm_32b_dense_production",
-    {
-      "override /slurm": "jupiter_autoexclude_relay"
-    },
-    "_self_"
-  ],
-  "aux": {
-    "run_root": "???",
-    "repo_root": "???",
-    "source": "???",
-    "data_manifest": "???",
-    "data_cache": "???",
-    "tokenizer": "???",
-    "image": "???",
-    "account": "???",
-    "walltime": "???",
-    "exclude_file": "???",
-    "end_step": 894000,
-    "nodes": 512,
-    "partition": "booster",
-    "qos": "normal",
-    "wandb_project": "oellm_32B_dense",
-    "variant": "???",
-    "expected_source": "???",
-    "run_name": "???",
-    "remaining_steps": "???"
-  },
-  "job": {
-    "name": "${aux.run_name}",
-    "base_output_dir": "${aux.run_root}/training_core",
-    "est_steps": "${aux.remaining_steps}",
-    "checkpoint_hook_command": "",
-    "checkpoint_hook_every": 2000
-  },
-  "backend": {
-    "aux": {
-      "active_nodes": "${aux.nodes}",
-      "spare_nodes": 0
-    },
-    "launcher_script": "${aux.repo_root}/tools/conservative_b1_training.py",
-    "env": {
-      "PYTHONPATH": "${aux.source}",
-      "TRANSITION_SOURCE": "${aux.source}",
-      "TRANSITION_OUT": "${aux.run_root}/restore-audit",
-      "B1_RESTORE_CONTRACT": "${aux.run_root}/restore-contract.json",
-      "WANDB_MODE": "offline",
-      "WANDB_RUN_GROUP": "${aux.run_name}"
-    },
-    "megatron": {
-      "lr": 0.0003,
-      "min_lr": 0.0,
-      "decoupled_lr": null,
-      "decoupled_min_lr": null,
-      "adam_beta1": 0.9,
-      "adam_beta2": 0.95,
-      "adam_eps": 1e-08,
-      "weight_decay": 0.1,
-      "qk_layernorm_wd_mult": 1.0,
-      "final_norm_wd_mult": 1.0,
-      "residual_norm_wd_mult": 0.0,
-      "embedding_wd_mult": 0.0,
-      "apply_wd_to_qk_layernorm": false,
-      "layernorm_zero_centered_gamma": false,
-      "output_z_loss_coeff": 1e-05,
-      "cross_entropy_loss_fusion": true,
-      "cross_entropy_fusion_impl": "native",
-      "fp8": "hybrid",
-      "fp8_recipe": "delayed",
-      "fp8_amax_history_len": 1024,
-      "fp8_amax_compute_algo": "max",
-      "first_last_layers_bf16": false,
-      "defer_embedding_wgrad_compute": true,
-      "overlap_grad_reduce": true,
-      "overlap_param_gather": true,
-      "tp_comm_overlap": true,
-      "no_load_optim": false,
-      "no_load_rng": false,
-      "finetune": false,
-      "use_checkpoint_args": false,
-      "use_checkpoint_opt_param_scheduler": false,
-      "override_opt_param_scheduler": true,
-      "allow_new_param_groups_on_load": true,
-      "global_batch_size": 4096,
-      "micro_batch_size": 2,
-      "seq_length": 4096,
-      "num_layers": 64,
-      "hidden_size": 5120,
-      "ffn_hidden_size": 25600,
-      "num_attention_heads": 64,
-      "num_query_groups": 8,
-      "qk_layernorm": true,
-      "tensor_model_parallel_size": 4,
-      "pipeline_model_parallel_size": 4,
-      "clip_grad": 1.0,
-      "lr_decay_style": "WSD",
-      "bf16": true,
-      "fp16": false,
-      "attention_dropout": 0.0,
-      "hidden_dropout": 0.0,
-      "normalization": "RMSNorm",
-      "rotary_base": 100000,
-      "untie_embeddings_and_output_weights": true,
-      "load": "${aux.run_root}/training_ckpts/checkpoints",
-      "save": "${aux.run_root}/training_ckpts/checkpoints",
-      "non_persistent_global_ckpt_dir": "${aux.run_root}/training_ckpts/checkpoints_rolling",
-      "non_persistent_save_interval": 125,
-      "non_persistent_ckpt_type": "global",
-      "save_interval": 2000,
-      "exit_interval": "${aux.end_step}",
-      "exit_duration_in_mins": null,
-      "exit_signal_handler": true,
-      "data_args_path": "${aux.data_manifest}",
-      "data_cache_path": "${aux.data_cache}",
-      "tokenizer_model": "${aux.tokenizer}",
-      "lr_warmup_samples": 40960000,
-      "train_samples": 3661824000,
-      "lr_wsd_decay_samples": 366182400,
-      "lr_wsd_decay_style": "linear",
-      "train_iters": null,
-      "lr_warmup_iters": 0,
-      "lr_decay_iters": null,
-      "lr_wsd_decay_iters": null,
-      "wandb_project": "${aux.wandb_project}",
-      "wandb_exp_name": "${job.name}",
-      "wandb_save_dir": "${aux.run_root}/wandb",
-      "tensorboard_dir": "${aux.run_root}/tensorboard",
-      "log_interval": 5,
-      "diagnostics_interval": 100,
-      "diag_activations": true,
-      "diag_logit_stats": true,
-      "diag_clip_events": true,
-      "diag_fp8_meta": true,
-      "diag_layer_grad_norms": true,
-      "diag_nonfinite": true,
-      "diag_norm_gains": true,
-      "diag_weight_stats": true,
-      "no_weight_decay_cond_type": null,
-      "exit_on_missing_checkpoint": true,
-      "log_memory_to_tensorboard": true,
-      "log_num_zeros_in_grad": true,
-      "log_params_norm": true,
-      "timing_log_level": 1
-    }
-  },
-  "container": {
-    "image": "${aux.image}",
-    "python": "/opt/venv/bin/python"
-  },
-  "slurm": {
-    "exclude_file": "${aux.exclude_file}",
-    "sbatch": {
-      "account": "${aux.account}",
-      "partition": "${aux.partition}",
-      "qos": "${aux.qos}",
-      "time": "${aux.walltime}",
-      "nodes": "${aux.nodes}",
-      "cpus_per_task": 288,
-      "signal": "B:USR1@240",
-      "exclude": null
-    },
-    "srun_opts": "--kill-on-bad-exit=1 --mpi=none --cpus-per-task=288",
-    "env": {
-      "SLURM_MPI_TYPE": "none",
-      "HF_HOME": "${aux.run_root}/hf_cache"
-    }
-  }
-}
+defaults:
+  - /experiments/oellm_32b_dense/oellm_32b_dense_production
+  - override /slurm: jupiter_autoexclude_relay
+  - _self_
+aux:
+  run_root: ???
+  repo_root: ???
+  source: ???
+  data_manifest: ???
+  data_cache: ???
+  tokenizer: ???
+  image: ???
+  account: ???
+  walltime: ???
+  exclude_file: ???
+  end_step: 894000
+  nodes: 512
+  partition: booster
+  qos: normal
+  wandb_project: oellm_32B_dense
+  variant: ???
+  expected_source: ???
+  run_name: ???
+  remaining_steps: ???
+job:
+  name: ${aux.run_name}
+  base_output_dir: ${aux.run_root}/training_core
+  est_steps: ${aux.remaining_steps}
+  checkpoint_hook_command: ''
+  checkpoint_hook_every: 2000
+backend:
+  aux:
+    active_nodes: ${aux.nodes}
+    spare_nodes: 0
+  launcher_script: ${aux.repo_root}/tools/conservative_b1_training.py
+  env:
+    PYTHONPATH: ${aux.source}
+    TRANSITION_SOURCE: ${aux.source}
+    TRANSITION_OUT: ${aux.run_root}/restore-audit
+    B1_RESTORE_CONTRACT: ${aux.run_root}/restore-contract.json
+    WANDB_MODE: offline
+    WANDB_RUN_GROUP: ${aux.run_name}
+  megatron:
+    lr: 0.0003
+    min_lr: 0.0
+    decoupled_lr: null
+    decoupled_min_lr: null
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1e-08
+    weight_decay: 0.1
+    qk_layernorm_wd_mult: 1.0
+    final_norm_wd_mult: 1.0
+    residual_norm_wd_mult: 0.0
+    embedding_wd_mult: 0.0
+    apply_wd_to_qk_layernorm: false
+    layernorm_zero_centered_gamma: false
+    output_z_loss_coeff: 1e-05
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: native
+    fp8: hybrid
+    fp8_recipe: delayed
+    fp8_amax_history_len: 1024
+    fp8_amax_compute_algo: max
+    first_last_layers_bf16: false
+    defer_embedding_wgrad_compute: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    tp_comm_overlap: true
+    no_load_optim: false
+    no_load_rng: false
+    finetune: false
+    use_checkpoint_args: false
+    use_checkpoint_opt_param_scheduler: false
+    override_opt_param_scheduler: true
+    allow_new_param_groups_on_load: true
+    global_batch_size: 4096
+    micro_batch_size: 2
+    seq_length: 4096
+    num_layers: 64
+    hidden_size: 5120
+    ffn_hidden_size: 25600
+    num_attention_heads: 64
+    num_query_groups: 8
+    qk_layernorm: true
+    tensor_model_parallel_size: 4
+    pipeline_model_parallel_size: 4
+    clip_grad: 1.0
+    lr_decay_style: WSD
+    bf16: true
+    fp16: false
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    normalization: RMSNorm
+    rotary_base: 100000
+    untie_embeddings_and_output_weights: true
+    load: ${aux.run_root}/training_ckpts/checkpoints
+    save: ${aux.run_root}/training_ckpts/checkpoints
+    non_persistent_global_ckpt_dir: ${aux.run_root}/training_ckpts/checkpoints_rolling
+    non_persistent_save_interval: 125
+    non_persistent_ckpt_type: global
+    save_interval: 2000
+    exit_interval: ${aux.end_step}
+    exit_duration_in_mins: null
+    exit_signal_handler: true
+    data_args_path: ${aux.data_manifest}
+    data_cache_path: ${aux.data_cache}
+    tokenizer_model: ${aux.tokenizer}
+    lr_warmup_samples: 40960000
+    train_samples: 3661824000
+    lr_wsd_decay_samples: 366182400
+    lr_wsd_decay_style: linear
+    train_iters: null
+    lr_warmup_iters: 0
+    lr_decay_iters: null
+    lr_wsd_decay_iters: null
+    wandb_project: ${aux.wandb_project}
+    wandb_exp_name: ${job.name}
+    wandb_save_dir: ${aux.run_root}/wandb
+    tensorboard_dir: ${aux.run_root}/tensorboard
+    log_interval: 5
+    diagnostics_interval: 100
+    diag_activations: true
+    diag_logit_stats: true
+    diag_clip_events: true
+    diag_fp8_meta: true
+    diag_layer_grad_norms: true
+    diag_nonfinite: true
+    diag_norm_gains: true
+    diag_weight_stats: true
+    no_weight_decay_cond_type: null
+    exit_on_missing_checkpoint: true
+    log_memory_to_tensorboard: true
+    log_num_zeros_in_grad: true
+    log_params_norm: true
+    timing_log_level: 1
+container:
+  image: ${aux.image}
+  python: /opt/venv/bin/python
+slurm:
+  exclude_file: ${aux.exclude_file}
+  sbatch:
+    account: ${aux.account}
+    partition: ${aux.partition}
+    qos: ${aux.qos}
+    time: ${aux.walltime}
+    nodes: ${aux.nodes}
+    cpus_per_task: 288
+    signal: B:USR1@240
+    exclude: null
+  srun_opts: --kill-on-bad-exit=1 --mpi=none --cpus-per-task=288
+  env:
+    SLURM_MPI_TYPE: none
+    HF_HOME: ${aux.run_root}/hf_cache
