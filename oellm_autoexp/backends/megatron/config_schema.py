@@ -457,6 +457,24 @@ class MegatronConfig(ConfigInterface):
     # Applied on the local tensor-parallel shard before the loss.
     final_logit_softcapping: float | None | None = None
 
+    # TWEO adjoint backend; reference retains the original debug implementation.
+    tweo_implementation: str = "fused"
+
+    # Full TWEO moments every N updates; zero disables only diagnostics.
+    tweo_diagnostics_interval: int = 100
+
+    # Target coefficient of post-residual TWEO; zero preserves the original path.
+    tweo_loss_coeff: float = 0.0
+
+    # Activation scale in the fourth-moment penalty (paper default 3).
+    tweo_tau: float = 3.0
+
+    # Absolute consumed-update coordinate at which coefficient ramp begins.
+    tweo_start_step: int = 0
+
+    # Linear coefficient ramp duration; independent of learning-rate warmup.
+    tweo_warmup_steps: int = 0
+
     # Scaling coefficient for the output (LM head) z-loss, an auxiliary loss ``coeff *
     # mean(logsumexp(logits, dim=vocab) ** 2)`` that keeps the softmax log-normalizer close to
     # zero for training stability (PaLM/Chinchilla). A starting value of 1e-4 is recommended.
@@ -1137,6 +1155,9 @@ class MegatronConfig(ConfigInterface):
     # them like every other weight.
     qk_layernorm_wd_mult: float = 0.0
 
+    # Separate final decoder RMSNorm decay multiplier; unset inherits residual-norm-wd-mult.
+    final_norm_wd_mult: float | None | None = None
+
     # Multiplier on --weight-decay for the remaining norm gains: every 1-D non-bias param that
     # is NOT a qk-layernorm gain, i.e. the residual-stream norms (input_layernorm,
     # pre_mlp_layernorm, the final layernorm, and the TE-fused *.layer_norm_weight tensors).
@@ -1145,19 +1166,17 @@ class MegatronConfig(ConfigInterface):
     # fraction for weaker decay. Biases are always excluded. Together with --qk-layernorm-wd-
     # mult this generalises --apply-wd-to-qk-layernorm, so they are mutually exclusive with
     # it.
-    # Separate final decoder norm WD; None preserves residual-norm inheritance.
-    final_norm_wd_mult: float | None = None
-
     residual_norm_wd_mult: float = 0.0
 
-    # Multiplier on --weight-decay for the word-embedding matrix. 1.0 = decay like every other
-    # weight (Megatron default); 0.0 = no decay on the embeddings (OLMo 2/3, Levanter/Marin).
-    # The untied output layer is not affected.
+    # Multiplier on --weight-decay for the word-embedding matrix (2-D param whose name
+    # contains word_embeddings). Default 1.0 = decay like every other weight. 0.0 excludes the
+    # embeddings from weight decay as OLMo 2/3 and Levanter/Marin do (decay erodes the rows of
+    # rare tokens). The untied output layer is not affected.
     embedding_wd_mult: float = 1.0
 
-    # Loading an optimizer checkpoint after a multiplier created a NEW param group (e.g.
-    # embedding_wd_mult mid-run): map the new group onto the structurally equivalent saved group
-    # and keep the current overrides instead of raising. Needed for the embedding arm at 512 nodes.
+    # When the loaded optimizer checkpoint has no param_group matching a current group (a
+    # multiplier enabled mid-run creates a new group), load the new group from the
+    # structurally equivalent saved group and keep the current overrides instead of raising.
     allow_new_param_groups_on_load: bool = False
 
     # Gradient clipping based on global L2 norm.
@@ -2823,37 +2842,49 @@ class MegatronConfig(ConfigInterface):
     diag_clip_events: bool = False
 
     # Log min/max/mean/rms of every linear_qkv / linear_proj / linear_fc1 / linear_fc2 weight
-    # matrix per layer, plus the embedding and output layer.
+    # matrix per layer, plus the embedding and output layer. One pass over the local weight
+    # shards and three small all-reduces over the model-parallel group on a diagnostic
+    # iteration.
     diag_weight_stats: bool = False
 
     # Log the FP8 delayed-scaling window-max amax and current scale of the GEMM input, weight
-    # and output gradient of the four TE GEMMs of every layer.
+    # and output gradient of the four TE GEMMs of every layer. Empty under recipes without
+    # per-tensor state (blockwise, mxfp8) and for bf16 layers.
     diag_fp8_meta: bool = False
 
-    # nvdlfw_inspect feature YAML applied to every Transformer Engine module. Writes PER-RANK
-    # statistics files, so use it only on small probes (<= 16 nodes).
-    te_debug_config: str | None = None
+    # nvdlfw_inspect feature YAML applied to every Transformer Engine module (LogTensorStats,
+    # LogFp8TensorStats, ...). Writes PER-RANK statistics files, so use it only on small
+    # probes (<= 16 nodes). See megatron/training/te_debug.py.
+    te_debug_config: str | None | None = None
 
     # Directory for the nvdlfw_inspect logs; defaults to <tensorboard-dir>/te_debug.
-    te_debug_log_dir: str | None = None
+    te_debug_log_dir: str | None | None = None
 
-    # Diagnostics only: after the checkpoint load, position the training dataloader at this
-    # consumed-sample count instead of the checkpoint's own (weights of iteration X on the
-    # batches of iteration Y).
-    diag_consumed_train_samples: int | None = None
-
-    # Output-layer logit statistics (mean/std/min/max, per-token max logit, log Z) on
-    # diagnostic iterations (forward hook on the output layer).
+    # Log mean/std/min/max of the output-layer logits, the mean per-token max logit and the
+    # mean/std of the per-token log-partition log Z on diagnostic iterations (forward hook on
+    # the output layer).
     diag_logit_stats: bool = False
 
-    # Per-token CE loss / label / mask / log Z / max logit dump for checkpoint probes on a
-    # fixed batch: <dir>/it<iteration>_dp<rank>_cp<rank>.npz on every diagnostic iteration.
-    diag_token_loss_dir: str | None = None
+    # Diagnostics only: on every diagnostic iteration write the per-token CE loss, label, loss
+    # mask, log Z and max logit of every microbatch to
+    # <dir>/it<iteration>_dp<rank>_cp<rank>.npz (TP rank 0 of the last pipeline stage). For
+    # checkpoint probes on a fixed batch.
+    diag_token_loss_dir: str | None | None = None
 
-    # Checkpoint surgery for probes: after the load, reload the tensors whose checkpoint key
-    # matches one of the comma-separated regexes from this torch_dist checkpoint.
-    diag_swap_checkpoint: str | None = None
-    diag_swap_keys: str | None = None
+    # Diagnostics only: after the checkpoint load, reload the model tensors selected by
+    # --diag-swap-keys from this torch_dist checkpoint (checkpoint surgery for probes).
+    diag_swap_checkpoint: str | None | None = None
+
+    # Comma-separated regexes matched against the checkpoint keys (global layer numbering,
+    # e.g. ^output_layer[.]weight or ^decoder[.]layers[.]5[6-9][.]) selecting the tensors to
+    # reload from --diag-swap-checkpoint.
+    diag_swap_keys: str | None | None = None
+
+    # Diagnostics only: after the checkpoint load, position the training dataloader at this
+    # consumed-sample count instead of the checkpoint's own, so a probe can run the weights of
+    # iteration X on the batches of iteration Y (Y * global batch size). Never use for real
+    # training.
+    diag_consumed_train_samples: int | None | None = None
 
     # Number of top logits to save.
     logits_save_top_k: int | None | None = None
