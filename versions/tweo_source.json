@@ -1,0 +1,13 @@
+{
+  "source_base": "799ff4e6e1c3f6762283c97cd76ab4eb68073720",
+  "files": {
+    "megatron/core/transformer/tweo.py": "3f860bf4b786546036219bf2ea60313cf518b1766950642734680a55440c4867",
+    "megatron/core/transformer/transformer_config.py": "d0f659cd644ff74f8be0eb3f9aba0bfaf76ef904d308faba7bbb98b4ae337e04",
+    "megatron/core/transformer/transformer_layer.py": "d7942304c64bd1a66928330011c7c5c04136f13758243a763f894ba417680f8d",
+    "megatron/core/pipeline_parallel/schedules.py": "8ba8d235cf7d44552cfab99232db23c0e87a0dc991ea54fbb23258a71904e34a",
+    "megatron/training/training.py": "b6acdc6483d1160d5ad26be8b788cb210dc537ad7e49449370c34a4e08851e98",
+    "megatron/training/arguments.py": "2f31ede0d68386cbc403a06e86ad8a04338ee2263a60f9ec77206de5388f509c",
+    "megatron/core/transformer/tweo_kernels.py": "ea07c3fcc931e7052720588c9a27acbbe1c9b6d18c3616b71438dd207871aee0"
+  },
+  "release_commit": "5dd5714035962a581827a4978dc3f51086b7f3ff"
+}

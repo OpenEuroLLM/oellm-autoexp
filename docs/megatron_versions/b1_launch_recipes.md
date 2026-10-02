@@ -64,3 +64,7 @@ PYTHONPATH=. python -m pytest -q --no-cov \
 ```
 
 The tests compose both full recipes through the actual typed loader and render their Megatron commands, check optimizer-setting restoration and checkpoint override rejection, and verify ramp behavior on resume and during eventual cooldown. Source-level GPU validation of the corrected gradient patch is documented in [the source milestone](b1_reborn_20260925.md). Packaging tests and dry-run rendering do not constitute a new GPU training run of the packaged wrapper with the historical source.
+
+## Optimized TWEO variant
+
+The additive `oellm-32b-b1-tweo-20261002` release also provides `--variant tweo`, preserving these legacy/patched variants. Use the [TWEO guide](b1_tweo_20261002.md) for its exact source, calibrated80k profile, coefficient-ramp semantics and numerical checks.

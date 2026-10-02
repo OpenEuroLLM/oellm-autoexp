@@ -10,6 +10,20 @@
       "commit": "799ff4e6e1c3f6762283c97cd76ab4eb68073720",
       "label": "B1_defer_patch_reborn",
       "gradient_handling": "corrected deferred head gradient"
+    },
+    "tweo": {
+      "commit": "5dd5714035962a581827a4978dc3f51086b7f3ff",
+      "label": "B1_TWEO_conservative80k",
+      "gradient_handling": "corrected deferred head gradient plus optimized TWEO",
+      "args": {
+        "tweo_loss_coeff": 7.817552855400486e-14,
+        "tweo_tau": 3.0,
+        "tweo_start_step": 80000,
+        "tweo_warmup_steps": 100,
+        "tweo_implementation": "fused",
+        "tweo_diagnostics_interval": 100
+      },
+      "minimum_start_step": 80000
     }
   },
   "args": {

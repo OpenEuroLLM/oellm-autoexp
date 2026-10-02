@@ -47,7 +47,10 @@ def contract(variant, start, end, ramp=0, floor=.1, run_name=None):
     spec = read(REPO/'versions/b1_recipes.json')
     if variant not in spec['variants'] or not 0 < start < end <= 894000 or ramp < 0 or not 0 < floor <= 1:
         raise ValueError('Invalid variant, continuation range or LR ramp')
-    args = dict(spec['args'],wandb_exp_name=run_name or spec['variants'][variant]['label'])
+    profile = spec['variants'][variant]
+    if start < profile.get('minimum_start_step', 1):
+        raise ValueError('Checkpoint predates the calibrated TWEO profile; calibrate a separate recipe')
+    args = dict(spec['args'], **profile.get('args', {}), wandb_exp_name=run_name or profile['label'])
     return dict(args=args,scheduler=dict(max_lr=3e-4,min_lr=0.,lr_decay_style='WSD',
         override_opt_param_scheduler=True,use_checkpoint_opt_param_scheduler=False),
         start=start,end=end,anchor_samples=start*4096,warmup_updates=max(ramp,1),
@@ -64,6 +67,8 @@ def prepare(a):
     from production_walltime import resolve
     spec = read(REPO/'versions/b1_recipes.json')
     variant = spec['variants'][a.variant]
+    if a.wandb_project is None:
+        a.wandb_project = 'oellm_32b_dense_loss-increase_debug' if a.variant == 'tweo' else 'oellm_32B_dense'
     root = safe_path(a.run_root)
     if root.exists(): raise ValueError('Use a fresh run root; never overwrite a prepared run')
     checkpoint = safe_path(a.checkpoint).resolve(strict=True)
@@ -106,6 +111,7 @@ def prepare(a):
     write(root/'config/b1.yaml',cfg); write(root/'restore-contract.json',rc)
     files=[REPO/'versions/b1_recipes.json',root/'config/b1.yaml',root/'restore-contract.json',checkpoint/'.metadata',paths['data_manifest']]
     files += [REPO/'tools'/n for n in ('b1_run.py','conservative_b1_training.py','gradient_transition_warmup.py','production_walltime.py')]
+    if a.variant == 'tweo': files.append(REPO/'tools/b1_tweo_training.py')
     files += sorted((REPO/'config').rglob('*.yaml'))
     files += sorted((REPO/'templates').glob('*.sbatch'))
     plan.update(source=str(source),source_tree=git(source,'rev-parse','HEAD^{tree}'),autoexp=git(REPO,'rev-parse','HEAD'),
@@ -148,12 +154,12 @@ def launch(a):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__); sub=p.add_subparsers(dest='action',required=True)
-    q=sub.add_parser('prepare'); q.add_argument('--variant',choices=['legacy','patched'],required=True)
+    q=sub.add_parser('prepare'); q.add_argument('--variant',choices=['legacy','patched','tweo'],required=True)
     q.add_argument('--run-root',required=True);q.add_argument('--checkpoint',required=True)
     for name in ('data-manifest','data-cache','tokenizer','image','exclude-file','account'): q.add_argument('--'+name,required=True)
     q.add_argument('--checkpoint-shards',type=int,default=2048);q.add_argument('--source-repository');q.add_argument('--name');q.add_argument('--partition',default='booster')
     q.add_argument('--qos',default='normal');q.add_argument('--nodes',type=int,default=512)
-    q.add_argument('--end-step',type=int,default=894000);q.add_argument('--wandb-project',default='oellm_32B_dense')
+    q.add_argument('--end-step',type=int,default=894000);q.add_argument('--wandb-project')
     q.add_argument('--ramp-updates',type=int,default=0);q.add_argument('--ramp-floor',type=float,default=.1)
     q.add_argument('--execute',action='store_true')
     q=sub.add_parser('launch');q.add_argument('--run-root',required=True);q.add_argument('--execute',action='store_true')

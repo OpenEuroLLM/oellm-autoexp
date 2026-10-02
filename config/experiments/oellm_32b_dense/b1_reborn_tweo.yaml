@@ -1,0 +1,23 @@
+# @package _global_
+{
+  "defaults": [
+    "/experiments/oellm_32b_dense/b1_reborn_common",
+    "_self_"
+  ],
+  "aux": {
+    "variant": "tweo",
+    "expected_source": "5dd5714035962a581827a4978dc3f51086b7f3ff",
+    "run_name": "B1_TWEO_conservative80k",
+    "wandb_project": "oellm_32b_dense_loss-increase_debug"
+  },
+  "backend": {
+    "launcher_script": "${aux.repo_root}/tools/b1_tweo_training.py",
+    "env": {
+      "TWEO_RECEIPT_OUT": "${aux.run_root}/save-receipts"
+    },
+    "megatron": {
+      "async_save": false,
+      "use_persistent_ckpt_worker": false
+    }
+  }
+}
