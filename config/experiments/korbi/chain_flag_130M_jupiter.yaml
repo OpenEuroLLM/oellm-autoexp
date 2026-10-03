@@ -7,8 +7,9 @@
 # the production tokenizer (OELLM 256k, SentencePiece) and production data:
 #
 #   train           1-2 nodes  niccolo 130M body, Qwen3-compatible (no QKV / linear
-#                              bias, tied embeddings, qk-layernorm, SwiGLU), 1000 steps
-#                              on one dclm shard of the production mix.
+#                              bias, tied embeddings, qk-layernorm, SwiGLU), 200 steps
+#                              at GBS 32 on one dclm shard of the production mix -- a
+#                              pipeline check, not a model.
 #   convert         1 node     scripts/downstream_eval/convert_export.sh -- the code
 #                              that produced the published 32B exports (Megatron-Bridge
 #                              image, our 262144-token tokenizer, production post-
@@ -41,7 +42,7 @@
 #   PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/korbi/chain_flag_130M_jupiter --dry-run
 #
 # Afterwards (login node):
-#   MODEL=32b_dense scripts/downstream_eval/eval_checkpoints.sh flag-status flagchain130M_1k
+#   MODEL=32b_dense scripts/downstream_eval/eval_checkpoints.sh flag-status flagchain130M_200
 # ============================================================================
 
 defaults:
@@ -50,11 +51,12 @@ defaults:
 
 aux:
   experiment_group: "flag_chain_130M"
-  train_iters: 1000
+  train_iters: 200
+  gbs: 32
   # Paths shared by the stages (each stage gets its own backend, so they live here).
   repo: ${oc.env:OELLM_AUTOEXP_ROOT,${oc.env:PWD}}
   train_dir: ${oc.env:OUTPUT_DIR,./output}/${aux.experiment_group}/flagchain130M_train
-  export_name: "flagchain130M_${oc.eval:'${aux.train_iters}//1000'}k"
+  export_name: "flagchain130M_${aux.train_iters}"
   export_root: ${oc.env:OUTPUT_DIR,./output}/${aux.experiment_group}/hf
   # Must share a filesystem with export_root: the eval views hard-link the weights.
   flag_work: /e/scratch/e-sta-openeurollm/${oc.env:USER}/flag-evals
@@ -90,9 +92,9 @@ backend:
     data_path: []
     split: null
     data_cache_path: ${oc.env:OUTPUT_DIR,./output}/${aux.experiment_group}/data_cache
-    # Short schedule that stays valid: warmup < WSD decay (0.2 * train_iters).
+    # Short schedule that stays valid: warmup < WSD decay (0.2 * train_iters = 40).
     train_iters: ${aux.train_iters}
-    lr_warmup_iters: 100
+    lr_warmup_iters: 10
     save_interval: ${aux.train_iters}
     eval_interval: ${aux.train_iters}
     eval_iters: 10
