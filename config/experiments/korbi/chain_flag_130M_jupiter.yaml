@@ -78,6 +78,10 @@ backend:
     tokenizer_type: HuggingFaceTokenizer
     tokenizer_model: /e/data1/datasets/playground/mmlaion/oellm/oellm_tokenizer_256k
     padded_vocab_size: 262144
+    # The 262k vocabulary makes the logits the memory peak: niccolo's micro batch 16 needs
+    # 16 * 4096 * 262144 * 4 B = 64 GiB for them alone (OOM, job 2161246). 2 -> 8 GiB;
+    # the global batch stays 128 through gradient accumulation.
+    micro_batch_size: 2
     # Qwen3 layout, so Megatron-Bridge's Qwen3 mapping covers every tensor.
     add_qkv_bias: false
     add_bias_linear: false
