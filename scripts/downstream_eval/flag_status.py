@@ -3,6 +3,7 @@
 #   flag_status.py STATE_FILE             per-task status of both halves; collect when complete
 #   flag_status.py STATE_FILE --rerun     resubmit failed / never-run tasks of both halves
 #   flag_status.py STATE_FILE --collect   collect now, even if incomplete (CSV is then partial)
+#   flag_status.py STATE_FILE --wait      poll until done, rerun failures once, collect (autoexp stage)
 #
 # A task's state is that of its LATEST attempt (highest job id among its logs):
 #   ok       log ends with "finished" and has no "[error] Evaluation failed"
@@ -11,7 +12,7 @@
 #   missing  never started and not queued
 # Reruns go to the same run directory, so results accumulate there and the collector keeps the
 # newest result per eval. Environment: FLAG_ACCOUNT, COLLECT_RAW, FLAG_DATASETS_CSV, FLAG_WORK,
-# DRY_RUN, FLAG_NO_QUEUE (1 = do not ask squeue; set by flag_stage.sh).
+# DRY_RUN.
 """Status, reruns and collection of one FLAG-suite run (see flag_launch.sh)."""
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 LOG_RE = re.compile(r"^oellm-eval-(\d+)-(\d+)\.out$")
@@ -55,8 +57,6 @@ def read_state(path: Path) -> dict[str, str]:
 def queued_tasks() -> set[tuple[str, int]]:
     """(job id, array index) of every queued task of this user, pending ranges
     expanded."""
-    if os.environ.get("FLAG_NO_QUEUE") == "1":  # inside a flag_stage.sh allocation
-        return set()
     try:
         out = subprocess.run(
             ["squeue", "--me", "-h", "-r", "-o", "%i"], check=True, capture_output=True, text=True
@@ -76,8 +76,9 @@ def task_names(run_dir: Path) -> list[str]:
         return [f"{row['task_path']} ({row['n_shot']}-shot)" for row in csv.DictReader(f)]
 
 
-def half_status(run_dir: Path, job_ids: set[str], queue: set[tuple[str, int]]):
+def half_status(run_dir: Path, job_ids: set[str], queue: set[tuple[str, int]], subset: str = ""):
     names = task_names(run_dir)
+    wanted = [int(i) for i in subset.split(",") if i.strip()] if subset else range(len(names))
     latest: dict[int, str] = {}
     for p in (run_dir / "slurm_logs").glob("oellm-eval-*.out"):
         m = LOG_RE.match(p.name)
@@ -87,7 +88,7 @@ def half_status(run_dir: Path, job_ids: set[str], queue: set[tuple[str, int]]):
                 latest[idx] = job
     queued_idx = {i for (j, i) in queue if j in job_ids}
     status, reason = {}, {}
-    for i in range(len(names)):
+    for i in wanted:
         job = latest.get(i)
         if i in queued_idx:  # queued under the run's job or one of its reruns
             status[i] = "active"
@@ -170,8 +171,62 @@ def collect(state: dict[str, str]) -> None:
         f"collected: {out}\n  joined {joined}/{total} evals"
         + ("  -- COMPLETE" if joined == total else "")
     )
-    for m in missing[:20]:
-        print(f"    missing: {m}")
+    if state.get("VLLM_INDICES") or state.get("LIGHTEVAL_INDICES"):
+        print("  (subset run: only the launched array indices were evaluated)")
+    else:
+        for m in missing[:20]:
+            print(f"    missing: {m}")
+
+
+def status_pass(state_path: Path, rerun: bool) -> tuple[bool, int]:
+    """Print the status of both halves; resubmit failed/missing tasks if
+    `rerun`.
+
+    Returns (complete, number of tasks still queued or running).
+    """
+    state = read_state(state_path)
+    queue = queued_tasks()
+    rerun_lines, complete, active = [], True, 0
+    print(
+        f"{time.strftime('%H:%M:%S')} {state['NAME']}  (eval rev {state.get('EVAL_REV', '?')[:9]})"
+    )
+    for half in ("VLLM", "LIGHTEVAL"):
+        run_dir = Path(state[f"{half}_RUN"])
+        job_ids = (
+            set(state[f"{half}_JOB"].split(","))
+            | set(state.get(f"{half}_RERUN_JOBS", "").split(","))
+        ) - {""}
+        names, status, reason = half_status(
+            run_dir, job_ids, queue, state.get(f"{half}_INDICES", "")
+        )
+        counts = {
+            s: sum(1 for v in status.values() if v == s)
+            for s in ("ok", "active", "failed", "missing")
+        }
+        print(
+            f"  {half.lower():9s} {counts['ok']}/{len(status)} ok, {counts['active']} active, "
+            f"{counts['failed']} failed, {counts['missing']} missing   {run_dir}"
+        )
+        todo = sorted(i for i, s in status.items() if s in ("failed", "missing"))
+        for i in todo:
+            print(
+                f"    [{i}] {names[i]}: {status[i]}" + (f" -- {reason[i]}" if i in reason else "")
+            )
+        complete &= counts["ok"] == len(status)
+        active += counts["active"]
+        if todo and rerun:
+            job = submit_rerun(run_dir / "submit_evals.sbatch", todo)
+            rerun_lines.append(
+                f"{half}_RERUN_JOBS={','.join(filter(None, [state.get(f'{half}_RERUN_JOBS', ''), job]))}"
+            )
+            active += len(todo)
+            print(f"    resubmitted {len(todo)} task(s) as job {job}")
+        elif todo:
+            print(f"    rerun: eval_checkpoints.sh flag-rerun {state['NAME']}")
+    if rerun_lines and os.environ.get("DRY_RUN") != "1":
+        with open(state_path, "a") as f:
+            f.write("\n".join(rerun_lines) + "\n")
+    return complete, active
 
 
 def main() -> None:
@@ -181,46 +236,34 @@ def main() -> None:
     ap.add_argument("state", type=Path)
     ap.add_argument("--rerun", action="store_true", help="resubmit failed and never-run tasks")
     ap.add_argument("--collect", action="store_true", help="collect even if not complete")
+    ap.add_argument(
+        "--wait",
+        action="store_true",
+        help="poll until nothing is queued or running, resubmitting failures --retries times, "
+        "then collect (for oellm-autoexp `job.local` eval stages)",
+    )
+    ap.add_argument("--retries", type=int, default=1, help="rerun rounds in --wait mode")
+    ap.add_argument("--poll", type=int, default=60, help="seconds between polls in --wait mode")
     args = ap.parse_args()
+    sys.stdout.reconfigure(line_buffering=True)  # keep order with the collector's own output
 
-    state = read_state(args.state)
-    queue = queued_tasks()
-    rerun_lines, complete = [], True
-    print(f"{state['NAME']}  (eval rev {state.get('EVAL_REV', '?')[:9]})")
-    for half in ("VLLM", "LIGHTEVAL"):
-        run_dir = Path(state[f"{half}_RUN"])
-        job_ids = (
-            set(state[f"{half}_JOB"].split(","))
-            | set(state.get(f"{half}_RERUN_JOBS", "").split(","))
-        ) - {""}
-        names, status, reason = half_status(run_dir, job_ids, queue)
-        counts = {
-            s: sum(1 for v in status.values() if v == s)
-            for s in ("ok", "active", "failed", "missing")
-        }
-        print(
-            f"  {half.lower():9s} {counts['ok']}/{len(names)} ok, {counts['active']} active, "
-            f"{counts['failed']} failed, {counts['missing']} missing   {run_dir}"
-        )
-        todo = sorted(i for i, s in status.items() if s in ("failed", "missing"))
-        for i in todo:
-            print(
-                f"    [{i}] {names[i]}: {status[i]}" + (f" -- {reason[i]}" if i in reason else "")
-            )
-        complete &= counts["ok"] == len(names)
-        if todo and args.rerun:
-            job = submit_rerun(run_dir / "submit_evals.sbatch", todo)
-            rerun_lines.append(
-                f"{half}_RERUN_JOBS={','.join(filter(None, [state.get(f'{half}_RERUN_JOBS', ''), job]))}"
-            )
-            print(f"    resubmitted {len(todo)} task(s) as job {job}")
-        elif todo:
-            print(f"    rerun: eval_checkpoints.sh flag-rerun {state['NAME']}")
-    if rerun_lines and os.environ.get("DRY_RUN") != "1":
-        with open(args.state, "a") as f:
-            f.write("\n".join(rerun_lines) + "\n")
+    if not args.wait:
+        complete, _ = status_pass(args.state, args.rerun)
+    else:
+        retries = args.retries
+        while True:
+            complete, active = status_pass(args.state, rerun=False)
+            if active:
+                time.sleep(args.poll)
+                continue
+            if complete or retries <= 0:
+                break
+            retries -= 1
+            print(f"[wait] resubmitting failed tasks ({args.retries - retries}/{args.retries})")
+            status_pass(args.state, rerun=True)
+            time.sleep(args.poll)
     if complete or args.collect:
-        collect(state)
+        collect(read_state(args.state))
 
 
 if __name__ == "__main__":

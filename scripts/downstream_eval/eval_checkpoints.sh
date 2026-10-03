@@ -31,6 +31,8 @@ Commands:
                        (vLLM + lighteval) as job arrays on FLAG_ACCOUNT
   flag-status NAME...  Per-task status; failures with their cause; collects the CSV when complete
   flag-rerun NAME...   Resubmit the failed / never-run tasks into the same run directories
+  flag-wait NAME...    Poll until done, resubmit failures FLAG_RETRIES (1) times, collect --
+                       the body of an oellm-autoexp eval stage (job.local, on the login node)
 
 Profiles: MODEL=$MODEL SITE=$SITE   WORK_ROOT=$WORK_ROOT
 USAGE
@@ -170,6 +172,7 @@ flag)
             echo "error: ${entry%%:*} is not converted; run 'convert ${entry%%:*}' first, or use an" \
                  "oellm-autoexp stage chain (config/experiments/korbi/chain_flag_130M_jupiter.yaml)" >&2; exit 1; }
     done
+    flag_clean_env
     rev=$(flag_preflight)                       # on the login node: compute nodes have no git
     export "${FLAG_ENV[@]}" FLAG_EVAL_REV="$rev"
     for entry in "${entries[@]}"; do
@@ -181,13 +184,18 @@ flag)
         fi
     done
     ;;
-flag-status|flag-rerun)
+flag-status|flag-rerun|flag-wait)
     [ $# -gt 0 ] || { echo "usage: eval_checkpoints.sh $CMD NAME..." >&2; exit 2; }
+    flag_clean_env
     export "${FLAG_ENV[@]}"
     for name in "$@"; do
         state="$FLAG_STATE_DIR/$name.env"
         [ -f "$state" ] || { echo "error: $name was not launched with 'flag' (no $state)" >&2; exit 1; }
-        python3 "$HERE/flag_status.py" "$state" $([ "$CMD" = flag-rerun ] && echo --rerun)
+        case "$CMD" in
+            flag-status) python3 "$HERE/flag_status.py" "$state" ;;
+            flag-rerun)  python3 "$HERE/flag_status.py" "$state" --rerun ;;
+            flag-wait)   python3 "$HERE/flag_status.py" "$state" --wait --retries "${FLAG_RETRIES:-1}" --poll "${FLAG_POLL_S:-60}" ;;
+        esac
     done
     ;;
 *)

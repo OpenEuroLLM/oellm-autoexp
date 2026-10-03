@@ -68,12 +68,14 @@ ids, so nothing guesses between timestamped run directories), and share `flag-st
 `config/experiments/korbi/chain_flag_130M_jupiter.yaml`:
 
 - `convert_export.sh NAME CHECKPOINT [ARCH_YAML]` is the conversion (also behind `convert.sbatch`);
-  a training run's `current.yaml` serves as ARCH_YAML. It writes `.convert_done` last.
-- `flag_stage.sh NAME vllm|lighteval` runs one half INSIDE the stage's allocation: compute jobs
-  cannot `sbatch`, so it renders the half and runs each eval as an `srun` step on one node (as many
-  at once as the allocation has nodes), retries failures once, and the half that finishes last
-  collects the CSV. Stages use `slurm: jupiter_driver`, which runs the command in the batch shell
-  (no outer `srun`), and `FLAG_INDICES_VLLM` / `FLAG_INDICES_LIGHTEVAL` restrict a run to a subset.
+  a training run's `current.yaml` serves as ARCH_YAML. It writes `.convert_done` last. The convert
+  stage uses `slurm: jupiter_driver` (command in the batch shell, no outer `srun` or container),
+  because the script starts its own container.
+- The eval stage runs on the login node (`job.local: true`; compute jobs cannot `sbatch`):
+  `eval_checkpoints.sh flag NAME` submits the two standard oellm-eval arrays, then
+  `eval_checkpoints.sh flag-wait NAME` polls until nothing is queued or running, resubmits
+  failures `FLAG_RETRIES` times and collects. A restarted stage does not resubmit: `flag` skips
+  an export already launched and `flag-wait` reattaches to its arrays.
 
 **From the login node**, for exports that already exist:
 
@@ -81,6 +83,7 @@ ids, so nothing guesses between timestamped run directories), and share `flag-st
 MODEL=32b_dense ./eval_checkpoints.sh flag v1annealC_118k v2anneal_118k   # submit both halves as job arrays
 MODEL=32b_dense ./eval_checkpoints.sh flag-status v1annealC_118k          # per task; collects when complete
 MODEL=32b_dense ./eval_checkpoints.sh flag-rerun  v1annealC_118k          # resubmit failed / never-run tasks
+MODEL=32b_dense ./eval_checkpoints.sh flag-wait   v1annealC_118k          # poll, rerun once, collect
 ```
 
 `flag` refuses an export that was already launched (`FORCE=1` for a fresh run) and one that is not
@@ -90,13 +93,15 @@ shutdown, container start-up, ...), and once every task is done it collects
 against all 438 evals.
 
 Defaults (`sites/jupiter.env`): `FLAG_ACCOUNT=e-sta-openeurollm`, `FLAG_CONCURRENCY=40` (higher
-throttles caused container start-up failures), `FLAG_TIME=01:30:00`.
+throttles caused container start-up failures), `FLAG_TIME=01:30:00`. `FLAG_ARRAY_VLLM` /
+`FLAG_ARRAY_LIGHTEVAL` launch a subset of array indices (recorded, so status ignores the rest).
+The flag commands drop what an oellm-autoexp stage exports (and stale `SLURM_*`) before
+submitting, so the arrays always see a plain login shell's environment.
 
 Nothing needs installing for the FLAG suite: `jupiter_flag_evals.sh` runs the oellm tool from
 `submodules/oellm-eval` on the vLLM image's Python (`OELLM_TOOL=image`, the default), so the suite
 definition is always this checkout's. `flag` also checks the pinned revision and a clean tree on the
-login node; stages, on compute nodes without git, check the tool's source and record the
-checked-out revision in the state file.
+login node (`ALLOW_EVAL_REV_MISMATCH=1` for a checkout without git metadata).
 The vLLM half binds the submodule's patched HumanEval grader (see `containers/patches/` there).
 
 ## Files
@@ -112,7 +117,7 @@ The vLLM half binds the submodule's patched HumanEval grader (see `containers/pa
 | `table_hf.py`, `plot_hf.py`, `table_reasoning.py`, `plot_reasoning.py` | tables and figures |
 | `table_plot.py` | shared table drawing (ties within 1 se are marked as ties) |
 | `convert_export.sh` | one Megatron -> HF export (used by `convert.sbatch` and by autoexp stages) |
-| `flag_launch.sh`, `flag_stage.sh`, `flag_lib.sh`, `flag_status.py` | FLAG suite: login-node launch, in-allocation stage driver, checks, status / rerun / collect |
+| `flag_launch.sh`, `flag_lib.sh`, `flag_status.py` | FLAG suite: launch + state file, login-node checks, status / rerun / wait / collect |
 
 ## Pitfalls these scripts already handle
 

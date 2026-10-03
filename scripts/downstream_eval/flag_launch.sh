@@ -3,14 +3,15 @@
 #
 #   flag_launch.sh NAME
 #
-# Called by `eval_checkpoints.sh flag` on the LOGIN node: it submits the two halves as job arrays.
-# (In an oellm-autoexp stage chain, flag_stage.sh runs the halves inside the stage's allocation.)
+# Called by `eval_checkpoints.sh flag` on the LOGIN node: it submits the two halves as job arrays
+# (also from an oellm-autoexp `job.local` stage, see chain_flag_130M_jupiter.yaml).
 # Writes $FLAG_STATE_DIR/NAME.env with the two run directories and job ids; `flag-status` and
 # `flag-rerun` read that file instead of guessing which timestamped directory belongs to the run.
 #
 # Environment (set by eval_checkpoints.sh / sites/*.env): EXPORT_ROOT EVAL_REPO EXPECTED_EVAL_REV
 #   FLAG_ACCOUNT FLAG_WORK FLAG_CONCURRENCY FLAG_TIME FLAG_STATE_DIR
-#   FLAG_ARRAY_VLLM / FLAG_ARRAY_LIGHTEVAL   optional --array override (e.g. a subset for a test)
+#   FLAG_ARRAY_VLLM / FLAG_ARRAY_LIGHTEVAL   optional subset of array indices, e.g. "1,2,30" (a test);
+#                                            recorded, so flag-status ignores the indices not submitted
 #   DRY_RUN=1                                render, but print the sbatch commands instead
 set -euo pipefail
 NAME="${1:?usage: flag_launch.sh NAME}"
@@ -44,7 +45,7 @@ light_sb=$(awk '$1 == "sbatch" && $2 ~ /\/lighteval\// {print $2}' <<< "$rendere
 
 submit_half() {  # <sbatch file> <array override> -> job id
     local args=(--parsable --account="$FLAG_ACCOUNT")
-    [ -n "$2" ] && args+=(--array="$2")
+    [ -n "$2" ] && args+=(--array="$2%${FLAG_CONCURRENCY:-40}")
     if [ "${DRY_RUN:-0}" = 1 ]; then
         printf 'sbatch' >&2; printf ' %q' "${args[@]}" "$1" >&2; printf '\n' >&2; echo DRYRUN
     else
@@ -65,5 +66,7 @@ VLLM_RUN=$(dirname "$vllm_sb")
 LIGHTEVAL_RUN=$(dirname "$light_sb")
 VLLM_JOB=$vllm_job
 LIGHTEVAL_JOB=$light_job
+VLLM_INDICES=${FLAG_ARRAY_VLLM:-}
+LIGHTEVAL_INDICES=${FLAG_ARRAY_LIGHTEVAL:-}
 STATE_EOF
 echo "launched $NAME: vllm=$vllm_job lighteval=$light_job  (state: $STATE)"

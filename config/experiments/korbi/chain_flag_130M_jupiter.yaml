@@ -15,23 +15,22 @@
 #                              image, our 262144-token tokenizer, production post-
 #                              processing); architecture = the train stage's current.yaml.
 #                              Writes <export>/.convert_done last.
-#   eval_vllm       N nodes    scripts/downstream_eval/flag_stage.sh NAME vllm
-#   eval_lighteval  M nodes    scripts/downstream_eval/flag_stage.sh NAME lighteval
-#                              Each renders its half of the FLAG suite (submodules/
-#                              oellm-eval) and runs the evals as `srun` steps inside its
-#                              own allocation, one node per eval, retrying failures once.
-#                              The half that finishes last collects the CSV into
+#   eval            login node scripts/downstream_eval/eval_checkpoints.sh flag + flag-wait:
+#                   (job.local) the standard oellm-eval way -- the two FLAG job arrays
+#                              (vLLM + lighteval, one eval set per array task, each on its
+#                              own node only while it runs), then poll until done, resubmit
+#                              failures once, and collect the CSV into
 #                              $FLAG_WORK/results/NAME.flag-evals-438.tasks.csv.
 #
-# WHY THE EVAL STAGES RUN THEIR OWN STEPS: compute jobs cannot sbatch on JUPITER,
-# so the FLAG arrays (one job per eval) cannot be spawned from a stage. The
-# driver slurm config (slurm/jupiter_driver.yaml) runs the stage command in the
-# batch shell instead of under an outer srun, so it can place the steps itself.
+# WHY THE EVAL STAGE RUNS ON THE LOGIN NODE: compute jobs cannot sbatch on JUPITER;
+# the login node can (the monitor itself submits every stage from there). A restarted
+# stage does not resubmit: `flag` skips an export already launched and `flag-wait`
+# reattaches to its arrays. The convert stage uses slurm/jupiter_driver.yaml (command in
+# the batch shell, no outer srun / container) because it starts its own container.
 #
 # THIS CHECK RUNS A SUBSET (aux.flag_indices_*: a few generative and log-likelihood
-# evals per half, ~20 node-minutes). Clear both to run all 438 evals; size
-# eval_vllm's nodes for it (365 evals at ~7 min each = ~45 node-hours for a 32B,
-# far less at 130M).
+# evals per half, ~20 node-minutes). Clear both to run all 438 evals (365 + 73 array
+# tasks; ~60 node-hours for a 32B, far less at 130M).
 #
 # NOTHING TO INSTALL: the oellm tool runs from submodules/oellm-eval on the vLLM eval image's
 # Python. ONCE PER USER: FLAG_WORK/hf_home must hold the eval datasets (see the oellm-eval flag-evals README;
@@ -65,9 +64,7 @@ aux:
   flag_share: /e/project1/e-sta-openeurollm/vanosch1/v1-vs-v2/anneal
   # Eval subsets for the check: indices into each half's jobs.csv (the suite's fixed order).
   #   vllm: AMC23, bigbench dyck, ifeval, HumanEval, gsm8k, MATH500, mbpp, commonsense_qa, arc_easy
-  #   lighteval: the first and last FLORES directions, the three xcopa languages
-  # One id per launch of the chain: the two eval halves share it (flag_stage.sh FLAG_RUN_ID).
-  run_id: ${now:%Y%m%d-%H%M%S}
+  #   lighteval: five FLORES directions (two from each end of the list, one in between)
   flag_indices_vllm: "1,2,30,42,99,230,251,256,308"
   flag_indices_lighteval: "0,1,70,71,72"
   shard: /e/data1/datasets/playground/mmlaion/oellm/flag_training_complete/dclm-1.0/megatron-lm/01_0_0000_text_document
@@ -150,44 +147,28 @@ sweep:
             ${aux.repo}/scripts/downstream_eval/convert_export.sh ${aux.export_name} ${aux.train_dir}/${oc.pad_iter:${aux.train_iters}} ${aux.train_dir}/current.yaml
           slurm.sbatch.time: "00:45:00"
 
-        # ====== FLAG eval: vLLM half (lm-eval + Evalchemy) ====================
-        - stage: eval_vllm
+        # ====== FLAG eval (login node: submit the two arrays, wait, rerun once, collect)
+        - stage: eval
           backend: bash
-          slurm: jupiter_driver
-          job.name: "flagchain130M_eval_vllm"
+          job.local: true
+          job.name: "flagchain130M_eval"
           job.est_steps: 1
-          job.est_step_time_s: 3600
+          job.est_step_time_s: 1800   # wall clock of the arrays (the stage itself only polls)
           job.start_condition:
             class_name: FileExistsCondition
             path: "${aux.export_root}/${aux.export_name}/.convert_done"
-          backend.env: &flag_env
+          backend.env:
+            MODEL: "32b_dense"   # site/model profile of scripts/downstream_eval (paths, images)
             EXPORT_ROOT: ${aux.export_root}
-            EVAL_REPO: ${aux.repo}/submodules/oellm-eval
             FLAG_WORK: ${aux.flag_work}
-            FLAG_STATE_DIR: ${aux.flag_work}/state
-            FLAG_TIME: "01:30:00"
-            COLLECT_RAW: ${aux.flag_share}/scripts/collect_raw.py
-            FLAG_DATASETS_CSV: ${aux.flag_share}/evals-438.datasets.csv
-            FLAG_INDICES_VLLM: ${aux.flag_indices_vllm}
-            FLAG_INDICES_LIGHTEVAL: ${aux.flag_indices_lighteval}
-            FLAG_RUN_ID: ${aux.run_id}
+            FLAG_ACCOUNT: "e-sta-openeurollm"
+            FLAG_ARRAY_VLLM: ${aux.flag_indices_vllm}
+            FLAG_ARRAY_LIGHTEVAL: ${aux.flag_indices_lighteval}
+            FLAG_RETRIES: "1"
+            # A checkout without git metadata (e.g. an rsynced test clone) cannot prove the
+            # oellm-eval pin; launch with ALLOW_EVAL_REV_MISMATCH=1 there.
+            ALLOW_EVAL_REV_MISMATCH: ${oc.env:ALLOW_EVAL_REV_MISMATCH,"0"}
           backend.command: |
-            ${aux.repo}/scripts/downstream_eval/flag_stage.sh ${aux.export_name} vllm
-          slurm.sbatch.nodes: 3
-          slurm.sbatch.time: "01:30:00"
-
-        # ====== FLAG eval: lighteval half (FLORES, xcopa) =====================
-        - stage: eval_lighteval
-          backend: bash
-          slurm: jupiter_driver
-          job.name: "flagchain130M_eval_lighteval"
-          job.est_steps: 1
-          job.est_step_time_s: 3600
-          job.start_condition:
-            class_name: FileExistsCondition
-            path: "${aux.export_root}/${aux.export_name}/.convert_done"
-          backend.env: *flag_env
-          backend.command: |
-            ${aux.repo}/scripts/downstream_eval/flag_stage.sh ${aux.export_name} lighteval
-          slurm.sbatch.nodes: 2
-          slurm.sbatch.time: "01:30:00"
+            set -eu
+            ${aux.repo}/scripts/downstream_eval/eval_checkpoints.sh flag ${aux.export_name}
+            ${aux.repo}/scripts/downstream_eval/eval_checkpoints.sh flag-wait ${aux.export_name}
