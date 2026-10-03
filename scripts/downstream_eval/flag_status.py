@@ -11,7 +11,7 @@
 #   missing  never started and not queued
 # Reruns go to the same run directory, so results accumulate there and the collector keeps the
 # newest result per eval. Environment: FLAG_ACCOUNT, COLLECT_RAW, FLAG_DATASETS_CSV, FLAG_WORK,
-# DRY_RUN.
+# DRY_RUN, FLAG_NO_QUEUE (1 = do not ask squeue; set by flag_stage.sh).
 """Status, reruns and collection of one FLAG-suite run (see flag_launch.sh)."""
 
 from __future__ import annotations
@@ -55,6 +55,8 @@ def read_state(path: Path) -> dict[str, str]:
 def queued_tasks() -> set[tuple[str, int]]:
     """(job id, array index) of every queued task of this user, pending ranges
     expanded."""
+    if os.environ.get("FLAG_NO_QUEUE") == "1":  # inside a flag_stage.sh allocation
+        return set()
     try:
         out = subprocess.run(
             ["squeue", "--me", "-h", "-r", "-o", "%i"], check=True, capture_output=True, text=True

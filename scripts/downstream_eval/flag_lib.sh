@@ -19,3 +19,35 @@ flag_preflight() {
     esac
     echo "$rev"
 }
+
+# Checked-out commit of a repo or submodule, read without the git binary (absent on compute nodes).
+git_head_rev() {
+    local repo="$1" gitdir head ref
+    if [ -f "$repo/.git" ]; then gitdir=$(sed -n 's/^gitdir: //p' "$repo/.git"); [[ "$gitdir" = /* ]] || gitdir="$repo/$gitdir"
+    else gitdir="$repo/.git"; fi
+    head=$(cat "$gitdir/HEAD" 2>/dev/null) || { echo unknown; return; }
+    case "$head" in
+        ref:*) ref=${head#ref: }
+               local common="$gitdir" rev=""
+               [ -f "$gitdir/commondir" ] && common="$gitdir/$(cat "$gitdir/commondir")"   # worktrees
+               for d in "$gitdir" "$common"; do
+                   [ -n "$rev" ] || rev=$(cat "$d/$ref" 2>/dev/null || true)
+                   [ -n "$rev" ] || rev=$(grep -m1 " $ref\$" "$d/packed-refs" 2>/dev/null | cut -d' ' -f1 || true)
+               done
+               echo "${rev:-unknown}" ;;
+        *) echo "$head" ;;
+    esac
+}
+
+# Compute-node subset of flag_preflight: the installed oellm-eval must come from EVAL_REPO.
+# (Revision pin and cleanliness need git; they are checked when the chain is submitted.)
+flag_check_installed() {
+    local tool pkg
+    tool=$(command -v oellm-eval) || { echo "error: oellm-eval not on PATH" >&2; return 1; }
+    pkg=$("$(dirname "$tool")/python" -c 'import oellm, os; print(os.path.dirname(os.path.realpath(oellm.__file__)))')
+    case "$pkg" in
+        "$(realpath "$EVAL_REPO")"/*) ;;
+        *) echo "error: oellm-eval is installed from $pkg, not $EVAL_REPO" >&2; return 1 ;;
+    esac
+    git_head_rev "$EVAL_REPO"
+}

@@ -58,31 +58,45 @@ that architecture (the JUPITER images are aarch64). Everything after conversion 
 oellm-eval, which already knows Leonardo, JURECA, JUWELS, LUMI, Snellius and UFAL
 (`oellm/resources/clusters.yaml`), so only the image and the account differ.
 
-## FLAG suite (438 evals) in one command
+## FLAG suite (438 evals)
+
+Two ways to run it; both use `submodules/oellm-eval`'s `scripts/jupiter_flag_evals.sh` (vLLM and
+lighteval halves), record each run in `$FLAG_WORK/state/<name>.env` (exact run directories and job
+ids, so nothing guesses between timestamped run directories), and share `flag-status`:
+
+**As oellm-autoexp stages** (train -> convert -> eval, unattended), see
+`config/experiments/korbi/chain_flag_130M_jupiter.yaml`:
+
+- `convert_export.sh NAME CHECKPOINT [ARCH_YAML]` is the conversion (also behind `convert.sbatch`);
+  a training run's `current.yaml` serves as ARCH_YAML. It writes `.convert_done` last.
+- `flag_stage.sh NAME vllm|lighteval` runs one half INSIDE the stage's allocation: compute jobs
+  cannot `sbatch`, so it renders the half and runs each eval as an `srun` step on one node (as many
+  at once as the allocation has nodes), retries failures once, and the half that finishes last
+  collects the CSV. Stages use `slurm: jupiter_driver`, which runs the command in the batch shell
+  (no outer `srun`), and `FLAG_INDICES_VLLM` / `FLAG_INDICES_LIGHTEVAL` restrict a run to a subset.
+
+**From the login node**, for exports that already exist:
 
 ```bash
-MODEL=32b_dense ./eval_checkpoints.sh flag v1annealC:118000 v2anneal_118k   # run:iter or an existing export
-MODEL=32b_dense ./eval_checkpoints.sh flag-status v1annealC_118k            # per task; collects when complete
-MODEL=32b_dense ./eval_checkpoints.sh flag-rerun  v1annealC_118k            # resubmit failed / never-run tasks
+MODEL=32b_dense ./eval_checkpoints.sh flag v1annealC_118k v2anneal_118k   # submit both halves as job arrays
+MODEL=32b_dense ./eval_checkpoints.sh flag-status v1annealC_118k          # per task; collects when complete
+MODEL=32b_dense ./eval_checkpoints.sh flag-rerun  v1annealC_118k          # resubmit failed / never-run tasks
 ```
 
-`flag` converts what is not converted yet (the conversion job then launches the evals itself) and
-launches both halves of `submodules/oellm-eval`'s `scripts/jupiter_flag_evals.sh` (vLLM + lighteval)
-for what is. Each launch is recorded in `$FLAG_WORK/state/<name>.env` (the two run directories and
-job ids), so status, reruns and collection never guess between timestamped run directories, and a
-second `flag` of the same export is refused (`FORCE=1` for a fresh run). `flag-status` names the
-cause of each failure (missing dataset, vLLM worker shutdown, container start-up, ...), and once
-every task is done it collects `$FLAG_WORK/results/<name>.flag-evals-438.tasks.csv` with
-`COLLECT_RAW` and checks the join against all 438 evals.
+`flag` refuses an export that was already launched (`FORCE=1` for a fresh run) and one that is not
+converted yet. `flag-status` names the cause of each failure (missing dataset, vLLM worker
+shutdown, container start-up, ...), and once every task is done it collects
+`$FLAG_WORK/results/<name>.flag-evals-438.tasks.csv` with `COLLECT_RAW` and checks the join
+against all 438 evals.
 
 Defaults (`sites/jupiter.env`): `FLAG_ACCOUNT=e-sta-openeurollm`, `FLAG_CONCURRENCY=40` (higher
-throttles caused container start-up failures), `FLAG_TIME=01:30:00`. `FLAG_ARRAY_VLLM` /
-`FLAG_ARRAY_LIGHTEVAL` restrict a launch to some array indices (for example for a test).
+throttles caused container start-up failures), `FLAG_TIME=01:30:00`.
 
-The installed `oellm-eval` must be this submodule at its pinned revision, clean, because the suite
-definition is read from the installed package; `flag` checks this on the login node (compute nodes
-have no git) and tells you the `uv tool install -e` command otherwise. The vLLM half binds the
-submodule's patched HumanEval grader (see `containers/patches/` there).
+The installed `oellm-eval` must be this submodule (`uv tool install -p 3.12 -e
+submodules/oellm-eval --force`), because the suite definition is read from the installed package.
+`flag` also checks the pinned revision and a clean tree on the login node; stages, on compute nodes
+without git, check the install location and record the checked-out revision in the state file.
+The vLLM half binds the submodule's patched HumanEval grader (see `containers/patches/` there).
 
 ## Files
 
@@ -96,7 +110,8 @@ submodule's patched HumanEval grader (see `containers/patches/` there).
 | `reasoning_evals.sh` | vLLM/Evalchemy renderer; validates the pinned revision, image and caches |
 | `table_hf.py`, `plot_hf.py`, `table_reasoning.py`, `plot_reasoning.py` | tables and figures |
 | `table_plot.py` | shared table drawing (ties within 1 se are marked as ties) |
-| `flag_launch.sh`, `flag_lib.sh`, `flag_status.py` | FLAG suite: launch + state file, preflight, status / rerun / collect |
+| `convert_export.sh` | one Megatron -> HF export (used by `convert.sbatch` and by autoexp stages) |
+| `flag_launch.sh`, `flag_stage.sh`, `flag_lib.sh`, `flag_status.py` | FLAG suite: login-node launch, in-allocation stage driver, checks, status / rerun / collect |
 
 ## Pitfalls these scripts already handle
 

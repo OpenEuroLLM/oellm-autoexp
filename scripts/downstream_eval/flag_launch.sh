@@ -3,8 +3,8 @@
 #
 #   flag_launch.sh NAME
 #
-# Called by `eval_checkpoints.sh flag` directly for exports that already exist, and at the end of
-# convert.sbatch (FLAG_AFTER_CONVERT=1) for exports it just wrote, so no node is spent on waiting.
+# Called by `eval_checkpoints.sh flag` on the LOGIN node: it submits the two halves as job arrays.
+# (In an oellm-autoexp stage chain, flag_stage.sh runs the halves inside the stage's allocation.)
 # Writes $FLAG_STATE_DIR/NAME.env with the two run directories and job ids; `flag-status` and
 # `flag-rerun` read that file instead of guessing which timestamped directory belongs to the run.
 #
@@ -28,7 +28,7 @@ fi
 
 # The suite definition (task groups, n_shot) is read from the INSTALLED oellm-eval, so it must be
 # this submodule at the pinned revision -- otherwise results silently come from another suite.
-# Checked on the login node (compute nodes have no git); convert.sbatch passes FLAG_PREFLIGHT_OK=1.
+# Checked on the login node; eval_checkpoints.sh runs it once and passes FLAG_PREFLIGHT_OK=1.
 rev="${FLAG_EVAL_REV:-}"
 if [ "${FLAG_PREFLIGHT_OK:-0}" != 1 ]; then
     rev=$(flag_preflight)

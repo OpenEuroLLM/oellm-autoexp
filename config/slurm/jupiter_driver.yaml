@@ -1,0 +1,10 @@
+defaults:
+  - jupiter
+  - _self_
+
+# JUPITER "driver" stage: the backend command runs directly in the batch shell (no outer srun,
+# no container), so it can launch its own containers and `srun` steps within the allocation.
+# For bash-backend stages that orchestrate work themselves, e.g. scripts/downstream_eval's
+# convert_export.sh and flag_stage.sh (config/experiments/korbi/chain_flag_130M_jupiter.yaml).
+template_path: "templates/jupiter_driver.sbatch"
+launcher_cmd: "${oc.join:'',${oc.mapkeyvaltmpl:'export %k=%v ; \\\n',${backend.env}}}"

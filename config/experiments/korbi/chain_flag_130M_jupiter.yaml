@@ -1,0 +1,183 @@
+# @package _global_
+#
+# ============================================================================
+# TRAIN -> CONVERT -> FLAG EVAL, AS ONE STAGE CHAIN (130M CHECK)
+# ============================================================================
+# A small end-to-end check of the evaluation pipeline the 32B anneals use, with
+# the production tokenizer (OELLM 256k, SentencePiece) and production data:
+#
+#   train           1-2 nodes  niccolo 130M body, Qwen3-compatible (no QKV / linear
+#                              bias, tied embeddings, qk-layernorm, SwiGLU), 1000 steps
+#                              on one dclm shard of the production mix.
+#   convert         1 node     scripts/downstream_eval/convert_export.sh -- the code
+#                              that produced the published 32B exports (Megatron-Bridge
+#                              image, our 262144-token tokenizer, production post-
+#                              processing); architecture = the train stage's current.yaml.
+#                              Writes <export>/.convert_done last.
+#   eval_vllm       N nodes    scripts/downstream_eval/flag_stage.sh NAME vllm
+#   eval_lighteval  M nodes    scripts/downstream_eval/flag_stage.sh NAME lighteval
+#                              Each renders its half of the FLAG suite (submodules/
+#                              oellm-eval) and runs the evals as `srun` steps inside its
+#                              own allocation, one node per eval, retrying failures once.
+#                              The half that finishes last collects the CSV into
+#                              $FLAG_WORK/results/NAME.flag-evals-438.tasks.csv.
+#
+# WHY THE EVAL STAGES RUN THEIR OWN STEPS: compute jobs cannot sbatch on JUPITER,
+# so the FLAG arrays (one job per eval) cannot be spawned from a stage. The
+# driver slurm config (slurm/jupiter_driver.yaml) runs the stage command in the
+# batch shell instead of under an outer srun, so it can place the steps itself.
+#
+# THIS CHECK RUNS A SUBSET (aux.flag_indices_*: a few generative and log-likelihood
+# evals per half, ~20 node-minutes). Clear both to run all 438 evals; size
+# eval_vllm's nodes for it (365 evals at ~7 min each = ~45 node-hours for a 32B,
+# far less at 130M).
+#
+# ONCE PER USER (login node):
+#   uv tool install -p 3.12 -e submodules/oellm-eval --force   # the suite is read from it
+#   FLAG_WORK/hf_home must hold the eval datasets (see the oellm-eval flag-evals README;
+#   copy missing ones from production_training/downstream_eval_32b/hf_home_suite).
+# The conversion reuses the prepared tokenizer/ and bridge/ under aux.downstream_work_root
+# (`scripts/downstream_eval/eval_checkpoints.sh prepare` made them for the 32B exports).
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/korbi/chain_flag_130M_jupiter --dry-run
+#
+# Afterwards (login node):
+#   MODEL=32b_dense scripts/downstream_eval/eval_checkpoints.sh flag-status flagchain130M_1k
+# ============================================================================
+
+defaults:
+  - megatron_niccolo_130M_smoke_jupiter
+  - _self_
+
+aux:
+  experiment_group: "flag_chain_130M"
+  train_iters: 1000
+  # Paths shared by the stages (each stage gets its own backend, so they live here).
+  repo: ${oc.env:OELLM_AUTOEXP_ROOT,${oc.env:PWD}}
+  train_dir: ${oc.env:OUTPUT_DIR,./output}/${aux.experiment_group}/flagchain130M_train
+  export_name: "flagchain130M_${oc.eval:'${aux.train_iters}//1000'}k"
+  export_root: ${oc.env:OUTPUT_DIR,./output}/${aux.experiment_group}/hf
+  # Must share a filesystem with export_root: the eval views hard-link the weights.
+  flag_work: /e/scratch/e-sta-openeurollm/${oc.env:USER}/flag-evals
+  downstream_work_root: /e/scratch/e-sta-openeurollm/production_training/downstream_eval_32b
+  bridge_sif: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-bridge-bridge_aarch64_202605191331.sif
+  flag_share: /e/project1/e-sta-openeurollm/vanosch1/v1-vs-v2/anneal
+  # Eval subsets for the check: indices into each half's jobs.csv (the suite's fixed order).
+  #   vllm: AMC23, bigbench dyck, ifeval, HumanEval, gsm8k, MATH500, mbpp, commonsense_qa, arc_easy
+  #   lighteval: the first and last FLORES directions, the three xcopa languages
+  flag_indices_vllm: "1,2,30,42,99,230,251,256,308"
+  flag_indices_lighteval: "0,1,70,71,72"
+  shard: /e/data1/datasets/playground/mmlaion/oellm/flag_training_complete/dclm-1.0/megatron-lm/01_0_0000_text_document
+
+container:
+  image: /e/project1/e-sta-openeurollm/container/nemo_26.04.sif
+
+backend:
+  megatron:
+    # Production tokenizer and vocabulary (the 32B runs: HuggingFaceTokenizer on the
+    # SentencePiece dir, padded to 262144 rows).
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: /e/data1/datasets/playground/mmlaion/oellm/oellm_tokenizer_256k
+    padded_vocab_size: 262144
+    # Qwen3 layout, so Megatron-Bridge's Qwen3 mapping covers every tensor.
+    add_qkv_bias: false
+    add_bias_linear: false
+    train_data_path: ["${aux.shard}"]
+    valid_data_path: ["${aux.shard}"]
+    data_path: []
+    split: null
+    data_cache_path: ${oc.env:OUTPUT_DIR,./output}/${aux.experiment_group}/data_cache
+    # Short schedule that stays valid: warmup < WSD decay (0.2 * train_iters).
+    train_iters: ${aux.train_iters}
+    lr_warmup_iters: 100
+    save_interval: ${aux.train_iters}
+    eval_interval: ${aux.train_iters}
+    eval_iters: 10
+    wandb_project: flag_chain_130M
+
+job:
+  chain_repeat: 1
+  est_step_time_s: 0.7
+  est_startup_min: 8
+  est_steps: ${aux.train_iters}
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:45:00"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ====== train =========================================================
+        - stage: train
+          job.name: "flagchain130M_train"
+
+        # ====== convert (Megatron -> HF, production export code) ==============
+        # Bash stages: no single quotes, no shell ${VAR} (OmegaConf); $VAR is fine.
+        - stage: convert
+          backend: bash
+          slurm: jupiter_driver
+          job.name: "flagchain130M_convert"
+          job.est_steps: 1
+          job.est_step_time_s: 1200
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "${aux.train_dir}/${oc.pad_iter:${aux.train_iters}}/.metadata"
+          backend.env:
+            WORK_ROOT: ${aux.downstream_work_root}
+            EXPORT_ROOT: ${aux.export_root}
+            BRIDGE_SIF: ${aux.bridge_sif}
+            MEGATRON_REPO: ${aux.repo}
+            HF_MODEL: "Qwen/Qwen3-0.6B"
+            DERIVE_HF_ARCH: "qwen3"
+            CONTAINER_BIND: "/e"
+          backend.command: |
+            set -eu
+            mkdir -p ${aux.export_root}
+            ${aux.repo}/scripts/downstream_eval/convert_export.sh ${aux.export_name} ${aux.train_dir}/${oc.pad_iter:${aux.train_iters}} ${aux.train_dir}/current.yaml
+          slurm.sbatch.time: "00:45:00"
+
+        # ====== FLAG eval: vLLM half (lm-eval + Evalchemy) ====================
+        - stage: eval_vllm
+          backend: bash
+          slurm: jupiter_driver
+          job.name: "flagchain130M_eval_vllm"
+          job.est_steps: 1
+          job.est_step_time_s: 3600
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "${aux.export_root}/${aux.export_name}/.convert_done"
+          backend.env: &flag_env
+            EXPORT_ROOT: ${aux.export_root}
+            EVAL_REPO: ${aux.repo}/submodules/oellm-eval
+            FLAG_WORK: ${aux.flag_work}
+            FLAG_STATE_DIR: ${aux.flag_work}/state
+            FLAG_TIME: "01:30:00"
+            COLLECT_RAW: ${aux.flag_share}/scripts/collect_raw.py
+            FLAG_DATASETS_CSV: ${aux.flag_share}/evals-438.datasets.csv
+            FLAG_INDICES_VLLM: ${aux.flag_indices_vllm}
+            FLAG_INDICES_LIGHTEVAL: ${aux.flag_indices_lighteval}
+          backend.command: |
+            ${aux.repo}/scripts/downstream_eval/flag_stage.sh ${aux.export_name} vllm
+          slurm.sbatch.nodes: 3
+          slurm.sbatch.time: "01:30:00"
+
+        # ====== FLAG eval: lighteval half (FLORES, xcopa) =====================
+        - stage: eval_lighteval
+          backend: bash
+          slurm: jupiter_driver
+          job.name: "flagchain130M_eval_lighteval"
+          job.est_steps: 1
+          job.est_step_time_s: 3600
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "${aux.export_root}/${aux.export_name}/.convert_done"
+          backend.env: *flag_env
+          backend.command: |
+            ${aux.repo}/scripts/downstream_eval/flag_stage.sh ${aux.export_name} lighteval
+          slurm.sbatch.nodes: 2
+          slurm.sbatch.time: "01:30:00"
