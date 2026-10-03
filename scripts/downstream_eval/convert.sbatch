@@ -27,3 +27,8 @@ python3 -c "import json,sys; p=sys.argv[1]; c=json.load(open(p)); c['torch_dtype
 [ ! -f "$EXPORT_ROOT/$NAME/chat_template.jinja" ] || \
     mv "$EXPORT_ROOT/$NAME/chat_template.jinja" "$EXPORT_ROOT/$NAME/chat_template.jinja.$DERIVE_HF_ARCH"
 echo "done: $EXPORT_ROOT/$NAME"
+# `eval_checkpoints.sh flag` sets FLAG_AFTER_CONVERT=1: launch the FLAG suite from this node, so the
+# evals start as soon as the export exists, with no separate job waiting for it.
+if [ "${FLAG_AFTER_CONVERT:-0}" = 1 ]; then
+    "$SCRIPT_DIR/flag_launch.sh" "$NAME"
+fi

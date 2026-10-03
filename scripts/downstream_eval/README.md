@@ -58,6 +58,32 @@ that architecture (the JUPITER images are aarch64). Everything after conversion 
 oellm-eval, which already knows Leonardo, JURECA, JUWELS, LUMI, Snellius and UFAL
 (`oellm/resources/clusters.yaml`), so only the image and the account differ.
 
+## FLAG suite (438 evals) in one command
+
+```bash
+MODEL=32b_dense ./eval_checkpoints.sh flag v1annealC:118000 v2anneal_118k   # run:iter or an existing export
+MODEL=32b_dense ./eval_checkpoints.sh flag-status v1annealC_118k            # per task; collects when complete
+MODEL=32b_dense ./eval_checkpoints.sh flag-rerun  v1annealC_118k            # resubmit failed / never-run tasks
+```
+
+`flag` converts what is not converted yet (the conversion job then launches the evals itself) and
+launches both halves of `submodules/oellm-eval`'s `scripts/jupiter_flag_evals.sh` (vLLM + lighteval)
+for what is. Each launch is recorded in `$FLAG_WORK/state/<name>.env` (the two run directories and
+job ids), so status, reruns and collection never guess between timestamped run directories, and a
+second `flag` of the same export is refused (`FORCE=1` for a fresh run). `flag-status` names the
+cause of each failure (missing dataset, vLLM worker shutdown, container start-up, ...), and once
+every task is done it collects `$FLAG_WORK/results/<name>.flag-evals-438.tasks.csv` with
+`COLLECT_RAW` and checks the join against all 438 evals.
+
+Defaults (`sites/jupiter.env`): `FLAG_ACCOUNT=e-sta-openeurollm`, `FLAG_CONCURRENCY=40` (higher
+throttles caused container start-up failures), `FLAG_TIME=01:30:00`. `FLAG_ARRAY_VLLM` /
+`FLAG_ARRAY_LIGHTEVAL` restrict a launch to some array indices (for example for a test).
+
+The installed `oellm-eval` must be this submodule at its pinned revision, clean, because the suite
+definition is read from the installed package; `flag` checks this on the login node (compute nodes
+have no git) and tells you the `uv tool install -e` command otherwise. The vLLM half binds the
+submodule's patched HumanEval grader (see `containers/patches/` there).
+
 ## Files
 
 | file | what |
@@ -70,6 +96,7 @@ oellm-eval, which already knows Leonardo, JURECA, JUWELS, LUMI, Snellius and UFA
 | `reasoning_evals.sh` | vLLM/Evalchemy renderer; validates the pinned revision, image and caches |
 | `table_hf.py`, `plot_hf.py`, `table_reasoning.py`, `plot_reasoning.py` | tables and figures |
 | `table_plot.py` | shared table drawing (ties within 1 se are marked as ties) |
+| `flag_launch.sh`, `flag_lib.sh`, `flag_status.py` | FLAG suite: launch + state file, preflight, status / rerun / collect |
 
 ## Pitfalls these scripts already handle
 

@@ -52,9 +52,9 @@ bash scripts/install_eval_env.sh --prefetch
 The installer auto-detects the cluster from hostname by way of
 `scripts/detect_cluster.py`; pass `--cluster NAME` to override.
 Dependencies for the eval env are declared upstream in
-`submodules/oellm_evals/pyproject.toml` under the `[eval]` and
+`submodules/oellm-eval/pyproject.toml` under the `[eval]` and
 `[eval-base]` extras (single source of truth, see
-[`submodules/oellm_evals/docs/VENV.md`](../submodules/oellm_evals/docs/VENV.md)):
+[`submodules/oellm-eval/docs/VENV.md`](../submodules/oellm-eval/docs/VENV.md)):
 
 - **`[eval]`** — full venv install: `lm_eval[hf,vllm,api,tasks]>=0.4.12`
   plus `datasets>=4.0`. Pulls torch + transformers + accelerate + peft
@@ -87,7 +87,7 @@ Two ways to provide that:
   sources `<venv>/bin/activate` and runs `oellm` from there.
 - **Container** (leonardo, lumi): bake or extend an eval container that
   already ships `lm_eval`. Install `oellm` by way of `pip install --user -e
-  submodules/oellm_evals` from inside the container so its `entry_points`
+  submodules/oellm-eval` from inside the container so its `entry_points`
   console script lands in `~/.local/bin`. Add `~/.local/bin` to PATH by way of
   `--env PATH=…` in the eval slurm launcher (`*_eval.yaml`). The user-site
   `.pth` files are editable installs pointing inside the container, so
@@ -104,7 +104,7 @@ this from a login node:
 # Run inside whatever env will be used at eval time so the
 # datasets-library version matches.
 python scripts/prefetch_datasets.py open-sci-0.01 \
-    submodules/oellm_evals/oellm/resources/task-groups.yaml
+    submodules/oellm-eval/oellm/resources/task-groups.yaml
 ```
 
 Two important details:
@@ -134,7 +134,7 @@ module load Stages/2025  # gives Python 3.12
 uv venv --python 3.12 ~/work/eval_venv
 PYTHONPATH= ~/work/eval_venv/bin/pip install \
     torch transformers "lm_eval>=0.4.12" \
-    -e ~/work/Projects/oellm-autoexp/submodules/oellm_evals \
+    -e ~/work/Projects/oellm-autoexp/submodules/oellm-eval \
     -e ~/work/Projects/oellm-autoexp \
     "compoconf==0.1.14" \
     scipy threadpoolctl scikit-learn chardet pytz tabulate colorama \
@@ -156,7 +156,7 @@ singularity exec --bind /leonardo_scratch --bind /leonardo --bind /leonardo_work
     --env HF_HUB_OFFLINE=0 \
     /leonardo_work/OELLM_prod2026/container_images/eval_env-leonardo.sif \
     bash -c "pip install --user --no-cache-dir \
-        -e /leonardo/home/$USER/work/Projects/oellm-autoexp/submodules/oellm_evals \
+        -e /leonardo/home/$USER/work/Projects/oellm-autoexp/submodules/oellm-eval \
         --upgrade 'datasets>=4.0' 'lm_eval>=0.4.12'"
 
 # 2) Pre-fetch datasets inside the eval container (legacy cache layout)
@@ -196,7 +196,7 @@ singularity exec --bind $HOME --bind /pfs \
     /scratch/project_462000963/containers/laif-rocm-….sif \
     bash -c "pip install --no-cache-dir --upgrade \
         --target \$HOME/eval_local/lib/python3.12/site-packages \
-        -e /scratch/project_462000963/user/$USER/Projects/oellm-autoexp/submodules/oellm_evals \
+        -e /scratch/project_462000963/user/$USER/Projects/oellm-autoexp/submodules/oellm-eval \
         -e /scratch/project_462000963/user/$USER/Projects/oellm-autoexp \
         compoconf==0.1.14 'lm_eval>=0.4.12' 'datasets>=4.0' \
         jsonargparse rich pandas pyyaml"

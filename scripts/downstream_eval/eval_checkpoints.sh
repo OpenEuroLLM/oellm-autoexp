@@ -8,6 +8,10 @@
 # Results and exports live under WORK_ROOT; only the scripts live in this repo.
 HERE=$(dirname "$(realpath "${BASH_SOURCE[0]}")")
 source "$HERE/lib.sh"
+source "$HERE/flag_lib.sh"
+: "${FLAG_STATE_DIR:=$FLAG_WORK/state}"
+FLAG_ENV=(EXPORT_ROOT EVAL_REPO EXPECTED_EVAL_REV FLAG_ACCOUNT FLAG_WORK FLAG_CONCURRENCY FLAG_TIME
+          FLAG_STATE_DIR FLAG_ARRAY_VLLM FLAG_ARRAY_LIGHTEVAL COLLECT_RAW FLAG_DATASETS_CSV)
 
 usage() {
     cat <<USAGE
@@ -23,6 +27,10 @@ Commands:
   reasoning [NAME|all] Render GSM8K/MATH500/MBPP etc. via vLLM (never submits; see TASKS=)
   table | plot         Print or draw the result tables (hf and reasoning)
   publish NAME...      Stage exports for the Hub (upload_hf.py --execute uploads them)
+  flag SPEC...         FLAG suite (438 evals): convert where needed, then launch both halves
+                       (vLLM + lighteval) on FLAG_ACCOUNT; a conversion launches its own evals
+  flag-status NAME...  Per-task status; failures with their cause; collects the CSV when complete
+  flag-rerun NAME...   Resubmit the failed / never-run tasks into the same run directories
 
 Profiles: MODEL=$MODEL SITE=$SITE   WORK_ROOT=$WORK_ROOT
 USAGE
@@ -152,6 +160,46 @@ table|plot)
         python3 "$HERE/plot_hf.py" "${1:-$WORK_ROOT/downstream_evals.png}"
         python3 "$HERE/plot_reasoning.py" "${2:-$WORK_ROOT/reasoning_evals.png}"
     fi
+    ;;
+flag)
+    [ $# -gt 0 ] || { echo "error: name the checkpoints, e.g. v1annealC:118000 or v1annealC_118k" >&2; exit 1; }
+    mapfile -t entries < <(select_checkpoints "$@")
+    [ ${#entries[@]} -gt 0 ] || { echo "error: no matching checkpoints" >&2; exit 1; }
+    rev=$(flag_preflight)                       # on the login node: compute nodes have no git
+    export "${FLAG_ENV[@]}" FLAG_EVAL_REV="$rev"
+    convert=()
+    for entry in "${entries[@]}"; do
+        name=${entry%%:*}
+        if [ -f "$FLAG_STATE_DIR/$name.env" ] && [ "${FORCE:-0}" != 1 ]; then
+            echo "skip $name: already launched (flag-status $name)"
+        elif [ -f "$EXPORT_ROOT/$name/config.json" ]; then
+            FLAG_PREFLIGHT_OK=1 "$HERE/flag_launch.sh" "$name"
+        elif [ -n "${entry#*:}" ]; then
+            convert+=("$entry")
+        else
+            echo "error: $name is neither converted nor a run:iter" >&2; exit 1
+        fi
+    done
+    if [ ${#convert[@]} -gt 0 ]; then
+        mkdir -p "$LOG_DIR" "$EXPORT_ROOT"
+        MANIFEST="$WORK_ROOT/convert_manifest_$(date +%Y%m%d_%H%M%S).txt"
+        printf '%s\n' "${convert[@]}" > "$MANIFEST"
+        echo "converting ${#convert[@]} checkpoint(s), each launches its FLAG evals when done:"; cat "$MANIFEST"
+        submit --account="$FLAG_ACCOUNT" --partition="$PARTITION" --time="$CONVERT_TIME" \
+            --gpus-per-node="$GPUS_PER_NODE" --array=0-$((${#convert[@]} - 1)) \
+            --output="$LOG_DIR/convert_%A_%a.log" \
+            --export=ALL,MANIFEST="$MANIFEST",SCRIPT_DIR="$HERE",WORK_ROOT="$WORK_ROOT",EXPORT_ROOT="$EXPORT_ROOT",BRIDGE_SIF="$BRIDGE_SIF",MEGATRON_REPO="$MEGATRON_REPO",HF_MODEL="$HF_MODEL",DERIVE_HF_ARCH="$DERIVE_HF_ARCH",ARCH_YAML="$ARCH_YAML",CONTAINER_BIND="$CONTAINER_BIND",FLAG_AFTER_CONVERT=1,FLAG_PREFLIGHT_OK=1 \
+            "$HERE/convert.sbatch"
+    fi
+    ;;
+flag-status|flag-rerun)
+    [ $# -gt 0 ] || { echo "usage: eval_checkpoints.sh $CMD NAME..." >&2; exit 2; }
+    export "${FLAG_ENV[@]}"
+    for name in "$@"; do
+        state="$FLAG_STATE_DIR/$name.env"
+        [ -f "$state" ] || { echo "error: $name was not launched with 'flag' (no $state)" >&2; exit 1; }
+        python3 "$HERE/flag_status.py" "$state" $([ "$CMD" = flag-rerun ] && echo --rerun)
+    done
     ;;
 *)
     usage; [ -z "$CMD" ] && exit 2 || exit 0

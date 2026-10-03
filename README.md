@@ -127,7 +127,7 @@ The two new backends are:
 - **`oellm_eval`** — `OELLMEvalBackend`. Wraps `oellm-eval schedule
   --local true …` so the eval runs inside the SLURM job allocated by
   oellm-autoexp (no extra sbatch from oellm-evals). Reads task definitions
-  from `submodules/oellm_evals/oellm/resources/task-groups.yaml`.
+  from `submodules/oellm-eval/oellm/resources/task-groups.yaml`.
 
 Once per checkout, on a login node with internet, run the installer:
 
@@ -143,7 +143,7 @@ That single script:
   juwels/jupiter, `pip install --user` inside the eval container on
   leonardo, `pip install --target` inside the rocm container on lumi
 - installs `oellm-evals` with the `[eval]` / `[eval-base]` extras from
-  `submodules/oellm_evals/pyproject.toml` (single source of truth for the
+  `submodules/oellm-eval/pyproject.toml` (single source of truth for the
   lm-eval dep set), plus `oellm-autoexp` and the `compoconf==0.1.14` pin
 - applies `container/megatron/patch_bridge_lazy_imports.py` so
   `from megatron.bridge import AutoBridge` is tolerant of missing model
