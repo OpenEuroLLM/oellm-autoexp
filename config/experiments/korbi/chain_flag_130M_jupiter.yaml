@@ -32,9 +32,8 @@
 # eval_vllm's nodes for it (365 evals at ~7 min each = ~45 node-hours for a 32B,
 # far less at 130M).
 #
-# ONCE PER USER (login node):
-#   uv tool install -p 3.12 -e submodules/oellm-eval --force   # the suite is read from it
-#   FLAG_WORK/hf_home must hold the eval datasets (see the oellm-eval flag-evals README;
+# NOTHING TO INSTALL: the oellm tool runs from submodules/oellm-eval on the vLLM eval image's
+# Python. ONCE PER USER: FLAG_WORK/hf_home must hold the eval datasets (see the oellm-eval flag-evals README;
 #   copy missing ones from production_training/downstream_eval_32b/hf_home_suite).
 # The conversion reuses the prepared tokenizer/ and bridge/ under aux.downstream_work_root
 # (`scripts/downstream_eval/eval_checkpoints.sh prepare` made them for the 32B exports).

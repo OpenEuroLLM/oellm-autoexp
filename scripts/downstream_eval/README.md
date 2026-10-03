@@ -92,10 +92,11 @@ against all 438 evals.
 Defaults (`sites/jupiter.env`): `FLAG_ACCOUNT=e-sta-openeurollm`, `FLAG_CONCURRENCY=40` (higher
 throttles caused container start-up failures), `FLAG_TIME=01:30:00`.
 
-The installed `oellm-eval` must be this submodule (`uv tool install -p 3.12 -e
-submodules/oellm-eval --force`), because the suite definition is read from the installed package.
-`flag` also checks the pinned revision and a clean tree on the login node; stages, on compute nodes
-without git, check the install location and record the checked-out revision in the state file.
+Nothing needs installing for the FLAG suite: `jupiter_flag_evals.sh` runs the oellm tool from
+`submodules/oellm-eval` on the vLLM image's Python (`OELLM_TOOL=image`, the default), so the suite
+definition is always this checkout's. `flag` also checks the pinned revision and a clean tree on the
+login node; stages, on compute nodes without git, check the tool's source and record the
+checked-out revision in the state file.
 The vLLM half binds the submodule's patched HumanEval grader (see `containers/patches/` there).
 
 ## Files

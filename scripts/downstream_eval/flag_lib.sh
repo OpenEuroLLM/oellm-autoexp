@@ -2,7 +2,7 @@
 
 # Login-node check that the oellm-eval in use is the pinned submodule; prints its revision.
 flag_preflight() {
-    local rev tool pkg
+    local rev
     rev=$(git -C "$EVAL_REPO" rev-parse HEAD 2>/dev/null || echo unknown)
     if [ "$rev" != "$EXPECTED_EVAL_REV" ] && [ "${ALLOW_EVAL_REV_MISMATCH:-0}" != 1 ]; then
         echo "error: $EVAL_REPO is at $rev, the repo pins $EXPECTED_EVAL_REV (ALLOW_EVAL_REV_MISMATCH=1 to override)" >&2
@@ -10,13 +10,7 @@ flag_preflight() {
     fi
     [ -z "$(git -C "$EVAL_REPO" status --porcelain 2>/dev/null)" ] || [ "${ALLOW_EVAL_REV_MISMATCH:-0}" = 1 ] || {
         echo "error: $EVAL_REPO has uncommitted changes (ALLOW_EVAL_REV_MISMATCH=1 to override)" >&2; return 1; }
-    tool=$(command -v oellm-eval) || { echo "error: oellm-eval not on PATH; run: uv tool install -p 3.12 -e $EVAL_REPO" >&2; return 1; }
-    pkg=$("$(dirname "$tool")/python" -c 'import oellm, os; print(os.path.dirname(os.path.realpath(oellm.__file__)))')
-    case "$pkg" in
-        "$(realpath "$EVAL_REPO")"/*) ;;
-        *) echo "error: oellm-eval is installed from $pkg, not $EVAL_REPO;" \
-                "run: uv tool install -p 3.12 -e $EVAL_REPO --force" >&2; return 1 ;;
-    esac
+    flag_tool_is_repo || return 1
     echo "$rev"
 }
 
@@ -39,15 +33,21 @@ git_head_rev() {
     esac
 }
 
-# Compute-node subset of flag_preflight: the installed oellm-eval must come from EVAL_REPO.
-# (Revision pin and cleanliness need git; they are checked when the chain is submitted.)
-flag_check_installed() {
-    local tool pkg
-    tool=$(command -v oellm-eval) || { echo "error: oellm-eval not on PATH" >&2; return 1; }
-    pkg=$("$(dirname "$tool")/python" -c 'import oellm, os; print(os.path.dirname(os.path.realpath(oellm.__file__)))')
+# The oellm tool that renders the suite must run this checkout's source (the suite definition is
+# read from it). By default it does: jupiter_flag_evals.sh runs it on the vLLM image's Python with
+# PYTHONPATH=EVAL_REPO (OELLM_TOOL=image); this also guards OELLM_TOOL=installed.
+flag_tool_is_repo() {
+    local pkg
+    pkg=$("$EVAL_REPO/scripts/jupiter_flag_evals.sh" check) || { echo "error: cannot run the oellm tool" >&2; return 1; }
     case "$pkg" in
         "$(realpath "$EVAL_REPO")"/*) ;;
-        *) echo "error: oellm-eval is installed from $pkg, not $EVAL_REPO" >&2; return 1 ;;
+        *) echo "error: the oellm tool runs $pkg, not $EVAL_REPO (OELLM_TOOL=${OELLM_TOOL:-image})" >&2; return 1 ;;
     esac
+}
+
+# Compute-node subset of flag_preflight; prints the checked-out revision.
+# (Revision pin and cleanliness need git; they are checked on the login node.)
+flag_check_installed() {
+    flag_tool_is_repo || return 1
     git_head_rev "$EVAL_REPO"
 }
