@@ -9,5 +9,5 @@
 	url = git@github.com:NVIDIA-NeMo/Megatron-Bridge.git
 [submodule "submodules/oellm-eval"]
 	path = submodules/oellm-eval
-	url = git@github.com:OpenEuroLLM/oellm-eval.git
+	url = git@github.com:kpoeppel/oellm-eval.git
 	branch = feat/flag-evals-humaneval-patch
