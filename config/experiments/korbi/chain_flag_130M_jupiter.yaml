@@ -66,6 +66,8 @@ aux:
   # Eval subsets for the check: indices into each half's jobs.csv (the suite's fixed order).
   #   vllm: AMC23, bigbench dyck, ifeval, HumanEval, gsm8k, MATH500, mbpp, commonsense_qa, arc_easy
   #   lighteval: the first and last FLORES directions, the three xcopa languages
+  # One id per launch of the chain: the two eval halves share it (flag_stage.sh FLAG_RUN_ID).
+  run_id: ${now:%Y%m%d-%H%M%S}
   flag_indices_vllm: "1,2,30,42,99,230,251,256,308"
   flag_indices_lighteval: "0,1,70,71,72"
   shard: /e/data1/datasets/playground/mmlaion/oellm/flag_training_complete/dclm-1.0/megatron-lm/01_0_0000_text_document
@@ -168,6 +170,7 @@ sweep:
             FLAG_DATASETS_CSV: ${aux.flag_share}/evals-438.datasets.csv
             FLAG_INDICES_VLLM: ${aux.flag_indices_vllm}
             FLAG_INDICES_LIGHTEVAL: ${aux.flag_indices_lighteval}
+            FLAG_RUN_ID: ${aux.run_id}
           backend.command: |
             ${aux.repo}/scripts/downstream_eval/flag_stage.sh ${aux.export_name} vllm
           slurm.sbatch.nodes: 3

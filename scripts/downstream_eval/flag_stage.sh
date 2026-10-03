@@ -17,6 +17,7 @@
 # Environment: EXPORT_ROOT EVAL_REPO FLAG_WORK FLAG_STATE_DIR FLAG_TIME COLLECT_RAW FLAG_DATASETS_CSV
 #   FLAG_INDICES_VLLM / FLAG_INDICES_LIGHTEVAL   comma list of eval indices (default: all)
 #   FLAG_RETRIES (default 1)
+#   FLAG_RUN_ID  identifies one launch of both halves (stale state from another launch is archived)
 set -euo pipefail
 NAME="${1:?usage: flag_stage.sh NAME vllm|lighteval}" HALF="${2:?vllm|lighteval}"
 case "$HALF" in vllm|lighteval) ;; *) echo "error: HALF must be vllm or lighteval" >&2; exit 2 ;; esac
@@ -30,7 +31,32 @@ NODES="${SLURM_JOB_NUM_NODES:-1}"
 [ -f "$EXPORT/config.json" ] || { echo "error: no export $EXPORT" >&2; exit 1; }
 mkdir -p "$FLAG_STATE_DIR" "$FLAG_WORK"
 
+# The evals must see what a hand-submitted FLAG array sees: the submitting shell's environment.
+# A stage's environment adds what the oellm-autoexp templates export (slurm.env, and backend.env
+# inherited from the experiment's training setup), and some of it changes the evals:
+# TORCHDYNAMO_DISABLE=1 turns torch.compile off ("aot_compile is not supported" in vLLM), and
+# TRANSFORMERS_CACHE / HUGGINGFACE_HUB_CACHE redirect caches to a training tree that is read-only
+# inside the eval container (job 2162259). Drop them all; the launcher sets what it needs.
+for v in TORCHDYNAMO_DISABLE TRANSFORMERS_CACHE HUGGINGFACE_HUB_CACHE TOKENIZERS_PARALLELISM \
+         PYTORCH_CUDA_ALLOC_CONF PYTORCH_ALLOC_CONF OMP_NUM_THREADS NCCL_SOCKET_IFNAME \
+         NCCL_SOCKET_FAMILY GLOO_SOCKET_IFNAME GLOO_SOCKET_FAMILY MASTER_ADDR MASTER_PORT NUM_NODES \
+         NUM_GPUS_PER_NODE NUM_GPUS ARCH WANDB_MODE MACHINE_NAME HF_ALLOW_CODE_EVAL \
+         HF_DATASETS_OFFLINE TRANSFORMERS_OFFLINE PYTHONUNBUFFERED; do
+    unset "$v"
+done
+
 rev=$(flag_check_installed)
+
+# One state file per export, shared by the two halves of ONE launch: a launch passes FLAG_RUN_ID
+# (the chain config stamps it at submission), and the first half to start archives a state file
+# left by an earlier launch, so the second half never collects against stale entries.
+if [ -n "${FLAG_RUN_ID:-}" ]; then
+    (
+        flock 9
+        if [ -f "$STATE" ] && ! grep -qx "RUN_ID=$FLAG_RUN_ID" "$STATE"; then mv "$STATE" "$STATE.prev-$(date +%s)"; fi
+        [ -f "$STATE" ] || printf 'NAME=%s\nEXPORT=%s\nEVAL_REV=%s\nRUN_ID=%s\n' "$NAME" "$EXPORT" "$rev" "$FLAG_RUN_ID" > "$STATE"
+    ) 9> "$STATE.lock"
+fi
 export FLAG_WORK TIME="$FLAG_TIME" HALVES="$HALF" ACCOUNT="${SLURM_JOB_ACCOUNT:-unused}"
 ( flock 9; "$EVAL_REPO/scripts/jupiter_flag_evals.sh" views "$EXPORT" > /dev/null ) 9> "$FLAG_WORK/.views.lock"
 launcher=$("$EVAL_REPO/scripts/jupiter_flag_evals.sh" render "$NAME" | awk '$1 == "sbatch" {print $2}')
