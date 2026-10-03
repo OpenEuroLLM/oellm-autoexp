@@ -22,6 +22,7 @@ Commands:
   prepare              One-time: tokenizer for conversion and evaluation, Megatron-Bridge copy
   convert SPEC...      Convert checkpoints: <run>:<iter>, <run>:latest, or an alias
                        (DRY_RUN=1 prints the sbatch command instead of submitting)
+  convert-here NAME CKPT  Convert one checkpoint in THIS allocation (an oellm-autoexp convert stage)
   check NAME           Submit a sanity check of one export (NLL + greedy continuation)
   hf NAME...           Render the 12 open-sci lm-eval tasks for those exports
   reasoning [NAME|all] Render GSM8K/MATH500/MBPP etc. via vLLM (never submits; see TASKS=)
@@ -126,6 +127,15 @@ convert)
         --output="$LOG_DIR/convert_%A_%a.log" \
         --export=ALL,MANIFEST="$MANIFEST",SCRIPT_DIR="$HERE",WORK_ROOT="$WORK_ROOT",EXPORT_ROOT="$EXPORT_ROOT",BRIDGE_SIF="$BRIDGE_SIF",MEGATRON_REPO="$MEGATRON_REPO",HF_MODEL="$HF_MODEL",DERIVE_HF_ARCH="$DERIVE_HF_ARCH",ARCH_YAML="$ARCH_YAML",CONTAINER_BIND="$CONTAINER_BIND" \
         "$HERE/convert.sbatch"
+    ;;
+convert-here)
+    # The conversion INSIDE the current allocation, with this profile's settings: the body of an
+    # oellm-autoexp convert stage (compute jobs cannot sbatch, so `convert` cannot be used there).
+    [ $# -eq 2 ] || { echo "usage: eval_checkpoints.sh convert-here NAME CHECKPOINT_DIR" >&2; exit 2; }
+    [ ! -d "$EXPORT_ROOT/$1" ] || [ "${FORCE:-0}" = 1 ] || { echo "error: $1 is already converted; FORCE=1 to convert it again" >&2; exit 1; }
+    mkdir -p "$EXPORT_ROOT"
+    export WORK_ROOT EXPORT_ROOT BRIDGE_SIF MEGATRON_REPO HF_MODEL DERIVE_HF_ARCH ARCH_YAML CONTAINER_BIND
+    exec "$HERE/convert_export.sh" "$1" "$2"
     ;;
 check)
     [ $# -eq 1 ] || { echo "usage: eval_checkpoints.sh check NAME" >&2; exit 2; }
