@@ -51,3 +51,15 @@ flag_check_installed() {
     flag_tool_is_repo || return 1
     git_head_rev "$EVAL_REPO"
 }
+
+# Cross-node lock. flock is not coherent across nodes on the shared filesystems (two stages on
+# different nodes both entered the "locked" section, job 2162600); mkdir is atomic. A lock older
+# than 10 minutes is taken to be left by a killed holder and broken.
+lock_acquire() {
+    local lock="$1" waited=0
+    until mkdir "$lock" 2>/dev/null; do
+        sleep 1; waited=$((waited + 1))
+        if [ "$waited" -ge 600 ]; then echo "warning: breaking stale lock $lock" >&2; rm -rf "$lock"; waited=0; fi
+    done
+}
+lock_release() { rmdir "$1" 2>/dev/null || true; }

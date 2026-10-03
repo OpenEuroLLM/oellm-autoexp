@@ -5,7 +5,7 @@
 #   flag_stage.sh NAME HALF
 #
 # Runs in the batch shell of a multi-node allocation (slurm config jupiter_driver: no outer srun):
-#   1. builds the model views (locked: the two halves may start together),
+#   1. builds the model views (mkdir-locked: the two halves may start together on different nodes),
 #   2. renders this half's launcher (oellm-eval scripts/jupiter_flag_evals.sh, HALVES=HALF),
 #   3. runs each eval as an `srun` step on one whole node, as many at once as there are nodes,
 #      with the logs where `flag-status` expects them (slurm_logs/oellm-eval-<job>-<index>.*),
@@ -51,15 +51,19 @@ rev=$(flag_check_installed)
 # (the chain config stamps it at submission), and the first half to start archives a state file
 # left by an earlier launch, so the second half never collects against stale entries.
 if [ -n "${FLAG_RUN_ID:-}" ]; then
-    (
-        flock 9
-        if [ -f "$STATE" ] && ! grep -qx "RUN_ID=$FLAG_RUN_ID" "$STATE"; then mv "$STATE" "$STATE.prev-$(date +%s)"; fi
-        [ -f "$STATE" ] || printf 'NAME=%s\nEXPORT=%s\nEVAL_REV=%s\nRUN_ID=%s\n' "$NAME" "$EXPORT" "$rev" "$FLAG_RUN_ID" > "$STATE"
-    ) 9> "$STATE.lock"
+    lock_acquire "$STATE.lockdir"
+    if [ -f "$STATE" ] && ! grep -qx "RUN_ID=$FLAG_RUN_ID" "$STATE"; then mv "$STATE" "$STATE.prev-$(date +%s)"; fi
+    [ -f "$STATE" ] || printf 'NAME=%s\nEXPORT=%s\nEVAL_REV=%s\nRUN_ID=%s\n' "$NAME" "$EXPORT" "$rev" "$FLAG_RUN_ID" > "$STATE"
+    lock_release "$STATE.lockdir"
 fi
 export FLAG_WORK TIME="$FLAG_TIME" HALVES="$HALF" ACCOUNT="${SLURM_JOB_ACCOUNT:-unused}"
-( flock 9; "$EVAL_REPO/scripts/jupiter_flag_evals.sh" views "$EXPORT" > /dev/null ) 9> "$FLAG_WORK/.views.lock"
-launcher=$("$EVAL_REPO/scripts/jupiter_flag_evals.sh" render "$NAME" | awk '$1 == "sbatch" {print $2}')
+lock_acquire "$FLAG_WORK/.views.lockdir"
+"$EVAL_REPO/scripts/jupiter_flag_evals.sh" views "$EXPORT" > /dev/null || { lock_release "$FLAG_WORK/.views.lockdir"; exit 1; }
+lock_release "$FLAG_WORK/.views.lockdir"
+# Render as from a login shell: the launcher template fills in variables from the environment,
+# and this allocation's SLURM_* values (job id, array task 0, ...) must not be baked into it.
+mapfile -t slurm_vars < <(compgen -e | grep '^SLURM_' || true)
+launcher=$(env "${slurm_vars[@]/#/-u}" "$EVAL_REPO/scripts/jupiter_flag_evals.sh" render "$NAME" | awk '$1 == "sbatch" {print $2}')
 [ -f "$launcher" ] || { echo "error: render produced no $HALF launcher" >&2; exit 1; }
 run_dir=$(dirname "$launcher")
 n_evals=$(( $(wc -l < "$run_dir/jobs.csv") - 1 ))
@@ -100,13 +104,13 @@ done
 echo "[flag_stage] $HALF done: $(( ${#indices[@]} - ${#todo[@]} ))/${#indices[@]} ok${todo:+; failed: ${todo[*]}}"
 
 # Record this half; the second half to arrive collects (the state file is shared, so lock it).
-(
-    flock 9
-    { grep -q "^NAME=" "$STATE" 2>/dev/null || printf 'NAME=%s\nEXPORT=%s\nEVAL_REV=%s\n' "$NAME" "$EXPORT" "$rev"
-      printf '%s_RUN=%s\n%s_JOB=%s\n%s_DONE=%s\n' "$UP" "$run_dir" "$UP" "$JOB" "$UP" "$(date -Is)"; } >> "$STATE"
-    if grep -q "^VLLM_DONE=" "$STATE" && grep -q "^LIGHTEVAL_DONE=" "$STATE"; then
-        subset=$([ -n "${FLAG_INDICES_VLLM:-}${FLAG_INDICES_LIGHTEVAL:-}" ] && echo --collect || true)
-        FLAG_NO_QUEUE=1 python3 "$HERE/flag_status.py" "$STATE" $subset || echo "[flag_stage] collection failed (see above)"
-    fi
-) 9> "$STATE.lock"
+lock_acquire "$STATE.lockdir"
+{ grep -q "^NAME=" "$STATE" 2>/dev/null || printf 'NAME=%s\nEXPORT=%s\nEVAL_REV=%s\n' "$NAME" "$EXPORT" "$rev"
+  printf '%s_RUN=%s\n%s_JOB=%s\n%s_DONE=%s\n' "$UP" "$run_dir" "$UP" "$JOB" "$UP" "$(date -Is)"; } >> "$STATE"
+both=$(grep -q "^VLLM_DONE=" "$STATE" && grep -q "^LIGHTEVAL_DONE=" "$STATE" && echo yes || true)
+lock_release "$STATE.lockdir"
+if [ -n "$both" ]; then
+    subset=$([ -n "${FLAG_INDICES_VLLM:-}${FLAG_INDICES_LIGHTEVAL:-}" ] && echo --collect || true)
+    FLAG_NO_QUEUE=1 python3 "$HERE/flag_status.py" "$STATE" $subset || echo "[flag_stage] collection failed (see above)"
+fi
 exit 0
