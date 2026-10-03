@@ -10,3 +10,7 @@
 [submodule "submodules/Megatron-Bridge"]
 	path = submodules/Megatron-Bridge
 	url = git@github.com:NVIDIA-NeMo/Megatron-Bridge.git
+[submodule "submodules/oellm-eval"]
+	path = submodules/oellm-eval
+	url = git@github.com:OpenEuroLLM/oellm-eval.git
+	branch = feat/vllm-data-parallel

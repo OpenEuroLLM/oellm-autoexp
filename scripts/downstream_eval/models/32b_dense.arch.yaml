@@ -1,0 +1,17 @@
+# 32B dense architecture (same for fork, control, softcap30, B1); values from the fork's training args.
+backend:
+  megatron:
+    num_layers: 64
+    hidden_size: 5120
+    ffn_hidden_size: 25600
+    num_attention_heads: 64
+    group_query_attention: true
+    num_query_groups: 8
+    kv_channels: 128
+    max_position_embeddings: 4096
+    norm_epsilon: 1.0e-5
+    rotary_base: 100000
+    add_qkv_bias: false
+    untie_embeddings_and_output_weights: true
+    make_vocab_size_divisible_by: 128
+    bf16: true
