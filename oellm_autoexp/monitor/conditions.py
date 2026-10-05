@@ -182,7 +182,8 @@ class IterationMultipleConditionConfig(ConditionConfigMixin, ConfigInterface):
 
 @register
 class IterationMultipleCondition(BaseCondition):
-    """Pass when the event's iteration (extracted from the log line) is a multiple of ``every``.
+    """Pass when the event's iteration (extracted from the log line) is a
+    multiple of ``every``.
 
     Built for checkpoint hooks: Megatron prints 'successfully saved checkpoint from iteration N'
     for every persistent checkpoint; an evaluation of each 2k checkpoint would be too much, one
@@ -198,10 +199,18 @@ class IterationMultipleCondition(BaseCondition):
         try:
             it = int(str(raw).replace(",", ""))
         except (TypeError, ValueError):
-            return ConditionResult(passed=False, message=f"no integer {self.config.key} in the event ({raw!r})")
+            return ConditionResult(
+                passed=False, message=f"no integer {self.config.key} in the event ({raw!r})"
+            )
         if it % self.config.every == 0:
-            return ConditionResult(passed=True, message=f"iteration {it} is a multiple of {self.config.every}", metadata={"iteration": it})
-        return ConditionResult(passed=False, message=f"iteration {it} is not a multiple of {self.config.every}")
+            return ConditionResult(
+                passed=True,
+                message=f"iteration {it} is a multiple of {self.config.every}",
+                metadata={"iteration": it},
+            )
+        return ConditionResult(
+            passed=False, message=f"iteration {it} is not a multiple of {self.config.every}"
+        )
 
 
 @dataclass
@@ -290,6 +299,66 @@ class GlobExistsCondition(BaseCondition):
         if count >= self.config.min_matches:
             return ConditionResult(passed=True)
         return ConditionResult(passed=False, message=f"glob {rendered} missing")
+
+
+@dataclass
+class JobsFinishedConditionConfig(ConditionConfigMixin, ConfigInterface):
+    """Pass once every job of the named stages / array groups in this session
+    is finished or cancelled -- the monitor-side dependency of a stage that
+    aggregates others (e.g. collecting the results of an eval array).
+
+    A job matches if its stage is in ``stages`` OR its ``job.array_group`` is in
+    ``array_groups``. Stage names repeat across the arms of a sweep, array group
+    names usually do not (they interpolate the arm), so prefer ``array_groups``
+    when several arms share a session. At least one job must match: a typo in a
+    name must not pass vacuously.
+    """
+
+    class_name: str = "JobsFinishedCondition"
+    stages: list[str] = field(default_factory=list)
+    array_groups: list[str] = field(default_factory=list)
+    # Also require that none of them ended cancelled (a failed task after its retries).
+    require_success: bool = False
+
+
+@register
+class JobsFinishedCondition(BaseCondition):
+    config: JobsFinishedConditionConfig
+
+    def check(self, context: ConditionContext) -> ConditionResult:
+        import json
+
+        session_dir = context.job_metadata.get("session_dir")
+        if not session_dir:
+            return ConditionResult(passed=False, message="no session_dir in job metadata")
+        stages = set(self.config.stages)
+        groups = set(self.config.array_groups)
+        matched = active = failed = 0
+        for path in Path(session_dir).glob("*.job.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            definition = payload.get("definition") or {}
+            stage = (definition.get("metadata") or {}).get("stage")
+            if stage not in stages and definition.get("array_group") not in groups:
+                continue
+            matched += 1
+            final = (payload.get("runtime") or {}).get("final_state")
+            if final is None:
+                active += 1
+            elif final != "finished":
+                failed += 1
+        if matched == 0:
+            return ConditionResult(
+                passed=False,
+                message=f"no job of stages {sorted(stages)} / array groups {sorted(groups)}",
+            )
+        if active:
+            return ConditionResult(passed=False, message=f"{active}/{matched} job(s) still active")
+        if failed and self.config.require_success:
+            return ConditionResult(passed=False, message=f"{failed}/{matched} job(s) cancelled")
+        return ConditionResult(passed=True, message=f"{matched} job(s) done, {failed} cancelled")
 
 
 @dataclass
@@ -530,6 +599,7 @@ __all__ = [
     "FileExistsCondition",
     "FileContentCondition",
     "GlobExistsCondition",
+    "JobsFinishedCondition",
     "CommandCondition",
     "ShellCommandCondition",
     "CompositeCondition",

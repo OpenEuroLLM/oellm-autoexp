@@ -17,6 +17,11 @@ cancel_condition: null
 # Only for cheap setup stages: no allocation, no accounting, no time limit.
 local: false
 
+# Points of one stage that share this name are submitted as ONE SLURM job array (one
+# script dispatching on $SLURM_ARRAY_TASK_ID, one monitored record per point; a failed
+# point is resubmitted alone). Throttle with slurm.array_concurrency.
+array_group: null
+
 # --- submit-gate cost/runtime estimate (estimate-only, never reaches SLURM) ---
 # Declared here with null defaults so a plain `job.est_step_time_s=4.2` override
 # works. Hydra runs the config in STRUCT mode, so a key absent from the yaml

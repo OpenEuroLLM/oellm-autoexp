@@ -162,3 +162,39 @@ def test_eval_blocked_tokens():
 
     with pytest.raises(ValueError, match="blocked token"):
         OmegaConf.create({"val": "${oc.eval:'input(1)'}"}).val
+
+
+def test_index_and_select_indices_for_item_lists():
+    """oc.index / oc.select_indices: per-point lookups into a generated item
+    list (config/eval_tasks/flag_evals.yaml), swept by position, selected by
+    name."""
+    import pytest
+    from omegaconf import OmegaConf
+
+    from oellm_autoexp.hydra_staged_sweep.config.resolvers import register_default_resolvers
+
+    register_default_resolvers()
+    cfg = OmegaConf.create(
+        {
+            "items": [
+                {"name": "a/x", "row": 3},
+                {"name": "b y", "row": 5},
+                {"name": "c:z", "row": 0},
+            ],
+            "i": 1,
+            "wanted": ["c:z", "a/x"],
+            "none": None,
+            "bad": ["a/x", "nope"],
+            "row": "${oc.index:${items},${i},row}",
+            "item": "${oc.index:${items},${i}}",
+            "selected": "${oc.select_indices:${items},name,${wanted}}",
+            "all": "${oc.select_indices:${items},name,${none}}",
+            "typo": "${oc.select_indices:${items},name,${bad}}",
+        }
+    )
+    assert cfg.row == 5
+    assert cfg.item.name == "b y"
+    assert cfg.selected == [0, 2]  # in the items' order, not the selection's
+    assert cfg.all == [0, 1, 2]
+    with pytest.raises(Exception, match="nope"):
+        _ = cfg.typo

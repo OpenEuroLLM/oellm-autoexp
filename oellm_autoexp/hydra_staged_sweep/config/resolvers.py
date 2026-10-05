@@ -114,6 +114,32 @@ def _slice(value, start, end):
     return value[int(start) : int(end)]  # noqa
 
 
+def _index(value, index, field=None):
+    """``${oc.index:${list},${i}}``: element ``i`` of a list, or with a third
+    argument ``${oc.index:${list},${i},name}`` that element's field ``name``. A
+    nested key (``${list.${i}}``) refuses an int ``i``, which is what a swept
+    index is."""
+    item = value[int(index)]
+    return item if field is None else item[field]
+
+
+def _select_indices(items, key, wanted=None):
+    """``${oc.select_indices:${items},name,${wanted}}``: the positions of the
+    items whose ``key`` is in ``wanted``, in the items' order; all positions
+    when ``wanted`` is null. Selecting by a stable key rather than by position
+    keeps a subset valid when the item list is regenerated. An unknown entry in
+    ``wanted`` raises: a typo must not silently shrink the selection."""
+    if wanted is None:
+        return list(range(len(items)))
+    wanted = [str(w) for w in wanted]
+    keys = [str(item[key]) for item in items]
+    unknown = sorted(set(wanted) - set(keys))
+    if unknown:
+        raise ValueError(f"oc.select_indices: no item with {key} in {unknown}")
+    wanted_set = set(wanted)
+    return [i for i, k in enumerate(keys) if k in wanted_set]
+
+
 def _mul_round_int(a, b, multiple):
     return int(round(float(a) * float(b) / float(multiple)) * float(multiple))
 
@@ -385,6 +411,8 @@ def register_default_resolvers(force: bool = False) -> None:
     OmegaConf.register_new_resolver("oc.cdivi", _ceil_div_int, replace=True)
     OmegaConf.register_new_resolver("oc.sqrt", _sqrt_wrapper, replace=True)
     OmegaConf.register_new_resolver("oc.slice", _slice, replace=True)
+    OmegaConf.register_new_resolver("oc.index", _index, replace=True)
+    OmegaConf.register_new_resolver("oc.select_indices", _select_indices, replace=True)
     OmegaConf.register_new_resolver("oc.mul_round_int", _mul_round_int, replace=True)
     OmegaConf.register_new_resolver("oc.concat", _concat, replace=True)
     OmegaConf.register_new_resolver("oc.int", _int_cast, replace=True, use_cache=False)

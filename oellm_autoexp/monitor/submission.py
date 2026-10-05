@@ -59,6 +59,14 @@ class BaseJob:
     # node, with no Slurm accounting, cgroup or time limit.
     local: bool = False
 
+    # Sweep points that name the same array group are submitted as ONE SLURM job
+    # array (orchestrator._bind_array_groups): one rendered script that dispatches
+    # on $SLURM_ARRAY_TASK_ID, one record per point. Each point stays a job of its
+    # own in the plan -- priced, monitored and restarted (as a one-task array)
+    # individually -- so a 400-eval stage is visible at config level without
+    # 400 sbatch calls. Members must agree on everything but their command.
+    array_group: str | None = None
+
 
 @dataclass(kw_only=True)
 class SlurmJobConfig(BaseJob, ConfigInterface):

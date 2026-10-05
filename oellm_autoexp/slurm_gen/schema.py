@@ -103,6 +103,8 @@ class SlurmConfig(ConfigInterface):
     log_path: str | None = None
     exclude_file: str | None = None
     array: bool = False
+    # Max simultaneously running tasks of a job array (`--array=...%N`); None = no limit.
+    array_concurrency: int | None = None
     launcher_cmd: str = ""
     srun_opts: str = ""
     launcher_env_passthrough: bool = False

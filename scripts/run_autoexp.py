@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Iterable
@@ -311,6 +312,9 @@ def _compute_gpu_hours(plan: ExecutionPlan, repeat: int = 1) -> tuple[float, lis
     total = 0.0
     bases: set[str] = set()
     for job in plan.jobs:
+        if getattr(job.config.job, "local", False):
+            # runs on the submitting host: no allocation to pay for
+            continue
         sbatch = job.config.slurm.sbatch
         nodes = int(getattr(sbatch, "nodes", 1) or 1)
         gpus_per_node = int(getattr(sbatch, "gpus_per_node", 1) or 1)
@@ -431,6 +435,25 @@ def main(argv: list[str] | None = None) -> None:
         f"Plan: {n_jobs} job(s) — estimated {gpu_hours:,.0f} GPU-h total ({basis})"
         + (f" approx. ({gpu_hours / n_jobs:,.0f} GPU-h each)" if n_jobs > 1 else "")
     )
+    # Per stage, so an array stage of hundreds of points reads as one line rather
+    # than vanishing behind the "... N more job(s)" cut below.
+    stages: dict[str, list] = {}
+    for job in plan.jobs:
+        stages.setdefault(str(getattr(job.config, "stage", "") or "-"), []).append(job)
+    if len(stages) > 1:
+        for stage, stage_jobs in stages.items():
+            stage_gpu_h, _ = _compute_gpu_hours(
+                replace(plan, jobs=stage_jobs), repeat=getattr(args, "repeat", 1) or 1
+            )
+            arrays = sorted(
+                {g for j in stage_jobs if (g := getattr(j.config.job, "array_group", None))}
+            )
+            local = sum(1 for j in stage_jobs if getattr(j.config.job, "local", False))
+            print(
+                f"  stage {stage}: {len(stage_jobs)} job(s), ~{stage_gpu_h:,.1f} GPU-h"
+                + (f"  [array {', '.join(arrays)}]" if arrays else "")
+                + (f"  [{local} local, no allocation]" if local else "")
+            )
 
     # RUNTIME, not just cost. GPU-h answers "can I afford it"; this answers
     # "when do I get results", which is the number you actually want when

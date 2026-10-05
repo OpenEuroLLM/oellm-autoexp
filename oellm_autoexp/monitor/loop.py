@@ -93,6 +93,11 @@ class JobFileStore:
         for path in self.list_paths():
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
+                # Skip finished/cancelled jobs BEFORE the full parse: parse_config of
+                # a record (it carries the resolved job config) dominates a poll once
+                # an array stage has put hundreds of records into the session.
+                if not include_finished and (payload.get("runtime") or {}).get("final_state"):
+                    continue
                 _import_registry()
                 job = parse_config(JobRecord, payload)
                 # Parse nested event configs once
@@ -229,6 +234,9 @@ class MonitorLoop:
         if self._local_client:
             statuses.update(self._local_client.squeue())
 
+        # Array members whose start condition passed this poll, by script: each
+        # batch goes out as ONE sbatch --array after the loop.
+        array_batches: dict[str, list[JobRecord]] = {}
         for job in self._store.load_all():
             if job.definition is None:
                 continue
@@ -253,6 +261,9 @@ class MonitorLoop:
                     self._store.mark_finished(job.job_id, "finished")
                     continue
                 if self._check_start(job):
+                    if self._is_array_member(job):
+                        array_batches.setdefault(job.definition.slurm.script_path, []).append(job)
+                        continue
                     self._start_jobs(job)
 
                     if job.runtime.runtime_job_id is None:
@@ -291,6 +302,9 @@ class MonitorLoop:
                 continue
 
             self._store.upsert(job)
+
+        for batch in array_batches.values():
+            self._start_array_batch(batch)
 
         if self.show_poll_state:
             statuses: dict[str, str] = {}
@@ -363,6 +377,59 @@ class MonitorLoop:
             runtime.runtime_job_id = runtime_job_id
             runtime.submitted = True
             runtime.log_cursor = 0
+
+    @staticmethod
+    def _is_array_member(job: JobRecord) -> bool:
+        """A point of a ``job.array_group`` (see
+        orchestrator._bind_array_groups)."""
+        return (
+            job.array_idx is not None
+            and isinstance(job.definition, SlurmJobConfig)
+            and bool(getattr(job.definition, "array_group", None))
+        )
+
+    def _start_array_batch(self, jobs: list[JobRecord]) -> None:
+        """Submit array members that became ready in the same poll as one
+        array.
+
+        They share one script, so ``--array=<their indices>`` starts exactly them;
+        a single failed member comes back here alone and is resubmitted as a
+        one-task array of the same script.
+        """
+        client = self._get_client(jobs[0])
+        indices = [job.array_idx for job in jobs]
+        try:
+            job_ids = client.submit_array(jobs[0].definition, indices)
+        except Exception as e:
+            if self.no_error_catching:
+                raise
+            LOGGER.error(f"Unable to submit array {jobs[0].definition.array_group} {indices}: {e}")
+            job_ids = []
+        by_index = {}
+        for runtime_job_id in job_ids:
+            # "<array id>_<index>"
+            by_index[int(str(runtime_job_id).rsplit("_", 1)[-1])] = runtime_job_id
+        now = time.time()
+        for job in jobs:
+            runtime_job_id = by_index.get(job.array_idx)
+            if runtime_job_id is None:
+                LOGGER.warning(f"Failed to start array task {job.job_id} (index {job.array_idx})")
+                self._store.mark_finished(job.job_id, "cancelled")
+                continue
+            runtime = job.runtime
+            runtime.attempts += 1
+            runtime.start_ts = now
+            runtime.runtime_job_id = runtime_job_id
+            runtime.submitted = True
+            runtime.log_cursor = 0
+            self._store.upsert(job)
+        if job_ids:
+            LOGGER.info(
+                "Submitted array %s tasks %s as %s",
+                jobs[0].definition.array_group,
+                indices,
+                str(job_ids[0]).rsplit("_", 1)[0],
+            )
 
     def _start_jobs(self, job: JobRecord, indices: list[int] | None = None) -> None:
         definition = job.definition
@@ -688,7 +755,11 @@ class MonitorLoop:
                 self._get_client(job).cancel(runtime_id)
                 hooks["wait_for_job_end"] = True
                 self._pending_restart_hooks[job.job_id] = hooks
-                LOGGER.info("Job %s: runtime job %s cancelled first; resubmission after it has left the queue", job.job_id, runtime_id)
+                LOGGER.info(
+                    "Job %s: runtime job %s cancelled first; resubmission after it has left the queue",
+                    job.job_id,
+                    runtime_id,
+                )
             if hooks.get("wait_for_job_end") and self._job_active(job):
                 # graceful exit in progress: the async checkpoint write may still
                 # be running behind the 'exiting program' line; resubmit once the
@@ -697,7 +768,9 @@ class MonitorLoop:
                 self._store.upsert(job)
                 LOGGER.info(
                     "Job %s: restart deferred until runtime job %s has ended (status %s)",
-                    job.job_id, runtime_id, job.runtime.last_status,
+                    job.job_id,
+                    runtime_id,
+                    job.runtime.last_status,
                 )
                 return True
             self._run_restart_hooks(job, runtime_id)
@@ -707,18 +780,33 @@ class MonitorLoop:
         return False
 
     # SLURM states in which a job still occupies (or waits for) resources
-    ACTIVE_STATES = frozenset({
-        "PENDING", "RUNNING", "COMPLETING", "CONFIGURING", "SUSPENDED", "REQUEUED",
-        "RESIZING", "STAGE_OUT", "SIGNALING", "REQUEUE_HOLD", "REQUEUE_FED", "RESV_DEL_HOLD",
-    })
+    ACTIVE_STATES = frozenset(
+        {
+            "PENDING",
+            "RUNNING",
+            "COMPLETING",
+            "CONFIGURING",
+            "SUSPENDED",
+            "REQUEUED",
+            "RESIZING",
+            "STAGE_OUT",
+            "SIGNALING",
+            "REQUEUE_HOLD",
+            "REQUEUE_FED",
+            "RESV_DEL_HOLD",
+        }
+    )
 
     def _job_active(self, job: JobRecord) -> bool:
         return (job.runtime.last_status or "") in self.ACTIVE_STATES
 
     def _resume_deferred_restart(self, job: JobRecord, runtime_id: str | None) -> bool:
-        """Resubmit a job whose restart was deferred (wait_for_job_end) once its
-        runtime job has left the queue. Returns True when the job was restarted
-        or is still waiting (the caller stops processing it for this poll)."""
+        """Resubmit a job whose restart was deferred (wait_for_job_end) once
+        its runtime job has left the queue.
+
+        Returns True when the job was restarted or is still waiting (the
+        caller stops processing it for this poll).
+        """
         if not job.runtime.deferred_restart:
             return False
         if self._job_active(job):
@@ -726,7 +814,12 @@ class MonitorLoop:
             return True
         self._pending_restart_hooks[job.job_id] = dict(job.runtime.deferred_restart)
         job.runtime.deferred_restart = {}
-        LOGGER.info("Job %s: runtime job %s ended (%s): running the deferred restart", job.job_id, runtime_id, job.runtime.last_status)
+        LOGGER.info(
+            "Job %s: runtime job %s ended (%s): running the deferred restart",
+            job.job_id,
+            runtime_id,
+            job.runtime.last_status,
+        )
         self._run_restart_hooks(job, runtime_id)
         self._restart_job(job)
         self._store.upsert(job)
@@ -757,14 +850,26 @@ class MonitorLoop:
 
             try:
                 proc = subprocess.run(
-                    [sys.executable, str(Path(__file__).with_name("nccl_peers.py")),
-                     "--job", variables["runtime_job_id"],
-                     "--log-root", str(Path(variables["log_path"]).parent.parent),
-                     "--exclude-file", exclude_file, "--apply"],
-                    capture_output=True, text=True, timeout=60,
+                    [
+                        sys.executable,
+                        str(Path(__file__).with_name("nccl_peers.py")),
+                        "--job",
+                        variables["runtime_job_id"],
+                        "--log-root",
+                        str(Path(variables["log_path"]).parent.parent),
+                        "--exclude-file",
+                        exclude_file,
+                        "--apply",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
                 )
-                LOGGER.info("NCCL peer scan exit %s | %s", proc.returncode,
-                            (proc.stdout + proc.stderr)[-8000:])
+                LOGGER.info(
+                    "NCCL peer scan exit %s | %s",
+                    proc.returncode,
+                    (proc.stdout + proc.stderr)[-8000:],
+                )
             except Exception as exc:
                 LOGGER.warning("NCCL peer scan failed; continuing recovery: %s", exc)
         if pre_command:
@@ -779,9 +884,13 @@ class MonitorLoop:
             timeout = float(hooks.get("pre_command_timeout_s") or 900.0)
             LOGGER.info("restart hook: running pre_command for %s: %s", job.job_id, command)
             try:
-                proc = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=timeout)
+                proc = subprocess.run(
+                    command, shell=True, capture_output=True, text=True, timeout=timeout
+                )
                 tail = (proc.stdout + proc.stderr).strip().splitlines()[-8:]
-                LOGGER.info("restart hook: pre_command exit %s | %s", proc.returncode, " / ".join(tail))
+                LOGGER.info(
+                    "restart hook: pre_command exit %s | %s", proc.returncode, " / ".join(tail)
+                )
             except subprocess.TimeoutExpired:
                 LOGGER.warning("restart hook: pre_command timed out after %ss", timeout)
             except Exception as exc:  # pragma: no cover - never block the restart
@@ -802,7 +911,10 @@ class MonitorLoop:
                         (str(before).count(",") + 1) if before else 0,
                     )
                 else:
-                    LOGGER.info("restart hook: exclusion file %s empty; sbatch exclude unchanged", exclude_file)
+                    LOGGER.info(
+                        "restart hook: exclusion file %s empty; sbatch exclude unchanged",
+                        exclude_file,
+                    )
             except Exception as exc:  # pragma: no cover
                 LOGGER.warning("restart hook: could not refresh the exclusion list: %s", exc)
 
@@ -937,6 +1049,10 @@ class MonitorLoop:
         metadata = dict(definition.metadata)
         metadata.setdefault("job_id", job.job_id)
         metadata.setdefault("job_name", definition.name)
+        # lets a condition look at the session's other records (JobsFinishedCondition)
+        store = getattr(self, "_store", None)
+        if store is not None:
+            metadata.setdefault("session_dir", str(store.root))
         job_class = definition.class_name
         metadata.setdefault("job_class", job_class)
         return metadata

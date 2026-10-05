@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import shlex
@@ -9,7 +10,7 @@ import signal
 import socket
 import subprocess
 import time
-from dataclasses import dataclass, field, MISSING, replace
+from dataclasses import dataclass, field, fields, MISSING, replace
 import hashlib
 import json
 from pathlib import Path
@@ -25,7 +26,7 @@ from oellm_autoexp.monitor.loop import MonitorLoop, JobFileStore, JobRecord, Job
 from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
 from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
 from oellm_autoexp.monitor.submission import SlurmJobConfig, LocalJobConfig
-from oellm_autoexp.slurm_gen.generator import generate_script
+from oellm_autoexp.slurm_gen.generator import build_sbatch_directives, generate_script
 
 import oellm_autoexp.backends.megatron_backend  # noqa  - register
 import oellm_autoexp.postprocess.megatron_dist_to_torch  # noqa  - register
@@ -117,12 +118,16 @@ def submit_jobs(
     )
 
     submitted_job_ids: list[str] = []
-    for job in plan.jobs:
-        record = _build_job_record(plan, job, session_id, local_mode=local_mode)
-
+    records = _bind_array_groups(
+        [_build_job_record(plan, job, session_id, local_mode=local_mode) for job in plan.jobs]
+    )
+    rendered: set[str] = set()
+    for record in records:
         if dry_run and isinstance(record.definition, SlurmJobConfig):
-            path = generate_script(record.definition.slurm)
-            LOGGER.info("DRY RUN - Generated batch script: %s", path)
+            if record.definition.slurm.script_path not in rendered:
+                path = generate_script(record.definition.slurm)
+                rendered.add(record.definition.slurm.script_path)
+                LOGGER.info("DRY RUN - Generated batch script: %s", path)
             # TODO: Might aswell validate the job script and therein megatron arguments here
         store.upsert(record)
         submitted_job_ids.append(record.job_id)
@@ -555,6 +560,7 @@ def _build_job_record(
         start_condition=base_job.start_condition,
         cancel_condition=base_job.cancel_condition,
         finish_condition=base_job.finish_condition,
+        array_group=getattr(base_job, "array_group", None),
         metadata={
             **dict(base_job.metadata),
             "session_id": session_id,
@@ -570,6 +576,130 @@ def _build_job_record(
         definition=definition,
         runtime=JobRuntime(submitted=False),
     )
+
+
+def _array_log_path(log_path: str, group_dir: Path) -> str:
+    """The group's per-task log: the member's file name with ``%j`` ->
+    ``%A_%a``, in the group's directory.
+
+    Under an array, ``%j`` is each task's own numeric job id, which the monitor
+    cannot derive from the ``<array id>_<index>`` it tracks; ``%A_%a`` is
+    exactly that id, so ``resolve_log_path`` finds the file.
+    """
+    name = Path(log_path).name
+    if "%A" not in name:
+        if "%j" not in name:
+            raise ValueError(f"array job log path needs %j or %A_%a in its file name: {log_path}")
+        name = name.replace("%j", "%A_%a")
+    return str(group_dir / name)
+
+
+def _bind_array_groups(records: list[JobRecord]) -> list[JobRecord]:
+    """Turn the SLURM records that share ``job.array_group`` into one job
+    array.
+
+    Every member keeps its own record (job id, conditions, events, attempts), so
+    the monitor starts, finishes and restarts each point on its own. What they
+    share is ONE script: the members' commands as the branches of a ``case`` on
+    ``$SLURM_ARRAY_TASK_ID``, the member's position in the group being its array
+    index. A restart therefore resubmits the same script with ``--array=<i>``.
+
+    Everything except the command must agree across members (sbatch directives,
+    template, launcher, env), because one script carries one header; a mismatch
+    is a configuration error, raised with the offending member named.
+    """
+    groups: dict[str, list[int]] = {}
+    for pos, record in enumerate(records):
+        definition = record.definition
+        name = getattr(definition, "array_group", None)
+        if name and isinstance(definition, SlurmJobConfig):
+            groups.setdefault(str(name), []).append(pos)
+
+    for name, positions in groups.items():
+        members = [records[pos] for pos in positions]
+        first = members[0].definition.slurm
+
+        def _header(slurm) -> tuple:
+            directives = [
+                line
+                for line in build_sbatch_directives(slurm)
+                if not line.startswith(("#SBATCH --job-name=", "#SBATCH --output="))
+            ]
+            return (
+                tuple(directives),
+                slurm.template_path,
+                slurm.launcher_cmd,
+                slurm.srun_opts,
+                tuple(sorted((slurm.env or {}).items())),
+                slurm.array_concurrency,
+            )
+
+        reference = _header(first)
+        for member in members[1:]:
+            if _header(member.definition.slurm) != reference:
+                raise ValueError(
+                    f"array group '{name}': {member.job_id} differs from {members[0].job_id} "
+                    "in more than its command (sbatch directives, template, launcher or env); "
+                    "one array has one script header"
+                )
+
+        group_dir = Path(first.log_dir).parent / name
+        log_path = _array_log_path(str(members[0].definition.log_path), group_dir)
+        branches = []
+        for index, member in enumerate(members):
+            command = " ".join(member.definition.slurm.command).strip()
+            branches.append(f"{index})\n{command}\n;;")
+        dispatch = (
+            'case "$SLURM_ARRAY_TASK_ID" in\n'
+            + "\n".join(branches)
+            + '\n*) echo "array group '
+            + name
+            + ': no task for index $SLURM_ARRAY_TASK_ID" >&2; exit 2 ;;\nesac'
+        )
+        sbatch = copy.deepcopy(first.sbatch)
+        sbatch.job_name = name
+        # `output` is not a declared SbatchConfig field: a non-strict extra, which
+        # lives in `_extras` (a plain setattr would not reach the rendered header)
+        if "output" in {f.name for f in fields(sbatch)}:
+            sbatch.output = log_path
+        else:
+            sbatch._extras["output"] = log_path
+        group_slurm = replace(
+            first,
+            name=name,
+            script_dir=str(group_dir),
+            log_dir=str(group_dir),
+            script_path=str(group_dir / f"{name}.sbatch"),
+            log_path=log_path,
+            command=[dispatch],
+            sbatch=sbatch,
+            array=True,
+        )
+        for index, (pos, member) in enumerate(zip(positions, members)):
+            definition = member.definition
+            records[pos] = replace(
+                member,
+                definition=replace(
+                    definition,
+                    slurm=group_slurm,
+                    log_path=log_path,
+                    # one log per task, so the "current" symlinks and the per-job
+                    # config dump of plain jobs do not apply
+                    log_path_current=None,
+                    config_path=None,
+                    config_path_current=None,
+                    metadata={
+                        **dict(definition.metadata),
+                        "array_group": name,
+                        "array_index": index,
+                    },
+                ),
+                array_idx=index,
+            )
+        LOGGER.info(
+            "array group '%s': %d task(s) -> %s", name, len(members), group_slurm.script_path
+        )
+    return records
 
 
 def _build_container_exec_prefix(container: ContainerConfig) -> str:
@@ -632,6 +762,22 @@ def render_job_scripts(plan: ExecutionPlan, *, session_id: str = "dry-run") -> l
     """
     global _RENDER_CONTEXT
 
+    if any(getattr(job.config.job, "array_group", None) for job in plan.jobs):
+        # Array members share one script, which only exists once the whole group
+        # is known: build every record first, then render each script once.
+        records = _bind_array_groups(
+            [_build_job_record(plan, job, session_id) for job in plan.jobs]
+        )
+        paths: list[Path] = []
+        for record in records:
+            if not isinstance(record.definition, SlurmJobConfig):
+                continue
+            path = Path(record.definition.slurm.script_path)
+            if path not in paths:
+                generate_script(record.definition.slurm)
+                paths.append(path)
+        return paths
+
     # Each job renders to its own file, so this fans out cleanly. Deal the jobs
     # round-robin rather than in blocks so the workers stay balanced.
     indices = list(range(len(plan.jobs)))
@@ -668,6 +814,11 @@ def chain_submit_jobs(
     restarts, but will not re-submit jobs since they are already marked
     submitted=True.
     """
+    if any(getattr(job.config.job, "array_group", None) for job in plan.jobs):
+        raise ValueError(
+            "job.array_group is not supported with --chain / chain_repeat: array tasks are "
+            "submitted and restarted by the monitor"
+        )
     store, session_id = _ensure_state_store(plan, session_id=session_id)
     client = slurm_client or SlurmClient(SlurmClientConfig())
     local_client = LocalCommandClient(LocalCommandClientConfig())
