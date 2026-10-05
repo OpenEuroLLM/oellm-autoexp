@@ -51,13 +51,15 @@ backend:
     moe_permute_fusion: true
 
     # Mock-data smoke run; remove these overrides for a real data run.
-    mock_data: true
+    mock_data: false
     data_args_path: null
-    data_path: null
+    per_split_data_args_path: null
+    data_path:
+      - /scratch/project_465002530/datasets/multilingual_oellm/train/catalogue/mlfoundations/dclm-baseline-1.0-10p-sample/dclm-10p-sample
     train_data_path: null
     valid_data_path: null
     test_data_path: null
-    split: null
+    split: "99,1,0"
     data_cache_path: "/scratch/project_462001516/users/rluukkon/cache/${job.name}"
     tokenizer_type: HuggingFaceTokenizer
     tokenizer_model: openeurollm/tokenizer-256k
@@ -67,7 +69,7 @@ backend:
     encoder_seq_length: null
 
     micro_batch_size: 1
-    global_batch_size: 64
+    global_batch_size: 128
 
     # EP8 remains node-local; two nodes provide DP2.
     tensor_model_parallel_size: 1
@@ -90,11 +92,16 @@ backend:
     # uses random logits and should only be enabled for throughput diagnostics.
     moe_router_force_load_balancing: false
     moe_router_load_balancing_type: aux_loss
-    moe_aux_loss_coeff: 1.0e-3
-    moe_per_layer_logging: false
+    moe_aux_loss_coeff: 1.0e-2
+    moe_per_layer_logging: true
 
-    train_iters: 20
-    exit_interval: 20
+
+    moe_expert_viability_metrics: True
+    moe_masked_layer_validation: false
+    moe_masked_layer_eval_iters: 8
+
+    train_iters: 200
+    exit_interval: 200
     eval_iters: 1
     eval_interval: 100000
     save_interval: 1000000000
@@ -103,11 +110,31 @@ backend:
     no_save_optim: true
     no_save_rng: true
 
-    lr: 5.0e-4
+    lr: 1.e-3
+    muon_scalar_optimizer: adam
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1e-8
+
     min_lr: 0.0
     lr_warmup_iters: 5
     lr_decay_iters: 20
     lr_decay_style: constant
+
+    # add muon configs 
+
+    optimizer: muon
+    muon_momentum: 0.95
+    muon_nesterov: True
+    muon_scale_mode: spectral
+    muon_coefficient_type: polar_express # 
+    muon_fp32_matmul_prec: medium
+    muon_num_ns_steps: 5
+    muon_tp_mode: blockwise
+    muon_split_qkv: True
+    muon_extra_scale_factor: 0.2
+
+
 
     log_progress: false
     log_throughput: true
