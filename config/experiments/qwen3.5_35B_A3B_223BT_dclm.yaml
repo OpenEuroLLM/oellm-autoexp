@@ -1,0 +1,356 @@
+# @package _global_
+# PRODUCTION 223BT CPT: Qwen3.5-35B-A3B-Base, dclm-baseline English, lr 3e-5.
+#
+# 53,167 iters x gbs 512 x 8192 = 223.0BT on 8 nodes. ~132h (5.5 days) at the
+# measured 212M tok/node-hour, i.e. ~1052 node-hours -- more than a typical
+# month's budget on its own. This is the expensive one; read the rest of this
+# header before submitting. (The 150.0BT / 708 node-hour figures that used to
+# be here were from the 35,763-iter draft and were never re-derived.)
+#
+# SETTINGS CHOSEN FROM THE 10BT MATRIX (6 arms, 3 English sources x 2 LRs):
+#   lr 3e-5 -- downstream evals favour it over 5e-5 on English retention
+#     (mmlu +0.90pp averaged over 3 mixes, 2.76x its borrowed floor) and on
+#     code/math (+1.01pp), while Finnish multiple-choice is FLAT (-0.0004).
+#     5e-5 won only flores en->fi (+0.52 BLEU) and post-anneal train loss.
+#     Caveat kept in the open: no 10BT arm had a seed replicate, so every floor
+#     quoted is borrowed from the 4BT sweep at a different token budget.
+#   gbs 512 -- matches every measurement we have (4BT sweep and all six 10BT
+#     arms), so the LR evidence transfers directly. The cost is 53,167 iterations
+#     rather than 17,882; see the host-RAM note below.
+#   dclm-baseline English -- weak lean from the 10BT evals (only cross-source
+#     wins were mmlu and multiblimp, ~1.1-1.5x floor). Genuinely unresolved; the
+#     three English sources were statistically indistinguishable on everything
+#     else. This is a choice, not a finding.
+#
+# HOST RAM IS THE LIVE RISK. The ROCm 7.1 signal-pool leak is fixed (binds are
+# inherited from container.bind below, verified by jobs 52457/52458), but the
+# residual 6.2 MB/iter/rank was measured over only 150 iterations. Extrapolated
+# over 53,167 iterations that is ~322 GB/rank, ~2575 GB/node of 3023 GB --
+# that is 85%, NOT the 65% previously stated here (which was 35,763 iters).
+# 85% on an unvalidated linear extrapolation from 150 iterations is not
+# headroom. WATCH IT: at iter 5000 ssh the node and check `free -g`
+# shared/swap and RssShmem on a rank -- treat this as a HARD GATE, not a
+# suggestion. If the trend projects past ~2600 GB/node, stop at the next save
+# point and resume in a fresh process (which resets host RSS to baseline),
+# dropping finetune/no_load_optim/no_load_rng per the RESUMING note.
+# RssShmem should be FLAT (it was 2.9 GB in the verification run). If swap is
+# non-zero the leak is back and the run should be stopped and resumed from the
+# latest checkpoint in a fresh process, which resets host RSS to baseline.
+#
+# CHECKPOINTS -- save_retain_interval is deliberately NOT used. Megatron's
+# retain logic deletes the PREVIOUS checkpoint on each save unless that
+# iteration is a multiple of save_retain_interval (checkpointing.py:808-821),
+# which makes every save point depend on arithmetic staying true; one edit to
+# train_iters and the pre-anneal checkpoint is silently deleted. Instead:
+#   save_interval     1000000   effectively disabled, so nothing is auto-deleted
+#   save_extra_steps  [24 pts]  every ~10BT (2384 iters = 10.0BT at gbs 512 x
+#                               8192), plus 42533 = the last full-plateau step,
+#                               plus 53167 = the final annealed checkpoint.
+#   lr_wsd_decay_iters = int(53167*0.20) = 10633, so the anneal begins at 42534
+#   and 42533 is the pre-anneal save. 42915 is kept as an early-anneal probe.
+# NOTHING is ever deleted by Megatron here, so disk is the real constraint:
+# 24 x ~453GB = ~10.9TB if all are kept. Check `df -h /shared_silo` first -- it
+# has sat at 92-96% all week -- and plan to export+prune older checkpoints as
+# the run proceeds rather than assuming they all fit.
+#
+# RESUMING. If this job dies, resume by pointing load at this run's own
+# checkpoints dir and DROPPING finetune / no_load_optim / no_load_rng -- any of
+# them zeroes the iteration counter and silently retrains from scratch. See
+# qwen3.5_35B_A3B_lr_10BT_resume.yaml for the exact shape, and verify from the
+# log ("successfully loaded checkpoint ... at iteration N"), never from the loss.
+#
+# SPLIT "1000,0,0" + eval_iters 0 REMAIN LOAD-BEARING: 43 components, two under
+# 1000 docs (stack-edu-Rust-s5 at 273, PHP-s5 at 754). Under "989,10,1" the 0.1%
+# test slice rounds to ZERO documents and the test-index build NEVER TERMINATES.
+#
+# COLD INDEX BUILD: num_samples = 53167*512 = 27,221,504 matches no existing
+# cache, so expect ~19 min before iteration 1. Single job, so no cache race.
+#
+# At 8 nodes DP=64, so gbs 512 / (64*2) = 4 gradient-accumulation steps, and the
+# distributed optimizer shards over 4x more ranks than the 2-node runs -- per-GPU
+# memory is strictly easier than the 197GB/256GB measured there.
+defaults:
+  - base
+  - /backend: megatron
+  - /container: mi325x
+  - /slurm: mi325x
+  - /sweep: none
+  - /backend/megatron: [qwen3_5_moe_35BA3B]
+  - _self_
+
+slurm:
+  sbatch:
+    partition: amd-tw-verification
+    nodes: 8
+    # 53167 iters on 8 nodes. The 34 s/iter figure from the 10BT arms is a
+    # TWO-node number; at 8 nodes expect ~9-11 s/iter (the 212M tok/node-hour
+    # constant implies 8.9). Budget at 11 s/iter = 162h + 4.0h for 24 ckpt
+    # writes + 0.3h cold index = ~167h, which OVERRUNS a 156h request and
+    # would be killed past the pre-anneal save at 42533 but before the final
+    # annealed checkpoint at 53167 -- full cost, no annealed model.
+    # The partition TIMELIMIT is infinite, so there is no cost to asking for
+    # more. 216h is ~30% margin at 11 s/iter.
+    time: 9-00:00:00
+    open_mode: append
+    qos: normal
+
+  # The cluster sets JobRequeue=1. Combined with --finetune (which zeroes the
+  # iteration counter and reloads --load, i.e. the BASE model) an automatic
+  # requeue would silently restart this run from scratch on any node failure
+  # or admin drain, with no loud error. Never requeue this job; resume it by
+  # hand per the RESUMING note above.
+  sbatch_extra_directives:
+    - "--no-requeue"
+
+  launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
+    export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
+    export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; export AITER_JIT_DIR=/tmp/$USER/aiter_jit_dir ; \\\n\
+    ${oc.select:container.runtime,apptainer} exec --rocm --overlay /shared_silo/scratch/containers/fla-overla-for-primus-v26.1.img:ro ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} \
+    ${oc.select:container.image,container.sif}"
+
+  env:
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    # Live logging to the internal TW dashboard. "online" is what the shim
+    # wants: it has NO offline path (it warns "offline synchronization" and
+    # logs live anyway), and no ingest for a replayed .wandb log either.
+    # Safe for a multi-day run: if FastTrackML is unreachable, wandb_shim
+    # __init__.py:944 catches it, logs "metrics will be lost" and nulls the
+    # run -- training is never aborted by a logging failure.
+    WANDB_MODE: "online"
+    WANDB_API_KEY: "local"
+    FASTTRACKML_URL: "http://tus1-vm-amd-k8s-001:5000"
+    FASTTRACKML_EXPERIMENT: "poro3-cpt"
+    DASHBOARD_URL: "http://tus1-vm-amd-k8s-001:8080"
+    TW_GROUP: "qwen3_5_35B_A3B_223BT"
+    OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
+    APPTAINER_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+    SINGULARITY_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+
+container:
+  image: /shared_silo/scratch/containers/primus_v26.1.sif
+  # ROCm 7.1 signal-pool leak fix (backport of upstream clr 3ad064d, in 7.2.0).
+  # ROCclr ActiveSignal grew its completion-signal pool for every signal whose
+  # timestamp bookkeeping was unharvested -- ~all of them in MoE training -- so
+  # host anon RAM climbed ~70MB/iter/rank, evicted the mmap'd dataset page cache
+  # and collapsed throughput 6x from ~iter 1400. Killed 52244/52246 by timeout.
+  # This list REPLACES the default from config/container/mi325x.yaml, so the
+  # original two entries are repeated here on purpose. Both .so and .so.7 are
+  # needed: torch dlopens the versioned name.
+  bind:
+    - "/shared_silo/scratch"
+    - "${oc.env:PWD}"
+    - "/shared_silo/scratch/dzautner/rocm71_signalpool_fix/libamdhip64.so.7.1-3ad064d:/opt/venv/lib/python3.10/site-packages/torch/lib/libamdhip64.so"
+    - "/shared_silo/scratch/dzautner/rocm71_signalpool_fix/libamdhip64.so.7.1-3ad064d:/opt/venv/lib/python3.10/site-packages/torch/lib/libamdhip64.so.7"
+    # TW dashboard wandb shim: a drop-in replacement for the wandb package
+    # that posts MLflow REST to FastTrackML. Stdlib-only (urllib/json/
+    # threading), verified to import under this container's python3.10.
+    # The eval sbatch binds it at python3.12/dist-packages; the training
+    # container is python3.10/site-packages, hence the different target.
+    - "/shared_silo/scratch/shared/tw-dashboard/wandb_shim/wandb:/opt/venv/lib/python3.10/site-packages/wandb"
+
+backend:
+  megatron:
+    log_throughput: true
+    log_interval: 10
+    log_progress: true
+
+    # handpicked (== poro2-orig): 30 fi / 30 en / 30 code / 10 math, 43 components.
+    # Lifted verbatim from qwen3.5_35B_A3B_baselines_4BT.yaml:293-378 (weights sum 1.0).
+    # Shared, NOT per-stage, so every arm provably sees the same blend.
+    data_path:
+      - 0.3000000000
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/hplt4.0-fi/hplt4.0_fi_cleaned_text_document.train
+      - 0.3000000000
+      - /shared_silo/scratch/datasets/CPT/dclm-1.0-baseline/tokenized/tokenizer/Qwen3.5-35B-A3B-Base/merge_13pct_shards/merge_13pct_shards_text_document
+      - 0.1000000000
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/Nemotron-CC-Math/Nemotron-CC-Math-v1-4plus_text_document.train
+      - 0.0000112040
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Cpp-s5_text_document.train
+      - 0.0057510693
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Cpp-s4_text_document.train
+      - 0.0365329339
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Cpp-s3_text_document.train
+      - 0.0002926370
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-JavaScript-s5_text_document.train
+      - 0.0041516480
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-JavaScript-s4_text_document.train
+      - 0.0378509222
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-JavaScript-s3_text_document.train
+      - 0.0000183258
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Java-s5_text_document.train
+      - 0.0060870246
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Java-s4_text_document.train
+      - 0.0361898568
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Java-s3_text_document.train
+      - 0.0001750267
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-SQL-s5_text_document.train
+      - 0.0041375931
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-SQL-s4_text_document.train
+      - 0.0335835067
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-SQL-s3_text_document.train
+      - 0.0000010886
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-PHP-s5_text_document.train
+      - 0.0004943995
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-PHP-s4_text_document.train
+      - 0.0358414855
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-PHP-s3_text_document.train
+      - 0.0000473635
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-C-s5_text_document.train
+      - 0.0034284434
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-C-s4_text_document.train
+      - 0.0200368244
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-C-s3_text_document.train
+      - 0.0000101656
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-TypeScript-s5_text_document.train
+      - 0.0005364094
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-TypeScript-s4_text_document.train
+      - 0.0118806578
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-TypeScript-s3_text_document.train
+      - 0.0000194214
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Shell-s5_text_document.train
+      - 0.0050770211
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Shell-s4_text_document.train
+      - 0.0069805899
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Shell-s3_text_document.train
+      - 0.0004890489
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Python-s5_text_document.train
+      - 0.0112660185
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Python-s4_text_document.train
+      - 0.0000291072
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Markdown-s5_text_document.train
+      - 0.0110426073
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Markdown-s4_text_document.train
+      - 0.0000348514
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Swift-s5_text_document.train
+      - 0.0004197994
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Swift-s4_text_document.train
+      - 0.0069288001
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Swift-s3_text_document.train
+      - 0.0000009584
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Rust-s5_text_document.train
+      - 0.0005753564
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Rust-s4_text_document.train
+      - 0.0065624288
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Rust-s3_text_document.train
+      - 0.0000052270
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Go-s5_text_document.train
+      - 0.0004598306
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Go-s4_text_document.train
+      - 0.0064741240
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Go-s3_text_document.train
+      - 0.0000684474
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Ruby-s5_text_document.train
+      - 0.0011641942
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Ruby-s4_text_document.train
+      - 0.0053435824
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/regmix_trainval_2026-09/stack-edu-full/stack-edu-Ruby-s3_text_document.train
+
+    data_cache_path: /shared_silo/scratch/avirtane/data_cache
+    split: "1000,0,0"
+    eval_iters: 0
+    # 43 cold components: index build is ~19 min, well past the
+    # inherited 10-minute default. This is a slow build, not the non-terminating
+    # test-split hang -- here the timeout genuinely is the fix.
+    distributed_timeout_minutes: 60
+    num_workers: 7
+
+    # Validated by probe 46339 at exactly these values.
+    global_batch_size: 512
+    micro_batch_size: 2
+    expert_model_parallel_size: 8
+    pipeline_model_parallel_size: 1
+    use_distributed_optimizer: true
+    # MUST be false while the wandb shim is bound. Megatron's track_moe_metrics
+    # calls wandb.Histogram for per-layer expert counts (moe_utils.py:1240) and
+    # NO shim copy implements it -- rank 63 (the wandb writer rank, world_size-1)
+    # dies with AttributeError ~16 min in, before iteration 1. This killed 52992.
+    # Audited: Histogram is the ONLY wandb attribute Megatron uses that the shim
+    # lacks (Api/init/run/Run are all present). Every prior dashboard-logged run
+    # was DENSE 0.8B, which never reaches this code path.
+    # Cost is per-layer granularity only: the aggregates are appended before the
+    # guard, so moe/expert_dead_count, expert_cv_pct, expert_max_frac and
+    # expert_min_entropy_pct (the worst-layer canary) are all still logged.
+    moe_per_layer_logging: false
+    create_attention_mask_in_dataloader: false
+    moe_grouped_gemm: false
+    moe_token_dispatcher_type: "alltoall"
+    moe_permute_fusion: true
+    moe_shared_expert_overlap: true
+    overlap_moe_expert_parallel_comm: false
+    overlap_param_gather: true
+    overlap_grad_reduce: true
+
+    recompute_activations: true
+    recompute_granularity: full
+
+    adam_beta2: 0.95
+    weight_decay: 0.1
+
+    # 223B tokens at gbs 512: 223e9 / (512*8192) = 53166.5 -> 53167.
+    train_iters: 53167
+    lr_decay_iters: 53167
+    lr_warmup_iters: 100
+    lr_decay_style: WSD
+    # int(53167 * 0.20) = 10633. Anneal begins at 53167 - 10633 = 42534.
+    lr_wsd_decay_iters: 10633
+    lr_wsd_decay_style: linear
+
+    moe_aux_loss_coeff: 0.0001
+    override_opt_param_scheduler: true
+    seed: 1234
+
+    # 42533 = last plateau step (continue from this one). 53167 = final annealed.
+    ckpt_format: torch_dist
+    save_interval: 1000000
+    save_extra_steps:
+      - 2384
+      - 4768
+      - 7153
+      - 9537
+      - 11921
+      - 14305
+      - 16689
+      - 19073
+      - 21458
+      - 23842
+      - 26226
+      - 28610
+      - 30994
+      - 33379
+      - 35763
+      - 38147
+      - 40531
+      - 42533
+      - 42915
+      - 45300
+      - 47684
+      - 50068
+      - 52452
+      - 53167
+    save: ${job.base_output_dir}/checkpoints
+
+    load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-35B-A3B-Base
+    finetune: true
+    no_load_optim: true
+    no_load_rng: true
+
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    wandb_save_dir: ${job.base_output_dir}/wandb
+    wandb_project: "poro3-cpt"
+    wandb_exp_name: "qwen3_5_35B_A3B_223BT_${stage}"
+
+job:
+  name: qwen3_5_35B_A3B_223BT_${stage}_${slurm.env.MACHINE_NAME}
+
+# 2x2. The two fwe_ arms inherit the shared blend above (fineweb-edu English).
+# The two dclm_ arms override data_path wholesale: identical 43 components with
+# the fineweb-edu path swapped for dclm-baseline at the SAME 0.3 weight.
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        - stage: dclm_lr3e5
+          backend.megatron.lr: 3.0e-5
+          backend.megatron.min_lr: 3.0e-7
+          backend.megatron.router_lr_spec: "1.0e-5"
