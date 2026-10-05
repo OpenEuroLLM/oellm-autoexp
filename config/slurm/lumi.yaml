@@ -14,12 +14,15 @@ srun:
   jobid: "$SLURM_JOB_ID"
 launcher_env_passthrough: true
 env:
+  FI_MR_CACHE_MONITOR: "kdreg2"
   WANDB_MODE: online
   MACHINE_NAME: LUMI
   MASTER_ADDR: '$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)'
   MASTER_PORT: "20074"
   WORLD_SIZE: ${oc.muli:${..sbatch.nodes},${..sbatch.ntasks_per_node}}
   HSA_ENABLE_SDMA: 0
+  # LUMI's inter-node GPU fabric is the HSN Slingshot interface. Restrict
+  # RCCL/NCCL to HSN so it does not select a management interface.
   NCCL_SOCKET_IFNAME: "hsn0,hsn1,hsn2,hsn3"
   NCCL_NET_GDR_LEVEL: "PHB"
   NVTE_DEBUG: "0"

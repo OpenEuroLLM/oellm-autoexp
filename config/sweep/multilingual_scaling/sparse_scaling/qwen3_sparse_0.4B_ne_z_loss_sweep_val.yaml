@@ -1,0 +1,245 @@
+type: product
+
+# Validation sweep for the 0.4B z-loss / shared-expert ablation training grid
+# (qwen3_sparse_0.4B_ne_z_loss_sweep.yaml). Mirrors that sweep's job naming and
+# ablation combos exactly, but Group 2 evaluates saved checkpoints instead of
+# training. Four stage families are evaluated:
+#   stable    -> the stable run's final (100% of max budget) checkpoint
+#   decay<N>  -> each decay run's final checkpoint
+#   branch<N> -> the stable run's checkpoint at 80% of budget N (decay branch point)
+#   end<N>    -> the stable run's checkpoint at 100% of budget N
+# branch/end read the stable's own checkpoints (via the local `stable` sibling)
+# at a specific ckpt_step; stable/decay load via job-name match from the base
+# experiment config's `load`.
+#
+# HP setting: lr=1.e-3, gbsz=128, stable120BT only. Decay/branch/end budgets are
+# limited to 6B..120B (the stable never reaches 200B/300B branching checkpoints).
+# end120BT is deduped by the filter (same checkpoint as `stable`).
+
+groups:
+  # GROUP 0: job naming, mirrors the z-loss training sweep exactly so `load`
+  # resolves to the matching training checkpoint dir.
+  - type: list
+    configs:
+      - job.name: "qwen3_sparse_0.4B_ne_nexp\\${backend.megatron.num_experts}_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_topk\\${backend.megatron.moe_router_topk}_lbt\\${backend.megatron.moe_router_load_balancing_type}_zloss\\${backend.megatron.moe_z_loss_coeff}_\\${stage}\\${backend.megatron.aux.job_horizon_suffix}"
+        backend.megatron.wandb_exp_name: "\\${job.name}"
+
+  # GROUP 1: single HP combo (lr=1.e-3, gbsz=128, max_decay=120BT), plus
+  # aux.max_tokens used by the end-dedup filter.
+  - type: list
+    defaults:
+      backend.megatron.num_workers: 8
+    configs:
+      - backend.megatron.lr: 1.e-3
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 2
+        backend.megatron.aux.tokens: 120_000_000_000
+        backend.megatron.aux.max_tokens: 120_000_000_000
+        backend.megatron.aux.center_tokens_set:   "{6_000_000_000, 12_000_000_000, 20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000, 120_000_000_000}"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
+        backend.megatron.aux.stable_launch_tier:  center
+
+  # GROUP 1b: ablation combos (load-balancing x z-loss x routing), identical to
+  # the training z-loss sweep.
+  - type: list
+    configs:
+      - backend.megatron.moe_router_load_balancing_type: aux_loss
+        backend.megatron.moe_z_loss_coeff: 4.e-3
+        backend.megatron.moe_router_topk: 4
+        backend.megatron.moe_shared_expert_intermediate_size: null
+      - backend.megatron.moe_router_load_balancing_type: aux_loss
+        backend.megatron.moe_z_loss_coeff: 4.e-3
+        backend.megatron.moe_router_topk: 3
+        backend.megatron.moe_shared_expert_intermediate_size: 768
+      - backend.megatron.moe_router_load_balancing_type: aux_loss
+        backend.megatron.moe_z_loss_coeff: 2.e-3
+        backend.megatron.moe_router_topk: 4
+        backend.megatron.moe_shared_expert_intermediate_size: null
+      - backend.megatron.moe_router_load_balancing_type: aux_loss
+        backend.megatron.moe_z_loss_coeff: 2.e-3
+        backend.megatron.moe_router_topk: 3
+        backend.megatron.moe_shared_expert_intermediate_size: 768
+      - backend.megatron.moe_router_load_balancing_type: global_aux_loss
+        backend.megatron.moe_z_loss_coeff: 4.e-3
+        backend.megatron.moe_router_topk: 4
+        backend.megatron.moe_shared_expert_intermediate_size: null
+      - backend.megatron.moe_router_load_balancing_type: global_aux_loss
+        backend.megatron.moe_z_loss_coeff: 4.e-3
+        backend.megatron.moe_router_topk: 3
+        backend.megatron.moe_shared_expert_intermediate_size: 768
+      - backend.megatron.moe_router_load_balancing_type: global_aux_loss
+        backend.megatron.moe_z_loss_coeff: 2.e-3
+        backend.megatron.moe_router_topk: 4
+        backend.megatron.moe_shared_expert_intermediate_size: null
+      - backend.megatron.moe_router_load_balancing_type: global_aux_loss
+        backend.megatron.moe_z_loss_coeff: 2.e-3
+        backend.megatron.moe_router_topk: 3
+        backend.megatron.moe_shared_expert_intermediate_size: 768
+      - backend.megatron.moe_router_load_balancing_type: global_aux_loss
+        backend.megatron.moe_z_loss_coeff: 1.e-3
+        backend.megatron.moe_router_topk: 4
+        backend.megatron.moe_shared_expert_intermediate_size: null
+      - backend.megatron.moe_router_load_balancing_type: global_aux_loss
+        backend.megatron.moe_z_loss_coeff: 1.e-3
+        backend.megatron.moe_router_topk: 3
+        backend.megatron.moe_shared_expert_intermediate_size: 768
+      - backend.megatron.moe_router_load_balancing_type: aux_loss
+        backend.megatron.moe_z_loss_coeff: 1.e-3
+        backend.megatron.moe_router_topk: 3
+        backend.megatron.moe_shared_expert_intermediate_size: 768
+
+  # GROUP 2: eval stages -- 1 stable + 7 decay + 7 branch + 7 end (6B..120B).
+  - type: list
+    configs:
+      # STABLE PHASE: evaluate the training stable run's final checkpoint (load
+      # resolves via job-name match, not overridden here).
+      - stage: stable
+        backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.lr_wsd_decay_iters: 0
+        backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+        backend.megatron.aux.job_horizon_suffix: "\\${oc.eval:'str(\\${backend.megatron.aux.tokens}//1_000_000_000)+\"BT\"'}"
+        job.start_condition:
+          class_name: AndCondition
+          conditions:
+            - class_name: FileExistsCondition
+              path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.train_iters}).zfill(7)'}"
+            - class_name: NotCondition
+              condition:
+                class_name: LogPatternCondition
+                log_path: "\\${job.log_path_current}"
+                pattern: ".*validation loss.*on test set.*"
+
+      # DECAY PHASES: evaluate each decay run's final checkpoint (load resolves via
+      # job-name match; waits for that training run's final checkpoint).
+      - type: list
+        defaults:
+          backend.megatron.aux.decay_fraction: "\\${backend.megatron.aux.cooldown_decay_fraction}"
+
+          backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+          backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
+          backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+
+          job.start_condition:
+            class_name: AndCondition
+            conditions:
+              - class_name: FileExistsCondition
+                path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.train_iters}).zfill(7)'}"
+              - class_name: NotCondition
+                condition:
+                  class_name: LogPatternCondition
+                  log_path: "\\${job.log_path_current}"
+                  pattern: ".*validation loss.*on test set.*"
+          job.cancel_condition: null
+
+        configs:
+          - stage: decay6BT
+            backend.megatron.aux.tokens: 6_000_000_000
+          - stage: decay12BT
+            backend.megatron.aux.tokens: 12_000_000_000
+          - stage: decay20BT
+            backend.megatron.aux.tokens: 20_000_000_000
+          - stage: decay30BT
+            backend.megatron.aux.tokens: 30_000_000_000
+          - stage: decay50BT
+            backend.megatron.aux.tokens: 50_000_000_000
+          - stage: decay80BT
+            backend.megatron.aux.tokens: 80_000_000_000
+          - stage: decay120BT
+            backend.megatron.aux.tokens: 120_000_000_000
+
+      # BRANCH PHASES: evaluate the stable's checkpoint at 80% of budget N (the
+      # decay branch point), loaded from the local `stable` sibling.
+      - type: list
+        defaults:
+          backend.megatron.load: "\\${sibling.stable.backend.megatron.load}"
+          backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+          backend.megatron.lr_wsd_decay_iters: 0
+          backend.megatron.ckpt_step: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+          job.start_condition:
+            class_name: AndCondition
+            conditions:
+              - class_name: FileExistsCondition
+                path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.ckpt_step}).zfill(7)'}"
+              - class_name: NotCondition
+                condition:
+                  class_name: LogPatternCondition
+                  log_path: "\\${job.log_path_current}"
+                  pattern: ".*validation loss.*on test set.*"
+          job.cancel_condition: null
+        configs:
+          - stage: branch6BT
+            backend.megatron.aux.tokens: 6_000_000_000
+          - stage: branch12BT
+            backend.megatron.aux.tokens: 12_000_000_000
+          - stage: branch20BT
+            backend.megatron.aux.tokens: 20_000_000_000
+          - stage: branch30BT
+            backend.megatron.aux.tokens: 30_000_000_000
+          - stage: branch50BT
+            backend.megatron.aux.tokens: 50_000_000_000
+          - stage: branch80BT
+            backend.megatron.aux.tokens: 80_000_000_000
+          - stage: branch120BT
+            backend.megatron.aux.tokens: 120_000_000_000
+
+      # END PHASES: evaluate the stable's un-decayed checkpoint at 100% of budget N.
+      - type: list
+        defaults:
+          backend.megatron.load: "\\${sibling.stable.backend.megatron.load}"
+          backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+          backend.megatron.lr_wsd_decay_iters: 0
+          backend.megatron.ckpt_step: "\\${backend.megatron.train_iters}"
+          job.start_condition:
+            class_name: AndCondition
+            conditions:
+              - class_name: FileExistsCondition
+                path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.ckpt_step}).zfill(7)'}"
+              - class_name: NotCondition
+                condition:
+                  class_name: LogPatternCondition
+                  log_path: "\\${job.log_path_current}"
+                  pattern: ".*validation loss.*on test set.*"
+          job.cancel_condition: null
+        configs:
+          - stage: end6BT
+            backend.megatron.aux.tokens: 6_000_000_000
+          - stage: end12BT
+            backend.megatron.aux.tokens: 12_000_000_000
+          - stage: end20BT
+            backend.megatron.aux.tokens: 20_000_000_000
+          - stage: end30BT
+            backend.megatron.aux.tokens: 30_000_000_000
+          - stage: end50BT
+            backend.megatron.aux.tokens: 50_000_000_000
+          - stage: end80BT
+            backend.megatron.aux.tokens: 80_000_000_000
+          - stage: end120BT
+            backend.megatron.aux.tokens: 120_000_000_000
+
+# Filter: tier routing + warmup guard + end-dedup.
+# end120BT is skipped: that checkpoint is the stable's final checkpoint, already
+# evaluated by the `stable` stage.
+filter: "\\${oc.eval:'(((\"\\${stage}\" == \"stable\" and (\"\\${backend.megatron.aux.priority_tier}\" == \"all\" or \"\\${backend.megatron.aux.priority_tier}\" == \"\\${backend.megatron.aux.stable_launch_tier}\")) or (\"\\${stage}\" != \"stable\" and (not (\"\\${stage}\".startswith(\"end\") and \\${backend.megatron.aux.tokens} == \\${backend.megatron.aux.max_tokens})) and ((\"\\${backend.megatron.aux.priority_tier}\" == \"all\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set} | \\${backend.megatron.aux.cross_tokens_set} | \\${backend.megatron.aux.diagonal_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"center\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"cross\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.cross_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"diagonal\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.diagonal_tokens_set})))) and (\\${backend.megatron.lr_warmup_iters} / \\${backend.megatron.train_iters} < 0.3))'}"
+
+
+### Job counts (per backend.megatron.aux.priority_tier)
+# Group 1  (hyperparameter combo):      1
+# Group 1b (ablation combos):           11
+# Group 2  (stages): 1 stable + 7 decay + 7 branch + 7 end = 22
+# Pre-filter product:                   1 x 11 x 22 = 242 sweep points
+#
+# end120BT pruned by end-dedup -> 21 surviving stages per combo.
+#   priority_tier   total
+#   -------------   -----
+#   all / center    231   (11 combos x 21 stages)
+#
+# Stage order per combo (index = combo * 22 + stage_offset; end120BT slot pruned):
+#   stable, decay6BT..decay120BT, branch6BT..branch120BT, end6BT..end80BT
+# (end120BT defined but filtered out).
+#
+# Combo index map matches the training z-loss sweep (0..10):
+#     0  aux_loss / 4e-3 / topk4
+#     1  aux_loss / 4e-3 / topk3
+#     ...
+#    10  aux_loss / 1e-3 / topk3

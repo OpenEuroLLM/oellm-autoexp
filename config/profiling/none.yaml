@@ -1,0 +1,24 @@
+# @package profiling
+provider: none
+mode: timeline
+ranks: [0]
+output_dir: ${job.base_output_dir}/profiling
+capture:
+  kernel: true
+  runtime: true
+  communication: true
+  memory: true
+  markers: false
+analysis:
+  enabled: false
+  auto_run: false
+  execution: dependent_slurm
+  steady_start_iteration: 5
+  steady_end_iteration: null
+  canvas: false
+  partition: null
+  account: null
+  cpus: 8
+  memory: 32G
+  time: "00:20:00"
+provider_options: {}

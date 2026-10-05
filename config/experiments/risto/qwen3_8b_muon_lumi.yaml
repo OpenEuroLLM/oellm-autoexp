@@ -1,0 +1,124 @@
+# @package _global_
+#
+# Qwen3-8B architecture trained for 40B tokens on LUMI, comparing Muon
+# against AdamW with otherwise identical training settings.
+#
+# The model preset is named qwen3_dense_9b because the 256k OELLM vocabulary
+# makes the total parameter count larger than the original Qwen3-8B model.
+#
+# Submit both variants:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/risto/qwen3_8b_muon_lumi \
+#     --submit-and-exit
+#
+# Use --array-subset 0 for Muon or --array-subset 1 for AdamW.
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/baby/models: qwen3_dense_9b
+  - /backend/megatron/multilingual_scaling/data: datamix4_lumi
+  - _self_
+
+index: 0
+stage: ""
+
+container:
+  env:
+    WANDB_TAGS: "lumi,qwen3_8b,dense,optimizer_comparison,40BT"
+
+job:
+  name: "qwen3_8B_${stage}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}_gbs${backend.megatron.global_batch_size}_lr${backend.megatron.lr}_40BT"
+  base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    # LUMI/ROCm compatibility.
+    masked_softmax_fusion: False
+    gradient_accumulation_fusion: False
+    bias_dropout_fusion: False
+    bias_swiglu_fusion: False
+    apply_rope_fusion: False
+    tp_comm_overlap: False
+    log_progress: False
+    num_workers: 6
+    num_dataset_builder_threads: 6
+    trust_remote_code: True
+    tensor_model_parallel_size: 2
+
+    # 40BT at gbsz=1024 and seq_length=4096 -> 9537 iterations.
+    train_iters: "${oc.eval:'(40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})'}"
+    lr_wsd_decay_iters: "${oc.eval:'int(((40_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})) * 0.2)'}"
+
+    micro_batch_size: 1
+    global_batch_size: 1024
+
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    data_cache_path: "/scratch/project_462001516/users/${oc.env:USER}/cache/MEGATRON_262k/${job.name}"
+
+    save: "${job.base_output_dir}/checkpoints"
+    load: "${job.base_output_dir}/checkpoints"
+
+    wandb_exp_name: "${job.name}"
+    wandb_project: "qwen3_8B_muon_vs_adamw_lumi"
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    overlap_param_gather_with_optimizer_step: False
+    use_distributed_optimizer: True
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "0"
+    TRITON_HOME: /tmp/triton_cache
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # Hidden matrices use spectral Muon with AdamW-RMS matching. Adam
+        # handles embeddings, output weights, biases, and normalization.
+        - stage: muon
+          backend.megatron.optimizer: muon
+          backend.megatron.muon_momentum: 0.95
+          backend.megatron.muon_nesterov: True
+          backend.megatron.muon_scale_mode: spectral
+          backend.megatron.muon_fp32_matmul_prec: medium
+          backend.megatron.muon_num_ns_steps: 5
+          backend.megatron.muon_tp_mode: blockwise
+          backend.megatron.muon_split_qkv: True
+          backend.megatron.muon_extra_scale_factor: 0.2
+          backend.megatron.muon_scalar_optimizer: adam
+
+        # Megatron's optimizer=adam with decoupled weight decay is AdamW.
+        - stage: adamw
+          backend.megatron.optimizer: adam
+
+slurm:
+  sbatch_extra_directives:
+    - "--exclude=nid005019"
+  env:
+    PYTHONPATH: "/scratch/project_462001516/users/${oc.env:USER}/python-external/muon:."
+    SINGULARITYENV_PYTHONPATH: "/scratch/project_462001516/users/${oc.env:USER}/python-external/muon:."
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    MASTER_PORT: "9999"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: 2
+    account: "project_462001516"
+    partition: dev-g
+    time: "00:10:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "

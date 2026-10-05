@@ -1,0 +1,120 @@
+# @package _global_
+# Five identical Finnish-only corpus screens from Qwen3.5-2B-Base.
+#
+# Every point starts from the same base checkpoint with a fresh optimizer and
+# differs only in data_path.  Each point trains for 2B tokens at the LR selected
+# by the HPLT 4.0 calibration (1e-4).
+defaults:
+  - ../base
+  - /backend: megatron
+  - /container: mi325x
+  - /slurm: mi325x
+  - /sweep: none
+  - /backend/megatron: [qwen3_5_2B]
+  - _self_
+
+slurm:
+  sbatch:
+    partition: amd-tw-verification
+    nodes: 1
+    time: 0-12:00:00
+    open_mode: append
+
+  env:
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    WANDB_MODE: "online"
+    WANDB_API_KEY: "local"
+    FASTTRACKML_URL: "http://tus1-vm-amd-k8s-001:5000"
+    PYTHONPATH: "/shared_silo/scratch/shared/tw-dashboard/wandb_shim:${oc.env:PWD}"
+    OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
+    APPTAINER_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+    SINGULARITY_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+
+container:
+  image: /shared_silo/scratch/containers/primus_v26.1.sif
+
+backend:
+  megatron:
+    log_throughput: true
+    log_interval: 1
+    log_progress: true
+
+    # This inherited default is overwritten for four sweep members below.
+    data_path:
+      - 1.0
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt4.0_fi_cleaned_merged/hplt4.0_fi_cleaned_text_document
+    data_cache_path: /shared_silo/scratch/rluukkon/data/.cache
+    split: "989,10,1"
+    num_workers: 7
+
+    # Match the completed LR calibration run. Do not change GBS/sequence length
+    # between corpora: equal token budgets and optimization noise are essential.
+    global_batch_size: 240
+    micro_batch_size: 6
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    use_distributed_optimizer: true
+
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1e-8
+    weight_decay: 0.01
+    clip_grad: 1.0
+
+    # 2B tokens = 1,017 iterations at GBS=240 and seq_length=8192.
+    train_iters: ${oc.eval:'-(-2_000_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    lr: 1e-4
+    min_lr: 5e-6
+    lr_warmup_iters: ${oc.eval:'max(12, int(${.train_iters} * 0.05))'}
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: ${oc.eval:'int(${.train_iters} * 0.20)'}
+    lr_decay_iters: ${.train_iters}
+
+    # Save at ~1B tokens, at the start of WSD decay, and at completion.
+    save_interval: ${oc.eval:'max(1, int(${.train_iters} / 2))'}
+    save_extra_steps:
+      - ${oc.eval:'int(${backend.megatron.train_iters} * 0.80)'}
+      - ${backend.megatron.train_iters}
+    ckpt_format: torch_dist
+    save: ${job.base_output_dir}/checkpoints
+
+    load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-2B-Base
+    finetune: true
+    no_load_optim: true
+    no_load_rng: true
+
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    wandb_save_dir: ${job.base_output_dir}/wandb
+    wandb_project: "moe-exploration"
+    wandb_exp_name: "qwen3_5_2B_fi_single_${stage}_${oc.env:SLURM_JOB_ID,local}"
+
+job:
+  name: qwen3_5_2B_fi_single_${stage}_${slurm.env.MACHINE_NAME}
+
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        - stage: hplt3
+          backend.megatron.data_path:
+            - 1.0
+            - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt3.0_fi_filtered7/train
+
+        - stage: hplt4
+
+        - stage: mt_nemotron
+          backend.megatron.data_path:
+            - 1.0
+            - /shared_silo/scratch/ttoivone/tokenized/fin/MT-Nemotron-CC-fin_Latn-max-500Btok_text_document
+
+        - stage: finepdf
+          backend.megatron.data_path:
+            - 1.0
+            - /shared_silo/scratch/ttoivone/tokenized/fin/FinePDFs-Edu-fin_Latn-max-500Btok_text_document
+
+        - stage: wikipedia
+          backend.megatron.data_path:
+            - 1.0
+            - /shared_silo/scratch/ttoivone/tokenized/fin/wikipedia-20231101.fi-max-500Btok_text_document

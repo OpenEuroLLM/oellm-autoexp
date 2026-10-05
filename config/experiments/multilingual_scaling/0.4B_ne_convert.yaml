@@ -1,0 +1,163 @@
+# @package _global_
+#
+# Tiered Megatron -> HuggingFace CONVERSION sweep for the 0.4B-ne dense grid.
+#
+# Batch-converts the FINAL checkpoint of every stable and every decay in the
+# 0.4B grid (1 stable + 9 decays per (lr, gbsz) combo), prioritizable by tier.
+# This is the sweep-driven sibling of experiments/swagatam/convert_0.9B_ne_leonardo.yaml
+# (which converts a single checkpoint via manual aux.run_name / aux.iter) and is
+# meant to be launched exactly like the train/val configs:
+#
+#   # whole grid in one shot (101 conversions: 20 stable + 81 decay)
+#   python scripts/run_autoexp.py \
+#       --config-name experiments/multilingual_scaling/0.4B_ne_convert \
+#       aux.priority_tier=all
+#
+#   # or by tier (any order; conversion has no stable->decay dependency):
+#   python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/0.4B_ne_convert aux.priority_tier=center
+#   python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/0.4B_ne_convert aux.priority_tier=cross
+#   python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/0.4B_ne_convert aux.priority_tier=diagonal
+#
+#   # convert only the decays (or only the stables) within a tier:
+#   python scripts/run_autoexp.py --config-name experiments/multilingual_scaling/0.4B_ne_convert \
+#       aux.priority_tier=center aux.convert_kind=decay
+#
+# Prerequisites are the same one-time steps as convert_0.9B_ne_leonardo.yaml
+# (Megatron-Bridge cloned + patched, 256k tokenizer.model copied into resources).
+#
+# All sweep/tier variables live under the TOP-LEVEL aux.* dict (RootConfig has
+# `aux: dict[str, Any]`); the megatron_bridge backend has no `backend.megatron`
+# section, so the tier knob is `aux.priority_tier=...`, NOT backend.megatron.aux.
+
+defaults:
+  - ../base
+  - /backend: megatron_bridge
+  - /container: leonardo
+  - /slurm: leonardo_bridge
+  - /sweep/multilingual_scaling@sweep: qwen3_dense_0.4B_ne_convert
+  - override /job: default
+  - _self_
+
+stage: "" # Will be overridden by sweep
+
+# ---------------------------------------------------------------------------
+# aux: conversion path knobs + tier-scheduling surface. The sweep overrides
+# run_name / iter / lr / gbsz / tokens / job_horizon_suffix / the *_tokens_set
+# literals / stable_launch_tier per point; the values here are resolvable
+# defaults (so a non-sweep resolve still works) plus the CLI-overridable tier
+# knobs (priority_tier, convert_kind).
+# ---------------------------------------------------------------------------
+aux:
+  # Model size tag -> drives model_base, hf_model and tokenizer below.
+  size: "0.4B"
+  model_base: "${aux.size}_ne"
+
+  # Sequence length of the training runs (used to map a token budget to its
+  # final iteration). 4096 for the whole multilingual-scaling grid.
+  seq_length: 4096
+
+  # --- per-point, overridden by the sweep ---
+  run_name: "" # e.g. qwen3_dense_0.4B_ne_lr0.001_gbsz128_decay120BT
+  iter: ""     # e.g. iter_0228882 (final checkpoint of the run)
+  lr: 1.e-3
+  gbsz: 128
+  tokens: 120_000_000_000
+  job_horizon_suffix: ""
+
+  # Training-config snapshot to read the model arch from. EMPTY -> auto-resolve
+  # via oc.train_config (prefers current.yaml, else newest config-*.yaml).
+  train_config: ""
+
+  # --- tier scheduling (CLI-overridable) ---
+  # priority_tier: all | center | cross | diagonal
+  priority_tier: all
+  # convert_kind: all | stable | decay  (restrict to one half of a tier)
+  convert_kind: all
+  # Per-combo tier metadata; overridden per Group-1 entry in the sweep. Defaults
+  # let a solo (non-sweep) resolve pass for priority_tier in {all, center}.
+  center_tokens_set:   "{6_000_000_000, 12_000_000_000, 20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
+  cross_tokens_set:    "set()"
+  diagonal_tokens_set: "set()"
+  stable_launch_tier:  center
+
+  # Derived layout: experiments/<model_base>/training/<run_name> is the
+  # (read-only) source; converted HF checkpoints + logs go to a sibling
+  # hf_converted/<run_name> tree in the same experiment dir.
+  exp_root: "/leonardo_work/OELLM_prod2026/experiments/multilingual_scaling/${aux.model_base}"
+  training_dir: "${aux.exp_root}/training/${aux.run_name}"
+  converted_dir: "${aux.exp_root}/hf_converted/${aux.run_name}"
+
+job:
+  name: "${aux.run_name}"
+  # Logs / monitor state / rendered config land in the run's hf_converted dir.
+  base_output_dir: "${aux.converted_dir}"
+
+container:
+  # The default container/leonardo.yaml uses ${OELLM_CONTAINERS_DIR,.} which
+  # resolves to "./<sif>" (repo root) when the env var is unset — and the SIF
+  # does NOT live there. Pin an absolute default like the convert config does.
+  image: "${oc.env:OELLM_CONTAINERS_DIR,/leonardo_work/OELLM_prod2026/container_images}/OELLM_autoexp_MegatronTrainingNoRoot_base_2510_x86_64_202603060943.sif"
+
+backend:
+  # Generate the HF reference config on the fly from the training config
+  # (derive_hf_arch=qwen3 reads the arch out of the run's training snapshot).
+  derive_hf_arch: "qwen3"
+  # Reference resources key (tokenizer + dummy-model config); tracks aux.size.
+  hf_model: "openeurollm/Qwen3-${aux.size}-ne"
+  tokenizer: "openeurollm/Qwen3-${aux.size}-ne"
+
+  # Source Megatron checkpoint + its training config, derived from the knobs.
+  # NOTE: oc.train_config_opt (tolerant) instead of oc.train_config: the planner
+  # fully resolves every pre-filter sweep point (and this base config, whose
+  # run_name is still empty) BEFORE the sweep.filter prunes it, so untrained /
+  # filtered combos would otherwise crash on a missing training dir. The
+  # tolerant resolver returns "" for those (harmless, they are pruned); real
+  # in-grid runs still resolve to their own config-*.yaml snapshot.
+  megatron_path: "${aux.training_dir}/checkpoints/${aux.iter}"
+  megatron_config_path: "${oc.train_config_opt:${aux.training_dir},${aux.train_config}}"
+
+  # HF output (must NOT already exist; run_export refuses to clobber).
+  hf_path: "${aux.converted_dir}/${aux.iter}"
+
+  # Repo + Bridge live under /leonardo_work, which the container binds by
+  # default, so we use real paths (no /workspace remap needed).
+  bridge_root: "/leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp/submodules/Megatron-Bridge"
+  resources: "/leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp/oellm_autoexp/postprocess/resources/megatron_bridge"
+
+  env:
+    # Repo root (for `oellm_autoexp` import) + Bridge src. Intentionally omit
+    # submodules/Megatron-LM so megatron.core resolves to the container's copy,
+    # which matches the symbols Bridge expects.
+    PYTHONPATH: "/leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp:/leonardo_work/OELLM_prod2026/users/shaldar0/oellm-autoexp/submodules/Megatron-Bridge/src"
+    # ~/.local user-site ships an antlr4 that breaks omegaconf inside this
+    # container; skip it.
+    PYTHONNOUSERSITE: "1"
+    # Not actually used by conversion (local tokenizer/config), but the base
+    # backend config references it, so give it a resolvable default.
+    HF_HOME: "${oc.env:HF_HOME,${oc.env:HOME}/.cache/huggingface}"
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    # The base leonardo slurm config exports SLURM_CPUS_PER_TASK=32. With our
+    # sbatch cpus_per_task=8 (which sets SLURM_TRES_PER_TASK=cpu:8), srun aborts
+    # with "cpus_per_task set by two different environment variables". Keep this
+    # in sync with sbatch.cpus_per_task below.
+    SLURM_CPUS_PER_TASK: "8"
+  srun:
+    # Match the sbatch slice (8 cores); otherwise srun renders --cpus-per-task=32
+    # which exceeds the allocation and the step never starts.
+    cpus_per_task: 8
+  sbatch:
+    nodes: 1
+    # Conversion is CPU-based (gloo + use_cpu_init), so request only a
+    # quarter-node slice: 1 GPU + 8 cores (a Leonardo boost node has 4 GPUs /
+    # 32 cores). gres and gpus_per_node must agree to avoid a SLURM mismatch.
+    gpus_per_node: 1
+    gres: "gpu:1"
+    cpus_per_task: 8
+    time: "00:30:00"
+    partition: ${oc.env:SLURM_PARTITION_DEBUG,${oc.env:SLURM_PARTITION,boost_usr_prod}}
+    account: AIFAC_5C0_092
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"

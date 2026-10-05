@@ -16,3 +16,5 @@ ml ScaLAPACK/2.2.0-fb
 
 echo "Launching {job_name} on JUWELS"
 srun {srun_opts}bash -c '{launcher_cmd} {command}'
+
+{after_run_cmd}

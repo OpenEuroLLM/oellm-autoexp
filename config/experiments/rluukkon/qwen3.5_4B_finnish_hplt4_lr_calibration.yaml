@@ -1,0 +1,112 @@
+# @package _global_
+# Finnish-only continued-pretraining LR calibration for Qwen3.5-4B-Base.
+#
+# Purpose: choose one stable LR for the later single-corpus Finnish screens.
+# Every sweep member starts from the same base checkpoint with a fresh optimizer,
+# trains on the same HPLT 4.0 Finnish corpus for 0.5B tokens, and differs only
+# in main-model LR.  This is deliberately a dense 4B proxy: router settings
+# are not applicable here and should be held frozen in any later MoE proxy.
+defaults:
+  - ../base
+  - /backend: megatron
+  - /container: mi325x
+  - /slurm: mi325x
+  - /sweep: none
+  - /backend/megatron: [qwen3_5_4B]
+  - _self_
+
+slurm:
+  sbatch:
+    partition: amd-tw-verification
+    nodes: 1
+    time: 0-12:00:00
+    open_mode: append
+
+  env:
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    WANDB_MODE: "online"
+    WANDB_API_KEY: "local"
+    FASTTRACKML_URL: "http://tus1-vm-amd-k8s-001:5000"
+    PYTHONPATH: "/shared_silo/scratch/shared/tw-dashboard/wandb_shim:${oc.env:PWD}"
+    OUTPUT_DIR: "${oc.env:OUTPUT_DIR,./output}"
+    APPTAINER_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+    SINGULARITY_BIND: '"/usr/local/lib/libbnxt_re-rdmav34.so:/usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so,${oc.env:SCRATCH},${oc.env:PWD}"'
+
+container:
+  image: /shared_silo/scratch/containers/primus_v26.1.sif
+
+backend:
+  megatron:
+    log_throughput: true
+    log_interval: 1
+    log_progress: true
+
+    # Use the actual merged HPLT 4.0 index, counted at 67.0B Qwen3.5 tokens.
+    # A single entry makes this a strictly Finnish-only calibration.
+    data_path:
+      - 1.0
+      - /shared_silo/scratch/datasets/tokenized/qwen3.5/megatron/hplt4.0_fi_cleaned_merged/hplt4.0_fi_cleaned_text_document
+    data_cache_path: /shared_silo/scratch/rluukkon/data/.cache
+    split: "989,10,1"
+    num_workers: 7
+
+    # Conservative one-node defaults. Increase micro_batch_size only after a
+    # memory/throughput check; do not change GBS between sweep members.
+    global_batch_size: 256
+    micro_batch_size: 1
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    use_distributed_optimizer: true
+
+    # Fresh-optimizer CPT settings. Do not inherit the 3e-4 from-scratch
+    # pretraining LR from the base 4B config.
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1e-8
+    weight_decay: 0.01
+    clip_grad: 1.0
+
+    # 0.5B tokens: with GBS=256 and seq=8192 this is 239 iterations.
+    # 12 warmup iterations are ~5%; WSD decays only in the final 20%.
+    train_iters: ${oc.eval:'-(-500_000_000 // (${.global_batch_size} * ${.seq_length}))'}
+    min_lr: 5e-6
+    lr_warmup_iters: ${oc.eval:'max(12, int(${.train_iters} * 0.05))'}
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_wsd_decay_iters: ${oc.eval:'int(${.train_iters} * 0.20)'}
+    lr_decay_iters: ${.train_iters}
+
+    # Checkpoints at ~0.25B, WSD decay start, and final.
+    save_interval: ${oc.eval:'max(1, int(${.train_iters} / 2))'}
+    save_extra_steps:
+      # List elements have their own interpolation context, so this must be
+      # absolute rather than `${.train_iters}`.
+      - ${oc.eval:'int(${backend.megatron.train_iters} * 0.80)'}
+      - ${backend.megatron.train_iters}
+    ckpt_format: torch_dist
+    save: ${job.base_output_dir}/checkpoints
+
+    load: /shared_silo/scratch/rluukkon/oellm/Megatron-Bridge/megatron_ckpt/Qwen3.5-4B-Base_fix3
+    finetune: true
+    no_load_optim: true
+    no_load_rng: true
+
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    wandb_save_dir: ${job.base_output_dir}/wandb
+    wandb_project: "moe-exploration"
+    wandb_exp_name: "qwen3_5_4B_fi_hplt4_lrcal_${stage}_${oc.env:SLURM_JOB_ID,local}"
+
+job:
+  name: qwen3_5_4B_fi_hplt4_lrcal_${stage}_${slurm.env.MACHINE_NAME}
+
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        - stage: lr3e-5
+          backend.megatron.lr: 3e-5
+        - stage: lr5e-5
+          backend.megatron.lr: 5e-5
+        - stage: lr1e-4
+          backend.megatron.lr: 1e-4

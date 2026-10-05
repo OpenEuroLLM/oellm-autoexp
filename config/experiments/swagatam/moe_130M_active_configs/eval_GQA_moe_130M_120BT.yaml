@@ -1,0 +1,207 @@
+# @package _global_
+
+# 131M active MoE model (downscaled version of Qwen3-30B-A3B) training with pull-based multi-stage cooldown on Leonardo
+# active params fixed by fixing topk to 2
+# sparsity is varied by varying num_experts and hence total params
+
+defaults:
+  - /backend: megatron_torchrun
+  - /container: leonardo
+  - /slurm: leonardo
+  - /job: auto_restart
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: "" # overridden by sweep
+
+# the sweep will vary num_experts, lr, and gbsz and may be seeds?
+# the name contains only the sweep variables
+job:
+  name: "moe_GQA_130M_eval_nexp_${backend.megatron.num_experts}_lr${backend.megatron.lr}_gbsz${backend.megatron.global_batch_size}_seed${backend.megatron.seed}_${stage}"
+  base_output_dir: "results/evals/moe_GQA_bsz${backend.megatron.global_batch_size}_lr_sparsity_grid_A130M_120BT/${job.name}"
+
+backend:
+  megatron:
+    wandb_exp_name: "${job.name}"
+    wandb_project: moe-ablations
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    # DATA: separate train and validation paths for evaluation
+    train_data_path: [/leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-LUMI-sample-318BT/high-all]
+    valid_data_path: [/leonardo_work/OELLM_prod2026/datasets/Nemotron-cc-2024-HQ-LUMI-sample-valid/high-all]
+    # data_cache_path: /leonardo_scratch/large/userexternal/shaldar0/MEGATRON_CACHE_DIR # megatron cache dir
+    seq_length: 4096
+    max_position_embeddings: 4096 # https://github.com/yanring/Megatron-MoE-ModelZoo/blob/main/model_configs/benchmarking/Qwen3-30B-A3B.yaml#L48 has 40960
+    
+    # still using old legacy tokenizer (gpt-neox-20b)
+    vocab_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/vocab.json
+    merge_file: /leonardo_work/OELLM_prod2026/models/EleutherAI/gpt-neox-20b/merges.txt
+    num_workers: 8
+    legacy_tokenizer: True
+
+    # MODEL: 131M active MoE model (downscaled version of Qwen3-30B-A3B)
+    num_layers: 18
+    hidden_size: 768
+    num_attention_heads: 12
+    num_query_groups: 4
+    group_query_attention: True
+    init_method_std: 0.02
+    position_embedding_type: "rope"
+    rotary_base: 10000
+    rotary_percent: 1.0
+    normalization: RMSNorm
+    norm_epsilon: 1.e-6 # rmsnorm epsilon
+    qk_layernorm: True  # enable qk-norm
+    bf16: True
+    swiglu: True
+    untie_embeddings_and_output_weights: False # tied embeddings
+    use_flash_attn: True
+    attention_softmax_in_fp32: False
+
+    # MoE PARAMETERS
+    num_experts: 8           # overridden by sweep
+    moe_ffn_hidden_size: 768 # note that it is same as model hidden size
+    moe_router_load_balancing_type: "aux_loss"
+    moe_router_topk: 2
+    moe_grouped_gemm: True
+    add_bias_linear: False
+    moe_aux_loss_coeff: 1.e-3
+    moe_token_dispatcher_type: "allgather"
+    moe_router_dtype: "fp32"
+    moe_z_loss_coeff: null # disabled by default, do we need this?
+    
+    # regularization
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+
+    # TRAINING, PARALLELISM
+    recompute_activations: False
+    use_torch_fsdp2: False # it's either this or the next 4 args
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    expert_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: True
+
+    distributed_backend: nccl
+    distributed_timeout_minutes: 10
+
+    # OPTIMIZER kept for checkpoint compatibility; not used during eval
+    use_distributed_optimizer: True
+    optimizer: adam
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.e-8
+    clip_grad: 1.0
+    weight_decay: 0.1
+
+    # SCHEDULER — zeroed out; not used during eval.
+    min_lr: 1.e-05
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_warmup_iters: 0
+    lr_wsd_decay_iters: 0
+    override_opt_param_scheduler: True
+
+    # EVAL-ONLY SETTINGS
+    skip_train: True
+    train_iters: 100
+    exit_on_missing_checkpoint: True
+    no_save_optim: True
+    no_save_rng: True
+    no_load_optim: True
+    no_load_rng: True
+
+    # PROFILE
+    profile: False
+    use_pytorch_profiler: False
+    profile_ranks: [0]
+    profile_step_start: 5
+    profile_step_end: 12
+
+    # EVALS
+    # Always evaluate exactly 2048 * 100 = 204800 samples (~838M tokens with seq=4096),
+    # independent of global batch size.
+    eval_interval: 1
+    eval_iters: "${oc.eval:'int(204800 // ${backend.megatron.global_batch_size})'}"
+
+    # LOGGING
+    log_interval: 10
+    log_progress: True
+    log_throughput: True
+    tensorboard_queue_size: 5
+    log_timers_to_tensorboard: True
+
+    # CHECKPOINT FORMAT
+    ckpt_format: "torch_dist"
+    save_interval: 1
+    save: ${job.base_output_dir}/checkpoints
+
+    # Base training configuration (for stable phase)
+    micro_batch_size: 16
+    global_batch_size: 64  # Will be overridden by sweep
+    lr: 4.e-4              # Will be overridden by sweep
+    seed: 1234
+
+    # Auxiliary computation variables
+    # Note: Computed fields (train_iters, lr_wsd_decay_iters, start_iter, start_iter_round)
+    # are defined in the sweep defaults alongside the tokens they depend on,
+    # so they get resolved together with stage-specific values
+    aux:
+      tokens: 300_000_000_000  # Default: 300B tokens
+      max_decay_tokens: 120_000_000_000  # largest decay budget; stable phase runs until end of this decay phase
+      decay_fraction: 0.0  # Default: no decay (overridden to cooldown_decay_fraction in decay stages)
+      cooldown_decay_fraction: 0.2  # fraction of iters spent in LR decay during cooldown
+      start_iter: 0  # only used in decay
+      start_iter_round: 0 # only used in decay
+
+# time is 24 hours by default
+slurm:
+  sbatch:
+    nodes: 4
+    time: "02:00:00" # use 2 hours per eval
+
+sweep:
+  # Outer level: product (combines hyperparameters × MoE experts x decay stages)
+  type: product
+
+  groups:
+    - type: list
+      configs:
+        - job.name: "moe_GQA_130M_eval_nexp_\\${backend.megatron.num_experts}_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_seed\\${backend.megatron.seed}_\\${stage}"
+          job.base_output_dir: "results/evals/moe_GQA_bsz\\${backend.megatron.global_batch_size}_lr_sparsity_grid_A130M/\\${job.name}"
+          backend.megatron.wandb_exp_name: "\\${job.name}"
+          # Load from the corresponding training run decay checkpoint.
+          backend.megatron.load: "results/moe_GQA_bsz\\${backend.megatron.global_batch_size}_lr_sparsity_grid_A130M_120BT/moe_GQA_nexp_\\${backend.megatron.num_experts}_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_seed\\${backend.megatron.seed}_\\${stage}/checkpoints"
+
+    
+    # GROUP 1: Hyperparameter configurations (5 lr × 3 batch sizes)
+    - type: list
+      configs:
+        - type: product
+          params:
+            backend.megatron.lr: [1.e-3]
+            backend.megatron.global_batch_size: [256]
+
+    # GROUP 2: Sparsity / num_experts
+    # Each entry can carry per-expert overrides (e.g. higher expert parallelism) 4 values (5 lr x 3 gbsz x 4 num_experts = 60)
+    - type: list
+      configs:
+        # - backend.megatron.num_experts: 8
+        # - backend.megatron.num_experts: 16
+        # - backend.megatron.num_experts: 32
+        #   backend.megatron.expert_model_parallel_size: 4
+        #   backend.megatron.micro_batch_size: 8
+        - backend.megatron.num_experts: 64
+          backend.megatron.expert_model_parallel_size: 4
+          backend.megatron.micro_batch_size: 8
+
+    # GROUP 3: Decay stages: total 60 x 2 = 120 runs
+    - type: list
+      configs:
+        # - stage: decay80BT
+        - stage: decay120BT

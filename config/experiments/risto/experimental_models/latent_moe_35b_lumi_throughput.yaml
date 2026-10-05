@@ -1,0 +1,230 @@
+# @package _global_
+#
+# LUMI throughput sweep for the proposed ~35B LatentMoE architecture.
+#
+# The four architecture points keep routed expert parameters approximately
+# constant. The two dispatcher points expose the hardware-dependent trade-off
+# between compact latent activations and routing metadata.
+#
+#   variant       d     latent  experts  top-k  routed+projection  A2A payload
+#   full_k2       3072  none         64      2              1.00          1.00
+#   latent_k2     3072  1024        192      2              0.56          0.33
+#   latent_k3     3072  1024        192      3              0.72          0.50
+#   latent_k4     3072  1024        192      4              0.89          0.67
+#
+# Ratios exclude unchanged attention and shared-expert work. This is a short
+# systems experiment with mock data, not a convergence run.
+#
+# Dry run:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/risto/experimental_models/latent_moe_35b_lumi_throughput \
+#     --dry-run
+#
+# Submit all eight architecture x dispatcher jobs:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/risto/experimental_models/latent_moe_35b_lumi_throughput \
+#     --submit-and-exit
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+index: 0
+stage: latent_k3
+
+job:
+  name: "latentmoe_35b_${stage}_${backend.megatron.moe_token_dispatcher_type}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}_EP${backend.megatron.expert_model_parallel_size}"
+  base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+container:
+  env:
+    WANDB_TAGS: "lumi,latent_moe,35B,throughput"
+
+backend:
+  # The pinned Megatron-LM accepts --moe-latent-size, but AutoExp's generated
+  # schema/CLI metadata predates it. Append the flag here so this experiment
+  # remains self-contained. The baseline sweep point sets latent_cli to empty.
+  aux:
+    latent_cli: "--moe-latent-size 1024"
+  full_cmd: "${.dist_cmd} ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n   %',' %',${oc.argsmegatron:${backend.megatron}}}} ${.aux.latent_cli}"
+  data_integrity_check: false
+
+  megatron:
+    # Architecture: ~34.9B with the 256K tokenizer and untied embeddings.
+    num_layers: 35
+    hidden_size: 3072
+    ffn_hidden_size: 8192
+    num_attention_heads: 24
+    num_query_groups: 8
+    kv_channels: 128
+    group_query_attention: true
+
+    num_experts: 192
+    moe_ffn_hidden_size: 1536
+    moe_shared_expert_intermediate_size: 1536
+    moe_layer_freq: 1
+    moe_router_topk: 3
+    moe_router_load_balancing_type: global_aux_loss
+    moe_aux_loss_coeff: 1.e-4
+    moe_router_dtype: fp32
+    moe_router_score_function: softmax
+    moe_router_pre_softmax: false
+    moe_router_num_groups: null
+    moe_router_group_topk: null
+    moe_grouped_gemm: true
+    moe_use_legacy_grouped_gemm: false
+    moe_token_dispatcher_type: alltoall
+    moe_permute_fusion: true
+    moe_router_fusion: false
+    # Required by the current LatentMoE implementation.
+    moe_shared_expert_overlap: false
+    overlap_moe_expert_parallel_comm: false
+
+    # Transformer / precision.
+    transformer_impl: transformer_engine
+    bf16: true
+    swiglu: true
+    add_bias_linear: false
+    normalization: RMSNorm
+    norm_epsilon: 1.e-6
+    attention_backend: flash
+    use_flash_attn: true
+    attention_softmax_in_fp32: true
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    qk_layernorm: true
+
+    # Train at 8K while retaining a 128K architectural position limit.
+    seq_length: 8192
+    encoder_seq_length: null
+    max_position_embeddings: 131072
+    position_embedding_type: rope
+    use_rotary_position_embeddings: true
+    rotary_percent: 1.0
+    rotary_base: 10000000
+
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    make_vocab_size_divisible_by: 128
+    untie_embeddings_and_output_weights: true
+    mock_data: true
+    split: null
+    data_path: null
+    data_args_path: null
+    per_split_data_args_path: null
+    data_cache_path: "/scratch/project_462001516/users/rluukkon/cache/latent_moe_35b/${job.name}"
+    num_workers: 6
+    num_dataset_builder_threads: 6
+    trust_remote_code: true
+
+    # Four nodes = 32 GCDs. EP remains inside each eight-GCD LUMI node.
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    expert_tensor_parallel_size: 1
+    expert_model_parallel_size: 8
+    sequence_parallel: false
+    use_distributed_optimizer: true
+    micro_batch_size: 1
+    global_batch_size: 64
+
+    # Full recomputation is the conservative 64-GB-GCD starting point.
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+
+    # Short steady-state timing window; no evaluation or checkpoint I/O.
+    train_iters: 60
+    lr: 1.e-4
+    min_lr: 0.0
+    lr_warmup_iters: 5
+    lr_decay_iters: 60
+    lr_decay_style: constant
+    optimizer: adam
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.e-8
+    weight_decay: 0.1
+    clip_grad: 1.0
+    eval_iters: 1
+    eval_interval: 1000000
+    save_interval: 1000000000
+    save: null
+    load: null
+    no_save_optim: true
+    no_save_rng: true
+
+    log_interval: 1
+    log_throughput: true
+    log_timers_to_tensorboard: true
+    timing_log_level: 2
+    moe_per_layer_logging: false
+    wandb_project: latent_moe_35b_lumi_throughput
+    wandb_exp_name: ${job.name}
+    wandb_entity: openeurollm-project
+    wandb_save_dir: ${job.base_output_dir}
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+    # ROCm/LUMI compatibility defaults used by existing experiments.
+    masked_softmax_fusion: false
+    gradient_accumulation_fusion: false
+    bias_dropout_fusion: false
+    bias_swiglu_fusion: false
+    apply_rope_fusion: false
+    log_progress: false
+    distributed_backend: nccl
+    distributed_timeout_minutes: 60
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - stage: full_k2
+          backend.aux.latent_cli: ""
+          backend.megatron.num_experts: 64
+          backend.megatron.moe_router_topk: 2
+
+        - stage: latent_k2
+          backend.aux.latent_cli: "--moe-latent-size 1024"
+          backend.megatron.num_experts: 192
+          backend.megatron.moe_router_topk: 2
+
+        - stage: latent_k3
+          backend.aux.latent_cli: "--moe-latent-size 1024"
+          backend.megatron.num_experts: 192
+          backend.megatron.moe_router_topk: 3
+
+        - stage: latent_k4
+          backend.aux.latent_cli: "--moe-latent-size 1024"
+          backend.megatron.num_experts: 192
+          backend.megatron.moe_router_topk: 4
+
+    - type: list
+      configs:
+        - backend.megatron.moe_token_dispatcher_type: alltoall
+        - backend.megatron.moe_token_dispatcher_type: allgather
+
+slurm:
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "0"
+    MASTER_PORT: "9999"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    TRITON_HOME: /tmp/triton_cache
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: 4
+    partition: dev-g
+    time: "00:30:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "

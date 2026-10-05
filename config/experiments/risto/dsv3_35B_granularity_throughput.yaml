@@ -1,0 +1,167 @@
+# @package _global_
+#
+# Throughput vs MoE granularity for the DeepSeek-V3-style ~35B model on LUMI.
+#
+# All variants keep:
+#   * total routed width  n_exp * moe_ffn = 256 * 704  (so ~35B total params)
+#   * active routed width topk * moe_ffn  = 8 * 704    (so ~2.9B activated)
+#   * shared expert width = 704
+#   * same TP/PP/EP, seq length, and batch size
+#
+# So the only architectural change is expert granularity (many thin experts vs
+# fewer fat ones), which is what we want to measure on this machine.
+#
+#   n_exp  moe_ffn  topk  group_topk  local experts @ EP=8
+#     256      704     8           4                     32
+#     128     1408     4           2                     16
+#      64     2816     2           1                      8
+#
+# Submit all three:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/swagatam/moe_lumi/dsv3_35B_granularity_throughput \
+#     --submit-and-exit
+#
+# Submit the 256-expert baseline only:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/swagatam/moe_lumi/dsv3_35B_granularity_throughput \
+#     --array-subset 0 --submit-and-exit
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: deepseek_v3_sparse_35B_experts_256
+  - _self_
+
+container:
+  env:
+    WANDB_TAGS: "lumi,dsv3_35B,granularity,throughput"
+
+index: 0
+stage: ""
+
+job:
+  name: "35B_dsv3_nexp${backend.megatron.num_experts}_topk${backend.megatron.moe_router_topk}_ffn${backend.megatron.moe_ffn_hidden_size}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}_EP${backend.megatron.expert_model_parallel_size}"
+  base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    ### lumi specific configs
+    masked_softmax_fusion: False
+    gradient_accumulation_fusion: False
+    bias_dropout_fusion: False
+    bias_swiglu_fusion: False
+    apply_rope_fusion: False
+    log_progress: False
+    num_workers: 6
+    num_dataset_builder_threads: 6
+    trust_remote_code: True
+    ### lumi specific configs end
+
+    # Short steady-state throughput window (skip ckpt + eval).
+    train_iters: 50
+    eval_iters: 1
+    eval_interval: 100000
+    save_interval: 1000000000
+    save: null
+    load: null
+    no_save_optim: True
+    no_save_rng: True
+    log_interval: 1
+    log_throughput: True
+    moe_per_layer_logging: False
+
+    wandb_exp_name: "${job.name}"
+    wandb_project: "moe_dsv3_35B_granularity_throughput"
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    data_args_path: null
+    per_split_data_args_path: /scratch/project_462001516/multilingual_dataset/datamix4-per-split.json
+    split: null
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    data_cache_path: /scratch/project_462001516/users/swagatam/cache/MEGATRON_262k/${job.name}
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    lr_warmup_iters: 5
+    lr_wsd_decay_iters: 1
+
+    # Fixed across variants so granularity is the only variable.
+    # 8 nodes × 8 GCD = 64 ranks; TP=2, PP=2, EP=8 → DP=2.
+    # gbsz=64, mbs=1 → 32 microbatches (enough to fill PP=2).
+    micro_batch_size: 1
+    global_batch_size: 64
+    lr: 1.e-4
+
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 2
+    expert_model_parallel_size: 8
+    sequence_parallel: True
+    use_distributed_optimizer: True
+
+    # 35B + MLA + MTP on 64GB GCDs: full layer recompute is the safe default.
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "0"
+    TRITON_HOME: /tmp/triton_cache
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # Fine-grained (DeepSeek-V3-style): 256 thin experts, topk=8
+        - stage: n256_k8
+          backend.megatron.num_experts: 256
+          backend.megatron.moe_ffn_hidden_size: 704
+          backend.megatron.moe_shared_expert_intermediate_size: 704
+          backend.megatron.moe_router_topk: 8
+          backend.megatron.moe_router_num_groups: 8
+          backend.megatron.moe_router_group_topk: 4
+
+        # Mid granularity: 128 experts, 2× wider, topk=4
+        - stage: n128_k4
+          backend.megatron.num_experts: 128
+          backend.megatron.moe_ffn_hidden_size: 1408
+          backend.megatron.moe_shared_expert_intermediate_size: 704
+          backend.megatron.moe_router_topk: 4
+          backend.megatron.moe_router_num_groups: 8
+          backend.megatron.moe_router_group_topk: 2
+
+        # Coarse: 64 fat experts, 4× wider, topk=2
+        - stage: n64_k2
+          backend.megatron.num_experts: 64
+          backend.megatron.moe_ffn_hidden_size: 2816
+          backend.megatron.moe_shared_expert_intermediate_size: 704
+          backend.megatron.moe_router_topk: 2
+          backend.megatron.moe_router_num_groups: 8
+          backend.megatron.moe_router_group_topk: 1
+
+slurm:
+  sbatch_extra_directives:
+    - "--exclude=nid005019"
+  env:
+    MASTER_PORT: "9999"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: 8
+    account: "project_462001516"
+    partition: standard-g
+    time: "00:30:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "

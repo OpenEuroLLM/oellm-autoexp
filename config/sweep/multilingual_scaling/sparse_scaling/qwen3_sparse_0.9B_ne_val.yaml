@@ -1,0 +1,360 @@
+type: product
+
+# Validation sweep for the 0.9B sparse scaling grid. Mirrors the training sweep
+# (qwen3_sparse_0.9B_ne.yaml) HP grid exactly, but Group 2 evaluates saved
+# checkpoints instead of training. Four stage families are evaluated:
+#   stable    -> the stable run's final (100% of max budget) checkpoint
+#   decay<N>  -> each decay run's final checkpoint
+#   branch<N> -> the stable run's checkpoint at 80% of budget N (decay branch point)
+#   end<N>    -> the stable run's checkpoint at 100% of budget N
+# branch/end read the stable's own checkpoints (via the local `stable` sibling)
+# at a specific ckpt_step; stable/decay load via job-name match from the base
+# experiment config's `load`.
+
+groups:
+  # GROUP 0: job naming, mirrors the training sweep exactly so `load` resolves to
+  # the matching training checkpoint dir.
+  - type: list
+    configs:
+      - job.name: "qwen3_sparse_0.9B_ne_nexp\\${backend.megatron.num_experts}_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_\\${stage}\\${backend.megatron.aux.job_horizon_suffix}"
+        backend.megatron.wandb_exp_name: "\\${job.name}"
+
+  # GROUP 1: HP grid, identical to the training sweep, plus aux.max_tokens (the
+  # per-combo max decay budget) used by the end-dedup filter.
+  - type: list
+    defaults:
+      backend.megatron.num_workers: 8
+      backend.megatron.micro_batch_size: 2
+    configs:
+      # ---- gbsz 32 ----
+      - backend.megatron.lr: 2.5e-4
+        backend.megatron.global_batch_size: 32
+        backend.megatron.aux.tokens: 12_000_000_000
+        backend.megatron.aux.max_tokens: 12_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000, 12_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+      - backend.megatron.lr: 5.e-4
+        backend.megatron.global_batch_size: 32
+        backend.megatron.aux.tokens: 12_000_000_000
+        backend.megatron.aux.max_tokens: 12_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{6_000_000_000, 12_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
+        backend.megatron.aux.stable_launch_tier:  cross
+      - backend.megatron.lr: 1.e-3
+        backend.megatron.global_batch_size: 32
+        backend.megatron.aux.tokens: 12_000_000_000
+        backend.megatron.aux.max_tokens: 12_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000, 12_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+
+      # ---- gbsz 64 ----
+      - backend.megatron.lr: 2.5e-4
+        backend.megatron.global_batch_size: 64
+        backend.megatron.aux.tokens: 50_000_000_000
+        backend.megatron.aux.max_tokens: 50_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{6_000_000_000, 12_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "{20_000_000_000, 30_000_000_000, 50_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  cross
+      - backend.megatron.lr: 5.e-4
+        backend.megatron.global_batch_size: 64
+        backend.megatron.aux.tokens: 50_000_000_000
+        backend.megatron.aux.max_tokens: 50_000_000_000
+        backend.megatron.aux.center_tokens_set:   "{6_000_000_000, 12_000_000_000}"
+        backend.megatron.aux.cross_tokens_set:    "{20_000_000_000, 30_000_000_000, 50_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
+        backend.megatron.aux.stable_launch_tier:  center
+      - backend.megatron.lr: 1.e-3
+        backend.megatron.global_batch_size: 64
+        backend.megatron.aux.tokens: 50_000_000_000
+        backend.megatron.aux.max_tokens: 50_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{6_000_000_000, 12_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "{20_000_000_000, 30_000_000_000, 50_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  cross
+
+      # ---- gbsz 128 ----
+      - backend.megatron.lr: 2.5e-4
+        backend.megatron.global_batch_size: 128
+        backend.megatron.aux.tokens: 50_000_000_000
+        backend.megatron.aux.max_tokens: 50_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{20_000_000_000, 30_000_000_000, 50_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000, 12_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  cross
+      - backend.megatron.lr: 5.e-4
+        backend.megatron.global_batch_size: 128
+        backend.megatron.aux.tokens: 120_000_000_000
+        backend.megatron.aux.max_tokens: 120_000_000_000
+        backend.megatron.aux.center_tokens_set:   "{20_000_000_000, 30_000_000_000, 50_000_000_000}"
+        backend.megatron.aux.cross_tokens_set:    "{6_000_000_000, 12_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "{80_000_000_000, 120_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  center
+      - backend.megatron.lr: 1.e-3
+        backend.megatron.global_batch_size: 128
+        backend.megatron.aux.tokens: 120_000_000_000
+        backend.megatron.aux.max_tokens: 120_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000, 120_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "{6_000_000_000, 12_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  cross
+      - backend.megatron.lr: 2.e-3
+        backend.megatron.global_batch_size: 128
+        backend.megatron.aux.tokens: 120_000_000_000
+        backend.megatron.aux.max_tokens: 120_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{80_000_000_000, 120_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+
+      # ---- gbsz 256 ----
+      - backend.megatron.lr: 2.5e-4
+        backend.megatron.global_batch_size: 256
+        backend.megatron.aux.tokens: 50_000_000_000
+        backend.megatron.aux.max_tokens: 50_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{20_000_000_000, 30_000_000_000, 50_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+      - backend.megatron.lr: 5.e-4
+        backend.megatron.global_batch_size: 256
+        backend.megatron.aux.tokens: 120_000_000_000
+        backend.megatron.aux.max_tokens: 120_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{20_000_000_000, 30_000_000_000, 50_000_000_000, 80_000_000_000, 120_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
+        backend.megatron.aux.stable_launch_tier:  cross
+      - backend.megatron.lr: 1.e-3
+        backend.megatron.global_batch_size: 256
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.max_tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "{80_000_000_000, 120_000_000_000}"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{20_000_000_000, 30_000_000_000, 50_000_000_000, 200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  center
+      - backend.megatron.lr: 2.e-3
+        backend.megatron.global_batch_size: 256
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.max_tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
+        backend.megatron.aux.stable_launch_tier:  cross
+      - backend.megatron.lr: 4.e-3
+        backend.megatron.global_batch_size: 256
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.max_tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+
+      # ---- gbsz 512 ----
+      - backend.megatron.lr: 5.e-4
+        backend.megatron.global_batch_size: 512
+        backend.megatron.aux.tokens: 120_000_000_000
+        backend.megatron.aux.max_tokens: 120_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{80_000_000_000, 120_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+      - backend.megatron.lr: 1.e-3
+        backend.megatron.global_batch_size: 512
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.max_tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{80_000_000_000, 120_000_000_000, 200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
+        backend.megatron.aux.stable_launch_tier:  cross
+      - backend.megatron.lr: 2.e-3
+        backend.megatron.global_batch_size: 512
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.max_tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "{200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{80_000_000_000, 120_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  center
+      - backend.megatron.lr: 4.e-3
+        backend.megatron.global_batch_size: 512
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.max_tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
+        backend.megatron.aux.stable_launch_tier:  cross
+
+      # ---- gbsz 1024 ----
+      - backend.megatron.lr: 1.e-3
+        backend.megatron.global_batch_size: 1024
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.max_tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+      - backend.megatron.lr: 2.e-3
+        backend.megatron.global_batch_size: 1024
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.max_tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "{200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.diagonal_tokens_set: "set()"
+        backend.megatron.aux.stable_launch_tier:  cross
+      - backend.megatron.lr: 4.e-3
+        backend.megatron.global_batch_size: 1024
+        backend.megatron.aux.tokens: 300_000_000_000
+        backend.megatron.aux.max_tokens: 300_000_000_000
+        backend.megatron.aux.center_tokens_set:   "set()"
+        backend.megatron.aux.cross_tokens_set:    "set()"
+        backend.megatron.aux.diagonal_tokens_set: "{200_000_000_000, 300_000_000_000}"
+        backend.megatron.aux.stable_launch_tier:  diagonal
+
+  # GROUP 2: eval stages -- 1 stable + 9 decay + 9 branch + 9 end.
+  - type: list
+    configs:
+      # STABLE PHASE: evaluate the training stable run's final checkpoint (load
+      # resolves via job-name match, not overridden here).
+      - stage: stable
+        backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.lr_wsd_decay_iters: 0
+        backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+        backend.megatron.aux.job_horizon_suffix: "\\${oc.eval:'str(\\${backend.megatron.aux.tokens}//1_000_000_000)+\"BT\"'}"
+        job.start_condition:
+          class_name: AndCondition
+          conditions:
+            - class_name: FileExistsCondition
+              path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.train_iters}).zfill(7)'}"
+            - class_name: NotCondition
+              condition:
+                class_name: LogPatternCondition
+                log_path: "\\${job.log_path_current}"
+                pattern: ".*validation loss.*on test set.*"
+
+      # DECAY PHASES: evaluate each decay run's final checkpoint (load resolves via
+      # job-name match; waits for that training run's final checkpoint).
+      - type: list
+        defaults:
+          backend.megatron.aux.decay_fraction: "\\${backend.megatron.aux.cooldown_decay_fraction}"
+
+          backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+          backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
+          backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+
+          job.start_condition:
+            class_name: AndCondition
+            conditions:
+              - class_name: FileExistsCondition
+                path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.train_iters}).zfill(7)'}"
+              - class_name: NotCondition
+                condition:
+                  class_name: LogPatternCondition
+                  log_path: "\\${job.log_path_current}"
+                  pattern: ".*validation loss.*on test set.*"
+          job.cancel_condition: null
+
+        configs:
+          - stage: decay6BT
+            backend.megatron.aux.tokens: 6_000_000_000
+          - stage: decay12BT
+            backend.megatron.aux.tokens: 12_000_000_000
+          - stage: decay20BT
+            backend.megatron.aux.tokens: 20_000_000_000
+          - stage: decay30BT
+            backend.megatron.aux.tokens: 30_000_000_000
+          - stage: decay50BT
+            backend.megatron.aux.tokens: 50_000_000_000
+          - stage: decay80BT
+            backend.megatron.aux.tokens: 80_000_000_000
+          - stage: decay120BT
+            backend.megatron.aux.tokens: 120_000_000_000
+          - stage: decay200BT
+            backend.megatron.aux.tokens: 200_000_000_000
+          - stage: decay300BT
+            backend.megatron.aux.tokens: 300_000_000_000
+
+      # BRANCH PHASES: evaluate the stable's checkpoint at 80% of budget N (the
+      # decay branch point), loaded from the local `stable` sibling.
+      - type: list
+        defaults:
+          backend.megatron.load: "\\${sibling.stable.backend.megatron.load}"
+          backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+          backend.megatron.lr_wsd_decay_iters: 0
+          backend.megatron.ckpt_step: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+          job.start_condition:
+            class_name: AndCondition
+            conditions:
+              - class_name: FileExistsCondition
+                path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.ckpt_step}).zfill(7)'}"
+              - class_name: NotCondition
+                condition:
+                  class_name: LogPatternCondition
+                  log_path: "\\${job.log_path_current}"
+                  pattern: ".*validation loss.*on test set.*"
+          job.cancel_condition: null
+        configs:
+          - stage: branch6BT
+            backend.megatron.aux.tokens: 6_000_000_000
+          - stage: branch12BT
+            backend.megatron.aux.tokens: 12_000_000_000
+          - stage: branch20BT
+            backend.megatron.aux.tokens: 20_000_000_000
+          - stage: branch30BT
+            backend.megatron.aux.tokens: 30_000_000_000
+          - stage: branch50BT
+            backend.megatron.aux.tokens: 50_000_000_000
+          - stage: branch80BT
+            backend.megatron.aux.tokens: 80_000_000_000
+          - stage: branch120BT
+            backend.megatron.aux.tokens: 120_000_000_000
+          - stage: branch200BT
+            backend.megatron.aux.tokens: 200_000_000_000
+          - stage: branch300BT
+            backend.megatron.aux.tokens: 300_000_000_000
+
+      # END PHASES: evaluate the stable's un-decayed checkpoint at 100% of budget N.
+      - type: list
+        defaults:
+          backend.megatron.load: "\\${sibling.stable.backend.megatron.load}"
+          backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+          backend.megatron.lr_wsd_decay_iters: 0
+          backend.megatron.ckpt_step: "\\${backend.megatron.train_iters}"
+          job.start_condition:
+            class_name: AndCondition
+            conditions:
+              - class_name: FileExistsCondition
+                path: "\\${backend.megatron.load}/iter_\\${oc.eval:'str(\\${backend.megatron.ckpt_step}).zfill(7)'}"
+              - class_name: NotCondition
+                condition:
+                  class_name: LogPatternCondition
+                  log_path: "\\${job.log_path_current}"
+                  pattern: ".*validation loss.*on test set.*"
+          job.cancel_condition: null
+        configs:
+          - stage: end6BT
+            backend.megatron.aux.tokens: 6_000_000_000
+          - stage: end12BT
+            backend.megatron.aux.tokens: 12_000_000_000
+          - stage: end20BT
+            backend.megatron.aux.tokens: 20_000_000_000
+          - stage: end30BT
+            backend.megatron.aux.tokens: 30_000_000_000
+          - stage: end50BT
+            backend.megatron.aux.tokens: 50_000_000_000
+          - stage: end80BT
+            backend.megatron.aux.tokens: 80_000_000_000
+          - stage: end120BT
+            backend.megatron.aux.tokens: 120_000_000_000
+          - stage: end200BT
+            backend.megatron.aux.tokens: 200_000_000_000
+          - stage: end300BT
+            backend.megatron.aux.tokens: 300_000_000_000
+
+# Filter: tier routing + warmup guard + end-dedup.
+# end<N> where N == max_tokens is skipped: that checkpoint is the stable's final
+# checkpoint, already evaluated by the `stable` stage.
+filter: "\\${oc.eval:'(((\"\\${stage}\" == \"stable\" and (\"\\${backend.megatron.aux.priority_tier}\" == \"all\" or \"\\${backend.megatron.aux.priority_tier}\" == \"\\${backend.megatron.aux.stable_launch_tier}\")) or (\"\\${stage}\" != \"stable\" and (not (\"\\${stage}\".startswith(\"end\") and \\${backend.megatron.aux.tokens} == \\${backend.megatron.aux.max_tokens})) and ((\"\\${backend.megatron.aux.priority_tier}\" == \"all\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set} | \\${backend.megatron.aux.cross_tokens_set} | \\${backend.megatron.aux.diagonal_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"center\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.center_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"cross\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.cross_tokens_set}) or (\"\\${backend.megatron.aux.priority_tier}\" == \"diagonal\" and \\${backend.megatron.aux.tokens} in \\${backend.megatron.aux.diagonal_tokens_set})))) and (\\${backend.megatron.lr_warmup_iters} / \\${backend.megatron.train_iters} < 0.3))'}"

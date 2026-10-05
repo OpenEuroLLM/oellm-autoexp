@@ -1,0 +1,120 @@
+type: product
+
+# Sanity sweep: single (lr, gbsz) combo, 50B-token stable + 50B-token decay.
+# Purpose:
+#   * End-to-end test of the multi-stage stable->decay pipeline on a sparse
+#     Qwen3 model BEFORE launching the full tier-based grid.
+#   * Verify checkpoint hand-off, FileExistsCondition, LogPatternCondition,
+#     and the LR/decay schedule at realistic scale (~190k iters per stage).
+#
+# Reusable across all 8 sparse experiment configs: the sweep itself is
+# model-size agnostic; the experiment YAML supplies the model config and
+# job.base_output_dir.
+#
+# Token math (gbsz=64, seq=4096 -> tokens/step = 262_144):
+#   train_iters         = ceil(50_000_000_000 / 262_144)    = 190_735
+#   start_iter (stable) = int(190_735 * (1 - 0.2))          = 152_588
+#   save_interval       = int(512_000 // 64) = 8_000        (model default at gbsz=64)
+#   start_iter_round    = int(152_588 // 8_000) * 8_000     = 152_000  # branching ckpt iter
+#   lr_wsd_decay_iters  = int(190_735 * 0.2)                = 38_147   # decay-only
+#   lr_warmup_iters     = 2_000                              (model default)
+#   warmup_ratio        = 2_000 / 190_735                    ~= 0.010
+#
+# The stable run writes checkpoints every save_interval=8_000 iters and a
+# final at iter 190_735 (no save_extra_steps required). The decay loads
+# iter_0000152000 (the first save_interval boundary <= start_iter) and
+# trains its own 190_735 iters with a 20% linear LR ramp-down at the end.
+#
+# Wallclock note: at world=16, mbsz=2, gbsz=64 the stable phase is ~190k
+# iters which is many hours of training. To make it faster, bump mbsz
+# once the OOM root cause (256k-vocab CE upcast) is resolved via
+# cross_entropy_loss_fusion or TP>=2 in the model config.
+#
+# This sweep does NOT use the tier filter (no priority_tier, no *_tokens_set).
+# It produces exactly 1 stable + 1 decay = 2 jobs total per invocation.
+
+groups:
+  # GROUP 0: dynamic job name + wandb name (from the sweep point's own params).
+  - type: list
+    configs:
+      - job.name: "qwen3_sparse_sanity_nexp\\${backend.megatron.num_experts}_lr\\${backend.megatron.lr}_gbsz\\${backend.megatron.global_batch_size}_\\${stage}\\${backend.megatron.aux.job_horizon_suffix}"
+        backend.megatron.wandb_exp_name: "\\${job.name}"
+
+  # GROUP 1: single hyperparameter combo.
+  # mbsz=2 is conservative to give all 8 sparse experiment configs (0.1B..0.9B
+  # x {16, 64} experts) a baseline that should not OOM at the vocab-parallel
+  # CE step with the 256k OELLM tokenizer. Bump mbsz once the bigger fix
+  # (cross_entropy_loss_fusion: True in the model configs, or TP>=2) is in
+  # place. lr_warmup_iters and save_interval are inherited from the model
+  # config (2_000 and int(512_000 // gbsz) respectively); at 50BT this gives
+  # a healthy warmup ratio and infrequent-enough checkpoint cadence.
+  - type: list
+    configs:
+      - backend.megatron.lr: 5.e-4
+        backend.megatron.global_batch_size: 64
+        backend.megatron.micro_batch_size: 2
+        backend.megatron.num_workers: 8
+        backend.megatron.aux.tokens: 50_000_000_000
+
+  # GROUP 2: 1 stable + 1 decay.
+  - type: list
+    configs:
+      # STABLE: 50B tokens with no LR decay; writes the branching checkpoint at
+      # the first save_interval boundary <= start_iter (= int(train_iters*0.8)).
+      - stage: stable
+        backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+        backend.megatron.lr_wsd_decay_iters: 0
+        backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.cooldown_decay_fraction}))'}"
+        # job.name suffix "_50BT" so the stable surfaces as ..._stable50BT.
+        backend.megatron.aux.job_horizon_suffix: "50BT"
+
+      # NESTED GROUP: cooldown/decay stage(s) gated on the stable's branching
+      # checkpoint. start_iter_round rounds start_iter DOWN to the nearest
+      # save_interval boundary so we hit a real on-disk checkpoint without
+      # relying on save_extra_steps (which is currently commented out in the
+      # sparse model configs -- see the OOM/sweep diagnosis notes).
+      - type: list
+        defaults:
+          backend.megatron.aux.decay_fraction: "\\${backend.megatron.aux.cooldown_decay_fraction}"
+          backend.megatron.train_iters: "\\${oc.eval:'(\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size})'}"
+          backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*\\${backend.megatron.aux.decay_fraction})'}"
+          backend.megatron.aux.start_iter: "\\${oc.eval:'int(((\\${backend.megatron.aux.tokens}+\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}-1)//(\\${backend.megatron.seq_length}*\\${backend.megatron.global_batch_size}))*(1-\\${backend.megatron.aux.decay_fraction}))'}"
+
+          # Checkpoint loading from the stable sibling, rounded to a save_interval boundary.
+          backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/checkpoints"
+          backend.megatron.ckpt_step: "\\${oc.eval:'int(\\${backend.megatron.aux.start_iter} // \\${backend.megatron.save_interval}) * \\${backend.megatron.save_interval}'}"
+          backend.megatron.override_opt_param_scheduler: true
+
+          # Start when the rounded branching checkpoint exists on disk.
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.stable.job.base_output_dir}/checkpoints/iter_\\${oc.eval:'str(int(\\${backend.megatron.aux.start_iter} // \\${backend.megatron.save_interval}) * \\${backend.megatron.save_interval}).zfill(7)'}"
+
+          # Cancel decay if the stable sibling crashed (FATAL ERROR / OOM / Traceback).
+          job.cancel_condition:
+            class_name: LogPatternCondition
+            log_path: "\\${sibling.stable.job.log_path_current}"
+            pattern: "FATAL ERROR|OutOfMemoryError|Traceback"
+
+        configs:
+          - stage: decay50BT
+            backend.megatron.aux.tokens: 50_000_000_000
+
+
+### Per-invocation job count
+# Group 0 (job.name template):              1
+# Group 1 (hyperparameter combos):          1
+# Group 2 (stages): 1 stable + 1 decay      2
+# Pre-filter product:                       1 x 1 x 2 = 2 sweep points
+# Filter:                                   none  -> 2 jobs total per invocation
+#
+### Usage
+#   python scripts/run_autoexp.py \
+#       --config-name=experiments/multilingual_scaling/sparse_scaling/0.2B_ne_sparse_experts_64 \
+#       sweep@sweep=multilingual_scaling/sparse_scaling/qwen3_sparse_sanity_50B
+#
+# The decay's FileExistsCondition watches for iter_0000152000 (the first
+# save_interval=8_000 boundary <= int(190_735 * 0.8) = 152_588). With
+# save_interval=8_000 at gbsz=64, the stable run emits checkpoints every
+# 8_000 iters, so the branching ckpt always lands -- no save_extra_steps
+# required.

@@ -1,0 +1,139 @@
+# @package _global_
+#
+# Short Qwen3.5-35B-A3B throughput/profile run on four LUMI-G nodes.
+# TP pairs and folded ETP=1/EP=8 groups remain node-local. This is the fastest
+# known feasible baseline after TP=4 and PP=2 alternatives underperformed.
+#
+# Throughput baseline:
+#   uv run --python 3.12 scripts/run_autoexp.py \
+#     --config-name experiments/risto/experimental_models/qwen3_5_35b_a3b_lumi_throughput \
+#     --submit-and-exit
+#
+# Rank-0 rocprofv3 capture:
+#   uv run --python 3.12 scripts/run_autoexp_rocprofv3.py \
+#     --config-name experiments/risto/experimental_models/qwen3_5_35b_a3b_lumi_throughput \
+#     --submit-and-exit
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: [base, qwen3.5_moe_35B_A3B]
+  - _self_
+
+index: 0
+stage: throughput
+
+job:
+  name: "qwen3_5_35b_a3b_${stage}_TP${backend.megatron.tensor_model_parallel_size}_PP${backend.megatron.pipeline_model_parallel_size}_EP${backend.megatron.expert_model_parallel_size}"
+  base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+container:
+  env:
+    WANDB_TAGS: "lumi,qwen3.5,35B-A3B,GDN,MoE,throughput,rocprofv3"
+
+backend:
+  data_integrity_check: false
+  megatron:
+    # Four nodes = 32 GCDs. Dense DP=16; four gradient-accumulation
+    # microbatches at GBS=64/MBS=1. ETP=1 folds EP onto node-local groups.
+    tensor_model_parallel_size: 2
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    expert_tensor_parallel_size: 1
+    expert_model_parallel_size: 8
+    sequence_parallel: true
+    use_distributed_optimizer: true
+
+    # Preserve the Qwen3.5 model definition; use the efficient all-to-all path.
+    moe_token_dispatcher_type: alltoall
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_shared_expert_overlap: false
+    overlap_moe_expert_parallel_comm: false
+
+    # Full recomputation is the conservative 64-GB-GCD baseline.
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+
+    # ROCm/LUMI compatibility.
+    masked_softmax_fusion: false
+    gradient_accumulation_fusion: false
+    bias_dropout_fusion: false
+    bias_swiglu_fusion: false
+    apply_rope_fusion: false
+    tp_comm_overlap: false
+    log_progress: false
+
+    # Short mock-data run; exit_interval ensures rocprof flushes a bounded trace.
+    mock_data: true
+    split: null
+    data_path: null
+    data_args_path: null
+    per_split_data_args_path: null
+    data_cache_path: "/scratch/project_462001516/users/rluukkon/cache/qwen3_5_35b_a3b/${job.name}"
+    num_workers: 6
+    num_dataset_builder_threads: 6
+    trust_remote_code: true
+
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    seq_length: 4096
+    encoder_seq_length: null
+    micro_batch_size: 1
+    global_batch_size: 64
+
+    train_iters: 60
+    exit_interval: 15
+    lr: 1.0e-4
+    min_lr: 0.0
+    lr_warmup_iters: 5
+    lr_decay_iters: 60
+    lr_decay_style: constant
+    optimizer: adam
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 0.1
+    clip_grad: 1.0
+
+    eval_iters: 1
+    eval_interval: 1000000
+    save_interval: 1000000000
+    save: null
+    load: null
+    no_save_optim: true
+    no_save_rng: true
+
+    log_interval: 1
+    log_throughput: true
+    log_timers_to_tensorboard: true
+    timing_log_level: 2
+    moe_per_layer_logging: false
+    wandb_project: qwen3_5_35b_a3b_lumi_throughput
+    wandb_exp_name: ${job.name}
+    wandb_entity: openeurollm-project
+    wandb_save_dir: ${job.base_output_dir}
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+slurm:
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "0"
+    MASTER_PORT: "9999"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    TRITON_HOME: /tmp/triton_cache
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: 4
+    account: project_462001516
+    partition: dev-g
+    time: "00:30:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "

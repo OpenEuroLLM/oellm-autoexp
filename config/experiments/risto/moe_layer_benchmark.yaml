@@ -1,0 +1,101 @@
+# @package _global_
+#
+# Param-budget MoE design search on LUMI for the ~10B DeepSeek-style skeleton.
+# Enumerates n_exp x topk x EP, solves moe_ffn to ~11.6B total / ~1.05B active,
+# and times each candidate at seq*mbs. Top-3 layouts also get a tokens/expert sweep.
+#
+# Submit:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/risto/moe_layer_benchmark \
+#     --submit-and-exit
+#
+# Login-node candidate list (no GPU):
+#   uv run --python 3.12 python scripts/moe/benchmark_moe_layer.py --design --dry-run \
+#     --target-total-params 1.16e10 --target-active-params 1.05e9 \
+#     --hidden-size 1024 --num-layers 28 --first-k-dense 2 --max-ep 8
+#
+# Unconstrained kernel-shape probe (old presets):
+#   ... --config-name experiments/risto/moe_layer_benchmark \
+#       backend.aux.design=false backend.aux.tokens=auto backend.aux.ep=8
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - _self_
+
+container:
+  env:
+    WANDB_TAGS: "lumi,moe_layer_design,10B"
+
+index: 0
+stage: design
+
+job:
+  name: "moe_layer_design_h${backend.aux.hidden_size}_l${backend.aux.num_layers}"
+  base_output_dir: "/scratch/project_462001516/experiments/moe_layer_benchmark/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  data_integrity_check: false
+  python_cmd: python
+  launcher_script: ./scripts/moe/benchmark_moe_layer.py
+  # The script adds submodules/Megatron-LM to sys.path itself; the container
+  # image resets PYTHONPATH, so exported values there are not reliable.
+  aux:
+    design: true
+    target_total_params: 1.16e10
+    target_active_params: 1.05e9
+    hidden_size: 1024
+    num_layers: 28
+    first_k_dense: 2
+    vocab_size: 262144
+    seq_length: 4096
+    micro_batch_size: 1
+    tokens: default
+    n_exp: "64,128,256"
+    topk_grid: "2,4,8"
+    active_tol: 0.15
+    ep: auto
+    # EP=16 hung on n256_k4 (job 22116871, NCCL allreduce timeout 600s),
+    # same class of failure as EP=32 on the earlier layer sweep.
+    max_ep: 8
+    etp: 1
+    design_token_top_n: 3
+    warmup_iters: 10
+    iters: 30
+    dispatcher: alltoall
+    implementation: te
+    shared_ffn: 0
+    preset: all
+  full_cmd: "${.python_cmd} ${.launcher_script} --design --target-total-params ${.aux.target_total_params} --target-active-params ${.aux.target_active_params} --hidden-size ${.aux.hidden_size} --num-layers ${.aux.num_layers} --first-k-dense ${.aux.first_k_dense} --vocab-size ${.aux.vocab_size} --seq-length ${.aux.seq_length} --micro-batch-size ${.aux.micro_batch_size} --tokens ${.aux.tokens} --n-exp ${.aux.n_exp} --topk-grid ${.aux.topk_grid} --active-tol ${.aux.active_tol} --ep ${.aux.ep} --max-ep ${.aux.max_ep} --etp ${.aux.etp} --design-token-top-n ${.aux.design_token_top_n} --warmup-iters ${.aux.warmup_iters} --iters ${.aux.iters} --dispatcher ${.aux.dispatcher} --implementation ${.aux.implementation} --shared-ffn ${.aux.shared_ffn} --output-json ${job.base_output_dir}/moe_bench.json --output-csv ${job.base_output_dir}/moe_bench.csv"
+  megatron:
+    # Schema stubs only; these are not passed because full_cmd is overridden.
+    lr: 1.e-4
+    wandb_project: moe_layer_benchmark
+    wandb_exp_name: "${job.name}"
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+    save: null
+    load: null
+
+slurm:
+  sbatch_extra_directives:
+    - "--exclude=nid005019"
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    MASTER_PORT: "9999"
+    TRITON_HOME: /tmp/triton_cache
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: 4
+    account: "project_462001516"
+    partition: dev-g
+    time: "00:45:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "

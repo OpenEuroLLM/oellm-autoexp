@@ -22,6 +22,7 @@ from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
 from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
 from oellm_autoexp.monitor.submission import SlurmJobConfig, LocalJobConfig
 from oellm_autoexp.slurm_gen.generator import generate_script
+from oellm_autoexp.profiling.capture import analysis_submission_command, wrap_launch_command
 
 import oellm_autoexp.backends.megatron_backend  # noqa  - register
 import oellm_autoexp.postprocess.megatron_dist_to_torch  # noqa  - register
@@ -76,10 +77,11 @@ def build_execution_plan(
     root = config
 
     points = expand_sweep(root.sweep)
-    points_by_idx = {point.index: point for point in points}
+    all_points_by_idx = {point.index: point for point in points}
+    points_by_idx = all_points_by_idx
     if subset_indices:
         points_by_idx = {
-            idx: point for idx, point in points_by_idx.items() if idx in subset_indices
+            idx: point for idx, point in all_points_by_idx.items() if idx in subset_indices
         }
         if not points_by_idx:
             raise ValueError(f"No sweep points match indices: {sorted(subset_indices)}")
@@ -89,6 +91,7 @@ def build_execution_plan(
         points_by_idx,
         config_setup=config_setup,
         config_class=RootConfig,
+        full_points_by_idx=all_points_by_idx,
     )
 
     return ExecutionPlan(
@@ -129,6 +132,18 @@ def submit_jobs(
         session_id=session_id,
         submitted_job_ids=submitted_job_ids,
     )
+
+
+def generate_scripts(plan: ExecutionPlan) -> list[Path]:
+    """Generate sbatch scripts for all jobs in the plan without submitting."""
+    paths: list[Path] = []
+    for job in plan.jobs:
+        record = _build_job_record(plan, job, session_id="no-submit", local_mode=False)
+        slurm_cfg = record.definition.slurm
+        path = generate_script(slurm_cfg)
+        LOGGER.info("Generated script: %s", path)
+        paths.append(Path(path))
+    return paths
 
 
 def load_monitor_controller(
@@ -213,6 +228,7 @@ def _build_job_record(
 
     backend = job.config.backend.instantiate(BackendInterface)
     launch_cmd = backend.build_launch_command()
+    launch_cmd = wrap_launch_command(job.config.profiling, launch_cmd)
 
     container = job.config.container if isinstance(job.config.container, ContainerConfig) else None
 
@@ -243,6 +259,7 @@ def _build_job_record(
         log_path=str(job.config.job.log_path),
         command=[launch_cmd],
         env=job.config.slurm.env,
+        after_run_cmd=analysis_submission_command(job.config.profiling),
     )
 
     base_job = job.config.job

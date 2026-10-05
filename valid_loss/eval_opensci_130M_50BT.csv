@@ -1,0 +1,6 @@
+run_name,iteration,lm_loss,lm_loss_ppl
+eval_opensci_130M_50BT_lr0.002_gbsz128_beta20.99_decay12BT,22889,2.641887,14.03967
+eval_opensci_130M_50BT_lr0.002_gbsz128_beta20.99_decay20BT,38147,2.597732,13.43324
+eval_opensci_130M_50BT_lr0.002_gbsz128_beta20.99_decay30BT,57221,2.567755,13.03652
+eval_opensci_130M_50BT_lr0.002_gbsz128_beta20.99_decay50BT,95368,2.536575,12.63631
+eval_opensci_130M_50BT_lr0.002_gbsz128_beta20.99_decay6BT,11445,2.718493,15.15746
