@@ -171,8 +171,8 @@ def collect(state: dict[str, str]) -> None:
         f"collected: {out}\n  joined {joined}/{total} evals"
         + ("  -- COMPLETE" if joined == total else "")
     )
-    if state.get("VLLM_INDICES") or state.get("LIGHTEVAL_INDICES"):
-        print("  (subset run: only the launched array indices were evaluated)")
+    if state.get("VLLM_INDICES") or state.get("LIGHTEVAL_INDICES") or state.get("SUBSET"):
+        print("  (subset run: only the selected evals were run)")
     else:
         for m in missing[:20]:
             print(f"    missing: {m}")
@@ -237,6 +237,11 @@ def main() -> None:
     ap.add_argument("--rerun", action="store_true", help="resubmit failed and never-run tasks")
     ap.add_argument("--collect", action="store_true", help="collect even if not complete")
     ap.add_argument(
+        "--collect-only",
+        action="store_true",
+        help="collect without a status pass (oellm-autoexp array stages: the monitor owns the tasks)",
+    )
+    ap.add_argument(
         "--wait",
         action="store_true",
         help="poll until nothing is queued or running, resubmitting failures --retries times, "
@@ -247,6 +252,9 @@ def main() -> None:
     args = ap.parse_args()
     sys.stdout.reconfigure(line_buffering=True)  # keep order with the collector's own output
 
+    if args.collect_only:
+        collect(read_state(args.state))
+        return
     if not args.wait:
         complete, _ = status_pass(args.state, args.rerun)
     else:

@@ -11,7 +11,7 @@ source "$HERE/lib.sh"
 source "$HERE/flag_lib.sh"
 : "${FLAG_STATE_DIR:=$FLAG_WORK/state}"
 FLAG_ENV=(EXPORT_ROOT EVAL_REPO EXPECTED_EVAL_REV FLAG_ACCOUNT FLAG_WORK FLAG_CONCURRENCY FLAG_TIME
-          FLAG_STATE_DIR FLAG_ARRAY_VLLM FLAG_ARRAY_LIGHTEVAL COLLECT_RAW FLAG_DATASETS_CSV)
+          FLAG_STATE_DIR FLAG_ARRAY_VLLM FLAG_ARRAY_LIGHTEVAL FLAG_SUBSET COLLECT_RAW FLAG_DATASETS_CSV)
 
 usage() {
     cat <<USAGE
@@ -34,6 +34,10 @@ Commands:
   flag-rerun NAME...   Resubmit the failed / never-run tasks into the same run directories
   flag-wait NAME...    Poll until done, resubmit failures FLAG_RETRIES (1) times, collect --
                        the body of an oellm-autoexp eval stage (job.local, on the login node)
+  flag-prepare NAME    Views + launchers for one export WITHOUT submitting (login node): the
+                       stage before oellm-autoexp's eval array stages, whose tasks each run one
+                       row (jupiter_flag_evals.sh run-one); idempotent
+  flag-collect NAME... Collect the CSV + join check (after the array stages)
 
 Profiles: MODEL=$MODEL SITE=$SITE   WORK_ROOT=$WORK_ROOT
 USAGE
@@ -192,6 +196,22 @@ flag)
         else
             FLAG_PREFLIGHT_OK=1 "$HERE/flag_launch.sh" "$name"
         fi
+    done
+    ;;
+flag-prepare)
+    [ $# -eq 1 ] || { echo "usage: eval_checkpoints.sh flag-prepare NAME" >&2; exit 2; }
+    [ -f "$EXPORT_ROOT/$1/config.json" ] || { echo "error: $1 is not converted ($EXPORT_ROOT/$1)" >&2; exit 1; }
+    flag_clean_env
+    rev=$(flag_preflight)                       # on the login node: compute nodes have no git
+    export "${FLAG_ENV[@]}" FLAG_EVAL_REV="$rev"
+    FLAG_PREFLIGHT_OK=1 PREPARE_ONLY=1 "$HERE/flag_launch.sh" "$1"
+    ;;
+flag-collect)
+    [ $# -gt 0 ] || { echo "usage: eval_checkpoints.sh flag-collect NAME..." >&2; exit 2; }
+    flag_clean_env
+    export "${FLAG_ENV[@]}"
+    for name in "$@"; do
+        python3 "$HERE/flag_status.py" "$FLAG_STATE_DIR/$name.env" --collect-only
     done
     ;;
 flag-status|flag-rerun|flag-wait)

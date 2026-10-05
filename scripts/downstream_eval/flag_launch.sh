@@ -12,7 +12,11 @@
 #   FLAG_ACCOUNT FLAG_WORK FLAG_CONCURRENCY FLAG_TIME FLAG_STATE_DIR
 #   FLAG_ARRAY_VLLM / FLAG_ARRAY_LIGHTEVAL   optional subset of array indices, e.g. "1,2,30" (a test);
 #                                            recorded, so flag-status ignores the indices not submitted
+#   FLAG_SUBSET=1                            (oellm-autoexp) only some evals are run; recorded for flag-collect
 #   DRY_RUN=1                                render, but print the sbatch commands instead
+#   PREPARE_ONLY=1                           views + render, no submission (LAUNCHER=autoexp in
+#                                            the state): oellm-autoexp array stages run the rows
+#                                            (jupiter_flag_evals.sh run-one); idempotent
 set -euo pipefail
 NAME="${1:?usage: flag_launch.sh NAME}"
 source "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/flag_lib.sh"
@@ -22,6 +26,11 @@ FLAG_SCRIPT="$EVAL_REPO/scripts/jupiter_flag_evals.sh"
 
 [ -f "$EXPORT/config.json" ] || { echo "error: no export $EXPORT" >&2; exit 1; }
 [ -x "$FLAG_SCRIPT" ] || { echo "error: $FLAG_SCRIPT missing (git submodule update --init submodules/oellm-eval)" >&2; exit 1; }
+if [ "${PREPARE_ONLY:-0}" = 1 ] && [ -f "$STATE" ] && grep -q '^LAUNCHER=autoexp$' "$STATE" \
+        && [ "${FORCE:-0}" != 1 ]; then
+    # A second prepare would render NEW run directories, orphaning the rows already done.
+    echo "$NAME already prepared ($STATE)"; exit 0
+fi
 if [ -f "$STATE" ] && [ "${FORCE:-0}" != 1 ]; then
     echo "error: $NAME already launched ($STATE); use flag-status / flag-rerun, or FORCE=1 for a fresh run" >&2
     exit 1
@@ -52,14 +61,20 @@ submit_half() {  # <sbatch file> <array override> -> job id
         sbatch "${args[@]}" "$1"
     fi
 }
-vllm_job=$(submit_half "$vllm_sb" "${FLAG_ARRAY_VLLM:-}")
-light_job=$(submit_half "$light_sb" "${FLAG_ARRAY_LIGHTEVAL:-}")
+launcher=flag_launch
+if [ "${PREPARE_ONLY:-0}" = 1 ]; then
+    launcher=autoexp vllm_job="" light_job=""
+else
+    vllm_job=$(submit_half "$vllm_sb" "${FLAG_ARRAY_VLLM:-}")
+    light_job=$(submit_half "$light_sb" "${FLAG_ARRAY_LIGHTEVAL:-}")
+fi
 
 [ "${DRY_RUN:-0}" = 1 ] && { echo "dry run: no state written"; exit 0; }
 mkdir -p "$FLAG_STATE_DIR"
 cat > "$STATE" <<STATE_EOF
 # written by flag_launch.sh $(date -Is)
 NAME=$NAME
+LAUNCHER=$launcher
 EXPORT=$EXPORT
 EVAL_REV=$rev
 VLLM_RUN=$(dirname "$vllm_sb")
@@ -68,5 +83,10 @@ VLLM_JOB=$vllm_job
 LIGHTEVAL_JOB=$light_job
 VLLM_INDICES=${FLAG_ARRAY_VLLM:-}
 LIGHTEVAL_INDICES=${FLAG_ARRAY_LIGHTEVAL:-}
+SUBSET=${FLAG_SUBSET:-}
 STATE_EOF
-echo "launched $NAME: vllm=$vllm_job lighteval=$light_job  (state: $STATE)"
+if [ "$launcher" = autoexp ]; then
+    echo "prepared $NAME: $(dirname "$vllm_sb") $(dirname "$light_sb")  (state: $STATE)"
+else
+    echo "launched $NAME: vllm=$vllm_job lighteval=$light_job  (state: $STATE)"
+fi
