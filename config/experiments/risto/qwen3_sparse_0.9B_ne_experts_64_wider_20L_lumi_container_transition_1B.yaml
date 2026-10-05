@@ -56,6 +56,7 @@ backend:
     seq_length: 4096
     max_position_embeddings: 4096
     encoder_seq_length: null
+    num_layers: 20
 
     # Four nodes = 32 GCDs. TP1/EP8 gives DP4 and keeps EP groups node-local.
     micro_batch_size: 1
@@ -88,7 +89,7 @@ backend:
     lr_decay_style: constant
 
     eval_iters: 10
-    eval_interval: 382
+    eval_interval: 1000
     save_interval: 1000000000
     save: null
     load: null
@@ -123,8 +124,8 @@ slurm:
   sbatch:
     nodes: 4
     account: project_462001516
-    partition: standard-g
-    time: "04:00:00"
+    partition: dev-g
+    time: "02:15:00"
     output: "${job.base_output_dir}/logs/stdout-%j.log"
     error: "${job.base_output_dir}/logs/stderr-%j.log"
   srun:
@@ -184,3 +185,28 @@ sweep:
           slurm.env.CUDA_DEVICE_MAX_CONNECTIONS: "32"
           slurm.env.GPU_MAX_HW_QUEUES: "4"
           slurm.env.NVTE_USE_CUTLASS_GROUPED_GEMM: "1"
+
+        # Old-container control: 3815 iterations (~1.000B tokens).
+        - stage: new_container_old_setup_control_1B
+          container.image: /appl/local/laifs/containers/lumi-multitorch-u24r72f21m50t211-20260929_104918/lumi-multitorch-plus-u24r72f21m50t211-20260929_104918.sif
+          container.env.WANDB_TAGS: "lumi,qwen3,L20,container-validity,new-container,old-setup,control"
+          backend.megatron.train_iters: 3815
+          backend.megatron.masked_softmax_fusion: false
+          backend.megatron.gradient_accumulation_fusion: false
+          backend.megatron.bias_dropout_fusion: false
+          backend.megatron.bias_swiglu_fusion: false
+          backend.megatron.apply_rope_fusion: false
+          backend.megatron.use_te_activation_func: false
+          backend.megatron.moe_router_fusion: false
+          backend.megatron.moe_grouped_gemm: true
+          backend.megatron.moe_permute_fusion: false
+          backend.megatron.moe_token_dispatcher_type: allgather
+          backend.megatron.overlap_moe_expert_parallel_comm: false
+          backend.megatron.delay_wgrad_compute: false
+          backend.megatron.high_priority_a2a_comm_stream: false
+          backend.megatron.overlap_grad_reduce: false
+          backend.megatron.overlap_param_gather: false
+          backend.megatron.tp_comm_overlap: false
+          slurm.env.CUDA_DEVICE_MAX_CONNECTIONS: "1"
+          slurm.env.GPU_MAX_HW_QUEUES: "1"
+          slurm.env.NVTE_USE_CUTLASS_GROUPED_GEMM: "0"
