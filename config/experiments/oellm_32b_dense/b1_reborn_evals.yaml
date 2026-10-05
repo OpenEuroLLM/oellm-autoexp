@@ -1,0 +1,159 @@
+# @package _global_
+#
+# ============================================================================
+# FLAG EVALUATION OF A B1_reborn CHECKPOINT (Jenia Jitsev's production line)
+# ============================================================================
+# Convert one checkpoint of B1-reborn-production and run the FLAG suite on it, every
+# allocation a job of this config (priced at plan time, submitted/retried by the monitor):
+#
+#   convert   1 node     eval_checkpoints.sh convert-here (32b_dense profile: tokenizer,
+#                        Bridge image, architecture) -> downstream_eval_32b/hf/<name>,
+#                        .convert_done written last
+#   prepare   login node eval_checkpoints.sh flag-prepare: eval views + the two oellm-eval
+#             (job.local) launchers, rendered, NOT submitted
+#   eval      1 node per ONE SLURM array, one task per eval (config/eval_tasks/flag_evals.yaml,
+#             eval       aux.flag_select: null = all 438); jupiter_flag_evals.sh run-one; a failed
+#                        task is resubmitted once, alone (job/array_task.yaml); a row that
+#                        already succeeded is skipped, so relaunching only runs what is missing
+#   collect   login node once every eval task finished or was given up:
+#             (job.local) eval_checkpoints.sh flag-collect -> $FLAG_WORK/results/<name>.flag-evals-438.tasks.csv
+#
+# The checkpoint is read in place from Jenia's run (group-readable); nothing is written there.
+# Defaults: iter_0266000, the last persistent checkpoint before the operator pause (the
+# pause checkpoint 266875 is a rolling one). Earlier B1 exports already evaluated with this
+# suite: b1_86k, b1_110k, b1_154k, b1_174k, b1_238k.
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_dense/b1_reborn_evals            [aux.eval_iter=264000]
+# Keep the session running until `collect` has finished.
+# ============================================================================
+defaults:
+  - b1_reborn_base
+  - /eval_tasks@aux.flag_suite: flag_evals
+  - _self_
+
+aux:
+  repo: ${oc.env:OELLM_AUTOEXP_ROOT,${oc.env:PWD}}   # launch from the repo root
+  eval_iter: 266000
+  eval_ckpts: /e/fscratch/e-sta-openeurollm/jj1/reanimation_64k_20260911/B1-reborn-production/training_ckpts/checkpoints
+  export_name: "b1_${oc.eval:'${aux.eval_iter}//1000'}k"
+  export_root: /e/scratch/e-sta-openeurollm/production_training/downstream_eval_32b/hf
+  flag_work: /e/scratch/e-sta-openeurollm/${oc.env:USER}/flag-evals
+  oellm_eval: ${aux.repo}/submodules/oellm-eval
+  # The evals to run, by name (half/task/n_shot); null = all 438.
+  flag_select: null
+  flag_indices: ${oc.select_indices:${aux.flag_suite.tasks},name,${aux.flag_select}}
+  # One eval, for the eval-stage point that sets flag_i (a position in flag_suite.tasks).
+  # Outside the sweep because only the base config is re-resolved per point; the stage
+  # references these escaped (\${...}).
+  flag_i: 0
+  flag_half: ${oc.index:${aux.flag_suite.tasks},${aux.flag_i},half}
+  flag_row: ${oc.index:${aux.flag_suite.tasks},${aux.flag_i},row}
+  flag_task: ${oc.index:${aux.flag_suite.tasks},${aux.flag_i},task}
+  flag_done: ${aux.flag_work}/runs/${aux.export_name}/${aux.flag_half}/done/${aux.flag_row}.ok
+  flag_run_one: "${aux.oellm_eval}/scripts/jupiter_flag_evals.sh run-one ${aux.export_name} ${aux.flag_half} ${aux.flag_row} \"${aux.flag_task}\""
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ====== convert (Megatron -> HF, in this stage's allocation) ======
+        # Bash stages: no single quotes, no shell ${VAR} (OmegaConf); $VAR is fine.
+        - stage: convert
+          backend: bash
+          slurm: jupiter_driver
+          job: default
+          job.name: "b1_reborn_convert_${aux.export_name}"
+          job.est_steps: 1
+          job.est_step_time_s: 1500
+          job.est_startup_min: 2
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "${aux.eval_ckpts}/${oc.pad_iter:${aux.eval_iter}}/.metadata"
+          backend.env:
+            MODEL: "32b_dense"
+          backend.command: |
+            set -eu
+            ${aux.repo}/scripts/downstream_eval/eval_checkpoints.sh convert-here ${aux.export_name} ${aux.eval_ckpts}/${oc.pad_iter:${aux.eval_iter}}
+          slurm.sbatch.account: e-sta-openeurollm
+          slurm.sbatch.nodes: 1
+          slurm.sbatch.time: "01:00:00"
+          # inherited from the 512-node training job: its USR1 would end this batch shell
+          slurm.sbatch.signal: null
+          slurm.sbatch.comment: null
+
+        # ====== FLAG launchers for the export (login node: views + render, no submission)
+        - stage: prepare
+          backend: bash
+          job: default
+          job.local: true
+          job.name: "b1_reborn_prepare_${aux.export_name}"
+          job.est_steps: 1
+          job.est_step_time_s: 120
+          job.est_startup_min: 0
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "${aux.export_root}/${aux.export_name}/.convert_done"
+          backend.env:
+            MODEL: "32b_dense"
+            FLAG_WORK: ${aux.flag_work}
+            FLAG_ACCOUNT: "e-sta-openeurollm"
+            FLAG_SUBSET: ${oc.if:${oc.eq:${oc.len:${aux.flag_indices}},${aux.flag_suite.count}},"","1"}
+            # A checkout without git metadata (an rsynced test clone) cannot prove the
+            # oellm-eval pin; launch with ALLOW_EVAL_REV_MISMATCH=1 there.
+            ALLOW_EVAL_REV_MISMATCH: ${oc.env:ALLOW_EVAL_REV_MISMATCH,"0"}
+          backend.command: |
+            set -eu
+            ${aux.repo}/scripts/downstream_eval/eval_checkpoints.sh flag-prepare ${aux.export_name}
+
+        # ====== FLAG evals: ONE SLURM array, one task (and monitor record) per eval
+        # A `params` leaf whose `defaults` carry the stage settings: one point per eval.
+        - params:
+            aux.flag_i: ${aux.flag_indices}
+          defaults:
+            stage: eval
+            backend: bash
+            slurm: jupiter_driver
+            job: array_task
+            job.name: "b1_reborn_eval_${aux.export_name}"
+            job.array_group: "b1_reborn_eval_${aux.export_name}"
+            job.est_steps: 1
+            # 32B: the 438 evals of an export took ~60 node-hours, i.e. ~8 min per task
+            job.est_step_time_s: 480
+            job.est_startup_min: 0
+            job.start_condition:
+              class_name: FileExistsCondition
+              path: "${aux.flag_work}/state/${aux.export_name}.env"
+            job.finish_condition:
+              class_name: FileExistsCondition
+              path: "\\${aux.flag_done}"
+            backend.env:
+              FLAG_WORK: ${aux.flag_work}
+            backend.command: "\\${aux.flag_run_one}"
+            slurm.array_concurrency: 40
+            slurm.sbatch.account: e-sta-openeurollm
+            slurm.sbatch.nodes: 1
+            slurm.sbatch.time: "01:30:00"
+            slurm.sbatch.signal: null
+            slurm.sbatch.comment: null
+
+        # ====== collect (login node), once every eval task has finished or been given up
+        - stage: collect
+          backend: bash
+          job: default
+          job.local: true
+          job.name: "b1_reborn_collect_${aux.export_name}"
+          job.est_steps: 1
+          job.est_step_time_s: 120
+          job.est_startup_min: 0
+          job.start_condition:
+            class_name: JobsFinishedCondition
+            array_groups: ["b1_reborn_eval_${aux.export_name}"]
+          backend.env:
+            MODEL: "32b_dense"
+            FLAG_WORK: ${aux.flag_work}
+          backend.command: |
+            set -eu
+            ${aux.repo}/scripts/downstream_eval/eval_checkpoints.sh flag-collect ${aux.export_name}
