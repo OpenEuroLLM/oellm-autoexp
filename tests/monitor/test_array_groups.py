@@ -184,3 +184,79 @@ def test_jobs_finished_condition(tmp_path: Path):
     assert not _jobs_finished(session, array_groups=["evals"], require_success=True)
     # a misspelt name must not pass vacuously
     assert not _jobs_finished(session, array_groups=["evalz"])
+
+
+def _marker_member(tmp_path: Path, index: int, retry: StateEventConfig) -> JobRecord:
+    marker = tmp_path / "done" / f"{index}.ok"
+    return _member(
+        tmp_path,
+        index,
+        state_events=[retry],
+        finish_condition=FileExistsConditionConfig(path=str(marker)),
+    )
+
+
+def _retry_once() -> StateEventConfig:
+    return StateEventConfig(
+        name="retry_failed",
+        transition=(None, "FAILED"),
+        condition={"class_name": "MaxActionFiresCondition", "max_fires": 1},
+        action={"class_name": "RestartAction", "reason": "retry"},
+    )
+
+
+def test_completed_without_done_marker_is_a_failure(tmp_path: Path):
+    """Exit 0 is not success for an array task whose finish_condition is its
+    done marker.
+
+    Regression: on node jpbo-001-01 three FLAG eval tasks (2204589_294,
+    2204589_347, 2204974_309) exited 0 within a minute without writing a log,
+    a done marker or a result. SLURM said COMPLETED, the monitor closed them as
+    finished, and their checkpoints were collected without those evals.
+    """
+    store = JobFileStore(tmp_path / "state")
+    for record in _bind_array_groups(
+        [_marker_member(tmp_path, i, _retry_once()) for i in range(2)]
+    ):
+        store.upsert(record)
+    client = _client()
+    loop = MonitorLoop(store, slurm_client=client)
+    loop.observe_once()
+    fake = client._client
+
+    (tmp_path / "done").mkdir()
+    (tmp_path / "done" / "0.ok").touch()  # task 0 really did its work
+    fake.set_state("1_0", "COMPLETED")
+    fake.set_state("1_1", "COMPLETED")  # task 1 exited 0 without its marker
+    loop.observe_once()
+
+    by_index = {r.array_idx: r for r in store.load_all(include_finished=True)}
+    assert by_index[0].runtime.final_state == "finished"
+    assert by_index[1].runtime.final_state is None  # not closed: resubmitted alone
+    assert by_index[1].runtime.runtime_job_id == "2_1"
+    assert by_index[1].runtime.attempts == 2
+
+    # the retry writes its marker: now it is finished
+    (tmp_path / "done" / "1.ok").touch()
+    loop.observe_once()
+    assert store.load(by_index[1].job_id, include_finished=True).runtime.final_state == "finished"
+
+
+def test_completed_without_done_marker_twice_is_given_up(tmp_path: Path):
+    store = JobFileStore(tmp_path / "state")
+    for record in _bind_array_groups([_marker_member(tmp_path, 0, _retry_once())]):
+        store.upsert(record)
+    client = _client()
+    loop = MonitorLoop(store, slurm_client=client)
+    loop.observe_once()
+    fake = client._client
+
+    fake.set_state("1_0", "COMPLETED")
+    loop.observe_once()
+    (record,) = store.load_all()
+    assert record.runtime.runtime_job_id == "2_0"
+
+    fake.set_state("2_0", "COMPLETED")
+    loop.observe_once()
+    final = store.load(record.job_id, include_finished=True)
+    assert final.runtime.final_state == "cancelled"  # retry budget spent: given up, not "finished"

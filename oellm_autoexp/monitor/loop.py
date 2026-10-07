@@ -243,6 +243,8 @@ class MonitorLoop:
             runtime = job.runtime
             runtime_id = runtime.runtime_job_id
             new_status = statuses.get(runtime_id) if runtime_id else None
+            if new_status == "COMPLETED" and runtime.last_status != "COMPLETED":
+                new_status = self._completed_status(job, runtime_id)
             # On entering RUNNING, re-point the current.* symlinks at this job so
             # a shared 'current' symlink (dependency chain) tracks the running job.
             if runtime_id and new_status == "RUNNING" and runtime.last_status != "RUNNING":
@@ -377,6 +379,29 @@ class MonitorLoop:
             runtime.runtime_job_id = runtime_job_id
             runtime.submitted = True
             runtime.log_cursor = 0
+
+    def _completed_status(self, job: JobRecord, runtime_id: str | None) -> str:
+        """COMPLETED, or FAILED for an array member that exited 0 without
+        meeting its finish_condition.
+
+        An array member's finish_condition is its success marker (e.g. the
+        done file `run-one` writes after the eval), so exit 0 alone does not
+        prove the work was done: on node jpbo-001-01 three FLAG eval tasks
+        exited 0 within a minute without writing a log, a marker or a result,
+        and were closed as finished. Reporting FAILED lets the job's FAILED
+        policy (job/array_task.yaml: retry once, then give up) apply. Plain
+        jobs keep the old meaning of COMPLETED.
+        """
+        if not self._is_array_member(job) or job.definition.finish_condition is None:
+            return "COMPLETED"
+        if self._check_finish(job):
+            return "COMPLETED"
+        LOGGER.warning(
+            "Job %s (%s) COMPLETED without meeting its finish condition -- treated as FAILED",
+            job.job_id,
+            runtime_id,
+        )
+        return "FAILED"
 
     @staticmethod
     def _is_array_member(job: JobRecord) -> bool:
