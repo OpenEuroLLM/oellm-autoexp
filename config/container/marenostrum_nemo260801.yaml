@@ -1,0 +1,17 @@
+# NeMo 26.08.01 (nvcr.io/nvidia/nemo:26.08.01) for MareNostrum 5, with HybridEP.
+# Run with PATH=/opt/venv/bin first (set in the experiment's backend.env) to get the NeMo
+# environment: TE 2.18 (fixed fused cross-entropy) and emerging_optimizers (Muon).
+class_name: Container
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/nemo_26.08.01.sif
+runtime: singularity
+bind:
+    - /gpfs
+    - /dev/shm:$TMPDIR
+    - /apps
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+env:
+  WANDB_MODE: "offline"
+  PYTHONPATH: ".:submodules/Megatron-LM"
+  MACHINE_NAME: "MARENOSTRUM"
+python: "python"

@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 # Mock all transformer_engine submodules before any imports
 te_mock = MagicMock()
+te_mock.__version__ = "2.16"
 sys.modules["transformer_engine"] = te_mock
 sys.modules["transformer_engine.pytorch"] = MagicMock()
 sys.modules["transformer_engine.pytorch.router"] = MagicMock()
