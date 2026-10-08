@@ -38,6 +38,10 @@ Commands:
                        stage before oellm-autoexp's eval array stages, whose tasks each run one
                        row (jupiter_flag_evals.sh run-one); idempotent
   flag-collect NAME... Collect the CSV + join check (after the array stages)
+  cot-prepare NAME     Views + the launcher of the "cot" half (task group flag-evals-cot: the
+                       forced-reasoning _cot and continuation _cont evals) WITHOUT submitting; own
+                       state file NAME.cot.env, so it also works for an export prepared before
+  cot-collect NAME...  Collect the cot half into \$FLAG_WORK/results/NAME.flag-cot.tasks.csv
 
 Profiles: MODEL=$MODEL SITE=$SITE   WORK_ROOT=$WORK_ROOT
 USAGE
@@ -212,6 +216,36 @@ flag-collect)
     export "${FLAG_ENV[@]}"
     for name in "$@"; do
         python3 "$HERE/flag_status.py" "$FLAG_STATE_DIR/$name.env" --collect-only
+    done
+    ;;
+cot-prepare)
+    [ $# -eq 1 ] || { echo "usage: eval_checkpoints.sh cot-prepare NAME" >&2; exit 2; }
+    [ -f "$EXPORT_ROOT/$1/config.json" ] || { echo "error: $1 is not converted ($EXPORT_ROOT/$1)" >&2; exit 1; }
+    state="$FLAG_STATE_DIR/$1.cot.env"
+    # A second render would make a NEW run directory and orphan the rows already done.
+    if [ -f "$state" ] && [ "${FORCE:-0}" != 1 ]; then echo "$1 cot half already prepared ($state)"; exit 0; fi
+    flag_clean_env
+    rev=$(flag_preflight)                       # on the login node: compute nodes have no git
+    export ACCOUNT="$FLAG_ACCOUNT" FLAG_WORK CONCURRENCY="$FLAG_CONCURRENCY" TIME="$FLAG_TIME"
+    flag_views "$EXPORT_ROOT/$1"
+    rendered=$(HALVES=cot "$EVAL_REPO/scripts/jupiter_flag_evals.sh" render "$1")
+    sb=$(awk '$1 == "sbatch" && $2 ~ /\/cot\// {print $2}' <<< "$rendered")
+    [ -f "$sb" ] || { echo "error: render did not produce the cot launcher" >&2; exit 1; }
+    mkdir -p "$FLAG_STATE_DIR"
+    printf '# written by eval_checkpoints.sh cot-prepare %s\nNAME=%s\nEXPORT=%s\nEVAL_REV=%s\nCOT_RUN=%s\n' \
+        "$(date -Is)" "$1" "$EXPORT_ROOT/$1" "$rev" "$(dirname "$sb")" > "$state"
+    echo "prepared the cot half of $1: $(dirname "$sb")  (state: $state)"
+    ;;
+cot-collect)
+    [ $# -gt 0 ] || { echo "usage: eval_checkpoints.sh cot-collect NAME..." >&2; exit 2; }
+    flag_clean_env
+    for name in "$@"; do
+        state="$FLAG_STATE_DIR/$name.cot.env"
+        [ -f "$state" ] || { echo "error: $name: no $state (cot-prepare first)" >&2; exit 1; }
+        run=$(sed -n 's/^COT_RUN=//p' "$state")
+        mkdir -p "$FLAG_WORK/results"
+        # collect_raw matches the model directory's basename: the identity view is named after the export.
+        python3 "$COLLECT_RAW" --checkpoints "$name" --runs "$run" -o "$FLAG_WORK/results/$name.flag-cot.tasks.csv"
     done
     ;;
 flag-status|flag-rerun|flag-wait)

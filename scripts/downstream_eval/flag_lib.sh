@@ -41,3 +41,22 @@ flag_clean_env() {
         unset "$v"
     done
 }
+
+# The two eval views of an export (identity chat template for vLLM, plain for lighteval) via
+# jupiter_flag_evals.sh views. The plain view is `cp -al <export>`, which fails on an export owned
+# by another user: we may not hard-link the files that are read-only to us (tokenizer.model,
+# special_tokens_map.json of vanosch1's exports). Build it per file first -- hard link where allowed
+# (the model shards), copy the rest; `views` then keeps it as it is. Needs FLAG_WORK, EVAL_REPO.
+flag_views() {  # <export dir>
+    local export=$1 plain f
+    plain="$FLAG_WORK/views/plain/$(basename "$(realpath "$export")")"
+    if [ ! -e "$plain" ] && [ "$(stat -c %U "$export")" != "$USER" ]; then
+        rm -rf "$plain.tmp"            # leftover of a failed `cp -al` (links and copies only)
+        mkdir -p "$plain.tmp"
+        for f in "$export"/*; do
+            ln "$f" "$plain.tmp/" 2>/dev/null || cp -a "$f" "$plain.tmp/"
+        done
+        mv "$plain.tmp" "$plain"
+    fi
+    "$EVAL_REPO/scripts/jupiter_flag_evals.sh" views "$export" > /dev/null
+}

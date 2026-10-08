@@ -45,21 +45,8 @@ if [ "${FLAG_PREFLIGHT_OK:-0}" != 1 ]; then
 fi
 
 export ACCOUNT="$FLAG_ACCOUNT" FLAG_WORK CONCURRENCY="$FLAG_CONCURRENCY" TIME="$FLAG_TIME"
-# The lighteval "plain" view is `cp -al <export>` (jupiter_flag_evals.sh views), which fails on an
-# export owned by another user: we may not hard-link the files that are read-only to us
-# (tokenizer.model, special_tokens_map.json of vanosch1's exports). Build it per file first --
-# hard link where allowed (the model shards), copy the rest; `views` then keeps it as it is.
-plain="$FLAG_WORK/views/plain/$(basename "$(realpath "$EXPORT")")"
-if [ ! -e "$plain" ] && [ "$(stat -c %U "$EXPORT")" != "$USER" ]; then
-    rm -rf "$plain.tmp"            # leftover of a failed `cp -al` (links and copies only)
-    mkdir -p "$plain.tmp"
-    for f in "$EXPORT"/*; do
-        ln "$f" "$plain.tmp/" 2>/dev/null || cp -a "$f" "$plain.tmp/"
-    done
-    mv "$plain.tmp" "$plain"
-fi
-"$FLAG_SCRIPT" views "$EXPORT" > /dev/null
-rendered=$("$FLAG_SCRIPT" render "$NAME")
+flag_views "$EXPORT"   # flag_lib.sh: also for exports owned by another user
+rendered=$(HALVES="vllm lighteval" "$FLAG_SCRIPT" render "$NAME")  # the release halves; cot: cot-prepare
 echo "$rendered"
 vllm_sb=$(awk '$1 == "sbatch" && $2 ~ /\/vllm\// {print $2}' <<< "$rendered")
 light_sb=$(awk '$1 == "sbatch" && $2 ~ /\/lighteval\// {print $2}' <<< "$rendered")
