@@ -41,7 +41,11 @@ Commands:
   cot-prepare NAME     Views + the launcher of the "cot" half (task group flag-evals-cot: the
                        forced-reasoning _cot and continuation _cont evals) WITHOUT submitting; own
                        state file NAME.cot.env, so it also works for an export prepared before
-  cot-collect NAME...  Collect the cot half into \$FLAG_WORK/results/NAME.flag-cot.tasks.csv
+  cot-collect NAME...  Collect the cot half into \$FLAG_WORK/results/NAME.flag-cot.tasks.csv,
+                       then flag-combine NAME
+  flag-combine NAME... \$FLAG_WORK/results/NAME.flag-evals-471.tasks.csv = the 438 suite's CSV + the
+                       cot half's (both must exist; the release evals stay, the cot rows are added;
+                       rows at an n_shot outside the suite are left out)
 
 Profiles: MODEL=$MODEL SITE=$SITE   WORK_ROOT=$WORK_ROOT
 USAGE
@@ -54,6 +58,19 @@ submit() {
     else
         sbatch "$@"
     fi
+}
+
+# NAME.flag-evals-471.tasks.csv: the 438 suite's rows and the cot half's, one file per export for
+# aggregation (summarize-evals); rows at an n_shot outside the suite are left out (flag_combine.py).
+flag_combine() {
+    local r="$FLAG_WORK/results" name="$1"
+    local suite="$r/$name.flag-evals-438.tasks.csv" cot="$r/$name.flag-cot.tasks.csv"
+    for f in "$suite" "$cot"; do
+        [ -f "$f" ] || { echo "flag-combine $name: no $f" >&2; return 1; }
+    done
+    python3 "$HERE/flag_combine.py" "$suite" "$cot" "$r/$name.flag-evals-471.tasks.csv.tmp" \
+        "$HERE/../../config/eval_tasks/flag_evals.yaml" "$HERE/../../config/eval_tasks/flag_cot.yaml" &&
+        mv "$r/$name.flag-evals-471.tasks.csv.tmp" "$r/$name.flag-evals-471.tasks.csv"
 }
 
 CMD="${1:-}"; shift || true
@@ -246,7 +263,12 @@ cot-collect)
         mkdir -p "$FLAG_WORK/results"
         # collect_raw matches the model directory's basename: the identity view is named after the export.
         python3 "$COLLECT_RAW" --checkpoints "$name" --runs "$run" -o "$FLAG_WORK/results/$name.flag-cot.tasks.csv"
+        flag_combine "$name" || true  # the 438 suite may not have run (yet)
     done
+    ;;
+flag-combine)
+    [ $# -gt 0 ] || { echo "usage: eval_checkpoints.sh flag-combine NAME..." >&2; exit 2; }
+    for name in "$@"; do flag_combine "$name"; done
     ;;
 flag-status|flag-rerun|flag-wait)
     [ $# -gt 0 ] || { echo "usage: eval_checkpoints.sh $CMD NAME..." >&2; exit 2; }
