@@ -79,6 +79,12 @@ aux:
   eval_ckpt: ${oc.index:${aux.lineage_ckpts},${aux.ck_i},ckpt}
   export_root: /e/scratch/e-sta-openeurollm/production_training/downstream_eval_32b/hf
   export_ready: "${aux.export_root}/${aux.export_name}/${oc.if:${aux.export_exists},config.json,.convert_done}"
+  # What the convert stage runs to produce export_root/export_name (and, last, .convert_done).
+  # A hook so a config can produce exports another way and reuse the chain (anneal_merge5_evals).
+  export_command: "${aux.repo}/scripts/downstream_eval/eval_checkpoints.sh convert-here ${aux.export_name} ${aux.eval_ckpt}"
+  # A shell test the convert stage waits for before it is submitted ("true": none). Lets a
+  # producer depend on other exports, e.g. a merge on its inputs' .convert_done.
+  export_after: "true"
   flag_work: /e/scratch/e-sta-openeurollm/${oc.env:USER}/flag-evals
   oellm_eval: ${aux.repo}/submodules/oellm-eval
   # The evals to run, by name (half/task/n_shot); null = all 438.
@@ -117,11 +123,14 @@ sweep:
           job.est_steps: 1
           job.est_step_time_s: 1500
           job.est_startup_min: 2
+          job.start_condition:
+            class_name: ShellCommandCondition
+            command: "\\${aux.export_after}"
           backend.env:
             MODEL: "32b_dense"
           backend.command: |
             set -eu
-            ${aux.repo}/scripts/downstream_eval/eval_checkpoints.sh convert-here \${aux.export_name} \${aux.eval_ckpt}
+            \${aux.export_command}
           slurm.sbatch.account: e-sta-openeurollm
           slurm.sbatch.nodes: 1
           slurm.sbatch.time: "01:00:00"
