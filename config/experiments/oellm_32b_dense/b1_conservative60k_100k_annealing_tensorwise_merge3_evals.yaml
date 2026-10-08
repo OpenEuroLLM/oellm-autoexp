@@ -1,0 +1,60 @@
+# @package _global_
+#
+# ============================================================================
+# v1C TENSORWISE RE-ANNEAL: HF EXPORTS, merge3 (116k-120k) AND THE FULL FLAG SUITE
+# ============================================================================
+# For Jenia's re-run of the v1C cooldown with the FP8 fixes (tensorwise + bf16 first/last layer;
+# b1_conservative60k_100k_annealing_tensorwise, run B1-conservative100k-precision-anneal), the
+# lineage_flag_evals chain over four exports:
+#
+#   name                          produced by (convert stage, 1 node)             FLAG (438)
+#   v1annealCT_116k               convert-here of iter_0116000                    -
+#   v1annealCT_118k               convert-here of iter_0118000                    -
+#   v1annealCT_120k               convert-here of iter_0120000                    yes
+#   v1annealCT_merge3_116k_120k   merge_hf.py --weights uniform over the three,   yes
+#                                 once all three have .convert_done
+#
+# merge3 = vanosch1's merge of the other anneals (merge3_flag_evals): uniform mean of the 116k,
+# 118k and 120k exports, fp32 accumulate, one round-to-nearest-even back to bf16
+# (scripts/model_merging/merge_hf.py reproduces those exports bit for bit). The 120k single is
+# evaluated as well: against v1annealC_120k (FP8-damaged) and v1annealC_120k_l0fix (repaired)
+# it shows what the fixes do on their own; the merge compares with the other *_merge3_116k_120k.
+#
+# Checkpoints are read from the hash-verified /e/data1 mirror (jitsev1's, read only). The convert
+# of the merge entry waits for its inputs (aux.export_after); prepare / eval / collect as in
+# lineage_flag_evals.
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_dense/b1_conservative60k_100k_annealing_tensorwise_merge3_evals --dry-run
+# Cost: 3 conversions (~0.5 node-h each) + merge (~0.1 node-h) + 2 x 438 evals (42 node-h each)
+# = ~86 node-hours; scratch +4 x 64 GB.
+# ============================================================================
+defaults:
+  - lineage_flag_evals
+  - _self_
+
+aux:
+  ct_ckpts: /e/data1/datasets/playground/mmlaion/oellm/experiments/annealing_precision_20261004/conservative/training_ckpts/checkpoints
+  merge_py: "python3 ${aux.repo}/scripts/model_merging/merge_hf.py --root ${aux.export_root}"
+  convert_sh: "${aux.repo}/scripts/downstream_eval/eval_checkpoints.sh convert-here"
+  # lineage_flag_evals' fields, plus: cmd = what the convert stage runs; after = the shell test it
+  # waits for; evals = run the FLAG suite on the export.
+  lineage_ckpts:
+    - {name: v1annealCT_116k, lines: [v1C], step: 116000, exists: false, evals: false, after: "true",
+       ckpt: "${aux.ct_ckpts}/iter_0116000", cmd: "${aux.convert_sh} v1annealCT_116k ${aux.ct_ckpts}/iter_0116000"}
+    - {name: v1annealCT_118k, lines: [v1C], step: 118000, exists: false, evals: false, after: "true",
+       ckpt: "${aux.ct_ckpts}/iter_0118000", cmd: "${aux.convert_sh} v1annealCT_118k ${aux.ct_ckpts}/iter_0118000"}
+    - {name: v1annealCT_120k, lines: [v1C], step: 120000, exists: false, evals: true, after: "true",
+       ckpt: "${aux.ct_ckpts}/iter_0120000", cmd: "${aux.convert_sh} v1annealCT_120k ${aux.ct_ckpts}/iter_0120000"}
+    - {name: v1annealCT_merge3_116k_120k, lines: [v1C], step: 120000, exists: false, evals: true, ckpt: "",
+       after: "test -f ${aux.export_root}/v1annealCT_116k/.convert_done -a -f ${aux.export_root}/v1annealCT_118k/.convert_done -a -f ${aux.export_root}/v1annealCT_120k/.convert_done",
+       cmd: "${aux.merge_py} --out v1annealCT_merge3_116k_120k --weights uniform v1annealCT_116k v1annealCT_118k v1annealCT_120k"}
+  ckpt_select: null   # all four
+  export_command: ${oc.index:${aux.lineage_ckpts},${aux.ck_i},cmd}
+  export_after: ${oc.index:${aux.lineage_ckpts},${aux.ck_i},after}
+  export_evals: ${oc.index:${aux.lineage_ckpts},${aux.ck_i},evals}
+
+sweep:
+  # lineage_flag_evals' filter (no convert for existing exports), plus: no prepare / eval /
+  # collect for convert-only entries.
+  filter: "\\${oc.eval:'not ((\"\\${stage}\" == \"convert\" and \\${aux.export_exists}) or (\"\\${stage}\" != \"convert\" and not \\${aux.export_evals}))'}"
