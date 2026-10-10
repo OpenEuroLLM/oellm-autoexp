@@ -387,6 +387,7 @@ log_memory_interval: null  # Report memory interval.
 log_memory_to_tensorboard: false  # Enable memory logging to tensorboard.
 log_num_zeros_in_grad: false  # If set, calculate and log the number of zeros in gradient.
 log_params_norm: false  # If set, calculate and log parameters norm.
+log_params_norm_and_zeros_interval: null  # Compute --log-params-norm and --log-num-zeros-in-grad only on iterations that are a multiple of this; None computes them every iteration. Each costs a pass over the local parameters / gradients plus a collective on EVERY step, logged or not.
 log_progress: false  # If set, log progress (in terms of number of processed tokens and number of floating-point operations) to progress.txt file in checkpoint directory.
 log_straggler: false  # If set, tracks and logs straggler per GPU.
 log_throughput: false  # If set, calculate and log throughput per GPU.

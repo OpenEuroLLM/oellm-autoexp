@@ -3148,6 +3148,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "log_params_norm_and_zeros_interval": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Compute --log-params-norm and --log-num-zeros-in-grad only on iterations that are a multiple of this; None computes them every iteration. Each costs a pass over the local parameters / gradients plus a collective on EVERY step, logged or not.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "log_progress": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -9376,6 +9384,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "log_params_norm_and_zeros_interval": MegatronActionSpec(
+        option_strings=("--log-params-norm-and-zeros-interval",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "log_progress": MegatronActionSpec(
         option_strings=("--log-progress",),
