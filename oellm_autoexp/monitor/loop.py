@@ -884,6 +884,8 @@ class MonitorLoop:
                         str(Path(variables["log_path"]).parent.parent),
                         "--exclude-file",
                         exclude_file,
+                        "--job-log",
+                        variables["log_path"],
                         "--apply",
                     ],
                     capture_output=True,
