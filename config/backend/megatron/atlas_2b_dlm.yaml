@@ -1,0 +1,115 @@
+defaults:
+ - qwen3_base
+
+# The 2B model of the ATLAS paper (shapes from its Table B.3, recipe from Table B.2), trained
+# as a masked diffusion model with the objective of qwen3_125M_dlm.yaml. ATLAS trains AR models.
+
+# Shapes borrowed by ATLAS from Muennighoff et al. (2024). ATLAS does not state the FFN type,
+# biases or embedding tying; a gated FFN, no biases and a tied embedding are inferred from its
+# parameter count. 2.18B parameters with the 128k vocabulary (1.89B in the transformer, 0.29B
+# in the tied embedding). RMSNorm, RoPE and QK layernorm come from qwen3_base, as in the rq1
+# models; ATLAS does not specify them.
+# 17 heads is prime, so tensor parallelism cannot split them: use data parallelism only.
+num_layers: 25
+hidden_size: 2176
+ffn_hidden_size: 8704
+num_attention_heads: 17
+num_query_groups: 17
+kv_channels: 128
+swiglu: true
+add_bias_linear: false
+untie_embeddings_and_output_weights: false
+
+# ATLAS trains on 2048 tokens. difflm-noshift drops the AR label shift, so 2049 leaves the
+# model 2048 tokens.
+seq_length: 2049
+max_position_embeddings: 2049
+
+# 30k steps of 2048 sequences x 2048 tokens: 4.2M tokens per step, 126B tokens in total, as in
+# ATLAS for its largest models. ATLAS reads the monolingual loss at 42B tokens (step 10,000).
+# train_full has 21.5B tokens, so the run sees it 5.8 times (2 times by step 10,000). Tokenize
+# more HPLT English shards to train on fresh data instead.
+train_iters: 30000
+global_batch_size: 2048
+# Estimated to fit an 80 GB H100 with the distributed optimizer; lower it if the first steps
+# run out of memory.
+micro_batch_size: 4
+
+# ATLAS recipe: peak LR 2e-4 (from Muennighoff et al. 2024), 1000 warmup steps, and a WSD
+# schedule whose cooldown is the last 10% of training. ATLAS does not give the cooldown shape;
+# linear is what the rq1 runs use (MegaDLMs' Megatron has no minus_sqrt). The LR comes from AR
+# models; the DLM uses it unchanged, as in qwen3_125M.yaml.
+lr: 2.0e-4
+min_lr: 0.0
+lr_decay_style: WSD
+lr_warmup_iters: 1000
+lr_wsd_decay_style: linear
+lr_wsd_decay_iters: ${oc.eval:'int(0.1*${backend.megatron.train_iters})'}
+# AdamW (Megatron's adam). ATLAS does not give betas, weight decay or clipping; these are the
+# HPLT/OpenEuroLLM values of qwen3_125M.yaml.
+adam_beta1: 0.9
+adam_beta2: 0.95
+weight_decay: 0.05
+clip_grad: 1.0
+init_method_std: 0.02
+
+# ATLAS uses dropout 0.1, where English scaling work usually uses 0.0: it mattered for
+# low-resource languages trained for several epochs. ATLAS gives one value; it is applied to
+# both dropouts here.
+hidden_dropout: 0.1
+attention_dropout: 0.1
+
+# 2.2B parameters without tensor parallelism: shard the optimizer state across the
+# data-parallel ranks and overlap its communication with compute, as in megadlm-8b.yaml.
+use_distributed_optimizer: true
+overlap_grad_reduce: true
+overlap_param_gather: true
+
+# MegaDLMs' Megatron cannot use these fusions with the Snellius TransformerEngine.
+bias_gelu_fusion: false
+bias_dropout_fusion: false
+bias_swiglu_fusion: false
+apply_rope_fusion: false
+
+# ATLAS uses the 64k MADLAD-400 vocabulary. The 128k OpenEuroLLM vocabulary doubles the
+# embedding, and raw losses do not line up with the paper's (ATLAS reports a
+# vocabulary-insensitive loss).
+tokenizer_type: SentencePieceTokenizer
+tokenizer_model: /projects/0/prjs2013/oellm/tokenizer/oellm-tokenizer-128k-v2/tokenizer.model
+
+# Data from tools/make_data_subsets.py, shared with the rq1 runs.
+aux:
+  objective: dlm
+  model_name: "atlas-2b-scale34-dlm"
+  # <unused_67> of oellm-tokenizer-128k-v2
+  mask_token_id: 147
+  # t ~ U(0,1) per sequence, 1/t-weighted masked cross-entropy (MDLM/LLaDA objective).
+  objective_args: "--model-running-mode difflm-noshift --base-model vanilla --attention-mask-type no_mask --mask-token ${.mask_token_id} --difflm-varilen-prob 0.01"
+  data_dir: /projects/0/prjs2013/users/zarep/rq1/data/hplt2_eng_Latn
+  language: eng_Latn
+  train_subset: full
+train_data_path:
+  - ${backend.megatron.aux.data_dir}/${backend.megatron.aux.language}_train_${backend.megatron.aux.train_subset}
+valid_data_path:
+  - ${backend.megatron.aux.data_dir}/${backend.megatron.aux.language}_valid
+# 5 x 2048 = 10,240 sequences (21M tokens), the size of the ATLAS test sets and 42% of the
+# 50M-token validation set. If MegaDLMs runs with --fixed-validation-set, every evaluation
+# scores exactly these sequences. Every 500 steps includes step 10,000.
+eval_iters: 5
+eval_interval: 500
+data_cache_path: ${job.base_output_dir}/data_cache
+
+# A checkpoint with optimizer state is about 29 GB (1.8 GB at 134M parameters), so the 30
+# checkpoints of a full run take about 870 GB.
+save: ${job.base_output_dir}/checkpoints
+load: ${job.base_output_dir}/checkpoints
+save_interval: 1000
+wandb_exp_name: ${job.name}
+wandb_save_dir: ${job.base_output_dir}/wandb
+tensorboard_dir: ${job.base_output_dir}/tensorboard
+log_interval: 10
+log_throughput: true
+use_flash_attn: true
+# Flash attention applies the no_mask pattern itself; a dense 2048x2048 mask per sample would
+# only cost dataloader time and host-to-device copies.
+create_attention_mask_in_dataloader: false

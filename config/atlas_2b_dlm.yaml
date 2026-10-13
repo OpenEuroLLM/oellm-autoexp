@@ -1,0 +1,40 @@
+# @package _global_
+# ATLAS 2B as a masked diffusion model (MegaDLMs) on HPLT English. Model and recipe:
+# backend/megatron/atlas_2b_dlm.yaml.
+#
+#   uv run scripts/run_autoexp.py --config-name atlas_2b_dlm --dry-run
+
+defaults:
+  - /backend: megadlm_torchrun
+  - /container: snellius
+  - /slurm: snellius
+  - /job: auto_restart
+  - /sweep: none
+  - override /backend/megatron: atlas_2b_dlm
+  - _self_
+
+job:
+  name: "atlas_2b_dlm"
+  base_output_dir: "${oc.env:OUTPUT_DIR,'/projects/0/prjs2013/users/zarep/rq1/output'}/${job.name}"
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+
+backend:
+  # For megadlm_torchrun.yaml versions that read the MegaDLMs flags from aux.difflm_args.
+  aux:
+    difflm_args: ${backend.megatron.aux.objective_args}
+  megatron:
+    wandb_project: "atlas-2b-dlm"
+
+# 126B tokens are about 1,700-2,500 GPU-hours at 300-200 TFLOP/s per GPU (the 125M DLM reaches
+# 166): 2-3 days on 8 nodes. auto_restart resubmits after the time limit, and training resumes
+# from the last checkpoint (1000 steps, about 2 hours). global_batch_size (2048) must be a
+# multiple of micro_batch_size x 4 GPUs x nodes.
+slurm:
+  sbatch:
+    _non_strict: true
+    nodes: 8
+    partition: gpu_h100
+    time: "48:00:00"
