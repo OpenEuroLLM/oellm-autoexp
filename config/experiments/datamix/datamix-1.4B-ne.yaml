@@ -1,0 +1,68 @@
+# @package _global_
+defaults:
+  - datamix
+  - _self_
+
+# AutoExp equivalent of train-gpt
+
+backend:
+  megatron:
+    data_path:
+      - /scratch/project_462001516/preprocessed/oellm-v1-256k/catalogue/nemotron-cc/1.0/10p-sample/nemotron-ha-10p-sample
+    # Qwen3 dense-like 1.4B model
+    num_layers: 28
+    hidden_size: 2048
+    ffn_hidden_size: 6144
+    num_attention_heads: 16
+    group_query_attention: true
+    num_query_groups: 8
+    untie_embeddings_and_output_weights: false
+    init_method_std: 0.02
+    seq_length: 4096
+    max_position_embeddings: 4096
+    position_embedding_type: rope
+    rotary_base: 10000
+    kv_channels: 128
+    add_bias_linear: false
+    attention_dropout: 0.0
+    hidden_dropout: 0.0
+    normalization: RMSNorm
+    qk_layernorm: true
+    bf16: true
+    swiglu: true
+    attention_softmax_in_fp32: false
+    masked_softmax_fusion: false
+    gradient_accumulation_fusion: false
+
+    # Parallelism and batches
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: true
+    use_distributed_optimizer: true
+    micro_batch_size: 2
+    global_batch_size: 512
+    distributed_timeout_minutes: 30
+
+    # Optimizer and 100B-token WSD schedule
+    optimizer: adam
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    lr: 0.001
+    min_lr: 0.0
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_warmup_iters: 2000
+    train_iters: "${oc.eval:'(${aux.train_tokens}+${.seq_length}*${.global_batch_size}-1)//(${.seq_length}*${.global_batch_size})'}"
+    lr_decay_iters: ${.train_iters}
+    lr_wsd_decay_iters: "${oc.eval:'${.train_iters}//5'}"
+    clip_grad: 1.0
+    weight_decay: 0.1
+
+    # Saving, evaluation, and logging
+    wandb_exp_name: 1.4B-nemo-ha
+
+job:
+  name: train-1.4B-ne
+  base_output_dir: ${oc.env:OUTPUT_DIR,"output/train-1.4B-ne"}

@@ -1,0 +1,66 @@
+# @package _global_
+defaults:
+  - base
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /sweep: none
+  - _self_
+
+# AutoExp equivalent of train-gpt
+aux:
+  train_tokens: 100_000_000_000
+
+backend:
+  megatron:
+    # Data
+    data_cache_path: ${job.base_output_dir}/cache
+    split: "99,1,0"
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    make_vocab_size_divisible_by: 128
+    num_workers: 2
+    num_dataset_builder_threads: 1
+    trust_remote_code: false
+    dataloader_type: cyclic
+    overlap_grad_reduce: true
+    seed: 1234
+    use_flash_attn: true
+
+    # Saving, evaluation, and logging
+    ckpt_format: torch_dist
+    save: ${job.base_output_dir}/checkpoints
+    load: ${job.base_output_dir}/checkpoints
+    save_interval: 4000
+    eval_interval: 2000
+    eval_iters: 100
+    log_interval: 1
+    log_throughput: true
+    log_progress: true
+    log_timers_to_tensorboard: true
+    tensorboard_queue_size: 5
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+    wandb_project: flag-config-test
+    wandb_save_dir: ${job.base_output_dir}/wandb
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "1"
+    TRITON_HOME: /tmp/triton_cache
+
+slurm:
+  env:
+    MASTER_PORT: "9999"
+    _CREATE_DIRS: "$(mkdir -p ${job.base_output_dir}/checkpoints)"
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000"
+  sbatch:
+    nodes: 16
+    ntasks_per_node: 8
+    gpus_per_node: 8
+    gres: gpu:8
+    cpus_per_task: 7
+    mem: 480G
+    partition: standard-g
+    account: project_462001516
+    time: "48:00:00"
+    exclusive: true
