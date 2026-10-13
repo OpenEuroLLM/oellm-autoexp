@@ -31,7 +31,7 @@ backend:
     # job.name already carries the "anneal" tag.
     wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
     # data_cache_path: /leonardo_work/OELLM_prod2026/production_training/${job.name}/cache
-    data_cache_path: /leonardo_scratch/fast/OELLM_prod2026/production_training/${job.name}/cache #change to the actual annealing data cache path
+    data_cache_path: /leonardo_scratch/fast/OELLM_prod2026/production_training/${job.name}/cache 
 
 
     # EXIT safely on signal
