@@ -4,6 +4,7 @@ rejection."""
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -97,8 +98,27 @@ def test_constructed_model_override_rejected(tmp_path, monkeypatch, wrong):
 
 
 def test_source_matches_validated_seven_file_overlay():
+    """The RELEASED TWEO source still carries the validated bytes.
+
+    Checked at the manifest's `release_commit`, read from git objects, not in
+    the working checkout: the autoexp gitlink moves on past the release (it
+    pins later Megatron), and the validated source is reproduced from the
+    release tag (docs/megatron_versions/b1_tweo_20261002.md), not from
+    whatever submodules/Megatron-LM currently holds.
+    """
     manifest = json.loads((ROOT / "versions/tweo_source.json").read_text())
     source = ROOT / "submodules/Megatron-LM"
-    assert (source / "pretrain_gpt.py").is_file(), "Initialize released Megatron before testing"
+    assert (source / "pretrain_gpt.py").is_file(), "Initialize Megatron before testing"
+    commit = manifest["release_commit"]
+    present = subprocess.run(
+        ["git", "-C", str(source), "cat-file", "-e", f"{commit}^{{commit}}"],
+        capture_output=True,
+    )
+    assert present.returncode == 0, f"release commit {commit} missing from the Megatron history"
     for rel, digest in manifest["files"].items():
-        assert hashlib.sha256((source / rel).read_bytes()).hexdigest() == digest, rel
+        blob = subprocess.run(
+            ["git", "-C", str(source), "show", f"{commit}:{rel}"],
+            capture_output=True,
+            check=True,
+        ).stdout
+        assert hashlib.sha256(blob).hexdigest() == digest, rel
