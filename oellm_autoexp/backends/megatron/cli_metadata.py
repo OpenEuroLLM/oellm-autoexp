@@ -2360,7 +2360,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "hybrid_layer_pattern": MegatronArgMetadata(
         arg_type=str,
         default=None,
-        help='Specify a hybrid layer pattern using M (mamba), G (gdn), * (attention), D (dsa), - (mlp), E (moe). Use | to define pipeline stage boundaries for flexible virtual pipeline parallel (fVPP). Use / to separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is used, it is the sole indicator that a hybrid model is being run.',
+        help='Specify a hybrid layer pattern using M (mamba), G (gdn), L (the linear mixer named by --experimental-attention-variant), * (attention), D (dsa), - (mlp), E (moe). Use | to define pipeline stage boundaries for flexible virtual pipeline parallel (fVPP). Use / to separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is used, it is the sole indicator that a hybrid model is being run.',
         choices=None,
         nargs=None,
         element_type=None,

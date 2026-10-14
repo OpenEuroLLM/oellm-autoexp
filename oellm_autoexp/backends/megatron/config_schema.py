@@ -3364,11 +3364,11 @@ class MegatronConfig(ConfigInterface):
     # `transformer_block.py`, or `transformer_layer.py`
     spec: list[str] | None | None = None
 
-    # Specify a hybrid layer pattern using M (mamba), G (gdn), * (attention), D (dsa), -
-    # (mlp), E (moe). Use | to define pipeline stage boundaries for flexible virtual pipeline
-    # parallel (fVPP). Use / to separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or
-    # "M-M-|M-M*-/MM/MM". When this flag is used, it is the sole indicator that a hybrid model
-    # is being run.
+    # Specify a hybrid layer pattern using M (mamba), G (gdn), L (the linear mixer named by
+    # --experimental-attention-variant), * (attention), D (dsa), - (mlp), E (moe). Use | to
+    # define pipeline stage boundaries for flexible virtual pipeline parallel (fVPP). Use / to
+    # separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this
+    # flag is used, it is the sole indicator that a hybrid model is being run.
     hybrid_layer_pattern: str | None | None = None
 
     # Deprecated. Use --hybrid-layer-pattern instead. If specified, its value will be
