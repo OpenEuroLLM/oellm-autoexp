@@ -1,0 +1,110 @@
+# @package _global_
+#
+# FINAL weak-model measurement: the WINNING parallelism at each size, all at the
+# same run length, for the proposal figure.
+#
+# WHY THIS EXISTS
+# ---------------
+# The weak-model points now come from three different vintages:
+#     64n  1.9B  TP1/PP1  300 iters  (control_weakmodel_n64.yaml rerun)
+#    256n  7B    TP2/PP2  200 iters  (weak_model_parallelism.yaml, the +17.8% fix)
+#    128n / 512n / 1024n  ONLY 50 iters (the original sweep)
+# Mixing 50-iteration and 200-iteration arms in one figure produces visibly
+# mismatched error bars — the 50-iteration arms have p10 far below their medians
+# (e.g. 17B: p10 264.3 vs median 324.2) purely because they sampled less. This
+# re-measures the three stragglers at 200 iterations so every point in the
+# published figure is like-for-like.
+#
+# The medians themselves are not expected to move much: all three already report
+# drift ~0, so they were converged. This buys STATISTICS, not a correction.
+#
+# WHICH PARALLELISM EACH ARM USES, AND WHY
+# ----------------------------------------
+# From the weak_model_parallelism.yaml sweep (median TFLOP/s/GPU):
+#     3.5B 128n  M=4   TP2/PP1 325.0  vs TP1/PP2 321.9   -> BASELINE WINS (-1.0%)
+#     7B   256n  M=8   TP4/PP1 272.9  vs TP2/PP2 321.4   -> TP2/PP2 WINS (+17.8%)
+#                                        TP1/PP4 293.4
+#     17B  512n  M=16  TP4/PP2 324.2  vs TP2/PP4 292.9   -> BASELINE WINS (-9.7%)*
+#     32B  1024n M=32  TP4/PP4 337.7  vs TP2/PP8 OOM     -> BASELINE WINS
+#
+# * the 17B alternative was HANDICAPPED and its loss is not a clean verdict:
+#   52 layers / (PP4 * VPP2) = 6.5 is not an integer, so it ran VPP=1 with an
+#   18.8% bubble against the baseline's 10%. The gap is about what that handicap
+#   alone predicts. Settling it properly needs a layer count divisible by 8.
+#
+# So "trade TP for PP" is NOT a general rule — it pays only where M is large
+# enough to hide the bubble AND the TP being removed is expensive. At M=4 the
+# 12.5% bubble costs more than dropping TP 2->1 saves; at M=8 the 6.3% bubble is
+# a bargain against TP 4->2. The 7B arm was simply mis-parallelised.
+#
+# The 32B TP2/PP8 arm died of CUDA OOM in the forward pass (~100 MiB free of
+# 95 GiB): PP=8 with VPP=2 gives 16 virtual stages of in-flight activations, and
+# halving TP simultaneously doubles the per-GPU parameter/activation shard.
+#
+# NOT INCLUDED: 64n and 256n already have 300 and 200 iterations respectively.
+#
+# COST: ~925 node-hours, of which the 1024-node arm is ~686. This is dominated
+# by the 32B point because its iteration is ~9.3 s (GBS 16384 x 4096 tokens).
+defaults:
+  - weak_scaling_model
+  - override /slurm: jupiter_autoexclude
+  - _self_
+
+job:
+  name: "speedscale_${backend.aux.variant}_gbs${backend.megatron.global_batch_size}"
+  chain_repeat: 0
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # --- 3.5B @128 : TP2/PP1 (baseline won by 1.0%) ----------------------
+        - backend.aux.variant: "wmfinal-3b5-n128-tp2pp1"
+          backend.aux.active_nodes: 128
+          backend.megatron.global_batch_size: 2048
+          backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.num_layers: 28
+          backend.megatron.hidden_size: 2560
+          backend.megatron.ffn_hidden_size: 12800
+          backend.megatron.num_attention_heads: 20
+          backend.megatron.num_query_groups: 4
+          backend.megatron.exit_interval: 200
+          slurm.sbatch.time: "00:30:00"
+
+        # --- 17B @512 : TP4/PP2, VPP2 (baseline won) -------------------------
+        - backend.aux.variant: "wmfinal-17b-n512-tp4pp2"
+          backend.aux.active_nodes: 512
+          backend.megatron.global_batch_size: 8192
+          backend.megatron.tensor_model_parallel_size: 4
+          backend.megatron.pipeline_model_parallel_size: 2
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 13
+          backend.megatron.num_layers: 52
+          backend.megatron.hidden_size: 4096
+          backend.megatron.ffn_hidden_size: 20480
+          backend.megatron.num_attention_heads: 32
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 200
+          slurm.sbatch.time: "00:45:00"
+
+        # --- 32B @1024 : TP4/PP4, VPP2 (baseline won; TP2/PP8 OOM'd) ---------
+        # ~9.3 s/iter -> 200 iters is ~31 min of measurement plus ~9 min startup.
+        # The wall is set to 1 h because startup at 1024 nodes is not predictable
+        # from the node count: an earlier 512-node arm burned 20 of its 25 min in
+        # startup while a 1024-node arm in the same round started in 3.5 min.
+        - backend.aux.variant: "wmfinal-32b-n1024-tp4pp4"
+          backend.aux.active_nodes: 1024
+          backend.megatron.global_batch_size: 16384
+          backend.megatron.tensor_model_parallel_size: 4
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 8
+          backend.megatron.num_layers: 64
+          backend.megatron.hidden_size: 5120
+          backend.megatron.ffn_hidden_size: 25600
+          backend.megatron.num_attention_heads: 40
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 200
+          slurm.sbatch.time: "01:00:00"

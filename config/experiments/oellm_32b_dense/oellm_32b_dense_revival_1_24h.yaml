@@ -1,0 +1,20 @@
+# @package _global_
+# Production revival 1 in 24 h segments: identical to oellm_32b_dense_revival_1.yaml except for the partition and
+# the wall time. The booster QoS caps jobs at 12 h; the `largebooster` partition (same jpbo nodes, QoS
+# part_largebooster: MinTRES node=480, no MaxWall) accepts 24 h for >= 480 nodes, but it is not in the JUPITER
+# documentation and was administratively DOWN on 2026-09-06 (jobs queue with reason PartitionDown and never
+# start). Use only when `scontrol show partition largebooster` reports State=UP, e.g. after JSC opened it on
+# request; helper_scripts/switch_revival_segment.sh --profile large24 checks that before submitting.
+defaults:
+  - /experiments/oellm_32b_dense/oellm_32b_dense_revival_1
+  - _self_
+
+backend:
+  megatron:
+    # save + exit at 23.5 h, leaving 30 min for the final torch_dist write and the teardown
+    exit_duration_in_mins: 1410
+
+slurm:
+  sbatch:
+    partition: largebooster
+    time: "24:00:00"

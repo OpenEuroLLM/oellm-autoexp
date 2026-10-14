@@ -1,0 +1,59 @@
+# @package _global_
+# Integration test for the new LM-head stabilizers added to Megatron-LM
+# (branch: zloss):
+#   * final_logit_softcapping : Gemma-2 style logits <- c * tanh(logits / c)
+#   * output_z_loss_coeff      : auxiliary coeff * mean(logsumexp(logits)**2)
+#
+# Based on the validated megatron_moe_jupiter_speed_test config, which uses
+# cross_entropy_fusion_impl=te + untied embeddings -> this exercises the TE
+# cross-entropy path and the standalone vocab_parallel_logsumexp helper used
+# for the z-loss (the trickiest of the new code paths). Short run, no save.
+# no observed speed degradation (< 1%)
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_base, qwen3_1.7B, data_nemonicco_jupiter]
+  - /sweep: none
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 100
+    global_batch_size: 64
+    micro_batch_size: 8
+    tensor_model_parallel_size: 1
+    eval_interval: 1000
+    seq_length: 4096
+    lr: 0.001
+    log_interval: 1
+
+    # --- feature under test ---------------------------------------------
+    final_logit_softcapping: 30.0   # Gemma-2 final-logit cap
+    output_z_loss_coeff: 1.0e-4     # PaLM/Chinchilla-style output z-loss
+    # --------------------------------------------------------------------
+
+    use_distributed_optimizer: true
+    save: null
+    load: null
+    ckpt_step: 0
+    moe_router_dtype: "fp32"
+
+    data_cache_path: /e/project1/projectnucleus/poeppel1/data/
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:15:00"
+
+job:
+  name: megatron_zloss_softcap_test

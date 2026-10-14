@@ -16,6 +16,13 @@ from unittest.mock import MagicMock
 # Mock all transformer_engine submodules before any imports
 te_mock = MagicMock()
 sys.modules["transformer_engine"] = te_mock
+
+# mcore 0.19 reads te.__version__ at import time
+# (tensor_parallel/generalized_tensor_parallelism.py:48 does Version(te.__version__)), and a
+# bare MagicMock raises AttributeError for dunders. Pin it to the TE that the deployment
+# container actually ships (nemo_26.04 -> 2.14.0) so any version-gated default here matches
+# what will really run, rather than an arbitrary mock value.
+te_mock.__version__ = "2.14.0"
 sys.modules["transformer_engine.pytorch"] = MagicMock()
 sys.modules["transformer_engine.pytorch.router"] = MagicMock()
 sys.modules["transformer_engine.pytorch.cpp_extensions"] = MagicMock()

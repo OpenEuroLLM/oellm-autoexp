@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field, MISSING
 from pathlib import Path
@@ -57,10 +58,13 @@ class JobRuntime:
     condition_state: dict[str, Any] = field(default_factory=dict)
     action_state: dict[str, Any] = field(default_factory=dict)
     # Persisted EventRecords keyed by stable event_key, surviving across polls.
-    # Currently used to accumulate inactivity streaks (count + timestamps).
+    # Used to accumulate inactivity streaks and no-progress streaks (count +
+    # timestamps, plus the last observed counter for progress events).
     events: dict[str, Any] = field(default_factory=dict)
     last_status: str | None = None
     final_state: str | None = None  # "finished", "cancelled", or None for active jobs
+    # RestartAction hooks parked until the job leaves the queue (wait_for_job_end)
+    deferred_restart: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(kw_only=True)
@@ -89,6 +93,11 @@ class JobFileStore:
         for path in self.list_paths():
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
+                # Skip finished/cancelled jobs BEFORE the full parse: parse_config of
+                # a record (it carries the resolved job config) dominates a poll once
+                # an array stage has put hundreds of records into the session.
+                if not include_finished and (payload.get("runtime") or {}).get("final_state"):
+                    continue
                 _import_registry()
                 job = parse_config(JobRecord, payload)
                 # Parse nested event configs once
@@ -102,10 +111,20 @@ class JobFileStore:
         return jobs
 
     def upsert(self, record: JobRecord) -> None:
+        """Write a job record, atomically.
+
+        A partial file is worse than no file: ``load_all`` silently skips
+        anything it cannot parse, so a torn write makes the job DISAPPEAR from
+        monitoring without a single log line. That is reachable whenever the
+        monitor is killed mid-write -- which the supervisor does on purpose when
+        it decides the monitor is wedged. tmp + rename makes the swap atomic.
+        """
         path = self.path_for(record.job_id)
         payload = asdict(record)
         payload.setdefault("schema_version", SCHEMA_VERSION)
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
 
     def mark_finished(self, job_id: str, final_state: str) -> None:
         """Mark a job as finished or cancelled without deleting it."""
@@ -156,6 +175,7 @@ class MonitorLoop:
         no_error_catching: bool = False,
     ) -> None:
         _import_registry()
+        self._pending_restart_hooks: dict[str, dict[str, Any]] = {}
         self._store = store
         self._slurm_client = slurm_client
         self._local_client = local_client
@@ -173,6 +193,39 @@ class MonitorLoop:
         elif isinstance(job.definition, LocalJobConfig):
             return self._local_client
 
+    def rehydrate(self) -> int:
+        """Re-register already-submitted jobs with their client.
+
+        MUST be called by anything that attaches to a session it did not submit
+        (``scripts/monitor_autoexp.py``), before the first poll.
+
+        The clients only learn about a job through ``submit()``, and
+        ``SlurmClient.squeue()`` short-circuits to ``{}`` while nothing is
+        tracked. So without this a re-attached monitor never sees a status at
+        all: every job stays at ``last_status=None``, the terminal-state branch
+        in :meth:`observe_once` never fires, jobs are never marked finished and
+        the loop never exits. Log events still work (they read files), which is
+        what made the failure so quiet.
+
+        Returns:
+            Number of jobs re-registered.
+        """
+        count = 0
+        for job in self._store.load_all():
+            runtime = job.runtime
+            if not runtime.submitted or not runtime.runtime_job_id:
+                continue
+            client = self._get_client(job)
+            # getattr, not a hard call: JobClientProtocol is structural and
+            # test doubles predating register_job must keep working.
+            register = getattr(client, "register_job", None)
+            if register is None:
+                continue
+            register(job.definition, runtime.runtime_job_id, runtime.last_status)
+            count += 1
+        LOGGER.info("Rehydrated %d already-submitted job(s) from session state", count)
+        return count
+
     def observe_once(self) -> None:
         # Query both clients and merge statuses
         statuses: dict[str, str] = {}
@@ -181,18 +234,25 @@ class MonitorLoop:
         if self._local_client:
             statuses.update(self._local_client.squeue())
 
+        # Array members whose start condition passed this poll, by script: each
+        # batch goes out as ONE sbatch --array after the loop.
+        array_batches: dict[str, list[JobRecord]] = {}
         for job in self._store.load_all():
             if job.definition is None:
                 continue
             runtime = job.runtime
             runtime_id = runtime.runtime_job_id
             new_status = statuses.get(runtime_id) if runtime_id else None
+            if new_status == "COMPLETED" and runtime.last_status != "COMPLETED":
+                new_status = self._completed_status(job, runtime_id)
             # On entering RUNNING, re-point the current.* symlinks at this job so
             # a shared 'current' symlink (dependency chain) tracks the running job.
             if runtime_id and new_status == "RUNNING" and runtime.last_status != "RUNNING":
                 self._update_current_symlinks(job)
             status_effect = self._status_action(job, runtime.last_status, new_status)
             runtime.last_status = new_status
+            if runtime.deferred_restart and self._resume_deferred_restart(job, runtime_id):
+                continue
             if self._apply_effect(job, status_effect, runtime_id):
                 continue
             if not runtime.submitted:
@@ -203,6 +263,9 @@ class MonitorLoop:
                     self._store.mark_finished(job.job_id, "finished")
                     continue
                 if self._check_start(job):
+                    if self._is_array_member(job):
+                        array_batches.setdefault(job.definition.slurm.script_path, []).append(job)
+                        continue
                     self._start_jobs(job)
 
                     if job.runtime.runtime_job_id is None:
@@ -241,6 +304,9 @@ class MonitorLoop:
                 continue
 
             self._store.upsert(job)
+
+        for batch in array_batches.values():
+            self._start_array_batch(batch)
 
         if self.show_poll_state:
             statuses: dict[str, str] = {}
@@ -314,6 +380,82 @@ class MonitorLoop:
             runtime.submitted = True
             runtime.log_cursor = 0
 
+    def _completed_status(self, job: JobRecord, runtime_id: str | None) -> str:
+        """COMPLETED, or FAILED for an array member that exited 0 without
+        meeting its finish_condition.
+
+        An array member's finish_condition is its success marker (e.g. the
+        done file `run-one` writes after the eval), so exit 0 alone does not
+        prove the work was done: on node jpbo-001-01 three FLAG eval tasks
+        exited 0 within a minute without writing a log, a marker or a result,
+        and were closed as finished. Reporting FAILED lets the job's FAILED
+        policy (job/array_task.yaml: retry once, then give up) apply. Plain
+        jobs keep the old meaning of COMPLETED.
+        """
+        if not self._is_array_member(job) or job.definition.finish_condition is None:
+            return "COMPLETED"
+        if self._check_finish(job):
+            return "COMPLETED"
+        LOGGER.warning(
+            "Job %s (%s) COMPLETED without meeting its finish condition -- treated as FAILED",
+            job.job_id,
+            runtime_id,
+        )
+        return "FAILED"
+
+    @staticmethod
+    def _is_array_member(job: JobRecord) -> bool:
+        """A point of a ``job.array_group`` (see
+        orchestrator._bind_array_groups)."""
+        return (
+            job.array_idx is not None
+            and isinstance(job.definition, SlurmJobConfig)
+            and bool(getattr(job.definition, "array_group", None))
+        )
+
+    def _start_array_batch(self, jobs: list[JobRecord]) -> None:
+        """Submit array members that became ready in the same poll as one
+        array.
+
+        They share one script, so ``--array=<their indices>`` starts exactly them;
+        a single failed member comes back here alone and is resubmitted as a
+        one-task array of the same script.
+        """
+        client = self._get_client(jobs[0])
+        indices = [job.array_idx for job in jobs]
+        try:
+            job_ids = client.submit_array(jobs[0].definition, indices)
+        except Exception as e:
+            if self.no_error_catching:
+                raise
+            LOGGER.error(f"Unable to submit array {jobs[0].definition.array_group} {indices}: {e}")
+            job_ids = []
+        by_index = {}
+        for runtime_job_id in job_ids:
+            # "<array id>_<index>"
+            by_index[int(str(runtime_job_id).rsplit("_", 1)[-1])] = runtime_job_id
+        now = time.time()
+        for job in jobs:
+            runtime_job_id = by_index.get(job.array_idx)
+            if runtime_job_id is None:
+                LOGGER.warning(f"Failed to start array task {job.job_id} (index {job.array_idx})")
+                self._store.mark_finished(job.job_id, "cancelled")
+                continue
+            runtime = job.runtime
+            runtime.attempts += 1
+            runtime.start_ts = now
+            runtime.runtime_job_id = runtime_job_id
+            runtime.submitted = True
+            runtime.log_cursor = 0
+            self._store.upsert(job)
+        if job_ids:
+            LOGGER.info(
+                "Submitted array %s tasks %s as %s",
+                jobs[0].definition.array_group,
+                indices,
+                str(job_ids[0]).rsplit("_", 1)[0],
+            )
+
     def _start_jobs(self, job: JobRecord, indices: list[int] | None = None) -> None:
         definition = job.definition
         if definition is None:
@@ -375,9 +517,10 @@ class MonitorLoop:
         now = time.time()
         had_activity = bool(new_text)
 
-        # Process each log event configuration (already parsed). Inactivity
-        # events must be evaluated every poll (including when there is no new
-        # text); pattern events only when there is new text to scan.
+        # Process each log event configuration (already parsed). Inactivity and
+        # progress events must be evaluated every poll (including when there is
+        # no new text — for progress, an empty slice IS the no-movement signal);
+        # pattern events only when there is new text to scan.
         log_events = getattr(definition, "log_events", None) or []
         for idx, event_cfg in enumerate(log_events):
             if event_cfg.action is None:
@@ -388,6 +531,14 @@ class MonitorLoop:
             if event_cfg.pattern_type == "inactivity":
                 effect = self._process_inactivity_event(
                     job, log_event, idx, had_activity=had_activity, now=now
+                )
+                if effect in ("finished", "cancelled", "restart"):
+                    return effect
+                continue
+
+            if event_cfg.pattern_type == "progress":
+                effect = self._process_progress_event(
+                    job, log_event, idx, new_text=new_text, now=now
                 )
                 if effect in ("finished", "cancelled", "restart"):
                     return effect
@@ -493,6 +644,115 @@ class MonitorLoop:
         runtime.events.pop(key, None)
         return self._handle_action_result(job, result)
 
+    def _process_progress_event(
+        self,
+        job: JobRecord,
+        log_event: LogEvent,
+        idx: int,
+        *,
+        new_text: str,
+        now: float,
+    ) -> str:
+        """Accumulate a FORWARD-PROGRESS stall streak and fire its action.
+
+        The inactivity check only asks whether the log grew, so it cannot see a
+        job that is dead but noisy: an ft_launcher restart loop emits fresh
+        setup banners forever (job 1375720 wrote 251 MB over 4 h while pinned at
+        iteration 100), and a job whose ranks never finish startup keeps
+        printing per-rank banners with zero iterations (jobs 1392564, 1392777).
+        This parses a counter out of the log instead and asks whether TRAINING
+        advanced.
+
+        Streak bookkeeping mirrors :meth:`_process_inactivity_event`: a
+        persistent EventRecord keyed by the stable ``progress_metadata`` key,
+        ``count`` counting consecutive polls without movement and
+        ``first_seen_ts``/``last_seen_ts`` bounding the real elapsed time. The
+        observed counter lives in ``payload`` (never in the key). A poll in
+        which the counter moved resets the streak in place — the record is kept
+        so the tracked value survives.
+        """
+        runtime = job.runtime
+        definition = job.definition
+        event_cfg = log_event.config
+        metadata = log_event.progress_metadata()
+        key = ":".join(event_key(job.job_id, event_cfg.name, metadata))
+
+        last_value, max_value, raw = log_event.observe_progress(new_text)
+
+        stored = runtime.events.get(key)
+        if stored is None:
+            action_state = runtime.action_state.get(f"log:{event_cfg.name}:{idx}", {})
+            record = EventRecord(
+                event_id=build_event_id(job.job_id, event_cfg.name, metadata),
+                name=event_cfg.name,
+                source="log",
+                count=0,
+                first_seen_ts=now,
+                last_seen_ts=now,
+                payload=dict(metadata),
+                metadata={
+                    "job_id": job.job_id,
+                    "job_name": definition.name,
+                    "last_action_ts": float(action_state.get("last_action_ts", 0.0)),
+                },
+            )
+        else:
+            record = EventRecord(**stored)
+            # This record was kept across a restart by _restart_job, so its clock
+            # was left running through a wait that may have been hours (21 h on
+            # job 1512329). Restart the clock here, at the first poll that has a
+            # log to read, from the amount it had already accumulated — so
+            # elapsed_s keeps measuring time the job spent RUNNING without
+            # reaching a new furthest iteration, and the wait to be scheduled
+            # adds nothing to it. `count` needs no such fix: it only ever
+            # advanced on a poll that read a log.
+            if record.payload.pop("clock_paused_for_requeue", False):
+                already_counted = max(0.0, record.last_seen_ts - record.first_seen_ts)
+                record.first_seen_ts = now - already_counted
+
+        advanced = _progress_advanced(event_cfg, record, last_value, max_value)
+        if advanced:
+            # Movement: restart the streak from this poll, keeping the record so
+            # the tracked counter is not lost.
+            record.count = 0
+            record.first_seen_ts = now
+        else:
+            record.count += 1
+        record.last_seen_ts = now
+        if raw is not None:
+            record.payload["progress_raw"] = raw
+        runtime.events[key] = asdict(record)
+
+        if advanced:
+            return "continue"
+
+        elapsed_s = record.last_seen_ts - record.first_seen_ts
+        if not log_event.progress_qualifies(count=record.count, elapsed_s=elapsed_s):
+            return "continue"
+
+        action_id = f"log:{event_cfg.name}:{idx}"
+        action = event_cfg.action.instantiate(BaseMonitorAction)
+        if not self._evaluate_event_condition(job, record, event_cfg.condition, action_id):
+            return "continue"
+
+        LOGGER.info(
+            "Progress stall on job %s (%s): '%s' stuck at %s for %d polls / %.0fs (mode=%s) -> %s",
+            job.job_id,
+            runtime.runtime_job_id,
+            event_cfg.name,
+            record.payload.get("progress_raw", "<never seen>"),
+            record.count,
+            elapsed_s,
+            event_cfg.progress_mode,
+            type(action).__name__,
+        )
+
+        result = action.execute(self._action_context(record, job))
+        self._update_action_state(job, action_id, result)
+        # Clear the streak so it must re-accumulate before firing again.
+        runtime.events.pop(key, None)
+        return self._handle_action_result(job, result)
+
     def _apply_effect(self, job: JobRecord, effect: str, runtime_id: str | None) -> bool:
         """Advance a job's lifecycle for a terminal/restart action effect.
 
@@ -513,10 +773,177 @@ class MonitorLoop:
             self._store.mark_finished(job.job_id, "cancelled")
             return True
         if effect == "restart":
+            hooks = self._pending_restart_hooks.get(job.job_id) or {}
+            if hooks.get("cancel_first") and runtime_id and self._job_active(job):
+                # kill the hung/faulty job now and resubmit once it has left the
+                # queue: the hooks then scan a complete log (post-kill lines incl.)
+                self._get_client(job).cancel(runtime_id)
+                hooks["wait_for_job_end"] = True
+                self._pending_restart_hooks[job.job_id] = hooks
+                LOGGER.info(
+                    "Job %s: runtime job %s cancelled first; resubmission after it has left the queue",
+                    job.job_id,
+                    runtime_id,
+                )
+            if hooks.get("wait_for_job_end") and self._job_active(job):
+                # graceful exit in progress: the async checkpoint write may still
+                # be running behind the 'exiting program' line; resubmit once the
+                # job has left the queue (observe_once -> _resume_deferred_restart)
+                job.runtime.deferred_restart = dict(self._pending_restart_hooks.pop(job.job_id))
+                self._store.upsert(job)
+                LOGGER.info(
+                    "Job %s: restart deferred until runtime job %s has ended (status %s)",
+                    job.job_id,
+                    runtime_id,
+                    job.runtime.last_status,
+                )
+                return True
+            self._run_restart_hooks(job, runtime_id)
             self._restart_job(job)
             self._store.upsert(job)
             return True
         return False
+
+    # SLURM states in which a job still occupies (or waits for) resources
+    ACTIVE_STATES = frozenset(
+        {
+            "PENDING",
+            "RUNNING",
+            "COMPLETING",
+            "CONFIGURING",
+            "SUSPENDED",
+            "REQUEUED",
+            "RESIZING",
+            "STAGE_OUT",
+            "SIGNALING",
+            "REQUEUE_HOLD",
+            "REQUEUE_FED",
+            "RESV_DEL_HOLD",
+        }
+    )
+
+    def _job_active(self, job: JobRecord) -> bool:
+        return (job.runtime.last_status or "") in self.ACTIVE_STATES
+
+    def _resume_deferred_restart(self, job: JobRecord, runtime_id: str | None) -> bool:
+        """Resubmit a job whose restart was deferred (wait_for_job_end) once
+        its runtime job has left the queue.
+
+        Returns True when the job was restarted or is still waiting (the
+        caller stops processing it for this poll).
+        """
+        if not job.runtime.deferred_restart:
+            return False
+        if self._job_active(job):
+            self._store.upsert(job)
+            return True
+        self._pending_restart_hooks[job.job_id] = dict(job.runtime.deferred_restart)
+        job.runtime.deferred_restart = {}
+        LOGGER.info(
+            "Job %s: runtime job %s ended (%s): running the deferred restart",
+            job.job_id,
+            runtime_id,
+            job.runtime.last_status,
+        )
+        self._run_restart_hooks(job, runtime_id)
+        self._restart_job(job)
+        self._store.upsert(job)
+        return True
+
+    def _run_restart_hooks(self, job: JobRecord, runtime_id: str | None) -> None:
+        """Before a resubmission: run the RestartAction's ``pre_command`` (e.g.
+        a node-fault scan of the failed job's log that updates the exclusion
+        file) and refresh ``slurm.sbatch.exclude`` from ``exclude_file`` so the
+        re-rendered sbatch carries every node excluded since plan time."""
+        hooks = self._pending_restart_hooks.pop(job.job_id, None) or {}
+        pre_command = (hooks.get("pre_command") or "").strip()
+        exclude_file = (hooks.get("exclude_file") or "").strip()
+        if not pre_command and not exclude_file:
+            return
+        variables = self._build_job_metadata(job)
+        variables["runtime_job_id"] = runtime_id or job.runtime.runtime_job_id or ""
+        try:
+            variables["log_path"] = str(self._resolve_log_path(job))
+            variables["log_dir"] = str(Path(variables["log_path"]).parent)
+        except Exception:  # pragma: no cover - best effort
+            variables["log_path"] = ""
+        if hooks.get("nccl_peer_scan") and exclude_file and variables.get("log_path"):
+            # This hook runs after cancellation/teardown, never in the critical
+            # cancellation path. A broken scanner must not block recovery.
+            import subprocess
+            import sys
+
+            try:
+                proc = subprocess.run(
+                    [
+                        sys.executable,
+                        str(Path(__file__).with_name("nccl_peers.py")),
+                        "--job",
+                        variables["runtime_job_id"],
+                        "--log-root",
+                        str(Path(variables["log_path"]).parent.parent),
+                        "--exclude-file",
+                        exclude_file,
+                        "--job-log",
+                        variables["log_path"],
+                        "--apply",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                LOGGER.info(
+                    "NCCL peer scan exit %s | %s",
+                    proc.returncode,
+                    (proc.stdout + proc.stderr)[-8000:],
+                )
+            except Exception as exc:
+                LOGGER.warning("NCCL peer scan failed; continuing recovery: %s", exc)
+        if pre_command:
+            import subprocess
+
+            from oellm_autoexp.monitor.utils.template import replace_braced_keys
+
+            try:
+                command = replace_braced_keys(pre_command, variables)
+            except KeyError:
+                command = pre_command
+            timeout = float(hooks.get("pre_command_timeout_s") or 900.0)
+            LOGGER.info("restart hook: running pre_command for %s: %s", job.job_id, command)
+            try:
+                proc = subprocess.run(
+                    command, shell=True, capture_output=True, text=True, timeout=timeout
+                )
+                tail = (proc.stdout + proc.stderr).strip().splitlines()[-8:]
+                LOGGER.info(
+                    "restart hook: pre_command exit %s | %s", proc.returncode, " / ".join(tail)
+                )
+            except subprocess.TimeoutExpired:
+                LOGGER.warning("restart hook: pre_command timed out after %ss", timeout)
+            except Exception as exc:  # pragma: no cover - never block the restart
+                LOGGER.warning("restart hook: pre_command failed: %s", exc)
+        if exclude_file and isinstance(job.definition, SlurmJobConfig):
+            try:
+                nodelist = oc_exclude_nodes(exclude_file)  # comma-joined string (or None)
+                if isinstance(nodelist, (list, tuple)):
+                    nodelist = ",".join(nodelist)
+                sbatch = job.definition.slurm.sbatch
+                before = getattr(sbatch, "exclude", None)
+                if nodelist:
+                    setattr(sbatch, "exclude", nodelist)
+                    LOGGER.info(
+                        "restart hook: exclusion list refreshed from %s: %d node(s) (was %s)",
+                        exclude_file,
+                        nodelist.count(",") + 1,
+                        (str(before).count(",") + 1) if before else 0,
+                    )
+                else:
+                    LOGGER.info(
+                        "restart hook: exclusion file %s empty; sbatch exclude unchanged",
+                        exclude_file,
+                    )
+            except Exception as exc:  # pragma: no cover
+                LOGGER.warning("restart hook: could not refresh the exclusion list: %s", exc)
 
     def _status_action(self, job: JobRecord, old_status: str | None, new_status: str | None) -> str:
         """Process state transition events.
@@ -606,6 +1033,17 @@ class MonitorLoop:
             event=event,
             job_metadata=self._build_job_metadata(job),
             attempts=job.runtime.attempts,
+            # PER-EVENT budget input, distinct from `attempts` above.
+            # `attempts` is the JOB-WIDE restart counter, so a MaxAttemptsCondition
+            # on one event is really a ceiling on restarts from EVERY cause — on a
+            # chained run dominated by healthy wall-clock rollovers that silently
+            # disables the stricter events a few segments in. `action_fires`
+            # counts only THIS event's own action executions (see
+            # _update_action_state) and survives restarts because _restart_job
+            # preserves action_state. Consumed by MaxActionFiresCondition.
+            # Threaded via `extra` rather than the event metadata because
+            # Composite/And/Or/Not all forward `extra` to their children already.
+            extra={"action_fires": int(action_state.get("fire_count", 0))},
             state=condition_state,
             started_ts=condition_state.get("started_ts"),
         )
@@ -638,6 +1076,10 @@ class MonitorLoop:
         metadata = dict(definition.metadata)
         metadata.setdefault("job_id", job.job_id)
         metadata.setdefault("job_name", definition.name)
+        # lets a condition look at the session's other records (JobsFinishedCondition)
+        store = getattr(self, "_store", None)
+        if store is not None:
+            metadata.setdefault("session_dir", str(store.root))
         job_class = definition.class_name
         metadata.setdefault("job_class", job_class)
         return metadata
@@ -692,12 +1134,20 @@ class MonitorLoop:
         state = runtime.action_state.setdefault(action_id, {})
         state["last_action_ts"] = time.time()
         state["last_status"] = result.status
+        # Per-event budget counter read back by MaxActionFiresCondition. Counted
+        # here rather than inside the condition because the condition is only a
+        # GATE — a child of an And/Or may be evaluated on a poll where the action
+        # never runs, so counting at check time would over-count. This runs
+        # exactly once per actual execution. Preserved across restarts by
+        # _restart_job, which deliberately keeps action_state.
+        state["fire_count"] = int(state.get("fire_count", 0)) + 1
         LOGGER.info(
-            "Action executed for job '%s' [%s]: special=%s status=%s%s",
+            "Action executed for job '%s' [%s]: special=%s status=%s fires=%d%s",
             job.job_id,
             action_id,
             result.special,
             result.status,
+            state["fire_count"],
             f" reason='{result.message}'" if result.message else "",
         )
 
@@ -708,6 +1158,9 @@ class MonitorLoop:
         """
         # Handle special actions
         if result.special == "restart":
+            # the RestartAction's hooks (pre_command, exclude_file) are consumed
+            # by _apply_effect right before the resubmission
+            self._pending_restart_hooks[job.job_id] = dict(result.metadata or {})
             return "restart"
 
         if result.special == "cancel":
@@ -796,7 +1249,49 @@ class MonitorLoop:
         runtime.start_ts = None
         # Streak records refer to the old run's log; clear so inactivity has to
         # re-accumulate against the fresh log.
+        #
+        # A `progress_mode: furthest` record is the exception: it is kept, so the
+        # question "has this run ever got past iteration N?" survives into the
+        # next attempt. Answering it across attempts is the only way to see a
+        # RESTART LOOP -- a run that relaunches over and over and never reaches
+        # new ground. Drop the record and each attempt starts from nothing, so a
+        # loop whose attempts die after ~7 min could never reach a 40-poll
+        # window, and the fast loop is the shape that actually happens (six jobs
+        # in one hour, 2026-08-23).
+        #
+        # THREE THINGS ARE KEPT, and each is meaningless without the others:
+        #   furthest_value  the furthest iteration this run has ever reached
+        #   count           polls so far that did not beat it
+        #   elapsed         time so far that did not beat it
+        # Keeping only the first would look right and detect nothing, because
+        # progress_qualifies gates on the other two.
+        #
+        # WHAT IS DELIBERATELY NOT KEPT is the time the job spends waiting to be
+        # scheduled. `count` excludes it for free -- it only advances on a poll
+        # that actually read a log, and _process_log_events returns early while
+        # the next attempt's log does not exist yet. `elapsed` does not, so the
+        # record is flagged here and the first poll that does see a log restarts
+        # the clock from the time already accumulated (see
+        # _process_progress_event). Skipping that, a 21 h queue wait (job
+        # 1512329) would land in `elapsed` and the AND in progress_qualifies
+        # would quietly collapse to its poll-count half.
+        #
+        # last_value belongs to `progress_mode: any_change`, which treats the
+        # backwards jump of a resume as progress on purpose -- so it must start
+        # fresh, and those records are dropped like any other.
+        carried: dict[str, Any] = {}
+        for key, stored in runtime.events.items():
+            payload = (stored or {}).get("payload") or {}
+            if "furthest_value" not in payload:
+                continue
+            record = dict(stored)
+            record["payload"] = {
+                k: v for k, v in payload.items() if k not in ("last_value", "progress_raw")
+            }
+            record["payload"]["clock_paused_for_requeue"] = True
+            carried[key] = record
         runtime.events.clear()
+        runtime.events.update(carried)
         # Note: condition_state, action_state, and attempts are preserved
 
         # Restart the job
@@ -830,6 +1325,41 @@ class MonitorLoop:
             LOGGER.info(f"Submitted Slurm job {job_id}")
         except Exception as e:
             LOGGER.error(f"Failed to submit Slurm job: {e}")
+
+
+def _progress_advanced(
+    event_cfg: LogEventConfig,
+    record: EventRecord,
+    last_value: float | None,
+    max_value: float | None,
+) -> bool:
+    """Did the progress counter move this poll? Updates ``record.payload``.
+
+    ``increase`` compares against the PREVIOUS observation and accepts any
+    change, including the backwards jump of a resume from checkpoint — a
+    healthy ft_launcher restart must not look like a stall.
+    ``max`` compares against the furthest value seen so far, so re-running iterations the
+    job has already done does NOT count as progress.
+
+    A counter seen for the first time counts as movement, which starts the clock
+    at the first iteration rather than at job submission. A job that never emits
+    a match never moves, so its streak accumulates from the first poll — that is
+    what catches a startup hang.
+    """
+    if event_cfg.progress_mode == "furthest":
+        if max_value is None:
+            return False
+        previous = record.payload.get("furthest_value")
+        record.payload["furthest_value"] = (
+            max_value if previous is None else max(float(previous), max_value)
+        )
+        return previous is None or max_value > float(previous)
+
+    if last_value is None:
+        return False
+    previous = record.payload.get("last_value")
+    record.payload["last_value"] = last_value
+    return previous is None or last_value != float(previous)
 
 
 def _normalize_job_definition(job: JobRecord) -> None:

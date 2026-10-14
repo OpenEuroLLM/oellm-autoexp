@@ -245,6 +245,28 @@ class LocalCommandClient(JobClientInterface):
         """
         self._jobs.pop(job_id, None)
 
+    def register_job(
+        self,
+        job: LocalJobConfig,
+        job_id: str,
+        state: str | None = None,
+    ) -> None:
+        """Not supported for local jobs — deliberately a no-op.
+
+        Adoption needs a handle on the running process, and this backend has
+        none to re-acquire: ``LocalJobState`` keeps a ``Popen`` that died with
+        the previous monitor, and ``job_id`` is an incrementing counter rather
+        than a pid, so there is nothing to poll. Registering the job anyway
+        would be worse than skipping it — its stored state would be reported
+        forever and the job could never be seen to finish.
+        """
+        LOGGER.warning(
+            "Cannot re-adopt local job %s (%s): the process handle did not survive "
+            "the previous monitor. It will not be tracked; SLURM jobs are unaffected.",
+            job_id,
+            getattr(job, "name", "?"),
+        )
+
     def squeue(self) -> dict[str, str]:
         """Get current status of all tracked jobs.
 

@@ -1,0 +1,89 @@
+# @package _global_
+#
+# STRONG SCALING in FP8 — the precision the production run actually uses.
+#
+# WHY THIS SUPERSEDES strong_scaling.yaml
+# ---------------------------------------
+# Every arm of the bf16 sweep inherits `fp8: null` from speed_test, so the whole
+# study measured a precision the flagship does not run. At IDENTICAL geometry
+# (512 nodes, GBS 4096, TP4/PP4, 64 layers, hidden 5120) the machine records:
+#     oellm_32b_dense_speed50_gbs4096_lr2e-4        438.5 TFLOP/s/GPU   (FP8)
+#     oellm_32b_dense_fp8speed-hybrid-delayed       437.9               (FP8)
+#     speedscale_strong-n512  (bf16 sweep)          336.1
+# i.e. bf16 understates the machine by ~30% at 512 nodes and ~24% at 1024.
+#
+# FP8 SETTINGS are copied from the flagship's best-measured configuration
+# (fp8speed-hybrid-delayed, 437.9 — the tensorwise variants scored 418.7 and
+# 411.8). fp8_param_gather stays FALSE: it produced a CUDA illegal memory access
+# in the async checkpoint worker, 4-for-4 reproducible, and cost ~5000 node-hours
+# in a restart loop. It is irrelevant to throughput here (save: null) but there
+# is no reason to carry a known-bad flag into a measurement config.
+#
+# ITERATION COUNTS are capped at 100 (only the 1024-node arm changes, 150 -> 100).
+# The per-arm counts below are NOT uniform on purpose: at fixed GBS the iteration
+# time spans ~200x across this sweep (~2 s at 1024 nodes to ~500 s at 8), so a
+# flat 100 everywhere would mean 8 hours on the 8-node arm while giving the
+# 1024-node arm 3 minutes. Each arm is sized to a comparable measurement WINDOW.
+#
+# THE 4-NODE ARM IS DROPPED. At DP=1 the distributed optimizer has nothing to
+# shard across and it OOM'd 4-for-4 in the bf16 run. 8 nodes is the real floor
+# for 32B at TP4/PP4, and FP8 does not change the optimizer-state footprint.
+#
+# COST: ~550 node-hours.
+defaults:
+  - strong_scaling
+  # 5-MINUTE STALL DETECTION. The parent chain resolves /job: auto_cancel, whose
+  # inactivity floor is 1200s — tuned for production runs that legitimately go
+  # quiet during multi-hundred-GB checkpoint saves. These speed tests set
+  # save: null, so 300s is safe and catches silent hangs like job 1397496
+  # (512 nodes, 12 min of total log silence, no error text, ~75 node-hours lost).
+  - override /job: auto_cancel_speedtest
+  - _self_
+
+backend:
+  megatron:
+    fp8: hybrid
+    fp8_recipe: delayed
+    fp8_param_gather: false
+    first_last_layers_bf16: false
+    fp8_amax_history_len: 1024
+    fp8_amax_compute_algo: max
+    cuda_graph_impl: none
+    # === FP32 GRADIENT ACCUMULATION — matches the production flagship ========
+    # ONE SWITCH ONLY. Do NOT also set accumulate_allreduce_grads_in_fp32:
+    # Megatron DERIVES it (arguments.py:742-745) and setting both would make this
+    # config lie about what ran:
+    #     if args.grad_reduce_in_bf16:
+    #         args.accumulate_allreduce_grads_in_fp32 = False
+    #     elif not args.accumulate_allreduce_grads_in_fp32 \
+    #          and args.main_grads_dtype == torch.float32:
+    #         args.accumulate_allreduce_grads_in_fp32 = True
+    # main_grads_dtype is fp32 here, so flipping this to false auto-enables fp32
+    # accumulation. The earlier FP8 speed tests (437-438 TFLOP/s) ran WITHOUT it;
+    # the production stability runs run WITH it, and it was measured to cost
+    # 7.8% (315.5 vs 342.3 TFLOP/s at 1024 nodes). Including it here means this
+    # sweep reports SUSTAINED production throughput rather than a speed-test
+    # ceiling the flagship does not actually operate at.
+    #
+    # NEITHER flag appears on the rendered command line — --grad-reduce-in-bf16
+    # is store_true so false omits it, and accumulate_allreduce_grads_in_fp32 is
+    # set inside Megatron. Confirm from the argument dump in the job log, not
+    # from the sbatch.
+    grad_reduce_in_bf16: false
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - {backend.aux.variant: "fp8strong-n8",    backend.aux.active_nodes: 8,    backend.megatron.exit_interval: 8,   slurm.sbatch.time: "00:55:00"}
+        - {backend.aux.variant: "fp8strong-n16",   backend.aux.active_nodes: 16,   backend.megatron.exit_interval: 10,  slurm.sbatch.time: "00:40:00"}
+        - {backend.aux.variant: "fp8strong-n32",   backend.aux.active_nodes: 32,   backend.megatron.exit_interval: 14,  slurm.sbatch.time: "00:35:00"}
+        - {backend.aux.variant: "fp8strong-n64",   backend.aux.active_nodes: 64,   backend.megatron.exit_interval: 24,  slurm.sbatch.time: "00:30:00"}
+        - {backend.aux.variant: "fp8strong-n128",  backend.aux.active_nodes: 128,  backend.megatron.exit_interval: 45,  slurm.sbatch.time: "00:30:00"}
+        - {backend.aux.variant: "fp8strong-n256",  backend.aux.active_nodes: 256,  backend.megatron.exit_interval: 80,  slurm.sbatch.time: "00:30:00"}
+        # 512n gets a wide wall NOT for the measurement but for startup: an
+        # earlier 512-node arm burned 20 of its 25 minutes before iteration 1.
+        - {backend.aux.variant: "fp8strong-n512",  backend.aux.active_nodes: 512,  backend.megatron.exit_interval: 100, slurm.sbatch.time: "00:50:00"}
+        - {backend.aux.variant: "fp8strong-n1024", backend.aux.active_nodes: 1024, backend.megatron.exit_interval: 100, slurm.sbatch.time: "00:40:00"}

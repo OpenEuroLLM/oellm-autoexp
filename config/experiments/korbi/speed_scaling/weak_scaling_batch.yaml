@@ -1,0 +1,121 @@
+# @package _global_
+#
+# WEAK SCALING, BATCH AXIS — grow the batch with the machine.
+#
+# Fixed 32B model and fixed TP=4/PP=4/mbs=2; GBS scales PROPORTIONALLY with node
+# count so the work per GPU per iteration is constant. This is the weak-scaling
+# question: if each GPU keeps doing the same amount of work, does adding nodes
+# cost anything?
+#
+#   nodes  GPUs   DP    GBS    M = GBS/(mbs*DP)   tokens/GPU/iter
+#    128    512    32    512          8                4,096
+#    256   1024    64   1024          8                4,096
+#    512   2048   128   2048          8                4,096
+#   1024   4096   256   4096          8                4,096
+#
+# M is CONSTANT at 8 by construction, which is the point: it removes the
+# microbatch-amortisation effect that dominates strong_scaling.yaml, leaving
+# only the genuinely scale-dependent costs:
+#   * the DP all-reduce / reduce-scatter, whose cost grows with DP
+#   * rendezvous and startup at larger world sizes
+#   * a larger draw on the machine, so more exposure to a slow node
+#
+# IDEAL WEAK SCALING = FLAT TFLOP/s/GPU across all four arms. Any downward slope
+# is the communication and straggler cost of the larger world. That number is
+# what tells you whether 1024 nodes is intrinsically worse or merely
+# batch-starved at the production GBS.
+#
+# The 1024-node arm is anchored at the production configuration (GBS 4096,
+# M=8), so the smaller arms are exactly that configuration scaled down.
+#
+# M=8 is a deliberately modest operating point (bubble ~19%). To repeat the
+# sweep at a healthier M=16, double every GBS:
+#     -o 'sweep.groups.0.configs.0.backend.megatron.global_batch_size=1024' ...
+# or simply edit the four values below; the 1024-node arm then runs GBS 8192,
+# which is 2x production but fine for a throughput measurement.
+#
+# FLOOR: 4 nodes (DP=1, GBS 16). The small arms run genuinely tiny batches —
+# GBS 16 is 65 k tokens/iteration — so fixed per-iteration costs dominate there.
+# That is not a defect: it is what constant-work-per-GPU means at this scale,
+# and the deviation from flat is exactly the quantity of interest.
+# The DP=1 arm carries the same unsharded-optimizer OOM risk noted in
+# strong_scaling.yaml.
+#
+# COST: same shape as the strong sweep, ~510 node-hours.
+defaults:
+  - /experiments/oellm_32b_dense/speed_test
+  - _self_
+
+backend:
+  megatron:
+    micro_batch_size: 2
+    tensor_model_parallel_size: 4
+    pipeline_model_parallel_size: 4
+    # === DO NOT SET eval_iters: 0 — IT CRASHES ===============================
+    # A previous revision set eval_iters: 0 to avoid building a valid-split index
+    # per distinct GBS (the cache key includes num_samples per split, and these
+    # sweeps vary GBS, so several indices are needed).
+    #
+    # THAT CRASHES ON REAL DATA. Megatron builds the valid dataloader
+    # unconditionally, and a zero-sample valid split trips an assert in the
+    # sampler (seen on job 1392775, all 256 ranks):
+    #     training.py:2946  valid_dataloaders.append(build_pretraining_data_loader(...))
+    #     data_samplers.py:133  assert self.total_samples > 0
+    #     AssertionError: no sample to consume: 0
+    #
+    # Every arm of this sweep that completed ran with the inherited production
+    # eval_iters of 10, paying the index-build cost at startup. Leave it alone.
+    # eval_interval is 10000, so no evaluation actually runs during these probes;
+    # eval_iters only sizes the split.
+    wandb_project: oellm_speed_scaling
+
+job:
+  # Tangential project: keep these OUT of the flagship's namespace. The parent's
+  # template is "oellm_32b_dense_${variant}_...", which is both misleading for a
+  # 3.5B arm and would scatter logs through the production_training tree next to
+  # the real 32B runs. base_output_dir derives from job.name, so overriding it
+  # here redirects logs/wandb/tensorboard as well. (save is null in speed_test,
+  # so there are no checkpoint paths to worry about.)
+  name: "speedscale_${backend.aux.variant}_gbs${backend.megatron.global_batch_size}"
+  chain_repeat: 0
+
+slurm:
+  sbatch:
+    time: "00:40:00"
+
+# NB nodes and GBS must move together — that is the whole definition of this
+# sweep, so both live in each arm rather than in separate sweep groups (a
+# product over two groups would give 16 arms, most of them meaningless).
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.variant: "weakbatch-n4"
+          backend.aux.active_nodes: 4
+          backend.megatron.global_batch_size: 16
+        - backend.aux.variant: "weakbatch-n8"
+          backend.aux.active_nodes: 8
+          backend.megatron.global_batch_size: 32
+        - backend.aux.variant: "weakbatch-n16"
+          backend.aux.active_nodes: 16
+          backend.megatron.global_batch_size: 64
+        - backend.aux.variant: "weakbatch-n32"
+          backend.aux.active_nodes: 32
+          backend.megatron.global_batch_size: 128
+        - backend.aux.variant: "weakbatch-n64"
+          backend.aux.active_nodes: 64
+          backend.megatron.global_batch_size: 256
+        - backend.aux.variant: "weakbatch-n128"
+          backend.aux.active_nodes: 128
+          backend.megatron.global_batch_size: 512
+        - backend.aux.variant: "weakbatch-n256"
+          backend.aux.active_nodes: 256
+          backend.megatron.global_batch_size: 1024
+        - backend.aux.variant: "weakbatch-n512"
+          backend.aux.active_nodes: 512
+          backend.megatron.global_batch_size: 2048
+        - backend.aux.variant: "weakbatch-n1024"
+          backend.aux.active_nodes: 1024
+          backend.megatron.global_batch_size: 4096

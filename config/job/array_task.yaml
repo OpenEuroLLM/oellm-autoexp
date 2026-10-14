@@ -1,0 +1,39 @@
+defaults:
+  - default
+
+# Policy for the points of a job.array_group stage (one short single-node task each, e.g. one
+# evaluation): resubmit a task that ended badly ONCE, then give up on it -- the stage's
+# other tasks go on, and a JobsFinishedCondition downstream sees it as cancelled.
+#
+# The monitor polls every 60 s, so a short task can go PENDING -> FAILED without RUNNING
+# ever being observed: every transition here is [null, <end state>], not [RUNNING, ...].
+# One retry budget PER end state (MaxActionFiresCondition counts per event). The give-up
+# events must be listed: TIMEOUT, NODE_FAIL and OUT_OF_MEMORY are not among the end states
+# the monitor closes by itself (COMPLETED, FAILED, CANCELLED), so without them such a task
+# would stay "active" and block everything downstream.
+state_events:
+  - name: retry_failed
+    transition: [null, FAILED]
+    condition: {class_name: MaxActionFiresCondition, max_fires: 1}
+    action: {class_name: RestartAction, reason: "array task failed -- one retry"}
+  - name: retry_timeout
+    transition: [null, TIMEOUT]
+    condition: {class_name: MaxActionFiresCondition, max_fires: 1}
+    action: {class_name: RestartAction, reason: "array task hit its time limit -- one retry"}
+  - name: retry_node_fail
+    transition: [null, NODE_FAIL]
+    condition: {class_name: MaxActionFiresCondition, max_fires: 1}
+    action: {class_name: RestartAction, reason: "array task lost its node -- one retry"}
+  - name: retry_oom
+    transition: [null, OUT_OF_MEMORY]
+    condition: {class_name: MaxActionFiresCondition, max_fires: 1}
+    action: {class_name: RestartAction, reason: "array task ran out of host memory -- one retry"}
+  - name: give_up_timeout
+    transition: [null, TIMEOUT]
+    action: {class_name: CancelAction, reason: "array task timed out again"}
+  - name: give_up_node_fail
+    transition: [null, NODE_FAIL]
+    action: {class_name: CancelAction, reason: "array task lost its node again"}
+  - name: give_up_oom
+    transition: [null, OUT_OF_MEMORY]
+    action: {class_name: CancelAction, reason: "array task ran out of host memory again"}

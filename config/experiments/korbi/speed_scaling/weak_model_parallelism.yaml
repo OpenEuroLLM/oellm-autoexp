@@ -1,0 +1,169 @@
+# @package _global_
+#
+# PARALLELISM OPTIMISATION for the weak-model (size-scaling) series.
+#
+# WHY
+# ---
+# weak_scaling_model.yaml fixes DP=256 and grows the model with the node count,
+# so the model-parallel size MP = TP*PP is pinned by the model at each scale
+# (1, 2, 4, 8, 16). But HOW that MP is split between TP and PP was chosen by
+# hand, and the measurements say the choice matters more than the model size:
+#
+#   nodes  model   TP  PP  VPP   M   TFLOP/s/GPU
+#      64   1.9B    1   1    -   2      374.0
+#     128   3.5B    2   1    -   4      325.0
+#     256     7B    4   1    -   8      272.9   <-- worst arm in the sweep
+#     512    17B    4   2    2  16      324.2
+#    1024    32B    4   4    2  32      337.7
+#
+# At PP=1 throughput falls monotonically as TP rises (374 -> 325 -> 273), then
+# RECOVERS once PP is introduced, despite more total parallelism and bigger
+# models. The 256-node dip is therefore not a property of the 7B model; it is
+# the only arm that runs maximum TP with no PP and no VPP. This matches the
+# earlier dense-1.8B result on this cluster, where TP=2 cost 27-31% vs TP=1.
+#
+# THE LEVER
+# ---------
+# M = GBS/(mbs*DP) = (16*nodes)/(2*256) = nodes/32, so M = 2,4,8,16,32 across the
+# series. Pipeline bubble ~ (PP-1)/(M*VPP), so the LARGER arms can afford PP and
+# the smaller ones cannot:
+#
+#   n128  MP=2  M=4   TP1/PP2/VPP2 -> bubble 12.5%, zero TP cost
+#   n256  MP=4  M=8   TP2/PP2/VPP2 -> bubble  6.3%, TP cost halved
+#                     TP1/PP4/VPP2 -> bubble 18.8%, zero TP cost
+#   n512  MP=8  M=16  TP2/PP4/VPP2 -> bubble 10.0%, TP cost halved
+#  n1024  MP=16 M=32  TP2/PP8/VPP2 -> bubble 11.3%, TP cost halved
+#
+# The n64 arm has MP=1 and nothing to optimise; it is not swept here.
+#
+# VPP=2 everywhere. num_layers_per_virtual_pipeline_stage is
+# num_layers / (PP * VPP) and divides exactly for every arm below:
+#   3.5B 28 layers  PP2 -> 7
+#   7B   40 layers  PP2 -> 10 | PP4 -> 5
+#   17B  52 layers  PP4 -> 6.5  ** NOT INTEGER: PP4 uses VPP=1 (13 per stage) **
+#   32B  64 layers  PP8 -> 4
+#
+# VPP requires M >= PP (schedules.py:975, microbatch_group_size_per_vp_stage
+# defaults to PP). Satisfied everywhere: n256 M=8 >= 4, n1024 M=32 >= 8.
+#
+# METHODOLOGY NOTE FOR THE SCALING-LAW WRITE-UP
+# ---------------------------------------------
+# Optimising parallelism PER SIZE is the correct methodology here, not a
+# confound. The weak-model series exists to answer "what throughput is
+# achievable at each model scale", which is the quantity that feeds a compute
+# budget. Reporting a hand-picked and demonstrably suboptimal split at one scale
+# would understate the machine, not control for anything. State in the caption
+# that parallelism is tuned per size and give the winning (TP,PP,VPP) per point.
+#
+# 200 iterations per arm, not the 50 the original sweep used: those arms have
+# p10 values far below their medians (n256: p10 157.6 vs median 272.9) and the
+# error bars are too wide for a proposal figure. 200 also makes the drift%
+# convergence check meaningful rather than computed over ~11 samples.
+#
+# COST (running every arm): ~760 node-hours, dominated by the two 1024-node arms.
+# Run in tiers with --array-subset if that is too much:
+#   TIER 1  subset 0,1,2   ~121 node-h   fixes the visible 256-node dip
+#   TIER 2  subset 3       ~145 node-h   17B
+#   TIER 3  subset 4       ~495 node-h   32B — only worth it if TP=2 wins below
+defaults:
+  - weak_scaling_model
+  - override /slurm: jupiter_autoexclude
+  - _self_
+
+job:
+  name: "speedscale_${backend.aux.variant}_gbs${backend.megatron.global_batch_size}"
+  chain_repeat: 0
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # --- 0 --- 3.5B @128: TP1/PP2 vs the current TP2/PP1 -----------------
+        - backend.aux.variant: "wmpar-3b5-n128-tp1pp2"
+          backend.aux.active_nodes: 128
+          backend.megatron.global_batch_size: 2048
+          backend.megatron.tensor_model_parallel_size: 1
+          backend.megatron.pipeline_model_parallel_size: 2
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 7
+          # TP=1 -> both are tensor-parallel features and must be off
+          backend.megatron.sequence_parallel: false
+          backend.megatron.tp_comm_overlap: false
+          backend.megatron.num_layers: 28
+          backend.megatron.hidden_size: 2560
+          backend.megatron.ffn_hidden_size: 12800
+          backend.megatron.num_attention_heads: 20
+          backend.megatron.num_query_groups: 4
+          backend.megatron.exit_interval: 200
+          slurm.sbatch.time: "00:35:00"
+
+        # --- 1 --- 7B @256: TP2/PP2 (the most promising fix for the dip) -----
+        - backend.aux.variant: "wmpar-7b-n256-tp2pp2"
+          backend.aux.active_nodes: 256
+          backend.megatron.global_batch_size: 4096
+          backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.pipeline_model_parallel_size: 2
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 10
+          backend.megatron.num_layers: 40
+          backend.megatron.hidden_size: 3072
+          backend.megatron.ffn_hidden_size: 15360
+          backend.megatron.num_attention_heads: 24
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 200
+          slurm.sbatch.time: "00:35:00"
+
+        # --- 2 --- 7B @256: TP1/PP4 (zero TP cost, larger bubble) ------------
+        - backend.aux.variant: "wmpar-7b-n256-tp1pp4"
+          backend.aux.active_nodes: 256
+          backend.megatron.global_batch_size: 4096
+          backend.megatron.tensor_model_parallel_size: 1
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 5
+          backend.megatron.sequence_parallel: false
+          backend.megatron.tp_comm_overlap: false
+          backend.megatron.num_layers: 40
+          backend.megatron.hidden_size: 3072
+          backend.megatron.ffn_hidden_size: 15360
+          backend.megatron.num_attention_heads: 24
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 200
+          slurm.sbatch.time: "00:35:00"
+
+        # --- 3 --- 17B @512: TP2/PP4 vs the current TP4/PP2 ------------------
+        # 52 layers / (PP4 * VPP2) = 6.5 is not an integer, so this arm runs
+        # VPP=1 (13 layers per stage = 4 virtual stages / PP 4). Bubble is
+        # therefore (4-1)/16 = 18.8% rather than the 10% VPP=2 would give — a
+        # handicap this arm carries against the TP4/PP2/VPP2 baseline. If it
+        # still wins, the TP saving is decisively larger than the bubble cost.
+        - backend.aux.variant: "wmpar-17b-n512-tp2pp4"
+          backend.aux.active_nodes: 512
+          backend.megatron.global_batch_size: 8192
+          backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 13
+          backend.megatron.num_layers: 52
+          backend.megatron.hidden_size: 4096
+          backend.megatron.ffn_hidden_size: 20480
+          backend.megatron.num_attention_heads: 32
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 200
+          slurm.sbatch.time: "00:40:00"
+
+        # --- 4 --- 32B @1024: TP2/PP8 vs the current TP4/PP4 -----------------
+        # The expensive one. Only worth running if TP2 wins at 256/512 — the
+        # whole hypothesis is that trading TP for PP pays, and the smaller arms
+        # test it far more cheaply.
+        - backend.aux.variant: "wmpar-32b-n1024-tp2pp8"
+          backend.aux.active_nodes: 1024
+          backend.megatron.global_batch_size: 16384
+          backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.pipeline_model_parallel_size: 8
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 4
+          backend.megatron.num_layers: 64
+          backend.megatron.hidden_size: 5120
+          backend.megatron.ffn_hidden_size: 25600
+          backend.megatron.num_attention_heads: 40
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 200
+          slurm.sbatch.time: "00:50:00"

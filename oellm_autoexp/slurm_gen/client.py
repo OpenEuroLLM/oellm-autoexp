@@ -250,6 +250,8 @@ class SlurmClient(BaseSlurmClient):
             array_range = f"{sorted_indices[0]}-{sorted_indices[-1]}"
         else:
             array_range = ",".join(str(idx) for idx in sorted_indices)
+        if slurm_config.array_concurrency:
+            array_range += f"%{int(slurm_config.array_concurrency)}"
         proc = run_command([*submit_cmd, f"--array={array_range}", str(slurm_config.script_path)])
 
         if proc.returncode != 0:
@@ -304,7 +306,10 @@ class SlurmClient(BaseSlurmClient):
         LOGGER.info(f"squeue: tracking {len(self._jobs)} jobs: {list(self._jobs.keys())}")
 
         cmd = shlex.split(self.config.squeue_cmd)
-        format_arg = ["--noheader", "--format", "%i %T"]
+        # --array: one line per array task. Without it, PENDING tasks of one array come
+        # back compressed ("2182413_[1,3] PENDING"), which matches none of the tracked
+        # ids, so every pending task would fall through to sacct (verified on JUPITER).
+        format_arg = ["--array", "--noheader", "--format", "%i %T"]
 
         job_ids = list(self._jobs.keys())
         job_id_to_key = {str(jid): jid for jid in job_ids}

@@ -1,0 +1,211 @@
+# @package _global_
+#
+# 1024-NODE VPP SWEEP — can a deeper interleave buy back the pipeline bubble?
+#
+# ============================================================================
+# THE HYPOTHESIS
+# ============================================================================
+# The interleaved-1F1B bubble is
+#
+#     bubble = (PP - 1) / (VPP * M),      M = GBS / (mbs * DP)
+#
+# and VPP is NOT a free parameter here: it is DERIVED from the number of
+# pipe-separated groups in pipeline_model_parallel_layout as
+# VPP = num_stages // PP (arguments.py:548). The parent config pins EIGHT
+# groups, so at PP=4 we have always run VPP=2 — never by choice, just by
+# inheritance.
+#
+# Going 512 -> 1024 nodes at fixed GBS 4096 halves M (16 -> 8) and therefore
+# DOUBLES the bubble:
+#
+#     nodes   DP   M   VPP   bubble
+#      512   128  16    2     9.4%
+#     1024   256   8    2    18.8%     <- where we are now
+#     1024   256   8    4     9.4%     <- ARM B: 16-group layout
+#     1024   256   8    8     4.7%     <- ARM C: 32-group layout (commented out)
+#
+# That accounts for most of the measured 512->1024 per-GPU loss. Bubble alone
+# predicts 1024 should run at (1-.188)/(1-.094) = 89.7% of the 512-node rate;
+# bf16 measured 85.4% (1319 vs 1545 tok/s/GPU), fp8 78.3% (1646 vs 2102). The
+# residual is the distributed-optimizer traffic, which is ~constant per
+# iteration while the compute per iteration halved — that one is NOT fixable
+# from here, only by raising GBS.
+#
+# ============================================================================
+# WHY THIS IS THE RIGHT KNOB, AND WHY *NOT* PP
+# ============================================================================
+# PP is already at its optimum and the 1024-node data says so:
+#
+#     PP=2  VPP=4  bubble  6.3%   params/GPU 4B   274.5 TFLOP/s  (job 1368280)
+#     PP=4  VPP=2  bubble 18.8%   params/GPU 2B   273.1 TFLOP/s  (job 1367660)
+#     PP=8  VPP=1  bubble 43.8%   params/GPU 1B   211.8 TFLOP/s  (job 1368214)
+#
+# PP=2 has a 3x smaller bubble and still did not win, because halving PP doubles
+# params-per-GPU and the distributed optimizer moves 2 * params/GPU per step
+# (reduce-scatter + all-gather): ~16 GB/GPU/iter at PP=2 vs ~8 GB at PP=4. The
+# bubble win and the comm loss cancel. PP=8 is hopeless because 8 groups / PP=8
+# collapses VPP to 1.
+#
+# Raising the GROUP COUNT attacks the bubble WITHOUT touching DP, params/GPU or
+# the optimizer traffic. It is the one term in the equation nothing else moves.
+#
+# ============================================================================
+# COSTS, AND WHY THEY LOOK SMALL
+# ============================================================================
+# COMMUNICATION scales with VPP: each microbatch crosses a stage boundary VPP
+# times instead of once. With SP + TP=4 a boundary tensor is
+# mbs*seq*hidden*2B / TP = 2*4096*5120*2/4 = 21 MB per GPU. At VPP=2 that is
+# ~27 ms per iteration against a 2489 ms iteration (~1%); VPP=4 makes it ~2%,
+# VPP=8 ~4%. Small against a 9.4-point bubble reduction, and overlap_p2p_comm
+# is already on.
+#
+# MEMORY should be roughly FLAT, which is the non-obvious part. Megatron sets
+# num_warmup_microbatches = (PP-rank-1)*2 + (VPP-1)*PP, so the in-flight count
+# grows with VPP (10 -> 18 -> 34 at rank 0) — but each chunk holds 64/(PP*VPP)
+# layers, so it shrinks in step. Layer-microbatches held at rank 0:
+#     VPP=2: 10 * 8 = 80     VPP=4: 18 * 4 = 72     VPP=8: 34 * 2 = 68
+# i.e. slightly BETTER, not worse. Baseline sits at mem 0.63, so there is room
+# either way — but this is derived from source, not measured, so ARM C is left
+# commented rather than assumed safe.
+#
+# CONSTRAINT: the interleaved schedule needs M % PP == 0, not M >= PP*VPP.
+# M=8, PP=4 -> 8 % 4 == 0 holds for every arm here. VPP does not enter it.
+#
+# ============================================================================
+# EXPECTED RESULT AND THE DECISION RULE
+# ============================================================================
+# Modelled ceiling for ARM B, from the fp8 baseline of 1646 tok/s/GPU:
+#     ideal = 1646 / (1 - 0.188) = 2026  ->  2026 * (1 - 0.094) = 1836  (+11%)
+# Treat that as an UPPER bound: part of the nominal bubble is already overlapped
+# with optimizer comm, so realistically expect +5-8%.
+#
+# READ-OFF: Tok/s/GPU, arm B vs arm A. Run-to-run spread at this scale is 2.7%
+# (jobs 1365560 vs 1365861, byte-identical configs, 320.5 vs 312.2), so
+#     >= +5%   -> adopt the 16-group layout for the flagship, then try ARM C
+#     +3..5%   -> real but marginal; re-run both arms before deciding
+#     <  +3%   -> inside the noise; keep the 8-group layout and stop here
+# ARM A is re-run rather than compared against job 1373121 precisely because of
+# that 2.7% spread — and because 1373121 ran fp8_param_gather=true, which
+# production cannot use (it corrupts checkpoint saving).
+#
+# ============================================================================
+# COST
+# ============================================================================
+# 1024 nodes x 4 GPUs = 4096 GPUs, so at the 40 min wall limit each arm is
+# ~2,730 GPU-h and the submit gate quotes 5,461 GPU-h for the pair (it assumes
+# full wall time). Realistically ~20 min per arm -> ~1,365 GPU-h each, ~2,700
+# for the two live arms. For reference the two failed c10d rendezvous attempts
+# at this scale burned ~1,200 GPU-h between them.
+# NB the gate at scripts/run_autoexp.py:271 prompts above 100 GPU-h and prompts
+# a SECOND time above 5000, and there is no bypass flag — it is a bare input().
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/speed_test_vpp1024
+#
+# NB render_config.py does NOT apply sweep arms — check the plan with
+#   PYTHONPATH=. python scripts/visualize_plan.py \
+#       --config-ref experiments/oellm_32b_dense/speed_test_vpp1024
+defaults:
+  # speed_test, not the production config: it drops fault tolerance, pins
+  # rdzv_backend=static (MANDATORY at 1024 — dynamic c10d does not converge at
+  # this participant count, jobs 1367229/1367464/1371705/1371721), sets
+  # exit_interval 50 and save: null so the step time is pure compute+comm.
+  - speed_test
+  # Skip known-bad nodes. Added 2026-08-17 after arm A (job 1395207) lost a
+  # 1024-node allocation two minutes in: task 1011 on jpbo-120-36 died in
+  # _initialize_distributed at torch.cuda.set_device() with
+  #     torch.AcceleratorError: CUDA error: out of memory
+  # i.e. a leftover process from a prior job still holding the GPU, NOT a sizing
+  # OOM — it fails before a single tensor is allocated. This path runs
+  # --max-restarts 0 with spare_nodes 0 and a STATIC rendezvous, so a fixed world
+  # of 4096 cannot re-form after losing 4 ranks: the surviving 1023 agents block
+  # forever (srun uses --kill-on-bad-exit=0, so they are not even torn down) and
+  # the job produces ZERO iterations while holding 1024 nodes to the wall clock.
+  # One bad node therefore costs a whole ~2,700 GPU-h arm, which is exactly the
+  # asymmetry config/exclude/jupiter_exclude_nodes.txt exists to cover — and NHC
+  # did not drain this node, so SLURM would hand it out again.
+  - override /slurm: jupiter_autoexclude
+  - _self_
+
+backend:
+  aux:
+    # 1024 active. spare_nodes stays 0 (inherited from speed_test): no FT here,
+    # so there is nothing to promote a spare with, and slurm.sbatch.nodes feeds
+    # torchrun's nnodes directly.
+    active_nodes: 1024
+
+  megatron:
+    # FP8 in the shape production is actually converging on — the same settings
+    # as the sc-fp8-zloss1e-4-nobsramp arm (jobs 1379130 / 1380848), so the
+    # numbers here are comparable to that run's sustained ~297 TFLOP/s. FP8 is
+    # also where the bubble matters MOST: the compute got faster, the bubble did
+    # not, so it is a larger share of the iteration than in bf16.
+    #
+    # These live here rather than in the sweep arms so that the sweep varies
+    # exactly ONE thing: the layout.
+    fp8: hybrid
+    fp8_recipe: delayed
+    fp8_amax_history_len: 1024
+    fp8_amax_compute_algo: max
+    # delayed + CUDA graphs is the graph-safe branch, but every 1024-node fp8 run
+    # so far has used none; keep it none so this is not a second variable.
+    cuda_graph_impl: none
+    # false: it breaks checkpoint saving (CUDA illegal memory access in the async
+    # worker), so production cannot use it and the speed test must not either —
+    # otherwise the winning layout gets picked against a config that cannot ship.
+    fp8_param_gather: false
+    first_last_layers_bf16: false
+    output_z_loss_coeff: 1.e-4
+
+# The sweep varies pipeline_model_parallel_layout and NOTHING else. `variant`
+# flows into job.name -> base_output_dir, so each arm gets its own output tree.
+# Set it in the ARM, not in backend.aux above: sweep arms are applied after this
+# file's own blocks, so an aux-level variant would be silently overridden.
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ---- ARM A: BASELINE. Identical to the parent's 8-group layout -------
+        # 9 + 8*6 + 7 = 64 layers, 8 groups -> VPP = 8/4 = 2. Re-run, not reused,
+        # so that A and B are measured in the same session on the same nodes.
+        - backend.aux.variant: "vpp1024-g8-vpp2"
+          backend.megatron.pipeline_model_parallel_layout: "Et\\*9\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*8\\|t\\*7L"
+
+        # ---- ARM B: THE TEST. 16 groups -> VPP = 16/4 = 4 --------------------
+        # 5 + 4*14 + 3 = 64 layers. Keeps the parent's balance philosophy: the
+        # first virtual stage carries the embedding so it gets one extra layer,
+        # the last carries the 262k-vocab UNTIED output head + loss so it gets
+        # one fewer.
+        - backend.aux.variant: "vpp1024-g16-vpp4"
+          backend.megatron.pipeline_model_parallel_layout: "Et\\*5\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*4\\|t\\*3L"
+
+        # ---- ARM C: STRETCH. 32 groups -> VPP = 32/4 = 8 ---------------------
+        # 3 + 2*30 + 1 = 64 layers. Bubble 4.7%, but only 4.7 points better than
+        # ARM B while doubling p2p again (~4% of the iteration) and cutting each
+        # chunk to TWO layers, where per-chunk kernel launch and scheduling
+        # overhead start to matter. Enable only if ARM B clearly wins — a third
+        # arm is another ~1,400 node-hours for a modelled +3% over B.
+        # - backend.aux.variant: "vpp1024-g32-vpp8"
+        #   backend.megatron.pipeline_model_parallel_layout: "Et\\*3\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*2\\|t\\*1L"
+
+# ============================================================================
+# FOLLOW-UPS, DELIBERATELY NOT IN THIS SWEEP
+# ============================================================================
+# Both would confound the layout comparison; run them on the winning arm.
+#
+#   -o backend.megatron.overlap_p2p_comm_warmup_flush=true
+#       Currently false. Targets exactly the warmup/flush phases of the
+#       interleaved schedule — i.e. the bubble itself — so it should compound
+#       with a deeper interleave rather than duplicate it.
+#
+#   -o backend.megatron.microbatch_group_size_per_vp_stage=<n>
+#       Currently null, which defaults to PP. Controls how many microbatches are
+#       grouped per VP stage; the knob trades p2p message count against
+#       scheduling slack, and the extra p2p is precisely what a higher VPP buys.
+#
+# NOT worth an arm: mbs=1. It reaches the same M=16 the long way (bubble 9.4%)
+# but the 8-node data prices the mbs=1 kernel penalty at ~7.5% once its own
+# bubble advantage is backed out (340.9 at 4.7% bubble vs 350.3 at 9.4%), which
+# eats most of the gain — modelled at only +3%. Keep it as the fallback if a
+# deeper interleave unexpectedly OOMs.

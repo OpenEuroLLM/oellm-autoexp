@@ -86,7 +86,7 @@ jobs:
             extras: 'dev,megatron'
             checkout_submodules: 'recursive'
             extra_pip_args: ''
-            pytest_args: 'tests/unit/test_megatron_backend.py tests/integration/test_megatron_optional.py'
+            pytest_args: 'tests/unit/test_megatron_backend.py tests/integration/test_megatron_optional.py tests/unit/test_merge_hf.py'
           - name: titan-extras
             python: '3.11'
             extras: 'dev,titan'

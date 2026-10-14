@@ -1,0 +1,62 @@
+# nemo_26.04 + Transformer Engine 2.18 + flash-attn v3.
+#
+# Built 2026-08-28 by re-running the te218 definition with the FA3 base image:
+#
+#   BASE_IMAGE=/e/project1/e-sta-openeurollm/container/nemo_26.04_fa3.sif \
+#   ./container/build_container.sh --backend megatron \
+#       --definition MegatronTraining-JUPITER-te218 \
+#       --additional-tag -fa3 --append-date \
+#       --output /e/project1/e-sta-openeurollm/container
+#
+# WHAT IT ADDS over `jupiter` / nemo_26.04.sif:
+#   1. TE 2.18 -> TE PR #3193, "Fix the numerical issue with the Fused CE loss"
+#      (01bbe3ee). We run cross_entropy_loss_fusion: true +
+#      cross_entropy_fusion_impl: te on bf16 logits with reduce_loss=False, which
+#      is exactly the path that was rounding the FP32 gradient to BF16 BEFORE
+#      applying the per-token scale. Absent from every tag up to and including
+#      v2.17.1; first present in v2.18. See
+#      container/megatron/MegatronTraining-JUPITER-te218.def.in for the full
+#      derivation, and note the fix is NOT free: the saved tensor becomes a fresh
+#      FP32 one of logits shape, roughly +2.1 GB on the loss-computing pipeline
+#      stage. At PP=4 that stage is often the memory-tightest -- measure first.
+#   2. flash-attn v3 (3.0.0), inherited from the nemo_26.04_fa3.sif base.
+#
+# FA3 IS PRESENT BUT NOT SELECTED BY DEFAULT. Verified on GH200 at the production
+# per-TP-rank shape (64 heads / TP4 = 16, 8 kv groups / TP4 = 2, head_dim 128,
+# seq 4096, mbs 2, causal GQA): TE detects FA3 ("Available backends =
+# {FlashAttention=True (3.0.0), FusedAttention=True, ...}") and still picks
+# cuDNN FusedAttention, for both bf16 and fp8 hybrid/delayed. Deliberately NOT
+# forced here, so this config is a drop-in replacement that changes only TE.
+# To opt in, set on the EXPERIMENT (not here):
+#
+#   backend:
+#     env:
+#       NVTE_FUSED_ATTN: "0"      # -> "Running with FlashAttention backend (3.0.0)"
+#
+# and confirm from the log's `Running with ... backend` line rather than assuming
+# from the image name.
+#
+# `python` IS PINNED AND MUST STAY PINNED. The base `jupiter` config defaults to
+# /usr/bin/python, which is correct only for the old MegatronTraining-JUPITER
+# image it still names. In every nemo-derived image the real environment is
+# /opt/venv, and the two interpreters carry DIFFERENT packages:
+#
+#     /opt/venv/bin/python -> TE 2.18.0, nvrx 0.6.0.dev33, wandb 0.27.0, flash_attn_3
+#     /usr/bin/python      -> TE 2.12.0, nvrx 0.5.0,       no wandb,     no flash_attn_3
+#
+# So /usr/bin/python silently loses BOTH things this image exists for, and a run
+# that starts is measuring a different TE. It also cannot import megatron-core
+# 0.19 at all (nvrx 0.5.0 genuinely fails the >=0.6.0 gate), which looks like a
+# container fault but is an interpreter-selection fault. The wandb half of this
+# already cost jobs 1436257 / 1436291 / 1436325 (0 iterations,
+# "ModuleNotFoundError: No module named 'wandb'" on the last rank only, with
+# ncclRemoteError noise on the rest). It stayed dormant while ft_launcher was
+# used, because its shebang is absolutely pinned (#!/opt/venv/bin/python3);
+# switching to `python -m torch.distributed.run` made this field live.
+
+defaults:
+  - jupiter
+  - _self_
+
+image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+python: "/opt/venv/bin/python"

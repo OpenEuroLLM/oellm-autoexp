@@ -1,0 +1,136 @@
+# @package _global_
+#
+# ============================================================================
+# STAGE 2 of 2: RESUME the checkpoints ckpt_write_n16.yaml produced
+# ============================================================================
+# DO NOT RUN UNTIL BOTH WRITE ARMS ARE COMPLETED. Every arm here loads a
+# checkpoint stage 1 wrote; without it they fail on a missing directory.
+#
+#   ls /e/scratch/e-sta-openeurollm/pre_production_training/ckpt_gate_019/*/checkpoints/iter_0000010
+#
+# ============================================================================
+# THE THREE QUESTIONS, AND WHICH ARM ANSWERS EACH
+# ============================================================================
+#
+#   arms 0,1  SAME DP (4 -> 4). "Can 0.19 save and resume its own checkpoint
+#             with document masking on?" Masking and checkpointing have never
+#             run together — every masking job so far had neither --save nor
+#             --load. No resharding is involved, so a failure here is the
+#             port's checkpoint path, nothing subtler.
+#
+#   arms 2,3  DIFFERENT DP (4 -> 8, at 32 nodes). "Does the distributed-
+#             optimizer checkpoint actually reshard across DP, and does
+#             dist_ckpt_optim_fully_reshardable change that?"
+#
+# That second pair is the flagship question. Gate 1 (job 1511083) failed
+# resharding DP 128 -> 4 with
+#     Global shape mismatch for loaded (154675456) and expected (98304000)
+#     for key optimizer.distributed.dp_group_idx_0.gbuf_idx_0...
+# on a checkpoint whose own metadata says `distrib_optim_sharding_type:
+# 'dp_reshardable'` — a format documented as supporting exactly that
+# (base_defaults.yaml:132, "plain DP reshardability"; `true` adds TP/PP/EP).
+# So the cause is NOT the flag, contrary to what was recorded at the time, and
+# is currently unknown.
+#
+#   arm 2 (flag=false) fails, arm 3 (flag=true) passes
+#       -> DP reshardability is broken in our configuration and the flag is the
+#          fix. Only then is flipping it on the flagship worth its cost.
+#   both pass
+#       -> DP resharding works in general; something specific to the 128 -> 4
+#          jump broke gate 1, and the flag is NOT the answer. Do not flip it.
+#   both fail
+#       -> resharding is broken regardless of the flag; the flagship can only
+#          ever resume at its own DP, which constrains any node-count change.
+#
+# ============================================================================
+# WHY 4 -> 8 AND NOT 4 -> 2
+# ============================================================================
+# Resharding UPWARD, so memory can only improve. Going to DP=2 (8 nodes) would
+# double optimizer state per rank against a gate that already sat at 0.60
+# utilisation, and an OOM would be indistinguishable from a resharding failure —
+# the measurement would be lost to a confound. DP=8 at 32 nodes has neither
+# problem.
+#
+# ============================================================================
+# READ-OFF
+# ============================================================================
+#   PASS  the log reports loading iteration 10, then logs 11..15 with lm loss
+#         CONTINUOUS with the writing run's iteration 10. Optimizer and RNG must
+#         be restored, not reinitialised — so do NOT add --finetune or
+#         --no-load-optim, and check the log does not say it is skipping them. A
+#         reinitialised optimizer shows up as a visible discontinuity, not a
+#         rounding difference.
+#   FAIL  a load error, or a loss jump.
+#
+#   Compare each arm's iteration 11 against its own writer's iteration 10
+#   (stage 1 logs). Do NOT compare across arms: arms 2/3 run DP=8, so their
+#   gradient reduction order differs and small offsets are expected.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/ckpt_resume_n16
+#   #   --array-subset 0,1   # same-DP resume  (question 1)
+#   #   --array-subset 2,3   # DP 4 -> 8       (the flagship question)
+defaults:
+  - fp8_speed_test_fp32grad_docmask
+  - _self_
+
+backend:
+  aux:
+    spare_nodes: 0
+    # active_nodes is set PER ARM below: 16 for the same-DP arms, 32 for the
+    # resharding ones.
+
+  megatron:
+    dataloader_inter_document_masking: true
+
+    # Five steps past the loaded iteration is enough to see continuity.
+    exit_interval: 15
+    # Never write. A resume test that also saved could overwrite the very
+    # checkpoint the other arms still need to read.
+    save: null
+    save_interval: 1000000
+
+job:
+  chain_repeat: 1
+  est_step_time_s: 2.4
+  est_startup_min: 10
+  est_steps: 15
+
+slurm:
+  sbatch:
+    time: "01:00:00"
+
+# ---------------------------------------------------------------------------
+# `load` is what varies, plus the node count for the resharding pair. Nothing
+# else moves.
+# ---------------------------------------------------------------------------
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ---- arms 0,1: SAME DP (4 -> 4). Question 1 ------------------------
+        - backend.aux.variant: "ckptr-dpresh-samedp"
+          backend.aux.active_nodes: 16
+          backend.megatron.dist_ckpt_optim_fully_reshardable: false
+          backend.megatron.load: /e/scratch/e-sta-openeurollm/pre_production_training/ckpt_gate_019/ckptw-dpresh/checkpoints
+
+        - backend.aux.variant: "ckptr-fullresh-samedp"
+          backend.aux.active_nodes: 16
+          backend.megatron.dist_ckpt_optim_fully_reshardable: true
+          backend.megatron.load: /e/scratch/e-sta-openeurollm/pre_production_training/ckpt_gate_019/ckptw-fullresh/checkpoints
+
+        # ---- arms 2,3: DP 4 -> 8 at 32 nodes. The flagship question --------
+        # The flag is restated to match how each checkpoint was WRITTEN. It does
+        # not drive loading — the sharding type comes from the checkpoint's own
+        # metadata (checkpointing.py:2233-2251) — but leaving it inconsistent
+        # would make the rendered command line misdescribe the run.
+        - backend.aux.variant: "ckptr-dpresh-reshard"
+          backend.aux.active_nodes: 32
+          backend.megatron.dist_ckpt_optim_fully_reshardable: false
+          backend.megatron.load: /e/scratch/e-sta-openeurollm/pre_production_training/ckpt_gate_019/ckptw-dpresh/checkpoints
+
+        - backend.aux.variant: "ckptr-fullresh-reshard"
+          backend.aux.active_nodes: 32
+          backend.megatron.dist_ckpt_optim_fully_reshardable: true
+          backend.megatron.load: /e/scratch/e-sta-openeurollm/pre_production_training/ckpt_gate_019/ckptw-fullresh/checkpoints

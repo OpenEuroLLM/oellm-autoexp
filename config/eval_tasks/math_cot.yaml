@@ -1,0 +1,34 @@
+# Competition math for 4k-context base models: sampled, forced-reasoning (CoT prefill) and
+# reference-solution NLL. Findings and why: docs/anneal-math/README.md (2026-10-07) -- the release
+# AIME/AMC/MATH500 evals are greedy and measure response style; forcing " <think>\n" measures
+# capability.
+#
+# One item per eval; name = mode/tasks (stable: select subsets by it). A stage runs one item for
+# one export in a 1-node (4 GPU) allocation:
+#   scripts/downstream_eval/math_cot/run.sh <export> <mode> <tasks>
+# done marker: $FLAG_WORK/math_cot/<export>/<mode>.<tasks>.ok. Needs the export's identity view
+# ($FLAG_WORK/views/identity/<export>, created by flag-prepare). Grade inside the eval image:
+#   python3 scripts/downstream_eval/math_cot/grade.py <dir with the *.shard*.jsonl>
+# Use like flag_evals: `- /eval_tasks@aux.math_suite: math_cot`, then
+#   aux.math_indices: ${oc.select_indices:${aux.math_suite.tasks},name,${aux.math_select}}
+#
+# est_min: rough per-item estimates for the 32B (vLLM 0.28, GH200, ~3 min model load), split from the
+# measured runs of 2026-10-06/07 (all four tasks of one mode: 24-37 min on 4 GPUs).
+settings:
+  context: 4096           # the models' trained context; prompt + generation must fit
+  temperature: 0.6
+  top_p: 0.95
+  prefill: " <think>\\n"  # mode cot; the release prompt is plain text ending in "Answer:"
+  samples: {AIME24: 16, AIME25: 16, AMC23: 16, MATH500: 4}
+  image: /e/project1/e-sta-openeurollm/container/oellm-eval-vllm.sif
+count: 9
+tasks:
+  - {name: "cot/AIME24",     mode: cot,     tasks: "AIME24",         est_min: 15}
+  - {name: "cot/AIME25",     mode: cot,     tasks: "AIME25",         est_min: 15}
+  - {name: "cot/AMC23",      mode: cot,     tasks: "AMC23",          est_min: 15}
+  - {name: "cot/MATH500",    mode: cot,     tasks: "MATH500",        est_min: 25}
+  - {name: "sampled/AIME24", mode: sampled, tasks: "AIME24",         est_min: 15}
+  - {name: "sampled/AIME25", mode: sampled, tasks: "AIME25",         est_min: 15}
+  - {name: "sampled/AMC23",  mode: sampled, tasks: "AMC23",          est_min: 15}
+  - {name: "sampled/MATH500", mode: sampled, tasks: "MATH500",       est_min: 25}
+  - {name: "nll/solutions",  mode: nll,     tasks: "AIME24,MATH500", est_min: 8}

@@ -1,0 +1,112 @@
+# @package _global_
+#
+# ============================================================================
+# COMPETITION-MATH EVALS WITH FORCED REASONING (math_cot) FOR THE 120k ANNEAL ENDS
+# ============================================================================
+# config/eval_tasks/math_cot.yaml for every checkpoint of aux.cot_ckpts: sampled and
+# forced-reasoning (" <think>\n" prefill) AIME24/AIME25/AMC23/MATH500, plus the reference-solution
+# NLL. Why: docs/anneal-math/README.md -- the release math evals are greedy and mostly measure
+# whether a base model opens a derivation; with the prefill, capability is compared.
+#
+#   eval      ONE SLURM array per checkpoint, one task per math_cot item (1 node, 4 GPUs):
+#             scripts/downstream_eval/math_cot/run.sh <export> <mode> <tasks>; an item whose done
+#             marker exists is skipped, so relaunching only runs what is missing
+#   grade     login node, once the checkpoint's array finished: grade.py in the eval image ->
+#             $FLAG_WORK/math_cot/<export>/summary.csv, per_problem.csv
+#
+# The exports must exist with an identity view ($FLAG_WORK/views/identity/<export>; every
+# checkpoint that went through the FLAG suite has one).
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/oellm_32b_dense/cot_evals
+#       [aux.cot_select=[v2anneal_120k]] [aux.math_select=[cot/AIME24,cot/AMC23]]
+# Cost: ~2 node-hours per checkpoint for all 9 items (measured 2026-10-06/07: 24-37 min per mode).
+# ============================================================================
+defaults:
+  - b1_reborn_base
+  - /eval_tasks@aux.math_suite: math_cot
+  - _self_
+
+aux:
+  repo: ${oc.env:OELLM_AUTOEXP_ROOT,${oc.env:PWD}}   # launch from the repo root
+  flag_work: /e/scratch/e-sta-openeurollm/${oc.env:USER}/flag-evals
+  math_out: ${aux.flag_work}/math_cot
+  # The checkpoints (HF export names) and the line each one ends.
+  cot_ckpts:
+    - {name: v1anneal_120k,        line: v1}
+    - {name: v1annealC_120k_l0fix, line: v1C}    # layer-0 repaired; the raw v1annealC_120k is FP8-damaged
+    - {name: v1annealTT_120k,      line: v1T}    # tensorwise FP8 + bf16 first/last from 112k
+    - {name: v2anneal_120k,        line: v2}
+  cot_select: null                                # export names; null = all of cot_ckpts
+  cot_indices: ${oc.select_indices:${aux.cot_ckpts},name,${aux.cot_select}}
+  math_select: null                               # math_cot item names; null = all 9
+  math_indices: ${oc.select_indices:${aux.math_suite.tasks},name,${aux.math_select}}
+  # One checkpoint / one item, for the point that sets ck_i / math_i. Outside the sweep because
+  # only the base config is re-resolved per point; the stages reference these escaped.
+  ck_i: 0
+  export_name: ${oc.index:${aux.cot_ckpts},${aux.ck_i},name}
+  math_i: 0
+  math_mode: ${oc.index:${aux.math_suite.tasks},${aux.math_i},mode}
+  math_tasks: ${oc.index:${aux.math_suite.tasks},${aux.math_i},tasks}
+  math_done: ${aux.math_out}/${aux.export_name}/${aux.math_mode}.${aux.math_tasks}.ok
+  math_run_one: "${aux.repo}/scripts/downstream_eval/math_cot/run.sh ${aux.export_name} ${aux.math_mode} ${aux.math_tasks}"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    # ====== the checkpoints ======
+    - type: product
+      params:
+        aux.ck_i: ${aux.cot_indices}
+
+    # ====== per checkpoint: the math_cot array, then grading. Per-checkpoint values are escaped
+    # (\${...}): sweep values resolve at the root, only aux is re-resolved per point.
+    - type: list
+      configs:
+        - params:
+            aux.math_i: ${aux.math_indices}
+          defaults:
+            stage: eval
+            backend: bash
+            slurm: jupiter_driver
+            job: array_task
+            job.name: "cot_eval_\\${aux.export_name}"
+            job.array_group: "cot_eval_\\${aux.export_name}"
+            job.est_steps: 1
+            job.est_step_time_s: 1080   # ~18 min per item on average (math_cot.yaml est_min)
+            job.est_startup_min: 0
+            job.finish_condition:
+              class_name: FileExistsCondition
+              path: "\\${aux.math_done}"
+            backend.env:
+              FLAG_WORK: ${aux.flag_work}
+              MATH_COT_OUT: ${aux.math_out}
+              EVAL_SIF: ${aux.math_suite.settings.image}
+              TEMPERATURE: ${aux.math_suite.settings.temperature}
+              TOP_P: ${aux.math_suite.settings.top_p}
+              PREFILL: ${aux.math_suite.settings.prefill}
+            backend.command: "\\${aux.math_run_one}"
+            slurm.array_concurrency: 9
+            slurm.sbatch.account: e-sta-openeurollm
+            slurm.sbatch.nodes: 1
+            slurm.sbatch.time: "01:00:00"
+            slurm.sbatch.signal: null
+            slurm.sbatch.comment: null
+
+        # ====== grade (login node), once every item of the checkpoint finished or was given up
+        - stage: grade
+          backend: bash
+          job: default
+          job.local: true
+          job.name: "cot_grade_\\${aux.export_name}"
+          job.est_steps: 1
+          job.est_step_time_s: 300
+          job.est_startup_min: 0
+          job.start_condition:
+            class_name: JobsFinishedCondition
+            array_groups: ["cot_eval_\\${aux.export_name}"]
+          backend.command: |
+            set -eu
+            D=${aux.math_out}/\${aux.export_name}
+            mkdir -p $D/home/grade
+            singularity exec --cleanenv --containall --no-mount bind-paths,hostfs,cwd,home --home $D/home/grade --bind /e/scratch/e-sta-openeurollm:/e/scratch/e-sta-openeurollm --bind ${aux.repo}:${aux.repo} ${aux.math_suite.settings.image} python3 ${aux.repo}/scripts/downstream_eval/math_cot/grade.py $D

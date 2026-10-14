@@ -5,7 +5,7 @@ data:
   min_doc_len: 10
 
   chunks_dir:
-    - /e/project1/jureap59/poeppel1/data/copy_nemotron_downsampled_15p_chunked/
+    - /e/data1/datasets/products/openeurollm/pretokenized/neox/copy_nemotron_downsampled_15p_chunked/
 
 
 validation:

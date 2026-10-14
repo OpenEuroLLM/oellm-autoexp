@@ -1,0 +1,140 @@
+# @package _global_
+#
+# ============================================================================
+# STAGE 1 of 2: WRITE a checkpoint at 16 nodes, so stage 2 can resume it
+# ============================================================================
+# Pair with ckpt_resume_n16.yaml. Run THIS first; it produces the checkpoints
+# that config resumes.
+#
+# ============================================================================
+# WHY A WRITE STAGE AT ALL, RATHER THAN REUSING SOMETHING ON DISK
+# ============================================================================
+# Two questions need answering and neither has a usable checkpoint already:
+#
+#   (1) Can 0.19 save and resume its OWN checkpoint, with document masking on?
+#       NEVER TESTED. Every masking job so far ran with no --save and no --load
+#       (verified across all six: jobs 1516064/65, 1517312/13, 1516808/09), so
+#       masking and checkpointing have never been exercised together.
+#
+#   (2) Does the distributed-optimizer checkpoint actually reshard across DP,
+#       and does dist_ckpt_optim_fully_reshardable change that?
+#       This is the flagship question. See below.
+#
+# The one 32B checkpoint on scratch that is big enough to be complete
+# (speed_prodsettings_019/iter_0000050, 442 GB) was written at 512 nodes,
+# DP=128 — reading it needs 512 nodes, which is the cost we are avoiding. The
+# 33 GB ones are from 2-node PDA experiments at shapes that are awkward to
+# reproduce. Writing our own at 16 nodes costs ~15 min and controls everything.
+#
+# ============================================================================
+# THE RESHARDABILITY QUESTION, AND WHY THE ARMS ARE WHAT THEY ARE
+# ============================================================================
+# Gate 1 (job 1511083) tried to resume the flagship's checkpoint at 16 nodes and
+# died with
+#     CheckpointingException: Global shape mismatch for loaded (154675456) and
+#     expected (98304000) for key optimizer.distributed.dp_group_idx_0.gbuf_idx_0...
+# reading at DP=4 what was written at DP=128.
+#
+# It was recorded at the time as "production runs
+# dist_ckpt_optim_fully_reshardable: False, so the layout is DP-dependent".
+# THAT EXPLANATION IS WRONG. `false` means "plain DP reshardability"
+# (base_defaults.yaml:132; `true` additionally covers TP/PP/EP), and the
+# checkpoint's own metadata confirms `distrib_optim_sharding_type:
+# 'dp_reshardable'`. DP 128 -> 4 is precisely what that format claims to
+# support, and it failed anyway. So the real cause is unknown, and flipping the
+# flag on the flagship would be a guess.
+#
+# These two arms turn it into a measurement. Same model, same shape, same
+# writer — only the flag differs — and stage 2 resumes each at BOTH the same DP
+# and a different one:
+#
+#   flag=false, DP 4 -> 4   must work (no resharding at all)
+#   flag=false, DP 4 -> 8   tests the DP-reshardability claim directly
+#   flag=true,  DP 4 -> 8   tests whether the flag is the fix
+#
+# If flag=false survives 4 -> 8, DP resharding works in general and something
+# specific to the 128 -> 4 jump broke gate 1. If it does not, DP reshardability
+# is broken in our configuration and the flag is the answer — at which point the
+# cost matters, which is why stage 2 also reports checkpoint save time.
+#
+# ============================================================================
+# COST OF THE FLAG, WHICH IS THE REASON NOT TO JUST TURN IT ON
+# ============================================================================
+# `fully_reshardable` gathers every distributed-optimizer buffer at save time:
+# an NCCL all-gather to all ranks (more memory, but save and load stay
+# parallel), or with distrib_optim_fully_reshardable_mem_efficient a Gloo gather
+# to DP rank 0 only, which SERIALISES save and load along DP. On a 43-day
+# flagship at DP=128 that is a per-save cost, and checkpoint time is already a
+# known sensitivity here — it is part of why the 26.06 container was rejected.
+#
+# NB the flag only affects SAVING. At load the sharding type comes from the
+# checkpoint's own metadata (checkpointing.py:2233-2251), not from args, so
+# flipping it on the flagship is forward-only: existing checkpoints stay
+# loadable and only later saves change format.
+#
+# ============================================================================
+# SHAPE
+# ============================================================================
+# 16 nodes = 64 GPUs / (TP4 x PP4) = DP 4 — the shape already proven to run at
+# this model size (the masking gate, jobs 1516064/65, sat at 0.60 memory). NOT
+# 4 nodes: DP=1 defeats optimizer sharding and OOMs (jobs 1509385/87).
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/ckpt_write_n16
+#   # then, once both arms are COMPLETED:
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/ckpt_resume_n16
+defaults:
+  - fp8_speed_test_fp32grad_docmask
+  - _self_
+
+backend:
+  aux:
+    active_nodes: 16
+    spare_nodes: 0
+
+  megatron:
+    # MASKING ON for both arms. Testing checkpointing WITHOUT it would leave the
+    # combination that has never run still untested.
+    dataloader_inter_document_masking: true
+
+    # Write exactly one checkpoint, at the end. save_interval == exit_interval
+    # so the run stops right after writing it.
+    exit_interval: 10
+    save_interval: 10
+
+    # Each arm needs ITS OWN tree, or they overwrite each other and stage 2
+    # resumes whichever finished last. This is not hypothetical: the 512-node
+    # speed arms shared one save path today, raced, and one hung for 16 minutes
+    # holding 512 nodes (job 1516808).
+    save: /e/scratch/e-sta-openeurollm/pre_production_training/ckpt_gate_019/${backend.aux.variant}/checkpoints
+    # Fresh init, not a resume — stage 1 must produce a checkpoint of its own.
+    load: null
+
+job:
+  chain_repeat: 1
+  est_step_time_s: 2.4
+  est_startup_min: 10
+  est_steps: 10
+
+slurm:
+  sbatch:
+    time: "01:00:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ---- arm 0: PRODUCTION'S CURRENT SETTING ---------------------------
+        # dp_reshardable. What the flagship writes today.
+        #   --array-subset 0
+        - backend.aux.variant: "ckptw-dpresh"
+          backend.megatron.dist_ckpt_optim_fully_reshardable: false
+
+        # ---- arm 1: THE CANDIDATE -------------------------------------------
+        # fully_reshardable. mem_efficient deliberately left at its default
+        # (false): the Gloo/DP-rank-0 path serialises save AND load, so turning
+        # it on here would confound the format question with a comms question.
+        #   --array-subset 1
+        - backend.aux.variant: "ckptw-fullresh"
+          backend.megatron.dist_ckpt_optim_fully_reshardable: true

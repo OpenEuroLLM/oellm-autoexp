@@ -114,6 +114,32 @@ def _slice(value, start, end):
     return value[int(start) : int(end)]  # noqa
 
 
+def _index(value, index, field=None):
+    """``${oc.index:${list},${i}}``: element ``i`` of a list, or with a third
+    argument ``${oc.index:${list},${i},name}`` that element's field ``name``. A
+    nested key (``${list.${i}}``) refuses an int ``i``, which is what a swept
+    index is."""
+    item = value[int(index)]
+    return item if field is None else item[field]
+
+
+def _select_indices(items, key, wanted=None):
+    """``${oc.select_indices:${items},name,${wanted}}``: the positions of the
+    items whose ``key`` is in ``wanted``, in the items' order; all positions
+    when ``wanted`` is null. Selecting by a stable key rather than by position
+    keeps a subset valid when the item list is regenerated. An unknown entry in
+    ``wanted`` raises: a typo must not silently shrink the selection."""
+    if wanted is None:
+        return list(range(len(items)))
+    wanted = [str(w) for w in wanted]
+    keys = [str(item[key]) for item in items]
+    unknown = sorted(set(wanted) - set(keys))
+    if unknown:
+        raise ValueError(f"oc.select_indices: no item with {key} in {unknown}")
+    wanted_set = set(wanted)
+    return [i for i, k in enumerate(keys) if k in wanted_set]
+
+
 def _mul_round_int(a, b, multiple):
     return int(round(float(a) * float(b) / float(multiple)) * float(multiple))
 
@@ -201,6 +227,76 @@ def oc_if(a: str | int | bool, b: str, c: str):
         return b
 
 
+def oc_coalesce(*tokens, _root_):
+    """First of `tokens` that resolves to a non-None value. SQL COALESCE.
+
+        est_steps: ${oc.coalesce:backend.megatron.exit_interval,backend.megatron.train_iters}
+        est_steps: ${oc.coalesce:backend.megatron.exit_interval,1000}
+
+    WHY oc.select CANNOT DO THIS. `oc.select:path,default` falls back only when
+    the path is MISSING; a path that exists and holds None returns None.
+    Measured on omegaconf 2.3.0:
+
+        exit_interval: None  ->  ${oc.select:....exit_interval,${...train_iters}}  ==  None
+        exit_interval absent ->  same expression                                   ==  894000
+
+    Every field of a structured config EXISTS — `exit_interval: int | None = None`
+    is present-and-None, never absent — so oc.select never fires its default on
+    this repo's schemas, which is precisely the case you want to write.
+
+    ARGUMENTS ARE PATHS, NOT INTERPOLATIONS, and that is deliberate: it makes
+    this LAZY. Written as `${oc.coalesce:${a},${b}}` OmegaConf would resolve both
+    arguments before calling us, so a `${b}` that is missing or itself invalid
+    would raise even when `${a}` was perfectly good. Taking bare paths lets us
+    stop at the first hit and never look at the rest.
+
+    A token that does not resolve to anything is used as a LITERAL, so a plain
+    default still works as the last argument. The cost of that convenience is
+    that a string literal shaped like a config path resolves as one; pass such
+    values from a config key instead. Returns None if nothing resolves, which
+    keeps `${oc.coalesce:a,b}` safe to assign to an Optional field.
+    """
+    for token in tokens:
+        if token is None:
+            continue
+        key = str(token).strip()
+        if not key:
+            continue
+        value = OmegaConf.select(_root_, key, default=None)
+        if value is not None:
+            return value
+        # Not a resolvable path (or resolved to None): treat as a literal, but
+        # only if it cannot be a path at all — otherwise a null config key would
+        # silently become the string "backend.megatron.exit_interval".
+        if not _LOOKS_LIKE_PATH.match(key):
+            return _coerce_scalar(key)
+    return None
+
+
+# A bare config path: dotted identifiers, optionally with [i] list indexing.
+_LOOKS_LIKE_PATH = re.compile(r"^[A-Za-z_][\w]*(\[\d+\]|\.[A-Za-z_][\w]*)*$")
+
+
+def _coerce_scalar(text: str):
+    """Turn a literal token into int/float/bool/None where it obviously is
+    one."""
+    lowered = text.lower()
+    if lowered in {"null", "none", "~"}:
+        return None
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    try:
+        return float(text)
+    except ValueError:
+        return text
+
+
 def oc_eq(a: str | int | bool, b: str | int | bool):
     return a == b
 
@@ -252,6 +348,19 @@ def oc_exclude_nodes(path: str, sep: str = ",") -> str | None:
     """
     target = Path(str(path)).expanduser()
     if not target.exists():
+        # WARN, do not fail. Returning None is correct — a site with no list
+        # should not have an --exclude directive — but staying silent about it
+        # is not: the list now lives OUTSIDE the repo (a shared project path on
+        # JUPITER), so a moved, renamed or archived file, or an unmounted
+        # /e/project1, turns into a 512-node job submitted with NO exclusions at
+        # all, and nothing anywhere says so. A typo in the path looks identical
+        # to "we deliberately have no list".
+        LOGGER.warning(
+            "oc.exclude_nodes: %s does not exist — no --exclude directive will be "
+            "emitted for this job. If a list was expected, check the path or "
+            "$JUPITER_EXCLUDE_NODES.",
+            target,
+        )
         return None
     nodes: list[str] = []
     seen: set[str] = set()
@@ -302,6 +411,8 @@ def register_default_resolvers(force: bool = False) -> None:
     OmegaConf.register_new_resolver("oc.cdivi", _ceil_div_int, replace=True)
     OmegaConf.register_new_resolver("oc.sqrt", _sqrt_wrapper, replace=True)
     OmegaConf.register_new_resolver("oc.slice", _slice, replace=True)
+    OmegaConf.register_new_resolver("oc.index", _index, replace=True)
+    OmegaConf.register_new_resolver("oc.select_indices", _select_indices, replace=True)
     OmegaConf.register_new_resolver("oc.mul_round_int", _mul_round_int, replace=True)
     OmegaConf.register_new_resolver("oc.concat", _concat, replace=True)
     OmegaConf.register_new_resolver("oc.int", _int_cast, replace=True, use_cache=False)
@@ -309,6 +420,9 @@ def register_default_resolvers(force: bool = False) -> None:
     OmegaConf.register_new_resolver("oc.timestring", lambda: _timestring(), replace=True)
     OmegaConf.register_new_resolver("oc.len", len, replace=True)
     OmegaConf.register_new_resolver("oc.eval", _safe_eval, replace=True)  # noqa: S307
+    # use_cache=False: the whole point is to re-read the referenced keys, which
+    # sweep arms and CLI overrides change between resolutions.
+    OmegaConf.register_new_resolver("oc.coalesce", oc_coalesce, replace=True, use_cache=False)
     OmegaConf.register_new_resolver("oc.eq", oc_eq, replace=True)
     OmegaConf.register_new_resolver("oc.neq", oc_neq, replace=True)
     OmegaConf.register_new_resolver("oc.lt", oc_lt, replace=True)

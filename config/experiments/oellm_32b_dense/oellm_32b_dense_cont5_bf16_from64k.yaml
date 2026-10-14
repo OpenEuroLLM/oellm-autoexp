@@ -1,0 +1,76 @@
+# @package _global_
+#
+# ============================================================================
+# _cont5: bf16 FROM 64000 -- the FP8 test at the best-instrumented fork point
+# ============================================================================
+# Identical to _cont4 (fp8 off, seed 1234, masking on, FA3, te218, lr 3e-4) with
+# ONE change: it forks from 64000 instead of 60000.
+#
+# WHY BOTH FORK POINTS ARE WORTH RUNNING
+# --------------------------------------
+#   _cont4 (60000)  has 4000 iterations of runway BEFORE the original turned
+#                   over, so it answers "does bf16 PREVENT the turn". It cannot
+#                   answer it quickly -- it has to traverse that runway first.
+#   _cont5 (64000)  starts AT the minimum, so it enters the degrading region
+#                   immediately and answers "does bf16 ARREST the degradation"
+#                   within ~2000 iterations.
+#
+# 64000 is also the most instrumented point in this whole investigation, which
+# is what makes this arm cheap to interpret. THREE curves already share it:
+#
+#   flagship  held-out  1.495481 (64000) -> 1.511213 (68000) -> 1.519173 (72000)
+#   cont2     held-out  1.495481 (fork)  -> 1.497005 / 1.496582 / 1.497398 /
+#                                           1.498708  at 65000/65500/65625/66000
+#   flagship  train     1.544005 (bin 64000) -> 1.548968 -> 1.556254 -> 1.560867
+#
+# So this arm needs no control of its own. It is the same fork point, the same
+# data order (seed 1234) and the same objective as the flagship; only the
+# numerics format differs.
+#
+# ============================================================================
+# READ-OFF
+# ============================================================================
+# Compare TRAIN loss in 2000-iteration bins against the flagship's own
+# 64000/66000/68000 bins above, and score checkpoints against the held-out
+# ladder with experiments/oellm_32b_dense/ckpt_ladder_eval_n32 when it has run
+# far enough.
+#
+#   FP8 IMPLICATED   the curve stays at or below 1.544005 (train) instead of
+#                    climbing to 1.548968 by bin 66000.
+#   FP8 CLEARED      it tracks the flagship despite bf16, and the last
+#                    first-order candidate is gone.
+#
+# TWO CAUTIONS ON READING IT
+#   * bf16 vs fp8 is NOT loss-neutral in itself. Expect a small immediate offset
+#     at the fork from the format change alone. As everywhere in this
+#     investigation, the SLOPE is the signal, not the level.
+#   * the held-out trajectory WOBBLES by ~4E-04 between checkpoints 500 apart
+#     (measured: cont2 went 1.497005 at 65000 DOWN to 1.496582 at 65500 before
+#     resuming its rise). Do not read a trend over less than a few thousand
+#     iterations; it is inside that wobble.
+#
+# ============================================================================
+# HOW TO RUN IT
+# ============================================================================
+# The seed stage is a LOCAL job (job.local, inherited) -- it symlinks the fork
+# checkpoint on the login node in seconds, no allocation. Submit it first, then
+# the train stage, or run the whole thing under the monitor:
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/oellm_32b_dense_cont5_bf16_from64k --array-subset 0
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/oellm_32b_dense_cont5_bf16_from64k --array-subset 1
+#
+# `--submit-and-exit` on the train stage only works AFTER the seed stage has
+# written the tracker: FileExistsCondition is evaluated once (run_autoexp.py:538).
+defaults:
+  - oellm_32b_dense_cont4_bf16_from60k
+  - _self_
+
+aux:
+  # 64000 in the ORIGINAL tree -- a persistent checkpoint (save_interval 4000),
+  # so nothing rotates it. parent_ckpts is inherited from cont4 and already
+  # points at the flagship tree.
+  fork_iter: 64000
+  fork_iter_dir: iter_0064000
+
+  # Carries the whole identity: checkpoint tree, run name, seed-stage job name.
+  variant_tag: "prod_dataopt5_cont5_bf16_i64k_seed1234"

@@ -1,0 +1,41 @@
+# @package _global_
+#
+# ============================================================================
+# FULL FLAG SUITE (438) FOR THE merge3 EXPORTS OF THE FOUR 100k->120k ANNEALS
+# ============================================================================
+# The stage chain of lineage_flag_evals for four EXISTING merged exports (no convert stage: the
+# sweep filter drops it for exists: true):
+#   prepare   login node eval_checkpoints.sh flag-prepare (views + launchers, NOT submitted)
+#   eval      ONE SLURM array per export, one task per eval (438); a failed task -- or one that
+#                        exits 0 without its done marker -- is resubmitted once, alone
+#   collect   login node eval_checkpoints.sh flag-collect -> $FLAG_WORK/results/<name>.flag-evals-438.tasks.csv
+#
+# The exports (vanosch1, 2026-10-07; MERGE_INFO.json in each): uniform mean of the 116k, 118k
+# and 120k exports of each anneal (fp32 accumulate, round-to-nearest-even back to bf16):
+#   v1    v1anneal_merge3_116k_120k     b1_production60k_100k_annealing
+#   v1C   v1annealC_merge3_116k_120k    b1_conservative60k_100k_annealing
+#   v1T   v1annealTT_merge3_116k_120k   b1_tweo80k_112kfork_tensorwise (the TT exports)
+#   v2    v2anneal_merge3_116k_120k     oellm_32b_v2/100k_annealing
+# The 5-checkpoint merges of the same anneals (112k-120k, linear / uniform): anneal_merge5_evals.
+#
+# KNOWN CAVEAT v1C: v1annealC 116k-120k carry the FP8-underflow dependency (bf16 evals degrade
+# from ~112k, dump/v1annealC_degradation/); the merge inherits it.
+#
+# The exports are owned by vanosch1; flag_launch.sh builds their lighteval plain view per file
+# (tokenizer.model and special_tokens_map.json are read-only to us, so `cp -al` alone fails).
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/oellm_32b_dense/merge3_flag_evals --dry-run
+# Cost: 438 evals = 42 node-hours per export (b1_266k, 2026-10-05): ~168 node-hours for all four.
+# ============================================================================
+defaults:
+  - lineage_flag_evals
+  - _self_
+
+aux:
+  # lineage_flag_evals' fields; exists: true = the export is already in export_root.
+  lineage_ckpts:
+    - {name: v1anneal_merge3_116k_120k,   lines: [v1],  step: 120000, exists: true, ckpt: ""}
+    - {name: v1annealC_merge3_116k_120k,  lines: [v1C], step: 120000, exists: true, ckpt: ""}
+    - {name: v1annealTT_merge3_116k_120k, lines: [v1T], step: 120000, exists: true, ckpt: ""}
+    - {name: v2anneal_merge3_116k_120k,   lines: [v2],  step: 120000, exists: true, ckpt: ""}
+  ckpt_select: null   # all four

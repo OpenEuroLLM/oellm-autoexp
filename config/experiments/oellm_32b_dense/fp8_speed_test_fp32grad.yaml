@@ -1,0 +1,131 @@
+# @package _global_
+#
+# FP8 SPEED TEST WITH FP32 GRADIENT ACCUMULATION — 512 and 1024 nodes.
+#
+# ============================================================================
+# WHAT THIS MEASURES
+# ============================================================================
+# The throughput COST of reducing/accumulating gradients in fp32 instead of
+# bf16, under FP8 compute. Precision of the gradient reduction is a stability
+# decision (it is the obvious suspect whenever a run spikes), so the point of
+# this config is to price it before anyone has to argue about it mid-incident.
+#
+# ONE SWITCH: `grad_reduce_in_bf16: false`. Do NOT also set
+# accumulate_allreduce_grads_in_fp32 — with grad_reduce_in_bf16 true Megatron
+# forces it False, and when you flip grad_reduce_in_bf16 to false Megatron
+# AUTO-ENABLES fp32 accumulation. Setting both would make the config lie about
+# what ran. arguments.py:742-745 is:
+#     if args.grad_reduce_in_bf16:
+#         args.accumulate_allreduce_grads_in_fp32 = False
+#     elif not args.accumulate_allreduce_grads_in_fp32 \
+#          and args.main_grads_dtype == torch.float32:
+#         args.accumulate_allreduce_grads_in_fp32 = True
+#
+# NOTE THE SECOND CONDITION — the auto-enable is guarded on
+# `main_grads_dtype == fp32`. It holds here (Megatron's own default is fp32 and
+# base_defaults.yaml:295 sets it explicitly), but it means that setting
+# `main_grads_dtype: bf16` would leave BOTH paths off: grad_reduce_in_bf16 false
+# so no bf16 reduce, and the elif not firing so no fp32 accumulation either. If
+# anyone ever touches main_grads_dtype, re-check this. Neither flag appears on
+# the rendered command line — `--grad-reduce-in-bf16` is store_true so false
+# omits it, and accumulate_allreduce_grads_in_fp32 is set INSIDE Megatron — so
+# the only way to confirm what ran is the argument dump in the log.
+# Verified in job 1375942's dump: grad_reduce_in_bf16 False,
+# main_grads_dtype torch.float32, accumulate_allreduce_grads_in_fp32 True.
+#
+# ============================================================================
+# WHAT IS ALREADY KNOWN (so you know what a surprise looks like)
+# ============================================================================
+# The bf16-grad references at the same scales, GBS 4096 / TP4 / PP4 / mbs2:
+#
+#   1024 nodes  fp8 delayed + param_gather, bf16 grad   342.6 TF   2488.9 ms
+#   1024 nodes  SAME but fp32 grad          (job 1375942) 315.6 TF  2701.7 ms  -7.9%
+#    512 nodes  fp8 delayed, bf16 grad      (job 1365865) 437.6 TF  3897.3 ms
+#    512 nodes  fp8 tensorwise, bf16 grad   (job 1366543) 417.3 TF  4087.0 ms
+#    512 nodes  fp32 grad under FP8                        NO DATA  <- the gap
+#   (bf16-compute reference for scale: 512 nodes bf16 + fp32 grad, job 1365957,
+#    305.6 vs 321.7 TF = -5.0%)
+#
+# So the 1024-node number mainly CONFIRMS/refreshes 1375942 on the current code,
+# and the 512-node arm is genuinely new. Expect roughly -5 to -8%; anything
+# outside that, or a large gap between the two scales, is the interesting result
+# — fp32 doubles the DP reduce-scatter/all-gather VOLUME, and DP is 128 at 512
+# nodes versus 256 at 1024, so the two scales stress it differently.
+#
+# ============================================================================
+# WHICH FP8 BRANCH
+# ============================================================================
+# Inherits fp8_speed_test, i.e. the /backend/megatron/oellm_32b_dense/precision:
+# fp8 group as configured — BRANCH A: `fp8_recipe: tensorwise` with
+# `cuda_graph_impl: none` and `first_last_layers_bf16: true`. That is the branch
+# VERIFIED WORKING at 512 nodes (job 1366543); tensorwise recomputes the scale
+# from each tensor every step, so there is no amax lag to confound a precision
+# measurement. The variant name interpolates fp8_recipe, so switching branch
+# automatically lands in a different output directory:
+#
+#   BRANCH B (delayed — matches what the stability runs use):
+#     -o backend.megatron.fp8_recipe=delayed \
+#     -o backend.megatron.fp8_amax_history_len=1024 \
+#     -o backend.megatron.fp8_amax_compute_algo=max
+#   NB fp8_param_gather requires delayed (arguments.py:1178) AND breaks
+#   checkpoint saving, so it stays off here regardless of branch.
+#
+# ============================================================================
+# RUNNING IT
+# ============================================================================
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/fp8_speed_test_fp32grad
+#
+# Two arms = ~4,100 GPU-h at the 40 min wall (512-node arm ~1,365, 1024-node arm
+# ~2,731); realistically ~half that at ~20 min each. To run one scale only:
+#   --array-subset 0   # 512 nodes
+#   --array-subset 1   # 1024 nodes
+# Submitting both at once asks for 1536 nodes simultaneously and they will
+# simply queue behind each other.
+defaults:
+  - fp8_speed_test
+  # Skip known-bad nodes. Not optional at these sizes: on 2026-08-17 three
+  # consecutive 1024-node speed-test allocations died to single-node faults
+  # (occupied GPU / NODE_FAIL / an agent that never joined the rendezvous),
+  # producing ZERO iterations each. This path has no fault tolerance by design
+  # — spare_nodes 0, --max-restarts 0, STATIC rendezvous — so one bad node costs
+  # the whole allocation. See config/exclude/jupiter_exclude_nodes.txt.
+  - override /slurm: jupiter_autoexclude
+  - _self_
+
+backend:
+  aux:
+    # DERIVED from the settings that actually vary, so the output directory can
+    # never disagree with what ran: fp8 recipe, grad precision, node count.
+    # Overrides the parent's "fp8speed-${fp8}-${fp8_recipe}".
+    # NB the sweep arms deliberately do NOT set backend.aux.variant — an
+    # arm-level variant wins over this line and would collapse both arms into
+    # one output tree.
+    variant: "fp8speed-${backend.megatron.fp8_recipe}-fp32grad-n${.active_nodes}"
+
+  megatron:
+    # THE CHANGE UNDER TEST. false -> Megatron auto-enables
+    # accumulate_allreduce_grads_in_fp32.
+    grad_reduce_in_bf16: false
+    # Left at its default (false) deliberately. This is a SEPARATE knob — fp32
+    # accumulation inside the reduce-scatter itself — and job 1365957 moved it
+    # together with grad_reduce_in_bf16, which is why that run is not a clean
+    # single-variable measurement of grad precision. Enable it as a follow-up
+    # once this baseline exists:
+    #   -o backend.megatron.ddp_reduce_scatter_with_fp32_accumulation=true
+    # ddp_reduce_scatter_with_fp32_accumulation: false
+
+# ---------------------------------------------------------------------------
+# The sweep varies ONLY the node count. slurm.sbatch.nodes and torchrun's
+# nnodes both interpolate from backend.aux.active_nodes (spare_nodes stays 0 on
+# the speed-test path), so a single key moves the whole allocation.
+# ---------------------------------------------------------------------------
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # DP = 2048/(TP4*PP4) = 128, M = 4096/(2*128) = 16 microbatches
+        - backend.aux.active_nodes: 512
+        # DP = 4096/(TP4*PP4) = 256, M = 4096/(2*256) = 8 microbatches
+        - backend.aux.active_nodes: 1024

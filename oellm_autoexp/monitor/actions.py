@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import re
+import sys
 import time
 from typing import Any, Literal
 
@@ -205,6 +206,247 @@ class AppendToFileAction(BaseMonitorAction):
         )
 
 
+def _ensure_megatron_importable() -> None:
+    """Put the Megatron submodule on sys.path if it is not already importable.
+
+    A torch_dist ``.metadata`` is a pickle referencing megatron.core classes, so
+    ``read_metadata()`` raises ModuleNotFoundError unless megatron is importable.
+    The monitor venv does NOT have it by default — verified on JUPITER, where the
+    check only succeeded with ``PYTHONPATH=.:submodules/Megatron-LM``. Rather
+    than require callers to set the environment, resolve it relative to this
+    file so the check works however the monitor was launched.
+    """
+    try:
+        import megatron.core  # noqa: F401
+
+        return
+    except Exception:
+        pass
+    candidate = Path(__file__).resolve().parents[2] / "submodules" / "Megatron-LM"
+    if candidate.is_dir() and str(candidate) not in sys.path:
+        sys.path.append(str(candidate))
+
+
+def _torch_dist_missing_files(path: Path) -> list[str] | None:
+    """Return shard files that ``.metadata`` promises but that are absent.
+
+    ``None`` means the metadata could not be read at all, which callers MUST
+    treat as "unverifiable" rather than "fine" — see ``checkpoint_is_complete``.
+    """
+    try:  # imported lazily: the monitor must not hard-depend on torch
+        _ensure_megatron_importable()
+        from torch.distributed.checkpoint import FileSystemReader
+    except Exception:  # pragma: no cover - torch not installed in this env
+        return None
+    try:
+        metadata = FileSystemReader(path).read_metadata()
+        expected = {info.relative_path for info in metadata.storage_data.values()}
+    except Exception:  # pragma: no cover - truncated/corrupt metadata
+        return None
+    return sorted(name for name in expected if not (path / name).exists())
+
+
+def checkpoint_status(path: Path) -> tuple[str, str]:
+    """Classify a torch_dist checkpoint as complete / incomplete /
+    unverifiable.
+
+    THREE STATES, NOT TWO, and the third one is the point.
+
+    `.metadata` alone is not sufficient: on 2026-08-19 ``iter_0003000`` carried a
+    valid `.metadata` while 927 of its shards were absent and every rank died
+    with FileNotFoundError. So the promised file list is checked against disk.
+
+    But when the metadata cannot be READ we must not guess. An earlier version
+    fell back to comparing shard counts against sibling ``iter_*`` directories,
+    which is actively dangerous: a tree can legitimately hold checkpoints written
+    at DIFFERENT WORLD SIZES (2026-08-19: 4096 files at world 2048 next to 8192
+    files at world 4096), and the heuristic would call a perfectly complete
+    checkpoint "short" and quarantine good state. Unverifiable now stops the
+    machinery and asks for a human instead.
+    """
+    if not path.is_dir():
+        return "incomplete", "not a directory"
+    if not (path / ".metadata").is_file():
+        # Written LAST by the coordinator, so its absence means the save never
+        # finished. NB it is a dotfile: plain `ls` hides it.
+        return "incomplete", "no .metadata (save never finalised)"
+    # NB pathlib's "*" DOES match leading dots, and the in-flight shards are
+    # written as ".__<rank>_<n>.distcp.tmp", so dedupe rather than concatenate.
+    leftovers = set(path.glob("*.distcp.tmp")) | set(path.glob(".*.distcp.tmp"))
+    if leftovers:
+        return "incomplete", f"{len(leftovers)} unfinished .tmp shards"
+    if not (path / "common.pt").is_file():
+        return "incomplete", "no common.pt"
+
+    missing = _torch_dist_missing_files(path)
+    if missing is None:
+        return "unverifiable", ".metadata present but unreadable (torch/megatron unavailable?)"
+    if missing:
+        return "incomplete", f"{len(missing)} shard(s) named in .metadata are absent"
+    return "complete", f"verified against .metadata ({len(list(path.glob('*.distcp')))} shards)"
+
+
+def checkpoint_is_complete(path: Path) -> tuple[bool, str]:
+    """Backwards-compatible boolean wrapper.
+
+    Unverifiable counts as NOT complete.
+    """
+    status, reason = checkpoint_status(path)
+    return status == "complete", reason
+
+
+@dataclass
+class QuarantineCheckpointActionConfig(ConfigInterface):
+    """Move a corrupt checkpoint aside and roll the tracker back to a valid
+    one.
+
+    Automates the manual recovery: rename ``iter_N`` to ``failed_iter_N`` and
+    rewrite ``latest_checkpointed_iteration.txt`` to the newest checkpoint that
+    actually loads, so a following ``RestartAction`` resumes instead of dying on
+    the same file again.
+
+    ONLY FOR GENUINELY INCOMPLETE CHECKPOINTS (missing shards / no ``.metadata``).
+    Do NOT wire this to a world-size mismatch — ``rerun_state_machine_state/
+    shard_<rank>_<world>`` missing means the checkpoint is FINE and the job's node
+    count is wrong; quarantining would discard good state and roll back for
+    nothing. That signature gets its own CancelAction.
+
+    Chain it BEFORE the RestartAction for the same pattern, as
+    config/job/autoexclude.yaml does for node exclusion.
+    """
+
+    class_name: str = "QuarantineCheckpointAction"
+    # Checkpoint tree holding the iter_* directories and the tracker file.
+    # Supports {var} templating.
+    checkpoint_dir: str = ""
+    # Iteration to quarantine; normally "{iteration}" captured via extract_groups.
+    # If it does not resolve to an int, the tracker's current value is used.
+    iteration: str = "{iteration}"
+    quarantine_prefix: str = "failed_"
+    tracker_name: str = "latest_checkpointed_iteration.txt"
+    # Refuse to quarantine once this many checkpoints have already been moved
+    # aside in this tree. Without a cap, a persistent fault walks backwards
+    # through every checkpoint one restart at a time.
+    max_rollbacks: int = 2
+    # Report what would happen and change nothing.
+    dry_run: bool = False
+
+
+@register
+class QuarantineCheckpointAction(BaseMonitorAction):
+    config: QuarantineCheckpointActionConfig
+
+    def execute(self, context: ActionContext) -> ActionResult:
+        root = Path(context.render(self.config.checkpoint_dir)).expanduser()
+        prefix = self.config.quarantine_prefix
+        tracker = root / self.config.tracker_name
+
+        if not root.is_dir():
+            return ActionResult(status="failed", message=f"checkpoint dir not found: {root}")
+
+        already = sorted(p.name for p in root.glob(f"{prefix}iter_*"))
+        if len(already) >= self.config.max_rollbacks:
+            return ActionResult(
+                status="failed",
+                message=(
+                    f"refusing to quarantine: {len(already)} checkpoint(s) already moved aside "
+                    f"in {root} (max_rollbacks={self.config.max_rollbacks}). Investigate manually."
+                ),
+                metadata={"quarantined": already},
+            )
+
+        # Which iteration is bad? Prefer the captured group, fall back to tracker.
+        raw = context.render(self.config.iteration).strip()
+        bad_iter: int | None = None
+        if raw.isdigit():
+            bad_iter = int(raw)
+        elif tracker.is_file():
+            current = tracker.read_text().strip()
+            if current.isdigit():
+                bad_iter = int(current)
+        if bad_iter is None:
+            return ActionResult(
+                status="failed",
+                message=f"could not determine the failing iteration (raw={raw!r}, tracker={tracker})",
+            )
+
+        bad_dir = root / f"iter_{bad_iter:07d}"
+
+        # CHOOSE THE RESUME POINT BEFORE TOUCHING ANYTHING. If the rename came
+        # first and the search then refused, the tracker would be left pointing
+        # at a directory that no longer exists — a worse state than the one we
+        # started in. Nothing is mutated until a verified target is in hand.
+        candidates = sorted(
+            (p for p in root.glob("iter_*") if p.is_dir() and p != bad_dir),
+            key=lambda p: int(p.name.split("_")[-1]),
+            reverse=True,
+        )
+        actions: list[str] = []
+        rejected: list[str] = []
+        for candidate in candidates:
+            status, why = checkpoint_status(candidate)
+            if status == "unverifiable":
+                # STOP. Do not skip past it (it may be perfectly good, and
+                # rolling further back would discard real training), and do not
+                # resume from it (it may be broken). Neither guess is safe, so
+                # hand it to a human with the reason.
+                return ActionResult(
+                    status="failed",
+                    message=(
+                        f"cannot verify {candidate.name} in {root}: {why}. "
+                        f"Refusing to choose a resume point. Check it by hand with "
+                        f'`python -c "from torch.distributed.checkpoint import FileSystemReader; '
+                        f"print(FileSystemReader('{candidate}').read_metadata())\"` "
+                        f"(needs megatron.core importable), then set "
+                        f"{self.config.tracker_name} yourself."
+                    ),
+                    metadata={
+                        "quarantined_iteration": bad_iter,
+                        "unverifiable": candidate.name,
+                        "rejected": rejected,
+                    },
+                )
+            if status == "complete":
+                iteration = int(candidate.name.split("_")[-1])
+                # Verified target in hand — now, and only now, mutate the tree.
+                if bad_dir.is_dir():
+                    moved = root / f"{prefix}iter_{bad_iter:07d}"
+                    if self.config.dry_run:
+                        actions.append(f"would rename {bad_dir.name} -> {moved.name}")
+                    else:
+                        bad_dir.rename(moved)
+                        actions.append(f"renamed {bad_dir.name} -> {moved.name}")
+                else:
+                    actions.append(f"{bad_dir.name} already absent")
+                if self.config.dry_run:
+                    actions.append(f"would set {tracker.name} -> {iteration} ({why})")
+                else:
+                    tracker.write_text(f"{iteration}\n")
+                    actions.append(f"set {tracker.name} -> {iteration} ({why})")
+                LOGGER.warning("checkpoint recovery in %s: %s", root, "; ".join(actions))
+                return ActionResult(
+                    status="success",
+                    message="; ".join(actions),
+                    metadata={
+                        "checkpoint_dir": str(root),
+                        "quarantined_iteration": bad_iter,
+                        "resume_iteration": iteration,
+                        "rejected": rejected,
+                        "dry_run": self.config.dry_run,
+                    },
+                )
+            rejected.append(f"{candidate.name}: {why}")
+
+        return ActionResult(
+            status="failed",
+            message=(
+                f"no loadable checkpoint left in {root} after quarantining iter_{bad_iter:07d}; "
+                f"rejected: {rejected or 'none found'}"
+            ),
+            metadata={"quarantined_iteration": bad_iter, "rejected": rejected},
+        )
+
+
 @dataclass
 class UpdateChainExcludesActionConfig(ConfigInterface):
     """Propagate the current node-exclusion list to dependency-chained jobs.
@@ -263,6 +505,32 @@ class NewJobAction(BaseMonitorAction):
 class RestartActionConfig(ConfigInterface):
     class_name: str = "RestartAction"
     reason: str = "restarting job"
+    # Shell command run by the monitor BEFORE the job is resubmitted (templated
+    # with the action-context variables plus {runtime_job_id} and {log_path});
+    # e.g. a node-fault scan of the failed job's log that appends attributable
+    # nodes to the exclusion file. Its exit code is logged, never fatal.
+    pre_command: str = ""
+    pre_command_timeout_s: float = 900.0
+    # Post-failure peer scan in a bounded child process; requires exclude_file.
+    nccl_peer_scan: bool = False
+    # Node-exclusion list re-read right before the resubmission so the
+    # re-rendered sbatch carries nodes excluded since plan time (the stored
+    # SlurmConfig is otherwise frozen at plan time).
+    exclude_file: str = ""
+    # Defer the resubmission until the job has left the queue instead of
+    # cancelling it: a graceful segment end (exit_duration_in_mins, SIGTERM)
+    # prints its 'exiting program ...' line BEFORE the async checkpoint write
+    # completes, so cancelling on that line cuts the very checkpoint the next
+    # segment should load (smoke 1691431, 2026-09-06). Stall/error rules keep
+    # the default and cancel the hung job.
+    wait_for_job_end: bool = False
+    # For hangs and faults: cancel the running job NOW, then wait for it to leave
+    # the queue before the hooks run and the job is resubmitted. The log is then
+    # complete, so the node-fault scan sees the lines written after the kill
+    # (e.g. a rank's cudaErrorLaunchFailure that names the faulty node; jobs
+    # 1692960/1693057 on 2026-09-06 were restarted twice onto the same bad node
+    # because the scan ran before the cancel). No-op when the job has already ended.
+    cancel_first: bool = False
 
 
 @register
@@ -274,7 +542,63 @@ class RestartAction(BaseMonitorAction):
             special="restart",
             status="success",
             message=self.config.reason,
+            action_config=self.config,
+            metadata={
+                "pre_command": self.config.pre_command,
+                "pre_command_timeout_s": self.config.pre_command_timeout_s,
+                "nccl_peer_scan": self.config.nccl_peer_scan,
+                "exclude_file": self.config.exclude_file,
+                "wait_for_job_end": self.config.wait_for_job_end,
+                "cancel_first": self.config.cancel_first,
+            },
         )
+
+
+@dataclass
+class RunCommandActionConfig(ConfigInterface):
+    """Run a shell command as a side effect of a log/state event (never terminal).
+
+    ``command`` is templated with the action-context variables ({job_id},
+    {job_name}, extracted groups, ...). Output is captured and logged.
+    """
+
+    class_name: str = "RunCommandAction"
+    command: str = ""
+    timeout_s: float = 900.0
+    cwd: str = ""
+
+
+@register
+class RunCommandAction(BaseMonitorAction):
+    config: RunCommandActionConfig
+
+    def execute(self, context: ActionContext) -> ActionResult:
+        import subprocess
+
+        command = context.render(self.config.command).strip()
+        if not command:
+            return ActionResult(status="failed", message="empty command")
+        try:
+            proc = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=self.config.timeout_s,
+                cwd=self.config.cwd or None,
+            )
+            tail = (proc.stdout + proc.stderr).strip().splitlines()[-5:]
+            msg = f"command exit {proc.returncode}: {command} | " + " / ".join(tail)
+            LOGGER.info("RunCommandAction: %s", msg)
+            return ActionResult(
+                status="success" if proc.returncode == 0 else "failed",
+                message=msg,
+                metadata={"returncode": proc.returncode, "command": command},
+            )
+        except subprocess.TimeoutExpired:
+            msg = f"command timed out after {self.config.timeout_s}s: {command}"
+            LOGGER.warning("RunCommandAction: %s", msg)
+            return ActionResult(status="failed", message=msg)
 
 
 @dataclass
@@ -326,7 +650,7 @@ class LogEventConfig(EventConfig):
     """Configuration for a log-triggered event and action."""
 
     pattern: str = ""
-    pattern_type: Literal["substring", "regex", "inactivity"] = "substring"
+    pattern_type: Literal["substring", "regex", "inactivity", "progress"] = "substring"
     extract_groups: dict[str, int | str] = field(default_factory=dict)
     match_once: bool = True
     # For pattern_type == "inactivity": minimum number of consecutive polls
@@ -335,6 +659,47 @@ class LogEventConfig(EventConfig):
     # its default disables that half of the check.
     inactivity_polls: int = 1
     inactivity_timeout_s: float = 0.0
+    # For pattern_type == "progress": ``pattern`` is always treated as a REGEX
+    # and must contain a capturing group holding a number that grows while the
+    # job is healthy — Megatron's iteration counter, `iteration +([0-9]+)/`.
+    # The streak counts consecutive polls in which that number did NOT move;
+    # ``progress_polls`` / ``progress_timeout_s`` gate the action with the same
+    # AND semantics as the inactivity pair above.
+    #
+    # WHY THIS IS NOT THE INACTIVITY CHECK: inactivity only asks whether the log
+    # GREW. A job stuck in an ft_launcher restart loop keeps emitting fresh
+    # setup banners, so it is never inactive — job 1375720 grew a 251 MB log
+    # over 4 h while pinned at iteration 100 — but its counter does not move.
+    progress_group: int | str = 1
+    # WHAT COUNTS AS PROGRESS, i.e. what resets the streak:
+    #
+    # any_change: ANY different value. A resume from checkpoint jumps the
+    #   counter BACKWARDS and that still counts, so this cannot be tripped by a
+    #   healthy restart and is safe with a short window. Answers "is the
+    #   training loop emitting iterations at all?" — it catches a frozen counter
+    #   and a job that never reaches iteration 1.
+    #
+    # furthest: only a value HIGHER than any seen before. Redoing iterations the
+    #   run has already done is not progress, so this additionally catches a loop
+    #   that keeps replaying the same range forever. The window must exceed the
+    #   time needed to redo the work lost to the last rolling checkpoint (plus
+    #   startup, if the streak spans a restart) or a healthy restart trips it.
+    #
+    # NB `any_change` was called `increase`, which was actively misleading: it
+    #   accepts a DECREASE too, and must, for the resume case above. `furthest`
+    #   was called `max`, which named the implementation rather than the
+    #   question. Both legacy spellings are still accepted and normalised in
+    #   __post_init__ so an older persisted job record still parses — without
+    #   that, JobFileStore.load_all() swallows the ValueError and the job
+    #   silently disappears from the monitor.
+    progress_mode: Literal["any_change", "furthest", "increase", "max"] = "any_change"
+    progress_polls: int = 1
+    progress_timeout_s: float = 0.0
+
+    def __post_init__(self):
+        legacy = {"increase": "any_change", "max": "furthest"}
+        if self.progress_mode in legacy:
+            self.progress_mode = legacy[self.progress_mode]
 
 
 @dataclass
@@ -359,11 +724,12 @@ class LogEvent:
         """Check if event triggers in the given log text, return metadata for
         each match.
 
-        Inactivity events are time/poll based rather than text based and are
-        handled separately by the monitor loop (see ``inactivity_qualifies``);
-        this method only matches substring/regex patterns.
+        Inactivity and progress events are streak based rather than
+        match-once-and-fire, and are handled separately by the monitor loop (see
+        ``inactivity_qualifies`` / ``progress_qualifies``); this method only
+        matches substring/regex patterns.
         """
-        if self.config.pattern_type == "inactivity":
+        if self.config.pattern_type in ("inactivity", "progress"):
             return []
         triggers = []
         for match in self._iter_matches(log_text):
@@ -389,6 +755,59 @@ class LogEvent:
         if count < self.config.inactivity_polls:
             return False
         if self.config.inactivity_timeout_s > 0 and elapsed_s < self.config.inactivity_timeout_s:
+            return False
+        return True
+
+    def progress_metadata(self) -> dict[str, Any]:
+        """Stable metadata identifying this progress streak.
+
+        Must NOT contain the observed counter: ``event_key`` hashes this dict,
+        so a value in here would mint a new streak every time the counter moved.
+        The observed values live in the record's ``payload`` instead.
+        """
+        metadata = dict(self.config.metadata)
+        metadata["progress"] = True
+        return metadata
+
+    def observe_progress(self, log_text: str) -> tuple[float | None, float | None, str | None]:
+        """Extract the progress counter from *new* log text.
+
+        Returns ``(last, max, raw)`` over every match in this poll's slice, or
+        ``(None, None, None)`` when the text holds no usable match — which is
+        itself the signal that nothing advanced. ``last`` drives
+        ``progress_mode: any_change`` (it is the job's current position, including
+        after a backwards jump on resume) and ``max`` drives
+        ``progress_mode: furthest``.
+        """
+        pattern = re.compile(self.config.pattern, flags=re.MULTILINE)
+        values: list[float] = []
+        raw: str | None = None
+        for match in pattern.finditer(log_text):
+            try:
+                token = match.group(self.config.progress_group)
+            except (IndexError, KeyError):
+                continue
+            if token is None:
+                continue
+            try:
+                values.append(float(token))
+            except (TypeError, ValueError):
+                continue
+            raw = token
+        if not values:
+            return None, None, None
+        return values[-1], max(values), raw
+
+    def progress_qualifies(self, *, count: int, elapsed_s: float) -> bool:
+        """Return True when a no-progress streak has lasted long enough to act.
+
+        ``count`` consecutive polls without movement AND ``elapsed_s`` real
+        seconds must both meet their thresholds (each half disabled when its
+        threshold is left at the default).
+        """
+        if count < self.config.progress_polls:
+            return False
+        if self.config.progress_timeout_s > 0 and elapsed_s < self.config.progress_timeout_s:
             return False
         return True
 
@@ -467,6 +886,8 @@ __all__ = [
     "NewJobActionConfig",
     "RestartActionConfig",
     "RestartAction",
+    "RunCommandActionConfig",
+    "RunCommandAction",
     "FinishActionConfig",
     "FinishAction",
     "CancelActionConfig",

@@ -6,7 +6,7 @@ mode (``local: true``) runs the eval script directly inside the SLURM
 job allocated by oellm-autoexp, so oellm-evals does **not** spawn its own
 sbatch and monitoring stays in oellm-autoexp's hands.
 
-See ``submodules/oellm_evals/oellm/main.py::schedule_evals`` for the
+See ``submodules/oellm-eval/oellm/main.py::schedule_evals`` for the
 underlying CLI; this backend exposes a typed config with the same
 surface plus an ``extra_cli_args`` escape hatch.
 """

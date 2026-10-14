@@ -1,0 +1,214 @@
+# @package _global_
+#
+# ============================================================================
+# LR DOSE RESPONSE FROM 64000 -- SHARED BASE. Do not submit this file.
+# ============================================================================
+# Submit an arm: oellm_32b_dense_lrdose_1p76e-4 or oellm_32b_dense_lrdose_1e-4.
+#
+# WHAT THIS TESTS AND WHY IT IS WORTH 512 NODES
+# ---------------------------------------------
+# Item 36 in docs/64k-debug/DEBUG.md found the first clean correlate of the
+# regression: measured exactly over all 33.893B master weights, the relative
+# step size ||dW||/||W|| declines monotonically to a MINIMUM at exactly
+# iteration 64000 -- the loss minimum -- and then reverses and accelerates.
+#
+#   interval    44-48k   48-52k   52-56k   56-60k   60-64k   64-68k   68-72k
+#   ||dW||/||W|| 0.302444 0.296136 0.289954 0.286706 0.285029 0.291157 0.302453
+#   change          --    -0.0063  -0.0062  -0.0032  -0.0017  +0.0061  +0.0113
+#
+# What that CANNOT say is which way the causation runs. At 4000-step spacing a
+# step that grows BECAUSE the loss is rising is indistinguishable from a loss
+# that rises BECAUSE the step grew. This sweep separates them: lowering the only
+# term that sets step size, while changing nothing else, is the intervention the
+# correlation cannot make on its own.
+#
+# THE CONTROL IS ALREADY PAID FOR
+# -------------------------------
+# The flagship's own 64000->75125 segment at 3e-4 is the third arm, recorded in
+# slurm-1536694.log / slurm-1537344.log. Do NOT re-run it. Binned control loss:
+#
+#   bin      64000    66000    68000    70000    72000
+#   loss   1.544002 1.548970 1.556254 1.560867 1.573184
+#   delta   0 (min)  +0.0050  +0.0123  +0.0169  +0.0292
+#
+# 2000-iteration means over ~400 logged points, so bin noise is ~0.0005.
+#
+# THESE ARE FORWARD BINS: the label is the START. "bin 66000" is the mean over
+# iterations 66000-68000, NOT the loss at 66000. Reading it as a point value is
+# what set exit_interval to 66000 in the first version of this file and cost a
+# full 5,142 GPU-h arm that measured nothing -- because the control does not
+# move at all before 66500. At 500-iteration resolution:
+#
+#   bin    64.0-64.5k 64.5-65k 65-65.5k 65.5-66k 66-66.5k 66.5-67k 67-67.5k 67.5-68k
+#   loss     1.5443   1.5435   1.5437   1.5445   1.5444   1.5464   1.5500   1.5550
+#
+# Flat within +/-0.0015 from 62000 through 66500, then it rises. THE TURN IS AT
+# ~66500, NOT 64000. Every "turns at exactly 64000" result in DEBUG.md (item 35
+# accuracy, item 36 ||dW||/||W||, item 37 frac_sqrtv) comes from 4000-spaced
+# checkpoints and cannot localise better than +/-4000; the per-step loss can, and
+# it says 66500-67000. The restart at 66625 (item 20) falls in that window, but
+# there is no step discontinuity across it -- the two production logs overlap at
+# 66630-66665 agreeing to the 5th decimal, against +/-0.008 of per-step scatter.
+#
+# An arm must therefore run PAST 66500 to see anything. exit_interval is 70000:
+# the control moves +0.0123 over 64000->70000, which is 25x bin noise, and it
+# buys a post-turn slope rather than a single bin straddling the inflection.
+#
+# READ-OFF -- IN THIS ORDER OF SHARPNESS
+# --------------------------------------
+#   1. ||dW||/||W|| from scripts/scan_update_direction.py over this arm's own
+#      500-step checkpoints. Item 36 predicts a lower LR pushes the minimum
+#      LATER and flattens the reversal. This is the direct test of the mechanism.
+#   2. Top-1 accuracy via scripts/scan_loss_breakdown.py --entropy. Item 35
+#      showed accuracy turns with the loss at z=13.6 and is not diluted by the
+#      7.5% per-interval prediction churn, so it is a sharper signal than loss.
+#   3. Binned loss against the control table above. Compare BINS, not single
+#      logged points -- those carry ~0.01 of noise.
+#
+# A LOWER-LR ARM MERELY GOING DOWN IS NOT A PASS. Reducing LR improves loss on
+# its own, so a single arm proves nothing. The result is the ORDERING: 1e-4
+# flatter than 1.76e-4 flatter than 3e-4. Without that ordering you cannot separate
+# "LR drives the turn" from "lower LR is simply gentler", which is the whole
+# reason two arms are submitted rather than one.
+#
+# WHY save_interval IS 500 AND NOT PRODUCTION'S 4000
+# --------------------------------------------------
+# 4000 is exactly the spacing that made item 36 unable to resolve causal order.
+# At 500 the ||dW||/||W|| series has 4 points inside the window instead of 0, so
+# it can be seen whether step growth LEADS or LAGS the loss. Cost is 4 persistent
+# checkpoints per arm, ~442 GB each, ~1.8 TB per arm and ~3.5 TB for the sweep,
+# against 48 TB free on /e/scratch. Delete them once the scan has run.
+#
+# RUNNING WITHOUT THE MONITOR
+# ---------------------------
+# The parent's two-stage design needs the monitor, because the train stage is
+# gated on a FileExistsCondition that is only evaluated in the monitor loop. The
+# seed stage does nothing but create one symlink and write a 6-byte tracker file,
+# so do it by hand and the gate is already satisfied when the train job starts:
+#
+#   ARM=prod_dataopt5_lrdose_1e-4_i64k_seed1234    # or ..._1p76e-4_...
+#   SRC=/e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4/checkpoints/iter_0064000
+#   DST=/e/scratch/e-sta-openeurollm/production_training/oellm_32b_dense_$ARM/checkpoints
+#   test -f "$SRC/.metadata" || { echo "incomplete parent checkpoint"; exit 1; }
+#   mkdir -p "$DST" && ln -sfn "$SRC" "$DST/iter_0064000"
+#   echo 64000 > "$DST/latest_checkpointed_iteration.txt"
+#
+# then render and submit the training stage on its own:
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/<arm> --dry-run
+#   sbatch <the rendered job_*.sbatch it prints>
+#
+# Symlink, not copy: the checkpoint is ~442 GB over ~4098 files. Megatron never
+# rewrites checkpoint files in place, and with /job: auto_cancel there is no
+# QuarantineCheckpointAction to rename anything in the parent's tree.
+#
+# `exit_on_missing_checkpoint: true` is inherited, so if the seed was skipped the
+# job dies immediately instead of silently starting a 32B model from random init
+# -- a fresh-init loss is a plausible-looking number, which is what makes that
+# failure mode dangerous.
+#
+# NO AUTOMATIC RECOVERY, ON PURPOSE. /job is auto_cancel and max_restarts is "0"
+# (inherited, a measured decision -- see cont4's "WHY max_restarts IS NOT RAISED
+# HERE": at 50 torchrun never raises ChildFailedError inside a 12 h wall, the
+# monitor goes blind and the job burns silently, ~11,000 GPU-h across three
+# jobs). A hang therefore ends the job and you resubmit by hand. That costs at
+# most non_persistent_save_interval = 125 iterations, and load == save means a
+# resubmit resumes from this arm's own newest checkpoint.
+#
+# EXTENDING THIS ARM COSTS NOTHING ALREADY SPENT. load == save with no ckpt_step
+# pin, so raising exit_interval and resubmitting resumes from the arm's newest
+# checkpoint and continues. That is how this arm got from 66000 to 70000 without
+# repaying the first 2000 iterations.
+#
+# WHAT THE CONTROL CANNOT MATCH
+# -----------------------------
+# The 3e-4 control is the flagship's own segment, and it saved every 4000
+# iterations, not every 500. So:
+#   * LOSS is fully matched -- production logged it every step. This is the
+#     primary read-off and it is 10x bin noise by 66000.
+#   * ACCURACY has no control checkpoint at 66000. Compare each arm's change
+#     from the shared 64000 baseline against the control's rate, which is
+#     measured at 64000/68000/72000 in data/loss_ent_00*.npz.
+#   * UPDATE GEOMETRY has no control at 500-step spacing at all, and cannot
+#     without re-running 3e-4. Read it arm-versus-arm, and against the control's
+#     coarse +0.0061 per 4000 from item 36. The 500-step noise floor is also
+#     unmeasured -- item 36 worked at 4000 -- so these arms establish it.
+#
+# DATA ORDER IS PRODUCTION'S, DELIBERATELY
+# ----------------------------------------
+# seed 1234, NOT cont2's 4321. The parent config forks to test data order and
+# sets 4321; an LR arm inheriting that silently would vary two things at once and
+# would not be comparable to the control table above. The seed-1234 cache and the
+# fscratch datamix are pinned together below because the absolute dataset_path is
+# part of the cache key -- one without the other is a cache MISS, and Megatron
+# answers a miss by building the 15 T index inline on 512 nodes.
+# ============================================================================
+defaults:
+  - oellm_32b_dense_cont2_from64k
+  - override /job: auto_cancel
+  - _self_
+
+aux:
+  # Fork point is inherited from cont2: iteration 64000, the loss minimum, the
+  # accuracy maximum (item 35) and the ||dW||/||W|| minimum (item 36).
+  datamix: /e/project1/e-sta-openeurollm/production_training/oellm_32b_dense/flagship_datamix_option5_fscratch.txt
+  # Built at random_seed 1234 by data_cache_build_fscratch_v2 -- verified, the
+  # description files in this directory read "random_seed": 1234. cont2's cache
+  # under pre_production_training is seed 4321 and must NOT be used here.
+  fscratch_cache: /e/fscratch/e-sta-openeurollm/production_training/oellm_32b_dense/cache
+
+backend:
+  megatron:
+    # Production's own data order, overriding cont2's 4321. See the header.
+    seed: 1234
+    data_args_path: ${aux.datamix}
+
+    # NECESSARY BUT NOT SUFFICIENT -- see the note below. Without it the job dies
+    # at optimizer_param_scheduler.py:333:
+    #   AssertionError: OptimizerParamScheduler: class input value ... and
+    #   checkpoint value 0.0003 for learning rate do not match
+    # It resets the WHOLE schedule from the arguments -- max_lr, min_lr, warmup,
+    # decay style, decay steps. Safe here only because everything except `lr` is
+    # inherited unchanged, and 64000 * 4096 = 262.1 M samples is far past
+    # lr_warmup_samples 40.96 M, so no arm restarts inside warmup.
+    #
+    # THIS FLAG ALONE DOES NOT LET YOU CHANGE `lr` ON RESUME. It is read by
+    # OptimizerParamScheduler.load_state_dict, which runs AFTER the optimizer has
+    # already loaded -- and the load is what fails first. Megatron matches saved
+    # param groups to current ones by a tuple of per-group config that INCLUDES
+    # max_lr (upstream 27e312ca1, #4705), so a changed lr makes every group miss
+    # and all ranks die in distrib_optimizer.py with a bare
+    #   KeyError: (None, 0.000176, 0.0, None, None, 1.0, 1.0, False, False)
+    # That is what killed job 1651012 four minutes in, at a cost of ~138 GPU-h.
+    #
+    # The fork carries `match_saved_param_group` in megatron/core/optimizer/
+    # optimizer.py to fix this: on an exact-tuple miss it retries with max_lr and
+    # min_lr masked out, accepts the relaxed match only if exactly ONE saved group
+    # survives -- so #4705's ambiguous case still raises -- and overwrites max_lr/
+    # min_lr from the live group. That last step is not bookkeeping: get_lr reads
+    # `param_group.get('max_lr', self.max_lr)`, so a group left holding the
+    # checkpoint's max_lr would run this whole arm at 3e-4 while `lr` below was
+    # silently ignored. THESE ARMS DEPEND ON THAT PATCH. If the submodule is ever
+    # reset to a clean upstream checkout, this config starts failing again at
+    # load, which is the safe direction -- it cannot silently run at the wrong LR.
+    override_opt_param_scheduler: true
+
+    # 500-step persistent cadence: the point of the sweep. See the header.
+    save_interval: 500
+
+    # Pure modulo (iteration % exit_interval == 0), so this stops at 70000 --
+    # 4000 iterations PAST the turn at ~66500, not 2000 short of it. See the
+    # forward-bin note in the header for why 66000 was the wrong stopping point.
+    # Saves before exiting.
+    exit_interval: 70000
+
+    # Cheap logging that makes the arms self-diagnosing without another job.
+    log_params_norm: true
+    log_num_zeros_in_grad: true
+    check_for_spiky_loss: true
+
+job:
+  chain_repeat: 1          # MUST stay 1 -- chaining bypasses the seed-stage gate
+  est_step_time_s: 4.2     # FP8, as production
+  est_startup_min: 15
+  est_steps: 6000         # 64000 -> 70000; a resume from 66000 runs 4000 of them

@@ -1,0 +1,68 @@
+defaults:
+  - jupiter
+  - _self_
+
+# JUPITER variant that automatically avoids known-bad nodes.
+#
+# Mirrors config/slurm/leonardo_autoexclude.yaml. The oc.exclude_nodes resolver
+# reads the file below at SCRIPT-GENERATION time (registered with
+# use_cache=False, so every submission re-reads the current on-disk list), and
+# emits `#SBATCH --exclude=<nodes>`. A missing or empty file resolves to null and
+# the directive is omitted entirely — so adding this to the defaults is a no-op
+# until the list has content.
+#
+# The path comes from $JUPITER_EXCLUDE_NODES so the monitor's AppendToFileAction
+# and this resolver share one source of truth. Set the env var for a per-user
+# list; the fallback is the SHARED PROJECT FILE.
+#
+# IT USED TO FALL BACK TO THE REPO-TRACKED COPY, AND THAT WAS WRONG (2026-08-23).
+# The argument for a tracked list — it travels with the code and is reviewable in
+# git — ignores that this file has a RUNTIME WRITER. The monitor appends to it
+# mid-run, so the live list is whatever is on the cluster, while git holds
+# whatever was last committed, and the two drift by construction: the 32B branch
+# carried 25 entries at HEAD against 18 curated in the working tree, and `main`
+# carried ZERO. Being git-tracked also meant `git checkout main` (or a stray
+# `git stash` / `git checkout .`) silently changed which nodes a 512-node
+# production job avoids — a VCS operation must not be able to do that. And a
+# repo-relative path is per-checkout, so a colleague submitting from their own
+# clone was reading a different file entirely.
+#
+# The shared path sits in production_training/, whose DEFAULT ACLs already grant
+# rwx to the production team (jitsev1, komulainen1, poeppel1, vanosch1, pyysalo1,
+# taubert2) and propagate to newly created files — so the monitor can append no
+# matter whose account the run is under. `shared/` cannot: it grants write to
+# poeppel1 alone.
+#
+# The repo copy is KEPT, as documentation rather than as the source of truth:
+# commit snapshots of it so the per-entry evidence comments stay reviewable and
+# diffable in git. Just never let it be what a job reads.
+#
+# WHY THIS EXISTS (2026-08-14)
+# ---------------------------
+# 1024-node jobs entered a non-converging requeue loop: 13+ attempts, each
+# RUNNING 2-8 s then REQUEUED with ExitCode 0:54. Cause is site-side, not ours:
+#     Prolog[0]   = /usr/sbin/nhc
+#     PrologFlags = Alloc,Contain,DeferBatch,ForceRequeueOnFail
+# so any node failing the health check requeues the WHOLE job. Normally the
+# failing node is drained and the loop converges after a few attempts; it did
+# not, because the nodes were only drained at 17:03-17:12, well after most of
+# the failed attempts, and stayed allocatable in between.
+#
+# CAVEAT ON USING THIS LIST
+# -------------------------
+# SLURM already refuses to schedule onto DRAINED nodes, so while these nodes stay
+# drained this file changes nothing. Its value is the window after an admin
+# resumes a node whose underlying condition was never fixed. Correspondingly it
+# is technical debt: prune entries once nodes are confirmed healthy, or large
+# jobs will slowly lose scheduling candidates for no reason.
+# `exclude_file` makes the sbatch builder re-read this list WHEN IT RENDERS THE
+# SCRIPT. The resolver below runs when the config is resolved, which for a restart
+# was plan time, so on its own it cannot carry a node excluded since. Job 1711267
+# went out on 2026-09-07 at 22:19:42 with 28 nodes, two seconds after the monitor
+# had refreshed the list to 30, and without the node whose failure had just ended
+# the previous job. Both are kept: the resolver seeds the value, the render-time
+# read is what makes a resubmission current, and an unreadable file falls back to
+# the resolved value rather than dropping the exclusions.
+exclude_file: ${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}
+sbatch:
+  exclude: ${oc.exclude_nodes:${oc.env:JUPITER_EXCLUDE_NODES,/e/project1/e-sta-openeurollm/production_training/jupiter_exclude_nodes.txt}}

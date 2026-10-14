@@ -1,0 +1,109 @@
+# @package _global_
+#
+# ============================================================================
+# B1_reborn CONTINUATION: resume Jenia Jitsev's B1-reborn-production run, in our tree
+# ============================================================================
+# B1-reborn-production was paused by its operator at iteration 266875 (STOP file in
+# /e/fscratch/e-sta-openeurollm/jj1/reanimation_64k_20260911/B1-reborn-production, 2026-09-23:
+# "Operator pause; resume later"), with the state in its ROLLING checkpoint
+# training_ckpts/checkpoints_rolling_defer_patch/iter_0266875. Its persistent tracker says
+# 266000; iter_0266877 there is an empty directory (an aborted save) -- do not use it.
+#
+# This continues that run with b1_reborn_base UNCHANGED: its argv equals the run's last job
+# script (2026-09-23, the 192k+ phase: Megatron 799ff4e source, fixed deferred wgrad ON)
+# except for run paths and W&B names -- diffed on 2026-10-05. Same schedule (894k WSD, lr
+# 3e-4), data (option5) and FP8 recipe; consumed samples and the optimizer state come from
+# the checkpoint.
+#
+#   seed      login node   symlink tree (cp -as) of the parent checkpoint into OUR save dir,
+#             (job.local)  tracker written last; the parent is owned by jitsev1, so no hard
+#                          links; never writes into the parent run
+#   train     512 nodes    resumes from the seed; Megatron writes every new checkpoint here
+#
+# Source caveat: our Megatron submodule is 799ff4e + 5dd5714 (Jenia's opt-in TWEO snapshot;
+# its training.py change is mostly import reformatting). Pin 799ff4e for a bit-exact
+# continuation.
+# The rolling checkpoint is plain torch_dist ("global" non-persistent type), loadable as a
+# persistent one; use parent_ckpts=<run>/training_ckpts/checkpoints + fork_iter=266000 for the
+# last persistent checkpoint instead (875 iterations, ~1 h, are then redone).
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_dense/b1_reborn_continue --dry-run
+# ============================================================================
+defaults:
+  - b1_reborn_base
+  - _self_
+
+aux:
+  b1_root: /e/fscratch/e-sta-openeurollm/oellm_32b_dense_b1
+  run_root: ${aux.b1_root}/${backend.aux.variant}
+
+job:
+  name: "oellm_32b_dense_${backend.aux.variant}"
+  base_output_dir: ${aux.b1_root}/${job.name}
+
+backend:
+  aux:
+    variant: "b1_reborn_continue"
+    parent_ckpts: /e/fscratch/e-sta-openeurollm/jj1/reanimation_64k_20260911/B1-reborn-production/training_ckpts/checkpoints_rolling_defer_patch
+    fork_iter: 266875
+    fork_iter_dir: iter_0266875
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - stage: seed
+          backend: bash
+          job: auto_cancel
+          job.name: "oellm_32b_dense_seed_${backend.aux.variant}"
+          job.est_steps: 1
+          job.est_step_time_s: 120
+          job.est_startup_min: 1
+          job.local: true
+          backend.command: |
+            set -eu
+            SEED_DIR="${aux.b1_root}/oellm_32b_dense_seed_${backend.aux.variant}"
+            MARKER="$SEED_DIR/SEED_FAILED"
+            mkdir -p "$SEED_DIR"
+            rm -f "$MARKER"
+            on_exit() { rc=$?; if [ $rc -ne 0 ]; then touch "$MARKER"; fi; }
+            trap on_exit EXIT
+            SRC=$(readlink -f "${backend.aux.parent_ckpts}/${backend.aux.fork_iter_dir}")
+            DST="${backend.megatron.save}"
+            TRACKER="$DST/latest_checkpointed_iteration.txt"
+            if [ -e "$TRACKER" ]; then
+              echo "[seed] $TRACKER exists -- already seeded, skipping"
+              exit 0
+            fi
+            PARENT_ITER=$(cat "${backend.aux.parent_ckpts}/latest_checkpointed_iteration.txt")
+            if [ "$PARENT_ITER" -lt ${backend.aux.fork_iter} ] || [ ! -d "$SRC" ] || [ ! -f "$SRC/.metadata" ]; then
+              echo "[seed] FATAL: parent tracker at $PARENT_ITER, or $SRC is no checkpoint (.metadata) -- refusing to seed"
+              exit 1
+            fi
+            if [ -e "$DST/${backend.aux.fork_iter_dir}.partial" ]; then
+              echo "[seed] FATAL: $DST/${backend.aux.fork_iter_dir}.partial left over from an interrupted seed"
+              exit 1
+            fi
+            mkdir -p "$DST"
+            cp -as "$SRC" "$DST/${backend.aux.fork_iter_dir}.partial"
+            N_SRC=$(find "$SRC" -type f | wc -l)
+            N_DST=$(find "$DST/${backend.aux.fork_iter_dir}.partial" -type l | wc -l)
+            if [ "$N_SRC" -eq 0 ] || [ "$N_SRC" -ne "$N_DST" ]; then
+              echo "[seed] FATAL: $N_SRC files in $SRC but $N_DST links in the seed"
+              exit 1
+            fi
+            mv "$DST/${backend.aux.fork_iter_dir}.partial" "$DST/${backend.aux.fork_iter_dir}"
+            echo "${backend.aux.fork_iter}" > "$TRACKER"
+            echo "[seed] symlinked $N_DST files of $SRC into $DST/${backend.aux.fork_iter_dir}"
+            echo "[seed] wrote $TRACKER = ${backend.aux.fork_iter}"
+        - stage: train
+          job.name: "oellm_32b_dense_${backend.aux.variant}"
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "${backend.megatron.save}/latest_checkpointed_iteration.txt"
+          job.cancel_condition:
+            class_name: FileExistsCondition
+            path: "${aux.b1_root}/oellm_32b_dense_seed_${backend.aux.variant}/SEED_FAILED"

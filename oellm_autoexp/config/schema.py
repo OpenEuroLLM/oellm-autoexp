@@ -92,6 +92,46 @@ class SlurmJobConfig(SlurmJobConfigBase):
     base_output_dir: str = field(default_factory=MISSING)
     chain_repeat: int = 1
 
+    # --- submit-gate cost estimate ------------------------------------------
+    # All optional and estimate-only: nothing here reaches SLURM or the trainer,
+    # it only sharpens the "~N GPU-h. Proceed?" gate in run_autoexp.py.
+    #
+    # WHY IT EXISTS. The gate used to price every job at its FULL --time, which
+    # is right for a run that trains to its wall clock and badly wrong for a
+    # measurement run that exits after a fixed number of iterations. The
+    # 1024-node PP/VPP campaign was quoted 35,499 GPU-h and actually cost 9,404,
+    # because `exit_interval: 50` ends each arm in 8-10 min of a 40 min wall.
+    # A gate that overstates by 4x gets clicked through, which defeats it.
+    #
+    # Set est_step_time_s from a MEASURED step time and the estimate becomes
+    #     per segment = min(--time, exit_duration_in_mins, startup + steps*step)
+    # Steps are taken from est_steps, else derived from the backend
+    # (exit_interval -> train_iters -> train_samples/global_batch_size), so for
+    # the common measurement case only est_step_time_s has to be set.
+    est_step_time_s: float | None = None
+    # Steps this ONE job segment runs. Leave None to derive from the backend.
+    est_steps: int | None = None
+    # Container start + rendezvous + init before iteration 1. NOT negligible at
+    # scale: >=256-node jobs on JUPITER are silent for 8+ min before the first
+    # step, which dominates the cost of any short measurement run.
+    est_startup_min: float = 0.0
+
+    # --- restart hooks (consumed by the RestartAction of the job policy) -----
+    # Shell command the monitor runs on the failed job's log right before a
+    # resubmission ({runtime_job_id} and {log_path} are filled in), e.g. a
+    # node-fault scan that appends attributable nodes to the exclusion list;
+    # and the exclusion list re-read at that moment so the re-rendered sbatch
+    # carries nodes excluded since plan time. Empty = off.
+    restart_pre_command: str = ""
+    restart_exclude_file: str = ""
+    # Checkpoint hook (policy event `checkpoint_saved`): shell command run by the monitor when the
+    # training log reports a persistent checkpoint whose iteration is a multiple of
+    # `checkpoint_hook_every` (0 = off). Templated with {iteration}, {ckpt_dir}, {job_id},
+    # {job_name}; it must return quickly (detach long work, e.g. an evaluation chain, with
+    # `setsid nohup ... &`), the monitor waits at most the action's timeout for it.
+    checkpoint_hook_command: str = ""
+    checkpoint_hook_every: int = 0
+
 
 @dataclass(kw_only=True)
 class RootConfig(StagedSweepRoot):

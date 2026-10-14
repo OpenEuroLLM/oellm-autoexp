@@ -5,6 +5,7 @@ template_path: templates/base.sbatch
 script_dir: ${job.base_output_dir}
 log_dir: ${job.base_output_dir}
 array: false
+array_concurrency: null   # `--array=...%N` for job.array_group stages
 launcher_cmd: "python"
 launcher_env_passthrough: false
 env:

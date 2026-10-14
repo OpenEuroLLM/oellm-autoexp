@@ -21,6 +21,13 @@ _RETRYABLE_SPAWN_ERRNOS = frozenset(
     {errno.EAGAIN, errno.ENOMEM, getattr(errno, "EWOULDBLOCK", errno.EAGAIN)}
 )
 
+# Never block forever on a SLURM client command. A wedged slurmctld makes
+# `squeue` hang indefinitely, and with no timeout that hangs the whole monitor
+# in a way nothing can see: the process is alive, the poll never returns, and no
+# log line is written. Generous enough for a loaded controller, short enough
+# that the loop's own error handling gets a turn.
+DEFAULT_COMMAND_TIMEOUT_S = 120.0
+
 
 def run_command(
     argv: Sequence[str],
@@ -28,7 +35,7 @@ def run_command(
     check: bool = False,
     capture_output: bool = True,
     text: bool = True,
-    timeout: float | None = None,
+    timeout: float | None = DEFAULT_COMMAND_TIMEOUT_S,
     max_spawn_retries: int = 5,
     spawn_retry_backoff: float = 1.0,
 ) -> subprocess.CompletedProcess[str]:
@@ -44,7 +51,8 @@ def run_command(
         check: Raise CalledProcessError on non-zero exit.
         capture_output: Capture stdout and stderr.
         text: Return text instead of bytes.
-        timeout: Timeout in seconds.
+        timeout: Timeout in seconds; ``None`` waits forever (rarely what you
+            want -- see DEFAULT_COMMAND_TIMEOUT_S).
         max_spawn_retries: Max retries when fork() fails transiently.
         spawn_retry_backoff: Base seconds for exponential backoff between retries.
 
@@ -81,4 +89,4 @@ def run_command(
     return result
 
 
-__all__ = ["run_command"]
+__all__ = ["DEFAULT_COMMAND_TIMEOUT_S", "run_command"]

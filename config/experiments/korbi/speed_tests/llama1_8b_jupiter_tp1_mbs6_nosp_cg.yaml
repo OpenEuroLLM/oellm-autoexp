@@ -30,7 +30,6 @@ backend:
     cross_entropy_loss_fusion: true
     sequence_parallel: false       # TP=1: sequence_parallel=true adds useless all-gathers
     cuda_graph_impl: local         # CUDA graphs: reduces kernel launch overhead
-    cuda_graph_scope: full         # layer-level scope
     check_for_nan_in_loss_and_grad: false  # required for cuda_graph_scope=full
   env:
     TOKENIZERS_PARALLELISM: "false"

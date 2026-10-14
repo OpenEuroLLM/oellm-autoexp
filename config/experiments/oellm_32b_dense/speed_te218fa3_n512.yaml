@@ -1,0 +1,125 @@
+# @package _global_
+#
+# ============================================================================
+# 512 NODES ON THE te218-fa3 CONTAINER: is TE 2.18 + FA3 worth switching to?
+# ============================================================================
+# Same measurement as speed_prodsettings_n512_019, one variable moved: the
+# container. Production settings verbatim, masking ON (the new production
+# setting), so this is directly comparable to job 1516809 on nemo_26.04:
+#
+#     nemo_26.04, masking on, 512n   4265.8 ms/iter   1920.4 tok/s/GPU   mem 0.750
+#
+# Read tok/s/GPU, not TFLOP/s. With varlen accounting the masked arm legitimately
+# reports fewer FLOPs for the same work, so TFLOP/s is not comparable across
+# masking settings -- and here both arms are masked, so it is at least
+# self-consistent, but tok/s/GPU is still the number to quote.
+#
+# ============================================================================
+# WHY TWO ARMS, AND WHY A ONE-ARM VERSION WOULD BE MISLEADING
+# ============================================================================
+# FA3 IS IN THE IMAGE BUT IS NOT SELECTED. Verified on GH200 at this exact
+# per-TP-rank shape: TE reports "Available backends = {FlashAttention=True
+# (3.0.0), FusedAttention=True, ...}" and then picks cuDNN FusedAttention anyway,
+# for both bf16 and fp8. So running this container with default settings measures
+# TE 2.18 vs TE 2.14 and NOTHING about FA3 -- and would very likely get written
+# up as "the FA3 container gave us X%", which is the kind of claim that is
+# extremely hard to walk back once it is in a table.
+#
+#   arm 0   attention_backend: auto  -> cuDNN FusedAttention. Isolates TE 2.18.
+#   arm 1   attention_backend: flash -> FlashAttention 3.0.0.
+#
+# DO NOT USE NVTE_FUSED_ATTN=0, which is what the container config suggests. That
+# advice is correct for raw Transformer Engine and WRONG under Megatron, which
+# cross-checks the NVTE_* variables against its own attention_backend and refuses
+# the combination before torch.distributed is even up:
+#     AssertionError: NVTE_FUSED_ATTN set to 0, but expected 1 for attention
+#     backend type auto. unset NVTE_FLASH_ATTN, NVTE_FUSED_ATTN and
+#     NVTE_UNFUSED_ATTN. Use the --attention-backend ...
+# (job 1522580, dead in ~1 min, with a cascade of Gloo connectFullMesh errors
+# behind it as the surviving ranks lost their peers). --attention-backend is the
+# supported route and it sets the NVTE_* variables itself, consistently.
+#
+# CONFIRM FROM THE ARGUMENT DUMP: arm 0 must print `attention_backend ...
+# AttnBackend.auto`, arm 1 `AttnBackend.flash`. TE does not log its backend
+# choice at default verbosity, so there is no "Running with ... backend" line to
+# read -- the auto -> cuDNN mapping rests on the GH200 verification recorded in
+# config/container/jupiter_te218_fa3.yaml, not on this run's log.
+#
+# ============================================================================
+# WHAT THIS CONTAINER'S HEADLINE FEATURE DOES *NOT* BUY US
+# ============================================================================
+# te218 was built for TE PR #3193, the fused cross-entropy precision fix. That is
+# MOOT on megatron-core 0.19: 0.19 asserts on the TE cross-entropy path outright
+# ("Transformer Engine cross entropy loss fusion is disabled due to stability
+# issues"), so we run cross_entropy_fusion_impl: native and never touch the
+# kernel the fix repairs. The +2.1 GB the fix costs on the loss-computing stage
+# is likewise moot for the same reason -- but memory is still worth reading off,
+# because the baseline sits at 0.750 and TE minor versions have moved allocation
+# behaviour before.
+#
+# So the question this answers is narrow and worth stating plainly: does TE 2.18
+# (arm 0), or FA3 (arm 1), beat TE 2.14 at production shape? If neither does, the
+# container has no reason to be adopted on the 0.19 stack.
+#
+# ============================================================================
+# COST
+# ============================================================================
+# 2 arms x 512 nodes. The comparable run took ~13 min wall including startup.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/speed_te218fa3_n512
+#   #   --array-subset 0   # TE 2.18, cuDNN FusedAttention
+#   #   --array-subset 1   # TE 2.18, FlashAttention 3
+defaults:
+  - speed_prodsettings_n512_019
+  - _self_
+
+# The container is set HERE, in the body, not via `override /container:`.
+# oellm_32b_dense.yaml sets container.image and container.python in ITS body, and
+# a body assignment beats a defaults-group override -- so the group override
+# alone would silently leave this running on nemo_26.04 and the whole test would
+# compare the container against itself.
+#
+# python MUST be pinned alongside the image. /usr/bin/python in this image is
+# TE 2.12 / nvrx 0.5.0 / no wandb / no flash_attn_3 -- it cannot even import
+# megatron-core 0.19 (nvrx 0.5.0 genuinely fails the >=0.6.0 gate), and if it
+# could it would be measuring a different TE than the one under test.
+container:
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+  python: "/opt/venv/bin/python"
+
+backend:
+  megatron:
+    # The new production setting, and what makes this comparable to job 1516809.
+    dataloader_inter_document_masking: true
+
+job:
+  chain_repeat: 1
+  est_step_time_s: 4.3
+  est_startup_min: 12
+  est_steps: 50
+
+# ---------------------------------------------------------------------------
+# ONE VARIABLE: which attention backend TE ends up running. Everything else --
+# container, masking, fp8 recipe, the 16-segment VPP=4 layout, tp_comm_overlap,
+# GBS, mbs, fp32 grad -- is identical across the two arms.
+# ---------------------------------------------------------------------------
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ---- arm 0: TE 2.18, default selection (cuDNN FusedAttention) -------
+        # The drop-in comparison: same everything as 1516809 except TE.
+        #   --array-subset 0
+        - backend.aux.variant: "te218fa3-cudnn-n512"
+          backend.megatron.dataloader_inter_document_masking: true
+
+        # ---- arm 1: TE 2.18, FA3 selected ------------------------------------
+        # Megatron sets the NVTE_* variables itself from this, so it is both the
+        # supported route and the only self-consistent one. `flash` also satisfies
+        # the packed-doc-attention guard, which only rejects local and unfused.
+        #   --array-subset 1
+        - backend.aux.variant: "te218fa3-flash3-n512"
+          backend.megatron.dataloader_inter_document_masking: true
+          backend.megatron.attention_backend: flash

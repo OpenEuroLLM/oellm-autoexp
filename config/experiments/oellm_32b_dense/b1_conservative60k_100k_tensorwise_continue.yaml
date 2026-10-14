@@ -1,0 +1,169 @@
+# @package _global_
+#
+# ============================================================================
+# B1-conservative60k FROM 100k, TENSORWISE FP8: THE FULL CONTINUATION TO 894k
+# ============================================================================
+# B1-conservative60k's own training continued from its iter_0100000 with B1's
+# data and schedule to the end of it: 894k WSD, lr 3e-4 constant to 804600, then
+# the linear decay over the last 89400 steps; exits at 894000 (= --train-samples
+# 3661824000 / 4096, b1_reborn_base's exit_interval). No anneal, no data switch.
+#
+# Built directly on b1_reborn_base (as b1_reborn_continue), independent of the
+# anneal configs. Everything not set here is b1_reborn_base = the parent's
+# recipe at 100k (B1 option5 mix + B1's read-only index cache, z-loss, TP4/PP4,
+# GBS 4096, defer_embedding_wgrad_compute ON: the fixed path of Megatron
+# 799ff4e / 5dd5714). Settings that differ from the parent's 60k-100k run:
+#   tensorwise FP8 + bf16 edge layers   as the v1CT re-anneal, against the layer-0
+#                                       underflow trap of delayed scaling (a
+#                                       delayed-recipe checkpoint loads under
+#                                       tensorwise: v1TT, job 2163086)
+#   timing_log_level 0                  logging only (level-1 barriers cost
+#                                       ~4%: B1 4.31 vs flagship 4.16 s/it)
+#
+# A/B partner: b1_conservative60k_100k_nodefer_check (1000 steps, defer OFF,
+# 64 nodes = DP 16) has the same parent, batches, lr and precision, so the first
+# 1000 steps of this run (defer ON, DP 128) are its comparison. Kept equal by
+# hand now that the two configs no longer share a parent -- change both.
+#
+# OWN VARIANT, own checkpoint tree; on the parent's 512 nodes (DP 128) the optimizer
+# state loads without resharding. The job policy resubmits on the 12 h limit until
+# exit_interval is reached (~794k steps, ~40 days at 4.35 s/step).
+#
+# MOVED TO /e/scratch/e-ext-2025e02-108 (2026-10-11). 100000 -> 112000 ran under
+# /e/fscratch/e-sta-openeurollm/oellm_32b_dense_b1 (jobs 2256804..2260610). That project dir
+# is above its SOFT quota (100 TiB; hard 110, which df shows as Size), and above it every
+# write fails once the grace period is over: the 112125 rolling save and four restarts
+# (2263788..2264712) died on EDQUOT. aux.b1_root moves the checkpoints AND the logs /
+# tensorboard / wandb / NCCL logs (both derive from it). The training data and its index
+# cache stay on /e/fscratch (read only). The seed stage now COPIES the old run's last
+# persistent checkpoint (iter_0112000, real files, 442 GiB) into the new tree, verifies file
+# count and bytes, and only then writes the tracker -- the run resumes from 112000 and the
+# old tree can be deleted afterwards. (The original seed symlinked jitsev1's 100k.)
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_dense/b1_conservative60k_100k_tensorwise_continue --dry-run
+defaults:
+  - b1_reborn_base
+  - _self_
+
+aux:
+  b1_root: /e/scratch/e-ext-2025e02-108/oellm_32b_dense_b1
+  # checkpoints (load/save/rolling) -- per variant, identical in all stages
+  run_root: ${aux.b1_root}/${backend.aux.variant}
+
+slurm:
+  env:
+    # not /e/scratch/e-sta-openeurollm (the production default): that project dir is above its
+    # soft quota as well (202 of 200 TiB, 2026-10-11), so any HF cache write there would fail
+    HF_HOME: ${aux.run_root}/hf_cache
+
+job:
+  name: "oellm_32b_dense_${backend.aux.variant}"
+  # logs/tensorboard/wandb -- per stage
+  base_output_dir: ${aux.b1_root}/${job.name}
+  # the parent's measured step time at 512 nodes
+  est_step_time_s: 4.35
+  est_startup_min: 15
+
+backend:
+  aux:
+    variant: "b1_conservative60k_100k_tensorwise"
+    # Jenia's B1-conservative60k (W&B oellm_32b_dense_loss-increase_debug,
+    # B1_reborn_defer_fix_iter60k_conservative_v1): v2 60k -> B1 recipe; at
+    # 100k loss 1.405, consumed samples 100000*4096, iter_0100000 = 2048
+    # shards + .metadata + metadata.json
+    # Originally: /e/fscratch/e-sta-openeurollm/jj1/reanimation_64k_20260911/B1-conservative60k/
+    # training_ckpts/checkpoints at 100000. Now the resume point: this run's own last persistent
+    # checkpoint in its old tree on e-sta fscratch (see MOVED above).
+    parent_ckpts: /e/fscratch/e-sta-openeurollm/oellm_32b_dense_b1/b1_conservative60k_100k_tensorwise/training_ckpts/checkpoints
+    fork_iter: 112000
+    fork_iter_dir: iter_0112000
+    run_end_iter: 894000
+    active_nodes: 512
+  megatron:
+    defer_embedding_wgrad_compute: true
+    fp8_recipe: tensorwise
+    first_last_layers_bf16: true
+    num_layers_at_start_in_bf16: 1
+    num_layers_at_end_in_bf16: 1
+    # Megatron falls back to the upfront dequantize pass for tensorwise
+    stream_ckpt_dequant: false
+    timing_log_level: 0
+    # params norm and grad zero-count every 100 steps instead of every step (both are a pass
+    # over the parameters/gradients plus a collective, paid on EVERY step otherwise); loss, lr,
+    # grad norm and throughput stay at log_interval 5, the per-layer diagnostics at 100.
+    log_params_norm_and_zeros_interval: 100
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ====== stage 0: copy the resume checkpoint into the new tree (login node)
+        # No single quotes (template wraps it in bash -c '...') and no shell
+        # ${VAR} (OmegaConf); plain $VAR is fine. Idempotent: the tracker is the
+        # marker. A real COPY (16 parallel cp, mode + timestamps only, so files get
+        # the destination's group = its quota), verified by file count and bytes
+        # before the tracker is written; an interrupted copy is resumed by re-running
+        # (files already complete are copied again, harmless). Any non-zero exit
+        # leaves SEED_FAILED, which the run stage watches.
+        - stage: seed
+          backend: bash
+          job: auto_cancel
+          job.name: "oellm_32b_dense_seed_${backend.aux.variant}"
+          job.est_steps: 1
+          job.est_step_time_s: 600
+          job.est_startup_min: 1
+          job.local: true
+          backend.command: |
+            set -eu
+            SEED_DIR="${aux.b1_root}/oellm_32b_dense_seed_${backend.aux.variant}"
+            MARKER="$SEED_DIR/SEED_FAILED"
+            mkdir -p "$SEED_DIR"
+            rm -f "$MARKER"
+            on_exit() { rc=$?; if [ $rc -ne 0 ]; then touch "$MARKER"; fi; }
+            trap on_exit EXIT
+            SRC=$(readlink -f "${backend.aux.parent_ckpts}/${backend.aux.fork_iter_dir}")
+            DST="${backend.megatron.save}"
+            PART="$DST/${backend.aux.fork_iter_dir}.partial"
+            TRACKER="$DST/latest_checkpointed_iteration.txt"
+            if [ -e "$TRACKER" ]; then
+              echo "[seed] $TRACKER exists -- already seeded, skipping"
+              exit 0
+            fi
+            PARENT_ITER=$(cat "${backend.aux.parent_ckpts}/latest_checkpointed_iteration.txt")
+            if [ "$PARENT_ITER" -lt ${backend.aux.fork_iter} ] || [ ! -d "$SRC" ] || [ ! -f "$SRC/.metadata" ]; then
+              echo "[seed] FATAL: parent tracker at $PARENT_ITER, or $SRC is no checkpoint (.metadata) -- refusing to seed"
+              exit 1
+            fi
+            mkdir -p "$PART"
+            echo "[seed] copying $SRC -> $PART"
+            (cd "$SRC" && find . -type f -print0 | xargs -0 -n 16 -P 16 cp --preserve=mode,timestamps --parents -t "$PART")
+            N_SRC=$(find "$SRC" -type f | wc -l)
+            N_DST=$(find "$PART" -type f | wc -l)
+            B_SRC=$(du -sb --apparent-size "$SRC" | cut -f1)
+            B_DST=$(du -sb --apparent-size "$PART" | cut -f1)
+            if [ "$N_SRC" -eq 0 ] || [ "$N_SRC" -ne "$N_DST" ] || [ "$B_SRC" -ne "$B_DST" ]; then
+              echo "[seed] FATAL: $SRC has $N_SRC files / $B_SRC bytes, the copy $N_DST / $B_DST"
+              exit 1
+            fi
+            mv "$PART" "$DST/${backend.aux.fork_iter_dir}"
+            echo "${backend.aux.fork_iter}" > "$TRACKER"
+            echo "[seed] copied and verified $N_DST files / $B_DST bytes of $SRC into $DST/${backend.aux.fork_iter_dir}"
+            echo "[seed] wrote $TRACKER = ${backend.aux.fork_iter}"
+
+        # ====== stage 1: B1's training fork_iter -> run_end_iter =============
+        # Everything from b1_reborn_base (B1 data, B1 cache, 894k schedule);
+        # only the stop changes. exit_interval's 'exiting program at iteration
+        # N' is not restarted by the job policy.
+        - stage: run
+          job.name: "oellm_32b_dense_${backend.aux.variant}"
+          job.est_steps: ${oc.subi:${backend.aux.run_end_iter},${backend.aux.fork_iter}}
+          backend.megatron.exit_interval: ${backend.aux.run_end_iter}
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "${backend.megatron.save}/latest_checkpointed_iteration.txt"
+          job.cancel_condition:
+            class_name: FileExistsCondition
+            path: "${aux.b1_root}/oellm_32b_dense_seed_${backend.aux.variant}/SEED_FAILED"

@@ -1,0 +1,72 @@
+# @package _global_
+#
+# ============================================================================
+# v1T (TWEO) ANNEAL CONTINUED 112k -> 120k WITH FP8 TENSORWISE + BF16 EDGE LAYERS
+# ============================================================================
+# Play-safe FP8 for the rest of the TWEO cooldown (b1_tweo80k_100k_annealing).
+#
+# Why (2026-10-03, dump/v1annealC_degradation/): the sibling anneal v1annealC
+# degraded in every bf16 eval from ~112k (GSM8K 0.833 @108k -> 0.623 @120k)
+# while its FP8 train/val loss kept falling. Cause: FP8 DELAYED scaling
+# (per-tensor scale = 448 / max over a 1024-step amax history). The input of
+# the layer-0 MLP down_proj carried rare outliers (~5.8e4), so every ordinary
+# value of it underflowed to 0 in E4M3 (70% @108k, 98% @116k) and the model
+# learned to rely on those zeros. bf16 lets them through: +0.23 nats on the
+# training mix @120k. Zeroing them at layer 0 alone restores it; a least-
+# squares refit of that one matrix repaired the checkpoint (GSM8K 0.840).
+#
+# v1T itself looked healthy at 112k (layer-0 exposure E ~0.10 vs v1C's 1.5,
+# GSM8K 0.834), but the cooldown's low-LR tail is where v1C's dependence
+# formed, so the rest of this anneal runs with:
+#   fp8_recipe tensorwise      current per-tensor scaling: each GEMM's own
+#                              amax, no 1024-step max (v1C 120k under this
+#                              emulation behaves like bf16, no hidden zeros)
+#   first_last_layers_bf16     layers 0 and 63 in bf16 (the culprit layer is
+#                              0); num_layers_at_start/end_in_bf16 = 1
+# Everything else -- TWEO profile, mix, cache, seed, 1-sqrt window
+# (100000 -> 120000, pinned in samples below) -- is inherited, and consumed samples at
+# the fork are 112000*4096, so the batches are v1T's own from 112k on.
+#
+# PARENT: v1T's own iter_0112000 (symlink seed, see the base config). Stop
+# the running v1T (oellm_32b_dense_b1_tweo80k_100kcooldown120k) first; its
+# checkpoint directory is left untouched, this run writes its own.
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_dense/b1_tweo80k_112kfork_tensorwise --dry-run
+#
+# UNTESTED ON GPU:
+#   * iter_0112000 was written under the DELAYED recipe; its TE _extra_state
+#     holds delayed-scaling meta the tensorwise modules do not use. Watch the
+#     first load for an extra_state error.
+#   * TWEO (fused) + tensorwise + bf16 edge layers have not run together.
+#   stream_ckpt_dequant is off explicitly (Megatron falls back to the upfront
+#   dequantize pass for tensorwise and warns otherwise).
+#
+# CHECKING IT: scripts/korbi/fp8_degradation_test.py
+#   scan <this run's tensorboard>      exposure per layer, seconds, login node
+#                                      (diag_fp8_meta is empty under
+#                                      tensorwise; scan falls back to the
+#                                      activation absmax = what current
+#                                      scaling sees)
+#   probe <hf export> --current        bf16 vs FP8-underflow-emulated NLL gap
+defaults:
+  - b1_tweo80k_100k_annealing
+  - _self_
+
+backend:
+  aux:
+    variant: "b1_tweo80k_112kfork_tensorwise_edgebf16"
+    parent_ckpts: /e/fscratch/e-sta-openeurollm/oellm_32b_dense_b1/b1_tweo80k_100kcooldown120k/training_ckpts/checkpoints
+    fork_iter: 112000
+    # The 1-sqrt window stays 100000 -> 120000: pin it in samples, so that
+    # anneal_start_iter can follow the fork and job.est_steps (= end - start)
+    # prices only the 8k steps this run trains, not the full 20k window.
+    anneal_wsd_samples: 81920000
+    anneal_start_iter: 112000
+    fork_iter_dir: iter_0112000
+  megatron:
+    fp8_recipe: tensorwise
+    first_last_layers_bf16: true
+    num_layers_at_start_in_bf16: 1
+    num_layers_at_end_in_bf16: 1
+    stream_ckpt_dequant: false

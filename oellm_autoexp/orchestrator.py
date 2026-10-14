@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import copy
 import logging
+import os
 import shlex
+import signal
+import socket
 import subprocess
 import time
-from dataclasses import dataclass, field, MISSING, replace
+from dataclasses import dataclass, field, fields, MISSING, replace
 import hashlib
 import json
 from pathlib import Path
@@ -22,7 +26,7 @@ from oellm_autoexp.monitor.loop import MonitorLoop, JobFileStore, JobRecord, Job
 from oellm_autoexp.monitor.slurm_client import SlurmClient, SlurmClientConfig
 from oellm_autoexp.monitor.local_client import LocalCommandClient, LocalCommandClientConfig
 from oellm_autoexp.monitor.submission import SlurmJobConfig, LocalJobConfig
-from oellm_autoexp.slurm_gen.generator import generate_script
+from oellm_autoexp.slurm_gen.generator import build_sbatch_directives, generate_script
 
 import oellm_autoexp.backends.megatron_backend  # noqa  - register
 import oellm_autoexp.postprocess.megatron_dist_to_torch  # noqa  - register
@@ -120,12 +124,16 @@ def submit_jobs(
     )
 
     submitted_job_ids: list[str] = []
-    for job in plan.jobs:
-        record = _build_job_record(plan, job, session_id, local_mode=local_mode)
-
+    records = _bind_array_groups(
+        [_build_job_record(plan, job, session_id, local_mode=local_mode) for job in plan.jobs]
+    )
+    rendered: set[str] = set()
+    for record in records:
         if dry_run and isinstance(record.definition, SlurmJobConfig):
-            path = generate_script(record.definition.slurm)
-            LOGGER.info("DRY RUN - Generated batch script: %s", path)
+            if record.definition.slurm.script_path not in rendered:
+                path = generate_script(record.definition.slurm)
+                rendered.add(record.definition.slurm.script_path)
+                LOGGER.info("DRY RUN - Generated batch script: %s", path)
             # TODO: Might aswell validate the job script and therein megatron arguments here
         store.upsert(record)
         submitted_job_ids.append(record.job_id)
@@ -157,16 +165,268 @@ def load_monitor_controller(
     )
 
 
-def run_loop(controller: MonitorLoop) -> None:
+# --- Session liveness / control files -------------------------------------
+#
+# Two files in the session directory, deliberately as dumb as possible so they
+# can be inspected and driven from any shell on either side of an ssh hop (the
+# session dir lives on the cluster's shared filesystem):
+#
+#   .monitor.alive  written every poll. Content is "pid host tmux_target"; the
+#                   TIMESTAMP IS THE MTIME, so liveness is a `stat`, not a
+#                   parse. Doubles as the lease: a monitor refuses to start
+#                   while a fresh heartbeat names a different pid@host, which
+#                   is what stops two monitors appearing on two login nodes.
+#   .monitor.stop   presence means stop. Content is a free-text reason. Written
+#                   by the user (`touch`), or by this process on Ctrl-C -- that
+#                   is the ONLY thing that distinguishes "was stopped" from
+#                   "died", and it is what lets the supervisor stand down
+#                   instead of restarting you. NB SIGTERM deliberately does NOT
+#                   write it; see run_loop.
+HEARTBEAT_FILENAME = ".monitor.alive"
+STOP_FILENAME = ".monitor.stop"
+
+# A heartbeat older than this means "no live monitor". Generous on purpose: a
+# GPFS hiccup or a slow squeue must not look like a death.
+DEFAULT_STALE_AFTER_S = 300.0
+
+# Consecutive failing polls before giving up. Exiting (rather than spinning) is
+# deliberate: the supervisor restarts us, and its restart budget then escalates
+# a persistent fault to a human instead of hiding it behind a busy loop.
+MAX_CONSECUTIVE_POLL_FAILURES = 5
+
+_STOP_SIGNAL_RECEIVED: str | None = None
+
+
+def heartbeat_path(session_dir: str | Path) -> Path:
+    return Path(session_dir) / HEARTBEAT_FILENAME
+
+
+def stop_path(session_dir: str | Path) -> Path:
+    return Path(session_dir) / STOP_FILENAME
+
+
+def write_heartbeat(session_dir: str | Path) -> None:
+    """Refresh the liveness file (tmp + rename so a reader never sees a
+    tear)."""
+    path = heartbeat_path(session_dir)
+    target = os.environ.get("AUTOEXP_TMUX_TARGET") or os.environ.get("TMUX_PANE") or "-"
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp.write_text(f"{os.getpid()} {socket.gethostname()} {target}\n", encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:  # a filesystem blip must never kill the monitor
+        LOGGER.warning("Could not write heartbeat %s: %s", path, exc)
+
+
+def read_heartbeat(session_dir: str | Path) -> tuple[int, str, str, float] | None:
+    """Return ``(pid, host, tmux_target, age_seconds)`` or None if absent."""
+    path = heartbeat_path(session_dir)
+    try:
+        parts = path.read_text(encoding="utf-8").split()
+        age = time.time() - path.stat().st_mtime
+    except (OSError, ValueError):
+        return None
+    if not parts:
+        return None
+    try:
+        pid = int(parts[0])
+    except ValueError:
+        return None
+    host = parts[1] if len(parts) > 1 else "?"
+    target = parts[2] if len(parts) > 2 else "-"
+    return pid, host, target, age
+
+
+def stop_requested(session_dir: str | Path) -> str | None:
+    """Return the stop reason if ``.monitor.stop`` exists, else None."""
+    path = stop_path(session_dir)
+    try:
+        return path.read_text(encoding="utf-8").strip() or "no reason given"
+    except OSError:
+        return None
+
+
+def request_stop(session_dir: str | Path, reason: str) -> None:
+    try:
+        stop_path(session_dir).write_text(f"{reason}\n", encoding="utf-8")
+    except OSError as exc:
+        LOGGER.warning("Could not write stop file: %s", exc)
+
+
+def _pid_alive(pid: int) -> bool:
+    """Does this pid exist?
+
+    Only meaningful for a process on THIS host.
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        # PermissionError et al: it exists, we just may not signal it.
+        return True
+    return True
+
+
+def ensure_no_live_monitor(
+    session_dir: str | Path,
+    *,
+    stale_after_s: float = DEFAULT_STALE_AFTER_S,
+    force: bool = False,
+) -> None:
+    """Refuse to start alongside a monitor that is still alive.
+
+    Two monitors on one session race on every read-modify-write of the job
+    records: double sbatch, lost log cursors, duplicate restarts. The heartbeat
+    is on the shared filesystem, so this holds even when the other monitor sits
+    on a login node we cannot reach.
+    """
+    beat = read_heartbeat(session_dir)
+    if beat is None:
+        return
+    pid, host, _target, age = beat
+    if pid == os.getpid() and host == socket.gethostname():
+        return
+    # A crashed monitor leaves a heartbeat that is still FRESH. Checking the pid
+    # before the age is what lets a supervisor relaunch immediately instead of
+    # being locked out for a whole stale window by the corpse of its predecessor.
+    if host == socket.gethostname() and not _pid_alive(pid):
+        LOGGER.info("Heartbeat names pid %s on this host, but it is gone; taking over.", pid)
+        return
+    if age > stale_after_s:
+        LOGGER.info("Ignoring stale heartbeat from %s@%s (%.0fs old)", pid, host, age)
+        return
+    message = (
+        f"A monitor appears to be running for this session: pid {pid} on {host} "
+        f"(heartbeat {age:.0f}s old). Stop it first "
+        f"(touch {stop_path(session_dir)}), or pass --force if you are certain it is gone."
+    )
+    if force:
+        LOGGER.warning("--force given, starting anyway. %s", message)
+        return
+    raise SystemExit(message)
+
+
+def _install_stop_signal_handlers() -> dict[int, object]:
+    """Turn SIGINT/SIGTERM into a flag rather than an exception.
+
+    The point is to finish the poll in progress before exiting: a signal landing
+    inside an sbatch would otherwise leave a submitted job whose id was never
+    recorded. Returns the previous handlers so the caller can restore them.
+    """
+
+    def _handler(signum, _frame):
+        global _STOP_SIGNAL_RECEIVED
+        _STOP_SIGNAL_RECEIVED = signal.Signals(signum).name
+        LOGGER.info("Received %s; finishing the current poll then exiting.", _STOP_SIGNAL_RECEIVED)
+
+    previous: dict[int, object] = {}
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            previous[sig] = signal.signal(sig, _handler)
+        except (ValueError, OSError):
+            # Not the main thread (tests, embedded use): leave signals alone.
+            pass
+    return previous
+
+
+def _restore_signal_handlers(previous: dict[int, object]) -> None:
+    for sig, handler in previous.items():
+        try:
+            signal.signal(sig, handler)
+        except (ValueError, OSError):
+            pass
+
+
+def _sleep_interruptibly(seconds: float) -> None:
+    """Sleep in 1 s slices so a signal is acted on promptly.
+
+    PEP 475 makes ``time.sleep`` resume after a handler returns, so a plain
+    sleep would swallow a SIGTERM for up to a full poll interval.
+    """
+    deadline = time.monotonic() + seconds
+    while _STOP_SIGNAL_RECEIVED is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(1.0, remaining))
+
+
+def run_loop(controller: MonitorLoop) -> str:
+    """Poll until every job is finished, or until asked to stop.
+
+    Returns one of ``"completed"``, ``"stopped"`` (``.monitor.stop`` appeared),
+    ``"signal"`` (SIGINT/SIGTERM) or ``"failed"`` (too many consecutive bad
+    polls). Post-job commands run only on a genuine completion.
+    """
+    global _STOP_SIGNAL_RECEIVED
+    _STOP_SIGNAL_RECEIVED = None
+
     loop = controller
-    while True:
-        active_jobs = list(loop._store.load_all())
-        if not active_jobs:
-            LOGGER.info("All jobs finished.")
-            break
-        loop.observe_once()
-        time.sleep(loop.poll_interval_seconds)
+    session_dir = Path(loop._store.root)
+    previous_handlers = _install_stop_signal_handlers()
+    failures = 0
+    outcome = "completed"
+    try:
+        while True:
+            reason = stop_requested(session_dir)
+            if reason is not None:
+                LOGGER.info("Stop requested (%s); exiting without cancelling jobs.", reason)
+                return "stopped"
+
+            active_jobs = list(loop._store.load_all())
+            if not active_jobs:
+                LOGGER.info("All jobs finished.")
+                break
+
+            write_heartbeat(session_dir)
+            try:
+                loop.observe_once()
+            except Exception:  # a bad poll must never end the monitor
+                failures += 1
+                LOGGER.exception(
+                    "Poll failed (%d/%d consecutive)", failures, MAX_CONSECUTIVE_POLL_FAILURES
+                )
+                if failures >= MAX_CONSECUTIVE_POLL_FAILURES:
+                    LOGGER.error("Giving up after %d consecutive failed polls.", failures)
+                    return "failed"
+            else:
+                failures = 0
+            write_heartbeat(session_dir)
+
+            if _STOP_SIGNAL_RECEIVED is not None:
+                outcome = "signal"
+                break
+            # Back off on repeated failures so a wedged controller is not hammered.
+            delay = loop.poll_interval_seconds * (2**failures if failures else 1)
+            _sleep_interruptibly(min(delay, 600.0))
+            if _STOP_SIGNAL_RECEIVED is not None:
+                outcome = "signal"
+                break
+    finally:
+        _restore_signal_handlers(previous_handlers)
+
+    if outcome == "signal":
+        # SIGINT and SIGTERM mean different things and MUST NOT both record a
+        # stop. SIGINT is a human at a keyboard (Ctrl-C) saying "I am taking
+        # over", so the intent is recorded and a supervisor stands down. SIGTERM
+        # is how a supervisor asks a WEDGED monitor to go away before restarting
+        # it -- recording a stop there would make the supervisor block its own
+        # relaunch, which is exactly what happened in the first end-to-end run.
+        if _STOP_SIGNAL_RECEIVED == "SIGINT":
+            request_stop(session_dir, "stopped by SIGINT (Ctrl-C)")
+        else:
+            LOGGER.info(
+                "Exiting on %s without recording a stop; a supervisor may restart us. "
+                "To stop for good: touch %s",
+                _STOP_SIGNAL_RECEIVED,
+                stop_path(session_dir),
+            )
+        return "signal"
+
+    request_stop(session_dir, "all jobs finished")
     _run_post_job_commands(loop._store)
+    return "completed"
 
 
 def _run_post_job_commands(store: JobFileStore) -> None:
@@ -254,7 +514,11 @@ def _build_job_record(
 
     base_job = job.config.job
 
-    if local_mode:
+    # `local_mode` is the global --local flag (every job in the plan);
+    # `base_job.local` is the per-job opt-in, which is what lets a multi-stage
+    # sweep run a cheap setup stage on the login node while its sibling still
+    # goes to Slurm with 512 nodes.
+    if local_mode or getattr(base_job, "local", False):
         merged_env = {
             **{k: str(v) for k, v in job.config.slurm.env.items()},
             **{k: str(v) for k, v in job.config.backend.env.items()},
@@ -302,6 +566,7 @@ def _build_job_record(
         start_condition=base_job.start_condition,
         cancel_condition=base_job.cancel_condition,
         finish_condition=base_job.finish_condition,
+        array_group=getattr(base_job, "array_group", None),
         metadata={
             **dict(base_job.metadata),
             "session_id": session_id,
@@ -317,6 +582,130 @@ def _build_job_record(
         definition=definition,
         runtime=JobRuntime(submitted=False),
     )
+
+
+def _array_log_path(log_path: str, group_dir: Path) -> str:
+    """The group's per-task log: the member's file name with ``%j`` ->
+    ``%A_%a``, in the group's directory.
+
+    Under an array, ``%j`` is each task's own numeric job id, which the monitor
+    cannot derive from the ``<array id>_<index>`` it tracks; ``%A_%a`` is
+    exactly that id, so ``resolve_log_path`` finds the file.
+    """
+    name = Path(log_path).name
+    if "%A" not in name:
+        if "%j" not in name:
+            raise ValueError(f"array job log path needs %j or %A_%a in its file name: {log_path}")
+        name = name.replace("%j", "%A_%a")
+    return str(group_dir / name)
+
+
+def _bind_array_groups(records: list[JobRecord]) -> list[JobRecord]:
+    """Turn the SLURM records that share ``job.array_group`` into one job
+    array.
+
+    Every member keeps its own record (job id, conditions, events, attempts), so
+    the monitor starts, finishes and restarts each point on its own. What they
+    share is ONE script: the members' commands as the branches of a ``case`` on
+    ``$SLURM_ARRAY_TASK_ID``, the member's position in the group being its array
+    index. A restart therefore resubmits the same script with ``--array=<i>``.
+
+    Everything except the command must agree across members (sbatch directives,
+    template, launcher, env), because one script carries one header; a mismatch
+    is a configuration error, raised with the offending member named.
+    """
+    groups: dict[str, list[int]] = {}
+    for pos, record in enumerate(records):
+        definition = record.definition
+        name = getattr(definition, "array_group", None)
+        if name and isinstance(definition, SlurmJobConfig):
+            groups.setdefault(str(name), []).append(pos)
+
+    for name, positions in groups.items():
+        members = [records[pos] for pos in positions]
+        first = members[0].definition.slurm
+
+        def _header(slurm) -> tuple:
+            directives = [
+                line
+                for line in build_sbatch_directives(slurm)
+                if not line.startswith(("#SBATCH --job-name=", "#SBATCH --output="))
+            ]
+            return (
+                tuple(directives),
+                slurm.template_path,
+                slurm.launcher_cmd,
+                slurm.srun_opts,
+                tuple(sorted((slurm.env or {}).items())),
+                slurm.array_concurrency,
+            )
+
+        reference = _header(first)
+        for member in members[1:]:
+            if _header(member.definition.slurm) != reference:
+                raise ValueError(
+                    f"array group '{name}': {member.job_id} differs from {members[0].job_id} "
+                    "in more than its command (sbatch directives, template, launcher or env); "
+                    "one array has one script header"
+                )
+
+        group_dir = Path(first.log_dir).parent / name
+        log_path = _array_log_path(str(members[0].definition.log_path), group_dir)
+        branches = []
+        for index, member in enumerate(members):
+            command = " ".join(member.definition.slurm.command).strip()
+            branches.append(f"{index})\n{command}\n;;")
+        dispatch = (
+            'case "$SLURM_ARRAY_TASK_ID" in\n'
+            + "\n".join(branches)
+            + '\n*) echo "array group '
+            + name
+            + ': no task for index $SLURM_ARRAY_TASK_ID" >&2; exit 2 ;;\nesac'
+        )
+        sbatch = copy.deepcopy(first.sbatch)
+        sbatch.job_name = name
+        # `output` is not a declared SbatchConfig field: a non-strict extra, which
+        # lives in `_extras` (a plain setattr would not reach the rendered header)
+        if "output" in {f.name for f in fields(sbatch)}:
+            sbatch.output = log_path
+        else:
+            sbatch._extras["output"] = log_path
+        group_slurm = replace(
+            first,
+            name=name,
+            script_dir=str(group_dir),
+            log_dir=str(group_dir),
+            script_path=str(group_dir / f"{name}.sbatch"),
+            log_path=log_path,
+            command=[dispatch],
+            sbatch=sbatch,
+            array=True,
+        )
+        for index, (pos, member) in enumerate(zip(positions, members)):
+            definition = member.definition
+            records[pos] = replace(
+                member,
+                definition=replace(
+                    definition,
+                    slurm=group_slurm,
+                    log_path=log_path,
+                    # one log per task, so the "current" symlinks and the per-job
+                    # config dump of plain jobs do not apply
+                    log_path_current=None,
+                    config_path=None,
+                    config_path_current=None,
+                    metadata={
+                        **dict(definition.metadata),
+                        "array_group": name,
+                        "array_index": index,
+                    },
+                ),
+                array_idx=index,
+            )
+        LOGGER.info(
+            "array group '%s': %d task(s) -> %s", name, len(members), group_slurm.script_path
+        )
+    return records
 
 
 def _build_container_exec_prefix(container: ContainerConfig) -> str:
@@ -379,6 +768,22 @@ def render_job_scripts(plan: ExecutionPlan, *, session_id: str = "dry-run") -> l
     """
     global _RENDER_CONTEXT
 
+    if any(getattr(job.config.job, "array_group", None) for job in plan.jobs):
+        # Array members share one script, which only exists once the whole group
+        # is known: build every record first, then render each script once.
+        records = _bind_array_groups(
+            [_build_job_record(plan, job, session_id) for job in plan.jobs]
+        )
+        paths: list[Path] = []
+        for record in records:
+            if not isinstance(record.definition, SlurmJobConfig):
+                continue
+            path = Path(record.definition.slurm.script_path)
+            if path not in paths:
+                generate_script(record.definition.slurm)
+                paths.append(path)
+        return paths
+
     # Each job renders to its own file, so this fans out cleanly. Deal the jobs
     # round-robin rather than in blocks so the workers stay balanced.
     indices = list(range(len(plan.jobs)))
@@ -415,6 +820,11 @@ def chain_submit_jobs(
     restarts, but will not re-submit jobs since they are already marked
     submitted=True.
     """
+    if any(getattr(job.config.job, "array_group", None) for job in plan.jobs):
+        raise ValueError(
+            "job.array_group is not supported with --chain / chain_repeat: array tasks are "
+            "submitted and restarted by the monitor"
+        )
     store, session_id = _ensure_state_store(plan, session_id=session_id)
     client = slurm_client or SlurmClient(SlurmClientConfig())
     local_client = LocalCommandClient(LocalCommandClientConfig())
@@ -423,7 +833,16 @@ def chain_submit_jobs(
     )
 
     submitted_job_ids: list[str] = []
-    prev_slurm_id: str | None = None
+    # Slurm id of the PREVIOUS repeat of each job, keyed on the job's identity
+    # (its pre-suffix job_id, i.e. the sweep point). `chain_repeat` exists to
+    # continue ONE job across the wall-clock limit, so repeat i+1 of a job must
+    # depend on repeat i OF THE SAME JOB — not on whatever happened to be
+    # submitted before it. A single shared `prev_slurm_id` chained every sweep
+    # arm to the previous arm, turning an N-arm sweep with chain_repeat=R into
+    # one strictly sequential N*R chain (observed: a 7-arm sweep with
+    # chain_repeat=2 ran 1 job at a time, 13 held on "(Dependency)", turning a
+    # ~24 h sweep into ~7 days).
+    prev_slurm_id_by_job: dict[str, str] = {}
 
     jobs_to_submit: list[tuple[JobPlan, str | None]] = []
     for job in plan.jobs:
@@ -435,6 +854,10 @@ def chain_submit_jobs(
 
     for job, repeat_suffix in jobs_to_submit:
         record = _build_job_record(plan, job, session_id)
+        # Identity of this job WITHOUT the _rN chain suffix. Taken from the
+        # record rather than parsed back out of the suffixed id, so a job whose
+        # own name contains "_r" cannot be mis-grouped.
+        chain_key = record.job_id
         if repeat_suffix:
             record = replace(record, job_id=record.job_id + repeat_suffix)
 
@@ -445,6 +868,7 @@ def chain_submit_jobs(
             continue
 
         slurm_cfg = record.definition.slurm
+        prev_slurm_id = prev_slurm_id_by_job.get(chain_key)
         if prev_slurm_id is not None:
             slurm_cfg.sbatch.dependency = f"afterany:{prev_slurm_id}"
             record = replace(record, definition=replace(record.definition, slurm=slurm_cfg))
@@ -458,7 +882,7 @@ def chain_submit_jobs(
             )
             store.upsert(record)
             submitted_job_ids.append(record.job_id)
-            prev_slurm_id = f"DRY-{record.job_id}"
+            prev_slurm_id_by_job[chain_key] = f"DRY-{record.job_id}"
             continue
 
         try:
@@ -480,7 +904,7 @@ def chain_submit_jobs(
         )
         store.upsert(record)
         submitted_job_ids.append(record.job_id)
-        prev_slurm_id = slurm_job_id
+        prev_slurm_id_by_job[chain_key] = slurm_job_id
         LOGGER.info(
             "chain_submit_jobs: submitted '%s' as Slurm job %s (dependency: %s)",
             record.job_id,

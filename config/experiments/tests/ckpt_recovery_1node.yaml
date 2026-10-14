@@ -1,0 +1,112 @@
+# @package _global_
+#
+# FIXTURE FOR scripts/tests/test_checkpoint_recovery.sh — NOT a science run.
+#
+# Smallest thing that produces two real torch_dist checkpoints on one node, so
+# the QuarantineCheckpointAction / auto_restart_ckptreset path can be exercised
+# end to end: corrupt the newest checkpoint, restart, and assert the monitor
+# renames it to failed_iter_* and resumes from the previous one.
+#
+# DESIGN NOTES
+# * mock_data: true — no dataset, no index build, no tokenizer cache. The test
+#   must not depend on data staging, and a real blend index would dominate the
+#   runtime of a 20-iteration job.
+# * 130M model, TP=PP=1: a checkpoint is small enough to write in seconds, and
+#   PP=1 keeps the shard layout trivial. NB PP=1 needs BOTH
+#   pipeline_model_parallel_layout: null and defer_embedding_wgrad_compute:
+#   false — the parent chain's 8-stage layout is read as an interleaved schedule
+#   and asserts otherwise, and num_layers_per_virtual_pipeline_stage: null does
+#   NOT clear it.
+# * save_interval 10 with train_iters 20 -> checkpoints at 10 and 20, which is
+#   the minimum needed to have something to roll BACK to.
+# * plain torchrun, no fault tolerance: at one node FT adds a rank monitor and a
+#   restart loop that would obscure what the test is measuring.
+defaults:
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /job: default          # the test overrides this to auto_restart_ckptreset
+  - /sweep: none
+  - /backend/megatron: [base_reference, opensci_ref_130M]
+  - _self_
+
+index: 0
+stage: "all"
+
+job:
+  name: "ckpt_recovery_test"
+  base_output_dir: ${oc.env:OUTPUT_DIR,./output}/${.name}
+
+container:
+  # MUST be pinned. config/container/jupiter.yaml still defaults to
+  # MegatronTraining-JUPITER_aarch64_202603120039.sif, which is NOT on this
+  # cluster — job 1414048 died in 3 min with
+  #   FATAL: While checking container encryption: could not open image ...
+  # Use the image the 32B runs actually use.
+  image: /e/project1/e-sta-openeurollm/container/nemo_26.04.sif
+
+backend:
+  aux:
+    active_nodes: 1
+    spare_nodes: 0
+  torchrun_args:
+    nnodes: ${slurm.sbatch.nodes}
+    max_restarts: "0"
+    rdzv_backend: static
+  megatron:
+    # --- no data ------------------------------------------------------------
+    mock_data: true
+    data_path: null
+    data_args_path: null
+    split: "949,50,1"
+
+    # --- trivial parallelism ------------------------------------------------
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    pipeline_model_parallel_layout: null
+    num_layers_per_virtual_pipeline_stage: null
+    defer_embedding_wgrad_compute: false
+    sequence_parallel: false
+    tp_comm_overlap: false
+    context_parallel_size: 1
+
+    # --- short run, two checkpoints -----------------------------------------
+    micro_batch_size: 1
+    global_batch_size: 8
+    train_iters: 20
+    save_interval: 10
+    # Without this the run logs ZERO iteration lines: the inherited log_interval
+    # is larger than the whole run, so a 20-iteration job trains and checkpoints
+    # in complete silence. That makes the test undebuggable and gives the
+    # progression assertion nothing to match.
+    log_interval: 1
+    eval_interval: 1000
+    eval_iters: 0
+    lr_warmup_iters: 2
+    lr_decay_iters: 20
+
+    # Persistent checkpoints only: the rolling/non-persistent tree would give
+    # the test two trackers to reason about for no benefit.
+    save: ${job.base_output_dir}/checkpoints
+    # MUST be pinned: base.yaml:10 defaults `load` to ${job.base_output_dir},
+    # NOT to `save`. Without this the resume looks one directory too high, finds
+    # no tracker, and silently starts from scratch — which would make the test
+    # pass for the wrong reason.
+    load: ${backend.megatron.save}
+    non_persistent_ckpt_type: null
+    non_persistent_global_ckpt_dir: null
+    non_persistent_save_interval: null
+
+    # no fault tolerance at 1 node
+    enable_ft_package: false
+    calc_ft_timeouts: false
+
+    cuda_graph_impl: none
+    wandb_project: oellm_ckpt_recovery_test
+
+slurm:
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  sbatch:
+    nodes: 1
+    time: "00:20:00"

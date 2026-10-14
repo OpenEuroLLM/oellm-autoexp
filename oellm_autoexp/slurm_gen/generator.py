@@ -14,6 +14,25 @@ def build_sbatch_directives(config: SlurmConfig) -> list[str]:
     directives: list[str] = []
     sbatch_values = asdict(config.sbatch)
     sbatch_values.pop("_non_strict", None)
+
+    # Re-read the node-exclusion list HERE, at render time. The resolver that
+    # first produced `sbatch.exclude` runs when the config is resolved, which for
+    # a restart happened at plan time; the monitor's refresh hook mutates a copy
+    # that does not reach this builder. Reading the file again is the only point
+    # that is guaranteed to see every node excluded since, including the one whose
+    # failure triggered this very resubmission.
+    exclude_file = getattr(config, "exclude_file", None)
+    if exclude_file:
+        from oellm_autoexp.hydra_staged_sweep.config.resolvers import oc_exclude_nodes
+
+        current = oc_exclude_nodes(str(exclude_file))
+        if isinstance(current, (list, tuple)):
+            current = ",".join(current)
+        if current:
+            sbatch_values["exclude"] = current
+        # a missing or empty file leaves whatever was already resolved in place:
+        # losing the list entirely is far worse than using a slightly stale one
+
     jobname_present = False
     for key, value in sbatch_values.items():
         if key == "job_name" and value is not None:
@@ -32,6 +51,31 @@ def build_sbatch_directives(config: SlurmConfig) -> list[str]:
     return directives
 
 
+def build_srun_args(config: SlurmConfig) -> list[str]:
+    """Render ``config.srun_args`` into srun flags.
+
+    Same shape as :func:`build_sbatch_directives` — ``_`` becomes ``-``, ``True``
+    emits a bare flag — with one deliberate difference: ``False`` is SKIPPED
+    rather than emitted as ``--flag=False``, so a cluster group can turn off a
+    flag an inherited group set. ``None`` is skipped too.
+
+    NB ``0`` and ``1`` are values, not booleans (``0 is False`` is False in
+    Python), so ``kill_on_bad_exit: 0`` correctly renders
+    ``--kill-on-bad-exit=0`` rather than being dropped.
+
+    ``config.srun`` is deliberately NOT rendered here; see :class:`SrunConfig`.
+    """
+    values = asdict(config.srun_args)
+    values.pop("_non_strict", None)
+    args: list[str] = []
+    for key, value in values.items():
+        if value is None or value is False:
+            continue
+        flag = key if key.startswith("-") else f"--{key.replace('_', '-')}"
+        args.append(flag if value is True else f"{flag}={value}")
+    return args
+
+
 def build_replacements(
     config: SlurmConfig,
     *,
@@ -42,6 +86,17 @@ def build_replacements(
 ) -> dict[str, str]:
     full_command = [*command, *(extra_args or [])]
     env_exports = "\n".join(f"export {key}={value}" for key, value in (config.env or {}).items())
+    # The templates render `srun {srun_opts}bash -c ...` with NO space before
+    # `bash`, so the value must carry its own trailing space. Normalising it here
+    # (instead of relying on every config author to remember) removes a footgun
+    # that produces `srun --kill-on-bad-exit=0bash -c` when the space is missed.
+    # NB srun_opts is appended verbatim (only surrounding whitespace trimmed), so
+    # a flag whose value contains a space still survives.
+    srun_parts = build_srun_args(config)
+    raw_srun_opts = (config.srun_opts or "").strip()
+    if raw_srun_opts:
+        srun_parts.append(raw_srun_opts)
+    srun_opts = " ".join(srun_parts)
     return {
         "job_name": job_name,
         "log_path": log_path,
@@ -49,7 +104,7 @@ def build_replacements(
         "sbatch_directives": "\n".join(build_sbatch_directives(config)),
         "env_exports": env_exports,
         "launcher_cmd": config.launcher_cmd or "",
-        "srun_opts": config.srun_opts or "",
+        "srun_opts": f"{srun_opts} " if srun_opts else "",
         "launcher_env_passthrough": str(config.launcher_env_passthrough).lower(),
     }
 
@@ -98,6 +153,7 @@ def merge_slurm_config(
 
 __all__ = [
     "build_sbatch_directives",
+    "build_srun_args",
     "build_replacements",
     "generate_script",
     "merge_slurm_config",

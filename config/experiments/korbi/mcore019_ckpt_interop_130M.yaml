@@ -1,0 +1,117 @@
+# @package _global_
+#
+# ============================================================================
+# HISTORICAL — ALREADY RUN, AND NOT RUNNABLE AS-IS ANY MORE
+# ============================================================================
+# RESULT: PASS (jobs 1519266 write / 1519394 read). 0.19 loaded the 0.16-written
+# checkpoint and continued cleanly:
+#     writer (0.16)  it100  lr 1.000000E-04  loss 7.171799E+00
+#     reader (0.19)  it101  lr 1.010000E-04  loss 7.051596E+00
+#                    it110  lr 1.100000E-04  loss 6.952575E+00
+# The LR resuming at exactly the next step of the 2000-iteration warmup ramp is
+# the load-bearing detail: a fresh scheduler would restart near zero, so the
+# iteration counter and scheduler state were genuinely restored, not just the
+# weights. At lr 1e-4 a dropped Adam moment would also have shown.
+#
+# Like the parity config it depends on, this needs BOTH megatron trees at once,
+# and the submodule has since been switched to 0.19 — so arm 0 has no 0.16 tree.
+# See mcore019_lossparity_130M.yaml for the worktree recipe to recreate it.
+#
+# ============================================================================
+# CAN 0.19 READ A CHECKPOINT THE 0.16 FORK WROTE?
+# ============================================================================
+# The migration question in its smallest honest form. Run the arms IN ORDER:
+# arm 0 writes with the 0.16 fork, arm 1 reads it back with 0.19.
+#
+#   scripts/oellm_32b.sh --config-name experiments/korbi/mcore019_ckpt_interop_130M --array-subset 0
+#   # wait for COMPLETED, then
+#   scripts/oellm_32b.sh --config-name experiments/korbi/mcore019_ckpt_interop_130M --array-subset 1
+#
+# ============================================================================
+# WHY 0.13B AND NOT THE 32B FLAGSHIP SHAPE
+# ============================================================================
+# Because the WRITER has to be the 0.16 fork, and the 32B configs cannot run
+# under it: they carry 0.19-only arguments that 0.16's argparse rejects
+# outright. Making them 0.16-compatible would mean maintaining a second,
+# divergent 32B config whose only purpose is to be written by the old tree —
+# and every difference in it would weaken the interop claim it exists to
+# support.
+#
+# The 0.13B niccolo config has a 0.16 arm that is already PROVEN to run
+# (job 1511166, the loss-parity reference), so the writer is known-good and the
+# only new thing under test is the read.
+#
+# WHAT THIS DOES AND DOES NOT SHOW. Checkpoint compatibility is a property of
+# the FORMAT, not of the model, so a 0.13B torch_dist checkpoint written by 0.16
+# and read by 0.19 is a real test of the format boundary. It does NOT cover:
+#   * resharding — writer and reader run the identical shape here, on purpose,
+#     so a failure can only be the version boundary. Resharding is a separate
+#     axis, measured at 32B by ckpt_resume_n16.yaml.
+#   * the flagship's own checkpoint, which is DP=128 and needs 512 nodes.
+# Those three questions are genuinely independent and are worth not conflating.
+#
+# ============================================================================
+# READ-OFF
+# ============================================================================
+#   PASS  arm 1 logs "loading checkpoint" at iteration 100 and continues to 110
+#         with lm loss continuous with arm 0's iteration 100. Optimizer and RNG
+#         must be RESTORED — do not add --finetune or --no-load-optim, and check
+#         the log does not report skipping them.
+#   FAIL  a load error (format incompatibility — the thing being tested), or a
+#         loss discontinuity (state silently not restored, which is worse than
+#         an error because a real run would look fine and train wrong).
+#
+# Both arms use cross_entropy_fusion_impl: native, inherited from the parity
+# config, so the CE implementation is held fixed and megatron-core is the only
+# thing that differs — same discipline as [[mcore019_lossparity_130M]].
+defaults:
+  - mcore019_lossparity_130M
+  - _self_
+
+backend:
+  megatron:
+    # Arm 0 writes here at iteration 100; arm 1 reads it. ONE shared path is
+    # correct here (unlike a sweep of independent arms) — the whole point is
+    # that arm 1 consumes what arm 0 produced.
+    save: /e/scratch/e-sta-openeurollm/poeppel1/output/ckpt_interop_130M/checkpoints
+
+job:
+  name: "niccolo130M_ckptinterop_${aux.additional_tag}"
+  est_step_time_s: 0.7
+  est_startup_min: 6
+  est_steps: 110
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ---- arm 0: WRITE with the 0.16 fork. RUN THIS FIRST ---------------
+        # All THREE path overrides, or the 0.19 pretrain_gpt.py runs against the
+        # 0.16 package (or vice versa) — the import succeeds and the run is
+        # meaningless.
+        #   --array-subset 0
+        # train_iters is deliberately NOT overridden — see the parity config for
+        # why (lr_warmup_iters 2000 would exceed the schedule and assert).
+        # exit_interval stops the run; save_interval writes on the way out.
+        - aux.additional_tag: "write016"
+          backend.launcher_script: "./submodules/Megatron-LM/pretrain_gpt.py"
+          backend.env.PYTHONPATH: ".:submodules/Megatron-LM"
+          backend.env.RUN_DIR: "${backend.env.PROJECT_DIR}/submodules/Megatron-LM"
+          backend.megatron.exit_interval: 100
+          backend.megatron.save_interval: 100
+          backend.megatron.load: null
+
+        # ---- arm 1: READ it back with 0.19 ---------------------------------
+        # Same shape, same DP — no resharding, so a failure is the version
+        # boundary and nothing else.
+        #   --array-subset 1
+        - aux.additional_tag: "read019"
+          backend.launcher_script: "./submodules/Megatron-LM-v0.19/pretrain_gpt.py"
+          backend.env.PYTHONPATH: ".:submodules/Megatron-LM-v0.19"
+          backend.env.RUN_DIR: "${backend.env.PROJECT_DIR}/submodules/Megatron-LM-v0.19"
+          backend.megatron.exit_interval: 110
+          # Never write: arm 1 must not overwrite the checkpoint it is reading.
+          backend.megatron.save_interval: 1000000
+          backend.megatron.load: /e/scratch/e-sta-openeurollm/poeppel1/output/ckpt_interop_130M/checkpoints

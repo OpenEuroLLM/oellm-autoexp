@@ -1,0 +1,78 @@
+# @package _global_
+#
+# ============================================================================
+# v1C ANNEAL RE-RUN 100k -> 120k WITH FP8 TENSORWISE SCALING + BF16 EDGE LAYERS
+# ============================================================================
+# The full v1C cooldown (b1_conservative60k_100k_annealing) again, from the same
+# parent and on identical batches, with the two FP8 fixes from the start -- to
+# show that the v1C recipe anneals cleanly once the layer-0 underflow trap is
+# gone (docs/anneal-math/README.md; memory v1annealC_late_degeneration).
+#
+# RAN AS: Jenia Jitsev's B1-conservative100k-precision-anneal (2026-10-04 ..
+# 10-07, 512 nodes, finished at 120000), launched from this repo at 3fc4aec with
+# Megatron 5dd5714 (oellm/v0.19-b1-tweo, TWEO off) and the te218-fa3 image:
+#   run dir      /e/fscratch/e-sta-openeurollm/jj1/reanimation_64k_20260911/B1-conservative100k-precision-anneal
+#   checkpoints  /e/data1/datasets/playground/mmlaion/oellm/experiments/annealing_precision_20261004/conservative/training_ckpts/checkpoints
+#                (hash-verified mirror; iter_0102000 ... iter_0120000 every 2000, + rolling 109556, 116871)
+#   W&B          oellm_32b_dense_loss-increase_debug / B1_conservative60k_100k_anneal120k_tensorwise_edgebf16_<job>
+# Its Megatron argv (job.sbatch, through frozen/annealing_precision_training.py, a
+# post-load audit of LR / Adam / precision settings that changes nothing) equals
+# this config's render in all 111 arguments except W&B names and the run paths
+# (checked 2026-10-08, dump/jenia_precision_anneal/). Running this config again
+# writes its own tree (variant below); it never touches Jenia's.
+# HF exports / merge3 / FLAG: b1_conservative60k_100k_annealing_tensorwise_merge3_evals.
+#
+# Why (2026-10-03, dump/v1annealC_degradation/): under FP8 DELAYED scaling
+# (per-tensor scale from a 1024-step amax history) the input of the layer-0
+# MLP down_proj carried outliers up to ~5.8e4, so every ordinary value of it
+# underflowed to 0 in E4M3 (70% @108k, 98% @116k+) and the model learned to rely
+# on those zeros; bf16 evals let them through (GSM8K 0.833 @108k -> 0.623 @120k)
+# while the FP8 loss kept falling. A least-squares refit of that one matrix
+# repaired 120k (v1annealC_120k_l0fix, the best 120k checkpoint overall).
+#
+# Two changes, both keep the FP8 path:
+#   fp8_recipe tensorwise      current per-tensor scaling: each GEMM's own amax,
+#                              no 1024-step max, so rare outliers stop flushing
+#                              the ordinary values
+#   first_last_layers_bf16     layer 0 (the culprit) and layer 63 in bf16;
+#                              num_layers_at_start/end_in_bf16 = 1
+# Same setting as v1TT (b1_tweo80k_112kfork_tensorwise, job 2163086): a
+# delayed-recipe checkpoint loads under tensorwise, ~2% slower (4.34 vs 4.25 s/it).
+#
+# BRANCH: a new variant, so a new checkpoint tree (aux.run_root) and new log /
+# W&B names. The seed stage symlinks the PARENT's iter_0100000 into this tree
+# (the same B1-conservative60k checkpoint the original v1C anneal started from;
+# jitsev1's files, read only) -- neither the parent nor the original v1C run
+# (b1_conservative60k_100kcooldown120k) is touched. Everything else is
+# inherited: 1-sqrt window 100000 -> 120000, anneal mix, shared cache, seed,
+# consumed samples 100000*4096 -> the batches are v1C's own, step for step, so
+# this run is a clean A/B against v1annealC (same checkpoints 102k ... 120k).
+#
+# Unlike the 108k fork (b1_conservative60k_108kfork_tensorwise, written but not
+# run), this covers the whole cooldown: v1C's dependence formed between 108k
+# and 116k, but delayed scaling already flushed 70% of that input at 108k.
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_dense/b1_conservative60k_100k_annealing_tensorwise --dry-run
+#
+# CHECKING IT: scripts/korbi/fp8_degradation_test.py
+#   scan <this run's tensorboard>      exposure per layer (diag_fp8_meta is empty
+#                                      under tensorwise; scan falls back to the
+#                                      activation absmax)
+#   probe <hf export> --current        bf16 vs FP8-underflow-emulated NLL gap
+# and the FLAG / math_cot evals of its 108k / 120k exports against v1annealC's.
+# stream_ckpt_dequant is off explicitly (Megatron falls back to the upfront
+# dequantize pass for tensorwise and warns otherwise).
+defaults:
+  - b1_conservative60k_100k_annealing
+  - _self_
+
+backend:
+  aux:
+    variant: "b1_conservative60k_100kcooldown120k_tensorwise_edgebf16"
+  megatron:
+    fp8_recipe: tensorwise
+    first_last_layers_bf16: true
+    num_layers_at_start_in_bf16: 1
+    num_layers_at_end_in_bf16: 1
+    stream_ckpt_dequant: false

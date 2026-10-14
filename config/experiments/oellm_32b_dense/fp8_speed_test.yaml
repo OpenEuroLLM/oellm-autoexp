@@ -1,0 +1,25 @@
+# @package _global_
+#
+# The bf16 speed test, in FP8 — same 512 nodes, plain torchrun, no fault
+# tolerance, no checkpoints, exit_interval 50. Precision is the ONLY difference
+# from `speed_test`, so the TFLOPS numbers are directly comparable to the bf16
+# baseline (316.7 at TP=4 / PP=4 / VPP=2 / GBS=4096 / mbs=2).
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/fp8_speed_test
+#
+# Two follow-ups worth measuring from here, both blocked on memory in bf16 and
+# plausibly unblocked by FP8's smaller activations:
+#   -o backend.megatron.micro_batch_size=4     # OOM'd in bf16 at 8 AND 512 nodes
+#   -o backend.megatron.fp8_param_gather=true  # halves the param all-gather at DP=128
+#
+# This measures SPEED ONLY. FP8 is a numerics change and the run that matters is
+# the stability comparison — see experiments/oellm_32b_dense/fp8.yaml.
+defaults:
+  - speed_test
+  - /backend/megatron/oellm_32b_dense/precision: fp8
+  - _self_
+
+backend:
+  aux:
+    # keep FP8 speed runs out of the bf16 speed-test output directory
+    variant: "fp8speed-${backend.megatron.fp8}-${backend.megatron.fp8_recipe}"

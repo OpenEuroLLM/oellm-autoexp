@@ -1,6 +1,42 @@
 defaults:
  - default
 
+# RESTART-ON-ERROR job policy.
+#
+# Same failure signatures as config/job/auto_cancel.yaml, but split by whether a
+# retry could possibly help:
+#
+#   CancelAction  — configuration / data faults. A retry lands on the SAME config
+#                   and fails identically, so restarting would just loop.
+#   RestartAction — infrastructure faults that are node-local and transient. A
+#                   fresh allocation is a genuinely different draw.
+#
+# WHY FAIL FAST: on 2026-08-14 job 1374701 died at 17:32:59 with
+# "Failed to CUDA calloc async" but was only cancelled at 17:41:22 — ~8 min x
+# 1024 nodes = ~136 node-hours spent idling on an already-diagnosed failure.
+#
+# CAUTION — RestartAction has NO restart cap of its own (RestartActionConfig
+# carries only class_name/reason, and _restart_job preserves `attempts` without
+# testing it), so any bound has to come from a `condition:`. That is also why
+# only node-local faults are restartable and everything config-shaped cancels.
+#
+# Every RestartAction below is now bounded by a MaxActionFiresCondition — a
+# PER-EVENT budget, so a benign event's allowance cannot be spent by an
+# unrelated fault (which is what the job-wide MaxAttemptsCondition did). Two
+# things to know before changing one:
+#   * events are evaluated IN ORDER and a blocked condition falls through, so
+#     bounding one event while a later event matches the same log bounds
+#     nothing — budget the whole group or none of it;
+#   * a spent budget stops the EVENT, not the JOB. Where the job would still be
+#     alive and burning (the stall events), the budget is paired with a
+#     terminal CancelAction; where the job is already dying (the generic tier),
+#     it simply ends.
+# Watch `fire_count` per action in monitor_state if a job seems to relaunch
+# repeatedly.
+#
+# KEEP IN SYNC WITH config/job/auto_cancel.yaml — the list is duplicated because
+# Hydra REPLACES lists on merge, so a shared include plus additions would
+# silently drop entries.
 log_events:
   - name: finished_training
     pattern: "[after training is done]"
@@ -14,31 +50,378 @@ log_events:
     action:
       class_name: FinishAction
       reason: "Test Evaluation Finished"
-  # Restart on ANY non-zero srun task exit, not just code 1. A launch-time flake
-  # (e.g. an empty MASTER_ADDR -> torchrun exits code 2) dies in seconds, before
-  # the poll ever observes the job RUNNING, so the RUNNING->FAILED state_event
-  # never fires and loop.py terminal-cancels it. Matching the exit-code line in
-  # the log (processed before the terminal-state check) makes these self-heal.
+
+  # === WALL-CLOCK SEGMENT ROLLOVER -> RESTART (chain-free continuation) ======
+  # `exit_duration_in_mins` ends a segment with sys.exit(0) -> SLURM COMPLETED
+  # -> monitor/loop.py:236 marks the run "finished" and training silently stops
+  # mid-schedule (job 1487924 stopped at iteration 19183/894000). This is the
+  # alternative to chain_repeat: no pre-queued siblings to clean up when a
+  # segment fails, at the price of re-queueing from scratch each time.
+  #
+  # The pattern alone proves the schedule is UNFINISHED: 'exiting program after
+  # N minutes' is printed inside the training loop (training.py:2070) and is
+  # followed by sys.exit at :2651, so 'after training is done' (:781, reached
+  # only when train() RETURNS) can never also appear. finished_training above
+  # therefore remains the sole authority on real completion.
+  # Deliberately excludes 'exiting program at iteration N' (exit_interval — a
+  # user-requested bounded run) and '...after receiving SIGTERM.' (looks like a
+  # deliberate scancel). See config/job/auto_restart_ckptreset.yaml for the full
+  # derivation — kept in sync by hand, Hydra REPLACES lists on merge.
+  #
+  # A budget is mandatory here: RestartAction has no cap (see the CAUTION in the
+  # header) and this event fires on every HEALTHY segment, not only on failures.
+  #
+  # GENEROUS BY DESIGN, in deliberate contrast to the tight budget on the stall
+  # events near the bottom of this file. That split is only possible because
+  # MaxActionFiresCondition counts THIS event's own fires; the job-wide
+  # MaxAttemptsCondition would make one number serve both.
+  # 150 not 50: a 15 TT schedule needs ~91 rollovers, so 50 would stop the run
+  # around halfway, and quietly.
+  - name: exit_duration_rollover
+    pattern: "exiting program after [0-9.]+ minutes"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 150
+    action:
+      class_name: RestartAction
+      reason: "exit_duration_in_mins reached mid-schedule — resuming the next segment from the last checkpoint"
+
+  # === FATAL: configuration / data faults -> CANCEL (never restart) =========
+
+  # Launcher rejected an argument. torchrun_args forwards ANY key as `--<key>`,
+  # so a typo only fails at RUN time on the full allocation. Killed job 1374593
+  # (1024 nodes) in 34 s: "ft_launcher: error: unrecognized arguments: --rdvz-backend"
+  - name: err_unrecognized_argument
+    pattern: "unrecognized arguments"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "Launcher rejected an argument (check torchrun_args/ft args)"
+
+  # LAUNCHER/FT-PACKAGE MISMATCH — `enable_ft_package: true` under a NON-ft
+  # launcher. Only ft_launcher sets FT_RANK_MONITOR_IPC_SOCKET, so every rank
+  # dies in ft_integration.setup(). Must be listed BEFORE err_nccl_timeout: the
+  # dead ranks make the survivors raise ncclRemoteError, which that pattern
+  # matches, so without this the monitor restarts a fault that is identical on
+  # every attempt. See the fuller note in config/job/auto_restart_ckptreset.yaml
+  # (kept in sync by hand — Hydra REPLACES lists on merge).
+  - name: err_ft_package_without_ft_launcher
+    pattern: "RankMonitorClientError|FT_RANK_MONITOR_IPC_SOCKET env variable should be set"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "enable_ft_package/calc_ft_timeouts are on but the launcher is not ft_launcher"
+
+  - name: err_disk_quota
+    pattern: "Disk quota exceeded|Errno 122"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Disk quota exceeded — free space or move checkpoints to scratch"
+
+  # Checkpoint present but unopenable — the loader fails before it reads a
+  # single shard, so the message names no iteration and nothing can be
+  # quarantined. `.metadata` is written LAST by torch_dist, so its absence is the
+  # signature of an interrupted save. A restart re-reads the same tree and dies
+  # identically: six jobs in one hour on 2026-08-23 (1465307..1465554) before
+  # this pattern existed. Anchored on "CheckpointingException:" so it cannot
+  # match the benign "is not a MLM or NeMo sharded checkpoint" that every
+  # from-scratch run logs. See config/job/auto_restart_ckptreset.yaml for the
+  # full derivation and for why this cancels rather than rolling back.
+  - name: err_ckpt_unloadable
+    pattern: "CheckpointingException: Checkpoint directory .* does not exist|CheckpointingException: .* is not a distributed checkpoint"
+    pattern_type: regex
+    match_once: true
+    action:
+      class_name: CancelAction
+      reason: "Checkpoint exists but cannot be opened (missing .metadata / unresolvable dir) — a restart re-reads the same broken tree"
+
+  - name: err_fp8_metadata
+    pattern: "Saved FP8 metadata does not match"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "FP8 recipe/CUDA-graph mismatch — set cuda_graph_impl: none"
+
+  - name: err_dataset_cache_corrupt
+    pattern: "mmap length is greater than file size|ValueError: cannot reshape array"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Corrupt dataset cache — run scripts/check_data_cache.py --repair"
+
+  # See config/job/auto_restart_ckptreset.yaml for the measured evidence behind
+  # these two (jobs 1522580 and 1523600, 512 nodes, zero iterations each). Both
+  # CANCEL: the fault is identical on every attempt.
+  - name: err_attention_backend_env
+    pattern: "NVTE_(FUSED|FLASH|UNFUSED)_ATTN set to [0-9]+, but expected [0-9]+ for attention backend"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "NVTE_*_ATTN env contradicts attention_backend — unset the env vars or set attention_backend explicitly"
+
+  - name: err_te_pickled_extra_state
+    pattern: "Refusing to load pickled Transformer Engine extra state"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "TE will not unpickle FP8 extra state from this checkpoint — decide explicitly whether to enable unsafe loading"
+
+  - name: err_infra_rank
+    pattern: "Invalid infrastructure rank"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "NVRx infrastructure rank invalid — check use_infra_group_rank"
+
+  # Model genuinely does not fit. Distinct from the CUDA-context OOM below,
+  # which is an occupied GPU rather than a sizing problem — hence cancel, not
+  # restart: a new allocation will not make the model smaller.
+  - name: err_torch_oom
+    pattern: "torch\\.cuda\\.OutOfMemoryError|CUDA out of memory\\. Tried to allocate"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Model OOM — reduce micro_batch_size or raise TP/PP"
+
+  # === INFRASTRUCTURE: node-local and transient -> RESTART ==================
+
+  # CUDA context / NCCL buffer allocation failed because the GPU was ALREADY
+  # occupied by a leftover process. Killed 1374701 and 1373119. A different
+  # allocation is a different set of nodes, so retrying is meaningful.
+  - name: err_cuda_alloc_init
+    pattern: "Failed to CUDA calloc|AcceleratorError: CUDA error: out of memory|cudaErrorMemoryAllocation"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      reason: "GPU occupied at init (leftover process) — retrying on new nodes"
+
+  # torch's DYNAMIC c10d rendezvous collapsing at scale (killed 1371705/1371721
+  # at 1024 nodes). Restartable because it is partly load-dependent — but if it
+  # recurs, the real fix is rdzv_backend=static (torchrun) rather than retries.
+  - name: err_rendezvous
+    # NB RendezvousClosedError is deliberately ABSENT. It is not the 1024-node
+    # rendezvous collapse — ft_launcher agents emit it during a NORMAL fault-
+    # tolerant restart cycle, when the rendezvous is closed and re-formed.
+    # Matching it cancelled healthy job 1379130 at iteration 4204/8000
+    # (2026-08-15 02:23) even though its log had ZERO genuine error hits —
+    # i.e. this pattern defeated the fault tolerance it was meant to protect.
+    # Only the "cannot reach the store" forms belong here.
+    pattern: "RendezvousConnectionError|DistNetworkError"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      reason: "Rendezvous failure — retrying (consider static rdzv for torchrun)"
+
+  # Always a SECONDARY symptom of a rank that already died, and the loudest line
+  # in this codebase's failure history (99k/149k/58k hits on jobs 1522580/
+  # 1523600/1512329) — it is what makes a dead job look ALIVE to the inactivity
+  # check. Placed after every CANCEL pattern so a diagnosable root cause wins.
+  - name: err_gloo_mesh
+    pattern: "Gloo connectFullMesh failed"
+    pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      reason: "Gloo mesh collapsed after a rank died — retrying on a fresh allocation"
+
+  # Transformer Engine userbuffers TP-overlap spin-wait: a peer stopped
+  # answering. Hung 1373198 for 20 min without finishing iteration 1. A clean
+  # run emits ZERO of these (verified on 1373121), so this is unambiguous.
+  - name: err_userbuffers_stall
+    pattern: "userbuffers\\.cu.*expecting [0-9]+ got [0-9]+"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      reason: "userbuffers TP-overlap stall — peer rank unresponsive, retrying"
+
+  - name: err_nccl_timeout
+    pattern: "Watchdog caught collective operation timeout|unhandled cuda error|NCCL error"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      reason: "NCCL collective timeout/abort — retrying"
+
+
+  # CUDA illegal memory access / hard C++ abort. THE 4-HOUR LESSON (2026-08-14):
+  # job 1375720 hit this right after iteration 100, then ft_launcher restart-
+  # looped all 4096 ranks ~8 times without ever getting past init, burning
+  # ~4 h x 1024 nodes (~4000 node-hours) before SLURM finally called NODE_FAIL.
+  # NONE of the other patterns matched it, and the log kept GROWING (251 MB of
+  # repeated startup banners) so the inactivity fallback could never fire either.
+  # A GPU that has taken an IMA generally needs a reset, so relaunching in place
+  # is futile — stop, and let a fresh allocation be a fresh draw.
+  - name: err_cuda_illegal_access
+    pattern: "illegal memory access|cudaErrorIllegalAddress"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      reason: "CUDA illegal memory access — GPU needs reset, not a relaunch"
+
+  # Unhandled C++ exception escaping to std::terminate (seen alongside the IMA
+  # above). Distinct pattern because the AcceleratorError text can be truncated
+  # or interleaved across 4096 ranks while this line survives intact.
+  - name: err_cpp_terminate
+    pattern: "terminate called after throwing an instance of"
+    pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      reason: "Unhandled C++ exception — worker aborted"
+
+  # SLURM tore the allocation down because a node died under us.
+  - name: err_node_failure
+    pattern: "DUE TO NODE FAILURE|Node failure on"
+    pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      reason: "SLURM node failure in the allocation"
+
+  # === GENERIC RESTART TIER: BOUNDED AS A GROUP ==============================
+  # err_gloo_mesh, err_child_failed and `error` all match the SAME rank-death
+  # log (job 1512329 has all three markers), and _process_log_events falls
+  # through to the next event when a condition blocks the action -- so capping
+  # only one of them is theatre, the next unbudgeted event takes the restart
+  # over. The effective ceiling is the SUM: 25+25+25 = 75 cycles for a
+  # gloo-shaped fault, ~half a day at the 6 cycles/hour measured in the real
+  # loop of 2026-08-23. A runaway backstop, deliberately not a tight bound:
+  # these are the PRIMARY recovery path. Full reasoning in
+  # config/job/auto_restart_ckptreset.yaml.
+  - name: err_child_failed
+    pattern: "ChildFailedError"
+    pattern_type: substring
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
+    action:
+      class_name: RestartAction
+      reason: "Worker process failed — retrying"
+
+  # ANY non-zero srun task exit, not just code 1. A launch-time flake (e.g. an
+  # empty MASTER_ADDR -> torchrun exits code 2) dies in seconds, before the poll
+  # ever observes the job RUNNING, so the RUNNING->FAILED state_event never
+  # fires and loop.py terminal-cancels it. Matching the exit-code line in the
+  # log (processed before the terminal-state check) makes these self-heal.
   - name: error
     pattern: "Exited with exit code [1-9][0-9]*"
     pattern_type: regex
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: ""
-  # SLURM wall-time TIMEOUT is handled by the RUNNING->TIMEOUT state_event
-  # below (sacct reports the TIMEOUT state even after the job leaves squeue).
-  # A single state_event is preferred over also scraping "DUE TO TIME LIMIT"
-  # from the log so a timeout can only fire one RestartAction.
+
+  # TIME LIMIT IS ALREADY HANDLED IN DEPENDENCY CHAIN
+  # - name: time_limit
+  #   pattern: "DUE TO TIME LIMIT"
+  #   pattern_type: substring
+  #   action:
+  #     class_name: RestartAction
+  #     reason: ""
+
+  # === FORWARD-PROGRESS STALL: "dead but noisy" ==============================
+  # Every event above waits for a STRING; `inactive` below waits for SILENCE. A
+  # job that is dead but still logging satisfies neither. Full rationale, the
+  # calibration data, and the three measured incidents are documented in
+  # config/job/auto_restart_ckptreset.yaml — keep the two files in sync.
+  #
+  # NB max_attempts is 150 here for the same reason as there: the condition reads
+  # the job's TOTAL attempt count, so a low ceiling silently disables the stall
+  # detector a few segments into a long chained run.
+  - name: iteration_counter_frozen
+    pattern: "iteration +([0-9]+)/"
+    pattern_type: progress
+    progress_mode: any_change
+    progress_polls: 20
+    progress_timeout_s: 1200
+    condition:
+      # PER-EVENT budget. MUST NOT be MaxAttemptsCondition — that counts the
+      # job's TOTAL attempts, so a small ceiling here would be spent by healthy
+      # rollover restarts and silently disable the stall detector.
+      class_name: MaxActionFiresCondition
+      max_fires: 3
+    action:
+      class_name: RestartAction
+      reason: "No iteration progress for 20 min — stuck, not slow"
+
+  - name: stuck_below_furthest_iteration
+    pattern: "iteration +([0-9]+)/"
+    pattern_type: progress
+    progress_mode: furthest
+    # 40 polls / 2400 s, WIDENED from 30/1800 when the furthest-iteration record started
+    # being carried across restarts (loop.py:_restart_job). elapsed_s now sums
+    # the ACTIVE no-progress time on BOTH sides of a restart, so the healthy
+    # rollover has to fit inside the window end to end:
+    #     tail of the finishing segment (final save/shutdown)   ~3 min
+    #   + new job startup to its first iteration line            6.6 min (measured)
+    #   + climbing back past the old mark, <=125 iters x 4.13 s  ~8.6 min
+    #   = ~18 min
+    # 2400 s is ~2x that. RETUNE IT if non_persistent_save_interval (125) grows,
+    # or if startup gets slower at a larger node count.
+    progress_polls: 40
+    progress_timeout_s: 2400
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 3
+    action:
+      class_name: RestartAction
+      reason: "No net iteration progress for 40 min of running — restart loop, not recovery"
+
+  # Terminal case for the two budgets above: a budget makes an event stop ACTING,
+  # not the job stop RUNNING. Without this the 4th stall would go unwatched.
+  # Unbudgeted, ordered last, mode=furthest so it covers a frozen counter and a
+  # rewinding restart loop alike.
+  - name: stuck_below_furthest_iteration_cancel
+    pattern: "iteration +([0-9]+)/"
+    pattern_type: progress
+    progress_mode: furthest
+    # MUST EXCEED 3 x the stuck_below_furthest_iteration window. Both streaks are carried
+    # across restarts, but stuck_below_furthest_iteration's is popped each time it fires while this
+    # one keeps accumulating -- so with a smaller window this would cancel after
+    # the FIRST stuck_below_furthest_iteration restart instead of the third, silently voiding the
+    # max_fires: 3 above. 3 x 40 = 120, so 130 polls / 7800 s.
+    progress_polls: 130
+    progress_timeout_s: 7800
+    action:
+      class_name: CancelAction
+      reason: "Still not progressing after 3 stall restarts — stopping so a human can look instead of burning the allocation"
+
   - name: inactive
     pattern_type: inactivity
-    # Restart only after the log has been silent for >=20 consecutive polls AND
-    # >=1200s (20 min) of real elapsed time (both must hold). Raised from 5 min:
-    # a distributed checkpoint save, first-run blend-index build, and CUDA-graph
-    # capture each go log-silent for minutes on multi-node — a 5-min window
-    # scancelled jobs mid-save, corrupting checkpoints. 20 min still catches a
-    # genuinely hung rank while leaving slow-but-alive saves/startup alone.
-    inactivity_polls: 20
+    # Restart only after the log has been silent for >=5 consecutive polls AND
+    # >=1200s of real elapsed time (both must hold). 1200s (not 300s) because a
+    # 1024-node startup plus a multi-hundred-GB checkpoint save can legitimately
+    # exceed 5 min of silence. Last line of defence — the patterns above should
+    # catch every failure we have actually seen, far sooner.
+    inactivity_polls: 5
     inactivity_timeout_s: 1200
+    condition:
+      class_name: MaxActionFiresCondition
+      max_fires: 25
     action:
       class_name: RestartAction
       reason: "Inactive Log"

@@ -1,0 +1,19 @@
+{
+  "autoexp_base": {
+    "commit": "1f8e3fd38c6e635fe3b0da1b0599cf51f9f0dea1",
+    "tree": "7dac926a9062a02fd7e88a703e99be16f4291dca"
+  },
+  "evidence": "docs/megatron_versions/b1_tweo_20261002.md",
+  "evidence_sha256": "6127d20ba42a459dfce7a081892017e77c6ef754bff4566c5bb90d6f13d836fe",
+  "megatron": {
+    "branch": "oellm/v0.19-b1-tweo",
+    "commit": "5dd5714035962a581827a4978dc3f51086b7f3ff",
+    "tag": "oellm-32b-b1-tweo-20261002",
+    "tree": "8c3a3d8577fc3abec0e0e80883bebbe6fd2630e5",
+    "url": "https://github.com/OpenEuroLLM/NVIDIA-Megatron-LM.git"
+  },
+  "name": "oellm-32b-b1-tweo-20261002",
+  "schema": 1,
+  "scope": "Exact committed source; ignored binaries/caches/environments are not packaged",
+  "submodule": "submodules/Megatron-LM"
+}

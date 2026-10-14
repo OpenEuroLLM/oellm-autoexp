@@ -1,0 +1,89 @@
+# @package _global_
+#
+# ============================================================================
+# B1_reborn BASE: the B1 recipe as it ran at iteration 100000
+# ============================================================================
+# Cite-able base for anything forked off Jenia Jitsev's B1_reborn line
+# (W&B group B1_reborn, project oellm_32b_dense; run 4tyddlft = 82k -> ~103.5k).
+# That line was launched from oellm-workflows with a rendered overlay that was
+# never committed:
+#   /e/fscratch/e-sta-openeurollm/jj1/reanimation_64k_20260911/B1-reborn-production/config/reanimation.yaml
+#   defaults: oellm_32b_dense_revival_1_ce_fp32_production + the megatron block below
+# This file is that overlay's training arguments, minus the campaign plumbing
+# (paths under jj1/, the run_reanimation.sh restart hook, its monitor events).
+#
+# The megatron argv this renders equals the 100k argv (4tyddlft's command line)
+# except for run paths, W&B names and non-numerical logging/checkpoint I/O.
+#
+# CODE: Megatron is the submodule, 799ff4e (oellm/v0.19-b1-reborn), i.e. the
+# source B1 used from 192k on. At 100k B1 ran 3fc1452, its parent, with the
+# same flags. The only numerical difference between the two is the deferred-
+# wgrad ordering fix, which matters only with defer_embedding_wgrad_compute:
+#   82k-156k  3fc1452, defer ON  (pre-fix: the head bucket could be reduced
+#                                 before the deferred GEMMs were accumulated)
+#   156k-192k 3fc1452, defer OFF
+#   192k-     799ff4e, defer ON  (fixed)
+# defer stays ON here, as at 100k; on 799ff4e that is the fixed path.
+#
+# Checkpoint parameter groups: B1 checkpoints carry the final-norm / embedding /
+# qk / residual-norm wd-mult groups, which older Megatron (v0.16 fork, main
+# oellm_32b_dense branch) cannot build. Use this branch's submodule.
+defaults:
+  - /experiments/oellm_32b_dense/oellm_32b_dense_revival_1_ce_fp32_production
+  - _self_
+
+aux:
+  run_root: /e/fscratch/e-sta-openeurollm/oellm_32b_dense_b1/${job.name}
+
+job:
+  name: "oellm_32b_dense_${backend.aux.variant}"
+  # revival_1 wires these to jitsev1's campaign scripts: never run them from here.
+  restart_pre_command: ""
+  checkpoint_hook_command: ""
+  est_step_time_s: 4.35
+  est_startup_min: 12
+
+backend:
+  aux:
+    variant: "b1_reborn"
+  megatron:
+    # --- optimizer: one global LR (revival_1's decoupled head LR is OFF) ---
+    lr: 3.0e-4
+    decoupled_lr: null
+    decoupled_min_lr: null
+    weight_decay: 0.1
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    clip_grad: 1.0
+    # --- weight-decay scope: the B1 intervention ---
+    embedding_wd_mult: 0.0
+    residual_norm_wd_mult: 0.0
+    qk_layernorm_wd_mult: 1.0
+    final_norm_wd_mult: 1.0
+    apply_wd_to_qk_layernorm: false
+    no_weight_decay_cond_type: null
+    layernorm_zero_centered_gamma: false
+    override_opt_param_scheduler: true
+    allow_new_param_groups_on_load: true
+    # --- loss: native fused CE (FP32 correction lives in the Megatron source) ---
+    output_z_loss_coeff: 1.0e-5
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: native
+    # --- precision ---
+    fp8: hybrid
+    fp8_recipe: delayed
+    first_last_layers_bf16: false
+    # --- overlap ---
+    defer_embedding_wgrad_compute: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    # --- checkpointing / run length ---
+    no_load_optim: false
+    no_load_rng: false
+    save_interval: 2000
+    non_persistent_save_interval: 125
+    exit_interval: 894000
+    exit_duration_in_mins: null
+    # --- logging ---
+    log_interval: 5
+    diagnostics_interval: 100

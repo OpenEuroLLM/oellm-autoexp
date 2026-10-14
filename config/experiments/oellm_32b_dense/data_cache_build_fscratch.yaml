@@ -1,0 +1,153 @@
+# @package _global_
+#
+# ============================================================================
+# BUILD THE MEGATRON DATASET INDEX CACHE ON /e/fscratch
+# ============================================================================
+# Same job as data_cache_prebuild, pointed at the new filesystem. One node, and
+# it must FINISH before any large job is submitted against this cache path.
+#
+# WHY A NEW PATH IS A FULL REBUILD, EVEN AT THE SAME SEED
+# -------------------------------------------------------
+# The cache key does NOT include the cache directory -- it is
+# `_key_config_attributes()` = [random_seed, sequence_length, split,
+# split_matrix, tokenizer] plus class/dataset_path/num_samples/index_split,
+# MD5'd into the filename prefix (megatron_dataset.py:57-71,
+# gpt_dataset.py:463). Moving the directory therefore does not invalidate
+# anything, it simply means the files are NOT THERE. Megatron's cache-hit test
+# is `os.path.isfile` on the four index files, so an empty directory is a clean
+# miss and every dataset is rebuilt from scratch.
+#
+# The practical consequence is the whole reason this config exists:
+# A 512-NODE JOB POINTED AT AN EMPTY CACHE PATH WILL BUILD THE CACHE ITSELF,
+# on 2048 ranks, inside its own allocation. Run this first.
+#
+# WHY THE 2-LAYER STAND-IN MODEL IS LEGITIMATE
+# --------------------------------------------
+# The model is not part of the cache key -- only the DATA and SCHEDULE groups
+# are, and both are inherited unchanged from data_cache_prebuild, which pulls
+# the same `oellm_256k_15TT_jupiter_train` + `prod_15TT` groups the production
+# experiment uses. So a 2-layer model on 1 node writes byte-identical caches to
+# what the 32B run would write.
+#
+# ============================================================================
+# COST, MEASURED
+# ============================================================================
+# Full builds of this cache took 1:04:11 and 1:08:44 (jobs 1466078, 1484798) on
+# ONE node, i.e. ~4 GPU-h. Warm re-runs took 16-19 min. The inherited 12 h wall
+# is headroom, not an estimate.
+#
+# DISK: the existing /e/scratch copy is 875 GB. /e/fscratch is 16 P with 15 P
+# free (3% used), against /e/scratch's 57 T free of 210 T -- which is the point
+# of the move.
+#
+# SAFE TO RUN WHILE THE FLAGSHIP IS TRAINING. It writes only under
+# ${backend.megatron.data_cache_path}, a directory nothing else is reading, and
+# the live run keeps using its own /e/scratch copy until the shared schedule
+# group is switched over (see the FOLLOW-UP note at the bottom).
+#
+# ============================================================================
+# TWO WAYS THIS BITES, BOTH SEEN BEFORE
+# ============================================================================
+# 1. A KILLED BUILD POISONS THE CACHE. The hit test is PRESENCE ONLY, with no
+#    size or checksum check (gpt_dataset.py:~478), so 0-byte files left behind
+#    by a SIGKILL are read as hits forever after and the next job dies in
+#    numpy.load with "EOFError: No data left in file" (job 1355485). If this job
+#    is cancelled or times out, before re-running it:
+#
+#      find /e/fscratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense/data_cache \
+#           -maxdepth 1 -type f -size 0 -delete
+#
+# 2. NEVER RUN TWO BUILDS CONCURRENTLY against the same data_cache_path. The
+#    overlap of jobs 1354605 and 1354684 is how that corruption arose in the
+#    first place. Note this file's job.name carries the seed, so builds for
+#    DIFFERENT seeds get different output directories -- but they would still
+#    share the cache directory, so serialise them anyway.
+#
+# ============================================================================
+# VERIFY BEFORE TRUSTING IT
+# ============================================================================
+#   # must print nothing
+#   find <cache> -maxdepth 1 -type f -size 0
+#   # sanity: three .npy per dataset per split, so this should be in the tens of
+#   # thousands, and comparable to the 28,910 files in the /e/scratch copy
+#   ls <cache> | wc -l
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/data_cache_build_fscratch
+#   # for a different data order, e.g. the _cont2 seed experiment:
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/data_cache_build_fscratch \
+#       aux.cache_seed=4321
+defaults:
+  - data_cache_prebuild
+  - _self_
+
+aux:
+  # THE DATA ORDER THIS BUILD IS FOR.
+  # 1234 reproduces the production order at the new location -- that is what
+  # oellm_32b_dense_cont2_from64k needs as written.
+  # Change it ONLY to test the data-order hypothesis, and set the SAME value on
+  # the training config (`backend.megatron.seed`), or the training job will miss
+  # this cache entirely and rebuild inside its own allocation.
+  cache_seed: 1234
+
+  # Mirrors the /e/scratch layout exactly, with the filesystem swapped.
+  fscratch_cache: /e/fscratch/e-sta-openeurollm/pre_production_training/oellm_32b_dense/data_cache
+
+job:
+  # Seed in the name so two data orders cannot share an output directory (and so
+  # the logs say which order was built).
+  name: "oellm_32b_dense_data_cache_build_fscratch_seed${aux.cache_seed}"
+
+backend:
+  megatron:
+    data_cache_path: ${aux.fscratch_cache}
+
+    # `seed` is the schema key -- NOT `random_seed`. Megatron passes args.seed
+    # into GPTDatasetConfig(random_seed=...), which is the name that then shows
+    # up in the config dump and in _key_config_attributes(). Setting
+    # `random_seed` here would not do what it looks like it does.
+    seed: ${aux.cache_seed}
+
+container:
+  # Matches production. The cache contents do NOT depend on the container -- the
+  # model is not in the cache key -- so this is about the job starting cleanly on
+  # the mcore 0.19 tree, not about what gets written.
+  image: /e/project1/e-sta-openeurollm/container/MegatronTraining-JUPITER-te218-fa3_aarch64_202608280932.sif
+
+  # `python` IS INERT FOR THIS BACKEND -- kept only so the intent survives if the
+  # launcher ever changes. VERIFIED 2026-08-30, do not rely on it:
+  # /backend: megatron_torchrun_localaddr invokes the `torchrun` CONSOLE SCRIPT
+  # inside the container, not `python -m torch.distributed.run`, so
+  # container.python is never consulted -- the same trap the production config
+  # documents for ft_launcher.
+  #
+  # It works out anyway, for a different reason. In the real (non-login)
+  # container environment `command -v torchrun` gives /usr/local/bin/torchrun
+  # with shebang `#!/usr/bin/env python3`, and PATH begins with /opt/venv/bin, so
+  # python3 resolves to /opt/venv/bin/python3 (torch 2.11.0a0+nv26.02) -- the
+  # venv interpreter, which is what we want. Both this image and nemo_26.04
+  # behave identically here.
+  #
+  # NB testing this with `bash -lc` MISLEADS: a login shell sources the host
+  # profile and torchrun then resolves to a HOST venv
+  # (~/work/venv/bin/torchrun, shebang into /e/project1/projectnucleus/...).
+  # The sbatch does not use a login shell, so that path is not what runs.
+  python: /opt/venv/bin/python
+
+slurm:
+  sbatch:
+    # The inherited prebuild still names `e-sta-openeurollm`, which
+    # oellm_32b_dense_production.yaml records as SUPERSEDED on 2026-08-25.
+    account: e-ext-2025e02-108
+
+# ============================================================================
+# FOLLOW-UP, DELIBERATELY NOT DONE HERE
+# ============================================================================
+# `data_cache_path` for every 32B run is set once, in
+# config/backend/megatron/oellm_32b_dense/schedule/prod_15TT.yaml:40, and still
+# points at /e/scratch. That file is inherited by
+# oellm_32b_dense_production.yaml, i.e. by the LIVE FLAGSHIP.
+#
+# Repointing it to /e/fscratch is a one-line change and it is the right end
+# state -- but do it only AFTER this build has completed and been verified,
+# because the flagship's next resubmission would otherwise come up against an
+# empty directory and start building the 15 T index on 512 nodes.

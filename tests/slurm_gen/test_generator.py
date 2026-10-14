@@ -7,10 +7,11 @@ import pytest
 from oellm_autoexp.slurm_gen.generator import (
     build_replacements,
     build_sbatch_directives,
+    build_srun_args,
     generate_script,
     merge_slurm_config,
 )
-from oellm_autoexp.slurm_gen.schema import SbatchConfig, SlurmConfig
+from oellm_autoexp.slurm_gen.schema import SbatchConfig, SlurmConfig, SrunConfig
 
 
 def make_config(tmp_path: Path) -> SlurmConfig:
@@ -47,6 +48,66 @@ class TestBuildSbatchDirectives:
         assert "#SBATCH --exclusive" in directives
 
 
+class TestBuildSrunArgs:
+    """Tests for build_srun_args — the composable (mapping) form of srun flags.
+
+    The string ``srun_opts`` cannot compose: Hydra replaces a string wholesale on
+    merge, so a cluster group and an experiment that both set it silently lose
+    one of the two. ``srun_args`` is a mapping and merges key-by-key.
+    """
+
+    def test_renders_flags_like_sbatch_directives(self, tmp_path: Path):
+        config = make_config(tmp_path)
+        config.srun_args = SrunConfig(no_kill=True, cpu_bind="cores")
+        assert build_srun_args(config) == ["--no-kill", "--cpu-bind=cores"]
+
+    def test_zero_is_a_value_not_a_boolean(self, tmp_path: Path):
+        """`0 is False` is False in Python, so kill_on_bad_exit: 0 must render
+        as a value — dropping it would silently re-enable SLURM's default of
+        tearing the step down on the first bad exit."""
+        config = make_config(tmp_path)
+        config.srun_args = SrunConfig(kill_on_bad_exit=0)
+        assert build_srun_args(config) == ["--kill-on-bad-exit=0"]
+
+    def test_false_and_none_are_skipped(self, tmp_path: Path):
+        """False means "do not pass this flag", so an inheriting config can
+        turn off something a base group switched on."""
+        config = make_config(tmp_path)
+        config.srun_args = SrunConfig(no_kill=False, exclusive=None, wait=60)
+        assert build_srun_args(config) == ["--wait=60"]
+
+    def test_legacy_srun_dict_is_not_rendered(self, tmp_path: Path):
+        """config/slurm/*.yaml still carry dead `srun:` blocks (wait: 60,
+        kill_on_bad_exit: 1, ...) that have never reached srun. Rendering them
+        now would change every cluster at once, and `--wait=60` in particular
+        kills the step 60s after the first task exits — fatal under ft_launcher."""
+        config = make_config(tmp_path)
+        config.srun = SrunConfig(wait=60, exclusive=True)
+        assert build_srun_args(config) == []
+
+    def test_srun_args_and_srun_opts_are_concatenated(self, tmp_path: Path):
+        """During migration both forms are live: args first, then the verbatim
+        string. This is what lets jupiter_autoexclude_ft supply --no-kill while
+        the experiment still passes --kill-on-bad-exit=0 as a string."""
+        config = make_config(tmp_path)
+        config.srun_args = SrunConfig(no_kill=True)
+        config.srun_opts = "--kill-on-bad-exit=0 "
+        replacements = build_replacements(config, job_name="j", log_path="/tmp/l", command=["true"])
+        assert replacements["srun_opts"] == "--no-kill --kill-on-bad-exit=0 "
+
+    def test_empty_stays_empty(self, tmp_path: Path):
+        """`srun {srun_opts}bash` must not gain a stray double space."""
+        config = make_config(tmp_path)
+        replacements = build_replacements(config, job_name="j", log_path="/tmp/l", command=["true"])
+        assert replacements["srun_opts"] == ""
+
+    def test_a_value_containing_a_space_survives_srun_opts(self, tmp_path: Path):
+        config = make_config(tmp_path)
+        config.srun_opts = '--comment="a b"'
+        replacements = build_replacements(config, job_name="j", log_path="/tmp/l", command=["true"])
+        assert replacements["srun_opts"] == '--comment="a b" '
+
+
 class TestBuildReplacements:
     """Tests for build_replacements."""
 
@@ -69,7 +130,10 @@ class TestBuildReplacements:
         assert replacements["log_path"] == "/tmp/log.txt"
         assert replacements["command"] == "python train.py --epochs 5"
         assert replacements["launcher_cmd"] == "srun"
-        assert replacements["srun_opts"] == "--cpu-bind=cores"
+        # Trailing space is added by build_replacements: the templates render
+        # `srun {srun_opts}bash -c ...` with no space before `bash`, so an
+        # un-spaced value used to produce `srun --cpu-bind=coresbash -c`.
+        assert replacements["srun_opts"] == "--cpu-bind=cores "
         assert replacements["launcher_env_passthrough"] == "true"
         assert "export CUDA_VISIBLE_DEVICES=0" in replacements["env_exports"]
         assert "export OMP_NUM_THREADS=8" in replacements["env_exports"]
@@ -140,3 +204,57 @@ class TestMergeSlurmConfig:
         assert merged["sbatch"]["nodes"] == 4
         assert merged["sbatch"]["partition"] == "gpu"
         assert merged["array"] is False
+
+
+class TestExcludeFileRereadAtRenderTime:
+    """`--exclude` must come from the file as it is WHEN THE SCRIPT IS RENDERED.
+
+    A restart re-renders the sbatch but reuses the config resolved at plan time, so a node
+    excluded after the first submission never reached the resubmitted job: 1711267 went out
+    two seconds after the monitor logged a 30-node refresh, carrying 28 and missing the node
+    whose failure had just ended the previous job.
+    """
+
+    def test_current_file_overrides_a_stale_exclude(self, tmp_path: Path) -> None:
+        listing = tmp_path / "exclude.txt"
+        listing.write_text("# excluded\njpbo-052-11\njpbo-079-14\n")
+        config = make_config(tmp_path)
+        config.exclude_file = str(listing)
+        config.sbatch = SbatchConfig(exclude="jpbo-052-11")  # stale: written before the failure
+        directives = build_sbatch_directives(config)
+        line = next(d for d in directives if d.startswith("#SBATCH --exclude="))
+        assert "jpbo-079-14" in line
+        assert "jpbo-052-11" in line
+
+    def test_missing_file_keeps_the_existing_exclusions(self, tmp_path: Path) -> None:
+        config = make_config(tmp_path)
+        config.exclude_file = str(tmp_path / "does-not-exist.txt")
+        config.sbatch = SbatchConfig(exclude="jpbo-052-11")
+        directives = build_sbatch_directives(config)
+        line = next(d for d in directives if d.startswith("#SBATCH --exclude="))
+        assert line == "#SBATCH --exclude=jpbo-052-11"
+
+    def test_empty_file_keeps_the_existing_exclusions(self, tmp_path: Path) -> None:
+        listing = tmp_path / "exclude.txt"
+        listing.write_text("# nothing but a comment\n\n")
+        config = make_config(tmp_path)
+        config.exclude_file = str(listing)
+        config.sbatch = SbatchConfig(exclude="jpbo-052-11")
+        directives = build_sbatch_directives(config)
+        line = next(d for d in directives if d.startswith("#SBATCH --exclude="))
+        assert line == "#SBATCH --exclude=jpbo-052-11"
+
+    def test_without_exclude_file_nothing_changes(self, tmp_path: Path) -> None:
+        config = make_config(tmp_path)
+        config.sbatch = SbatchConfig(exclude="jpbo-052-11")
+        directives = build_sbatch_directives(config)
+        line = next(d for d in directives if d.startswith("#SBATCH --exclude="))
+        assert line == "#SBATCH --exclude=jpbo-052-11"
+
+    def test_file_alone_is_enough_when_no_exclude_was_resolved(self, tmp_path: Path) -> None:
+        listing = tmp_path / "exclude.txt"
+        listing.write_text("jpbo-079-14\n")
+        config = make_config(tmp_path)
+        config.exclude_file = str(listing)
+        directives = build_sbatch_directives(config)
+        assert "#SBATCH --exclude=jpbo-079-14" in directives

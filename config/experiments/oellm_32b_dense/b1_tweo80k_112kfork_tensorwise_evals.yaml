@@ -1,0 +1,84 @@
+# @package _global_
+#
+# ============================================================================
+# CONVERT + FLAG-EVAL THE v1T TENSORWISE FORK AT 120k (companion of the training run)
+# ============================================================================
+# Two stages for the end of b1_tweo80k_112kfork_tensorwise, as their OWN oellm-autoexp
+# session, so the live training session is not touched (its stage list is inherited and
+# carries the seed command; restating it here would duplicate it):
+#
+#   convert  1 node, e-sta-openeurollm. Starts when the run's checkpoint tracker reads
+#            120000 (Megatron writes it only after the save completed). Runs the 32B export
+#            in its own allocation: scripts/downstream_eval/eval_checkpoints.sh
+#            convert-here (the 32b_dense profile: tokenizer, Bridge image, architecture).
+#            -> <EXPORT_ROOT>/v1annealTts_120k, .convert_done written last.
+#   eval     login node (job.local). The full FLAG suite as the standard oellm-eval arrays
+#            (365 vLLM + 73 lighteval tasks, %40, e-sta-openeurollm): `flag`, then
+#            `flag-wait` polls, resubmits failures once and collects
+#            $FLAG_WORK/results/v1annealTts_120k.flag-evals-438.tasks.csv.
+#            Keep the session running until it reports `collected`.
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_dense/b1_tweo80k_112kfork_tensorwise_evals
+#
+# Other checkpoints of this run: set aux.eval_iter (e.g. 116000) -- the export is named
+# v1annealTts_<iter/1000>k like `eval_checkpoints.sh convert v1annealTts:<iter>` would.
+defaults:
+  - b1_tweo80k_112kfork_tensorwise
+  - _self_
+
+aux:
+  repo: ${oc.env:OELLM_AUTOEXP_ROOT,${oc.env:PWD}}   # launch from the repo root
+  eval_iter: 120000
+  eval_name: "v1annealTts_${oc.eval:'${aux.eval_iter}//1000'}k"
+  eval_ckpts: ${aux.run_root}/training_ckpts/checkpoints
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ====== convert (Megatron -> HF, in this stage's allocation) ======
+        # Bash stages: no single quotes, no shell ${VAR} (OmegaConf); $VAR is fine.
+        - stage: convert
+          backend: bash
+          slurm: jupiter_driver
+          job: default
+          job.name: "oellm_32b_dense_${backend.aux.variant}_convert_${aux.eval_name}"
+          job.est_steps: 1
+          job.est_step_time_s: 1500
+          job.est_startup_min: 2
+          job.start_condition:
+            class_name: FileContentCondition
+            path: "${aux.eval_ckpts}/latest_checkpointed_iteration.txt"
+            pattern: "^${aux.eval_iter}\\s*$"
+            mode: regex
+          backend.env:
+            MODEL: "32b_dense"
+          backend.command: |
+            set -eu
+            ${aux.repo}/scripts/downstream_eval/eval_checkpoints.sh convert-here ${aux.eval_name} ${aux.eval_ckpts}/${oc.pad_iter:${aux.eval_iter}}
+          slurm.sbatch.account: e-sta-openeurollm
+          slurm.sbatch.nodes: 1
+          slurm.sbatch.time: "01:00:00"
+
+        # ====== FLAG eval: the standard oellm-eval arrays, from the login node ======
+        - stage: eval
+          backend: bash
+          job: default
+          job.local: true
+          job.name: "oellm_32b_dense_${backend.aux.variant}_eval_${aux.eval_name}"
+          job.est_steps: 1
+          job.est_step_time_s: 7200   # wall clock of the arrays (the stage itself only polls)
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "/e/scratch/e-sta-openeurollm/production_training/downstream_eval_32b/hf/${aux.eval_name}/.convert_done"
+          backend.env:
+            MODEL: "32b_dense"
+            FLAG_ACCOUNT: "e-sta-openeurollm"
+            FLAG_RETRIES: "1"
+          backend.command: |
+            set -eu
+            ${aux.repo}/scripts/downstream_eval/eval_checkpoints.sh flag ${aux.eval_name}
+            ${aux.repo}/scripts/downstream_eval/eval_checkpoints.sh flag-wait ${aux.eval_name}

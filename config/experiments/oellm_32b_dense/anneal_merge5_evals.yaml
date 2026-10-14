@@ -1,0 +1,81 @@
+# @package _global_
+#
+# ============================================================================
+# MERGE THE LAST 5 CHECKPOINTS (112k-120k) OF EACH 100k->120k ANNEAL, THEN FULL FLAG SUITE
+# ============================================================================
+# STATUS 2026-10-07: NOT RUN -- merging of the anneals was dropped; vanosch1's uniform
+# *_merge3_116k_120k exports are evaluated instead. Kept as the working template for future
+# merges (scripts/model_merging/README.md). merge_hf.py verified bit-identical to those merge3
+# exports and to an exact reference (dump/model_merging/verify_against_merge3.log).
+#
+# The stage chain of lineage_flag_evals, with the convert stage producing a MERGED export
+# instead (aux.export_command):
+#
+#   convert   1 node     scripts/model_merging/merge_hf.py over existing HF exports (bf16
+#                        safetensors, correctly rounded weighted mean) -> downstream_eval_32b/hf/<name>,
+#                        MERGE_INFO.json + .convert_done written, then renamed in place.
+#                        I/O bound: 5 x 64 GB read, 64 GB written.
+#   prepare / eval / collect   unchanged (438 FLAG evals, one SLURM array per merged export)
+#
+# Inputs = the anneals' saves every 2000 iterations (all already exported, 2026-10-07):
+#   v1    v1anneal_{112..120}k              b1_production60k_100k_annealing
+#   v1C   v1annealC_{112..120}k             b1_conservative60k_100k_annealing
+#   v1T   v1annealT_112k + v1annealTT_{114..120}k   b1_tweo80k_100k_annealing, forked at its
+#         own iter_0112000 into b1_tweo80k_112kfork_tensorwise (the TT exports), so this IS
+#         one trajectory
+#   v2    v2anneal_{112..120}k              oellm_32b_v2/100k_annealing
+#
+# WEIGHTING. Merging checkpoints theta_1..theta_n with weights c_i is identical to keeping
+# theta_1 and scaling the updates between theta_{i-1} and theta_i by S_i = sum_{k>=i} c_k (WSM,
+# arXiv:2507.17634). Inside a cooldown that means "decay the LR further, after the fact". The
+# 1-sqrt window here is at 22% / 16% / 11% / 5% / 0% of peak LR at 112/114/116/118/120k, so:
+#   weights         S per 2k interval      anneal-data update mass   centroid
+#                                          112k-120k kept
+#   last only       1    1    1    1       100%                      120.0k
+#   linear  (wma5)  .93  .80  .60  .33      80%                      117.3k   <- DEFAULT
+#   uniform (merge5).80  .60  .40  .20      63%                      116.0k
+# Default = linear (WMA, Li et al. 2025, arXiv:2505.12082): it averages out iterate noise but
+# keeps the most-annealed checkpoints dominant. The paper finds SMA/EMA/WMA converge to the same
+# result late in training. Uniform is kept as the PMA-default control and continues
+# vanosch1's uniform merge3_116k_120k (same exports, a longer window).
+#
+# KNOWN CAVEAT v1C: v1annealC 116k-120k carry the FP8-underflow dependency (bf16 evals degrade
+# from ~112k, dump/v1annealC_degradation/); any merge over them inherits most of it.
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/oellm_32b_dense/anneal_merge5_evals --dry-run
+#   # the uniform controls as well:
+#   ... 'aux.ckpt_select=[v1anneal_wma5_112k_120k,v1anneal_merge5_112k_120k]'
+# Cost: merge ~1 node-hour each; 438 evals = 42 node-hours per export (b1_266k, 2026-10-05).
+# Default selection (4 exports): ~172 node-hours; scratch +256 GB (exa_scratch was 99% full,
+# 2.9 TB free, on 2026-10-07).
+# ============================================================================
+defaults:
+  - lineage_flag_evals
+  - _self_
+
+aux:
+  # name: the merged export; inputs: exports under export_root, OLDEST FIRST; weights: merge_hf.py
+  # --weights (uniform | linear | a,b,...). exists/ckpt/lines/step: lineage_flag_evals' fields.
+  lineage_ckpts:
+    - {name: v1anneal_wma5_112k_120k,     lines: [v1],  step: 120000, exists: false, ckpt: "", weights: linear,
+       inputs: "v1anneal_112k v1anneal_114k v1anneal_116k v1anneal_118k v1anneal_120k"}
+    - {name: v1annealC_wma5_112k_120k,    lines: [v1C], step: 120000, exists: false, ckpt: "", weights: linear,
+       inputs: "v1annealC_112k v1annealC_114k v1annealC_116k v1annealC_118k v1annealC_120k"}
+    - {name: v1annealTT_wma5_112k_120k,   lines: [v1T], step: 120000, exists: false, ckpt: "", weights: linear,
+       inputs: "v1annealT_112k v1annealTT_114k v1annealTT_116k v1annealTT_118k v1annealTT_120k"}
+    - {name: v2anneal_wma5_112k_120k,     lines: [v2],  step: 120000, exists: false, ckpt: "", weights: linear,
+       inputs: "v2anneal_112k v2anneal_114k v2anneal_116k v2anneal_118k v2anneal_120k"}
+    - {name: v1anneal_merge5_112k_120k,   lines: [v1],  step: 120000, exists: false, ckpt: "", weights: uniform,
+       inputs: "v1anneal_112k v1anneal_114k v1anneal_116k v1anneal_118k v1anneal_120k"}
+    - {name: v1annealC_merge5_112k_120k,  lines: [v1C], step: 120000, exists: false, ckpt: "", weights: uniform,
+       inputs: "v1annealC_112k v1annealC_114k v1annealC_116k v1annealC_118k v1annealC_120k"}
+    - {name: v1annealTT_merge5_112k_120k, lines: [v1T], step: 120000, exists: false, ckpt: "", weights: uniform,
+       inputs: "v1annealT_112k v1annealTT_114k v1annealTT_116k v1annealTT_118k v1annealTT_120k"}
+    - {name: v2anneal_merge5_112k_120k,   lines: [v2],  step: 120000, exists: false, ckpt: "", weights: uniform,
+       inputs: "v2anneal_112k v2anneal_114k v2anneal_116k v2anneal_118k v2anneal_120k"}
+  ckpt_select: [v1anneal_wma5_112k_120k, v1annealC_wma5_112k_120k, v1annealTT_wma5_112k_120k,
+                v2anneal_wma5_112k_120k]
+  merge_weights: ${oc.index:${aux.lineage_ckpts},${aux.ck_i},weights}
+  merge_inputs: ${oc.index:${aux.lineage_ckpts},${aux.ck_i},inputs}
+  # host python of the batch shell (jupiter_driver: no container); merge_hf.py needs numpy only
+  export_command: "python3 ${aux.repo}/scripts/model_merging/merge_hf.py --root ${aux.export_root} --out ${aux.export_name} --weights ${aux.merge_weights} ${aux.merge_inputs}"

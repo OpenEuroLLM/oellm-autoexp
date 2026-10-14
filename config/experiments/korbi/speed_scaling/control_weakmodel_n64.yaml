@@ -1,0 +1,80 @@
+# @package _global_
+#
+# RE-RUN of the one broken arm in the weak-model sweep.
+#
+# WHAT WAS WRONG
+# --------------
+# speedscale_weakmodel-1b9-n64 is the only arm in either weak sweep that failed
+# the convergence check. Its whole-run median was 362.0 TFLOP/s/GPU but the
+# median of its LAST QUARTER was 208.4 — a drift of -42.4%. The direction
+# matters: the arm ran clean and then DEGRADED, which is the opposite of the
+# 256-node strong arm (that one warmed up slowly and was biased LOW). A run that
+# starts fine and falls apart is the signature of a sick node or a filesystem
+# stall part-way through, not of an unconverged measurement, so its median is
+# biased HIGH and the arm cannot be repaired by analysing it differently.
+#
+# Its per-iteration trace also has the widest spread of any arm in the sweep
+# (p10 130.4 against a 362.0 median), consistent with the same explanation.
+#
+# WHAT THIS CHANGES
+# -----------------
+#   1. Node exclusion (21 known-bad nodes). The parent chain resolves
+#      /slurm: jupiter, which applies NO exclusion — the most likely direct
+#      cause of the degradation, and free to fix.
+#   2. 300 iterations instead of 50. This arm is tiny and fast (~1.1 s/iter:
+#      the original completed in 3 m 55 s wall INCLUDING startup), so a 6x
+#      longer measurement costs about 5 extra minutes on 64 nodes. With 300
+#      iterations a single transient dip cannot move the median, and the
+#      drift% check becomes meaningful rather than being computed over 11
+#      samples.
+#
+# WHAT THIS DELIBERATELY DOES NOT CHANGE
+# --------------------------------------
+# REAL DATA, not mock. Every other arm in the weak-model series ran on real
+# data, and this arm's number has to slot back into that curve. Switching it to
+# mock would make it incomparable with the nine arms it sits between — the exact
+# provenance-mixing mistake that the strong sweep is being fully re-run to
+# avoid. (The separate control_weakbatch_mock.yaml arm exists to measure the
+# real-vs-mock delta; until that lands, assume it is nonzero.)
+#
+# Geometry is copied verbatim from the weakmodel-1b9-n64 arm in
+# weak_scaling_model.yaml: ~1.9 B params, TP=1, PP=1 (no model parallelism at
+# all — the floor of that series), DP=256, GBS 1024, so M = 1024/(2*256) = 2.
+# M=2 is a very low operating point, which is inherent to that arm's position in
+# the sweep and is preserved on purpose.
+#
+# The `-rerun` suffix writes to speedscale_weakmodel-1b9-n64-rerun_gbs1024/ so
+# the original broken measurement is preserved for comparison rather than
+# overwritten. That suffix also means it does NOT match the weak-model series
+# regex in scripts/korbi/scaling_plots.py (which requires `-n<digits>_`), so
+# once it succeeds, analyse the series with the substitution made explicitly:
+#     --series 'weak-model=speedscale_weakmodel-(?:small-)?[a-z0-9]+-n([0-9]+)(?:-rerun)?_'
+#
+# COST: ~10 min on 64 nodes = ~11 node-hours.
+defaults:
+  - weak_scaling_model
+  - override /slurm: jupiter_autoexclude
+  - _self_
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.variant: "weakmodel-1b9-n64-rerun"
+          backend.aux.active_nodes: 64
+          backend.megatron.global_batch_size: 1024
+          backend.megatron.tensor_model_parallel_size: 1
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          # TP=1 -> both are tensor-parallel features and must be off
+          backend.megatron.sequence_parallel: false
+          backend.megatron.tp_comm_overlap: false
+          backend.megatron.num_layers: 24
+          backend.megatron.hidden_size: 2048
+          backend.megatron.ffn_hidden_size: 10240
+          backend.megatron.num_attention_heads: 16
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 300
+          slurm.sbatch.time: "00:25:00"

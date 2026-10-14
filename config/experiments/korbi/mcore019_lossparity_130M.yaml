@@ -1,0 +1,199 @@
+# @package _global_
+#
+# ============================================================================
+# HISTORICAL — ALREADY RUN, AND NOT RUNNABLE AS-IS ANY MORE
+# ============================================================================
+# The comparison this file describes is DONE (PASS, numbers below) and the
+# submodule has since been switched to the 0.19 port, so `submodules/Megatron-LM`
+# now IS 0.19 and arm 0 has no 0.16 tree to point at. Kept as the record of how
+# parity was established, and as the recipe if it ever has to be redone.
+#
+# To re-run it, recreate the second checkout first:
+#     git -C submodules/Megatron-LM worktree add ../Megatron-LM-0.16 auto_restart
+# then point arm 0 at submodules/Megatron-LM-0.16 and arm 1 at
+# submodules/Megatron-LM. Both trees have to exist simultaneously — that is the
+# whole point of the config and the reason it cannot survive the switch.
+#
+# ============================================================================
+# 0.13B LOSS PARITY: megatron-core 0.16 vs 0.19, same data, same seed
+# ============================================================================
+# The 512-node speed tests answer "is 0.19 fast enough". This answers the other
+# half -- "does 0.19 compute the same thing" -- at a size where 200 optimizer
+# steps cost minutes instead of node-hours.
+#
+# WHY THIS FILE EXISTS AT ALL. Both arms were first run by hand, as CLI
+# overrides on megatron_niccolo_130M_smoke_jupiter (jobs 1511165 / 1511166).
+# That worked, but nothing on disk said WHICH overrides, so the comparison was
+# not reproducible. Everything below is those overrides, written down.
+#
+# ============================================================================
+# HOW THE TWO ARMS SELECT DIFFERENT MEGATRON TREES
+# ============================================================================
+# The repo has two checkouts and the 0.19 one is now the default everywhere:
+#   submodules/Megatron-LM          0.16 fork,  branch auto_restart
+#   submodules/Megatron-LM-v0.19    0.19 port,  branch oellm/v0.19  (git worktree)
+# config/backend/megatron*.yaml hard-codes the 0.19 path in THREE places -- the
+# launcher script, PYTHONPATH and RUN_DIR -- so an arm that wants 0.16 has to
+# override all three. Overriding only launcher_script silently runs the 0.19
+# pretrain_gpt.py against the 0.16 megatron package, or vice versa; the import
+# succeeds and the run is meaningless.
+#
+# ============================================================================
+# THE CONFOUND, AND WHY IT IS ACCEPTABLE HERE
+# ============================================================================
+# 0.19 refuses cross_entropy_fusion_impl: te (arguments.py:1654), so a strict
+# single-variable comparison is impossible. Both arms are therefore pinned to
+# `native` below -- the CE implementation is held FIXED and only megatron-core
+# moves. Our 1-node A/B (jobs 1506575/1506576) measured native 2.8% faster than
+# te and numerically equivalent, so pinning costs nothing.
+#
+# ============================================================================
+# READ-OFF
+# ============================================================================
+# 200 iterations at log_interval 10 -> 20 loss points per arm. Compare with
+#   scripts/korbi/compare_loss_parity.py <log016> <log019>
+#
+#   PASS   agreement to ~1e-6 for the first tens of steps, drifting to ~1e-3 by
+#          step 200, with NO systematic sign. That is floating-point chaos
+#          amplification off a bitwise-different-but-equivalent kernel mix, and
+#          it is what a correct port looks like -- two runs that differ in the
+#          last bit of one reduction diverge exponentially in a chaotic system.
+#   FAIL   a step-1 mismatch beyond ~1e-5 (different init or different data
+#          order), or a drift with a CONSISTENT sign (a real bias -- wrong LR
+#          schedule, wrong weight decay, a dropped loss term).
+#
+# Measured 2026-08-26 (jobs 1511165 / 1511166):
+#   iter  10   0.16 1.067719E+01   0.19 1.067720E+01   rel  9E-07
+#   iter 100   0.16 7.170163E+00   0.19 7.168594E+00   rel -2E-04
+#   iter 200   0.16 5.870253E+00   0.19 5.876484E+00   rel  1E-03
+# No systematic sign (0.19 is below at 100, above at 200). PASS.
+#
+#   scripts/oellm_32b.sh --config-name experiments/korbi/mcore019_lossparity_130M
+#   # one arm only:
+#   #   --array-subset 0   # 0.16 reference
+#   #   --array-subset 1   # 0.19 candidate
+defaults:
+  - megatron_niccolo_130M_smoke_jupiter
+  # A parity check must fail loudly and once -- a restart would resume from a
+  # checkpoint and destroy the from-scratch comparison.
+  - override /job: auto_cancel
+  - _self_
+
+aux:
+  experiment_group: "niccolo_130M_smoke"
+
+# PINNED, because the inherited default no longer exists. `/container: jupiter`
+# names MegatronTraining-JUPITER_aarch64_202603120039.sif, which has been
+# DELETED from /e/project1/e-sta-openeurollm/container/, so anything inheriting
+# it dies in 15 seconds with
+#     FATAL: While checking container encryption: could not open image ...
+# (job 1518845). The original hand-run parity arms passed this as a CLI
+# override, which is exactly the kind of thing that does not survive being
+# written down — this file existed to make the sweep reproducible and would not
+# have reproduced it.
+#
+# nemo_26.04.sif is what jobs 1511165/1511166 actually ran. NB container.python
+# is deliberately NOT pinned here: this backend launches through `torchrun` from
+# the container PATH and never consults that field. The 32B configs do pin it,
+# because their launcher makes it live.
+container:
+  image: /e/project1/e-sta-openeurollm/container/nemo_26.04.sif
+
+backend:
+  megatron:
+    # PINNED for the same reason as the container: the inherited default is
+    # dead. data_nemonicco_jupiter points valid_data_path at
+    # /e/scratch/projectnucleus/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all,
+    # which no longer exists (0 of 2 .idx/.bin present), so the dataset builder
+    # asserts before the first step:
+    #     indexed_dataset.py:631 One or both of the .idx and .bin files cannot
+    #     be found at the path prefix
+    # (job 1519192). The train prefix is intact (2 of 2).
+    #
+    # Jobs 1511165/1511166 passed the TRAIN path as valid on the command line —
+    # the third undocumented override those runs depended on, after the
+    # container and the LR schedule. Using train data for validation is fine
+    # here: nothing in this comparison reads the validation loss, and
+    # eval_interval is pushed past exit_interval so it never even runs. The
+    # valid index is built regardless, which is why the path has to resolve.
+    valid_data_path:
+      - /e/data1/datasets/products/openeurollm/pretokenized/neox/copy_nemotron_downsampled_15p/high-all
+
+    # 200 steps is enough for the curves to separate if they are going to.
+    #
+    # STOP VIA exit_interval, AND LEAVE train_iters ALONE. Overriding
+    # train_iters to 200 looks equivalent and is not: the inherited config sets
+    # lr_warmup_iters 2000 and derives lr_wsd_decay_iters from train_iters, so a
+    # 200-step schedule puts warmup past the end of decay and Megatron asserts
+    # before the first step --
+    #     optimizer_param_scheduler.py:74 assert lr_warmup_steps < lr_decay_steps
+    # (seen on job 1519150). It also would NOT have reproduced jobs 1511165/66,
+    # whose logs read "iteration 10/11445" — they kept the full schedule and
+    # just stopped early, so the LR at every compared iteration matches.
+    #
+    # NB preflight_megatron_args.py cannot catch this: the assert lives in
+    # setup_model_and_optimizer, not in validate_args.
+    exit_interval: 200
+    log_interval: 10
+
+    # Never fires inside exit_interval. NOT null -- `save_interval: null` with
+    # `save` set trips an assert.
+    save_interval: 1000000
+    # eval_iters 0 does NOT skip validation, it starves the loader to zero
+    # samples and asserts in data_samplers.py. Push eval_interval out instead.
+    eval_iters: 10
+    eval_interval: 100000000
+
+    # HELD FIXED ACROSS BOTH ARMS. 0.19 asserts on `te`, so `native` is the only
+    # value both trees accept; pinning it keeps megatron-core the single moving
+    # part. See the header.
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: native
+
+    wandb_project: oellm_mcore019_parity
+
+job:
+  # base_output_dir is inherited: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}".
+  # On JUPITER OUTPUT_DIR=/e/scratch/e-sta-openeurollm/poeppel1/output, so the two
+  # arms land in
+  #   .../output/niccolo_130M_smoke/niccolo130M_lossparity_mcore016
+  #   .../output/niccolo_130M_smoke/niccolo130M_lossparity_mcore019
+  # Distinct names are what keeps them apart -- a shared tree would let arm 1
+  # resume arm 0's checkpoint and the comparison would be junk.
+  name: "niccolo130M_lossparity_${aux.additional_tag}"
+  chain_repeat: 1
+  est_step_time_s: 0.7
+  est_startup_min: 6
+  est_steps: 200
+
+slurm:
+  sbatch:
+    nodes: 2
+    # Short wall -> backfills. Both arms measured ~9 min wall including startup.
+    time: "00:40:00"
+
+# ---------------------------------------------------------------------------
+# ONE VARIABLE: which megatron-core tree runs. Everything else -- model, data,
+# seed, schedule, CE implementation -- is identical and inherited.
+# ---------------------------------------------------------------------------
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # ---- arm 0: REFERENCE. The 0.16 fork the flagship trains on today ----
+        #   --array-subset 0
+        - aux.additional_tag: "mcore016"
+          backend.launcher_script: "./submodules/Megatron-LM/pretrain_gpt.py"
+          backend.env.PYTHONPATH: ".:submodules/Megatron-LM"
+          backend.env.RUN_DIR: "${backend.env.PROJECT_DIR}/submodules/Megatron-LM"
+
+        # ---- arm 1: CANDIDATE. The 0.19 port -------------------------------
+        # Paths restated rather than inherited so the two arms read as a pair
+        # and a future default flip cannot silently make both arms the same.
+        #   --array-subset 1
+        - aux.additional_tag: "mcore019"
+          backend.launcher_script: "./submodules/Megatron-LM-v0.19/pretrain_gpt.py"
+          backend.env.PYTHONPATH: ".:submodules/Megatron-LM-v0.19"
+          backend.env.RUN_DIR: "${backend.env.PROJECT_DIR}/submodules/Megatron-LM-v0.19"

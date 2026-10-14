@@ -1,0 +1,40 @@
+# @package _global_
+#
+# The production config, in FP8. Everything else — parallelism, schedule, data,
+# checkpointing, fault tolerance — is inherited unchanged from
+# oellm_32b_dense.yaml, so this differs from the bf16 flagship in precision ONLY.
+# That is the point: it makes the bf16-vs-FP8 comparison a single variable.
+#
+# WHY A SEPARATE CONFIG RATHER THAN A FLAG ON THE MAIN ONE
+# --------------------------------------------------------
+# FP8 is a training-stability decision, not a speed setting. It gets its own
+# `variant` tag, so it gets its own base_output_dir, checkpoints, wandb run and
+# tensorboard — a bf16 run can never resume from an FP8 checkpoint or vice
+# versa, and the two loss curves stay separable.
+#
+# HOW TO EVALUATE IT (throughput is the easy half)
+# ------------------------------------------------
+# 1. Speed:     -o backend.megatron.exit_interval=50 -o backend.aux.spare_nodes=0
+#               (or run experiments/oellm_32b_dense/speed_test with
+#                +backend/megatron/oellm_32b_dense/precision=fp8)
+# 2. Stability: run this for a few thousand iterations against the bf16
+#               warmup_lr_only run and compare loss, grad norm, and the count of
+#               skipped/NaN iterations at EQUAL TOKENS. Same instrument as the
+#               warmup ablation — the question "does FP8 spike where bf16 does
+#               not" is the same shape as "does this warmup length spike".
+#                 -o backend.megatron.exit_interval=6000 -o job.chain_repeat=1
+#
+# The recipe choices and their rationale live in the precision group config.
+defaults:
+  - oellm_32b_dense
+  # adds FP8 on top of the production config; see that file for why the
+  # defaults are stability-first and which knobs are held back.
+  - /backend/megatron/oellm_32b_dense/precision: fp8
+  - _self_
+
+backend:
+  aux:
+    # Derived from the ACTUAL fp8 settings so the output directory can never
+    # disagree with what was run — sweeping the recipe automatically lands in a
+    # different directory rather than silently overwriting a previous variant.
+    variant: "fp8-${backend.megatron.fp8}-${backend.megatron.fp8_recipe}"

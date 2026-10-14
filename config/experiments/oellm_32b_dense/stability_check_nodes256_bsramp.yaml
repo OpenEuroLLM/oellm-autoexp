@@ -1,0 +1,128 @@
+# @package _global_
+#
+# 256-NODE BATCH-RAMPUP RUN — the rampup test WITHOUT having to disable VPP.
+#
+# ============================================================================
+# WHY 256 NODES RATHER THAN 1024
+# ============================================================================
+# The interleaved (virtual pipeline) schedule requires M >= PP, where
+# M = GBS / (mbs * DP). DP scales with node count, so the minimum usable batch
+# scales with it too:
+#
+#     nodes   GPUs    DP   mbs*DP   VPP floor (PP*mbs*DP)   M at GBS 4096
+#      256    1024    64      128           512                  32
+#      512    2048   128      256          1024                  16
+#     1024    4096   256      512          2048                   8
+#
+# At 1024 nodes the floor is GBS 2048 — half the production batch — so a ramp
+# starting at 512 was only possible by switching VPP OFF
+# (stability_check_nodes1024_bsramp.yaml). At 256 nodes the floor lands exactly
+# on 512, and EVERY ramp stage keeps VPP enabled:
+#
+#     GBS   512 1024 1536 2048 2560 3072 3584 4096
+#     M       4    8   12   16   20   24   28   32     (all >= PP=4)
+#
+# So this run needs no VPP-disabling override, no changed pipeline schedule, and
+# therefore no confound versus the no-ramp reference (job 1380848, which ran
+# with VPP=2).
+#
+# IT IS ALSO CHEAPER, not more expensive. Small M wastes the pipeline: at 1024
+# nodes the ramp starts at M=1 with PP=4, i.e. ~3/4 of the pipeline idle.
+#     1024 nodes, VPP OFF   wall 1.5-1.8 h   ~1500-1800 node-hours
+#      256 nodes, VPP ON    wall 3.9-4.4 h   ~1000-1100 node-hours
+# Longer wall clock, ~35% fewer node-hours.
+#
+# IS A 256-NODE RUN A VALID TEST OF A 1024-NODE PHENOMENON? Yes. DP size does
+# not change the mathematics — the gradient is averaged over the same global
+# batch however many ranks contribute. Only the reduction tree and floating-point
+# ordering differ, which will not create or suppress a +4.59 loss jump.
+#
+# ============================================================================
+# WHAT THIS IS TESTING
+# ============================================================================
+# The no-ramp run at GBS 4096 produced a genuine catastrophic spike inside the
+# LR warmup:
+#     iter 1739:  lm loss +4.590 IN ONE STEP (~2.8 -> 7.40), grad norm 236.5
+# For calibration, the same metric elsewhere:
+#     32B  GBS 128 (16 nodes)   largest 1-step rise ~ +0.1 to +0.4
+#     1.7B GBS 2048 / ramp      largest 1-step rise  +0.108 / +0.348
+# (The 1.7B proxy could not reproduce the spike: it inherited lr 2e-4, which is
+# scale-appropriate for 32B but ~10x conservative for 1.7B, so it never
+# approached its stability edge. That is why the test moved back to 32B.)
+#
+# READ-OFF: largest single-step loss rise over the warmup window, versus +4.590.
+#   ~+0.1 to +0.5  -> the rampup suppresses the spike; adopt it for the flagship
+#   another ~+4    -> batch size is not the driver; drop the rampup
+#
+# ============================================================================
+# THE RAMP
+# ============================================================================
+#   --rampup-batch-size 512 512 8192000
+#     start 512 samples = 2.10 M tokens/iter   (the "start around 2 M" target)
+#     increment 512;  ramp over 8,192,000 samples == lr_warmup_samples, so the
+#     batch ramp and the LR warmup complete together.
+#
+#   num_increments = (4096-512)/512 = 7, so 8,192,000/7 = 1,170,286 samples per
+#   plateau. Equal SAMPLES per plateau, so STEPS halve as the batch grows:
+#
+#     plateau  GBS   steps   cum
+#        1      512   2286   2286
+#        2     1024   1143   3429
+#        3     1536    762   4190
+#        4     2048    571   4762
+#        5     2560    457   5219
+#        6     3072    381   5600
+#        7     3584    327   5927
+#     full GBS 4096 from ~5927 onward.
+#
+# exit_interval 6000 covers the whole ramp plus ~73 steps at full batch. The
+# comparison window (samples 0..8,192,000, i.e. steps 1..5927) is fully inside
+# it. Going further costs ~4096 samples/step for post-warmup data we already
+# have from 1380848; extend from the checkpoint later if wanted.
+defaults:
+  - stability_check_nodes1024
+  - _self_
+
+backend:
+  aux:
+    # 256 active + 2 hot spares. Spares matter: single-node hardware faults
+    # killed this run three times in one night at 1024 nodes.
+    active_nodes: 256
+    spare_nodes: 2
+
+  megatron:
+    # NB deliberately NOT overriding pipeline_model_parallel_layout here — the
+    # parent's eight-virtual-stage layout is inherited, giving VPP = 8/PP = 2,
+    # which is the whole point of running at 256 nodes.
+    rampup_batch_size: ["512", "512", "8192000"]
+    exit_interval: 6000
+
+slurm:
+  sbatch:
+    # ~4.4 h of ramp + startup, with margin for FT restarts.
+    time: "08:00:00"
+
+# Restate the sweep so `variant` takes: the parent's arm pins
+# backend.aux.variant and sweep arms apply AFTER this file's backend.aux block,
+# so setting it there is silently overridden — and variant feeds job.name, hence
+# base_output_dir AND the checkpoint paths. Getting it wrong would make this run
+# resume from the completed no-ramp run's iter_0008000 checkpoint (that is
+# exactly what happened to job 1384514).
+# render_config.py does NOT apply sweep arms — verify with --dry-run.
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.variant: "sc-fp8-zloss1e-4-bsramp256"
+          backend.megatron.output_z_loss_coeff: 1.e-4
+          backend.megatron.fp8: hybrid
+          backend.megatron.fp8_recipe: delayed
+          backend.megatron.cuda_graph_impl: none
+          # false — fp8_param_gather breaks checkpoint saving (CUDA illegal
+          # memory access in the async worker); see the parent config.
+          backend.megatron.fp8_param_gather: false
+          backend.megatron.first_last_layers_bf16: false
+          backend.megatron.fp8_amax_history_len: 1024
+          backend.megatron.fp8_amax_compute_algo: max

@@ -1,0 +1,54 @@
+# @package _global_
+#
+# CHECKPOINT SMOKE TEST — the 16-node stability config, unchanged except that it
+# checkpoints immediately and stops at iteration 20.
+#
+# Answers one question in ~10 minutes instead of 1.5 hours: does a real ~442 GB
+# checkpoint of this model actually land, at the configured paths, given the
+# current quota situation?
+#
+# The sweep arms only reach their first rolling save at iteration 1000 (~90 min
+# in), so a checkpoint problem costs 7 x 16 nodes x 1.5 h before it even shows
+# up — which is what happened when project1 hit its quota and the arms died with
+#     OSError: [Errno 122] Disk quota exceeded
+#
+# INHERITS stability_check_nodes16 SO THE TEST IS THE REAL THING: same pinned
+# baseline, same GBS 128 / mbs 2 / TP 4 / PP 4, same scratch checkpoint paths,
+# same async_save + persistent worker + ckpt_assume_constant_structure, same
+# cuda_graph_impl: none. Only three things differ:
+#     exit_interval               8000 -> 20
+#     non_persistent_save_interval 1000 -> 10   (rolling tier at iter 10 and 20)
+#     save_interval                4000 -> 20   (persistent tier at iter 20)
+# plus a distinct `variant`, so this cannot collide with the running sc-base arm
+# or resume from its checkpoints.
+#
+# The 7-arm sweep is emptied — this is one job, not another sweep.
+#
+# PASS = "successfully saved checkpoint from iteration 10" and "... 20" in the
+# log, exit code 0, and non-empty directories under BOTH checkpoint paths.
+# ~884 GB of scratch churn; delete the directory afterwards.
+defaults:
+  - stability_check_nodes16
+  - _self_
+
+backend:
+  aux:
+    variant: "ckptcheck"
+
+  megatron:
+    exit_interval: 20
+    non_persistent_save_interval: 10
+    save_interval: 20
+
+job:
+  chain_repeat: 1
+
+slurm:
+  sbatch:
+    time: "00:40:00"    # ~5 min startup + 20 iters + two ~60 s saves
+
+# Replace the parent's 7 arms with nothing: one job, using the pinned baseline.
+sweep:
+  type: list
+  groups: []
+  store_sweep_json: false

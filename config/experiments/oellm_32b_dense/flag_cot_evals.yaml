@@ -1,0 +1,148 @@
+# @package _global_
+#
+# ============================================================================
+# FLAG PRE-TRAINING VARIANTS (_cot / _cont) FOR EXISTING EXPORTS
+# ============================================================================
+# The "cot" half of the FLAG suite: task group flag-evals-cot of submodules/oellm-eval
+# (custom_lm_eval_tasks/flag_cot), 33 evals, listed in config/eval_tasks/flag_cot.yaml:
+#   _cot   AIME24/25, AMC23, MATH500, JEEBench, GPQA Diamond, PolyMath (24): the release prompt
+#          + " <think>\n" (forced reasoning), sampled at T 0.6 / top_p 0.95
+#   _cont  HumanEval, LiveCodeBench (0-shot), MBPP (3-shot) as code continuations, T 0.6 / top_p 0.6
+# all with pass@1 (mean over n samples) and pass@k; n, k and their sources in each task YAML.
+# The release (greedy) evals stay in the 438 suite (lineage_flag_evals / merge3_flag_evals).
+#
+#   prepare  login node eval_checkpoints.sh cot-prepare: the cot launcher, NOT submitted; own state
+#                       file <name>.cot.env, so it works for exports prepared for the 438 before
+#   eval     ONE SLURM array per export, one task per eval (33); a failed task -- or one that exits
+#                       0 without its done marker -- is resubmitted once, alone
+#   collect  login node eval_checkpoints.sh cot-collect -> $FLAG_WORK/results/<name>.flag-cot.tasks.csv
+# The exports must exist (no conversion here): aux.lineage_ckpts lists them, aux.ckpt_select picks.
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/oellm_32b_dense/flag_cot_evals \
+#       ['aux.ckpt_select=[v2anneal_120k]'] ['aux.flag_select=[cot/aime24_cot/0,cot/humaneval_cont/0]']
+# Keep the session running until every `collect` has finished.
+# ============================================================================
+defaults:
+  - lineage_flag_evals
+  - override /eval_tasks@aux.flag_suite: flag_cot
+  - _self_
+
+aux:
+  # lineage_flag_evals' fields (exists: true = the export is in export_root; ckpt unused here).
+  lineage_ckpts:
+    - {name: oldprod_60k,                 lines: [v1],      step: 60000,  exists: true, ckpt: ""}
+    - {name: v2_60k,                      lines: [v1C, v2], step: 60000,  exists: true, ckpt: ""}
+    - {name: b1prod_70k,                  lines: [v1],      step: 70000,  exists: true, ckpt: ""}
+    - {name: b1cons_70k,                  lines: [v1C],     step: 70000,  exists: true, ckpt: ""}
+    - {name: v2zloss_70k,                 lines: [v2],      step: 70000,  exists: true, ckpt: ""}
+    - {name: b1prod_80k,                  lines: [v1],      step: 80000,  exists: true, ckpt: ""}
+    - {name: b1cons_80k,                  lines: [v1C, v1T], step: 80000, exists: true, ckpt: ""}
+    - {name: v2zloss_80k,                 lines: [v2],      step: 80000,  exists: true, ckpt: ""}
+    - {name: b1prod_90k,                  lines: [v1],      step: 90000,  exists: true, ckpt: ""}
+    - {name: b1cons_90k,                  lines: [v1C],     step: 90000,  exists: true, ckpt: ""}
+    - {name: tweo_90k,                    lines: [v1T],     step: 90000,  exists: true, ckpt: ""}
+    - {name: v2zloss_90k,                 lines: [v2],      step: 90000,  exists: true, ckpt: ""}
+    - {name: v1anneal_100k,               lines: [v1],      step: 100000, exists: true, ckpt: ""}
+    - {name: v1annealC_100k,              lines: [v1C],     step: 100000, exists: true, ckpt: ""}
+    - {name: v1annealT_100k,              lines: [v1T],     step: 100000, exists: true, ckpt: ""}
+    - {name: v2anneal_100k,               lines: [v2],      step: 100000, exists: true, ckpt: ""}
+    - {name: v1anneal_120k,               lines: [v1],      step: 120000, exists: true, ckpt: ""}
+    - {name: v1annealC_120k_l0fix,        lines: [v1C],     step: 120000, exists: true, ckpt: ""}
+    - {name: v1annealTT_120k,             lines: [v1T],     step: 120000, exists: true, ckpt: ""}
+    - {name: v2anneal_120k,               lines: [v2],      step: 120000, exists: true, ckpt: ""}
+    - {name: v1anneal_merge3_116k_120k,   lines: [v1],      step: 120000, exists: true, ckpt: ""}
+    - {name: v1annealC_merge3_116k_120k,  lines: [v1C],     step: 120000, exists: true, ckpt: ""}
+    - {name: v1annealTT_merge3_116k_120k, lines: [v1T],     step: 120000, exists: true, ckpt: ""}
+    - {name: v2anneal_merge3_116k_120k,   lines: [v2],      step: 120000, exists: true, ckpt: ""}
+    # v1CT = the v1C tensorwise re-anneal (b1_conservative60k_100k_annealing_tensorwise[_merge3_evals])
+    - {name: v1annealCT_120k,             lines: [v1CT],    step: 120000, exists: true, ckpt: ""}
+    - {name: v1annealCT_merge3_116k_120k, lines: [v1CT],    step: 120000, exists: true, ckpt: ""}
+  # Default: the 120k anneal ends (v1 / v1C repaired / v1T / v2) and the v1C tensorwise
+  # re-anneal (v1CT) with its merge3.
+  ckpt_select: [v1anneal_120k, v1annealC_120k_l0fix, v1annealTT_120k, v2anneal_120k,
+                v1annealCT_120k, v1annealCT_merge3_116k_120k]
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: true
+  groups:
+    # ====== the checkpoints ======
+    - type: product
+      params:
+        aux.ck_i: ${aux.ckpt_indices}
+
+    # ====== the stage chain, per checkpoint (per-checkpoint values escaped, see lineage_flag_evals)
+    - type: list
+      configs:
+        # ====== the cot launcher for the export (login node: views + render, no submission)
+        - stage: prepare
+          backend: bash
+          job: default
+          job.local: true
+          job.name: "cot_prepare_\\${aux.export_name}"
+          job.est_steps: 1
+          job.est_step_time_s: 120
+          job.est_startup_min: 0
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${aux.export_ready}"
+          backend.env:
+            MODEL: "32b_dense"
+            FLAG_WORK: ${aux.flag_work}
+            FLAG_ACCOUNT: "e-sta-openeurollm"
+            # A checkout without git metadata (an rsynced test clone) cannot prove the
+            # oellm-eval pin; launch with ALLOW_EVAL_REV_MISMATCH=1 there.
+            ALLOW_EVAL_REV_MISMATCH: ${oc.env:ALLOW_EVAL_REV_MISMATCH,"0"}
+          backend.command: |
+            set -eu
+            ${aux.repo}/scripts/downstream_eval/eval_checkpoints.sh cot-prepare \${aux.export_name}
+
+        # ====== the evals: ONE SLURM array per export, one task (and monitor record) per eval
+        - params:
+            aux.flag_i: ${aux.flag_indices}
+          defaults:
+            stage: eval
+            backend: bash
+            slurm: jupiter_driver
+            job: array_task
+            job.name: "cot_eval_\\${aux.export_name}"
+            job.array_group: "cot_eval_\\${aux.export_name}"
+            job.est_steps: 1
+            # the slowest are AIME/AMC (32 samples x up to ~3.8k tokens) and LiveCodeBench grading
+            job.est_step_time_s: 1200
+            job.est_startup_min: 0
+            job.start_condition:
+              class_name: FileExistsCondition
+              path: "${aux.flag_work}/state/\\${aux.export_name}.cot.env"
+            job.finish_condition:
+              class_name: FileExistsCondition
+              path: "\\${aux.flag_done}"
+            backend.env:
+              FLAG_WORK: ${aux.flag_work}
+            backend.command: "\\${aux.flag_run_one}"
+            slurm.array_concurrency: 40
+            slurm.sbatch.account: e-sta-openeurollm
+            slurm.sbatch.nodes: 1
+            slurm.sbatch.time: "01:30:00"
+            slurm.sbatch.signal: null
+            slurm.sbatch.comment: null
+
+        # ====== collect (login node), once every eval task of the export finished or was given up
+        - stage: collect
+          backend: bash
+          job: default
+          job.local: true
+          job.name: "cot_collect_\\${aux.export_name}"
+          job.est_steps: 1
+          job.est_step_time_s: 60
+          job.est_startup_min: 0
+          job.start_condition:
+            class_name: JobsFinishedCondition
+            array_groups: ["cot_eval_\\${aux.export_name}"]
+          backend.env:
+            MODEL: "32b_dense"
+            FLAG_WORK: ${aux.flag_work}
+          backend.command: |
+            set -eu
+            ${aux.repo}/scripts/downstream_eval/eval_checkpoints.sh cot-collect \${aux.export_name}

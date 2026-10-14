@@ -1,0 +1,121 @@
+# @package _global_
+#
+# WEAK SCALING, MODEL AXIS: model size and nodes grow together (~13 M params/node).
+#
+# THREE SMALL DENSE FAMILIES — 400M / 1.7B / 7B — at TP=1, PP=1 (no model
+# parallelism is needed at these sizes, so DP = 4 x nodes throughout).
+#
+# THE BINDING CONSTRAINT IS  M = GBS / (mbs * DP) >= 1.
+# With TP=PP=1 that is  nodes <= GBS / (mbs * 4).  Raising GBS to 16384 (from
+# 4096) is what lets all three families reach 512 nodes; at GBS 4096 a
+# mbs-8 model was capped at 128 nodes. Larger mbs and more nodes pull against
+# each other, so mbs is chosen per model size:
+#     400M mbs 8   1.7B mbs 4   7B mbs 2
+#
+# WHY mbs MATTERS HERE: at GBS 16384 on a single node (DP=4) an mbs of 2 would
+# mean M = 2048 micro-batches per rank per step, so per-micro-batch overhead is
+# paid 2048 times. Raising mbs is what makes the small-node end of a
+# fixed-GBS sweep meaningful rather than overhead-dominated.
+#
+# GEOMETRIES are the ones already in this repo (opensci_ref_400M, qwen3_1.7B,
+# and the 7B arm of weak_scaling_model.yaml) rather than newly invented ones.
+# NB the 400M config is slightly off-family: ffn/hidden is 3.75 (not 5) and
+# head_dim is 64 (not 128). It is used as-is because it is already validated;
+# if the scaling-law fit needs a strictly self-similar family, regenerate it.
+#
+# FP8 (hybrid + delayed), fp32 grad accumulation, no fp8_param_gather, and the
+# stability-run amax settings — identical to the fp8_* sweeps so these numbers
+# are directly comparable with the 32B results.
+#
+# CAVEAT NOT YET TESTED: FP8 gain may be smaller at 400M, where hidden=1024
+# makes the GEMMs small enough that quantisation overhead is proportionally
+# larger. Worth one bf16 comparison at 400M before trusting the absolute values.
+#
+# COST: ~260 node-hours.
+defaults:
+  - /experiments/oellm_32b_dense/speed_test
+  - override /slurm: jupiter_autoexclude
+  - override /job: auto_cancel_speedtest
+  - _self_
+
+backend:
+  megatron:
+    fp8: hybrid
+    fp8_recipe: delayed
+    fp8_param_gather: false
+    first_last_layers_bf16: false
+    fp8_amax_history_len: 1024
+    fp8_amax_compute_algo: max
+    cuda_graph_impl: none
+    # REQUIRED FOR PP=1 — the parent chain sets an 8-stage
+    # pipeline_model_parallel_layout (read as an interleaved schedule, asserts
+    # at startup when PP=1) and defer_embedding_wgrad_compute (needs PP>1).
+    # num_layers_per_virtual_pipeline_stage: null does NOT clear the layout.
+    pipeline_model_parallel_layout: null
+    defer_embedding_wgrad_compute: false
+    # See fp8_strong_scaling.yaml: ONE switch only; Megatron derives
+    # accumulate_allreduce_grads_in_fp32 from this (arguments.py:742-745).
+    grad_reduce_in_bf16: false
+    eval_iters: 10
+    wandb_project: oellm_speed_scaling
+    # 15T blend index is reused; these arms only vary GBS/model, not train_samples.
+    wgrad_deferral_limit: 32
+
+job:
+  name: "speedscale_${backend.aux.variant}_gbs${backend.megatron.global_batch_size}"
+  chain_repeat: 0
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - backend.aux.variant: "fp8small-weakmodel-400m-n32"
+          backend.aux.active_nodes: 32
+          backend.megatron.global_batch_size: 1024
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.tensor_model_parallel_size: 1
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.sequence_parallel: false
+          backend.megatron.tp_comm_overlap: false
+          backend.megatron.num_layers: 22
+          backend.megatron.hidden_size: 1024
+          backend.megatron.ffn_hidden_size: 3840
+          backend.megatron.num_attention_heads: 16
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 100
+          slurm.sbatch.time: "00:25:00"
+        - backend.aux.variant: "fp8small-weakmodel-1b7-n128"
+          backend.aux.active_nodes: 128
+          backend.megatron.global_batch_size: 4096
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.tensor_model_parallel_size: 1
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.sequence_parallel: false
+          backend.megatron.tp_comm_overlap: false
+          backend.megatron.num_layers: 28
+          backend.megatron.hidden_size: 2048
+          backend.megatron.ffn_hidden_size: 6144
+          backend.megatron.num_attention_heads: 16
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 100
+          slurm.sbatch.time: "00:25:00"
+        - backend.aux.variant: "fp8small-weakmodel-7b-n512"
+          backend.aux.active_nodes: 512
+          backend.megatron.global_batch_size: 16384
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.tensor_model_parallel_size: 2
+          backend.megatron.pipeline_model_parallel_size: 1
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.sequence_parallel: true
+          backend.megatron.tp_comm_overlap: false
+          backend.megatron.num_layers: 40
+          backend.megatron.hidden_size: 3072
+          backend.megatron.ffn_hidden_size: 15360
+          backend.megatron.num_attention_heads: 24
+          backend.megatron.num_query_groups: 8
+          backend.megatron.exit_interval: 100
+          slurm.sbatch.time: "00:40:00"

@@ -1,0 +1,29 @@
+# @package _global_
+#
+# LR dose response arm: 1.76e-4. This is the geometric midpoint of the 3e-4
+# control and the 1e-4 arm, so the ladder is evenly log-spaced (x1.70 then
+# x1.76) rather than the lopsided x1.5 / x2.0 that 2e-4 would have given.
+# All reasoning, the control table and the read-off criteria are in
+# oellm_32b_dense_lrdose_base.yaml -- read that first.
+#
+#   scripts/oellm_32b.sh --config-name experiments/oellm_32b_dense/oellm_32b_dense_lrdose_1p76e-4
+#
+# Either run it with the monitor, or seed by hand and sbatch the training stage
+# directly -- see "RUNNING WITHOUT THE MONITOR" in the base config. The seed
+# stage is gated by a FileExistsCondition evaluated only in the monitor loop, so
+# --submit-and-exit / --no-monitor would otherwise submit the seed and never the
+# training job.
+defaults:
+  - oellm_32b_dense_lrdose_base
+  - _self_
+
+aux:
+  # Carries the whole identity: checkpoint tree, run name, seed-stage job name.
+  # The LR is in it so the two arms cannot share a checkpoint tree.
+  variant_tag: "prod_dataopt5_lrdose_1p76e-4_i64k_seed1234"
+
+backend:
+  aux:
+    lr_tag: "1.76e-4"        # cosmetic, feeds job.name
+  megatron:
+    lr: 1.76e-4

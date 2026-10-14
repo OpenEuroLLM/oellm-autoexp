@@ -119,6 +119,101 @@ class MaxAttemptsCondition(BaseCondition):
 
 
 @dataclass
+class MaxActionFiresConditionConfig(ConditionConfigMixin, ConfigInterface):
+    class_name: str = "MaxActionFiresCondition"
+    max_fires: int = 3
+
+
+@register
+class MaxActionFiresCondition(BaseCondition):
+    """Cap how many times THIS event's own action may run.
+
+    The per-event counterpart to :class:`MaxAttemptsCondition`, which reads the
+    JOB-WIDE ``runtime.attempts``. That distinction is the whole point: on a
+    chained production run the job-wide counter is dominated by healthy
+    wall-clock rollovers (a 15 TT schedule needs ~91 of them), so a
+    ``MaxAttemptsCondition: 4`` meant to say "give up after 4 stalls" actually
+    says "stop reacting to stalls once the run has restarted 4 times for ANY
+    reason" — i.e. it disables itself around segment 5 and the failure it guards
+    becomes invisible again. This counts only this event's executions, so
+    different events get genuinely independent budgets: generous for a benign
+    rollover, tight for a real fault.
+
+    The count lives in ``action_state[action_id]["fire_count"]`` (incremented by
+    the monitor loop after each execution) and is passed in via
+    ``context.extra["action_fires"]``. It survives restarts, because
+    ``_restart_job`` preserves ``action_state``.
+
+    ONLY MEANINGFUL ON EVENT CONDITIONS. ``start``/``cancel``/``finish``
+    conditions are not tied to an action, so ``action_fires`` is absent there and
+    this passes unconditionally — use MaxAttemptsCondition for those.
+
+    NB exhausting the budget makes the event STOP ACTING, it does not stop the
+    job. If the event is the only thing watching for a fault, pair it with a
+    lower-priority event carrying a CancelAction so the run ends loudly instead
+    of going unwatched.
+    """
+
+    config: MaxActionFiresConditionConfig
+
+    def check(self, context: ConditionContext) -> ConditionResult:
+        fires = int(context.extra.get("action_fires", 0))
+        if fires < self.config.max_fires:
+            return ConditionResult(
+                passed=True,
+                message=f"{fires}/{self.config.max_fires} fires used",
+                metadata={"action_fires": fires},
+            )
+        return ConditionResult(
+            passed=False,
+            message=f"action fired {fires} times >= limit {self.config.max_fires}",
+            metadata={"action_fires": fires},
+        )
+
+
+@dataclass
+class IterationMultipleConditionConfig(ConditionConfigMixin, ConfigInterface):
+    class_name: str = "IterationMultipleCondition"
+    # the event variable holding the iteration (a named regex group of the log event)
+    key: str = "iteration"
+    # fire only when that iteration is a multiple of `every` (0 = never: the hook is off)
+    every: int = 0
+
+
+@register
+class IterationMultipleCondition(BaseCondition):
+    """Pass when the event's iteration (extracted from the log line) is a
+    multiple of ``every``.
+
+    Built for checkpoint hooks: Megatron prints 'successfully saved checkpoint from iteration N'
+    for every persistent checkpoint; an evaluation of each 2k checkpoint would be too much, one
+    every 4k or 8k is what the downstream trajectories use. ``every: 0`` disables the hook.
+    """
+
+    config: IterationMultipleConditionConfig
+
+    def check(self, context: ConditionContext) -> ConditionResult:
+        if not self.config.every or self.config.every <= 0:
+            return ConditionResult(passed=False, message="hook disabled (every = 0)")
+        raw = context.variables.get(self.config.key)
+        try:
+            it = int(str(raw).replace(",", ""))
+        except (TypeError, ValueError):
+            return ConditionResult(
+                passed=False, message=f"no integer {self.config.key} in the event ({raw!r})"
+            )
+        if it % self.config.every == 0:
+            return ConditionResult(
+                passed=True,
+                message=f"iteration {it} is a multiple of {self.config.every}",
+                metadata={"iteration": it},
+            )
+        return ConditionResult(
+            passed=False, message=f"iteration {it} is not a multiple of {self.config.every}"
+        )
+
+
+@dataclass
 class CooldownConditionConfig(ConditionConfigMixin, ConfigInterface):
     class_name: str = "CooldownCondition"
     cooldown_seconds: float = 60.0
@@ -204,6 +299,66 @@ class GlobExistsCondition(BaseCondition):
         if count >= self.config.min_matches:
             return ConditionResult(passed=True)
         return ConditionResult(passed=False, message=f"glob {rendered} missing")
+
+
+@dataclass
+class JobsFinishedConditionConfig(ConditionConfigMixin, ConfigInterface):
+    """Pass once every job of the named stages / array groups in this session
+    is finished or cancelled -- the monitor-side dependency of a stage that
+    aggregates others (e.g. collecting the results of an eval array).
+
+    A job matches if its stage is in ``stages`` OR its ``job.array_group`` is in
+    ``array_groups``. Stage names repeat across the arms of a sweep, array group
+    names usually do not (they interpolate the arm), so prefer ``array_groups``
+    when several arms share a session. At least one job must match: a typo in a
+    name must not pass vacuously.
+    """
+
+    class_name: str = "JobsFinishedCondition"
+    stages: list[str] = field(default_factory=list)
+    array_groups: list[str] = field(default_factory=list)
+    # Also require that none of them ended cancelled (a failed task after its retries).
+    require_success: bool = False
+
+
+@register
+class JobsFinishedCondition(BaseCondition):
+    config: JobsFinishedConditionConfig
+
+    def check(self, context: ConditionContext) -> ConditionResult:
+        import json
+
+        session_dir = context.job_metadata.get("session_dir")
+        if not session_dir:
+            return ConditionResult(passed=False, message="no session_dir in job metadata")
+        stages = set(self.config.stages)
+        groups = set(self.config.array_groups)
+        matched = active = failed = 0
+        for path in Path(session_dir).glob("*.job.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            definition = payload.get("definition") or {}
+            stage = (definition.get("metadata") or {}).get("stage")
+            if stage not in stages and definition.get("array_group") not in groups:
+                continue
+            matched += 1
+            final = (payload.get("runtime") or {}).get("final_state")
+            if final is None:
+                active += 1
+            elif final != "finished":
+                failed += 1
+        if matched == 0:
+            return ConditionResult(
+                passed=False,
+                message=f"no job of stages {sorted(stages)} / array groups {sorted(groups)}",
+            )
+        if active:
+            return ConditionResult(passed=False, message=f"{active}/{matched} job(s) still active")
+        if failed and self.config.require_success:
+            return ConditionResult(passed=False, message=f"{failed}/{matched} job(s) cancelled")
+        return ConditionResult(passed=True, message=f"{matched} job(s) done, {failed} cancelled")
 
 
 @dataclass
@@ -438,11 +593,13 @@ __all__ = [
     "ConditionResult",
     "AlwaysTrueCondition",
     "MaxAttemptsCondition",
+    "MaxActionFiresCondition",
     "CooldownCondition",
     "TimeoutCondition",
     "FileExistsCondition",
     "FileContentCondition",
     "GlobExistsCondition",
+    "JobsFinishedCondition",
     "CommandCondition",
     "ShellCommandCondition",
     "CompositeCondition",

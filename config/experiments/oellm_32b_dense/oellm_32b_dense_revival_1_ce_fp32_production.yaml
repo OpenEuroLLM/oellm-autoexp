@@ -1,0 +1,28 @@
+# @package _global_
+# Production continuation of the selected full-state 110000 checkpoint.
+# Megatron's submodule pins the validated native CE/z FP32 backward correction.
+# Keep the production checkpoint cadence, timed rollover, fault scan, evaluation
+# hooks, W&B destination and full optimizer/RNG loading.
+defaults:
+  - /experiments/oellm_32b_dense/oellm_32b_dense_revival_1
+  - _self_
+
+job:
+  checkpoint_hook_every: 2000
+
+backend:
+  megatron:
+    cross_entropy_loss_fusion: true
+    cross_entropy_fusion_impl: native
+    output_z_loss_coeff: 1e-4
+    no_load_optim: false
+    no_load_rng: false
+    # Retain the successful experiment's writable cache/link farm, including
+    # entries absent from the older shared cache. Dataset mix/order is unchanged.
+    data_cache_path: /e/fscratch/e-sta-openeurollm/jj1/data_cache_link
+
+slurm:
+  # Same post-maintenance launcher as the successful TP4/PP4/DP128 experiment.
+  srun_opts: "--kill-on-bad-exit=1 --mpi=none --cpus-per-task=288"
+  env:
+    SLURM_MPI_TYPE: none

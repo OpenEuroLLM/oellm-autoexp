@@ -1,5 +1,9 @@
 import argparse
 
+from oellm_autoexp.backends.megatron.cli_metadata import (
+    MEGATRON_ACTION_SPECS,
+    MEGATRON_ARG_METADATA,
+)
 from oellm_autoexp.backends.megatron_args import (
     build_cmdline_args,
     extract_default_args,
@@ -54,3 +58,36 @@ def test_extract_default_args_handles_overrides_and_metadata():
     assert defaults == {"count": 42, "mode": "slow"}
     assert metadata["mode"].choices == ("fast", "slow")
     assert metadata["count"].help == "Number of items"
+
+
+def test_inter_document_masking_toggle_renders():
+    """The cross-document attention flags must map to the right Megatron CLI
+    form.
+
+    Renamed from test_packed_doc_attention_toggle_renders when the repo moved to
+    megatron-core 0.19: our --packed-doc-attention patch was dropped in favour of
+    upstream's --dataloader-inter-document-masking, which is a superset (it also
+    supports context parallelism and the SFT path).
+
+    dataloader_inter_document_masking is a plain store_true, while
+    create_attention_mask_in_dataloader is inverted (--no-create-...), so a naive
+    rendering would emit a flag Megatron rejects.
+    """
+
+    def render(cfg):
+        return build_cmdline_args(cfg, MEGATRON_ARG_METADATA, MEGATRON_ACTION_SPECS)
+
+    assert render({"dataloader_inter_document_masking": True}) == [
+        "--dataloader-inter-document-masking"
+    ]
+    assert render({"dataloader_inter_document_masking": False}) == []
+    assert render({"create_attention_mask_in_dataloader": True}) == []
+    assert render({"create_attention_mask_in_dataloader": False}) == [
+        "--no-create-attention-mask-in-dataloader"
+    ]
+    assert render(
+        {"dataloader_inter_document_masking": True, "create_attention_mask_in_dataloader": False}
+    ) == [
+        "--dataloader-inter-document-masking",
+        "--no-create-attention-mask-in-dataloader",
+    ]

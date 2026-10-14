@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 import yaml
 
 from compoconf import ConfigInterface, register, asdict
@@ -74,6 +75,14 @@ class SlurmClient(JobClientInterface):
             job.slurm.script_path,
             job.slurm.name,
         )
+        # Nobody creates the log directory for a job name that has never run:
+        # sbatch does NOT create the --output directory (the job dies at launch
+        # with "Unable to open file"), and the config dump below would raise
+        # FileNotFoundError. The %j placeholder only ever sits in the FILENAME,
+        # so the parent directory is already final here.
+        for path in (job.log_path, job.config_path):
+            if path:
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
         job_id = self._client.submit(job.slurm)
         LOGGER.info(f"Submitted job ({job_id}): {job.slurm.name}")
         # The current.* symlinks are (re)pointed by the monitor when the job goes
@@ -138,6 +147,27 @@ class SlurmClient(JobClientInterface):
             Statuses: "RUNNING", "COMPLETED", "FAILED", "CANCELLED"
         """
         return self._client.squeue()
+
+    def register_job(
+        self,
+        job: SlurmJobConfig,
+        job_id: str,
+        state: str | None = None,
+    ) -> None:
+        """Adopt an already-submitted SLURM job into the underlying client.
+
+        The base client only learns about a job through ``submit()``, and its
+        ``squeue()`` short-circuits to ``{}`` while nothing is tracked. A monitor
+        that re-attaches to a session therefore has to re-register the jobs by
+        hand or it stays blind to SLURM for its whole lifetime.
+
+        Args:
+            job: Stored job definition (carries the SlurmConfig).
+            job_id: SLURM job id, e.g. ``1524558`` or ``1524558_3``.
+            state: Last known state; PENDING is only the placeholder until the
+                next squeue overwrites it.
+        """
+        self._client.register_job(job_id, job.slurm, state=state or "PENDING")
 
     def update_excludes(self, job_id: str, nodelist: str) -> None:
         """Update a pending job's excluded-node list (delegates to

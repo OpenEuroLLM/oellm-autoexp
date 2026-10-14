@@ -1,0 +1,48 @@
+# @package _global_
+#
+# ============================================================================
+# COOLDOWN OF THE B1 TWEO RUN: 100000 -> 120000, 1-sqrt, TWEO kept on
+# ============================================================================
+# Identical to b1_conservative60k_100k_annealing (seed + anneal stages, anneal
+# mix, 120k schedule, prod_v2's anneal cache, timing_log_level 0) plus TWEO with
+# the calibrated profile of the parent run. Only the parent checkpoint, the run
+# name and the six tweo_* arguments differ.
+#
+# PARENT: Jenia's B1_TWEO_conservative80k_to100k
+#   (/e/fscratch/e-ext-2025e02-108/jitsev1/tweo_continuation_100k_20260928/tweo)
+#   0 -> 60k        v2 line (bf16)
+#   60k -> 80k      B1-conservative60k (B1 recipe, FP8 hybrid, fixed defer)
+#   80000 -> 80146  TWEO pilot, seeded from B1-conservative60k/iter_0080000
+#   80146 -> 100k   this TWEO continuation; at 100k: lm loss 1.4049, consumed
+#                   samples 409600000 = 100000 * 4096, lr 3e-4 plateau,
+#                   iter_0100000 = 2048 shards + .metadata + metadata.json
+#
+# TWEO (Megatron 5dd5714, release oellm-32b-b1-tweo-20261002): quartic
+# auxiliary gradient at each post-MLP residual output, tweo_loss_coeff 0 = off.
+# The values below are the calibrated profile of the parent run (restore
+# contract / tools/b1_run.py contract('tweo', ...)); the coefficient was
+# calibrated on exactly this lineage (conservative-v1-seeded 80k). The ramp is
+# anchored at the absolute iteration 80000, so at 100k the full coefficient
+# applies from the first anneal step; nothing restarts.
+#
+# Deliberate difference from Jenia's TWEO recipe: saves stay asynchronous (B1
+# base). His recipe saves synchronously only to write per-save receipts from
+# his wrapper (tools/b1_tweo_training.py); no numerical effect.
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_dense/b1_tweo80k_100k_annealing --dry-run
+defaults:
+  - b1_conservative60k_100k_annealing
+  - _self_
+
+backend:
+  aux:
+    variant: "b1_tweo80k_100kcooldown120k"
+    parent_ckpts: /e/fscratch/e-ext-2025e02-108/jitsev1/tweo_continuation_100k_20260928/tweo/training_ckpts/checkpoints
+  megatron:
+    tweo_loss_coeff: 7.817552855400486e-14
+    tweo_tau: 3.0
+    tweo_start_step: 80000
+    tweo_warmup_steps: 100
+    tweo_implementation: fused
+    tweo_diagnostics_interval: 100

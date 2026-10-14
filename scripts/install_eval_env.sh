@@ -12,7 +12,7 @@
 #                inside laif-rocm-….sif (container ships rocm torch)
 #
 # The `[eval]` / `[eval-base]` extras are declared in
-# submodules/oellm_evals/pyproject.toml — they're the single source of
+# submodules/oellm-eval/pyproject.toml — they're the single source of
 # truth for what lm-eval-harness needs.
 #
 # Run from the repo root on a login node with internet access. Idempotent:
@@ -29,7 +29,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OELLM_EVALS_DIR="$REPO_ROOT/submodules/oellm_evals"
+OELLM_EVALS_DIR="$REPO_ROOT/submodules/oellm-eval"
 AUTOEXP_DIR="$REPO_ROOT"
 
 CLUSTER=""

@@ -9,6 +9,7 @@
 # ml CUDA/13
 # ml NCCL/default-CUDA-13
 module purge
+ulimit -c 0
 
 # Disable core dumps. core_pattern is relative (core.%h.%p), so a crashing rank
 # would otherwise write a multi-GB memory dump into the job CWD — the repo on the

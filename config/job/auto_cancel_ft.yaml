@@ -1,0 +1,149 @@
+defaults:
+ - default
+
+# CANCEL-ON-ERROR policy for FAULT-TOLERANT (ft_launcher) runs.
+#
+# WHY THIS EXISTS — two healthy 1024-node runs were killed by auto_cancel.yaml:
+#   1379130  cancelled at iteration 4204/8000 by err_rendezvous, on
+#            RendezvousClosedError (1986 occurrences, ZERO genuine error hits)
+#   1380778  cancelled at iteration 3101/8000 by err_cpp_terminate, on
+#            "terminate called after throwing an instance of", while iterations
+#            were still ADVANCING (3010 -> 3101 across polls)
+#
+# THE PRINCIPLE. Under ft_launcher a rank-level fault is EXPECTED to appear in
+# the log and then be RECOVERED — that is what fault tolerance does. Matching
+# those strings as fatal does not detect failure, it CAUSES it: the policy kills
+# a run precisely when its resilience machinery is doing its job.
+#
+# So a fault string is NOT evidence of failure here. The only trustworthy
+# signals for an FT run are:
+#   1. SLURM says the job is dead                       (state_events, below)
+#   2. Forward progress has stopped                     (inactivity, below, plus
+#      the ITERATION-counter stall check in
+#      scripts/oellm_32b_watchdog.sh — needed because a stuck run can still
+#      emit log output: job 1375720 grew its log to 251 MB of restart banners
+#      over 4 h at iteration 100, so a log-activity check alone is not enough)
+#   3. A configuration/data fault that makes ANY progress impossible
+#
+# Only category 3 is pattern-matched below. Everything transient is deliberately
+# absent — NOT an oversight:
+#     err_cuda_alloc_init, err_rendezvous, err_userbuffers_stall,
+#     err_nccl_timeout, err_cuda_illegal_access, err_cpp_terminate,
+#     err_node_failure, err_child_failed, "Exited with exit code 1"
+# Use config/job/auto_cancel.yaml for NON-FT runs (e.g. the torchrun speed
+# tests), where there is no recovery layer and those patterns are the fastest
+# honest signal.
+log_events:
+  - name: finished_training
+    pattern: "[after training is done]"
+    pattern_type: substring
+    action:
+      class_name: FinishAction
+      reason: "Training finished"
+  - name: finish
+    pattern: ".*validation loss.*on test set.*"
+    pattern_type: regex
+    action:
+      class_name: FinishAction
+      reason: "Test Evaluation Finished"
+
+  # === CONFIG / DATA FAULTS ONLY ===========================================
+  # These make forward progress impossible no matter how many times FT retries,
+  # so failing fast is strictly better than waiting out the inactivity timeout.
+
+  - name: err_unrecognized_argument
+    pattern: "unrecognized arguments"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "Launcher rejected an argument (check torchrun_args/ft args)"
+
+  - name: err_disk_quota
+    pattern: "Disk quota exceeded|Errno 122"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Disk quota exceeded — free space or move checkpoints to scratch"
+
+  - name: err_fp8_metadata
+    pattern: "Saved FP8 metadata does not match"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "FP8 recipe/CUDA-graph mismatch — set cuda_graph_impl: none"
+
+  - name: err_dataset_cache_corrupt
+    pattern: "mmap length is greater than file size|ValueError: cannot reshape array"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Corrupt dataset cache — run scripts/check_data_cache.py --repair"
+
+  - name: err_infra_rank
+    pattern: "Invalid infrastructure rank"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "NVRx infrastructure rank invalid — check use_infra_group_rank"
+
+  - name: err_torch_oom
+    pattern: "torch\\.cuda\\.OutOfMemoryError|CUDA out of memory\\. Tried to allocate"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Model OOM — reduce micro_batch_size or raise TP/PP"
+
+  # Setup-time configuration errors. These raise on EVERY restart, so under FT
+  # they produce an unbounded relaunch loop that the transient-fault patterns
+  # deliberately ignore and that the log-inactivity check cannot see (the log
+  # keeps growing with fresh setup banners). Observed:
+  #   "should range in [PP=..., M=...]"        VPP needs M >= PP  (job 1384533,
+  #                                            3 setup cycles on 1026 nodes)
+  #   "Cannot defer embedding wgrad compute"   needs PP > 1       (jobs 1385132/
+  #                                            1385134, 29 cycles on 32 nodes)
+  # Specific strings, not a bare "ValueError", to avoid matching benign text.
+  - name: err_setup_config_invalid
+    pattern: "should range in \\[PP=|Cannot defer embedding wgrad compute|is not divisible by|must be divisible by"
+    pattern_type: regex
+    action:
+      class_name: CancelAction
+      reason: "Setup-time config error — will fail identically on every restart"
+
+  - name: time_limit
+    pattern: "DUE TO TIME LIMIT"
+    pattern_type: substring
+    action:
+      class_name: FinishAction
+      reason: ""
+
+  # Progress-based catch-all. 1200 s of log silence, because a 1024-node startup
+  # plus a ~442 GB checkpoint save can legitimately exceed 5 minutes of quiet.
+  - name: inactive
+    pattern_type: inactivity
+    inactivity_polls: 5
+    inactivity_timeout_s: 1200
+    action:
+      class_name: CancelAction
+      reason: "Inactive Log"
+
+state_events:
+  - name: "failed"
+    transition: ["RUNNING", "FAILED"]
+    action:
+      class_name: FinishAction
+      reason: "Job failed"
+  - name: "timeout"
+    transition: ["RUNNING", "TIMEOUT"]
+    action:
+      class_name: FinishAction
+      reason: "Job timed out"
+  - name: "timeout"
+    transition: ["COMPLETING", "TIMEOUT"]
+    action:
+      class_name: FinishAction
+      reason: "Job timed out"
+  - name: "cancelled"
+    transition: ["RUNNING", "CANCELLED"]
+    action:
+      class_name: FinishAction
+      reason: "Job cancelled"

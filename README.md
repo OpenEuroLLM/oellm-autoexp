@@ -2,6 +2,8 @@
 
 Single CLI surface for planning sweeps, launching jobs (directly or by way of containers), and monitoring SLURM runs by way of declarative configs. See `SPEC.md` for platform-wide goals; this README focuses on the workflows you touch every day.
 
+For the validated OELLM 32B B1 reborn Megatron source, use [the pinned B1 release](docs/megatron_versions/b1_reborn_20260925.md). It includes the deferred-head-gradient/overlapped-reduction fix and the source verification commands. [Standalone version packaging and publication](tools/README_megatron_release.md) explains how to release another tested Megatron version without changing live checkouts.
+
 ## Your own experiments
 
 For you own experiments, first create your own branch `exp_YOURNAME`. Add a folder `config/experiments/YOURNAME`. Within that folder you can add your own experiment composition files (see the existing ones), with `# @package _global_` as header to ensure it's located at the top-level of the config. You can then run your experiment with:
@@ -125,7 +127,7 @@ The two new backends are:
 - **`oellm_eval`** — `OELLMEvalBackend`. Wraps `oellm-eval schedule
   --local true …` so the eval runs inside the SLURM job allocated by
   oellm-autoexp (no extra sbatch from oellm-evals). Reads task definitions
-  from `submodules/oellm_evals/oellm/resources/task-groups.yaml`.
+  from `submodules/oellm-eval/oellm/resources/task-groups.yaml`.
 
 Once per checkout, on a login node with internet, run the installer:
 
@@ -141,7 +143,7 @@ That single script:
   juwels/jupiter, `pip install --user` inside the eval container on
   leonardo, `pip install --target` inside the rocm container on lumi
 - installs `oellm-evals` with the `[eval]` / `[eval-base]` extras from
-  `submodules/oellm_evals/pyproject.toml` (single source of truth for the
+  `submodules/oellm-eval/pyproject.toml` (single source of truth for the
   lm-eval dep set), plus `oellm-autoexp` and the `compoconf==0.1.14` pin
 - applies `container/megatron/patch_bridge_lazy_imports.py` so
   `from megatron.bridge import AutoBridge` is tolerant of missing model
@@ -183,6 +185,97 @@ python scripts/monitor_autoexp.py --session <session_id>
 python scripts/monitor_autoexp.py --session-dir monitor_state/<session_id>
 ```
 - The session file stores all the config, last SLURM state, per-event history, so you can crash/restart without guessing log names.
+
+Two more files live in the session directory and carry the whole liveness/control protocol:
+
+| file | meaning |
+| --- | --- |
+| `.monitor.alive` | written every poll; content is `pid host tmux_target` and the **mtime is the timestamp**. Also the lease — a monitor refuses to start while another one's heartbeat is fresh. |
+| `.monitor.stop` | **presence means stop**. Content is a free-text reason. |
+
+```bash
+touch <session_dir>/.monitor.stop      # stop the monitor (works from either side)
+rm    <session_dir>/.monitor.stop      # ...and resume
+```
+
+`Ctrl-C` writes that file for you, so the intuitive action does the intuitive thing.
+`SIGTERM` deliberately does **not**: that is how a supervisor clears a wedged monitor
+before restarting it, and recording a stop there would block its own relaunch.
+
+### Retiring old sessions
+
+A monitor that is killed never gets to write `final_state`, so its records stay "active"
+forever — 367 of 506 session directories on JUPITER were in that state, months after the
+jobs ended. `scripts/retire_sessions.py` closes them out, asking SLURM what actually
+happened rather than flattening everything into one label:
+
+| sacct says | `final_state` becomes |
+| --- | --- |
+| `COMPLETED` | `finished` |
+| `FAILED` / `CANCELLED` / `TIMEOUT` / `NODE_FAIL` / … | `cancelled` |
+| nothing (retention expired), or never submitted | `retired` |
+
+```bash
+python scripts/retire_sessions.py --state-dir monitor_state            # dry run
+python scripts/retire_sessions.py --state-dir monitor_state --apply
+python scripts/retire_sessions.py --session-dir monitor_state/<id> --apply
+```
+
+Dry run by default. A session with a job **in the queue right now is skipped entirely**, so
+a live run can never be retired out from under its monitor. Measured against the real
+folder: 1074 records across 365 sessions, resolving to 592 `cancelled` / 479 `finished` /
+3 `retired` — worth recovering while sacct still remembers, which it does for at least two
+weeks.
+
+> Provenance is written to `runtime.action_state["retired"]`, never as a new top-level
+> field. `JobFileStore.load_all` **silently skips** records it cannot parse, so an unknown
+> key would make a job disappear from monitoring instead of raising.
+
+### Surviving login-node reboots (optional)
+
+EuroHPC login nodes reboot, which kills the monitor's tmux session silently. The monitor
+stays **on** the cluster — a cluster can lose external connectivity while its jobs run
+fine — and an optional supervisor on an always-on machine watches it over ssh:
+
+```bash
+# on the cluster: idempotent, safe to run any time (creates/respawns as needed)
+bash scripts/monitor_launch.sh <session_id>
+bash scripts/monitor_probe.sh  <session_id>       # -> STOPPED | OK | DEAD | WEDGED
+bash scripts/monitor_probe.sh  --all monitor_state  # every session that needs a monitor
+
+# on your always-on box: watch the whole folder, or one session
+bash scripts/supervise_monitor.sh --ssh 'ssh jupiter' \
+    --repository '~/work/Projects/oellm-autoexp' \
+    --monitor-state-dir '~/work/Projects/oellm-autoexp/monitor_state' \
+    --notify-email you@example.org
+```
+
+To keep it running across reboots of your own machine, install the systemd --user template
+unit — [`scripts/autoexp-supervisor@.service`](scripts/autoexp-supervisor@.service) plus
+[`scripts/autoexp-supervisor.env.example`](scripts/autoexp-supervisor.env.example), one env
+file per cluster. Running without the supervisor costs nothing and changes nothing: if it
+dies, the cluster-side monitors carry on, you just lose the auto-restart safety net.
+`scripts/tests/test_monitor_supervisor.sh` exercises the whole thing locally (real tmux,
+no cluster, no SLURM).
+
+**Which sessions get supervised.** A session qualifies only if one of its unfinished job
+records names a SLURM job that is **in the queue right now**. "Has an unfinished record" is
+not enough and is actively dangerous: of 506 session directories on JUPITER, 367 still hold
+one (their monitor died before it could mark anything finished) and **35 hold records with
+`submitted: false`** — resurrecting one of those would *submit old work*. The queue rule
+selected exactly 1 of the 506, needs no age heuristic, and can never resubmit an abandoned
+session. The accepted limitation: a monitor that dies in the gap between chain stages, with
+nothing of its own queued, is not picked up.
+
+> **Before pointing the supervisor at a folder, dry-run it:**
+> ```bash
+> bash scripts/supervise_monitor.sh ... --dry-run --once
+> ```
+> A monitor started before this feature existed writes no `.monitor.alive`, so it probes as
+> `DEAD` and the supervisor would start a **second** monitor on a live session — two
+> monitors race on every job record (double `sbatch`, lost log cursors). Migrate such a
+> session first: stop the old monitor, relaunch it with `monitor_launch.sh`, then start
+> supervising.
 
 ## Hyperparameter Sweeps
 
@@ -494,3 +587,7 @@ pre-commit install
 This helps keeping the format clean.
 
 If you touch the backend submodule versions, please make sure you re-generate the dataclasses / configs. If you are very eager, and have spare time, you could integrate this re-generation even into the pre-commit config - so that we are on the safe side always.
+
+### Historical and patched B1 reborn launch configurations
+
+See [complete B1 continuation recipes](docs/megatron_versions/b1_launch_recipes.md) for the source-pinned legacy and corrected variants, preparation, restore audits and launch commands.

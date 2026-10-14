@@ -1,0 +1,15 @@
+# @package _global_
+# Same optional largebooster profile as production, inheriting the selected CE
+# correction and the validated MPI launcher. The operator switch checks availability.
+defaults:
+  - /experiments/oellm_32b_dense/oellm_32b_dense_revival_1_ce_fp32_production
+  - _self_
+
+backend:
+  megatron:
+    exit_duration_in_mins: 1410
+
+slurm:
+  sbatch:
+    partition: largebooster
+    time: "24:00:00"

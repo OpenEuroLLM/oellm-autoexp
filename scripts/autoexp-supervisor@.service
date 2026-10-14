@@ -1,0 +1,49 @@
+; systemd --user template unit for the monitor supervisor.
+;
+; This runs on YOUR always-on machine, not on the cluster -- that is the whole
+; point: the cluster's login nodes reboot, yours does not, and you have root
+; here so Restart=always is actually available.
+;
+; Install (the env file's BASENAME is the instance name -- `jupiter.env` here):
+;   mkdir -p ~/.config/systemd/user ~/.config/autoexp
+;   cp scripts/autoexp-supervisor@.service     ~/.config/systemd/user/
+;   cp scripts/autoexp-supervisor.env.example  ~/.config/autoexp/jupiter.env   # then edit
+;   systemctl --user daemon-reload
+;   systemctl --user enable --now autoexp-supervisor@jupiter
+;
+; Watch / stop:
+;   journalctl --user -u autoexp-supervisor@jupiter -f
+;   systemctl --user stop autoexp-supervisor@jupiter    # supervision off, monitor untouched
+;
+; One instance per CLUSTER: it watches every live session in that cluster's
+; monitor_state folder. The instance name picks the env file. To pin an instance
+; to a single session instead, swap --monitor-state-dir for --session ${SESSION}.
+;
+; Dry-run before enabling, once per cluster:
+;   bash <SUPERVISOR_SCRIPT> --ssh 'ssh jupiter' --repo <REMOTE_REPO> \
+;        --monitor-state-dir <MONITOR_STATE_DIR> --dry-run --once
+
+[Unit]
+Description=oellm-autoexp monitor supervisor (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/autoexp/%i.env
+; ${VAR} is passed as ONE argument (unlike $VAR, which systemd word-splits), so
+; an SSH_PREFIX of "ssh jupiter" survives intact.
+ExecStart=/bin/bash ${SUPERVISOR_SCRIPT} \
+    --ssh ${SSH_PREFIX} \
+    --repo ${REMOTE_REPO} \
+    --monitor-state-dir ${MONITOR_STATE_DIR} \
+    --poll ${POLL} \
+    --stale-after ${STALE_AFTER} \
+    --wedge-grace ${WEDGE_GRACE} \
+    --restart-budget ${RESTART_BUDGET} \
+    --notify-email ${NOTIFY_EMAIL}
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

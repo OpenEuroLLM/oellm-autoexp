@@ -1,0 +1,1981 @@
+# The 64k problem: the 32B run gets worse with continued training
+
+**Latest status:** training is paused and a high-confidence dominant cause has
+been identified. With `defer_embedding_wgrad_compute: true` and
+`overlap_grad_reduce: true`, Megatron can start reducing the untied LM-head
+gradient before the real deferred gradient has been written. A controlled
+reproduction produces the wrong gradient before the first update, while a 32B
+fork with deferral disabled improves immediately and avoids the historical rise
+for more than 8,000 iterations (item 43).
+
+The held-out loss is best at iteration 64,000 and worsens afterward. The flag
+was enabled from iteration 0, so the remaining scientific question is why its
+effect becomes visible only around 60,000--66,500, not what changed at one exact
+step. The evidence is experimental rather than a mathematical proof, but no
+current alternative explains the source trace, controlled reproduction,
+production intervention, and held-out LM-head refit together.
+
+This page is intended to be readable without prior context and is the single
+record for this investigation. Earlier conclusions are superseded here, and
+their measurements are quoted where they still hold.
+
+---
+
+## What is the issue?
+
+We are training a 32-billion-parameter dense model with 64 layers, hidden size
+5,120, sequence length 4,096, and global batch size 4,096. Each optimizer step
+therefore contains about 16.8 million tokens. The full plan is 15 trillion
+tokens, or about 894,000 iterations.
+
+The loss improves normally at first. It then flattens and starts to rise. The
+visible turn is near iteration 66,000, but later analysis suggests that the
+departure from the healthy trend starts earlier, somewhere before 64,000.
+
+![Three views of the problem](issue_overview.png)
+
+### Evidence that the regression is real
+
+1. **Training loss leaves its previous trend.**
+
+   | iterations | loss change per 1,000 steps |
+   |---|---:|
+   | 50k–56k | −0.0018 |
+   | 62k–66.6k | −0.0005 |
+   | 66.6k–71k | +0.0023 |
+   | 71k–75k | +0.0062 |
+
+2. **Held-out loss also gets worse.** This shows that the effect is in the
+   model weights, not only in training-loss logging.
+
+   | checkpoint | held-out loss | job | W&B |
+   |---|---:|---|---|
+   | 60,000 | 1.500890 | `1548575` | [4nlzb9z3](https://wandb.ai/openeurollm-project/oellm_32b_dense_probe/runs/4nlzb9z3) |
+   | **64,000** | **1.495481** | `1573075` | [n73hfjsd](https://wandb.ai/openeurollm-project/oellm_32b_dense_probe/runs/n73hfjsd) |
+   | 68,000 | 1.511213 | `1563495` | [qbovy64e](https://wandb.ai/openeurollm-project/oellm_32b_dense_probe/runs/qbovy64e) |
+   | 72,000 | 1.519173 | `1543640` | [bdinzdw8](https://wandb.ai/openeurollm-project/oellm_32b_dense_probe/runs/bdinzdw8) |
+
+3. **BF16 evaluation gives the same result.** Re-scoring the 64k and 72k
+   checkpoints without FP8 preserves 97% of the loss gap.
+
+There are no NaNs, skipped steps, gradient-clipping events, or sudden gradient
+spikes. This is therefore a smooth degradation, not an explosive numerical
+divergence.
+
+### Impact
+
+The run stopped at iteration 75,125, after about 1.26 trillion tokens. That is
+8.4% of the planned run. About 11,000 iterations, 185 billion tokens, and 27,500
+GPU-hours were spent after the best held-out checkpoint.
+
+**Main run:** `oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4`, last job
+`1537344`, W&B run
+[tjeg54n7](https://wandb.ai/openeurollm-project/oellm_32b_dense/runs/tjeg54n7).
+The W&B runs are offline until `scripts/sync_runs.py` is run. The Slurm logs
+under `/e/project1/e-sta-openeurollm/production_training/<run>/logs/` remain the
+primary record.
+
+---
+
+## Potential causes
+
+Each section has one of three statuses:
+
+- **Closed:** the stated hypothesis has direct evidence against it. The scope of
+  the conclusion is written explicitly.
+- **Confirmed:** direct evidence supports the hypothesis strongly enough to use
+  it as the operational explanation. Remaining limitations are stated.
+- **WIP:** the hypothesis is still open, or the existing test is not sufficient.
+
+“Closed” does not mean that a component is ideal. It means that the specific
+hypothesis in that section does not explain the observed loss regression.
+
+### 1. Incorrect loss measurement
+
+**Status: Closed**
+
+**Question:** Could FP8 evaluation make healthy weights appear worse?
+
+**Evidence:** Checkpoints 64,000 and 72,000 were evaluated again with FP8
+disabled.
+
+| forward pass | 64,000 | 72,000 | gap |
+|---|---:|---:|---:|
+| FP8 | 1.495481 | 1.519173 | +0.023692 |
+| BF16 | 1.494178 | 1.517163 | +0.022985 |
+
+**Conclusion:** 97% of the gap remains in BF16. The later checkpoint contains
+worse weights. Jobs: `1564918`, `1564919`.
+
+### 2. Configuration change during training
+
+**Status: Closed**
+
+**Question:** Did a training setting change near the loss turn?
+
+**Evidence:** The saved configuration is byte-identical by MD5 across the last
+nine jobs, starting with job `1524558`.
+
+**Conclusion:** No configuration file changed near the turn.
+
+### 3. Learning-rate schedule event
+
+**Status: Closed**
+
+**Question:** Did the learning rate or batch size change near 64k–67k?
+
+**Evidence:** Logs show a constant learning rate of `3e-4` and global batch size
+4,096 throughout the interval. WSD decay is scheduled to start near iteration
+804,600.
+
+**Conclusion:** There is no scheduled event near the turn. This does **not** show
+that `3e-4` remains stable throughout training. A constant learning rate becoming
+too large for the later loss landscape is covered in items 23 and 29.
+
+### 4. Checkpoint restart or resume handling
+
+**Status: Closed**
+
+**Question:** Did repeated resumes introduce a loss error?
+
+**Evidence:** Loss was checked around all 12 resumes. Optimizer and RNG state
+were restored, and there is no repeated level or slope change at restart points.
+Item 20 separately tests the restart at iteration 66,625.
+
+**Conclusion:** Ordinary checkpoint resumes do not explain the regression.
+
+### 5. Data-mixture content or composition
+
+**Status: WIP**
+
+**Question:** Does one domain, language, source, or repeated subset become
+harmful as training progresses?
+
+**Current evidence:** Batch-to-batch loss variance is nearly constant across the
+turn, and a different shuffle also degrades. These observations argue against a
+short cluster of bad batches, but they do not test the content of the mixture.
+The earlier comparison to `baby_9b_dense` was invalid because that run used a
+different mixture.
+
+Loss by source is now measured directly. On identical tokens, all 25 of the
+heaviest sources are worse at 72,000 than at 64,000, mean +2.16% relative, with
+the size of the degradation tracking each source's baseline difficulty rather
+than its identity (item 34). No source or subset carries the regression, so
+composition is not the driver.
+
+**Open issue:** Language, document length, and effective duplicate and
+near-duplicate exposure remain unmeasured. Nominal dataset epoch boundaries
+alone do not test duplication inside a component. This item stays open for those
+axes only; the per-source composition question is answered.
+
+### 6. A specific bad data order after 64k
+
+**Status: Closed**
+
+**Question:** Did the flagship encounter an unlucky sequence of batches after
+64k?
+
+**Evidence:** `cont2` forked from the 64k flagship checkpoint, used shuffle seed
+4321, and still worsened by +0.0032 held-out loss by iteration 66,000. Job
+`1558724`, W&B run
+[921bmgjb](https://wandb.ai/openeurollm-project/oellm_32b_dense/runs/921bmgjb).
+
+**Conclusion:** The specific post-64k batch order is not required. Because the
+fork starts at 64k, this test does not exclude data history before 64k; that
+remains part of item 5.
+
+### 7. A specific set of machines after 64k
+
+**Status: Closed**
+
+**Question:** Did faulty nodes used by the flagship cause the continued rise?
+
+**Evidence:** `cont2` used 468 different nodes out of 512 and still degraded.
+
+**Conclusion:** The post-64k degradation is not tied to the flagship's node set.
+The experiment does not test hardware effects already present in the inherited
+64k checkpoint.
+
+### 8. Arithmetic changes in the software-stack swap
+
+**Status: Closed**
+
+**Question:** Did the container, Transformer Engine 2.14→2.18, Megatron Core
+0.16→0.19, or attention backend compute incorrect values after iteration
+34,455?
+
+**Evidence:**
+
+| test | result |
+|---|---|
+| One checkpoint evaluated with three stacks | identical loss: `1.519173E+00` |
+| TE 2.14 versus 2.18 gradient probe | identical loss and gradient norm |
+| FP8 scale state across the swap | continuous; ratio 0.95–0.98 |
+| Loss trajectory at the swap | level change, no measured slope change |
+
+**Conclusion:** The tested forward and backward arithmetic is consistent across
+the stack change. This does not cover the objective change from document masking
+(item 10) or the data-parallel sharding change (item 22).
+
+### 9. FP8 as the initiating cause
+
+**Status: WIP**
+
+**Question:** Does FP8 initiate the regression, amplify it, or both?
+
+**Evidence:** `cont4` switched the flagship checkpoint at 60k to BF16 and reached
+63,125. `cont4b` resumed that BF16 branch and reached 68k. It is therefore a BF16
+continuation from 60k, not a direct flagship fork at 63,125.
+
+| loss slope per 1,000 steps | before 66,625 | after 66,625 |
+|---|---:|---:|
+| flagship, FP8 | −0.00036 | +0.00904 |
+| `cont4b`, BF16 | −0.00073 | +0.00391 |
+
+Read on that window alone, the BF16 branch also turns upward, but more slowly.
+That reading does not survive a longer window. Job `1619380` resumed the same
+BF16 branch and reached 70,580, past the point where the two conclusions diverge:
+
+| loss slope per 1,000 steps | FP8 | BF16 |
+|---|---:|---:|
+| 66,625–68,000 | +0.00904 | +0.00362 |
+| 66,625–70,580 | +0.00233 | +0.00446 |
+| 68,000–70,580 | −0.00023 | +0.00467 |
+
+After 68,000 the flagship flattens while the BF16 branch continues at its earlier
+rate. Measured from a shared 65,500–66,125 baseline to 70,000–70,600 the two rise
+by the same amount: FP8 1.5444 to 1.5587 (+0.0143), BF16 1.5390 to 1.5535
+(+0.0145). The −0.005 offset between the curves is constant across 63,500–70,600
+and is the expected unquantised-forward offset, not a divergence.
+
+The flagship plateau is not a restart artifact: 66,626–75,125 is a single job
+(`1537344`) and the learning rate is 3.0e-4 throughout.
+
+`1618489` and `1619380` are independent forks of the same 63,125 checkpoint and
+agree to 0.0007 across matched windows, so the +0.0145 rise is about twenty times
+the run-to-run noise.
+
+Note on provenance: the first BF16 segment, job `1576287` (60,000–60,367), logged
+no iteration lines to slurm. Its metrics exist only in wandb
+(`offline-run-20260831_215533-22veosbj`), because srun dropped stdout under the
+NVTE_DEBUG flood that produced a 14 GB log. Re-deriving these curves from logs
+alone silently omits that segment.
+
+**Current conclusion:** FP8 is not required for the regression to continue after
+60k. On the 66,625–68,000 window it appears to amplify the rate of degradation,
+but on 66,625–70,580 the BF16 slope is the larger of the two and the cumulative
+rise is equal, so the two branches differ in the shape of the turn rather than
+its magnitude. Because the possible onset may be earlier than 60k, this
+experiment cannot exclude an FP8 contribution already stored in the 60k weights.
+
+**Open issue:** Start a BF16 branch before the earliest plausible onset, or use
+earlier BF16-trained weights. Measure FP8 quantization error as described in item
+15.
+
+### 10. Inter-document masking and packed-sequence handling
+
+**Status: WIP**
+
+**Question:** Did enabling per-document attention masking at iteration 34,455
+introduce a harmful objective or implementation error?
+
+**Current evidence:** The masking flags were inert before 34,455 and active
+afterward. The loss has a +0.00365 level change at the swap, but continues to
+improve for about 26,000–32,000 iterations. `cont3` changed the entire old stack,
+so it does not isolate masking.
+
+The existing packed-document unit test validates formats, queues, and shapes. It
+does not prove end-to-end loss and gradient equivalence under the production
+PP=4/VPP=4 path.
+
+Points 1 and 2 below are now done for 64,000 and 72,000 (item 34). On identical
+tokens the block-minus-dense gap does **not** widen across the turn, +0.0050 to
++0.0038, and the degradation by document position is a smooth difficulty-tracking
+gradient rather than the step at positions 1-8 that a masking fault predicts.
+The masking objective is therefore not driving the regression, and point 4 is
+not justified on current evidence.
+
+**Open issue:**
+
+1. ~~Score 60k, 64k, 68k, and 72k with and without masking.~~ Done at 64k and
+   72k; 60k and 68k would only add resolution, not change the reading.
+2. ~~Stratify loss by document position, boundary position, and documents per
+   pack.~~ Done by document position.
+3. Compare the same minibatch under a simple PP=1 reference and production
+   PP/VPP, including tokens, labels, position IDs, `cu_seqlens`, loss, and
+   gradients. **This is what keeps the item open.** Item 34 scores the objective
+   at TP=1/PP=1 against a mask it constructs itself, so it cannot see a fault in
+   the production masking path.
+4. Run `cont6`, the one-variable masking-off continuation, only if point 3 finds
+   a discrepancy.
+
+### 11. Missing zero-centered gamma
+
+**Status: Closed**
+
+**Question:** Would zero-centered RMSNorm gains prevent the turn?
+
+**Evidence:** With no weight decay on the gains,
+`gamma * x_hat` and `(1 + gamma') * x_hat` are equivalent parameterizations.
+Measured gains also change smoothly rather than showing a new population-level
+failure near the loss turn.
+
+**Conclusion:** The parameterization itself is not the cause. It also cannot be
+enabled when loading the current checkpoints without converting the stored gain
+values, because an unchanged gain near 1 would become an effective gain near 2.
+
+### 12. Individual RMSNorm channels switching off
+
+**Status: Closed**
+
+**Question:** Are increasing numbers of channels becoming inactive because their
+RMSNorm gains approach zero?
+
+**Evidence:** The original statistic was the minimum over thousands of channels,
+which is unstable as a distribution widens. The replacement scan counts the
+fraction of channels below 1%, 10%, 25%, and 50% of their layer median.
+
+| tensor | change in minimum/median | worst fraction below 10% of median |
+|---|---:|---:|
+| `pre_mlp_layernorm` | 0.799→0.00136 | 0.0000→0.0020 |
+| `input_layernorm` | 0.926→0.0524 | 0.0000→0.0002 |
+| `q_layernorm` | 0.421→0.00013 | 0.0000→0.109 |
+| `k_layernorm` | 0.373→0.00063 | 0.0000→0.141 |
+| `final_layernorm` | 0.784→0.118 | 0.0000→0.0000 |
+
+The population fractions are flat through the loss-turn window. Script:
+[../../scripts/scan_gain_distribution.py](../../scripts/scan_gain_distribution.py).
+
+**Conclusion:** A few extreme channels explain the falling minimum; there is no
+growing population of inactive channels. This test is relative to each layer's
+median and therefore does not cover uniform shrinkage of an entire layer. Layer
+0 is treated separately in item 30.
+
+### 13. FP8 overflow from activation growth
+
+**Status: Closed**
+
+**Question:** Do growing activations exceed the FP8 range?
+
+**Evidence:** Transformer Engine amax histories were read from 22 checkpoints.
+Only inputs not immediately bounded by normalization, mainly `linear_proj` and
+`linear_fc2`, grow substantially. The growth begins by iteration 4,000 and slows
+after the stack swap. Median `scale_fwd` is approximately 9.8 from iteration
+16,000 onward, with no recorded non-finite values or overflow event.
+
+**Conclusion:** Recorded activation overflow does not explain the turn. This test
+does not measure loss of precision for typical values inside an outlier-scaled
+tensor; that remains open in item 15.
+
+### 14. Weight growth and outliers
+
+**Status: WIP**
+
+**Question:** Do growing weight norms or outliers reduce plasticity or FP8
+precision?
+
+**Current evidence:** Weight growth is real, especially in output projections.
+
+| tensor, median over layers | RMS growth 8k→75k | max/RMS 8k→75k |
+|---|---:|---:|
+| `self_attention.linear_qkv` | 1.86× | 6.1→13.2 |
+| `mlp.linear_fc2` | 4.18× | 6.0→48.2 |
+
+BF16 branches show a similar `fc2` max/RMS ratio near 64k, so FP8 is not required
+to create the tail. The available flagship weight statistics cover only six
+checkpoints, including a gap from 34,454 to 60,000.
+
+A controlled version of the comparison exists. `cont4` forks the flagship at
+60,000 and reaches 64,000, so FP8 and BF16 run the same 4,000 steps from
+bit-identical starting weights, the only difference being numerics. The fork
+doubles as a correctness check on the scan: at 60,000 the two runs must agree
+exactly on all eight quantities, and they do, for example `linear_fc2` max|W| of
+1.78906 in both.
+
+| growth 60,000 to 64,000 | max\|W\| FP8 | max\|W\| BF16 | rms\|W\| FP8 | rms\|W\| BF16 |
+|---|---:|---:|---:|---:|
+| `linear_qkv` | +3.22% | +2.07% | +1.60% | +1.17% |
+| `linear_proj` | +5.67% | +8.51% | +1.79% | +1.15% |
+| `linear_fc1` | +4.87% | +5.19% | +1.13% | +1.11% |
+| `linear_fc2` | +1.75% | +1.75% | +1.44% | +1.34% |
+
+Weight growth is not FP8-specific; on `linear_proj` the BF16 control grows half
+again as fast. The outlier/bulk split is real, max|W| running about 9x over the
+flagship run against about 3x for rms|W|, but it holds equally in BF16. Figure:
+[weight_control.png](weight_control.png), regenerate with
+[../../scripts/plot_weight_control.py](../../scripts/plot_weight_control.py)
+from `data/weight_stats.csv`.
+
+This window ends at 64,000, before the turn at 66,625, so it establishes that
+weight growth is normal in the run-up, not that it stays normal afterwards. BF16
+checkpoints past 64,000 now exist, from jobs `1620342` (to 68,000) and `1619380`
+(to 70,580), so the post-turn window can be scanned.
+
+**Open issue:** The current measurements do not establish whether the tails harm
+representations, optimization, or FP8 signal-to-noise. Measure actual updates,
+activation outliers, and quantization error by layer and checkpoint. This item is
+closely related to plasticity (item 31) and FP8 quantization quality (item 15).
+
+### 15. FP8 scaling-state corruption or poor quantization quality
+
+**Status: WIP**
+
+**Question:** Is the FP8 scaling state wrong, or is a correct scale still too
+coarse for most tensor values?
+
+**Evidence:** The bookkeeping part is closed: all 22 checkpoint `_extra_state`
+records are finite, `scale == fp8_max / amax`, and scales are continuous across
+the stack swap. Median `scale_fwd` is flat.
+
+However, delayed per-tensor scaling follows the largest values. A rising max/RMS
+ratio can reduce precision for typical values even when the recorded amax and
+scale are correct.
+
+The forward weight and activation parts have now been measured at the 60,000
+and 75,126 endpoints. The weight probe quantizes the stored BF16 weights with
+each layer's saved E4M3 weight scale. The activation probe runs one fixed BF16
+observer forward and quantizes the four GEMM inputs with each layer's saved E4M3
+activation scale.
+
+| median across 64 layers | weight SQNR 60k→75k | activation SQNR 60k→75k | activation zero fraction 60k→75k |
+|---|---:|---:|---:|
+| `linear_qkv` | 31.50→31.52 dB | 31.50→31.51 dB | 0.035%→0.038% |
+| `linear_proj` | 31.51→31.52 dB | 31.53→31.54 dB | 0.050%→0.052% |
+| `linear_fc1` | 31.50→31.51 dB | 31.54→31.53 dB | 0.017%→0.016% |
+| `linear_fc2` | 31.50→31.51 dB | 31.52→31.53 dB | 2.60%→2.71% |
+
+No module has measurable median deterioration, and activation clipping is at
+most 4.8e-8 of elements in this probe (effectively zero).
+The worst per-layer weight-SQNR change is only −0.045 dB. Some `linear_fc2`
+inputs are poorly represented in isolation, but the worst cases improve while
+the loss worsens: layer 63 goes from 15.04 to 25.36 dB and 81.0% to 70.9% zeros;
+layer 1 goes from 11.96 to 27.01 dB and 97.2% to 38.7% zeros.
+
+A pre-onset activation probe at 48,000 is also flat: median SQNR is 31.49,
+31.54, 31.53, and 31.52 dB for QKV, projection, FC1, and FC2 respectively.
+QKV clipping moves in the opposite direction to the loss, falling from at most
+8.7e-6 of elements at 48k to 4.8e-8 at 60k and zero at 75k. Median FC2 zeroing
+does drift from 2.14% to 2.58% to 2.71%, but without any loss of median SQNR;
+the worst individual layers fluctuate rather than degrade monotonically.
+
+**Current conclusion:** Deteriorating forward weight or activation quantization
+between 48k and 75k is not supported. This is a comparison on one
+fixed dense-causal batch, using a BF16 observer forward; it does not reproduce
+accumulated FP8 error, production packed attention, backward-gradient
+quantization, or a contribution already stored before 60k. Data:
+`data/fp8_weight_quant_error.csv`, `data/fp8_activation_quant_error.csv`,
+and `data/fp8_activation_quant_error_48000.csv`;
+scripts: [../../scripts/scan_fp8_quant_error.py](../../scripts/scan_fp8_quant_error.py)
+and [../../scripts/scan_fp8_activation_quant_error.py](../../scripts/scan_fp8_activation_quant_error.py).
+
+**Open issue:** Measure forward and backward gradient quantization on production
+batches. Repeat the activation endpoint check under production packing and on
+several sources only if the source-stratified loss test points toward an FP8
+interaction.
+
+### 16. Weight decay crushing the weights
+
+**Status: Closed**
+
+**Question:** Is constant weight decay `0.05` steadily reducing useful weights?
+
+**Evidence:** Model-wide weight RMS rises from 0.016688 to 0.017121, and no
+scanned decoder-layer matrix shrinks over the measured interval.
+
+**Conclusion:** Weight decay is not globally shrinking the model. Its interaction
+with actual Adam updates can still be studied under item 19.
+
+### 17. LM-head z-loss
+
+**Status: WIP**
+
+**Question:** Does the added z-loss become too influential as cross-entropy
+gradients change?
+
+**Evidence:** The reported loss is not contaminated because the implementation
+adds `z_loss - z_loss.detach()`: it changes gradients but not the logged value.
+The term is active from the first job, and its diagnostic is broadly flat after
+20k.
+
+| iteration | 4k | 24k | 34,455 | 64k | 66,625 | 68k | 75,125 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| mean(logZ²) | 144.1 | 66.2 | 65.8 | 64.5 | 62.5 | 62.9 | 65.3 |
+
+**Current conclusion:** z-loss does not explain the reported loss value and has
+no obvious value-level transition. A flat auxiliary loss does not prove that its
+gradient remains negligible relative to the shrinking cross-entropy gradient.
+
+**Open issue:** Measure cross-entropy and z-loss gradient norms and their cosine
+by module at several checkpoints. The production coefficient is `1e-4`;
+`final_logit_softcapping` is disabled.
+
+### 18. QK-norm growth and attention-entropy collapse
+
+**Status: WIP**
+
+**Question:** Do growing QK-norm gains make attention too sharp or otherwise
+damage the attention pattern?
+
+**Current evidence:** Mean Q and K gains grow from about 1.20 to 1.50 between 8k
+and 75k. A first entropy probe found no mean collapse:
+
+| checkpoint | mean entropy, nats | most concentrated sampled layer |
+|---|---:|---:|
+| 48k | 3.064 | 1.977 |
+| 60k | 3.039 | 1.994 |
+| 64k | 2.968 | 1.942 |
+| 68k | 2.967 | 2.002 |
+| 72k | 3.022 | 2.045 |
+| 75,126 | 3.040 | 2.100 |
+
+The probe does not reproduce production packed attention: it ignores the passed
+document mask, creates a dense causal mask with monotonic positions, samples only
+every eighth head, and uses one fixed batch. See
+[../../scripts/scan_attention_entropy.py](../../scripts/scan_attention_entropy.py).
+
+**Open issue:** Repeat the measurement with real production masks and position
+resets, several batches, and every head. Report per-head and per-position
+distributions, not only layer means. The existing result rules out a large mean
+collapse in the sampled synthetic setting; it does not close production
+attention pathologies.
+
+### 19. Adam state, epsilon, and actual update size
+
+**Status: WIP**
+
+**Question:** Does Adam state suppress or redirect useful updates near the loss
+turn?
+
+**Current evidence:** The scans find no obvious timing signal: sampled
+`sqrt(v)` and the proxy update are roughly flat before 64k and rise afterward.
+This is more consistent with a response to rising loss than with an earlier cause.
+
+Quantifying that from `data/optimizer_state_spread.csv`, as the size-weighted
+mean of per-shard `rel_step_p50` over eight shards covering 3.21B parameters:
+
+| iteration | 44k | 48k | 52k | 56k | 60k | 64k | 68k | 72k | 75,126 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| weighted `rel_step_p50` | 4.22 | 4.47 | 4.07 | 3.96 | 3.91 | 3.68 | 4.23 | 4.05 | 4.47 |
+| change from previous | — | +5.8% | −8.9% | −2.7% | −1.0% | −6.0% | +14.9% | −4.2% | +10.3% |
+
+The normalized update rises 14.9% from 64k to 68k, which is the largest single
+step in the series and coincides with the turn. It is not yet evidence, for two
+reasons. The same series moves +5.8% at 48k and −8.9% at 52k, well before the
+onset, so the step-to-step scatter is roughly 8% and a 14.9% move is about
+1.7 standard deviations. The narrower five-shard sample in
+`data/optimizer_state.csv`, covering 1.49B parameters, puts the same interval at
++9.4%. The direction is consistent across both samples; the magnitude is not
+resolved.
+
+The current aggregation is not sufficient for model-wide quantitative claims.
+[../../scripts/plot_optimizer_turn.py](../../scripts/plot_optimizer_turn.py)
+computes a size-weighted average of per-shard medians, which is not a global
+median. It also derives epsilon suppression from that aggregate instead of from
+individual parameters. Eight lexicographically spread shards cover 9.5% of the
+model but are not a random sample.
+
+**Open issue:** Stream the actual tensors and compute, per parameter,
+
+```text
+s_i = eps / (sqrt(v_i) + eps)
+u_i = m_i / (sqrt(v_i) + eps)
+```
+
+Then aggregate true quantiles and `||u|| / ||w||` by named tensor, module, and
+pipeline stage. Separate radial updates from updates orthogonal to the weight.
+Compare the actual update to an `eps -> 0` counterfactual.
+
+**Current conclusion:** There is no validated evidence that `adam_eps=1e-8`
+causes the turn or slows the whole model by a specific percentage. Do not change
+it to `1e-15` without an ablation.
+
+### 20. The restart at iteration 66,625
+
+**Status: Closed**
+
+**Question:** Did job `1537344` introduce the turn when it resumed at exactly
+66,625?
+
+**Evidence:**
+
+| run | nearby restart pattern | loss turns? |
+|---|---|---|
+| flagship | resume at 66,625 | yes |
+| `cont4b` | resume at 66,125 | yes |
+| `cont2` | no resume from 64,000 to 66,520 | yes |
+
+**Conclusion:** The turn occurs under three different restart patterns. The
+66,625 restart is a coincidence, not the cause.
+
+### 21. A dataset component reaching an epoch boundary
+
+**Status: Closed**
+
+**Question:** Did a blend component run out and begin repeating near the turn?
+
+**Evidence:** Epoch boundaries were calculated from all 452 component token
+counts and mixture weights using
+`iteration = tokens_i / (weight_i * 4096 * 4096)`.
+
+| check | result |
+|---|---:|
+| metadata files read | 452/452 |
+| earliest nominal epoch boundary | 222,700 |
+| components wrapping from 60k–72k | 0 |
+| blend weight exhausted before 66,625 | 0.0000 |
+
+**Conclusion:** No component reaches its first nominal epoch boundary near the
+loss turn. This does not measure duplicate content within a component; that is
+part of item 5.
+
+### 22. Distributed-optimizer sharding
+
+**Status: Closed**
+
+**Question:** Did changing `data_parallel_sharding_strategy` from `no_shard` to
+`optim_grads_params` affect reductions or optimizer state?
+
+**Current evidence:** The change occurred at iteration 34,455. Existing forward
+and small-scale gradient probes do not exercise the 512-node data-parallel path.
+Timing is weak evidence against it because training improved for many iterations
+after the change.
+
+**Conclusion:** The flag was never reachable, so the change was a no-op. In this
+Megatron, `data_parallel_sharding_strategy` appears in exactly one place outside
+`megatron/core/distributed/fsdp/` -- `megatron/core/optimizer/__init__.py:1126`
+-- and that reference sits inside `if ddp_config.use_megatron_fsdp:`. The run has
+`use_megatron_fsdp: false`, `use_torch_fsdp2: false` and
+`use_layer_wise_distributed_optimizer: false`, so `FullyShardedDataParallel` is
+never constructed. Item 36 independently corroborates this by reading
+`optimizer.distributed.*.param`, which is the plain DistributedOptimizer flat
+buffer layout and not an FSDP shard.
+
+No controlled comparison is needed and the planned one is withdrawn. This also
+shortens the list of changes at iteration 34,455 by one.
+
+### 23. Curvature and Adam edge of stability
+
+**Status: WIP**
+
+**Question:** Does a constant learning rate become unstable as curvature grows?
+
+This mechanism fits the smooth, progress-dependent behavior and does not require
+a configuration event. It could also occur without NaNs or clipping.
+
+**Attempted test:**
+[../../scripts/scan_sharpness.py](../../scripts/scan_sharpness.py) used finite
+differences on one decoder layer at sequence length 512. The result is invalid:
+
+- The perturbation was often below BF16 parameter resolution.
+- The same 64k checkpoint produced 0.0470 with five power iterations and 0.0234
+  with 25, which is inconsistent with a stable power-iteration estimate.
+- A single-layer, short-sequence Hessian is only a partial view of the model.
+- The SGD rule `lr * lambda_max < 2` does not apply directly to Adam. The relevant
+  object is the preconditioned Hessian.
+
+**Open issue:** Implement exact double-backward HVPs and estimate the leading
+eigenvalue of the Adam-preconditioned Hessian. Use checkpoints before and around
+the possible onset, for example 34,455, 40k, 48k, 56k, 60k, and 64k. Validate the
+operator on a small model before interpreting the 32B result.
+
+### 24. Rank collapse and functional loss of capacity
+
+**Status: Closed**
+
+**Question:** Are weights or activations becoming low-rank as training proceeds?
+
+**Current evidence:** No decoder weight matrix shrinks, and row norms do not show
+a large dead population. Those checks do not measure functional activation rank.
+
+**Evidence:**
+[../../scripts/scan_activation_capacity.py](../../scripts/scan_activation_capacity.py)
+on real packed batches under the block-diagonal training mask. Array job
+`1727523`, five checkpoints, 5m41s each. Every arm scored exactly 131,072
+identical tokens, so this is a paired comparison. Residual-stream covariance is
+centered -- uncentered would be dominated by the stream's large mean component
+and would report healthy rank for one fixed vector plus noise. SwiGLU activity is
+the RMS of each neuron at `linear_fc2`'s input, which under a gated linear unit
+is the gate*up product; the dead threshold is relative to each layer's own median
+so it stays comparable as the activation scale drifts (item 14 has `linear_fc2`
+max/RMS going 6.0 to 48.2). Data `.act/*.csv`.
+
+Entropy rank of the centered residual covariance, hidden size 5,120:
+
+| layer | prod 44k | prod 64k | prod 72k | revival 80k | revival 104k |
+|---|---:|---:|---:|---:|---:|
+| 8 | 42.9 | 26.9 | 24.2 | 9.3 | **6.6** |
+| 16 | 553.0 | 397.6 | 320.2 | 153.1 | **135.5** |
+| 24 | 1701 | 1639 | 1566 | 1378 | 1391 |
+| 32 | 1295 | 1258 | 1266 | 1232 | 1194 |
+| 48 | 955 | 921 | 907 | 950 | 948 |
+| 56 | 684 | 731 | 732 | 825 | **940** |
+
+SwiGLU dead-neuron fraction, mean over all 64 layers: 0.0000%, 0.0001%, 0.0001%,
+0.0004%, 0.0019%. At 25,600 neurons per layer that peak is half a neuron.
+
+**Conclusion:** Neither failure mode is present as a cause of the turn.
+
+* **No neuron death.** The dead fraction never leaves the noise floor.
+* **Rank collapse is real but not turn-specific.** Early layers fall hard --
+  layer 8 by 6.5x, layer 16 by 4x -- but the collapse runs at the same rate or
+  faster while the loss is descending normally. Per 1,000 iterations, layer 8
+  moves -1.86% over the healthy 44k-64k interval against -1.29% over the turn
+  interval 64k-72k. Only layers 16 and 24 accelerate (1.7x and 3.1x), against
+  layer 8 decelerating: two of nine layers with no error bars is not a signal.
+* **It is not global.** Layer 56 gains rank throughout (684 to 940) and layers
+  32-48 are flat. This is depth-wise redistribution, not capacity loss.
+
+The large absolute finding is worth recording separately: early layers operate at
+entropy rank 7 to 43 out of 5,120, and the last layer at ~1. That is the known
+outlier-dimension behaviour of trained transformers, it is a property of the
+whole run, and it has no bearing on the turn.
+
+### 25. Embedding and output-layer collapse
+
+**Status: Closed**
+
+**Question:** Do the 1.34B-parameter input embedding or untied output layer
+degrade near 64k?
+
+**Evidence:**
+
+| iteration | embed RMS | embed absmax | output RMS | output absmax |
+|---|---:|---:|---:|---:|
+| 8k | 0.02125 | 0.137 | 0.01864 | 0.239 |
+| 34,454 | 0.02737 | 1.063 | 0.01803 | 0.303 |
+| 64k | 0.02816 | 1.141 | 0.01830 | 0.350 |
+| 75,126 | 0.02875 | 1.227 | 0.01840 | 0.412 |
+
+No token rows fall below 10% of the median row norm at any measured checkpoint.
+The output RMS remains nearly constant, and all changes are smooth. Data:
+`data/embed_output.csv`.
+
+**Conclusion:** There is no gross embedding or output-layer *norm* collapse near
+the turn. This does not test gradient correctness or whether the head is well
+fitted: item 43 finds both an incorrect LM-head gradient and a refittable loss
+defect that these norm statistics cannot see.
+
+### 26. Batch size and gradient-noise scale
+
+**Status: WIP**
+
+**Question:** Is 16.8 million tokens per optimizer step beyond the useful or
+stable batch range for this model?
+
+**Current evidence:** The batch is constant, so it is not a discrete event. A
+very large batch can still reduce beneficial gradient noise, interact with
+curvature, and make a high constant learning rate less forgiving. No gradient
+noise-scale measurement has been made for this run.
+
+**Open issue:** Estimate gradient noise scale from multiple microbatch gradients
+at representative checkpoints. A training ablation should vary batch and
+learning rate together so that token budget and optimizer-step count are
+interpretable.
+
+### 27. A discrete event at iteration 66,625
+
+**Status: Closed**
+
+**Question:** Is 66,625 a real breakpoint where something suddenly changes?
+
+**Evidence:** Smooth polynomial models fit the 40k–75k training-loss curve better
+than a kink or a level-and-slope breakpoint at the same parameter count.
+
+| model | parameters | RSS | delta BIC |
+|---|---:|---:|---:|
+| quartic, smooth | 5 | 0.1904 | 0 |
+| cubic, smooth | 4 | 0.1968 | 224 |
+| kink | 4 + location | 0.2074 | 595 |
+| level and slope breakpoint | 4 + location | 0.2074 | 603 |
+
+Fits against a decreasing baseline place the departure somewhere before 64k.
+The onset and growth exponent are strongly coupled: plausible fits range from
+about 52k with a steep exponent to about 64k with a shallow exponent. Residuals
+are also autocorrelated.
+
+**Conclusion:** There is no supported instantaneous event at 66,625. The safest
+statement is: **the loss departs smoothly from its healthy trend before 64k**.
+The exact onset and a specifically quadratic growth law are model-dependent.
+Script: [../../scripts/fit_onset.py](../../scripts/fit_onset.py).
+
+### 28. Dating the onset in other saved metrics
+
+**Status: Closed**
+
+**Question:** Can the existing checkpoint scans identify which internal metric
+changes first?
+
+**Evidence:** Checkpoints were saved every 4,000 iterations. Only about seven
+points are available between the stack swap and the possible onset. Two
+extrapolation methods failed their healthy-window negative controls, with maximum
+absolute z-scores of 27.3 and 7.8. Per-step gradient norm passes the control but
+shows only a gentle decline and a transient spike near 55,200.
+
+**Conclusion:** The current saved checkpoints cannot date an internal onset
+reliably. Future continuations through this region should save every 500 steps.
+This closes the measurement question, not the underlying mechanisms.
+
+### 29. Aggressive optimization with too little regularization
+
+**Status: WIP**
+
+**Priority:** Secondary after the confirmed gradient-ordering bug in item 43.
+
+**Question:** Is the combination of constant high learning rate, very large
+batch, and unregularized norm gains unsuitable for the full run?
+
+| setting | this run |
+|---|---|
+| learning rate | constant `3e-4` until about 804,600 |
+| global batch | 16.8M tokens per step from the start |
+| batch ramp | none |
+| QK-norm gain weight decay | `0.0` |
+| residual-norm gain weight decay | `0.0` |
+
+The phrase “no restoring force” is too broad: ordinary weights have weight decay,
+the logits have z-loss, and Q/K vectors are normalized. The precise concern is
+that several relevant controls do not change over training, while norm gains are
+excluded from weight decay.
+
+**Current evidence:** This family matches the smooth progress dependence and is
+shared by FP8 and BF16. Lowering the learning rate at 64k suppresses the rise
+(item 39), but every LR arm retains the incorrect deferred-gradient path. The
+result therefore shows mitigation, not that the optimization regime initiated
+the problem. A scaling-law LR estimate is informative but not an exact stability
+threshold.
+
+**Open issue:** Run a controlled learning-rate dose response and the curvature
+and noise-scale tests in items 23 and 26. Consider a factorial test with residual
+precision from item 32.
+
+### 30. Uniform attenuation of layer-0 attention
+
+**Status: Closed**
+
+**Question:** Does the 22-fold fall in layer-0 input-norm gain cause the global
+loss turn?
+
+**Evidence:** Layer-0 `input_layernorm` RMS falls from 0.9464 at 8k to 0.0423 at
+75,126. This is a uniform layer-scale change, so the relative-channel test in
+item 12 cannot see it. Weight growth compensates part of the change:
+
+| layer-0 path, relative scale | 8k | 60k | 75,126 |
+|---|---:|---:|---:|
+| `pre_mlp_layernorm * W_fc1` | 1.000 | 0.955 | 0.912 |
+| `input_layernorm * W_qkv * W_proj` | 1.000 | 0.447 | 0.356 |
+
+QK normalization protects the attention pattern, so the remaining effect is
+mainly on value/output scale. Only layer 0 falls below half its starting scale,
+and most of the decline is complete before the possible onset.
+
+Item 33 measures the same path directly rather than through a scale proxy, and
+the absolute reading above does not survive it. Layer 0's attention is the
+dominant writer at that depth: it puts out rms 5.24 into a residual stream of rms
+0.042, the raw token embedding, at a cosine of 0.009, so it is writing the
+initial representation rather than refining one. In absolute terms the branch
+output grew, 1.79 to 5.24 between 8,000 and 75,126. Its share peaked at 24,000
+rather than at the start, and the decline since, 215x to 119x, is smooth,
+decelerating, and still above the 8,000 value.
+
+**Conclusion:** Layer-0 attention attenuates relative to its 24,000 peak, but it
+does not switch off and its output grows in absolute terms. Timing and
+localization do not support it as the primary cause of the model-wide
+regression. The scale products here are RMS proxies, not exact operator norms;
+the RMS of a matrix product is not the product of the RMS values when the
+weights are correlated or the input is anisotropic, which is why the proxy
+overstated the effect.
+
+### 31. Loss of plasticity and effective parameter updates
+
+**Status: WIP**
+
+**Question:** Does weight growth reduce the model's ability to change useful
+representations?
+
+**Current evidence:** Inverse weight RMS, used as a rough proxy for Adam's
+relative update scale, falls by about 2–4× from 8k to 75k in several projections.
+Most of the change occurs before 34k and then decelerates.
+
+| tensor, proxy relative to 8k | 34k | 60k | 64k | 75k |
+|---|---:|---:|---:|---:|
+| `mlp.linear_fc1` | 0.599 | 0.529 | 0.524 | 0.502 |
+| `mlp.linear_fc2` | 0.302 | 0.255 | 0.251 | 0.240 |
+| `self_attention.linear_proj` | 0.305 | 0.254 | 0.249 | 0.234 |
+| `self_attention.linear_qkv` | 0.672 | 0.588 | 0.578 | 0.543 |
+
+Inverse weight RMS is not the actual effective learning rate. Adam updates vary
+by parameter, and only the component that changes the weight direction directly
+captures representational rotation.
+
+**Open issue:** Use optimizer state or adjacent FP32 master checkpoints to measure
+`||delta w|| / ||w||`, update/weight cosine, and radial versus orthogonal update
+components by tensor. Combine this with activation-rank and SwiGLU-use statistics
+from item 24.
+
+### 32. BF16 residual-add precision
+
+**Status: WIP**
+
+**Priority:** Demoted after the endpoint rounding measurement.
+
+**Question:** Are small attention or MLP branches being rounded away when added
+to a growing BF16 residual stream?
+
+**Current evidence:** `fp32_residual_connection` is disabled. In the current
+`data/residual_stream.csv` snapshot, median hidden-state RMS rises from about 24
+at 8k to 111 at 64k. At the final layer of the 64k checkpoint, attention-branch
+RMS is about 0.85% of shortcut RMS. That is close enough to BF16 spacing to make
+partial elementwise loss plausible, but an RMS ratio is not a rounding test.
+
+The rounding operation has now been measured directly on the same fixed sequence
+at 60,000 and 75,126:
+
+| metric, median over layers | 60k | 75,126 |
+|---|---:|---:|
+| attention add unchanged fraction | 2.83% | 2.59% |
+| attention rounding error / branch L2 | 2.35% | 2.42% |
+| MLP add unchanged fraction | 0.83% | 0.81% |
+| MLP rounding error / branch L2 | 1.19% | 1.26% |
+
+Late attention additions do have appreciable rounding: at 60k layer 63 leaves
+12.5% of elements unchanged and has error equal to 19.3% of branch L2. But this
+does not worsen with the loss; at 75,126 the same numbers improve to 11.2% and
+18.3%. The worst layer-level attention error/branch value also falls from 19.3%
+to 18.3%.
+
+**Current conclusion:** BF16 residual rounding exists, especially in late
+attention layers, but the controlled 60k→75k endpoint comparison carries no
+degradation signal. It is therefore not a leading explanation for the post-60k
+loss rise.
+
+The probe still uses one fixed batch with dense causal positions rather than the
+production packed-document objective. Data: `data/residual_rounding.csv`;
+instrumentation: [../../scripts/scan_residual_stream.py](../../scripts/scan_residual_stream.py).
+
+**Open issue:**
+
+1. Confirm the endpoint comparison on several production-packed batches if a
+   later test implicates masking or document position.
+2. Re-score 60k, 64k, 68k, and 72k with FP32 residual additions only if that
+   confirmation shows increasing rounding.
+
+### 33. Per-layer residual-stream budget
+
+**Status: Closed**
+
+**Question:** Is any layer doing less work than it used to? Gain plots cannot
+answer this, because a RMSNorm gain and the weight it feeds are a degenerate
+pair: only the product `gain x W` changes the function, so a shrinking gain
+beside a growing weight is bookkeeping (item 14). The quantity independent of
+that split is what each branch writes into the residual stream, measured against
+the stream itself, `attn_share = rms(Attn(RMSNorm(h) * g)) / rms(h)`.
+
+**Evidence:** [../../scripts/scan_residual_stream.py](../../scripts/scan_residual_stream.py)
+hooks all 64 layers and runs one forward pass per checkpoint on a fixed sequence,
+the same tokens every time, so the comparison is controlled. Nine checkpoints
+from 8,000 to 75,126, about six minutes each on one login-node GH200. Figure:
+[residual_stream.png](residual_stream.png), data `data/residual_stream.csv`.
+
+| iteration | 8,000 | 24,000 | 34,454 | 44,000 | 56,000 | 60,000 | 64,000 | 68,000 | 75,126 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| attn share, median L2-61 | 0.042 | 0.068 | 0.070 | 0.072 | 0.068 | 0.073 | 0.071 | 0.069 | 0.069 |
+| MLP share, median L2-61 | 0.138 | 0.151 | 0.140 | 0.144 | 0.141 | 0.142 | 0.140 | 0.140 | 0.133 |
+| attn share, layer 0 | 85x | 215x | 197x | 161x | 133x | 127x | 125x | 121x | 119x |
+| stream rms at layer 30 | 23.6 | 65.0 | 77.5 | 89.2 | 96.1 | 99.6 | 100.9 | 103.8 | 110.7 |
+
+There is no functional collapse anywhere. Both branch shares are flat from 24,000
+on, straight through the onset. Comparing 24,000 with 64,000 per layer, the
+weakest is layer 0 at 0.58x and nothing else falls below 0.68x, while mid-stack
+layers grow, L37 at 1.54x, and layer 63's MLP grows 3.53x. The bottom of the
+stack hands work to the middle and top: redistribution, not collapse.
+
+The residual stream grows smoothly and decelerates. At layer 30 it goes 23.6 to
+110.7, and at layer 60 50.5 to 412.2, monotone at every depth with no feature at
+the onset. Because the branch shares are flat, the branches grow with it and
+nothing is being drowned out. Nothing moves at 60,500.
+
+**Conclusion:** No layer stops contributing, and the branch/stream ratios carry
+no signal at the turn. This removes functional collapse as a cause and corrects
+the absolute reading in item 30.
+
+**Open issue:** One unconfirmed observation. Layer 61's attention branch jumps
+from 6.89 to 30.28 rms between 68,000 and 75,126, against a series that is
+smooth everywhere else: 1.16, 3.04, 5.11, 4.98, 5.45, 6.01, 6.28, 6.89, 30.28.
+It is one layer in one checkpoint after the onset, and it barely moves the stream
+it is added to, 427 to 447, so it is consistent with a few very large values
+rather than a broad shift. It needs a second input sequence before it means
+anything.
+
+### 34. Where the extra loss lands, by source and document position
+
+**Status: Closed**
+
+**Question:** Every measurement above is loss against *iteration*. None is loss
+against *what is being predicted*. That leaves items 5 and 10 untested and
+mutually indistinguishable: a data-composition effect concentrates the
+degradation in a few sources, a masking effect concentrates it at low document
+positions, and an optimization effect does neither.
+
+**Evidence:** [../../scripts/scan_loss_breakdown.py](../../scripts/scan_loss_breakdown.py)
+scores 64,000 and 72,000 forward-only on **identical tokens**, the 25 heaviest
+sources of the flagship blend, 8 packed 4,096-token windows each, 32,768 tokens
+per source per mask mode. Token selection is fully determined by the datamix and
+window count with no sampling, so the two checkpoints see byte-identical inputs.
+Pairing is the design: absolute loss spans 0.28 to 2.55 across sources, far more
+than the effect being chased, so only the same-source difference is readable.
+Jobs `1647776` and `1647777`, one GH200 each, about 14 minutes. Data
+`data/loss_breakdown_0064000.csv` and `data/loss_breakdown_0072000.csv`.
+
+Blend-weighted mean loss rises 1.5727 to 1.5959, **+0.0232**. Held-out loss over
+the narrower 66,625-70,580 window rises +0.014, so the sampled tokens reproduce
+the regression at the right magnitude and sign, which is the sanity check that
+makes the breakdown worth reading at all.
+
+**All 25 sources are worse at 72,000**, spanning +0.0007 (`common-pile-stackv2`)
+to +0.0959 (`dochplt-3.1`), mean +2.16% relative. Nothing is spared and no subset
+carries the damage. Across sources the increase correlates with baseline
+difficulty, `r(loss at 64k, delta) = +0.50`, but see the correction below: that
+relationship does not survive at token level.
+
+The same holds across document position, under the production block mask:
+
+| position in document | 1-8 | 9-32 | 33-128 | 129-512 | 513-2048 | 2049+ |
+|---|---:|---:|---:|---:|---:|---:|
+| loss at 64,000 | 3.4378 | 1.9596 | 1.6696 | 1.5513 | 1.4955 | 1.5866 |
+| delta to 72,000 | +0.0864 | +0.0398 | +0.0304 | +0.0220 | +0.0232 | +0.0184 |
+| relative | 2.51% | 2.03% | 1.82% | 1.42% | 1.55% | 1.16% |
+
+The gradient is smooth, not a spike. A masking fault predicts a step at
+positions 1-8 against a flat remainder; instead the delta grows with the
+baseline loss of the bin, and the effect is still present at 1.16% deep inside
+documents.
+
+The direct test is the block-minus-dense gap on identical tokens, which measures
+what the packed-document objective is worth. It does not widen: **+0.0050 at
+64,000, +0.0038 at 72,000, change -0.0012.** If the objective were driving the
+regression that gap would grow.
+
+**Conclusion:** The degradation is global. It is not concentrated in any source
+and not concentrated at document boundaries, which removes data composition and
+the masking objective as the driver and leaves a model-wide cause, consistent
+with items 19, 30, and 33.
+
+**Correction.** This section first read that the degradation was "roughly
+proportional to how hard each prediction already was". Item 35 measured the same
+comparison per token instead of per cell and that statement does not hold. The
+median per-token change is 0.000 and only 47.4% of tokens are worse, so the
++0.0232 cell mean is a small residual of large cancelling movements rather than a
+uniform shift. Sorted into deciles of baseline loss, the increase is carried by
+the middle of the distribution while the hardest decile improves. Cell means
+cannot distinguish that from proportional degradation. The source, position and
+mask conclusions above are unaffected: they rest on cell means, which are
+correct as reported.
+
+**Open issue:** Three limits on the scope of this result.
+
+1. The per-source spread, 0.07% to 6.95%, is wide. At 32,768 tokens per source
+   the effective sample is nearer the roughly 30 documents than the token count,
+   so real heterogeneity cannot be separated from sampling noise here. The
+   robust statement is 25 of 25, not any single source's value.
+2. This scores the *objective*, not the production *implementation*. The model
+   runs at TP=1/PP=1 against a mask this script builds itself, so a fault in the
+   PP=4/VPP=4 masking path would not appear. Item 10 point 3 stands.
+3. Source and document position are covered. Language, document length, and
+   near-duplicate exposure from item 5 are not.
+
+**Method note:** The first run of this scan returned bit-identical block and
+dense losses for every source, which reads as "the mask makes no difference".
+That was an artifact.
+`get_gpt_layer_with_transformer_engine_spec` hardcodes `AttnMaskType.causal`,
+and under `causal` Transformer Engine builds the mask internally and ignores the
+tensor passed to `forward()`. Only `AttnMaskType.arbitrary` honours a supplied
+boolean mask, at the cost of the unfused attention path. After the fix, `dense`
+reproduces the earlier causal numbers to about 1e-4, which is the check that the
+only thing changed is the block-diagonal structure; and every window was
+confirmed to hold 2 to 12 documents, so the one-document-per-window explanation
+is excluded. Any future use of these scripts to compare mask modes has to set
+the mask type explicitly.
+
+### 35. Predictive accuracy, entropy, and calibration
+
+**Status: Closed**
+
+**Question:** Is the regression a loss of predictive capability, or only a
+change in confidence? A model whose output distribution flattens loses loss
+without losing knowledge, and the two demand completely different responses.
+
+**Evidence:**
+[../../scripts/scan_loss_breakdown.py](../../scripts/scan_loss_breakdown.py)
+`--entropy` records per-token loss, predictive entropy and top probability on the
+same fixed token set used by item 34, at four checkpoints spanning the turn.
+Jobs `1648351`, `1648350`, `1648346`, `1648348`, one GH200 and about 10 minutes
+each. Data `data/loss_ent_00*.npz`, 819,200 tokens per checkpoint, token
+alignment asserted across all four.
+
+Because `p(correct) = exp(-loss)` and the top probability are both recorded,
+top-1 accuracy is recoverable without a second forward pass. It is stable to
+five decimal places across tolerances from 1e-2 to 1e-6, so it is not an artefact
+of that reconstruction.
+
+| iteration | 56,000 | 60,000 | 64,000 | 68,000 | 72,000 |
+|---|---:|---:|---:|---:|---:|
+| top-1 accuracy | 70.104% | 70.159% | **70.357%** | 70.170% | 69.947% |
+| mean confidence | 0.7061 | 0.7074 | 0.7098 | 0.7039 | 0.7110 |
+| confidence - accuracy | 0.0050 | 0.0058 | 0.0062 | 0.0022 | 0.0115 |
+| mean entropy | 1.3954 | 1.3842 | 1.3733 | 1.4169 | 1.3617 |
+| mean loss | 1.3608 | 1.3561 | **1.3523** | 1.3715 | 1.3797 |
+
+**Accuracy turns where the loss turns.** It rises to a maximum at 64,000 and
+falls monotonically afterward. Paired on identical tokens, the net change in
+correct predictions per interval is +457 (`z = +1.9`), +1,616 (`z = +6.8`),
+-1,531 (`z = -6.3`), -1,828 (`z = -7.4`). The sign flips exactly at 64,000 and
+both post-turn intervals are individually significant.
+
+**Entropy and confidence are NOT monotone.** Iteration 68,000 is a model-wide
+excursion: entropy rises to 1.4169 against 1.3733 before and 1.3617 after, and
+confidence dips to 0.7039 between 0.7098 and 0.7110. It is not an artefact --
+token alignment is asserted against the same fixed set, the median (0.7111 vs
+0.6781 and 0.6762) and p90 (3.9594 vs 3.8583 and 3.8225) move with the mean, and
+23 of the 25 sources show 68,000 above both neighbours. Loss and accuracy at
+68,000 sit smoothly on their trends, so the model there is markedly more
+uncertain while being no less accurate than interpolation predicts.
+
+That excursion breaks the calibration reading this section first carried. The gap
+runs 0.0050, 0.0058, 0.0062, 0.0022, 0.0115: it does not widen steadily after the
+turn, it collapses at 68,000 and then more than quintuples by 72,000. With five
+points there is no basis for calling either a trend. Note that 68,000 is 1,375
+iterations after the restart at 66,625 (item 20); that is an association worth
+recording, not a claim.
+
+Under the surface the churn is much larger than the net. 61,000 of 819,200
+predictions, 7.5%, flip between 64,000 and 72,000; the healthy interval churns
+6.9% and nets positive. The regression is a small negative residual on a large
+two-way flow, not a quiet uniform decay.
+
+**Conclusion:** This is a real loss of predictive capability, not a calibration
+artefact and not a confidence artefact. Top-1 accuracy peaks at 64,000 and falls
+afterward, significantly in both post-turn intervals.
+
+**Correction.** This section was first written from 56,000/60,000/64,000/72,000
+only, and concluded that the model "commits harder while getting them right less
+often" -- entropy falling monotonically, confidence rising monotonically, the
+calibration gap widening an order of magnitude faster after the turn. Adding
+68,000 falsifies all three: entropy, confidence and the gap are each
+non-monotone. Four points that happen to be monotone are not a trend. The
+accuracy result is unaffected and is now measured over five points instead of
+four.
+
+**Method note:** Ranking tokens by their loss at one checkpoint and then
+measuring the change from that checkpoint produces an apparent flattening -- mass
+leaving confident predictions, entering unconfident ones, crossing over near
+`p = 0.5` -- **under a null**. For correlated variables with near-equal
+marginals, `E[Y-X | X large] < 0` follows with no mechanism. That table was
+convincing and wrong. Entropy and accuracy are marginal statistics with no
+conditioning, which is why they settle it and the sorted table cannot.
+
+---
+
+### 36. Update geometry: step size and direction persistence
+
+**Status: WIP**
+
+**Question:** Under Adam the update is `LR * m / (sqrt(v) + eps)`, so gradient
+magnitude is divided out. That is why gradient norm can fall from 0.512 to 0.457
+while the loss rises, and why no correlate has been found in it: it is the wrong
+variable. What is not normalised away is where the weights actually go. Does the
+geometry of the trajectory change at the turn?
+
+**Evidence:**
+[../../scripts/scan_update_direction.py](../../scripts/scan_update_direction.py)
+differences the fp32 master weights in `optimizer.distributed.*.param` across
+eight checkpoints spaced exactly 4,000 apart, and accumulates exact global sums
+over **all 33.893B parameters in all 80 buckets** -- not a sample. Bucket layout
+is asserted identical at every checkpoint, since these flat buffers are only
+comparable within one run at one DP size. The bf16 weights are deliberately not
+used: one ulp of bf16 near a weight of 0.01 is comparable to the update being
+measured, which would bias every cosine toward zero. Array job `1648074`, ten
+tasks, CPU and I/O only. Data `data/update_direction.csv`.
+
+| interval | 44-48k | 48-52k | 52-56k | 56-60k | 60-64k | 64-68k | 68-72k |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `\|W\|` at start | 6880 | 7026 | 7152 | 7264 | 7363 | 7452 | 7548 |
+| `\|dW\|` | 2080.9 | 2080.6 | 2073.8 | 2082.6 | 2098.5 | 2169.8 | 2282.8 |
+| `\|dW\|/\|W\|` | 0.302444 | 0.296136 | 0.289954 | 0.286706 | **0.285029** | 0.291157 | 0.302453 |
+| change | — | −0.0063 | −0.0062 | −0.0032 | −0.0017 | **+0.0061** | **+0.0113** |
+| `cos` with previous | — | −0.0862 | −0.0886 | −0.0906 | −0.0938 | −0.0947 | **−0.1070** |
+
+**The relative step size has a minimum at iteration 64,000**, the same iteration
+as the loss minimum. It declines monotonically with a decelerating rate that
+approaches zero at the turn, then reverses and accelerates, and by 72,000 it is
+back to its 44,000 value. Absolute displacement is flat within 0.4% for the
+16,000 steps to 60,000 and then climbs +0.8%, +3.4%, +5.2%. Directional
+persistence degrades steadily, and its largest single move, −0.0123, is the last
+interval, four to six times the typical step.
+
+`||W||` grows smoothly across the whole window with no feature at 64,000, which
+is the control: this is not item 14's weight growth restated.
+
+This is a stronger form of the same idea as item 19. That series is a
+size-weighted mean of per-shard medians over 9.5% of the model chosen
+lexicographically, with roughly 8% step-to-step scatter, in which the +14.9% move
+at the turn is about 1.7 standard deviations. This one is exact, global, and
+monotone before the turn, so the reversal does not have to be separated from
+noise.
+
+**Open issue:** Three things keep this open.
+
+1. **Causality is not established.** A growing step could be a response to
+   rising loss rather than its cause. Their extrema coincide at 4,000-step
+   resolution, which cannot separate the two orderings. This is the same
+   objection this document raises against item 19 and it applies here unchanged.
+   Item 38 dates the loss turn to ~66,500, so "minimum at 64,000" here means
+   "minimum in the last bin before the turn", not a coincidence of extrema.
+2. **Per-step oscillation is invisible.** Each `dW` sums 4,000 updates, so the
+   edge-of-stability signature averages out inside one interval. A negative
+   cosine at this scale means large-scale reversal, not per-step bouncing.
+   Item 23 is untouched by this result. Resolving it needs the 500-step cadence.
+3. The cosine is negative throughout, including in healthy training, so its sign
+   carries no information on its own. Only the trend does.
+
+---
+
+### 37. Adam second moment and the eps-floored fraction
+
+**Status: WIP**
+
+**Question:** Item 36 shows the step size turning, but `||dW||` is the outcome of
+`m / (sqrt(v) + eps)`. Does the optimizer state itself change at the turn, and is
+`eps` involved?
+
+**Evidence:**
+[../../scripts/scan_optimizer_state.py](../../scripts/scan_optimizer_state.py)
+at `--buckets 80`, which is **all 80 buckets and all 33.893B parameters**, on
+nine checkpoints. Array job `1650780`, nine tasks, ~40 min each. The `frac_*`
+columns are computed on the full buffers, not the 2M-element percentile sample,
+so the numel-weighted means below are exact. Data `.optparts/opt_00*.csv`.
+
+| iter | 44k | 48k | 52k | 56k | 60k | 64k | 68k | 72k | 75,126 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `frac sqrt(v) < 10eps` | .9119 | .8867 | .9184 | .9237 | .9152 | .8825 | .7590 | .7441 | **.5485** |
+| `sqrt(v)` p01 (e-9) | 9.30 | 9.49 | 9.42 | 9.32 | 9.79 | 10.49 | 15.90 | 16.25 | 19.59 |
+| `sqrt(v)` p50 (e-8) | 5.33 | 5.49 | 5.16 | 5.01 | 5.14 | 5.45 | 7.40 | 7.57 | 9.44 |
+| `sqrt(v)` p99 (e-7) | 6.90 | 7.21 | 6.80 | 6.61 | 6.73 | 7.24 | 7.35 | 7.49 | 8.20 |
+| `rel_step_p50` | 4.157 | 4.273 | 3.989 | 3.913 | 3.881 | **3.639** | 4.153 | 4.027 | 4.358 |
+
+Before the turn the eps-floored fraction is a stationary wiggle: band
+0.8825–0.9237, alternating sign, rate never exceeding 0.008 per 1,000 iterations.
+After it the rates are −0.031, −0.004 and −0.063 per 1,000. Two of those three
+are four to eight times outside the entire pre-turn band.
+
+**What moves is the lower half of the second-moment distribution.** From 64,000
+the 1st percentile rises 87% and the median 73%, while the 99th moves 13%.
+`sqrt_v_rms` is tail-dominated and reads flat throughout, which is why item 19
+never reported this despite holding it in the same rows.
+
+`rel_step_p50` bottoms at 64,000 and then leaves its pre-turn band upward,
+independently reproducing item 36 from a different measurement: item 36
+differences weights between checkpoints, this reads `m` and `v` inside one.
+
+**Open issue:** Four things.
+
+1. **Causality is not established**, exactly as in item 36.
+2. **The minimum at 64,000 is within scatter.** `step_p50` at 64,000 is 0.0057
+   below the pre-turn floor, and the pre-turn series already contains a +0.006
+   excursion at 48,000. Only the post-turn rise is clearly outside the band.
+3. **The decline is not smooth.** The 68k→72k rate, −0.004 per 1,000, sits
+   inside the pre-turn band. Dropping 68,000 entirely still leaves 64k→72k at
+   −0.017 per 1,000, twice the band, so the trend does not depend on it.
+4. **The step rise cannot be decomposed.** It grows while median `sqrt(v)` grows
+   73%, which requires median `|m|` to grow too, but the scanner records only
+   `m_rms` (flat to declining, 4.28e-7 → 4.17e-7) and an RMS and a median can
+   move oppositely. Adding `m_p01/p50/p99` is a one-line change and a free
+   re-run on checkpoints already staged.
+
+Per-bucket, 77/80 fall over 64k→75,126 with median −0.328. That count alone is
+not the evidence: the pre-turn control interval 56k→60k also has 72/80 falling,
+with median −0.0025. Buckets move together; only the magnitude separates them,
+by a factor of about 130.
+
+---
+
+### 38. Dating the turn from per-step loss
+
+**Status: Closed**
+
+**Question:** Items 35, 36 and 37 all report extrema "at exactly 64,000". All
+three are measured on checkpoints spaced 4,000 apart. Where is the turn actually?
+
+**Evidence:** Per-step `lm loss` from the 18 production logs, 15,033 points,
+binned at 500 iterations.
+
+| bin | 62–62.5k | 63.5–64k | 64–64.5k | 64.5–65k | 65–65.5k | 65.5–66k | 66–66.5k | 66.5–67k | 67–67.5k | 67.5–68k |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| loss | 1.5455 | 1.5448 | 1.5443 | **1.5435** | 1.5437 | 1.5445 | 1.5444 | 1.5464 | 1.5500 | 1.5550 |
+
+The loss is flat within ±0.0015 from 62,000 through 66,500, then rises at an
+accelerating rate. **The upward turn is at ~66,500, not 64,000.** 64,000 carries
+no feature; the minimum 500-bin is 64,500–65,000 and every bin in the plateau is
+within noise of it.
+
+**Conclusion:** No result in this document localises the turn to 64,000. Items
+35, 36 and 37 place it in the interval 64,000–68,000, which is all their
+checkpoint spacing permits, and 64,000 is the label on the earliest bin of a
+change that begins later. Their findings stand; their dating does not.
+
+This does not conflict with item 27. That item fits against a *decreasing*
+baseline, where falling short of the expected decline is already a departure — a
+plateau is such a departure. The turn measured here is the different and later
+event where the loss stops falling and starts rising.
+
+The restart at 66,625 (items 20, 27) falls inside the 66,500–67,000 bin where
+the rise begins. There is still no discontinuity across it: the two production
+logs overlap at 66,630–66,665 and agree to the fifth decimal, against ±0.008 of
+per-step scatter. Recorded as an association, not a mechanism.
+
+**Cost of not knowing this:** the first LR arm was scoped to stop at 66,000 on a
+misreading of a forward-binned control table, and so ran entirely inside the
+plateau. 5,142 GPU-h measuring a window with no signal in it.
+
+---
+
+### 39. Lowering the learning rate at 64,000
+
+**Status: WIP**
+
+**Question:** Items 36 and 37 find the step size turning with the loss, but at
+4,000-step resolution a step that grows *because* the loss is rising cannot be
+told from a loss that rises *because* the step grew. Lowering the only term that
+sets step size, changing nothing else, is the intervention the correlation
+cannot make.
+
+**Evidence:** One arm at `lr` 1.76e-4 forked from the flagship at iteration
+64,000 and run to 70,000 -- jobs `1651437` and `1656733`, 512 nodes, ~14,700
+GPU-h, `save_interval` 500. Config
+[../../config/experiments/oellm_32b_dense/oellm_32b_dense_lrdose_base.yaml](../../config/experiments/oellm_32b_dense/oellm_32b_dense_lrdose_base.yaml).
+The control is the flagship's own 3e-4 segment; it was not re-run. Both series
+are referenced to their own 65,500–66,000 bin, which is after the arm's LR-drop
+transient had decayed to −0.0013 and before the turn at ~66,500 (item 38).
+
+| bin | 66–66.5k | 66.5–67k | 67–67.5k | 67.5–68k | 68–68.5k | 68.5–69k | 69–69.5k | 69.5–70k |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| control 3e-4 | −0.0001 | +0.0019 | +0.0055 | +0.0105 | **+0.0134** | +0.0132 | +0.0104 | +0.0099 |
+| arm 1.76e-4 | −0.0018 | −0.0032 | −0.0038 | −0.0046 | −0.0057 | −0.0055 | −0.0063 | −0.0067 |
+| gap | −0.0017 | −0.0051 | −0.0094 | −0.0151 | **−0.0190** | −0.0187 | −0.0166 | −0.0166 |
+
+**At 1.76e-4 the regression does not occur in the window where it occurs at
+3e-4.** The arm is not still improving either: its last four bins span 0.0012
+against a ~0.001 noise floor, so it has flattened. The control rose and stayed
+up.
+
+**Update geometry at 500-step spacing.** The same measurement as item 36, run
+over this arm's 13 checkpoints -- array job `1709393`, exact over all 33.893B
+parameters. Data `data/update_direction_lr1p76e-4.csv`.
+
+| interval | 64.0–64.5k | 65.5–66k | 67.5–68k | 68–68.5k | 68.5–69k | 69–69.5k | 69.5–70k |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `\|dW\|/\|W\|` | 0.069529 | **0.067619** | 0.067679 | 0.067968 | 0.068037 | 0.068142 | 0.068352 |
+| `cos` with previous | — | −0.0371 | −0.0467 | −0.0468 | −0.0483 | −0.0489 | −0.0487 |
+
+**The arm reproduces the update-geometry turn but not the loss turn.** Relative
+step size bottoms at 65,500–66,000 and then rises monotonically over the last
+four intervals, +1.1% from the minimum, while directional persistence degrades
+throughout. Over those same last 2,000 iterations the loss is flat: −0.0057,
+−0.0055, −0.0063, −0.0067 from baseline, a 0.0012 spread against a ~0.001 floor.
+
+**Step-size growth and cosine degradation are therefore not sufficient to
+produce the loss rise.** They continue here in a run that does not regress. This
+is a negative result for the mechanism item 36 implied, and it does not depend
+on any cross-run comparison.
+
+Cross-run magnitude comparison is in fact not available: the control has no
+500-spaced checkpoints, and `\|dW\|` over 500 steps is not comparable in level to
+`\|dW\|` over 4,000. Only within-run shape is trustworthy here. What this does
+newly establish is the 500-step scatter, ~0.4% across the flat region, which
+item 36 could not measure; it puts the +1.1% rise at about 2.5x scatter.
+
+**Open issue:** Three things.
+
+1. **This does not attribute the effect to LR.** Lowering LR reduces loss on its
+   own, so "LR drives the turn" and "lower LR is simply gentler" both predict
+   exactly this table. Only the ordering 1e-4 flatter than 1.76e-4 flatter than
+   3e-4 separates them. The 1e-4 arm is built and patched but was deliberately
+   not submitted, so this arm is a demonstration that the turn is avoidable at
+   lower LR, not a measurement of what causes it.
+2. **The gap stops growing.** It peaks at −0.0190 near 68,250 and settles to
+   −0.0166, partly because the control itself falls back (+0.0134 to +0.0099).
+   The effect is about 0.017 ± 0.002 over this window, not a widening
+   divergence, and the control's own trace here is not monotone.
+3. **6,000 iterations is short.** Nothing here says the arm would not turn later
+   at its own, lower, step size.
+
+**Interpretation after item 43:** this arm also kept
+`defer_embedding_wgrad_compute: true`. Lowering the learning rate reduced the
+effect of a bad gradient but did not make that gradient correct. The experiment
+remains useful as mitigation evidence, but it no longer supports treating the
+learning rate as the leading cause of the production turn.
+
+**Method note:** changing `lr` on resume required a patch to the Megatron
+submodule (`match_saved_param_group`, commit `bc89ad3ff`). Upstream `27e312ca1`
+(#4705) put `max_lr` in the tuple used to match saved param groups, so any LR
+change fails every lookup and dies in `distrib_optimizer.py` with a bare
+`KeyError`. `override_opt_param_scheduler` does not help -- it is read after the
+optimizer has already loaded. The patch also overwrites `max_lr` from the live
+group, because `get_lr` reads `param_group.get('max_lr', self.max_lr)` and a
+group left holding the checkpoint's value runs silently at the old LR.
+
+---
+
+### 40. Weight-norm growth against the loss, at 5-step resolution
+
+**Status: WIP**
+
+**Question:** Items 36 and 37 date their extrema from checkpoints 4,000 apart and
+cannot order cause and effect. `params_norm` is logged every 5 iterations, which
+is 800x finer. Does `||W||` growth lead the loss, or follow it?
+
+**Evidence:** `log_params_norm` is **off in production** -- 0 of 18 slurm logs
+contain `params norm` -- so this channel exists only for revival 1, which turned
+it on. 5,823 points over 76,001 to 105,095, binned at 500 and differenced so
+neither series carries a trend.
+
+| correlation with change in loss | r | t (55 df) |
+|---|---:|---:|
+| change in `\|\|W\|\|` | **+0.602** | **+5.59** |
+| change in grad norm | -0.087 | -0.65 |
+| change in `num_zeros_in_grad` | -0.179 | -1.35 |
+
+The weight-norm channel is significant at p < 1e-6 and the other two are null.
+Grad norm being null is the prediction of item 36 restated: Adam divides gradient
+magnitude out. `num_zeros_in_grad` is flat at 1.18% of parameters (399M to 401M)
+across the whole span, which closes a channel DEBUG.md has never examined.
+
+**Lead/lag, which is what the 5-step resolution buys:**
+
+| k | -4 | -3 | -2 | **-1** | 0 | +1 | +2 | +3 | +4 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| r | +.525 | +.603 | +.652 | **+.664** | +.602 | +.219 | +.042 | -.240 | -.361 |
+
+`k > 0` means `||W||` leads the loss, and the correlation collapses there. The
+peak is at k = -1 at 500-iteration bins and k = 0 at 250. **Weight-norm growth is
+contemporaneous with or lags the loss and never leads it**, so it joins items 36
+and 37 as an accompaniment rather than a driver.
+
+**Open issue:** the leading alternative is data composition -- a stretch of harder
+documents would raise the loss and change gradient structure together, giving
+exactly a k near 0 correlation. It cannot be excluded from one run, and
+production has no `params_norm` to compare against. Turning `log_params_norm` on
+is free and belongs in every future run.
+
+---
+
+### 41. Weight growth exponents by tensor type
+
+**Status: Closed**
+
+**Question:** Merrill et al. predict transformer weight norms grow as `t^0.5`.
+Adam's relative update scale goes as `1/||W||`, so any tensor growing faster than
+that is losing effective learning rate faster than the theory allows. Do the
+tensor types diverge?
+
+**Evidence:** `data/weight_stats.csv`, run `flagship`, six time points (8k,
+34,454, 60k, 64k, 68k, 75,126), fitting `log(wrms)` against `log t` per tensor
+per layer. Reported as exponents, not ratios.
+
+| tensor | mean exponent | min | max | vs `t^0.5` |
+|---|---:|---:|---:|---|
+| `self_attention.linear_qkv` | 0.264 | 0.038 | 0.336 | sub |
+| `mlp.linear_fc1` | 0.311 | 0.262 | 0.349 | sub |
+| `mlp.linear_fc2` | **0.646** | 0.560 | 0.680 | **super** |
+| `self_attention.linear_proj` | **0.652** | 0.535 | 0.737 | **super** |
+
+**The split is input versus output projection, not MLP versus attention.** Both
+blocks contain one sub-`t^0.5` matrix that reads from the residual stream and one
+super-`t^0.5` matrix that writes to it, with nearly identical exponents across
+the two blocks. The two residual-writing matrices are losing effective LR about
+2.4x faster than the two residual-reading ones, and the gap widens as `t^0.37`.
+
+By depth the asymmetry is uniform, except that `qkv` falls monotonically from
+0.312 in layers 0-7 to 0.190 in layers 56-63, so deep attention inputs retain the
+most effective LR of anything in the network.
+
+| layer band | fc1 | fc2 | proj | qkv |
+|---|---:|---:|---:|---:|
+| 0-7 | 0.331 | 0.670 | 0.679 | 0.312 |
+| 24-39 | 0.307 | 0.637 | 0.651 | 0.265 |
+| 56-63 | 0.294 | 0.653 | 0.609 | 0.190 |
+
+**Correction to a companion note.** `revival_notes.md` H-A reports only `qkv`
+(0.28) and `fc2` (0.64) and reads them as "the MLP is progressively freezing
+relative to attention". With all four tensors that reading does not survive:
+`fc1` is the slowest-growing MLP matrix and `proj` the fastest-growing attention
+one, which is the opposite pairing. The remedy H-A proposes (norm-gain weight
+decay, its T2-C) is designed against an asymmetry that is not the one present.
+
+This is a description of the trajectory, not a driver: the exponents are fitted
+across 8k to 75k and show no feature at the turn.
+
+---
+
+### 42. What the training data stream actually was
+
+**Status: WIP**
+
+**Question:** Every data test so far (items 5, 21, 34) scores the model on a
+*clean* datamix or reasons about the *designed* mixture. Nothing had checked the
+bytes actually fed to the model.
+
+**Evidence, and it is clean at the turn:**
+
+* **Shards untouched.** All 904 files in the blend (452 `.bin` + 452 `.idx`,
+  54.41 TB) carry a single mtime of 2026-08-11, before the run's 2026-08-24 to
+  08-30 window. None missing, none zero length.
+* **No index activity near the turn.** Every write under `data_cache_path` is
+  dated 08-26 or earlier. Mapping logs to iterations puts 08-26 at iteration
+  ~26,000; the turn is at 66,500, reached on 08-30.
+
+**The consumed mixture is exactly the specified one.** Reading `num_samples`
+out of all 452 cache descriptions and comparing the implied weight against the
+datamix production actually used (`data_args_path` in the frozen config, whose
+*contents* point at `/e/scratch` even though the file lives on `/e/data1`), every
+dataset deviates by 0.2122% -- median, mean and maximum all equal, so the spread
+is zero. That is renormalisation, not distortion: the datamix weights sum to
+1.002127 and 1/1.002127 = 0.997877. Total `num_samples` exceeds `train_samples`
+by 0.5%, matching `mid_level_dataset_surplus: 0.005`. No source was
+over- or under-sampled.
+
+**But the index was rebuilt once mid-run, and the cause is alarming.** Each of
+the 452 production datasets has exactly two cached builds, 08-24 18:00 and 08-26
+16:00-17:00. Comparing them field by field across all 452: `num_samples` differs
+in **0**, and the *only* field that differs, in **452 of 452**, is `tokenizer`.
+The `tokenizer_path` is identical; what changed is the serialised metadata dict,
+one build recording `vocab_file` and the other `chat_template`. That is a
+Megatron-side change in how the tokenizer describes itself, not a different
+tokenizer.
+
+The dict is part of the md5 that keys the cache, so a cosmetic change to it
+invalidated the entire 15 T index and produced a new shuffle -- a different data
+order from a change that altered nothing about the data. 08-26 maps to iteration
+~19,000-26,000.
+
+**Correction.** An earlier version of this item listed three rebuild causes,
+including a root migration and a 12% shift in `num_samples`. Both came from
+comparing production's build against a `/e/data1`-rooted build that predates the
+run and belongs to something else. Within production's own root there is one
+rebuild and one cause.
+
+**Conclusion:** this does not explain the regression -- it is ~40,000 iterations
+early and the binned loss descends smoothly through it. It is a process defect
+for the restart recipe: pin the cache key, or assert it is unchanged on resume.
+A library upgrade must not be able to re-shuffle the training data as a side
+effect of renaming a metadata field.
+
+**Open issue:** the third part of this test is unrun. Instantiating the
+dataloader offline at the `consumed_samples` for iterations 40,000 and 70,000 and
+comparing token-frequency histograms, document lengths and packing would be the
+direct check; the above is the file-level and metadata-level check only.
+
+---
+
+### 43. Deferred LM-head wgrad with overlapped gradient reduction
+
+**Status: Confirmed**
+
+**Question:** Did `defer_embedding_wgrad_compute: true` cause the late loss
+divergence?
+
+**Mechanism:** Yes, in combination with `overlap_grad_reduce: true` on the
+tested Megatron revisions. The model has
+`untie_embeddings_and_output_weights: true`, so despite the flag's name the
+affected production parameter is the **LM head**, not the input embedding.
+The runtime dump from production job `1537344` confirms deferral enabled with
+`wgrad_deferral_limit: 0` (all eligible microbatches), reduction overlap, the
+distributed optimizer, gradient-accumulation fusion, TP/PP/VPP/DP of
+4/4/4/128, and global/micro batch sizes of 4,096/2.
+
+
+The production path runs in this order:
+
+```text
+LM-head backward saves activations and output gradients
+    -> a dummy weight gradient lets the DDP hook mark the parameter ready
+    -> asynchronous reduce-scatter may start
+    -> the pipeline flush computes and adds the real LM-head wgrad later
+```
+
+The distributed optimizer therefore does not reliably receive the intended
+fully data-parallel-averaged gradient. With data-parallel size 128, one rank's
+local estimator can have about 128 times the intended variance, or 11.3 times
+the standard deviation. The actual write races with an asynchronous collective,
+so it can instead be a timing-dependent partial mixture.
+
+Source inspection follows the deferred calculation and dummy gradient in
+[Tensor-parallel layers](../../submodules/Megatron-LM/megatron/core/tensor_parallel/layers.py),
+the ready hook and reduction in
+[distributed DDP](../../submodules/Megatron-LM/megatron/core/distributed/distributed_data_parallel.py)
+and
+[gradient buffers](../../submodules/Megatron-LM/megatron/core/distributed/param_and_grad_buffer.py),
+and the later drain in
+[pipeline schedules](../../submodules/Megatron-LM/megatron/core/pipeline_parallel/schedules.py)
+and [core utilities](../../submodules/Megatron-LM/megatron/core/utils.py).
+
+**Controlled reproduction:** Job `1760228` ran the same seed and mock data on a
+four-layer, four-GPU PP=2/DP=2 model with virtual pipeline stages, an untied LM
+head, the distributed optimizer, and gradient-accumulation fusion.
+
+| arm | defer wgrad | overlap reduction | iteration-1 loss / grad norm | later trajectory |
+|---|---:|---:|---|---|
+| A: reference | off | on | 10.42399 / 0.985 | reference |
+| B: affected | on | on | 10.42399 / **0.994** | diverges from iteration 2 |
+| C: ordering control | on | off | 10.42399 / 0.985 | matches A at printed precision |
+
+The first losses match because no optimizer update has happened. The affected
+arm's gradient norm already differs before that update; disabling reduction
+overlap while retaining deferral restores the reference. This isolates the
+tested failure to **deferral plus overlapped reduction**, not deferral alone.
+Raw logs are under
+`/e/scratch/e-sta-openeurollm/production_training/smoke/defer_wgrad_test/`.
+
+**Production intervention:** A fork resumed from the flagship's persistent
+iteration-64,000 checkpoint, including optimizer state, kept `lr: 3e-4`, and
+changed only:
+
+```yaml
+defer_embedding_wgrad_compute: false
+```
+
+The audit found the same model, optimizer settings, container, learning rate,
+and effective data batches. Per-step losses correlate at `r = 0.75` over
+66.5--70k and `r = 0.84` over 70--71.6k, independently confirming matching
+changes in batch difficulty. The first common logged point, iteration 64,005,
+is 1.544307 with deferral off and 1.545458 with it on.
+
+| interval | fork: defer off | historical control: defer on | fork - control |
+|---|---:|---:|---:|
+| 64--65k | 1.4745 | 1.5440 | -0.0694 |
+| 65--66k | 1.4617 | 1.5440 | -0.0824 |
+| 66--67k | 1.4545 | 1.5455 | -0.0910 |
+| 67--68k | 1.4569 | 1.5526 | -0.0956 |
+| 68--69k | 1.4595 | 1.5578 | -0.0983 |
+| 69--70k | 1.4532 | 1.5547 | -0.1015 |
+| 70--71k | 1.4471 | 1.5591 | -0.1120 |
+| 71--72k | 1.4466 | 1.5627 | -0.1161 |
+| 72,000--72,485, partial | 1.4490 | 1.5682 | -0.1192 |
+
+The response is immediate: the 25-iteration-window gap is -0.012 after 25
+updates and -0.051 after 100. The fork then runs more than 8,000 iterations,
+past the original onset window, without the sustained rise; its gap from the
+control widens in every complete 1,000-iteration bin. The comparison logs are
+under the production directories
+`oellm_32b_dense_prod_dataopt5_gbs4096_lr3e-4` and
+`oellm_32b_dense_prod_dataopt5_deferoff_3e-4_i64k_seed1234_gbs4096_lr3e-4`.
+
+**Held-out LM-head refit:** Training loss alone could improve because the output
+layer repairs quickly. Jobs `1769506`--`1769508` froze every other parameter,
+evaluated the same held-out slice of about 168 million tokens, refitted only the
+LM head for 500 correct-gradient steps on unseen post-80k samples, and evaluated
+the slice again.
+
+| checkpoint | own-head loss | after head refit | improvement |
+|---|---:|---:|---:|
+| control 64k | 1.4969 | 1.4491 | 0.0478 |
+| control 72k | 1.5206 | 1.4698 | 0.0508 |
+| defer-off fork 70k | **1.4006** | **1.3990** | 0.0015 |
+
+About 0.05 loss in each affected control is associated directly with a poorly
+fitted head. The post-refit control loss still rises by about 0.021 from 64k to
+72k, so replacing only the head does not repair the late damage: the frozen body
+also becomes worse. Starting from the same 64k weights, the defer-off fork's
+body improves and its own head is already near the refit result. Raw evidence is
+under `/e/scratch/e-sta-openeurollm/production_training/smoke/head_refit/`.
+
+**Conclusion:** The incorrect ordering is demonstrated directly, and disabling
+only the unsafe optimization at production scale immediately changes the
+trajectory. Together with held-out and frozen-body evidence, this makes
+deferred LM-head wgrad plus overlapped reduction the high-confidence, dominant
+cause of the observed divergence.
+
+This is not a 100% mathematical proof: there is one production-scale fork, its
+control is the historical trajectory rather than a concurrent rerun, the fork
+uses a slightly later audited code revision, and a 500-step head refit is a
+finite optimization rather than an exact decomposition. None currently offers
+a plausible alternative explanation for all three experiments.
+
+The flag was enabled from iteration 0. This result therefore explains the
+harmful dynamics but not why they become visible only around 60--66.5k, how a
+noisy head propagates damage into the transformer body, or how much pre-64k
+damage remains in the recovered fork.
+
+The affected ordering is present in official Megatron Core v0.16.0 commit
+`3bec9aa97dda898d16ff5a89bac0ed2b6682b172`, the local reproduction fork, and
+the later 0.19-based production fork. The flag is not a Megatron default; this
+project enabled it in the 32B scaling configuration on 2026-08-14 and copied it
+to production on 2026-08-21. The v2 configuration disables it.
+
+**Operational conclusion:** Preserve gradient-reduction overlap and disable the
+unsafe deferral:
+
+```yaml
+overlap_grad_reduce: true
+defer_embedding_wgrad_compute: false
+```
+
+Add a startup assertion for the unsafe combination and a regression test that
+compares the LM-head gradient or one optimizer update with a non-deferred
+reference. Prefer a checkpoint from the defer-off fork over later affected
+control checkpoints; refitting the head does not remove the measured body
+damage. Reinterpret lower-LR arms as symptom mitigation because they retained
+the invalid gradient path.
+
+The full source and configuration audit is in
+[DEFER_EMBEDDING_WGRAD_BUG.md](DEFER_EMBEDDING_WGRAD_BUG.md).
+
+---
+
+## Run index
+
+Run names are deterministic: `<run-directory-name>_<SLURM_JOB_ID>`. Logs are at
+`/e/project1/e-sta-openeurollm/production_training/<run-directory-name>/logs/slurm-<job>.log`,
+and `config-<job>.yaml` beside them is the configuration that job actually ran.
+Check that file rather than trusting a run name. W&B URLs are
+`https://wandb.ai/openeurollm-project/<project>/runs/<id>`.
+
+`/e/scratch/.../production_training/` holds directories with the same names but
+contains only checkpoints: no logs, no configs, no wandb directories. A run that
+appears to have no evidence is usually being looked for on the wrong file
+system.
+
+| run | job | id | project |
+|---|---|---|---|
+| flagship, old stack (to 34,450) | `1516079` | `uaewx25r` | `oellm_32b_dense` |
+| flagship, new stack (34,455 on) | `1524558` | `eef62uvs` | `oellm_32b_dense` |
+| flagship, the broken stretch | `1537344` | `tjeg54n7` | `oellm_32b_dense` |
+| cont2 (seed 4321) | `1558724` | `921bmgjb` | `oellm_32b_dense` |
+| cont3 (old stack) | `1563277` | `59cgca5p` | `oellm_32b_dense` |
+| cont5 (crashed) | `1566470` | `u0ym9e9h` | `oellm_32b_dense` |
+| bf16 eval at 64k | `1564918` | `cyw7md2r` | `oellm_32b_dense_probe` |
+| bf16 eval at 72k | `1564919` | `63y7kx56` | `oellm_32b_dense_probe` |
+| stack probe FA3 at 72k | `1543640` | `bdinzdw8` | `oellm_32b_dense_probe` |
+| stack probe cuDNN at 72k | `1548568` | `haao7dqu` | `oellm_32b_dense_probe` |
+| stack probe nemo26.04 at 72k | `1548574` | `h70nuvhz` | `oellm_32b_dense_probe` |
+| stack probe FA3 at 60k | `1548575` | `4nlzb9z3` | `oellm_32b_dense_probe` |
+| ladder flagship 64,000 | `1573075` | `n73hfjsd` | `oellm_32b_dense_probe` |
+| ladder flagship 68,000 | `1563495` | `qbovy64e` | `oellm_32b_dense_probe` |
+| ladder cont2 65,000 | `1563497` | `cqcarvfh` | `oellm_32b_dense_probe` |
+| ladder cont2 65,500 | `1563500` | `0hxqfqu8` | `oellm_32b_dense_probe` |
+| ladder cont2 65,625 | `1563502` | `0jmlocsy` | `oellm_32b_dense_probe` |
+| ladder cont2 66,000 | `1563494` | `toq5cc6t` | `oellm_32b_dense_probe` |
+
+The BF16 branch from 60k is four segments, each resuming from a rolling
+checkpoint slightly behind where the previous one stopped, so the seams overlap
+by 90 to 120 iterations:
+
+| segment | job | id | iterations |
+|---|---|---|---|
+| cont4, first | `1576287` | `22veosbj` | 60,000–60,367 |
+| cont4, second | `1580164` | `yejlm5uz` | 60,251–63,220 |
+| cont4, third | `1619380` | `k79pnix8` | 63,126–70,580 |
+| cont4b, replica | `1618489` | `sksjido2` | 63,126–66,151 |
+| cont4b, replica | `1620342` | `td7t0a6m` | 66,126–68,000 |
+
+`1576287`, `1580164` and `1619380` form one continuous branch to 70,580. The two
+`cont4b` jobs are an independent fork of the same 63,125 checkpoint, so they
+duplicate 63,126–68,000 rather than extending it; plotted together they also
+give a run-to-run noise floor of 0.0007. Job `1576287` logged no iteration lines
+to slurm and is readable only in wandb, for the reason given under operational
+notes.
+
+The five `attnprobe-*` jobs (`1574335`, `1574334`, `1574662`, `1574661`,
+`1574828`) wrote no wandb directory; their loss and gradient norm are in the
+slurm logs at full printed precision. The FP8 amax audit is an offline script
+over checkpoints, not a run. Everything else wrote an offline wandb directory at
+`<run>/wandb/offline-run-*`, whose suffix is the run id in these tables, so the
+ids are checkable on disk before anything is synced.
+
+---
+
+## Operational notes
+
+Two configuration settings cost significant time and should not be reintroduced.
+
+**`log_max_attention_logit: true`** makes Transformer Engine disable every fused
+attention kernel, leaving only the unfused path. That path either runs out of
+memory at production shape or, when `attention_backend: flash` is pinned, fails
+with `ValueError: No dot product attention backend is available`. It killed
+about eight consecutive 512-node starts, roughly 700 GPU-hours: jobs `1565251`,
+`1566161`, `1567010`, `1573069`, `1573297`, `1573378`, `1574997`, `1575141` on
+the cont4 branch and `1565209`, `1565895`, `1566470` on cont5. Because the
+setting lived only in the BF16 forks, "BF16" and "this flag" were initially
+indistinguishable as causes.
+
+**`attention_backend: flash`** does not work in BF16 with document masking
+(`thd` and `cu_seqlens`); use `auto`, which selects cuDNN. This costs nothing
+scientifically, as FA3 and cuDNN measure identically to six decimals (items 8
+and the stack probes in the run index).
+
+**Debug logging at 512 nodes.** `NVTE_DEBUG_LEVEL=2` prints the backend
+selection block on every attention call on every rank. Job `1576287` produced
+8,464,730 such lines and a 14 GB log, and srun dropped its stdout, so that job's
+iteration lines are absent from slurm entirely while the metrics reached wandb
+normally. The settings have been removed from the configuration. Any curve
+re-derived from logs alone silently omits that segment.
+
+---
+
+## Logbook
+
+- **2026-08-24:** The flagship run starts, job `1485573`.
+- **2026-08-28, iteration 34,455:** Container, Transformer Engine, Megatron Core,
+  attention backend, optimizer sharding, and document masking change. Training
+  continues to improve afterward.
+- **2026-08-30:** The flagship stops at iteration 75,125 after the loss has risen
+  for about 8,500 iterations.
+- **2026-08-31 to 2026-09-01:** Initial checks cover configuration, scheduled LR,
+  restarts, BF16 evaluation, norm gains, FP8 amax, and weight statistics.
+- **2026-09-02:** The BF16 continuation reaches 68k and also turns upward. On
+  that window it appears to do so more slowly than FP8; the extension recorded
+  the next day shows that reading to be an artifact of stopping at 68k. Software
+  arithmetic, z-loss values, sampled attention entropy, and optimizer state are
+  probed.
+- **2026-09-03:** Dataset epoch boundaries, embeddings, layer-0 attenuation,
+  onset models, and gain-distribution statistics are examined. The first
+  finite-difference sharpness measurement is rejected as invalid. The per-layer
+  residual-stream scan closes functional collapse and corrects the absolute
+  reading in item 30. The BF16 branch is extended to 70,580, which reverses the
+  earlier reading that FP8 halves the rate of degradation. Earlier working notes
+  are archived. The paired loss breakdown scores 64,000 and 72,000 on identical
+  tokens and finds the degradation global across all 25 heaviest sources and
+  smooth across document position, with the block-minus-dense gap not widening;
+  this removes data composition and the masking objective as drivers (item 34).
+  Scoring the same tokens per token rather than per cell corrects that item's
+  difficulty-proportionality reading and shows the regression is a real loss of
+  top-1 accuracy, not a calibration effect, with the model sharpening while
+  getting less accurate (item 35). Differencing the fp32 master weights over all
+  33.9B parameters finds the first clean correlate: relative step size has a
+  minimum exactly at 64,000 and rises afterward (item 36). Training remains
+  paused.
+
+- **2026-09-04** Scanning the optimizer state over 100% of the model confirms the
+  eps-floored fraction collapsing 0.88 to 0.55 after the turn, a second correlate
+  from a different measurement (item 37). Binning the per-step loss at 500
+  iterations dates the turn to ~66,500 and shows 64,000 carries no feature, so
+  the "exactly 64,000" in items 35–37 is checkpoint spacing, not localisation
+  (item 38). A Megatron fork patch was needed before any LR could be changed on
+  resume; the 1.76e-4 arm runs to 70,000 as job `1656733`.
+
+- **2026-09-07** The 1.76e-4 arm completed at 70,000. It does not reproduce the
+  regression: flat where the control rises +0.0099 to +0.0134 (item 39). The
+  1e-4 arm was deliberately not submitted, so the established result is that the
+  turn is avoidable at a lower LR, not that LR causes it. Training remains
+  paused.
+
+- **2026-09-08** Revival 1 (head 2e-4 by way of `--decoupled-lr`, body 3e-4) reached
+  105,095. It mitigates but does not fix: drift is +0.00099 per 1,000 from 82k
+  against production's +0.00416, but healthy is negative. A CPU-only pass closed
+  items 22 and the stray-position-embedding question, resolved the `||W||`
+  discrepancy in favour of item 36, and added items 40 (weight-norm growth
+  correlates with the loss at r = +0.60 but never leads it), 41 (growth exponents
+  split input versus output projection, not MLP versus attention) and 42 (the
+  data stream is clean at the turn, the consumed mixture matches the datamix
+  exactly, but a tokenizer metadata rename re-shuffled the whole index at
+  ~19,000-26,000). Checkpoint averaging is queued behind a maintenance window.
+
+- **2026-09-12:** Source inspection and controlled job `1760228` identify an
+  ordering bug between deferred LM-head wgrad computation and overlapped
+  gradient reduction. A production fork from 64k with deferral disabled improves
+  immediately and remains healthy through 72,485; held-out LM-head refits show
+  both a poorly fitted control head and damage in the frozen body. Item 43 records
+  the bug as the high-confidence dominant cause. Training remains paused.
+
+---
+
+## Current assessment
+
+### What is established
+
+- **The dominant cause is the deferred LM-head gradient interacting with
+  overlapped data-parallel reduction** (item 43). The ready hook can launch
+  reduce-scatter on a dummy gradient before the real deferred wgrad is added, so
+  the distributed optimizer does not reliably receive the intended DP-averaged
+  gradient.
+- The affected parameter is the untied output layer, not the input embedding.
+  The production configuration combines deferral with reduction overlap, PP=4,
+  VPP=4, DP=128, the distributed optimizer, and gradient-accumulation fusion.
+- A controlled A/B/C reproduction changes the gradient before the first update
+  only when both deferral and reduction overlap are on. Keeping deferral but
+  turning overlap off matches the non-deferred reference at printed precision.
+- **The production intervention agrees with the source diagnosis.** From the
+  same 64k checkpoint and optimizer state, disabling only deferral at `lr:
+  3e-4` improves the loss immediately and prevents the historical rise through
+  iteration 72,485. The gap reaches -0.1192 in the latest partial bin and widens
+  in every complete 1,000-iteration bin.
+- **The damage is not confined to the output layer.** Refitting only the LM head
+  removes about 0.05 loss from affected 64k and 72k checkpoints, but the
+  post-refit loss still worsens by about 0.021. The defer-off fork is already
+  within 0.0015 of its refit result and its frozen body is substantially better.
+- The causal conclusion is high confidence rather than mathematical certainty:
+  there is one production-scale intervention, the control is historical, the
+  fork uses a later audited revision, and head refitting is finite optimization.
+  No current alternative explains the source ordering, controlled reproduction,
+  32B intervention, and held-out result together.
+- The flag was enabled from iteration 0. It explains the harmful training
+  dynamics, but not why the visible effect appears around 60,000--66,500.
+- Lowering the LR at 64k mitigated the symptom while retaining the incorrect
+  gradient path (item 39). It is not evidence that learning rate rather than the
+  bug caused the turn. Update geometry and Adam-state changes remain useful
+  descriptions of how affected training evolved, not the leading cause.
+- The regression itself remains well established: held-out and BF16 evaluation
+  reproduce it, fixed-token top-1 accuracy falls, and the extra loss is global
+  across sources and document positions. There is no scheduled event, restart
+  discontinuity, node-set dependence, specific post-64k shuffle, gross capacity
+  collapse, or forward FP8-evaluation artifact at the turn.
+- Twenty-four of the 43 hypotheses are closed and item 43 is confirmed. The open
+  items describe secondary contributors, consequences, or unmeasured axes; they
+  are no longer co-equal candidate explanations for the production divergence.
+
+### Remaining questions, grouped by priority
+
+1. **Why the effect is late.** Determine why a gradient error present from the
+   first update remains partly hidden until 60--66.5k. Relevant possibilities
+   include a changing head/body coupling, loss-landscape sensitivity, or
+   accumulation of pre-64k damage.
+2. **How damage propagates and how much remains.** Isolate how a noisy LM head
+   degrades the transformer body and compare recovery from earlier affected
+   checkpoints. The 500-step refit shows that replacing only the head is
+   insufficient.
+3. **Exact implementation boundary.** Establish which Megatron revisions and
+   parallel configurations are affected, then fix the ordering upstream rather
+   than relying indefinitely on a configuration guard.
+4. **Independent causal replication.** A concurrent defer-on/defer-off fork or
+   second seed would remove the principal experimental caveats. It would
+   strengthen confidence, not change the current operational decision.
+5. **Secondary open items.** Production masking equivalence, language/document
+   length/duplicate exposure, backward FP8 error, residual precision, curvature,
+   and gradient-noise scale remain scientifically useful but are lower priority
+   than preventing the demonstrated invalid gradient.
+
+### Recommended next actions
+
+1. **Keep deferral off wherever reduction overlap is on** for the affected
+   revisions:
+
+   ```yaml
+   overlap_grad_reduce: true
+   defer_embedding_wgrad_compute: false
+   ```
+
+2. **Fail fast on the unsafe combination.** Add a startup assertion until the
+   communication ordering is fixed.
+3. **Add a regression test.** Exercise pipeline parallelism, an untied output
+   layer, the distributed optimizer, gradient-accumulation fusion, deferral, and
+   overlapped reduction. Compare the LM-head gradient or one optimizer update
+   with a non-deferred reference.
+4. **Use the defer-off fork for recovery.** Prefer its checkpoints over later
+   affected control checkpoints; head-only refitting does not remove the
+   measured body degradation. Continue held-out evaluation and retain
+   250--500-step checkpoints through the old onset window.
+5. **Audit related runs and conclusions.** Disable the flag in every matching
+   configuration, and reinterpret LR, optimizer-state, and update-geometry
+   experiments that used the affected path as mitigation or consequence
+   evidence.
+6. **Prepare an upstream report** with the minimal A/B/C reproduction, exact
+   affected commits, source ordering, and regression-test expectation.

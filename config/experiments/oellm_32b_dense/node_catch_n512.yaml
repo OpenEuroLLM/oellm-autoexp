@@ -1,0 +1,182 @@
+# @package _global_
+#
+# ============================================================================
+# NODE-CATCHING CAMPAIGN — burn in the fleet before the production run.
+# ============================================================================
+#
+# Takes N independent 512-node draws, runs a ~1 min per-node health probe in
+# each, and writes every node that fails into config/exclude/jupiter_exclude_nodes.txt
+# so the production submission stops drawing it. Each draw is a fresh
+# allocation, so the campaign samples the fleet rather than one lucky set.
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_dense/node_catch_n512
+#
+# (run_autoexp auto-enables --chain when chain_repeat > 1, which is what makes
+# the propagate step below reach the queued draws.)
+#
+# SMOKE-TEST IT FIRST — one 8-node draw, two minutes, no cost:
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_dense/node_catch_n512 \
+#       slurm.sbatch.nodes=8 job.chain_repeat=2
+#
+# AFTERWARDS, run the half this config cannot do (see "WHAT THIS CANNOT SEE"):
+#   python scripts/run_autoexclude_jupiter.py analyze --since <campaign start>
+#   python scripts/run_autoexclude_jupiter.py update  --since <campaign start> --apply
+#
+# THE EXCLUSION FILE LIVES ON THE CLUSTER AND DRIFTS FROM THE REPO. The monitor
+# appends to config/exclude/jupiter_exclude_nodes.txt on JUPITER as it finds
+# nodes, and sync_to_jupiter.sh only pushes workstation -> cluster, so those
+# entries never come home. Verified 2026-08-20: the cluster copy held 26 nodes
+# to the repo's 25 (jpbo-111-44, appended live by auto_restart_ft.yaml's
+# node_failure_append). `rsync -ru` skips files newer on the receiver, so
+# nothing was lost — but a repo-side edit WOULD overwrite the cluster's copy and
+# silently discard whatever the monitor had learned. Pull it back before editing
+# it by hand, and commit it:
+#   rsync jupiter:~/work/Projects/oellm-autoexp/config/exclude/jupiter_exclude_nodes.txt \
+#         config/exclude/
+#
+# ============================================================================
+# WHY A PROBE AND NOT A TRAINING RUN
+# ============================================================================
+# Every entry currently in config/exclude/jupiter_exclude_nodes.txt is a HOST
+# fault — free RAM, per-NUMA memory, a residual squashfuse mount, an unmounted
+# /e/project1, IB link-downed counters, pending GPU row remapping, a wedged GSP
+# firmware channel. Not one of them needed a trainer to be visible; they were
+# all diagnosable in seconds from the node itself. scripts/nodecheck.sh checks
+# exactly that list (it is annotated with the node each check would have
+# caught), so a draw costs ~3 min of allocation instead of the 20+ min a
+# container start plus NCCL init plus a few hundred iterations would.
+#
+# At 512 nodes x 20 min wall (the limit below, mostly queue-side slack) a draw
+# is at most ~170 node-hours and typically ~25. Eight draws therefore cost less
+# than ONE failed 512-node training start, and the 2026-08 campaign lost
+# several of those.
+#
+# WHAT THIS CANNOT SEE, AND WHAT COVERS IT
+# ----------------------------------------
+#   * fabric / collective faults that only appear under load, and slow nodes
+#     that are not broken. Only a real at-scale run finds those — attach
+#     `/job: node_catch` to the real training config (see the note at the
+#     bottom) and harvest as a side effect.
+#   * the prolog-requeue loop. JUPITER's PrologFlags carry ForceRequeueOnFail,
+#     so a node failing NHC requeues the whole job BEFORE the batch script runs.
+#     There is no log, so no log_event can ever fire; the only record is the
+#     per-attempt NodeList in `sacct --duplicates`. That is exactly what
+#     scripts/run_autoexclude_jupiter.py reads, and it is the mechanism that
+#     produced the 2026-08-14 block of the exclusion file by hand.
+#   * a job that DIES MIDWAY. The monitor only appends when the log says
+#     "Node failure on <node>" AND it happens to be polling at that moment; a
+#     hang, an unattributed NCCL death, or any failure after the monitor exited
+#     appends nothing. The script covers this from SLURM's node-event table
+#     instead: when a node death kills an allocation, the node's drain event and
+#     the job's End timestamp are the SAME SECOND (verified on jobs 1375720 /
+#     1395206 / 1400371), so the culprit is recoverable with no log at all.
+#
+# ============================================================================
+# HOW A DRAW LEARNS FROM THE PREVIOUS ONE
+# ============================================================================
+# `--chain` pre-queues all N draws at once with afterany dependencies, which is
+# what gives a 512-node job a decent queue position. Their scripts are rendered
+# UP FRONT, so the `#SBATCH --exclude=` baked in by /slurm: jupiter_autoexclude
+# is the list as it stood at submission time. The updating happens live:
+# /job: node_catch runs `scontrol update JobId=.. ExcNodeList=..` on every
+# still-PENDING sibling as soon as a node is recorded, and PENDING is the only
+# state SLURM lets us edit. So draw k+1 avoids everything draws 1..k found,
+# without regenerating or resubmitting anything.
+#
+# NB draws are NOT guaranteed to be disjoint — SLURM hands out whatever is free,
+# and consecutive draws often overlap heavily. That is not a defect: a node that
+# passes eight times is evidence, and one that fails twice is stronger evidence
+# than one that fails once. The analysis script ranks on exactly that.
+defaults:
+  - /backend: bash              # no trainer, no container, no CUDA
+  - /container: none
+  - /slurm: jupiter_autoexclude # bakes the current exclusion list into --exclude
+  - /job: node_catch            # append + propagate + finish (never restart)
+  - /sweep: none
+  - _self_
+
+job:
+  name: "oellm_32b_dense_node_catch"
+  base_output_dir: /e/project1/e-sta-openeurollm/pre_production_training/${job.name}
+  # Logs go DIRECTLY in base_output_dir, not in a logs/ subdirectory. Only
+  # base_output_dir is created by generate_script, so on the first launch a
+  # logs/ path would make SLURM's --output fail with "No such file or
+  # directory" before anything ran.
+  log_path: ${.base_output_dir}/slurm-%j.log
+  log_path_current: ${.base_output_dir}/current.log
+  config_path: ${.base_output_dir}/config-%j.yaml
+  config_path_current: ${.base_output_dir}/current.yaml
+  # Eight independent draws. Enough that a node appearing in several failing
+  # allocations is statistically meaningful (the manual 2026-08-14 correlation
+  # used 35 attempts and treated ~6.5 appearances as the null expectation),
+  # while staying inside a single monitor session so the propagate step can
+  # reach every queued sibling.
+  chain_repeat: 8
+
+backend:
+  # $SLURM_SUBMIT_DIR is the repo root as of submission — the same idiom
+  # config/slurm/jupiter_ftlauncher_saboteur.yaml uses for the saboteur. It
+  # keeps the probe in a reviewable, lintable file instead of an unquotable
+  # blob: BashBackend.command is embedded in `bash -c '...'`, so it can contain
+  # NO single quotes and no ${...} (OmegaConf would interpolate it).
+  #
+  # Thresholds are the script's defaults. Override them under slurm.env below —
+  # NOT under backend.env. `backend.env` only ever reaches the job through the
+  # apptainer `--env` flags that config/slurm/jupiter.yaml builds into
+  # launcher_cmd, and this config sets `launcher_cmd: ""` because there is no
+  # container. Verified by rendering: a `backend.env.NODECHECK_MEM_FAIL_GB`
+  # override appears ZERO times in the generated script, silently. Only
+  # `slurm.env` becomes `export` lines (generator.py:70).
+  command: |
+    bash "$SLURM_SUBMIT_DIR/scripts/nodecheck.sh"
+
+slurm:
+  # No container -> run the command directly under `srun bash -c`. Without this
+  # the jupiter default prepends an apptainer exec that has no image to run.
+  launcher_cmd: ""
+  sbatch:
+    # Production shape. The point of matching the real run's node count is that
+    # the draw is sampled from the same pool the production job will draw from,
+    # under the same partition and the same --exclusive semantics.
+    nodes: 512
+    # The probe itself finishes in well under a minute per node; the rest is
+    # slack for allocation and prolog. A short limit is also the cheapest way to
+    # get a 512-node job through backfill.
+    time: "00:20:00"
+    account: e-sta-openeurollm
+    job_name: null
+    # NB --gres=gpu:1 is inherited from config/slurm/base.yaml and is emitted
+    # alongside --gpus-per-node=4 for EVERY jupiter job in this repo, including
+    # the 1024-node training runs that demonstrably get all four GPUs. Left as
+    # is deliberately: the probe should allocate exactly the way production
+    # does, or it is not testing the same thing.
+  name: "nodecatch_${oc.timestring:}"
+
+# ============================================================================
+# HARVESTING FROM A REAL TRAINING RUN INSTEAD
+# ============================================================================
+# The job policy is independent of the payload. To collect node failures from
+# an at-scale training run — which is the only way to catch fabric and
+# under-load faults — swap the policy on any 32B config:
+#
+#   PYTHONPATH=. python scripts/run_autoexp.py \
+#       --config-name experiments/oellm_32b_dense/stability_check_nodes512_lr3e-4 \
+#       job/_group_=node_catch          # or edit its defaults list
+#
+# The policy only appends nodes that SLURM names as failed ("Node failure on
+# <node>") or that the probe fails, so it is safe on a trainer — the tempting
+# third signature, `srun: error: <node>: task N: Exited with exit code 1`,
+# names the WHOLE ALLOCATION when a distributed job dies (measured: 830 nodes)
+# and is deliberately absent; see the note in config/job/node_catch.yaml.
+#
+# Note also that node_catch FINISHES rather than restarts, so it is a policy for
+# a deliberate node-hunting run, not for the production run itself — production
+# should keep /job: auto_restart_ft, which already appends NODE_FAIL nodes to
+# the same file.
+#
+# For everything a log cannot attribute, run the forensics script over the same
+# jobs afterwards:
+#   python scripts/run_autoexclude_jupiter.py update --since <start> \
+#       --log-glob "${job.base_output_dir}/slurm-*.log"

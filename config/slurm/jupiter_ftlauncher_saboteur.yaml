@@ -1,0 +1,55 @@
+# JUPITER SLURM config for ft_launcher resilience TESTS (hot-spare validation).
+#
+# Derives from jupiter.yaml, which already carries the two fixes ft_launcher
+# needs (a whitespace-clean MASTER_ADDR, and a SLURM_ARRAY_TASK_ID that defaults
+# to 0 instead of the empty string NVRx would choke on). Adds two things:
+#
+# 1. srun --kill-on-bad-exit=0. A dropped node's srun TASK must not tear the
+#    whole step down, or ft_launcher never gets the chance to re-rendezvous and
+#    promote a spare. The template renders srun options from the `srun_opts`
+#    STRING (the `srun:` dict is ignored — slurm_gen/generator.py:53).
+#
+# 2. A gated one-shot fault injector (scripts/saboteur_nodeloss.sh, INERT by
+#    default) that simulates a PERMANENT NODE LOSS $SABOTEUR_DELAY s in, so a
+#    STANDBY node has to be promoted.
+#    It runs OUTSIDE the container — apptainer shares the host PID namespace, so
+#    it can signal the in-container processes. Invoked via $SLURM_SUBMIT_DIR so
+#    it resolves regardless of the launcher's CWD.
+#
+#    NOT scripts/saboteur.sh, for two reasons learned from JUPITER job 1354846:
+#      a) that one takes a SLURM_NODEID, but which node parks as STANDBY is
+#         decided by the barrier rendezvous and is NOT predictable from
+#         SLURM_NODEID (that run put infra ranks 0 and 2 active, 1 standby).
+#         Targeting "node 1" killed zero processes and training carried on
+#         undisturbed — a silent false pass. The node-loss script instead has
+#         each node ask locally "do I have training workers?", and an atomic
+#         mkdir claim on shared FS ensures exactly one of them fires.
+#      b) that one SPARES the ft_launcher agent on purpose, which makes the
+#         agent restart the worker group on the SAME nodes — a restart test.
+#         Promotion requires the node to actually leave the rendezvous, so the
+#         agent has to die too.
+#
+# NB use $(...) / bare $VAR below, NEVER ${...} — OmegaConf treats ${...} as an
+# interpolation and would fail to resolve a shell variable.
+#
+# NOT for production runs: use /slurm: jupiter for those. This file only exists
+# so the hot-spare path can be exercised on purpose.
+defaults:
+  - jupiter
+  - _self_
+
+env:
+  # Node-loss injector knobs — INERT defaults; the experiment arms them by
+  # setting SABOTEUR_DELAY and SABOTEUR_CLAIM_DIR.
+  SABOTEUR_DELAY: "999999"
+  SABOTEUR_CLAIM_DIR: ""
+  SABOTEUR_SKIP_NODE0: "1"
+
+srun_opts: "--kill-on-bad-exit=0 "
+
+# Identical to jupiter.yaml's launcher_cmd, with the (gated) saboteur prepended.
+launcher_cmd: "( SABOTEUR_DELAY=$SABOTEUR_DELAY SABOTEUR_CLAIM_DIR=$SABOTEUR_CLAIM_DIR SABOTEUR_SKIP_NODE0=$SABOTEUR_SKIP_NODE0 bash \"$SLURM_SUBMIT_DIR/scripts/saboteur_nodeloss.sh\" ) & \\\n \
+  export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ;\\\n \
+  ${oc.select:container.runtime,apptainer} exec \
+  ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
+  --writable-tmpfs --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif} \\\n"

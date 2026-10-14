@@ -44,6 +44,29 @@ class BaseJob:
     array_len: int = 1
     base_config: Any = field(default_factory=dict)
 
+    # Run this job as a LOCAL process on the submitting host instead of
+    # submitting it to Slurm. Per-JOB counterpart to the global `--local` flag,
+    # which applies to every job in the plan and so cannot express "this stage
+    # is a filesystem operation, that one needs 512 nodes".
+    #
+    # Intended for cheap setup stages -- e.g. the seed stage of
+    # experiments/oellm_32b_dense/oellm_32b_dense_cont2_from64k, which just
+    # symlinks a checkpoint and writes a tracker file. Combined with a
+    # BashBackend the local command is the backend's `command` verbatim, so no
+    # adaptation is needed.
+    #
+    # Do NOT set this on anything that needs an allocation: it runs on the login
+    # node, with no Slurm accounting, cgroup or time limit.
+    local: bool = False
+
+    # Sweep points that name the same array group are submitted as ONE SLURM job
+    # array (orchestrator._bind_array_groups): one rendered script that dispatches
+    # on $SLURM_ARRAY_TASK_ID, one record per point. Each point stays a job of its
+    # own in the plan -- priced, monitored and restarted (as a one-task array)
+    # individually -- so a 400-eval stage is visible at config level without
+    # 400 sbatch calls. Members must agree on everything but their command.
+    array_group: str | None = None
+
 
 @dataclass(kw_only=True)
 class SlurmJobConfig(BaseJob, ConfigInterface):
