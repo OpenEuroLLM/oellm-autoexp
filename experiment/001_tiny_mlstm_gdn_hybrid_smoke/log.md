@@ -48,3 +48,12 @@ Both tiny hybrid smoke tests passed locally under the available-VRAM constraint.
 
 ## Related
 - Architecture configs: `config/experiments/architecture_scaling_variants/`
+
+## Follow-up: JUPITER Triton driver-library failure
+
+- 2026-07-29: Jobs `1090774` (GDN) and `1090775` (mLSTM) both reached the first Triton kernel launch but failed with `/usr/bin/ld: cannot find -l:libcuda.so.1`. The explicit `TRITON_LIBCUDA_PATH=/usr/local/cuda/compat/lib` referenced a path absent in the derived linear-attention image.
+- 2026-07-29: Confirmed locally on the JUPITER login host that Apptainer with `--writable-tmpfs` can bind `/usr/lib64/libcuda.so.1` into `/opt/nvidia/lib/libcuda.so.1` and compile a shared object using `-L/opt/nvidia/lib`. Updated the GDN and mLSTM JUPITER overlays to use that bind set and `TRITON_LIBCUDA_PATH=/opt/nvidia/lib`.
+- 2026-07-29: Submitted a minimal GPU-node validation of that exact mount/link setup as JUPITER job `1091016` under `e-sta-openeurollm`; cancelled it while pending after completing an equivalent login-node validation.
+- 2026-07-29: The JUPITER login-node GH200 successfully ran the derived container with the explicit `/opt/nvidia/lib` binds. A CUDA `fla.modules.convolution.causal_conv1d(..., backend='triton')` call completed successfully, forcing Triton's runtime launcher compilation and validating the fix without Slurm.
+- 2026-07-29: Slurm validation probe `1091110` started 2m36s after submission and completed successfully in 15s. The corrected 2-node mLSTM smoke job `1091299` and GDN smoke job `1091301` were submitted under `e-sta-openeurollm`. Concurrent launcher invocations produced duplicate jobs `1091300` and `1091302`; those duplicates were cancelled while pending.
+- 2026-07-29: Both corrected 2-node smoke jobs completed successfully after a 4m35s queue delay. mLSTM job `1091299` ran for 1m17s and reached iteration 10/10 (loss 7.3743, no NaNs). GDN job `1091301` ran for 2m28s and reached iteration 10/10 (loss 7.2918, no NaNs). The non-fatal checkpoint-inspection message appeared because the smoke output directory is not a sharded checkpoint.
