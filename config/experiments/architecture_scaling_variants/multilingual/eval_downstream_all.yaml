@@ -1,0 +1,262 @@
+# @package _global_
+# DOWNSTREAM eval sweep — the same 5 variants x 25 budget points as
+# main_scaling_all.yaml, scored with oellm-eval (lm-eval-harness + lighteval)
+# on `dclm-core-22` and the `oellm-multilingual` super group, instead of the
+# val-loss/PPL that eval_all_scaling_all.yaml computes.
+#
+# PREREQUISITE — conversion is NOT a stage here. Run it once up front:
+#
+#     python scripts/convert_arch_scaling_to_hf.py
+#
+# It walks the training group and writes a self-contained HF model dir per
+# cooldown final (`model.safetensors` + config.json with `auto_map` + the
+# `oellm_hybrid` modeling code + the 256k tokenizer) into <train_group>_hf/.
+# Conversion is CPU+IO only and takes seconds per 0.1B checkpoint, so it is not
+# worth 124 whole-node allocations, and it is re-runnable (`--skip-existing`) as
+# later cooldowns land.
+#
+# Two stages per (variant, ladder, budget) point:
+#
+#   evaldclm   OELLMEvalBackend, 1 GPU. `dclm-core-22` (21 tasks).
+#   evalml     OELLMEvalBackend, 1 GPU. `oellm-multilingual` (belebele /
+#              global-mmlu / include / mgsm / generic-multilingual, plus
+#              flores200 both directions through lighteval).
+#
+# 5 variants x 25 budget points x 2 stages = 250 jobs. Launch a pilot subset
+# first with `--array-subset` (see README).
+#
+# LAUNCH WITH `HYDRA_STAGED_SWEEP_WORKERS=1`. The DAG resolver's parallel path
+# fails to unpickle its own results for this config
+# (`TypeError: RootConfig.__init__() missing … 'slurm', 'job', 'backend'` raised
+# in the pool's result thread, which then hangs). Single-worker resolution
+# renders all 250 points fine; it just takes a couple of minutes.
+#
+# WHY A CUSTOM HF ARCHITECTURE: only `fullattn` maps onto a stock HF class.
+# `oellm_autoexp/hf_export/oellm_hybrid` ports all five token mixers (attention,
+# sliding-window attention, GatedDeltaNet, mLSTM, Mamba2) into one architecture
+# with a per-layer `layer_types` list, calling the *same* kernels Megatron
+# trained with (fla / mlstm_kernels / mamba_ssm). Every variant therefore takes
+# an identical eval code path, which is what makes the numbers comparable.
+defaults:
+  - ../../base
+  - /backend: oellm_eval
+  - /container: jupiter
+  - /slurm: jupiter
+  - /sweep: none
+  - override /job: default
+  - _self_
+
+aux:
+  # Dedicated eval container (container/megatron/MegatronTraining-JUPITER-eval.def.in):
+  # the training image + lm-eval/lighteval/oellm-eval. Replaces the old
+  # `jupiter_venv` host venv, whose CUDA extensions were built against the
+  # login-node module toolchain and died with `CXXABI_1.3.15 not found` inside
+  # every batch job.
+  eval_image: ${oc.env:OELLM_EVAL_IMAGE,'${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-eval_aarch64_202608131040.sif'}
+  # oellm-eval's generated script unconditionally sources $VENV/bin/activate, and
+  # OELLMEvalBackend.validate() demands venv_path when local=true. In container
+  # mode the image *is* the environment, so point at a stub whose activate is a
+  # no-op (the documented Leonardo/Lumi pattern).
+  venv_stub: ${oc.env:OELLM_EVAL_VENV_STUB,'${oc.env:HOME}/eval_venv_stub'}
+  # Where the training runs live, and where the converted HF dirs go.
+  experiment_group: architecture_scaling_variants_multilingual_main_7to1_downstream
+  train_group: architecture_scaling_variants_multilingual_main_7to1
+  hf_group: architecture_scaling_variants_multilingual_main_7to1_hf
+  tokenizer_path: /e/data1/datasets/products/openeurollm/tokenizers/tokenizer-256k
+  # Eval-side HF cache. oellm-eval hardcodes HF_DATASETS_CACHE=$HF_HOME/datasets,
+  # while JUPITER's populated cache has the `owner___name` dirs at the cache
+  # ROOT. scripts/setup_eval_hf_home.sh builds this dir with `datasets` symlinked
+  # onto the real cache so both layouts agree.
+  eval_hf_home: ${oc.env:OELLM_EVAL_HF_HOME,'/e/project1/jureap59/poeppel1/cache_eval'}
+  # Placeholders; every sweep point overrides these.
+  variant: fullattn
+  size: 0.1B
+  gbs: 128
+  lr: 0.002
+  tokens: 20_000_000_000
+  seq_len: 4096
+  # Derived names, resolved per point.
+  run_name: "qwen3_${aux.variant}_${aux.size}_ne_lr${aux.lr}_gbsz${aux.gbs}_firstcd_decay${oc.eval:'int(${aux.tokens}//10**9)'}BT"
+  train_run_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.train_group}/${aux.run_name}"
+  hf_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.hf_group}/${aux.run_name}"
+
+container:
+  image: ${aux.eval_image}
+  # Same driver binds as jupiter_liger_mamba: triton needs a linkable libcuda,
+  # and the base `jupiter` container config does not provide it. Without these
+  # every linear-attention kernel fails with "libcuda.so cannot found!".
+  bind:
+    - "/e"
+    - "/dev/shm"
+    - "/usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro"
+    - "/usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro"
+    - "/usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro"
+
+backend:
+  # Do not re-evaluate a point that already has results. oellm-eval writes
+  # lm_eval's --output_path as a random hex filename, so it can never detect
+  # prior results itself; without this a relaunch silently repeats the work and
+  # deposits duplicate JSONs (3226 redundant evaluations had accumulated this
+  # way before it was added). Override per-job with OELLM_FORCE_EVAL=1.
+  skip_if_evaluated: true
+  env:
+    HF_HOME: ${aux.eval_hf_home}
+    HF_HUB_OFFLINE: "1"
+    HF_DATASETS_OFFLINE: "1"
+    TOKENIZERS_PARALLELISM: "false"
+    HF_DATASETS_TRUST_REMOTE_CODE: "1"
+    # JIT caches must land somewhere writable: $HOME is read-only in the job and
+    # tilelang/triton create their cache dirs at import time.
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+    TILELANG_CACHE_DIR: "/tmp/oellm_${oc.env:USER}/tilelang"
+    TRITON_CACHE_DIR: "/tmp/oellm_${oc.env:USER}/triton"
+    TORCHINDUCTOR_CACHE_DIR: "/tmp/oellm_${oc.env:USER}/inductor"
+    QUEUE_LIMIT: "1"
+    GPUS_PER_NODE: "${slurm.sbatch.gpus_per_node}"
+    PARTITION: "${slurm.sbatch.partition}"
+    ACCOUNT: "${slurm.sbatch.account}"
+    EVAL_CONTAINER_IMAGE: ""
+    SINGULARITY_ARGS: ""
+    EVAL_BASE_DIR: ${job.base_output_dir}/eval
+    EVAL_OUTPUT_DIR: ${job.base_output_dir}/eval
+
+slurm:
+  sbatch:
+    job_name: null
+    nodes: 1
+    gpus_per_node: 1
+    time: "04:00:00"
+    exclude: jpbo-001-48
+
+stage: evaldclm
+
+job:
+  name: "${aux.run_name}_${stage}"
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    # ===================== GROUP 0 — ARCHITECTURE =====================
+    # Only the name matters here: the architecture is reconstructed by the
+    # converter from the training run's own current.yaml, not from this file.
+    - type: list
+      configs:
+        - aux.variant: fullattn
+        - aux.variant: swa7_rope100k
+        - aux.variant: gdn7_nope
+        - aux.variant: mlstm7_nope
+        - aux.variant: mamba2_nope
+        # The two 3:1 arms, appended LAST so the existing indices 0-4 (and every
+        # point derived from them) keep their positions -- --array-subset numbers
+        # already used against this file stay valid.
+        - aux.variant: gdn3_nope
+        - aux.variant: gdn3_qwen35
+
+    # ================= GROUP 1 — (SIZE, TIER) LADDERS =================
+    # Identical grid to main_scaling_all.yaml / eval_all_scaling_all.yaml, so
+    # every downstream number lines up with a val-loss cell.
+    - type: list
+      configs:
+        # ---- 0.1B low: gbs128 lr2e-3 -> 20/30/50 BT ----
+        - type: list
+          defaults: {aux.size: 0.1B, aux.gbs: 128, aux.lr: 0.002}
+          configs:
+            - aux.tokens: 20_000_000_000
+            - aux.tokens: 30_000_000_000
+            - aux.tokens: 50_000_000_000
+        # ---- 0.1B high: gbs256 lr2e-3 -> 80/200/300 BT ----
+        - type: list
+          defaults: {aux.size: 0.1B, aux.gbs: 256, aux.lr: 0.002}
+          configs:
+            - aux.tokens: 80_000_000_000
+            - aux.tokens: 200_000_000_000
+            - aux.tokens: 300_000_000_000
+        # ---- 0.2B low: gbs128 lr1e-3 -> 6/12/20/30 BT ----
+        - type: list
+          defaults: {aux.size: 0.2B, aux.gbs: 128, aux.lr: 0.001}
+          configs:
+            - aux.tokens: 6_000_000_000
+            - aux.tokens: 12_000_000_000
+            - aux.tokens: 20_000_000_000
+            - aux.tokens: 30_000_000_000
+        # ---- 0.2B high: gbs512 lr2e-3 -> 50/80/120/200/300 BT ----
+        - type: list
+          defaults: {aux.size: 0.2B, aux.gbs: 512, aux.lr: 0.002}
+          configs:
+            - aux.tokens: 50_000_000_000
+            - aux.tokens: 80_000_000_000
+            - aux.tokens: 120_000_000_000
+            - aux.tokens: 200_000_000_000
+            - aux.tokens: 300_000_000_000
+        # ---- 0.4B: gbs256 lr2e-3 -> 12/20/30/50 BT ----
+        - type: list
+          defaults: {aux.size: 0.4B, aux.gbs: 256, aux.lr: 0.002}
+          configs:
+            - aux.tokens: 12_000_000_000
+            - aux.tokens: 20_000_000_000
+            - aux.tokens: 30_000_000_000
+            - aux.tokens: 50_000_000_000
+        # ---- 0.9B mid: gbs512 lr5e-4 -> 30/50/80/120 BT ----
+        - type: list
+          defaults: {aux.size: 0.9B, aux.gbs: 512, aux.lr: 0.0005}
+          configs:
+            - aux.tokens: 30_000_000_000
+            - aux.tokens: 50_000_000_000
+            - aux.tokens: 80_000_000_000
+            - aux.tokens: 120_000_000_000
+        # ---- 0.9B high: gbs1024 lr1e-3 -> 200/300 BT ----
+        - type: list
+          defaults: {aux.size: 0.9B, aux.gbs: 1024, aux.lr: 0.001}
+          configs:
+            - aux.tokens: 200_000_000_000
+            - aux.tokens: 300_000_000_000
+
+    # ======================= GROUP 2 — STAGES =========================
+    - type: list
+      configs:
+        # ---- 2. DCLM core (English, mostly log-likelihood) ----
+        - stage: evaldclm
+          backend.task_groups: [dclm-core-22]
+          backend.models: ["\\${aux.hf_dir}"]
+          backend.venv_path: ${aux.venv_stub}
+          backend.local: true
+          # Compute nodes are offline: skip oellm-eval's hub/model reachability checks.
+          backend.skip_checks: true
+          backend.verbose: true
+          backend.trust_remote_code: true
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${aux.hf_dir}/model.safetensors"
+          # 06:00:00, sized from MEASURED runtimes rather than estimated. Across
+          # 76 completed evaldclm jobs WITH generation working (2026-08-18/20):
+          #   0.2B  median 3h26  max 3h59   (n=36)
+          #   0.4B  median 3h48  max 4h12   (n=16)
+          #   0.9B  median 3h55  max 4h10   (n=24)
+          # So 6h is ~43% above the worst observed run. It was briefly raised to
+          # the 12h QOS ceiling on the assumption that working generative tasks
+          # would be far slower than the crashing ones -- the data says they are
+          # not (the whole 19-task set fits in ~4h at every size).
+          # Requesting 12h for a 4h job also hurts: shorter requests backfill
+          # sooner, which matters when there is a downtime window to beat.
+          slurm.sbatch.time: "06:00:00"
+
+        # ---- 3. OELLM multilingual super group ----
+        # Longest stage by far: flores200 is generative over 35 EU languages in
+        # both directions and the HF port runs without a KV cache. JUPITER hard-
+        # rejects >12h, so cap the sample count per task if the pilot overruns
+        # (backend.limit) or split the super group into its 7 constituent groups.
+        - stage: evalml
+          backend.task_groups: [oellm-multilingual]
+          backend.models: ["\\${aux.hf_dir}"]
+          backend.venv_path: ${aux.venv_stub}
+          backend.local: true
+          # Compute nodes are offline: skip oellm-eval's hub/model reachability checks.
+          backend.skip_checks: true
+          backend.verbose: true
+          backend.trust_remote_code: true
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${aux.hf_dir}/model.safetensors"
+          slurm.sbatch.time: "12:00:00"

@@ -1,0 +1,116 @@
+Bootstrap: localimage
+From: ${BASE_IMAGE}
+
+%labels
+    Author OpenSci
+    Version 0.1.0
+    Base ${BASE_IMAGE}
+    Description Derived image: adds lm-eval-harness + lighteval + oellm-eval (submodules/oellm-eval) on top of the linattn+mamba JUPITER sif, for downstream evaluation of the architecture-scaling checkpoints
+    Purpose config/experiments/architecture_scaling_variants/multilingual/eval_downstream_all.yaml
+    Replaces container/slurm "jupiter_venv" (see WHY below)
+
+# WHY THIS IMAGE EXISTS
+# ---------------------
+# The eval stage used to run in a host venv (`container: jupiter_venv`). That was
+# the single biggest source of failures in this study, all environmental:
+#
+#   * the venv had been relocated, leaving stale interpreter paths in
+#     bin/pip, bin/oellm and VIRTUAL_ENV in bin/activate;
+#   * it is shared with other work, so its `datasets` / `compoconf` versions
+#     drifted from what this repo declares;
+#   * fatally, its CUDA extensions were compiled against the libstdc++ supplied
+#     by the `Stages/2026` / `GCCcore` modules. Those modules are loaded by the
+#     login profile but NOT inside a batch job, so `import mamba_ssm` died with
+#     `/lib64/libstdc++.so.6: version CXXABI_1.3.15 not found` on every compute
+#     node — while working fine in any interactive shell. That mismatch cannot
+#     be fixed from inside the venv; it is a property of where the venv runs.
+#
+# Building on the TRAINING image fixes all of it at once: fla, mlstm_kernels,
+# mamba-ssm and causal-conv1d are already present and already compiled against
+# this image's toolchain — and those are exactly the kernels the converted HF
+# models call (oellm_autoexp/hf_export/oellm_hybrid). Evaluation then runs on the
+# same stack the checkpoints were trained on, which also removes a class of doubt
+# from the numbers.
+
+# STAGING NOTE (why the %files section below exists)
+# The base training image does NOT contain the repo — `/workspace/oellm-autoexp`
+# only exists at RUN time via a bind mount, not during `%post`. The first build
+# attempt assumed otherwise and failed twice over: gen_constraints.py was not
+# found (so constraint pinning silently degraded to unconstrained, letting pip
+# replace antlr4-runtime/nltk/httpx and break omegaconf), and the oellm-eval
+# install then died on a nonexistent path. Both are staged explicitly below.
+#
+# ${REPO_ROOT} is substituted by build_container.sh's envsubst pass, so the
+# caller must export it:
+#   REPO_ROOT=$HOME/work/Projects/oellm-autoexp-hybrid bash build_container.sh ...
+%files
+    ${REPO_ROOT}/container/gen_constraints.py /workspace/oellm-autoexp/container/gen_constraints.py
+    ${REPO_ROOT}/submodules/oellm-eval /workspace/oellm_eval_src
+
+%post
+# NOTE: build_container.sh pipes this template through envsubst, so this section
+# must not reference shell variables with ${...} — they would be blanked at
+# template-render time. Plain VAR=value inline assignments are safe.
+
+# Pin everything already in the base image (torch/triton/transformers/
+# flash-linear-attention/mlstm_kernels/liger/mamba-ssm/causal-conv1d) so the
+# eval dependency tree cannot pull a different torch in underneath the compiled
+# CUDA extensions — that is precisely the failure mode this image exists to end.
+# Fail loudly rather than silently building an unconstrained image: an
+# unpinned eval install can replace torch/transformers underneath the compiled
+# CUDA extensions, which is the exact class of breakage this image exists to end.
+if [ ! -f /workspace/oellm-autoexp/container/gen_constraints.py ]; then
+    echo "FATAL: gen_constraints.py missing - %files did not stage the repo" >&2
+    exit 1
+fi
+python3 /workspace/oellm-autoexp/container/gen_constraints.py \
+    --output /workspace/constraints.eval.txt \
+    --exclude pip setuptools wheel
+CONSTRAINTS="-c /workspace/constraints.eval.txt"
+
+# `datasets` MUST be >= 4: the Hub serves dataset-card metadata in the 4.x
+# format, which 3.x cannot parse ("Feature type 'List' not found"), so under 3.x
+# even plain allenai/ai2_arc fails to resolve. oellm-eval's [eval-base] now
+# requires datasets>=4.0 itself (the old oellm-evals pinned <4.0.0). Measured
+# over both suites (24 probes), the one 4.x casualty was wsc273's
+# `winograd_wsc` loading script; oellm-eval reads the parquet
+# `lighteval/winograd_wsc` instead.
+python3 -m pip install --no-cache-dir $CONSTRAINTS "datasets>=4.0"
+
+# lm-eval-harness + lighteval. `[api,tasks]` mirrors oellm-eval's `[eval-base]`
+# extra: it deliberately omits `[hf]` and `[vllm]` so the base image's prebuilt
+# torch/transformers are left alone.
+python3 -m pip install --no-cache-dir $CONSTRAINTS \
+    "lm_eval[api,tasks]>=0.4.12" \
+    "lighteval" \
+    sacrebleu
+
+# oellm-eval itself, --no-deps so its dependency tree cannot touch what is
+# installed above or in the base image. Its real imports (pandas, jsonargparse, rich,
+# huggingface_hub, pyyaml, datasets) are satisfied by the lines above/base image.
+python3 -m pip install --no-cache-dir --no-deps /workspace/oellm_eval_src
+
+python3 -m pip install --no-cache-dir $CONSTRAINTS \
+    jsonargparse rich pandas pyyaml
+
+python3 -m pip list | grep -i -e lm.eval -e lighteval -e oellm -e datasets \
+    -e transformers -e "^torch " -e mamba -e flash-linear -e mlstm
+
+%test
+    # Each check below corresponds to something that actually broke during this
+    # study; a green %test means the image cannot reproduce those failures.
+    echo "--- CXXABI / compiled CUDA extensions (the venv's fatal flaw) ---"
+    python3 -c "import mamba_ssm, causal_conv1d; print('mamba_ssm', mamba_ssm.__version__)"
+    python3 -c "import selective_scan_cuda; print('selective_scan_cuda ok')"
+    echo "--- kernels the converted HF models call ---"
+    python3 -c "from fla.ops.gated_delta_rule import chunk_gated_delta_rule, fused_recurrent_gated_delta_rule; print('fla ok')"
+    python3 -c "from mlstm_kernels.torch import get_mlstm_kernel, get_mlstm_step_kernel; print('mlstm_kernels ok')"
+    python3 -c "from mamba_ssm.ops.triton.selective_state_update import selective_state_update; print('mamba step ok')"
+    echo "--- eval stack ---"
+    python3 -c "import lm_eval; print('lm_eval', lm_eval.__version__)"
+    python3 -c "import lighteval; print('lighteval ok')"
+    python3 -c "import datasets; assert int(datasets.__version__.split('.')[0]) >= 4, datasets.__version__; print('datasets', datasets.__version__)"
+    python3 -c "import oellm.main; print('oellm ok')"
+    oellm-eval --help > /dev/null && echo "oellm-eval CLI ok"
+    echo "--- torch must be untouched by the eval installs ---"
+    python3 -c "import torch; print('torch', torch.__version__)"
