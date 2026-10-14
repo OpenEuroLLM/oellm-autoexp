@@ -513,9 +513,15 @@ class OellmMLSTM(nn.Module):
         self.key_head_dim = config.linear_key_head_dim
         self.value_head_dim = config.linear_value_head_dim
         self.num_heads = config.linear_num_value_heads
-        if config.linear_num_key_heads != config.linear_num_value_heads:
-            raise ValueError("mLSTM requires linear_num_key_heads == linear_num_value_heads")
-        self.qk_dim = self.key_head_dim * self.num_heads
+        num_key_heads = config.linear_num_key_heads
+        if self.num_heads % num_key_heads:
+            raise ValueError(
+                "mLSTM requires linear_num_value_heads to be a multiple of linear_num_key_heads"
+            )
+        # Grouped-query mode (Megatron MLSTM): q/k projected at num_key_heads,
+        # repeat_interleave'd to the value heads before the cell.
+        self.qk_repeat = self.num_heads // num_key_heads
+        self.qk_dim = self.key_head_dim * num_key_heads
         self.v_dim = self.value_head_dim * self.num_heads
         self.gate_soft_cap = config.mlstm_gate_soft_cap
         self.chunk_size = config.mlstm_chunk_size
@@ -582,6 +588,9 @@ class OellmMLSTM(nn.Module):
         q = q.reshape(b, s, -1, self.key_head_dim).transpose(1, 2).contiguous()
         k = k.reshape(b, s, -1, self.key_head_dim).transpose(1, 2).contiguous()
         v = v.reshape(b, s, -1, self.value_head_dim).transpose(1, 2).contiguous()
+        if self.qk_repeat > 1:
+            q = q.repeat_interleave(self.qk_repeat, dim=1)
+            k = k.repeat_interleave(self.qk_repeat, dim=1)
 
         i_preact = i_preact.float() + self.igate_bias.float()
         f_preact = f_preact.float() + self.fgate_bias.float()
