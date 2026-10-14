@@ -68,7 +68,7 @@ case "$CLUSTER" in
         PYTHONPATH= "${PIP[@]}" install --no-cache-dir --no-build-isolation \
             rouge-score
         PYTHONPATH= "${PIP[@]}" install --no-cache-dir \
-            -e "$OELLM_EVALS_DIR[eval]" -e "$AUTOEXP_DIR" "compoconf==0.1.14"
+            -e "$OELLM_EVALS_DIR[eval]" -e "$AUTOEXP_DIR" "compoconf>=0.3.1"
         echo "✓ Venv ready at $VENV"
         ;;
 
@@ -81,7 +81,7 @@ case "$CLUSTER" in
             pip install --user --no-cache-dir --upgrade pip setuptools wheel
             pip install --user --no-cache-dir --upgrade \
                 -e '$OELLM_EVALS_DIR[eval-base]' -e '$AUTOEXP_DIR' \
-                'compoconf==0.1.14'
+                'compoconf>=0.3.1'
         "
         # oellm-evals's local mode needs *some* venv path to `source activate`;
         # the container is already activated, so point at an empty stub.
@@ -105,7 +105,7 @@ case "$CLUSTER" in
             set -e
             pip install --no-cache-dir --upgrade --target '$TARGET' \
                 -e '$OELLM_EVALS_DIR[eval-base]' -e '$AUTOEXP_DIR' \
-                'compoconf==0.1.14'
+                'compoconf>=0.3.1'
         "
         if [[ ! -f "$HOME/eval_venv_stub/bin/activate" ]]; then
             mkdir -p "$HOME/eval_venv_stub/bin"

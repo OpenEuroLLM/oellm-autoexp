@@ -39,7 +39,7 @@ def pytest_configure(config):
             found = "unknown"
         raise pytest.UsageError(
             f"compoconf {found} at {compoconf.__file__} defines a __reduce__ that "
-            f"flattens nested configs on pickle; pyproject requires >=0.2.2.\n"
+            f"flattens nested configs on pickle; pyproject requires >=0.3.1.\n"
             f"Interpreter: {sys.executable} (python {sys.version.split()[0]}).\n"
             f"If that is not this project's .venv, pytest was resolved from PATH "
             f'(e.g. an active conda env). Fix with:\n  uv pip install --python .venv/bin/python -e ".[dev]"'
