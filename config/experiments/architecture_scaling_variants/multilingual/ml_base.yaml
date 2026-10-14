@@ -166,6 +166,18 @@ backend:
     # lost on a hard kill is unchanged. Written under <save>/non_persistent/, which
     # never interferes with cooldown branch loads (those pin a specific ckpt_step in
     # the main dir) or the firstcd start_condition (which checks the main-dir iter).
+    # DO NOT override this to null on a TRAINING run. The two knobs below are a
+    # pair: with a save_interval set but the type left None, Megatron trains
+    # normally and then raises at the FIRST non-persistent save boundary
+    # (checkpointing.py:550, "Please use local or global non-persistent
+    # checkpoints"). Under job=auto_restart that is an invisible crash loop —
+    # every attempt reloads the same checkpoint, runs to the next boundary and
+    # dies, making exactly zero net progress. It cost ~64 GPU-h on
+    # mamba2_0.9B/gbsz1024 (jobs 1351763/1352497/1353055/1353746, all stuck at
+    # iter 38147) before it was spotted. The `backend.megatron.
+    # non_persistent_ckpt_type=null` override belongs ONLY on the eval sweeps,
+    # which set no save_interval; do not copy it onto a train monitor. To
+    # genuinely disable rolling checkpoints, null BOTH lines.
     non_persistent_ckpt_type: global
     non_persistent_save_interval: "${oc.eval:'int(512000 // ${aux.gbs})'}"
     ckpt_format: torch_dist
