@@ -39,6 +39,7 @@ apply_query_key_layer_scaling: false  # If true, scale Q * K^T by 1 / layer-numb
 apply_residual_connection_post_layernorm: false  # If True, uses the original BERT residule connection ordering.
 apply_rope_fusion: true  # Disable rope fusion, the fusion is available only when using megatron-core.
 apply_wd_to_qk_layernorm: false  # Apply weight decay to qk layernorm as a special case.
+arch_metrics_interval: 0  # Record and log the architecture diagnostics (megatron/core/transformer/arch_metrics.py: mHC / routed-residual stream usage, AttnRes depth attention, nGPT LERP rates, attention output gates, XSA self-copy, Engram gates, product-key-memory usage, shared-expert gates, linear-mixer decay gates) every this many iterations; 0 disables. Only the logged steps pay for it. MoE router health is logged separately (moe_health.py).
 async_ckpt_cpu_priority: 10  # CPU nice value target (0-19, higher = lower priority) for the async checkpoint writer process. If it exceeds 19, it will be set to 19. If the current nice value is greater than the target, it will be left unchanged. Only applies when using persistent ckpt worker.
 async_ckpt_io_priority: 3  # I/O scheduling class (0-3, 3=idle) for the async checkpoint writer process.
 async_ckpt_use_cpu_shm: false  # Copy GPU tensors to CPU shared-memory in the training process before handing off to the async checkpoint worker. Avoids CUDA IPC / NVLink fabric handles in the worker subprocess. Useful on MNNVL systems where fabric resources are exhausted. Only applies with the nvrx async strategy.

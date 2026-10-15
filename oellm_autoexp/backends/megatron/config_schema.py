@@ -3259,6 +3259,13 @@ class MegatronConfig(ConfigInterface):
     # If set, calculate and log parameters norm.
     log_params_norm: bool = False
 
+    # Record and log the architecture diagnostics (megatron/core/transformer/arch_metrics.py:
+    # mHC / routed-residual stream usage, AttnRes depth attention, nGPT LERP rates, attention
+    # output gates, XSA self-copy, Engram gates, product-key-memory usage, shared-expert
+    # gates, linear-mixer decay gates) every this many iterations; 0 disables. Only the logged
+    # steps pay for it. MoE router health is logged separately (moe_health.py).
+    arch_metrics_interval: int = 0
+
     # If set, calculate and log throughput per GPU.
     log_throughput: bool = False
 

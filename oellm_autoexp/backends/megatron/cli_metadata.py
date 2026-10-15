@@ -333,6 +333,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "arch_metrics_interval": MegatronArgMetadata(
+        arg_type=int,
+        default=0,
+        help="Record and log the architecture diagnostics (megatron/core/transformer/arch_metrics.py: mHC / routed-residual stream usage, AttnRes depth attention, nGPT LERP rates, attention output gates, XSA self-copy, Engram gates, product-key-memory usage, shared-expert gates, linear-mixer decay gates) every this many iterations; 0 disables. Only the logged steps pay for it. MoE router health is logged separately (moe_health.py).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "async_ckpt_cpu_priority": MegatronArgMetadata(
         arg_type=int,
         default=10,
@@ -8002,6 +8010,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "arch_metrics_interval": MegatronActionSpec(
+        option_strings=("--arch-metrics-interval",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
     ),
     "async_ckpt_cpu_priority": MegatronActionSpec(
         option_strings=("--async-ckpt-cpu-priority",),
