@@ -235,7 +235,7 @@ exit_signal_handler_for_dataloader: false  # Use signal handler for dataloader w
 exit_signal_handler_for_training: false  # Shutdown the training when SIGINT or SIGTERM received to avoid unclear traceback
 exp_avg_dtype: fp32  # choices: ['fp32', 'fp16', 'bf16', 'fp8'] | Dtype of exp_avg (1st moment in adam optimizer) when enabling precision-aware-optimizer. This dtype is used for storing the optimizer state in memory during training but does not affect the precision in the kernel computation.
 exp_avg_sq_dtype: fp32  # choices: ['fp32', 'fp16', 'bf16', 'fp8'] | Dtype of exp_avg_sq (2nd moment in adam optimizer) when enabling precision-aware-optimizer. This dtype is used for storing the optimizer state in memory during training but does not affect the precision in the kernel computation.
-experimental_attention_variant: null  # choices: ['gated_delta_net', 'mlstm', 'mamba', 'dsa', 'kda', 'signed_kda', 'panini', 'complex_kda'] | Type of attention variant to use. Currently support gated_delta_net, mlstm, dsa, the FLA hybrids (kda, signed_kda, panini) and complex_kda.
+experimental_attention_variant: null  # choices: ['gated_delta_net', 'mlstm', 'mamba', 'dsa', 'kda', 'signed_kda', 'panini', 'complex_kda', 'triadic'] | Type of attention variant to use. Currently support gated_delta_net, mlstm, dsa, the FLA hybrids (kda, signed_kda, panini) and complex_kda.
 expert_model_parallel_size: 1  # Distributes Moe Experts across sub data parallel dimension.
 expert_tensor_parallel_num_weight_shards: null  # Total number of shards each expert weight is split into across the expert-tensor-parallel + expert-GTP axes (i.e. ``expert_tensor_parallel_size * expert_gtp_weight_remat_size``). This is the user-facing knob for expert layers: it must be ``>= expert_tensor_parallel_size`` and divisible by it. When None it defaults to ``expert_tensor_parallel_size`` (no expert GTP sharding). It is the source of truth and implies ``expert_gtp_weight_remat_size = expert_tensor_parallel_num_weight_shards // expert_tensor_parallel_size`` (resolved in ``__post_init__``).
 expert_tensor_parallel_size: null  # Intra-layer tensor model parallelism for expert layer. Splits tensors across GPU ranks. Default is None, which will be set to the value of tensor_model_parallel_size.
@@ -324,7 +324,7 @@ hierarchical_context_parallel_sizes: null  # Degrees of the hierarchical context
 high_priority_a2a_comm_stream: false  # If True, the communication stream created by set_streams for combined 1f1b a2a overlap is created with CUDA high priority.
 high_priority_stream_groups: []  # Specify which communicator groups should use high priority streams during creation. Assigning high priority to communication streams ensures that communication kernels are scheduled with higher priority, minimizing the exposed communication when it is overlapped with other computation kernels.
 hybrid_context_parallel: false  # If true, enables hybrid context parallel. This is used to balance the workload of each CP rank when we use packed samples with variable sequence lengths. Please set max_seqlen_per_dp_cp_rank when using hybrid_context_parallel.
-hybrid_layer_pattern: null  # Specify a hybrid layer pattern using M (mamba), G (gdn), L (the linear mixer named by --experimental-attention-variant), C (gated short convolution), N (Engram n-gram memory), P (product-key memory), * (attention), D (dsa), - (mlp), E (moe). Use | to define pipeline stage boundaries for flexible virtual pipeline parallel (fVPP). Use / to separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is used, it is the sole indicator that a hybrid model is being run.
+hybrid_layer_pattern: null  # Specify a hybrid layer pattern using M (mamba), G (gdn), L (the linear mixer named by --experimental-attention-variant), C (gated short convolution), N (Engram n-gram memory), P (product-key memory), * (attention), W (sliding-window attention, --window-size), D (dsa), - (mlp), E (moe). Use | to define pipeline stage boundaries for flexible virtual pipeline parallel (fVPP). Use / to separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is used, it is the sole indicator that a hybrid model is being run.
 hybrid_override_pattern: null  # Deprecated. Use --hybrid-layer-pattern instead. If specified, its value will be forwarded to --hybrid-layer-pattern.
 hysteresis: 2  # hysteresis for dynamic loss scaling
 ict_head_size: null  # Size of block embeddings to be used in ICT and REALM (paper default: 128)
@@ -434,6 +434,9 @@ linear_key_head_dim: 128  # Query and key head dimension for the gated delta net
 linear_num_key_heads: 16  # Number of query and key heads for the gated delta net.
 linear_num_value_heads: 32  # Number of value and gate heads for the gated delta net.
 linear_output_gate: lowrank  # choices: ['lowrank', 'linear'] | Shape of the output gate, for complex_kda. ``"lowrank"`` factorises it through a bottleneck; ``"linear"`` is a single projection. This changes the parameter count, so it is part of what a parameter-matched comparison has to hold fixed.
+linear_triadic_base: kda  # The delta rule the triadic state extends: "gdn" (a decay per slice), "kda" (plus KDA's per-channel decay) or "ckda" (the signed channel gate of linear_fla_gate, beta up to 2).
+linear_triadic_e: 2  # Triadic linear attention (variant "triadic", megatron/core/ssm/triadic.py): E, the number of state slices per head (the second key's width); 1 is the base mixer.
+linear_triadic_kernel: auto  # Triadic backend: "kda" (FLA's chunk_kda on the expanded keys; every base, E*D <= 256), "cute" (cute-triadic-gdn's CuTe kernels: base gdn, head dim 128, sm90+) or "auto" (cute when it applies and is installed, else kda).
 linear_value_head_dim: 128  # Value and gate head dimension for the gated delta net.
 lion_beta1: 0.95  # First beta coefficient for Lion optimizer (used in sign update). Default: 0.95.
 lion_beta2: 0.98  # Second beta coefficient for Lion optimizer (used in momentum EMA update). Default: 0.98.
@@ -608,6 +611,8 @@ moe_token_drop_policy: probs  # choices: ['probs', 'position'] | The policy to d
 moe_upcycling_granularity: 1  # This param sepecifics how many times smaller is the expert hidden size compared with the original dense FFN hidden size. For using granular upcycling strategy, please set this param as a positive integer. If this param is set to 1, it means using the default upcycling strategy.
 moe_use_upcycling: false  # Load a checkpoint of a dense model, convert it into an MoE model, and save the converted model to the path specified by --save. Upcycling is implemented on the top of distributed checkpointing, so it supports parallel modes different from the dense model.
 moe_z_loss_coeff: null  # Scaling coefficient for the z-loss. A starting value of 1e-3 is recommended.
+moe_zero_expert_num: 0  # Zero-computation experts (LongCat-Flash): the router also scores this many experts that cost nothing -- a token's top-k slots routed to them are not dispatched, and their gate weight multiplies the MoE input (moe_zero_expert_type="identity") or contributes nothing ("zero"). Tokens thus use a variable number of real experts; balancing (aux loss, expert bias) runs over all experts. alltoall / allgather dispatchers only.
+moe_zero_expert_type: identity  # Output of a zero-computation expert: "identity" (the input) or "zero".
 mrope_section: null  # Multimodal rope section is for channel dimension of temporal, height and width in rope calculation.
 mscale: 1.0  # Mscale for YaRN RoPE in multi-latent attention.
 mscale_all_dim: 0.0  # Mscale all dimensions for YaRN RoPE in multi-latent attention.
@@ -721,6 +726,9 @@ pad_vocab_size: true  # Whether to pad vocab size of the model automatically if 
 padded_vocab_size: null  # Vocabulary size of the model (padded to be divisible by tensor model parallel size). If not provided, it will be automatically calculated from vocab-size.
 patch_dim: 16  # patch dimension
 per_dataset_sequences_path: null  # Path to a json file with the sequences per dataset. Check the tools/build_sequences_per_dataset.py script to build this file.
+per_layer_embedding_activation: gelu  # Activation of the PLE gate (gelu as Gemma, or silu).
+per_layer_embedding_dim: 0  # Per-layer embeddings (PLE, Gemma 3n / Gemma 4; token_embeddings.py): each chosen layer of a HybridModel gets its own token table of this width, gated by the hidden state after the layer and added as an extra residual update h += Norm(W_up(act(W_gate h) * e[token])). 0 disables.
+per_layer_embedding_layers: mlp  # Which HybridModel layers get a PLE: "mlp" (after every MLP / MoE layer, as Gemma adds it after the feed-forward) or "all".
 per_split_data_args_path: null  # Path to per-split-data-args. Instead of feeding `--(train|valid|test)-data-path` with weighted dataset, we pass in a file path from which we read those arguments. This is useful when the list of data is too big. Format is a json file with `train`, `valid, `test` keys
 perform_initialization: true  # Controls weights initialization. This option can be useful when you know you are going to load values from a checkpoint.
 perform_rl_step: false  # Use the RL training step.
@@ -738,6 +746,7 @@ pkm_table_parallel: tp  # Values table distribution, as engram_table_parallel: "
 pkm_topk: 32  # Candidates kept per half and rows read per head.
 pkm_value_dim: null  # Width of a value row; None = hidden_size.
 position_embedding_type: learned_absolute  # choices: ['learned_absolute', 'rope', 'yarn', 'mrope', 'relative', 'none'] | Position embedding type.
+post_sublayer_norm: false  # Sandwich / peri-LN normalization: normalize every sublayer output (attention, MLP, MoE, Mamba, linear mixers, Engram, PKM) with a learnable gain before it enters the residual, h <- h + Norm(f(Norm(h))) (Gemma 2/3, OLMo 2). Unlike ngpt the residual stream stays unnormalized; with mHC / AttnRes / nGPT the normalized output is what they mix.
 pretrained_checkpoint: null  # Directory containing a pretrained model checkpoint for finetuning.
 profile: false  # Enable nsys profiling. When using this option, nsys options should be specified in commandline. An example nsys commandline is `nsys profile -s none -t nvtx,cuda -o <path/to/output_file> --force-overwrite true --capture-range=cudaProfilerApi --capture-range-end=stop`.
 profile_ranks: []  # Global ranks to profile.
@@ -932,6 +941,7 @@ use_transformer_engine_op_fuser: false  # If True, submodules may use Transforme
 v_head_dim: 128  # Dimension of the head in the V projection.
 valid_data_path: null  # The weight and prefix list for an independent validation dataset. Follows the same pattern rules as --data-path.
 validation_set_names: null  # Optional list of names for multiple validation sets. When provided with --multiple-validation-sets, these names are used instead of numeric indices (e.g. 'validation-wiki' instead of 'validation-0'). The number of names must match the number of validation datasets.
+value_embedding: false  # Value embeddings (modded-nanogpt; token_embeddings.py): every self-attention layer of a HybridModel adds its own token table to its values, v <- l_v v + l_e ve[token].
 verify_integrity: false  # Whether to hash checkpointing files during save and validate their integrity during load.
 vision_backbone_type: vit  # choices: ['vit', 'mit', 'swin'] | backbone types types
 vision_pretraining: false  # flag to indicate vision pretraining

@@ -348,7 +348,15 @@ class MegatronConfig(ConfigInterface):
     # hybrids (kda, signed_kda, panini) and complex_kda.
     experimental_attention_variant: (
         Literal[
-            "gated_delta_net", "mlstm", "mamba", "dsa", "kda", "signed_kda", "panini", "complex_kda"
+            "gated_delta_net",
+            "mlstm",
+            "mamba",
+            "dsa",
+            "kda",
+            "signed_kda",
+            "panini",
+            "complex_kda",
+            "triadic",
         ]
         | None
     ) = None
@@ -493,6 +501,19 @@ class MegatronConfig(ConfigInterface):
 
     # Value-dim expansion for the FLA hybrid layers (expand_v).
     linear_fla_expand_v: float = 1.0
+
+    # Triadic linear attention (variant "triadic", megatron/core/ssm/triadic.py): E, the
+    # number of state slices per head (the second key's width); 1 is the base mixer.
+    linear_triadic_e: int = 2
+
+    # The delta rule the triadic state extends: "gdn" (a decay per slice), "kda" (plus KDA's
+    # per-channel decay) or "ckda" (the signed channel gate of linear_fla_gate, beta up to 2).
+    linear_triadic_base: str = "kda"
+
+    # Triadic backend: "kda" (FLA's chunk_kda on the expanded keys; every base, E*D <= 256),
+    # "cute" (cute-triadic-gdn's CuTe kernels: base gdn, head dim 128, sm90+) or "auto" (cute
+    # when it applies and is installed, else kda).
+    linear_triadic_kernel: str = "auto"
 
     # Decay-gate parameterisation. "softplus"/"sigmoid" give alpha in (0,1];
     # "signed_sigmoid2"/"signed_tanh" give alpha in [-1,1]. The signed forms plus
@@ -1076,6 +1097,16 @@ class MegatronConfig(ConfigInterface):
     # Apply probs on input of experts instead of applying after activation and glu.
     moe_apply_probs_on_input: bool = False
 
+    # Zero-computation experts (LongCat-Flash): the router also scores this many experts that
+    # cost nothing -- a token's top-k slots routed to them are not dispatched, and their gate
+    # weight multiplies the MoE input (moe_zero_expert_type="identity") or contributes nothing
+    # ("zero"). Tokens thus use a variable number of real experts; balancing (aux loss, expert
+    # bias) runs over all experts. alltoall / allgather dispatchers only.
+    moe_zero_expert_num: int = 0
+
+    # Output of a zero-computation expert: "identity" (the input) or "zero".
+    moe_zero_expert_type: str = "identity"
+
     # Latent projection dimension for MoE. If None, MoE latent projections are not used.
     moe_latent_size: int | None = None
 
@@ -1416,6 +1447,29 @@ class MegatronConfig(ConfigInterface):
     # stream mixing, so it moves (2k+1) of the n streams instead of all of them. 0 is dense
     # mHC. Requires mhc=True; not combinable with mhc_lerp.
     mhc_routed_topk: int = 0
+
+    # Per-layer embeddings (PLE, Gemma 3n / Gemma 4; token_embeddings.py): each chosen layer
+    # of a HybridModel gets its own token table of this width, gated by the hidden state after
+    # the layer and added as an extra residual update h += Norm(W_up(act(W_gate h) *
+    # e[token])). 0 disables.
+    per_layer_embedding_dim: int = 0
+
+    # Which HybridModel layers get a PLE: "mlp" (after every MLP / MoE layer, as Gemma adds it
+    # after the feed-forward) or "all".
+    per_layer_embedding_layers: str = "mlp"
+
+    # Activation of the PLE gate (gelu as Gemma, or silu).
+    per_layer_embedding_activation: str = "gelu"
+
+    # Value embeddings (modded-nanogpt; token_embeddings.py): every self-attention layer of a
+    # HybridModel adds its own token table to its values, v <- l_v v + l_e ve[token].
+    value_embedding: bool = False
+
+    # Sandwich / peri-LN normalization: normalize every sublayer output (attention, MLP, MoE,
+    # Mamba, linear mixers, Engram, PKM) with a learnable gain before it enters the residual,
+    # h <- h + Norm(f(Norm(h))) (Gemma 2/3, OLMo 2). Unlike ngpt the residual stream stays
+    # unnormalized; with mHC / AttnRes / nGPT the normalized output is what they mix.
+    post_sublayer_norm: bool = False
 
     # Routed residual streams: also mix the k selected streams with a per-token doubly
     # stochastic [k, k] matrix (mHC's H_res restricted to the selection), initialized near the
@@ -3753,10 +3807,11 @@ class MegatronConfig(ConfigInterface):
 
     # Specify a hybrid layer pattern using M (mamba), G (gdn), L (the linear mixer named by
     # --experimental-attention-variant), C (gated short convolution), N (Engram n-gram
-    # memory), P (product-key memory), * (attention), D (dsa), - (mlp), E (moe). Use | to
-    # define pipeline stage boundaries for flexible virtual pipeline parallel (fVPP). Use / to
-    # separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this
-    # flag is used, it is the sole indicator that a hybrid model is being run.
+    # memory), P (product-key memory), * (attention), W (sliding-window attention, --window-
+    # size), D (dsa), - (mlp), E (moe). Use | to define pipeline stage boundaries for flexible
+    # virtual pipeline parallel (fVPP). Use / to separate MTP patterns. Example:
+    # "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is used, it is the sole
+    # indicator that a hybrid model is being run.
     hybrid_layer_pattern: str | None = None
 
     # Deprecated. Use --hybrid-layer-pattern instead. If specified, its value will be
