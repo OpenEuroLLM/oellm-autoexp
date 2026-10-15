@@ -69,6 +69,8 @@ block_data_path: null  # Where to save/load BlockData to/from
 cache_mla_latents: false  # If set caches the mla down projected latents with mla flash decode.
 calc_ft_timeouts: false  # If set, FT package will try to automatically compute the timeouts. Note: This feature is for Nvidia internal use only.
 calculate_per_token_loss: false  # Whether cross entropy loss is calculated over the actual number of non-padded tokens in the global batch, versus the default behavior of assuming all tokens are non-padded.
+canon_kernel_size: 4  # Kernel width of the Canon convolutions.
+canon_layers: ''  # Canon layers (Allen-Zhu, Physics of LMs 4.1): any of "ABCD" -- A the token-mixer input, B the attention q/k/v, C the MLP input, D the MLP fc1 output (fused with SwiGLU). Short causal depthwise convolutions with a residual, zero-initialized; see megatron/core/transformer/canon.py.
 chat_template: null  # Custom chat template in jinja format for conversation formatting.
 check_for_large_grads: false  # Check for unexpectedly large grads
 check_for_nan_in_loss_and_grad: true  # Check for NaNs in loss and grad
@@ -222,6 +224,7 @@ eval_interval: null  # Interval between running evaluation on validation set. If
 eval_iters: 100  # Number of iterations to run for evaluation. Used for both validation and test. If not set, evaluation will not run.
 eval_micro_batch_size: null  # Micro batch size to use during evaluation. If not set, defaults to micro_batch_size. Changing this affects per-device memory usage during eval and the number of microbatches per eval step.
 evidence_data_path: null  # Path to Wikipedia Evidence frm DPR paper
+exclusive_self_attention: false  # Exclusive self attention (Zhai 2026, arXiv:2603.09078): orthogonalize every attention output head against the token's own value vector (fused Triton kernel, together with the output gate when attention_output_gate is set).
 exit_duration_in_mins: null  # Exit the program after this many minutes.
 exit_interval: null  # Exit the program after the iteration is divisible by this value.
 exit_on_missing_checkpoint: false  # If 'load' is set, but checkpoint is not found (e.g., path typo), then exit instead of random initialization.
@@ -320,7 +323,7 @@ hierarchical_context_parallel_sizes: null  # Degrees of the hierarchical context
 high_priority_a2a_comm_stream: false  # If True, the communication stream created by set_streams for combined 1f1b a2a overlap is created with CUDA high priority.
 high_priority_stream_groups: []  # Specify which communicator groups should use high priority streams during creation. Assigning high priority to communication streams ensures that communication kernels are scheduled with higher priority, minimizing the exposed communication when it is overlapped with other computation kernels.
 hybrid_context_parallel: false  # If true, enables hybrid context parallel. This is used to balance the workload of each CP rank when we use packed samples with variable sequence lengths. Please set max_seqlen_per_dp_cp_rank when using hybrid_context_parallel.
-hybrid_layer_pattern: null  # Specify a hybrid layer pattern using M (mamba), G (gdn), L (the linear mixer named by --experimental-attention-variant), C (gated short convolution), N (Engram n-gram memory), * (attention), D (dsa), - (mlp), E (moe). Use | to define pipeline stage boundaries for flexible virtual pipeline parallel (fVPP). Use / to separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is used, it is the sole indicator that a hybrid model is being run.
+hybrid_layer_pattern: null  # Specify a hybrid layer pattern using M (mamba), G (gdn), L (the linear mixer named by --experimental-attention-variant), C (gated short convolution), N (Engram n-gram memory), P (product-key memory), * (attention), D (dsa), - (mlp), E (moe). Use | to define pipeline stage boundaries for flexible virtual pipeline parallel (fVPP). Use / to separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is used, it is the sole indicator that a hybrid model is being run.
 hybrid_override_pattern: null  # Deprecated. Use --hybrid-layer-pattern instead. If specified, its value will be forwarded to --hybrid-layer-pattern.
 hysteresis: 2  # hysteresis for dynamic loss scaling
 ict_head_size: null  # Size of block embeddings to be used in ICT and REALM (paper default: 128)
@@ -515,6 +518,7 @@ mhc_alpha_init: 0.01  # Initial value of the learnable gates on the input-depend
 mhc_expansion_rate: 4  # Number of residual streams n. n=1 degenerates to a standard residual. The paper uses n=4, reporting 6.7% training-time overhead at that setting. Costs n-times the residual activation memory and n-times the pipeline inter-stage payload.
 mhc_lerp: false  # Compose mHC with the nGPT LERP residual: mix the streams first (norm-preserving), then take a LERP step per stream toward the normalized sublayer output. Requires ngpt=True. Mixing must precede renormalization, since a convex combination of unit vectors is not itself unit norm.
 mhc_res_init: identity  # Initial stream connectivity. 'identity' biases the Sinkhorn input toward the identity so the streams start independent and the identity mapping is preserved at init; 'uniform' starts from the uniform doubly stochastic matrix.
+mhc_routed_topk: 0  # Routed residual streams (MoE-like residual sparsity, routed_residual.py): with k > 0 each sublayer reads and writes only stream 0 plus the top k-1 of the other mhc_expansion_rate - 1 streams (chosen per token by a router on stream 0), with no stream mixing, so it moves (2k+1) of the n streams instead of all of them. 0 is dense mHC. Requires mhc=True; not combinable with mhc_lerp.
 mhc_sinkhorn_iters: 20  # Sinkhorn-Knopp sweeps used to project the stream mixer onto the Birkhoff polytope.
 micro_batch_size: null  # Batch size per model instance (local batch size). Global batch size is local batch size times data parallel size times number of micro batches.
 microbatch_group_size_per_vp_stage: null  # This value specifies the number of micro-batches that are executed at a time for a given virtual stage (both forward and backward). Default (in __post_init__() method below) to pipeline_parallel_size which specifies a depth-first schedule. Example: for PP=2 VP=2, when microbatch_group_size_per_vp_stage=2, num_microbatches = 4, we have rank 0 | 0 1 0 1 2 3 2 3 rank 1 | 0 1 0 1 2 3 2 3 When microbatch_group_size_per_vp_stage=3, num_microbatches = 5, we have rank 0 | 0 1 2 0 1 2 3 4 3 4 rank 1 | 0 1 2 0 1 2 3 4 3 4
@@ -722,6 +726,13 @@ pin_cpu_params: true  # Disable pinning of CPU memory for parameters.
 pipeline_model_parallel_comm_backend: null  # choices: ['nccl', 'ucc'] | Configuring backend option of pipeline parallel communication (e.g., nccl, ucc) If None, the default backend will be used.
 pipeline_model_parallel_layout: null  # A string that describes a custom pipeline model parallel layout. e.g., "E|(t|)*3,m|m||L". E, L, t, m denotes embedding, loss, transformer decoder layer, and mtp layer, respectively. Stages are split by "|". Replicated stages or layers can be described with multiplication. Commas can be used cosmetically. Default None is not using this argument to set the layout.
 pipeline_model_parallel_size: 1  # Inter-layer model parallelism. Splits transformer layers across GPU ranks.
+pkm_gated: true  # Memory+ (Berges et al. 2024): gate the read with SiLU(W_g h) before the output projection.
+pkm_heads: 4  # Memory heads of a product-key memory (`P`) layer; their reads are summed.
+pkm_key_dim: 256  # Query / product-key width (split into two halves of pkm_key_dim // 2).
+pkm_num_keys: 512  # Sub-keys per half; the memory has pkm_num_keys**2 value rows.
+pkm_table_parallel: tp  # Values table distribution, as engram_table_parallel: "tp" (rows over TP, DDP gradient) or "dp" (rows over the whole stage, sparse updates).
+pkm_topk: 32  # Candidates kept per half and rows read per head.
+pkm_value_dim: null  # Width of a value row; None = hidden_size.
 position_embedding_type: learned_absolute  # choices: ['learned_absolute', 'rope', 'yarn', 'mrope', 'relative', 'none'] | Position embedding type.
 pretrained_checkpoint: null  # Directory containing a pretrained model checkpoint for finetuning.
 profile: false  # Enable nsys profiling. When using this option, nsys options should be specified in commandline. An example nsys commandline is `nsys profile -s none -t nvtx,cuda -o <path/to/output_file> --force-overwrite true --capture-range=cudaProfilerApi --capture-range-end=stop`.

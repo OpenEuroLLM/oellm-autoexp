@@ -1,7 +1,6 @@
 """Megatron CLI metadata (auto-generated)."""
 
-from typing import Any
-from collections.abc import Mapping
+from typing import Any, Mapping
 
 from oellm_autoexp.backends.megatron_args import MegatronArgMetadata, MegatronActionSpec
 
@@ -572,6 +571,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help="Whether cross entropy loss is calculated over the actual number of non-padded tokens in the global batch, versus the default behavior of assuming all tokens are non-padded.",
         choices=None,
         nargs=0,
+        element_type=None,
+    ),
+    "canon_kernel_size": MegatronArgMetadata(
+        arg_type=int,
+        default=4,
+        help="Kernel width of the Canon convolutions.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "canon_layers": MegatronArgMetadata(
+        arg_type=str,
+        default="",
+        help='Canon layers (Allen-Zhu, Physics of LMs 4.1): any of "ABCD" -- A the token-mixer input, B the attention q/k/v, C the MLP input, D the MLP fc1 output (fused with SwiGLU). Short causal depthwise convolutions with a residual, zero-initialized; see megatron/core/transformer/canon.py.',
+        choices=None,
+        nargs=None,
         element_type=None,
     ),
     "chat_template": MegatronArgMetadata(
@@ -1778,6 +1793,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "exclusive_self_attention": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Exclusive self attention (Zhai 2026, arXiv:2603.09078): orthogonalize every attention output head against the token's own value vector (fused Triton kernel, together with the output gate when attention_output_gate is set).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "exit_duration_in_mins": MegatronArgMetadata(
         arg_type=int,
         default=None,
@@ -2608,7 +2631,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "hybrid_layer_pattern": MegatronArgMetadata(
         arg_type=str,
         default=None,
-        help='Specify a hybrid layer pattern using M (mamba), G (gdn), L (the linear mixer named by --experimental-attention-variant), C (gated short convolution), N (Engram n-gram memory), * (attention), D (dsa), - (mlp), E (moe). Use | to define pipeline stage boundaries for flexible virtual pipeline parallel (fVPP). Use / to separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is used, it is the sole indicator that a hybrid model is being run.',
+        help='Specify a hybrid layer pattern using M (mamba), G (gdn), L (the linear mixer named by --experimental-attention-variant), C (gated short convolution), N (Engram n-gram memory), P (product-key memory), * (attention), D (dsa), - (mlp), E (moe). Use | to define pipeline stage boundaries for flexible virtual pipeline parallel (fVPP). Use / to separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is used, it is the sole indicator that a hybrid model is being run.',
         choices=None,
         nargs=None,
         element_type=None,
@@ -4156,6 +4179,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=str,
         default="identity",
         help="Initial stream connectivity. 'identity' biases the Sinkhorn input toward the identity so the streams start independent and the identity mapping is preserved at init; 'uniform' starts from the uniform doubly stochastic matrix.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "mhc_routed_topk": MegatronArgMetadata(
+        arg_type=int,
+        default=0,
+        help="Routed residual streams (MoE-like residual sparsity, routed_residual.py): with k > 0 each sublayer reads and writes only stream 0 plus the top k-1 of the other mhc_expansion_rate - 1 streams (chosen per token by a router on stream 0), with no stream mixing, so it moves (2k+1) of the n streams instead of all of them. 0 is dense mHC. Requires mhc=True; not combinable with mhc_lerp.",
         choices=None,
         nargs=None,
         element_type=None,
@@ -5829,6 +5860,62 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=int,
         default=1,
         help="Inter-layer model parallelism. Splits transformer layers across GPU ranks.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "pkm_gated": MegatronArgMetadata(
+        arg_type=bool,
+        default=True,
+        help="Memory+ (Berges et al. 2024): gate the read with SiLU(W_g h) before the output projection.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "pkm_heads": MegatronArgMetadata(
+        arg_type=int,
+        default=4,
+        help="Memory heads of a product-key memory (`P`) layer; their reads are summed.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "pkm_key_dim": MegatronArgMetadata(
+        arg_type=int,
+        default=256,
+        help="Query / product-key width (split into two halves of pkm_key_dim // 2).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "pkm_num_keys": MegatronArgMetadata(
+        arg_type=int,
+        default=512,
+        help="Sub-keys per half; the memory has pkm_num_keys**2 value rows.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "pkm_table_parallel": MegatronArgMetadata(
+        arg_type=str,
+        default="tp",
+        help='Values table distribution, as engram_table_parallel: "tp" (rows over TP, DDP gradient) or "dp" (rows over the whole stage, sparse updates).',
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "pkm_topk": MegatronArgMetadata(
+        arg_type=int,
+        default=32,
+        help="Candidates kept per half and rows read per head.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "pkm_value_dim": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Width of a value row; None = hidden_size.",
         choices=None,
         nargs=None,
         element_type=None,
@@ -8110,6 +8197,16 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "canon_kernel_size": MegatronActionSpec(
+        option_strings=("--canon-kernel-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=4,
+    ),
+    "canon_layers": MegatronActionSpec(
+        option_strings=("--canon-layers",), action_type="store", nargs=None, const=None, default=""
+    ),
     "chat_template": MegatronActionSpec(
         option_strings=("--chat-template",),
         action_type="store",
@@ -9152,6 +9249,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=None,
+    ),
+    "exclusive_self_attention": MegatronActionSpec(
+        option_strings=("--exclusive-self-attention",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "exit_duration_in_mins": MegatronActionSpec(
         option_strings=("--exit-duration-in-mins",),
@@ -11111,6 +11215,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default="identity",
     ),
+    "mhc_routed_topk": MegatronActionSpec(
+        option_strings=("--mhc-routed-topk",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
+    ),
     "mhc_sinkhorn_iters": MegatronActionSpec(
         option_strings=("--mhc-sinkhorn-iters",),
         action_type="store",
@@ -12511,6 +12622,39 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=1,
+    ),
+    "pkm_gated": MegatronActionSpec(
+        option_strings=("--no-pkm-gated", "--disable-pkm-gated"),
+        action_type="store_false",
+        nargs=0,
+        const=False,
+        default=True,
+    ),
+    "pkm_heads": MegatronActionSpec(
+        option_strings=("--pkm-heads",), action_type="store", nargs=None, const=None, default=4
+    ),
+    "pkm_key_dim": MegatronActionSpec(
+        option_strings=("--pkm-key-dim",), action_type="store", nargs=None, const=None, default=256
+    ),
+    "pkm_num_keys": MegatronActionSpec(
+        option_strings=("--pkm-num-keys",), action_type="store", nargs=None, const=None, default=512
+    ),
+    "pkm_table_parallel": MegatronActionSpec(
+        option_strings=("--pkm-table-parallel",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="tp",
+    ),
+    "pkm_topk": MegatronActionSpec(
+        option_strings=("--pkm-topk",), action_type="store", nargs=None, const=None, default=32
+    ),
+    "pkm_value_dim": MegatronActionSpec(
+        option_strings=("--pkm-value-dim",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "position_embedding_type": MegatronActionSpec(
         option_strings=("--position-embedding-type",),

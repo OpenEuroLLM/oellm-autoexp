@@ -1,7 +1,7 @@
 """Megatron-LM configuration schema (auto-generated)."""
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 from compoconf import ConfigInterface
 
 
@@ -422,6 +422,43 @@ class MegatronConfig(ConfigInterface):
 
     # Kernel of Engram's depthwise causal conv (dilation = the largest n-gram order).
     engram_conv_kernel_size: int = 4
+
+    # Exclusive self attention (Zhai 2026, arXiv:2603.09078): orthogonalize every attention
+    # output head against the token's own value vector (fused Triton kernel, together with the
+    # output gate when attention_output_gate is set).
+    exclusive_self_attention: bool = False
+
+    # Canon layers (Allen-Zhu, Physics of LMs 4.1): any of "ABCD" -- A the token-mixer input,
+    # B the attention q/k/v, C the MLP input, D the MLP fc1 output (fused with SwiGLU). Short
+    # causal depthwise convolutions with a residual, zero-initialized; see
+    # megatron/core/transformer/canon.py.
+    canon_layers: str = ""
+
+    # Kernel width of the Canon convolutions.
+    canon_kernel_size: int = 4
+
+    # Memory heads of a product-key memory (`P`) layer; their reads are summed.
+    pkm_heads: int = 4
+
+    # Sub-keys per half; the memory has pkm_num_keys**2 value rows.
+    pkm_num_keys: int = 512
+
+    # Query / product-key width (split into two halves of pkm_key_dim // 2).
+    pkm_key_dim: int = 256
+
+    # Candidates kept per half and rows read per head.
+    pkm_topk: int = 32
+
+    # Width of a value row; None = hidden_size.
+    pkm_value_dim: int | None = None
+
+    # Memory+ (Berges et al. 2024): gate the read with SiLU(W_g h) before the output
+    # projection.
+    pkm_gated: bool = True
+
+    # Values table distribution, as engram_table_parallel: "tp" (rows over TP, DDP gradient)
+    # or "dp" (rows over the whole stage, sparse updates).
+    pkm_table_parallel: str = "tp"
 
     # How Engram tables are distributed. "tp": rows sharded over tensor parallelism,
     # replicated over data parallelism (DDP reduces their dense gradient). "dp": rows sharded
@@ -1373,6 +1410,13 @@ class MegatronConfig(ConfigInterface):
     # itself unit norm.
     mhc_lerp: bool = False
 
+    # Routed residual streams (MoE-like residual sparsity, routed_residual.py): with k > 0
+    # each sublayer reads and writes only stream 0 plus the top k-1 of the other
+    # mhc_expansion_rate - 1 streams (chosen per token by a router on stream 0), with no
+    # stream mixing, so it moves (2k+1) of the n streams instead of all of them. 0 is dense
+    # mHC. Requires mhc=True; not combinable with mhc_lerp.
+    mhc_routed_topk: int = 0
+
     # Enable Block Attention Residuals (arXiv:2603.15031): replace the uniformly-weighted
     # residual accumulation with learned softmax attention over depth. Bounds hidden-state
     # magnitude, which otherwise grows as O(L) under PreNorm. Mutually exclusive with mhc.
@@ -1450,7 +1494,7 @@ class MegatronConfig(ConfigInterface):
     yarn_beta_slow: float | None = None
 
     # Do not round YaRN correction range endpoints to integers.
-    yarn_correction_range_round_to_int: bool | None = None
+    yarn_correction_range_round_to_int: Optional[bool] = None
 
     # Number of buckets for relative position embeddings.
     relative_attention_num_buckets: int = 32
@@ -3688,10 +3732,10 @@ class MegatronConfig(ConfigInterface):
 
     # Specify a hybrid layer pattern using M (mamba), G (gdn), L (the linear mixer named by
     # --experimental-attention-variant), C (gated short convolution), N (Engram n-gram
-    # memory), * (attention), D (dsa), - (mlp), E (moe). Use | to define pipeline stage
-    # boundaries for flexible virtual pipeline parallel (fVPP). Use / to separate MTP
-    # patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is
-    # used, it is the sole indicator that a hybrid model is being run.
+    # memory), P (product-key memory), * (attention), D (dsa), - (mlp), E (moe). Use | to
+    # define pipeline stage boundaries for flexible virtual pipeline parallel (fVPP). Use / to
+    # separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this
+    # flag is used, it is the sole indicator that a hybrid model is being run.
     hybrid_layer_pattern: str | None = None
 
     # Deprecated. Use --hybrid-layer-pattern instead. If specified, its value will be
