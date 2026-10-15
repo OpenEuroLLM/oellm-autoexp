@@ -34,7 +34,7 @@ log_events:
     # interval these coincide (~5 min); the time floor keeps it correct if the
     # poll interval changes or a poll is skipped.
     inactivity_polls: 5
-    inactivity_timeout_s: 300
+    inactivity_timeout_s: 600
     action:
       class_name: CancelAction
       reason: "Inactive Log"
