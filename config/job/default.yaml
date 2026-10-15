@@ -35,3 +35,9 @@ array_group: null
 est_step_time_s: null
 est_steps: null
 est_startup_min: 0.0
+# Checkpoint hook (job event `checkpoint_saved`, see JobConfig in
+# oellm_autoexp/config/schema.py). Off by default; declared here so job configs
+# that interpolate ${job.checkpoint_hook_every} resolve when an experiment does
+# not set it.
+checkpoint_hook_command: ""
+checkpoint_hook_every: 0
