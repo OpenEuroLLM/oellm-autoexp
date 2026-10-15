@@ -138,6 +138,12 @@ def main() -> int:
         help="Megatron flags (one shell-quoted line) instead of <run-dir>/job.sbatch, for "
         "runs not launched by oellm-autoexp; the entry point is named on the line.",
     )
+    p.add_argument(
+        "--fp32",
+        action="store_true",
+        help="run the model in fp32 (drop --bf16/--fp16) to separate a real export "
+        "mismatch from bf16 rounding",
+    )
     args, _ = p.parse_known_args()
 
     tokens = np.load(args.tokens)
@@ -152,6 +158,8 @@ def main() -> int:
     else:
         launcher = find_launcher((args.run_dir / "job.sbatch").read_text())
         megatron_args = extract_megatron_args(args.run_dir / "job.sbatch")
+    if args.fp32:
+        megatron_args = [a for a in megatron_args if a not in ("--bf16", "--fp16")]
     megatron_args += [
         "--load",
         str(args.run_dir),

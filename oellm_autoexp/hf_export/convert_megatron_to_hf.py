@@ -321,7 +321,15 @@ def _sliding_window(mcfg: dict[str, Any]) -> int | None:
     return left
 
 
+# Residual / depth schemes the HF model does not implement. Exporting such a run
+# would silently drop their parameters and produce a different model, so refuse.
+_UNSUPPORTED_SCHEMES = ("mhc", "attn_res", "ngpt", "loop_block_layers")
+
+
 def build_hf_config(mcfg: dict[str, Any], vocab_size: int) -> dict[str, Any]:
+    active = [k for k in _UNSUPPORTED_SCHEMES if mcfg.get(k) not in (None, False, 0, "None")]
+    if active:
+        raise NotImplementedError(f"HF export does not support {active} yet")
     if mcfg.get("hybrid_layer_pattern"):
         layout = _hybrid_layout(mcfg)
         mixer_types = [layer["mixer"] for layer in layout]
