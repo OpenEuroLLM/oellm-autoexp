@@ -64,7 +64,7 @@ slurm:
     time: "24:00:00"
     qos: qos_oellm #same as before
     exclude: "lrdn[0057,0070,0621-0622,2131]"
-    #reservation: s_oellm_prod2026 #adapt to new reservation
+    reservation: s_int_oellm
 
     # slurm signal to process to stop training and checkpoint right before time limit
     signal: "TERM@240"
