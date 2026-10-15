@@ -186,7 +186,7 @@ def _type_repr(meta: MegatronArgMetadata, default: Any) -> tuple[str, set[str]]:
         allow_none = False
         if meta.choices:
             allow_none = any(option is None for option in meta.choices)
-        if not allow_none:
+        if not allow_none and not type_repr.endswith("| None"):
             type_repr = f"{type_repr} | None"
     return type_repr, imports
 
@@ -252,7 +252,12 @@ def generate_dataclass(
         # (bool), which yields an un-instantiable `x: bool = None`. compoconf rejects it at
         # parse time: "Tried to parse None to <class 'bool'>". Widen to Optional whenever the
         # default really is None.
-        if default is None and type_repr not in ("Any",) and "Optional" not in type_repr:
+        if (
+            default is None
+            and type_repr not in ("Any",)
+            and "Optional" not in type_repr
+            and not type_repr.endswith("| None")
+        ):
             type_repr = f"Optional[{type_repr}]"
             type_imports = set(type_imports) | {"Optional"}
         typing_imports.update(type_imports)
