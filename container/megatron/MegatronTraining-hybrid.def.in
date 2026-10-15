@@ -5,7 +5,7 @@ From: ${BASE_IMAGE}
     Author OpenSci
     Version 0.1.0
     Base ${BASE_IMAGE}
-    Description Megatron hybrid-architecture container: NGC PyTorch (torch 2.12), NVRx, CuTe DSL + cute-triadic-gdn, TileLang, power retention, mamba_ssm
+    Description Megatron hybrid-architecture container: NGC PyTorch (26.09: torch 2.14, TE 2.19, FA4), NVRx, CuTe DSL + cute-triadic-gdn, TileLang, power retention, mamba_ssm
 
 %environment
     export PYTHONUNBUFFERED=1
@@ -48,15 +48,18 @@ python3 -m pip install --no-cache-dir \
 python3 -m pip uninstall -y megatron-core || true
 
 # ---------------------------------------------------------------------------
-# Hybrid-architecture extras (oellm-autoexp feat/hybrid-v0.19): torch 2.12 base
-# (NGC 26.05), NVRx, the CuTe DSL stack for cute-triadic-gdn, and mamba_ssm /
+# Hybrid-architecture extras (oellm-autoexp feat/hybrid-v0.19) on an NGC PyTorch base
+# (26.09 by default, torch >= 2.12): NVRx, the CuTe DSL stack for cute-triadic-gdn, and mamba_ssm /
 # causal_conv1d compiled against this torch. FLA (the ComplexKDA fork) stays
 # outside the image, on PYTHONPATH, as for the other hybrid images.
 # ---------------------------------------------------------------------------
 python3 -m pip install --no-cache-dir --no-deps "nvidia-resiliency-ext==0.6.0"
-python3 -m pip install --no-cache-dir \
-    -c /workspace/constraints.installed.txt \
-    "nvidia-cutlass-dsl[cu13]==4.7.1" cuda-python
+# The CuTe DSL: the base's version where it ships one (FlashAttention 4 depends on it;
+# the constraints keep it), else the version cute-triadic-gdn is built against.
+python3 -c "import cutlass" 2>/dev/null || \
+    python3 -m pip install --no-cache-dir -c /workspace/constraints.installed.txt \
+        "nvidia-cutlass-dsl[cu13]==4.7.1"
+python3 -m pip install --no-cache-dir -c /workspace/constraints.installed.txt cuda-python
 python3 -m pip install --no-cache-dir --no-deps \
     "git+https://github.com/OliverSieberling/cute-triadic-gdn"
 # mamba_ssm / causal_conv1d: built from source against the image's torch (H100 + B200)
@@ -92,7 +95,8 @@ python scripts/run_autoexp.py --help >/dev/null
 python - <<'PY'
 import importlib.metadata as m
 import torch
-assert torch.__version__.startswith("2.12"), torch.__version__
+major, minor = (int(x) for x in torch.__version__.split(".")[:2])
+assert (major, minor) >= (2, 12), torch.__version__
 for mod in ("transformer_engine", "nvidia_resiliency_ext", "cutlass", "cute_triadic_gdn",
             "mamba_ssm", "causal_conv1d", "triton", "tilelang", "retention.triton"):
     __import__(mod)
