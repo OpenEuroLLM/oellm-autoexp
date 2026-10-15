@@ -19,7 +19,7 @@ export MAX_JOBS="${MAX_JOBS:-16}"   # parallel nvcc jobs for mamba_ssm / causal_
 BASE_IMAGE="${BASE_IMAGE:-nvcr.io/nvidia/pytorch:26.09-py3}"
 cd "$HERE/.."
 ./build_container.sh \
-    --definition MegatronTraining-hybrid-torch212 \
-    --base-image nvcr.io/nvidia/pytorch:26.09-py3 \
+    --definition MegatronTraining-hybrid \
+    --base-image "$BASE_IMAGE" \
     --output "$OUT" \
-    --container-cmd apptainer 2>&1 | tee "$OUT/build_hybrid_torch214.log"
+    --container-cmd apptainer 2>&1 | tee "$OUT/build_hybrid_${BASE_IMAGE##*:}.log"
