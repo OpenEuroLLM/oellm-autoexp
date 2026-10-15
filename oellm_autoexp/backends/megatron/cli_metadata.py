@@ -1682,6 +1682,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "engram_table_parallel": MegatronArgMetadata(
+        arg_type=str,
+        default="tp",
+        help='How Engram tables are distributed. "tp": rows sharded over tensor parallelism, replicated over data parallelism (DDP reduces their dense gradient). "dp": rows sharded over every rank of the pipeline stage (tensor x data x context parallel), looked up with all-to-all and updated by EngramTableOptimizer from sparse row gradients -- no table-sized gradient traffic; requires engram_table_fp32.',
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "engram_table_size": MegatronArgMetadata(
         arg_type=int,
         default=262144,
@@ -9064,6 +9072,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=False,
         default=True,
+    ),
+    "engram_table_parallel": MegatronActionSpec(
+        option_strings=("--engram-table-parallel",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="tp",
     ),
     "engram_table_size": MegatronActionSpec(
         option_strings=("--engram-table-size",),

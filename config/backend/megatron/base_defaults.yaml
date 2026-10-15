@@ -210,6 +210,7 @@ engram_ngram_orders:  # N-gram orders an Engram (`N`) layer hashes, e.g. 2 3 for
 - 3
 engram_num_heads: 4  # Hash heads per n-gram order; each head has its own table.
 engram_table_fp32: true  # Keep the Engram tables as fp32 parameters under bf16/fp16 training. Their rows receive small, sparse gradients; an fp32 table accumulates them in fp32 and is its own optimizer master copy, so it costs about what a bf16 table plus its fp32 master and bf16 gradient do. The lookups are cast to the compute dtype.
+engram_table_parallel: tp  # How Engram tables are distributed. "tp": rows sharded over tensor parallelism, replicated over data parallelism (DDP reduces their dense gradient). "dp": rows sharded over every rank of the pipeline stage (tensor x data x context parallel), looked up with all-to-all and updated by EngramTableOptimizer from sparse row gradients -- no table-sized gradient traffic; requires engram_table_fp32.
 engram_table_size: 262144  # Rows per Engram hash table (rounded up to distinct primes, one per head).
 engram_token_map: null  # Path to a .npy int array mapping token id -> canonical id (Engram's tokenizer compression, e.g. NFKC + lowercasing). None hashes the raw token ids.
 eod_mask_loss: false  # Mask loss for the end of document tokens.
