@@ -21,7 +21,7 @@ job:
   log_path_current: ${.base_output_dir}/logs/current.log
   config_path: ${.base_output_dir}/logs/config-%j.yaml
   config_path_current: ${.base_output_dir}/logs/current.yaml
-  chain_repeat: 1 #for the first annealing job set to 1, then change load path below and from the second job onwards set to 3
+  chain_repeat: 3 #for the first annealing job set to 1, then change load path below and from the second job onwards set to 3
 
 backend:
   megatron:
@@ -52,8 +52,8 @@ backend:
 
 
     save: ${job.base_output_dir}/checkpoints
-    load: /leonardo_scratch/fast/OELLM_prod2026/production_training/baby_9b_dense/checkpoints #first annealing job
-    #load: ${.save} #from the second annealing job onwards
+    #load: /leonardo_scratch/fast/OELLM_prod2026/production_training/baby_9b_dense/checkpoints #first annealing job
+    load: ${.save} #from the second annealing job onwards
 
 slurm:
   env:
@@ -64,7 +64,7 @@ slurm:
     time: "24:00:00"
     qos: qos_oellm #same as before
     exclude: "lrdn[0057,0070,0621-0622,2131]"
-    reservation: s_oellm_prod2026 #adapt to new reservation
+    #reservation: s_oellm_prod2026 #adapt to new reservation
 
     # slurm signal to process to stop training and checkpoint right before time limit
     signal: "TERM@240"
