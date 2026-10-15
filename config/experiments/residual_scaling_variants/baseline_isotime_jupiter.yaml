@@ -1,0 +1,60 @@
+# @package _global_
+#
+# Baseline at matched wall-clock, to price the two arms that beat it.
+#
+# Every arm in this sweep runs 11445 iterations, i.e. matched *tokens*. That
+# answers "which scheme is better per token" but not "which is better per second",
+# and the two arms that beat baseline both do so by spending throughput:
+#
+#   arm              tok/s/GPU   vs base   final    baseline iters at equal wall-clock
+#   mhc4_gbs128        193,750     0.70x   2.665                              16,320
+#   loop12x2_plain     175,183     0.63x   2.678                              18,046
+#   baseline           276,290     1.00x   2.721                              11,445
+#
+# So both wins might be nothing more than "spend 1.4-1.6x the compute, get a
+# better loss" -- which baseline can also do, simply by training longer. These two
+# runs give baseline the same wall-clock and let it try.
+#
+# Sized rather than sampled. A single long run cannot answer this by reading its
+# intermediate checkpoints: lr_wsd_decay_iters is 0.2 * train_iters, so an
+# 18,046-iteration run is still in its stable phase at iteration 11,445 and its
+# loss there understates what a properly-sized 11,445-iteration run achieves.
+# Only endpoints are comparable, so each budget needs its own run.
+#
+# train_iters is set explicitly instead of via aux.tokens because the schedule
+# derives from it: lr_wsd_decay_iters follows ${.train_iters}, and aux.total_tokens
+# reports the resulting budget.
+#
+# Everything else is baseline exactly: same geometry, data, gbs 128, mbs 32,
+# lr 0.002, WSD with 2000 warmup and a 20% decay tail.
+defaults:
+  - ngpt_scalers_jupiter
+  - _self_
+
+slurm:
+  sbatch:
+    # 21,648 iterations at baseline's 474 ms/iter is ~2.9h.
+    time: "05:00:00"
+
+backend:
+  megatron:
+    global_batch_size: 128
+    micro_batch_size: 32
+    lr: 0.002
+
+sweep:
+  type: product
+  groups:
+   - type: list
+     configs:
+      # Matches mhc4_gbs128's wall-clock: 11445 * 676.4/474.4.
+      - aux.variant: baseline_iso_mhc4
+        backend.megatron.train_iters: 16320
+      # Matches loop12x2_plain's wall-clock: 11445 * 748/474.4.
+      - aux.variant: baseline_iso_loop12x2
+        backend.megatron.train_iters: 18046
+      # Matches loop12x2_ngpt's wall-clock: 11445 * 897/474.4. That arm finished at
+      # 2.663, the best in the sweep on tokens, so it is the one most worth pricing
+      # -- and at 0.53x throughput it is also the most expensive claim to defend.
+      - aux.variant: baseline_iso_loop12x2_ngpt
+        backend.megatron.train_iters: 21648

@@ -1,0 +1,62 @@
+# @package _global_
+#
+# Which addition costs the memory that forces the LERP arms down to mbs=8?
+#
+# Plain mhc4 fits mbs=32 at 0.9934 occupancy. The full LERP+scaler config OOMs at
+# the same mbs=32, so one of the additions retains substantially more per
+# micro-batch. Three hypotheses have already been implemented and measured flat
+# (fusing the write, trading CUDA graphs for batch, checkpointing the write), so
+# this stops proposing mechanisms and turns the features on one at a time.
+#
+# The weight normalizer is deliberately absent: the arms that OOM'd never had it,
+# so row-norms are already excluded as the cause.
+#
+# Every arm at mbs=8 with graphs off. mbs=32 was tried first and discriminated
+# nothing: plain mhc4 sits at 0.9935 occupancy there, so all three additions OOM
+# individually and the grid only proves the baseline has no headroom. At mbs=8
+# everything fits and the memory numbers are directly comparable, which is what
+# actually attributes the cost.
+defaults:
+  - speed_mhc_jupiter
+  - _self_
+
+backend:
+  megatron:
+    mhc: true
+    mhc_expansion_rate: 4
+    mhc_sinkhorn_iters: 8
+    cuda_graph_impl: none
+    global_batch_size: 128
+    micro_batch_size: 8
+    lr: 0.001
+
+sweep:
+  type: product
+  groups:
+   - type: list
+     configs:
+      # Reference: the configuration that reaches ~200 TFLOP/s.
+      - aux.variant: ab8_mhc4_only
+      # The LERP residual alone, no scalers, no qk normalization.
+      - aux.variant: ab8_lerp
+        backend.megatron.mhc_lerp: true
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+      # The scaler set alone: s_qk multiplies q/k, s_uv multiplies the fc1
+      # intermediate, which is 8x the hidden width -- a mul retains its operands.
+      - aux.variant: ab8_scalers
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_use_sqk: true
+        backend.megatron.ngpt_use_suv: true
+      # QK L2 normalization alone.
+      - aux.variant: ab8_qknorm
+        backend.megatron.ngpt: true
+        backend.megatron.qk_l2_norm: true
+      # Everything, i.e. what the science arms run.
+      - aux.variant: ab8_full
+        backend.megatron.mhc_lerp: true
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+        backend.megatron.qk_l2_norm: true
+        backend.megatron.ngpt_use_sqk: true
+        backend.megatron.ngpt_use_suv: true

@@ -1,0 +1,75 @@
+# @package _global_
+# MoE ~9B total / ~1.3B active (PROPOSED arch) — 1 node. Qwen3-MoE style,
+# same expert granularity as 30B-A3B (moe_ffn 768, topk 8):
+#   32 layers, hidden 1536, 72 experts
+#   params (neox vocab): experts 32×255M=8.15B + attn 0.25B + emb 0.15B ≈ 8.6B
+#   active ≈ 1.3B (topk 8/72)
+#
+# VALIDATED optimum (tune sweeps + HybridEP check 2026-07-27, job 1052298):
+#   full recompute + mbs8/GBS32 + HybridEP dispatcher
+#   → 165.9 TFLOPS / 16.8% MFU, 18,397 tok/s/GPU, 1.78 s/iter, 62% mem
+# (allgather same settings: 14,868 tok/s — HybridEP +24%. HybridEP does NOT
+# lift the recompute constraint: norc mbs4 still OOMs, norc mbs2 slower.
+# Requires the hybridep container + libcuda binds, see below.)
+# Tuning findings (see moe_9B_tune{,2}.yaml):
+#   - Full recompute is REQUIRED, not conservative: every no-recompute/selective
+#     variant at mbs≥4 OOMs (allgather-dispatcher activations dominate;
+#     selective [moe_act, layernorm] ≈ none in memory — same as 30B-A3B).
+#   - norc at mbs2 fits (74%) but is 13% slower — small GEMMs cost more than
+#     recompute saves.
+#   - Accumulation adds nothing on 1 node (dispatch-bound, not optimizer-bound).
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe, data_nemonicco_split_jupiter]
+  - common
+  - /sweep: none
+  - _self_
+
+backend:
+  megatron:
+    # ── size ─────────────────────────────────────────────────────────────
+    num_layers: 32
+    hidden_size: 1536
+    ffn_hidden_size: 4608           # unused with moe_layer_freq=1, kept consistent (3×h)
+    num_attention_heads: 16         # head_dim 128 → q-proj 1536→2048
+    num_query_groups: 4
+    kv_channels: 128
+    num_experts: 72                 # divisible by EP=4 → 18 experts/GPU
+    moe_ffn_hidden_size: 768
+    moe_router_topk: 8
+    # ── parallelism / speed ──────────────────────────────────────────────
+    expert_model_parallel_size: 4
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    sequence_parallel: false
+    micro_batch_size: 8
+    global_batch_size: 32           # mbs × DP(4)
+    # full recompute (granularity=full, method=uniform, num_layers=1)
+    # inherited from qwen3_moe — see header
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: hybridep
+    moe_hybridep_num_sms: 16
+    moe_router_dtype: "fp32"
+  env:
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+
+container:
+  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deep-hybridep_aarch64.sif
+  bind:
+    - /e
+    - /dev/shm
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:20:00"
+
+job:
+  name: jspeed_moe_9B

@@ -1,0 +1,27 @@
+# @package _global_
+# Final two points of the 30BA3B scaling curve: n128/n256, PP2 recipe at the
+# GBS cap, overlap OFF (its bucket/group init stalls c10d at n≥64 — confirmed
+# by the n64 probe, job 1065422: overlap-on died in init 3×, overlap-off ran
+# 100/100 iters at ~5,650 tok/s).
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+backend:
+  megatron:
+    overlap_grad_reduce: false
+    overlap_param_gather: false
+
+slurm:
+  sbatch:
+    time: "00:40:00"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - slurm.sbatch.nodes: 128
+        - slurm.sbatch.nodes: 256
+          backend.megatron.micro_batch_size: 2

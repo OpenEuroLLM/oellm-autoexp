@@ -1,0 +1,71 @@
+# @package _global_
+# MoE 30B-A3B (Qwen3-30B-A3B: 48L, hidden 2048, 128 experts × ffn 768, topk 8)
+# — 2 nodes, 8× GH200. Fills the "32B MoE" slot of the collection.
+#
+# VALIDATED optimum (HybridEP comparison 2026-07-27, jobs 1052255-58; see
+# moe_30BA3B_hybridep_comp.yaml for the full table):
+#   EP=4 + PP=2 + TP=1, mbs=4, full recompute, HybridEP dispatcher,
+#   VPP (4 layers/vstage → VP=6, bubble 4%), GBS=64
+#   → 163.5 TFLOPS / 16.5% MFU, 7,515 tok/s/GPU, 4.36 s/iter, 88% mem
+# Ladder: allgather GBS256 6,076 → hybridep GBS256 7,296 → hybridep+VPP GBS64
+# 7,515 (+24% total; and at the 4× smaller, production-realistic batch).
+# Absolute peak: hybridep+VPP+GBS256 → 7,737 tok/s / 168.3 TF (+3%, bubble
+# 4%→1%; see moe_30BA3B_hep_vpp_gbs256.yaml) — GBS64 kept here deliberately.
+# Requires the hybridep container + libcuda binds (below).
+# Beats torchtitan at matched global batch (titan: 5,042 @ GBS64, 5,126 @ GBS256).
+# Key findings baked in:
+#   - EP=4 keeps the expert allgather intra-node (NVLink); EP=8+PP=1 (inter-node
+#     EP over IB) is ~37% slower.
+#   - Full recompute required: selective/none OOM at EP=4 (32 experts/GPU).
+#   - mbs=4 beats mbs=8 (118 vs 102 TFLOPS).
+#   - NCCL_NET_GDR_LEVEL=0 required: PP=2 inter-node P2P hangs with GDRDMA.
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, qwen3_moe_30BA3B, data_nemonicco_split_jupiter]
+  - common
+  - /sweep: none
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 100
+    global_batch_size: 64
+    micro_batch_size: 4
+    expert_model_parallel_size: 4
+    pipeline_model_parallel_size: 2
+    tensor_model_parallel_size: 1
+    # VPP: 48 layers / (PP2 × 4/vstage) = VP 6 → bubble (PP−1)/(PP−1+GA·VP) = 4%
+    num_layers_per_virtual_pipeline_stage: 4
+    overlap_p2p_comm: true
+    # HybridEP dispatcher (+24% vs allgather incl. VPP); needs the container below
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: hybridep
+    moe_hybridep_num_sms: 16
+    # full recompute (granularity=full, method=uniform, num_layers=1) and
+    # grouped GEMM come from qwen3_moe
+    moe_router_dtype: "fp32"
+  env:
+    NCCL_NET_GDR_LEVEL: "0"   # disable GDRDMA — fixes IB hang with PP=2 inter-node P2P
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+
+container:
+  image: ${oc.env:CONTAINER_CACHE_DIR,.}/MegatronTraining-JUPITER-deep-hybridep_aarch64.sif
+  # hybridep container lacks host driver libs — Inductor asserts without these
+  bind:
+    - /e
+    - /dev/shm
+    - /usr/lib64/libcuda.so.1:/opt/nvidia/lib/libcuda.so.1:ro
+    - /usr/lib64/libcuda.so:/opt/nvidia/lib/libcuda.so:ro
+    - /usr/lib64/libnvidia-ml.so.1:/opt/nvidia/lib/libnvidia-ml.so.1:ro
+    - /usr/lib64/libnvidia-ptxjitcompiler.so.1:/opt/nvidia/lib/libnvidia-ptxjitcompiler.so.1:ro
+
+slurm:
+  sbatch:
+    nodes: 2
+    time: "00:30:00"
+
+job:
+  name: jspeed_moe_30BA3B

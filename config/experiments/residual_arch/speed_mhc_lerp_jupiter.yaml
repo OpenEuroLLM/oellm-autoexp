@@ -1,0 +1,86 @@
+# @package _global_
+#
+# Why do the mhc4 LERP+scaler arms run at 65 TFLOP/s when plain mhc4 reaches 200?
+#
+# Not the config: the scaling sweep already carries every flag the speed work
+# added (Liger, the fusions, no dataloader mask, compile), and its base
+# micro_batch_size is 32. The only difference is that those arms were forced down
+# to 8 to stop them OOMing, and micro-batch was the single largest lever in the
+# whole speed campaign.
+#
+# Fusing the LERP write was measured and did nothing (65.9 -> 65.6), so this
+# stops guessing at kernels and tests the batch directly. CUDA graphs are the
+# thing to trade away for it: they cost memory at capture, and were measured
+# worth -0.4% for mHC at matched micro-batch, so spending that memory on a
+# larger batch should be strictly better.
+#
+# 60 iterations each -- enough for steady-state throughput, cheap enough to run
+# the whole grid.
+defaults:
+  - speed_mhc_jupiter
+  - _self_
+
+slurm:
+  env:
+    # Declared so the sweep can override per arm.
+    MHC_LERP_RECOMPUTE: "0"
+
+backend:
+  megatron:
+    # The full recipe the science arms run, so the probe measures that path.
+    mhc: true
+    mhc_expansion_rate: 4
+    mhc_sinkhorn_iters: 8
+    mhc_lerp: true
+    ngpt: true
+    ngpt_lerp_normalization: analytic
+    qk_l2_norm: true
+    ngpt_use_sqk: true
+    ngpt_use_suv: true
+    lr: 0.001
+    # gbs 128 matches the science sweep, so gbs/DP = 32 and mbs must divide 32.
+    global_batch_size: 128
+
+sweep:
+  type: product
+  groups:
+   - type: list
+     configs:
+      # The current science setting, for a within-session reference point.
+      - aux.variant: lerp_mbs8_cg
+        backend.megatron.micro_batch_size: 8
+      - aux.variant: lerp_mbs8_nocg
+        backend.megatron.micro_batch_size: 8
+        backend.megatron.cuda_graph_impl: none
+      - aux.variant: lerp_mbs16_nocg
+        backend.megatron.micro_batch_size: 16
+        backend.megatron.cuda_graph_impl: none
+      - aux.variant: lerp_mbs32_nocg
+        backend.megatron.micro_batch_size: 32
+        backend.megatron.cuda_graph_impl: none
+      # Compiling the LERP write freed enough memory that mbs=16 fits (0.699).
+      # Graphs were worth +58% at mbs=8 here -- far more than for the additive
+      # write, because at small batch launch overhead dominates -- so the two
+      # levers are worth combining.
+      - aux.variant: lerp_mbs16_cg
+        backend.megatron.micro_batch_size: 16
+      # gbs 448 makes gbs/DP = 112, which 28 divides: the configuration that took
+      # plain mhc4 to 199.8, now that this path can afford the batch.
+      - aux.variant: lerp_gbs448_mbs28_cg
+        backend.megatron.global_batch_size: 448
+        backend.megatron.micro_batch_size: 28
+      - aux.variant: lerp_gbs448_mbs28_nocg
+        backend.megatron.global_batch_size: 448
+        backend.megatron.micro_batch_size: 28
+        backend.megatron.cuda_graph_impl: none
+      # Recompute was measured useless before -- but that was on the build where
+      # the LERP write silently ran eager, so it was freeing intermediates that
+      # eager was materializing anyway. On a compiled build it is untested, and
+      # memory is what caps this path at mbs=16.
+      - aux.variant: lerp_mbs28_recompute
+        backend.megatron.global_batch_size: 448
+        backend.megatron.micro_batch_size: 28
+        slurm.env.MHC_LERP_RECOMPUTE: "1"
+      - aux.variant: lerp_mbs32_recompute
+        backend.megatron.micro_batch_size: 32
+        slurm.env.MHC_LERP_RECOMPUTE: "1"

@@ -1,0 +1,17 @@
+# @package _global_
+# Softmax-bf16 test for moe_9B: attention_softmax_in_fp32=false gave +3.6% on
+# dense_32B (tune3); qwen3_moe sets it true. Attention structure is identical.
+# Result (2026-07-29, jobs 1088077-79): 18,464 vs 18,397 — +0.4%, noise.
+# VERDICT: NO gain on MoE — not folded. The dense_32B +3.6% likely comes from
+# the large-attention regime (h5120, 64 heads); MoE attention (h<=2048) is a
+# small compute fraction and the fused kernels are unaffected by this flag.
+defaults:
+  - moe_9B
+  - _self_
+
+backend:
+  megatron:
+    attention_softmax_in_fp32: false
+
+job:
+  name: jspeed_moe_9B_softmaxbf16

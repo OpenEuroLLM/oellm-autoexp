@@ -15,6 +15,24 @@ align_grad_reduce: true  # If not set, all PP stages will launch gradient reduce
 align_param_gather: true  # If not set, all PP stages will launch param all-gathers simultaneously. Otherwise, each PP stage will independently launch as needed.
 allow_ambiguous_pad_tokens: false  # Whether to prevent pad tokens already present in the dataset from being masked out when the pad token incorrectly shares the same id with other special tokens in the tokenizer. Note that this argument has no effect when the tokenizer correctly provides a unique id for the pad. Masking out such ambiguous pad tokens results in training instability. Such a scenario is best resolved by fixing the tokenizer; leaving this option as False provides a workaround. When left to the default of False, any token ids that collide with the pad token id - as provided by the tokenizer - will not be masked out of the loss calculation: it cannot be determined whether they are truly pad. If instead this argument is set, the training flow will treat all tokens that share the same id as the pad token as true pad tokens, potentially causing severe training instability.
 allow_new_param_groups_on_load: false  # When the loaded optimizer checkpoint has no param_group matching a current group (a multiplier enabled mid-run creates a new group), load the new group from the structurally equivalent saved group and keep the current overrides instead of raising.
+angular_muown_batched_step: true  # Disable the batched AngularMuown step and update one parameter at a time
+angular_muown_beta1: 0.9  # Adam beta1 for the AngularMuown row magnitudes g. Default: 0.9.
+angular_muown_beta2: 0.95  # Adam beta2 for the AngularMuown row magnitudes g. Default: 0.95.
+angular_muown_coefficient_type: simple  # Newton-Schulz coefficient type for AngularMuown. simple matches the original AngularMuown newtonschulz5 coefficients.
+angular_muown_extra_scale_factor: 0.2  # Additional scale factor for the AngularMuown U direction. The default 0.2 pairs with spectral scaling to give the standard Muon 0.2 * sqrt(max(m, n)).
+angular_muown_fp32_matmul_prec: medium  # choices: ['low', 'medium', 'high'] | FP32 matmul precision for the AngularMuown Newton-Schulz iteration
+angular_muown_momentum: 0.95  # Momentum coefficient for the U-gradient buffer in AngularMuown
+angular_muown_nesterov: true  # Disable Nesterov-style lookahead for the AngularMuown U update
+angular_muown_num_ns_steps: 5  # Number of Newton-Schulz steps for AngularMuown
+angular_muown_scale_mode: spectral  # choices: ['spectral', 'unit_rms_norm', 'shape_scaling'] | Shape-dependent scale for the AngularMuown U direction. spectral (default, with --angular-muown-extra-scale-factor 0.2) matches the Muon recipe convention so Adam-tuned learning rates transfer; shape_scaling (with extra scale factor 1.0) reproduces the original AngularMuown ratio scaling.
+angular_muown_split_qkv: true  # Whether to split fused QKV parameters for AngularMuown orthogonalization
+angular_muown_tp_mode: duplicated  # choices: ['duplicated', 'distributed'] | How to perform NS calculation for tensor parallel weights. Blockwise mode is not supported for AngularMuown.
+angular_muown_u_decay_min_multiplier: 0.0  # Floor of the cosine U-decay schedule
+angular_muown_u_decay_p: 1.0  # Exponent for the poly U-decay schedule
+angular_muown_u_decay_scale: 0.001  # Scale for the poly U-decay schedule. Set --angular-muown-u-decay-p 0 to disable decay.
+angular_muown_u_decay_schedule: poly  # choices: ['poly', 'cosine'] | Internal decay schedule for the AngularMuown directional step multiplier
+angular_muown_u_decay_steps: null  # Post-warmup steps over which the cosine schedule decays to --angular-muown-u-decay-min-multiplier (required for cosine)
+angular_muown_u_decay_warmup_steps: 0  # Steps before the AngularMuown U-decay schedule begins
 app_tag_run_name: null  # Jobs belonging to same training run, suppose to have the same name. It will be used to track progress of a training done over multiple different jobs
 app_tag_run_version: 0.0.0  # The version of the training of which current job is part of. It will be used to track the changes in the application side which might change the performance baseline
 apply_query_key_layer_scaling: false  # If true, scale Q * K^T by 1 / layer-number. This improve numeric stability when training with fp16. Also sets `attention_softmax_in_fp32` to True.
@@ -30,6 +48,10 @@ attention_backend: auto  # choices: [1, 2, 3, 4, 5] | Attention backend to run. 
 attention_dropout: 0.1  # Post attention dropout probability.
 attention_output_gate: false  # Whether to apply output gate to the attention layers.
 attention_softmax_in_fp32: false  # Run attention masking and softmax in fp32.
+attn_res: false  # Enable Block Attention Residuals (arXiv:2603.15031): replace the uniformly-weighted residual accumulation with learned softmax attention over depth. Bounds hidden-state magnitude, which otherwise grows as O(L) under PreNorm. Mutually exclusive with mhc. Requires pipeline_model_parallel_size == 1 for now.
+attn_res_lerp: false  # Compose Block AttnRes with the nGPT LERP residual: accumulate each block via a LERP step toward the normalized sublayer output instead of a plain sum, keeping block summaries on the unit sphere rather than growing with block size. Requires ngpt=True.
+attn_res_num_blocks: 8  # Number of blocks N the layers are partitioned into. Each block is summed to a single representation, so memory and pipeline traffic are O(N*h) rather than O(L*h) - the same payload shape as mHC with expansion rate N. N=num_layers recovers Full AttnRes; N=1 degenerates to a standard residual. The paper finds N~8 recovers most of the benefit.
+attn_res_query_init_std: 0.0  # Std of the normal used to initialize the learnable per-sublayer pseudo-query. 0 gives a zero query, i.e. uniform attention over depth at init - exactly the averaging a standard residual performs.
 auto_detect_ckpt_format: false  # Determine if the checkpoint format is in legacy or distributed format. If False, expects distributed checkpoint iff args.ckpt_format != "torch". Might slow down loading a bit (double rank0 ckpt load).
 barrier_with_L1_time: true  # If not disabled, use barrier with level 1 time measurements. Note that this is up to the user to make sure calling barrier with their timers will not result in hangs. This can happen if for example the user adds a level 1 timer that is not called by all ranks.
 batch_invariant_mode: false  # If true, uses batch-invariant kernels that provide deterministic forward execution regardless of batch size. This ensures bitwise identical results when the same inputs are processed in different batch configurations. This will significantly affect speed of training and inference as the kernels are not full optimized. Defaults to False.
@@ -180,6 +202,15 @@ enable_one_logger: true  # If set, disable using one_logger to track E2E metrics
 encoder_num_layers: null  # Number of encoder transformer layers.
 encoder_seq_length: null  # Maximum encoder sequence length to process.This should be exclusive of --seq-length
 end_weight_decay: null  # End of run weight decay coefficient for L2 regularization.
+engram_conv_kernel_size: 4  # Kernel of Engram's depthwise causal conv (dilation = the largest n-gram order).
+engram_embed_dim: 64  # Width of one Engram table row; the memory vector concatenates len(engram_ngram_orders) * engram_num_heads rows.
+engram_lr_mult: 5.0  # Learning-rate multiplier of the Engram (N-layer) tables, which also get no weight decay.
+engram_ngram_orders:  # N-gram orders an Engram (`N`) layer hashes, e.g. 2 3 for bigrams and trigrams.
+- 2
+- 3
+engram_num_heads: 4  # Hash heads per n-gram order; each head has its own table.
+engram_table_size: 262144  # Rows per Engram hash table (rounded up to distinct primes, one per head).
+engram_token_map: null  # Path to a .npy int array mapping token id -> canonical id (Engram's tokenizer compression, e.g. NFKC + lowercasing). None hashes the raw token ids.
 eod_mask_loss: false  # Mask loss for the end of document tokens.
 ep_overlap_early_attn_memory_release: false  # Enable early memory release of attention activations during EP overlap. EP overlap can increase peak memory usage when the overlapped forward module allocates more memory than what is freed by the backward module. This flag addresses this by reordering the attention backward pass to occur earlier in the schedule. Specifically: - Without this flag: attn_bwd executes after moe_combine_fwd - With this flag: attn_bwd executes before mlp_fwd The earlier execution releases attention activations sooner, reducing peak memory. Note: This may impact performance as moe_combine_fwd and moe_dispatch_bwd become exposed (not overlapped with other computation).
 error_injection_rate: 0  # Rate at which to inject unexpected results, e.g. 1000 means once every 1000 result validations
@@ -287,7 +318,7 @@ hierarchical_context_parallel_sizes: null  # Degrees of the hierarchical context
 high_priority_a2a_comm_stream: false  # If True, the communication stream created by set_streams for combined 1f1b a2a overlap is created with CUDA high priority.
 high_priority_stream_groups: []  # Specify which communicator groups should use high priority streams during creation. Assigning high priority to communication streams ensures that communication kernels are scheduled with higher priority, minimizing the exposed communication when it is overlapped with other computation kernels.
 hybrid_context_parallel: false  # If true, enables hybrid context parallel. This is used to balance the workload of each CP rank when we use packed samples with variable sequence lengths. Please set max_seqlen_per_dp_cp_rank when using hybrid_context_parallel.
-hybrid_layer_pattern: null  # Specify a hybrid layer pattern using M (mamba), G (gdn), L (the linear mixer named by --experimental-attention-variant), C (gated short convolution), * (attention), D (dsa), - (mlp), E (moe). Use | to define pipeline stage boundaries for flexible virtual pipeline parallel (fVPP). Use / to separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is used, it is the sole indicator that a hybrid model is being run.
+hybrid_layer_pattern: null  # Specify a hybrid layer pattern using M (mamba), G (gdn), L (the linear mixer named by --experimental-attention-variant), C (gated short convolution), N (Engram n-gram memory), * (attention), D (dsa), - (mlp), E (moe). Use | to define pipeline stage boundaries for flexible virtual pipeline parallel (fVPP). Use / to separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is used, it is the sole indicator that a hybrid model is being run.
 hybrid_override_pattern: null  # Deprecated. Use --hybrid-layer-pattern instead. If specified, its value will be forwarded to --hybrid-layer-pattern.
 hysteresis: 2  # hysteresis for dynamic loss scaling
 ict_head_size: null  # Size of block embeddings to be used in ICT and REALM (paper default: 128)
@@ -383,6 +414,7 @@ linear_fla_gate_init_style: spread  # FLA signed layers only: how the decay gate
 linear_fla_gate_neg_frac: null  # FLA signed layers: fraction of decay-gate channels initialised NEGATIVE. FLA offers only two bundled presets -- "shipped" = (neg_frac 0.0, fproj scale 1.0) and "spread" = (neg_frac 0.5, fproj scale 0.1) -- which confound sign diversity with the input-dependence of the gate. Setting this (and/or linear_fla_gate_fproj_scale) builds the layer with the "shipped" init and then re-signs dt_bias here, so the two are independent. Sign and magnitude share one pre-activation u: |alpha| = eps + (1-eps) |tanh(u/2)| and s = sign(u), so |alpha| -> eps at the crossing. A channel born at the wrong sign can only cross by walking through near-total state erasure, which is why the negative fraction is a real prior and not a free initialisation choice.
 linear_fla_lower_bound: -5.0  # Floor of the log decay gate; also its eps floor. Must be in [-5, 0).
 linear_fla_lower_bound_v: -2.0  # panini only: floor of log|c| for the value gate. Sets the gauge dynamic range; deliberately tighter than the key gate's -5. Only affects THROUGHPUT when linear_fla_v_gate_in_kernel is False, where it sets value_segment_length() and hence the number of kernel launches. On the in-kernel path it is a pure modelling knob.
+linear_fla_megatron_init: false  # Re-initialize the projections of the self-contained FLA layers (kda, signed_kda, panini, complex_kda and its gated NoPE attention) the Megatron way: every ``nn.Linear`` weight with ``init_method``, the output projection ``o_proj`` with ``output_layer_init_method``. FLA's own layers keep PyTorch's default init, whose output projection is ~7x larger than Megatron's scaled init, so at the start of training these mixers write much more into the residual stream than the other mixers do. Gate parameters (A_log, dt_bias) and biases keep FLA's init. Off by default so earlier runs stay reproducible.
 linear_fla_output_gate: linear  # Output gate: "linear" (Kimi K3) or "lowrank" (Kimi Linear).
 linear_fla_torch_compile: false  # Wrap the FLA layer's forward in torch.compile to fuse the gate/projection epilogues that sit around the Triton kernel. CUDA graphs (cuda_graph_impl) already remove launch overhead but do not fuse, so every elementwise gate op still round-trips HBM. Measured per-layer fwd+bwd at B16/T4096/hidden512 on GH200, eager -> compiled: panini 24.24 -> 15.53 ms (1.56x), signed_kda 11.07 -> 8.90 (1.24x), but plain kda 6.92 -> 7.99 (0.87x -- SLOWER). Enable it per variant, not globally: layers with little torch-side glue only pay the overhead. Requires excluding running_sign from dynamo; see _exclude_running_sign_from_dynamo in megatron/core/ssm/fla_hybrid.py.
 linear_fla_v_gate: signed_sigmoid2  # panini only: the value-index gate. "none" reduces panini to signed KDA.
@@ -430,6 +462,11 @@ logits_save_dtype: fp16  # choices: ['fp16', 'bf16', 'fp32'] | Dtype for on-disk
 logits_save_top_k: null  # Number of top logits to save.
 logits_save_top_p: null  # Top-P (nucleus) threshold applied after top-K selection when saving logits. Only the smallest set of entries whose cumulative probability mass reaches this threshold is kept. Must be in (0, 1].
 logits_save_top_p_min_k: 1  # Minimum number of entries kept per token when top-P masking is active, regardless of cumulative mass. Default: 1.
+loop_block_layers: 0  # Number of unique layers in the looped block. 0 disables looping entirely.
+loop_coda_layers: 0  # Unique layers applied once after the loop, before the final norm and head.
+loop_group_size: 0  # Where the recurrence sits inside the block, at identical parameters and FLOPs. 0 (default) repeats the whole block -- outer recurrence. N>0 partitions the block into consecutive groups of N and repeats each group in place, so N=1 applies each layer ``loop_iterations`` times before moving on. Must divide loop_block_layers.
+loop_iterations: 1  # How many times the looped block is applied. 1 is equivalent to no looping.
+loop_prelude_layers: 0  # Unique layers applied once before the loop, to get off the token embedding.
 loss_scale: null  # Static loss scaling, positive power of 2 values can improve fp16 convergence. If None, dynamicloss scaling is used.
 loss_scale_window: 1000  # Window over which to raise/lower dynamic scale.
 lr: null  # Initial learning rate. Depending on decay style and initial warmup, the learning rate at each iteration would be different.
@@ -471,6 +508,12 @@ megatron_fsdp_max_pool_double_buffer: false  # When using Megatron-FSDP double b
 memory_snapshot_path: snapshot.pickle  # Specifies where to dump the memory history pickle.
 merge_file: null  # Path to the BPE merge file.
 metadata_path: null  # Path to the tokenizer metadata file in json format.
+mhc: false  # Enable mHC (arXiv:2512.24880): widen the residual into mhc_expansion_rate parallel streams mixed by a doubly stochastic matrix. Doubly stochastic mixing is non-expansive and closed under composition, so the composite depth mapping stays norm-preserving - this is what plain Hyper-Connections lose. Mutually exclusive with attn_res. Requires pipeline_model_parallel_size == 1 for now.
+mhc_alpha_init: 0.01  # Initial value of the learnable gates on the input-dependent (dynamic) part of the connection matrices. Small values keep the dynamic term near zero at init, so the static biases set the initial connectivity.
+mhc_expansion_rate: 4  # Number of residual streams n. n=1 degenerates to a standard residual. The paper uses n=4, reporting 6.7% training-time overhead at that setting. Costs n-times the residual activation memory and n-times the pipeline inter-stage payload.
+mhc_lerp: false  # Compose mHC with the nGPT LERP residual: mix the streams first (norm-preserving), then take a LERP step per stream toward the normalized sublayer output. Requires ngpt=True. Mixing must precede renormalization, since a convex combination of unit vectors is not itself unit norm.
+mhc_res_init: identity  # Initial stream connectivity. 'identity' biases the Sinkhorn input toward the identity so the streams start independent and the identity mapping is preserved at init; 'uniform' starts from the uniform doubly stochastic matrix.
+mhc_sinkhorn_iters: 20  # Sinkhorn-Knopp sweeps used to project the stream mixer onto the Birkhoff polytope.
 micro_batch_size: null  # Batch size per model instance (local batch size). Global batch size is local batch size times data parallel size times number of micro batches.
 microbatch_group_size_per_vp_stage: null  # This value specifies the number of micro-batches that are executed at a time for a given virtual stage (both forward and backward). Default (in __post_init__() method below) to pipeline_parallel_size which specifies a depth-first schedule. Example: for PP=2 VP=2, when microbatch_group_size_per_vp_stage=2, num_microbatches = 4, we have rank 0 | 0 1 0 1 2 3 2 3 rank 1 | 0 1 0 1 2 3 2 3 When microbatch_group_size_per_vp_stage=3, num_microbatches = 5, we have rank 0 | 0 1 2 0 1 2 3 4 3 4 rank 1 | 0 1 2 0 1 2 3 4 3 4
 mid_level_dataset_surplus: 0.005  # The sample surplus to build for the mid-level datasets(s)
@@ -495,6 +538,7 @@ moe_enable_deepep: false  # [Experimental] Enable DeepEP for efficient token dis
 moe_enable_routing_replay: false  # If True, enable the routing replay feature for MoE layers.
 moe_expert_capacity_factor: null  # moe_expert_capacity_factor (float): The capacity factor for each expert, None means no token will be dropped. The default is None.
 moe_expert_rank_capacity_factor: null  # moe_expert_rank_capacity_factor (float): The capacity factor for each expert rank, i.e. the per-rank token budget. None means no token will be dropped. The default is None. With the 'hybridep' backend, tokens exceeding this budget are dropped. With the 'ncclep' backend, exceeding the budget is a hard error (TransformerEngine/NCCL traps) — set it generously.
+moe_expert_viability_metrics: false  # Enable opt-in per-layer routed-expert viability diagnostics. Requires ``moe_per_layer_logging`` because the diagnostics are emitted per MoE layer.
 moe_ffn_hidden_size: null  # MoE Feed-Forward Network hidden size. If not specified, defaults to the ffn_hidden_size.
 moe_flex_dispatcher_backend: deepep  # choices: ['deepep', 'hybridep', 'ncclep'] | [Experimental] The backend to use for flex token dispatcher. The default is "deepep". Options are "deepep", "hybridep", and "ncclep". Currently only "hybridep" backend supports the MNNVL case. "ncclep" uses NVIDIA NCCL Expert Parallelism via TransformerEngine's transformer_engine.pytorch.ep API.
 moe_flex_dispatcher_num_sms: null  # Number of SMs for the flex token dispatcher's dispatch/combine communication, for all backends (deepep, hybridep, ncclep). None lets each backend use its own default. Unifies the deprecated per-backend moe_{deepep,hybridep}_num_sms knobs (routed in __post_init__).
@@ -508,6 +552,8 @@ moe_input_jitter_eps: null  # Add noise to the input tensor by applying jitter w
 moe_latent_size: null  # Latent projection dimension for MoE. If None, MoE latent projections are not used.
 moe_layer_freq: 1  # Frequency between MoE layers and Dense layers. Accepts either: - An integer N: Represents a 1:N ratio, meaning one expert layer for every N-1 dense layers - A string containing a Python list expression that defines a custom pattern, e.g.: "([1]*3+[0]*1)*3" evaluates to [1,1,1,0,1,1,1,0,1,1,1,0] where 1 indicates an expert layer and 0 indicates a dense layer. Examples: "([0]+[1]*23)": 1 dense layer followed by 23 expert layers, "([1]*3+[0]*2)*2": Three expert layers followed by two dense layers, repeated twice.
 moe_layer_recompute: false  # Memory optimization: checkpointing moe_layer to save actiavtion memory.
+moe_masked_layer_eval_iters: 8  # Dedicated validation batches used by each masked-layer probe.
+moe_masked_layer_validation: false  # Enable an opt-in paired validation probe that masks one routed MoE layer.
 moe_mlp_glu_interleave_size: null  # When set, GLU activations in the MoE grouped MLP layer will use a block interleaved format. Instead of interpreting the input tensor as a concatenation of gates and linear units, it will be interpreted as alternating blocks of gates and linear units. This data format is experimental and primarily intended to enable advanced fused kernels.
 moe_ncclep_static_shape: false  # For the 'ncclep' flex dispatcher: feed the experts the full fixed-size receive buffer instead of narrowing to the (data-dependent) number of received tokens, removing the D2H sync and dynamic shapes from the dispatch (required for CUDA-graph capture of the MoE A2A and for the 1F1B EP comm overlap). The fused grouped GEMM consumes the ragged per-expert counts on device and walks only the received tokens (no slack GEMM, no last-expert padding). This requires the CuTe DSL / device-offset grouped GEMM, so it is only supported with the fused op (use_transformer_engine_op_fuser, NVTE_CUTEDSL_FUSED_GROUPED_MLP=1) on sm100+ (Blackwell or later); the dispatcher asserts this. On older GPUs leave it False (dynamic shape). Defaults to False (narrow to the received tokens).
 moe_ncclep_zero_copy: false  # For the 'ncclep' flex dispatcher: use the NCCL symmetric-memory zero-copy IO path (ep_bootstrap zero_copy + symm-mem-backed receive/combine buffers) instead of the default HBM staged-copy path, saving one copy on the wire. Requires moe_ncclep_static_shape and the fused op (use_transformer_engine_op_fuser). Defaults to False.
@@ -517,7 +563,7 @@ moe_paged_stash: false  # If True, enable paged stash for all routed-expert acti
 moe_paged_stash_buffer_size_factor_cpu: 0.0  # Scale factor for paged stash host buffer. 0 disables host buffer. Same sign convention as moe_paged_stash_buffer_size_factor_cuda: positive = avg-based, negative = actual-max; scale = abs(factor).
 moe_paged_stash_buffer_size_factor_cuda: 1.1  # Scale factor for paged stash CUDA buffer allocation. Sign selects sizing: positive = avg-based, negative = actual-max. Magnitude is headroom (e.g. 1.10 = 10%).
 moe_paged_stash_page_size: 64  # Number of tokens per page for paged stash memory management.
-moe_per_layer_logging: false  # Enable per-layer logging for MoE, currently supports auxiliary loss and z loss.
+moe_per_layer_logging: false  # Enable per-layer logging for MoE, currently supports auxiliary loss, z loss, router-score, and expert-utilization health metrics.
 moe_permute_fusion: false  # Fuse token rearrangement ops during token dispatching.
 moe_permute_fusion_into_hybridep: false  # Fuse token rearrangement ops during token dispatching for HybridEP.
 moe_router_bias_update_rate: 0.001  # The expert bias is updated based on the number of assigned tokens to each expert in a global batch, where the bias is increased for the experts with less assigned tokens and decreased for the experts with more assigned tokens. The default value 1e-3 is same as that used in DeepSeekV3.
@@ -563,6 +609,7 @@ mtp_standalone: false  # This will be set automatically according to the pipelin
 mtp_use_repeated_layer: false  # Use a single MTP layer repeatedly instead of multiple separate layers.
 multi_latent_attention: false  # Whether to use multi-latent attention.
 multiple_validation_sets: false  # If set, multiple datasets listed in the validation split are evaluated independently with a separate loss for each dataset in the list. This argument requires that no weights are included in the list.
+muon_batched_step: false  # Stack same-shape parameters and run the Muon update on the whole stack (batched Newton-Schulz via bmm, foreach weight decay and momentum). Off by default (upstream per-parameter behavior).
 muon_coefficient_type: quintic  # Newton-Schulz coefficient type for the Muon optimizer. Valid types are discovered from the installed emerging_optimizers package (e.g. simple, quintic, polar_express, aol). Validated at optimizer creation time.
 muon_extra_scale_factor: 1.0  # Additional scale factor for the muon update
 muon_fp32_matmul_prec: medium  # choices: ['low', 'medium', 'high'] | FP32 matmul precision for Newton-Schulz iteration
@@ -573,6 +620,13 @@ muon_scalar_optimizer: adam  # choices: ['adam', 'lion'] | Optimizer for scalar 
 muon_scale_mode: spectral  # choices: ['spectral', 'unit_rms_norm', 'shape_scaling'] | Scale mode for Muon optimizer. With MuP, set --muon-scale-mode unit_rms_norm to use unit_rms_norm scaling, or set --muon-scale-mode spectral to keep spectral scaling.
 muon_split_qkv: true  # Whether to split QKV parameters for Muon optimizer
 muon_tp_mode: blockwise  # choices: ['blockwise', 'duplicated', 'distributed'] | How to perform NS calculation for tensor model parallel weights
+muown_extra_scale_factor: 1.0  # Additional multiplier on the Muown direction update.
+muown_magnitude_lr_scale: 1.0  # Multiplier on the base lr for the Muown row-magnitude (l-infinity sign) update.
+muown_max_row_norm: null  # Optional upper clamp on Muown row magnitudes.
+muown_momentum: 0.95  # Momentum for both Muown components (direction and magnitude).
+muown_nesterov: true  # Disable Nesterov lookahead momentum in Muown.
+muown_num_ns_steps: 5  # Newton-Schulz iterations for the Muown direction update.
+muown_scale_mode: spectral  # choices: ['spectral', 'unit'] | Scaling of the orthogonalized Muown direction update.
 mup_attn_scale_power: 1.0  # Power for attention scaling: softmax_scale = 1 / (kv_channels ** mup_attn_scale_power). 0.5 = standard attention (1/sqrt(d_head)), 1.0 = MuP attention (1/d_head). Default: 1.0 (MuP scaling when use_mup is True). Set to 0.5 for standard scaling.
 mup_base_head_dim: null  # Base head dimension for MuP attention scaling. When set, softmax_scale = sqrt(mup_base_head_dim) / (kv_channels ** mup_attn_scale_power). Set to base model's d_head (e.g., 64) to match standard 1/sqrt(d_head) scaling at the base width, ensuring non-MuP compatibility for that specific value.
 mup_base_hidden_size: null  # Base hidden size for MuP width scaling. This is the reference width from which scaling factors are computed. Defaults to hidden_size if not specified (base model case where width_mult=1.0). Set this to your base/proxy model's hidden size when scaling up.
@@ -582,6 +636,21 @@ mup_width_mult: 1.0  # Width multiplier for MuP scaling, computed as hidden_size
 nccl_all_reduce_for_prefill: false  # If True, use NCCL all-reduce kernels when symmetric all-reduce is enabled.
 nccl_communicator_config_path: null  # Path to the yaml file with NCCL communicator configurations. The number of min/max thread groups and thread group cluster size of each communicator can be configured by setting `min_ctas`, `max_ctas`, and `cga_cluster_size`.
 nccl_ub: false  # Use the userbuffer registration for DP/FSDP communication buffers.This option will reduce GPU SM usage for the DP/FSDP communication,which is improving the performance of the overlapped computation.
+ngpt: false  # Enable nGPT geometry (arXiv:2410.01131): the additive residual is replaced by a LERP toward the L2-normalized sublayer output, keeping hidden states on the unit hypersphere. All other nGPT knobs are inert when this is False, and the model is bit-identical to upstream Megatron.
+ngpt_alpha_activation: abs  # Mapping from the raw alpha parameter to the effective LERP coefficient. 'abs' is unbounded (nGPT default); 'half_sigmoid' and 'half_tanh_sq' cap alpha at the principled LERP ceiling of 0.5; 'tanh_smooth_bound' caps it at 0.95.
+ngpt_alpha_init_value: 0.05  # Effective LERP step size (nGPT 'eigen learning rate') at initialization.
+ngpt_base_scale: -1.0  # Raw-parameter initialization for the alpha eigen-LR reparameterization. -1 selects 1/sqrt(hidden_size).
+ngpt_lerp_normalization: approx  # How the LERP residual is renormalized. 'approx' is nGPT's closed form assuming an orthogonal update; 'analytic' is the exact factor using cos(theta) between the residual and the sublayer output (full-rank Jacobian); 'direct' applies an explicit L2 normalization; 'both', 'direct_ste', 'both_ste' and 'approx_fwd' are ablation variants that decouple the forward normalization from the backward Jacobian.
+ngpt_lerp_normalization_attn: ''  # Overrides ngpt_lerp_normalization for the attention residual when non-empty.
+ngpt_lerp_normalization_ffn: ''  # Overrides ngpt_lerp_normalization for the MLP residual when non-empty.
+ngpt_post_layer_norm_attn: true  # L2-normalize the attention output before the LERP residual update.
+ngpt_post_layer_norm_ffn: true  # L2-normalize the MLP output before the LERP residual update.
+ngpt_scaler_base_scale: -1.0  # Raw-parameter init for the scaler eigen-LR reparameterization; -1 selects 1/sqrt(hidden_size). The optimizer sees a parameter of this scale while the effective value starts at ngpt_scaler_init, decoupling the two.
+ngpt_scaler_init: 1.0  # Effective value of the nGPT scalers at initialization.
+ngpt_scaler_lr_mult: 1.0  # Learning-rate multiplier for nGPT scaler parameters (LERP alphas, s_qk, s_uv). On a normalized architecture these carry all the magnitude information, so they often want a larger step than the direction-carrying weight matrices.
+ngpt_scaler_wd_mult: 0.0  # Weight-decay multiplier for nGPT scaler parameters. 0 by default: decaying them toward zero fights the geometry.
+ngpt_use_sqk: false  # Learnable per-channel scalers on Q and K (nGPT's s_qk). Once Q/K are L2-normalized their dot product is a cosine, so the attention logits lose all scale; s_qk puts it back as a learned quantity. Pair with qk_l2_norm.
+ngpt_use_suv: false  # Learnable per-channel scaler on the MLP intermediate (nGPT's s_uv). Takes the place of the fixed 1/sqrt(ffn/hidden) up-scale when the fc1 weights are row-normalized and can no longer carry that magnitude themselves.
 no_load_optim: null  # Do not load optimizer when loading checkpoint.
 no_load_rng: null  # Do not load rng state when loading checkpoint.
 no_persist_layer_norm: false  # Disable using persistent fused layer norm kernel. This kernel supports only a set of hidden sizes. Please check persist_ln_hidden_sizes if your hidden size is supported.
@@ -620,7 +689,7 @@ one_logger_project: megatron-lm  # The one-logger project name. Will ignore if -
 one_logger_run_name: null  # The one-logger run name displayed. Will ignore if --no-one-logger is set
 onnx_safe: null  # Use workarounds for known problems with Torch ONNX exporter
 openai_gelu: false  # Use OpenAIs GeLU implementation. This optionshould not be used unless for backward compatibilityreasons.
-optimizer: adam  # choices: ['adam', 'sgd', 'muon', 'dist_muon', 'lion', 'soap', 'adaptive_muon'] | Optimizer function. Note: dist_muon is deprecated; use --optimizer muon with --use-distributed-optimizer instead.
+optimizer: adam  # choices: ['adam', 'sgd', 'muon', 'dist_muon', 'lion', 'soap', 'adaptive_muon', 'angular_muown', 'muown'] | Optimizer function. Note: dist_muon is deprecated; use --optimizer muon with --use-distributed-optimizer instead. muown is Muon with explicit row-magnitude control (arXiv:2605.10797).
 optimizer_cpu_offload: false  # Offload optimizer state to CPU
 optimizer_cuda_graph: false  # Enable CUDA graph for optimizer step
 optimizer_offload_fraction: 1.0  # Ratio of optimizer state to offload to CPU
@@ -860,6 +929,13 @@ wandb_save_dir: null  # Path to save the wandb results locally.
 warmup: null  # Old lr warmup argument, do not use. Use one of the--lr-warmup-* arguments above
 weight_decay: 0.01  # Weight decay coefficient for L2 regularization.
 weight_decay_incr_style: constant  # choices: ['constant', 'linear', 'cosine'] | Weight decay increment function.
+weight_normalizer: false  # Renormalize weight matrices after every optimizer step (nGPT). This is what keeps weights, and hence hidden states, on the unit hypersphere when the trunk has no LayerNorm/RMSNorm.
+weight_normalizer_bounded: false  # Project weights onto the ball (shrink-only) rather than pinning every row to the sphere.
+weight_normalizer_every_n_steps: 1  # Run the weight normalizer only every N optimizer steps.
+weight_normalizer_head_unconstrained: true  # Normalize the LM head too. By default the head is left unconstrained (qwen3-style row growth) and controlled by weight decay instead.
+weight_normalizer_max_norm: 1.0  # Target row/column norm for the weight normalizer.
+weight_normalizer_normalize_embeddings: true  # Do not normalize the token embedding matrix.
+weight_normalizer_out_norm_dim_0: true  # Row-normalize output projections instead of column-normalizing them. Column norm (the default) is the strict nGPT convention of normalizing along the embedding dimension, and is also the tensor-parallel-local choice.
 wgrad_deferral_limit: 0  # This value tunes the number of micro-batches for which the embedding weight gradient compute needs to be deferred to pipeline flush, this argument is invalid if `defer_embedding_wgrad_compute` is False. Defaults to 0, which means all micro-batches are deferred.
 window_attn_skip_freq: null  # Frequency of layers to skip window attention. Accepts either: - An integer N: Represents a (N-1):1 ratio, meaning one full attention layer after (N-1) SWA layers. - A string containing a Python list expression that defines a custom pattern, e.g.: "[1,1,1,0]*3" evaluates to [1,1,1,0,1,1,1,0,1,1,1,0] where 1 indicates SWA and 0 indicates full attention.
 window_size: null  # Window size for window attention. If not provided, window attention will be disabled.

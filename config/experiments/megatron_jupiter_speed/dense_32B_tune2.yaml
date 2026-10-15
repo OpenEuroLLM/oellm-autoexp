@@ -1,0 +1,38 @@
+# @package _global_
+# Round 2 of dense_32B tuning — combine the round-1 winners
+# (round 1, jobs 1034454-58: gbs64 291 TFLOPS > gbs32_overlap 269 >
+#  gbs32 = gbs32_tpco 249; tp2pp2 OOM in train_step as flagged).
+#   0. gbs64_overlap   — expected winner (~300+ TFLOPS)
+#   1. gbs128_overlap  — does accumulation saturate past 16 µbatches?
+#
+# ── Results (jobs 1034537-38, 2026-07-24) ────────────────────────────────
+#   gbs64_overlap  → 298.0 TFLOPS, 30.1% MFU, 1,478 tok/s/GPU
+#   gbs128_overlap → 316.9 TFLOPS, 32.0% MFU, 1,571 tok/s/GPU ← WINNER,
+#                    folded into dense_32B.yaml (still +6% at 32 µbatches)
+defaults:
+  - dense_32B
+  - _self_
+
+aux:
+  tag: "gbs64_overlap"
+
+backend:
+  megatron:
+    global_batch_size: 64
+    train_iters: 30
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+
+job:
+  name: jspeed_dense_32B_tune_${aux.tag}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: gbs64_overlap
+        - aux.tag: gbs128_overlap
+          backend.megatron.global_batch_size: 128
+          backend.megatron.train_iters: 20

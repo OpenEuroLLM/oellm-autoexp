@@ -1,0 +1,18 @@
+# @package _global_
+# Re-run of the n16/n32 weak-scale points with the tuned config (GA8 via
+# GBS=64·nodes, overlap grad-reduce/param-gather, PP2 regime — both are below
+# the 2048 GBS cap). Old GA4 runs: n16 5,990 / n32 5,849 tok/s.
+# Expectation: ~7.0-7.1k (n8 gave 7,125). Same job names as the scaling config
+# sweep → the extractor's latest-run default supersedes the old points.
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - slurm.sbatch.nodes: 16
+        - slurm.sbatch.nodes: 32

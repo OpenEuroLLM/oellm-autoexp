@@ -1,0 +1,30 @@
+# @package _global_
+# Round 2 for moe_3B: the main config runs mbs4/GBS16 (28,953 tok/s, 62% mem);
+# round 1 ruled out mbs16 (norc OOM, full-recompute slower). The untested gap
+# is mbs8+norc — the moe_1.7B optimum. One job closes the ladder.
+# ── Result (job 1052117, 2026-07-27): OOM after 5 iters at 98.6% mem ─────
+# mbs8+norc does NOT fit at 3B (24L·h1280·40 experts ≈ 2× the 1.7B activation
+# footprint). Ladder closed — moe_3B optimum CONFIRMED: mbs4/GBS16/norc
+# (28,953 tok/s, 172 TF, 62% mem). Per-size norc mbs limit: 1.7B→8, 3B→4.
+defaults:
+  - moe_3B
+  - _self_
+
+aux:
+  tag: "mbs8_norc"
+
+backend:
+  megatron:
+    micro_batch_size: 8
+    global_batch_size: 32
+
+job:
+  name: jspeed_moe_3B_tune_${aux.tag}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: mbs8_norc

@@ -1,0 +1,54 @@
+# @package _global_
+#
+# End-to-end A/B of the fused Triton write backward on mhc4.
+#
+# Profiling put ~48% of mHC's cost in the backward of the stream read and write,
+# where autograd emits four kernels that each re-read the 604 MB upstream
+# gradient. The fused kernel reads it once and measures 1.842 ms against
+# Inductor's 2.150 in isolation (1.17x); scaled by the 324 sublayer invocations
+# in a step that predicts ~+2%, i.e. mhc4 landing around 200 TFLOP/s.
+#
+# Both arms run the same build; MHC_TRITON_BACKWARD=0 selects the old path, so
+# the only difference between them is which backward runs. Same session, so the
+# ~1% cluster drift seen between earlier sessions cannot confound the result.
+defaults:
+  - speed_mhc_jupiter
+  - _self_
+
+slurm:
+  env:
+    # Declared here so the sweep can override it per arm: a key absent from the
+    # config needs Hydra's `+` append syntax, which sweep entries cannot parse.
+    MHC_TRITON_BACKWARD: "1"
+
+sweep:
+  type: product
+  groups:
+   - type: list
+     configs:
+      - aux.variant: mhc4_inductor_bwd
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.cuda_graph_impl: none
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 32
+        slurm.env.MHC_TRITON_BACKWARD: "0"
+      - aux.variant: mhc4_triton_bwd
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.cuda_graph_impl: none
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 32
+        slurm.env.MHC_TRITON_BACKWARD: "1"
+      # The fused backward frees memory as well as time -- it never materializes
+      # the intermediates the four-kernel version does -- so retry the CUDA-graph
+      # capture that OOM'd at mbs=32 before.
+      - aux.variant: mhc4_triton_bwd_cg
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.global_batch_size: 384
+        backend.megatron.micro_batch_size: 32
+        slurm.env.MHC_TRITON_BACKWARD: "1"

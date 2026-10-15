@@ -1,0 +1,47 @@
+# @package _global_
+#
+# mhc2_lerp at the batch every other arm uses.
+#
+# mhc2_lerp is the second of the two arms that overrode global_batch_size to 384
+# while train_iters stayed derived from aux.gbs (128), so it consumed 18.0B
+# tokens against the 6.0B every non-mHC arm saw. Its result is not comparable to
+# anything and neither is mhc4's; this is the mhc4_gbs128 treatment applied to
+# the other one.
+#
+# The derivation itself is fixed now -- train_iters and aux.total_tokens both
+# read backend.megatron.global_batch_size, so an arm that overrides the batch
+# gets its iteration count adjusted and the token budget holds at 6.0B (verified:
+# gbs 128 -> 11445 iters, gbs 384 -> 3815 iters, 6.00B both). gbs is still pinned
+# to 128 here rather than left at 384-with-fewer-steps, because matching the
+# other arms on batch as well as on tokens removes the last free variable.
+#
+# Every other setting is the original arm's: lr 0.001, mhc_expansion_rate 2,
+# sinkhorn 8, mhc_lerp + ngpt + analytic, no CUDA graphs. mbs stays 16 -- it
+# divides gbs/DP = 32, and the LERP write is the memory-heavy path (it caps mhc4
+# at 16 even on the compiled build), so 32 is not worth the OOM risk.
+defaults:
+  - ngpt_scalers_jupiter
+  - _self_
+
+slurm:
+  sbatch:
+    # mhc4_gbs128 runs 11445 iterations in ~2h at 195 TFLOP/s; the LERP path is
+    # slower, so 6h leaves headroom without a 12h queue penalty.
+    time: "06:00:00"
+
+sweep:
+  type: product
+  groups:
+   - type: list
+     configs:
+      - aux.variant: mhc2_lerp_gbs128
+        backend.megatron.lr: 0.001
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 16
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.cuda_graph_impl: none
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 2
+        backend.megatron.mhc_lerp: true
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic

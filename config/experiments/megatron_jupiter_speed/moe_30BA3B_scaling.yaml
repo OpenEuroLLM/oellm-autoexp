@@ -1,0 +1,74 @@
+# @package _global_
+# Node-scaling sweep (fixed model; GBS grows to the optimal-batch cap, fixed above) for MoE 30B-A3B: nodes 2→256. EP=4 (intra-node), PP=2,
+# VPP (VP=6) and HybridEP fixed; DP = 2·nodes. GBS = min(64·nodes, 2048
+# samples ≈ 8.4M tokens — the optimal-batch cap; uncapped GBS∝nodes would
+# benchmark batches nobody trains).
+#
+# FINAL MEASURED CURVE (2026-07-27/28, best layout per point):
+#   n2 7,651 / n4 7,364 / n8 7,151 / n16 6,980 / n32 6,770   (PP2, GA8+overlap)
+#   n64 5,577 (PP2, GA4, no overlap; PP4: 4,895)
+#   n128 4,641 (PP4! — PP2/DP256/GA2 measured 4,220; big ring + thin GA
+#               costs more than PP4's 11% bubble)
+#   n256 2,343 (PP2, mbs2, GA2, DP512 — 5.2% MFU; PP4 invalid at GA<PP)
+# Economic sweet spot ~n64 (73% of n2 efficiency); n256 runs at 31%.
+#
+# Layout alternatives, all measured and REJECTED (ws_diag{,2}, ws_pp{,1,2,3}):
+#   - no VPP: −12-14% at any scale (VPP strongly positive).
+#   - PP4 at cap: 4,895/4,641 at n64/128 (GA-starved bubble); n256 invalid.
+#   - PP8: collapses (3,615 — per-layer P2P latency over GDR-0 IB).
+#   - PP1 (fits from n4; no bubble, no P2P, GDR2): wins only at n4 (7,547);
+#     parity n8/n16, below PP2 at n32 (2× per-GPU grad volume offsets gains),
+#     and startup grows pathologically with scale (n64+: >30 min to iter 1).
+#   - overlap+PP4: −17% (bucketing fights the interleaved schedule).
+# Recipe rules: overlap ONLY where DP crosses nodes, PP small AND n≤32.
+# At n≥64 overlap is BROKEN, not just slow (final probe job 1069175, 45-min
+# pg timeout): init took ~45 min, then its COALESCED reduce op hung after
+# 8 iters → watchdog kill. Overlap-off is the only reliable n≥64 mode.
+# GA↑ only within the GBS cap. n256 has NO config-level rescue — its 5.2%
+# MFU is the arithmetic of 8,192 tokens/GPU/step; the only real lever is
+# raising the GBS cap (a training-recipe decision).
+# Extract with: python scripts/extract_speed_results.py $OUTPUT_DIR/megatron_jupiter_speed
+defaults:
+  - moe_30BA3B
+  - _self_
+
+backend:
+  megatron:
+    global_batch_size: ${oc.eval:'min(64*${slurm.sbatch.nodes}, 2048)'}
+    overlap_grad_reduce: true    # hide inter-node DP reduce behind backward
+    overlap_param_gather: true
+
+job:
+  name: jspeed_moe_30BA3B_scaling_n${slurm.sbatch.nodes}
+
+slurm:
+  sbatch:
+    time: "00:40:00"   # startup grows with scale; 30 min is tight at n≥64
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - slurm.sbatch.nodes: 2
+        - slurm.sbatch.nodes: 4
+        - slurm.sbatch.nodes: 8
+        - slurm.sbatch.nodes: 16
+        - slurm.sbatch.nodes: 32
+        # n≥64: overlap OFF (init stalls c10d at this scale, see header)
+        - slurm.sbatch.nodes: 64
+          backend.megatron.overlap_grad_reduce: false
+          backend.megatron.overlap_param_gather: false
+        - slurm.sbatch.nodes: 128
+          # PP4 beats PP2 here (4,641 vs 4,220): DP stays ≤128, GA 4 not 2
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 2
+          backend.megatron.overlap_grad_reduce: false
+          backend.megatron.overlap_param_gather: false
+        - slurm.sbatch.nodes: 256
+          backend.megatron.micro_batch_size: 2   # GBS cap 2048 = mbs2 × DP512 × GA2
+          backend.megatron.overlap_grad_reduce: false
+          backend.megatron.overlap_param_gather: false
+          backend.megatron.distributed_timeout_minutes: 45  # DP≥256 comm-init needs >10 min
+          slurm.sbatch.time: "01:15:00"

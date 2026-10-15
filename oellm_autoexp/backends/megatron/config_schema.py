@@ -407,6 +407,26 @@ class MegatronConfig(ConfigInterface):
     # Its projections follow `add_bias_linear`.
     short_conv_bias: bool = False
 
+    # N-gram orders an Engram (`N`) layer hashes, e.g. 2 3 for bigrams and trigrams.
+    engram_ngram_orders: list[int] = field(default_factory=lambda: [2, 3])
+
+    # Hash heads per n-gram order; each head has its own table.
+    engram_num_heads: int = 4
+
+    # Rows per Engram hash table (rounded up to distinct primes, one per head).
+    engram_table_size: int = 262144
+
+    # Width of one Engram table row; the memory vector concatenates len(engram_ngram_orders) *
+    # engram_num_heads rows.
+    engram_embed_dim: int = 64
+
+    # Kernel of Engram's depthwise causal conv (dilation = the largest n-gram order).
+    engram_conv_kernel_size: int = 4
+
+    # Path to a .npy int array mapping token id -> canonical id (Engram's tokenizer
+    # compression, e.g. NFKC + lowercasing). None hashes the raw token ids.
+    engram_token_map: str | None = None
+
     # Query and key head dimension for the gated delta net.
     linear_key_head_dim: int = 128
 
@@ -488,6 +508,16 @@ class MegatronConfig(ConfigInterface):
     # panini only: the same for the VALUE gate. None follows linear_fla_gate_init_style, which
     # is FLA's own behaviour.
     linear_fla_v_gate_init_style: str | None = None
+
+    # Re-initialize the projections of the self-contained FLA layers (kda, signed_kda, panini,
+    # complex_kda and its gated NoPE attention) the Megatron way: every ``nn.Linear`` weight
+    # with ``init_method``, the output projection ``o_proj`` with
+    # ``output_layer_init_method``. FLA's own layers keep PyTorch's default init, whose output
+    # projection is ~7x larger than Megatron's scaled init, so at the start of training these
+    # mixers write much more into the residual stream than the other mixers do. Gate
+    # parameters (A_log, dt_bias) and biases keep FLA's init. Off by default so earlier runs
+    # stay reproducible.
+    linear_fla_megatron_init: bool = False
 
     # Wrap the FLA layer's forward in torch.compile to fuse the gate/projection epilogues that
     # sit around the Triton kernel. CUDA graphs (cuda_graph_impl) already remove launch
@@ -949,8 +979,19 @@ class MegatronConfig(ConfigInterface):
     # token counts.
     moe_hybridep_pad_uneven_dispatch_inputs: bool = False
 
-    # Enable per-layer logging for MoE, currently supports auxiliary loss and z loss.
+    # Enable per-layer logging for MoE, currently supports auxiliary loss, z loss, router-
+    # score, and expert-utilization health metrics.
     moe_per_layer_logging: bool = False
+
+    # Enable opt-in per-layer routed-expert viability diagnostics. Requires
+    # ``moe_per_layer_logging`` because the diagnostics are emitted per MoE layer.
+    moe_expert_viability_metrics: bool = False
+
+    # Enable an opt-in paired validation probe that masks one routed MoE layer.
+    moe_masked_layer_validation: bool = False
+
+    # Dedicated validation batches used by each masked-layer probe.
+    moe_masked_layer_eval_iters: int = 8
 
     # moe_expert_capacity_factor (float): The capacity factor for each expert, None means no
     # token will be dropped. The default is None.
@@ -1233,6 +1274,132 @@ class MegatronConfig(ConfigInterface):
     # full-iteration CUDA graphs
     fine_grained_offloading_max_inflight_offloads: int | None = None
 
+    # Enable nGPT geometry (arXiv:2410.01131): the additive residual is replaced by a LERP
+    # toward the L2-normalized sublayer output, keeping hidden states on the unit hypersphere.
+    # All other nGPT knobs are inert when this is False, and the model is bit-identical to
+    # upstream Megatron.
+    ngpt: bool = False
+
+    # How the LERP residual is renormalized. 'approx' is nGPT's closed form assuming an
+    # orthogonal update; 'analytic' is the exact factor using cos(theta) between the residual
+    # and the sublayer output (full-rank Jacobian); 'direct' applies an explicit L2
+    # normalization; 'both', 'direct_ste', 'both_ste' and 'approx_fwd' are ablation variants
+    # that decouple the forward normalization from the backward Jacobian.
+    ngpt_lerp_normalization: str = "approx"
+
+    # Overrides ngpt_lerp_normalization for the attention residual when non-empty.
+    ngpt_lerp_normalization_attn: str = ""
+
+    # Overrides ngpt_lerp_normalization for the MLP residual when non-empty.
+    ngpt_lerp_normalization_ffn: str = ""
+
+    # Effective LERP step size (nGPT 'eigen learning rate') at initialization.
+    ngpt_alpha_init_value: float = 0.05
+
+    # Raw-parameter initialization for the alpha eigen-LR reparameterization. -1 selects
+    # 1/sqrt(hidden_size).
+    ngpt_base_scale: float = -1.0
+
+    # Mapping from the raw alpha parameter to the effective LERP coefficient. 'abs' is
+    # unbounded (nGPT default); 'half_sigmoid' and 'half_tanh_sq' cap alpha at the principled
+    # LERP ceiling of 0.5; 'tanh_smooth_bound' caps it at 0.95.
+    ngpt_alpha_activation: str = "abs"
+
+    # L2-normalize the attention output before the LERP residual update.
+    ngpt_post_layer_norm_attn: bool = True
+
+    # L2-normalize the MLP output before the LERP residual update.
+    ngpt_post_layer_norm_ffn: bool = True
+
+    # Learnable per-channel scalers on Q and K (nGPT's s_qk). Once Q/K are L2-normalized their
+    # dot product is a cosine, so the attention logits lose all scale; s_qk puts it back as a
+    # learned quantity. Pair with qk_l2_norm.
+    ngpt_use_sqk: bool = False
+
+    # Learnable per-channel scaler on the MLP intermediate (nGPT's s_uv). Takes the place of
+    # the fixed 1/sqrt(ffn/hidden) up-scale when the fc1 weights are row-normalized and can no
+    # longer carry that magnitude themselves.
+    ngpt_use_suv: bool = False
+
+    # Effective value of the nGPT scalers at initialization.
+    ngpt_scaler_init: float = 1.0
+
+    # Raw-parameter init for the scaler eigen-LR reparameterization; -1 selects
+    # 1/sqrt(hidden_size). The optimizer sees a parameter of this scale while the effective
+    # value starts at ngpt_scaler_init, decoupling the two.
+    ngpt_scaler_base_scale: float = -1.0
+
+    # Enable mHC (arXiv:2512.24880): widen the residual into mhc_expansion_rate parallel
+    # streams mixed by a doubly stochastic matrix. Doubly stochastic mixing is non-expansive
+    # and closed under composition, so the composite depth mapping stays norm-preserving -
+    # this is what plain Hyper-Connections lose. Mutually exclusive with attn_res. Requires
+    # pipeline_model_parallel_size == 1 for now.
+    mhc: bool = False
+
+    # Number of residual streams n. n=1 degenerates to a standard residual. The paper uses
+    # n=4, reporting 6.7% training-time overhead at that setting. Costs n-times the residual
+    # activation memory and n-times the pipeline inter-stage payload.
+    mhc_expansion_rate: int = 4
+
+    # Sinkhorn-Knopp sweeps used to project the stream mixer onto the Birkhoff polytope.
+    mhc_sinkhorn_iters: int = 20
+
+    # Initial value of the learnable gates on the input-dependent (dynamic) part of the
+    # connection matrices. Small values keep the dynamic term near zero at init, so the static
+    # biases set the initial connectivity.
+    mhc_alpha_init: float = 0.01
+
+    # Initial stream connectivity. 'identity' biases the Sinkhorn input toward the identity so
+    # the streams start independent and the identity mapping is preserved at init; 'uniform'
+    # starts from the uniform doubly stochastic matrix.
+    mhc_res_init: str = "identity"
+
+    # Compose mHC with the nGPT LERP residual: mix the streams first (norm-preserving), then
+    # take a LERP step per stream toward the normalized sublayer output. Requires ngpt=True.
+    # Mixing must precede renormalization, since a convex combination of unit vectors is not
+    # itself unit norm.
+    mhc_lerp: bool = False
+
+    # Enable Block Attention Residuals (arXiv:2603.15031): replace the uniformly-weighted
+    # residual accumulation with learned softmax attention over depth. Bounds hidden-state
+    # magnitude, which otherwise grows as O(L) under PreNorm. Mutually exclusive with mhc.
+    # Requires pipeline_model_parallel_size == 1 for now.
+    attn_res: bool = False
+
+    # Number of blocks N the layers are partitioned into. Each block is summed to a single
+    # representation, so memory and pipeline traffic are O(N*h) rather than O(L*h) - the same
+    # payload shape as mHC with expansion rate N. N=num_layers recovers Full AttnRes; N=1
+    # degenerates to a standard residual. The paper finds N~8 recovers most of the benefit.
+    attn_res_num_blocks: int = 8
+
+    # Std of the normal used to initialize the learnable per-sublayer pseudo-query. 0 gives a
+    # zero query, i.e. uniform attention over depth at init - exactly the averaging a standard
+    # residual performs.
+    attn_res_query_init_std: float = 0.0
+
+    # Compose Block AttnRes with the nGPT LERP residual: accumulate each block via a LERP step
+    # toward the normalized sublayer output instead of a plain sum, keeping block summaries on
+    # the unit sphere rather than growing with block size. Requires ngpt=True.
+    attn_res_lerp: bool = False
+
+    # Number of unique layers in the looped block. 0 disables looping entirely.
+    loop_block_layers: int = 0
+
+    # How many times the looped block is applied. 1 is equivalent to no looping.
+    loop_iterations: int = 1
+
+    # Unique layers applied once before the loop, to get off the token embedding.
+    loop_prelude_layers: int = 0
+
+    # Unique layers applied once after the loop, before the final norm and head.
+    loop_coda_layers: int = 0
+
+    # Where the recurrence sits inside the block, at identical parameters and FLOPs. 0
+    # (default) repeats the whole block -- outer recurrence. N>0 partitions the block into
+    # consecutive groups of N and repeats each group in place, so N=1 applies each layer
+    # ``loop_iterations`` times before moving on. Must divide loop_block_layers.
+    loop_group_size: int = 0
+
     # Number of encoder transformer layers.
     encoder_num_layers: int | None = None
 
@@ -1359,6 +1526,9 @@ class MegatronConfig(ConfigInterface):
     # it.
     residual_norm_wd_mult: float = 0.0
 
+    # Learning-rate multiplier of the Engram (N-layer) tables, which also get no weight decay.
+    engram_lr_mult: float = 5.0
+
     # Multiplier on --weight-decay for the word-embedding matrix (2-D param whose name
     # contains word_embeddings). Default 1.0 = decay like every other weight. 0.0 excludes the
     # embeddings from weight decay as OLMo 2/3 and Levanter/Marin do (decay erodes the rows of
@@ -1412,12 +1582,78 @@ class MegatronConfig(ConfigInterface):
     # How to perform NS calculation for tensor model parallel weights
     muon_tp_mode: Literal["blockwise", "duplicated", "distributed"] = "blockwise"
 
+    # Stack same-shape parameters and run the Muon update on the whole stack (batched Newton-
+    # Schulz via bmm, foreach weight decay and momentum). Off by default (upstream per-
+    # parameter behavior).
+    muon_batched_step: bool = False
+
     # Additional scale factor for the muon update
     muon_extra_scale_factor: float = 1.0
 
     # Optimizer for scalar parameters (embeddings, biases, norms) when using muon. Defaults to
     # adam.
     muon_scalar_optimizer: Literal["adam", "lion"] = "adam"
+
+    # Momentum coefficient for the U-gradient buffer in AngularMuown
+    angular_muown_momentum: float = 0.95
+
+    # Disable Nesterov-style lookahead for the AngularMuown U update
+    angular_muown_nesterov: bool = True
+
+    # Adam beta1 for the AngularMuown row magnitudes g. Default: 0.9.
+    angular_muown_beta1: float = 0.9
+
+    # Adam beta2 for the AngularMuown row magnitudes g. Default: 0.95.
+    angular_muown_beta2: float = 0.95
+
+    # Whether to split fused QKV parameters for AngularMuown orthogonalization
+    angular_muown_split_qkv: bool = True
+
+    # Shape-dependent scale for the AngularMuown U direction. spectral (default, with
+    # --angular-muown-extra-scale-factor 0.2) matches the Muon recipe convention so Adam-tuned
+    # learning rates transfer; shape_scaling (with extra scale factor 1.0) reproduces the
+    # original AngularMuown ratio scaling.
+    angular_muown_scale_mode: Literal["spectral", "unit_rms_norm", "shape_scaling"] = "spectral"
+
+    # Additional scale factor for the AngularMuown U direction. The default 0.2 pairs with
+    # spectral scaling to give the standard Muon 0.2 * sqrt(max(m, n)).
+    angular_muown_extra_scale_factor: float = 0.2
+
+    # FP32 matmul precision for the AngularMuown Newton-Schulz iteration
+    angular_muown_fp32_matmul_prec: Literal["low", "medium", "high"] = "medium"
+
+    # Newton-Schulz coefficient type for AngularMuown. simple matches the original
+    # AngularMuown newtonschulz5 coefficients.
+    angular_muown_coefficient_type: str = "simple"
+
+    # Number of Newton-Schulz steps for AngularMuown
+    angular_muown_num_ns_steps: int = 5
+
+    # How to perform NS calculation for tensor parallel weights. Blockwise mode is not
+    # supported for AngularMuown.
+    angular_muown_tp_mode: Literal["duplicated", "distributed"] = "duplicated"
+
+    # Internal decay schedule for the AngularMuown directional step multiplier
+    angular_muown_u_decay_schedule: Literal["poly", "cosine"] = "poly"
+
+    # Scale for the poly U-decay schedule. Set --angular-muown-u-decay-p 0 to disable decay.
+    angular_muown_u_decay_scale: float = 0.001
+
+    # Exponent for the poly U-decay schedule
+    angular_muown_u_decay_p: float = 1.0
+
+    # Steps before the AngularMuown U-decay schedule begins
+    angular_muown_u_decay_warmup_steps: int = 0
+
+    # Post-warmup steps over which the cosine schedule decays to --angular-muown-u-decay-min-
+    # multiplier (required for cosine)
+    angular_muown_u_decay_steps: int | None = None
+
+    # Floor of the cosine U-decay schedule
+    angular_muown_u_decay_min_multiplier: float = 0.0
+
+    # Disable the batched AngularMuown step and update one parameter at a time
+    angular_muown_batched_step: bool = True
 
     # First beta coefficient for Lion optimizer (used in sign update). Default: 0.95.
     lion_beta1: float = 0.95
@@ -1606,8 +1842,75 @@ class MegatronConfig(ConfigInterface):
     use_flash_attn: bool = False
 
     # Optimizer function. Note: dist_muon is deprecated; use --optimizer muon with --use-
-    # distributed-optimizer instead.
-    optimizer: Literal["adam", "sgd", "muon", "dist_muon", "lion", "soap", "adaptive_muon"] = "adam"
+    # distributed-optimizer instead. muown is Muon with explicit row-magnitude control
+    # (arXiv:2605.10797).
+    optimizer: Literal[
+        "adam",
+        "sgd",
+        "muon",
+        "dist_muon",
+        "lion",
+        "soap",
+        "adaptive_muon",
+        "angular_muown",
+        "muown",
+    ] = "adam"
+
+    # Multiplier on the base lr for the Muown row-magnitude (l-infinity sign) update.
+    muown_magnitude_lr_scale: float = 1.0
+
+    # Momentum for both Muown components (direction and magnitude).
+    muown_momentum: float = 0.95
+
+    # Disable Nesterov lookahead momentum in Muown.
+    muown_nesterov: bool = True
+
+    # Newton-Schulz iterations for the Muown direction update.
+    muown_num_ns_steps: int = 5
+
+    # Scaling of the orthogonalized Muown direction update.
+    muown_scale_mode: Literal["spectral", "unit"] = "spectral"
+
+    # Additional multiplier on the Muown direction update.
+    muown_extra_scale_factor: float = 1.0
+
+    # Optional upper clamp on Muown row magnitudes.
+    muown_max_row_norm: float | None = None
+
+    # Renormalize weight matrices after every optimizer step (nGPT). This is what keeps
+    # weights, and hence hidden states, on the unit hypersphere when the trunk has no
+    # LayerNorm/RMSNorm.
+    weight_normalizer: bool = False
+
+    # Row-normalize output projections instead of column-normalizing them. Column norm (the
+    # default) is the strict nGPT convention of normalizing along the embedding dimension, and
+    # is also the tensor-parallel-local choice.
+    weight_normalizer_out_norm_dim_0: bool = True
+
+    # Project weights onto the ball (shrink-only) rather than pinning every row to the sphere.
+    weight_normalizer_bounded: bool = False
+
+    # Target row/column norm for the weight normalizer.
+    weight_normalizer_max_norm: float = 1.0
+
+    # Do not normalize the token embedding matrix.
+    weight_normalizer_normalize_embeddings: bool = True
+
+    # Normalize the LM head too. By default the head is left unconstrained (qwen3-style row
+    # growth) and controlled by weight decay instead.
+    weight_normalizer_head_unconstrained: bool = True
+
+    # Learning-rate multiplier for nGPT scaler parameters (LERP alphas, s_qk, s_uv). On a
+    # normalized architecture these carry all the magnitude information, so they often want a
+    # larger step than the direction-carrying weight matrices.
+    ngpt_scaler_lr_mult: float = 1.0
+
+    # Weight-decay multiplier for nGPT scaler parameters. 0 by default: decaying them toward
+    # zero fights the geometry.
+    ngpt_scaler_wd_mult: float = 0.0
+
+    # Run the weight normalizer only every N optimizer steps.
+    weight_normalizer_every_n_steps: int = 1
 
     # Offload optimizer state to CPU
     optimizer_cpu_offload: bool = False
@@ -3371,11 +3674,11 @@ class MegatronConfig(ConfigInterface):
     spec: list[str] | None = None
 
     # Specify a hybrid layer pattern using M (mamba), G (gdn), L (the linear mixer named by
-    # --experimental-attention-variant), C (gated short convolution), * (attention), D (dsa),
-    # - (mlp), E (moe). Use | to define pipeline stage boundaries for flexible virtual
-    # pipeline parallel (fVPP). Use / to separate MTP patterns. Example:
-    # "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is used, it is the sole
-    # indicator that a hybrid model is being run.
+    # --experimental-attention-variant), C (gated short convolution), N (Engram n-gram
+    # memory), * (attention), D (dsa), - (mlp), E (moe). Use | to define pipeline stage
+    # boundaries for flexible virtual pipeline parallel (fVPP). Use / to separate MTP
+    # patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is
+    # used, it is the sole indicator that a hybrid model is being run.
     hybrid_layer_pattern: str | None = None
 
     # Deprecated. Use --hybrid-layer-pattern instead. If specified, its value will be

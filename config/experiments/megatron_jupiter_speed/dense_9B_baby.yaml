@@ -1,0 +1,51 @@
+# @package _global_
+# Dense 9B — EXACT baby-9B arch (/backend/megatron/baby/models/qwen3_dense_9b:
+# 36L, hidden 4096, ffn 12288, 32 heads / 8 KV groups, untied, qk-norm) — 1 node.
+#
+# The baby model file carries the Leonardo production setup (TP=4, selective
+# recompute, overlap grad/param, WSD schedule); `common` neutralizes the
+# schedule/ckpt parts, overrides below adapt it to a 1-node JUPITER speed run.
+# VALIDATED optimum (tune sweeps 2026-07-27, jobs 1051949-52 + 1052010-12):
+#   TP=1 / DP=4, mbs1, GBS16 (4 µbatches), NO recompute
+#   → 390.1 TFLOPS / 39.4% MFU, 8,383 tok/s/GPU, 1.96 s/iter, 92% mem
+# TP ladder (1 node, norc): TP4 316 → TP2 328 → TP1 390 TF — TP comm is pure
+# overhead when memory fits; dropping the production selective recompute is
+# free for dense (+10%).
+#
+# Caveats:
+#   - 92% mem is with the neox ~50k vocab; the production 256k OELLM tokenizer
+#     grows the LM head ~5× — at TP1 that will NOT fit; production keeps TP4.
+#   - CUDA_DEVICE_MAX_CONNECTIONS=1 (below) is a TP-overlap requirement, now
+#     inert at TP=1 but kept as-measured.
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, data_nemonicco_split_jupiter]
+  - /backend/megatron/baby/models: qwen3_dense_9b
+  - common
+  - /sweep: none
+  - _self_
+
+backend:
+  megatron:
+    tensor_model_parallel_size: 1   # TP1 fastest at 50k vocab (see header)
+    pipeline_model_parallel_size: 1
+    sequence_parallel: false        # no-op at TP=1
+    tp_comm_overlap: false          # baby sets true; irrelevant at TP=1
+    micro_batch_size: 1
+    global_batch_size: 16           # mbs1 × DP(4) × 4 µbatches
+    cross_entropy_loss_fusion: true
+    recompute_activations: false    # production selective recompute costs +10%
+    recompute_granularity: null
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"  # required for TP≥2 comm overlap on JUPITER
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:20:00"
+
+job:
+  name: jspeed_dense_9B_baby

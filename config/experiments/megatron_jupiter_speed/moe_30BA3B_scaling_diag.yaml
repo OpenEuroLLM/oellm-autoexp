@@ -1,0 +1,51 @@
+# @package _global_
+# Diagnose 30BA3B weak-scaling degradation (n2 7,376 → n4 6,509 → n8 6,131
+# tok/s/GPU, jobs jspeed_moe_30BA3B_ws_n{2,4,8}).
+#
+# Hypothesis: at n2 each PP stage's DP group is intra-node (NVLink); from n4
+# DP crosses IB — and the config has NO overlap_grad_reduce, plus
+# NCCL_NET_GDR_LEVEL=0 (required for PP P2P) throttles IB bandwidth. The mem
+# column corroborates DP growth (dist-optim shards: 89→66→55%).
+#
+# Entries (n4 + n8 each):
+#   overlap — hide the DP reduce behind backward (fixed dense_32B multi-node)
+#   ga8     — GBS 64·nodes: 2× accumulation amortizes the per-step DP reduce
+#   novpp   — VPP off: isolates P2P-frequency/fabric-contention share
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+aux:
+  tag: "overlap"
+
+job:
+  name: jspeed_moe_30BA3B_wsdiag_${aux.tag}_n${slurm.sbatch.nodes}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: overlap
+          slurm.sbatch.nodes: 4
+          backend.megatron.overlap_grad_reduce: true
+          backend.megatron.overlap_param_gather: true
+        - aux.tag: overlap
+          slurm.sbatch.nodes: 8
+          backend.megatron.overlap_grad_reduce: true
+          backend.megatron.overlap_param_gather: true
+        - aux.tag: ga8
+          slurm.sbatch.nodes: 4
+          backend.megatron.global_batch_size: 256
+        - aux.tag: ga8
+          slurm.sbatch.nodes: 8
+          backend.megatron.global_batch_size: 512
+        - aux.tag: novpp
+          slurm.sbatch.nodes: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.overlap_p2p_comm: false
+        - aux.tag: novpp
+          slurm.sbatch.nodes: 8
+          backend.megatron.num_layers_per_virtual_pipeline_stage: null
+          backend.megatron.overlap_p2p_comm: false

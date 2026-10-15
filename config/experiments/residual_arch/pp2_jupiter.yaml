@@ -1,0 +1,59 @@
+# @package _global_
+#
+# PP=2 correctness smoke for mHC and Block AttnRes.
+#
+# Both schemes widen what crosses a stage boundary. They now ship it as a
+# fixed-width [s, b, slots*h] payload -- flattened rather than rank-4, because
+# the p2p layer exchanges shapes as a 3-element tensor under
+# variable_seq_lengths and would silently truncate a 4-D shape.
+#
+# Each scheme runs at PP=1 and PP=2 with everything else identical. The two are
+# not bit-identical (different reduction partitioning), but the loss trajectory
+# must track closely; a payload packed or unpacked wrongly shows up immediately
+# as a diverging loss rather than as an error.
+#
+# attn_res_num_blocks=4 over 18 layers gives 4 layers per block, so the stage
+# boundary at layer 9 lands *mid-block* (9 % 4 = 1). That is the harder path:
+# the payload has to carry the in-progress partial sum as well as the completed
+# blocks, and the receiving stage has to work out which slice is which from its
+# own layer offset.
+defaults:
+  - speed_mhc_jupiter
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 60
+    global_batch_size: 128
+    micro_batch_size: 16
+    # Isolate the pipeline plumbing: graphs are a separate axis and were
+    # measured to be worth nothing here anyway.
+    cuda_graph_impl: none
+
+slurm:
+  env:
+    # PP send/recv on JUPITER has deadlocked without this; cheap insurance even
+    # though PP=2 on one node stays on NVLink.
+    NCCL_NET_GDR_LEVEL: "0"
+
+sweep:
+  type: product
+  groups:
+   - type: list
+     configs:
+      - aux.variant: pp1_mhc4
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.pipeline_model_parallel_size: 1
+      - aux.variant: pp2_mhc4
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.pipeline_model_parallel_size: 2
+      - aux.variant: pp1_attnres4
+        backend.megatron.attn_res: true
+        backend.megatron.attn_res_num_blocks: 4
+        backend.megatron.pipeline_model_parallel_size: 1
+      - aux.variant: pp2_attnres4
+        backend.megatron.attn_res: true
+        backend.megatron.attn_res_num_blocks: 4
+        backend.megatron.pipeline_model_parallel_size: 2

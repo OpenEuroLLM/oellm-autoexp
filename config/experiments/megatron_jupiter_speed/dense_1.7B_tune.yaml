@@ -1,0 +1,46 @@
+# @package _global_
+# Tuning sweep for dense_1.7B (baseline: 319 TFLOPS / 32.2% MFU avg,
+# median 33.5k tok/s — stragglers in window; 84% mem, GBS24 = 1 µbatch).
+#   0. gbs48         — 2 accumulation µbatches (amortize optimizer step)
+#   1. gbs96         — 4 µbatches
+#   2. gbs48_overlap — + overlap grad-reduce/param-gather (worked at 32B;
+#                      interaction with CUDA graphs untested)
+#   3. mbs8_gbs32    — bigger GEMMs. LLaMA-1.8B OOMed at mbs8 but Qwen3-1.7B
+#                      has smaller ffn (6144 vs 8192) + tied embeddings.
+#
+# ── Results (jobs 1051942-45, 2026-07-27) ────────────────────────────────
+#   gbs48         → 367.1 TFLOPS, 37.1% MFU, 35,017 tok/s, 89% mem ← WINNER
+#                   (+15% vs GBS24; also kills the step-time jitter: avg=median)
+#   gbs96         → 365.9 TFLOPS — saturated at 2 µbatches
+#   gbs48_overlap → 358.9 TFLOPS — overlap slightly NEGATIVE with CUDA graphs
+#   mbs8_gbs32    → OOM (6.14 GiB fp32 vocab-logit alloc, same as LLaMA-1.8B)
+# Winner folded into dense_1.7B.yaml.
+defaults:
+  - dense_1.7B
+  - _self_
+
+aux:
+  tag: "gbs48"
+
+backend:
+  megatron:
+    global_batch_size: 48
+
+job:
+  name: jspeed_dense_1.7B_tune_${aux.tag}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: gbs48
+        - aux.tag: gbs96
+          backend.megatron.global_batch_size: 96
+        - aux.tag: gbs48_overlap
+          backend.megatron.overlap_grad_reduce: true
+          backend.megatron.overlap_param_gather: true
+        - aux.tag: mbs8_gbs32
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.global_batch_size: 32

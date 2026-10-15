@@ -1,0 +1,45 @@
+# @package _global_
+# Tuning sweep for moe_3B (baseline: 172 TFLOPS / 28,953 tok/s/GPU,
+# 62% mem, no recompute, mbs8). moe_9B lesson: mbs is the knob for MoE.
+#   0. mbs16_norc — 2× µbatch without recompute (62% mem → decent odds)
+#   1. mbs16_full — 2× µbatch WITH full recompute (fallback)
+#   2. mbs32_full — 4× µbatch with full recompute
+#
+# ── Results (jobs 1051957-59, 2026-07-27): BASELINE STANDS ──────────────
+#   mbs16_norc → OOM (the 62% baseline underestimates transient dispatcher peaks)
+#   mbs16_full → 24,207 tok/s; mbs32_full → 23,835 tok/s — both ~17% below
+#   the mbs8/no-recompute baseline (28,953 tok/s, 172 TF).
+# Same as moe_1.7B: below ~1B active, no-recompute beats any full-recompute
+# mbs. No change to moe_3B.yaml.
+defaults:
+  - moe_3B
+  - _self_
+
+aux:
+  tag: "mbs16_norc"
+
+backend:
+  megatron:
+    micro_batch_size: 16
+    global_batch_size: 64
+
+job:
+  name: jspeed_moe_3B_tune_${aux.tag}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: mbs16_norc
+        - aux.tag: mbs16_full
+          backend.megatron.recompute_granularity: full
+          backend.megatron.recompute_method: uniform
+          backend.megatron.recompute_num_layers: 1
+        - aux.tag: mbs32_full
+          backend.megatron.micro_batch_size: 32
+          backend.megatron.global_batch_size: 128
+          backend.megatron.recompute_granularity: full
+          backend.megatron.recompute_method: uniform
+          backend.megatron.recompute_num_layers: 1

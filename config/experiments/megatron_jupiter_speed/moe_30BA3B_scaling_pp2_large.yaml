@@ -1,0 +1,34 @@
+# @package _global_
+# n64/128/256 under the PROVEN PP2 regime-1 recipe (VPP VP6, overlap, GDR0),
+# GBS capped at 2048. GA at the cap: n64=4 (bubble 4%), n128=2 (7.7%),
+# n256 needs mbs2 (VPP requires µbatches ≥ PP; mbs4 would give GA1) → GA2.
+# Context: PP4 regime measured 4,895/4,641/invalid; PP1 turned out to have a
+# scale-growing startup cost (30-min TIMEOUTs before iteration 1 at n64+) and
+# only parity steady-state at n16/32. PP2 curve through n32: 7,651…6,770.
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+backend:
+  megatron:
+    # restore PP2 base layout (scaling config body defaults to PP1 for n≥4)
+    pipeline_model_parallel_size: 2
+    num_layers_per_virtual_pipeline_stage: 4
+    overlap_p2p_comm: true
+  env:
+    NCCL_NET_GDR_LEVEL: "0"
+
+slurm:
+  sbatch:
+    time: "00:40:00"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - slurm.sbatch.nodes: 64
+        - slurm.sbatch.nodes: 128
+        - slurm.sbatch.nodes: 256
+          backend.megatron.micro_batch_size: 2

@@ -1,0 +1,100 @@
+# @package _global_
+#
+# Looped (weight-tied) depth, with and without the nGPT LERP residual.
+#
+# The hypothesis: nGPT's LERP holds ||x|| constant with depth, so a weight-tied
+# block sees inputs from the same distribution at every iteration. A plain
+# additive residual grows in magnitude with depth, so a tied block would face a
+# different input scale on each pass. If that is what matters, the LERP's
+# advantage should *grow with loop count* -- larger at 3x4 (four passes through
+# the same weights) than at 6x2 (two).
+#
+# That ordering is the real result here. A single good looped-nGPT number cannot
+# distinguish "the invariance makes tying work" from "looping just works", which
+# is why every loop configuration runs both with and without the LERP.
+#
+# Structure is prelude / block x iterations / coda over the 18-layer geometry,
+# 3 layers at each end so the loop does not have to handle the token embedding or
+# the vocabulary projection:
+#
+#   arm        structure        unique  effective  params   FLOPs
+#   loop3x4    3 + (3)x4 + 3      9        18      76.8M    1.00x   iso-FLOP
+#   loop6x2    3 + (6)x2 + 3     12        18      92.7M    1.00x   iso-FLOP
+#   loop12x2   3 + (12)x2 + 3    18        30     124.5M    1.67x   iso-param
+#
+# num_layers counts *unique* layers, so it is 9 / 12 / 18 rather than 18/18/30.
+#
+# References already measured at these settings: baseline 2.721 (18 layers,
+# 124.5M) and ngpt_analytic_std 2.708. The iso-FLOP arms ask whether looping buys
+# parameter efficiency at fixed compute; the iso-param pair asks whether it buys
+# quality at fixed parameters by spending 1.67x the compute.
+#
+# Weights are fully tied across iterations, including the LERP alpha. That is the
+# literal form of the claim being tested -- the same layer repeated. Untying alpha
+# per loop position is the obvious follow-up if the loops underperform; it costs
+# ~35k parameters and would let the block take a large first step and smaller
+# later ones.
+#
+# CUDA graphs are off, which makes these arms ~20% slower than the non-looped
+# references. That was a mistake, kept here only so the runs stay reproducible:
+# the guard that forced it was justified from CudaGraphManager's docstring rather
+# than from a test, and the docstring is misleading. At PP=1 a runner is chosen by
+# scanning for the first FWD_READY one and a forward flips it to BWD_READY, so N
+# calls to one module capture N runners and replay them in order -- exactly what
+# gradient accumulation already does. The guard is gone; rerunning these arms with
+# cuda_graph_impl: local is the open item.
+defaults:
+  - ngpt_scalers_jupiter
+  - _self_
+
+slurm:
+  sbatch:
+    # The iso-param arms are 1.67x the FLOPs of an 18-layer model and run without
+    # CUDA graphs, so ~5h; the iso-FLOP arms ~3h.
+    time: "08:00:00"
+
+backend:
+  megatron:
+    global_batch_size: 128
+    micro_batch_size: 32
+    lr: 0.002
+    cuda_graph_impl: none
+    loop_prelude_layers: 3
+    loop_coda_layers: 3
+
+sweep:
+  type: product
+  groups:
+    # Loop geometry. num_layers is the unique count.
+    - type: list
+      configs:
+        - aux.loop: loop3x4
+          backend.megatron.num_layers: 9
+          backend.megatron.loop_block_layers: 3
+          backend.megatron.loop_iterations: 4
+        - aux.loop: loop6x2
+          backend.megatron.num_layers: 12
+          backend.megatron.loop_block_layers: 6
+          backend.megatron.loop_iterations: 2
+        # 30 effective layers holds 1.67x the activations of an 18-layer model, and
+        # baseline already sits at 0.737 occupancy at mbs=32 -- this OOM'd there
+        # (job 1304065, "Tried to allocate 1.12 GiB", 87 GiB already allocated).
+        # mbs only changes gradient accumulation, so gbs and the comparison are
+        # unaffected; 16 divides gbs/DP = 32 and should land near 0.65.
+        - aux.loop: loop12x2
+          backend.megatron.num_layers: 18
+          backend.megatron.loop_block_layers: 12
+          backend.megatron.loop_iterations: 2
+          backend.megatron.micro_batch_size: 16
+    # Residual scheme. The whole point of the grid is this axis.
+    - type: list
+      configs:
+        - aux.scheme: plain
+        - aux.scheme: ngpt
+          backend.megatron.ngpt: true
+          backend.megatron.ngpt_lerp_normalization: analytic
+
+aux:
+  loop: ""
+  scheme: ""
+  variant: "${aux.loop}_${aux.scheme}"

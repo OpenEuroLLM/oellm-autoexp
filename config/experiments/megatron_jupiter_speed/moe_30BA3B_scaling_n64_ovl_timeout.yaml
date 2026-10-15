@@ -1,0 +1,32 @@
+# @package _global_
+# Probe: does overlap_grad_reduce init succeed at n64 given a 45-min pg
+# timeout? Earlier overlap-on n≥64 runs died in init under the 10-min default
+# — same signature the DP≥256 comm-init had, which the 45-min timeout fixed.
+# If yes: n64 recovers ~2.5% and, more importantly, n128/n256 can hide their
+# grad reduce — the largest fixed cost at the GBS cap (n256 potential +10-20%).
+# Reference: n64 no-overlap = 5,577 tok/s (job 1065422).
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+backend:
+  megatron:
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    distributed_timeout_minutes: 45
+
+job:
+  name: jspeed_moe_30BA3B_ws_n64_ovl
+
+slurm:
+  sbatch:
+    nodes: 64
+    time: "01:15:00"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - slurm.sbatch.nodes: 64

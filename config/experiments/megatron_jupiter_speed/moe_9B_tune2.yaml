@@ -1,0 +1,51 @@
+# @package _global_
+# Round 2 of moe_9B tuning. Round 1 (moe_9B_tune.yaml): dropping full
+# recompute OOMs in every variant — allgather-dispatcher activations dominate
+# and selective saves ~nothing (as on 30BA3B). So keep FULL recompute
+# (baseline: 125.4 TFLOPS / 13,897 tok/s/GPU, 54% mem) and tune around it:
+#   0. full_mbs8       — bigger expert GEMMs under full recompute (54% mem
+#                        baseline leaves room for 2× activations)
+#   1. full_mbs4_gbs64 — 4 accumulation µbatches: amortize optimizer/router
+#   2. full_mbs8_gbs128— both combined
+#   3. norc_mbs2       — no recompute at halved µbatch (norc_mbs4 was close
+#                        at 81% before OOM; mbs2 may fit and skip recompute
+#                        entirely — GEMM-efficiency vs recompute tradeoff)
+# ── Results (jobs 1051287-90, 2026-07-27) ────────────────────────────────
+#   full_mbs8        → 134.1 TFLOPS, 14,868 tok/s/GPU, 65% mem ← WINNER (+7%)
+#   full_mbs4_gbs64  → 132.8 TFLOPS, 14,722 tok/s/GPU (accumulation alone)
+#   full_mbs8_gbs128 → 132.4 TFLOPS, 14,681 tok/s/GPU (no gain past 1 µbatch)
+#   norc_mbs2        → 116.4 TFLOPS, 12,902 tok/s/GPU, 74% mem — recompute-free
+#                      fits at mbs2 but loses more to small GEMMs than it saves
+# Winner folded into moe_9B.yaml (mbs8/GBS32). MoE throughput is dispatch-
+# bound, not optimizer-bound: accumulation adds nothing on 1 node.
+defaults:
+  - moe_9B
+  - _self_
+
+aux:
+  tag: "full_mbs8"
+
+job:
+  name: jspeed_moe_9B_tune_${aux.tag}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: full_mbs8
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.global_batch_size: 32
+        - aux.tag: full_mbs4_gbs64
+          backend.megatron.global_batch_size: 64
+        - aux.tag: full_mbs8_gbs128
+          backend.megatron.micro_batch_size: 8
+          backend.megatron.global_batch_size: 128
+          backend.megatron.train_iters: 50
+        - aux.tag: norc_mbs2
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.global_batch_size: 32
+          backend.megatron.recompute_granularity: null
+          backend.megatron.recompute_method: null
+          backend.megatron.recompute_num_layers: null

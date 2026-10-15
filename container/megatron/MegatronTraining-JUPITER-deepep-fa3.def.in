@@ -1,0 +1,189 @@
+Bootstrap: docker
+From: ${BASE_IMAGE}
+
+%labels
+    Author OpenSci
+    Version 0.1.0
+    Base ${BASE_IMAGE}
+    Description Megatron container based on NVIDIA PyTorch with full HPC support, DeepEP/HybridEP and flash-attn v3 (Hopper)
+
+%environment
+    export PYTHONNOUSERSITE=1
+    export CUDA_HOME=/usr/local/cuda
+    # NOTE: PATH is forced ahead of the forwarded host PATH via
+    # /.singularity.d/env/91-oellm-path.sh (created in %post). Setting it here in
+    # %environment does not work — apptainer special-cases and drops `export PATH`.
+    export PYTHONPATH=/workspace/oellm-autoexp/submodules/Megatron-LM:/workspace/oellm-autoexp:${PYTHONPATH:-}
+    export OELLM_AUTOEXP_CACHE=/workspace/cache
+    export HF_HOME=/workspace/cache/hf
+    export NVSHMEM_VERSION=libnvshmem-linux-sbsa-3.5.21_cuda12-archive
+
+%files
+    ${REPO_ROOT} /workspace/oellm-autoexp
+    ${REQUIREMENTS_PATH} /workspace/${REQUIREMENTS_BASENAME}
+%post
+ln -sf /usr/local/cuda/compat/lib.real /usr/local/cuda/compat/lib
+
+mkdir -p /workspace/cache
+cd /workspace
+
+pip install --upgrade pip setuptools wheel
+
+python3 /workspace/oellm-autoexp/container/gen_constraints.py \
+    --output /workspace/constraints.installed.txt \
+    --exclude pip setuptools wheel huggingface_hub
+
+if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
+    python3 -m pip install --no-cache-dir \
+        -c /workspace/constraints.installed.txt \
+        -r "/workspace/${REQUIREMENTS_BASENAME}"
+fi
+
+if [ -d "/workspace/oellm-autoexp/submodules/Megatron-LM" ]; then
+    python3 -m pip install --no-cache-dir \
+        -c /workspace/constraints.installed.txt \
+        -e /workspace/oellm-autoexp/submodules/Megatron-LM
+fi
+
+python3 -m pip install --no-cache-dir \
+    -c /workspace/constraints.installed.txt \
+    -e /workspace/oellm-autoexp
+
+python3 -m pip uninstall -y megatron-core || true
+
+# install NVSHMEM from NVIDIA's public redist (self-contained; no cluster module).
+# --strip-components 1 yields /opt/nvshmem/{lib,include} so DeepEP finds
+# lib/libnvshmem_host.so*.
+export NVSHMEM_VERSION=libnvshmem-linux-sbsa-3.5.21_cuda12-archive
+wget https://developer.download.nvidia.com/compute/nvshmem/redist/libnvshmem/linux-sbsa/libnvshmem-linux-sbsa-3.5.21_cuda12-archive.tar.xz
+xz -d libnvshmem-linux-sbsa-3.5.21_cuda12-archive.tar.xz
+mkdir /opt/nvshmem
+tar -xf libnvshmem-linux-sbsa-3.5.21_cuda12-archive.tar --strip-components 1 -C /opt/nvshmem
+export NVSHMEM_DIR=/opt/nvshmem
+# DeepEP's hybrid-ep setup links `-l:libnvshmem_host.so` (unversioned) when
+# NVSHMEM_DIR is set; the redist archive ships only the versioned soname.
+ln -sf /opt/nvshmem/lib/libnvshmem_host.so.3 /opt/nvshmem/lib/libnvshmem_host.so
+export CPATH=/usr/local/cuda-13.0/targets/sbsa-linux/include/cccl:$CPATH
+export CXXFLAGS="-I/usr/local/cuda-13.0/targets/sbsa-linux/include/cccl $CXXFLAGS"
+export CPLUS_INCLUDE_PATH=/usr/local/cuda-13.0/targets/sbsa-linux/include/cccl:$CPLUS_INCLUDE_PATH
+
+# Install DeepEP from the `hybrid-ep` branch — the NVIDIA-developed fork that
+# actually provides HybridEP (deep_ep.HybridEPBuffer + the hybrid_ep_cpp
+# extension), the dispatcher Megatron selects via moe_flex_dispatcher_backend=
+# hybridep. Upstream `main` (DeepEP 2.x) does NOT contain HybridEP. Pinned commit
+# + the NVIDIA patch mirror Megatron-LM/docker/Dockerfile.ci.dev. HybridEP on
+# JUPITER is intra-node (EP within a node), so HYBRID_EP_MULTINODE stays unset
+# and no third-party NCCL/GDAKI build is required (this branch needs NVSHMEM only,
+# not the NCCL device API that upstream main pulls in).
+git clone --branch hybrid-ep https://github.com/deepseek-ai/DeepEP.git /workspace/DeepEP
+cd /workspace/DeepEP
+git checkout 1dddd194c26911c35b4f53a148617dd73de0ffc9
+patch -p1 < /workspace/oellm-autoexp/submodules/Megatron-LM/docker/patches/deepep.patch
+# The redist NVSHMEM archive (unlike NVIDIA's pip wheel the CI uses) defines the
+# IBGDA device-state global `nvshmemi_ibgda_device_state_d` non-extern in a
+# header, so it collides with libnvshmem_device.a at link under modern binutils
+# (multiple definition). It is internode-only (unused for intra-node HybridEP),
+# so let the linker take the first definition.
+sed -i "s|    extra_link_args = \[\]|    extra_link_args = ['-Wl,--allow-multiple-definition']|" setup.py
+cd /workspace
+export TORCH_CUDA_ARCH_LIST="9.0" # JUPITER GH200 (Hopper) only
+pip install --no-build-isolation ./DeepEP
+
+# install flash-attn v3 (Hopper / sm90) for TransformerEngine DotProductAttention.
+# TE probes for an importable `flash_attn_3.flash_attn_interface`; the FA3 kernels
+# live in the `hopper/` subdir of the flash-attention repo (not on PyPI).
+git clone https://github.com/Dao-AILab/flash-attention.git /opt/flash-attention
+cd /opt/flash-attention
+git submodule update --init --depth 1 csrc/cutlass
+cd /opt/flash-attention/hopper
+# JUPITER is GH200 (Hopper / sm90) only, so skip the Ampere (sm80) kernel matrix:
+# it halves the build and drops the sm80 backward kernels entirely (we never run
+# on sm80 anyway).
+export FLASH_ATTENTION_DISABLE_SM80=TRUE
+# FA3 backward kernels are very memory-heavy to compile; nvcc got OOM-killed at
+# high parallelism on the shared build host. Cap concurrency to stay within RAM.
+export MAX_JOBS=${MAX_JOBS:-8}
+export NVCC_THREADS=${NVCC_THREADS:-2}
+python setup.py install
+# NOTE: build_container.sh renders this template with `envsubst`, which would
+# expand a `$python_path` shell var to empty. Use inline command substitution
+# (envsubst leaves `$(...)` untouched) to place the FA3 interface where TE looks.
+mkdir -p "$(python -c 'import site; print(site.getsitepackages()[0])')/flash_attn_3"
+cp flash_attn_interface.py "$(python -c 'import site; print(site.getsitepackages()[0])')/flash_attn_3/flash_attn_interface.py"
+cd /workspace
+
+
+cd oellm-autoexp
+pip install -e .[dev]
+
+# ── slim the image ───────────────────────────────────────────────────────────
+# Drop build trees and caches now that everything is installed, so the shipped
+# .sif stays small and transferable. (The big historical bloat — multi-GB core
+# dumps copied in via %files — is avoided by keeping the host repo clean; the
+# rm below is a harmless idempotent guard in case any got left behind.)
+rm -rf /opt/flash-attention                         # flash-attn v3 build dir (installed)
+rm -rf /workspace/DeepEP /workspace/deepep /opt/deepep   # DeepEP source clone (installed)
+rm -f  /workspace/*.tar /workspace/*.tar.xz 2>/dev/null || true   # NVSHMEM download leftovers
+rm -f  /workspace/oellm-autoexp/core.* 2>/dev/null || true        # stray core dumps
+rm -rf /root/.cache /workspace/cache/pip 2>/dev/null || true
+python3 -m pip cache purge 2>/dev/null || true
+rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb 2>/dev/null || true
+find /usr/local/lib/python3.12/dist-packages -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+
+# Force the in-container binaries (torchrun, python 3.12 where deep_ep /
+# flash_attn_3 / megatron are installed) AHEAD of the host PATH that apptainer
+# forwards at runtime. Without this, `torchrun`/`python` resolve to a host
+# venv/uv interpreter bind-mounted via /e and the run crashes. `${PATH:-}` is
+# left intact by build_container.sh's envsubst (expands at container runtime).
+mkdir -p /.singularity.d/env
+cat > /.singularity.d/env/91-oellm-path.sh << 'EOFPATH'
+#!/bin/bash
+export PATH=/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/bin:${PATH:-}
+EOFPATH
+chmod +x /.singularity.d/env/91-oellm-path.sh
+
+# HybridEP's runtime kernel JIT hardcodes its cache to <deep_ep pkg>/build/jit,
+# which is read-only inside the squashfs -> "Failed to compile the code" at first
+# use. Redirect it to a runtime-writable tmpfs path so the JIT can compile.
+rm -rf /usr/local/lib/python3.12/dist-packages/deep_ep/build 2>/dev/null || true
+ln -sf /tmp/deep_ep_build /usr/local/lib/python3.12/dist-packages/deep_ep/build
+cat > /.singularity.d/env/92-deepep-jit.sh << 'EOFJIT'
+#!/bin/bash
+# ensure the (tmpfs) HybridEP JIT cache dir exists and is writable at runtime
+mkdir -p /tmp/deep_ep_build/jit 2>/dev/null || true
+EOFJIT
+chmod +x /.singularity.d/env/92-deepep-jit.sh
+
+# startup script that fixes CUDA symlinks
+mkdir -p /.singularity.d/env
+cat > /.singularity.d/env/99-cuda-fix.sh << 'EOFENV'
+#!/bin/bash
+# Fix CUDA symlinks for Triton when --nv is used
+if [ -f /.singularity.d/libs/libcuda.so.1 ]; then
+mkdir -p /usr/local/cuda/lib64 /usr/local/cuda/compat/lib 2>/dev/null
+ln -sf /.singularity.d/libs/libcuda.so.1 /usr/local/cuda/lib64/libcuda.so.1 2>/dev/null
+ln -sf /usr/local/cuda/lib64/libcuda.so.1 /usr/local/cuda/lib64/libcuda.so 2>/dev/null
+ln -sf /.singularity.d/libs/libcuda.so.1 /usr/local/cuda/compat/lib/libcuda.so.1 2>/dev/null
+ln -sf /usr/local/cuda/compat/lib/libcuda.so.1 /usr/local/cuda/compat/lib/libcuda.so 2>/dev/null
+fi
+export LD_LIBRARY_PATH=/.singularity.d/libs:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+EOFENV
+chmod +x /.singularity.d/env/99-cuda-fix.sh
+
+
+%runscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%startscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%test
+cd /workspace/oellm-autoexp
+python scripts/run_autoexp.py --help >/dev/null
+
+%help
+    Build with container/build_container.sh and run via
+    `apptainer exec MegatronTraining.sif python -m oellm_autoexp.plan`.
+    Adds DeepEP/HybridEP and flash-attn v3 (Hopper) on top of the base image.

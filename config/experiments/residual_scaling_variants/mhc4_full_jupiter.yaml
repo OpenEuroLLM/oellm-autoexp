@@ -1,0 +1,70 @@
+# @package _global_
+#
+# mhc4 with the full nGPT recipe: LERP residual + scaler set + weight normalizer.
+#
+# mhc4 is the best arm on loss in this sweep (2.638) with none of nGPT's
+# magnitude machinery. The two schemes constrain residual magnitude in different
+# places -- mHC makes the *mixing operator* non-expansive and leaves stream
+# magnitude free, nGPT pins the *stream* to the unit sphere and reinjects scale
+# through learnable scalers -- so composing them is not obviously additive, and
+# is the open question this sweep was set up to answer.
+#
+# Two arms so the weight normalizer can be attributed. It is the piece that
+# needs the scalers to exist at all: it strips weight magnitude, and without
+# s_qk/s_uv nothing puts it back, which is why ngpt_wnorm was the worst arm here
+# (2.977) before the scalers were wired.
+#
+# micro_batch_size is 8 where the other arms use 16: mHC's 4x-wider residual
+# plus the LERP and scaler state does not fit at 16, and the arms OOM'd twice
+# before their first iteration. global_batch_size is unchanged, so this is
+# just more gradient accumulation and the loss comparison is unaffected.
+#
+# Same geometry, data, batch and schedule as every other arm in this sweep, so
+# only the scheme differs. Note mhc_lerp routes MHCMixer.write down its LERP
+# path, which does not go through the fused Triton backward -- the speed work
+# this branch landed applies to the additive write only, so expect these arms to
+# be slower than the plain mhc4 arm rather than faster.
+defaults:
+  - ngpt_scalers_jupiter
+  - _self_
+
+sweep:
+  type: product
+  groups:
+   - type: list
+     configs:
+      - aux.variant: mhc4_lerp_scalers
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.mhc_lerp: true
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+        backend.megatron.qk_l2_norm: true
+        backend.megatron.ngpt_use_sqk: true
+        backend.megatron.ngpt_use_suv: true
+        backend.megatron.lr: 0.001
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 8
+      - aux.variant: mhc4_lerp_scalers_wnorm
+        backend.megatron.mhc: true
+        backend.megatron.mhc_expansion_rate: 4
+        backend.megatron.mhc_sinkhorn_iters: 8
+        backend.megatron.mhc_lerp: true
+        backend.megatron.ngpt: true
+        backend.megatron.ngpt_lerp_normalization: analytic
+        backend.megatron.qk_l2_norm: true
+        backend.megatron.ngpt_use_sqk: true
+        backend.megatron.ngpt_use_suv: true
+        backend.megatron.weight_normalizer: true
+        backend.megatron.weight_normalizer_out_norm_dim_0: true
+        backend.megatron.weight_normalizer_head_unconstrained: true
+        backend.megatron.weight_decay: 0.0
+        # The scalers are the only place magnitude lives once the weights are
+        # normalized, so they want a larger step than the direction-carrying
+        # matrices. mHC's connection parameters are marked is_ngpt_scaler and
+        # land in this group too.
+        backend.megatron.ngpt_scaler_lr_mult: 4.0
+        backend.megatron.lr: 0.001
+        backend.megatron.global_batch_size: 128
+        backend.megatron.micro_batch_size: 8

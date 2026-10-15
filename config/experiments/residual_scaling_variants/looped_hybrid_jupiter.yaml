@@ -1,0 +1,157 @@
+# @package _global_
+#
+# Looped depth in a hybrid (mLSTM) stack, against dense hybrid controls at both
+# matched FLOPs and matched parameters.
+#
+# Two things are new here relative to the transformer loop grid.
+#
+# 1. The dense controls that grid never ran. RESULT.md Open #2: looping was only
+#    ever compared against the 18-layer baseline, which is the iso-FLOP reference
+#    for loop6x2/loop3x4 and the iso-param reference for loop12x2 -- but no dense
+#    model was ever trained at 92.7M or 76.8M, so "looping beats a smaller dense
+#    model at equal parameters" was never actually tested. hybrid_d12 and
+#    hybrid_d9 are exactly those controls.
+#
+# 2. A stack where looping's structural cost disappears. Looping multiplies
+#    *effective* depth, and a softmax layer's KV cache scales with effective
+#    depth: loop12x2 needs 1.67x the KV of an 18-layer dense model at the same
+#    stored parameters, which at long context is the dominant memory term. A
+#    gated linear layer carries a recurrent state of num_heads*d_k*d_v, constant
+#    in sequence length -- d_head/(16C) of that layer's weight traffic, ~0.35%
+#    at this width. Replicating it per loop iteration is free.
+#
+# The pattern therefore puts softmax attention in the prelude and coda and mLSTM
+# in the looped block, so the repeated layers are precisely the ones with no
+# context-scaling state. loop12x2 reaches effective depth 30 while carrying only
+# 6 softmax layers' worth of KV -- a third of what the dense 18-layer softmax
+# baseline carries.
+#
+# Layer counting. This runs through TransformerBlock, not HybridStack:
+# gpt_builders.gpt_builder routes experimental_attention_variant through
+# get_transformer_block_with_experimental_attention_variant_spec, which returns
+# TransformerBlockSubmodules with a per-layer mix of linear and softmax
+# attention. So one layer is one full block (mixer + MLP), num_layers counts
+# unique layers exactly as in the transformer grid, and build_loop_schedule
+# applies unchanged. linear_attention_freq is a per-layer 0/1 list of length
+# num_layers, i.e. it addresses *unique* layers; the loop schedule then replays
+# them.
+#
+# Parameter counting. The mLSTM head layout follows the convention already in
+# use in architecture_scaling_variants/multilingual (head_dim x num_heads =
+# hidden, reusing the attention head structure), which here is 9 heads x 64.
+# mLSTM's in_proj is 2*qk_dim + 2*v_dim + 2*num_heads wide and out_proj is
+# v_dim x C, so a mixer costs 576*2322 + 576*576 = 1.669M against a softmax
+# layer's 4C^2 = 1.327M. The hybrid arms therefore carry ~4.1M more than the
+# 124.5M transformer baseline (+3.3%) at d18.
+#
+# That offset is between this grid and the transformer grid, never inside this
+# grid: every arm here uses the same layer types, so the iso-param comparisons
+# below are exact. Do not read hybrid_d18 against the transformer baseline as a
+# parameter-matched pair.
+#
+# CUDA graphs are off for every arm, dense ones included, so the throughput
+# column compares like with like. Looping no longer requires this -- the guard
+# that used to forbid it was removed after reading the runner selection rather
+# than its docstring -- but these arms were launched under it, so the setting
+# stays for reproducibility and uniformity. Loss is unaffected either way; a
+# graphs-on rerun is the follow-up.
+#
+# Standard budget throughout: 11445 steps, gbs 128, lr 0.002, 6.0B tokens.
+defaults:
+  - ngpt_scalers_jupiter
+  - _self_
+
+slurm:
+  sbatch:
+    # Measured on a 120-iteration probe: 569 ms/iter (d9) to 630 (d18), and 756
+    # for loop12x2 at 30 effective layers and mbs 16. That is 2.0-2.4h for 11445
+    # steps, so 4h carries ~1.7x margin. Kept tight deliberately: short time
+    # limits get materially better scheduling priority on the booster partition.
+    #
+    # Note for anyone reading throughput out of these runs: step time is nearly
+    # depth-independent here (9 -> 18 layers costs 11%, while Megatron's analytic
+    # TFLOP/s falls 180.6 -> 127.7 at the same wall-clock). With CUDA graphs off
+    # and mLSTM emitting many small kernels, these steps are launch-bound, not
+    # compute-bound. Wall-clock differences inside this grid therefore say very
+    # little about the architectures; read it as iso-steps.
+    time: "04:00:00"
+
+backend:
+  megatron:
+    global_batch_size: 128
+    micro_batch_size: 32
+    lr: 0.002
+    cuda_graph_impl: none
+    cuda_graph_modules: []
+
+    # ---- mLSTM ----
+    # Head layout mirrors the softmax layers exactly: 9 heads x 64 = 576 = hidden,
+    # no expansion. Same convention as the 0.1B multilingual hybrid runs, which
+    # set the linear head dims from the model's own attention heads. mLSTM has no
+    # grouped-query mode, so key and value head counts must be equal.
+    experimental_attention_variant: mlstm
+    linear_num_key_heads: 9
+    linear_num_value_heads: 9
+    linear_key_head_dim: 64
+    linear_value_head_dim: 64
+    linear_conv_kernel_dim: 4
+    mlstm_chunk_size: 128
+
+    # Declared so each arm's sweep override lands in an existing key.
+    num_layers: 18
+    linear_attention_freq: "[0]*3+[1]*12+[0]*3"
+    loop_prelude_layers: 0
+    loop_block_layers: 0
+    loop_iterations: 1
+    loop_coda_layers: 0
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        # ---- dense hybrid controls ----
+        # d18 is the iso-FLOP reference for loop6x2 and loop3x4 (all 18 effective
+        # layers) and the iso-param reference for loop12x2 (both 18 unique).
+        - aux.variant: hybrid_d18
+          backend.megatron.num_layers: 18
+          backend.megatron.linear_attention_freq: "[0]*3+[1]*12+[0]*3"
+        # The two controls the transformer grid never ran: dense models at the
+        # looped arms' *parameter* counts. Without these, "looping wins at fixed
+        # parameters" compares a looped model against a deeper dense one rather
+        # than against the dense model of the same size.
+        - aux.variant: hybrid_d12
+          backend.megatron.num_layers: 12
+          backend.megatron.linear_attention_freq: "[0]*3+[1]*6+[0]*3"
+        - aux.variant: hybrid_d9
+          backend.megatron.num_layers: 9
+          backend.megatron.linear_attention_freq: "[0]*3+[1]*3+[0]*3"
+
+        # ---- looped arms ----
+        # iso-param with d18, 1.67x its FLOPs: the arm that won the transformer
+        # grid outright (loop12x2_ngpt 2.663 vs baseline 2.721). 30 effective
+        # layers, so mbs drops to 16 -- the transformer version OOM'd at 32.
+        - aux.variant: hybrid_loop12x2
+          backend.megatron.num_layers: 18
+          backend.megatron.linear_attention_freq: "[0]*3+[1]*12+[0]*3"
+          backend.megatron.loop_prelude_layers: 3
+          backend.megatron.loop_block_layers: 12
+          backend.megatron.loop_iterations: 2
+          backend.megatron.loop_coda_layers: 3
+          backend.megatron.micro_batch_size: 16
+        # iso-FLOP with d18 (18 effective), iso-param with d12 (12 unique).
+        - aux.variant: hybrid_loop6x2
+          backend.megatron.num_layers: 12
+          backend.megatron.linear_attention_freq: "[0]*3+[1]*6+[0]*3"
+          backend.megatron.loop_prelude_layers: 3
+          backend.megatron.loop_block_layers: 6
+          backend.megatron.loop_iterations: 2
+          backend.megatron.loop_coda_layers: 3
+        # iso-FLOP with d18 (18 effective), iso-param with d9 (9 unique).
+        - aux.variant: hybrid_loop3x4
+          backend.megatron.num_layers: 9
+          backend.megatron.linear_attention_freq: "[0]*3+[1]*3+[0]*3"
+          backend.megatron.loop_prelude_layers: 3
+          backend.megatron.loop_block_layers: 3
+          backend.megatron.loop_iterations: 4
+          backend.megatron.loop_coda_layers: 3

@@ -1,0 +1,19 @@
+# @package _global_
+# Re-run of the n2/n4/n8 weak-scale points under the final tuned config
+# (GA8 + overlap), so the ws_n* experiment folders hold a consistent curve —
+# the old folders contain GA4 runs (7,376/6,509/6,131), while the tuned
+# equivalents (7,358/7,125 at n4/n8) sat in the wsdiag folders. n2 also
+# changes: GBS 128 (GA8) + overlap, expected ≥ the GA4 7,376.
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - slurm.sbatch.nodes: 2
+        - slurm.sbatch.nodes: 4
+        - slurm.sbatch.nodes: 8

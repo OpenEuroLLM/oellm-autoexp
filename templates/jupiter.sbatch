@@ -8,7 +8,7 @@
 # ml Python/3.13.5
 # ml CUDA/13
 # ml NCCL/default-CUDA-13
-module purge
+module --force purge
 ulimit -c 0
 
 # Disable core dumps. core_pattern is relative (core.%h.%p), so a crashing rank

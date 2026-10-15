@@ -1,0 +1,43 @@
+# @package _global_
+# Round 2 of PP-scaled weak scaling. Round 1 (moe_30BA3B_ws_pp):
+#   pp4_n4 → 6,912 tok/s, 53% mem (beats DP-scaled baseline 6,509)
+#   pp8_n8 → ~3,480 tok/s, 35% mem — COLLAPSED: lpvs=1 means a P2P per layer
+#            over GDR-0 IB; latency-bound.
+# Follow-ups:
+#   pp4_norc_n4  — spend the 53%-mem headroom on dropping recompute
+#                  (worth ~+25% if it fits; the DP-scaled variants can't afford it)
+#   pp4_ga16_n4  — GBS 64·nodes → GA16, bubble 3%→1.5% + better amortization
+#   pp8_lpvs2_n8 — fix pp8's chunking: 2-layer chunks (VP=3), half the P2P
+#                  rounds at bubble 12.7% — tests if pp8 is salvageable
+defaults:
+  - moe_30BA3B_scaling
+  - _self_
+
+aux:
+  tag: "pp4_norc"
+
+job:
+  name: jspeed_moe_30BA3B_wspp_${aux.tag}_n${slurm.sbatch.nodes}
+
+sweep:
+  type: list
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.tag: pp4_norc
+          slurm.sbatch.nodes: 4
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 2
+          backend.megatron.recompute_granularity: null
+          backend.megatron.recompute_method: null
+          backend.megatron.recompute_num_layers: null
+        - aux.tag: pp4_ga16
+          slurm.sbatch.nodes: 4
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 2
+          backend.megatron.global_batch_size: 256
+        - aux.tag: pp8_lpvs2
+          slurm.sbatch.nodes: 8
+          backend.megatron.pipeline_model_parallel_size: 8
+          backend.megatron.num_layers_per_virtual_pipeline_stage: 2

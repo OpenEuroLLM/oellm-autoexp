@@ -21,6 +21,7 @@ ckpt_format: torch_dist
 cross_entropy_loss_fusion: true
 manual_gc: true
 manual_gc_interval: 100
+cuda_graph_modules: []  # migrated from cuda_graph_scope: full (0.18.2 API)
 cuda_graph_impl: "none"
 cuda_graph_warmup_steps: 3
 cross_entropy_fusion_impl: "te"
