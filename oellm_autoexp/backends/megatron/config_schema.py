@@ -1417,6 +1417,16 @@ class MegatronConfig(ConfigInterface):
     # mHC. Requires mhc=True; not combinable with mhc_lerp.
     mhc_routed_topk: int = 0
 
+    # Routed residual streams: also mix the k selected streams with a per-token doubly
+    # stochastic [k, k] matrix (mHC's H_res restricted to the selection), initialized near the
+    # identity. Memory traffic stays (2k+1) of the n streams.
+    mhc_routed_mix: bool = False
+
+    # Routed residual streams: update rate of the aux-loss-free selection bias that balances
+    # how often each stream is picked (as moe_router_bias_update_rate; 1e-3 is DeepSeek-V3's).
+    # 0 disables.
+    mhc_routed_balance_rate: float = 0.0
+
     # Enable Block Attention Residuals (arXiv:2603.15031): replace the uniformly-weighted
     # residual accumulation with learned softmax attention over depth. Bounds hidden-state
     # magnitude, which otherwise grows as O(L) under PreNorm. Mutually exclusive with mhc.
@@ -3224,6 +3234,10 @@ class MegatronConfig(ConfigInterface):
 
     # Mscale all dimensions for YaRN RoPE in multi-latent attention.
     mscale_all_dim: float = 0.0
+
+    # Grouped-query MLA: key/value heads up-projected from the KV latent (None = one per query
+    # head). --qk-pos-emb-head-dim 0 makes MLA NoPE.
+    mla_num_query_groups: int | None = None
 
     # If set caches the mla down projected latents with mla flash decode.
     cache_mla_latents: bool = False

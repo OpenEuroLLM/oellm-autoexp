@@ -4191,6 +4191,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "mhc_routed_balance_rate": MegatronArgMetadata(
+        arg_type=float,
+        default=0.0,
+        help="Routed residual streams: update rate of the aux-loss-free selection bias that balances how often each stream is picked (as moe_router_bias_update_rate; 1e-3 is DeepSeek-V3's). 0 disables.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "mhc_routed_mix": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Routed residual streams: also mix the k selected streams with a per-token doubly stochastic [k, k] matrix (mHC's H_res restricted to the selection), initialized near the identity. Memory traffic stays (2k+1) of the n streams.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "mhc_routed_topk": MegatronArgMetadata(
         arg_type=int,
         default=0,
@@ -4261,6 +4277,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help="Enable fused q/kv down-projection and fused input layernorm when backend supports. Otherwise fall back to the unfused MLA.",
         choices=None,
         nargs=0,
+        element_type=None,
+    ),
+    "mla_num_query_groups": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Grouped-query MLA: key/value heads up-projected from the KV latent (None = one per query head). --qk-pos-emb-head-dim 0 makes MLA NoPE.",
+        choices=None,
+        nargs=None,
         element_type=None,
     ),
     "mlp_chunks_for_prefill": MegatronArgMetadata(
@@ -11230,6 +11254,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default="identity",
     ),
+    "mhc_routed_balance_rate": MegatronActionSpec(
+        option_strings=("--mhc-routed-balance-rate",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.0,
+    ),
+    "mhc_routed_mix": MegatronActionSpec(
+        option_strings=("--mhc-routed-mix",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "mhc_routed_topk": MegatronActionSpec(
         option_strings=("--mhc-routed-topk",),
         action_type="store",
@@ -11288,6 +11326,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "mla_num_query_groups": MegatronActionSpec(
+        option_strings=("--mla-num-query-groups",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "mlp_chunks_for_prefill": MegatronActionSpec(
         option_strings=("--mlp-chunks-for-prefill",),

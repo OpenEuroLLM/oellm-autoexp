@@ -519,6 +519,8 @@ mhc_alpha_init: 0.01  # Initial value of the learnable gates on the input-depend
 mhc_expansion_rate: 4  # Number of residual streams n. n=1 degenerates to a standard residual. The paper uses n=4, reporting 6.7% training-time overhead at that setting. Costs n-times the residual activation memory and n-times the pipeline inter-stage payload.
 mhc_lerp: false  # Compose mHC with the nGPT LERP residual: mix the streams first (norm-preserving), then take a LERP step per stream toward the normalized sublayer output. Requires ngpt=True. Mixing must precede renormalization, since a convex combination of unit vectors is not itself unit norm.
 mhc_res_init: identity  # Initial stream connectivity. 'identity' biases the Sinkhorn input toward the identity so the streams start independent and the identity mapping is preserved at init; 'uniform' starts from the uniform doubly stochastic matrix.
+mhc_routed_balance_rate: 0.0  # Routed residual streams: update rate of the aux-loss-free selection bias that balances how often each stream is picked (as moe_router_bias_update_rate; 1e-3 is DeepSeek-V3's). 0 disables.
+mhc_routed_mix: false  # Routed residual streams: also mix the k selected streams with a per-token doubly stochastic [k, k] matrix (mHC's H_res restricted to the selection), initialized near the identity. Memory traffic stays (2k+1) of the n streams.
 mhc_routed_topk: 0  # Routed residual streams (MoE-like residual sparsity, routed_residual.py): with k > 0 each sublayer reads and writes only stream 0 plus the top k-1 of the other mhc_expansion_rate - 1 streams (chosen per token by a router on stream 0), with no stream mixing, so it moves (2k+1) of the n streams instead of all of them. 0 is dense mHC. Requires mhc=True; not combinable with mhc_lerp.
 mhc_sinkhorn_iters: 20  # Sinkhorn-Knopp sweeps used to project the stream mixer onto the Birkhoff polytope.
 micro_batch_size: null  # Batch size per model instance (local batch size). Global batch size is local batch size times data parallel size times number of micro batches.
@@ -528,6 +530,7 @@ min_loss_scale: 1.0  # Minimum loss scale for dynamic loss scaling.
 min_lr: 0.0  # Minimum value for learning rate. The schedulerclip values below this threshold.
 min_offloaded_tensor_size: 1048576  # The minimum size of the tensor to be offloaded.
 mla_down_proj_fusion: false  # Enable fused q/kv down-projection and fused input layernorm when backend supports. Otherwise fall back to the unfused MLA.
+mla_num_query_groups: null  # Grouped-query MLA: key/value heads up-projected from the KV latent (None = one per query head). --qk-pos-emb-head-dim 0 makes MLA NoPE.
 mlp_chunks_for_prefill: 1  # The number of chunks along the sequence dimension to use for MLP computation during prefill.
 mlp_chunks_for_training: 1  # The number of chunks along the sequence dimension to use for MLP computation during training.
 mlstm_backend: chunkwise--triton_xl_chunk  # mlstm_kernels sequence kernel used by the mLSTM attention variant.
