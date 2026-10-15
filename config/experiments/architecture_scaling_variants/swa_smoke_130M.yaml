@@ -1,0 +1,35 @@
+# @package _global_
+# Smoke test — run this FIRST. 130M SWA model, 1 node, 500 iters, no
+# checkpointing. Verifies on JUPITER that:
+#   - --window-size 1024,0 + --window-attn-skip-freq 6 are accepted by the
+#     container's Megatron/TransformerEngine and flash/fused attention
+#     actually supports sliding windows on GH200
+#   - data + gpt-neox-20b tokenizer resolve offline, split 99,1,0 works
+#   - throughput baseline for planning
+# Compare the first ~500 iters of the loss curve against a baseline 130M run
+# (wandb dense_scaling) as a cheap sanity check.
+defaults:
+  - size_130M
+  - _self_
+
+aux:
+  gbs: 32
+  mbs: 8
+  tokens: 0          # unused; train_iters overridden below
+  extra_steps: []    # no cooldown branches in the smoke test
+
+backend:
+  megatron:
+    lr: 0.0005
+    train_iters: 500
+    lr_wsd_decay_iters: 0
+    save: null
+    save_extra_steps: []
+    eval_interval: 250
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:30:00"   # short time limit -> high scheduling priority
+
+stage: smoke

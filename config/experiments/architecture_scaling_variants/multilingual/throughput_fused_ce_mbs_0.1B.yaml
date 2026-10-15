@@ -1,0 +1,45 @@
+# @package _global_
+# Isolate the memory/performance effect of Megatron's fused execution path on
+# the 0.1B full-attention control. The shared ml_base enables native CE,
+# gradient-accumulation, and masked-softmax fusions.
+defaults:
+  - smoke_0.1B
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_fused_ce_mbs
+
+backend:
+  megatron:
+    train_iters: 100
+    lr_warmup_iters: 20
+    eval_interval: 1000
+    eval_iters: 1
+    log_interval: 10
+    global_batch_size: 32
+    window_size: null
+    window_attn_skip_freq: null
+    experimental_attention_variant: null
+    linear_attention_freq: null
+    position_embedding_type: rope
+    rotary_base: 10000
+    # Reuse a completed, identical blend-index cache. This benchmark only
+    # changes per-GPU microbatch and therefore does not need to rebuild it.
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/four_model_throughput/fullattn_rope"
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:30:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.variant: fullattn_rope_fused_mbs4
+          backend.megatron.micro_batch_size: 4
+
+        - aux.variant: fullattn_rope_fused_mbs8
+          backend.megatron.micro_batch_size: 8

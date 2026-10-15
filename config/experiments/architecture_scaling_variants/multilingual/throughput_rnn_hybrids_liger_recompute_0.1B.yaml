@@ -1,0 +1,43 @@
+# @package _global_
+# Throughput-only retry for the two 7:1 recurrent hybrids that miss the
+# MBS=32 Liger gate. This is a 100-iteration / ~105M-token run per point,
+# not a 6B-token training run. Completed 2026-07-31: recompute regressed to
+# mLSTM 235.5 TFLOP/s/GPU / 173.0k Tok/s/GPU (job 1138571) and GDN 195.7 /
+# 142.5k (job 1138570), so it is not a production candidate.
+defaults:
+  - throughput_four_models_liger_0.1B
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_rnn_liger_recompute_gate
+
+backend:
+  megatron:
+    # Recompute one of the sixteen transformer layers to make the larger fixed
+    # micro-batch fit. Full-iteration capture is required in this branch.
+    micro_batch_size: 64
+    global_batch_size: 256
+    cuda_graph_impl: full_iteration
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.variant: mlstm7_nope_mbs64_recompute
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: mlstm
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.position_embedding_type: none
+
+        - aux.variant: gdn7_nope_mbs64_recompute
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: gated_delta_net
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.position_embedding_type: none

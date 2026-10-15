@@ -1,0 +1,19 @@
+# @package _global_
+# 0.9B throughput/checkpoint debug — 8 nodes, mbs2, gbs512 (0.9B_mid geometry).
+# Most nodes => most GPFS clients + the most-stressed multi-node save.
+defaults:
+  - size_0.9B
+  - tp_debug_base
+  - override /container: jupiter_liger_mamba
+  - override /job: default
+  - _self_
+
+aux:
+  mbs: 2
+  gbs: 512
+  size_tag: s09B
+
+slurm:
+  sbatch:
+    nodes: 8
+    time: "00:40:00"

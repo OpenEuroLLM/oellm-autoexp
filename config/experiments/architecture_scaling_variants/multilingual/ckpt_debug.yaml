@@ -1,0 +1,55 @@
+# @package _global_
+# Fast 2-node reproducer for the multi-node distributed checkpoint SAVE hang.
+# 0.1B / 2 nodes / mbs16 / gbs128 — exactly the 0.1B_low sweep geometry (cuda
+# graphs local + torch_dist + distributed optimizer). Saves quickly (interval
+# 10) so a save is attempted while cuda graphs are live. NO auto_restart so a
+# hung save is visible (not scancelled). Reuses the already-built blend index
+# from the stopped sweep so startup is fast.
+defaults:
+  - size_0.1B
+  - override /container: jupiter_liger_mamba
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: ckpt_debug
+  variant: fullattn
+  mbs: 16
+  gbs: 128
+  tokens: 0
+  extra_steps: []
+
+backend:
+  megatron:
+    lr: 0.001
+    # Liger fused CE (as in the main sweep) — avoids materializing the full
+    # 262k-vocab logits (else OOM at 64 GiB).
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
+    # Moderate num_samples (500 x 128 = 64k) — big enough to avoid the tiny-build
+    # bug, small enough to build fast. Save at 20 (cancel right after).
+    train_iters: 500
+    lr_warmup_iters: 3
+    lr_wsd_decay_iters: 0
+    split: "100,0,0"
+    eval_iters: 0
+    save: ${job.base_output_dir}
+    save_interval: 20
+    log_interval: 2
+    position_embedding_type: rope
+    rotary_base: 10000
+    experimental_attention_variant: null
+    linear_attention_freq: null
+    window_size: null
+    window_attn_skip_freq: null
+    # per-variant fresh cache (no concurrent-build race)
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/ckpt_debug/${aux.experiment_group}"
+    wandb_project: ckpt_debug
+
+slurm:
+  sbatch:
+    nodes: 2
+    time: "00:30:00"
+    exclude: jpbo-001-48
+
+stage: debug

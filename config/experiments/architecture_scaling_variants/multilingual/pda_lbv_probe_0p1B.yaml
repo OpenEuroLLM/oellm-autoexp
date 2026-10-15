@@ -1,0 +1,245 @@
+# @package _global_
+# PDA THROUGHPUT PROBE -- sweeps lower_bound_v at the exact matched-down 0.1B
+# production geometry (hidden 512, 16 layers, hd64 x 8, ffn 1408, mbs 16,
+# 262k vocab, 2 nodes), so ms/iter is directly comparable to the running arms.
+#
+# lower_bound_v is the SOLE input to value_segment_length(lbv, 80, 64) =
+#   int(2*80/(|lbv|*64)) * 64
+# and _segmented_value_gauge runs a PYTHON LOOP calling chunk_kda once per
+# segment, threading the state through. At the FLA default lbv=-2.0 that is
+# segment 64 -> 64 sequential kernel calls per layer per forward at T=4096.
+#   lbv -2.0  -> seg   64 -> 64 calls  (current production setting)
+#   lbv -1.0  -> seg  128 -> 32 calls
+#   lbv -0.5  -> seg  320 -> 13 calls
+#   lbv -0.25 -> seg  640 ->  7 calls
+#   lbv -0.125-> seg 1280 ->  4 calls
+# skda7 is the reference: no value gate, hence no segmentation at all, so it
+# bounds what pda can reach. NOTE lower_bound_v is a MODELLING knob too --
+# it floors the per-token value-gate decay -- so a win here still has to be
+# checked against loss, not adopted on speed alone.
+# Six hybrids re-dimensioned to the dense-attention inner dim and matched
+# to the EXISTING fullattn/swa7 baseline, which is deliberately NOT re-run.
+# Separate experiment group so it cannot be confused with main_7to1.
+defaults:
+  - ml_base
+  - override /container: jupiter_liger_mamba
+  - _self_
+
+aux:
+  # SEPARATE group: these arms are re-dimensioned and param-matched, so they
+  # must NOT land in the main_7to1 tree, whose completed runs use the original
+  # (unmatched) geometry and identical job names.
+  experiment_group: architecture_scaling_variants_multilingual_pda_lbv_probe
+  # Placeholders for base resolution; every real value is set per sweep point.
+  variant: fullattn
+  size: 0.1B
+  hidden: 512
+  ffn: 1536
+  layers: 16
+  heads: 8
+  qgroups: 8
+  gqa: false
+  mbs: 32
+  gbs: 128
+  tokens: 40_000_000_000
+  extra_steps: []
+
+  # ---- runtime estimate (drives aux.true_time -> run_autoexp.py GPU-h) ----
+  # MEASURED Tok/s/GPU per (architecture, size) from the thr_hmbs_*.yaml smokes
+  # at the DOUBLED-node production MBS (0.1B mbs16, 0.2B mbs8, 0.4B mbs4,
+  # 0.9B mbs2), all 5 archs incl. mamba2. This is the throughput *invariant*
+  # (per-GPU token rate is independent of gbs/GA/nodes), so one number per
+  # (arch,size) yields an accurate un-capped runtime for every tier/stage below.
+  # Keys are letter-leading ("s01B", not "01B"): the sibling mechanism flattens
+  # aux.* into Hydra override keys, whose grammar forbids a digit-leading path
+  # segment (a "." in aux.size would also break the key path).
+  tok_s:
+    fullattn:      {"s01B": 193000, "s02B": 115000, "s04B": 59000, "s09B": 36000}
+    swa7_rope100k: {"s01B": 206000, "s02B": 124000, "s04B": 67000, "s09B": 38000}
+    gdn7_nope:     {"s01B": 165000, "s02B": 101000, "s04B": 52000, "s09B": 34000}
+    gdn3_nope:     {"s01B": 163455, "s02B": 100825, "s04B": 53232, "s09B": 35235}
+    skda7_nope:    {"s01B": 154000, "s02B": 91000, "s04B": 44900, "s09B": 26600}
+    pda7_nope:     {"s01B": 39800,  "s02B": 23600, "s04B": 11600, "s09B": 6900}
+    mlstm7_nope:   {"s01B": 188000, "s02B": 115000, "s04B": 56000, "s09B": 34000}
+    mamba2_nope:   {"s01B": 172000, "s02B": 94000,  "s04B": 55000, "s09B": 32000}
+  # Set per ladder alongside aux.size (must match a tok_s sub-key).
+  size_tag: "s01B"
+  # Un-capped wall-time estimate in HOURS for this point, read by run_autoexp.py
+  # as aux.true_time for the sweep GPU-hour total (independent of the QOS-capped
+  # slurm --time reservation). runtime_iters = train_iters - start_iter covers
+  # both the stable (start_iter 0 -> full 0.8*Dmax) and each cooldown (the
+  # 0.2*D decay). Deferred so it resolves per point at final composition.
+  true_time: "\\${oc.eval:'(\\${backend.megatron.train_iters} - \\${aux.start_iter}) * \\${aux.seq_len} * \\${aux.gbs} / (\\${aux.tok_s.\\${aux.variant}.\\${aux.size_tag}} * \\${slurm.sbatch.nodes} * \\${slurm.sbatch.gpus_per_node} * 3600.0)'}"
+
+backend:
+  # skda/panini need FLA >= 0.5.x; the image ships 0.3.2.
+  env:
+    PYTHONPATH: "flash-linear-attention:.:submodules/Megatron-LM"
+  megatron:
+    lr: 0.002
+    # ---- SPEED PROBE ONLY: 100 iters, no checkpoints, no eval ----
+    train_iters: 100
+    lr_warmup_iters: 10
+    lr_wsd_decay_iters: 20
+    save: null
+    save_interval: 1000000000
+    # NOT 0: Megatron still builds the valid/test splits and asserts
+    # total_samples > 0, so eval_iters 0 dies with "no sample to consume: 0"
+    # before the first step. 1 iteration is cheap and never fires anyway
+    # because eval_interval far exceeds train_iters.
+    eval_iters: 1
+    eval_interval: 1000000000
+    log_interval: 10
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
+    wandb_project: dense_multilingual_scaling_main_7to1
+    # Throughput fix (tp_debug_* sweep, 2026-08-02): the iteration-time
+    # instability was GPFS mmap read-latency starving the dataloader — the
+    # (CUDA-graph) step blocks on the next batch, so a slow read becomes a 1-18s
+    # iteration spike. Deeper prefetch (16 workers x prefetch_factor 8 = 128
+    # batches ~45s runway) fully absorbs it: 0 stalls >300ms at every scale,
+    # mean batch-generator 736ms -> 1ms at 0.1B. prefetch_factor is set via the
+    # MEGATRON_DATALOADER_PREFETCH_FACTOR env (slurm.env below).
+    num_workers: 16
+    # Per-(variant,size,gbs) blend-index cache. num_samples ~= tokens/seq_len is
+    # independent of gbs, so all architectures/ladders at a given budget would
+    # otherwise share one index file and race-build it (EOFError) at launch.
+    # Keying on variant+size+gbs gives each ladder its own dir; the stable and
+    # its cooldowns differ in num_samples so they never collide within a dir.
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/main_sweep/${aux.variant}_${aux.size}_gbs${aux.gbs}"
+
+slurm:
+  env:
+    # Multi-node checkpoint save fix: the torch distributed-checkpoint coordinator
+    # does a rooted NCCL gather that fails with "NCCL Error 3: internal error" on
+    # NCCL's P2P transport across nodes (single-node worked over NVLink, which is
+    # why the 6B runs never hit it). Disabling P2P routes the gather around the
+    # bug. Measured throughput cost on GH200: ~0 (357 vs 358 ms/iter at 0.1B/2n).
+    NCCL_P2P_DISABLE: "1"
+    # Deeper dataloader prefetch buffer (read by the data_samplers.py patch).
+    # 16 workers x 8 = 128 batches buffered — absorbs GPFS read stalls.
+    MEGATRON_DATALOADER_PREFETCH_FACTOR: "8"
+  sbatch:
+    nodes: 1
+    exclude: jpbo-001-48
+    # QOS wall-time ceiling (12h on the booster). This is the CAP; run_autoexp
+    # right-sizes each job's actual reservation down to min(this, aux.true_time
+    # x1.5) from the measured throughput. A plain value (not an interpolation)
+    # keeps it robust through the sibling snapshot; jobs whose true runtime
+    # exceeds 12h reserve the full 12h and wall-time-chain via auto_restart.
+    time: "12:00:00"
+
+stage: speedprobe
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # IN-KERNEL gauge at the modelling-default lbv. If the gauge really rides
+        # inside the kernel, lower_bound_v no longer costs launches and this should
+        # land near kda7_ref rather than at the 1179 ms/iter of the segmented path.
+        - aux.variant: pda7_ink_lbv2p0
+          aux.ffn: 1408
+          backend.megatron.experimental_attention_variant: panini
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.linear_conv_kernel_dim: 4
+          backend.megatron.linear_key_head_dim: 64
+          backend.megatron.linear_num_key_heads: 8
+          backend.megatron.linear_fla_gate: signed_sigmoid2
+          backend.megatron.linear_fla_output_gate: lowrank
+          backend.megatron.linear_fla_lower_bound: -5.0
+          backend.megatron.linear_fla_allow_neg_eigval: true
+          backend.megatron.linear_fla_v_gate: signed_sigmoid2
+          backend.megatron.linear_fla_lower_bound_v: -2.0
+          backend.megatron.linear_fla_v_gate_in_kernel: true
+
+        # SANITY: in-kernel at a 20x weaker gate floor. Must be ~identical to
+        # pda7_ink_lbv2p0 -- if it is faster, segmentation is still live somewhere.
+        - aux.variant: pda7_ink_lbv0p125
+          aux.ffn: 1408
+          backend.megatron.experimental_attention_variant: panini
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.linear_conv_kernel_dim: 4
+          backend.megatron.linear_key_head_dim: 64
+          backend.megatron.linear_num_key_heads: 8
+          backend.megatron.linear_fla_gate: signed_sigmoid2
+          backend.megatron.linear_fla_output_gate: lowrank
+          backend.megatron.linear_fla_lower_bound: -5.0
+          backend.megatron.linear_fla_allow_neg_eigval: true
+          backend.megatron.linear_fla_v_gate: signed_sigmoid2
+          backend.megatron.linear_fla_lower_bound_v: -0.125
+          backend.megatron.linear_fla_v_gate_in_kernel: true
+
+        # CONTROL: the segmented fallback that every pda run so far used (64 launches).
+        - aux.variant: pda7_seg_lbv2p0
+          aux.ffn: 1408
+          backend.megatron.experimental_attention_variant: panini
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.linear_conv_kernel_dim: 4
+          backend.megatron.linear_key_head_dim: 64
+          backend.megatron.linear_num_key_heads: 8
+          backend.megatron.linear_fla_gate: signed_sigmoid2
+          backend.megatron.linear_fla_output_gate: lowrank
+          backend.megatron.linear_fla_lower_bound: -5.0
+          backend.megatron.linear_fla_allow_neg_eigval: true
+          backend.megatron.linear_fla_v_gate: signed_sigmoid2
+          backend.megatron.linear_fla_lower_bound_v: -2.0
+          backend.megatron.linear_fla_v_gate_in_kernel: false
+
+        # reference: plain Kimi KDA, parameter-identical to skda7.
+        - aux.variant: kda7_ref
+          aux.ffn: 1408
+          backend.megatron.experimental_attention_variant: kda
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.linear_conv_kernel_dim: 4
+          backend.megatron.linear_key_head_dim: 64
+          backend.megatron.linear_num_key_heads: 8
+          backend.megatron.linear_fla_lower_bound: -5.0
+          backend.megatron.linear_fla_allow_neg_eigval: true
+
+        # reference: signed KDA, no value gate at all.
+        - aux.variant: skda7_ref
+          aux.ffn: 1408
+          backend.megatron.experimental_attention_variant: signed_kda
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.linear_conv_kernel_dim: 4
+          backend.megatron.linear_key_head_dim: 64
+          backend.megatron.linear_num_key_heads: 8
+          backend.megatron.linear_fla_gate: signed_sigmoid2
+          backend.megatron.linear_fla_output_gate: lowrank
+          backend.megatron.linear_fla_lower_bound: -5.0
+          backend.megatron.linear_fla_allow_neg_eigval: true
+
+    - type: list
+      configs:
+        - aux.size: 0.1B
+          aux.hidden: 512
+          aux.layers: 16
+          aux.heads: 8
+          aux.qgroups: 8
+          aux.gqa: false
+          aux.mbs: 16
+          aux.gbs: 128
+          aux.size_tag: "s01B"
+          aux.tokens: 20_000_000_000
+          aux.start_iter: 0
+          backend.megatron.lr: 0.002
+          slurm.sbatch.nodes: 2
+          slurm.sbatch.time: "0:30:00"

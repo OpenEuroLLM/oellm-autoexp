@@ -1,0 +1,78 @@
+# @package _global_
+# Speed reference — NATIVE Mamba2 hybrid (Megatron HybridModel / MambaStack via
+# pretrain_hybrid.py), Nemotron-H-style layer pattern, ~0.1B. Throughput smoke
+# (100 iters) to compare Tok/s/GPU against the GPT-block Mamba2 adapter
+# (experimental_attention_variant=mamba), which ran ~237 TFLOP/s, 172k Tok/s at
+# MBS32/GBS128. This is a DIFFERENT architecture (Mamba/attention/MLP as separate
+# layers) — a speed reference, not an apples-to-apples net.
+#
+# Pattern "M-M-M-M-*-M-M-M-M-*-M-M-M-M-" = 28 layers: 12 Mamba (M), 14 MLP (-),
+# 2 attention (*) — ~7% attention, Mamba+MLP interleaved (Nemotron-H style).
+defaults:
+  - ml_base
+  - override /container: jupiter_liger_mamba
+  - override /job: default   # a smoke failure must be diagnosed, not resubmitted
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_native_mamba_speed
+  variant: native_mamba2_hybrid
+  size: 0.1B
+  hidden: 512
+  ffn: 1536
+  layers: 28
+  heads: 8
+  qgroups: 8
+  gqa: false
+  mbs: 32
+  gbs: 128
+  tokens: 0
+  extra_steps: []
+
+backend:
+  # Native hybrid path (MambaStack) instead of pretrain_gpt.py.
+  launcher_script: ./submodules/Megatron-LM/pretrain_hybrid.py
+  megatron:
+    lr: 0.001
+    train_iters: 100
+    lr_warmup_iters: 20
+    lr_wsd_decay_iters: 0
+    eval_interval: 1000
+    eval_iters: 1
+    log_interval: 10
+    save: null
+    save_extra_steps: []
+    tensor_model_parallel_size: 1
+
+    # ---- native hybrid stack ----
+    is_hybrid_model: true
+    hybrid_layer_pattern: "M-M-M-M-*-M-M-M-M-*-M-M-M-M-"
+    # pretrain_hybrid requires an explicit hybrid stack spec (module + attr).
+    spec:
+      - megatron.core.models.hybrid.hybrid_layer_specs
+      - hybrid_stack_spec
+    mamba_state_dim: 128
+    mamba_head_dim: 64
+    mamba_num_groups: 8
+    position_embedding_type: none
+
+    # ---- neutralise the GPT experimental-attention-variant / SWA knobs ----
+    experimental_attention_variant: null
+    linear_attention_freq: null
+    window_size: null
+    window_attn_skip_freq: null
+
+    # Match the adapter smoke's throughput path (Liger fused LM-head/CE).
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
+
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/native_mamba_speed"
+    wandb_project: dense_multilingual_scaling_native_mamba_speed
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:50:00"
+    exclude: jpbo-001-48
+
+stage: smoke

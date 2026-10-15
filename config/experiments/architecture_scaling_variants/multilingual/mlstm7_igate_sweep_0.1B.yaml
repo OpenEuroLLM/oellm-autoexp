@@ -1,0 +1,138 @@
+# @package _global_
+# mLSTM input-gate-bias-init hyperparameter sweep at the 0.1B / 6B-token cell.
+#
+# Motivation: in the four-architecture comparison the 7:1 mLSTM variant fell
+# slightly behind the others, with anomalous behaviour around ~1k steps that is
+# suspected to stem from the very low default input-gate bias init (-10.0),
+# which keeps the input gate almost shut early in training. This sweep varies
+# only `mlstm_igate_bias_init` across {-12, -10, -8, -3} (-10 is the current
+# default / "normal" point, retained here so the comparison is self-contained
+# and runs under the identical code path — it duplicates the main-comparison
+# mLSTM run and can be dropped to save one allocation).
+#
+# Everything else is pinned to the exact recipe of the main comparison
+# (`fullattn_mlstm7_gdn7_0.1B_50BT.yaml`): 7:1 mLSTM + NoPE, GBS=128, LR=5e-4,
+# 6B tokens, 2k warmup, linear WSD cooldown over the final 2,289 of 11,445
+# iterations, split 100,0,0 for training, and a common `datamix4-val`
+# evaluation after annealing.
+defaults:
+  - size_0.1B
+  - /backend/megatron/data_multilingual_1tt_val_jupiter@aux.val_dataset
+  - override /container: jupiter_liger
+  - override /job: default
+  - _self_
+
+aux:
+  # Fresh namespace so the sweep's DAG conditions do not touch other groups.
+  experiment_group: architecture_scaling_variants_multilingual_mlstm7_igate_sweep
+  # Overridden per sweep point (encodes the igate init so job names / output
+  # dirs / data caches stay distinct).
+  variant: mlstm7_nope_igm10
+  gbs: 128
+  mbs: 32
+  tokens: 6_000_000_000
+  final_train_iters: "${oc.eval:'(${aux.tokens}+${aux.seq_len}*${aux.gbs}-1)//(${aux.seq_len}*${aux.gbs})'}"
+  extra_steps: []
+
+backend:
+  megatron:
+    # Key the blend-index cache on the (per-point) variant tag: the four jobs
+    # run concurrently and must not build/cache the same shuffle index at once
+    # (a partial index file makes the others fail with EOFError). Seed, blend
+    # and sample counts are identical across points.
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/mlstm7_igate_sweep_6B/${aux.variant}"
+
+    aux:
+      val_datamix_prefix: /e/data1/datasets/products/openeurollm/pretokenized/openeurollm-tokenized-256k-val
+
+    # Same direct WSD schedule as the baseline 0.1B / gbs128 cell.
+    lr: 0.0005
+    lr_decay_iters: null
+    lr_wsd_decay_iters: 2289
+
+    # Validated MBS=32 high-throughput Liger path.
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
+
+    # 7:1 mLSTM + NoPE (identical to the main comparison's mLSTM point). Only
+    # the input-gate bias init is swept, via `mlstm_igate_bias_init` below.
+    position_embedding_type: none
+    experimental_attention_variant: mlstm
+    linear_attention_freq: 8
+    window_size: null
+    window_attn_skip_freq: null
+
+    # Shared hybrid geometry.
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 128
+    linear_value_head_dim: 128
+    linear_num_key_heads: ${aux.qgroups}
+    linear_num_value_heads: ${aux.heads}
+    mlstm_chunk_size: 128
+
+    wandb_project: dense_multilingual_scaling_mlstm7_igate_sweep
+
+slurm:
+  env:
+    GLOO_SOCKET_IFNAME: ib0
+  sbatch:
+    nodes: 1
+    time: "12:00:00"
+    exclude: jpbo-001-48
+
+stage: final6BT
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    # Sweep point = input-gate bias init. The variant tag encodes the value so
+    # every point gets a unique job name / output dir / data cache.
+    - type: list
+      configs:
+        - aux.variant: mlstm7_nope_igm12
+          backend.megatron.mlstm_igate_bias_init: -12.0
+        - aux.variant: mlstm7_nope_igm10
+          backend.megatron.mlstm_igate_bias_init: -10.0
+        - aux.variant: mlstm7_nope_igm8
+          backend.megatron.mlstm_igate_bias_init: -8.0
+        - aux.variant: mlstm7_nope_igm3
+          backend.megatron.mlstm_igate_bias_init: -3.0
+
+    # Train once (split 100,0,0), then run the common external validation blend
+    # from the final checkpoint. eval_iters=0 on the train stage disables the
+    # in-loop periodic eval (there is no validation split at train time; leaving
+    # it on forces do_valid=True against an empty dataloader and crashes).
+    - type: list
+      configs:
+        - stage: final6BT
+          backend.megatron.split: '100,0,0'
+          backend.megatron.eval_iters: 0
+
+        - stage: eval6BT
+          backend.megatron.skip_train: true
+          backend.megatron.train_iters: 1
+          backend.megatron.eval_interval: 1
+          backend.megatron.eval_iters: "${oc.eval:'int(204800 // ${aux.gbs})'}"
+          backend.megatron.data_path: []
+          backend.megatron.train_data_path: null
+          backend.megatron.valid_data_path: ${aux.val_dataset.valid_data_path}
+          backend.megatron.test_data_path: null
+          backend.megatron.split: null
+          backend.megatron.load: "\\${sibling.final6BT.job.base_output_dir}/"
+          backend.megatron.exit_on_missing_checkpoint: true
+          backend.megatron.save_interval: 1
+          backend.megatron.no_save_optim: true
+          backend.megatron.no_save_rng: true
+          backend.megatron.no_load_optim: true
+          backend.megatron.no_load_rng: true
+          container.env.WANDB_MODE: offline
+          slurm.sbatch.nodes: 1
+          slurm.sbatch.time: "4:00:00"
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.final6BT.job.base_output_dir}/iter_\\${oc.eval:'str(\\${aux.final_train_iters}).zfill(7)'}"
+          job.cancel_condition:
+            class_name: LogPatternCondition
+            log_path: "\\${sibling.final6BT.job.log_path_current}"
+            pattern: "FATAL ERROR|OutOfMemoryError|Traceback"

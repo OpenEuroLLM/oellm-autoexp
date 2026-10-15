@@ -1,0 +1,147 @@
+# @package _global_
+# Throughput smoke at the DOUBLED-node production geometry (halved MBS=16),
+# 1 node, 100 iters, 7 archs (the 5 7:1/dense arms + the 2 3:1 GDN arms).
+# Measures Tok/s/GPU per arch at the new MBS to
+# refine aux.tok_s in main_scaling_all. Tok/s/GPU is node-invariant so 1 node
+# suffices; GA=1 (gbs 64) — per-microbatch throughput is GA-independent.
+defaults:
+  - size_0.1B
+  - override /container: jupiter_liger_mamba
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_thr_hmbs
+  variant: fullattn
+  mbs: 16
+  gbs: 64
+  tokens: 0
+  extra_steps: []
+
+backend:
+  megatron:
+    lr: 0.001
+    train_iters: 100
+    lr_warmup_iters: 20
+    lr_decay_iters: null
+    lr_wsd_decay_iters: 0
+    split: "100,0,0"
+    eval_iters: 0
+    save: null
+    save_interval: 100000
+    save_extra_steps: []
+    log_interval: 10
+    log_throughput: true
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/thr_hmbs/${aux.size}_${aux.variant}"
+    wandb_project: dense_multilingual_scaling_thr_hmbs
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:30:00"
+    exclude: jpbo-001-48
+
+stage: smoke
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.variant: fullattn
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_base: 10000
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: null
+          backend.megatron.linear_attention_freq: null
+        - aux.variant: swa7_rope100k
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_base: 100000
+          backend.megatron.window_size: "1024,0"
+          backend.megatron.window_attn_skip_freq: 8
+          backend.megatron.experimental_attention_variant: null
+          backend.megatron.linear_attention_freq: null
+        - aux.variant: gdn7_nope
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: gated_delta_net
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.linear_conv_kernel_dim: 4
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_value_head_dim: 128
+          backend.megatron.linear_num_key_heads: ${aux.qgroups}
+          backend.megatron.linear_num_value_heads: ${aux.heads}
+        - aux.variant: mlstm7_nope
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: mlstm
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.mlstm_conv1d: false
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_value_head_dim: 128
+          backend.megatron.linear_num_key_heads: ${aux.heads}
+          backend.megatron.linear_num_value_heads: ${aux.heads}
+          backend.megatron.mlstm_chunk_size: 128
+          backend.megatron.mlstm_igate_bias_init: -8.0
+        - aux.variant: mamba2_nope
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: mamba
+          backend.megatron.linear_attention_freq: 8
+
+    # ---------------- 3:1 GDN arms (indices 5, 6) ----------------
+    # Both use linear_attention_freq 4 (3 GDN : 1 softmax) instead of 8, so they
+    # carry one more attention layer per 4 than the 7:1 arms carry per 8.
+    #
+    # gdn3_nope: the arm already defined in gdn3_scaling_all.yaml, whose tok_s
+    # there is INTERPOLATED, not measured (see its PROVISIONAL note). Measured
+    # here so the 3:1 pair shares one geometry and one measurement pass.
+    #
+    # gdn3_qwen35: the Qwen3.5 / Qwen3-Next dense block. Deltas vs gdn3_nope:
+    #   attention_output_gate      -- sigmoid gate on the softmax layers' output,
+    #                                 fused into linear_qkv as [q, gate, k, v]
+    #                                 (+hidden*heads*kv_channels params per attn
+    #                                 layer, ~+2.5% non-embedding params)
+    #   layernorm_zero_centered_gamma -- zero-centred RMSNorm gamma everywhere
+    #                                 (--apply-layernorm-1p; TE-only, the torch
+    #                                 norm fallback asserts against it)
+    #   rope on the softmax layers -- rotary_percent 0.25 (partial RoPE over
+    #                                 32 of 128 head dims). GDN's forward ignores
+    #                                 rotary_pos_emb, so the linear layers stay
+    #                                 positionless exactly as in Qwen.
+    # rotary_base stays at the sweep baseline 10000: Qwen's 1e7 is a 256k-context
+    # setting and would be a confound at our 4096 seq_len. Throughput-neutral
+    # either way, so this smoke measures the same tok/s for both choices.
+        - aux.variant: gdn3_nope
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: gated_delta_net
+          backend.megatron.linear_attention_freq: 4
+          backend.megatron.linear_conv_kernel_dim: 4
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_value_head_dim: 128
+          backend.megatron.linear_num_key_heads: ${aux.qgroups}
+          backend.megatron.linear_num_value_heads: ${aux.heads}
+        - aux.variant: gdn3_qwen35
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_base: 10000
+          backend.megatron.rotary_percent: 0.25
+          backend.megatron.attention_output_gate: true
+          backend.megatron.layernorm_zero_centered_gamma: true
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: gated_delta_net
+          backend.megatron.linear_attention_freq: 4
+          backend.megatron.linear_conv_kernel_dim: 4
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_value_head_dim: 128
+          backend.megatron.linear_num_key_heads: ${aux.qgroups}
+          backend.megatron.linear_num_value_heads: ${aux.heads}

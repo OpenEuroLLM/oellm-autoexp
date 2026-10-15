@@ -1,0 +1,52 @@
+# @package _global_
+# One-node GH200 throughput tuning for the 0.1B SWA model. This varies the
+# per-GPU microbatch, which changes kernel occupancy; merely raising global
+# batch size while keeping mbs=4 would not address the observed bottleneck.
+defaults:
+  - smoke_0.1B
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_throughput
+
+backend:
+  megatron:
+    # Exclude startup/cache and evaluation from the steady-state measurement.
+    train_iters: 100
+    lr_warmup_iters: 20
+    eval_interval: 1000
+    eval_iters: 1
+    log_interval: 10
+    # Four points may start together; do not let concurrent rank-zero workers
+    # race while writing the Megatron blend-index cache.
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/throughput_swa5/${aux.variant}"
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:30:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # Current smoke baseline: mbs=4 and two accumulation steps at gbs32.
+        - aux.variant: swa5w1024_mbs4_gbs32
+          aux.mbs: 4
+          aux.gbs: 32
+
+        # Same global batch, but a single, better-occupied microbatch per GPU.
+        - aux.variant: swa5w1024_mbs8_gbs32
+          aux.mbs: 8
+          aux.gbs: 32
+
+        # Larger per-GPU work; accumulation remains one.
+        - aux.variant: swa5w1024_mbs16_gbs64
+          aux.mbs: 16
+          aux.gbs: 64
+
+        - aux.variant: swa5w1024_mbs32_gbs128
+          aux.mbs: 32
+          aux.gbs: 128

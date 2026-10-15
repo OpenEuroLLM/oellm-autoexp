@@ -1,0 +1,61 @@
+# @package _global_
+# Geometry retry — GDN 7:1 at 0.9B, which OOM'd at MBS=8 / 1 node / TP=1 (Triton
+# CUDA OOM). GDN (fla kernels + conv/gate/decay state) is the memory-binding
+# architecture. Two fallback geometries, both on 1 node, gbs 16 (GA=1):
+#   A) TP=2, MBS=8  -> DP=2  (shard model+activations across 2 GPUs)
+#   B) TP=1, MBS=4  -> DP=4  (halve per-GPU activation memory)
+# Pick the one that fits with the higher Tok/s/GPU for the 0.9B ladder geometry.
+defaults:
+  - size_0.9B
+  - main_7to1_base
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_geo_smoke
+  variant: gdn7_nope
+  gbs: 16
+  tokens: 0
+  extra_steps: []
+
+backend:
+  megatron:
+    lr: 0.001
+    train_iters: 100
+    lr_warmup_iters: 20
+    lr_wsd_decay_iters: 0
+    eval_interval: 1000
+    eval_iters: 1
+    log_interval: 10
+    save: null
+    save_extra_steps: []
+    position_embedding_type: none
+    experimental_attention_variant: gated_delta_net
+    linear_attention_freq: 8
+    window_size: null
+    window_attn_skip_freq: null
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 128
+    linear_value_head_dim: 128
+    linear_num_key_heads: ${aux.qgroups}
+    linear_num_value_heads: ${aux.heads}
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/geo_smoke/0.9B_gdn_retry_${aux.mbs}_tp${backend.megatron.tensor_model_parallel_size}"
+    wandb_project: dense_multilingual_scaling_geo_smoke
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:50:00"
+
+stage: smoke
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.mbs: 8
+          backend.megatron.tensor_model_parallel_size: 2
+        - aux.mbs: 4
+          backend.megatron.tensor_model_parallel_size: 1

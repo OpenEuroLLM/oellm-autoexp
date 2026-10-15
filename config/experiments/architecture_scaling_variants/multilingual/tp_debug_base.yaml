@@ -1,0 +1,65 @@
+# @package _global_
+# Shared mixin for the THROUGHPUT + CHECKPOINT debug (separate project;
+# experiment_group=throughput_debug, so the main sweep's checkpoints are
+# untouched). Goal: (1) CONFIRM the iteration-time spikes are GPFS dataloader
+# stalls by printing the `batch-generator` timer (timing_log_level=2 +
+# log_interval=1), and (2) test the fix — more dataloader workers + a deeper
+# prefetch buffer (aux.num_workers / aux.prefetch_factor, override on the CLI).
+#
+# Fullattn, production node counts + halved MBS per scale (set in the per-scale
+# file). NCCL_P2P_DISABLE kept (the checkpoint-save fix; ~0 throughput cost, see
+# the P2P A/B). Short save_interval exercises checkpointing several times per run.
+#
+# Included as a defaults-list mixin AFTER size_*.yaml (so it overrides ml_base's
+# SWA settings back to plain full attention). Per-scale files set geometry last.
+aux:
+  experiment_group: throughput_debug
+  variant: fullattn
+  tokens: 0
+  extra_steps: []
+  start_iter: 0
+  # Dataloader levers — override per run: baseline = 6/2, fix = 24/4.
+  num_workers: 6
+  prefetch_factor: 2
+
+backend:
+  megatron:
+    lr: 0.001
+    # Liger fused CE (as in the main sweep) — avoids materializing the full
+    # 262k-vocab logits (else OOM at 64 GiB).
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
+    train_iters: 150
+    lr_warmup_iters: 3
+    lr_wsd_decay_iters: 0
+    split: "100,0,0"
+    eval_iters: 0
+    eval_interval: 100000
+    save: ${job.base_output_dir}
+    save_interval: 40           # exercise the distributed save several times
+    log_interval: 1             # per-iteration timing resolution
+    timing_log_level: 2         # prints the `batch-generator` timer => proves DL stall
+    timing_log_option: max
+    num_workers: ${aux.num_workers}
+    # Plain full attention (override ml_base's SWA defaults).
+    position_embedding_type: rope
+    rotary_base: 10000
+    window_size: null
+    window_attn_skip_freq: null
+    experimental_attention_variant: null
+    linear_attention_freq: null
+    # Per-(variant,size,gbs) fresh cache (no concurrent-build race with the sweep).
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/tp_debug/${aux.variant}_${aux.size}_gbs${aux.gbs}"
+    wandb_project: throughput_debug
+
+slurm:
+  env:
+    # Checkpoint-save fix (routes the coordinator gather off NCCL P2P). ~0
+    # steady-state cost (P2P A/B: 348 vs 350 ms/iter). Keep it.
+    NCCL_P2P_DISABLE: "1"
+    # Deeper dataloader prefetch (patch in data_samplers.py reads this env).
+    MEGATRON_DATALOADER_PREFETCH_FACTOR: "${aux.prefetch_factor}"
+  sbatch:
+    exclude: jpbo-001-48
+
+stage: debug

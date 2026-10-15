@@ -1,0 +1,283 @@
+# @package _global_
+# 0.1B gdn3_qwen35 arm -- Qwen3.5 dense LM, matched down to the fullattn basis.
+# Shares the matcheddown_0p1B experiment group (job names carry the variant,
+# so nothing collides with the six arms already running).
+# Six hybrids re-dimensioned to the dense-attention inner dim and matched
+# to the EXISTING fullattn/swa7 baseline, which is deliberately NOT re-run.
+# Separate experiment group so it cannot be confused with main_7to1.
+defaults:
+  - ml_base
+  - override /container: jupiter_liger_mamba
+  - _self_
+
+aux:
+  # SEPARATE group: these arms are re-dimensioned and param-matched, so they
+  # must NOT land in the main_7to1 tree, whose completed runs use the original
+  # (unmatched) geometry and identical job names.
+  experiment_group: architecture_scaling_variants_multilingual_matcheddown_0p1B
+  # Placeholders for base resolution; every real value is set per sweep point.
+  variant: fullattn
+  size: 0.1B
+  hidden: 512
+  ffn: 1536
+  layers: 16
+  heads: 8
+  qgroups: 8
+  gqa: false
+  mbs: 32
+  gbs: 128
+  tokens: 40_000_000_000
+  extra_steps: []
+
+  # ---- runtime estimate (drives aux.true_time -> run_autoexp.py GPU-h) ----
+  # MEASURED Tok/s/GPU per (architecture, size) from the thr_hmbs_*.yaml smokes
+  # at the DOUBLED-node production MBS (0.1B mbs16, 0.2B mbs8, 0.4B mbs4,
+  # 0.9B mbs2), all 5 archs incl. mamba2. This is the throughput *invariant*
+  # (per-GPU token rate is independent of gbs/GA/nodes), so one number per
+  # (arch,size) yields an accurate un-capped runtime for every tier/stage below.
+  # Keys are letter-leading ("s01B", not "01B"): the sibling mechanism flattens
+  # aux.* into Hydra override keys, whose grammar forbids a digit-leading path
+  # segment (a "." in aux.size would also break the key path).
+  tok_s:
+    fullattn:      {"s01B": 193000, "s02B": 115000, "s04B": 59000, "s09B": 36000}
+    swa7_rope100k: {"s01B": 206000, "s02B": 124000, "s04B": 67000, "s09B": 38000}
+    gdn7_nope:     {"s01B": 165000, "s02B": 101000, "s04B": 52000, "s09B": 34000}
+    gdn3_nope:     {"s01B": 163455, "s02B": 100825, "s04B": 53232, "s09B": 35235}
+    skda7_nope:    {"s01B": 154000, "s02B": 91000, "s04B": 44900, "s09B": 26600}
+    gdn3_qwen35:   {"s01B": 158000, "s02B": 97000, "s04B": 51000, "s09B": 34000}
+    pda7_nope:     {"s01B": 39800,  "s02B": 23600, "s04B": 11600, "s09B": 6900}
+    mlstm7_nope:   {"s01B": 188000, "s02B": 115000, "s04B": 56000, "s09B": 34000}
+    mamba2_nope:   {"s01B": 172000, "s02B": 94000,  "s04B": 55000, "s09B": 32000}
+  # Set per ladder alongside aux.size (must match a tok_s sub-key).
+  size_tag: "s01B"
+  # Un-capped wall-time estimate in HOURS for this point, read by run_autoexp.py
+  # as aux.true_time for the sweep GPU-hour total (independent of the QOS-capped
+  # slurm --time reservation). runtime_iters = train_iters - start_iter covers
+  # both the stable (start_iter 0 -> full 0.8*Dmax) and each cooldown (the
+  # 0.2*D decay). Deferred so it resolves per point at final composition.
+  true_time: "\\${oc.eval:'(\\${backend.megatron.train_iters} - \\${aux.start_iter}) * \\${aux.seq_len} * \\${aux.gbs} / (\\${aux.tok_s.\\${aux.variant}.\\${aux.size_tag}} * \\${slurm.sbatch.nodes} * \\${slurm.sbatch.gpus_per_node} * 3600.0)'}"
+
+backend:
+  # skda/panini need FLA >= 0.5.x; the image ships 0.3.2.
+  env:
+    PYTHONPATH: "flash-linear-attention:.:submodules/Megatron-LM"
+  megatron:
+    lr: 0.002
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
+    wandb_project: dense_multilingual_scaling_main_7to1
+    # Throughput fix (tp_debug_* sweep, 2026-08-02): the iteration-time
+    # instability was GPFS mmap read-latency starving the dataloader — the
+    # (CUDA-graph) step blocks on the next batch, so a slow read becomes a 1-18s
+    # iteration spike. Deeper prefetch (16 workers x prefetch_factor 8 = 128
+    # batches ~45s runway) fully absorbs it: 0 stalls >300ms at every scale,
+    # mean batch-generator 736ms -> 1ms at 0.1B. prefetch_factor is set via the
+    # MEGATRON_DATALOADER_PREFETCH_FACTOR env (slurm.env below).
+    num_workers: 16
+    # Per-(variant,size,gbs) blend-index cache. num_samples ~= tokens/seq_len is
+    # independent of gbs, so all architectures/ladders at a given budget would
+    # otherwise share one index file and race-build it (EOFError) at launch.
+    # Keying on variant+size+gbs gives each ladder its own dir; the stable and
+    # its cooldowns differ in num_samples so they never collide within a dir.
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/main_sweep/${aux.variant}_${aux.size}_gbs${aux.gbs}"
+
+slurm:
+  env:
+    # Multi-node checkpoint save fix: the torch distributed-checkpoint coordinator
+    # does a rooted NCCL gather that fails with "NCCL Error 3: internal error" on
+    # NCCL's P2P transport across nodes (single-node worked over NVLink, which is
+    # why the 6B runs never hit it). Disabling P2P routes the gather around the
+    # bug. Measured throughput cost on GH200: ~0 (357 vs 358 ms/iter at 0.1B/2n).
+    NCCL_P2P_DISABLE: "1"
+    # Deeper dataloader prefetch buffer (read by the data_samplers.py patch).
+    # 16 workers x 8 = 128 batches buffered — absorbs GPFS read stalls.
+    MEGATRON_DATALOADER_PREFETCH_FACTOR: "8"
+  sbatch:
+    nodes: 1
+    exclude: jpbo-001-48
+    # QOS wall-time ceiling (12h on the booster). This is the CAP; run_autoexp
+    # right-sizes each job's actual reservation down to min(this, aux.true_time
+    # x1.5) from the measured throughput. A plain value (not an interpolation)
+    # keeps it robust through the sibling snapshot; jobs whose true runtime
+    # exceeds 12h reserve the full 12h and wall-time-chain via auto_restart.
+    time: "12:00:00"
+
+stage: stable
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    # ===================== GROUP 0 — ARCHITECTURE =====================
+    # PARAMETER-MATCHED **DOWN** to the existing fullattn/swa7 baseline
+    # (188,809,216 params at ffn 1536), which is NOT re-run here -- it already
+    # exists in the main_7to1 sweep at exactly this geometry and ladder.
+    #
+    # Matching has two parts:
+    #   1. Every mixer is re-dimensioned to the SAME inner dim as dense
+    #      attention: 8 heads x 64 = 512 = 1.0x hidden. The sweep's original
+    #      hybrids ran head_dim 128 x 8 = 1024 = 2x hidden, which is the single
+    #      largest source of the 10-30% parameter inflation. mamba2 uses
+    #      mamba_num_heads 8 x mamba_head_dim 64 -> d_inner 512 (expand 1
+    #      instead of 2). This also matches the flash-linear-attention LM
+    #      configs, which run head_dim 64 with heads = hidden/64.
+    #   2. The small residual is absorbed in aux.ffn, rounded to multiples of
+    #      128. Residuals: gdn7 +0.38%, gdn3 +0.09%, mlstm7 +0.34%,
+    #      mamba2 -0.73%, skda7 -0.61%, pda7 -0.12%.
+    #
+    # mamba2 is the worst fit because its B/C projections are ngroups(8) x
+    # d_state(128) = 1024 each regardless of d_inner, so it cannot be shrunk to
+    # the dense attention footprint by width alone; ffn 1024 (2.00x) is the
+    # closest multiple of 128.
+    #
+    # Per-layer mixer at inner 512: dense attn 1,048,576 | gdn 1,325,056 (+26%)
+    # | mlstm 1,318,912 (+26%) | mamba2 1,849,360 (+76%) | skda 1,190,984 (+14%)
+    # | pda 1,257,040 (+20%).
+    - type: list
+      configs:
+        # Qwen3.5 (Qwen3-Next) dense LM, PARAMETER-MATCHED DOWN. Same three
+        # deltas vs gdn3_nope as the unmatched gdn3_qwen35 arm in
+        # qwen35_scaling_all.yaml -- gated attention, zero-centered RMSNorm and
+        # partial RoPE 0.25 -- but re-dimensioned to the dense-attention inner
+        # dim (8 x 64 = 512) like every other matched-down arm, instead of the
+        # head_dim 128 (2x hidden) the original used.
+        #
+        # attention_output_gate makes the QKV projection emit
+        # (2*np/ng + 2)*hn instead of (np/ng + 2)*hn -- 4x hidden rather than
+        # 3x -- i.e. +262,144 params per ATTENTION layer. At 3:1 that is 4 such
+        # layers, so +1,048,576 to absorb in the MLP on top of gdn3's +0.09%.
+        #
+        # ffn 1344, NOT a multiple of 128. The 128 grid gives only 1408
+        # (+0.646%) or 1280 (-1.020%); 1344 lands at -0.187%. Since the effects
+        # being measured here are 0.1-0.5%, a +0.65% parameter surplus would be
+        # a real confound, so this one arm uses a multiple of 64.
+        #
+        # MoE and MTP are deliberately OMITTED: this list is dense, and MTP adds
+        # prediction heads plus an auxiliary loss, which changes the objective
+        # and would make its val loss incomparable to every other arm.
+        - aux.variant: gdn3_qwen35
+          aux.ffn: 1344
+          backend.megatron.attention_output_gate: true
+          backend.megatron.layernorm_zero_centered_gamma: true
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_percent: 0.25
+          backend.megatron.rotary_base: 10000
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: gated_delta_net
+          backend.megatron.linear_attention_freq: 4
+          backend.megatron.linear_conv_kernel_dim: 4
+          backend.megatron.linear_key_head_dim: 64
+          backend.megatron.linear_value_head_dim: 64
+          backend.megatron.linear_num_key_heads: 8
+          backend.megatron.linear_num_value_heads: 8
+
+    # ================= GROUP 1 — (SIZE, TIER) LADDERS =================
+    # Each entry: shared ladder params + [stable, cooldown-per-budget].
+    - type: list
+      configs:
+        # ---- 0.1B low: gbs128 lr2e-3 -> 20/30/50 BT ----
+        - type: list
+          defaults:
+            aux.size: 0.1B
+            aux.hidden: 512
+            # aux.ffn set per variant in group 0
+            aux.layers: 16
+            aux.heads: 8
+            aux.qgroups: 8
+            aux.gqa: false
+            aux.mbs: 16
+            aux.gbs: 128
+            backend.megatron.lr: 0.002
+            slurm.sbatch.nodes: 2
+            aux.size_tag: "s01B"
+            # Per-ladder cooldown budgets — the single source of truth for both
+            # the cooldown sweep points below and the stable's branch steps.
+            aux.budgets: [20_000_000_000, 30_000_000_000, 50_000_000_000]
+          configs:
+            - stage: stable
+              aux.tokens: 40_000_000_000
+              # Branch iters = 0.8 x (each budget) in steps, computed from
+              # aux.budgets (no sweep-path citation). Escaped so it resolves at
+              # final composition with the ladder's aux.gbs; the expression is
+              # identical for every ladder, so it is defined once here (&extra_steps).
+              aux.extra_steps: &extra_steps "\\${oc.mapeval:\\${oc.maptmpl:'int((((% + \\${aux.seq_len}*\\${aux.gbs})-1)//(\\${aux.seq_len}*\\${aux.gbs}))*(1-\\${aux.decay_fraction}))',\\${aux.budgets}}}"
+              backend.megatron.train_iters: "\\${oc.eval:'max(\\${aux.extra_steps})'}"
+              backend.megatron.lr_wsd_decay_iters: 0
+            - type: list
+              configs:
+                - type: list
+                  defaults: &firstcd
+                    aux.start_iter: "\\${oc.eval:'int(((\\${aux.tokens}+\\${aux.seq_len}*\\${aux.gbs}-1)//(\\${aux.seq_len}*\\${aux.gbs}))*(1-\\${aux.decay_fraction}))'}"
+                    backend.megatron.load: "\\${sibling.stable.job.base_output_dir}/"
+                    backend.megatron.ckpt_step: "\\${aux.start_iter}"
+                    backend.megatron.override_opt_param_scheduler: true
+                    backend.megatron.train_iters: "\\${oc.eval:'\\${aux.start_iter}+1'}"
+                    backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'\\${backend.megatron.train_iters}-\\${aux.start_iter}'}"
+                    backend.megatron.save_interval: 1
+                    # --ckpt-step is SILENTLY OVERRIDDEN when the LOAD dir has a
+                    # non-persistent checkpoint at iteration >= the requested step
+                    # (_get_non_persistent_iteration wins over ckpt_step). The stable
+                    # trunk rotates non_persistent saves, so a firstcd seed submitted
+                    # AFTER the trunk has run past its branch point loads the trunk's
+                    # latest instead: observed ckpt_step 4578 vs tracker 12000 ->
+                    # "training is done" -> exits with NO checkpoint and state
+                    # COMPLETED, silently breaking that budget's whole cooldown chain.
+                    # Only bites on late/manual resubmission (a promptly-gated seed
+                    # runs while the tracker is still below its own train_iters),
+                    # which is exactly why the 3BT points failed and 6/10BT did not.
+                    # Safe here specifically: firstcd is a ONE-step job that reads
+                    # from stable and writes its own dir, so it never needs
+                    # non-persistent state of its own. Do NOT copy this to contcd,
+                    # which must resume from its own non-persistent saves.
+                    backend.megatron.non_persistent_ckpt_type: null
+                    stage: "firstcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT"
+                    job.start_condition:
+                      class_name: FileExistsCondition
+                      path: "\\${sibling.stable.job.base_output_dir}/iter_\\${oc.eval:'str(\\${aux.start_iter}).zfill(7)'}"
+                    # NO cancel_condition on purpose. Watching the stable's log for
+                    # "Traceback|OutOfMemoryError|FATAL ERROR" CANCELLED every cooldown
+                    # of any stable that had a TRANSIENT failure and recovered -- the
+                    # log keeps the traceback from the failed attempt, so a stable with
+                    # attempts>1 (rendezvous/OOM flake then success) silently killed all
+                    # its cooldowns (final_state=cancelled, attempts=0). The
+                    # start_condition already gates on the branch checkpoint, so a
+                    # genuinely-dead stable simply leaves the cooldown WAITING.
+                  configs:
+                    - aux.tokens: 20_000_000_000
+                    - aux.tokens: 30_000_000_000
+                    - aux.tokens: 50_000_000_000
+                - type: list
+                  defaults: &contcd
+                    aux.start_iter: "\\${oc.eval:'int(((\\${aux.tokens}+\\${aux.seq_len}*\\${aux.gbs}-1)//(\\${aux.seq_len}*\\${aux.gbs}))*(1-\\${aux.decay_fraction}))'}"
+                    backend.megatron.lr_wsd_decay_iters: "\\${oc.eval:'\\${backend.megatron.train_iters}-\\${aux.start_iter}'}"
+                    # Directly-constructed first_cooldown dir (== its base_output_dir);
+                    # load+save it to resume own progress (restart-safe). Inlined
+                    # (not an aux var) so it is NOT sibling-serialized. Mirrors job.name.
+                    backend.megatron.load: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.experiment_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_firstcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT/"
+                    backend.megatron.save: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.experiment_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_firstcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT"
+                    backend.megatron.override_opt_param_scheduler: true
+                    # Keep only the endpoint persistently (the fully-decayed model,
+                    # saved by Megatron's end-of-training save); inherit ml_base's
+                    # coarse save_interval so no intermediate persistent saves land.
+                    backend.megatron.save_interval: 1000000000
+                    # Restart resilience via the rolling non-persistent checkpoint,
+                    # scaled to the decay span so there are always >=3 rolling saves
+                    # within the short cooldown. The base cadence (512000//gbs)
+                    # exceeds the decay span for small budgets (e.g. 6BT span ~2289
+                    # < 4000), so a wall-time SIGKILL would re-branch the whole decay
+                    # from firstcd's seed instead of resuming; //3 keeps contcd
+                    # genuinely restart-safe at any budget. (ckpt_type=global is
+                    # inherited from ml_base.)
+                    backend.megatron.non_persistent_save_interval: "\\${oc.eval:'max(1, (\\${backend.megatron.train_iters}-\\${aux.start_iter})//3)'}"
+                    stage: "contcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT"
+                    job.start_condition:
+                      class_name: FileExistsCondition
+                      path: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.experiment_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_firstcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT/iter_\\${oc.eval:'str(\\${aux.start_iter}+1).zfill(7)'}"
+                    # NO cancel_condition -- see the firstcd note above. A stable that
+                    # recovered from a transient failure would otherwise cancel this
+                    # contcd via the traceback left in its log.
+                  configs:
+                    - aux.tokens: 20_000_000_000
+                    - aux.tokens: 30_000_000_000
+                    - aux.tokens: 50_000_000_000

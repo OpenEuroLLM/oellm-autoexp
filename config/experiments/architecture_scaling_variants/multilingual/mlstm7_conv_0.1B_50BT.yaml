@@ -1,0 +1,113 @@
+# @package _global_
+# 6B reference — mLSTM (7:1, NoPE) WITH the xLSTM/GDN-style short depthwise
+# causal conv over q,k,v (mlstm_conv1d), at igate_bias_init = -8. Two variants:
+# conv kernel size 4 and 8 (FLA's causal_conv1d supports width > 4, unlike Tri
+# Dao's used by Mamba). Adds to the completed 6B comparison group with the same
+# recipe (GBS=128, LR=5e-4, 6B tokens, split 100,0,0 + datamix4-val eval), so
+# these two points land alongside fullattn/mlstm7/gdn7/swa7/mamba2.
+defaults:
+  - size_0.1B
+  - /backend/megatron/data_multilingual_1tt_val_jupiter@aux.val_dataset
+  - override /container: jupiter_liger_mamba
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_7to1_liger_mbs32
+  variant: mlstm7_conv4_nope
+  gbs: 128
+  mbs: 32
+  tokens: 6_000_000_000
+  final_train_iters: "${oc.eval:'(${aux.tokens}+${aux.seq_len}*${aux.gbs}-1)//(${aux.seq_len}*${aux.gbs})'}"
+  extra_steps: []
+
+backend:
+  megatron:
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/four_model_liger_6B/${aux.variant}"
+
+    aux:
+      val_datamix_prefix: /e/data1/datasets/products/openeurollm/pretokenized/openeurollm-tokenized-256k-val
+
+    lr: 0.0005
+    lr_decay_iters: null
+    lr_wsd_decay_iters: 2289
+
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
+
+    # 7:1 mLSTM + NoPE, igate init -8 (sweep winner), WITH the causal conv.
+    position_embedding_type: none
+    experimental_attention_variant: mlstm
+    linear_attention_freq: 8
+    window_size: null
+    window_attn_skip_freq: null
+    mlstm_igate_bias_init: -8.0
+    mlstm_conv1d: true
+    # mLSTM has no GQA mode: key heads must equal value heads.
+    linear_key_head_dim: 128
+    linear_value_head_dim: 128
+    linear_num_key_heads: ${aux.heads}
+    linear_num_value_heads: ${aux.heads}
+    mlstm_chunk_size: 128
+    # linear_conv_kernel_dim (the conv width) is set per variant in the sweep.
+
+    wandb_project: dense_multilingual_scaling_7to1_comparison
+
+slurm:
+  env:
+    GLOO_SOCKET_IFNAME: ib0
+  sbatch:
+    nodes: 1
+    time: "12:00:00"
+    exclude: jpbo-001-48
+
+stage: final6BT
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    # Conv kernel width: 4 (matches Mamba/GDN convention) and 8 (wider local
+    # context; only reachable via FLA's Triton causal_conv1d).
+    - type: list
+      configs:
+        - aux.variant: mlstm7_conv4_nope
+          backend.megatron.linear_conv_kernel_dim: 4
+        - aux.variant: mlstm7_conv8_nope
+          backend.megatron.linear_conv_kernel_dim: 8
+
+    # Train once (split 100,0,0, in-loop eval disabled), then the common
+    # datamix4-val eval from the final checkpoint.
+    - type: list
+      configs:
+        - stage: final6BT
+          backend.megatron.split: '100,0,0'
+          backend.megatron.eval_iters: 0
+
+        - stage: eval6BT
+          backend.megatron.skip_train: true
+          backend.megatron.train_iters: 1
+          backend.megatron.eval_interval: 1
+          backend.megatron.eval_iters: "${oc.eval:'int(204800 // ${aux.gbs})'}"
+          backend.megatron.data_path: []
+          backend.megatron.train_data_path: null
+          backend.megatron.valid_data_path: ${aux.val_dataset.valid_data_path}
+          backend.megatron.test_data_path: null
+          backend.megatron.split: null
+          backend.megatron.load: "\\${sibling.final6BT.job.base_output_dir}/"
+          backend.megatron.exit_on_missing_checkpoint: true
+          backend.megatron.save_interval: 1
+          backend.megatron.no_save_optim: true
+          backend.megatron.no_save_rng: true
+          backend.megatron.no_load_optim: true
+          backend.megatron.no_load_rng: true
+          container.env.WANDB_MODE: offline
+          slurm.sbatch.nodes: 1
+          slurm.sbatch.time: "4:00:00"
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.final6BT.job.base_output_dir}/iter_\\${oc.eval:'str(\\${aux.final_train_iters}).zfill(7)'}"
+          job.cancel_condition:
+            class_name: LogPatternCondition
+            log_path: "\\${sibling.final6BT.job.log_path_current}"
+            pattern: "FATAL ERROR|OutOfMemoryError|Traceback"

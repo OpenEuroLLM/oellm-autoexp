@@ -1,0 +1,31 @@
+# @package _global_
+# Short, TP=1 Liger throughput gate for the four 7:1 comparison architectures.
+# This is deliberately a 100-iteration / ~52M-token smoke, not a 6B-token run.
+# Do not launch the 6B comparison unless every point clears 300 TFLOP/s/GPU.
+# Completed 2026-07-31 at MBS=32 / GBS=128: FullAttn 323.6 TFLOP/s/GPU
+# (197.8k Tok/s/GPU, job 1138460); mLSTM 260.4 (191.2k, 1138461);
+# GDN 231.9 (168.8k, 1138463); SWA 355.3 (217.1k, 1138462).  The FLOP
+# estimator is architecture-aware; token rate is the directly comparable metric.
+defaults:
+  - throughput_four_models_0.1B
+  - override /container: jupiter_liger
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_four_model_liger_gate
+
+backend:
+  megatron:
+    micro_batch_size: 32
+    global_batch_size: 128
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
+    # Do not share partially-built blend indices between concurrent points.
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/four_model_liger_gate/${aux.variant}"
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:30:00"
+    # Known JUPITER node with zero visible CUDA devices in the validated image.
+    exclude: jpbo-001-48

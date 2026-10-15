@@ -1,0 +1,216 @@
+# @package _global_
+#
+# FLA hybrid probe on the standard candle: ~125M params (niccolo-130M geometry,
+# 124.5M), 6B tokens, 7:1 linear:attention.
+#
+# Two new flash-linear-attention layers, integrated as Megatron mixers:
+#   signed_kda  SignedKimiDeltaAttention -- KDA with a signed decay gate and a
+#               widened Householder rate (beta in (0,2)).
+#   panini      PaniniDeltaAttention -- signed KDA plus a signed value-index
+#               gate on the other side of the state.
+#
+# Compared against the GDN 7:1 arms already run at this exact cell
+# (resid_gdn_beta1/2/2_plat) and the dense transformer (resid_baseline): same
+# geometry, data, tokenizer, batch and schedule.
+#
+# Hyperparameters follow flash-linear-attention/lm/configs/signed-kda.json and
+# lm/src/config/signed-kda_300M.yaml: head_dim 64, expand_v 1, conv_size 4,
+# gate signed_sigmoid2, output_gate linear, lower_bound -5.0,
+# allow_neg_eigval true. head_dim*num_heads must equal hidden_size: 64*9 = 576.
+#
+# IMPORTANT -- FLA VERSION. The container ships FLA 0.3.2, which has no kda /
+# signed_kda / panini at all. The repo's flash-linear-attention checkout (0.5.2)
+# is prepended to PYTHONPATH below so `import fla` resolves to it.
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter_liger_mamba
+  - /slurm: jupiter
+  - /backend/megatron: [base, data_nemonicco_jupiter]
+  - /sweep: none
+  - override /job: default
+  - _self_
+
+aux:
+  experiment_group: "residual_scaling_variants"
+  total_tokens: "${oc.eval:'${aux.seq_len}*${aux.gbs}*${backend.megatron.train_iters}'}"
+  gbs: 128
+  tokens: 6_000_000_000
+  decay_fraction: 0.2
+  seq_len: 4096
+  start_iter: 0
+  additional_tag: ""
+  variant: "fla_skda7"
+  hf_home: "/e/project1/e-sta-openeurollm/poeppel1/cache"
+
+backend:
+  # apptainer is invoked with explicit `--env PYTHONPATH=...` taken from the
+  # BACKEND config (config/backend/megatron_torchrun.yaml), not the container
+  # and not the host environment -- a host `export PYTHONPATH` is silently
+  # overridden. Prepend the repo's flash-linear-attention checkout (0.5.2)
+  # here: it is the only build carrying signed_kda / panini, and the image
+  # ships 0.3.2. Scoped to this experiment, so other sweeps still import the
+  # image's FLA unchanged.
+  env:
+    PYTHONPATH: "flash-linear-attention:.:submodules/Megatron-LM"
+  megatron:
+    # ---- geometry: niccolo 130M (identical to the transformer arms) ----
+    num_layers: 18
+    hidden_size: 576
+    # ffn_hidden_size is set PER ARM below to equalise total parameters -- see
+    # the sweep block. The dense reference (resid_baseline) is 124,526,592
+    # params at ffn 2304; a 7:1 hybrid replaces 16 of 18 dense-attention
+    # blocks (1,327,104 params each) with a wider mixer, so leaving ffn at
+    # 2304 would hand the hybrid a free parameter advantage.
+    num_attention_heads: 9
+    num_query_groups: 9
+    kv_channels: 64
+    seq_length: ${aux.seq_len}
+    max_position_embeddings: ${aux.seq_len}
+    padded_vocab_size: 50304
+    normalization: RMSNorm
+    swiglu: true
+    add_bias_linear: false
+    add_qkv_bias: false
+    create_attention_mask_in_dataloader: false
+    qk_layernorm: true
+    rotary_percent: 1
+    untie_embeddings_and_output_weights: false
+
+    # ---- GDN 7:1 hybrid, NoPE. Overridden per variant only for beta. ----
+    position_embedding_type: none
+    rotary_base: 100000          # unused under NoPE; kept for arg parity
+    window_size: null
+    window_attn_skip_freq: null
+    experimental_attention_variant: signed_kda   # overridden per arm
+    linear_attention_freq: 8     # (N-1):1 -> 7 linear : 1 attention
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 64      # head_dim from the FLA lm config; 64*9 = 576 = hidden
+    linear_num_key_heads: ${backend.megatron.num_attention_heads}   # 9 heads
+
+    # ---- schedule: identical to the transformer arms ----
+    train_iters: ${oc.eval:'(${aux.tokens}+${aux.seq_len}*${aux.gbs}-1)//(${aux.seq_len}*${aux.gbs})'}
+    global_batch_size: ${aux.gbs}
+    # 16, not the transformer arms' 32: GDN's input projection is
+    # qk*2 + v*2 + heads*2 = 4626 wide at hidden 576 (~8x hidden, vs ~3x for a
+    # dense attention block), plus the recurrent state, so mbs 32 OOMs on the
+    # 95 GiB GH200s (observed: "tried to allocate 576 MiB, 81 MiB free").
+    # mbs must divide gbs/DP = 128/4 = 32, so 16 -> 2 accumulation steps.
+    # This changes throughput only: gbs, token order and optimizer steps are
+    # unchanged, so these arms stay comparable to the transformer ones.
+    micro_batch_size: 16
+    lr: 0.002
+    min_lr: 1.0e-05
+    lr_decay_style: WSD
+    lr_warmup_iters: 2000
+    lr_wsd_decay_iters: ${oc.eval:'int(0.2 * ${.train_iters})'}
+    lr_wsd_decay_style: linear
+    lr_warmup_init: 0
+    adam_beta2: 0.99
+    clip_grad: 1
+
+    # ---- parallelism ----
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    expert_model_parallel_size: 1
+    expert_tensor_parallel_size: 1
+    sequence_parallel: false
+
+    # ---- precision / perf ----
+    bf16: true
+    accumulate_allreduce_grads_in_fp32: true
+    grad_reduce_in_bf16: false
+    use_distributed_optimizer: true
+    use_flash_attn: true
+    gradient_accumulation_fusion: true
+    bias_dropout_fusion: true
+    bias_gelu_fusion: true
+    bias_swiglu_fusion: true
+    cross_entropy_loss_fusion: true
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
+    # CUDA graphs ON. They were originally disabled on the assumption that the
+    # FLA kernels are not capture-safe; the real blocker was an allocator/NCCL
+    # conflict, fixed by NCCL_GRAPH_REGISTER=0 above. Measured effect at this
+    # cell: skda 141.8 -> 146.1 TFLOP/s, panini 13.5 -> 37.8 (same settings).
+    cuda_graph_impl: local
+    cuda_graph_warmup_steps: 3
+    check_for_nan_in_loss_and_grad: false
+    overlap_grad_reduce: false
+    overlap_param_gather: false
+    attention_dropout: 0
+    hidden_dropout: 0
+    dataloader_type: cyclic
+    num_workers: 7
+    num_dataset_builder_threads: 6
+    rerun_mode: disabled
+
+    # ---- data / tokenizer: identical to the transformer arms ----
+    train_data_path:
+      - /e/project1/e-sta-openeurollm/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all
+    valid_data_path:
+      - /e/project1/e-sta-openeurollm/poeppel1/datasets/nemotron_downsampled_5p_valid/high-all
+    # Private index cache per job: the arms start together on the same dataset
+    # and would otherwise race to build the same index files.
+    data_cache_path: ${job.base_output_dir}/data_cache
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: EleutherAI/gpt-neox-20b
+
+    log_interval: 50
+
+# Container env. Composing the residual-style defaults (../base + /backend:
+# megatron_torchrun_localaddr) drops the env block that config/container/
+# jupiter_liger_mamba.yaml defines, so TRITON_LIBCUDA_PATH went missing and
+# Inductor died during Megatron's _warmup_jit_function() with
+# "AssertionError: libcuda.so cannot found!" -- before the model was even built.
+# The image's bind list (rendered correctly) maps the host libcuda to
+# /opt/nvidia/lib, so point Triton there. HF_HOME is pinned to the same cache
+# the transformer arms use; both caches hold the gpt-neox-20b tokenizer, this
+# just keeps the arms byte-identical in environment too.
+# Set via slurm.env (renders an `export` in the sbatch), NOT container.env:
+# composing the residual-style defaults drops the container's own env block, and
+# a top-level `container: env:` override does not take effect here.
+slurm:
+  env:
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+    NCCL_GRAPH_REGISTER: "0"   # required with cuda_graph_impl=local (allocator/NCCL conflict)
+
+# Same naming convention as the transformer arms (resid_baseline, resid_ngpt_*,
+# resid_muown, ...), so the GDN arms land beside them in the same group dir.
+# Without this block every sweep point renders to the default output/demo/ and
+# the three arms collide in one directory.
+job:
+  name: resid_${aux.variant}${aux.additional_tag}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+# Measured throughput at this cell (120-step probes, mean of last 5 steps):
+#   skda  head_dim 64  146.1 TFLOP/s   701 ms/iter
+#   pda   lbv -2.0      37.8            2685
+#   pda   lbv -0.0625   87.9            1154
+# For reference the same cell gives GDN 7:1 157.4, mhc4 195.2, dense 270.2.
+# Ruled out as levers: mbs 32 (OOM), head_dim 72/96 (no better than 64),
+# naive-kernel fallback (confirmed not happening).
+#
+# pda runs at BOTH lower_bound_v settings: -2.0 is the value the layer's authors
+# use and validate, -0.0625 is the 2.3x-faster single-segment variant whose
+# docs warn sign flips become abrupt and "fit worse in practice". Running both
+# measures that quality cost instead of assuming it.
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.variant: fla_skda7
+          backend.megatron.experimental_attention_variant: signed_kda
+          backend.megatron.ffn_hidden_size: 2088
+
+        - aux.variant: fla_pda7
+          backend.megatron.experimental_attention_variant: panini
+          backend.megatron.ffn_hidden_size: 2048
+          backend.megatron.linear_fla_lower_bound_v: -2.0
+
+        - aux.variant: fla_pda7_fastgate
+          backend.megatron.experimental_attention_variant: panini
+          backend.megatron.ffn_hidden_size: 2048
+          backend.megatron.linear_fla_lower_bound_v: -0.0625

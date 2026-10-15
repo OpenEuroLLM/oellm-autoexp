@@ -1,0 +1,117 @@
+# @package _global_
+# SMOKE for matched_0.4B.yaml (mlstm7gqa_nope, ckda3_qwen35) at the exact
+# production geometry (4 nodes, mbs 4, gbs 256). Checks, before ~600 GPU-h of
+# ladders go in:
+#   - both arms build and train (real mlstm_kernels GQA path; ComplexKDA's fla),
+#     and fit in memory with ckda3's wider MLP;
+#   - Megatron's parameter print equals the matched counts
+#     (mlstm7gqa 762,689,184-ish; ckda3_qwen35 768,224,808);
+#   - torch_dist save works (ComplexKDA's own ladder had to fall back to torch
+#     format for its 3:1 hybrids -- with fla-owned attention layers);
+#   - a cooldown-style branch (`reload`: --ckpt-step 20 from the smoke dir,
+#     one step, own save) loads it, exactly like the ladders' firstcd stage.
+# Arms are copied from matched_0.4B.yaml's GROUP 0 (keep in sync).
+defaults:
+  - matched_0.4B
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_matched_0p4B_smoke
+  size: 0.4B
+  hidden: 1024
+  layers: 28
+  heads: 16
+  qgroups: 8
+  gqa: true
+  mbs: 4
+  gbs: 256
+  size_tag: "s04B"
+  tokens: 0
+  extra_steps: [20]
+
+backend:
+  megatron:
+    train_iters: 40
+    lr_warmup_iters: 10
+    lr_wsd_decay_iters: 0
+    log_interval: 5
+    eval_interval: 40
+    eval_iters: 2
+    save_interval: 20
+    non_persistent_save_interval: 1000
+    wandb_project: dense_multilingual_scaling_smoke
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/main_sweep/${aux.variant}_${aux.size}_gbs${aux.gbs}"
+
+slurm:
+  sbatch:
+    nodes: 4
+    time: "00:45:00"
+
+stage: smoke
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    # ===================== GROUP 0 — ARCHITECTURE =====================
+    - type: list
+      configs:
+        - aux.variant: mlstm7gqa_nope
+          aux.ffn: 3072            # the ladder's dense ffn, as in main_scaling_all
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: mlstm
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.mlstm_conv1d: false
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_value_head_dim: 128
+          # GQA: q/k at the attention KV-group count, v (and the gates) at the
+          # head count. Escaped so they resolve against the ladder's aux.*.
+          backend.megatron.linear_num_key_heads: "\\${aux.qgroups}"
+          backend.megatron.linear_num_value_heads: "\\${aux.heads}"
+          backend.megatron.mlstm_chunk_size: 128
+          backend.megatron.mlstm_igate_bias_init: -8.0
+
+        - aux.variant: ckda3_qwen35
+          aux.ffn: 3968
+          # --- Qwen3.5 attention layers, identical to gdn3_qwen35 ---
+          backend.megatron.attention_output_gate: true
+          backend.megatron.layernorm_zero_centered_gamma: true
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_percent: 0.25
+          backend.megatron.rotary_base: 10000
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.linear_attention_freq: 4
+          # Megatron's own attention (not ComplexKDA's fla `gated_nope` one), so
+          # the gate/RoPE/qk-norm settings above apply exactly as in gdn3_qwen35.
+          backend.megatron.linear_hybrid_attention: standard
+          # --- Complex-KDA mixer (ComplexKDA sweep_spec `ckda_shipped`) ---
+          backend.megatron.experimental_attention_variant: complex_kda
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_conv_kernel_dim: 4
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_gate_lower_bound: -5.0
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.env.PYTHONPATH: ".:submodules/Megatron-LM:\\${aux.ckda_repo}"
+
+    - type: list
+      configs:
+        - stage: smoke
+        - stage: reload
+          aux.start_iter: 20
+          backend.megatron.load: "\\${sibling.smoke.job.base_output_dir}/"
+          backend.megatron.ckpt_step: 20
+          backend.megatron.override_opt_param_scheduler: true
+          backend.megatron.train_iters: 21
+          backend.megatron.lr_wsd_decay_iters: 1
+          backend.megatron.save_interval: 1
+          backend.megatron.non_persistent_ckpt_type: null
+          backend.megatron.non_persistent_save_interval: null
+          job.start_condition:
+            class_name: FileExistsCondition
+            path: "\\${sibling.smoke.job.base_output_dir}/iter_0000040"

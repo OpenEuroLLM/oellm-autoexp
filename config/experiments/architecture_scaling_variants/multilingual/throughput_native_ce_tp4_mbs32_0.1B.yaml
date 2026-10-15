@@ -1,0 +1,34 @@
+# @package _global_
+# Native vocabulary-parallel CE alternative to Liger. With world=TP=4 the
+# data-parallel degree is one, so MBS=GBS=32 preserves the loss-comparison
+# optimizer batch while each rank owns only one fourth of the 262k vocabulary.
+defaults:
+  - throughput_fused_ce_mbs_0.1B
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_native_ce_tp4
+
+backend:
+  # Required by Megatron whenever tensor/context parallelism is active.
+  env:
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+  megatron:
+    micro_batch_size: 32
+    global_batch_size: 32
+    tensor_model_parallel_size: 4
+    sequence_parallel: true
+    liger_fused_linear_cross_entropy: false
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:30:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.variant: fullattn_rope_nativece_tp4_sp_mbs32_gbs32

@@ -1,0 +1,88 @@
+# @package _global_
+# Geometry / throughput smoke — 0.2B, four 7:1 architectures on the validated
+# Liger setup. Goal: confirm the geometry FITS in memory (GDN/mLSTM are the
+# binding constraint — GDN hit 99.7% mem at 0.1B/MBS32) and measure per-GPU
+# TFLOP/s + Tok/s to lock MBS/nodes/TP for the 0.2B ladders (target gbs 128/512).
+#
+# Candidate: 1 node / DP=4 / TP=1 / MBS=16, GA=1 (gbs 64) — GA is kept at 1 so
+# the 100-iteration smoke is fast; peak activation memory depends on MBS, not GA,
+# so OOM behaviour is representative of the production gbs. If GDN/mLSTM OOM,
+# drop MBS to 8; if all four have wide headroom, retry MBS=32.
+defaults:
+  - size_0.2B
+  - main_7to1_base
+  - override /job: default   # a smoke failure must be diagnosed, not resubmitted
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_geo_smoke
+  gbs: 64
+  mbs: 16
+  tokens: 0          # unused; train_iters set explicitly
+  extra_steps: []    # no cooldown branches in a smoke
+
+backend:
+  megatron:
+    lr: 0.001
+    train_iters: 100
+    lr_warmup_iters: 20
+    lr_wsd_decay_iters: 0
+    eval_interval: 1000
+    eval_iters: 1
+    log_interval: 10
+    save: null
+    save_extra_steps: []
+    tensor_model_parallel_size: 1
+    # Shared hybrid geometry (inert for fullattn/swa).
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 128
+    linear_value_head_dim: 128
+    linear_num_key_heads: ${aux.qgroups}
+    linear_num_value_heads: ${aux.heads}
+    mlstm_chunk_size: 128
+    mlstm_igate_bias_init: -8.0
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/geo_smoke/${aux.size}_${aux.variant}"
+    wandb_project: dense_multilingual_scaling_geo_smoke
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:50:00"   # generous: first-run blend index build is slow
+
+stage: smoke
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.variant: fullattn
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: null
+          backend.megatron.linear_attention_freq: null
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_base: 10000
+
+        - aux.variant: mlstm7_nope
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: mlstm
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.position_embedding_type: none
+
+        - aux.variant: gdn7_nope
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: gated_delta_net
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.position_embedding_type: none
+
+        - aux.variant: swa7_rope100k
+          backend.megatron.window_size: "1024,0"
+          backend.megatron.window_attn_skip_freq: 8
+          backend.megatron.experimental_attention_variant: null
+          backend.megatron.linear_attention_freq: null
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_base: 100000

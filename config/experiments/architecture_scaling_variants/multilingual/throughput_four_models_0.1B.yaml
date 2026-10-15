@@ -1,0 +1,75 @@
+# @package _global_
+# One-node fixed-shape throughput comparison for the four 7:1 architecture
+# comparison models. This isolates architecture/kernel effects: every point uses
+# DP=4, mbs=4, gbs=32 (two accumulation steps), seq=4096, bf16, Dynamo, and
+# MCore local CUDA graphs. It intentionally does not alter the training recipe.
+defaults:
+  - smoke_0.1B
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_four_model_throughput
+
+backend:
+  megatron:
+    train_iters: 100
+    lr_warmup_iters: 20
+    eval_interval: 1000
+    eval_iters: 1
+    log_interval: 10
+    # mbs=8 exceeds the fixed graph-pool headroom for full attention and SWA
+    # on a GH200. mbs=4 matches the intended 4-node production layout
+    # (DP=16, gbs=128, two accumulation steps).
+    micro_batch_size: 4
+    global_batch_size: 32
+    # The hybrid kernels use this geometry in exactly the same way as the
+    # upcoming 6B-token 7:1 comparison.
+    linear_conv_kernel_dim: 4
+    linear_key_head_dim: 128
+    linear_value_head_dim: 128
+    linear_num_key_heads: ${aux.qgroups}
+    linear_num_value_heads: ${aux.heads}
+    mlstm_chunk_size: 128
+    # Isolate cache writes because the four points can start at once.
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/four_model_throughput/${aux.variant}"
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:30:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.variant: fullattn_rope
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: null
+          backend.megatron.linear_attention_freq: null
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_base: 10000
+
+        - aux.variant: mlstm7_nope
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: mlstm
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.position_embedding_type: none
+
+        - aux.variant: gdn7_nope
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: gated_delta_net
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.position_embedding_type: none
+
+        - aux.variant: swa7_rope100k
+          backend.megatron.window_size: "1024,0"
+          backend.megatron.window_attn_skip_freq: 8
+          backend.megatron.experimental_attention_variant: null
+          backend.megatron.linear_attention_freq: null
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_base: 100000

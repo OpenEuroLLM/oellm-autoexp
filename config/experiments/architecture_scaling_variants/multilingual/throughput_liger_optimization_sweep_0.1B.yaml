@@ -1,0 +1,65 @@
+# @package _global_
+# Isolated throughput-only optimizations for the TP=1, Liger fused LM-head path.
+# Each point changes GBS and therefore is not a loss-curve comparison with GBS=32.
+defaults:
+  - throughput_liger_fused_lmhead_0.1B
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_liger_optimizations
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:30:00"
+    # This node exposed zero CUDA devices inside an otherwise known-good
+    # Apptainer image in jobs 1137612 and 1137766.
+    exclude: jpbo-001-48
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # MBS=48 result: 228 TFLOP/s/GPU (job 1137473), below the MBS=32 path.
+        - aux.variant: fullattn_rope_liger_mbs48_gbs192
+          backend.megatron.micro_batch_size: 48
+          backend.megatron.global_batch_size: 192
+
+        # TE operation-fuser result: 177.4 TFLOP/s/GPU (job 1137571), no gain.
+        - aux.variant: fullattn_rope_liger_mbs32_teop_fuser_gbs128
+          backend.megatron.micro_batch_size: 32
+          backend.megatron.global_batch_size: 128
+          backend.megatron.use_transformer_engine_op_fuser: true
+
+        # DDP-overlap result: 176.9 TFLOP/s/GPU (job 1137588), no gain.
+        - aux.variant: fullattn_rope_liger_mbs32_overlap_gbs128
+          backend.megatron.micro_batch_size: 32
+          backend.megatron.global_batch_size: 128
+          backend.megatron.overlap_grad_reduce: true
+          backend.megatron.overlap_param_gather: true
+
+        # Best result: explicit 8192-token chunks give 317.2 TFLOP/s/GPU /
+        # 193.9k Tok/s/GPU (job 1137772) at MBS=32 / GBS=128.
+        - aux.variant: fullattn_rope_liger_mbs32_chunk8192_gbs128
+          backend.megatron.micro_batch_size: 32
+          backend.megatron.global_batch_size: 128
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+
+        # MBS=64 full-recompute result: 281.9 TFLOP/s/GPU / 172.3k Tok/s/GPU
+        # (job 1137738), so recompute costs more than its occupancy gain.
+        - aux.variant: fullattn_rope_liger_mbs64_recompute_gbs256
+          backend.megatron.micro_batch_size: 64
+          backend.megatron.global_batch_size: 256
+          # Do not set the legacy --recompute-activations flag: this Megatron
+          # branch maps it to selective recompute and overrides full below.
+          # Full layer recompute in this branch is supported only with a full
+          # iteration CUDA graph; the other throughput points retain `local`.
+          backend.megatron.cuda_graph_impl: full_iteration
+          # The automatic Liger path uses a CUDA `.item()` and cannot be
+          # captured by a full-iteration graph. The explicit path is graph-safe.
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.recompute_granularity: full
+          backend.megatron.recompute_method: uniform
+          backend.megatron.recompute_num_layers: 1

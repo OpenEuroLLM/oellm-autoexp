@@ -1,0 +1,18 @@
+# @package _global_
+# 0.2B throughput/checkpoint debug — 2 nodes, mbs8, gbs128 (0.2B_low geometry).
+defaults:
+  - size_0.2B
+  - tp_debug_base
+  - override /container: jupiter_liger_mamba
+  - override /job: default
+  - _self_
+
+aux:
+  mbs: 8
+  gbs: 128
+  size_tag: s02B
+
+slurm:
+  sbatch:
+    nodes: 2
+    time: "00:40:00"

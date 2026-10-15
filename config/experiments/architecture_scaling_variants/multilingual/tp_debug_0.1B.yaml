@@ -1,0 +1,19 @@
+# @package _global_
+# 0.1B throughput/checkpoint debug — 2 nodes, mbs16, gbs128 (0.1B_low geometry).
+# Most spike-sensitive scale (shortest compute per step).
+defaults:
+  - size_0.1B
+  - tp_debug_base
+  - override /container: jupiter_liger_mamba
+  - override /job: default
+  - _self_
+
+aux:
+  mbs: 16
+  gbs: 128
+  size_tag: s01B
+
+slurm:
+  sbatch:
+    nodes: 2
+    time: "00:40:00"

@@ -1,0 +1,44 @@
+# @package _global_
+# Smoke test — run FIRST. 0.1B SWA model, 1 node, 500 iters, no checkpoints.
+# Verifies on JUPITER:
+#   - staged 1TT-option-4 mix + tokenizer-256k resolve offline (padded vocab
+#     should print 262272), blend index builds (first build can take ~30 min)
+#   - --window-size 1024,0 + --window-attn-skip-freq 6 work in the container
+#     (TE/flash sliding-window support on GH200)
+#   - throughput baseline for the GPU-hour plan (assumed 30% MFU)
+# Compare the first ~500 iters of lm loss against a baseline 0.1B run.
+defaults:
+  - size_0.1B
+  # The generic JUPITER image lacks SentencePiece.  Use the validated hybrid
+  # image so this smoke covers the same offline tokenizer path as the sweep.
+  - override /container: jupiter_linattn
+  # A smoke failure must be diagnosed rather than silently resubmitted.
+  - override /job: default
+  - _self_
+
+aux:
+  gbs: 32
+  tokens: 0          # unused; train_iters overridden below
+  extra_steps: []    # no cooldown branches in the smoke test
+
+backend:
+  megatron:
+    lr: 0.001
+    train_iters: 500
+    # The production 2k-step warmup is longer than this deliberately short
+    # smoke. Megatron requires warmup < decay/train steps.
+    lr_warmup_iters: 50
+    lr_wsd_decay_iters: 0
+    save: null
+    save_extra_steps: []
+    eval_interval: 250
+    eval_iters: 10
+    # Do not race or reuse a partial index built by the previous failed sweep.
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/smoke_swa5"
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "01:00:00"   # generous: first-run dataset index build is slow
+
+stage: smoke

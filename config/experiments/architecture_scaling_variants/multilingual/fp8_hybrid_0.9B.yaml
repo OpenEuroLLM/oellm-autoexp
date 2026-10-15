@@ -1,0 +1,120 @@
+# @package _global_
+# FP8-hybrid precision probe on the LARGEST dense baseline: the 0.9B high ladder
+# stable (gbs 1024, lr 1e-3, 240BT -> 57220 iters), i.e. the qwen3-style dense
+# transformer with full attention. Question: does FP8 gravely hurt stability or
+# loss relative to the bf16 baseline?
+#
+# The bf16 reference is COMPLETE and on disk, so this is a true matched rerun:
+#   qwen3_fullattn_0.9B_ne_lr0.001_gbsz1024_stable   57220/57220, 80 checkpoints
+# Everything here is copied from main_scaling_all.yaml's fullattn arch block and
+# its "0.9B high" ladder -- same geometry, same (gbs, lr), same warmup 2000, same
+# WSD-with-decay-0 stable schedule, same seed 1234, same blend, same 8-node/mbs2
+# geometry, same liger + CUDA-graph execution path. The ONLY delta is precision,
+# so any divergence in the loss curve is attributable to FP8 and nothing else.
+# Same wandb_project as the baseline so the two curves overlay directly.
+#
+# ---- FP8 configuration ----
+# fp8: hybrid            e4m3 for activations/weights, e5m2 for output-activation
+#                        gradients. This is what "FP8 hybrid" refers to.
+# fp8_recipe: delayed    delayed scaling -- the long-standing, most-tested
+#                        Megatron/TE recipe, and the one an FP8 stability claim
+#                        is normally made about.
+# fp8_amax_history_len: 1024 + fp8_amax_compute_algo: max
+#                        the standard NVIDIA delayed-scaling pairing. NOTE the
+#                        repo defaults are history_len 1 / most_recent, which
+#                        degenerates delayed scaling to "reuse last step's amax"
+#                        -- a jumpier setting that would itself be a confound in
+#                        a stability test, so it is overridden explicitly here.
+# first_last_layers_bf16 stays FALSE on purpose: this is the honest "pure FP8"
+#                        test. Keeping the embedding-adjacent blocks in bf16
+#                        (that knob + num_layers_at_{start,end}_in_bf16) is the
+#                        FIRST mitigation to try if this run does go unstable.
+# fp8_param_gather stays FALSE: it is a memory/throughput optimisation that would
+#                        add a second variable, and it constrains the recipe
+#                        (arguments.py asserts it requires 'delayed').
+#
+# The LM head runs through liger_fused_linear_cross_entropy, which sits OUTSIDE
+# the TE FP8 autocast -- so the output projection and loss stay bf16 in both
+# runs. That is a property of the shared recipe, not an FP8 concession.
+#
+# ---- cost ----
+# 240BT at the bf16 0.9B fullattn rate (36k tok/s/GPU) is ~1850 GPU-h / ~58 h
+# wall on 8 nodes; FP8 should come in under that. This chains through the 12h
+# QOS cap via auto_restart. A stability verdict does NOT need the full budget --
+# divergence from the reference curve shows up in the first few thousand
+# iterations, so this is expected to be killed early once the answer is clear.
+defaults:
+  - size_0.9B
+  - override /container: jupiter_liger_mamba
+  - override /job: auto_restart
+  - _self_
+
+aux:
+  # Separate output group: this is a precision probe, not an architecture arm.
+  # Keeping it out of ..._main_7to1 means it can never be swept into the
+  # architecture comparison (refresh_metrics.sh / the scaling-law fits) by
+  # accident, while the shared wandb_project still overlays the loss curves.
+  experiment_group: architecture_scaling_variants_multilingual_fp8
+  variant: fullattn_fp8hybrid
+  size: 0.9B
+  hidden: 1536
+  ffn: 4608
+  layers: 28
+  heads: 16
+  qgroups: 8
+  gqa: true
+  mbs: 2
+  gbs: 1024
+  tokens: 240_000_000_000
+  size_tag: "s09B"
+  extra_steps: []
+  # 0.8 x 300BT, identical to the baseline stable's train_iters. With
+  # lr_wsd_decay_iters 0 the schedule is warmup-then-constant, so this only sets
+  # the end point; it is matched to the baseline so the two runs are iteration
+  # -for-iteration comparable at every point.
+  final_train_iters: 57220
+  # Un-capped runtime estimate in HOURS, from the bf16 rate (conservative: FP8
+  # should be faster, so this over-reserves rather than under-reserves).
+  true_time: "${oc.eval:'${aux.final_train_iters} * ${aux.seq_len} * ${aux.gbs} / (36000 * ${slurm.sbatch.nodes} * ${slurm.sbatch.gpus_per_node} * 3600.0)'}"
+
+backend:
+  megatron:
+    # ---- baseline fullattn architecture (main_scaling_all.yaml:118-124) ----
+    position_embedding_type: rope
+    rotary_base: 10000
+    window_size: null
+    window_attn_skip_freq: null
+    experimental_attention_variant: null
+    linear_attention_freq: null
+
+    # ---- baseline 0.9B-high ladder recipe ----
+    lr: 0.001
+    train_iters: ${aux.final_train_iters}
+    lr_wsd_decay_iters: 0
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
+    wandb_project: dense_multilingual_scaling_main_7to1
+
+    # ---- FP8 (the only delta vs the bf16 baseline) ----
+    fp8: hybrid
+    fp8_recipe: delayed
+    fp8_amax_history_len: 1024
+    fp8_amax_compute_algo: max
+
+    # Dataloader depth fix (GPFS read-latency starvation), as in the main sweep.
+    num_workers: 16
+    # Own blend-index cache dir: keyed on the variant so it cannot race the
+    # baseline's index. Same seed/blend/gbs/num_samples => identical sample
+    # order, which is what makes the loss curves comparable.
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_1tt_262k/fp8_probe/${aux.variant}_${aux.size}_gbs${aux.gbs}"
+
+slurm:
+  env:
+    NCCL_P2P_DISABLE: "1"
+    MEGATRON_DATALOADER_PREFETCH_FACTOR: "8"
+  sbatch:
+    nodes: 8
+    exclude: jpbo-001-48
+    time: "12:00:00"
+
+stage: stable

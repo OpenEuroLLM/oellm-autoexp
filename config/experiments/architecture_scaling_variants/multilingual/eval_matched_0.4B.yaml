@@ -1,0 +1,195 @@
+# @package _global_
+# EVAL sweep -- mirrors matched_0.4B.yaml (mlstm7gqa_nope, ckda3_qwen35 on the
+# 0.4B ladder, gbs256 lr2e-3, 12/20/30/50BT). Every point is an eval-only
+# (skip_train) job that LOADS a trained checkpoint and computes val loss / PPL
+# on the held-out multilingual validation blend -- the same blend, eval_tokens
+# and 1-node geometry as eval_all_scaling_all.yaml, so the numbers drop straight
+# into dump/eval_val_metrics.csv next to the main_7to1 cells. Two points per
+# (arm, budget): the decayed cooldown final (evalcd) and the stable branch
+# checkpoint (evalstable). 2 arms x 4 budgets x 2 = 16 jobs, each AUTO-GATED on
+# its training checkpoint appearing. Arms are copied from matched_0.4B.yaml's
+# GROUP 0 (keep in sync).
+defaults:
+  - ml_base
+  # Validation blend as valid_data_path (repackaged under aux.val_dataset); the
+  # backend.megatron.aux.val_datamix_prefix below resolves its path interpolations.
+  - /backend/megatron/data_multilingual_1tt_val_jupiter@aux.val_dataset
+  - override /container: jupiter_liger_mamba
+  - _self_
+
+aux:
+  # eval jobs write here; checkpoints are LOADED from train_group.
+  experiment_group: architecture_scaling_variants_multilingual_matched_0p4B_eval
+  train_group: architecture_scaling_variants_multilingual_matched_0p4B
+  # ~200M val tokens per checkpoint, held ~constant across gbs (eval_iters below)
+  # for a fair, low-variance PPL. Tunable.
+  eval_tokens: 200_000_000
+  # Placeholder defaults so the BASE config composes (aux.* are ??? in ml_base
+  # and referenced by top-level data_cache_path/eval_iters). Every sweep point
+  # overrides all of these per (variant, ladder, budget).
+  size: 0.4B
+  hidden: 1024
+  ffn: 3072
+  layers: 28
+  heads: 16
+  qgroups: 8
+  gqa: true
+  mbs: 4
+  gbs: 256
+  tokens: 12_000_000_000
+  ckda_repo: ${oc.env:CKDA_REPO,/e/project1/e-sta-openeurollm/poeppel1/complex_kda}
+
+backend:
+  # Default (mlstm7gqa) = the container path; the ckda3_qwen35 arm overrides it
+  # per point with ComplexKDA's fla, exactly as its training job does.
+  # apptainer takes PYTHONPATH from THIS backend.env block (an explicit --env).
+  env:
+    PYTHONPATH: ".:submodules/Megatron-LM"
+  megatron:
+    # Placeholder (overridden per ladder by the sweep); base compose needs it set.
+    lr: 0.002
+    # Liger fused linear cross-entropy — REQUIRED: the val-loss computation
+    # otherwise materializes the full 262k-vocab logits and OOMs at ~64 GiB
+    # (same as the training runs, which set this). Chunked so it fits 1 node.
+    liger_fused_linear_cross_entropy: true
+    liger_fused_linear_cross_entropy_chunk_size: 8192
+    # ---- eval-only: no training, no save; load model weights only ----
+    skip_train: true
+    train_iters: 1
+    lr_warmup_iters: 0            # avoid warmup>train_iters with train_iters=1
+    eval_interval: 1
+    eval_iters: "${oc.eval:'max(50, int(${aux.eval_tokens}/(${aux.seq_len}*${aux.gbs})))'}"
+    data_path: []
+    train_data_path: null
+    test_data_path: null
+    valid_data_path: ${aux.val_dataset.valid_data_path}
+    split: null
+    save: null
+    save_extra_steps: []
+    no_load_optim: true
+    no_load_rng: true
+    no_save_optim: true
+    no_save_rng: true
+    exit_on_missing_checkpoint: true
+    # --ckpt-step is SILENTLY OVERRIDDEN when a non-persistent checkpoint with
+    # iteration >= the requested step exists (checkpointing.py:1325). The stable
+    # dirs carry non_persistent/iter_00680000-ish rotations, so evalstable_branch20BT
+    # (ask 30517) and branch30BT (ask 45776) both loaded 68000 and returned
+    # byte-identical losses; branch50BT (ask 76294) was correct only because
+    # 76294 > 68000. Disabling the non-persistent type makes --ckpt-step
+    # authoritative. EVAL-ONLY: on a TRAIN config this silently prevents restart
+    # progress and produces a zero-progress restart loop.
+    non_persistent_ckpt_type: null
+    lr_wsd_decay_iters: 0
+    # Per-eval-job val blend index dir (avoids concurrent-build races).
+    data_cache_path: "${oc.env:OELLM_CACHE_DIR,'.cache'}/multiling_val_262k/${aux.variant}_${aux.size}_${stage}"
+    wandb_project: dense_multilingual_scaling_matched_0p4B_eval
+    aux:
+      # Resolves the ${backend.megatron.aux.val_datamix_prefix} refs inside the
+      # included validation blend.
+      val_datamix_prefix: /e/data1/datasets/products/openeurollm/pretokenized/openeurollm-tokenized-256k-val
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "3:00:00"
+    exclude: jpbo-001-48
+
+stage: eval
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    # ===================== GROUP 0 — ARCHITECTURE =====================
+    - type: list
+      configs:
+        - aux.variant: mlstm7gqa_nope
+          aux.ffn: 3072            # the ladder's dense ffn, as in main_scaling_all
+          backend.megatron.position_embedding_type: none
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.experimental_attention_variant: mlstm
+          backend.megatron.linear_attention_freq: 8
+          backend.megatron.mlstm_conv1d: false
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_value_head_dim: 128
+          # GQA: q/k at the attention KV-group count, v (and the gates) at the
+          # head count. Escaped so they resolve against the ladder's aux.*.
+          backend.megatron.linear_num_key_heads: "\\${aux.qgroups}"
+          backend.megatron.linear_num_value_heads: "\\${aux.heads}"
+          backend.megatron.mlstm_chunk_size: 128
+          backend.megatron.mlstm_igate_bias_init: -8.0
+
+        - aux.variant: ckda3_qwen35
+          aux.ffn: 3968
+          # --- Qwen3.5 attention layers, identical to gdn3_qwen35 ---
+          backend.megatron.attention_output_gate: true
+          backend.megatron.layernorm_zero_centered_gamma: true
+          backend.megatron.position_embedding_type: rope
+          backend.megatron.rotary_percent: 0.25
+          backend.megatron.rotary_base: 10000
+          backend.megatron.window_size: null
+          backend.megatron.window_attn_skip_freq: null
+          backend.megatron.linear_attention_freq: 4
+          # Megatron's own attention (not ComplexKDA's fla `gated_nope` one), so
+          # the gate/RoPE/qk-norm settings above apply exactly as in gdn3_qwen35.
+          backend.megatron.linear_hybrid_attention: standard
+          # --- Complex-KDA mixer (ComplexKDA sweep_spec `ckda_shipped`) ---
+          backend.megatron.experimental_attention_variant: complex_kda
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_conv_kernel_dim: 4
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_gate_lower_bound: -5.0
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.env.PYTHONPATH: ".:submodules/Megatron-LM:\\${aux.ckda_repo}"
+
+    # ================= GROUP 1 — 0.4B ladder (gbs256 lr2e-3) =================
+    # Two eval points per budget: the fully-decayed cooldown final, and the
+    # stable pre-decay branch checkpoint it was seeded from.
+    - type: list
+      configs:
+        # ---- 0.4B: gbs256 lr2e-3 -> 12/20/30/50 BT (as eval_all_scaling_all) ----
+        - type: list
+          defaults:
+            aux.size: 0.4B
+            aux.hidden: 1024
+            # aux.ffn set per arm in group 0
+            aux.layers: 28
+            aux.heads: 16
+            aux.qgroups: 8
+            aux.gqa: true
+            aux.mbs: 4
+            aux.gbs: 256
+            backend.megatron.lr: 0.002
+          configs:
+            - type: list
+              defaults:
+                aux.start_iter: "\\${oc.eval:'int((\\${aux.tokens}+\\${aux.seq_len}*\\${aux.gbs}-1)//(\\${aux.seq_len}*\\${aux.gbs}))'}"
+                backend.megatron.load: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.train_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_firstcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT/"
+                stage: "evalcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT"
+                job.start_condition:
+                  class_name: FileExistsCondition
+                  path: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.train_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_firstcd_decay\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT/iter_\\${oc.eval:'str(\\${aux.start_iter}).zfill(7)'}"
+              configs:
+                - aux.tokens: 12_000_000_000
+                - aux.tokens: 20_000_000_000
+                - aux.tokens: 30_000_000_000
+                - aux.tokens: 50_000_000_000
+            - type: list
+              defaults:
+                aux.start_iter: "\\${oc.eval:'int(((\\${aux.tokens}+\\${aux.seq_len}*\\${aux.gbs}-1)//(\\${aux.seq_len}*\\${aux.gbs}))*(1-\\${aux.decay_fraction}))'}"
+                backend.megatron.load: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.train_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_stable/"
+                backend.megatron.ckpt_step: "\\${aux.start_iter}"
+                stage: "evalstable_branch\\${oc.eval:'int(\\${aux.tokens}//10**9)'}BT"
+                job.start_condition:
+                  class_name: FileExistsCondition
+                  path: "\\${oc.env:OUTPUT_DIR,'./output'}/\\${aux.train_group}/qwen3_\\${aux.variant}_\\${aux.size}_ne_lr\\${backend.megatron.lr}_gbsz\\${aux.gbs}_stable/iter_\\${oc.eval:'str(\\${aux.start_iter}).zfill(7)'}"
+              configs:
+                - aux.tokens: 12_000_000_000
+                - aux.tokens: 20_000_000_000
+                - aux.tokens: 30_000_000_000
+                - aux.tokens: 50_000_000_000

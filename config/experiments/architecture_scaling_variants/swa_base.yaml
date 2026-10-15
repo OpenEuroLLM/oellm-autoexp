@@ -1,0 +1,162 @@
+# @package _global_
+# Shared base for the architecture-variant scaling rerun
+# (dump/scaling_experiments/retraining_plan.md).
+#
+# Reproduces the dense_scaling baseline recipe EXACTLY — data, tokenizer,
+# split/seed (=> identical token order), optimizer, WSD schedule, init — with
+# ONE architecture change: sliding-window attention on >3/4 of the layers.
+#
+#   window_attn_skip_freq: 6  -> full attention on every 6th layer (1-based,
+#     layer % 6 == 0), SWA elsewhere:
+#       50M (12L): 10/12 SWA   130M (18L): 15/18   300M/600M (20L): 17/20
+#       1B  (24L): 20/24  — i.e. 83–85% SWA for all sizes.
+#   window_size: 1024 (causal) at seq 4096 -> ~2.7x KV-cache reduction at 4k
+#     context, ~6x asymptotically at long context.
+#
+# Ground truth for every non-SWA setting:
+#   dump/scaling_experiments/reference_configs/{50M,130M,300M,600M,1B}.json
+# Comparison target: dump/scaling_experiments/post_decay_losses.csv
+defaults:
+  - ../base
+  - /backend: megatron_torchrun_localaddr
+  - /container: jupiter
+  - /slurm: jupiter
+  - /backend/megatron: [base, data_nemonicco_split_jupiter]
+  - /sweep: none
+  - override /job: auto_restart
+  - _self_
+
+aux:
+  experiment_group: "architecture_scaling_variants"
+
+  # ---- architecture variant knobs (sweep other hybrid variants here) ----
+  variant: swa6w1024
+  swa_window: "1024,0"      # (left, right) window; right=0 => causal
+  swa_full_attn_freq: 6     # full attention every Nth layer, SWA on the rest
+
+  # ---- model size (set by size_*.yaml) ----
+  size: ???
+  hidden: ???
+  ffn: ???
+  layers: ???
+  heads: ???
+  beta2: ???
+
+  # ---- per-ladder / per-stage (set by ladder files and their sweeps) ----
+  gbs: ???
+  mbs: ???
+  tokens: ???
+  seq_len: 4096
+  decay_fraction: 0.2
+  start_iter: 0
+
+  # Branch iterations (0.8 x budget-iters) for every decay stage of this
+  # file's sweep — the stable run saves a checkpoint at each of them.
+  # NOTE: assumes the stage group is sweep.groups.0 (ladder files); the
+  # phase-1 tuning files override this with groups.1.
+  extra_steps: ${oc.mapeval:${oc.maptmpl:'int((((% + ${aux.seq_len}*${aux.gbs})-1)//(${aux.seq_len}*${aux.gbs}))*(1-${aux.decay_fraction}))',${oc.mapextractkey:aux.tokens,${sweep.groups.0.configs.1.configs}}}}
+
+backend:
+  megatron:
+    # ---- architecture (baseline + SWA) ----
+    hidden_size: ${aux.hidden}
+    ffn_hidden_size: ${aux.ffn}
+    num_layers: ${aux.layers}
+    num_attention_heads: ${aux.heads}
+    num_query_groups: ${aux.heads}    # MHA, as baseline
+    kv_channels: 64
+    window_size: ${aux.swa_window}
+    window_attn_skip_freq: ${aux.swa_full_attn_freq}
+    add_qkv_bias: true
+    qk_layernorm: true
+    attention_dropout: 0
+    hidden_dropout: 0
+    normalization: RMSNorm
+    layernorm_epsilon: 1.0e-05
+    position_embedding_type: rope
+    rotary_base: 10000
+    rotary_percent: 1
+    swiglu: true
+    untie_embeddings_and_output_weights: false
+    init_method_std: 0.02
+    seq_length: ${aux.seq_len}
+    max_position_embeddings: ${aux.seq_len}
+    padded_vocab_size: 50304
+    make_vocab_size_divisible_by: 128
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: EleutherAI/gpt-neox-20b
+
+    # ---- precision / fusions (match baseline --no-* flags) ----
+    bf16: true
+    accumulate_allreduce_grads_in_fp32: true
+    grad_reduce_in_bf16: false
+    bias_dropout_fusion: false
+    bias_gelu_fusion: false
+    bias_swiglu_fusion: false
+    gradient_accumulation_fusion: false
+    use_flash_attn: true
+
+    # ---- optimizer / WSD schedule (baseline) ----
+    lr: ???                       # set per ladder file / sweep
+    adam_beta1: 0.9
+    adam_beta2: ${aux.beta2}
+    adam_eps: 1.0e-08
+    weight_decay: 0.1
+    clip_grad: 1
+    lr_decay_style: WSD
+    lr_wsd_decay_style: linear
+    lr_warmup_iters: 2000         # fixed regardless of gbs, as baseline
+    lr_warmup_init: 0
+    min_lr: 1.0e-05
+
+    # ---- data / batching: identical token order as baseline ----
+    global_batch_size: ${aux.gbs}
+    micro_batch_size: ${aux.mbs}
+    train_iters: "${oc.eval:'(${aux.tokens}+${aux.seq_len}*${aux.gbs}-1)//(${aux.seq_len}*${aux.gbs})'}"
+    dataloader_type: single       # baseline (NOT cyclic): same seed+split => same tokens
+    seed: 1234
+    num_workers: 7
+    num_dataset_builder_threads: 6
+
+    # ---- parallelism: DP-only for all sizes ----
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    expert_model_parallel_size: 1
+    expert_tensor_parallel_size: 1
+    sequence_parallel: false
+    use_distributed_optimizer: true
+    overlap_p2p_comm: false
+
+    # ---- logging / eval / checkpointing ----
+    log_interval: 10
+    log_progress: true
+    log_throughput: true
+    eval_interval: 1000
+    eval_iters: 100               # baseline: val loss = deterministic 1% split
+    save: ${job.base_output_dir}
+    save_interval: 5000
+    save_extra_steps: ${aux.extra_steps}   # checkpoint exactly at each branch point
+    ckpt_format: torch_dist
+    rerun_mode: disabled
+    wandb_project: architecture_scaling_variants
+    wandb_exp_name: ${job.name}
+    wandb_save_dir: ${job.base_output_dir}/wandb
+    tensorboard_dir: ${job.base_output_dir}/tensorboard
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    TORCHDYNAMO_DISABLE: "1"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+
+slurm:
+  sbatch:
+    time: "24:00:00"
+
+stage: stable
+
+job:
+  name: ${aux.variant}_${aux.size}_lr${backend.megatron.lr}_gbsz${aux.gbs}_beta2${backend.megatron.adam_beta2}_${stage}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"

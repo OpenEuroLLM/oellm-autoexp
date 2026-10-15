@@ -1,0 +1,45 @@
+# @package _global_
+# TP=1 validation and speed test for the chunked Liger fused LM-head/CE path.
+# It intentionally keeps the normal native CE settings inherited from ml_base;
+# the model bypasses that path only while labels are present.
+defaults:
+  - throughput_fused_ce_mbs_0.1B
+  - override /container: jupiter_liger
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_liger_fused_lmhead
+
+backend:
+  megatron:
+    liger_fused_linear_cross_entropy: true
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:30:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        # Numerical/throughput comparison against completed native fused MBS=4.
+        - aux.variant: fullattn_rope_liger_mbs4
+          backend.megatron.micro_batch_size: 4
+
+        # This is the target case which OOMs with native CE because it allocates
+        # the full [4096, 8, 262272] FP32 softmax workspace.
+        - aux.variant: fullattn_rope_liger_mbs8
+          backend.megatron.micro_batch_size: 8
+
+        # Throughput-only points: with DP=4, the global batch must be at least
+        # four times MBS. Do not use these to compare loss curves with GBS=32.
+        - aux.variant: fullattn_rope_liger_mbs16_gbs64
+          backend.megatron.micro_batch_size: 16
+          backend.megatron.global_batch_size: 64
+
+        - aux.variant: fullattn_rope_liger_mbs32_gbs128
+          backend.megatron.micro_batch_size: 32
+          backend.megatron.global_batch_size: 128

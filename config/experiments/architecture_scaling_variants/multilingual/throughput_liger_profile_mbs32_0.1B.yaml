@@ -1,0 +1,39 @@
+# @package _global_
+# Short, rank-0 PyTorch-profiler capture of the successful Liger MBS=32 path.
+# The profile starts after CUDA-graph warm-up, so it represents steady state.
+defaults:
+  - throughput_liger_fused_lmhead_0.1B
+  - _self_
+
+aux:
+  experiment_group: architecture_scaling_variants_multilingual_liger_profile
+
+backend:
+  megatron:
+    train_iters: 16
+    # Profiling-only schedule: the inherited 20-step warm-up is longer than
+    # this capture run and fails Megatron's scheduler validation.
+    lr_warmup_iters: 8
+    log_interval: 1
+    profile: true
+    profile_ranks: [0]
+    profile_step_start: 10
+    profile_step_end: 14
+    use_pytorch_profiler: true
+    pytorch_profiler_collect_shapes: false
+    pytorch_profiler_collect_callstack: false
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:30:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  groups:
+    - type: list
+      configs:
+        - aux.variant: fullattn_rope_liger_mbs32_profile
+          backend.megatron.micro_batch_size: 32
+          backend.megatron.global_batch_size: 128
