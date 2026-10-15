@@ -121,6 +121,10 @@ class OellmHybridConfig(PretrainedConfig):
         engram_hash_multipliers: list[list[int]] | None = None,
         # Whether the weights carry a token -> canonical id map (tokenizer compression).
         engram_token_map: bool = False,
+        # Table storage: "bf16", "fp32" (continued training) or "fp8" (inference only:
+        # e4m3 bytes + one scale per row, in engram_scale_dtype "fp32" or "bf16").
+        engram_table_dtype: str = "bf16",
+        engram_scale_dtype: str = "fp32",
         # ---- complete FLA layers (kda / signed_kda / complex_kda) ----
         fla_layer: dict | None = None,
         fla_attention_layer: dict | None = None,
@@ -206,6 +210,14 @@ class OellmHybridConfig(PretrainedConfig):
         self.engram_table_sizes = engram_table_sizes
         self.engram_hash_multipliers = engram_hash_multipliers
         self.engram_token_map = engram_token_map
+        if engram_table_dtype not in ("bf16", "fp32", "fp8"):
+            raise ValueError(
+                f"engram_table_dtype must be bf16, fp32 or fp8, got {engram_table_dtype!r}"
+            )
+        if engram_scale_dtype not in ("bf16", "fp32"):
+            raise ValueError(f"engram_scale_dtype must be bf16 or fp32, got {engram_scale_dtype!r}")
+        self.engram_table_dtype = engram_table_dtype
+        self.engram_scale_dtype = engram_scale_dtype
         if ENGRAM in mixer_types:
             lookups = len(self.engram_ngram_orders) * engram_num_heads
             if engram_table_sizes is None or len(engram_table_sizes) != lookups:

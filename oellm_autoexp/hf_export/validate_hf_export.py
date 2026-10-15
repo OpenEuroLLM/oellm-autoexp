@@ -80,12 +80,21 @@ def main() -> int:
     # 0.045-nat spread between the architectures being compared, and a real
     # conversion bug misses by orders of magnitude (the RoPE-as-identity bug put
     # NLL at 5.8 vs 3.0).
-    p.add_argument("--max-kl", type=float, default=2e-3,
-                   help="max mean KL(megatron || hf) over all positions")
-    p.add_argument("--min-agree", type=float, default=0.98,
-                   help="min fraction of positions whose argmax token matches")
-    p.add_argument("--max-nll-delta", type=float, default=1e-2,
-                   help="max |NLL_megatron - NLL_hf| on the reference tokens")
+    p.add_argument(
+        "--max-kl", type=float, default=2e-3, help="max mean KL(megatron || hf) over all positions"
+    )
+    p.add_argument(
+        "--min-agree",
+        type=float,
+        default=0.98,
+        help="min fraction of positions whose argmax token matches",
+    )
+    p.add_argument(
+        "--max-nll-delta",
+        type=float,
+        default=1e-2,
+        help="max |NLL_megatron - NLL_hf| on the reference tokens",
+    )
     args = p.parse_args()
 
     from transformers import AutoTokenizer
@@ -109,9 +118,7 @@ def main() -> int:
     with torch.no_grad():
         out = model(input_ids=ids)
     logits = out.logits.float()
-    nll = torch.nn.functional.cross_entropy(
-        logits[0, :-1], ids[0, 1:], reduction="mean"
-    ).item()
+    nll = torch.nn.functional.cross_entropy(logits[0, :-1], ids[0, 1:], reduction="mean").item()
     random_nll = float(torch.log(torch.tensor(float(cfg.vocab_size))))
     print(f"tokens               : {ids.shape[1]}")
     print(f"mean NLL             : {nll:.4f}  (random baseline {random_nll:.4f})")
@@ -129,8 +136,7 @@ def main() -> int:
             mine = model(input_ids=ref_ids).logits.float().cpu()
         if mine.shape != ref_logits.shape:
             ok = False
-            print(f"FAIL reference       : shape {tuple(mine.shape)} vs "
-                  f"{tuple(ref_logits.shape)}")
+            print(f"FAIL reference       : shape {tuple(mine.shape)} vs {tuple(ref_logits.shape)}")
         else:
             delta = (mine - ref_logits).abs()
             # Raw logit deltas are dominated by the bf16 forward, so the
@@ -138,9 +144,9 @@ def main() -> int:
             # agreement — those are what any eval actually consumes.
             p_ref = torch.log_softmax(ref_logits, dim=-1)
             p_mine = torch.log_softmax(mine, dim=-1)
-            kl = torch.nn.functional.kl_div(
-                p_mine, p_ref, log_target=True, reduction="none"
-            ).sum(-1)
+            kl = torch.nn.functional.kl_div(p_mine, p_ref, log_target=True, reduction="none").sum(
+                -1
+            )
             agree = (mine.argmax(-1) == ref_logits.argmax(-1)).float().mean().item()
             nll_ref = torch.nn.functional.cross_entropy(
                 ref_logits[:, :-1].reshape(-1, ref_logits.size(-1)),
@@ -155,8 +161,10 @@ def main() -> int:
             print(f"mean |Δlogit|        : {delta.mean().item():.6f}")
             print(f"mean KL(mega‖hf)     : {kl.mean().item():.3e}   max {kl.max().item():.3e}")
             print(f"top-1 agreement      : {agree * 100:.3f}%")
-            print(f"NLL megatron / hf    : {nll_ref:.5f} / {nll_mine:.5f} "
-                  f"(Δ {abs(nll_ref - nll_mine):.5f})")
+            print(
+                f"NLL megatron / hf    : {nll_ref:.5f} / {nll_mine:.5f} "
+                f"(Δ {abs(nll_ref - nll_mine):.5f})"
+            )
             passed = (
                 kl.mean().item() < args.max_kl
                 and agree >= args.min_agree

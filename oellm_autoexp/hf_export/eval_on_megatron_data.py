@@ -32,8 +32,14 @@ import torch
 
 # Megatron IndexedDataset dtype codes (megatron/core/datasets/indexed_dataset.py).
 _DTYPES = {
-    1: np.uint8, 2: np.int8, 3: np.int16, 4: np.int32,
-    5: np.int64, 6: np.float64, 7: np.float32, 8: np.uint16,
+    1: np.uint8,
+    2: np.int8,
+    3: np.int16,
+    4: np.int32,
+    5: np.int64,
+    6: np.float64,
+    7: np.float32,
+    8: np.uint16,
 }
 _HDR_MAGIC = b"MMIDIDX\x00\x00"
 
@@ -91,9 +97,7 @@ def main() -> int:
         ids = torch.from_numpy(row).unsqueeze(0).to(args.device)
         with torch.no_grad():
             logits = model(input_ids=ids).logits.float()
-        nll = torch.nn.functional.cross_entropy(
-            logits[0, :-1], ids[0, 1:], reduction="sum"
-        ).item()
+        nll = torch.nn.functional.cross_entropy(logits[0, :-1], ids[0, 1:], reduction="sum").item()
         total_nll += nll
         total_tok += ids.shape[1] - 1
 

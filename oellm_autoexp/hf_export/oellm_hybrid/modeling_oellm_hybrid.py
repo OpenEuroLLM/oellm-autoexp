@@ -888,7 +888,23 @@ class OellmEngram(nn.Module):
             "token_map",
             torch.zeros(config.vocab_size, dtype=torch.long) if config.engram_token_map else None,
         )
-        self.table = nn.Parameter(torch.empty(sum(self.sizes), config.engram_embed_dim))
+        rows = sum(self.sizes)
+        # engram_table_dtype: "fp8" (inference) stores e4m3 bytes as uint8 plus one scale
+        # per row; "fp32" keeps the table fp32 under a bf16 model (continued training).
+        self.table_dtype = getattr(config, "engram_table_dtype", None) or "bf16"
+        if self.table_dtype == "fp8":
+            self.register_buffer(
+                "table", torch.zeros(rows, config.engram_embed_dim, dtype=torch.uint8)
+            )
+            scale_dtype = {"fp32": torch.float32, "bf16": torch.bfloat16}[
+                getattr(config, "engram_scale_dtype", "fp32")
+            ]
+            self.register_buffer("table_scale", torch.ones(rows, dtype=scale_dtype))
+        else:
+            # Explicit dtype: from_pretrained builds the model under its load dtype.
+            table_dtype = torch.float32 if self.table_dtype == "fp32" else None
+            self.table = nn.Parameter(torch.empty(rows, config.engram_embed_dim, dtype=table_dtype))
+            self.table_scale = None
         mem_dim = config.engram_embed_dim * len(self.sizes)
         self.key_proj = nn.Linear(mem_dim, h, bias=False)
         self.value_proj = nn.Linear(mem_dim, h, bias=False)
@@ -898,10 +914,43 @@ class OellmEngram(nn.Module):
             h, h, kernel_size=self.kernel_size, groups=h, bias=False, dilation=self.dilation
         )
 
+    def _apply(self, fn, recurse=True):
+        """Keep an fp32 table and fp8 scales out of the model's dtype casts
+        (``.to(bf16)``, ``from_pretrained(dtype=...)``); device moves still
+        apply."""
+        keep = []
+        if self.table_dtype == "fp32" and "table" in self._parameters:
+            keep.append(("_parameters", "table"))
+        if self.table_scale is not None and "table_scale" in self._buffers:
+            keep.append(("_buffers", "table_scale"))
+        probe = fn(torch.zeros(1, dtype=torch.float32, device=self.table.device))
+        if not keep or probe.dtype == torch.float32:
+            return super()._apply(fn, recurse)
+        held = [(store, name, getattr(self, store).pop(name)) for store, name in keep]
+        try:
+            super()._apply(fn, recurse)
+        finally:
+            for store, name, tensor in held:
+                if tensor.device != probe.device:
+                    tensor.data = tensor.data.to(probe.device)
+                getattr(self, store)[name] = tensor
+        return self
+
     def offload_table(self, device="cpu") -> None:
         """Keep the table on ``device`` (e.g. CPU) while the rest stays where
         it is."""
         self.table.data = self.table.data.to(device)
+        if self.table_scale is not None:
+            self.table_scale.data = self.table_scale.data.to(device)
+
+    def _lookup(self, rows: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
+        """Table rows ``[..., L] -> [..., L, dim]``; fp8 rows are dequantized
+        here."""
+        idx = rows.to(self.table.device)
+        if self.table_dtype == "fp8":
+            q = self.table[idx].view(torch.float8_e4m3fn).to(torch.float32)
+            return (q * self.table_scale[idx].float().unsqueeze(-1)).to(dtype)
+        return F.embedding(idx, self.table).to(dtype)
 
     def _rows(self, shifted: torch.Tensor, s: int) -> torch.Tensor:
         """Global table rows of the last ``s`` positions; ``shifted`` = ids + 1 with
@@ -940,8 +989,8 @@ class OellmEngram(nn.Module):
         new_id_state = shifted[:, shifted.shape[1] - p :]
 
         rows = self._rows(shifted, s)
-        e = F.embedding(rows.to(self.table.device), self.table)
-        e = e.to(device=hidden_states.device, dtype=hidden_states.dtype).reshape(b, s, -1)
+        e = self._lookup(rows, hidden_states.dtype)
+        e = e.to(device=hidden_states.device).reshape(b, s, -1)
         k, v = self.key_proj(e), self.value_proj(e)
         gate = (self.hidden_norm(hidden_states).float() * self.key_norm(k).float()).sum(
             -1, keepdim=True
@@ -1086,15 +1135,25 @@ class OellmHybridPreTrainedModel(PreTrainedModel):
     _supports_flash_attn = False
 
     def _init_weights(self, module: nn.Module) -> None:
+        # transformers >= 5 runs _init_weights after loading and skips tensors it loaded
+        # only through its guarded init functions; a raw ``.data.normal_()`` would
+        # overwrite loaded weights (it did, for the Engram tables).
+        try:
+            from transformers import initialization as hf_init
+
+            normal_, zeros_ = hf_init.normal_, hf_init.zeros_
+        except ImportError:  # older transformers: only missing weights get here
+            normal_, zeros_ = torch.nn.init.normal_, torch.nn.init.zeros_
         std = self.config.initializer_range
-        if isinstance(module, (nn.Linear, nn.Conv1d)):
-            module.weight.data.normal_(mean=0.0, std=std)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=std)
-        elif isinstance(module, OellmEngram):
-            module.table.data.normal_(mean=0.0, std=std)
+        with torch.no_grad():
+            if isinstance(module, (nn.Linear, nn.Conv1d)):
+                normal_(module.weight, mean=0.0, std=std)
+                if module.bias is not None:
+                    zeros_(module.bias)
+            elif isinstance(module, nn.Embedding):
+                normal_(module.weight, mean=0.0, std=std)
+            elif isinstance(module, OellmEngram) and module.table.is_floating_point():
+                normal_(module.table, mean=0.0, std=std)
 
 
 class OellmHybridModel(OellmHybridPreTrainedModel):

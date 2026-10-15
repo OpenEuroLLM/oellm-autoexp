@@ -374,7 +374,7 @@ def build_hf_config(mcfg: dict[str, Any], vocab_size: int) -> dict[str, Any]:
             "AutoConfig": "configuration_oellm_hybrid.OellmHybridConfig",
             "AutoModelForCausalLM": "modeling_oellm_hybrid.OellmHybridForCausalLM",
         },
-        "torch_dtype": "bfloat16",
+        "torch_dtype": "bfloat16",  # overwritten from --dtype in convert()
         "vocab_size": vocab_size,
         "hidden_size": mcfg["hidden_size"],
         "intermediate_size": mcfg["ffn_hidden_size"],
@@ -717,9 +717,63 @@ def _resolve_iter(run_dir: Path, iteration: int | None) -> Path:
     return run_dir / f"iter_{int(marker.read_text().strip()):07d}"
 
 
+_DTYPES = {"bf16": torch.bfloat16, "fp32": torch.float32}
+# float8 e4m3: largest finite value. Rows are scaled so their max |x| maps onto it.
+_FP8_MAX = 448.0
+
+
+def quantize_engram_table(table: torch.Tensor, scale_dtype: torch.dtype):
+    """Per-row fp8 (e4m3) quantization: ``(uint8 bytes [rows, dim], scale
+    [rows])``.
+
+    The bytes are stored as uint8 so no dtype cast of the model (``.to(bf16)``,
+    ``from_pretrained(dtype=...)``) can touch them; the HF model dequantizes only the
+    rows it looks up, ``row = fp8(bytes) * scale``.
+    """
+    table = table.float()
+    amax = table.abs().amax(dim=-1).clamp_min(1e-12)
+    scale = (amax / _FP8_MAX).to(scale_dtype)
+    q = (table / scale.float().unsqueeze(-1)).clamp(-_FP8_MAX, _FP8_MAX)
+    return q.to(torch.float8_e4m3fn).view(torch.uint8).contiguous(), scale.contiguous()
+
+
+def cast_for_export(
+    tensors: dict[str, torch.Tensor],
+    dtype: str = "bf16",
+    engram_table_dtype: str | None = None,
+    engram_scale_dtype: str = "fp32",
+) -> dict[str, torch.Tensor]:
+    """Weights to ``dtype``; Engram tables to ``engram_table_dtype`` (fp8: +
+    scales)."""
+    engram_table_dtype = engram_table_dtype or dtype
+    out: dict[str, torch.Tensor] = {}
+    for k, v in tensors.items():
+        if k.endswith(".mixer.table") and engram_table_dtype == "fp8":
+            q, scale = quantize_engram_table(v, _DTYPES[engram_scale_dtype])
+            out[k] = q
+            out[k[: -len("table")] + "table_scale"] = scale
+        elif k.endswith(".mixer.table"):
+            out[k] = v.to(_DTYPES[engram_table_dtype]).contiguous()
+        elif v.is_floating_point():
+            out[k] = v.to(_DTYPES[dtype]).contiguous()
+        else:
+            out[k] = v.contiguous()
+    return out
+
+
 def convert(
-    run_dir: Path, out_dir: Path, tokenizer_dir: Path | None, iteration: int | None = None
+    run_dir: Path,
+    out_dir: Path,
+    tokenizer_dir: Path | None,
+    iteration: int | None = None,
+    dtype: str = "bf16",
+    engram_table_dtype: str | None = None,
+    engram_scale_dtype: str = "fp32",
 ) -> Path:
+    """``dtype`` is the weights' dtype; ``engram_table_dtype`` (default: ``dtype``)
+    that of the Engram tables: ``fp8`` for inference only (per-row scales in
+    ``engram_scale_dtype``), ``fp32`` to continue training or post-train from the
+    export."""
     from safetensors.torch import save_file
 
     ckpt_dir = _resolve_iter(run_dir, iteration)
@@ -731,6 +785,11 @@ def convert(
     assert_finite(state, f"source checkpoint {ckpt_dir}")
     vocab_size = state["embedding.word_embeddings.weight"].shape[0]
     hf_cfg = build_hf_config(mcfg, vocab_size)
+    engram_table_dtype = engram_table_dtype or dtype
+    hf_cfg["torch_dtype"] = {"bf16": "bfloat16", "fp32": "float32"}[dtype]
+    if "engram" in hf_cfg["mixer_types"]:
+        hf_cfg["engram_table_dtype"] = engram_table_dtype
+        hf_cfg["engram_scale_dtype"] = engram_scale_dtype
     LOGGER.info(
         "%s: %d layers %s",
         run_dir.name,
@@ -743,10 +802,7 @@ def convert(
     # Re-check after remapping: a bad split/concat could also introduce
     # non-finite values that were not present in the source tensors.
     assert_finite(tensors, f"remapped export for {ckpt_dir}")
-    tensors = {
-        k: (v if not v.is_floating_point() else v.to(torch.bfloat16)).contiguous()
-        for k, v in tensors.items()
-    }
+    tensors = cast_for_export(tensors, dtype, engram_table_dtype, engram_scale_dtype)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     save_file(tensors, str(out_dir / "model.safetensors"), metadata={"format": "pt"})
@@ -796,13 +852,34 @@ def main() -> None:
     p.add_argument("--tokenizer", type=Path, default=None)
     p.add_argument("--iter", type=int, default=None)
     p.add_argument("--skip-existing", action="store_true")
+    p.add_argument("--dtype", choices=sorted(_DTYPES), default="bf16", help="weight dtype")
+    p.add_argument(
+        "--engram-table-dtype",
+        choices=["fp8", "bf16", "fp32"],
+        default=None,
+        help="Engram tables: fp8 for inference only, fp32 to continue training (default: --dtype)",
+    )
+    p.add_argument(
+        "--engram-scale-dtype",
+        choices=sorted(_DTYPES),
+        default="fp32",
+        help="dtype of the per-row fp8 scales",
+    )
     args = p.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if args.skip_existing and (args.out_dir / "model.safetensors").exists():
         LOGGER.info("%s already converted, skipping", args.out_dir)
         return
-    convert(args.run_dir, args.out_dir, args.tokenizer, args.iter)
+    convert(
+        args.run_dir,
+        args.out_dir,
+        args.tokenizer,
+        args.iter,
+        dtype=args.dtype,
+        engram_table_dtype=args.engram_table_dtype,
+        engram_scale_dtype=args.engram_scale_dtype,
+    )
 
 
 if __name__ == "__main__":
