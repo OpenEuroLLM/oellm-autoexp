@@ -400,6 +400,14 @@ class MegatronConfig(ConfigInterface):
     # Conv kernel dimension for the gated delta net.
     linear_conv_kernel_dim: int = 4
 
+    # Kernel width of the gated short convolution, the `C` layers of a hybrid model (LFM2's
+    # `conv_L_cache`).
+    short_conv_kernel_size: int = 3
+
+    # Whether the gated short convolution's depthwise conv has a bias (LFM2's `conv_bias`).
+    # Its projections follow `add_bias_linear`.
+    short_conv_bias: bool = False
+
     # Query and key head dimension for the gated delta net.
     linear_key_head_dim: int = 128
 
@@ -3365,10 +3373,11 @@ class MegatronConfig(ConfigInterface):
     spec: list[str] | None | None = None
 
     # Specify a hybrid layer pattern using M (mamba), G (gdn), L (the linear mixer named by
-    # --experimental-attention-variant), * (attention), D (dsa), - (mlp), E (moe). Use | to
-    # define pipeline stage boundaries for flexible virtual pipeline parallel (fVPP). Use / to
-    # separate MTP patterns. Example: "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this
-    # flag is used, it is the sole indicator that a hybrid model is being run.
+    # --experimental-attention-variant), C (gated short convolution), * (attention), D (dsa),
+    # - (mlp), E (moe). Use | to define pipeline stage boundaries for flexible virtual
+    # pipeline parallel (fVPP). Use / to separate MTP patterns. Example:
+    # "M-M-|M-M*-|M-M-|M-M*-" or "M-M-|M-M*-/MM/MM". When this flag is used, it is the sole
+    # indicator that a hybrid model is being run.
     hybrid_layer_pattern: str | None | None = None
 
     # Deprecated. Use --hybrid-layer-pattern instead. If specified, its value will be
