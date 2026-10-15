@@ -7,6 +7,10 @@ with, not a reimplementation:
 * ``OellmGatedDeltaNet`` <- ``megatron.core.ssm.gated_delta_net.GatedDeltaNet``
 * ``OellmMLSTM``         <- ``megatron.core.ssm.mlstm.MLSTM``
 * ``OellmMamba2``        <- ``megatron.core.ssm.mamba_mixer.MambaMixer``
+* ``OellmShortConv``     <- ``megatron.core.ssm.short_conv.ShortConv``
+* ``OellmEngram``        <- ``megatron.core.ssm.engram.EngramLayer``
+* ``OellmFLALayer``      <- ``megatron.core.ssm.fla_hybrid`` / ``complex_kda`` (the FLA
+  layer itself: KimiDeltaAttention, ComplexKimiDeltaAttention, gated NoPE Attention)
 
 The recurrences call the very same kernels Megatron calls
 (``fla.ops.gated_delta_rule.chunk_gated_delta_rule``,
@@ -35,7 +39,6 @@ cached and uncached generation agree.
 from __future__ import annotations
 
 import contextlib
-from typing import Optional
 
 import torch
 import torch.nn.functional as F
@@ -72,49 +75,81 @@ if not hasattr(torch.cpu, "device"):  # pragma: no cover - environment shim
 
 
 def _chunk_gated_delta_rule():
-    from fla.ops.gated_delta_rule import chunk_gated_delta_rule
+    try:  # inside try: transformers' remote-code import check skips it
+        from fla.ops.gated_delta_rule import chunk_gated_delta_rule
+    except ImportError as exc:
+        raise ImportError(
+            "GDN layers and the mLSTM conv need flash-linear-attention (fla)"
+        ) from exc
 
     return chunk_gated_delta_rule
 
 
 def _fused_recurrent_gated_delta_rule():
-    from fla.ops.gated_delta_rule import fused_recurrent_gated_delta_rule
+    try:  # inside try: transformers' remote-code import check skips it
+        from fla.ops.gated_delta_rule import fused_recurrent_gated_delta_rule
+    except ImportError as exc:
+        raise ImportError(
+            "GDN layers and the mLSTM conv need flash-linear-attention (fla)"
+        ) from exc
 
     return fused_recurrent_gated_delta_rule
 
 
 def _fla_causal_conv1d():
-    from fla.modules.convolution import causal_conv1d
+    try:  # inside try: transformers' remote-code import check skips it
+        from fla.modules.convolution import causal_conv1d
+    except ImportError as exc:
+        raise ImportError(
+            "GDN layers and the mLSTM conv need flash-linear-attention (fla)"
+        ) from exc
 
     return causal_conv1d
 
 
 def _fla_l2norm():
-    from fla.modules.l2norm import l2norm
+    try:  # inside try: transformers' remote-code import check skips it
+        from fla.modules.l2norm import l2norm
+    except ImportError as exc:
+        raise ImportError(
+            "GDN layers and the mLSTM conv need flash-linear-attention (fla)"
+        ) from exc
 
     return l2norm
 
 
 def _mlstm_kernel(name: str):
-    from mlstm_kernels.torch import get_mlstm_kernel
+    try:  # inside try: transformers' remote-code import check skips it
+        from mlstm_kernels.torch import get_mlstm_kernel
+    except ImportError as exc:
+        raise ImportError("mLSTM layers need mlstm_kernels") from exc
 
     return get_mlstm_kernel(name)
 
 
 def _mlstm_step_kernel(name: str = "triton"):
-    from mlstm_kernels.torch import get_mlstm_step_kernel
+    try:  # inside try: transformers' remote-code import check skips it
+        from mlstm_kernels.torch import get_mlstm_step_kernel
+    except ImportError as exc:
+        raise ImportError("mLSTM layers need mlstm_kernels") from exc
 
     return get_mlstm_step_kernel(name)
 
 
 def _mamba_chunk_scan_combined():
-    from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+    try:  # inside try: transformers' remote-code import check skips it
+        from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+    except ImportError as exc:
+        raise ImportError("Mamba2 layers need mamba_ssm") from exc
 
     return mamba_chunk_scan_combined
 
 
 def _rms_norm_gated_cls():
-    from mamba_ssm.ops.triton.layernorm_gated import RMSNorm as RMSNormGated
+    try:  # inside try: transformers' remote-code import check skips it
+        from mamba_ssm.ops.triton.layernorm_gated import RMSNorm as RMSNormGated
+    except ImportError as exc:
+        raise ImportError("Mamba2 layers need mamba_ssm") from exc
 
     return RMSNormGated
 
@@ -157,9 +192,12 @@ class OellmRMSNorm(nn.Module):
 
 
 class OellmMLP(nn.Module):
-    """SwiGLU MLP. Megatron's fused ``linear_fc1`` is split into gate/up by the
+    """SwiGLU MLP.
+
+    Megatron's fused ``linear_fc1`` is split into gate/up by the
     converter (``torch.chunk(x, 2, dim=-1)`` in ``bias_swiglu`` ⇒ first half is
-    the gated branch)."""
+    the gated branch).
+    """
 
     def __init__(self, config: OellmHybridConfig) -> None:
         super().__init__()
@@ -240,6 +278,11 @@ class OellmHybridCache:
     * gdn        — ``(conv_state, recurrent_state)``
     * mlstm      — ``(c, n, m)`` (plus ``conv_state`` when ``mlstm_conv1d``)
     * mamba2     — ``(conv_state, ssm_state)``
+    * short_conv — ``conv_state``, the last ``kernel_size - 1`` conv inputs
+    * fla        — the layer's own ``fla.models.utils.Cache`` (one per layer)
+    * engram     — ``(id_state, conv_state)``: the last ``max_order - 1`` (shifted)
+      token ids and the last ``(kernel_size - 1) * dilation`` gated values
+    * none       — nothing (an MLP-only layer)
 
     Deliberately not a ``transformers.Cache`` subclass: that API is built around
     key/value tensors and carries assumptions (layer indexing, cropping,
@@ -258,8 +301,12 @@ class OellmHybridCache:
         def _sel(x):
             if isinstance(x, torch.Tensor):
                 return x.index_select(0, beam_idx.to(x.device))
-            if isinstance(x, tuple):
-                return tuple(_sel(i) for i in x)
+            if isinstance(x, (tuple, list)):
+                return type(x)(_sel(i) for i in x)
+            if isinstance(x, dict):
+                return {k: _sel(v) for k, v in x.items()}
+            if hasattr(x, "states"):  # an FLA Cache: per-layer dicts of tensors
+                x.states = [_sel(s) for s in x.states]
             return x
 
         self.states = [_sel(s) for s in self.states]
@@ -291,9 +338,7 @@ class OellmAttention(nn.Module):
         self.head_dim = config.head_dim
         self.n_rep = self.num_heads // self.num_kv_heads
         self.scaling = self.head_dim**-0.5
-        self.sliding_window = (
-            config.sliding_window if layer_type == "sliding_attention" else None
-        )
+        self.sliding_window = config.sliding_window if layer_type == "sliding_attention" else None
 
         self.q_proj = nn.Linear(config.hidden_size, self.num_heads * self.head_dim, bias=False)
         self.k_proj = nn.Linear(config.hidden_size, self.num_kv_heads * self.head_dim, bias=False)
@@ -323,11 +368,11 @@ class OellmAttention(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]],
-        attn_mask: Optional[torch.Tensor],
+        position_embeddings: tuple[torch.Tensor, torch.Tensor] | None,
+        attn_mask: torch.Tensor | None,
         state=None,
         past_len: int = 0,
-    ) -> tuple[torch.Tensor, Optional[tuple]]:
+    ) -> tuple[torch.Tensor, tuple | None]:
         b, s, _ = hidden_states.shape
 
         q = self.q_proj(hidden_states).view(b, s, self.num_heads, self.head_dim)
@@ -364,8 +409,13 @@ class OellmAttention(nn.Module):
             out = F.scaled_dot_product_attention(q, k, v, is_causal=True, scale=self.scaling)
         else:
             mask = _build_attention_mask(
-                attn_mask, s, kv_len, past_len, self.sliding_window,
-                hidden_states.device, q.dtype,
+                attn_mask,
+                s,
+                kv_len,
+                past_len,
+                self.sliding_window,
+                hidden_states.device,
+                q.dtype,
             )
             out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, scale=self.scaling)
 
@@ -382,11 +432,11 @@ class OellmAttention(nn.Module):
 
 
 def _build_attention_mask(
-    padding_mask: Optional[torch.Tensor],
+    padding_mask: torch.Tensor | None,
     q_len: int,
     kv_len: int,
     past_len: int,
-    sliding_window: Optional[int],
+    sliding_window: int | None,
     device: torch.device,
     dtype: torch.dtype,
 ) -> torch.Tensor:
@@ -410,7 +460,8 @@ def _build_attention_mask(
 
 
 class OellmGatedDeltaNet(nn.Module):
-    """GatedDeltaNet; ``in_proj`` stays fused as ``[q | k | v | z | beta | alpha]``."""
+    """GatedDeltaNet; ``in_proj`` stays fused as ``[q | k | v | z | beta |
+    alpha]``."""
 
     def __init__(self, config: OellmHybridConfig) -> None:
         super().__init__()
@@ -444,9 +495,7 @@ class OellmGatedDeltaNet(nn.Module):
         )
         self.out_proj = nn.Linear(self.v_dim, config.hidden_size, bias=False)
 
-    def forward(
-        self, hidden_states: torch.Tensor, state=None
-    ) -> tuple[torch.Tensor, Optional[tuple]]:
+    def forward(self, hidden_states: torch.Tensor, state=None) -> tuple[torch.Tensor, tuple | None]:
         b, s, _ = hidden_states.shape
         conv_state, recurrent_state = state if state is not None else (None, None)
         qkvzba = self.in_proj(hidden_states)
@@ -505,7 +554,8 @@ class OellmGatedDeltaNet(nn.Module):
 
 
 class OellmMLSTM(nn.Module):
-    """mLSTM; ``in_proj`` stays fused as ``[q | k | v | ogate | igate | fgate]``."""
+    """MLSTM; ``in_proj`` stays fused as ``[q | k | v | ogate | igate |
+    fgate]``."""
 
     def __init__(self, config: OellmHybridConfig) -> None:
         super().__init__()
@@ -553,9 +603,7 @@ class OellmMLSTM(nn.Module):
         self._mlstm_fn = None
         self._mlstm_step_fn = None
 
-    def forward(
-        self, hidden_states: torch.Tensor, state=None
-    ) -> tuple[torch.Tensor, Optional[tuple]]:
+    def forward(self, hidden_states: torch.Tensor, state=None) -> tuple[torch.Tensor, tuple | None]:
         b, s, _ = hidden_states.shape
         conv_state, c, n, m = state if state is not None else (None, None, None, None)
         fused = self.in_proj(hidden_states)
@@ -608,8 +656,14 @@ class OellmMLSTM(nn.Module):
             # The step kernel wants the gates as [b, nh, 1] (not [b, nh]) —
             # keep the singleton time axis instead of indexing it away.
             h, (c, n, m) = self._mlstm_step_fn(
-                q=q[:, :, 0], k=k[:, :, 0], v=v[:, :, 0],
-                i=i_preact[:, :, 0:1], f=f_preact[:, :, 0:1], c=c, n=n, m=m,
+                q=q[:, :, 0],
+                k=k[:, :, 0],
+                v=v[:, :, 0],
+                i=i_preact[:, :, 0:1],
+                f=f_preact[:, :, 0:1],
+                c=c,
+                n=n,
+                m=m,
             )
             h = h.unsqueeze(2)
         else:
@@ -637,9 +691,16 @@ class OellmMLSTM(nn.Module):
                 f_preact = F.pad(f_preact, (0, pad), value=30.0)
 
             h, (c, n, m) = self._mlstm_fn(
-                q=q, k=k, v=v, i=i_preact, f=f_preact,
-                c_initial=c, n_initial=n, m_initial=m,
-                return_last_states=True, chunk_size=self.chunk_size,
+                q=q,
+                k=k,
+                v=v,
+                i=i_preact,
+                f=f_preact,
+                c_initial=c,
+                n_initial=n,
+                m_initial=m,
+                return_last_states=True,
+                chunk_size=self.chunk_size,
             )
             if pad:
                 h = h[:, :, :s]
@@ -688,15 +749,11 @@ class OellmMamba2(nn.Module):
         )
         self.out_proj = nn.Linear(self.d_inner, config.hidden_size, bias=False)
 
-    def forward(
-        self, hidden_states: torch.Tensor, state=None
-    ) -> tuple[torch.Tensor, Optional[tuple]]:
+    def forward(self, hidden_states: torch.Tensor, state=None) -> tuple[torch.Tensor, tuple | None]:
         b, s, _ = hidden_states.shape
         conv_state, ssm_state = state if state is not None else (None, None)
         zxbcdt = self.in_proj(hidden_states)
-        z, xBC, dt = torch.split(
-            zxbcdt, [self.d_inner, self.conv_dim, self.nheads], dim=-1
-        )
+        z, xBC, dt = torch.split(zxbcdt, [self.d_inner, self.conv_dim, self.nheads], dim=-1)
 
         xBC, conv_state = _fla_causal_conv1d()(
             x=xBC,
@@ -722,7 +779,10 @@ class OellmMamba2(nn.Module):
             # Decode: one SSM step. selective_state_update wants A/dt/D expanded
             # to (nheads, headdim, dstate) / (b, nheads, headdim), matching
             # Megatron's own `_step` path.
-            from mamba_ssm.ops.triton.selective_state_update import selective_state_update
+            try:  # inside try: transformers' remote-code import check skips it
+                from mamba_ssm.ops.triton.selective_state_update import selective_state_update
+            except ImportError as exc:
+                raise ImportError("Mamba2 layers need mamba_ssm") from exc
 
             A_exp = A.view(-1, 1, 1).expand(self.nheads, self.headdim, self.d_state)
             dt_exp = dt[:, 0].unsqueeze(-1).expand(b, self.nheads, self.headdim)
@@ -761,6 +821,179 @@ class OellmMamba2(nn.Module):
         return self.out_proj(y), (conv_state, ssm_state)
 
 
+class OellmShortConv(nn.Module):
+    """LFM2 gated short convolution (Megatron ``ShortConv``, the ``C`` symbol).
+
+    ``in_proj`` stays fused as ``[B | C | x]``; ``y = C * causal_conv(B * x)``.
+    The conv is depthwise with a width of ``short_conv_kernel_size`` and runs in
+    plain torch: the decoding state is the last ``kernel_size - 1`` inputs.
+    """
+
+    def __init__(self, config: OellmHybridConfig) -> None:
+        super().__init__()
+        h = config.hidden_size
+        self.kernel_size = config.short_conv_kernel_size
+        self.in_proj = nn.Linear(h, 3 * h, bias=False)
+        self.conv1d = nn.Conv1d(
+            h, h, kernel_size=self.kernel_size, groups=h, bias=config.short_conv_bias
+        )
+        self.out_proj = nn.Linear(h, h, bias=False)
+
+    def forward(
+        self, hidden_states: torch.Tensor, state=None
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        b, c, x = self.in_proj(hidden_states).chunk(3, dim=-1)
+        bx = (b * x).transpose(1, 2)  # [batch, hidden, seq]
+        if state is None:
+            state = bx.new_zeros(bx.shape[0], bx.shape[1], self.kernel_size - 1)
+        padded = torch.cat([state.to(bx.dtype), bx], dim=-1)
+        conv = F.conv1d(padded, self.conv1d.weight, self.conv1d.bias, groups=bx.shape[1])
+        new_state = padded[..., padded.shape[-1] - (self.kernel_size - 1) :]
+        y = c * conv.transpose(1, 2)
+        return self.out_proj(y), new_state
+
+
+class OellmEngram(nn.Module):
+    """Engram hashed n-gram memory (Megatron ``EngramLayer``, the ``N``
+    symbol).
+
+    Per token, every suffix n-gram (orders ``engram_ngram_orders``) is hashed by
+    ``engram_num_heads`` multiplicative-XOR heads into tables of prime size; the
+    looked-up rows ``e`` are gated into the residual stream::
+
+        k = W_K e,  v = W_V e,  alpha = sigmoid(RMSNorm(h) . RMSNorm(k) / sqrt(d))
+        v~ = alpha * v,  y = SiLU(causal_conv(v~)) + v~
+
+    with a depthwise conv of dilation ``max(orders)``. The layer normalises ``h``
+    itself, so the decoder layer applies no pre-norm. The table addresses depend on
+    the token ids alone: ``table`` may be moved to the CPU (``offload_table``) and
+    the lookup gathers only the rows it needs.
+    """
+
+    def __init__(self, config: OellmHybridConfig) -> None:
+        super().__init__()
+        h = config.hidden_size
+        self.orders = list(config.engram_ngram_orders)
+        self.num_heads = config.engram_num_heads
+        self.sizes = list(config.engram_table_sizes)
+        self.kernel_size = config.engram_conv_kernel_size
+        self.dilation = max(self.orders)
+        # Plain ints, not non-persistent buffers: from_pretrained builds the model on
+        # the meta device and leaves such buffers uninitialised (garbage row indices).
+        self.row_offsets = [0]
+        for n in self.sizes[:-1]:
+            self.row_offsets.append(self.row_offsets[-1] + n)
+        self.hash_mult = [[int(a) for a in row] for row in config.engram_hash_multipliers]
+        self.register_buffer(
+            "token_map",
+            torch.zeros(config.vocab_size, dtype=torch.long) if config.engram_token_map else None,
+        )
+        self.table = nn.Parameter(torch.empty(sum(self.sizes), config.engram_embed_dim))
+        mem_dim = config.engram_embed_dim * len(self.sizes)
+        self.key_proj = nn.Linear(mem_dim, h, bias=False)
+        self.value_proj = nn.Linear(mem_dim, h, bias=False)
+        self.hidden_norm = OellmRMSNorm(h, eps=config.rms_norm_eps)
+        self.key_norm = OellmRMSNorm(h, eps=config.rms_norm_eps)
+        self.conv1d = nn.Conv1d(
+            h, h, kernel_size=self.kernel_size, groups=h, bias=False, dilation=self.dilation
+        )
+
+    def offload_table(self, device="cpu") -> None:
+        """Keep the table on ``device`` (e.g. CPU) while the rest stays where
+        it is."""
+        self.table.data = self.table.data.to(device)
+
+    def _rows(self, shifted: torch.Tensor, s: int) -> torch.Tensor:
+        """Global table rows of the last ``s`` positions; ``shifted`` = ids + 1 with
+        the ``max_order - 1`` previous ids (0 = before the start) in front."""
+        p = max(self.orders) - 1
+        history = [shifted[:, p - i : p - i + s] for i in range(max(self.orders))]
+        out, lookup = [], 0
+        for n in self.orders:
+            for _ in range(self.num_heads):
+                hsh = torch.zeros_like(history[0])
+                for i in range(n):
+                    hsh = hsh ^ (history[i] * self.hash_mult[lookup][i])
+                out.append(torch.remainder(hsh, self.sizes[lookup]) + self.row_offsets[lookup])
+                lookup += 1
+        return torch.stack(out, dim=-1)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        input_ids: torch.LongTensor | None,
+        token_mask: torch.Tensor | None = None,
+        state=None,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        if input_ids is None:
+            raise ValueError("engram layers need input_ids (inputs_embeds alone is not enough)")
+        b, s, h = hidden_states.shape
+        ids = input_ids if self.token_map is None else self.token_map[input_ids]
+        shifted = ids.long() + 1
+        if token_mask is not None:  # padding hashes like "before the start"
+            shifted = shifted * token_mask.long()
+        p = max(self.orders) - 1
+        id_state, conv_state = state if state is not None else (None, None)
+        if id_state is None:
+            id_state = shifted.new_zeros(b, p)
+        shifted = torch.cat([id_state, shifted], dim=1)
+        new_id_state = shifted[:, shifted.shape[1] - p :]
+
+        rows = self._rows(shifted, s)
+        e = F.embedding(rows.to(self.table.device), self.table)
+        e = e.to(device=hidden_states.device, dtype=hidden_states.dtype).reshape(b, s, -1)
+        k, v = self.key_proj(e), self.value_proj(e)
+        gate = (self.hidden_norm(hidden_states).float() * self.key_norm(k).float()).sum(
+            -1, keepdim=True
+        )
+        v = torch.sigmoid(gate / h**0.5).to(v.dtype) * v
+        if token_mask is not None:
+            v = v * token_mask[..., None].to(v.dtype)
+
+        pad = (self.kernel_size - 1) * self.dilation
+        vt = v.transpose(1, 2)  # [b, h, s]
+        if conv_state is None:
+            conv_state = vt.new_zeros(b, h, pad)
+        padded = torch.cat([conv_state.to(vt.dtype), vt], dim=-1)
+        conv = F.conv1d(padded, self.conv1d.weight, groups=h, dilation=self.dilation)
+        new_conv_state = padded[..., padded.shape[-1] - pad :]
+        y = F.silu(conv.transpose(1, 2)) + v
+        return y, (new_id_state, new_conv_state)
+
+
+class OellmFLALayer(nn.Module):
+    """A complete FLA layer, built from ``{"class", "kwargs"}`` as Megatron
+    built it.
+
+    kda / signed_kda / complex_kda (and complex_kda's gated NoPE attention) wrap the
+    FLA layer whole, so the checkpoint holds exactly its parameters, under
+    ``mixer.layer``. Each layer keeps a private FLA ``Cache`` with ``layer_idx=0``
+    as its decoding state, so the HF layer numbering never has to match FLA's.
+    """
+
+    def __init__(self, spec: dict) -> None:
+        super().__init__()
+        import importlib
+
+        module, name = spec["class"].rsplit(".", 1)
+        cls = getattr(importlib.import_module(module), name)
+        self.layer = cls(**spec["kwargs"], layer_idx=0)
+
+    def forward(
+        self, hidden_states: torch.Tensor, state=None, attention_mask: torch.Tensor | None = None
+    ):
+        from fla.models.utils import Cache
+
+        cache = state if state is not None else Cache()
+        out, _, cache = self.layer(
+            hidden_states=hidden_states,
+            attention_mask=attention_mask,
+            past_key_values=cache,
+            use_cache=True,
+        )
+        return out, cache
+
+
 # --------------------------------------------------------------------------
 # decoder
 # --------------------------------------------------------------------------
@@ -775,6 +1008,14 @@ def _build_mixer(config: OellmHybridConfig, layer_type: str) -> nn.Module:
         return OellmMLSTM(config)
     if layer_type == "mamba2":
         return OellmMamba2(config)
+    if layer_type == "short_conv":
+        return OellmShortConv(config)
+    if layer_type == "engram":
+        return OellmEngram(config)
+    if layer_type == "fla":
+        return OellmFLALayer(config.fla_layer)
+    if layer_type == "fla_attention":
+        return OellmFLALayer(config.fla_attention_layer)
     raise ValueError(f"Unknown layer type {layer_type!r}")
 
 
@@ -783,38 +1024,57 @@ class OellmHybridDecoderLayer(nn.Module):
         super().__init__()
         self.layer_type = config.mixer_types[layer_idx]
         self.is_attention = self.layer_type in ("full_attention", "sliding_attention")
-        self.input_layernorm = OellmRMSNorm(
-            config.hidden_size,
-            eps=config.rms_norm_eps,
-            zero_centered_gamma=getattr(config, "layernorm_zero_centered_gamma", False),
-        )
-        self.mixer = _build_mixer(config, self.layer_type)
-        self.post_attention_layernorm = OellmRMSNorm(
-            config.hidden_size,
-            eps=config.rms_norm_eps,
-            zero_centered_gamma=getattr(config, "layernorm_zero_centered_gamma", False),
-        )
-        self.mlp = OellmMLP(config)
+        # A HybridModel layer can be a mixer or an MLP alone (see mlp_layers).
+        self.has_mixer = self.layer_type != "none"
+        self.is_engram = self.layer_type == "engram"
+        self.is_fla = self.layer_type in ("fla", "fla_attention")
+        self.has_mlp = getattr(config, "mlp_layers", None) is None or config.mlp_layers[layer_idx]
+
+        def norm():
+            return OellmRMSNorm(
+                config.hidden_size,
+                eps=config.rms_norm_eps,
+                zero_centered_gamma=getattr(config, "layernorm_zero_centered_gamma", False),
+            )
+
+        if self.has_mixer:
+            if not self.is_engram:  # Engram normalises internally
+                self.input_layernorm = norm()
+            self.mixer = _build_mixer(config, self.layer_type)
+        if self.has_mlp:
+            self.post_attention_layernorm = norm()
+            self.mlp = OellmMLP(config)
 
     def forward(
         self,
         hidden_states: torch.Tensor,
-        position_embeddings: Optional[tuple[torch.Tensor, torch.Tensor]],
-        attn_mask: Optional[torch.Tensor],
+        position_embeddings: tuple[torch.Tensor, torch.Tensor] | None,
+        attn_mask: torch.Tensor | None,
         state=None,
         past_len: int = 0,
-    ) -> tuple[torch.Tensor, Optional[tuple]]:
-        residual = hidden_states
-        h = self.input_layernorm(hidden_states)
-        if self.is_attention:
-            h, new_state = self.mixer(h, position_embeddings, attn_mask, state, past_len)
-        else:
-            h, new_state = self.mixer(h, state)
-        hidden_states = residual + h
+        input_ids: torch.LongTensor | None = None,
+        token_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, tuple | None]:
+        new_state = None
+        if self.is_engram:
+            h, new_state = self.mixer(hidden_states, input_ids, token_mask, state)
+            hidden_states = hidden_states + h
+        elif self.has_mixer:
+            residual = hidden_states
+            h = self.input_layernorm(hidden_states)
+            if self.is_attention:
+                h, new_state = self.mixer(h, position_embeddings, attn_mask, state, past_len)
+            elif self.is_fla:
+                h, new_state = self.mixer(h, state, attn_mask)
+            else:
+                h, new_state = self.mixer(h, state)
+            hidden_states = residual + h
 
-        residual = hidden_states
-        h = self.post_attention_layernorm(hidden_states)
-        return residual + self.mlp(h), new_state
+        if self.has_mlp:
+            residual = hidden_states
+            h = self.post_attention_layernorm(hidden_states)
+            hidden_states = residual + self.mlp(h)
+        return hidden_states, new_state
 
 
 class OellmHybridPreTrainedModel(PreTrainedModel):
@@ -833,6 +1093,8 @@ class OellmHybridPreTrainedModel(PreTrainedModel):
                 module.bias.data.zero_()
         elif isinstance(module, nn.Embedding):
             module.weight.data.normal_(mean=0.0, std=std)
+        elif isinstance(module, OellmEngram):
+            module.table.data.normal_(mean=0.0, std=std)
 
 
 class OellmHybridModel(OellmHybridPreTrainedModel):
@@ -865,14 +1127,14 @@ class OellmHybridModel(OellmHybridPreTrainedModel):
 
     def forward(
         self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        past_key_values: Optional[OellmHybridCache] = None,
-        use_cache: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        past_key_values: OellmHybridCache | None = None,
+        use_cache: bool | None = None,
+        output_hidden_states: bool | None = None,
+        return_dict: bool | None = None,
         **kwargs,
     ) -> BaseModelOutputWithPast:
         if (input_ids is None) == (inputs_embeds is None):
@@ -895,9 +1157,7 @@ class OellmHybridModel(OellmHybridPreTrainedModel):
                 .expand(b, s)
             )
 
-        position_embeddings = (
-            self.rotary_emb(position_ids) if self.rotary_emb is not None else None
-        )
+        position_embeddings = self.rotary_emb(position_ids) if self.rotary_emb is not None else None
 
         # A padding mask of all ones carries no information; dropping it keeps
         # the fast is_causal SDPA path.
@@ -905,6 +1165,7 @@ class OellmHybridModel(OellmHybridPreTrainedModel):
             attention_mask = None
 
         hidden_states = inputs_embeds
+        token_mask = None
         if attention_mask is not None:
             # The recurrent mixers have no mask interface: zeroing padded
             # positions keeps them from contributing to the state (their
@@ -922,6 +1183,7 @@ class OellmHybridModel(OellmHybridPreTrainedModel):
             # failed while log-likelihood tasks were fine.
             cur_mask = attention_mask[:, -s:] if attention_mask.shape[1] >= s else attention_mask
             hidden_states = hidden_states * cur_mask[..., None].to(hidden_states.dtype)
+            token_mask = cur_mask
 
         all_hidden_states: list[torch.Tensor] = []
         for idx, layer in enumerate(self.layers):
@@ -929,7 +1191,13 @@ class OellmHybridModel(OellmHybridPreTrainedModel):
                 all_hidden_states.append(hidden_states)
             state = past_key_values.states[idx] if past_key_values is not None else None
             hidden_states, new_state = layer(
-                hidden_states, position_embeddings, attention_mask, state, past_len
+                hidden_states,
+                position_embeddings,
+                attention_mask,
+                state,
+                past_len,
+                input_ids=input_ids,
+                token_mask=token_mask,
             )
             if past_key_values is not None:
                 past_key_values.states[idx] = new_state
@@ -974,15 +1242,15 @@ class OellmHybridForCausalLM(OellmHybridPreTrainedModel, GenerationMixin):
 
     def forward(
         self,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        past_key_values: Optional[OellmHybridCache] = None,
-        use_cache: Optional[bool] = None,
-        labels: Optional[torch.LongTensor] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        position_ids: torch.LongTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        past_key_values: OellmHybridCache | None = None,
+        use_cache: bool | None = None,
+        labels: torch.LongTensor | None = None,
+        output_hidden_states: bool | None = None,
+        return_dict: bool | None = None,
         **kwargs,
     ) -> CausalLMOutputWithPast:
         outputs = self.model(

@@ -57,12 +57,206 @@ FUSED_SECTIONS: dict[str, dict[str, list[str]]] = {
         "conv1d.weight": ["x", "B", "C"],
         "conv1d.bias": ["x", "B", "C"],
     },
+    "short_conv": {
+        "in_proj.weight": ["B", "C", "x"],
+    },
 }
+
+# experimental_attention_variant -> HF mixer type (GPT path and HybridModel `L`).
+# kda / signed_kda / complex_kda are complete FLA layers (megatron/core/ssm/fla_hybrid.py,
+# complex_kda.py): the HF model builds the same FLA class and loads its weights as is.
+_VARIANT_MIXERS = {
+    "gated_delta_net": "gdn",
+    "mlstm": "mlstm",
+    "mamba": "mamba2",
+    "kda": "fla",
+    "signed_kda": "fla",
+    "complex_kda": "fla",
+}
+
+# TransformerConfig defaults of the fields the FLA layers are built from, for a
+# current.yaml that predates a field.
+_FLA_DEFAULTS = {
+    "linear_fla_expand_v": 1.0,
+    "linear_fla_allow_neg_eigval": True,
+    "linear_fla_lower_bound": -5.0,
+    "linear_fla_gate": "signed_sigmoid2",
+    "linear_fla_output_gate": "linear",
+    "linear_fla_gate_init_style": "spread",
+    "linear_fla_drop_silu": True,
+    "linear_gate_activation": "signed_sigmoid2",
+    "linear_gate_init_style": "shipped",
+    "linear_gate_lower_bound": -5.0,
+    "linear_output_gate": "lowrank",
+    "linear_drop_qkv_silu": False,
+    "linear_beta_max": 1.0,
+    "linear_conv_kernel_dim": 4,
+    "linear_key_head_dim": 128,
+    "linear_num_key_heads": 16,
+}
+
+
+def _fla_layer_spec(mcfg: dict[str, Any]) -> dict[str, Any]:
+    """The FLA class and constructor kwargs of a kda / signed_kda / complex_kda
+    layer, as the Megatron wrappers build it (``layer_idx`` is set by the HF
+    model)."""
+
+    def get(key):
+        value = mcfg.get(key)
+        return _FLA_DEFAULTS[key] if value in (None, "None") else value
+
+    variant = mcfg["experimental_attention_variant"]
+    eps = float(mcfg["layernorm_epsilon"])
+    conv = int(get("linear_conv_kernel_dim"))
+    if variant in ("kda", "signed_kda"):  # fla_hybrid.py: KDA, SignedKDA
+        common = dict(
+            hidden_size=mcfg["hidden_size"],
+            expand_v=float(get("linear_fla_expand_v")),
+            head_dim=int(get("linear_key_head_dim")),
+            num_heads=int(get("linear_num_key_heads")),
+            num_v_heads=None,
+            mode="chunk",
+            use_short_conv=True,
+            conv_size=conv,
+            conv_bias=False,
+            allow_neg_eigval=bool(get("linear_fla_allow_neg_eigval")),
+            norm_eps=eps,
+        )
+        lower = mcfg.get("linear_fla_lower_bound", _FLA_DEFAULTS["linear_fla_lower_bound"])
+        lower = None if lower in (None, "None") else float(lower)
+        if variant == "kda":
+            return {
+                "class": "fla.layers.kda.KimiDeltaAttention",
+                "kwargs": {**common, "safe_gate": lower is not None, "lower_bound": lower},
+            }
+        return {
+            "class": "fla.layers.complex_kda_layer.ComplexKimiDeltaAttention",
+            "kwargs": {
+                **common,
+                "gate": get("linear_fla_gate"),
+                "output_gate": get("linear_fla_output_gate"),
+                "lower_bound": lower,
+                # init only (the weights are loaded), kept for a faithful rebuild
+                "gate_init_style": get("linear_fla_gate_init_style"),
+                "drop_silu": bool(get("linear_fla_drop_silu")),
+            },
+        }
+    if variant == "complex_kda":  # complex_kda.py: ComplexKDA
+        head_dim = mcfg.get("linear_key_head_dim") or mcfg.get("kv_channels")
+        head_dim = int(head_dim or mcfg["hidden_size"] // mcfg["num_attention_heads"])
+        lower = mcfg.get("linear_gate_lower_bound", _FLA_DEFAULTS["linear_gate_lower_bound"])
+        return {
+            "class": "fla.layers.complex_kda_layer.ComplexKimiDeltaAttention",
+            "kwargs": dict(
+                hidden_size=mcfg["hidden_size"],
+                num_heads=mcfg["hidden_size"] // head_dim,
+                head_dim=head_dim,
+                allow_neg_eigval=float(get("linear_beta_max")) == 2.0,
+                gate=get("linear_gate_activation"),
+                gate_init_style=get("linear_gate_init_style"),
+                lower_bound=None if lower in (None, "None") else float(lower),
+                output_gate=get("linear_output_gate"),
+                drop_silu=bool(get("linear_drop_qkv_silu")),
+                conv_size=conv,
+                norm_eps=eps,
+            ),
+        }
+    raise ValueError(f"no FLA layer for experimental_attention_variant={variant!r}")
+
+
+def _fla_attention_spec(mcfg: dict[str, Any], num_kv_heads: int) -> dict[str, Any]:
+    """complex_kda's gated NoPE attention (ComplexKDAHybridAttention), an FLA
+    Attention."""
+    return {
+        "class": "fla.layers.attn.Attention",
+        "kwargs": dict(
+            hidden_size=mcfg["hidden_size"],
+            num_heads=mcfg["num_attention_heads"],
+            num_kv_heads=num_kv_heads,
+            qkv_bias=bool(mcfg.get("add_qkv_bias", False)),
+            qk_norm=bool(mcfg.get("qk_layernorm", False)),
+            output_gate=True,
+            use_rope=False,
+        ),
+    }
+
+
+def _hybrid_layout(mcfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """Group a HybridModel pattern into HF layers (optional mixer + optional
+    MLP).
+
+    Each Megatron pattern symbol is one layer: a mixer (``*``, ``L``, ``G``,
+    ``C``, ``M``, ``N``) or an MLP (``-``). A mixer directly followed by ``-`` becomes
+    one HF layer with both; a mixer or ``-`` standing alone becomes a layer
+    without the other half. Returns, per HF layer, the HF mixer type (or
+    ``"none"``), the Megatron symbol, and the Megatron layer indices of the
+    mixer and the MLP (``None`` when absent).
+    """
+    pattern = mcfg["hybrid_layer_pattern"]
+    if "/" in pattern:
+        raise ValueError(f"MTP layers ({pattern!r}) cannot be exported to HF")
+    symbols = pattern.replace("|", "")
+    variant = mcfg.get("experimental_attention_variant")
+    mixers = {"*": "full_attention", "G": "gdn", "C": "short_conv", "M": "mamba2", "N": "engram"}
+    layers: list[dict[str, Any]] = []
+    for idx, sym in enumerate(symbols):
+        if sym == "-":
+            if layers and layers[-1]["mlp_src"] is None and layers[-1]["mixer"] != "none":
+                layers[-1]["mlp_src"] = idx
+            else:
+                layers.append({"mixer": "none", "symbol": None, "mixer_src": None, "mlp_src": idx})
+            continue
+        if sym == "L":
+            mixer = _VARIANT_MIXERS.get(variant)
+            if mixer is None:
+                raise ValueError(f"Unsupported experimental_attention_variant={variant!r} for 'L'")
+        elif sym in mixers:
+            mixer = mixers[sym]
+        else:
+            raise ValueError(
+                f"Hybrid pattern symbol {sym!r} has no HF export (pattern {pattern!r})"
+            )
+        layers.append({"mixer": mixer, "symbol": sym, "mixer_src": idx, "mlp_src": None})
+    return layers
 
 
 # --------------------------------------------------------------------------
 # config derivation
 # --------------------------------------------------------------------------
+
+# megatron/core/ssm/engram.py: the hash geometry is fixed by the config and this
+# seed, so it is recomputed here rather than read from the checkpoint.
+_ENGRAM_HASH_SEED = 0x5EED_E46A
+_ENGRAM_DEFAULTS = {
+    "engram_ngram_orders": [2, 3],
+    "engram_num_heads": 4,
+    "engram_table_size": 262144,
+    "engram_embed_dim": 64,
+    "engram_conv_kernel_size": 4,
+}
+
+
+def _engram_geometry(mcfg: dict[str, Any]) -> tuple[list[int], list[list[int]]]:
+    """Table sizes and hash multipliers, as ``engram_table_sizes`` and
+    ``engram_hash_multipliers`` compute them in Megatron."""
+    import numpy as np
+
+    orders = mcfg.get("engram_ngram_orders") or _ENGRAM_DEFAULTS["engram_ngram_orders"]
+    heads = mcfg.get("engram_num_heads") or _ENGRAM_DEFAULTS["engram_num_heads"]
+    lookups = len(orders) * heads
+
+    def is_prime(n: int) -> bool:
+        return n >= 2 and all(n % d for d in range(2, int(n**0.5) + 1))
+
+    sizes, candidate = [], mcfg.get("engram_table_size") or _ENGRAM_DEFAULTS["engram_table_size"]
+    for _ in range(lookups):
+        while not is_prime(candidate):
+            candidate += 1
+        sizes.append(candidate)
+        candidate += 1
+    rng = np.random.default_rng(_ENGRAM_HASH_SEED)
+    mult = rng.integers(1 << 20, 1 << 31, size=(lookups, max(orders))) | 1
+    return sizes, mult.tolist()
 
 
 def _megatron_cfg(run_dir: Path) -> dict[str, Any]:
@@ -89,19 +283,24 @@ def _mixer_types(mcfg: dict[str, Any]) -> list[str]:
     skip_freq = mcfg.get("window_attn_skip_freq")
 
     if variant:
-        mixer = {"gated_delta_net": "gdn", "mlstm": "mlstm", "mamba": "mamba2"}.get(variant)
+        mixer = _VARIANT_MIXERS.get(variant)
         if mixer is None:
             raise ValueError(f"Unsupported experimental_attention_variant={variant!r}")
         if not isinstance(freq, int):
             raise ValueError(f"Expected an integer linear_attention_freq, got {freq!r}")
-        return ["full_attention" if (i + 1) % freq == 0 else mixer for i in range(n)]
+        # complex_kda can swap the softmax layers for FLA's gated NoPE attention.
+        softmax = (
+            "fla_attention"
+            if variant == "complex_kda" and mcfg.get("linear_hybrid_attention") == "gated_nope"
+            else "full_attention"
+        )
+        return [softmax if (i + 1) % freq == 0 else mixer for i in range(n)]
 
     if skip_freq:
         if not isinstance(skip_freq, int):
             raise ValueError(f"Expected an integer window_attn_skip_freq, got {skip_freq!r}")
         return [
-            "full_attention" if (i + 1) % skip_freq == 0 else "sliding_attention"
-            for i in range(n)
+            "full_attention" if (i + 1) % skip_freq == 0 else "sliding_attention" for i in range(n)
         ]
 
     return ["full_attention"] * n
@@ -123,13 +322,43 @@ def _sliding_window(mcfg: dict[str, Any]) -> int | None:
 
 
 def build_hf_config(mcfg: dict[str, Any], vocab_size: int) -> dict[str, Any]:
-    mixer_types = _mixer_types(mcfg)
+    if mcfg.get("hybrid_layer_pattern"):
+        layout = _hybrid_layout(mcfg)
+        mixer_types = [layer["mixer"] for layer in layout]
+        mlp_layers = [layer["mlp_src"] is not None for layer in layout]
+    else:
+        layout = None
+        mixer_types = _mixer_types(mcfg)
+        mlp_layers = [True] * len(mixer_types)
+    engram = {}
+    if "engram" in mixer_types:
+        sizes, mult = _engram_geometry(mcfg)
+        engram = {
+            "engram_ngram_orders": mcfg.get("engram_ngram_orders")
+            or _ENGRAM_DEFAULTS["engram_ngram_orders"],
+            "engram_num_heads": mcfg.get("engram_num_heads")
+            or _ENGRAM_DEFAULTS["engram_num_heads"],
+            "engram_embed_dim": mcfg.get("engram_embed_dim")
+            or _ENGRAM_DEFAULTS["engram_embed_dim"],
+            "engram_conv_kernel_size": mcfg.get("engram_conv_kernel_size")
+            or _ENGRAM_DEFAULTS["engram_conv_kernel_size"],
+            "engram_table_sizes": sizes,
+            "engram_hash_multipliers": mult,
+            "engram_token_map": mcfg.get("engram_token_map") not in (None, "None"),
+            # Not a model buffer in Megatron: remap_state reads the .npy file.
+            "_engram_token_map_path": mcfg.get("engram_token_map"),
+        }
     head_dim = mcfg.get("kv_channels") or mcfg["hidden_size"] // mcfg["num_attention_heads"]
     num_kv_heads = (
         mcfg["num_query_groups"]
         if mcfg.get("group_query_attention")
         else mcfg["num_attention_heads"]
     )
+    fla = {}
+    if "fla" in mixer_types:
+        fla["fla_layer"] = _fla_layer_spec(mcfg)
+    if "fla_attention" in mixer_types:
+        fla["fla_attention_layer"] = _fla_attention_spec(mcfg, num_kv_heads)
     return {
         "architectures": ["OellmHybridForCausalLM"],
         "model_type": "oellm_hybrid",
@@ -141,7 +370,7 @@ def build_hf_config(mcfg: dict[str, Any], vocab_size: int) -> dict[str, Any]:
         "vocab_size": vocab_size,
         "hidden_size": mcfg["hidden_size"],
         "intermediate_size": mcfg["ffn_hidden_size"],
-        "num_hidden_layers": mcfg["num_layers"],
+        "num_hidden_layers": len(mixer_types),
         "num_attention_heads": mcfg["num_attention_heads"],
         "num_key_value_heads": num_kv_heads,
         "head_dim": head_dim,
@@ -155,11 +384,13 @@ def build_hf_config(mcfg: dict[str, Any], vocab_size: int) -> dict[str, Any]:
         # Qwen3.5 block options. Read from the training run's own current.yaml,
         # so a run that did not use them exports exactly as before.
         "attention_output_gate": bool(mcfg.get("attention_output_gate", False)),
-        "layernorm_zero_centered_gamma": bool(
-            mcfg.get("layernorm_zero_centered_gamma", False)
-        ),
+        "layernorm_zero_centered_gamma": bool(mcfg.get("layernorm_zero_centered_gamma", False)),
         "partial_rotary_factor": float(mcfg.get("rotary_percent") or 1.0),
         "mixer_types": mixer_types,
+        "mlp_layers": mlp_layers,
+        # Megatron layer indices behind each HF layer (HybridModel runs only); read
+        # by remap_state and dropped from the saved config.
+        "_hybrid_layout": layout,
         "linear_key_head_dim": mcfg.get("linear_key_head_dim", 128),
         "linear_value_head_dim": mcfg.get("linear_value_head_dim", 128),
         "linear_num_key_heads": mcfg.get("linear_num_key_heads", 8),
@@ -176,6 +407,10 @@ def build_hf_config(mcfg: dict[str, Any], vocab_size: int) -> dict[str, Any]:
         "mamba_expand": 2,
         "mamba_conv_kernel": 4,
         "mamba_chunk_size": 128,
+        "short_conv_kernel_size": mcfg.get("short_conv_kernel_size", 3),
+        "short_conv_bias": bool(mcfg.get("short_conv_bias", False)),
+        **engram,
+        **fla,
         "use_cache": True,
     }
 
@@ -243,7 +478,8 @@ def unstack_layers(state: dict[str, torch.Tensor], num_layers: int) -> dict[str,
 
 
 def _gather(state: dict[str, torch.Tensor], prefix: str, sections: list[str]) -> torch.Tensor:
-    """Concatenate a fused tensor that the checkpoint stores as named sections."""
+    """Concatenate a fused tensor that the checkpoint stores as named
+    sections."""
     if prefix in state:  # already fused
         return state[prefix]
     missing = [s for s in sections if f"{prefix}.{s}" not in state]
@@ -290,7 +526,7 @@ def _split_qkv(
     return q, k, v, gate
 
 
-def assert_finite(state: dict[str, "torch.Tensor"], where: str) -> None:
+def assert_finite(state: dict[str, torch.Tensor], where: str) -> None:
     """Refuse to export non-finite weights.
 
     A checkpoint read while it is still being written (or already being removed)
@@ -315,32 +551,78 @@ def assert_finite(state: dict[str, "torch.Tensor"], where: str) -> None:
             f"non-finite weights in {where} -- refusing to export.\n  "
             + "\n  ".join(bad)
             + "\nThe source checkpoint is corrupt or was read mid-write; "
-              "re-run the stage that produced it."
+            "re-run the stage that produced it."
         )
 
 
-def remap_state(
-    state: dict[str, torch.Tensor], hf_cfg: dict[str, Any]
-) -> dict[str, torch.Tensor]:
+def remap_state(state: dict[str, torch.Tensor], hf_cfg: dict[str, Any]) -> dict[str, torch.Tensor]:
     out: dict[str, torch.Tensor] = {}
     out["model.embed_tokens.weight"] = state["embedding.word_embeddings.weight"]
-    out["model.norm.weight"] = state["decoder.final_layernorm.weight"]
+    # GPTModel names the final norm final_layernorm, HybridModel final_norm.
+    final_norm = "decoder.final_layernorm.weight"
+    out["model.norm.weight"] = state.get(final_norm, state.get("decoder.final_norm.weight"))
+    if out["model.norm.weight"] is None:
+        raise KeyError("neither decoder.final_layernorm.weight nor decoder.final_norm.weight")
     if not hf_cfg["tie_word_embeddings"]:
         out["lm_head.weight"] = state["output_layer.weight"]
 
     ffn = hf_cfg["intermediate_size"]
+    layout = hf_cfg.get("_hybrid_layout")
     for i, layer_type in enumerate(hf_cfg["mixer_types"]):
-        src = f"decoder.layers.{i}"
         dst = f"model.layers.{i}"
+        if layout is None:  # GPTModel: mixer and MLP share the Megatron layer
+            mixer_src = mlp_src = f"decoder.layers.{i}"
+            symbol = None
+        else:
+            entry = layout[i]
+            mixer_src = (
+                None if entry["mixer_src"] is None else f"decoder.layers.{entry['mixer_src']}"
+            )
+            mlp_src = None if entry["mlp_src"] is None else f"decoder.layers.{entry['mlp_src']}"
+            symbol = entry["symbol"]
 
-        # MLP (identical for every layer type); linear_fc1 is [gate | up].
-        fc1 = state[f"{src}.mlp.linear_fc1.weight"]
-        out[f"{dst}.mlp.gate_proj.weight"] = fc1[:ffn]
-        out[f"{dst}.mlp.up_proj.weight"] = fc1[ffn:]
-        out[f"{dst}.mlp.down_proj.weight"] = state[f"{src}.mlp.linear_fc2.weight"]
-        out[f"{dst}.post_attention_layernorm.weight"] = state[
-            f"{src}.mlp.linear_fc1.layer_norm_weight"
-        ]
+        if mlp_src is not None:
+            # MLP (identical for every layer type); linear_fc1 is [gate | up].
+            fc1 = state[f"{mlp_src}.mlp.linear_fc1.weight"]
+            out[f"{dst}.mlp.gate_proj.weight"] = fc1[:ffn]
+            out[f"{dst}.mlp.up_proj.weight"] = fc1[ffn:]
+            out[f"{dst}.mlp.down_proj.weight"] = state[f"{mlp_src}.mlp.linear_fc2.weight"]
+            out[f"{dst}.post_attention_layernorm.weight"] = state[
+                f"{mlp_src}.mlp.linear_fc1.layer_norm_weight"
+            ]
+        if mixer_src is None:
+            continue
+        src = mixer_src
+
+        if layer_type == "engram":
+            # The Megatron table is padded to a multiple of 4096 rows; drop the padding.
+            rows = sum(hf_cfg["engram_table_sizes"])
+            out[f"{dst}.mixer.table"] = state[f"{src}.table"][:rows]
+            for name in (
+                "key_proj.weight",
+                "value_proj.weight",
+                "hidden_norm.weight",
+                "key_norm.weight",
+                "conv1d.weight",
+            ):
+                out[f"{dst}.mixer.{name}"] = state[f"{src}.{name}"]
+            if hf_cfg["engram_token_map"]:
+                import numpy as np
+
+                token_map = torch.from_numpy(np.load(hf_cfg["_engram_token_map_path"]))
+                out[f"{dst}.mixer.token_map"] = token_map.to(torch.int64)
+            continue
+
+        if layer_type in ("fla", "fla_attention"):
+            # A whole FLA layer behind a separate pre-norm: copy its parameters as is.
+            out[f"{dst}.input_layernorm.weight"] = state[f"{src}.input_layernorm.weight"]
+            prefix = f"{src}.self_attention.layer."
+            names = [k[len(prefix) :] for k in state if k.startswith(prefix)]
+            if not names:
+                raise KeyError(f"no FLA layer parameters under {prefix}")
+            for name in names:
+                out[f"{dst}.mixer.layer.{name}"] = state[prefix + name]
+            continue
 
         if layer_type in ("full_attention", "sliding_attention"):
             attn = f"{src}.self_attention"
@@ -363,8 +645,12 @@ def remap_state(
                 out[f"{dst}.mixer.k_norm.weight"] = state[f"{attn}.k_layernorm.weight"]
             continue
 
-        # Mamba2 hangs its mixer one level deeper (Mamba2Attention -> .mixer).
-        base = f"{src}.self_attention" + (".mixer" if layer_type == "mamba2" else "")
+        # Mamba2 hangs its mixer one level deeper (Mamba2Attention -> .mixer); a
+        # native HybridModel Mamba layer (`M`) keeps it at .mixer directly.
+        if symbol == "M":
+            base = f"{src}.mixer"
+        else:
+            base = f"{src}.self_attention" + (".mixer" if layer_type == "mamba2" else "")
         sections = FUSED_SECTIONS[layer_type]
         out[f"{dst}.input_layernorm.weight"] = state[f"{base}.in_proj.layer_norm_weight"]
         out[f"{dst}.mixer.in_proj.weight"] = _gather(
@@ -372,7 +658,11 @@ def remap_state(
         )
         out[f"{dst}.mixer.out_proj.weight"] = state[f"{base}.out_proj.weight"]
 
-        if layer_type == "gdn":
+        if layer_type == "short_conv":
+            out[f"{dst}.mixer.conv1d.weight"] = state[f"{base}.conv1d.weight"]
+            if hf_cfg["short_conv_bias"]:
+                out[f"{dst}.mixer.conv1d.bias"] = state[f"{base}.conv1d.bias"]
+        elif layer_type == "gdn":
             out[f"{dst}.mixer.conv1d.weight"] = _gather(
                 state, f"{base}.conv1d.weight", sections["conv1d.weight"]
             )
@@ -434,7 +724,9 @@ def convert(
     vocab_size = state["embedding.word_embeddings.weight"].shape[0]
     hf_cfg = build_hf_config(mcfg, vocab_size)
     LOGGER.info(
-        "%s: %d layers %s", run_dir.name, len(hf_cfg["mixer_types"]),
+        "%s: %d layers %s",
+        run_dir.name,
+        len(hf_cfg["mixer_types"]),
         sorted(set(hf_cfg["mixer_types"])),
     )
 
@@ -443,11 +735,15 @@ def convert(
     # Re-check after remapping: a bad split/concat could also introduce
     # non-finite values that were not present in the source tensors.
     assert_finite(tensors, f"remapped export for {ckpt_dir}")
-    tensors = {k: v.to(torch.bfloat16).contiguous() for k, v in tensors.items()}
+    tensors = {
+        k: (v if not v.is_floating_point() else v.to(torch.bfloat16)).contiguous()
+        for k, v in tensors.items()
+    }
 
     out_dir.mkdir(parents=True, exist_ok=True)
     save_file(tensors, str(out_dir / "model.safetensors"), metadata={"format": "pt"})
-    (out_dir / "config.json").write_text(json.dumps(hf_cfg, indent=2) + "\n")
+    saved_cfg = {k: v for k, v in hf_cfg.items() if not k.startswith("_")}
+    (out_dir / "config.json").write_text(json.dumps(saved_cfg, indent=2) + "\n")
 
     for mod in ("configuration_oellm_hybrid.py", "modeling_oellm_hybrid.py"):
         # Copy verbatim: transformers' dynamic-module loader resolves *relative*

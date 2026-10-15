@@ -12,11 +12,24 @@ layer. That is expressed by :attr:`mixer_types`, one entry per layer:
 ``gdn``              GatedDeltaNet (``fla.ops.gated_delta_rule``)
 ``mlstm``            mLSTM / xLSTM (``mlstm_kernels.torch``)
 ``mamba2``           Mamba2 (``mamba_ssm.ops.triton.ssd_combined``)
+``short_conv``       LFM2 gated short convolution (plain torch)
+``engram``           Engram hashed n-gram memory (plain torch, no pre-norm)
+``fla``              a complete FLA layer: kda / signed_kda / complex_kda
+                     (``fla_layer``: its class and constructor kwargs)
+``fla_attention``    FLA's gated NoPE attention, complex_kda's softmax layers
+                     (``fla_attention_layer``)
+``none``             no mixer: the layer is only an MLP
 ===================  ==========================================================
 
 So e.g. the ``gdn7_nope`` variant (``linear_attention_freq=8``) becomes
 ``["gdn"]*7 + ["full_attention"] + ["gdn"]*7 + ["full_attention"]`` for 16
 layers, and ``fullattn`` is ``["full_attention"] * num_hidden_layers``.
+
+A Megatron ``HybridModel`` places mixers and MLPs as separate pattern symbols
+(``L-L-*-``, ``C-C-*-``); :attr:`mlp_layers` (one bool per layer, default all
+``True``) says which HF layers carry an MLP, so a mixer followed by an MLP is
+one HF layer, and a mixer or MLP standing alone is a layer with ``mlp=False``
+or mixer ``none``. The GPT-path models, every layer mixer + MLP, are unchanged.
 
 The field names mirror the Megatron ``TransformerConfig`` knobs they were
 trained with so that the conversion in ``convert_megatron_to_hf.py`` is a
@@ -28,8 +41,12 @@ from __future__ import annotations
 from transformers.configuration_utils import PretrainedConfig
 
 ATTENTION_LAYER_TYPES = ("full_attention", "sliding_attention")
-LINEAR_LAYER_TYPES = ("gdn", "mlstm", "mamba2")
-ALL_LAYER_TYPES = ATTENTION_LAYER_TYPES + LINEAR_LAYER_TYPES
+LINEAR_LAYER_TYPES = ("gdn", "mlstm", "mamba2", "short_conv", "fla")
+# Complete FLA layers, rebuilt from {"class": "fla.layers.<module>.<Class>", "kwargs": {...}}.
+FLA_LAYER_TYPES = ("fla", "fla_attention")
+ENGRAM = "engram"
+NO_MIXER = "none"
+ALL_LAYER_TYPES = ATTENTION_LAYER_TYPES + LINEAR_LAYER_TYPES + ("fla_attention", ENGRAM, NO_MIXER)
 
 
 class OellmHybridConfig(PretrainedConfig):
@@ -70,6 +87,7 @@ class OellmHybridConfig(PretrainedConfig):
         partial_rotary_factor: float = 1.0,
         # ---- per-layer mixer assignment ----
         mixer_types: list[str] | None = None,
+        mlp_layers: list[bool] | None = None,
         # ---- GatedDeltaNet / mLSTM shared head geometry ----
         linear_key_head_dim: int = 128,
         linear_value_head_dim: int = 128,
@@ -89,6 +107,23 @@ class OellmHybridConfig(PretrainedConfig):
         mamba_expand: int = 2,
         mamba_conv_kernel: int = 4,
         mamba_chunk_size: int = 128,
+        # ---- short_conv (LFM2) ----
+        short_conv_kernel_size: int = 3,
+        short_conv_bias: bool = False,
+        # ---- engram (Megatron `N`) ----
+        # The hash geometry is part of the model: the converter copies the table
+        # sizes (one prime per order and head) and the multipliers from Megatron.
+        engram_ngram_orders: list[int] | None = None,
+        engram_num_heads: int = 4,
+        engram_embed_dim: int = 64,
+        engram_conv_kernel_size: int = 4,
+        engram_table_sizes: list[int] | None = None,
+        engram_hash_multipliers: list[list[int]] | None = None,
+        # Whether the weights carry a token -> canonical id map (tokenizer compression).
+        engram_token_map: bool = False,
+        # ---- complete FLA layers (kda / signed_kda / complex_kda) ----
+        fla_layer: dict | None = None,
+        fla_attention_layer: dict | None = None,
         # ---- misc ----
         initializer_range: float = 0.02,
         use_cache: bool = True,
@@ -128,6 +163,19 @@ class OellmHybridConfig(PretrainedConfig):
         if "sliding_attention" in mixer_types and sliding_window is None:
             raise ValueError("mixer_types contains 'sliding_attention' but sliding_window is None")
         self.mixer_types = list(mixer_types)
+        if mlp_layers is None:
+            mlp_layers = [True] * num_hidden_layers
+        if len(mlp_layers) != num_hidden_layers:
+            raise ValueError(
+                f"mlp_layers has {len(mlp_layers)} entries but num_hidden_layers="
+                f"{num_hidden_layers}"
+            )
+        empty = [
+            i for i, (m, f) in enumerate(zip(mixer_types, mlp_layers)) if m == NO_MIXER and not f
+        ]
+        if empty:
+            raise ValueError(f"layers {empty} have neither a mixer nor an MLP")
+        self.mlp_layers = [bool(f) for f in mlp_layers]
 
         self.linear_key_head_dim = linear_key_head_dim
         self.linear_value_head_dim = linear_value_head_dim
@@ -147,6 +195,31 @@ class OellmHybridConfig(PretrainedConfig):
         self.mamba_expand = mamba_expand
         self.mamba_conv_kernel = mamba_conv_kernel
         self.mamba_chunk_size = mamba_chunk_size
+
+        self.short_conv_kernel_size = short_conv_kernel_size
+        self.short_conv_bias = short_conv_bias
+
+        self.engram_ngram_orders = list(engram_ngram_orders or [2, 3])
+        self.engram_num_heads = engram_num_heads
+        self.engram_embed_dim = engram_embed_dim
+        self.engram_conv_kernel_size = engram_conv_kernel_size
+        self.engram_table_sizes = engram_table_sizes
+        self.engram_hash_multipliers = engram_hash_multipliers
+        self.engram_token_map = engram_token_map
+        if ENGRAM in mixer_types:
+            lookups = len(self.engram_ngram_orders) * engram_num_heads
+            if engram_table_sizes is None or len(engram_table_sizes) != lookups:
+                raise ValueError(f"engram layers need engram_table_sizes ({lookups} entries)")
+            if engram_hash_multipliers is None or len(engram_hash_multipliers) != lookups:
+                raise ValueError(f"engram layers need engram_hash_multipliers ({lookups} rows)")
+
+        self.fla_layer = fla_layer
+        self.fla_attention_layer = fla_attention_layer
+        for kind, spec in (("fla", fla_layer), ("fla_attention", fla_attention_layer)):
+            if kind in mixer_types and not (spec and "class" in spec and "kwargs" in spec):
+                raise ValueError(
+                    f"{kind} layers need {kind}_layer = {{'class': ..., 'kwargs': ...}}"
+                )
 
         self.initializer_range = initializer_range
         self.use_cache = use_cache
@@ -174,4 +247,12 @@ class OellmHybridConfig(PretrainedConfig):
         return self.mamba_d_inner // self.mamba_head_dim
 
 
-__all__ = ["OellmHybridConfig", "ALL_LAYER_TYPES", "ATTENTION_LAYER_TYPES", "LINEAR_LAYER_TYPES"]
+__all__ = [
+    "OellmHybridConfig",
+    "ALL_LAYER_TYPES",
+    "ATTENTION_LAYER_TYPES",
+    "LINEAR_LAYER_TYPES",
+    "ENGRAM",
+    "FLA_LAYER_TYPES",
+    "NO_MIXER",
+]
