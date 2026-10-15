@@ -1674,6 +1674,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "engram_table_fp32": MegatronArgMetadata(
+        arg_type=bool,
+        default=True,
+        help="Keep the Engram tables as fp32 parameters under bf16/fp16 training. Their rows receive small, sparse gradients; an fp32 table accumulates them in fp32 and is its own optimizer master copy, so it costs about what a bf16 table plus its fp32 master and bf16 gradient do. The lookups are cast to the compute dtype.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "engram_table_size": MegatronArgMetadata(
         arg_type=int,
         default=262144,
@@ -9049,6 +9057,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=4,
+    ),
+    "engram_table_fp32": MegatronActionSpec(
+        option_strings=("--no-engram-table-fp32", "--disable-engram-table-fp32"),
+        action_type="store_false",
+        nargs=0,
+        const=False,
+        default=True,
     ),
     "engram_table_size": MegatronActionSpec(
         option_strings=("--engram-table-size",),

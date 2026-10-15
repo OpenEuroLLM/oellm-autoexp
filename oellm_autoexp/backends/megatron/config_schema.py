@@ -423,6 +423,12 @@ class MegatronConfig(ConfigInterface):
     # Kernel of Engram's depthwise causal conv (dilation = the largest n-gram order).
     engram_conv_kernel_size: int = 4
 
+    # Keep the Engram tables as fp32 parameters under bf16/fp16 training. Their rows receive
+    # small, sparse gradients; an fp32 table accumulates them in fp32 and is its own optimizer
+    # master copy, so it costs about what a bf16 table plus its fp32 master and bf16 gradient
+    # do. The lookups are cast to the compute dtype.
+    engram_table_fp32: bool = True
+
     # Path to a .npy int array mapping token id -> canonical id (Engram's tokenizer
     # compression, e.g. NFKC + lowercasing). None hashes the raw token ids.
     engram_token_map: str | None = None
