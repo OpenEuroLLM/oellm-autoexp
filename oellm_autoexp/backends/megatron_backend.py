@@ -60,10 +60,13 @@ register_argparse_resolver(
     arg_metadata=dict(MEGATRON_ARG_METADATA),
     action_specs=dict(MEGATRON_ACTION_SPECS),
     skip_defaults=True,
+    # Both resolvers feed the shell launch command (full_cmd / dist_cmd).
+    shell_quote=True,
 )
 
 register_argparse_resolver(
     "cliargs",
+    shell_quote=True,
 )
 
 
@@ -105,6 +108,7 @@ class MegatronBackendConfig(NonStrictDataclass, BaseBackendConfig):
                         dict(MEGATRON_ARG_METADATA),
                         dict(MEGATRON_ACTION_SPECS),
                         skip_defaults=True,
+                        shell_quote=True,
                     ),
                 ]
             )
@@ -185,6 +189,7 @@ class MegatronBackend(BaseBackend):
             dict(MEGATRON_ARG_METADATA),
             dict(MEGATRON_ACTION_SPECS),
             skip_defaults=True,
+            shell_quote=True,
         )
         return f"{self.config.dist_cmd} {' '.join(training_args)}"
 

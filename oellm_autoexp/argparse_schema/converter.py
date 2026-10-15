@@ -4,6 +4,8 @@ dictionaries/YAML."""
 from __future__ import annotations
 
 import argparse
+import re
+import shlex
 import logging
 from argparse import _StoreFalseAction, _StoreTrueAction
 from dataclasses import MISSING, dataclass, field
@@ -108,6 +110,28 @@ def extract_default_args(
     return defaults
 
 
+# Characters that need no quoting in a POSIX shell word (shlex's safe set).
+_SHELL_UNSAFE = re.compile(r"[^\w@%+=:,./-]", re.ASCII)
+# A token starting with "-" that is not a (negative) number.
+_LOOKS_LIKE_OPTION = re.compile(r"^-(?![0-9.]+(?:[eE][-+]?[0-9]+)?$)")
+
+
+def shell_token(token: str) -> str:
+    """Quote one argv token for a POSIX shell command line.
+
+    Tokens of plain characters are returned unchanged, so ordinary commands
+    render byte-identically. A token containing ``$`` is double-quoted, which
+    protects spaces, ``|``, ``*`` and the like while keeping the variable or
+    command substitution the config asks for (``$SLURM_JOB_ID``,
+    ``$(hostname)``). Anything else is single-quoted.
+    """
+    if token and not _SHELL_UNSAFE.search(token):
+        return token
+    if "$" in token:
+        return '"' + token.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return shlex.quote(token)
+
+
 def build_cmdline_args(
     args: dict[str, Any],
     metadata: Mapping[str, ArgMetadata] | None = None,
@@ -115,6 +139,7 @@ def build_cmdline_args(
     *,
     skip_defaults: bool = True,
     list_sep: str | None = None,
+    shell_quote: bool = False,
 ) -> list[str]:
     """Convert a dictionary of arguments back into a list of CLI strings.
 
@@ -125,6 +150,9 @@ def build_cmdline_args(
         skip_defaults: Whether to omit arguments that match their default values
         list_sep: If set, join list arguments with this separator into a single token.
                   If None (default), each list element becomes a separate token (space-separated).
+        shell_quote: Quote each token for a shell (see ``shell_token``). Set it when the
+                  tokens are joined into a command line; leave it off when they go to
+                  ``argparse`` or ``subprocess`` as a list.
     """
     cli_args: list[str] = []
 
@@ -146,6 +174,8 @@ def build_cmdline_args(
             if not spec:
                 continue
             cli_args.extend(_spec_to_cmdline(spec, value, skip_defaults, list_sep=list_sep))
+    if shell_quote:
+        cli_args = [shell_token(token) for token in cli_args]
     return cli_args
 
 
@@ -244,7 +274,12 @@ def _spec_to_cmdline(
     if skip_defaults and argval == spec.default:
         return []
 
-    return [option, str(argval)]
+    value = str(argval)
+    if _LOOKS_LIKE_OPTION.match(value):
+        # argparse would read a separate "--x" token as the next option, so a value
+        # that starts with "-" (e.g. a hybrid pattern "--*-") rides on its flag.
+        return [f"{option}={value}"]
+    return [option, value]
 
 
 def _ensure_iterable(value: Any) -> Iterable[Any]:

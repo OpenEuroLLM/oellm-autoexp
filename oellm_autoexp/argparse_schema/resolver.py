@@ -9,6 +9,7 @@ def register_argparse_resolver(
     action_specs: dict[str, ActionSpec] | None = None,
     skip_defaults: bool = True,
     list_sep: str | None = None,
+    shell_quote: bool = False,
 ):
     def argparse_resolver(args_dict: DictConfig) -> ListConfig:
         OmegaConf.resolve(args_dict)
@@ -19,6 +20,7 @@ def register_argparse_resolver(
                 action_specs=action_specs,
                 skip_defaults=skip_defaults,
                 list_sep=list_sep,
+                shell_quote=shell_quote,
             )
         )
 
