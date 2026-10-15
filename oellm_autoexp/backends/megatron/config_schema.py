@@ -357,6 +357,7 @@ class MegatronConfig(ConfigInterface):
             "panini",
             "complex_kda",
             "triadic",
+            "power",
         ]
         | None
     ) = None
@@ -501,6 +502,24 @@ class MegatronConfig(ConfigInterface):
 
     # Value-dim expansion for the FLA hybrid layers (expand_v).
     linear_fla_expand_v: float = 1.0
+
+    # Exclusive self attention for the linear mixers: project each head's recurrence output
+    # off the token's own value before the output norm (fused_xsa.py) -- the self-copy a
+    # token's own delta-rule write returns, about beta (q . k) v. Native GDN, mLSTM and the
+    # triadic mixer apply it here; the FLA layers (kda, signed_kda, complex_kda) need the
+    # ComplexKDA fork's xsa option.
+    linear_xsa: bool = False
+
+    # Power retention (variant "power", megatron/core/ssm/power_retention.py): the even degree
+    # of the (q . k)^deg similarity; the state per head is binom(d+deg-1, deg) x (d+1). The
+    # public Triton kernels (the baseline) implement deg = 2.
+    linear_power_deg: int = 2
+
+    # Power retention: the chunk size of the chunked algorithm.
+    linear_power_chunk_size: int = 128
+
+    # Power retention: rotary embeddings on q / k (the reference model's choice); off = NoPE.
+    linear_power_rope: bool = False
 
     # Triadic linear attention (variant "triadic", megatron/core/ssm/triadic.py): E, the
     # number of state slices per head (the second key's width); 1 is the base mixer.
@@ -1475,6 +1494,13 @@ class MegatronConfig(ConfigInterface):
     # stochastic [k, k] matrix (mHC's H_res restricted to the selection), initialized near the
     # identity. Memory traffic stays (2k+1) of the n streams.
     mhc_routed_mix: bool = False
+
+    # Routed residual streams: keep per sublayer only the change it makes (its output and
+    # routing weights) and undo the writes in the backward to recover the streams its read and
+    # router saw, instead of saving the gathered rows and the router input. Exact up to the
+    # stream dtype's rounding, which reaches only the router gradients. Not with
+    # mhc_routed_mix.
+    mhc_routed_reversible: bool = False
 
     # Routed residual streams: update rate of the aux-loss-free selection bias that balances
     # how often each stream is picked (as moe_router_bias_update_rate; 1e-3 is DeepSeek-V3's).
