@@ -1,0 +1,107 @@
+Bootstrap: docker
+From: ${BASE_IMAGE}
+
+%labels
+    Author OpenSci
+    Version 0.1.0
+    Base ${BASE_IMAGE}
+    Description Megatron hybrid-architecture container: NGC PyTorch (torch 2.12), NVRx, CuTe DSL + cute-triadic-gdn, TileLang, power retention, mamba_ssm
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export PYTHONPATH=/workspace/oellm-autoexp:${PYTHONPATH}
+    export OELLM_AUTOEXP_CACHE=/workspace/cache
+    export HF_HOME=/workspace/cache/hf
+
+%files
+    ${REPO_ROOT} /workspace/oellm-autoexp
+    ${REQUIREMENTS_PATH} /workspace/${REQUIREMENTS_BASENAME}
+    ${PROVENANCE_PATH} /workspace/oellm-autoexp/provenance/container_provenance.json
+
+%post
+mkdir -p /workspace/oellm-autoexp/provenance
+mkdir -p /workspace/cache
+cd /workspace
+
+python3 -m pip install --upgrade pip setuptools packaging wheel
+
+python3 /workspace/oellm-autoexp/container/gen_constraints.py \
+    --output /workspace/constraints.installed.txt \
+    --exclude pip setuptools wheel huggingface_hub
+
+if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
+    python3 -m pip install --no-cache-dir \
+        -c /workspace/constraints.installed.txt \
+        -r "/workspace/${REQUIREMENTS_BASENAME}"
+fi
+
+if [ -d "/workspace/oellm-autoexp/submodules/Megatron-LM" ]; then
+    python3 -m pip install --no-cache-dir \
+        -c /workspace/constraints.installed.txt \
+        -e /workspace/oellm-autoexp/submodules/Megatron-LM
+fi
+
+python3 -m pip install --no-cache-dir \
+    -c /workspace/constraints.installed.txt \
+    -e /workspace/oellm-autoexp
+
+python3 -m pip uninstall -y megatron-core || true
+
+# ---------------------------------------------------------------------------
+# Hybrid-architecture extras (oellm-autoexp feat/hybrid-v0.19): torch 2.12 base
+# (NGC 26.05), NVRx, the CuTe DSL stack for cute-triadic-gdn, and mamba_ssm /
+# causal_conv1d compiled against this torch. FLA (the ComplexKDA fork) stays
+# outside the image, on PYTHONPATH, as for the other hybrid images.
+# ---------------------------------------------------------------------------
+python3 -m pip install --no-cache-dir --no-deps "nvidia-resiliency-ext==0.6.0"
+python3 -m pip install --no-cache-dir \
+    -c /workspace/constraints.installed.txt \
+    "nvidia-cutlass-dsl[cu13]==4.7.1" cuda-python
+python3 -m pip install --no-cache-dir --no-deps \
+    "git+https://github.com/OliverSieberling/cute-triadic-gdn"
+# mamba_ssm / causal_conv1d: built from source against the image's torch (H100 + B200)
+export TORCH_CUDA_ARCH_LIST="9.0;10.0"
+export MAX_JOBS=${MAX_JOBS:-16}
+python3 -m pip install --no-cache-dir --no-build-isolation \
+    -c /workspace/constraints.installed.txt \
+    "causal-conv1d>=1.5" "mamba-ssm>=2.2.4"
+python3 -m pip install --no-cache-dir --no-deps \
+    "git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git@v0.2.0" || \
+    echo "WARNING: emerging-optimizers not installed (Muon-family optimizers need it)"
+# TileLang (TVM-based tile DSL), for kernels written in it later (power retention, ...);
+# its own torch pin is overridden by the image's constraints.
+python3 -m pip install --no-cache-dir \
+    -c /workspace/constraints.installed.txt \
+    "tilelang>=0.1.15"
+# Power retention (the `power` linear variant): the public Triton kernels; vidrial only
+# for its Python utilities (the CUDA backends are not used).
+python3 -m pip install --no-cache-dir --no-deps "vidrial==0.2.1" \
+    "git+https://github.com/m-a-n-i-f-e-s-t/retention"
+
+%runscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%startscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%test
+cd /workspace/oellm-autoexp
+python scripts/run_autoexp.py --help >/dev/null
+python - <<'PY'
+import importlib.metadata as m
+import torch
+assert torch.__version__.startswith("2.12"), torch.__version__
+for mod in ("transformer_engine", "nvidia_resiliency_ext", "cutlass", "cute_triadic_gdn",
+            "mamba_ssm", "causal_conv1d", "triton", "tilelang", "retention.triton"):
+    __import__(mod)
+print("torch", torch.__version__, "| cutlass-dsl", m.version("nvidia-cutlass-dsl"),
+      "| mamba-ssm", m.version("mamba-ssm"), "| nvrx", m.version("nvidia-resiliency-ext"),
+      "| tilelang", m.version("tilelang"))
+PY
+
+%help
+    Build with container/build_container.sh and run via
+    `apptainer exec MegatronTraining.sif python -m oellm_autoexp.plan`.
+
