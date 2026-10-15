@@ -239,3 +239,6 @@ dump/
 *.distcp
 outputs/megatron_marenostrum_speed_test/*
 outputs/data_cache/*
+
+# Local archive of the pre-ComplexKDA flash-linear-attention checkout (panini), not a submodule.
+flash-linear-attention-legacy/
