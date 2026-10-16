@@ -1,0 +1,167 @@
+Bootstrap: docker
+From: ${BASE_IMAGE}
+
+# The hybrid-architecture image (MegatronTraining-hybrid.def.in) on NeMo's framework image
+# instead of NGC PyTorch. NeMo 26.08.01 already ships, in its uv venv /opt/venv (torch 2.13,
+# TE 2.18, Python 3.12, CUDA 13.3): DeepEP/HybridEP at the commit Megatron v0.19 is tested
+# with (1.2.1+de0dd11), mamba-ssm 2.3.2.post1 + causal-conv1d, NVRx 0.6.0,
+# emerging-optimizers 0.2.0 and NVSHMEM -- the two hardest builds of the NGC-based def come
+# prebuilt. Added here: our Megatron (on PYTHONPATH, the bundled megatron-core removed),
+# the CuTe DSL / TileLang versions our kernels need, power retention, Liger, and the further
+# EP libraries (MoonEP, UCCL-EP; best effort).
+#
+# Build:
+#   container/build_container.sh \
+#     --definition MegatronTraining-hybrid-nemo \
+#     --base-image nvcr.io/nvidia/nemo:26.08.01 \
+#     --output <container cache dir> --append-date
+#
+# Only shell forms that build_container.sh's envsubst leaves alone are used in %post:
+# literals, command substitutions, defaulted expansions and heredocs (envsubst blanks any
+# plain variable reference).
+
+%labels
+    Author OpenSci
+    Version 0.1.0
+    Base ${BASE_IMAGE}
+    Description Megatron hybrid-architecture container on NeMo (26.08.01: torch 2.13, TE 2.18, DeepEP/HybridEP, mamba_ssm), CuTe DSL, TileLang, power retention, Liger, MoonEP, UCCL-EP
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export PYTHONPATH=/workspace/oellm-autoexp:${PYTHONPATH:-}
+    export OELLM_AUTOEXP_CACHE=/workspace/cache
+    export HF_HOME=/workspace/cache/hf
+
+%files
+    ${REPO_ROOT} /workspace/oellm-autoexp
+    ${REQUIREMENTS_PATH} /workspace/${REQUIREMENTS_BASENAME}
+    ${PROVENANCE_PATH} /workspace/oellm-autoexp/provenance/container_provenance.json
+
+%post
+set -e
+mkdir -p /workspace/oellm-autoexp/provenance
+mkdir -p /workspace/cache
+cd /workspace
+
+# NeMo's packages live in the uv venv /opt/venv (with the system site-packages visible);
+# install into it with uv, as NeMo does.
+alias_uv() { uv pip install --python /opt/venv/bin/python --no-cache "$@"; }
+
+/opt/venv/bin/python /workspace/oellm-autoexp/container/gen_constraints.py \
+    --output /workspace/constraints.installed.txt \
+    --exclude pip setuptools wheel huggingface_hub apache-tvm-ffi \
+              tilelang nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base megatron-core
+
+if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
+    alias_uv -c /workspace/constraints.installed.txt -r "/workspace/${REQUIREMENTS_BASENAME}"
+fi
+alias_uv -c /workspace/constraints.installed.txt -e /workspace/oellm-autoexp
+
+# Our Megatron (submodules/Megatron-LM, oellm/v0.19-hybrid) comes from PYTHONPATH, as in the
+# other hybrid images: the bundled megatron-core 0.19.1 would shadow it.
+uv pip uninstall --python /opt/venv/bin/python megatron-core || true
+
+# ---------------------------------------------------------------------------
+# Versions our kernels need, newer than NeMo's: the CuTe DSL our CuTe kernels
+# (cute_kernels / cute-triadic-gdn) are built against, and TileLang for the FLA TileLang
+# paths (FLA itself, the ComplexKDA fork, stays on PYTHONPATH).
+# ---------------------------------------------------------------------------
+alias_uv -c /workspace/constraints.installed.txt "nvidia-cutlass-dsl[cu13]==4.7.1"
+alias_uv -c /workspace/constraints.installed.txt "tilelang>=0.1.15"
+alias_uv --no-deps "git+https://github.com/OliverSieberling/cute-triadic-gdn"
+# Liger's fused linear cross-entropy (liger_fused_linear_cross_entropy)
+alias_uv --no-deps "liger-kernel>=0.6"
+
+# Power retention (the `power` linear variant): the public Triton kernels; vidrial only for
+# its Python utilities (the CUDA backends are not used).
+alias_uv --no-deps "vidrial==0.2.1" "git+https://github.com/m-a-n-i-f-e-s-t/retention"
+# vidrial clones its CUTLASS fork next to itself on first import; compute nodes are offline
+# and site-packages is read-only at run time, so check it out here.
+/opt/venv/bin/python - <<'PY'
+import importlib.util, os, shutil, subprocess
+dst = os.path.join(os.path.dirname(importlib.util.find_spec("vidrial").origin), "cutlass")
+subprocess.check_call(["git", "clone", "--depth", "1", "https://github.com/m-a-n-i-f-e-s-t/cutlass.git", dst])
+shutil.rmtree(os.path.join(dst, ".git"))
+PY
+
+# ---------------------------------------------------------------------------
+# Further EP libraries next to NeMo's DeepEP/HybridEP, best effort.
+# ---------------------------------------------------------------------------
+export TORCH_CUDA_ARCH_LIST="9.0;10.0"   # sm_90: H100/GH200, sm_100: B200/GB200
+export MAX_JOBS=${MAX_JOBS:-16}
+# MoonEP: CUDA extension + CuTe DSL kernels, NVLink-only, no NVSHMEM. --no-deps: it pins
+# nvidia-cutlass-dsl 4.6.2.
+alias_uv --no-deps --no-build-isolation \
+    "git+https://github.com/MoonshotAI/MoonEP.git@d86fda40329de4002e0cade6817df7b4b5512ee5" || \
+    echo "WARNING: MoonEP not installed"
+# UCCL-EP: DeepEP's Buffer API over GPU-initiated RDMA (its gain is across nodes).
+git clone --depth 1 https://github.com/uccl-project/uccl.git /tmp/uccl && \
+    (cd /tmp/uccl/ep && /opt/venv/bin/python setup.py install) || \
+    echo "WARNING: UCCL-EP not installed"
+rm -rf /tmp/uccl
+
+# HybridEP JIT-compiles kernels into <deep_ep>/build/jit at first use; make sure that is a
+# writable location in the read-only image.
+/opt/venv/bin/python - <<'PY'
+import os, shutil, importlib.util
+pkg = os.path.dirname(importlib.util.find_spec("deep_ep").origin)
+build = os.path.join(pkg, "build")
+if not os.path.islink(build):
+    if os.path.isdir(build):
+        shutil.rmtree(build)
+    elif os.path.exists(build):
+        os.remove(build)
+    os.symlink("/tmp/deep_ep_build", build)
+PY
+
+# The venv first on PATH at run time (apptainer drops `export PATH` from %environment), so
+# `python` / `torchrun` are NeMo's, not the system interpreter or a host one.
+mkdir -p /.singularity.d/env
+cat > /.singularity.d/env/91-nemo-venv.sh << 'EOFPATH'
+#!/bin/bash
+export PATH=/opt/venv/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin:/bin:${PATH:-}
+mkdir -p /tmp/deep_ep_build/jit 2>/dev/null || true
+EOFPATH
+chmod +x /.singularity.d/env/91-nemo-venv.sh
+
+rm -rf /root/.cache 2>/dev/null || true
+
+%runscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%startscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%test
+cd /workspace/oellm-autoexp
+/opt/venv/bin/python scripts/run_autoexp.py --help >/dev/null
+/opt/venv/bin/python - <<'PY'
+import importlib.metadata as m
+import torch
+for mod in ("transformer_engine", "nvidia_resiliency_ext", "cutlass", "cute_triadic_gdn",
+            "mamba_ssm", "causal_conv1d", "triton", "tilelang", "retention.triton",
+            "liger_kernel", "deep_ep"):
+    __import__(mod)
+from deep_ep import Buffer, HybridEPBuffer  # the flex dispatcher's deepep / hybridep backends
+try:
+    import megatron.core  # noqa: F401
+    raise SystemExit("a bundled megatron-core is still installed; ours comes from PYTHONPATH")
+except ImportError:
+    pass
+print("torch", torch.__version__, "| TE", m.version("transformer_engine"),
+      "| cutlass-dsl", m.version("nvidia-cutlass-dsl"), "| tilelang", m.version("tilelang"),
+      "| mamba-ssm", m.version("mamba-ssm"), "| deep_ep", m.version("deep_ep"))
+for name, mod in (("ncclep (TE NCCL EP)", "transformer_engine.pytorch.ep"),
+                  ("MoonEP", "moonep"), ("UCCL-EP", "uccl.ep")):
+    try:  # optional EP libraries: report, do not fail
+        __import__(mod)
+        print(name, "available")
+    except Exception as e:
+        print(name, "not available:", type(e).__name__, e)
+PY
+
+%help
+    The hybrid-architecture image on NeMo 26.08.01. Run with Megatron-LM, flash-linear-attention
+    and cute_kernels from the synced checkout on PYTHONPATH (config/container/marenostrum_hybrid.yaml).

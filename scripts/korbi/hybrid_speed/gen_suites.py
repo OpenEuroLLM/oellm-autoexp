@@ -203,10 +203,11 @@ def moe():
         "aux.pattern": "*-" * 12, B + "num_experts": None, B + "moe_ffn_hidden_size": None,
         B + "moe_shared_expert_intermediate_size": None, B + "expert_model_parallel_size": 1,
         B + "ffn_hidden_size": 2304, B + "cuda_graph_modules": []})
+    E = "backend.env."
+    cutlass = {E + "NVTE_USE_CUTLASS_GROUPED_GEMM": "1", "aux.array_tag": "_cutlass"}
     noshared = {B + "moe_shared_expert_intermediate_size": None, B + "moe_router_topk": 6}
     arm("noshared", "no shared expert, top-6", noshared)
-    arm("noshared_cublas", "no shared expert, top-6, cuBLAS grouped GEMM", noshared,
-        {"backend.env.NVTE_USE_CUTLASS_GROUPED_GEMM": "0", "aux.array_tag": "_cublas"})
+    arm("noshared_cutlass", "no shared expert, top-6, CUTLASS grouped GEMM", noshared, cutlass)
     arm("auxfree", "aux-loss-free balancing (sigmoid router + expert bias)", {
         B + "moe_router_load_balancing_type": "none", B + "moe_aux_loss_coeff": 0.0,
         B + "moe_router_enable_expert_bias": True, B + "moe_router_score_function": "sigmoid"})
@@ -226,8 +227,10 @@ def moe():
     # 10B-A0.9B), one at a time on our image, then on NeMo 26.08.01 (TE 2.18 + HybridEP)
     E = "backend.env."
     arm("router_fusion", "TE fused router", {B + "moe_router_fusion": True})
-    arm("cublas_gg", "cuBLAS grouped GEMM (the reference uses TE's CUTLASS one)",
-        {E + "NVTE_USE_CUTLASS_GROUPED_GEMM": "0", "aux.array_tag": "_cublas"})
+    # TE's CUTLASS grouped GEMM: 1.06x on the reference, but it segfaults (TE 2.10) with
+    # top-6 / no shared expert and with LatentMoE -- opt-in only; *_nemo: TE 2.18
+    cutlass = {E + "NVTE_USE_CUTLASS_GROUPED_GEMM": "1", "aux.array_tag": "_cutlass"}
+    arm("cutlass_gg", "TE CUTLASS grouped GEMM", cutlass)
     # needs TE >= 2.12 with CUDA graphs: the NeMo arms below
     arm("a2a_overlap", "EP all-to-all overlapped with compute (+ delayed wgrad), no CUDA graphs",
         {B + "overlap_moe_expert_parallel_comm": True, B + "delay_wgrad_compute": True,
@@ -248,6 +251,12 @@ def moe():
         {B + "moe_router_fusion": True})
     arm("nemo_flex_a2a", "NeMo, HybridEP + all-to-all overlap (+ delayed wgrad)", nemo, flex, a2a)
     arm("nemo_a2a", "NeMo, alltoall dispatcher + all-to-all overlap (+ delayed wgrad)", nemo, a2a)
+    nemo_cutlass = {**nemo, E + "NVTE_USE_CUTLASS_GROUPED_GEMM": "1", "aux.array_tag": "_nemo_cutlass"}
+    arm("nemo_cutlass", "NeMo (TE 2.18), CUTLASS grouped GEMM", nemo_cutlass)
+    arm("nemo_cutlass_noshared", "NeMo (TE 2.18), CUTLASS grouped GEMM, no shared expert, top-6",
+        nemo_cutlass, noshared)
+    arm("nemo_cutlass_latent", "NeMo (TE 2.18), CUTLASS grouped GEMM, LatentMoE", nemo_cutlass,
+        {B + "moe_latent_size": 256})
     return arms
 
 
@@ -309,7 +318,4 @@ backend:
     moe_permute_fusion: true
     expert_model_parallel_size: 4
     cuda_graph_modules: [attn, moe_router, moe_preprocess]
-  env:
-    # TE's CUTLASS grouped GEMM for the experts: 1.06x over cuBLAS (v13moe)
-    NVTE_USE_CUTLASS_GROUPED_GEMM: "1"
 """, moe())

@@ -29,9 +29,6 @@ backend:
     moe_permute_fusion: true
     expert_model_parallel_size: 4
     cuda_graph_modules: [attn, moe_router, moe_preprocess]
-  env:
-    # TE's CUTLASS grouped GEMM for the experts: 1.06x over cuBLAS (v13moe)
-    NVTE_USE_CUTLASS_GROUPED_GEMM: "1"
 
 sweep:
   type: product
@@ -61,12 +58,12 @@ sweep:
         - aux.arm: noshared
           backend.megatron.moe_shared_expert_intermediate_size: null
           backend.megatron.moe_router_topk: 6
-        # no shared expert, top-6, cuBLAS grouped GEMM
-        - aux.arm: noshared_cublas
+        # no shared expert, top-6, CUTLASS grouped GEMM
+        - aux.arm: noshared_cutlass
           backend.megatron.moe_shared_expert_intermediate_size: null
           backend.megatron.moe_router_topk: 6
-          backend.env.NVTE_USE_CUTLASS_GROUPED_GEMM: '0'
-          aux.array_tag: _cublas
+          backend.env.NVTE_USE_CUTLASS_GROUPED_GEMM: '1'
+          aux.array_tag: _cutlass
         # aux-loss-free balancing (sigmoid router + expert bias)
         - aux.arm: auxfree
           backend.megatron.moe_router_load_balancing_type: none
@@ -100,10 +97,10 @@ sweep:
         # TE fused router
         - aux.arm: router_fusion
           backend.megatron.moe_router_fusion: true
-        # cuBLAS grouped GEMM (the reference uses TE's CUTLASS one)
-        - aux.arm: cublas_gg
-          backend.env.NVTE_USE_CUTLASS_GROUPED_GEMM: '0'
-          aux.array_tag: _cublas
+        # TE CUTLASS grouped GEMM
+        - aux.arm: cutlass_gg
+          backend.env.NVTE_USE_CUTLASS_GROUPED_GEMM: '1'
+          aux.array_tag: _cutlass
         # EP all-to-all overlapped with compute (+ delayed wgrad), no CUDA graphs
         - aux.arm: a2a_overlap
           backend.megatron.overlap_moe_expert_parallel_comm: true
@@ -164,3 +161,24 @@ sweep:
           aux.array_tag: _nemo
           backend.megatron.overlap_moe_expert_parallel_comm: true
           backend.megatron.delay_wgrad_compute: true
+        # NeMo (TE 2.18), CUTLASS grouped GEMM
+        - aux.arm: nemo_cutlass
+          container.image: /gpfs/projects/ehpc533/singularity_images/nemo_26.08.01.sif
+          backend.env.PATH: /opt/venv/bin:/usr/local/bin:/usr/bin:/bin
+          aux.array_tag: _nemo_cutlass
+          backend.env.NVTE_USE_CUTLASS_GROUPED_GEMM: '1'
+        # NeMo (TE 2.18), CUTLASS grouped GEMM, no shared expert, top-6
+        - aux.arm: nemo_cutlass_noshared
+          container.image: /gpfs/projects/ehpc533/singularity_images/nemo_26.08.01.sif
+          backend.env.PATH: /opt/venv/bin:/usr/local/bin:/usr/bin:/bin
+          aux.array_tag: _nemo_cutlass
+          backend.env.NVTE_USE_CUTLASS_GROUPED_GEMM: '1'
+          backend.megatron.moe_shared_expert_intermediate_size: null
+          backend.megatron.moe_router_topk: 6
+        # NeMo (TE 2.18), CUTLASS grouped GEMM, LatentMoE
+        - aux.arm: nemo_cutlass_latent
+          container.image: /gpfs/projects/ehpc533/singularity_images/nemo_26.08.01.sif
+          backend.env.PATH: /opt/venv/bin:/usr/local/bin:/usr/bin:/bin
+          aux.array_tag: _nemo_cutlass
+          backend.env.NVTE_USE_CUTLASS_GROUPED_GEMM: '1'
+          backend.megatron.moe_latent_size: 256
