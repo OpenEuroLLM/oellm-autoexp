@@ -263,6 +263,20 @@ def moe():
         {B + "moe_router_fusion": True})
     arm("nemo_flex_a2a", "NeMo, HybridEP + all-to-all overlap (+ delayed wgrad)", nemo, flex, a2a)
     arm("nemo_a2a", "NeMo, alltoall dispatcher + all-to-all overlap (+ delayed wgrad)", nemo, a2a)
+    # Drop-and-pad (fixed expert capacity): no host sync in the dispatch, so the whole MoE
+    # layer is CUDA-graphable (the reference graphs only attention / router / preprocess and
+    # leaves the GPU idle ~half the step, v25prof). Tokens over capacity are dropped.
+    for cf in (1.0, 1.25):
+        tag = str(cf).replace(".", "p")
+        dp = {B + "moe_expert_capacity_factor": cf, B + "moe_pad_expert_input_to_capacity": True}
+        arm(f"dp{tag}", f"drop-and-pad, capacity {cf}, router graphs", dp)
+        arm(f"dp{tag}_cgmoe", f"drop-and-pad, capacity {cf}, whole MoE layer CUDA-graphed", dp,
+            {B + "cuda_graph_modules": ["attn", "moe"]})
+        arm(f"dp{tag}_cgfull", f"drop-and-pad, capacity {cf}, full-iteration CUDA graph", dp,
+            {B + "cuda_graph_impl": "full_iteration", B + "cuda_graph_modules": []})
+    arm("dp1p25_cgmoe_best", "drop-and-pad 1.25, MoE graphed, router fusion, CUTLASS GG",
+        {B + "moe_expert_capacity_factor": 1.25, B + "moe_pad_expert_input_to_capacity": True,
+         B + "cuda_graph_modules": ["attn", "moe"], B + "moe_router_fusion": True}, cutlass)
     nemo_cutlass = {**nemo, E + "NVTE_USE_CUTLASS_GROUPED_GEMM": "1", "aux.array_tag": "_nemo_cutlass"}
     arm("nemo_cutlass", "NeMo (TE 2.18), CUTLASS grouped GEMM", nemo_cutlass)
     arm("nemo_cutlass_noshared", "NeMo (TE 2.18), CUTLASS grouped GEMM, no shared expert, top-6",

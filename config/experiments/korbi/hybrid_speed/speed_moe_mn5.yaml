@@ -156,6 +156,44 @@ sweep:
           aux.array_tag: _nemo
           backend.megatron.overlap_moe_expert_parallel_comm: true
           backend.megatron.delay_wgrad_compute: true
+        # drop-and-pad, capacity 1.0, router graphs
+        - aux.arm: dp1p0
+          backend.megatron.moe_expert_capacity_factor: 1.0
+          backend.megatron.moe_pad_expert_input_to_capacity: true
+        # drop-and-pad, capacity 1.0, whole MoE layer CUDA-graphed
+        - aux.arm: dp1p0_cgmoe
+          backend.megatron.moe_expert_capacity_factor: 1.0
+          backend.megatron.moe_pad_expert_input_to_capacity: true
+          backend.megatron.cuda_graph_modules: [attn, moe]
+        # drop-and-pad, capacity 1.0, full-iteration CUDA graph
+        - aux.arm: dp1p0_cgfull
+          backend.megatron.moe_expert_capacity_factor: 1.0
+          backend.megatron.moe_pad_expert_input_to_capacity: true
+          backend.megatron.cuda_graph_impl: full_iteration
+          backend.megatron.cuda_graph_modules: []
+        # drop-and-pad, capacity 1.25, router graphs
+        - aux.arm: dp1p25
+          backend.megatron.moe_expert_capacity_factor: 1.25
+          backend.megatron.moe_pad_expert_input_to_capacity: true
+        # drop-and-pad, capacity 1.25, whole MoE layer CUDA-graphed
+        - aux.arm: dp1p25_cgmoe
+          backend.megatron.moe_expert_capacity_factor: 1.25
+          backend.megatron.moe_pad_expert_input_to_capacity: true
+          backend.megatron.cuda_graph_modules: [attn, moe]
+        # drop-and-pad, capacity 1.25, full-iteration CUDA graph
+        - aux.arm: dp1p25_cgfull
+          backend.megatron.moe_expert_capacity_factor: 1.25
+          backend.megatron.moe_pad_expert_input_to_capacity: true
+          backend.megatron.cuda_graph_impl: full_iteration
+          backend.megatron.cuda_graph_modules: []
+        # drop-and-pad 1.25, MoE graphed, router fusion, CUTLASS GG
+        - aux.arm: dp1p25_cgmoe_best
+          backend.megatron.moe_expert_capacity_factor: 1.25
+          backend.megatron.moe_pad_expert_input_to_capacity: true
+          backend.megatron.cuda_graph_modules: [attn, moe]
+          backend.megatron.moe_router_fusion: true
+          backend.env.NVTE_USE_CUTLASS_GROUPED_GEMM: '1'
+          aux.array_tag: _cutlass
         # NeMo (TE 2.18), CUTLASS grouped GEMM
         - aux.arm: nemo_cutlass
           container.image: /gpfs/projects/ehpc533/singularity_images/nemo_26.08.01.sif
