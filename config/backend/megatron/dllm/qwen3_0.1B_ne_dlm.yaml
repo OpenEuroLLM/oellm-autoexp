@@ -1,0 +1,52 @@
+# qwen3_125M_dlm with the architecture of the 0.1B non-embedding (ne) dense model from the
+# multilingual scaling experiments (exp_diana: multilingual_scaling/qwen3_dense_0.1B_ne.yaml).
+# Only architecture fields differ from qwen3_125M_dlm; LR, schedule, batch size and data are unchanged.
+defaults:
+ - /backend/megatron/qwen3_base@_here_
+
+# Architecture from qwen3_dense_0.1B_ne
+num_layers: 16
+hidden_size: 512
+ffn_hidden_size: 1536
+num_attention_heads: 8
+num_query_groups: 8
+group_query_attention: false
+kv_channels: 128
+untie_embeddings_and_output_weights: False
+rotary_base: 10000
+layernorm_epsilon: 1.e-5  # -> --norm-epsilon
+attention_softmax_in_fp32: false
+
+seq_length: 4097
+max_position_embeddings: 4097
+
+train_iters: 9536
+micro_batch_size: 8
+lr: 6.0e-4
+
+# Disable fusions that conflict with diffusion or require TE >= 1.4
+bias_gelu_fusion: false
+bias_dropout_fusion: false
+bias_swiglu_fusion: false
+apply_rope_fusion: false
+
+aux:
+  model_name: "megadlm-qwen3-0.1b-ne"
+  mask_token_id: 147
+
+tokenizer_type: SentencePieceTokenizer
+tokenizer_model: /projects/0/prjs2013/oellm/tokenizer/oellm-tokenizer-128k-v2/tokenizer.model
+
+data_path:
+  - /projects/0/prjs2013/preprocessed/oellm-tokenizer-128k-v2/HPLT/HPLT2.0_cleaned/eng_Latn_67/eng_Latn_67_text_document
+
+save: ${job.base_output_dir}/checkpoints
+wandb_save_dir: ${job.base_output_dir}/wandb
+tensorboard_dir: ${job.base_output_dir}/tensorboard
+save_interval: 1000
+eval_interval: 1001
+eval_iters: 101
+log_interval: 10
+log_throughput: true
+log_timers_to_tensorboard: true
+use_flash_attn: true

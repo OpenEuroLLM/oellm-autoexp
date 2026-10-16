@@ -1,5 +1,5 @@
 defaults:
- - qwen3_base
+ - /backend/megatron/qwen3_base@_here_
 
 num_layers: 16
 hidden_size: 512

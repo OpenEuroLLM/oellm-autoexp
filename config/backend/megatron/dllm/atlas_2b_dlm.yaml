@@ -1,5 +1,5 @@
 defaults:
- - qwen3_base
+ - /backend/megatron/qwen3_base@_here_
 
 # The 2B model of the ATLAS paper (shapes from its Table B.3, recipe from Table B.2), trained
 # as a masked diffusion model with the objective of qwen3_125M_dlm.yaml. ATLAS trains AR models.

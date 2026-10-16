@@ -1,8 +1,8 @@
 # @package _global_
 # ATLAS 2B as a masked diffusion model (MegaDLMs) on HPLT English. Model and recipe:
-# backend/megatron/atlas_2b_dlm.yaml.
+# backend/megatron/dllm/atlas_2b_dlm.yaml.
 #
-#   uv run scripts/run_autoexp.py --config-name atlas_2b_dlm --dry-run
+#   uv run scripts/run_autoexp.py --config-name experiments/dllm/atlas_2b_dlm --dry-run
 
 defaults:
   - /backend: megadlm_torchrun
@@ -10,7 +10,7 @@ defaults:
   - /slurm: snellius
   - /job: auto_restart
   - /sweep: none
-  - override /backend/megatron: atlas_2b_dlm
+  - override /backend/megatron: dllm/atlas_2b_dlm
   - _self_
 
 job:

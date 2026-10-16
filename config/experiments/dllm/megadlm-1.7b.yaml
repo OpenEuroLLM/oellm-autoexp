@@ -1,0 +1,62 @@
+# @package _global_
+
+defaults:
+  - /experiments/base
+  - /backend: megadlm_torchrun
+  - /container: snellius
+  - /slurm: snellius
+  - /backend/megatron: [base, dllm/megadlm-1.7b]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: "megadlm-1.7b"
+
+backend:
+  megatron:
+    # ── 10k-step stability run (same recipe as the 8B variant) ───────────────
+    train_iters: 10000
+    lr_warmup_iters: 2000            # linear warmup 0 → lr over the first 2000 steps
+    lr_wsd_decay_iters: 0            # no decay: lr held at peak after warmup, so any
+                                     # instability shows up at the constant target lr
+    log_interval: 10
+    eval_interval: 1000
+    distributed_timeout_minutes: 60  # avoid NCCL watchdog timeouts on a long run
+
+    # Checkpoint so the run survives wall-time limits: resubmit the same job and
+    # it resumes from the latest checkpoint (load == save).
+    # save: "${job.base_output_dir}/checkpoints"
+    # load: "${job.base_output_dir}/checkpoints"
+    save: null
+    load: null
+    save_interval: 1000
+    log_throughput: true
+
+    # NOTE: do NOT set padded_vocab_size — MegaDLMs' pretrain_difflm.py has no
+    # --padded-vocab-size arg and computes padding from vocab_size (50289, set
+    # in backend/megatron/dllm/megadlm-1.7b.yaml) + make_vocab_size_divisible_by.
+    global_batch_size: 128
+    micro_batch_size: 4
+    tensor_model_parallel_size: 1
+
+    data_path:
+      - /projects/2/managed_datasets/FineWeb/10BT/fineweb-10BT_text_document
+    data_cache_path: /scratch-shared/${oc.env:USER}/cache
+
+    tokenizer_model: EleutherAI/gpt-neox-20b
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    PYTHONWARNINGS: "ignore::UserWarning"
+    NCCL_NET_GDR_LEVEL: "0"  # disable GDRDMA — required for PP=2 inter-node P2P
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"  # required for TP>1 (tensor_model_parallel_size=4)
+
+job:
+  name: megadlm-1.7b_n${slurm.sbatch.nodes}_tp${backend.megatron.tensor_model_parallel_size}_pp${backend.megatron.pipeline_model_parallel_size}_cp${backend.megatron.context_parallel_size}_mbs${backend.megatron.micro_batch_size}_gbs${backend.megatron.global_batch_size}_seq${backend.megatron.seq_length}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${job.name}"
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "1:00:00"

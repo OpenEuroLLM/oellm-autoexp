@@ -1,3 +1,4 @@
+# @package backend.megatron
 # MegaDLM 8B model config
 # Architecture matches the Qwen2.5-based 8B used in MegaDLMs/pretrain_difflm.job.
 # seq_length is 4097 (not 4096): difflm-noshift trims the first token after

@@ -6,7 +6,7 @@ defaults:
   - /slurm: snellius
   - /job: default
   - /sweep: none
-  - override /backend/megatron: qwen3_125M_dlm
+  - override /backend/megatron: dllm/qwen3_125M_dlm
   - _self_
 
 job:

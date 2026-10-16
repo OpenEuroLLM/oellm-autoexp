@@ -1,0 +1,45 @@
+# @package _global_
+# ~21M non-embedding Qwen3-style masked diffusion LM on 1 H100.
+# Meant to be launched by auto-research's `oellm_autoexp` backend (backfill worker), which
+# renders this with --dry-run and runs the script inside its own 1-GPU allocation, adding
+# --load/--exit-signal-handler/--exit-duration-in-mins so runs resume across backfill jobs.
+# Standalone: python scripts/run_autoexp.py --config-name experiments/dllm/qwen3_20m_dlm
+
+defaults:
+  - /backend: megadlm_torchrun
+  - /container: snellius
+  - /slurm: snellius
+  - /job: default
+  - /sweep: none
+  - override /backend/megatron: dllm/qwen3_20m_dlm
+  - _self_
+
+job:
+  name: "qwen3_20m_dlm"
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${job.name}"
+  log_path: ${.base_output_dir}/logs/slurm-%j.log
+  log_path_current: ${.base_output_dir}/logs/current.log
+  config_path: ${.base_output_dir}/logs/config-%j.yaml
+  config_path_current: ${.base_output_dir}/logs/current.yaml
+
+backend:
+  # Same MegaDLMs flags as qwen3_125M_dlm (see that file for what each does).
+  aux:
+    difflm_args: "--attention-mask-type no_mask --mask-token ${backend.megatron.aux.mask_token_id} --base-model vanilla --model-running-mode difflm-noshift --difflm-varilen-prob 0.01 --wandb-exp-name ${job.name}"
+  megatron:
+    wandb_project: "autoresearch-dlm"
+
+slurm:
+  env:
+    # MegaDLMs' checkpoint loader calls torch.load() without weights_only=False; since torch
+    # 2.6 that rejects Megatron's own checkpoints (WeightsUnpickler: megatron.core.enums.ModelType)
+    TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: "1"
+  sbatch:
+    _non_strict: true
+    nodes: 1
+    ntasks: 1
+    gpus_per_node: 1
+    cpus_per_task: 16
+    exclusive: false
+    partition: gpu_h100
+    time: "00:59:00"

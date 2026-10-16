@@ -1,0 +1,62 @@
+# Qwen3-style masked-diffusion LM at ~21M non-embedding params (scaled-down qwen3_125M_dlm).
+# Same architecture as auto-research's nanoDLM preset `qwen3_20m`, and the same data
+# (managed FineWeb-10BT, GPT-2 tokens) so both codebases can be compared in bits-per-byte.
+defaults:
+ - /backend/megatron/qwen3_base@_here_
+
+num_layers: 12
+hidden_size: 384
+ffn_hidden_size: 1152
+num_attention_heads: 6
+num_query_groups: 2
+kv_channels: 64
+untie_embeddings_and_output_weights: False
+
+# difflm-noshift trims the first token: 513 -> 512 positions, as in nanoDLM (seq_len=512)
+seq_length: 513
+max_position_embeddings: 513
+
+# 8000 x 128 x 512 = 524M tokens, identical budget to auto-research m1 runs
+train_iters: 8000
+micro_batch_size: 64
+global_batch_size: 128
+lr: 2.0e-3
+min_lr: 2.0e-4
+lr_warmup_iters: 400
+lr_decay_style: cosine
+weight_decay: 0.1
+adam_beta2: 0.95
+clip_grad: 1.0
+
+# Disable fusions that conflict with diffusion or require TE >= 1.4
+bias_gelu_fusion: false
+bias_dropout_fusion: false
+bias_swiglu_fusion: false
+apply_rope_fusion: false
+
+aux:
+  model_name: "megadlm-qwen3-20m"
+  mask_token_id: 50257   # first padding row of the GPT-2 vocab (50257 -> padded 50304)
+
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: gpt2
+make_vocab_size_divisible_by: 128
+
+data_path:
+  - /projects/2/managed_datasets/FineWeb/10BT/fineweb-10BT_text_document
+split: "998,2,0"
+data_cache_path: /scratch-shared/${oc.env:USER}/autoresearch/megatron_data_cache
+
+# torch_dist saving fails with MegaDLMs' dist_checkpointing on the torch 2.13 container
+# ("_write_item() missing ... 'storage_key' and 'serialization_format'"); plain torch format
+# is fine on a single GPU.
+ckpt_format: torch
+save: ${job.base_output_dir}/checkpoints
+wandb_save_dir: ${job.base_output_dir}/wandb
+tensorboard_dir: ${job.base_output_dir}/tensorboard
+save_interval: 500
+eval_interval: 500
+eval_iters: 10
+log_interval: 20
+log_throughput: true
+use_flash_attn: true
