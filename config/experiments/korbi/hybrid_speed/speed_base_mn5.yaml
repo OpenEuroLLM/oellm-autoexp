@@ -1,0 +1,138 @@
+# @package _global_
+# Shared base of the hybrid-architecture speed suite on MareNostrum 5 (one node, 4x H100):
+# a short training run per architecture feature, mock data (no GPFS reads), CUDA graphs on,
+# nothing saved. Every arm differs from its family's reference in the feature only.
+#
+#   speed_130M_mn5.yaml   dense 130M family (HybridModel "*-" x 12 reference, + GPTModel)
+#   speed_moe_mn5.yaml    50M-active / 500M-total MoE family
+#
+# Run (MN5 login node, synced checkout):
+#   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py \
+#       --config-name experiments/korbi/hybrid_speed/speed_130M_mn5 --no-monitor
+# Table: python scripts/korbi/hybrid_speed_table.py $OUTPUT_DIR/hybrid_speed/<family>
+defaults:
+  - ../../base
+  - /backend: megatron_torchrun
+  - /container: marenostrum_hybrid
+  - /slurm: marenostrum_ehpc533
+  - /backend/megatron: [base]
+  - /sweep: none
+  - _self_
+
+aux:
+  experiment_group: hybrid_speed
+  family: dense130M
+  arm: dense
+  # suite version: bump when the measurement setup changes, so tables never mix setups
+  suite: v1
+  pattern: "*-*-*-*-*-*-*-*-*-*-*-*-"
+  hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
+
+backend:
+  launcher_script: ./submodules/Megatron-LM/pretrain_hybrid.py
+  megatron:
+    # ---- model: 130M dense (hidden 768, 12 blocks, 12 heads of 64, SwiGLU 2048) ----
+    is_hybrid_model: true
+    spec: [megatron.core.models.hybrid.hybrid_layer_specs, hybrid_stack_spec]
+    hybrid_layer_pattern: ${aux.pattern}
+    num_layers: null
+    hidden_size: 768
+    ffn_hidden_size: 2048
+    num_attention_heads: 12
+    num_query_groups: 12
+    kv_channels: 64
+    swiglu: true
+    normalization: RMSNorm
+    add_bias_linear: false
+    qk_layernorm: true
+    position_embedding_type: rope
+    rotary_base: 10000
+    untie_embeddings_and_output_weights: false
+    attention_dropout: 0
+    hidden_dropout: 0
+    init_method_std: 0.02
+    seq_length: 4096
+    max_position_embeddings: 4096
+    # linear mixers: 64-dim heads, as many as attention (overridden per arm)
+    linear_key_head_dim: 64
+    linear_value_head_dim: 64
+    linear_num_key_heads: 12
+    linear_num_value_heads: 12
+
+    # ---- precision / fusions / graphs ----
+    bf16: true
+    transformer_impl: transformer_engine
+    use_flash_attn: true
+    cross_entropy_loss_fusion: true
+    masked_softmax_fusion: true
+    gradient_accumulation_fusion: true
+    cuda_graph_impl: local
+    check_for_nan_in_loss_and_grad: false
+    rerun_mode: disabled
+    manual_gc: true
+    manual_gc_interval: 50
+
+    # ---- data: mock tokens, gpt-neox-sized vocabulary ----
+    mock_data: true
+    tokenizer_type: NullTokenizer
+    vocab_size: 50303
+    tokenizer_model: null
+    data_path: null
+    split: null
+    num_workers: 2
+
+    # ---- batch / schedule: 4 GPUs x mbs 8 x 4096 = 131k tokens per step ----
+    micro_batch_size: 8
+    global_batch_size: 32
+    train_iters: 100
+    lr: 0.001
+    min_lr: 0.0001
+    lr_decay_style: constant
+    lr_warmup_iters: 5
+    weight_decay: 0.1
+    clip_grad: 1.0
+    adam_beta2: 0.95
+
+    # ---- parallelism: DP only ----
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    context_parallel_size: 1
+    sequence_parallel: false
+    use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+
+    # ---- logging only; nothing saved or evaluated ----
+    log_interval: 5
+    log_throughput: true
+    log_memory_to_tensorboard: false
+    eval_interval: 1000000
+    eval_iters: 0
+    save: null
+    load: null
+    save_interval: null
+    non_persistent_ckpt_type: null
+    tensorboard_dir: null
+    wandb_project: null
+    wandb_exp_name: null
+
+  env:
+    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:${aux.hybrid_env}/pylibs:${aux.hybrid_env}/pylibs_cute:${aux.hybrid_env}/pylibs_cute/nvidia_cutlass_dsl/dsl_packages:${aux.hybrid_env}/retention:${aux.hybrid_env}/pylibs_power"
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    NVIDIA_PYTORCH_VERSION: "25.12"
+    TOKENIZERS_PARALLELISM: "false"
+
+job:
+  name: ${aux.suite}_${aux.family}_${aux.arm}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${aux.suite}_${aux.family}/${aux.arm}"
+  array_group: ${aux.suite}_${aux.family}
+  # GPU-h estimate (submit gate): ~4 min startup + compile, 100 steps of <= 2 s
+  est_step_time_s: 2.0
+  est_startup_min: 4.0
+
+slurm:
+  array_concurrency: 16
+  sbatch:
+    time: "00:25:00"
+
+stage: speed
