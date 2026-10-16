@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> None:
 
     slurm_client = SlurmClient(SlurmClientConfig())
     local_client = LocalCommandClient(LocalCommandClientConfig())
-    session_dir = Path(args.session_dir) or Path(args.monitor_state_dir) / args.session
+    session_dir = Path(args.session_dir) if args.session_dir else Path(args.monitor_state_dir) / args.session
     if not session_dir.exists():
         print(f"Session directory {session_dir} does not exist.")
     loop = MonitorLoop(
