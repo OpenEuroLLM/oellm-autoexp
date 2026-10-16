@@ -1,0 +1,182 @@
+Bootstrap: docker
+From: ${BASE_IMAGE}
+
+# Upstream torchtitan (main: submodules/torchtitan) on NGC PyTorch with a PyTorch nightly,
+# plus the kernel libraries our hybrid features use, so they can run under torchtitan too:
+#   - DeepEP with HybridEP (as MegatronTraining-hybrid-ep: Megatron v0.19's commit + patch),
+#   - MoonEP (MoonshotAI), best effort,
+#   - causal_conv1d, TileLang, the CuTe DSL + cute-triadic-gdn, Liger.
+# torchtitan main needs a nightly (2.16 dev in 2026-10; NGC 26.09's 2.14 lacks e.g.
+# torch.distributed.pipelining.analyze_pipeline_activation_liveness). The nightly lives in a
+# venv (/opt/titan, no system site-packages) that the image activates; the NGC Python and
+# its TE / apex builds stay as they are but are not used. Every extension above is compiled
+# against the venv's nightly torch.
+#
+# torchtitan, FLA and Megatron are NOT installed: the checkouts go on PYTHONPATH at run
+# time (config/experiments/korbi/hybrid_speed/titan_main_mn5.yaml).
+#
+# Build:  container/titan/build_titan.sh [OUTPUT_DIR]   (TORCH_INDEX, BASE_IMAGE to override)
+#
+# Only shell forms that build_container.sh's envsubst leaves alone are used in %post:
+# literals, command substitutions, defaulted expansions and heredocs (envsubst blanks
+# any plain variable reference).
+
+%labels
+    Author OpenSci
+    Version 0.1.0
+    Base ${BASE_IMAGE}
+    Description torchtitan main on NGC PyTorch + PyTorch nightly venv; DeepEP/HybridEP, MoonEP, causal_conv1d, TileLang, CuTe DSL
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export VIRTUAL_ENV=/opt/titan
+    export HF_HOME=/workspace/cache/hf
+    export HYBRID_EP_MULTINODE=1
+
+%files
+    ${REPO_ROOT}/submodules/torchtitan/.ci/docker/requirements.txt /workspace/torchtitan-requirements.txt
+    ${REPO_ROOT}/submodules/Megatron-LM/docker/patches/deepep.patch /workspace/deepep.patch
+
+%post
+mkdir -p /workspace/cache /opt/build
+cd /workspace
+
+# ---------------------------------------------------------------------------
+# The nightly venv
+# ---------------------------------------------------------------------------
+python3 -m venv /opt/titan
+export PATH=/opt/titan/bin:${PATH:-/usr/bin:/bin}
+# NGC puts its own torch's lib directory first on LD_LIBRARY_PATH, which would override the
+# nightly's own libraries (LD_LIBRARY_PATH beats RUNPATH): drop it, here and at run time.
+export LD_LIBRARY_PATH="$(printf %s "${LD_LIBRARY_PATH:-}" | tr ':' '\n' | grep -v 'dist-packages/torch' | paste -sd: -)"
+mkdir -p /.singularity.d/env
+cat > /.singularity.d/env/95-titan-venv.sh << 'EOFENV'
+#!/bin/bash
+# the nightly venv first (not in %environment: build_container.sh's envsubst would bake the
+# build host's PATH into a plain PATH reference there)
+export PATH="/opt/titan/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
+export LD_LIBRARY_PATH="$(printf %s "${LD_LIBRARY_PATH:-}" | tr ':' '\n' | grep -v 'dist-packages/torch' | paste -sd: -)"
+EOFENV
+chmod +x /.singularity.d/env/95-titan-venv.sh
+
+python -m pip install --no-cache-dir --upgrade pip setuptools wheel packaging ninja
+python -m pip install --no-cache-dir --pre torch --index-url "${TORCH_INDEX:-https://download.pytorch.org/whl/nightly/cu130}"
+python -m pip install --no-cache-dir --pre torchao --index-url "${TORCH_INDEX:-https://download.pytorch.org/whl/nightly/cu130}"
+python -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
+# the nightly as constraint for everything else (nothing may replace it)
+python -c "import torch, torchao; print(f'torch=={torch.__version__}'); print(f'torchao=={torchao.__version__}')" \
+    > /workspace/constraints.txt
+python -m pip install --no-cache-dir -c /workspace/constraints.txt -r /workspace/torchtitan-requirements.txt
+python -m pip install --no-cache-dir -c /workspace/constraints.txt \
+    numpy einops tiktoken sentencepiece blobfile pytest hydra-core omegaconf compoconf \
+    transformers "liger-kernel" cuda-python nanobind
+
+# ---------------------------------------------------------------------------
+# Kernel libraries, built against the nightly (sm_90 H100/GH200, sm_100 B200/GB200)
+# ---------------------------------------------------------------------------
+export TORCH_CUDA_ARCH_LIST="9.0;10.0"
+export MAX_JOBS=${MAX_JOBS:-16}
+export CUDA_HOME=/usr/local/cuda
+CAUSAL_CONV1D_FORCE_BUILD=TRUE python -m pip install --no-cache-dir --no-build-isolation \
+    -c /workspace/constraints.txt "causal-conv1d>=1.5"
+python -m pip install --no-cache-dir -c /workspace/constraints.txt "tilelang>=0.1.15"
+python -m pip install --no-cache-dir -c /workspace/constraints.txt "nvidia-cutlass-dsl[cu13]>=4.7.1"
+python -m pip install --no-cache-dir --no-deps "git+https://github.com/OliverSieberling/cute-triadic-gdn"
+
+# DeepEP with HybridEP (see MegatronTraining-hybrid-ep.def.in for the reasoning)
+apt-get update
+apt-get install -y --no-install-recommends --allow-change-held-packages rdma-core libibverbs-dev
+mkdir -p /opt/build/cuda_link_stubs
+ln -sf /usr/local/cuda/lib64/stubs/libnvidia-ml.so /opt/build/cuda_link_stubs/libnvidia-ml.so.1
+mkdir -p /opt/rdma-core/build
+ln -sfn /usr/include /opt/rdma-core/build/include
+ln -sfn "/usr/lib/$(uname -m)-linux-gnu" /opt/rdma-core/build/lib
+test -f "/usr/lib/$(uname -m)-linux-gnu/libmlx5.so" || \
+    ln -sf "/usr/lib/$(uname -m)-linux-gnu/libmlx5.so.1" "/usr/lib/$(uname -m)-linux-gnu/libmlx5.so"
+# NVSHMEM: the wheel the nightly depends on (DeepEP links its static device library); add
+# the unversioned host library name DeepEP links against.
+python -c "import nvidia.nvshmem" 2>/dev/null || \
+    python -m pip install --no-cache-dir -c /workspace/constraints.txt nvidia-nvshmem-cu13
+python - <<'PY'
+import os, nvidia.nvshmem
+lib = os.path.join(list(nvidia.nvshmem.__path__)[0], "lib")
+dst = os.path.join(lib, "libnvshmem_host.so")
+if not os.path.exists(dst):
+    os.symlink("libnvshmem_host.so.3", dst)
+PY
+git clone https://github.com/deepseek-ai/DeepEP.git /opt/build/DeepEP
+cd /opt/build/DeepEP
+git fetch origin de0dd1185142c727b9c118aeb4cc4702e34deeba
+git checkout FETCH_HEAD
+patch -p1 < /workspace/deepep.patch
+LIBRARY_PATH=/usr/local/cuda/lib64/stubs:/opt/build/cuda_link_stubs:${LIBRARY_PATH:-} \
+HYBRID_EP_MULTINODE=1 RDMA_CORE_HOME=/opt/rdma-core/build \
+    python -m pip install --no-cache-dir --no-build-isolation --no-deps -v .
+cd /workspace
+rm -rf /opt/build/DeepEP /workspace/deepep.patch /opt/build/cuda_link_stubs
+apt-get autoremove -y
+rm -rf /var/lib/apt/lists/*
+# HybridEP JIT-compiles into <deep_ep>/build/jit at first use: read-only in the image
+python - <<'PY'
+import os, shutil, importlib.util
+pkg = os.path.dirname(importlib.util.find_spec("deep_ep").origin)
+build = os.path.join(pkg, "build")
+if os.path.islink(build) or os.path.isfile(build):
+    os.remove(build)
+elif os.path.isdir(build):
+    shutil.rmtree(build)
+os.symlink("/tmp/deep_ep_build", build)
+PY
+cat > /.singularity.d/env/92-deepep-jit.sh << 'EOFJIT'
+#!/bin/bash
+mkdir -p /tmp/deep_ep_build/jit 2>/dev/null || true
+EOFJIT
+chmod +x /.singularity.d/env/92-deepep-jit.sh
+
+# MoonEP, best effort (--no-deps: it pins an older CuTe DSL)
+python -m pip install --no-cache-dir --no-build-isolation --no-deps \
+    "git+https://github.com/MoonshotAI/MoonEP.git@d86fda40329de4002e0cade6817df7b4b5512ee5" || \
+    echo "WARNING: MoonEP not installed"
+
+# Triton 3.4+ expects /usr/local/cuda/compat/lib (NGC ships lib.real)
+if [ -d /usr/local/cuda/compat/lib.real ] && [ ! -e /usr/local/cuda/compat/lib ]; then
+    ln -s lib.real /usr/local/cuda/compat/lib
+fi
+chmod 777 /workspace
+rm -rf /opt/build /root/.cache 2>/dev/null || true
+python -m pip cache purge 2>/dev/null || true
+
+%test
+set -e
+export TORCHINDUCTOR_CACHE_DIR=/tmp/titan_test_cache/inductor
+export TRITON_CACHE_DIR=/tmp/titan_test_cache/triton
+export HOME=/tmp/titan_test_cache/home
+mkdir -p /tmp/titan_test_cache/home /tmp/titan_test_cache/stubs
+ln -sf /usr/local/cuda/lib64/stubs/libnvidia-ml.so /tmp/titan_test_cache/stubs/libnvidia-ml.so.1
+export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}:/tmp/titan_test_cache/stubs
+trap 'rm -rf /tmp/titan_test_cache' EXIT
+python - <<'PY'
+import importlib.metadata as m
+import torch
+assert torch.__file__.startswith("/opt/titan/"), torch.__file__
+major, minor = (int(x) for x in torch.__version__.split(".")[:2])
+assert (major, minor) >= (2, 16), torch.__version__
+from torch.distributed.pipelining import analyze_pipeline_activation_liveness  # noqa: F401
+for mod in ("grain", "spmd_types", "torch_remat", "torch_checkpointing", "attn_gym",
+            "causal_conv1d", "tilelang", "cutlass", "cute_triadic_gdn", "liger_kernel", "deep_ep"):
+    __import__(mod)
+from deep_ep import Buffer, HybridEPBuffer  # noqa: F401
+try:
+    import moonep  # noqa: F401
+    moon = "yes"
+except Exception as e:
+    moon = f"no ({type(e).__name__})"
+print("torch", torch.__version__, "| tilelang", m.version("tilelang"), "| deep_ep",
+      m.version("deep_ep"), "| MoonEP", moon)
+PY
+
+%help
+    torchtitan main + PyTorch nightly (venv /opt/titan) on NGC PyTorch, with DeepEP/HybridEP,
+    MoonEP, causal_conv1d, TileLang and the CuTe DSL built against the nightly. Put
+    submodules/torchtitan (and FLA / Megatron if needed) on PYTHONPATH, then
+    `python -m torch.distributed.run ... -m torchtitan.train --module <recipes> --config <fn>`.

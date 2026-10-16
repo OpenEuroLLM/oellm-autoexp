@@ -34,6 +34,9 @@ backend:
     --config ${aux.arm} --output-dir ${job.base_output_dir}/out
   env:
     PYTHONPATH: ".:submodules/torchtitan:${aux.hybrid_env}/pylibs_titan_main"
+    # NGC puts its own torch's lib directory first on LD_LIBRARY_PATH, which would make the
+    # nightly load the image's libtorch (LD_LIBRARY_PATH beats RUNPATH): the driver paths only
+    LD_LIBRARY_PATH: "/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/.singularity.d/libs"
     TITAN_STEPS: "${aux.steps}"
     PYTORCH_ALLOC_CONF: "expandable_segments:True"
     TOKENIZERS_PARALLELISM: "false"
