@@ -35,7 +35,9 @@ def build(args):
         parallel_state.initialize_model_parallel(1, 1)
     model_parallel_cuda_manual_seed(0)
     kwargs = dict(
-        num_layers=1, hidden_size=args.hidden, num_attention_heads=args.heads,
+        # the pattern's layer count: depth-aware features (attention residuals' blocks,
+        # init scaling) read it from the config
+        num_layers=len(args.pattern.split("/")[0].replace("|", "")), hidden_size=args.hidden, num_attention_heads=args.heads,
         num_query_groups=args.heads, kv_channels=args.hidden // args.heads,
         ffn_hidden_size=args.ffn, normalization="RMSNorm", add_bias_linear=False,
         gated_linear_unit=True, activation_func=torch.nn.functional.silu,
