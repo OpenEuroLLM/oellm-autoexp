@@ -457,11 +457,23 @@ def _ensure_state_store(
     plan: ExecutionPlan, *, session_id: str | None = None
 ) -> tuple[JobFileStore, str]:
     monitor_state_dir = Path(plan.config_setup.monitor_state_dir)
-    if not session_id:
-        session_id = str(int(time.time()))
-
-    session_dir = monitor_state_dir / session_id
-    session_dir.mkdir(parents=True, exist_ok=True)
+    if session_id:
+        session_dir = monitor_state_dir / session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        # A new session claims its directory atomically: sessions started in the same
+        # second (several run_autoexp calls launched together) would otherwise share one
+        # and their monitors would submit each other's jobs.
+        monitor_state_dir.mkdir(parents=True, exist_ok=True)
+        stamp = int(time.time())
+        while True:
+            session_id = str(stamp)
+            session_dir = monitor_state_dir / session_id
+            try:
+                session_dir.mkdir()
+                break
+            except FileExistsError:
+                stamp += 1
     store = JobFileStore(session_dir)
     LOGGER.info("Created monitoring session directory: %s", session_dir)
     return store, session_id
