@@ -63,9 +63,18 @@ def saved_activations(run, x, top=12):
 
     seen, by_module, stack = set(), defaultdict(int), []
     hooks = []
+    # (hooks must return None: a forward hook's return value replaces the module output)
+    def enter(name):
+        def hook(module, args):
+            stack.append(name)
+        return hook
+
+    def leave(module, args, output):
+        stack.pop()
+
     for name, mod in run.named_modules():
-        hooks.append(mod.register_forward_pre_hook(lambda m, a, n=name: stack.append(n)))
-        hooks.append(mod.register_forward_hook(lambda m, a, o: stack.pop()))
+        hooks.append(mod.register_forward_pre_hook(enter(name)))
+        hooks.append(mod.register_forward_hook(leave))
 
     def pack(t):
         if isinstance(t, torch.Tensor) and t.device.type == "cuda":
