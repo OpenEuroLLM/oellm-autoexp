@@ -5,7 +5,8 @@
 
 A suite directory holds one sub-directory per arm and the array group's directory with
 the task scripts (task_<i>.sh) and the Slurm logs (slurm-<array>_<i>.log; the newest
-attempt of every task wins). Per arm, from Megatron's training log:
+attempt of every task wins); arms run as plain jobs keep job.sbatch and slurm-<id>.log
+in their own directory. Per arm, from Megatron's training log:
 
   step ms     median elapsed time per iteration over the iterations after --skip
               (CUDA-graph capture, autotuning and compilation happen before)
@@ -42,14 +43,25 @@ ARM = re.compile(r"/([^/\s]+)/wandb")
 ERR = re.compile(r"(\w*(Error|Exception)\b[^\n]{0,200}|CUDA out of memory[^\n]{0,120}|Segmentation fault)")
 
 
+def _newest(paths):
+    paths = sorted(paths, key=lambda p: p.stat().st_mtime)
+    return paths[-1] if paths else None
+
+
 def _tasks(suite: Path):
-    """(arm, task script, newest log) per task of the suite's array group(s)."""
+    """(arm, launch script, newest log) per arm: the tasks of the suite's array group(s),
+    then arms run as plain jobs (``job.array_group=null``: <arm>/job.sbatch)."""
+    seen = set()
     for script in sorted(suite.glob("*/task_*.sh"), key=lambda p: int(p.stem.split("_")[1])):
         index = script.stem.split("_")[1]
         text = script.read_text()
         arm = ARM.search(text)
-        logs = sorted(script.parent.glob(f"slurm-*_{index}.log"), key=lambda p: p.stat().st_mtime)
-        yield (arm.group(1) if arm else f"task{index}"), text, (logs[-1] if logs else None)
+        name = arm.group(1) if arm else f"task{index}"
+        seen.add(name)
+        yield name, text, _newest(script.parent.glob(f"slurm-*_{index}.log"))
+    for script in sorted(suite.glob("*/job.sbatch")):
+        if script.parent.name not in seen:
+            yield script.parent.name, script.read_text(), _newest(script.parent.glob("slurm-*.log"))
 
 
 def measure(text: str, log: Path | None, skip: int) -> dict:
