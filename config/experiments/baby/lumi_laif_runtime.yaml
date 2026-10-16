@@ -1,0 +1,31 @@
+# @package _global_
+
+# Opt-in runtime fixes for the LAIF ROCm 6.4.4 / TE 2.4 / Triton 3.2 container.
+# Keep the source overlay paired with this image when changing containers.
+container:
+  image: /scratch/project_465002530/containers/laif-rocm-6.4.4-pytorch-2.9.1-te-2.4.0-fa-2.8.0-triton-3.2.0.sif
+  bind:
+    - /scratch/
+    - /pfs/
+    - ${oc.env:PWD}/container/patches/triton-3.2.0/testing.py:/opt/venv/lib/python3.12/site-packages/triton/testing.py:ro
+
+slurm:
+  # Match the container launch environment used by the validated resume probes.
+  template_path: templates/lumi_laif.sbatch
+  launcher_cmd: "export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; export AITER_JIT_DIR=/tmp/$USER/aiter_jit_dir ; ${container.runtime} exec ${oc.join:' ',${oc.maptmpl:'--bind %',${container.bind}}} ${container.image}"
+  env:
+    PYTHONPATH: ${oc.env:PWD}/submodules/Megatron-LM
+    OMP_NUM_THREADS: "1"
+    PYTHONUNBUFFERED: "1"
+    # Avoid libfabric rewriting libc memory calls during ROCm IPC setup.
+    FI_MR_CACHE_MONITOR: disabled
+    FI_MR_CACHE_MAX_COUNT: "0"
+    SINGULARITYENV_FI_MR_CACHE_MONITOR: disabled
+    SINGULARITYENV_FI_MR_CACHE_MAX_COUNT: "0"
+
+backend:
+  megatron:
+    # The rerun engine skips validation on the first resumed iteration.
+    # Disabled rerunning retains immediate loss/gradient NaN rejection.
+    rerun_mode: disabled
+    check_for_nan_in_loss_and_grad: true

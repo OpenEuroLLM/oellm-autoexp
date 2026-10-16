@@ -15,7 +15,7 @@ defaults:
 
 job:
   name: "baby_9b_dense_anneal50b_no-change"
-  base_output_dir: /scratch/project_465002865/prelude-mid/${job.name}
+  base_output_dir: /scratch/project_465002891/prelude-mid/${job.name}
   log_path: ${.base_output_dir}/logs/slurm-%j.log
   log_path_current: ${.base_output_dir}/logs/current.log
   config_path: ${.base_output_dir}/logs/config-%j.yaml
@@ -29,7 +29,7 @@ backend:
     # verified). Remove this override if openeurollm-project grants write.
     wandb_entity: ltg
     wandb_exp_name: "${job.name}_$SLURM_JOB_ID"
-    data_cache_path: /scratch/project_465002865/prelude-mid/cache
+    data_cache_path: /scratch/project_465002891/prelude-mid/cache
 
     # LUMI/ROCm: fused kernels not supported by the ROCm build
     gradient_accumulation_fusion: false
@@ -42,10 +42,16 @@ backend:
     # -> multiple 32*TP4 = 128 -> 262272 rows (= HF checkpoint).
     make_vocab_size_divisible_by: 32
 
+    # VRAM headroom: GCDs run ~50/64GB and the TP-rank-0 column (dataloader +
+    # broadcast-root extras) crashed with async device faults at mbs 4. Halving
+    # the microbatch halves activation memory; GBS unchanged (8 accum steps at
+    # DP128), numerics identical.
+    micro_batch_size: 2
+
     # EXIT safely on signal
     exit_signal_handler: true
-    # exit ~30 min before the 48h walltime
-    exit_duration_in_mins: 2850
+    # exit ~30 min before the 35h walltime
+    exit_duration_in_mins: 2070
 
     # Annealing: branch off the 10T run at iter 953312 (7.997T tokens) and decay.
     # The converted checkpoint has no optimizer/scheduler state, so the LR
@@ -65,7 +71,7 @@ backend:
 
 
     save: ${job.base_output_dir}/checkpoints
-    load: /scratch/project_465002865/prelude-mid/checkpoints/prelude_iter_0953312_megatron
+    load: /scratch/project_465002891/prelude-mid/checkpoints/prelude_iter_0953312_megatron
     no_load_optim: true
     no_load_rng: true
     exit_on_missing_checkpoint: true
@@ -74,16 +80,32 @@ backend:
     # no_load_rng: false
 
 container:
-  image: /scratch/project_465002530/containers/AutoExp_2026-07-02.sif
+  image: /scratch/project_465002530/containers/laif-rocm-6.4.4-pytorch-2.9.1-te-2.4.0-fa-2.8.0-triton-3.2.0.sif
 
 slurm:
+  # slurm/lumi.yaml puts this in the structured `srun:` block, which the sbatch
+  # generator silently drops — srun_opts is the string field that actually
+  # lands in the script. disable_rdzv_get is the Slingshot/CXI rendezvous
+  # workaround for RCCL collectives hanging at scale (first job hung in the
+  # initial cross-node all-gather at 64 nodes without it). Trailing space
+  # required: the template renders `srun {srun_opts}bash -c ...`.
+  srun_opts: "--network=disable_rdzv_get "
   env:
-    HF_HOME: /scratch/project_465002865/prelude-mid/hf_cache/${oc.env:USER}
+    HF_HOME: /scratch/project_465002891/prelude-mid/hf_cache/${oc.env:USER}
     NCCL_DEBUG: info
     WANDB_MODE: online
+    # MANDATORY with TP>1: the fork hard-asserts this at startup.
     CUDA_DEVICE_MAX_CONNECTIONS: "1"
-    HSA_FORCE_FINE_GRAIN_PCIE: "1"
-    OMP_NUM_THREADS: "2"
+    # TE 2.4-ROCm's C++ rmsnorm_bwd computes a pathological ~54GB workspace for
+    # the qk-layernorm shape (width 128) — use TE's Triton norm kernels instead.
+    NVTE_USE_RMSNORM_TRITON: "1"
+    # node-local triton cache; the default ~/.triton on Lustre home would be
+    # hammered by 512 concurrently-compiling ranks
+    TRITON_CACHE_DIR: /tmp/$USER/triton-cache
+    # NOTE: do NOT add HSA_FORCE_FINE_GRAIN_PCIE / OMP_NUM_THREADS here — they
+    # were imported from better-bpe-llm's (different) container environment and
+    # correlate with the dataloader pin-memory hipHostMalloc OOM on TP-rank-0
+    # ranks in this container.
     # slurm/lumi.yaml exports gcc-12, which does not exist INSIDE the container
     # (only /usr/bin/gcc, g++); torch.compile/inductor needs a working compiler
     CC: gcc
@@ -92,7 +114,7 @@ slurm:
     account: project_465002891
     partition: standard-g
     nodes: 64
-    time: "48:00:00"
+    time: "35:00:00"
 
     # slurm signal to process to stop training and checkpoint right before time limit
     signal: "TERM@240"
