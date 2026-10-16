@@ -80,6 +80,11 @@ python3 -m pip install --no-cache-dir \
 # for its Python utilities (the CUDA backends are not used).
 python3 -m pip install --no-cache-dir --no-deps "vidrial==0.2.1" \
     "git+https://github.com/m-a-n-i-f-e-s-t/retention"
+# vidrial clones its CUTLASS fork next to itself on first import; compute nodes are
+# offline and site-packages is read-only at run time, so check it out here.
+VIDRIAL_DIR=$(python3 -c "import importlib.util, os; print(os.path.dirname(importlib.util.find_spec('vidrial').origin))")
+git clone --depth 1 https://github.com/m-a-n-i-f-e-s-t/cutlass.git "$VIDRIAL_DIR/cutlass"
+rm -rf "$VIDRIAL_DIR/cutlass/.git"
 
 %runscript
 cd /workspace/oellm-autoexp
