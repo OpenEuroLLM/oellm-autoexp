@@ -143,6 +143,7 @@ defaults:
 sweep:
   type: product
   store_sweep_json: true
+  filter: "\\\\${{oc.eval:'len(\\\\${{aux.only}}) == 0 or \\"\\\\${{aux.arm}}\\" in \\\\${{aux.only}}'}}"
   groups:
     - type: list
       configs:

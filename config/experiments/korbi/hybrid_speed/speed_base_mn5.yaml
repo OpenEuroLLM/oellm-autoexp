@@ -27,6 +27,11 @@ aux:
   suite: v1
   pattern: "*-*-*-*-*-*-*-*-*-*-*-*-"
   hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
+  # Run a subset of the arms: aux.only=[power,mamba2] (empty: all)
+  only: []
+  # Torch-profile steps 50-53 on rank 0 (trace in <arm>/torch_profile; summarise with
+  # scripts/korbi/hybrid_speed/kernel_summary.py). Use with a different aux.suite.
+  profile: false
 
 backend:
   launcher_script: ./submodules/Megatron-LM/pretrain_hybrid.py
@@ -102,6 +107,13 @@ backend:
     overlap_grad_reduce: true
     overlap_param_gather: true
 
+    # ---- profiling (aux.profile) ----
+    profile: ${aux.profile}
+    use_pytorch_profiler: ${aux.profile}
+    profile_step_start: 50
+    profile_step_end: 53
+    profile_ranks: [0]
+
     # ---- logging only; nothing saved or evaluated ----
     log_interval: 5
     log_throughput: true
@@ -112,12 +124,13 @@ backend:
     load: null
     save_interval: null
     non_persistent_ckpt_type: null
-    tensorboard_dir: null
+    # the profiler writes next to it (<arm>/torch_profile)
+    tensorboard_dir: ${job.base_output_dir}/tb
     wandb_project: null
     wandb_exp_name: null
 
   env:
-    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:${aux.hybrid_env}/pylibs:${aux.hybrid_env}/pylibs_cute:${aux.hybrid_env}/pylibs_cute/nvidia_cutlass_dsl/dsl_packages:${aux.hybrid_env}/retention:${aux.hybrid_env}/pylibs_power"
+    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute-triadic-gdn:${aux.hybrid_env}/pylibs:${aux.hybrid_env}/pylibs_cute:${aux.hybrid_env}/pylibs_cute/nvidia_cutlass_dsl/dsl_packages:${aux.hybrid_env}/retention:${aux.hybrid_env}/pylibs_power"
     CUDA_DEVICE_MAX_CONNECTIONS: "1"
     NVIDIA_PYTORCH_VERSION: "25.12"
     TOKENIZERS_PARALLELISM: "false"
