@@ -203,8 +203,10 @@ def moe():
         "aux.pattern": "*-" * 12, B + "num_experts": None, B + "moe_ffn_hidden_size": None,
         B + "moe_shared_expert_intermediate_size": None, B + "expert_model_parallel_size": 1,
         B + "ffn_hidden_size": 2304, B + "cuda_graph_modules": []})
-    arm("noshared", "no shared expert, top-6", {
-        B + "moe_shared_expert_intermediate_size": None, B + "moe_router_topk": 6})
+    noshared = {B + "moe_shared_expert_intermediate_size": None, B + "moe_router_topk": 6}
+    arm("noshared", "no shared expert, top-6", noshared)
+    arm("noshared_cublas", "no shared expert, top-6, cuBLAS grouped GEMM", noshared,
+        {"backend.env.NVTE_USE_CUTLASS_GROUPED_GEMM": "0", "aux.array_tag": "_cublas"})
     arm("auxfree", "aux-loss-free balancing (sigmoid router + expert bias)", {
         B + "moe_router_load_balancing_type": "none", B + "moe_aux_loss_coeff": 0.0,
         B + "moe_router_enable_expert_bias": True, B + "moe_router_score_function": "sigmoid"})

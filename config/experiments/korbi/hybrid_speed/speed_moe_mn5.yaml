@@ -61,6 +61,12 @@ sweep:
         - aux.arm: noshared
           backend.megatron.moe_shared_expert_intermediate_size: null
           backend.megatron.moe_router_topk: 6
+        # no shared expert, top-6, cuBLAS grouped GEMM
+        - aux.arm: noshared_cublas
+          backend.megatron.moe_shared_expert_intermediate_size: null
+          backend.megatron.moe_router_topk: 6
+          backend.env.NVTE_USE_CUTLASS_GROUPED_GEMM: '0'
+          aux.array_tag: _cublas
         # aux-loss-free balancing (sigmoid router + expert bias)
         - aux.arm: auxfree
           backend.megatron.moe_router_load_balancing_type: none
