@@ -82,6 +82,7 @@ backend:
     create_attention_mask_in_dataloader: false      # causal flash kernels need no mask
     fused_qk_norm_rope: true                        # Triton q/k RMSNorm + RoPE from the QKV GEMM
     fused_residual_rmsnorm: true                    # TE fused residual + RMSNorm backward
+    fused_short_conv: true                          # ShortConv (C layers): one Triton kernel each way
     rerun_mode: disabled
     manual_gc: true
     manual_gc_interval: 50

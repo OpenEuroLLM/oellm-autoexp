@@ -2459,6 +2459,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "fused_short_conv": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="ShortConv (`C` layers): the gated depthwise causal convolution C * conv(B * x) as one Triton kernel each way (megatron/core/fusions/fused_short_conv.py); unpacked sequences without context parallelism (others keep the unfused path).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "global_batch_size": MegatronArgMetadata(
         arg_type=int,
         default=None,
@@ -9944,6 +9952,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "fused_residual_rmsnorm": MegatronActionSpec(
         option_strings=("--fused-residual-rmsnorm",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "fused_short_conv": MegatronActionSpec(
+        option_strings=("--fused-short-conv",),
         action_type="store_true",
         nargs=0,
         const=True,
