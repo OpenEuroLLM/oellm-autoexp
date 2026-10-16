@@ -1,0 +1,22 @@
+# @package backend.megatron
+#
+# Wider, shallower variant of qwen3_sparse_0.9B_ne_experts_64.
+# Keeps E64/K4 routing and approximately 0.9B active non-embedding
+# parameters while increasing GEMM sizes and reducing MoE communication stages.
+
+defaults:
+  - qwen3_sparse_0.9B_ne_experts_64
+  - _self_
+
+num_layers: 20
+hidden_size: 2048
+ffn_hidden_size: 6144
+moe_ffn_hidden_size: 1280
+
+# 128-dimensional query/key/value heads.
+kv_channels: 128
+num_attention_heads: 16
+num_query_groups: 8
+
+aux:
+  model_name: "0.9B_ne_wider_20L"
