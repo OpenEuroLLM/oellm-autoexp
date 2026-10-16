@@ -1,0 +1,76 @@
+# @package _global_
+# Upstream torchtitan (main, submodules/torchtitan) twin of the hybrid speed suite's dense
+# 130M reference, on one MareNostrum 5 node (4x H100): the recipes of
+# oellm_autoexp/titan_recipes/hybrid_speed.py (same model -- 123.6M parameters --, same
+# FineWeb-10BT gpt-neox tokens, 4 GPUs x 8 x 4096 tokens per step).
+# (titan_dense_mn5.yaml is the older titan-oellm / torchtitan 0.2.1 stack.)
+#
+# torchtitan main needs a PyTorch nightly: the hybrid-ep image's Python with a nightly
+# environment first on PYTHONPATH ($HYBRID_ENV/pylibs_titan_main: torch 2.16 dev + the
+# torchtitan requirements, copied from a local uv venv). The Megatron twin on the same
+# data: speed_130M_mn5 arms dense_fineweb / dense_fineweb_mbs16.
+#
+#   scripts/korbi/mn5_autoexp_bg.sh titan scripts/run_autoexp.py \
+#       --config-name experiments/korbi/hybrid_speed/titan_main_mn5
+defaults:
+  - ../../base
+  - /backend: bash
+  - /container: marenostrum_hybrid
+  - /slurm: marenostrum_ehpc533
+  - /sweep: none
+  - _self_
+
+aux:
+  suite: t4
+  arm: dense130m
+  hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
+  sif: MegatronTraining-hybrid-ep_x86_64_202610161948.sif
+  steps: 100
+
+backend:
+  command: >-
+    python -m torch.distributed.run --standalone --nproc-per-node 4 --local-ranks-filter 0
+    --role rank --tee 3 -m torchtitan.train --module oellm_autoexp.titan_recipes.hybrid_speed
+    --config ${aux.arm} --output-dir ${job.base_output_dir}/out
+  env:
+    PYTHONPATH: ".:submodules/torchtitan:${aux.hybrid_env}/pylibs_titan_main"
+    TITAN_STEPS: "${aux.steps}"
+    PYTORCH_ALLOC_CONF: "expandable_segments:True"
+    TOKENIZERS_PARALLELISM: "false"
+
+job:
+  name: ${aux.suite}_titan_${aux.arm}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/hybrid_speed/${aux.suite}_titan/${aux.arm}"
+  array_group: ${aux.suite}_titan
+  est_steps: 1
+  est_step_time_s: 900
+  state_events:
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:25:00"
+
+stage: speed
+
+container:
+  image: ${aux.hybrid_env}/container/${aux.sif}
+
+# titan's speed defaults (FSDP2, CUDA graphs, compiled RoPE / SwiGLU / loss, varlen
+# attention) and one knob each
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        - {aux.arm: dense130m}
+        - {aux.arm: dense130m_nocg}
+        - {aux.arm: dense130m_nocompile}
+        - {aux.arm: dense130m_ddp}
+        - {aux.arm: dense130m_noreshard}
+        - {aux.arm: dense130m_mbs16}
+        - {aux.arm: dense130m_flex}
+        - {aux.arm: dense130m_flex_flash}
