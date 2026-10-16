@@ -1,0 +1,169 @@
+# @package _global_
+
+# Qwen3-30B-A3B throughput benchmark on LUMI
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /backend/megatron: [base,qwen3_moe_30BA3B]
+  - /backend/megatron/multilingual_scaling/data: oellm_256k_lumi # full datamix (data_args_path, tokenizer)
+  - /sweep: none
+  - _self_
+
+index: 0
+stage: optimized
+
+job:
+  name: "qwen3_30B_A3B_mbs${backend.megatron.micro_batch_size}_gbs${backend.megatron.global_batch_size}_${slurm.sbatch.nodes}_tuner"
+  base_output_dir: "/scratch/project_465002530/users/amoisala/oellm-autoexp/config/experiments/anni/qwen3_30B_A3B_throughput_test/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+#sweep:
+#  type: product
+#  groups:
+#    - type: list
+#      configs: 
+#        - { slurm.sbatch.nodes: 8 }
+#        - { slurm.sbatch.nodes: 16 }
+#        - { slurm.sbatch.nodes: 32 }
+
+
+backend:
+  megatron:
+    # from other lumi config
+    bias_dropout_fusion: false
+    bias_swiglu_fusion: false
+    apply_rope_fusion: true 
+    use_te_activation_func: true
+    tp_comm_overlap: false
+
+    log_progress: false
+    log_throughput: true
+
+    # data? 
+    mock_data: false
+    data_args_path: null
+    data_path: ["/scratch/project_465002530/datasets/multilingual_oellm/train/catalogue/mlfoundations/dclm-baseline-1.0-10p-sample/dclm-10p-sample"]
+    split: "99,1,0"
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    num_workers: 6
+    num_dataset_builder_threads: 6
+    trust_remote_code: true
+
+    # DATA
+    data_cache_path: "/scratch/project_465002530/users/$USER/megatron_cache/${job.name}" # unique per run: avoids concurrent-job cache races
+
+    # need to be set on lumi for ROCm based models to work
+    add_bias_linear: false
+    gradient_accumulation_fusion: false
+    masked_softmax_fusion: false
+
+    # --- benchmark length / schedule ---
+    train_iters: 15
+    global_batch_size: 4096
+    micro_batch_size: 1
+    seq_length: 4096
+    max_position_embeddings: 4096
+    lr: 3.0e-4
+    min_lr: 3.0e-5
+    lr_decay_style: cosine
+    eval_iters: 0
+    eval_interval: 1000
+    save_interval: 1000
+    save: null
+    load: null
+    no_save_optim: true
+    no_save_rng: true
+    log_interval: 1
+    timing_log_level: 1
+
+    # --- parallelism: TP1, PP4 with 6-layer virtual stages, EP8 within a node ---
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 4
+    num_layers_per_virtual_pipeline_stage: 6
+    overlap_p2p_comm: true
+    sequence_parallel: false
+    expert_model_parallel_size: 8
+    expert_tensor_parallel_size: 1
+    use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+   # untie_embeddings_and_output_weights: true
+    optimizer_cpu_offload: false
+    use_precision_aware_optimizer: false
+
+    # --- MoE: flex dispatcher with HybridEP (intra-node, so EP x ETP <= 4) ---
+  #  moe_token_dispatcher_type: "flex"
+  #  moe_flex_dispatcher_backend: "hybridep"
+  #  moe_hybridep_num_sms: 16          # deprecated name, but the base config sets it (0), so it must be overridden here
+   
+    # MI250X MoE throughput path
+    moe_token_dispatcher_type: alltoall
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_per_layer_logging: false
+    overlap_moe_expert_parallel_comm: true
+    high_priority_a2a_comm_stream: false # if true, slows down compute more than it saves on communication
+
+    moe_router_fusion: true
+    delay_wgrad_compute: true
+    moe_router_dtype: fp32
+    moe_router_topk: 8
+    #moe_router_load_balancing_type: aux_loss
+    moe_router_force_load_balancing: true    # benchmark only: perfect routing balance
+
+    # --- memory ---
+    # Cannot be set with overlap_moe_expert_parallel_comm=true
+    #recompute_granularity: full
+    #recompute_method: uniform
+    #recompute_num_layers: 1
+    cross_entropy_fusion_impl: te  # TE impl is rejected by Megatron v0.19.1 (stability); qwen3_moe default is "te"
+
+    # --- misc ---
+    #use_gloo_process_groups: false
+    #rerun_mode: disabled
+    #check_for_nan_in_loss_and_grad: false
+    #yarn_correction_range_round_to_int: false
+    #distributed_timeout_minutes: 30
+    #num_workers: 8
+    #create_attention_mask_in_dataloader: false
+    #mmap_bin_files: false
+    #manual_gc: true
+    #manual_gc_interval: 10
+
+    wandb_project: qwen3_30B_A3B_throughput_test
+    wandb_exp_name: ${job.name}
+    wandb_entity: openeurollm-project
+    wandb_save_dir: ${job.base_output_dir}
+
+slurm:
+  sbatch_extra_directives:
+    - "--exclude=nid005019"
+  env:
+    NVTE_USE_CUTLASS_GROUPED_GEMM: "1"
+    NVTE_CUTLASS_GROUPED_GEMM_WARN_FALLBACK: "1"
+
+    NCCL_TUNER_PLUGIN: "/scratch/project_465002530/users/amoisala/rccl-tuner/librccl-tuner.so"
+ 
+    MASTER_PORT: "9999"
+    CUDA_DEVICE_MAX_CONNECTIONS: "32"
+    GPU_MAX_HW_QUEUES: "4"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+    TRITON_HOME: /tmp/triton_cache
+    PYTORCH_HIP_ALLOC_CONF: "expandable_segments:True"
+    # make wandb offline
+    WANDB_MODE: online
+
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: 64
+    account: project_462001516
+    partition: standard-g
+    time: "00:45:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "
