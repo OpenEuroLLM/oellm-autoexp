@@ -19,6 +19,9 @@ env:
   TRITON_LIBCUDA_PATH: /.singularity.d/libs
   HF_HUB_OFFLINE: "1"
   NCCL_DEBUG: WARN
+  # torchrun defaults every rank to one thread: CPU-side work (the offloaded optimizer
+  # step) would run on 1 of the 20 cores a GPU has (80 per node).
+  OMP_NUM_THREADS: "16"
 
 sbatch:
   account: ehpc533
