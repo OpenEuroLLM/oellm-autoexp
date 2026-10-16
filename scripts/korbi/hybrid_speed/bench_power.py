@@ -82,6 +82,15 @@ def main():
             print(f"FAIL power_flex d={d}: {type(e).__name__}: {str(e)[:200]}", flush=True)
         for x in (q, k, v, log_g):
             x.grad = None
+        try:
+            from megatron.core.fusions.fused_power_attention import power_attention
+
+            f = lambda q, k, v, g: power_attention(q, k, v, g, scale=d**-0.5)
+            report("power_megatron_triton", bench(fwd_bwd(f, q, k, v, log_g)))
+        except Exception as e:  # noqa: BLE001
+            print(f"FAIL power_megatron_triton d={d}: {type(e).__name__}: {str(e)[:200]}", flush=True)
+        for x in (q, k, v, log_g):
+            x.grad = None
 
         for backend in ("triton", "vidrial", "cuda"):
             try:

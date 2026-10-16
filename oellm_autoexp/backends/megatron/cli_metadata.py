@@ -3545,7 +3545,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "linear_power_attention_impl": MegatronArgMetadata(
         arg_type=str,
         default="retention",
-        help='Power retention\'s quadratic form: "retention" (the package\'s Triton kernel) or "flex" (FlexAttention with the deg-th power and the gate as a score_mod; 1.5-1.7x slower than retention\'s kernel on H100 at head dim 64-256, bench_power.py).',
+        help='Power retention\'s quadratic form: "triton" (megatron/core/fusions/fused_power_attention.py: a flash-style kernel without softmax rescaling, deg 2), "retention" (the package\'s Triton kernel) or "flex" (FlexAttention with the deg-th power and the gate as a score_mod; 1.5-1.7x slower than retention\'s kernel on H100 at head dim 64-256, bench_power.py).',
         choices=None,
         nargs=None,
         element_type=None,
