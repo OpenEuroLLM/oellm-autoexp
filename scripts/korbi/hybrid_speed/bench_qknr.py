@@ -1,6 +1,8 @@
 """Forward / backward bandwidth of the fused q/k RMSNorm + RoPE kernel (one GPU)."""
-import torch, triton, sys
-sys.path.insert(0, ".")
+import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../submodules/Megatron-LM"))
+import torch, triton
+
 from megatron.core.fusions.fused_qk_norm_rope import fused_qk_norm_rope
 s, b, ng, hq, d = 4096, 8, 12, 1, 64
 mixed = torch.randn(s, b, ng, (hq + 2) * d, device="cuda", dtype=torch.bfloat16, requires_grad=True)

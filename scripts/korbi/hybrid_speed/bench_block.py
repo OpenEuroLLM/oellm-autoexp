@@ -67,6 +67,9 @@ def main():
     p.add_argument("--iters", type=int, default=20)
     p.add_argument("--warmup", type=int, default=5)
     p.add_argument("--profile", action="store_true")
+    p.add_argument("--stack", type=int, default=0,
+                   help="with --profile: group GPU time by this many Python stack frames "
+                        "(attributes elementwise kernels to the code that launched them)")
     p.add_argument("--compile", action="store_true", help="torch.compile the stack")
     args = p.parse_args()
 
@@ -104,11 +107,18 @@ def main():
     if args.profile:
         from torch.profiler import ProfilerActivity, profile
 
-        with profile(activities=[ProfilerActivity.CUDA]) as prof:
+        acts = [ProfilerActivity.CUDA] + ([ProfilerActivity.CPU] if args.stack else [])
+        with profile(activities=acts, with_stack=bool(args.stack)) as prof:
             for _ in range(3):
                 step()
             torch.cuda.synchronize()
-        print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=25, max_name_column_width=80))
+        if args.stack:
+            avg = prof.key_averages(group_by_stack_n=args.stack)
+            print(avg.table(sort_by="self_cuda_time_total", row_limit=40, max_name_column_width=60,
+                            max_src_column_width=110))
+        else:
+            print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=25,
+                                            max_name_column_width=80))
 
 
 if __name__ == "__main__":

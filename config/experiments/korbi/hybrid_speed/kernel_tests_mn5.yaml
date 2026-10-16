@@ -5,7 +5,7 @@
 #   scripts/korbi/mn5_autoexp_bg.sh tests scripts/run_autoexp.py \
 #       --config-name experiments/korbi/hybrid_speed/kernel_tests_mn5 --yes \
 #       aux.name=qknr 'aux.tests="tests/unit_tests/fusions/test_fused_qk_norm_rope.py"' \
-#       'aux.bench="../../scripts/korbi/hybrid_speed/bench_qknr.py"'
+#       'aux.bench="python scripts/korbi/hybrid_speed/bench_qknr.py"'   (from the repo root)
 defaults:
   - ../../base
   - /backend: bash
