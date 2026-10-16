@@ -33,7 +33,8 @@ aux:
   # Torch-profile steps 50-53 on rank 0 (trace in <arm>/torch_profile; summarise with
   # scripts/korbi/hybrid_speed/kernel_summary.py). Use with a different aux.suite.
   profile: false
-  # MareNostrum's dev queue: plain jobs, one in flight (job.concurrency_group/max_active)
+  # MareNostrum's dev queue (acc_debug: 1 job per user, 2 h): plain jobs, one in flight
+  # across all monitors (job.concurrency_group/max_active/concurrency_qos)
   dev_queue: false
 
 backend:
@@ -154,6 +155,7 @@ job:
   array_group: ${oc.if:${aux.dev_queue},null,${aux.suite}_${aux.family}}
   concurrency_group: ${oc.if:${aux.dev_queue},acc_debug,null}
   max_active: ${oc.if:${aux.dev_queue},1,null}
+  concurrency_qos: ${aux.dev_queue}  # the cap is per user: count other monitors' jobs too
   # GPU-h estimate (submit gate): ~4 min startup + compile, 100 steps of <= 2 s
   est_step_time_s: 2.0
   est_startup_min: 4.0

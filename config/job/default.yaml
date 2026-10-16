@@ -26,6 +26,9 @@ array_group: null
 # session (others wait for a slot). For per-user job caps such as MareNostrum's acc_debug.
 concurrency_group: null
 max_active: null
+# concurrency_group names a SLURM QOS: count the user's jobs in it cluster-wide (squeue),
+# so several monitors share the cap.
+concurrency_qos: false
 
 # --- submit-gate cost/runtime estimate (estimate-only, never reaches SLURM) ---
 # Declared here with null defaults so a plain `job.est_step_time_s=4.2` override

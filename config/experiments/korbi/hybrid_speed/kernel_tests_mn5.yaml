@@ -19,6 +19,8 @@ aux:
   tests: ""
   bench: ""
   hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
+  # MareNostrum's dev queue (acc_debug: 1 job per user, 2 h), shared with every monitor
+  dev_queue: false
 
 backend:
   command: bash scripts/korbi/hybrid_speed/run_tests.sh "${aux.tests}" "${aux.bench}"
@@ -32,10 +34,13 @@ job:
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/kernel_tests/${aux.name}"
   est_steps: 1
   est_step_time_s: 600
+  concurrency_group: ${oc.if:${aux.dev_queue},acc_debug,null}
+  max_active: ${oc.if:${aux.dev_queue},1,null}
+  concurrency_qos: ${aux.dev_queue}
 
 slurm:
   sbatch:
     time: "00:30:00"
-    qos: acc_ehpc
+    qos: ${oc.if:${aux.dev_queue},acc_debug,acc_ehpc}
 
 stage: test

@@ -73,6 +73,9 @@ class BaseJob:
     # acc_debug (one job, no arrays): concurrency_group=acc_debug, max_active=1.
     concurrency_group: str | None = None
     max_active: int | None = None
+    # The group is a SLURM QOS: count the user's jobs in it across the cluster (squeue),
+    # not only this session's -- for a per-user cap shared by several monitors.
+    concurrency_qos: bool = False
 
 
 @dataclass(kw_only=True)

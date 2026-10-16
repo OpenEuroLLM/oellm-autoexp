@@ -75,6 +75,11 @@ class BaseSlurmClient(SlurmClientInterface, RegistrableConfigInterface):
     def squeue(self) -> dict[str, str]:  # pragma: no cover - interface
         raise NotImplementedError
 
+    def count_in_qos(self, qos: str) -> int | None:
+        """The user's jobs (pending or running, array tasks counted) in ``qos`` across the
+        cluster, or None when unknown."""
+        return None
+
     def update_excludes(self, job_id: str, nodelist: str) -> None:  # pragma: no cover - interface
         raise NotImplementedError
 
@@ -352,6 +357,14 @@ class SlurmClient(BaseSlurmClient):
 
         LOGGER.debug(f"squeue: parsed statuses: {statuses}")
         return statuses
+
+    def count_in_qos(self, qos: str) -> int | None:
+        cmd = shlex.split(self.config.squeue_cmd)
+        proc = run_command([*cmd, "--me", "--qos", qos, "--array", "--noheader", "--format", "%i"])
+        if proc.returncode != 0:
+            LOGGER.warning(f"squeue --qos {qos}: rc={proc.returncode}, stderr={proc.stderr}")
+            return None
+        return len([line for line in proc.stdout.splitlines() if line.strip()])
 
     def job_ids_by_name(self, name: str) -> list[str]:
         return [job_id for job_id, job in self._jobs.items() if job.config.name == name]

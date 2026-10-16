@@ -13,7 +13,9 @@ from oellm_autoexp.slurm_gen import SlurmConfig
 from oellm_autoexp.slurm_gen.client import FakeSlurmClientConfig
 
 
-def _job(tmp_path: Path, index: int, group: str | None = "debugq", limit: int | None = 1):
+def _job(
+    tmp_path: Path, index: int, group: str | None = "debugq", limit: int | None = 1, qos=False
+):
     out = tmp_path / "out" / f"job_{index}"
     slurm = parse_config(
         SlurmConfig,
@@ -28,7 +30,7 @@ def _job(tmp_path: Path, index: int, group: str | None = "debugq", limit: int | 
     )
     definition = SlurmJobConfig(
         name=f"job_{index}", log_path=str(out / "slurm-%j.log"), slurm=slurm,
-        concurrency_group=group, max_active=limit,
+        concurrency_group=group, max_active=limit, concurrency_qos=qos,
     )
     return JobRecord(job_id=f"job_{index}_x", definition=definition, runtime=JobRuntime())
 
@@ -66,3 +68,21 @@ def test_limit_two_and_unthrottled_jobs(tmp_path: Path):
     loop.observe_once()
     assert set(_submitted(store)) >= {"job_9_x"}
     assert len([j for j in _submitted(store) if j != "job_9_x"]) == 2
+
+
+def test_qos_group_counts_other_sessions_jobs(tmp_path: Path, monkeypatch):
+    """concurrency_qos: a job already in the QOS from another monitor blocks the slot."""
+    store, client, loop = _loop(tmp_path, [_job(tmp_path, i, qos=True) for i in range(2)])
+    elsewhere = {"n": 1}
+    monkeypatch.setattr(client._client, "count_in_qos", lambda qos: elsewhere["n"], raising=False)
+    loop.observe_once()
+    assert _submitted(store) == []
+    elsewhere["n"] = 0
+    loop.observe_once()
+    assert len(_submitted(store)) == 1
+
+
+def test_qos_unknown_falls_back_to_the_session_count(tmp_path: Path):
+    store, _, loop = _loop(tmp_path, [_job(tmp_path, i, qos=True) for i in range(2)])
+    loop.observe_once()  # the fake client cannot count: session count only
+    assert len(_submitted(store)) == 1

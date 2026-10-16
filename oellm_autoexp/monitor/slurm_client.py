@@ -148,6 +148,10 @@ class SlurmClient(JobClientInterface):
         """
         return self._client.squeue()
 
+    def count_in_qos(self, qos: str) -> int | None:
+        """The user's queued and running jobs in ``qos`` cluster-wide (None: unknown)."""
+        return self._client.count_in_qos(qos)
+
     def register_job(
         self,
         job: SlurmJobConfig,

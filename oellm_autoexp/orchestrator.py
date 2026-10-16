@@ -581,6 +581,7 @@ def _build_job_record(
         array_group=getattr(base_job, "array_group", None),
         concurrency_group=getattr(base_job, "concurrency_group", None),
         max_active=getattr(base_job, "max_active", None),
+        concurrency_qos=getattr(base_job, "concurrency_qos", False),
         metadata={
             **dict(base_job.metadata),
             "session_id": session_id,

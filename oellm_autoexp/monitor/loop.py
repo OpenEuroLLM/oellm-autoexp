@@ -240,10 +240,19 @@ class MonitorLoop:
         jobs = self._store.load_all()
         # Submitted, unfinished jobs per concurrency group (job.max_active).
         active_in_group: dict[str, int] = {}
+        qos_groups: set[str] = set()
         for job in jobs:
             group = getattr(job.definition, "concurrency_group", None) if job.definition else None
             if group and job.runtime.submitted:
                 active_in_group[group] = active_in_group.get(group, 0) + 1
+            if group and getattr(job.definition, "concurrency_qos", False) and not job.runtime.submitted:
+                qos_groups.add(group)
+        # QOS groups: other sessions' jobs count too (only queried while jobs wait for one).
+        if self._slurm_client:
+            for group in qos_groups:
+                cluster = self._slurm_client.count_in_qos(group)
+                if cluster is not None:
+                    active_in_group[group] = max(active_in_group.get(group, 0), cluster)
         for job in jobs:
             if job.definition is None:
                 continue
