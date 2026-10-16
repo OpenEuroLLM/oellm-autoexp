@@ -800,6 +800,12 @@ class MegatronConfig(ConfigInterface):
     # If True, uses fused weighted squared relu kernel when using MoE.
     use_fused_weighted_squared_relu: bool = False
 
+    # Self-attention with qk_layernorm (RMSNorm) and RoPE: one Triton kernel from the fused
+    # QKV projection to normed, rotated q / k and v, and one back
+    # (megatron/core/fusions/fused_qk_norm_rope.py) instead of split + two norms + two RoPEs
+    # (+ concat in the backward). Raises if a layer does not qualify (training only).
+    fused_qk_norm_rope: bool = False
+
     # If True, fuses residual connection and RMSNorm backward pass when TE is used.
     fused_residual_rmsnorm: bool = False
 

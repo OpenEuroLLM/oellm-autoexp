@@ -2443,6 +2443,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "fused_qk_norm_rope": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Self-attention with qk_layernorm (RMSNorm) and RoPE: one Triton kernel from the fused QKV projection to normed, rotated q / k and v, and one back (megatron/core/fusions/fused_qk_norm_rope.py) instead of split + two norms + two RoPEs (+ concat in the backward). Raises if a layer does not qualify (training only).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "fused_residual_rmsnorm": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -9906,6 +9914,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "full_validation": MegatronActionSpec(
         option_strings=("--full-validation",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "fused_qk_norm_rope": MegatronActionSpec(
+        option_strings=("--fused-qk-norm-rope",),
         action_type="store_true",
         nargs=0,
         const=True,

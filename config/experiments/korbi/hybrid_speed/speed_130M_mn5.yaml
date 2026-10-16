@@ -86,6 +86,31 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy: true
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
           backend.megatron.micro_batch_size: 4
+        # Liger, no mask + fused q/k norm + RoPE (Triton)
+        - aux.arm: base_qknr
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.create_attention_mask_in_dataloader: false
+          backend.megatron.fused_qk_norm_rope: true
+        # Liger, no mask + TE fused residual/RMSNorm backward
+        - aux.arm: base_resnorm
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.create_attention_mask_in_dataloader: false
+          backend.megatron.fused_residual_rmsnorm: true
+        # Liger, no mask + TE operation fuser
+        - aux.arm: base_opfuser
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.create_attention_mask_in_dataloader: false
+          backend.megatron.use_transformer_engine_op_fuser: true
+        # Liger, no mask, fused q/k norm + RoPE, fused residual norm
+        - aux.arm: base_qknr_resnorm
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.create_attention_mask_in_dataloader: false
+          backend.megatron.fused_qk_norm_rope: true
+          backend.megatron.fused_residual_rmsnorm: true
         # FP8 (hybrid, delayed scaling as the 32B runs)
         - aux.arm: base_fp8
           backend.megatron.fp8: hybrid

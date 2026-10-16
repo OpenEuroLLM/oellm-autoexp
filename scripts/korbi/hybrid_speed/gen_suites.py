@@ -62,6 +62,14 @@ def dense130m():
         liger, {B + "qk_layernorm": False})
     arm("base_liger_mbs4", "Liger CE, mbs 4 (2 accumulation steps)", liger,
         {B + "micro_batch_size": 4})
+    qknr = {B + "fused_qk_norm_rope": True}
+    arm("base_qknr", "Liger, no mask + fused q/k norm + RoPE (Triton)", liger, nomask, qknr)
+    arm("base_resnorm", "Liger, no mask + TE fused residual/RMSNorm backward", liger, nomask,
+        {B + "fused_residual_rmsnorm": True})
+    arm("base_opfuser", "Liger, no mask + TE operation fuser", liger, nomask,
+        {B + "use_transformer_engine_op_fuser": True})
+    arm("base_qknr_resnorm", "Liger, no mask, fused q/k norm + RoPE, fused residual norm",
+        liger, nomask, qknr, {B + "fused_residual_rmsnorm": True})
     arm("base_fp8", "FP8 (hybrid, delayed scaling as the 32B runs)",
         {B + "fp8": "hybrid", B + "fp8_amax_compute_algo": "max",
          B + "fp8_amax_history_len": 1024})
