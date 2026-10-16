@@ -50,13 +50,30 @@ def category(name: str) -> str:
 
 
 def summarise(trace: dict) -> dict:
+    """Kernel time per name / category over the profiled steps, without the first one
+    (profiler start-up makes it several times slower). Steps are the GPU-side
+    ``ProfilerStep#`` annotations, each counted once."""
     events = trace["traceEvents"] if isinstance(trace, dict) else trace
-    kernels = [e for e in events if e.get("cat") in ("kernel", "gpu_memcpy", "gpu_memset") and "dur" in e]
-    steps = [e for e in events if e.get("name", "").startswith("ProfilerStep#")]
+    steps = sorted(
+        (e for e in events
+         if e.get("name", "").startswith("ProfilerStep#") and e.get("cat") == "gpu_user_annotation"),
+        key=lambda e: e["ts"],
+    )
+    if len(steps) > 1:
+        steps = steps[1:]
+    if steps:
+        t0, t1 = steps[0]["ts"], steps[-1]["ts"] + steps[-1]["dur"]
+    else:  # no GPU step annotations: the whole trace
+        t0, t1 = float("-inf"), float("inf")
+    kernels = [
+        e for e in events
+        if e.get("cat") in ("kernel", "gpu_memcpy", "gpu_memset") and "dur" in e and t0 <= e["ts"] < t1
+    ]
     if not kernels:
-        raise SystemExit("no GPU kernels in the trace")
-    t0 = min(e["ts"] for e in kernels)
-    t1 = max(e["ts"] + e["dur"] for e in kernels)
+        raise SystemExit("no GPU kernels in the profiled steps")
+    if not steps:
+        t0 = min(e["ts"] for e in kernels)
+        t1 = max(e["ts"] + e["dur"] for e in kernels)
     by_name, by_cat = defaultdict(float), defaultdict(float)
     count = defaultdict(int)
     for e in kernels:
@@ -64,14 +81,13 @@ def summarise(trace: dict) -> dict:
         count[e["name"]] += 1
         by_cat[category(e["name"])] += e["dur"]
     # busy time: union of kernel intervals on all streams
-    busy, end = 0.0, -1.0
+    busy, end = 0.0, t0
     for start, stop in sorted((e["ts"], e["ts"] + e["dur"]) for e in kernels):
         if stop <= end:
             continue
         busy += stop - max(start, end)
         end = stop
-    n_steps = max(len(steps), 1)
-    return {"window_us": t1 - t0, "busy_us": busy, "steps": n_steps,
+    return {"window_us": t1 - t0, "busy_us": busy, "steps": max(len(steps), 1),
             "by_name": by_name, "count": count, "by_cat": by_cat}
 
 

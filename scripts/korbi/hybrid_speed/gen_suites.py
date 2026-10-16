@@ -49,6 +49,14 @@ def dense130m():
     arm("base_liger_mbs16", "Liger CE + mbs 16 (gbs 64)", liger,
         {B + "micro_batch_size": 16, B + "global_batch_size": 64})
     arm("base_liger_nocg", "Liger CE without CUDA graphs", liger, {B + "cuda_graph_impl": "none"})
+    arm("base_liger_nodistopt", "Liger CE, plain all-reduce instead of the distributed optimizer",
+        liger, {B + "use_distributed_optimizer": False, B + "overlap_param_gather": False})
+    arm("base_liger_teact", "Liger CE + TE's fused SwiGLU", liger,
+        {B + "use_te_activation_func": True})
+    arm("base_liger_noqkln", "Liger CE without q/k layernorm (architecture change: prices it)",
+        liger, {B + "qk_layernorm": False})
+    arm("base_liger_mbs4", "Liger CE, mbs 4 (2 accumulation steps)", liger,
+        {B + "micro_batch_size": 4})
     arm("base_fp8", "FP8 (hybrid, delayed scaling as the 32B runs)",
         {B + "fp8": "hybrid", B + "fp8_amax_compute_algo": "max",
          B + "fp8_amax_history_len": 1024})

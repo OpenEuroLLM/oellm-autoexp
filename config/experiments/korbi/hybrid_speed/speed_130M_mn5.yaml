@@ -51,6 +51,27 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy: true
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
           backend.megatron.cuda_graph_impl: none
+        # Liger CE, plain all-reduce instead of the distributed optimizer
+        - aux.arm: base_liger_nodistopt
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.use_distributed_optimizer: false
+          backend.megatron.overlap_param_gather: false
+        # Liger CE + TE's fused SwiGLU
+        - aux.arm: base_liger_teact
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.use_te_activation_func: true
+        # Liger CE without q/k layernorm (architecture change: prices it)
+        - aux.arm: base_liger_noqkln
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.qk_layernorm: false
+        # Liger CE, mbs 4 (2 accumulation steps)
+        - aux.arm: base_liger_mbs4
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.micro_batch_size: 4
         # FP8 (hybrid, delayed scaling as the 32B runs)
         - aux.arm: base_fp8
           backend.megatron.fp8: hybrid
