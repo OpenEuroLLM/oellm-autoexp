@@ -27,6 +27,35 @@ sweep:
         # reference without CUDA graphs (what the graphs are worth)
         - aux.arm: dense_nocg
           backend.megatron.cuda_graph_impl: none
+        # fused LM-head + CE (Liger, chunked: no full-vocab logits)
+        - aux.arm: base_liger
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+        # TE parallel cross entropy
+        - aux.arm: base_ce_te
+          backend.megatron.cross_entropy_fusion_impl: te
+        # attention backend flash (FA2) instead of auto (cuDNN SDPA)
+        - aux.arm: base_flash
+          backend.megatron.attention_backend: flash
+        # full-iteration CUDA graph (fwd+bwd, not the optimizer)
+        - aux.arm: base_graph_full
+          backend.megatron.cuda_graph_impl: full_iteration
+        # Liger CE + mbs 16 (gbs 64)
+        - aux.arm: base_liger_mbs16
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.micro_batch_size: 16
+          backend.megatron.global_batch_size: 64
+        # Liger CE without CUDA graphs
+        - aux.arm: base_liger_nocg
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.cuda_graph_impl: none
+        # FP8 (hybrid, delayed scaling as the 32B runs)
+        - aux.arm: base_fp8
+          backend.megatron.fp8: hybrid
+          backend.megatron.fp8_amax_compute_algo: max
+          backend.megatron.fp8_amax_history_len: 1024
         # no positional encoding
         - aux.arm: nope
           backend.megatron.position_embedding_type: none

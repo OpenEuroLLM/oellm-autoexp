@@ -37,6 +37,21 @@ def dense130m():
         B + "num_layers": 12})
     arm("dense_nocg", "reference without CUDA graphs (what the graphs are worth)",
         {B + "cuda_graph_impl": "none"})
+    # ---- baseline tuning: one speed knob each on the reference (no model change)
+    liger = {B + "liger_fused_linear_cross_entropy": True,
+             B + "liger_fused_linear_cross_entropy_chunk_size": 8192}
+    arm("base_liger", "fused LM-head + CE (Liger, chunked: no full-vocab logits)", liger)
+    arm("base_ce_te", "TE parallel cross entropy", {B + "cross_entropy_fusion_impl": "te"})
+    arm("base_flash", "attention backend flash (FA2) instead of auto (cuDNN SDPA)",
+        {B + "attention_backend": "flash"})
+    arm("base_graph_full", "full-iteration CUDA graph (fwd+bwd, not the optimizer)",
+        {B + "cuda_graph_impl": "full_iteration"})
+    arm("base_liger_mbs16", "Liger CE + mbs 16 (gbs 64)", liger,
+        {B + "micro_batch_size": 16, B + "global_batch_size": 64})
+    arm("base_liger_nocg", "Liger CE without CUDA graphs", liger, {B + "cuda_graph_impl": "none"})
+    arm("base_fp8", "FP8 (hybrid, delayed scaling as the 32B runs)",
+        {B + "fp8": "hybrid", B + "fp8_amax_compute_algo": "max",
+         B + "fp8_amax_history_len": 1024})
     # ---- attention
     arm("nope", "no positional encoding", {B + "position_embedding_type": "none"})
     arm("gqa4", "grouped-query attention, 4 kv heads", {B + "num_query_groups": 4})
