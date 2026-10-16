@@ -27,6 +27,26 @@ sweep:
         # reference without CUDA graphs (what the graphs are worth)
         - aux.arm: dense_nocg
           backend.megatron.cuda_graph_impl: none
+        # reference on FineWeb-10BT (the torchtitan twin's data)
+        - aux.arm: dense_fineweb
+          backend.megatron.mock_data: false
+          backend.megatron.tokenizer_type: HuggingFaceTokenizer
+          backend.megatron.tokenizer_model: /gpfs/projects/ehpc533/datasets/gpt-neox-20b-tokenizer
+          backend.megatron.vocab_size: null
+          backend.megatron.make_vocab_size_divisible_by: 128
+          backend.megatron.data_path: [/gpfs/projects/ehpc533/datasets/FineWeb-gpt-neox/fineweb-10BT_text_document]
+          backend.megatron.split: 100,0,0
+        # reference on FineWeb-10BT, mbs 16
+        - aux.arm: dense_fineweb_mbs16
+          backend.megatron.mock_data: false
+          backend.megatron.tokenizer_type: HuggingFaceTokenizer
+          backend.megatron.tokenizer_model: /gpfs/projects/ehpc533/datasets/gpt-neox-20b-tokenizer
+          backend.megatron.vocab_size: null
+          backend.megatron.make_vocab_size_divisible_by: 128
+          backend.megatron.data_path: [/gpfs/projects/ehpc533/datasets/FineWeb-gpt-neox/fineweb-10BT_text_document]
+          backend.megatron.split: 100,0,0
+          backend.megatron.micro_batch_size: 16
+          backend.megatron.global_batch_size: 64
         # fused LM-head + CE (Liger, chunked: no full-vocab logits)
         - aux.arm: base_liger
           backend.megatron.liger_fused_linear_cross_entropy: true

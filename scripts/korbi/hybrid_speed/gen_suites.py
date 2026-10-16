@@ -38,6 +38,15 @@ def dense130m():
         B + "num_layers": 12})
     arm("dense_nocg", "reference without CUDA graphs (what the graphs are worth)",
         {B + "cuda_graph_impl": "none"})
+    # the torchtitan twin's data (titan_dense_mn5.yaml): FineWeb-10BT, gpt-neox tokens
+    fineweb = {B + "mock_data": False, B + "tokenizer_type": "HuggingFaceTokenizer",
+               B + "tokenizer_model": "/gpfs/projects/ehpc533/datasets/gpt-neox-20b-tokenizer",
+               B + "vocab_size": None, B + "make_vocab_size_divisible_by": 128,
+               B + "data_path": ["/gpfs/projects/ehpc533/datasets/FineWeb-gpt-neox/fineweb-10BT_text_document"],
+               B + "split": "100,0,0"}
+    arm("dense_fineweb", "reference on FineWeb-10BT (the torchtitan twin's data)", fineweb)
+    arm("dense_fineweb_mbs16", "reference on FineWeb-10BT, mbs 16", fineweb,
+        {B + "micro_batch_size": 16, B + "global_batch_size": 64})
     # ---- baseline tuning: one speed knob each on the reference (no model change)
     liger = {B + "liger_fused_linear_cross_entropy": True,
              B + "liger_fused_linear_cross_entropy_chunk_size": 8192}
