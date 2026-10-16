@@ -146,7 +146,10 @@ def main():
         from torch.profiler import ProfilerActivity, profile
 
         acts = [ProfilerActivity.CUDA] + ([ProfilerActivity.CPU] if args.stack else [])
-        with profile(activities=acts, with_stack=bool(args.stack)) as prof:
+        extra = {}
+        if args.stack:  # Python stacks need the verbose experimental config on recent torch
+            extra["experimental_config"] = torch._C._profiler._ExperimentalConfig(verbose=True)
+        with profile(activities=acts, with_stack=bool(args.stack), **extra) as prof:
             for _ in range(3):
                 step()
             torch.cuda.synchronize()
