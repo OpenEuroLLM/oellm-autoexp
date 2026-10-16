@@ -520,8 +520,9 @@ class MegatronConfig(ConfigInterface):
     # public Triton kernels (the baseline) implement deg = 2.
     linear_power_deg: int = 2
 
-    # Power retention: the chunk size of the chunked algorithm.
-    linear_power_chunk_size: int = 128
+    # Power retention: the chunk size of the chunked algorithm (256: 15% faster than 128 on
+    # H100 at head dim 64, the speed suite's chunk sweep).
+    linear_power_chunk_size: int = 256
 
     # Power retention: rotary embeddings on q / k (the reference model's choice); off = NoPE.
     linear_power_rope: bool = False
@@ -799,6 +800,10 @@ class MegatronConfig(ConfigInterface):
 
     # If True, uses fused weighted squared relu kernel when using MoE.
     use_fused_weighted_squared_relu: bool = False
+
+    # Gated DeltaNet (G layers): the output RMSNorm and its silu gate as FLA's fused
+    # rms_norm_gated (one Triton kernel each way) instead of TE norm + eager gating.
+    gdn_fused_out_norm: bool = False
 
     # ShortConv (`C` layers): the gated depthwise causal convolution C * conv(B * x) as one
     # Triton kernel each way (megatron/core/fusions/fused_short_conv.py); unpacked sequences

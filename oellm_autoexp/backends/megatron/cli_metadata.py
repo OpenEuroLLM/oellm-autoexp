@@ -2467,6 +2467,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "gdn_fused_out_norm": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Gated DeltaNet (G layers): the output RMSNorm and its silu gate as FLA's fused rms_norm_gated (one Triton kernel each way) instead of TE norm + eager gating.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "global_batch_size": MegatronArgMetadata(
         arg_type=int,
         default=None,
@@ -3536,8 +3544,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     ),
     "linear_power_chunk_size": MegatronArgMetadata(
         arg_type=int,
-        default=128,
-        help="Power retention: the chunk size of the chunked algorithm.",
+        default=256,
+        help="Power retention: the chunk size of the chunked algorithm (256: 15% faster than 128 on H100 at head dim 64, the speed suite's chunk sweep).",
         choices=None,
         nargs=None,
         element_type=None,
@@ -9964,6 +9972,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "gdn_fused_out_norm": MegatronActionSpec(
+        option_strings=("--gdn-fused-out-norm",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "global_batch_size": MegatronActionSpec(
         option_strings=("--global-batch-size",),
         action_type="store",
@@ -10890,7 +10905,7 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         action_type="store",
         nargs=None,
         const=None,
-        default=128,
+        default=256,
     ),
     "linear_power_deg": MegatronActionSpec(
         option_strings=("--linear-power-deg",),

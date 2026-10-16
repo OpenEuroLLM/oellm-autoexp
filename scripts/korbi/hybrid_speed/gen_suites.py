@@ -127,7 +127,7 @@ def dense130m():
     # more); mbs 4 with 2 accumulation steps keeps the tokens per step.
     arm("power", "power retention deg 2 (Triton baseline), mbs 4", lin("power"),
         {B + "micro_batch_size": 4})
-    for ck in (64, 256):  # chunked power retention (default 128)
+    for ck in (64, 128):  # chunked power retention (default 256)
         arm(f"power_ck{ck}", f"power retention, chunk {ck}, mbs 4", lin("power"),
             {B + "micro_batch_size": 4, B + "linear_power_chunk_size": ck})
     # ---- token mixing / memory layers added to the dense stack
