@@ -7,7 +7,7 @@
 # titan has no mock data; the Megatron twin on the same file is speed_130M_mn5 with
 # aux.data=fineweb.
 #
-#   scripts/korbi/mn5_autoexp_bg.sh titan_dense \
+#   scripts/korbi/mn5_autoexp_bg.sh titan_dense scripts/run_autoexp.py \
 #       --config-name experiments/korbi/hybrid_speed/titan_dense_mn5
 defaults:
   - ../../base
