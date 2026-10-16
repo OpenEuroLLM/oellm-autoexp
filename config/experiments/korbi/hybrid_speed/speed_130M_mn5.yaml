@@ -57,11 +57,25 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
           backend.megatron.use_distributed_optimizer: false
           backend.megatron.overlap_param_gather: false
-        # Liger CE + TE's fused SwiGLU
+        # Liger CE + TE's fused SwiGLU (instead of Megatron's)
         - aux.arm: base_liger_teact
           backend.megatron.liger_fused_linear_cross_entropy: true
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
           backend.megatron.use_te_activation_func: true
+          backend.megatron.bias_swiglu_fusion: false
+        # Liger CE, no dense attention mask from the dataloader
+        - aux.arm: base_liger_nomask
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.create_attention_mask_in_dataloader: false
+        # Liger CE, no mask, mbs 16, no CUDA graphs
+        - aux.arm: base_liger_nomask_mbs16_nocg
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.create_attention_mask_in_dataloader: false
+          backend.megatron.micro_batch_size: 16
+          backend.megatron.global_batch_size: 64
+          backend.megatron.cuda_graph_impl: none
         # Liger CE without q/k layernorm (architecture change: prices it)
         - aux.arm: base_liger_noqkln
           backend.megatron.liger_fused_linear_cross_entropy: true

@@ -51,8 +51,13 @@ def dense130m():
     arm("base_liger_nocg", "Liger CE without CUDA graphs", liger, {B + "cuda_graph_impl": "none"})
     arm("base_liger_nodistopt", "Liger CE, plain all-reduce instead of the distributed optimizer",
         liger, {B + "use_distributed_optimizer": False, B + "overlap_param_gather": False})
-    arm("base_liger_teact", "Liger CE + TE's fused SwiGLU", liger,
-        {B + "use_te_activation_func": True})
+    arm("base_liger_teact", "Liger CE + TE's fused SwiGLU (instead of Megatron's)", liger,
+        {B + "use_te_activation_func": True, B + "bias_swiglu_fusion": False})
+    nomask = {B + "create_attention_mask_in_dataloader": False}
+    arm("base_liger_nomask", "Liger CE, no dense attention mask from the dataloader", liger, nomask)
+    arm("base_liger_nomask_mbs16_nocg", "Liger CE, no mask, mbs 16, no CUDA graphs", liger,
+        nomask, {B + "micro_batch_size": 16, B + "global_batch_size": 64,
+                 B + "cuda_graph_impl": "none"})
     arm("base_liger_noqkln", "Liger CE without q/k layernorm (architecture change: prices it)",
         liger, {B + "qk_layernorm": False})
     arm("base_liger_mbs4", "Liger CE, mbs 4 (2 accumulation steps)", liger,
