@@ -1,0 +1,41 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/pytorch:26.09-py3
+
+# Upstream torchtitan main (submodules/torchtitan) needs a PyTorch nightly (2.16 dev in
+# 2026-10; the NGC 26.09 torch 2.14 lacks e.g. torch.distributed.pipelining's
+# analyze_pipeline_activation_liveness). The NGC base provides CUDA 13, NCCL, cuDNN and the
+# system stack; torch (+ torchao) nightly replace its torch in a venv so the NGC builds
+# (TE, apex) stay untouched. torchtitan itself is NOT installed: the checkout is put on
+# PYTHONPATH at run time (config/experiments/korbi/hybrid_speed/titan_main_mn5.yaml).
+# Interim alternative without this image: the hybrid-ep image + $HYBRID_ENV/pylibs_titan_main.
+
+%arguments
+    TORCH_INDEX=https://download.pytorch.org/whl/nightly/cu130
+
+%files
+    ${REPO_ROOT}/submodules/torchtitan/.ci/docker/requirements.txt /opt/torchtitan-requirements.txt
+
+%environment
+    export VIRTUAL_ENV=/opt/titan
+    export PATH=/opt/titan/bin:$PATH
+
+%post
+    python3 -m venv --system-site-packages /opt/titan
+    . /opt/titan/bin/activate
+    pip install --no-cache-dir --upgrade pip
+    # nightly torch first, so the requirements resolve against it
+    pip install --no-cache-dir --pre --force-reinstall torch --index-url {{ TORCH_INDEX }}
+    pip install --no-cache-dir --pre torchao --index-url {{ TORCH_INDEX }}
+    pip install --no-cache-dir -r /opt/torchtitan-requirements.txt
+    pip install --no-cache-dir tiktoken sentencepiece blobfile hydra-core omegaconf compoconf
+    python -c "import torch; print('torch', torch.__version__, torch.version.cuda)"
+
+    # Triton 3.4+ expects /usr/local/cuda/compat/lib (NGC ships lib.real)
+    if [ -d /usr/local/cuda/compat/lib.real ] && [ ! -e /usr/local/cuda/compat/lib ]; then
+        ln -s lib.real /usr/local/cuda/compat/lib
+    fi
+    mkdir -p /workspace && chmod 777 /workspace
+
+%labels
+    Description torchtitan main (upstream) on NGC 26.09 with a PyTorch nightly venv
+    Base nvcr.io/nvidia/pytorch:26.09-py3
