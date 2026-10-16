@@ -54,6 +54,39 @@ def build(args):
     return model.decoder
 
 
+def saved_activations(run, x, top=12):
+    """Bytes autograd saves for backward in one forward, total and by the innermost module
+    that saved them, summed over layers (each storage counted once: views of one buffer are
+    free). Tensors a custom Function keeps on ctx instead of save_for_backward are missed."""
+    import re
+    from collections import defaultdict
+
+    seen, by_module, stack = set(), defaultdict(int), []
+    hooks = []
+    for name, mod in run.named_modules():
+        hooks.append(mod.register_forward_pre_hook(lambda m, a, n=name: stack.append(n)))
+        hooks.append(mod.register_forward_hook(lambda m, a, o: stack.pop()))
+
+    def pack(t):
+        if isinstance(t, torch.Tensor) and t.device.type == "cuda":
+            key = t.untyped_storage().data_ptr()
+            if key not in seen:
+                seen.add(key)
+                name = re.sub(r"\.\d+(\.|$)", r".*\1", stack[-1]) if stack else "<top>"
+                by_module[name] += t.untyped_storage().nbytes()
+        return t
+
+    with torch.autograd.graph.saved_tensors_hooks(pack, lambda t: t):
+        out = run(hidden_states=x, attention_mask=None)
+    del out
+    for h in hooks:
+        h.remove()
+    total = sum(by_module.values())
+    ranked = sorted(by_module.items(), key=lambda kv: -kv[1])[:top]
+    return {"total_gib": total / 2**30,
+            "top": [[name, round(b / 2**20, 1)] for name, b in ranked]}
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--pattern", required=True)
@@ -71,6 +104,9 @@ def main():
                    help="with --profile: group GPU time by this many Python stack frames "
                         "(attributes elementwise kernels to the code that launched them)")
     p.add_argument("--compile", action="store_true", help="torch.compile the stack")
+    p.add_argument("--saved", action="store_true",
+                   help="report the activation memory autograd saves in one forward, per module "
+                        "(unique storages; what the backward keeps alive)")
     args = p.parse_args()
 
     stack = build(args)
@@ -102,6 +138,8 @@ def main():
               "ms": ms, "ms_per_layer": ms / max(mixers, 1), "spread": (max(times) - min(times)) / ms,
               "peak_gib": torch.cuda.max_memory_allocated() / 2**30,
               "tokens_per_s": args.seq * args.mbs / (ms / 1000)}
+    if args.saved:
+        result["saved"] = saved_activations(run, x)
     print("RESULT " + json.dumps(result), flush=True)
 
     if args.profile:
