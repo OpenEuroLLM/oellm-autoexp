@@ -151,6 +151,15 @@ def dense130m():
         B + "mhc_routed_balance_rate": 0.001})
     arm("routed_k2_rev", "routed residual, 2 of 4, reversible", mhc, nocg,
         {B + "mhc_routed_topk": 2, B + "mhc_routed_reversible": True})
+    # the same with CUDA graphs: needs MEGATRON_ROUTED_CUDA_GRAPHS=1 in backend.env (run as
+    # their own session, losses compared against the no-graph arms)
+    cg = {B + "cuda_graph_impl": "local"}
+    arm("routed_k2_cg", "routed residual, 2 of 4, CUDA graphs", mhc, cg, {B + "mhc_routed_topk": 2})
+    arm("routed_k2_mix_cg", "routed residual, 2 of 4, mixed, balanced, CUDA graphs", mhc, cg, {
+        B + "mhc_routed_topk": 2, B + "mhc_routed_mix": True,
+        B + "mhc_routed_balance_rate": 0.001})
+    arm("routed_k2_rev_cg", "routed residual, 2 of 4, reversible, CUDA graphs", mhc, cg,
+        {B + "mhc_routed_topk": 2, B + "mhc_routed_reversible": True})
     arm("attn_res", "block attention residuals (4 blocks), no CUDA graphs", nocg,
         {B + "attn_res": True, B + "attn_res_num_blocks": 4})
     arm("postnorm", "sandwich norm", {B + "post_sublayer_norm": True})
