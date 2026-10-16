@@ -29,6 +29,9 @@ backend:
     moe_permute_fusion: true
     expert_model_parallel_size: 4
     cuda_graph_modules: [attn, moe_router, moe_preprocess]
+  env:
+    # TE's CUTLASS grouped GEMM for the experts: 1.06x over cuBLAS (v13moe)
+    NVTE_USE_CUTLASS_GROUPED_GEMM: "1"
 
 sweep:
   type: product
@@ -91,14 +94,15 @@ sweep:
         # TE fused router
         - aux.arm: router_fusion
           backend.megatron.moe_router_fusion: true
-        # TE CUTLASS grouped GEMM
-        - aux.arm: cutlass_gg
-          backend.env.NVTE_USE_CUTLASS_GROUPED_GEMM: '1'
-          aux.array_tag: _cutlass
-        # EP all-to-all overlapped with compute (+ delayed wgrad)
+        # cuBLAS grouped GEMM (the reference uses TE's CUTLASS one)
+        - aux.arm: cublas_gg
+          backend.env.NVTE_USE_CUTLASS_GROUPED_GEMM: '0'
+          aux.array_tag: _cublas
+        # EP all-to-all overlapped with compute (+ delayed wgrad), no CUDA graphs
         - aux.arm: a2a_overlap
           backend.megatron.overlap_moe_expert_parallel_comm: true
           backend.megatron.delay_wgrad_compute: true
+          backend.megatron.cuda_graph_impl: none
         # CUDA_DEVICE_MAX_CONNECTIONS 8
         - aux.arm: conn8
           backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
@@ -106,11 +110,6 @@ sweep:
         # manual GC every 10 steps
         - aux.arm: gc10
           backend.megatron.manual_gc_interval: 10
-        # router fusion + CUTLASS grouped GEMM
-        - aux.arm: tuned
-          backend.megatron.moe_router_fusion: true
-          backend.env.NVTE_USE_CUTLASS_GROUPED_GEMM: '1'
-          aux.array_tag: _cutlass
         # reference on NeMo 26.08.01 (TE 2.18)
         - aux.arm: nemo
           container.image: /gpfs/projects/ehpc533/singularity_images/nemo_26.08.01.sif
@@ -133,13 +132,29 @@ sweep:
           backend.megatron.moe_flex_dispatcher_backend: hybridep
           backend.megatron.moe_hybridep_num_sms: 16
           backend.megatron.cuda_graph_impl: none
-        # NeMo, HybridEP + router fusion + CUTLASS grouped GEMM
-        - aux.arm: nemo_flex_tuned
+        # NeMo, HybridEP + router fusion
+        - aux.arm: nemo_flex_rf
           container.image: /gpfs/projects/ehpc533/singularity_images/nemo_26.08.01.sif
           backend.env.PATH: /opt/venv/bin:/usr/local/bin:/usr/bin:/bin
-          aux.array_tag: _nemo_cutlass
+          aux.array_tag: _nemo
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: hybridep
           backend.megatron.moe_hybridep_num_sms: 16
           backend.megatron.moe_router_fusion: true
-          backend.env.NVTE_USE_CUTLASS_GROUPED_GEMM: '1'
+        # NeMo, HybridEP + all-to-all overlap (+ delayed wgrad)
+        - aux.arm: nemo_flex_a2a
+          container.image: /gpfs/projects/ehpc533/singularity_images/nemo_26.08.01.sif
+          backend.env.PATH: /opt/venv/bin:/usr/local/bin:/usr/bin:/bin
+          aux.array_tag: _nemo
+          backend.megatron.moe_token_dispatcher_type: flex
+          backend.megatron.moe_flex_dispatcher_backend: hybridep
+          backend.megatron.moe_hybridep_num_sms: 16
+          backend.megatron.overlap_moe_expert_parallel_comm: true
+          backend.megatron.delay_wgrad_compute: true
+        # NeMo, alltoall dispatcher + all-to-all overlap (+ delayed wgrad)
+        - aux.arm: nemo_a2a
+          container.image: /gpfs/projects/ehpc533/singularity_images/nemo_26.08.01.sif
+          backend.env.PATH: /opt/venv/bin:/usr/local/bin:/usr/bin:/bin
+          aux.array_tag: _nemo
+          backend.megatron.overlap_moe_expert_parallel_comm: true
+          backend.megatron.delay_wgrad_compute: true

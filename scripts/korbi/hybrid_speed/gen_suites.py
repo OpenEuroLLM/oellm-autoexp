@@ -224,15 +224,16 @@ def moe():
     # 10B-A0.9B), one at a time on our image, then on NeMo 26.08.01 (TE 2.18 + HybridEP)
     E = "backend.env."
     arm("router_fusion", "TE fused router", {B + "moe_router_fusion": True})
-    arm("cutlass_gg", "TE CUTLASS grouped GEMM",
-        {E + "NVTE_USE_CUTLASS_GROUPED_GEMM": "1", "aux.array_tag": "_cutlass"})
-    arm("a2a_overlap", "EP all-to-all overlapped with compute (+ delayed wgrad)", {
-        B + "overlap_moe_expert_parallel_comm": True, B + "delay_wgrad_compute": True})
+    arm("cublas_gg", "cuBLAS grouped GEMM (the reference uses TE's CUTLASS one)",
+        {E + "NVTE_USE_CUTLASS_GROUPED_GEMM": "0", "aux.array_tag": "_cublas"})
+    # needs TE >= 2.12 with CUDA graphs: the NeMo arms below
+    arm("a2a_overlap", "EP all-to-all overlapped with compute (+ delayed wgrad), no CUDA graphs",
+        {B + "overlap_moe_expert_parallel_comm": True, B + "delay_wgrad_compute": True,
+         B + "cuda_graph_impl": "none"})
     arm("conn8", "CUDA_DEVICE_MAX_CONNECTIONS 8",
         {E + "CUDA_DEVICE_MAX_CONNECTIONS": "8", "aux.array_tag": "_conn8"})
     arm("gc10", "manual GC every 10 steps", {B + "manual_gc_interval": 10})
-    tuned = {B + "moe_router_fusion": True, E + "NVTE_USE_CUTLASS_GROUPED_GEMM": "1"}
-    arm("tuned", "router fusion + CUTLASS grouped GEMM", tuned, {"aux.array_tag": "_cutlass"})
+    a2a = {B + "overlap_moe_expert_parallel_comm": True, B + "delay_wgrad_compute": True}
     nemo = {"container.image": "/gpfs/projects/ehpc533/singularity_images/nemo_26.08.01.sif",
             E + "PATH": "/opt/venv/bin:/usr/local/bin:/usr/bin:/bin", "aux.array_tag": "_nemo"}
     arm("nemo", "reference on NeMo 26.08.01 (TE 2.18)", nemo)
@@ -241,8 +242,10 @@ def moe():
     arm("nemo_flex", "NeMo 26.08.01, flex dispatcher with HybridEP (16 SMs)", nemo, flex)
     arm("nemo_flex_nocg", "as nemo_flex, no CUDA graphs", nemo, flex,
         {B + "cuda_graph_impl": "none"})
-    arm("nemo_flex_tuned", "NeMo, HybridEP + router fusion + CUTLASS grouped GEMM", nemo, flex,
-        tuned, {"aux.array_tag": "_nemo_cutlass"})
+    arm("nemo_flex_rf", "NeMo, HybridEP + router fusion", nemo, flex,
+        {B + "moe_router_fusion": True})
+    arm("nemo_flex_a2a", "NeMo, HybridEP + all-to-all overlap (+ delayed wgrad)", nemo, flex, a2a)
+    arm("nemo_a2a", "NeMo, alltoall dispatcher + all-to-all overlap (+ delayed wgrad)", nemo, a2a)
     return arms
 
 
@@ -304,4 +307,7 @@ backend:
     moe_permute_fusion: true
     expert_model_parallel_size: 4
     cuda_graph_modules: [attn, moe_router, moe_preprocess]
+  env:
+    # TE's CUTLASS grouped GEMM for the experts: 1.06x over cuBLAS (v13moe)
+    NVTE_USE_CUTLASS_GROUPED_GEMM: "1"
 """, moe())
