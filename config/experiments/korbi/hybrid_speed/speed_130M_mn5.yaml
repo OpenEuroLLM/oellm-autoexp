@@ -232,7 +232,7 @@ sweep:
         - aux.arm: kda
           aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-
           backend.megatron.experimental_attention_variant: kda
-        # linear mixer complex_kda, as signed_kda
+        # linear mixer complex_kda
         - aux.arm: complex_kda
           aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-
           backend.megatron.experimental_attention_variant: complex_kda
@@ -240,11 +240,6 @@ sweep:
           backend.megatron.linear_output_gate: linear
           backend.megatron.linear_drop_qkv_silu: true
           backend.megatron.linear_gate_init_style: spread
-        # linear mixer signed_kda, compiled layer
-        - aux.arm: signed_kda
-          aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-
-          backend.megatron.experimental_attention_variant: signed_kda
-          backend.megatron.linear_fla_torch_compile: true
         # KDA with exclusive self attention
         - aux.arm: kda_xsa
           aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-

@@ -110,16 +110,11 @@ def dense130m():
     arm("gdn_native", "Megatron's native Gated DeltaNet", {"aux.pattern": h3("G")})
     for v in ["gated_delta_net", "mlstm", "kda"]:
         arm(v, f"linear mixer {v}", lin(v))
-    # complex_kda and signed_kda build the same FLA layer (ComplexKimiDeltaAttention) from
-    # different config fields (linear_* vs linear_fla_*) whose defaults differ: the arms are
-    # set to the same model (signed_kda's defaults)
-    arm("complex_kda", "linear mixer complex_kda, as signed_kda", lin("complex_kda"), {
+    # complex_kda (signed_kda is the same FLA layer, ComplexKimiDeltaAttention, from the
+    # linear_fla_* fields): signed gate, beta in (0, 2), full-rank output gate, no qkv silu
+    arm("complex_kda", "linear mixer complex_kda", lin("complex_kda"), {
         B + "linear_beta_max": 2.0, B + "linear_output_gate": "linear",
         B + "linear_drop_qkv_silu": True, B + "linear_gate_init_style": "spread"})
-    # torch.compile of the FLA layer fuses signed_kda's sign glue (0.57 -> 0.66 of dense);
-    # kda / complex_kda / kda_xsa do not gain from it
-    arm("signed_kda", "linear mixer signed_kda, compiled layer", lin("signed_kda"),
-        {B + "linear_fla_torch_compile": True})
     arm("kda_xsa", "KDA with exclusive self attention", lin("kda"), {B + "linear_xsa": True})
     for ck in (64, 256):  # chunkwise mLSTM (default 128)
         arm(f"mlstm_ck{ck}", f"mLSTM, chunk {ck}", lin("mlstm"), {B + "mlstm_chunk_size": ck})

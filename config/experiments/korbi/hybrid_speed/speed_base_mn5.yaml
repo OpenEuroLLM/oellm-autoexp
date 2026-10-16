@@ -28,6 +28,20 @@ aux:
   suite: v2
   pattern: "*-*-*-*-*-*-*-*-*-*-*-*-"
   hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
+  # The training image and the libraries it needs from outside: ours first on PYTHONPATH
+  # (Megatron, the FLA fork, cute_kernels -- they shadow the image's copies), then the
+  # extras the image lacks. base: the 25.12 image + the old pylibs (built for its torch);
+  # ep: MegatronTraining-hybrid-ep (NGC 26.09, torch 2.14 / TE 2.19, DeepEP/HybridEP,
+  # mamba_ssm, TileLang, retention, MoonEP) + liger_kernel / mlstm_kernels only, and our
+  # retention checkout ahead of the image's.
+  image: ep
+  images:
+    base:
+      sif: MegatronTraining_base2512_x86_64_202602200350.sif
+      libs: "${aux.hybrid_env}/pylibs:${aux.hybrid_env}/pylibs_cute:${aux.hybrid_env}/pylibs_cute/nvidia_cutlass_dsl/dsl_packages:${aux.hybrid_env}/retention:${aux.hybrid_env}/pylibs_power"
+    ep:
+      sif: MegatronTraining-hybrid-ep_x86_64_202610161948.sif
+      libs: "${aux.hybrid_env}/retention:${aux.hybrid_env}/pylibs_ep"
   # Run a subset of the arms: aux.only=[power,mamba2] (empty: all)
   only: []
   # Torch-profile steps 50-53 on rank 0 (trace in <arm>/torch_profile; summarise with
@@ -147,7 +161,7 @@ backend:
     wandb_exp_name: null
 
   env:
-    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.hybrid_env}/pylibs:${aux.hybrid_env}/pylibs_cute:${aux.hybrid_env}/pylibs_cute/nvidia_cutlass_dsl/dsl_packages:${aux.hybrid_env}/retention:${aux.hybrid_env}/pylibs_power"
+    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}"
     CUDA_DEVICE_MAX_CONNECTIONS: "1"
     NVIDIA_PYTORCH_VERSION: "25.12"
     TOKENIZERS_PARALLELISM: "false"
@@ -180,3 +194,6 @@ slurm:
     qos: ${oc.if:${aux.dev_queue},acc_debug,acc_ehpc}
 
 stage: speed
+
+container:
+  image: ${aux.hybrid_env}/container/${aux.images.${aux.image}.sif}
