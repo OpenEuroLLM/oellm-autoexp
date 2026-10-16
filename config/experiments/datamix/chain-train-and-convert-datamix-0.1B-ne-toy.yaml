@@ -1,0 +1,12 @@
+# @package _global_
+#
+# Toy test of chain-train-and-convert-datamix-0.1B-ne.yaml (_chain-toy.yaml):
+#   train      1 node dev-g, 100 iters  -> checkpoints/iter_0000050, iter_0000100
+#   convert_N  1 GCD dev-g each         -> hf/iter_N (+ hf/iter_N.done)
+# Run dir output/train-0.1B-ne-toy. Evaluate with chain-eval-datamix-0.1B-ne-toy.yaml.
+# Keep run_autoexp.py running (tmux).
+
+defaults:
+  - chain-train-and-convert-datamix-0.1B-ne
+  - _chain-toy
+  - _self_

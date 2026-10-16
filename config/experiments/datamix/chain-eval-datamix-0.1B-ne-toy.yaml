@@ -1,0 +1,15 @@
+# @package _global_
+#
+# Toy test of chain-eval-datamix-0.1B-ne.yaml: lm-eval (50 samples per task) on the
+# checkpoints of chain-train-and-convert-datamix-0.1B-ne-toy.yaml, 1 GCD dev-g each,
+# one after another (dev-g job limit, see _chain-toy.yaml).
+# Run it as its own session next to the toy training; keep it running (tmux).
+
+defaults:
+  - chain-train-and-convert-datamix-0.1B-ne-toy   # the run to evaluate
+  - _chain-ckpt-eval
+  - _chain-toy             # again after _chain-ckpt-eval: its small-g eval settings win
+  - _self_
+
+aux:
+  eval_task_groups: [open-sci-0.01]

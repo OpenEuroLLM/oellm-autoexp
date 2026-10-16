@@ -1,0 +1,25 @@
+# @package _global_
+#
+# Adapter: runs the datamix training configs (datamix-*-ne.yaml, left untouched)
+# through the per-checkpoint convert/eval pipeline (_chain-ckpt-convert.yaml /
+# _chain-ckpt-eval.yaml).
+#
+# The datamix configuration is kept as is (account, run dir, job name, W&B, container,
+# tokenizer, ...). This file only adds what _chain-ckpt-convert/_chain-ckpt-eval need
+# and the datamix files don't define:
+#   - the tokenizer as a local dir (conversion can't take an HF hub id)
+#   - the project dir holding the eval container
+#   - the bridge container for the convert jobs (the datamix training container lacks modelopt)
+#
+# Include it after the datamix file and after _chain-ckpt-convert, see chain-train-and-convert-datamix-*.yaml.
+
+aux:
+  # scratch of the billed project (slurm.sbatch.account); the containers live here
+  project_dir: /scratch/${slurm.sbatch.account}
+  # The datamix tokenizer (backend.megatron.tokenizer_model, an HF hub id loaded offline
+  # from $HF_HOME) resolved to its snapshot in the HF cache; used as is if it's a local dir.
+  # Needs HF_HOME, as in the datamix guide.
+  tokenizer_cache: ${oc.env:HF_HOME,""}/hub/models--${oc.eval:'"${backend.megatron.tokenizer_model}".replace("/", "--")'}
+  tokenizer_dir: >-
+    ${oc.eval:'"${backend.megatron.tokenizer_model}" if Path("${backend.megatron.tokenizer_model}").is_dir() else "${aux.tokenizer_cache}/snapshots/" + Path("${aux.tokenizer_cache}/refs/main").read_text().strip()'}
+  convert_container: ${oc.env:PWD}/artifacts/MegatronTrainingLumi_bridge_x86_64.sif

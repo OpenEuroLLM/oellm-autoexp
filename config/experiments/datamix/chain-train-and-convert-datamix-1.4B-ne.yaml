@@ -1,0 +1,18 @@
+# @package _global_
+#
+# datamix-1.4B-ne.yaml training (unchanged) + conversion of every checkpoint to HF
+# (_chain-ckpt-convert.yaml). Evaluate with chain-eval-datamix-1.4B-ne.yaml.
+# Change data_path for your data. Run dir, job name, account, W&B etc. are the
+# datamix ones: run dir = $OUTPUT_DIR if set, else output/train-1.4B-ne (relative to
+# the repo root). Keep run_autoexp.py running (tmux).
+
+defaults:
+  - datamix-1.4B-ne
+  - _chain-ckpt-convert
+  - _chain-datamix         # after the datamix file and _chain-ckpt-convert: adapts them to each other
+  - _self_
+
+backend:
+  megatron:
+    data_path:            # weight, prefix, weight, prefix, ... (prefix = no .bin/.idx)
+      - ${aux.project_dir}/users/${oc.env:USER}/pca_filtering/data/tokenization/fin_Latn/bin_00_text_document

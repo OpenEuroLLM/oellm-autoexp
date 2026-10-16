@@ -61,6 +61,5 @@ slurm:
     cpus_per_task: 7
     mem: 480G
     partition: standard-g
-    account: project_462001516
     time: "48:00:00"
     exclusive: true
