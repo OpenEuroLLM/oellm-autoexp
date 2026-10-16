@@ -159,6 +159,16 @@ job:
   concurrency_group: ${oc.if:${aux.dev_queue},acc_debug,null}
   max_active: ${oc.if:${aux.dev_queue},1,null}
   concurrency_qos: ${aux.dev_queue}  # the cap is per user: count other monitors' jobs too
+  # A run that hits the wall time (e.g. one that finishes and then hangs on exit, as the
+  # full-iteration CUDA graph does) is finished, not monitored forever
+  # (config/job/auto_cancel_speedtest.yaml's handlers, without its log rules).
+  state_events:
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+    - name: timeout
+      transition: ["COMPLETING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
   # GPU-h estimate (submit gate): ~4 min startup + compile, 100 steps of <= 2 s
   est_step_time_s: 2.0
   est_startup_min: 4.0
