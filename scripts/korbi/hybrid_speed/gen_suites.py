@@ -186,8 +186,9 @@ def dense130m():
 
 
 def moe():
-    """50M active / 500M total: hidden 512, 12 blocks of 8 heads; 64 experts of 384, top 4,
-    plus a shared expert of 768 (= 2 experts): 6 expert-widths active per token."""
+    """120M active / 1.2B total (the dense 130M model's attention and width): hidden 768,
+    12 blocks of 12 heads; 128 experts of 320, top 4, plus a shared expert of 640 (= 2
+    experts): 6 expert-widths (1920) active per token."""
     arms = []
 
     def arm(name, comment, *dicts, **kv):
@@ -197,13 +198,13 @@ def moe():
         merged.update(kv)
         arms.append((name, comment, merged))
 
-    arm("moe", "reference: 64 experts top-4 + shared, aux loss, EP 4")
+    arm("moe", "reference: 128 experts top-4 + shared, aux loss, EP 4")
     arm("moe_nocg", "reference without CUDA graphs", {B + "cuda_graph_impl": "none"})
     arm("moe_ep1", "experts replicated (EP 1)", {B + "expert_model_parallel_size": 1})
-    arm("dense50M", "dense reference with the MoE's active width (SwiGLU 2304)", {
+    arm("dense120M", "dense reference with the MoE's active width (SwiGLU 1920)", {
         "aux.pattern": "*-" * 12, B + "num_experts": None, B + "moe_ffn_hidden_size": None,
         B + "moe_shared_expert_intermediate_size": None, B + "expert_model_parallel_size": 1,
-        B + "ffn_hidden_size": 2304, B + "cuda_graph_modules": []})
+        B + "ffn_hidden_size": 1920, B + "cuda_graph_modules": []})
     E = "backend.env."
     cutlass = {E + "NVTE_USE_CUTLASS_GROUPED_GEMM": "1", "aux.array_tag": "_cutlass"}
     noshared = {B + "moe_shared_expert_intermediate_size": None, B + "moe_router_topk": 6}
@@ -212,7 +213,7 @@ def moe():
     arm("auxfree", "aux-loss-free balancing (sigmoid router + expert bias)", {
         B + "moe_router_load_balancing_type": "none", B + "moe_aux_loss_coeff": 0.0,
         B + "moe_router_enable_expert_bias": True, B + "moe_router_score_function": "sigmoid"})
-    arm("latent", "LatentMoE (experts in a 256-dim latent)", {B + "moe_latent_size": 256})
+    arm("latent", "LatentMoE (experts in a 384-dim latent)", {B + "moe_latent_size": 384})
     # zero-computation experts cannot be CUDA-graphed yet (open issue)
     arm("zero16", "16 zero-computation experts, no CUDA graphs", {B + "moe_zero_expert_num": 16},
         {B + "cuda_graph_impl": "none"})
@@ -257,7 +258,7 @@ def moe():
     arm("nemo_cutlass_noshared", "NeMo (TE 2.18), CUTLASS grouped GEMM, no shared expert, top-6",
         nemo_cutlass, noshared)
     arm("nemo_cutlass_latent", "NeMo (TE 2.18), CUTLASS grouped GEMM, LatentMoE", nemo_cutlass,
-        {B + "moe_latent_size": 256})
+        {B + "moe_latent_size": 384})
     return arms
 
 
@@ -293,24 +294,19 @@ if __name__ == "__main__":
          "Speed of every architecture feature on the 130M dense model (speed_base_mn5.yaml).",
          "\naux:\n  family: dense130M\n", dense130m())
     dump("speed_moe_mn5.yaml",
-         "Speed of the MoE features on a 50M-active / 500M-total MoE (speed_base_mn5.yaml).",
+         "Speed of the MoE features on a 120M-active / 1.2B-total MoE (speed_base_mn5.yaml).",
          """
 aux:
-  family: moe50M500M
+  family: moe120M1200M
   pattern: "*E*E*E*E*E*E*E*E*E*E*E*E"
 
 backend:
   megatron:
-    hidden_size: 512
-    num_attention_heads: 8
-    num_query_groups: 8
-    linear_num_key_heads: 8
-    linear_num_value_heads: 8
-    ffn_hidden_size: 2304
-    num_experts: 64
-    moe_ffn_hidden_size: 384
+    ffn_hidden_size: 1920
+    num_experts: 128
+    moe_ffn_hidden_size: 320
     moe_router_topk: 4
-    moe_shared_expert_intermediate_size: 768
+    moe_shared_expert_intermediate_size: 640
     moe_grouped_gemm: true
     moe_token_dispatcher_type: alltoall
     moe_router_load_balancing_type: aux_loss

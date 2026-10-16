@@ -3,7 +3,7 @@
     python scripts/korbi/hybrid_speed/speed_state.py $OUTPUT_DIR/hybrid_speed -o SPEED_STATE.md \
         [--notes config/experiments/korbi/hybrid_speed/NOTES.md] [--loop 600]
 
-Per family (dense130M, moe50M500M, ...): the LATEST measurement of every arm across all
+Per family (dense130M, moe120M1200M, ...): the LATEST measurement of every arm across all
 suites of that family (suite directories ``<suite>_<family>``, the newest run of an arm
 wins), relative to the family's reference arm, plus which suite it came from; then the
 per-suite tables. Arms that never produced a measurement show their last failure.
@@ -20,7 +20,7 @@ from pathlib import Path
 
 from speed_table import markdown, table  # noqa: E402  (same directory)
 
-REFERENCES = {"dense130M": "dense", "moe50M500M": "moe"}
+REFERENCES = {"dense130M": "dense", "moe120M1200M": "moe", "moe50M500M": "moe"}
 FAMILIES = tuple(REFERENCES)
 # Suites measuring something other than the single-node DP-4 setup (parallelism checks,
 # checkpoint save / resume, context parallel): per-suite tables only, never "latest".

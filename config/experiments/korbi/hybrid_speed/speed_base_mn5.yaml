@@ -4,7 +4,7 @@
 # nothing saved. Every arm differs from its family's reference in the feature only.
 #
 #   speed_130M_mn5.yaml   dense 130M family (HybridModel "*-" x 12 reference, + GPTModel)
-#   speed_moe_mn5.yaml    50M-active / 500M-total MoE family
+#   speed_moe_mn5.yaml    120M-active / 1.2B-total MoE family
 #
 # Run (MN5 login node, synced checkout):
 #   scripts/korbi/mn5_autoexp.sh scripts/run_autoexp.py \
