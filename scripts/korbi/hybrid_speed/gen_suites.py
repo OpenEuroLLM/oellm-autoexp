@@ -29,6 +29,7 @@ def dense130m():
         arms.append((name, comment, merged))
 
     lin = lambda v: {"aux.pattern": h3("L"), B + "experimental_attention_variant": v}  # noqa: E731
+    noqknr = {B + "fused_qk_norm_rope": False}  # arms the fused q/k norm + RoPE cannot run
     # ---- references
     arm("dense", "reference: HybridModel, attention + SwiGLU MLP x 12")
     arm("dense_gpt", "the same model through GPTModel", {
@@ -81,19 +82,19 @@ def dense130m():
         {B + "fp8": "hybrid", B + "fp8_amax_compute_algo": "max",
          B + "fp8_amax_history_len": 1024})
     # ---- attention
-    arm("nope", "no positional encoding", {B + "position_embedding_type": "none"})
+    arm("nope", "no positional encoding", {B + "position_embedding_type": "none"}, noqknr)
     arm("gqa4", "grouped-query attention, 4 kv heads", {B + "num_query_groups": 4})
     arm("xsa", "exclusive self attention", {B + "exclusive_self_attention": True})
-    arm("gate", "sigmoid output gate", {B + "attention_output_gate": True})
+    arm("gate", "sigmoid output gate", {B + "attention_output_gate": True}, noqknr)
     arm("xsa_gate", "XSA + output gate",
-        {B + "exclusive_self_attention": True, B + "attention_output_gate": True})
+        {B + "exclusive_self_attention": True, B + "attention_output_gate": True}, noqknr)
     arm("swa3", "3:1 sliding-window (1024) : global",
         {"aux.pattern": h3("W"), B + "window_size": "1023,0"})
     mla = {B + "multi_latent_attention": True, B + "q_lora_rank": 384, B + "kv_lora_rank": 256,
            B + "qk_head_dim": 64, B + "v_head_dim": 64, B + "qk_pos_emb_head_dim": 0,
            B + "rope_type": "rope", "aux.pattern": "+-" * 12,
            # NoPE MLA has no RoPE to fuse (Megatron rejects the flag)
-           B + "apply_rope_fusion": False}
+           B + "apply_rope_fusion": False, B + "fused_qk_norm_rope": False}
     arm("mla", "multi-latent attention, NoPE", mla)
     arm("mla_gqa_xsa_gate", "MLA + 4 kv groups + XSA + output gate", mla, {
         B + "mla_num_query_groups": 4, B + "exclusive_self_attention": True,
@@ -122,7 +123,7 @@ def dense130m():
         {B + "micro_batch_size": 4})
     # ---- token mixing / memory layers added to the dense stack
     arm("shortconv", "ShortConv before every attention", {"aux.pattern": "C*-" * 12})
-    arm("canon", "Canon layers ABCD", {B + "canon_layers": "ABCD"})
+    arm("canon", "Canon layers ABCD", {B + "canon_layers": "ABCD"}, noqknr)
     arm("engram", "Engram n-gram memory before blocks 2 and 8 (data-parallel tables)", {
         "aux.pattern": "*-N*-*-*-*-*-*-N*-*-*-*-*-", B + "engram_ngram_orders": [2, 3],
         B + "engram_table_parallel": "dp"})
@@ -130,17 +131,19 @@ def dense130m():
         "aux.pattern": "*-*-*-*P*-*-*-*-*P*-*-*-", B + "pkm_table_parallel": "dp"})
     # ---- residual stream / norms / embeddings
     mhc = {B + "mhc": True, B + "mhc_expansion_rate": 4}
+    # routed residual and attention residuals cannot be CUDA-graphed yet (open issue)
+    nocg = {B + "cuda_graph_impl": "none"}
     arm("mhc4", "mHC, 4 residual streams", mhc)
-    arm("routed_k2", "routed residual, 2 of 4 streams", mhc, {B + "mhc_routed_topk": 2})
-    arm("routed_k2_mix", "routed residual, 2 of 4, mixed, balanced", mhc, {
+    arm("routed_k2", "routed residual, 2 of 4 streams", mhc, nocg, {B + "mhc_routed_topk": 2})
+    arm("routed_k2_mix", "routed residual, 2 of 4, mixed, balanced", mhc, nocg, {
         B + "mhc_routed_topk": 2, B + "mhc_routed_mix": True,
         B + "mhc_routed_balance_rate": 0.001})
-    arm("routed_k2_rev", "routed residual, 2 of 4, reversible", mhc,
+    arm("routed_k2_rev", "routed residual, 2 of 4, reversible", mhc, nocg,
         {B + "mhc_routed_topk": 2, B + "mhc_routed_reversible": True})
-    arm("attn_res", "block attention residuals (4 blocks)",
+    arm("attn_res", "block attention residuals (4 blocks), no CUDA graphs", nocg,
         {B + "attn_res": True, B + "attn_res_num_blocks": 4})
     arm("postnorm", "sandwich norm", {B + "post_sublayer_norm": True})
-    arm("ngpt", "nGPT", {B + "ngpt": True, B + "weight_normalizer": True})
+    arm("ngpt", "nGPT", {B + "ngpt": True, B + "weight_normalizer": True}, noqknr)
     arm("ple128", "per-layer embeddings (128)", {B + "per_layer_embedding_dim": 128})
     arm("value_emb", "value embeddings", {B + "value_embedding": True})
     # ---- optimizers

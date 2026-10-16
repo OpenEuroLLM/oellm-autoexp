@@ -148,6 +148,7 @@ sweep:
         # no positional encoding
         - aux.arm: nope
           backend.megatron.position_embedding_type: none
+          backend.megatron.fused_qk_norm_rope: false
         # grouped-query attention, 4 kv heads
         - aux.arm: gqa4
           backend.megatron.num_query_groups: 4
@@ -157,10 +158,12 @@ sweep:
         # sigmoid output gate
         - aux.arm: gate
           backend.megatron.attention_output_gate: true
+          backend.megatron.fused_qk_norm_rope: false
         # XSA + output gate
         - aux.arm: xsa_gate
           backend.megatron.exclusive_self_attention: true
           backend.megatron.attention_output_gate: true
+          backend.megatron.fused_qk_norm_rope: false
         # 3:1 sliding-window (1024) : global
         - aux.arm: swa3
           aux.pattern: W-W-W-*-W-W-W-*-W-W-W-*-
@@ -176,6 +179,7 @@ sweep:
           backend.megatron.rope_type: rope
           aux.pattern: +-+-+-+-+-+-+-+-+-+-+-+-
           backend.megatron.apply_rope_fusion: false
+          backend.megatron.fused_qk_norm_rope: false
         # MLA + 4 kv groups + XSA + output gate
         - aux.arm: mla_gqa_xsa_gate
           backend.megatron.multi_latent_attention: true
@@ -187,6 +191,7 @@ sweep:
           backend.megatron.rope_type: rope
           aux.pattern: +-+-+-+-+-+-+-+-+-+-+-+-
           backend.megatron.apply_rope_fusion: false
+          backend.megatron.fused_qk_norm_rope: false
           backend.megatron.mla_num_query_groups: 4
           backend.megatron.exclusive_self_attention: true
           backend.megatron.attention_output_gate: true
@@ -275,6 +280,7 @@ sweep:
         # Canon layers ABCD
         - aux.arm: canon
           backend.megatron.canon_layers: ABCD
+          backend.megatron.fused_qk_norm_rope: false
         # Engram n-gram memory before blocks 2 and 8 (data-parallel tables)
         - aux.arm: engram
           aux.pattern: '*-N*-*-*-*-*-*-N*-*-*-*-*-'
@@ -292,11 +298,13 @@ sweep:
         - aux.arm: routed_k2
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.cuda_graph_impl: none
           backend.megatron.mhc_routed_topk: 2
         # routed residual, 2 of 4, mixed, balanced
         - aux.arm: routed_k2_mix
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.cuda_graph_impl: none
           backend.megatron.mhc_routed_topk: 2
           backend.megatron.mhc_routed_mix: true
           backend.megatron.mhc_routed_balance_rate: 0.001
@@ -304,10 +312,12 @@ sweep:
         - aux.arm: routed_k2_rev
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.cuda_graph_impl: none
           backend.megatron.mhc_routed_topk: 2
           backend.megatron.mhc_routed_reversible: true
-        # block attention residuals (4 blocks)
+        # block attention residuals (4 blocks), no CUDA graphs
         - aux.arm: attn_res
+          backend.megatron.cuda_graph_impl: none
           backend.megatron.attn_res: true
           backend.megatron.attn_res_num_blocks: 4
         # sandwich norm
@@ -317,6 +327,7 @@ sweep:
         - aux.arm: ngpt
           backend.megatron.ngpt: true
           backend.megatron.weight_normalizer: true
+          backend.megatron.fused_qk_norm_rope: false
         # per-layer embeddings (128)
         - aux.arm: ple128
           backend.megatron.per_layer_embedding_dim: 128

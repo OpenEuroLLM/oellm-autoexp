@@ -24,7 +24,8 @@ aux:
   family: dense130M
   arm: dense
   # suite version: bump when the measurement setup changes, so tables never mix setups
-  suite: v1
+  # (v1: plain Megatron reference at 186 TFLOP/s; v2: the optimized reference below)
+  suite: v2
   pattern: "*-*-*-*-*-*-*-*-*-*-*-*-"
   hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
   # Run a subset of the arms: aux.only=[power,mamba2] (empty: all)
@@ -75,6 +76,12 @@ backend:
     gradient_accumulation_fusion: true
     cuda_graph_impl: local
     check_for_nan_in_loss_and_grad: false
+    # ---- optimized reference (v2; see NOTES.md): +67% over plain Megatron at 130M ----
+    liger_fused_linear_cross_entropy: true          # no full-vocabulary logits
+    liger_fused_linear_cross_entropy_chunk_size: 8192
+    create_attention_mask_in_dataloader: false      # causal flash kernels need no mask
+    fused_qk_norm_rope: true                        # Triton q/k RMSNorm + RoPE from the QKV GEMM
+    fused_residual_rmsnorm: true                    # TE fused residual + RMSNorm backward
     rerun_mode: disabled
     manual_gc: true
     manual_gc_interval: 50
