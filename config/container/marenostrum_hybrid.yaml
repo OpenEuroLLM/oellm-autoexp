@@ -1,0 +1,10 @@
+# The hybrid-architecture environment on MareNostrum 5 (ehpc533): the training image
+# plus the pure-Python / Triton / CuTe packages that are not in it yet ($HYBRID_ENV).
+# flash-linear-attention is the checkout synced with this repo (./sync_to_marenostrum.sh).
+class_name: Container
+image: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/container/${oc.env:HYBRID_SIF,MegatronTraining_base2512_x86_64_202602200350.sif}
+runtime: singularity
+bind: ["/gpfs"]
+env:
+  MACHINE_NAME: MARENOSTRUM
+python: "python"

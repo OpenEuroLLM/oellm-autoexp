@@ -1,0 +1,27 @@
+# MareNostrum 5 accelerated partition, project ehpc533 (ssh marenostrum_new). One node is
+# 4x H100 64GB. Jobs are submitted from the login node through scripts/korbi/mn5_autoexp.sh.
+defaults:
+  - marenostrum
+  - _self_
+
+launcher_cmd: "module load singularity/4.1.5 ; \\\n\
+ ${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \\\n\
+ export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \
+  ${oc.select:container.runtime,apptainer} exec ${oc.join:' ',${oc.maptmpl:'--env %=$% \\\n',${oc.dict.keys:.env}}} \
+  ${oc.join:' ',${oc.mapkeyvaltmpl:'--env %k=%v \\\n',${backend.env}}} \
+  --nv ${oc.join:' ',${oc.maptmpl:'--bind % \\\n',${container.bind}}} ${oc.select:container.image,container.sif}"
+
+env:
+  HF_HOME: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/cache/hf
+  TORCHINDUCTOR_CACHE_DIR: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/cache/inductor
+  TRITON_CACHE_DIR: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/cache/triton
+  # Triton finds libcuda in the container's driver bind, not in ldconfig.
+  TRITON_LIBCUDA_PATH: /.singularity.d/libs
+  HF_HUB_OFFLINE: "1"
+  NCCL_DEBUG: WARN
+
+sbatch:
+  account: ehpc533
+  qos: ${oc.env:SLURM_QOS,acc_ehpc}
+  partition: null
+  time: "00:30:00"
