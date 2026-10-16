@@ -651,17 +651,24 @@ def _bind_array_groups(records: list[JobRecord]) -> list[JobRecord]:
 
         group_dir = Path(first.log_dir).parent / name
         log_path = _array_log_path(str(members[0].definition.log_path), group_dir)
-        branches = []
-        for index, member in enumerate(members):
-            command = " ".join(member.definition.slurm.command).strip()
-            branches.append(f"{index})\n{command}\n;;")
-        dispatch = (
-            'case "$SLURM_ARRAY_TASK_ID" in\n'
-            + "\n".join(branches)
-            + '\n*) echo "array group '
-            + name
-            + ': no task for index $SLURM_ARRAY_TASK_ID" >&2; exit 2 ;;\nesac'
-        )
+        commands = [" ".join(member.definition.slurm.command).strip() for member in members]
+        if (first.launcher_cmd or "").strip():
+            # A launcher (e.g. `apptainer exec ... image.sif`) runs a program, not shell
+            # syntax: a `case` handed to it would be exec'd. Each task's command goes to
+            # its own script next to the array script, and the launcher runs that.
+            group_dir.mkdir(parents=True, exist_ok=True)
+            for index, command in enumerate(commands):
+                (group_dir / f"task_{index}.sh").write_text(f"#!/bin/bash\n{command}\n")
+            dispatch = f"bash {group_dir}/task_${{SLURM_ARRAY_TASK_ID}}.sh"
+        else:
+            branches = [f"{index})\n{command}\n;;" for index, command in enumerate(commands)]
+            dispatch = (
+                'case "$SLURM_ARRAY_TASK_ID" in\n'
+                + "\n".join(branches)
+                + '\n*) echo "array group '
+                + name
+                + ': no task for index $SLURM_ARRAY_TASK_ID" >&2; exit 2 ;;\nesac'
+            )
         sbatch = copy.deepcopy(first.sbatch)
         sbatch.job_name = name
         # `output` is not a declared SbatchConfig field: a non-strict extra, which

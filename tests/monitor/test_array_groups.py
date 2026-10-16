@@ -81,6 +81,19 @@ def test_bind_gives_one_script_and_an_index_per_member(tmp_path: Path):
     assert f"#SBATCH --output={tmp_path}/out/evals/slurm-%A_%a.log" in script
 
 
+def test_launcher_runs_one_task_script_per_member(tmp_path: Path):
+    """A container launcher execs a program: the dispatch must not be a `case`."""
+    launcher = {"slurm": {"launcher_cmd": "apptainer exec --nv image.sif"}}
+    records = _bind_array_groups([_member(tmp_path, i, **launcher) for i in range(3)])
+
+    script = Path(generate_script(records[0].definition.slurm)).read_text()
+    group_dir = tmp_path / "out" / "evals"
+    assert "case " not in script
+    assert f"apptainer exec --nv image.sif bash {group_dir}/task_${{SLURM_ARRAY_TASK_ID}}.sh" in script
+    for i in range(3):
+        assert (group_dir / f"task_{i}.sh").read_text() == f"#!/bin/bash\necho task {i}\n"
+
+
 def test_members_must_share_the_header(tmp_path: Path):
     records = [_member(tmp_path, 0), _member(tmp_path, 1, slurm={"sbatch": {"time": "02:00:00"}})]
     with pytest.raises(ValueError, match="array group 'evals'"):
