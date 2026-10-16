@@ -73,13 +73,23 @@ def main():
         except Exception as e:  # noqa: BLE001
             print(f"FAIL gdn d={d}: {type(e).__name__}: {str(e)[:200]}", flush=True)
 
+        try:
+            from megatron.core.ssm.power_retention import power_attention_flex
+
+            f = lambda q, k, v, g: power_attention_flex(q, k, v, g, deg=2, scale=d**-0.5)
+            report("power_flex", bench(fwd_bwd(f, q, k, v, log_g)))
+        except Exception as e:  # noqa: BLE001
+            print(f"FAIL power_flex d={d}: {type(e).__name__}: {str(e)[:200]}", flush=True)
+        for x in (q, k, v, log_g):
+            x.grad = None
+
         for backend in ("triton", "vidrial", "cuda"):
             try:
                 pr = importlib.import_module(f"retention.{backend}").power_retention
             except Exception as e:  # noqa: BLE001
                 print(f"FAIL import retention.{backend}: {type(e).__name__}: {str(e)[:200]}", flush=True)
                 continue
-            for chunk in (128, 256, 512, 1024, 2048, None):
+            for chunk in (1024, None):
                 f = lambda q, k, v, g, c=chunk: pr(q, k, v, g, deg=2, scale=d**-0.5, chunk_size=c)
                 try:
                     ms = bench(fwd_bwd(f, q, k, v, log_g))

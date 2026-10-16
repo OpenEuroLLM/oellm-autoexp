@@ -3542,6 +3542,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "linear_power_attention_impl": MegatronArgMetadata(
+        arg_type=str,
+        default="flex",
+        help='Power retention\'s quadratic form: "flex" (FlexAttention with the deg-th power and the gate as a score_mod: no [T, T] weights) or "retention" (the package\'s Triton kernel).',
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "linear_power_chunk_size": MegatronArgMetadata(
         arg_type=int,
         default=256,
@@ -10907,6 +10915,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default="lowrank",
+    ),
+    "linear_power_attention_impl": MegatronActionSpec(
+        option_strings=("--linear-power-attention-impl",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="flex",
     ),
     "linear_power_chunk_size": MegatronActionSpec(
         option_strings=("--linear-power-chunk-size",),
