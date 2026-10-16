@@ -1,0 +1,89 @@
+# Qwen3.5-35B-A3B (text only), for Megatron-LM oellm/v0.19.
+# Sources:
+# - https://huggingface.co/Qwen/Qwen3.5-35B-A3B/blob/main/config.json (text_config)
+# - https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/qwen/qwen35_bridge.py
+#   (HF -> Megatron mapping: _apply_qwen35_common_config, _apply_qwen35_moe_config)
+# - https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen/gb200/qwen35.py
+#   (qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config: NVIDIA's text-only pretraining recipe)
+# - config/backend/megatron/qwen3.5_9B.yaml in oellm-autoexp commit b13ac89 (Dalton, dense 9B on JUPITER)
+#
+# Differences from the HF model, on purpose:
+# - vocabulary: the OpenEuroLLM tokenizer/data (262k) instead of Qwen's 248,320 (set by the data config);
+# - text only (no vision tower); RoPE is plain 1-D rope (HF uses interleaved mrope, identical for text-only positions);
+# - MTP off by default (HF has 1 MTP layer): set mtp_num_layers: 1 to include it
+
+# ---------------------------------------------------------------- general / implementation
+seq_length: 4096
+encoder_seq_length: null  # must be null when seq_length is set (mutually exclusive in Megatron)
+bf16: true
+transformer_impl: transformer_engine
+attention_backend: flash
+use_flash_attn: true
+te_rng_tracker: true
+cross_entropy_loss_fusion: true
+cuda_graph_impl: "none"
+cuda_graph_warmup_steps: 3
+make_vocab_size_divisible_by: 128
+ckpt_format: torch_dist
+dist_ckpt_strictness: log_unexpected
+
+# ---------------------------------------------------------------- common transformer settings
+swiglu: true
+add_bias_linear: false
+attention_dropout: 0.0
+hidden_dropout: 0.0
+attention_softmax_in_fp32: true
+
+# ---------------------------------------------------------------- size
+num_layers: 40
+hidden_size: 2048
+ffn_hidden_size: 512                    # unused (every layer is MoE: mlp_only_layers = []); kept = moe_ffn_hidden_size
+max_position_embeddings: 262144
+
+# ---------------------------------------------------------------- full-attention layers (1 of every 4)
+num_attention_heads: 16
+num_query_groups: 2                     # num_key_value_heads
+group_query_attention: true
+kv_channels: 256                        # head_dim
+attention_output_gate: true             # attn_output_gate
+qk_layernorm: true
+add_qkv_bias: false                     # attention_bias: false
+position_embedding_type: rope
+rotary_base: 10000000                   # rope_theta
+rotary_percent: 0.25                    # partial_rotary_factor
+
+# ---------------------------------------------------------------- Gated DeltaNet
+experimental_attention_variant: gated_delta_net   # Megatron-Bridge (newer mcore) calls it "gdn" at https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/76cf8ca3402c3fb28465bcc9ef5fbb58d92181bc/src/megatron/bridge/models/qwen/qwen35_bridge.py#L62
+linear_attention_freq: 4                # full_attention_interval
+linear_conv_kernel_dim: 4
+linear_key_head_dim: 128
+linear_value_head_dim: 128
+linear_num_key_heads: 16
+linear_num_value_heads: 32
+
+# ---------------------------------------------------------------- normalization
+normalization: RMSNorm
+layernorm_epsilon: 1.0e-6               # rms_norm_eps
+layernorm_zero_centered_gamma: true
+
+# ---------------------------------------------------------------- MoE
+num_experts: 256
+moe_router_topk: 8                      # num_experts_per_tok
+moe_ffn_hidden_size: 512                # moe_intermediate_size
+moe_shared_expert_intermediate_size: 512
+moe_shared_expert_gate: true
+moe_layer_freq: 1
+moe_router_load_balancing_type: global_aux_loss
+moe_aux_loss_coeff: 0.001               # router_aux_loss_coef
+moe_router_pre_softmax: false
+moe_router_score_function: softmax
+moe_router_dtype: fp32
+moe_grouped_gemm: true
+
+# ---------------------------------------------------------------- embeddings / MTP
+untie_embeddings_and_output_weights: true   # tie_word_embeddings: false
+mtp_num_layers: null                    # HF: 1 (mtp_num_hidden_layers); Megatron-Bridge uses mtp_loss_scaling_factor 0.1
+mtp_loss_scaling_factor: 0.1
+
+aux:
+  model_name: "Qwen3.5-35B-A3B"
