@@ -137,13 +137,14 @@ def dense130m():
         {B + "linear_triadic_base": "kda", B + "linear_triadic_e": 4})
     arm("tri_ckda_e4", "triadic CKDA E=4 (6 heads of 128)", lin("triadic"), tri128,
         {B + "linear_triadic_base": "ckda", B + "linear_triadic_e": 4})
-    # mbs 8 x 4096 runs out of memory (the expanded deg-2 state: 41.7 GiB allocated + 6 GiB
-    # more); mbs 4 with 2 accumulation steps keeps the tokens per step.
-    arm("power", "power retention deg 2 (Triton baseline), mbs 4", lin("power"),
-        {B + "micro_batch_size": 4})
-    for ck in (64, 128):  # chunked power retention (default 256)
-        arm(f"power_ck{ck}", f"power retention, chunk {ck}, mbs 4", lin("power"),
-            {B + "micro_batch_size": 4, B + "linear_power_chunk_size": ck})
+    # At 4096 tokens power retention runs its quadratic (attention) form (faster than any
+    # chunk size: linear_power_switch_over_seq_len); the chunked form (mbs 4: its expanded
+    # deg-2 state runs out of memory at mbs 8) for comparison.
+    arm("power", "power retention deg 2 (attention form at 4096)", lin("power"))
+    arm("power_hd128", "power retention deg 2, 6 heads of 128 (attention form)", lin("power"),
+        tri128)
+    arm("power_chunked", "power retention deg 2, chunked (256), mbs 4", lin("power"),
+        {B + "micro_batch_size": 4, B + "linear_power_switch_over_seq_len": 0})
     # ---- token mixing / memory layers added to the dense stack
     arm("shortconv", "ShortConv before every attention", {"aux.pattern": "C*-" * 12})
     arm("canon", "Canon layers ABCD (needs the unfused input norm)", {B + "canon_layers": "ABCD"},

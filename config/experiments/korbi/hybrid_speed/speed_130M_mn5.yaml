@@ -314,23 +314,24 @@ sweep:
           backend.megatron.linear_num_value_heads: 6
           backend.megatron.linear_triadic_base: ckda
           backend.megatron.linear_triadic_e: 4
-        # power retention deg 2 (Triton baseline), mbs 4
+        # power retention deg 2 (attention form at 4096)
         - aux.arm: power
           aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-
           backend.megatron.experimental_attention_variant: power
-          backend.megatron.micro_batch_size: 4
-        # power retention, chunk 64, mbs 4
-        - aux.arm: power_ck64
+        # power retention deg 2, 6 heads of 128 (attention form)
+        - aux.arm: power_hd128
+          aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-
+          backend.megatron.experimental_attention_variant: power
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_value_head_dim: 128
+          backend.megatron.linear_num_key_heads: 6
+          backend.megatron.linear_num_value_heads: 6
+        # power retention deg 2, chunked (256), mbs 4
+        - aux.arm: power_chunked
           aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-
           backend.megatron.experimental_attention_variant: power
           backend.megatron.micro_batch_size: 4
-          backend.megatron.linear_power_chunk_size: 64
-        # power retention, chunk 128, mbs 4
-        - aux.arm: power_ck128
-          aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-
-          backend.megatron.experimental_attention_variant: power
-          backend.megatron.micro_batch_size: 4
-          backend.megatron.linear_power_chunk_size: 128
+          backend.megatron.linear_power_switch_over_seq_len: 0
         # ShortConv before every attention
         - aux.arm: shortconv
           aux.pattern: C*-C*-C*-C*-C*-C*-C*-C*-C*-C*-C*-C*-

@@ -3566,6 +3566,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "linear_power_switch_over_seq_len": MegatronArgMetadata(
+        arg_type=int,
+        default=8192,
+        help="Power retention: sequences up to this length run the quadratic (attention) form, longer ones the chunked recurrence. At 4096 tokens the attention form is 1.7x (head dim 64) to 7x (128) faster than the best chunk size on H100 (bench_power.py); 0: always chunked.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "linear_triadic_base": MegatronArgMetadata(
         arg_type=str,
         default="kda",
@@ -10920,6 +10928,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "linear_power_switch_over_seq_len": MegatronActionSpec(
+        option_strings=("--linear-power-switch-over-seq-len",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=8192,
     ),
     "linear_triadic_base": MegatronActionSpec(
         option_strings=("--linear-triadic-base",),

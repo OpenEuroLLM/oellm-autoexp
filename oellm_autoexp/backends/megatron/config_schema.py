@@ -524,6 +524,11 @@ class MegatronConfig(ConfigInterface):
     # H100 at head dim 64, the speed suite's chunk sweep).
     linear_power_chunk_size: int = 256
 
+    # Power retention: sequences up to this length run the quadratic (attention) form, longer
+    # ones the chunked recurrence. At 4096 tokens the attention form is 1.7x (head dim 64) to
+    # 7x (128) faster than the best chunk size on H100 (bench_power.py); 0: always chunked.
+    linear_power_switch_over_seq_len: int = 8192
+
     # Power retention: rotary embeddings on q / k (the reference model's choice); off = NoPE.
     linear_power_rope: bool = False
 
