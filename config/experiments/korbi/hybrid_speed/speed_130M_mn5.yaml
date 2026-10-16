@@ -209,3 +209,16 @@ sweep:
         # MuOwn
         - aux.arm: muown
           backend.megatron.optimizer: muown
+        # TE precision-aware Adam (fp32 states; offload's prerequisite)
+        - aux.arm: adam_precaware
+          backend.megatron.use_precision_aware_optimizer: true
+        # Adam with the optimizer state on the CPU, D2H/H2D overlapped
+        - aux.arm: adam_offload
+          backend.megatron.use_precision_aware_optimizer: true
+          backend.megatron.optimizer_cpu_offload: true
+          backend.megatron.optimizer_offload_fraction: 1.0
+          backend.megatron.overlap_cpu_optimizer_d2h_h2d: true
+        # MuOwn with its momentum streamed from host memory
+        - aux.arm: muown_offload
+          backend.megatron.optimizer: muown
+          backend.megatron.muown_cpu_offload: true

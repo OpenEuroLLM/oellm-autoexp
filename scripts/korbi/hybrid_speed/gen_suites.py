@@ -101,6 +101,14 @@ def dense130m():
     # ---- optimizers
     arm("muon", "Muon", {B + "optimizer": "muon"})
     arm("muown", "MuOwn", {B + "optimizer": "muown"})
+    # ---- memory: optimizer-state offloading (compared alone first, combined later)
+    arm("adam_precaware", "TE precision-aware Adam (fp32 states; offload's prerequisite)",
+        {B + "use_precision_aware_optimizer": True})
+    arm("adam_offload", "Adam with the optimizer state on the CPU, D2H/H2D overlapped",
+        {B + "use_precision_aware_optimizer": True, B + "optimizer_cpu_offload": True,
+         B + "optimizer_offload_fraction": 1.0, B + "overlap_cpu_optimizer_d2h_h2d": True})
+    arm("muown_offload", "MuOwn with its momentum streamed from host memory",
+        {B + "optimizer": "muown", B + "muown_cpu_offload": True})
     return arms
 
 
@@ -131,6 +139,11 @@ def moe():
     arm("latent", "LatentMoE (experts in a 256-dim latent)", {B + "moe_latent_size": 256})
     arm("zero16", "16 zero-computation experts", {B + "moe_zero_expert_num": 16})
     arm("muown", "MuOwn", {B + "optimizer": "muown"})
+    arm("muown_offload", "MuOwn with its momentum streamed from host memory",
+        {B + "optimizer": "muown", B + "muown_cpu_offload": True})
+    arm("adam_offload", "Adam with the optimizer state on the CPU, D2H/H2D overlapped",
+        {B + "use_precision_aware_optimizer": True, B + "optimizer_cpu_offload": True,
+         B + "optimizer_offload_fraction": 1.0, B + "overlap_cpu_optimizer_d2h_h2d": True})
     arm("gdn3", "3:1 GDN hybrid on the MoE", {
         "aux.pattern": "LELELE*E" * 3, B + "experimental_attention_variant": "gated_delta_net"})
     return arms

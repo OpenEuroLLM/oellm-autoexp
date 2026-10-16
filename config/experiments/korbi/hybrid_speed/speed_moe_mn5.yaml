@@ -72,6 +72,16 @@ sweep:
         # MuOwn
         - aux.arm: muown
           backend.megatron.optimizer: muown
+        # MuOwn with its momentum streamed from host memory
+        - aux.arm: muown_offload
+          backend.megatron.optimizer: muown
+          backend.megatron.muown_cpu_offload: true
+        # Adam with the optimizer state on the CPU, D2H/H2D overlapped
+        - aux.arm: adam_offload
+          backend.megatron.use_precision_aware_optimizer: true
+          backend.megatron.optimizer_cpu_offload: true
+          backend.megatron.optimizer_offload_fraction: 1.0
+          backend.megatron.overlap_cpu_optimizer_d2h_h2d: true
         # 3:1 GDN hybrid on the MoE
         - aux.arm: gdn3
           aux.pattern: LELELE*ELELELE*ELELELE*E
