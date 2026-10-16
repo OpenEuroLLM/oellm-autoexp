@@ -243,14 +243,25 @@ def moe():
     # top-6 / no shared expert and with LatentMoE -- opt-in only; *_nemo: TE 2.18
     cutlass = {E + "NVTE_USE_CUTLASS_GROUPED_GEMM": "1", "aux.array_tag": "_cutlass"}
     arm("cutlass_gg", "TE CUTLASS grouped GEMM", cutlass)
-    # needs TE >= 2.12 with CUDA graphs: the NeMo arms below
-    arm("a2a_overlap", "EP all-to-all overlapped with compute (+ delayed wgrad), no CUDA graphs",
-        {B + "overlap_moe_expert_parallel_comm": True, B + "delay_wgrad_compute": True,
-         B + "cuda_graph_impl": "none"})
+    # EP all-to-all overlap (HybridModel combined-1F1B schedule plan, ported from upstream
+    # #4942/#4944): no CUDA graphs, >= 2 microbatches per step (mbs 4: 2 accumulation steps),
+    # more than one device connection. moe_mbs4_nocg is its reference.
+    ovl = {B + "overlap_moe_expert_parallel_comm": True, B + "cuda_graph_impl": "none",
+           B + "micro_batch_size": 4, E + "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+           "aux.array_tag": "_conn8"}
+    arm("moe_mbs4_nocg", "reference at mbs 4 without CUDA graphs (the overlap's reference)",
+        {B + "cuda_graph_impl": "none", B + "micro_batch_size": 4})
+    arm("a2a_overlap", "EP all-to-all overlapped with compute, mbs 4, no CUDA graphs", ovl)
+    arm("a2a_overlap_dw", "EP all-to-all overlap + delayed wgrad", ovl,
+        {B + "delay_wgrad_compute": True})
+    arm("a2a_overlap_mbs8", "EP all-to-all overlap, mbs 8 x 2 (gbs 64)", ovl,
+        {B + "micro_batch_size": 8, B + "global_batch_size": 64})
     arm("conn8", "CUDA_DEVICE_MAX_CONNECTIONS 8",
         {E + "CUDA_DEVICE_MAX_CONNECTIONS": "8", "aux.array_tag": "_conn8"})
     arm("gc10", "manual GC every 10 steps", {B + "manual_gc_interval": 10})
-    a2a = {B + "overlap_moe_expert_parallel_comm": True, B + "delay_wgrad_compute": True}
+    a2a = {B + "overlap_moe_expert_parallel_comm": True, B + "cuda_graph_impl": "none",
+           B + "micro_batch_size": 4, E + "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+           "aux.array_tag": "_nemo_conn8"}
     nemo = {"container.image": "/gpfs/projects/ehpc533/singularity_images/nemo_26.08.01.sif",
             E + "PATH": "/opt/venv/bin:/usr/local/bin:/usr/bin:/bin", "aux.array_tag": "_nemo"}
     arm("nemo", "reference on NeMo 26.08.01 (TE 2.18)", nemo)
