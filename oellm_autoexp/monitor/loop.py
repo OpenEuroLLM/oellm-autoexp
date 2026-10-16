@@ -291,8 +291,21 @@ class MonitorLoop:
                         active_in_group[group] = active_in_group.get(group, 0) + 1
 
                     if job.runtime.runtime_job_id is None:
-                        LOGGER.warning(f"Failed to start job: {job}")
-                        self._store.mark_finished(job.job_id, "cancelled")
+                        if group and getattr(job.definition, "max_active", None) is not None:
+                            # A throttled group's submit fails when the cap is reached
+                            # elsewhere (another session, a race with it): keep the job
+                            # waiting and stop submitting to the group this poll.
+                            LOGGER.warning(
+                                f"Could not submit {job.job_id} to concurrency group {group}; "
+                                "retrying on the next poll"
+                            )
+                            active_in_group[group] = max(
+                                active_in_group.get(group, 0), job.definition.max_active
+                            )
+                            self._store.upsert(job)
+                        else:
+                            LOGGER.warning(f"Failed to start job: {job}")
+                            self._store.mark_finished(job.job_id, "cancelled")
                 else:
                     self._store.upsert(job)
                 continue

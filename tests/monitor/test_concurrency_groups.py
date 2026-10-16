@@ -86,3 +86,24 @@ def test_qos_unknown_falls_back_to_the_session_count(tmp_path: Path):
     store, _, loop = _loop(tmp_path, [_job(tmp_path, i, qos=True) for i in range(2)])
     loop.observe_once()  # the fake client cannot count: session count only
     assert len(_submitted(store)) == 1
+
+
+def test_rejected_submit_in_a_throttled_group_is_retried(tmp_path: Path, monkeypatch):
+    """A QOS rejection (cap reached by another session / a race) keeps the job waiting and
+    holds the rest of its group for this poll, instead of cancelling every job."""
+    store, client, loop = _loop(tmp_path, [_job(tmp_path, i, qos=True) for i in range(3)])
+    real_submit = client._client.submit
+    calls = {"n": 0}
+
+    def flaky(cfg):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("sbatch: error: QOSMaxSubmitJobPerUserLimit")
+        return real_submit(cfg)
+
+    monkeypatch.setattr(client._client, "submit", flaky)
+    loop.observe_once()
+    assert calls["n"] == 1  # one attempt, the others held back
+    assert _submitted(store) == [] and len(store.load_all()) == 3
+    loop.observe_once()
+    assert len(_submitted(store)) == 1
