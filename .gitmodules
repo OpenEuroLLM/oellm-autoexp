@@ -15,7 +15,7 @@
 	path = submodules/oellm-eval
 	url = git@github.com:kpoeppel/oellm-eval.git
 	branch = feat/flag-evals-humaneval-patch
-[submodule "submodules/cute-triadic-gdn"]
-	path = submodules/cute-triadic-gdn
-	url = https://github.com/OliverSieberling/cute-triadic-gdn.git
+[submodule "submodules/cute_kernels"]
+	path = submodules/cute_kernels
+	url = git@github.com:OpenEuroLLM/cute_kernels.git
 	branch = main

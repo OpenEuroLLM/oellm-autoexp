@@ -23,7 +23,7 @@ aux:
 backend:
   command: bash scripts/korbi/hybrid_speed/run_tests.sh "${aux.tests}" "${aux.bench}"
   env:
-    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute-triadic-gdn:${aux.hybrid_env}/pylibs:${aux.hybrid_env}/pylibs_cute:${aux.hybrid_env}/pylibs_cute/nvidia_cutlass_dsl/dsl_packages:${aux.hybrid_env}/retention:${aux.hybrid_env}/pylibs_power"
+    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.hybrid_env}/pylibs:${aux.hybrid_env}/pylibs_cute:${aux.hybrid_env}/pylibs_cute/nvidia_cutlass_dsl/dsl_packages:${aux.hybrid_env}/retention:${aux.hybrid_env}/pylibs_power"
     CUDA_DEVICE_MAX_CONNECTIONS: "1"
     NVIDIA_PYTORCH_VERSION: "25.12"
 
