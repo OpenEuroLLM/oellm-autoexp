@@ -108,8 +108,14 @@ def dense130m():
     for ck in (64, 256):  # SSD chunk size (default 128)
         arm(f"mamba2_ck{ck}", f"Mamba2, chunk {ck}", mamba, {B + "mamba_chunk_size": ck})
     arm("gdn_native", "Megatron's native Gated DeltaNet", {"aux.pattern": h3("G")})
-    for v in ["gated_delta_net", "mlstm", "kda", "complex_kda"]:
+    for v in ["gated_delta_net", "mlstm", "kda"]:
         arm(v, f"linear mixer {v}", lin(v))
+    # complex_kda and signed_kda build the same FLA layer (ComplexKimiDeltaAttention) from
+    # different config fields (linear_* vs linear_fla_*) whose defaults differ: the arms are
+    # set to the same model (signed_kda's defaults)
+    arm("complex_kda", "linear mixer complex_kda, as signed_kda", lin("complex_kda"), {
+        B + "linear_beta_max": 2.0, B + "linear_output_gate": "linear",
+        B + "linear_drop_qkv_silu": True, B + "linear_gate_init_style": "spread"})
     # torch.compile of the FLA layer fuses signed_kda's sign glue (0.57 -> 0.66 of dense);
     # kda / complex_kda / kda_xsa do not gain from it
     arm("signed_kda", "linear mixer signed_kda, compiled layer", lin("signed_kda"),
