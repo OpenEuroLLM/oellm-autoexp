@@ -36,6 +36,9 @@ aux:
   # MareNostrum's dev queue (acc_debug: 1 job per user, 2 h): plain jobs, one in flight
   # across all monitors (job.concurrency_group/max_active/concurrency_qos)
   dev_queue: false
+  # Arms whose environment or container differs (one array = one script header) set
+  # their own array_tag and go out as an array of their own.
+  array_tag: ""
 
 backend:
   launcher_script: ./submodules/Megatron-LM/pretrain_hybrid.py
@@ -152,7 +155,7 @@ backend:
 job:
   name: ${aux.suite}_${aux.family}_${aux.arm}
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${aux.suite}_${aux.family}/${aux.arm}"
-  array_group: ${oc.if:${aux.dev_queue},null,${aux.suite}_${aux.family}}
+  array_group: ${oc.if:${aux.dev_queue},null,${aux.suite}_${aux.family}${aux.array_tag}}
   concurrency_group: ${oc.if:${aux.dev_queue},acc_debug,null}
   max_active: ${oc.if:${aux.dev_queue},1,null}
   concurrency_qos: ${aux.dev_queue}  # the cap is per user: count other monitors' jobs too

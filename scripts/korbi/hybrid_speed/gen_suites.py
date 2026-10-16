@@ -220,6 +220,29 @@ def moe():
          B + "optimizer_offload_fraction": 1.0, B + "overlap_cpu_optimizer_d2h_h2d": True})
     arm("gdn3", "3:1 GDN hybrid on the MoE", {
         "aux.pattern": "LELELE*E" * 3, B + "experimental_attention_variant": "gated_delta_net"})
+    # The MoE levers of the large-scale MN5 runs (oellm-autoexp exp_irene: Qwen3-30B-A3B,
+    # 10B-A0.9B), one at a time on our image, then on NeMo 26.08.01 (TE 2.18 + HybridEP)
+    E = "backend.env."
+    arm("router_fusion", "TE fused router", {B + "moe_router_fusion": True})
+    arm("cutlass_gg", "TE CUTLASS grouped GEMM",
+        {E + "NVTE_USE_CUTLASS_GROUPED_GEMM": "1", "aux.array_tag": "_cutlass"})
+    arm("a2a_overlap", "EP all-to-all overlapped with compute (+ delayed wgrad)", {
+        B + "overlap_moe_expert_parallel_comm": True, B + "delay_wgrad_compute": True})
+    arm("conn8", "CUDA_DEVICE_MAX_CONNECTIONS 8",
+        {E + "CUDA_DEVICE_MAX_CONNECTIONS": "8", "aux.array_tag": "_conn8"})
+    arm("gc10", "manual GC every 10 steps", {B + "manual_gc_interval": 10})
+    tuned = {B + "moe_router_fusion": True, E + "NVTE_USE_CUTLASS_GROUPED_GEMM": "1"}
+    arm("tuned", "router fusion + CUTLASS grouped GEMM", tuned, {"aux.array_tag": "_cutlass"})
+    nemo = {"container.image": "/gpfs/projects/ehpc533/singularity_images/nemo_26.08.01.sif",
+            E + "PATH": "/opt/venv/bin:/usr/local/bin:/usr/bin:/bin", "aux.array_tag": "_nemo"}
+    arm("nemo", "reference on NeMo 26.08.01 (TE 2.18)", nemo)
+    flex = {B + "moe_token_dispatcher_type": "flex", B + "moe_flex_dispatcher_backend": "hybridep",
+            B + "moe_hybridep_num_sms": 16}
+    arm("nemo_flex", "NeMo 26.08.01, flex dispatcher with HybridEP (16 SMs)", nemo, flex)
+    arm("nemo_flex_nocg", "as nemo_flex, no CUDA graphs", nemo, flex,
+        {B + "cuda_graph_impl": "none"})
+    arm("nemo_flex_tuned", "NeMo, HybridEP + router fusion + CUTLASS grouped GEMM", nemo, flex,
+        tuned, {"aux.array_tag": "_nemo_cutlass"})
     return arms
 
 
