@@ -7,6 +7,8 @@ from typing import Any
 import pytest
 from omegaconf import OmegaConf
 
+from oellm_autoexp import HYDRA_FAST
+
 from oellm_autoexp.hydra_staged_sweep.config import cache
 from oellm_autoexp.hydra_staged_sweep.config.loader import load_hydra_config
 from oellm_autoexp.hydra_staged_sweep.config.schema import StagedSweepRoot
@@ -90,6 +92,7 @@ def test_editing_a_config_invalidates_the_cache(config_dir, fresh_cache):
     assert _load(config_dir).name == "edited"
 
 
+@pytest.mark.skipif(HYDRA_FAST, reason="hydra-fast caches natively; the Hydra patches are off")
 def test_caches_record_hits(config_dir, fresh_cache):
     for _ in range(3):
         _load(config_dir)

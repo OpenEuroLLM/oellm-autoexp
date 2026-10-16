@@ -12,8 +12,9 @@ from compoconf import parse_config, ConfigInterface
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf, open_dict
 
+from oellm_autoexp import HYDRA_FAST
+
 from . import schema
-from .cache import enable as enable_config_cache
 from .resolvers import register_default_resolvers
 
 LOGGER = logging.getLogger(__file__)
@@ -22,8 +23,12 @@ T = TypeVar("T", bound=ConfigInterface)
 
 register_default_resolvers()
 # Sweeps compose the same config tree once per point; without this every point
-# re-reads and re-merges the whole tree. See config/cache.py.
-enable_config_cache()
+# re-reads and re-merges the whole tree. See config/cache.py. hydra-fast caches
+# natively (and has no Hydra internals for the cache to patch).
+if not HYDRA_FAST:
+    from .cache import enable as enable_config_cache
+
+    enable_config_cache()
 
 
 class ConfigLoaderError(RuntimeError):

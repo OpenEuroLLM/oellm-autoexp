@@ -14,8 +14,9 @@ license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
   "compoconf>=0.3.1",
-  "hydra-core>=1.3",
-  "omegaconf>=2.3",
+  # Hydra-compatible composition (~100x faster sweeps, no ANTLR); it serves
+  # `import hydra` / `import omegaconf` through its shim (oellm_autoexp/__init__.py).
+  "hydra-fast>=0.1.0",
   "pydantic>=2.0",
   "jsonschema>=4.17",
   "networkx>=3.0",
@@ -24,6 +25,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Upstream Hydra / OmegaConf instead of hydra-fast (set OELLM_HYDRA_FAST=0).
+hydra-upstream = [
+  "hydra-core>=1.3",
+  "omegaconf>=2.3",
+]
 megatron = [
   "torch",
   "transformers",
