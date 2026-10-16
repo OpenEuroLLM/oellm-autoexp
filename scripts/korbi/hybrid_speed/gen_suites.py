@@ -45,10 +45,12 @@ def dense130m():
     arm("xsa_gate", "XSA + output gate",
         {B + "exclusive_self_attention": True, B + "attention_output_gate": True})
     arm("swa3", "3:1 sliding-window (1024) : global",
-        {"aux.pattern": h3("W"), B + "window_size": "[1023,0]"})
+        {"aux.pattern": h3("W"), B + "window_size": "1023,0"})
     mla = {B + "multi_latent_attention": True, B + "q_lora_rank": 384, B + "kv_lora_rank": 256,
            B + "qk_head_dim": 64, B + "v_head_dim": 64, B + "qk_pos_emb_head_dim": 0,
-           B + "rope_type": "rope", "aux.pattern": "+-" * 12}
+           B + "rope_type": "rope", "aux.pattern": "+-" * 12,
+           # NoPE MLA has no RoPE to fuse (Megatron rejects the flag)
+           B + "apply_rope_fusion": False}
     arm("mla", "multi-latent attention, NoPE", mla)
     arm("mla_gqa_xsa_gate", "MLA + 4 kv groups + XSA + output gate", mla, {
         B + "mla_num_query_groups": 4, B + "exclusive_self_attention": True,

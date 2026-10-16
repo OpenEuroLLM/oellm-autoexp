@@ -46,7 +46,7 @@ sweep:
         # 3:1 sliding-window (1024) : global
         - aux.arm: swa3
           aux.pattern: W-W-W-*-W-W-W-*-W-W-W-*-
-          backend.megatron.window_size: '[1023,0]'
+          backend.megatron.window_size: 1023,0
         # multi-latent attention, NoPE
         - aux.arm: mla
           backend.megatron.multi_latent_attention: true
@@ -57,6 +57,7 @@ sweep:
           backend.megatron.qk_pos_emb_head_dim: 0
           backend.megatron.rope_type: rope
           aux.pattern: +-+-+-+-+-+-+-+-+-+-+-+-
+          backend.megatron.apply_rope_fusion: false
         # MLA + 4 kv groups + XSA + output gate
         - aux.arm: mla_gqa_xsa_gate
           backend.megatron.multi_latent_attention: true
@@ -67,6 +68,7 @@ sweep:
           backend.megatron.qk_pos_emb_head_dim: 0
           backend.megatron.rope_type: rope
           aux.pattern: +-+-+-+-+-+-+-+-+-+-+-+-
+          backend.megatron.apply_rope_fusion: false
           backend.megatron.mla_num_query_groups: 4
           backend.megatron.exclusive_self_attention: true
           backend.megatron.attention_output_gate: true
