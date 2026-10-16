@@ -324,8 +324,9 @@ sweep:
           aux.pattern: '*-N*-*-*-*-*-*-N*-*-*-*-*-'
           backend.megatron.engram_ngram_orders: [2, 3]
           backend.megatron.engram_table_parallel: dp
-        # product-key memory in place of 2 MLPs
+        # product-key memory in place of 2 MLPs, mbs 4
         - aux.arm: pkm
+          backend.megatron.micro_batch_size: 4
           aux.pattern: '*-*-*-*P*-*-*-*-*P*-*-*-'
           backend.megatron.pkm_table_parallel: dp
         # mHC, 4 residual streams

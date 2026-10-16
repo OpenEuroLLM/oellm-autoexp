@@ -137,7 +137,8 @@ def dense130m():
     arm("engram", "Engram n-gram memory before blocks 2 and 8 (data-parallel tables)", {
         "aux.pattern": "*-N*-*-*-*-*-*-N*-*-*-*-*-", B + "engram_ngram_orders": [2, 3],
         B + "engram_table_parallel": "dp"})
-    arm("pkm", "product-key memory in place of 2 MLPs", {
+    # mbs 8 runs out of memory (one 12 GiB value gather); mbs 4 x 2 accumulation steps
+    arm("pkm", "product-key memory in place of 2 MLPs, mbs 4", {B + "micro_batch_size": 4}, {
         "aux.pattern": "*-*-*-*P*-*-*-*-*P*-*-*-", B + "pkm_table_parallel": "dp"})
     # ---- residual stream / norms / embeddings
     mhc = {B + "mhc": True, B + "mhc_expansion_rate": 4}
