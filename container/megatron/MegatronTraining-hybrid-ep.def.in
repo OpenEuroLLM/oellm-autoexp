@@ -1,0 +1,149 @@
+Bootstrap: localimage
+From: ${BASE_IMAGE}
+
+# Expert-parallel communication libraries on top of a built hybrid image
+# (MegatronTraining-hybrid.def.in), so they can be rebuilt or dropped without recompiling
+# that image:
+#   - DeepEP with HybridEP: the flex token dispatcher's `deepep` / `hybridep` backends
+#     (moe_token_dispatcher_type=flex, moe_flex_dispatcher_backend=...);
+#   - MoonEP (MoonshotAI): load-balanced EP via dynamically planned redundant experts;
+#   - UCCL-EP: DeepEP's Buffer API with GPU-initiated RDMA through a CPU proxy.
+# The `ncclep` backend (NCCL EP) is Transformer Engine's and comes with the base image;
+# %test reports whether its TE build ships it. MoonEP and UCCL-EP are not wired into
+# Megatron's dispatcher yet.
+#
+# Build:
+#   container/build_container.sh \
+#     --definition MegatronTraining-hybrid-ep \
+#     --base-image /path/to/MegatronTraining-hybrid_<arch>_<stamp>.sif \
+#     --output <container cache dir> --append-date
+#
+# Only shell forms that build_container.sh's envsubst leaves alone are used in %post:
+# literals, command substitutions, defaulted expansions and heredocs (envsubst blanks
+# any plain variable reference).
+
+%labels
+    Author OpenSci
+    Version 0.1.0
+    Base ${BASE_IMAGE}
+    Description Megatron hybrid-architecture image + EP communication libraries: DeepEP/HybridEP, MoonEP, UCCL-EP
+
+%environment
+    # HybridEP was built with its multi-node (RDMA) path; intra-node EP does not use it.
+    export HYBRID_EP_MULTINODE=1
+
+%files
+    ${REPO_ROOT}/submodules/Megatron-LM/docker/patches/deepep.patch /workspace/deepep.patch
+    ${PROVENANCE_PATH} /workspace/oellm-autoexp/provenance/container_provenance_ep.json
+
+%post
+set -e
+cd /workspace
+export TORCH_CUDA_ARCH_LIST="9.0;10.0"   # sm_90: H100/GH200, sm_100: B200/GB200
+export MAX_JOBS=${MAX_JOBS:-16}
+
+# ---------------------------------------------------------------------------
+# DeepEP with HybridEP, as Megatron-LM/docker/Dockerfile.ci.dev: the commit Megatron
+# v0.19 is tested with plus docker/patches/deepep.patch, NVSHMEM from its pip wheel, and
+# rdma-core / libibverbs for the multi-node HybridEP path. Upstream DeepEP before this
+# commit has no HybridEP (the JUPITER deepep-fa3 image uses the older `hybrid-ep`
+# branch for that reason).
+# ---------------------------------------------------------------------------
+apt-get update
+apt-get install -y --no-install-recommends --allow-change-held-packages \
+    rdma-core libibverbs-dev libnvidia-ml-dev
+mkdir -p /opt/rdma-core/build
+ln -sfn /usr/include /opt/rdma-core/build/include
+ln -sfn "/usr/lib/$(uname -m)-linux-gnu" /opt/rdma-core/build/lib
+test -f "/usr/lib/$(uname -m)-linux-gnu/libmlx5.so" || \
+    ln -sf "/usr/lib/$(uname -m)-linux-gnu/libmlx5.so.1" "/usr/lib/$(uname -m)-linux-gnu/libmlx5.so"
+
+python3 -m pip install --no-cache-dir "nvidia-nvshmem-cu13==3.4.5"
+# DeepEP links -l:libnvshmem_host.so (unversioned); the wheel ships only the soname.
+python3 - <<'PY'
+import os, nvidia.nvshmem
+lib = os.path.join(list(nvidia.nvshmem.__path__)[0], "lib")
+dst = os.path.join(lib, "libnvshmem_host.so")
+if not os.path.exists(dst):
+    os.symlink("libnvshmem_host.so.3", dst)
+PY
+
+git clone https://github.com/deepseek-ai/DeepEP.git /tmp/DeepEP
+cd /tmp/DeepEP
+git fetch origin de0dd1185142c727b9c118aeb4cc4702e34deeba
+git checkout FETCH_HEAD
+patch -p1 < /workspace/deepep.patch
+HYBRID_EP_MULTINODE=1 RDMA_CORE_HOME=/opt/rdma-core/build \
+    python3 -m pip install --no-cache-dir --no-build-isolation --no-deps -v .
+cd /workspace
+rm -rf /tmp/DeepEP /workspace/deepep.patch
+apt-get purge -y libnvidia-ml-dev
+apt-get autoremove -y
+rm -rf /var/lib/apt/lists/*
+
+# HybridEP JIT-compiles its kernels into <deep_ep>/build/jit at first use, which is
+# read-only in the squashfs image: point it at a writable tmpfs directory instead.
+python3 - <<'PY'
+import os, shutil, importlib.util
+pkg = os.path.dirname(importlib.util.find_spec("deep_ep").origin)
+build = os.path.join(pkg, "build")
+if os.path.islink(build) or os.path.isfile(build):
+    os.remove(build)
+elif os.path.isdir(build):
+    shutil.rmtree(build)
+os.symlink("/tmp/deep_ep_build", build)
+PY
+mkdir -p /.singularity.d/env
+cat > /.singularity.d/env/92-deepep-jit.sh << 'EOFJIT'
+#!/bin/bash
+mkdir -p /tmp/deep_ep_build/jit 2>/dev/null || true
+EOFJIT
+chmod +x /.singularity.d/env/92-deepep-jit.sh
+
+# ---------------------------------------------------------------------------
+# Further EP libraries, best effort (a failing build leaves the image usable).
+# ---------------------------------------------------------------------------
+# MoonEP: CUDA extension + CuTe DSL kernels, NVLink-only (VMM-mapped peer buffers), no
+# NVSHMEM. --no-deps: it pins nvidia-cutlass-dsl 4.6.2; the image's version (FA4,
+# cute_kernels) is kept.
+python3 -m pip install --no-cache-dir --no-build-isolation --no-deps \
+    "git+https://github.com/MoonshotAI/MoonEP.git@d86fda40329de4002e0cade6817df7b4b5512ee5" || \
+    echo "WARNING: MoonEP not installed"
+# UCCL-EP: its gain is across nodes (EFA, CX7 InfiniBand, Broadcom, AMD NICs).
+git clone --depth 1 https://github.com/uccl-project/uccl.git /tmp/uccl && \
+    (cd /tmp/uccl/ep && python3 setup.py install) || \
+    echo "WARNING: UCCL-EP not installed"
+rm -rf /tmp/uccl
+
+rm -rf /root/.cache 2>/dev/null || true
+python3 -m pip cache purge 2>/dev/null || true
+
+%runscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%startscript
+cd /workspace/oellm-autoexp
+exec "$@"
+
+%test
+python - <<'PY'
+import importlib.metadata as m
+import deep_ep
+from deep_ep import Buffer, HybridEPBuffer  # the flex dispatcher's deepep / hybridep backends
+try:
+    print("deep_ep", m.version("deep_ep"))
+except m.PackageNotFoundError:
+    print("deep_ep (version unknown)")
+for name, mod in (("ncclep (TE NCCL EP)", "transformer_engine.pytorch.ep"),
+                  ("MoonEP", "moonep"), ("UCCL-EP", "uccl.ep")):
+    try:  # optional EP libraries: report, do not fail
+        __import__(mod)
+        print(name, "available")
+    except Exception as e:
+        print(name, "not available:", type(e).__name__, e)
+PY
+
+%help
+    MegatronTraining-hybrid plus DeepEP/HybridEP, MoonEP and UCCL-EP. Select a backend with
+    moe_token_dispatcher_type=flex and moe_flex_dispatcher_backend=deepep|hybridep|ncclep.
