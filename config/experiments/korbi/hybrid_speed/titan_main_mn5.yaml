@@ -5,9 +5,8 @@
 # FineWeb-10BT gpt-neox tokens, 4 GPUs x 8 x 4096 tokens per step).
 # (titan_dense_mn5.yaml is the older titan-oellm / torchtitan 0.2.1 stack.)
 #
-# torchtitan main needs a PyTorch nightly: the hybrid-ep image's Python with a nightly
-# environment first on PYTHONPATH ($HYBRID_ENV/pylibs_titan_main: torch 2.16 dev + the
-# torchtitan requirements, copied from a local uv venv). The Megatron twin on the same
+# torchtitan main needs a PyTorch nightly: the TitanTraining-main image (aux.image=sif), or
+# the hybrid-ep image + a nightly environment on PYTHONPATH (aux.image=venv). The Megatron twin on the same
 # data: speed_130M_mn5 arms dense_fineweb / dense_fineweb_mbs16.
 #
 #   scripts/korbi/mn5_autoexp_bg.sh titan scripts/run_autoexp.py \
@@ -24,8 +23,18 @@ aux:
   suite: t4
   arm: dense130m
   hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
-  sif: MegatronTraining-hybrid-ep_x86_64_202610161948.sif
   steps: 100
+  # sif: the torchtitan image (container/titan/TitanTraining-main.def.in: NGC 26.09 + torch
+  # nightly venv, DeepEP/HybridEP, MoonEP, causal_conv1d, TileLang); venv: the hybrid-ep
+  # image + the nightly environment copied to $HYBRID_ENV/pylibs_titan_main (interim)
+  image: sif
+  images:
+    sif:
+      sif: TitanTraining-main_x86_64_202610170146.sif
+      pythonpath: ".:submodules/torchtitan"
+    venv:
+      sif: MegatronTraining-hybrid-ep_x86_64_202610161948.sif
+      pythonpath: ".:submodules/torchtitan:${aux.hybrid_env}/pylibs_titan_main"
 
 backend:
   command: >-
@@ -33,9 +42,10 @@ backend:
     --role rank --tee 3 -m torchtitan.train --module oellm_autoexp.titan_recipes.hybrid_speed
     --config ${aux.arm} --output-dir ${job.base_output_dir}/out
   env:
-    PYTHONPATH: ".:submodules/torchtitan:${aux.hybrid_env}/pylibs_titan_main"
-    # NGC puts its own torch's lib directory first on LD_LIBRARY_PATH, which would make the
-    # nightly load the image's libtorch (LD_LIBRARY_PATH beats RUNPATH): the driver paths only
+    PYTHONPATH: ${aux.images.${aux.image}.pythonpath}
+    # NGC puts its own torch's lib directory first on LD_LIBRARY_PATH, which would make a
+    # nightly load the image's libtorch (LD_LIBRARY_PATH beats RUNPATH): driver paths only
+    # (the nightly finds its CUDA libraries through its wheels' RUNPATH)
     LD_LIBRARY_PATH: "/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/.singularity.d/libs"
     TITAN_STEPS: "${aux.steps}"
     PYTORCH_ALLOC_CONF: "expandable_segments:True"
@@ -60,7 +70,7 @@ slurm:
 stage: speed
 
 container:
-  image: ${aux.hybrid_env}/container/${aux.sif}
+  image: ${aux.hybrid_env}/container/${aux.images.${aux.image}.sif}
 
 # titan's speed defaults (FSDP2, CUDA graphs, compiled RoPE / SwiGLU / loss, varlen
 # attention) and one knob each
