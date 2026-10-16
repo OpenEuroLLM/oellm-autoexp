@@ -1,0 +1,121 @@
+# @package _global_
+# Qwen3-30B-A3B throughput benchmark on MareNostrum 5 (H100 64 GB): tensor parallel + sequence parallel, no recompute.
+# BF16, TP4 or TP2 + SP + tp_comm_overlap / PP4 with the balanced layout / EP4. Fits in 64 GB without recompute,
+# but 2times slower than the TP1 + full recompute config. 8 nodes:
+#   TP4 + SP, MBS 2: 96.4 TFLOP/s/GPU;  TP2 + SP, MBS 1: 97.4 TFLOP/s/GPU (Taskboard #211).
+# Larger MBS (TP4 MBS 4, TP2 MBS 2) runs out of memory inside NCCL.
+defaults:
+  - ../base
+  - /backend: megatron_torchrun
+  - /container: marenostrum_nemo260801
+  - /slurm: marenostrum
+  - /backend/megatron: [base,qwen3_moe_30BA3B_v019,data_mn5_256k]
+  - /sweep: none
+  - _self_
+
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - { slurm.sbatch.nodes: 8 }
+    - type: list
+      configs:
+        - { backend.megatron.tensor_model_parallel_size: 4, backend.megatron.micro_batch_size: 2 }
+        - { backend.megatron.tensor_model_parallel_size: 2, backend.megatron.micro_batch_size: 1 }
+
+backend:
+  megatron:
+    micro_batch_size: 2
+# --- benchmark length / schedule ---
+    train_iters: 15
+    global_batch_size: 4096
+    seq_length: 4096
+    max_position_embeddings: 4096
+    lr: 3.0e-4
+    min_lr: 3.0e-5
+    lr_decay_style: cosine
+    eval_iters: 0
+    eval_interval: 1000
+    save: null
+    log_interval: 1
+    timing_log_level: 1
+    wandb_project: qwen3-30B-A3B-scaling-mn5
+
+    # --- MoE: flex dispatcher with HybridEP (intra-node, so EP x ETP <= 4) ---
+    expert_model_parallel_size: 4
+    expert_tensor_parallel_size: 1
+    moe_token_dispatcher_type: "flex"
+    moe_flex_dispatcher_backend: "hybridep"
+    moe_hybridep_num_sms: 16          # deprecated name, but the base config sets it (0), so it must be overridden here
+    moe_grouped_gemm: true
+    moe_permute_fusion: true
+    moe_router_fusion: true
+    moe_router_dtype: fp32
+    moe_router_topk: 8
+    moe_router_load_balancing_type: aux_loss
+    moe_router_force_load_balancing: true    # benchmark only: perfect routing balance
+
+    # --- distributed optimizer / overlap ---
+    use_distributed_optimizer: true
+    overlap_grad_reduce: true
+    overlap_param_gather: true
+    overlap_p2p_comm: true
+    optimizer_cpu_offload: false
+    use_precision_aware_optimizer: false
+
+    # --- fused cross-entropy ---
+    cross_entropy_fusion_impl: te     # run apply_megatron_te_cross_entropy_patch.sh first
+
+    # --- misc ---
+    use_gloo_process_groups: false
+    rerun_mode: disabled
+    check_for_nan_in_loss_and_grad: false
+    yarn_correction_range_round_to_int: false
+    distributed_timeout_minutes: 30
+    num_workers: 8
+    create_attention_mask_in_dataloader: false
+    mmap_bin_files: false
+    manual_gc: true
+    manual_gc_interval: 10
+
+    # --- parallelism: TP + SP (set by the sweep), PP4 with the balanced layout ---
+    tensor_model_parallel_size: 4
+    sequence_parallel: true
+    tp_comm_overlap: true
+    pipeline_model_parallel_size: 4
+    pipeline_model_parallel_layout: "Et\\*7\\|t\\*7\\|t\\*7\\|t\\*6\\|t\\*7\\|t\\*7\\|t\\*6\\|t\\*1L"   # 7+7+7+6+7+7+6+1 = 48 layers
+    num_layers_per_virtual_pipeline_stage: null
+
+    # --- precision ---
+    fp8: null
+    fp8_param_gather: false
+
+    # --- memory: no recompute ---
+    recompute_granularity: null
+    recompute_method: null
+    recompute_num_layers: null
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_CACHE: ${oc.env:HF_HOME}/transformers
+    HUGGINGFACE_HUB_CACHE: ${oc.env:HF_HOME}/hub
+    HF_HOME: ${oc.env:HF_HOME}
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"   # required by Megatron with TP > 1
+    UB_SKIPMC: "1"                     # required with TP > 1
+    PYTHONPATH: ".:submodules/Megatron-LM:/opt/"
+    TRITON_LIBCUDA_PATH: "/opt/nvidia/lib"
+    PATH: "/opt/venv/bin:/usr/local/bin:/usr/bin:/bin"   # NeMo env (TE 2.18), not the system python (TE 2.16)
+    PYTHONUNBUFFERED: "1"
+    OMP_NUM_THREADS: "1"
+  torchrun_args:
+    numa_binding: node
+
+slurm:
+  sbatch:
+    time: "01:00:00"
+  env:
+    TORCHINDUCTOR_CACHE_DIR: "${oc.env:TORCHINDUCTOR_CACHE_DIR,${oc.env:OUTPUT_DIR}/torch_inductor_cache}"   # torch.compile/Triton cache
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+
+job:
+  name: qwen30BA3B_mn5_bf16_tp${backend.megatron.tensor_model_parallel_size}_sp_layout_norecompute_mbs${backend.megatron.micro_batch_size}_gbs${backend.megatron.global_batch_size}_${slurm.sbatch.nodes}n_${now:%Y%m%d_%H%M%S}
