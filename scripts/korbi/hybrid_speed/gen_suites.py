@@ -108,8 +108,12 @@ def dense130m():
     for ck in (64, 256):  # SSD chunk size (default 128)
         arm(f"mamba2_ck{ck}", f"Mamba2, chunk {ck}", mamba, {B + "mamba_chunk_size": ck})
     arm("gdn_native", "Megatron's native Gated DeltaNet", {"aux.pattern": h3("G")})
-    for v in ["gated_delta_net", "mlstm", "kda", "signed_kda", "complex_kda"]:
+    for v in ["gated_delta_net", "mlstm", "kda", "complex_kda"]:
         arm(v, f"linear mixer {v}", lin(v))
+    # torch.compile of the FLA layer fuses signed_kda's sign glue (0.57 -> 0.66 of dense);
+    # kda / complex_kda / kda_xsa do not gain from it
+    arm("signed_kda", "linear mixer signed_kda, compiled layer", lin("signed_kda"),
+        {B + "linear_fla_torch_compile": True})
     arm("kda_xsa", "KDA with exclusive self attention", lin("kda"), {B + "linear_xsa": True})
     for ck in (64, 256):  # chunkwise mLSTM (default 128)
         arm(f"mlstm_ck{ck}", f"mLSTM, chunk {ck}", lin("mlstm"), {B + "mlstm_chunk_size": ck})
