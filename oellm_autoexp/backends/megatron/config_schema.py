@@ -1308,6 +1308,10 @@ class MegatronConfig(ConfigInterface):
     # The dimensionality of the heads in the Mamba layers.
     mamba_head_dim: int = 64
 
+    # Chunk size of the Mamba2 SSD kernel (None: the mixer's default, 128). The chunk splits
+    # the work between the quadratic intra-chunk part and the inter-chunk state recurrence.
+    mamba_chunk_size: int | None = None
+
     # The number of groups used in Mamba layers.
     mamba_num_groups: int = 8
 

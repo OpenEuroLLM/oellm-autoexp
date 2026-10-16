@@ -103,10 +103,16 @@ def dense130m():
     arm("mamba2", "Mamba2 (24 heads of 64, state 128)", {
         "aux.pattern": h3("M"), B + "mamba_num_heads": 24, B + "mamba_head_dim": 64,
         B + "mamba_num_groups": 8, B + "mamba_state_dim": 128})
+    mamba = {"aux.pattern": h3("M"), B + "mamba_num_heads": 24, B + "mamba_head_dim": 64,
+             B + "mamba_num_groups": 8, B + "mamba_state_dim": 128}
+    for ck in (64, 256):  # SSD chunk size (default 128)
+        arm(f"mamba2_ck{ck}", f"Mamba2, chunk {ck}", mamba, {B + "mamba_chunk_size": ck})
     arm("gdn_native", "Megatron's native Gated DeltaNet", {"aux.pattern": h3("G")})
     for v in ["gated_delta_net", "mlstm", "kda", "signed_kda", "complex_kda"]:
         arm(v, f"linear mixer {v}", lin(v))
     arm("kda_xsa", "KDA with exclusive self attention", lin("kda"), {B + "linear_xsa": True})
+    for ck in (64, 256):  # chunkwise mLSTM (default 128)
+        arm(f"mlstm_ck{ck}", f"mLSTM, chunk {ck}", lin("mlstm"), {B + "mlstm_chunk_size": ck})
     tri128 = {B + "linear_key_head_dim": 128, B + "linear_value_head_dim": 128,
               B + "linear_num_key_heads": 6, B + "linear_num_value_heads": 6}
     arm("kda_hd128", "KDA, 6 heads of 128 (the triadic arms at E=1)", lin("kda"), tri128)
@@ -121,6 +127,9 @@ def dense130m():
     # more); mbs 4 with 2 accumulation steps keeps the tokens per step.
     arm("power", "power retention deg 2 (Triton baseline), mbs 4", lin("power"),
         {B + "micro_batch_size": 4})
+    for ck in (64, 256):  # chunked power retention (default 128)
+        arm(f"power_ck{ck}", f"power retention, chunk {ck}, mbs 4", lin("power"),
+            {B + "micro_batch_size": 4, B + "linear_power_chunk_size": ck})
     # ---- token mixing / memory layers added to the dense stack
     arm("shortconv", "ShortConv before every attention", {"aux.pattern": "C*-" * 12})
     arm("canon", "Canon layers ABCD", {B + "canon_layers": "ABCD"}, noqknr)

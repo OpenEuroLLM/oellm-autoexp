@@ -4022,6 +4022,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "mamba_chunk_size": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="Chunk size of the Mamba2 SSD kernel (None: the mixer's default, 128). The chunk splits the work between the quadratic intra-chunk part and the inter-chunk state recurrence.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "mamba_head_dim": MegatronArgMetadata(
         arg_type=int,
         default=64,
@@ -11270,6 +11278,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=128,
+    ),
+    "mamba_chunk_size": MegatronActionSpec(
+        option_strings=("--mamba-chunk-size",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "mamba_head_dim": MegatronActionSpec(
         option_strings=("--mamba-head-dim",),

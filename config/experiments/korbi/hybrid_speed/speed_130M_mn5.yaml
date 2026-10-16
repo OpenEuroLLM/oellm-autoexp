@@ -202,6 +202,22 @@ sweep:
           backend.megatron.mamba_head_dim: 64
           backend.megatron.mamba_num_groups: 8
           backend.megatron.mamba_state_dim: 128
+        # Mamba2, chunk 64
+        - aux.arm: mamba2_ck64
+          aux.pattern: M-M-M-*-M-M-M-*-M-M-M-*-
+          backend.megatron.mamba_num_heads: 24
+          backend.megatron.mamba_head_dim: 64
+          backend.megatron.mamba_num_groups: 8
+          backend.megatron.mamba_state_dim: 128
+          backend.megatron.mamba_chunk_size: 64
+        # Mamba2, chunk 256
+        - aux.arm: mamba2_ck256
+          aux.pattern: M-M-M-*-M-M-M-*-M-M-M-*-
+          backend.megatron.mamba_num_heads: 24
+          backend.megatron.mamba_head_dim: 64
+          backend.megatron.mamba_num_groups: 8
+          backend.megatron.mamba_state_dim: 128
+          backend.megatron.mamba_chunk_size: 256
         # Megatron's native Gated DeltaNet
         - aux.arm: gdn_native
           aux.pattern: G-G-G-*-G-G-G-*-G-G-G-*-
@@ -230,6 +246,16 @@ sweep:
           aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-
           backend.megatron.experimental_attention_variant: kda
           backend.megatron.linear_xsa: true
+        # mLSTM, chunk 64
+        - aux.arm: mlstm_ck64
+          aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-
+          backend.megatron.experimental_attention_variant: mlstm
+          backend.megatron.mlstm_chunk_size: 64
+        # mLSTM, chunk 256
+        - aux.arm: mlstm_ck256
+          aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-
+          backend.megatron.experimental_attention_variant: mlstm
+          backend.megatron.mlstm_chunk_size: 256
         # KDA, 6 heads of 128 (the triadic arms at E=1)
         - aux.arm: kda_hd128
           aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-
@@ -274,6 +300,18 @@ sweep:
           aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-
           backend.megatron.experimental_attention_variant: power
           backend.megatron.micro_batch_size: 4
+        # power retention, chunk 64, mbs 4
+        - aux.arm: power_ck64
+          aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-
+          backend.megatron.experimental_attention_variant: power
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.linear_power_chunk_size: 64
+        # power retention, chunk 256, mbs 4
+        - aux.arm: power_ck256
+          aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-
+          backend.megatron.experimental_attention_variant: power
+          backend.megatron.micro_batch_size: 4
+          backend.megatron.linear_power_chunk_size: 256
         # ShortConv before every attention
         - aux.arm: shortconv
           aux.pattern: C*-C*-C*-C*-C*-C*-C*-C*-C*-C*-C*-C*-
