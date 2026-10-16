@@ -8,8 +8,9 @@
 #       --config-name experiments/korbi/hybrid_speed/speed_130M_mn5 --yes
 set -euo pipefail
 R=${R:-/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
-# Runs go to scratch (configs place them under $OUTPUT_DIR; unset, they land in /gpfs/projects).
-export OUTPUT_DIR=${OUTPUT_DIR:-/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp}
+# Runs go to scratch: configs place them under $OUTPUT_DIR, which the account's .bashrc points
+# at $PROJECT/outputs. Override with HYBRID_OUTPUT_DIR.
+export OUTPUT_DIR=${HYBRID_OUTPUT_DIR:-/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp}
 cd "$(dirname "$0")/../.."
 export PYTHONPATH=.${PYTHONPATH:+:$PYTHONPATH}
 exec "$R/autoexp_env/bin/python" "$@"
