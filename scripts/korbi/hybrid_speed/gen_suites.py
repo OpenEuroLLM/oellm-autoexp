@@ -71,7 +71,10 @@ def dense130m():
         {B + "linear_triadic_base": "kda", B + "linear_triadic_e": 4})
     arm("tri_ckda_e4", "triadic CKDA E=4 (6 heads of 128)", lin("triadic"), tri128,
         {B + "linear_triadic_base": "ckda", B + "linear_triadic_e": 4})
-    arm("power", "power retention deg 2 (Triton baseline)", lin("power"))
+    # mbs 8 x 4096 runs out of memory (the expanded deg-2 state: 41.7 GiB allocated + 6 GiB
+    # more); mbs 4 with 2 accumulation steps keeps the tokens per step.
+    arm("power", "power retention deg 2 (Triton baseline), mbs 4", lin("power"),
+        {B + "micro_batch_size": 4})
     # ---- token mixing / memory layers added to the dense stack
     arm("shortconv", "ShortConv before every attention", {"aux.pattern": "C*-" * 12})
     arm("canon", "Canon layers ABCD", {B + "canon_layers": "ABCD"})

@@ -144,10 +144,11 @@ sweep:
           backend.megatron.linear_num_value_heads: 6
           backend.megatron.linear_triadic_base: ckda
           backend.megatron.linear_triadic_e: 4
-        # power retention deg 2 (Triton baseline)
+        # power retention deg 2 (Triton baseline), mbs 4
         - aux.arm: power
           aux.pattern: L-L-L-*-L-L-L-*-L-L-L-*-
           backend.megatron.experimental_attention_variant: power
+          backend.megatron.micro_batch_size: 4
         # ShortConv before every attention
         - aux.arm: shortconv
           aux.pattern: C*-C*-C*-C*-C*-C*-C*-C*-C*-C*-C*-C*-
