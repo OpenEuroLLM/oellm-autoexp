@@ -117,7 +117,8 @@ stage: speed
 container:
   image: ${aux.hybrid_env}/container/${aux.sif}
 
-# FSDP (titan's default) vs DDP (as Megatron's DP + distributed optimizer), compile on/off
+# FSDP (titan's default) vs DDP (as Megatron's DP + distributed optimizer), compile on/off,
+# reshard-after-forward off, local batch 16. (torchtitan 0.2.1 has no CUDA-graph path.)
 sweep:
   type: list
   groups:
@@ -127,3 +128,10 @@ sweep:
         - {aux.arm: ddp_compile, backend.titan.parallelism.data_parallel_replicate_degree: 4,
            backend.titan.parallelism.data_parallel_shard_degree: 1}
         - {aux.arm: fsdp_eager, backend.titan.compile.enable: false}
+        # parameters kept unsharded between forward and backward (no backward all-gather)
+        - {aux.arm: fsdp_compile_noreshard, backend.titan.parallelism.fsdp_reshard_after_forward: never}
+        # local batch 16 (Megatron's best: mbs 16)
+        - {aux.arm: fsdp_compile_lbs16, backend.titan.training.local_batch_size: 16,
+           backend.titan.training.global_batch_size: 64}
+        - {aux.arm: fsdp_compile_noreshard_lbs16, backend.titan.parallelism.fsdp_reshard_after_forward: never,
+           backend.titan.training.local_batch_size: 16, backend.titan.training.global_batch_size: 64}
