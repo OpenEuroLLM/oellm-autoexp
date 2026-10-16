@@ -85,9 +85,9 @@ def dense130m():
     arm("nope", "no positional encoding", {B + "position_embedding_type": "none"}, noqknr)
     arm("gqa4", "grouped-query attention, 4 kv heads", {B + "num_query_groups": 4})
     arm("xsa", "exclusive self attention", {B + "exclusive_self_attention": True})
-    arm("gate", "sigmoid output gate", {B + "attention_output_gate": True}, noqknr)
+    arm("gate", "sigmoid output gate", {B + "attention_output_gate": True})
     arm("xsa_gate", "XSA + output gate",
-        {B + "exclusive_self_attention": True, B + "attention_output_gate": True}, noqknr)
+        {B + "exclusive_self_attention": True, B + "attention_output_gate": True})
     arm("swa3", "3:1 sliding-window (1024) : global",
         {"aux.pattern": h3("W"), B + "window_size": "1023,0"})
     mla = {B + "multi_latent_attention": True, B + "q_lora_rank": 384, B + "kv_lora_rank": 256,
