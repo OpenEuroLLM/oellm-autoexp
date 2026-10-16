@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import re
 import time
 from pathlib import Path
 
@@ -21,6 +22,9 @@ from speed_table import markdown, table  # noqa: E402  (same directory)
 
 REFERENCES = {"dense130M": "dense", "moe50M500M": "moe"}
 FAMILIES = tuple(REFERENCES)
+# Suites measuring something other than the single-node DP-4 setup (parallelism checks,
+# checkpoint save / resume, context parallel): per-suite tables only, never "latest".
+OFF_SETUP = re.compile(r"^(par\d*|ck\d*)_|cp\d")
 
 
 def _family(suite_dir: Path) -> str | None:
@@ -50,6 +54,8 @@ def latest(suites: dict, reference: str) -> list[dict]:
     but is noted)."""
     best: dict = {}
     for suite, rows in suites.items():
+        if OFF_SETUP.search(suite):
+            continue
         for row in rows:
             row = {**row, "suite": suite}
             arm = row["arm"]
@@ -70,7 +76,9 @@ def latest(suites: dict, reference: str) -> list[dict]:
             if r.get("tok_s_gpu") and ref.get("tok_s_gpu"):
                 r["tok_rel"] = r["tok_s_gpu"] / ref["tok_s_gpu"]
     order: dict = {}
-    for suite_rows in suites.values():  # the order of the arms in the suites
+    for suite, suite_rows in suites.items():  # the order of the arms in the suites
+        if OFF_SETUP.search(suite):
+            continue
         for row in suite_rows:
             order.setdefault(row["arm"], len(order))
     return sorted(rows, key=lambda r: (order.get(r["arm"], 1e9), r["arm"]))
