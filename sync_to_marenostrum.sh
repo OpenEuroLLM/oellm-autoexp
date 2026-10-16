@@ -29,7 +29,7 @@ echo "$STAMP" > SYNC_STAMP
 rsync -a --delete --stats \
     --exclude .git --exclude __pycache__ --exclude '*.pyc' --exclude .pytest_cache \
     --exclude dump/ --exclude outputs/ --exclude monitor_state --exclude '*.sif' \
-    --exclude 'build/' --exclude '*.egg-info' \
+    --exclude 'build/' --exclude '*.egg-info' --exclude .venv --exclude .local_pydeps \
     ./ "$HOST:$DEST/" 2>&1 | grep -E '^(Number of (created|deleted|regular) files|Total transferred file size)' || true
 
 echo "synced to $HOST:$DEST"
