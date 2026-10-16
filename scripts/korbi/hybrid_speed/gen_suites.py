@@ -51,8 +51,6 @@ def dense130m():
     arm("base_liger_nocg", "Liger CE without CUDA graphs", liger, {B + "cuda_graph_impl": "none"})
     arm("base_liger_nodistopt", "Liger CE, plain all-reduce instead of the distributed optimizer",
         liger, {B + "use_distributed_optimizer": False, B + "overlap_param_gather": False})
-    arm("base_liger_teact", "Liger CE + TE's fused SwiGLU (instead of Megatron's)", liger,
-        {B + "use_te_activation_func": True, B + "bias_swiglu_fusion": False})
     nomask = {B + "create_attention_mask_in_dataloader": False}
     arm("base_liger_nomask", "Liger CE, no dense attention mask from the dataloader", liger, nomask)
     arm("base_liger_nomask_mbs16_nocg", "Liger CE, no mask, mbs 16, no CUDA graphs", liger,
@@ -70,6 +68,14 @@ def dense130m():
         {B + "use_transformer_engine_op_fuser": True})
     arm("base_qknr_resnorm", "Liger, no mask, fused q/k norm + RoPE, fused residual norm",
         liger, nomask, qknr, {B + "fused_residual_rmsnorm": True})
+    best = {**liger, **nomask, **qknr, B + "fused_residual_rmsnorm": True}
+    arm("base_best", "best stack so far: Liger, no mask, fused q/k norm + RoPE, residual norm",
+        best)
+    arm("base_best_mbs16_nocg", "best stack, mbs 16 (gbs 64), no CUDA graphs", best,
+        {B + "micro_batch_size": 16, B + "global_batch_size": 64, B + "cuda_graph_impl": "none"})
+    arm("base_best_hd128", "best stack with 6 heads of 128 (architecture change: attention "
+        "kernels at head dim 128)", best, {B + "num_attention_heads": 6, B + "num_query_groups": 6,
+                                           B + "kv_channels": 128})
     arm("base_fp8", "FP8 (hybrid, delayed scaling as the 32B runs)",
         {B + "fp8": "hybrid", B + "fp8_amax_compute_algo": "max",
          B + "fp8_amax_history_len": 1024})

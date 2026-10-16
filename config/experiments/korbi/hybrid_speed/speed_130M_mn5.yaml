@@ -57,12 +57,6 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
           backend.megatron.use_distributed_optimizer: false
           backend.megatron.overlap_param_gather: false
-        # Liger CE + TE's fused SwiGLU (instead of Megatron's)
-        - aux.arm: base_liger_teact
-          backend.megatron.liger_fused_linear_cross_entropy: true
-          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
-          backend.megatron.use_te_activation_func: true
-          backend.megatron.bias_swiglu_fusion: false
         # Liger CE, no dense attention mask from the dataloader
         - aux.arm: base_liger_nomask
           backend.megatron.liger_fused_linear_cross_entropy: true
@@ -111,6 +105,33 @@ sweep:
           backend.megatron.create_attention_mask_in_dataloader: false
           backend.megatron.fused_qk_norm_rope: true
           backend.megatron.fused_residual_rmsnorm: true
+        # best stack so far: Liger, no mask, fused q/k norm + RoPE, residual norm
+        - aux.arm: base_best
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.create_attention_mask_in_dataloader: false
+          backend.megatron.fused_qk_norm_rope: true
+          backend.megatron.fused_residual_rmsnorm: true
+        # best stack, mbs 16 (gbs 64), no CUDA graphs
+        - aux.arm: base_best_mbs16_nocg
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.create_attention_mask_in_dataloader: false
+          backend.megatron.fused_qk_norm_rope: true
+          backend.megatron.fused_residual_rmsnorm: true
+          backend.megatron.micro_batch_size: 16
+          backend.megatron.global_batch_size: 64
+          backend.megatron.cuda_graph_impl: none
+        # best stack with 6 heads of 128 (architecture change: attention kernels at head dim 128)
+        - aux.arm: base_best_hd128
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.create_attention_mask_in_dataloader: false
+          backend.megatron.fused_qk_norm_rope: true
+          backend.megatron.fused_residual_rmsnorm: true
+          backend.megatron.num_attention_heads: 6
+          backend.megatron.num_query_groups: 6
+          backend.megatron.kv_channels: 128
         # FP8 (hybrid, delayed scaling as the 32B runs)
         - aux.arm: base_fp8
           backend.megatron.fp8: hybrid
