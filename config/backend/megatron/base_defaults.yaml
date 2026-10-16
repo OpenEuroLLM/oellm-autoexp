@@ -440,7 +440,7 @@ linear_key_head_dim: 128  # Query and key head dimension for the gated delta net
 linear_num_key_heads: 16  # Number of query and key heads for the gated delta net.
 linear_num_value_heads: 32  # Number of value and gate heads for the gated delta net.
 linear_output_gate: lowrank  # choices: ['lowrank', 'linear'] | Shape of the output gate, for complex_kda. ``"lowrank"`` factorises it through a bottleneck; ``"linear"`` is a single projection. This changes the parameter count, so it is part of what a parameter-matched comparison has to hold fixed.
-linear_power_attention_impl: flex  # Power retention's quadratic form: "flex" (FlexAttention with the deg-th power and the gate as a score_mod: no [T, T] weights) or "retention" (the package's Triton kernel).
+linear_power_attention_impl: retention  # Power retention's quadratic form: "retention" (the package's Triton kernel) or "flex" (FlexAttention with the deg-th power and the gate as a score_mod; 1.5-1.7x slower than retention's kernel on H100 at head dim 64-256, bench_power.py).
 linear_power_chunk_size: 256  # Power retention: the chunk size of the chunked algorithm (256: 15% faster than 128 on H100 at head dim 64, the speed suite's chunk sweep).
 linear_power_deg: 2  # Power retention (variant "power", megatron/core/ssm/power_retention.py): the even degree of the (q . k)^deg similarity; the state per head is binom(d+deg-1, deg) x (d+1). The public Triton kernels (the baseline) implement deg = 2.
 linear_power_rope: false  # Power retention: rotary embeddings on q / k (the reference model's choice); off = NoPE.

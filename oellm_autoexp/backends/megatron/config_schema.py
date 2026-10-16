@@ -529,9 +529,10 @@ class MegatronConfig(ConfigInterface):
     # 7x (128) faster than the best chunk size on H100 (bench_power.py); 0: always chunked.
     linear_power_switch_over_seq_len: int = 8192
 
-    # Power retention's quadratic form: "flex" (FlexAttention with the deg-th power and the
-    # gate as a score_mod: no [T, T] weights) or "retention" (the package's Triton kernel).
-    linear_power_attention_impl: str = "flex"
+    # Power retention's quadratic form: "retention" (the package's Triton kernel) or "flex"
+    # (FlexAttention with the deg-th power and the gate as a score_mod; 1.5-1.7x slower than
+    # retention's kernel on H100 at head dim 64-256, bench_power.py).
+    linear_power_attention_impl: str = "retention"
 
     # Power retention: rotary embeddings on q / k (the reference model's choice); off = NoPE.
     linear_power_rope: bool = False

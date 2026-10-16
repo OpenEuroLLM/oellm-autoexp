@@ -19,3 +19,6 @@
 	path = submodules/cute_kernels
 	url = git@github.com:OpenEuroLLM/cute_kernels.git
 	branch = main
+[submodule "submodules/torchtitan"]
+	path = submodules/torchtitan
+	url = https://github.com/pytorch/torchtitan.git
