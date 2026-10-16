@@ -8,7 +8,7 @@ markdown report restricted to:
     have downstream numbers at all (stable-branch rows exist in the CSV but
     carry no task scores by construction).
   * the **dclm-core-22** task set, taken from
-    ``submodules/oellm_evals/oellm/resources/task-groups.yaml`` rather than
+    ``submodules/oellm-eval/oellm/resources/task-groups.yaml`` rather than
     inferred from which columns happen to be populated -- so a task that failed
     everywhere shows up as an empty column instead of silently vanishing.
 
@@ -52,7 +52,7 @@ def dclm_task_columns() -> list[str]:
     """The dclm-core-22 task@Nshot keys, from the authoritative group yaml."""
     import yaml
 
-    y = _REPO / "submodules/oellm_evals/oellm/resources/task-groups.yaml"
+    y = _REPO / "submodules/oellm-eval/oellm/resources/task-groups.yaml"
     doc = yaml.safe_load(y.read_text())
     grp = None
     for k, v in doc.items():

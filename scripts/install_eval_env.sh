@@ -3,12 +3,12 @@
 # the current cluster. The install path depends on the cluster:
 #
 #   juwels    -> uv venv at $OELLM_EVAL_VENV (default ~/work/eval_venv)
-#                pip install -e oellm_evals[eval]   (pulls torch from PyPI)
+#                pip install -e oellm-eval[eval]   (pulls torch from PyPI)
 #   jupiter   -> uv venv at $OELLM_EVAL_VENV (default ~/work/venv)
-#                pip install -e oellm_evals[eval]
-#   leonardo  -> pip install --user -e oellm_evals[eval-base] inside
+#                pip install -e oellm-eval[eval]
+#   leonardo  -> pip install --user -e oellm-eval[eval-base] inside
 #                eval_env-leonardo.sif (container ships torch + transformers)
-#   lumi      -> pip install --target $HOME/eval_local -e oellm_evals[eval-base]
+#   lumi      -> pip install --target $HOME/eval_local -e oellm-eval[eval-base]
 #                inside laif-rocm-….sif (container ships rocm torch)
 #
 # The `[eval]` / `[eval-base]` extras are declared in
@@ -83,7 +83,7 @@ case "$CLUSTER" in
                 -e '$OELLM_EVALS_DIR[eval-base]' -e '$AUTOEXP_DIR' \
                 'compoconf>=0.3.1'
         "
-        # oellm-evals's local mode needs *some* venv path to `source activate`;
+        # oellm-eval's local mode needs *some* venv path to `source activate`;
         # the container is already activated, so point at an empty stub.
         if [[ ! -f "$HOME/eval_venv_stub/bin/activate" ]]; then
             mkdir -p "$HOME/eval_venv_stub/bin"
