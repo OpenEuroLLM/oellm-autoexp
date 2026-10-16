@@ -122,12 +122,18 @@ def _collect_git_metadata(repo_root: Path) -> dict[str, str | bool]:
     status = _run(["git", "status", "--porcelain"])
     dirty = bool(status)
     diff = _run(["git", "diff"]) if dirty else ""
-    return {
+    meta = {
         "commit": commit,
         "dirty": dirty,
         "status": status,
         "diff": diff,
     }
+    # A checkout mirrored without .git (sync_to_marenostrum.sh) carries the commits and
+    # the hash of the uncommitted diff of every repo in SYNC_STAMP.
+    stamp = repo_root / "SYNC_STAMP"
+    if stamp.is_file():
+        meta["sync_stamp"] = stamp.read_text()
+    return meta
 
 
 def _sanitize_env() -> dict[str, str]:

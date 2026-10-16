@@ -41,4 +41,4 @@ else
     diff <(echo "$remote") <(echo "$STAMP") >&2
     exit 1
 fi
-rm -f SYNC_STAMP
+rm -f SYNC_STAMP   # the copy keeps it: run_autoexp.py records it as provenance
