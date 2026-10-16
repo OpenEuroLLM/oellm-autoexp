@@ -15,7 +15,7 @@ export CC=${CC:-gcc} CXX=${CXX:-g++}
 status=0
 if [ -n "${1:-}" ]; then
     python -m torch.distributed.run --standalone --nproc-per-node 1 \
-        -m pytest -p no:cacheprovider -W ignore -q -rfE $1 || status=$?
+        -m pytest -p no:cacheprovider -o addopts="" -W ignore -q -rfE $1 || status=$?
 fi
 if [ -n "${2:-}" ]; then
     (cd "$ROOT" && bash -c "$2") || status=$?
