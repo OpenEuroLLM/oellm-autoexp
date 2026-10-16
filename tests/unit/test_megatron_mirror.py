@@ -190,3 +190,52 @@ def test_base_defaults_is_generated_from_checked_out_megatron(tmp_path):
     assert out.read_text() == BASE_DEFAULTS.read_text(), (
         f"base_defaults.yaml is stale; {REGENERATE}"
     )
+
+
+@pytest.mark.skipif(not _megatron_importable(), reason="needs torch and the Megatron-LM submodule")
+def test_schema_and_cli_metadata_are_generated_from_checked_out_megatron(tmp_path):
+    """config_schema.py and cli_metadata.py are exactly what
+    scripts/generate_megatron_dataclass.py emits (ruff-formatted) for the checked-out
+    Megatron-LM -- never hand-edited, never stale."""
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    if shutil.which("ruff") is None and not (Path(sys.executable).parent / "ruff").exists():
+        pytest.skip("ruff not installed")
+    schema, cli = tmp_path / "config_schema.py", tmp_path / "cli_metadata.py"
+    env = dict(
+        os.environ,
+        PYTHONPATH=os.pathsep.join([str(REPO), str(REPO / "submodules" / "Megatron-LM")]),
+        PATH=os.pathsep.join([str(Path(sys.executable).parent), os.environ.get("PATH", "")]),
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "scripts" / "generate_megatron_dataclass.py"),
+            "--output",
+            str(schema),
+            "--cli-output",
+            str(cli),
+        ],
+        cwd=REPO,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if proc.returncode != 0 and "Megatron-LM not available" in proc.stderr:
+        pytest.skip("Megatron-LM does not import in this environment")
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    package = REPO / "oellm_autoexp" / "backends" / "megatron"
+    regenerate = (
+        "regenerate with `PYTHONPATH=.:submodules/Megatron-LM python "
+        "scripts/generate_megatron_dataclass.py` in an env with torch and ruff"
+    )
+    assert schema.read_text() == (package / "config_schema.py").read_text(), (
+        f"config_schema.py is stale; {regenerate}"
+    )
+    assert cli.read_text() == (package / "cli_metadata.py").read_text(), (
+        f"cli_metadata.py is stale; {regenerate}"
+    )
