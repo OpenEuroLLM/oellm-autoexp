@@ -58,7 +58,7 @@ def dense130m():
         nomask, {B + "micro_batch_size": 16, B + "global_batch_size": 64,
                  B + "cuda_graph_impl": "none"})
     arm("base_liger_noqkln", "Liger CE without q/k layernorm (architecture change: prices it)",
-        liger, {B + "qk_layernorm": False})
+        liger, {B + "qk_layernorm": False}, noqknr)
     arm("base_liger_mbs4", "Liger CE, mbs 4 (2 accumulation steps)", liger,
         {B + "micro_batch_size": 4})
     qknr = {B + "fused_qk_norm_rope": True}
@@ -132,7 +132,8 @@ def dense130m():
             {B + "micro_batch_size": 4, B + "linear_power_chunk_size": ck})
     # ---- token mixing / memory layers added to the dense stack
     arm("shortconv", "ShortConv before every attention", {"aux.pattern": "C*-" * 12})
-    arm("canon", "Canon layers ABCD", {B + "canon_layers": "ABCD"}, noqknr)
+    arm("canon", "Canon layers ABCD (needs the unfused input norm)", {B + "canon_layers": "ABCD"},
+        noqknr, {B + "fused_residual_rmsnorm": False})
     arm("engram", "Engram n-gram memory before blocks 2 and 8 (data-parallel tables)", {
         "aux.pattern": "*-N*-*-*-*-*-*-N*-*-*-*-*-", B + "engram_ngram_orders": [2, 3],
         B + "engram_table_parallel": "dp"})
@@ -187,14 +188,16 @@ def moe():
     arm("dense50M", "dense reference with the MoE's active width (SwiGLU 2304)", {
         "aux.pattern": "*-" * 12, B + "num_experts": None, B + "moe_ffn_hidden_size": None,
         B + "moe_shared_expert_intermediate_size": None, B + "expert_model_parallel_size": 1,
-        B + "ffn_hidden_size": 2304})
+        B + "ffn_hidden_size": 2304, B + "cuda_graph_modules": []})
     arm("noshared", "no shared expert, top-6", {
         B + "moe_shared_expert_intermediate_size": None, B + "moe_router_topk": 6})
     arm("auxfree", "aux-loss-free balancing (sigmoid router + expert bias)", {
         B + "moe_router_load_balancing_type": "none", B + "moe_aux_loss_coeff": 0.0,
         B + "moe_router_enable_expert_bias": True, B + "moe_router_score_function": "sigmoid"})
     arm("latent", "LatentMoE (experts in a 256-dim latent)", {B + "moe_latent_size": 256})
-    arm("zero16", "16 zero-computation experts", {B + "moe_zero_expert_num": 16})
+    # zero-computation experts cannot be CUDA-graphed yet (open issue)
+    arm("zero16", "16 zero-computation experts, no CUDA graphs", {B + "moe_zero_expert_num": 16},
+        {B + "cuda_graph_impl": "none"})
     arm("muown", "MuOwn", {B + "optimizer": "muown"})
     arm("muown_offload", "MuOwn with its momentum streamed from host memory",
         {B + "optimizer": "muown", B + "muown_cpu_offload": True})

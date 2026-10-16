@@ -53,6 +53,7 @@ sweep:
           backend.megatron.moe_shared_expert_intermediate_size: null
           backend.megatron.expert_model_parallel_size: 1
           backend.megatron.ffn_hidden_size: 2304
+          backend.megatron.cuda_graph_modules: []
         # no shared expert, top-6
         - aux.arm: noshared
           backend.megatron.moe_shared_expert_intermediate_size: null
@@ -66,9 +67,10 @@ sweep:
         # LatentMoE (experts in a 256-dim latent)
         - aux.arm: latent
           backend.megatron.moe_latent_size: 256
-        # 16 zero-computation experts
+        # 16 zero-computation experts, no CUDA graphs
         - aux.arm: zero16
           backend.megatron.moe_zero_expert_num: 16
+          backend.megatron.cuda_graph_impl: none
         # MuOwn
         - aux.arm: muown
           backend.megatron.optimizer: muown

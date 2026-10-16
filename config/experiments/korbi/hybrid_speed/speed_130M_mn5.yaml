@@ -75,6 +75,7 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy: true
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
           backend.megatron.qk_layernorm: false
+          backend.megatron.fused_qk_norm_rope: false
         # Liger CE, mbs 4 (2 accumulation steps)
         - aux.arm: base_liger_mbs4
           backend.megatron.liger_fused_linear_cross_entropy: true
@@ -315,10 +316,11 @@ sweep:
         # ShortConv before every attention
         - aux.arm: shortconv
           aux.pattern: C*-C*-C*-C*-C*-C*-C*-C*-C*-C*-C*-C*-
-        # Canon layers ABCD
+        # Canon layers ABCD (needs the unfused input norm)
         - aux.arm: canon
           backend.megatron.canon_layers: ABCD
           backend.megatron.fused_qk_norm_rope: false
+          backend.megatron.fused_residual_rmsnorm: false
         # Engram n-gram memory before blocks 2 and 8 (data-parallel tables)
         - aux.arm: engram
           aux.pattern: '*-N*-*-*-*-*-*-N*-*-*-*-*-'
