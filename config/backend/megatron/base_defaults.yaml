@@ -869,6 +869,7 @@ stream_ckpt_dequant: true  # Per-tensor streaming dequantize when loading checkp
 strict_fsdp_dtensor_load: true  # Whether to enforce strict loading for FSDP DTensor checkpoints. When False, allows partial loading.
 suggested_communication_unit_size: null  # Specifies the number of elements to communicate at once during FSDP (Fully Sharded Data Parallel) operations. This flag also affects FSDP all-gather prefetch behavior. Setting a larger value increases the communication buffer size, while a smaller value disables prefetching and may degrade performance. Adjust this value based on your system's memory and performance requirements.
 swiglu: false  # Use gated linear units and SiLU activation instead of default gelu
+swiglu_triton: false  # Bias-free SwiGLU through two Triton kernels (megatron/core/fusions/fused_swiglu_triton.py) instead of the torch.compile'd swiglu (only with bias_swiglu_fusion and no bias).
 swin_backbone_type: tiny  # choices: ['tiny', 'base', 'h3'] | pretraining objectives
 symmetric_ar_type: null  # choices: ['two_shot', 'one_shot', 'multimem_all_reduce'] | What type of symmetric all reduce to use. The default is None which is no use of symmetric memory.
 te_debug_config: null  # nvdlfw_inspect feature YAML applied to every Transformer Engine module (LogTensorStats, LogFp8TensorStats, ...). Writes PER-RANK statistics files, so use it only on small probes (<= 16 nodes). See megatron/training/te_debug.py.

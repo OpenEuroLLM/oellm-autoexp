@@ -112,6 +112,14 @@ sweep:
           backend.megatron.create_attention_mask_in_dataloader: false
           backend.megatron.fused_qk_norm_rope: true
           backend.megatron.fused_residual_rmsnorm: true
+        # best stack + Triton SwiGLU
+        - aux.arm: base_best_swiglu
+          backend.megatron.liger_fused_linear_cross_entropy: true
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 8192
+          backend.megatron.create_attention_mask_in_dataloader: false
+          backend.megatron.fused_qk_norm_rope: true
+          backend.megatron.fused_residual_rmsnorm: true
+          backend.megatron.swiglu_triton: true
         # best stack, mbs 16 (gbs 64), no CUDA graphs
         - aux.arm: base_best_mbs16_nocg
           backend.megatron.liger_fused_linear_cross_entropy: true

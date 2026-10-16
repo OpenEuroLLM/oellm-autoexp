@@ -800,6 +800,11 @@ class MegatronConfig(ConfigInterface):
     # If True, uses fused weighted squared relu kernel when using MoE.
     use_fused_weighted_squared_relu: bool = False
 
+    # Bias-free SwiGLU through two Triton kernels
+    # (megatron/core/fusions/fused_swiglu_triton.py) instead of the torch.compile'd swiglu
+    # (only with bias_swiglu_fusion and no bias).
+    swiglu_triton: bool = False
+
     # Self-attention with qk_layernorm (RMSNorm) and RoPE: one Triton kernel from the fused
     # QKV projection to normed, rotated q / k and v, and one back
     # (megatron/core/fusions/fused_qk_norm_rope.py) instead of split + two norms + two RoPEs

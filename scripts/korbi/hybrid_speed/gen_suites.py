@@ -71,6 +71,7 @@ def dense130m():
     best = {**liger, **nomask, **qknr, B + "fused_residual_rmsnorm": True}
     arm("base_best", "best stack so far: Liger, no mask, fused q/k norm + RoPE, residual norm",
         best)
+    arm("base_best_swiglu", "best stack + Triton SwiGLU", best, {B + "swiglu_triton": True})
     arm("base_best_mbs16_nocg", "best stack, mbs 16 (gbs 64), no CUDA graphs", best,
         {B + "micro_batch_size": 16, B + "global_batch_size": 64, B + "cuda_graph_impl": "none"})
     arm("base_best_hd128", "best stack with 6 heads of 128 (architecture change: attention "

@@ -6991,6 +6991,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "swiglu_triton": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Bias-free SwiGLU through two Triton kernels (megatron/core/fusions/fused_swiglu_triton.py) instead of the torch.compile'd swiglu (only with bias_swiglu_fusion and no bias).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "swin_backbone_type": MegatronArgMetadata(
         arg_type=str,
         default="tiny",
@@ -13707,6 +13715,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "swiglu": MegatronActionSpec(
         option_strings=("--swiglu",), action_type="store_true", nargs=0, const=True, default=False
+    ),
+    "swiglu_triton": MegatronActionSpec(
+        option_strings=("--swiglu-triton",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "swin_backbone_type": MegatronActionSpec(
         option_strings=("--swin-backbone-type",),
