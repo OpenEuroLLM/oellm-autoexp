@@ -237,7 +237,14 @@ class MonitorLoop:
         # Array members whose start condition passed this poll, by script: each
         # batch goes out as ONE sbatch --array after the loop.
         array_batches: dict[str, list[JobRecord]] = {}
-        for job in self._store.load_all():
+        jobs = self._store.load_all()
+        # Submitted, unfinished jobs per concurrency group (job.max_active).
+        active_in_group: dict[str, int] = {}
+        for job in jobs:
+            group = getattr(job.definition, "concurrency_group", None) if job.definition else None
+            if group and job.runtime.submitted:
+                active_in_group[group] = active_in_group.get(group, 0) + 1
+        for job in jobs:
             if job.definition is None:
                 continue
             runtime = job.runtime
@@ -262,11 +269,17 @@ class MonitorLoop:
                 if self._check_finish(job):
                     self._store.mark_finished(job.job_id, "finished")
                     continue
-                if self._check_start(job):
+                if self._check_start(job) and self._has_slot(job, active_in_group):
                     if self._is_array_member(job):
                         array_batches.setdefault(job.definition.slurm.script_path, []).append(job)
+                        group = getattr(job.definition, "concurrency_group", None)
+                        if group:
+                            active_in_group[group] = active_in_group.get(group, 0) + 1
                         continue
                     self._start_jobs(job)
+                    group = getattr(job.definition, "concurrency_group", None)
+                    if group and job.runtime.submitted:
+                        active_in_group[group] = active_in_group.get(group, 0) + 1
 
                     if job.runtime.runtime_job_id is None:
                         LOGGER.warning(f"Failed to start job: {job}")
@@ -334,6 +347,15 @@ class MonitorLoop:
                     }
 
             LOGGER.info(f"[{time.time():0.6f}]" + f"Monitor Polling: {poll_state}")
+
+    @staticmethod
+    def _has_slot(job: JobRecord, active_in_group: dict[str, int]) -> bool:
+        """Below its concurrency group's max_active (or not throttled)."""
+        group = getattr(job.definition, "concurrency_group", None)
+        limit = getattr(job.definition, "max_active", None)
+        if not group or limit is None:
+            return True
+        return active_in_group.get(group, 0) < limit
 
     def _check_start(self, job: JobRecord) -> bool:
         condition = job.definition.start_condition

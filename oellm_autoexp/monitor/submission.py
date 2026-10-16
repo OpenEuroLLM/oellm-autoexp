@@ -67,6 +67,13 @@ class BaseJob:
     # 400 sbatch calls. Members must agree on everything but their command.
     array_group: str | None = None
 
+    # At most `max_active` jobs of one concurrency group are submitted and unfinished at
+    # a time, across the monitor session; the rest wait (as for a start condition) and go
+    # out as earlier ones finish. For queues that cap jobs per user -- e.g. MareNostrum's
+    # acc_debug (one job, no arrays): concurrency_group=acc_debug, max_active=1.
+    concurrency_group: str | None = None
+    max_active: int | None = None
+
 
 @dataclass(kw_only=True)
 class SlurmJobConfig(BaseJob, ConfigInterface):

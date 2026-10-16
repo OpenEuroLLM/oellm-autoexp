@@ -567,6 +567,8 @@ def _build_job_record(
         cancel_condition=base_job.cancel_condition,
         finish_condition=base_job.finish_condition,
         array_group=getattr(base_job, "array_group", None),
+        concurrency_group=getattr(base_job, "concurrency_group", None),
+        max_active=getattr(base_job, "max_active", None),
         metadata={
             **dict(base_job.metadata),
             "session_id": session_id,
