@@ -1,0 +1,41 @@
+# @package _global_
+# Megatron unit tests and kernel benchmarks on one MareNostrum 5 GPU node, through
+# autoexp (provenance, the shared slurm/container setup):
+#
+#   scripts/korbi/mn5_autoexp_bg.sh tests scripts/run_autoexp.py \
+#       --config-name experiments/korbi/hybrid_speed/kernel_tests_mn5 --yes \
+#       aux.name=qknr 'aux.tests="tests/unit_tests/fusions/test_fused_qk_norm_rope.py"' \
+#       'aux.bench="../../scripts/korbi/hybrid_speed/bench_qknr.py"'
+defaults:
+  - ../../base
+  - /backend: bash
+  - /container: marenostrum_hybrid
+  - /slurm: marenostrum_ehpc533
+  - /sweep: none
+  - _self_
+
+aux:
+  name: tests
+  tests: ""
+  bench: ""
+  hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
+
+backend:
+  command: bash scripts/korbi/hybrid_speed/run_tests.sh "${aux.tests}" "${aux.bench}"
+  env:
+    PYTHONPATH: ".:submodules/Megatron-LM:flash-linear-attention:submodules/cute-triadic-gdn:${aux.hybrid_env}/pylibs:${aux.hybrid_env}/pylibs_cute:${aux.hybrid_env}/pylibs_cute/nvidia_cutlass_dsl/dsl_packages:${aux.hybrid_env}/retention:${aux.hybrid_env}/pylibs_power"
+    CUDA_DEVICE_MAX_CONNECTIONS: "1"
+    NVIDIA_PYTORCH_VERSION: "25.12"
+
+job:
+  name: kernel_tests_${aux.name}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/kernel_tests/${aux.name}"
+  est_steps: 1
+  est_step_time_s: 600
+
+slurm:
+  sbatch:
+    time: "00:30:00"
+    qos: acc_ehpc
+
+stage: test
