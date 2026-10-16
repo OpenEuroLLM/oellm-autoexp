@@ -1,0 +1,129 @@
+# @package _global_
+# TorchTitan (titan-oellm qwen3_custom) twin of the hybrid speed suite's dense 130M reference
+# (speed_base_mn5.yaml / speed_130M_mn5.yaml, arm "dense"), on the same image
+# (MegatronTraining-hybrid-ep: torch 2.14) and one MareNostrum 5 node (4x H100):
+# hidden 768, 12 layers, 12 heads of 64, SwiGLU 2048, qk-norm, tied embeddings, vocab 50304,
+# seq 4096, 4 GPUs x local batch 8. Data: FineWeb-10BT (gpt-neox, Megatron mmap format) --
+# titan has no mock data; the Megatron twin on the same file is speed_130M_mn5 with
+# aux.data=fineweb.
+#
+#   scripts/korbi/mn5_autoexp_bg.sh titan_dense \
+#       --config-name experiments/korbi/hybrid_speed/titan_dense_mn5
+defaults:
+  - ../../base
+  - /backend: titan
+  - /container: marenostrum_hybrid
+  - /slurm: marenostrum_ehpc533
+  - /sweep: none
+  - override /backend/titan/model: qwen3_base
+  - _self_
+
+aux:
+  experiment_group: hybrid_speed
+  suite: t1
+  arm: titan
+  hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
+  sif: MegatronTraining-hybrid-ep_x86_64_202610161948.sif
+
+backend:
+  titan:
+    model:
+      name: qwen3_custom
+      tokenizer_path: /gpfs/projects/ehpc533/datasets/gpt-neox-20b-tokenizer
+      hf_assets_path: ""
+      vocab_size: 50304
+      dim: 768
+      n_layers: 12
+      n_heads: 12
+      n_kv_heads: 12
+      head_dim: 64
+      hidden_dim: 2048
+      qk_norm: true
+      enable_weight_tying: true
+      rope_theta: 10000
+      depth_init: false
+      norm_eps: 1e-5
+      max_seq_len: 4096
+    training:
+      steps: 100
+      local_batch_size: 8
+      global_batch_size: 32
+      seq_len: 4096
+      max_norm: 1.0
+      dataset: ""
+      dataloader:
+        num_workers: 2
+        pin_memory: true
+    data:
+      dataloader: MMapDataset
+      seq_len: 4096
+      data_prefix: /gpfs/projects/ehpc533/datasets/FineWeb-gpt-neox/fineweb-10BT_text_document
+    optimizer:
+      lr: 0.001
+      beta2: 0.95
+      weight_decay: 0.1
+    lr_scheduler:
+      warm_steps: 5
+    metrics:
+      log_freq: 5
+      enable_tensorboard: false
+    parameter_logging:
+      enabled: false
+    validation:
+      enable: false
+    checkpoint:
+      enable: false
+    parallelism:
+      data_parallel_replicate_degree: 1
+      data_parallel_shard_degree: -1
+    compile:
+      enable: true
+    activation_checkpoint:
+      mode: none
+
+  env:
+    PYTHONPATH: ".:submodules/titan-oellm:submodules/titan-oellm/torchtitan"
+    TOKENIZERS_PARALLELISM: "false"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+
+  torchrun_args:
+    nproc_per_node: ${slurm.sbatch.gpus_per_node}
+    nnodes: ${slurm.sbatch.nodes}
+    max_restarts: 0
+    rdzv_backend: c10d
+    rdzv_endpoint: "$MASTER_ADDR:$MASTER_PORT"
+    node_rank: "$SLURM_NODEID"
+    master_addr: "$MASTER_ADDR"
+    master_port: "$MASTER_PORT"
+
+job:
+  name: ${aux.suite}_titan_${aux.arm}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${aux.suite}_titan/${aux.arm}"
+  array_group: ${aux.suite}_titan
+  state_events:
+    - name: timeout
+      transition: ["RUNNING", "TIMEOUT"]
+      action: {class_name: FinishAction, reason: "Job timed out"}
+  est_step_time_s: 2.0
+  est_startup_min: 5.0
+
+slurm:
+  sbatch:
+    nodes: 1
+    time: "00:25:00"
+
+stage: speed
+
+container:
+  image: ${aux.hybrid_env}/container/${aux.sif}
+
+# FSDP (titan's default) vs DDP (as Megatron's DP + distributed optimizer), compile on/off
+sweep:
+  type: list
+  groups:
+    - type: list
+      configs:
+        - {aux.arm: fsdp_compile}
+        - {aux.arm: ddp_compile, backend.titan.parallelism.data_parallel_replicate_degree: 4,
+           backend.titan.parallelism.data_parallel_shard_degree: 1}
+        - {aux.arm: fsdp_eager, backend.titan.compile.enable: false}
