@@ -95,6 +95,8 @@ backend:
     data_path: null
     split: null
     num_workers: 2
+    # per arm: concurrent jobs building one shared index cache corrupt it (mmap errors)
+    data_cache_path: ${job.base_output_dir}/data_cache
 
     # ---- batch / schedule: 4 GPUs x mbs 8 x 4096 = 131k tokens per step ----
     micro_batch_size: 8
