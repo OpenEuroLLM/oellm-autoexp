@@ -82,6 +82,9 @@ CAUSAL_CONV1D_FORCE_BUILD=TRUE python -m pip install --no-cache-dir --no-build-i
 python -m pip install --no-cache-dir -c /workspace/constraints.txt "tilelang>=0.1.15"
 python -m pip install --no-cache-dir -c /workspace/constraints.txt "nvidia-cutlass-dsl[cu13]>=4.7.1"
 python -m pip install --no-cache-dir --no-deps "git+https://github.com/OliverSieberling/cute-triadic-gdn"
+# FlashAttention 4 (flash_attn.cute): FlexAttention's FLASH backend (attn_backend flex_flash) on
+# Hopper / Blackwell. --no-deps: it pins an older CuTe DSL; the image's newer one works.
+python -m pip install --no-cache-dir --pre --no-deps "flash-attn-4==4.0.0b24" "quack-kernels==0.6.2"
 
 # DeepEP with HybridEP (see MegatronTraining-hybrid-ep.def.in for the reasoning)
 apt-get update

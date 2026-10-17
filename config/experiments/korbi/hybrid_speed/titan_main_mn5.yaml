@@ -33,7 +33,8 @@ aux:
   images:
     sif:
       sif: TitanTraining-main_x86_64_202610170146.sif
-      pythonpath: ".:submodules/torchtitan"
+      # + FlashAttention 4 (flash_attn.cute, for flex_flash) until the image ships it
+      pythonpath: ".:submodules/torchtitan:${aux.hybrid_env}/pylibs_titan_fa4"
     venv:
       sif: MegatronTraining-hybrid-ep_x86_64_202610161948.sif
       pythonpath: ".:submodules/torchtitan:${aux.hybrid_env}/pylibs_titan_main"
