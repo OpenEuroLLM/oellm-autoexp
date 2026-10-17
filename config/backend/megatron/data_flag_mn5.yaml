@@ -1,0 +1,22 @@
+# @package backend.megatron
+# The "flag" training mix on MareNostrum 5 (ehpc533): the JUPITER flagship mix's sources
+# (training-data-collection/flag, Megatron format, OELLM 256k SentencePiece tokenizer), weights
+# from its datamix.txt. scripts/korbi/flag_datamix_mn5.py writes the absolute-path weights file
+# (only shards present; rerun once the collection has fully landed). Template:
+# oellm_32b_dense/data/oellm_256k_15TT_jupiter_train.yaml.
+data_args_path: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/flag_datamix_mn5.txt
+data_path: null
+split: "998,2,0"
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: /gpfs/projects/ehpc533/tokenizers/tokenizer-256k
+# 262144 rows (the 32B runs' padding)
+padded_vocab_size: 262144
+vocab_size: null
+mock_data: false
+seq_length: 4096
+max_position_embeddings: 4096
+dataloader_type: cyclic
+num_workers: 8
+num_dataset_builder_threads: 32
+data_cache_path: ${oc.env:OUTPUT_DIR,./output}/data_cache_flag
+create_attention_mask_in_dataloader: false
