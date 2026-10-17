@@ -218,3 +218,42 @@ def dense130m_local() -> Trainer.Config:
     config.training.steps = int(os.environ.get("TITAN_STEPS", "10"))
     config.metrics.log_freq = 1
     return config
+
+
+# ---- GraphTrainer: the whole train step traced into one graph (forward + loss + backward),
+# SimpleFSDP, full Inductor compilation, graph passes (torchtitan/experiments/graph_trainer)
+
+
+def _graph(config: Trainer.Config, inductor: str = "full", memory_policy: str = "none"):
+    from torchtitan.experiments.graph_trainer.configs import (
+        GraphTrainerCompileConfig,
+        to_graph_trainer_config,
+    )
+    from torchtitan.experiments.graph_trainer.qwen3.model import GraphTrainerQwen3Model
+
+    graph = to_graph_trainer_config(config, GraphTrainerQwen3Model.Config)
+    graph.compile = GraphTrainerCompileConfig(
+        inductor_compilation=inductor, memory_policy=memory_policy, numerics_changing_optim=True)
+    return graph
+
+
+def dense130m_graph():
+    """Whole-step graph, full Inductor, no recompute (attention: TITAN_ATTN, default flex)."""
+    return _graph(dense130m(attn_backend=os.environ.get("TITAN_ATTN", "flex")))
+
+
+def dense130m_graph_mbs16():
+    return _graph(dense130m(attn_backend=os.environ.get("TITAN_ATTN", "flex"), micro_batch=16))
+
+
+def dense130m_graph_regional():
+    """Whole-step graph, regional Inductor (attention regions only)."""
+    return _graph(dense130m(attn_backend=os.environ.get("TITAN_ATTN", "flex")), inductor="regional")
+
+
+def dense130m_graph_local():
+    """One-GPU smoke test of the graph trainer (micro batch 2, 10 steps)."""
+    config = _graph(dense130m(attn_backend="flex", micro_batch=2))
+    config.training.steps = int(os.environ.get("TITAN_STEPS", "10"))
+    config.metrics.log_freq = 1
+    return config
