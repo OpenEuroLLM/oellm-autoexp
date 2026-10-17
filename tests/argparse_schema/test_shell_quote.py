@@ -51,7 +51,7 @@ def test_hybrid_pattern_renders_as_one_shell_word():
     args = {"hybrid_layer_pattern": "L-L-*-|L-L-*-"}
     assert build_cmdline_args(args, meta, specs, shell_quote=True) == [
         "--hybrid-layer-pattern",
-        "'L-L-*-|L-L-*-'",
+        '"L-L-*-|L-L-*-"',
     ]
     # Unquoted for argparse/subprocess consumers.
     assert build_cmdline_args(args, meta, specs) == ["--hybrid-layer-pattern", "L-L-*-|L-L-*-"]
@@ -64,5 +64,15 @@ def test_value_starting_with_dash_rides_on_its_flag():
         "--hybrid-layer-pattern=--*-"
     ]
     assert build_cmdline_args({"hybrid_layer_pattern": "--*-"}, meta, specs, shell_quote=True) == [
-        "'--hybrid-layer-pattern=--*-'"
+        '"--hybrid-layer-pattern=--*-"'
     ]
+
+
+@needs_bash
+@pytest.mark.parametrize("value", ["L-L-*-|L-L-*-", "a b", "--*-", "g[0-9]", "semi;colon"])
+def test_values_survive_an_outer_single_quoted_bash_c(value):
+    # MareNostrum's launch line wraps the whole command: srun bash -c '<command>'
+    inner = f"printf '%s' {shell_token(value)}".replace("'%s'", '%s')
+    out = subprocess.run(["bash", "-c", f"bash -c '{inner}'"], capture_output=True, text=True,
+                         env={"PATH": "/usr/bin:/bin"}, check=True).stdout
+    assert out == value

@@ -120,16 +120,20 @@ def shell_token(token: str) -> str:
     """Quote one argv token for a POSIX shell command line.
 
     Tokens of plain characters are returned unchanged, so ordinary commands
-    render byte-identically. A token containing ``$`` is double-quoted, which
-    protects spaces, ``|``, ``*`` and the like while keeping the variable or
-    command substitution the config asks for (``$SLURM_JOB_ID``,
-    ``$(hostname)``). Anything else is single-quoted.
+    render byte-identically. Everything else is double-quoted, which protects
+    spaces, ``|``, ``*`` and the like. A token containing ``$`` keeps the variable
+    or command substitution the config asks for (``$SLURM_JOB_ID``,
+    ``$(hostname)``); in any other token backquotes are escaped too.
+    Double rather than single quotes: launch templates wrap the whole command in
+    ``bash -c '...'`` (MareNostrum's srun line), where a single-quoted token would
+    close the outer quote and leave ``|`` to the outer shell as a pipe.
     """
     if token and not _SHELL_UNSAFE.search(token):
         return token
-    if "$" in token:
-        return '"' + token.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    return shlex.quote(token)
+    out = token.replace("\\", "\\\\").replace('"', '\\"')
+    if "$" not in token:
+        out = out.replace("`", "\\`")
+    return '"' + out + '"'
 
 
 def build_cmdline_args(
