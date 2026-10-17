@@ -319,25 +319,29 @@ def a3b():
     arm("gdn", "Gated DeltaNet (FLA) instead of CKDA", lin("gated_delta_net"), {
         B + "linear_beta_max": 1.0, B + "linear_output_gate": "lowrank",
         B + "linear_drop_qkv_silu": False, B + "linear_gate_init_style": "shipped"})
-    arm("attn", "all-attention MoE (no linear mixer)", {"aux.pattern": "*E" * 48})
+    arm("attn", "all-attention MoE (no linear mixer)",
+        {"aux.pattern": "|".join(["*E" * 12] * 4)})
     arm("ckda_xsa", "exclusive self attention in the attention layers",
         {B + "exclusive_self_attention": True})
     arm("ckda_gate", "sigmoid output gate in the attention layers (Qwen3-Next style)",
         {B + "attention_output_gate": True})
-    arm("ckda_hybridep", "flex dispatcher with HybridEP (16 SMs)",
-        {B + "moe_token_dispatcher_type": "flex", B + "moe_flex_dispatcher_backend": "hybridep",
-         B + "moe_hybridep_num_sms": 16})
-    arm("ckda_ovl", "EP all-to-all overlap (mbs 1 x 2, no CUDA graphs, 8 connections)",
-        {B + "overlap_moe_expert_parallel_comm": True, B + "cuda_graph_impl": "none",
-         B + "micro_batch_size": 1, "backend.env.CUDA_DEVICE_MAX_CONNECTIONS": "8",
-         "aux.array_tag": "_conn8"})
-    arm("ckda_mbs1", "micro batch 1 (2 accumulation steps)", {B + "micro_batch_size": 1})
-    arm("ckda_mbs4", "micro batch 4 (gbs x2)", {B + "micro_batch_size": 4,
-                                                B + "global_batch_size": "${oc.eval:'2 * ${aux.gbs}'}"})
+    arm("ckda_alltoall", "alltoall dispatcher instead of flex / HybridEP",
+        {B + "moe_token_dispatcher_type": "alltoall"})
+    arm("ckda_ovl", "EP all-to-all overlap with the combined 1F1B schedule (8 connections)",
+        {B + "overlap_moe_expert_parallel_comm": True,
+         "backend.env.CUDA_DEVICE_MAX_CONNECTIONS": "8", "aux.array_tag": "_conn8"})
+    arm("ckda_mbs2", "micro batch 2", {B + "micro_batch_size": 2})
+    arm("ckda_mbs8", "micro batch 8", {B + "micro_batch_size": 8})
+    arm("ckda_sel_recompute", "selective recompute (MoE activations + norms) instead of full",
+        {B + "recompute_granularity": "selective", B + "recompute_method": None,
+         B + "recompute_num_layers": None, B + "recompute_modules": ["moe_act", "layernorm"]})
     arm("ckda_ep_half", "half the expert parallelism", {
         B + "expert_model_parallel_size": "${oc.eval:'${aux.ep} // 2'}"})
     arm("ckda_ep_double", "twice the expert parallelism", {
         B + "expert_model_parallel_size": "${oc.eval:'2 * ${aux.ep}'}"})
+    arm("ckda_pp2", "pipeline parallel 2 (two stages)", {
+        B + "pipeline_model_parallel_size": 2,
+        "aux.pattern": "LELELE*E" * 6 + "|" + "LELELE*E" * 6})
     return arms
 
 
@@ -361,24 +365,33 @@ backend:
     untie_embeddings_and_output_weights: true
     vocab_size: 262143
     moe_grouped_gemm: true
-    moe_token_dispatcher_type: alltoall
+    # exp_irene's best MN5 layout for Qwen3-30B-A3B / Qwen3.5-35B-A3B (185.8 TFLOP/s/GPU, 8 nodes):
+    # TP1 / PP4 / EP4, flex dispatcher with HybridEP, full recompute, mbs 4
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: hybridep
     moe_router_load_balancing_type: aux_loss
     moe_aux_loss_coeff: 0.001
     moe_router_dtype: fp32
     moe_permute_fusion: true
     expert_model_parallel_size: ${aux.ep}
-    micro_batch_size: 2
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 4
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    micro_batch_size: 4
     global_batch_size: ${aux.gbs}
-    cuda_graph_modules: [attn, moe_router, moe_preprocess]
-    train_iters: 60
-    log_interval: 5
+    cuda_graph_impl: none
+    cuda_graph_modules: []
+    train_iters: 25
+    log_interval: 1
 {shape}job:
-  est_step_time_s: 2.0
-  est_startup_min: 8.0
+  est_step_time_s: 20.0
+  est_startup_min: 10.0
 slurm:
   sbatch:
     nodes: ${aux.nodes}
-    time: "00:30:00"
+    time: "00:40:00"
 """
 
 
@@ -436,30 +449,30 @@ backend:
     expert_model_parallel_size: 4
     cuda_graph_modules: [attn, moe_router, moe_preprocess]
 """, moe())
-    pattern48 = "LELELE*E" * 12
+    pattern48 = "|".join(["LELELE*E" * 3] * 4)  # PP4: 12 mixer layers per stage
     dump("speed_a3b30_mn5.yaml",
-         "Speed of the 3B-active / ~30B-total hybrid MoE (128 experts x 768, top-8) on 8 nodes.",
+         "Speed of the 3B-active / ~30B-total hybrid MoE (128 experts x 768, top-8) on 8 nodes, TP1 / PP4 / EP4.",
          f"""
 aux:
   family: a3b30
   pattern: "{pattern48}"
   nodes: 8
-  ep: 16
-  gbs: 64
+  ep: 4
+  gbs: 1024
 """ + A3B_COMMON.replace("{shape}", """    num_experts: 128
     moe_ffn_hidden_size: 768
     moe_router_topk: 8
 """), a3b())
     dump("speed_a3b80_mn5.yaml",
          "Speed of the 3B-active / ~80B-total hybrid MoE (512 experts x 512, top-10 + shared) on 16 "
-         "nodes.",
+         "nodes, TP1 / PP4 / EP8.",
          f"""
 aux:
   family: a3b80
   pattern: "{pattern48}"
   nodes: 16
-  ep: 32
-  gbs: 128
+  ep: 8
+  gbs: 1024
 """ + A3B_COMMON.replace("{shape}", """    num_experts: 512
     moe_ffn_hidden_size: 512
     moe_router_topk: 10
