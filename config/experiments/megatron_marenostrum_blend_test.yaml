@@ -1,0 +1,28 @@
+# @package _global_
+# Multi-file (blend) prefetch test: a 2-file Megatron blend, consumed with the windowed shuffle +
+# per-file node-local mirror prefetch. data_path (list) and PREFETCH_PREFIX (comma string) live here
+# in YAML because comma/list values on the CLI trip hydra's sweep-override validation.
+defaults:
+  - base
+  - /backend: megatron_torchrun
+  - /container: marenostrum
+  - /slurm: marenostrum
+  - /sweep: none
+  - /backend/megatron: [llama1_8b_qkln, megatron_fsdp, speed_test_marenostrum]
+  - _self_
+
+backend:
+  megatron:
+    train_iters: 1500
+    eval_interval: 100000
+    data_path:
+      - /gpfs/scratch/ehpc390/data/blend_test/blendA
+      - /gpfs/scratch/ehpc390/data/blend_test/blendB
+
+slurm:
+  env:
+    # must list the SAME prefixes as data_path (the prefetcher splits on comma)
+    PREFETCH_PREFIX: "/gpfs/scratch/ehpc390/data/blend_test/blendA,/gpfs/scratch/ehpc390/data/blend_test/blendB"
+
+job:
+  name: megatron_marenostrum_blend_test
