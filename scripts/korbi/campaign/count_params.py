@@ -26,6 +26,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 SIF = Path.home() / ".cache/containers/MegatronTraining-hybrid-ep_x86_64.sif"
 PM = REPO / "config/experiments/korbi/campaign_3b/param_match.json"
+# the extras the image lacks (liger_kernel, mlstm_kernels): a local copy of MN5's $HYBRID_ENV/pylibs_ep
+PYLIBS = os.environ.get("PYLIBS_EP", str(Path.home() / ".cache/pylibs_ep"))
 DROP = {  # flags (with their value count) replaced for the local count
     "--data-args-path": 1, "--data-path": None, "--split": 1, "--tokenizer-type": 1,
     "--tokenizer-model": 1, "--data-cache-path": 1, "--micro-batch-size": 1,
@@ -86,7 +88,7 @@ def count(args: list[str]) -> tuple[int, int]:
         cmd = ["apptainer", "exec", "--nv", "--cleanenv", "--no-mount", "/etc/resolv.conf",
                "--bind", "/tmp", str(SIF), "env",
                f"PYTHONPATH={REPO}:{REPO}/submodules/Megatron-LM:{REPO}/flash-linear-attention:"
-               f"{REPO}/submodules/cute_kernels", f"TRITON_CACHE_DIR={td}/triton",
+               f"{REPO}/submodules/cute_kernels:{PYLIBS}", f"TRITON_CACHE_DIR={td}/triton",
                f"TORCHINDUCTOR_CACHE_DIR={td}/inductor", f"HOME={td}", "CUDA_DEVICE_MAX_CONNECTIONS=1",
                "python", "-m", "torch.distributed.run", "--standalone", "--nproc-per-node", "1",
                str(REPO / "submodules/Megatron-LM/pretrain_hybrid.py"), *local]

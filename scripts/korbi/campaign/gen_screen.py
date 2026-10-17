@@ -92,7 +92,7 @@ backend:
 
 job:
   array_group: ${{aux.suite}}
-  est_step_time_s: 1.5
+  est_step_time_s: {step_s}
 
 slurm:
   sbatch:
@@ -116,7 +116,8 @@ def main():
         lines = [HEADER.format(size=size, hidden=hidden, blocks=blocks, heads=heads, ffn=ffn, lr=lr,
                                min_lr=lr / 10, gbs=gbs, pattern="*-" * blocks,
                                matched=f"{len(table)} arms counted" if table else "NOT YET COUNTED",
-                               time="03:00:00" if size == "s1" else "06:00:00")]
+                               time="02:00:00" if size == "s1" else "05:00:00",
+                               step_s=0.6 if size == "s1" else 1.6)]
         for name, comment, kv in arms(blocks):
             kv = dict(kv)
             entry = table.get(name)

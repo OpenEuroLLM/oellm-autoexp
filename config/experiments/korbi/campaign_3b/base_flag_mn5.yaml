@@ -19,9 +19,14 @@ aux:
   tokens: 0.1e9
   gbs: 64
   seq: 4096
+  # the mix snapshot (scripts/korbi/flag_datamix_mn5.py output, frozen per round so all runs of a
+  # round see the same data): r1 = the 275 complete shards of 2026-10-17 03:00 (47.7 % of the
+  # mix weight); flag_datamix_mn5.txt is the live (regenerated) file
+  datamix: flag_datamix_mn5_r1.txt
 
 backend:
   megatron:
+    data_args_path: ${aux.hybrid_env}/data/${aux.datamix}
     micro_batch_size: 8
     global_batch_size: ${aux.gbs}
     train_iters: "${oc.eval:'int(${aux.tokens}) // (${aux.gbs} * ${aux.seq})'}"
