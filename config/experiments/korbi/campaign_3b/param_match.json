@@ -1,0 +1,96 @@
+{
+ "s1": {
+  "attn": {
+   "ffn": 2048,
+   "non_emb": 84960000,
+   "measured_at_base_ffn": 84960000
+  },
+  "attn_gate": {
+   "ffn": 1792,
+   "non_emb": 84952112,
+   "measured_at_base_ffn": 92030000
+  },
+  "attn_xsa": {
+   "ffn": 2048,
+   "non_emb": 84960000,
+   "measured_at_base_ffn": 84960000
+  },
+  "h_ckda": {
+   "ffn": 1792,
+   "non_emb": 84252112,
+   "measured_at_base_ffn": 91330000
+  },
+  "h_ckda_gate": {
+   "ffn": 1728,
+   "non_emb": 84252640,
+   "measured_at_base_ffn": 93100000
+  },
+  "h_ckda_xsa": {
+   "ffn": 1792,
+   "non_emb": 84252112,
+   "measured_at_base_ffn": 91330000
+  },
+  "h_gdn": {
+   "ffn": 1856,
+   "non_emb": 85201584,
+   "measured_at_base_ffn": 90510000
+  },
+  "h_kda": {
+   "ffn": 1984,
+   "non_emb": 85130528,
+   "measured_at_base_ffn": 86900000
+  },
+  "h_kda_xsa": {
+   "ffn": 1984,
+   "non_emb": 85130528,
+   "measured_at_base_ffn": 86900000
+  }
+ },
+ "s2": {
+  "attn": {
+   "ffn": 2816,
+   "non_emb": 256950000,
+   "measured_at_base_ffn": 256950000
+  },
+  "attn_gate": {
+   "ffn": 2496,
+   "non_emb": 258259200,
+   "measured_at_base_ffn": 277920000
+  },
+  "attn_xsa": {
+   "ffn": 2816,
+   "non_emb": 256950000,
+   "measured_at_base_ffn": 256950000
+  },
+  "h_ckda": {
+   "ffn": 2496,
+   "non_emb": 255439200,
+   "measured_at_base_ffn": 275100000
+  },
+  "h_ckda_gate": {
+   "ffn": 2432,
+   "non_emb": 256747040,
+   "measured_at_base_ffn": 280340000
+  },
+  "h_ckda_xsa": {
+   "ffn": 2496,
+   "non_emb": 255439200,
+   "measured_at_base_ffn": 275100000
+  },
+  "h_gdn": {
+   "ffn": 2560,
+   "non_emb": 257621360,
+   "measured_at_base_ffn": 273350000
+  },
+  "h_kda": {
+   "ffn": 2752,
+   "non_emb": 257407840,
+   "measured_at_base_ffn": 261340000
+  },
+  "h_kda_xsa": {
+   "ffn": 2752,
+   "non_emb": 257407840,
+   "measured_at_base_ffn": 261340000
+  }
+ }
+}
