@@ -1,0 +1,44 @@
+# @package _global_
+# Base of the 3B-active campaign's small-scale trainings (docs/hybrid_moe_3b_campaign.md) on
+# MareNostrum 5: the speed suite's optimized stack and image (speed_base_mn5.yaml), trained on
+# datamix4 (data_datamix4_mn5.yaml: exp_irene's multilingual mix, OELLM 256k tokenizer, separate
+# validation mix) with TensorBoard and the architecture metrics; nothing saved unless a config asks
+# for it. The "flag" mix (data_flag_mn5.yaml) replaces it once fully on the cluster (swap the
+# data default below).
+#
+#   scripts/korbi/mn5_autoexp_bg.sh smoke scripts/run_autoexp.py \
+#       --config-name experiments/korbi/campaign_3b/base_train_mn5
+defaults:
+  - ../hybrid_speed/speed_base_mn5
+  - /backend/megatron: [data_datamix4_mn5]
+  - _self_
+
+aux:
+  experiment_group: campaign_3b
+  family: dm4
+  arm: smoke
+  suite: c0
+  tokens: 0.1e9
+  gbs: 64
+  seq: 4096
+
+backend:
+  megatron:
+    micro_batch_size: 8
+    global_batch_size: ${aux.gbs}
+    train_iters: "${oc.eval:'int(${aux.tokens}) // (${aux.gbs} * ${aux.seq})'}"
+    lr_decay_style: constant
+    lr_warmup_iters: 100
+    eval_interval: 100
+    eval_iters: 10
+    log_interval: 10
+
+job:
+  name: ${aux.suite}_${aux.arm}
+  base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${aux.suite}/${aux.arm}"
+  array_group: null
+  est_step_time_s: 1.0
+
+slurm:
+  sbatch:
+    time: "00:40:00"

@@ -1,0 +1,25 @@
+# @package backend.megatron
+# "datamix4" (1TT-option-4, = LUMI datamix4) on MareNostrum 5, as exp_irene's 10B-A0.9B MoE
+# scaling sweep: the multilingual OpenEuroLLM mix tokenised with the OELLM 256k tokenizer
+# (/gpfs/projects/ehpc533/preprocessed/openeurollm-tokenized-256k), train and validation as
+# separate weighted mixes (data/datamix4_mn5_per_split_v19.json, copied from exp_irene 2841f4c;
+# valid = 200BT-option-4-val without nemotron-cc high-actual, whose merged .bin is truncated).
+per_split_data_args_path: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/autoexp/config/backend/megatron/data/datamix4_mn5_per_split_v19.json
+data_args_path: null
+data_path: null
+train_data_path: null
+valid_data_path: null
+test_data_path: null
+split: null
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: /gpfs/projects/ehpc533/tokenizers/tokenizer-256k
+padded_vocab_size: 262144
+vocab_size: null
+mock_data: false
+seq_length: 4096
+max_position_embeddings: 4096
+dataloader_type: cyclic
+num_workers: 8
+num_dataset_builder_threads: 32
+data_cache_path: ${oc.env:OUTPUT_DIR,./output}/data_cache_datamix4
+create_attention_mask_in_dataloader: false
