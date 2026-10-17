@@ -531,10 +531,10 @@ class MegatronConfig(ConfigInterface):
 
     # Power retention's quadratic form: "triton"
     # (megatron/core/fusions/fused_power_attention.py: a flash-style kernel without softmax
-    # rescaling, deg 2), "retention" (the package's Triton kernel) or "flex" (FlexAttention
-    # with the deg-th power and the gate as a score_mod; 1.5-1.7x slower than retention's
-    # kernel on H100 at head dim 64-256, bench_power.py).
-    linear_power_attention_impl: str = "retention"
+    # rescaling, deg 2; on H100 1.1-1.3x faster than retention's kernel at head dim 64-256,
+    # bench_power.py), "retention" (the package's Triton kernel) or "flex" (FlexAttention with
+    # the deg-th power and the gate as a score_mod).
+    linear_power_attention_impl: str = "triton"
 
     # Power retention: rotary embeddings on q / k (the reference model's choice); off = NoPE.
     linear_power_rope: bool = False
