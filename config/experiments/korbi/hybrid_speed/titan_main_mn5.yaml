@@ -24,6 +24,8 @@ aux:
   arm: dense130m
   hybrid_env: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}
   steps: 100
+  # attention backend of the variant recipes (varlen needs FA3's flash_attn_interface on Hopper)
+  attn: varlen
   # sif: the torchtitan image (container/titan/TitanTraining-main.def.in: NGC 26.09 + torch
   # nightly venv, DeepEP/HybridEP, MoonEP, causal_conv1d, TileLang); venv: the hybrid-ep
   # image + the nightly environment copied to $HYBRID_ENV/pylibs_titan_main (interim)
@@ -48,6 +50,7 @@ backend:
     # (the nightly finds its CUDA libraries through its wheels' RUNPATH)
     LD_LIBRARY_PATH: "/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/.singularity.d/libs"
     TITAN_STEPS: "${aux.steps}"
+    TITAN_ATTN: ${aux.attn}
     PYTORCH_ALLOC_CONF: "expandable_segments:True"
     TOKENIZERS_PARALLELISM: "false"
 

@@ -49,6 +49,9 @@ from torchtitan.trainer import Trainer
 FINEWEB = "/gpfs/projects/ehpc533/datasets/FineWeb-gpt-neox/fineweb-10BT_text_document"
 NEOX = "/gpfs/projects/ehpc533/datasets/gpt-neox-20b-tokenizer"
 SEQ = 4096
+# attention backend of the variants: varlen needs flash_attn_interface (FA3) on Hopper; flex,
+# flex_flash (FlexAttention's flash backend, Hopper) need nothing extra
+ATTN = os.environ.get("TITAN_ATTN", "varlen")
 
 # Megatron's indexed-dataset dtype codes (megatron/core/datasets/indexed_dataset.py)
 _DTYPES = {1: np.uint8, 2: np.int8, 3: np.int16, 4: np.int32, 5: np.int64, 6: np.float64,
@@ -136,10 +139,10 @@ def _qwen3_130m(attn_backend: str, parallelism: ParallelismConfig,
     )
 
 
-def dense130m(attn_backend: str = "varlen", micro_batch: int = 8) -> Trainer.Config:
+def dense130m(attn_backend: str | None = None, micro_batch: int = 8) -> Trainer.Config:
     """FSDP over the node, CUDA graphs, compiled RoPE / SwiGLU / loss regions."""
     parallelism = ParallelismConfig(data_parallel_shard_degree=-1)
-    model = _qwen3_130m(attn_backend, parallelism)
+    model = _qwen3_130m(attn_backend or ATTN, parallelism)
     tokens = micro_batch * SEQ
     dataset = SingleDatasetConfig(
         source=MegatronWindowSource.Config(prefix=os.environ.get("TITAN_DATA_PREFIX", FINEWEB)),
@@ -172,32 +175,33 @@ def dense130m(attn_backend: str = "varlen", micro_batch: int = 8) -> Trainer.Con
 
 
 def dense130m_nocg() -> Trainer.Config:
-    config = dense130m()
+    config = dense130m(attn_backend=ATTN)
     config.training.disable_cuda_graphs = True
     return config
 
 
 def dense130m_nocompile() -> Trainer.Config:
-    config = dense130m()
+    config = dense130m(attn_backend=ATTN)
     config.model.local_compile_regions = []
     return config
 
 
 def dense130m_ddp() -> Trainer.Config:
-    config = dense130m()
+    config = dense130m(attn_backend=ATTN)
     config.parallelism.data_parallel_shard_degree = 1
-    config.parallelism.data_parallel_replicate_degree = -1
+    # replicate degrees must be explicit: the world size
+    config.parallelism.data_parallel_replicate_degree = int(os.environ.get("WORLD_SIZE", "4"))
     return config
 
 
 def dense130m_noreshard() -> Trainer.Config:
-    config = dense130m()
+    config = dense130m(attn_backend=ATTN)
     config.parallelism.fsdp_reshard_after_forward = "never"
     return config
 
 
 def dense130m_mbs16() -> Trainer.Config:
-    return dense130m(micro_batch=16)
+    return dense130m(attn_backend=ATTN, micro_batch=16)
 
 
 def dense130m_flex() -> Trainer.Config:
