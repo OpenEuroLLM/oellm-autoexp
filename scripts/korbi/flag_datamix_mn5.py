@@ -5,7 +5,8 @@
 
 ``<root>/datamix.txt`` lists ``weight prefix`` pairs with prefixes relative to the root (the
 same mix as JUPITER's flagship_datamix files). This writes the absolute-path version, keeping
-only shards whose ``.bin`` and ``.idx`` both exist (the collection lands in stages), with the
+only shards whose ``.bin`` and ``.idx`` both exist with the sizes their ``<shard>.info.json``
+records (the collection lands in stages: a shard being copied has a short ``.bin``), with the
 weights renormalised to sum to 1, and prints per source how much of the mix weight is present.
 ``--require-complete`` fails instead when anything is missing (for the reference trainings).
 """
@@ -13,12 +14,23 @@ weights renormalised to sum to 1, and prints per source how much of the mix weig
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 ROOT = "/gpfs/projects/ehpc533/training-data-collection/flag"
+
+
+def complete(root: Path, prefix: str) -> bool:
+    """Both files there, with the sizes the shard's info.json records."""
+    info = root / (prefix.removesuffix("_text_document") + ".info.json")
+    binf, idxf = root / f"{prefix}.bin", root / f"{prefix}.idx"
+    if not (info.is_file() and binf.is_file() and idxf.is_file()):
+        return False
+    meta = json.loads(info.read_text())
+    return binf.stat().st_size == meta["bin"]["size"] and idxf.stat().st_size == meta["idx"]["size"]
 
 
 def main():
@@ -39,7 +51,7 @@ def main():
     kept = []
     for w, prefix in rows:
         src = prefix.split("/")[0]
-        ok = (root / f"{prefix}.bin").is_file() and (root / f"{prefix}.idx").is_file()
+        ok = complete(root, prefix)
         s = by_source[src]
         s[0] += w
         s[2] += 1
