@@ -192,6 +192,24 @@ Ours: the same model as HybridModel `*E` x 48 on the hybrid-ep image (`ep_qwen3_
 - The imbalance of real (step-1..15) routing costs 25 % (152 vs 198); **MoonEP recovers 40 % of
   it** with real routing. MoonEP slice after zero-copy combine: 149.2 (+3 %), 172.2 at mbs 2.
 
+**Round 2 (q2, mock data): MoonEP tuning** -- base 171.6 (reproducible), 48 comm SMs 174.1 (16:
+156.3, 24: 165.4; default 32), mbs 8 174.4, gbs 4096 177.2 (HybridEP grouped path at gbs 4096:
+170.4), slot padding 64 171.1, memory settings 171.4; **forced balancing 180.3 vs HybridEP's 201.4:
+MoonEP's own overhead is ~10 %** (profiled in q4).
+
+**Round 3 (q3): real text** (nemotron-cc mha 10p sample, OELLM 256k tokenizer = exp_irene's
+data_mn5_256k, so the 262k LM head is in the FLOPs as in their 185.8):
+
+| arm | TFLOP/s | tok/s/GPU | mem |
+|---|---:|---:|---:|
+| r_ref (exp_irene's settings, no memory settings) | OOM | | |
+| **r_opfx_mem (HybridEP grouped path + NCCL 4 ch + expandable segments)** | **169.2** | 5,919 | 60 % |
+| **r_opfx_mem_force (forced balancing, exp_irene's benchmark setting)** | **215.0** | 7,519 | 60 % |
+
+- On exp_irene's own benchmark setting (forced balancing, 256k vocab) our stack gives **215 vs
+  185.8** (+16 %: grouped-tensor experts, memory settings, the hybrid-ep image's TE 2.19 / torch 2.14).
+- With real routing on real text, HybridEP reaches 169 (mock data's skew: 160); MoonEP pending.
+
 ## GPU-h ledger
 
 | suite | what | GPU-h (est.) |
