@@ -140,6 +140,35 @@ sync-free dispatch, more tokens per expert GEMM (round 3).
 copies 3 per step: output / dx / dprobs / dW1 / dW2 within 0.5 %, bf16 level;
 tests/unit_tests/transformer/moe/test_moonep.py, job 47506054).
 
+## 4. Phase B: the production model at full depth (8 nodes, gbs 128 = 16 micro-batches / pipeline)
+
+~39B-A2.7B (48 blocks CKDA 5:1, 160 x 768 top-5 + shared, 8k doc-masked, 262k vocab), mbs 1,
+full recompute, EP4 HybridEP, routed residual 2 of 8 unless "plain". 12-15 steps.
+
+| arm | layout | TFLOP/s | tok/s/GPU | mem | note |
+|---|---|---:|---:|---:|---|
+| p_hep | PP4 even | 75.9 | 4,475 | 86 % | prodw-equivalent reference |
+| p_opfx | PP4 even, grouped path | 76.9 | 4,534 | 86 % | |
+| p_opfx_nomask | PP4, no document masking | 79.2 | 4,516 | 85 % | |
+| p_opfx_vpp | VPP2 | OOM | | | 47.9 GiB PyTorch + ~14 GiB not PyTorch's |
+| q_un | uneven PP4 15/15/14/4 | OOM | | | |
+| **q_un_mem** | uneven PP4 + NCCL 4 ch + expandable segments | 76.6 | 4,516 | | memory settings make it fit |
+| **q_vpp_mem / s_vpp_prof** | VPP2 + memory settings | 77.0 / 75.7 | 4,539 | 64 % | routed + VPP2 runs now (OOM / hang before) |
+| s_vpp_cap15 | VPP2 + sync-free (cap 1.5) | 80.2 | 4,728 | 64 % | after the doc-masking rewind fix |
+| q_un_plain | uneven PP4, plain residual | 86.2 | 5,082 | | |
+| **s_vpp_plain** | VPP2, plain residual | **98.0** | 5,777 | 53 % | |
+| s_vpp_mbs2 | VPP2, mbs 2 | OOM | | | |
+| s_vpp_moon | VPP2, MoonEP | 71.3 | 4,207 | 66 % | |
+| p_nep8 / q_nep8_pp2u | ncclep EP8, PP4 / PP2 | 62.8 / 69.7 | | | receive-capacity overflow (traps) at 1.5 and 2.0 |
+
+- Neither the head-balanced uneven layout nor VPP2 beats even PP4 with the routed residual: the
+  full-depth profile (VPP2, rank 0 / rank 24) spends 2.1 s / 4.45 s of a 7.5 s step in PP
+  `SendRecv` kernels. The routed residual sends all 8 streams across every stage boundary
+  (`depth_payload_slots`: 8 x [8192, 2048] bf16 = 268 MB per micro-batch, over InfiniBand
+  because EP fills the node): routed costs 21 % at full depth (98.0 -> 77.0) vs 10 % in the slice.
+- Fixes along the way: `pad_routing_map` in place (fused router), ncclep `num_topk` (TE 2.19),
+  document masking + paged-stash retry (the cu_seqlens stash is replayed: `rewind()`).
+
 ## GPU-h ledger
 
 | suite | what | GPU-h (est.) |
