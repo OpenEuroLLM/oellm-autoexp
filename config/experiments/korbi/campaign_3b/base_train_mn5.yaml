@@ -29,6 +29,8 @@ backend:
   env:
     WANDB_MODE: offline
     WANDB_RUN_GROUP: ${aux.suite}
+    # fewer fragmentation losses (with the 4 NCCL channels of slurm/marenostrum_ehpc533.yaml)
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
   megatron:
     micro_batch_size: 8
     global_batch_size: ${aux.gbs}

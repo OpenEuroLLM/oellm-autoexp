@@ -22,6 +22,11 @@ env:
   # torchrun defaults every rank to one thread: CPU-side work (the offloaded optimizer
   # step) would run on 1 of the 20 cores a GPU has (80 per node).
   OMP_NUM_THREADS: "16"
+  # marenostrum.yaml forces 32 channels on every communicator: ~14 GiB per GPU outside
+  # PyTorch at the production layout. 4 makes VPP2 / uneven PP fit with the routed residual at
+  # no speed cost (EP agent, docs/ep_optimization.md, 2026-10-19).
+  NCCL_MIN_NCHANNELS: "4"
+  NCCL_NCHANNELS_PER_PEER: "4"
 
 sbatch:
   account: ehpc533

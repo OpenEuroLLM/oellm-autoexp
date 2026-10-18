@@ -529,6 +529,8 @@ def write3c(pm):
 R4_SIZES = {  # hidden, blocks, q heads (x 128, 2 KV groups), active FFN (= dense twin), lr
     "s1": (768, 12, 6, 2048, 4e-3),
     "s2": (1024, 18, 8, 2816, 2.5e-3),  # 18 blocks: 5:1 needs blocks % 6 == 0
+    # round 5 only: ~0.5B active / ~12B total non-embedding; lr by the (N3/N2)^-0.417 law
+    "s3": (1280, 24, 10, 3584, 1.8e-3),
 }
 
 
@@ -720,6 +722,92 @@ def arms4ry(size: str):
     ])
 
 
+def hybrid_every(blocks: int, period: int, mixer: str) -> str:
+    """Attention every ``period``-th block, ``mixer`` elsewhere, MoE after each (a remainder of
+    linear blocks at the end when ``period`` does not divide ``blocks``)."""
+    return "".join(("*" if i % period == period - 1 else mixer) + "E" for i in range(blocks))
+
+
+def arms5(size: str):
+    """Round 5 (docs §12): the architecture decision before the two main runs (a Qwen3.5-35B-A3B
+    replica and our 2-3B-active hybrid), on the production data setting: the flag mix at 8k with
+    document masking, CUDA graphs (attention + MoE router) with the routing statistics, angular
+    MuOwn without warmup, stable only, exit at 4000 steps of a 4BT schedule (gbs 64 x 8k = round
+    4's token batch). Every arm at equal active and total MoE parameters (144 x w, top-3 + shared
+    w), mixers / residuals / MoE shape varied one at a time."""
+    hidden, blocks, heads, ffn, lr = R4_SIZES[size]
+    pool = dict((n, kv) for n, _, kv in arms4(size))
+    # literals (sweep-entry values do not reach the base config's train_iters interpolation):
+    # 4BT schedule at 64 x 8192 = 7629 steps, exit at 4000 (round 4's token batch and protocol)
+    base = {**FLAG8K, "aux.seq": 8192, B + "micro_batch_size": 1, B + "global_batch_size": 64,
+            "aux.gbs": 64, B + "train_iters": 7629, **CG4}
+    h5 = {**pool["h5_moe"], **base}
+    mlr = {B + "residual_mixer_lr_mult": 0.25}
+    mhc = lambda n: {B + "mhc": True, B + "mhc_expansion_rate": n, **mlr}  # noqa: E731
+    rr = {B + "mhc": True, B + "mhc_expansion_rate": 8, B + "mhc_routed_topk": 2,
+          B + "mhc_routed_key_dim": 64, B + "mhc_routed_balance_rate": 1e-3, **mlr}
+    w = ffn // 4
+    # Qwen3.5-like: Gated DeltaNet 3:1, gated attention with partial RoPE, zero-centred norm,
+    # GDN 128-wide heads (k = heads, v = 2 x heads) -- same MoE as ours
+    qwen = {**{k: v for k, v in h5.items() if not k.startswith(B + "linear_")},
+            "aux.pattern": hybrid_every(blocks, 4, "L"),
+            B + "experimental_attention_variant": "gated_delta_net",
+            B + "linear_key_head_dim": 128, B + "linear_value_head_dim": 128,
+            B + "linear_num_key_heads": heads, B + "linear_num_value_heads": 2 * heads,
+            B + "attention_output_gate": True, B + "exclusive_self_attention": False,
+            B + "position_embedding_type": "rope", B + "rotary_percent": 0.25,
+            B + "layernorm_zero_centered_gamma": True}
+    out = [
+        ("attn_moe", "all-attention MoE (RoPE + qk-norm + XSA): is the hybrid worth it at 8k",
+         {**pool["attn_moe"], **base}),
+        ("qwen35_moe", "Qwen3.5-like GDN 3:1 + gated attention, same MoE: main run A's proxy", qwen),
+        ("h5_moe", "ours: CKDA 5:1 + NoPE / qk-norm / XSA / gated attention, MoE", h5),
+        ("h5_moe_mhc4", "+ mHC, 4 streams (DeepSeek's)", {**h5, **mhc(4)}),
+        ("h5_moe_mhc2", "+ mHC, 2 streams", {**h5, **mhc(2)}),
+        ("h5_moe_rr28", "+ routed residual 1 + 1 of 8, keyed, pick balancing", {**h5, **rr}),
+        ("h5_moe_attnres", "+ block attention residuals (4 blocks; no CUDA graphs: not verified)",
+         {**h5, B + "attn_res": True, B + "attn_res_num_blocks": 4,
+          B + "cuda_graph_impl": "none", B + "cuda_graph_modules": []}),
+        ("h5_moe_g2", f"MoE granularity x2: {144 * 2} x {w // 2}, top-6 + shared {w}",
+         {**h5, B + "num_experts": 288, B + "moe_ffn_hidden_size": w // 2, B + "moe_router_topk": 6}),
+    ]
+    if size == "s1":
+        out.append(("h5_moe_seed2", "h5_moe, seed 1235 (noise: pairs with h5_moe_rr28_seed2)",
+                    {**h5, B + "seed": 1235}))
+        out.append(("h5_moe_rr28_seed2", "h5_moe_rr28, seed 1235", {**h5, **rr, B + "seed": 1235}))
+    if size == "s3":
+        # 2 nodes; 144 experts over EP8 (all-to-all crosses nodes; HybridEP is intra-node only)
+        nodes = {"slurm.sbatch.nodes": 2, B + "expert_model_parallel_size": 8}
+        out = [(n, c, {**kv, **nodes}) for n, c, kv in out
+               if n in ("qwen35_moe", "h5_moe", "h5_moe_mhc4", "h5_moe_rr28")]
+    return out
+
+
+def write5():
+    steps_s = {"s1": 3.0, "s2": 6.0, "s3": 7.0}
+    times = {"s1": "08:00:00", "s2": "12:00:00", "s3": "12:00:00"}
+    # smoke: every s1 arm (and the s3 layout) for 40 steps, before the unattended start
+    smoke = [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})
+             for n, c, kv in arms5("s1")]
+    # (the 2-node s3 layout cannot share the 1-node array: checked separately)
+    for size, prefix, pool in [(z, "screen5", arms5(z)) for z in ("s1", "s2", "s3")] + [
+            ("s1", "screen5smoke", smoke)]:
+        hidden, blocks, heads, ffn, lr = R4_SIZES[size]
+        lines = [HEADER.format(
+            title="Round 5: the architecture decision on the production data setting (flag, 8k)",
+            suite=f"{prefix}_{size}", size=size, hidden=hidden, tokens="4.0e9", blocks=blocks,
+            heads=heads, ffn=ffn, lr=lr, gbs=64, pattern="*-" * blocks,
+            matched="MoE: equal active and total by construction", time=times[size],
+            step_s=steps_s[size])]
+        for name, comment, kv in pool:
+            lines.append(f"        # {comment}\n        - aux.arm: {name}\n")
+            for k, v in kv.items():
+                val = yaml.safe_dump(v, default_flow_style=True).strip().removesuffix("...").strip()
+                lines.append(f"          {k}: {val}\n")
+        (OUT / f"{prefix}_{size}_mn5.yaml").write_text("".join(lines))
+        print(f"{prefix}_{size}_mn5.yaml: {len(pool)} arms")
+
+
 def write4():
     _write4("s1", "screen4ry", "Round 4R-y: the routed residual as a cheap axis (2 / 1 of 8)",
             arms4ry("s1"))
@@ -728,7 +816,7 @@ def write4():
                 arms4rx(size))
     _write4("s1", "screen4r", "Round 4R: residual arms with the stream diagnostics", arms4r("s1"))
     _write4("s1", "flagsmoke", "Flag mix smoke at 8k with document masking", flag_smoke("s1"))
-    for size, (hidden, blocks, heads, ffn, lr) in R4_SIZES.items():
+    for size in ("s1", "s2"):
         _write4(size, "screen4", "Round 4: the MoE hybrid with a residual stream + LatentMoE",
                 arms4(size))
     for size in ("s1",):
@@ -764,6 +852,7 @@ def main():
     write3b()
     write3c(pm)
     write4()
+    write5()
 
 
 def write(prefix, sizes, keep, title, pm):

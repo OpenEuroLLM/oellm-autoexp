@@ -5,7 +5,11 @@ step ~30 with a finite loss, s1 shapes; not reproduced at hidden 256 locally.)
 
 Run from submodules/Megatron-LM (tests.unit_tests importable). MHC_TRITON_BACKWARD=0 switches
 mHC to the torch backward."""
+import os
 import sys
+
+# run from submodules/Megatron-LM: its `tests` package, not the autoexp repo's
+sys.path.insert(0, os.getcwd())
 import torch
 from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_stack_spec
 from megatron.core.models.hybrid.hybrid_model import HybridModel
