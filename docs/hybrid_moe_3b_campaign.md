@@ -1991,3 +1991,55 @@ optimizer):
 - A short MoE lr / gbs sweep (its optimum differs from dense) and the warmup check under the
   chosen optimizer.
 - Throughput at scale from the A3B-30B layout (§7.2), re-checked only for round 3's winners.
+
+## 12. Round 5: the architecture decision before the two main runs (2026-10-19)
+
+Round 5 prepares the two main runs: **A** a Qwen3.5-35B-A3B replica, **B** our hybrid at 2-3B
+active (total TBD, ~39B in docs/inference_model_size.md). It is the last small-scale round: every
+remaining architecture choice is made here, on the production data setting.
+
+**Protocol (`screen5_{s1,s2,s3}_mn5.yaml`, `gen_screen.py arms5 / write5`):** the flag mix at 8k
+with document masking; CUDA graphs on the attention / mixer layers and the MoE router + preprocess
+with the routing statistics (graph-safe, §11.7); angular MuOwn without warmup (s1 4e-3, s2 2.5e-3,
+s3 1.8e-3), stable only; gbs 64 x 8192 (round 4's token batch), mbs 1; a 4BT schedule (7629
+steps) with exit at 4000 (equal data order for every arm; finalists extend by resuming); rolling
+checkpoints every 250 steps; the NaN guard; NCCL 4 channels + expandable segments. Every arm has
+equal active and total MoE parameters (144 x w, top-3 + shared w; w = d_ffn / 4).
+
+**Sizes** (non-embedding, estimated; + 0.4-0.7B embedding at the 262k vocabulary):
+
+| size | hidden x blocks | q heads x 128 | active | total | nodes |
+|---|---|---|---:|---:|---:|
+| s1 | 768 x 12 | 6 | ~0.09B | ~2.1B | 1 |
+| s2 | 1024 x 18 | 8 | ~0.23B | ~5.7B | 1 |
+| s3 | 1280 x 24 | 10 | ~0.5B | ~12B | 2 (EP8, all-to-all) |
+
+**Arms:**
+
+| arm | s1 | s2 | s3 | decides |
+|---|:-:|:-:|:-:|---|
+| attn_moe: all-attention MoE (RoPE, qk-norm, XSA) | x | x | | is the hybrid worth it at 8k |
+| qwen35_moe: GDN 3:1, gated attention, partial RoPE, zero-centred norm, same MoE | x | x | x | main run A's proxy |
+| h5_moe: CKDA 5:1 + NoPE / qk-norm / XSA / gated attention | x | x | x | main run B's base |
+| + mHC-4 (DeepSeek's stream count) | x | x | x | residual |
+| + mHC-2 | x | x | | residual (cheap dense) |
+| + routed 1 + 1 of 8, keyed, pick balancing | x | x | x | residual (new, novel) |
+| + block AttnRes (4 blocks; ungraphed) | x | x | | residual |
+| MoE granularity x2 (288 x w/2, top-6) | x | x | | MoE shape |
+| seed pair: h5_moe / + routed, seed 1235 | x | | | noise of a gap |
+
+**Decision rule (user 2026-10-19):** by the fitted curves and their extrapolation to the
+overtrained regime (10T tokens: the larger-data estimate, not the loss at 4000 steps), with the
+throughput at the production layout (PP: the routed residual sends all 8 streams across every
+pipeline boundary, -21 % at full depth per the EP agent; mHC-n sends n). mHC slightly better but
+compute-heavy -> dropped; mHC about equal or worse than the routed residual -> the routed residual
+(novelty), in its best setting. Gaps are judged against the run-to-run noise (seed pair, §11.7).
+
+**Preconditions:** the angular-MuOwn checkpoint-load fix (Megatron a4545822e: s2 runs could not
+resume, OOM in load_state_dict), the dense-mHC NaN diagnosis (mHC-4 NaN at step ~30 under MoE),
+the 40-step smoke of every arm. **Auto-start:** when round 4's s2 / 4G arms finish (MN5 login
+node, survives this session).
+
+**Budget:** s1 ~10 arms x ~13 GPU-h, s2 8 x ~27, s3 4 x ~50 -> ~550 GPU-h; then lr sweeps (3 lr
+for the 2 finalists at s1 / s2, ~160) and the 6BT extensions (~100): ~800 GPU-h, ending near 4.4k
+of the 7k hard limit.
