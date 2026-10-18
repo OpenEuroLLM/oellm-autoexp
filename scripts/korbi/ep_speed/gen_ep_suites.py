@@ -317,6 +317,31 @@ def qwen3_a3b():
     return arms
 
 
+def qwen3_a3b_moon():
+    """Qwen3-30B-A3B round 2: MoonEP (171.5 TFLOP/s with real routing in q1, vs 160-162 for
+    HybridEP and 201 for HybridEP with forced balancing) tuned: comm SMs, slot padding, memory
+    settings, micro batch 8, gbs 4096; its own overhead under forced balancing."""
+    arms, arm = arms_builder()
+    base = dict(Q3VPP)
+    moon = dict(MOON, **{"aux.array_tag": "_moon"})
+    moonmem = {**MOON, **MEM, "aux.array_tag": "_moonmem"}
+    sms = lambda n: {B + "moe_flex_dispatcher_num_sms": n}  # noqa: E731
+    long = {"aux.gbs": 4096, B + "train_iters": 8}
+    arm("m_base", "MoonEP (repeat of q_moon)", base, moon)
+    arm("m_mem", "MoonEP + NCCL 4 channels + expandable segments", base, moonmem)
+    arm("m_sms16", "MoonEP, 16 comm SMs (default 32)", base, moon, sms(16))
+    arm("m_sms24", "MoonEP, 24 comm SMs", base, moon, sms(24))
+    arm("m_sms48", "MoonEP, 48 comm SMs", base, moon, sms(48))
+    arm("m_pad64", "MoonEP, expert-slot padding 64 (default 128)", base, MOON,
+        {"backend.env.MOONEP_TOKEN_PADDING": "64", "aux.array_tag": "_moonpad"})
+    arm("m_force", "MoonEP, forced balancing (MoonEP's own overhead vs q_opfx_force)", base, moon,
+        {B + "moe_router_force_load_balancing": True})
+    arm("m_mbs8", "MoonEP, micro batch 8", base, moonmem, {B + "micro_batch_size": 8})
+    arm("m_gbs4096", "MoonEP, gbs 4096", base, moonmem, long)
+    arm("h_gbs4096", "HybridEP grouped path + memory settings, gbs 4096", base, HEP, OPFX, MEM, long)
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -515,6 +540,19 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, qwen3_a3b())
+    dump("ep_qwen3b_mn5.yaml",
+         "Qwen3-30B-A3B on 8 nodes, round 2: MoonEP tuning (docs/ep_fp8_speed.md, phase Q).",
+         """
+aux:
+  family: q3a3b
+  suite: q2
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON, qwen3_a3b_moon())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
