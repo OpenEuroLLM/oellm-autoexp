@@ -412,8 +412,7 @@ def ep_prod4():
     """Phase B, round 4: the Qwen3 findings on the production hybrid, real text (8k, document
     masking, 256k tokenizer), routed residual: MoonEP (64 SMs) vs HybridEP, VPP2, memory settings."""
     arms, arm = arms_builder()
-    data = dict(REALDATA, **{B + "seq_length": 8192, B + "max_position_embeddings": 8192})
-    base = dict(RECIPE, **PROD, **ROUTED, **PRODSEQ, **data)
+    base = {**RECIPE, **PROD, **ROUTED, **REALDATA, **PRODSEQ}
     moon = {**MOON, **MEM, "aux.array_tag": "_moonmem", B + "moe_flex_dispatcher_num_sms": 64}
     arm("t_hep_vpp", "HybridEP grouped path, VPP2, routed", base, HEP, VPP2, OPFX, MEM)
     arm("t_hep_vpp_cap2", "HybridEP grouped path, VPP2, routed, sync-free capacity 2.0", base, HEP,
