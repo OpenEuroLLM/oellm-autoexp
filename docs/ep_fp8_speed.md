@@ -169,6 +169,17 @@ full recompute, EP4 HybridEP, routed residual 2 of 8 unless "plain". 12-15 steps
 - Fixes along the way: `pad_routing_map` in place (fused router), ncclep `num_topk` (TE 2.19),
   document masking + paged-stash retry (the cu_seqlens stash is replayed: `rewind()`).
 
+**Round 4 (b4): real text** (nemotron-cc, 256k, 8k with document masking), VPP2 + memory settings:
+
+| arm | routed 2 of 8 | plain residual |
+|---|---:|---:|
+| HybridEP grouped path | 73.4 | 86.2 |
+| MoonEP (64 SMs) | 60.5 | **88.8** |
+| HybridEP sync-free capacity 2.0 | 55.0 (re-runs) | |
+
+MoonEP helps the plain hybrid (+3 %) but loses with the routed residual (to be profiled: the
+routed sublayer recompute re-runs the MoE forward, i.e. MoonEP's planning / prefetch / dispatch).
+
 ## 5. Phase Q: Qwen3-30B-A3B first (user, 2026-10-18: reach exp_irene's 170+ with standard attention)
 
 exp_irene (branch `exp_irene`): Qwen3-30B-A3B (48 x attention + MoE, 32 q / 4 kv heads x 128,
@@ -219,6 +230,10 @@ its whole fp32 block), 1.06 s device-to-device copies (comm-buffer boundary), Mo
 ~3.3 s vs HybridEP dispatch/combine/permute ~3.2 s. Fixed in round 5: prefetch-slot wgrad without
 accumulation, zero-copy combine backward, the weighted-SwiGLU output saved instead of recomputed.
 micro batch 8 OOMs with the 262k head.
+
+**Round 5 (q5, after the MoonEP fixes):** MoonEP 64 SMs **195.1** (80 SMs 195.9), **gbs 4096: 203.0**,
+forced 206.0 (vs HybridEP forced 214.5: overhead now ~4 %). HybridEP comm SMs 16 / 48: 169.9 /
+170.0 (no effect).
 
 ## GPU-h ledger
 
