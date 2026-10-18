@@ -440,6 +440,19 @@ def qwen3_a3b_r6():
     return arms
 
 
+def ep_prod5():
+    """Phase B, round 5: profiles of MoonEP vs HybridEP with the routed residual (real text)."""
+    arms, arm = arms_builder()
+    base = {**RECIPE, **PROD, **ROUTED, **REALDATA, **PRODSEQ}
+    moon = {**MOON, **MEM, "aux.array_tag": "_moonmem", B + "moe_flex_dispatcher_num_sms": 64}
+    prof = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
+            B + "profile_step_start": 6, B + "profile_step_end": 8, B + "train_iters": 10}
+    arm("u_moon_prof", "profile: MoonEP, VPP2, routed", base, VPP2, moon, prof)
+    arm("u_hep_prof", "profile: HybridEP grouped path, VPP2, routed", base, HEP, VPP2, OPFX, MEM,
+        prof)
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -708,6 +721,11 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, qwen3_a3b_r6())
+    dump("ep_prod5_mn5.yaml",
+         "The production model on 8 nodes, round 5: routed-residual profiles (docs/ep_fp8_speed.md, phase B).",
+         PROD_AUX.replace("suite: b1", "suite: b5") + common(PROD_PARAMS, iters=10, time="00:30:00",
+                                                            startup=1500, stall=600, step_s=15.0),
+         ep_prod5())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
