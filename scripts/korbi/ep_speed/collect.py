@@ -21,7 +21,8 @@ ITER = re.compile(r"iteration\s+(\d+)/\s*(\d+) \|.*?elapsed time per iteration \
 ERRORS = [
     ("OOM", re.compile(r"CUDA out of memory|OutOfMemoryError|out of memory")),
     ("WATCHDOG", re.compile(r"WATCHDOG: .*")),
-    ("NCCL-timeout", re.compile(r"Watchdog caught collective operation timeout|NCCL.*[Tt]imeout")),
+    ("NCCL-timeout", re.compile(r"Watchdog caught collective operation timeout|NCCL.*timed out")),
+    ("ncclep-overflow", re.compile(r"padded EM slots \d+ > max_recv_tokens_per_rank \d+")),
     ("assert", re.compile(r"AssertionError.*")),
     ("error", re.compile(r"^\S*\s*(?:\[default\d+\]:)?\s*(\w+(?:Error|Exception)): (.*)$", re.M)),
 ]

@@ -197,6 +197,14 @@ VPP2 = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (7, 7, 7, 6, 7, 7, 6, 1)),
 PP2 = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (24, 24)), B + "pipeline_model_parallel_size": 2}
 PP2V = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (13, 12, 12, 11)),
         B + "pipeline_model_parallel_size": 2, B + "overlap_p2p_comm": True}
+# the 262k LM head + loss is ~18 % of the model's FLOPs (~10.5 blocks' worth): on the last of
+# four equal stages it makes that stage ~1.5x the others. Uneven stages balance it.
+PP4U = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (15, 15, 14, 4)),
+        B + "pipeline_model_parallel_size": 4}
+PP2U = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (26, 22)), B + "pipeline_model_parallel_size": 2}
+PLAIN = {B + "mhc": False, B + "mhc_routed_topk": None, B + "mhc_routed_reversible": False,
+         B + "mhc_expansion_rate": None}
+NEP2 = dict(NEP, **{B + "moe_expert_rank_capacity_factor": 2.0})
 PRODSEQ = {B + "seq_length": 8192, B + "max_position_embeddings": 8192,
            B + "dataloader_inter_document_masking": True}
 
@@ -222,6 +230,24 @@ def ep_prod():
     arm("p_nep8_pp2", "ncclep EP8, PP2 (DP 16): half the pipeline bubble", base, NEP, PP2, OPFX,
         {"aux.ep": 8})
     arm("p_nep8_pp2v", "ncclep EP8, PP2 x VPP2", base, NEP, PP2V, OPFX, {"aux.ep": 8})
+    return arms
+
+
+def ep_prod2():
+    """Phase B, round 2: the head-balanced uneven PP4 layout (15/15/14/4 blocks), sync-free
+    HybridEP, the plain residual, partial (block) recompute, ncclep EP8 with capacity 2.0."""
+    arms, arm = arms_builder()
+    base = dict(RECIPE, **PROD, **ROUTED, **PRODSEQ)
+    arm("q_un", "HybridEP EP4, grouped path, uneven PP4 15/15/14/4", base, HEP, PP4U, OPFX)
+    arm("q_un_cap", "+ sync-free HybridEP (rank capacity 1.25)", base, HEP, PP4U, OPFX, CAP)
+    arm("q_un_plain", "plain residual, uneven PP4", base, HEP, PP4U, OPFX, PLAIN)
+    arm("q_un_plain_cap", "plain residual, uneven PP4, sync-free", base, HEP, PP4U, OPFX, PLAIN, CAP)
+    arm("q_un_blk24", "uneven PP4, recompute only the first 24 layers of a stage (block)", base,
+        HEP, PP4U, OPFX, {B + "recompute_method": "block", B + "recompute_num_layers": 24})
+    arm("q_un_r2", "uneven PP4, checkpoint every 2 layers (one block)", base, HEP, PP4U, OPFX,
+        {B + "recompute_num_layers": 2})
+    arm("q_nep8_un", "ncclep EP8 (capacity 2.0), uneven PP4", base, NEP2, PP4U, OPFX, {"aux.ep": 8})
+    arm("q_nep8_pp2u", "ncclep EP8 (capacity 2.0), PP2 26/22", base, NEP2, PP2U, OPFX, {"aux.ep": 8})
     return arms
 
 
@@ -307,6 +333,30 @@ SLICE_PARAMS = """    num_experts: 160
     liger_fused_linear_cross_entropy_chunk_size: 4096
 """
 
+PROD_AUX = """
+aux:
+  family: epprod
+  suite: b1
+  pattern: "LELELELELE*E"
+  nodes: 8
+  ep: 4
+  gbs: 128
+  topk: 5
+  expert_ffn: 768
+"""
+PROD_PARAMS = """    num_experts: 160
+    moe_ffn_hidden_size: 768
+    moe_router_topk: 5
+    moe_shared_expert_intermediate_size: 768
+    vocab_size: 262143
+    micro_batch_size: 1
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    # 2048 x 262k bf16 logits per chunk (8192: 4 GiB, OOM on the last stage at 8k)
+    liger_fused_linear_cross_entropy_chunk_size: 2048
+"""
+
 
 if __name__ == "__main__":
     dump("ep_slice_mn5.yaml",
@@ -322,28 +372,13 @@ if __name__ == "__main__":
                                                              step_s=3.0), ep_slice3())
     dump("ep_prod_mn5.yaml",
          "The production model on 8 nodes: slice findings at full depth, layouts (docs/ep_fp8_speed.md, phase B).",
-         """
-aux:
-  family: epprod
-  suite: b1
-  pattern: "LELELELELE*E"
-  nodes: 8
-  ep: 4
-  gbs: 128
-  topk: 5
-  expert_ffn: 768
-""" + common("""    num_experts: 160
-    moe_ffn_hidden_size: 768
-    moe_router_topk: 5
-    moe_shared_expert_intermediate_size: 768
-    vocab_size: 262143
-    micro_batch_size: 1
-    recompute_granularity: full
-    recompute_method: uniform
-    recompute_num_layers: 1
-    # 2048 x 262k bf16 logits per chunk (8192: 4 GiB, OOM on the last stage at 8k)
-    liger_fused_linear_cross_entropy_chunk_size: 2048
-""", iters=15, time="00:30:00", startup=1500, stall=600, step_s=15.0), ep_prod())
+         PROD_AUX + common(PROD_PARAMS, iters=15, time="00:30:00", startup=1500, stall=600,
+                           step_s=15.0), ep_prod())
+    dump("ep_prod2_mn5.yaml",
+         "The production model on 8 nodes, round 2: head-balanced layouts (docs/ep_fp8_speed.md, phase B).",
+         PROD_AUX.replace("suite: b1", "suite: b2") + common(PROD_PARAMS, iters=15, time="00:30:00",
+                                                            startup=1500, stall=600, step_s=15.0),
+         ep_prod2())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
