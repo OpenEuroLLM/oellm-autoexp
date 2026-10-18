@@ -424,6 +424,22 @@ def ep_prod4():
     return arms
 
 
+def qwen3_a3b_r6():
+    """Qwen3-30B-A3B round 6 (real text): MoonEP at 61 % memory -> recompute less. Block
+    recompute per VPP chunk (14 layers = 7 x attention + MoE): the first N layers recomputed."""
+    arms, arm = arms_builder()
+    base = dict(Q3VPP, **REALDATA)
+    moon = {**MOON, **MEM, "aux.array_tag": "_moonmem", B + "moe_flex_dispatcher_num_sms": 64}
+    blk = lambda n: {B + "recompute_method": "block", B + "recompute_num_layers": n}  # noqa: E731
+    long = {"aux.gbs": 4096, B + "train_iters": 8}
+    arm("e_blk12", "MoonEP, recompute 12 of 14 layers per chunk", base, moon, blk(12))
+    arm("e_blk10", "MoonEP, recompute 10 of 14 layers per chunk", base, moon, blk(10))
+    arm("e_blk8", "MoonEP, recompute 8 of 14 layers per chunk", base, moon, blk(8))
+    arm("e_blk12_gbs4096", "MoonEP, recompute 12 of 14, gbs 4096", base, moon, blk(12), long)
+    arm("e_blk10_gbs4096", "MoonEP, recompute 10 of 14, gbs 4096", base, moon, blk(10), long)
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -679,6 +695,19 @@ aux:
          PROD_AUX.replace("suite: b1", "suite: b4") + common(PROD_PARAMS, iters=12, time="00:30:00",
                                                             startup=1500, stall=600, step_s=15.0),
          ep_prod4())
+    dump("ep_qwen3e_mn5.yaml",
+         "Qwen3-30B-A3B on 8 nodes, round 6: less recompute with MoonEP (docs/ep_fp8_speed.md, phase Q).",
+         """
+aux:
+  family: q3a3b
+  suite: q6
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON, qwen3_a3b_r6())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
