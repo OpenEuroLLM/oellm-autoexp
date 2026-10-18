@@ -408,6 +408,23 @@ def qwen3_a3b_r5():
     return arms
 
 
+def ep_prod4():
+    """Phase B, round 4: the Qwen3 findings on the production hybrid, real text (8k, document
+    masking, 256k tokenizer), routed residual: MoonEP (64 SMs) vs HybridEP, VPP2, memory settings."""
+    arms, arm = arms_builder()
+    data = dict(REALDATA, **{B + "seq_length": 8192, B + "max_position_embeddings": 8192})
+    base = dict(RECIPE, **PROD, **ROUTED, **PRODSEQ, **data)
+    moon = {**MOON, **MEM, "aux.array_tag": "_moonmem", B + "moe_flex_dispatcher_num_sms": 64}
+    arm("t_hep_vpp", "HybridEP grouped path, VPP2, routed", base, HEP, VPP2, OPFX, MEM)
+    arm("t_hep_vpp_cap2", "HybridEP grouped path, VPP2, routed, sync-free capacity 2.0", base, HEP,
+        VPP2, OPFX, MEM, {B + "moe_expert_rank_capacity_factor": 2.0})
+    arm("t_moon_vpp", "MoonEP 64 SMs, VPP2, routed", base, VPP2, moon)
+    arm("t_moon_vpp_plain", "MoonEP 64 SMs, VPP2, plain residual", base, VPP2, moon, PLAIN)
+    arm("t_hep_vpp_plain", "HybridEP grouped path, VPP2, plain residual", base, HEP, VPP2, OPFX,
+        MEM, PLAIN)
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -658,6 +675,11 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, qwen3_a3b_r5())
+    dump("ep_prod4_mn5.yaml",
+         "The production model on 8 nodes, round 4: real text, MoonEP vs HybridEP (docs/ep_fp8_speed.md, phase B).",
+         PROD_AUX.replace("suite: b1", "suite: b4") + common(PROD_PARAMS, iters=12, time="00:30:00",
+                                                            startup=1500, stall=600, step_s=15.0),
+         ep_prod4())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
