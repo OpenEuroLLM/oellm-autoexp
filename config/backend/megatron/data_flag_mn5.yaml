@@ -3,7 +3,10 @@
 # (training-data-collection/flag, Megatron format, OELLM 256k SentencePiece tokenizer), weights
 # from its datamix.txt. scripts/korbi/flag_datamix_mn5.py writes the absolute-path weights file
 # (only shards present; rerun once the collection has fully landed). Template:
-# oellm_32b_dense/data/oellm_256k_15TT_jupiter_train.yaml.
+# oellm_32b_dense/data/oellm_256k_15TT_jupiter_train.yaml. Complete on 2026-10-18: 452/452 shards,
+# 100 % of the mix weight.
+# Pre-training at 8k with document masking (user 2026-10-18; as oellm_32b_dense): cu_seqlens from
+# the document index, per-document position ids, CKDA's recurrence restarts per document.
 data_args_path: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/data/flag_datamix_mn5.txt
 data_path: null
 split: "998,2,0"
@@ -13,10 +16,13 @@ tokenizer_model: /gpfs/projects/ehpc533/tokenizers/tokenizer-256k
 padded_vocab_size: 262144
 vocab_size: null
 mock_data: false
-seq_length: 4096
-max_position_embeddings: 4096
+seq_length: 8192
+max_position_embeddings: 8192
+dataloader_inter_document_masking: true
 dataloader_type: cyclic
-num_workers: 8
+# GPFS: 8 workers starved the GPUs at scale (throughput spikes); 16 workers + prefetch 8 fixed it
+num_workers: 16
+dataloader_prefetch_factor: 8
 num_dataset_builder_threads: 32
 data_cache_path: ${oc.env:OUTPUT_DIR,./output}/data_cache_flag
 create_attention_mask_in_dataloader: false

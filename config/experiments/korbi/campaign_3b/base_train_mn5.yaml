@@ -21,8 +21,14 @@ aux:
   tokens: 0.1e9
   gbs: 64
   seq: 4096
+  # wandb, as oellm_32b_dense: written OFFLINE next to each run (MN5 compute nodes have no
+  # internet); upload later with scripts/korbi/campaign/wandb_sync_tb.sh (offline runs)
+  wandb_project: hybrid_baby_arch_exp
 
 backend:
+  env:
+    WANDB_MODE: offline
+    WANDB_RUN_GROUP: ${aux.suite}
   megatron:
     micro_batch_size: 8
     global_batch_size: ${aux.gbs}
@@ -32,12 +38,59 @@ backend:
     eval_interval: 100
     eval_iters: 10
     log_interval: 10
+    # architecture diagnostics (arch_metrics.py: residual-stream sizes and usage, routers, gates;
+    # per layer with moe_per_layer_logging), every 100 steps -- round 4 ran without them
+    arch_metrics_interval: 100
+    wandb_project: ${aux.wandb_project}
+    wandb_entity: openeurollm-project
+    wandb_exp_name: ${job.name}
+    wandb_save_dir: ${job.base_output_dir}/wandb
+    # checkpoints, as oellm_32b_dense (b1_reborn_common.yaml): rolling non-persistent ones (only
+    # the latest kept) and one persistent checkpoint at the end of the run; load = save, so a
+    # restarted job resumes. (Never set non_persistent_ckpt_type: null on a training run with a
+    # non_persistent_save_interval: Megatron raises at the first save boundary -> restart loop.)
+    save: ${job.base_output_dir}/ckpt
+    load: ${job.base_output_dir}/ckpt
+    save_interval: ${backend.megatron.train_iters}
+    non_persistent_ckpt_type: global
+    non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
+    non_persistent_save_interval: 1000
+    # per run: array tasks sharing one index cache race on it (EOFError / mmap size errors)
+    data_cache_path: ${job.base_output_dir}/data_cache
+    # building the per-run index of the 156-prefix blend from GPFS can take > 10 min (one rank
+    # builds, the others wait in a barrier): the default 10-min NCCL timeout killed a run
+    distributed_timeout_minutes: 45
 
 job:
   name: ${aux.suite}_${aux.arm}
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${aux.suite}/${aux.arm}"
   array_group: null
   est_step_time_s: 1.0
+  # the backward CUDA-graph capture (cuda_graphs.py create_bwd_graph, default "global" capture
+  # mode) is invalidated now and then at startup by another thread's CUDA call
+  # (cudaErrorStreamCaptureInvalidated / "Invalid stream capture status"): 2 of 4 attn_ref runs
+  # under angular MuOwn on 2026-10-17. One rank dies at step 0, SLURM says COMPLETED 0:0, the
+  # monitor finished the job. Transient: a fresh start passes. Bounded restart.
+  log_events:
+    - name: cuda_graph_capture_invalidated
+      pattern: "cudaErrorStreamCaptureInvalidated|Invalid stream capture status|operation failed due to a previous error during capture"
+      pattern_type: regex
+      condition:
+        class_name: MaxActionFiresCondition
+        max_fires: 2
+      action:
+        class_name: RestartAction
+        reason: "CUDA-graph capture invalidated at startup (transient) -- restarting"
+    # A non-finite gradient norm: the run trains on garbage from there on (round 4's dense mHC
+    # arms ran ~2.5k steps on NaN gradients, 2026-10-18: rerun_mode is disabled, so Megatron
+    # neither skips nor stops). A restart would resume the same weights: cancel.
+    - name: nonfinite_grad_norm
+      pattern: "grad norm: (nan|inf)"
+      pattern_type: regex
+      match_once: true
+      action:
+        class_name: CancelAction
+        reason: "non-finite grad norm -- the run diverged"
 
 slurm:
   sbatch:
