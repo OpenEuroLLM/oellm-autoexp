@@ -110,6 +110,31 @@ def ep_slice():
     return arms
 
 
+MOON = {B + "moe_token_dispatcher_type": "flex", B + "moe_flex_dispatcher_backend": "moonep"}
+# rank 0 torch profile of steps 20-22 (kernel_summary.py); the throughput is read from steps < 20
+PROF = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
+        B + "profile_step_start": 20, B + "profile_step_end": 22}
+
+
+def ep_slice2():
+    """Phase A, second round: the fixed arms (ncclep bootstrap on TE 2.19, alltoall + router
+    padding), MoonEP, and rank-0 profiles of the grouped-tensor path in bf16 / fp8."""
+    arms, arm = arms_builder()
+    base = dict(RECIPE, **PROD)
+    arm("nep", "flex / ncclep (TE NCCL-EP), rank capacity 1.5", base, NEP)
+    arm("a2a_fp8b", "alltoall, fp8 blockwise + router padding", base, A2A, FP8B)
+    arm("moon", "MoonEP (balanced dispatch, prefetched redundant experts), bf16", base, MOON)
+    arm("moon_routed", "MoonEP + routed residual 2 of 8", base, MOON, ROUTED)
+    arm("hep_opfx_routed", "HybridEP + grouped-tensor op-fuser path + routed residual", base, HEP,
+        OPFX, ROUTED)
+    arm("prof_hep", "profile: HybridEP bf16 (unfused TEGroupedMLP)", base, HEP, PROF)
+    arm("prof_hep_opfx", "profile: HybridEP bf16, grouped-tensor path", base, HEP, OPFX, PROF)
+    arm("prof_hep_fp8b_opfx", "profile: HybridEP fp8 blockwise, grouped-tensor path", base, HEP,
+        FP8B, OPFX, PROF)
+    arm("prof_moon", "profile: MoonEP bf16", base, MOON, PROF)
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -164,10 +189,7 @@ def common(params: str, *, iters: int, time: str, startup: int = 1200, stall: in
                      "stall": stall, "step_s": step_s}
 
 
-if __name__ == "__main__":
-    dump("ep_slice_mn5.yaml",
-         "EP backends x fp8 on one node at the production layer shapes (docs/ep_fp8_speed.md, phase A).",
-         """
+SLICE_AUX = """
 aux:
   family: epslice
   suite: e1
@@ -177,7 +199,8 @@ aux:
   gbs: 32
   topk: 5
   expert_ffn: 768
-""" + common("""    num_experts: 160
+"""
+SLICE_PARAMS = """    num_experts: 160
     moe_ffn_hidden_size: 768
     moe_router_topk: 5
     moe_shared_expert_intermediate_size: 768
@@ -192,4 +215,14 @@ aux:
     # PP1 without recompute trips the overlapped param all-gather's ordering assert (a3bslice)
     overlap_param_gather: false
     liger_fused_linear_cross_entropy_chunk_size: 4096
-""", iters=30, time="00:20:00", step_s=3.0), ep_slice())
+"""
+
+
+if __name__ == "__main__":
+    dump("ep_slice_mn5.yaml",
+         "EP backends x fp8 on one node at the production layer shapes (docs/ep_fp8_speed.md, phase A).",
+         SLICE_AUX + common(SLICE_PARAMS, iters=30, time="00:20:00", step_s=3.0), ep_slice())
+    dump("ep_slice2_mn5.yaml",
+         "EP backends x fp8 on one node, round 2: fixes, MoonEP, profiles (docs/ep_fp8_speed.md, phase A).",
+         SLICE_AUX.replace("suite: e1", "suite: e2") + common(SLICE_PARAMS, iters=30, time="00:20:00",
+                                                             step_s=3.0), ep_slice2())
