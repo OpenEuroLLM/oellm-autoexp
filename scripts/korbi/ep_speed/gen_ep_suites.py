@@ -185,6 +185,43 @@ def ep_slice3():
     return arms
 
 
+# production model layouts: 48 blocks (CKDA 5:1), PP4 stages of 12 blocks, or PP4 x VPP2 with
+# the 262k head + loss on a segment of its own (exp_irene's balanced layout, §7.2)
+PP4 = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (12, 12, 12, 12)),
+       B + "pipeline_model_parallel_size": 4}
+VPP2 = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (7, 7, 7, 6, 7, 7, 6, 1)),
+        B + "pipeline_model_parallel_size": 4, B + "overlap_p2p_comm": True}
+PP2 = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (24, 24)), B + "pipeline_model_parallel_size": 2}
+PP2V = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (13, 12, 12, 11)),
+        B + "pipeline_model_parallel_size": 2, B + "overlap_p2p_comm": True}
+PRODSEQ = {B + "seq_length": 8192, B + "max_position_embeddings": 8192,
+           B + "dataloader_inter_document_masking": True}
+
+
+def ep_prod():
+    """Phase B: the production model (~39B / 2.74B active: 48 blocks CKDA 5:1, 160 x 768 top-5 +
+    shared, routed residual 2 of 8, 8k with document masking, 262k vocabulary) on 8 nodes, full
+    recompute, mbs 1, gbs 128 = 16 micro-batches per pipeline (DP 8; production at 512 GPUs and
+    PP4: DP 128, gbs ~2048 -> 16). What the slice findings are worth at full depth, and the
+    layout levers: VPP2 (routed + VPP hung at A3B, §7.2: watchdog stacks), EP8 across nodes
+    with ncclep (the only internode backend on MN5) -> half the expert memory, PP2."""
+    arms, arm = arms_builder()
+    base = dict(RECIPE, **PROD, **ROUTED, **PRODSEQ)
+    arm("p_hep", "reference: HybridEP EP4, PP4, unfused experts (prodw w768_mbs1)", base, HEP, PP4)
+    arm("p_opfx", "+ grouped-tensor op-fuser experts", base, HEP, PP4, OPFX)
+    arm("p_opfx_vpp", "+ VPP2 balanced layout, P2P overlap", base, HEP, VPP2, OPFX)
+    arm("p_opfx_plain", "plain residual (no routed streams), PP4", base, HEP, PP4, OPFX,
+        {B + "mhc": False})
+    arm("p_opfx_plain_vpp", "plain residual, VPP2", base, HEP, VPP2, OPFX, {B + "mhc": False})
+    arm("p_opfx_nomask", "no document masking, PP4", base, HEP, PP4, OPFX,
+        {B + "dataloader_inter_document_masking": False})
+    arm("p_nep8", "ncclep EP8 across 2 nodes, PP4", base, NEP, PP4, OPFX, {"aux.ep": 8})
+    arm("p_nep8_pp2", "ncclep EP8, PP2 (DP 16): half the pipeline bubble", base, NEP, PP2, OPFX,
+        {"aux.ep": 8})
+    arm("p_nep8_pp2v", "ncclep EP8, PP2 x VPP2", base, NEP, PP2V, OPFX, {"aux.ep": 8})
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -280,6 +317,30 @@ if __name__ == "__main__":
          "EP backends x fp8 on one node, round 3 (docs/ep_fp8_speed.md, phase A).",
          SLICE_AUX.replace("suite: e1", "suite: e4") + common(SLICE_PARAMS, iters=30, time="00:20:00",
                                                              step_s=3.0), ep_slice3())
+    dump("ep_prod_mn5.yaml",
+         "The production model on 8 nodes: slice findings at full depth, layouts (docs/ep_fp8_speed.md, phase B).",
+         """
+aux:
+  family: epprod
+  suite: b1
+  pattern: "LELELELELE*E"
+  nodes: 8
+  ep: 4
+  gbs: 128
+  topk: 5
+  expert_ffn: 768
+""" + common("""    num_experts: 160
+    moe_ffn_hidden_size: 768
+    moe_router_topk: 5
+    moe_shared_expert_intermediate_size: 768
+    vocab_size: 262143
+    micro_batch_size: 1
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    # 2048 x 262k bf16 logits per chunk (8192: 4 GiB, OOM on the last stage at 8k)
+    liger_fused_linear_cross_entropy_chunk_size: 2048
+""", iters=15, time="00:30:00", startup=1500, stall=600, step_s=15.0), ep_prod())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
