@@ -202,7 +202,7 @@ PP2V = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (13, 12, 12, 11)),
 PP4U = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (15, 15, 14, 4)),
         B + "pipeline_model_parallel_size": 4}
 PP2U = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (26, 22)), B + "pipeline_model_parallel_size": 2}
-PLAIN = {B + "mhc": False, B + "mhc_routed_topk": None, B + "mhc_routed_reversible": False}
+PLAIN = {B + "mhc": False, B + "mhc_routed_topk": 0, B + "mhc_routed_reversible": False}
 # ~14 GiB of a 63 GiB GPU is not PyTorch's at the production layout (b1 VPP2 OOM: 47.9 GiB
 # allocated, 63.2 GiB in use): NCCL buffers (the base config forces 32 channels per peer on every
 # communicator), EP buffers, workspaces. NCCL at 4 channels + the expandable-segment allocator
