@@ -4321,7 +4321,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "mhc_routed_free": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="Routed residual streams: pick all mhc_routed_topk streams by score instead of stream 0 plus the top-(k-1) others, so topk 1 routes each sublayer to one of the n streams (the cheapest routed residual: 3 rows of stream state moved per token and sublayer). The write carries a straight-through gate p / sg(p) (p: the softmax over all n routing logits at the picked streams; value 1), so the selection learns from the write also at topk 1, where the read weights are constant. Balancing then covers all n streams. Not with mhc_routed_reversible.",
+        help="Routed residual streams: pick all mhc_routed_topk streams by score instead of stream 0 plus the top-(k-1) others, so topk 1 routes each sublayer to one of the n streams (the cheapest routed residual: 3 rows of stream state moved per token and sublayer). The write carries a straight-through gate exp(log p - sg(log p)) (p: the softmax over all n routing logits at the picked streams; value 1, computed in log space so a stream picked through the balancing bias with p ~ 0 stays finite), so the selection learns from the write also at topk 1, where the read weights are constant. Balancing then covers all n streams. Not with mhc_routed_reversible.",
         choices=None,
         nargs=0,
         element_type=None,
