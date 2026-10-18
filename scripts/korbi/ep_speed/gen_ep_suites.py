@@ -135,6 +135,24 @@ def ep_slice2():
     return arms
 
 
+def ep_slice_internode():
+    """Two nodes, EP8 across the node boundary (20 experts per GPU), the slice otherwise: which
+    backend runs internode on MN5 (HybridEP asserted in DOCA before, §7.2), and at what cost
+    against EP4 within the node. Internode EP is the memory lever for fewer pipeline stages /
+    less recompute at the production scale."""
+    arms, arm = arms_builder()
+    base = dict(RECIPE, **PROD)
+    arm("a2a", "alltoall, EP8 over 2 nodes", base, A2A)
+    arm("hep", "HybridEP, EP8 over 2 nodes (multinode RDMA path)", base, HEP)
+    arm("dep", "DeepEP, EP8 over 2 nodes (internode NVSHMEM kernels)", base, DEP)
+    arm("nep", "ncclep (NCCL device API), EP8 over 2 nodes", base, NEP)
+    arm("hep_opfx", "HybridEP + grouped-tensor path, EP8", base, HEP, OPFX)
+    arm("a2a_opfx", "alltoall + grouped-tensor path, EP8", base, A2A, OPFX)
+    arm("hep_ep4", "control: HybridEP EP4 within the node (DP 8, expert DP 2)", base, HEP,
+        {"aux.ep": 4})
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -226,3 +244,8 @@ if __name__ == "__main__":
          "EP backends x fp8 on one node, round 2: fixes, MoonEP, profiles (docs/ep_fp8_speed.md, phase A).",
          SLICE_AUX.replace("suite: e1", "suite: e2") + common(SLICE_PARAMS, iters=30, time="00:20:00",
                                                              step_s=3.0), ep_slice2())
+    dump("ep_slice8_mn5.yaml",
+         "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
+         SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
+         .replace("nodes: 1", "nodes: 2").replace("ep: 4", "ep: 8").replace("gbs: 32", "gbs: 64")
+         + common(SLICE_PARAMS, iters=30, time="00:20:00", step_s=3.0), ep_slice_internode())
