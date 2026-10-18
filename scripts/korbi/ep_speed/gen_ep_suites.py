@@ -259,6 +259,28 @@ def ep_prod2():
     return arms
 
 
+def ep_prod3():
+    """Phase B, round 3: every arm with the memory settings (NCCL 4 channels + expandable
+    segments: they make VPP2 / uneven PP4 fit with the routed residual). Rank 0 (stage 0) and
+    rank 24 (first rank of the last stage) profile steps 8-9: why neither the head-balanced
+    layout nor VPP2 beat plain PP4 (76.9 TFLOP/s)."""
+    arms, arm = arms_builder()
+    base = dict(RECIPE, **PROD, **ROUTED, **PRODSEQ)
+    prof = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 24],
+            B + "profile_step_start": 8, B + "profile_step_end": 10}
+    cap15 = {B + "moe_expert_rank_capacity_factor": 1.5}
+    arm("s_vpp_prof", "VPP2, routed, profiled", base, HEP, VPP2, OPFX, MEM, prof)
+    arm("s_un_prof", "uneven PP4, routed, profiled", base, HEP, PP4U, OPFX, MEM, prof)
+    arm("s_pp4_prof", "even PP4, routed, profiled", base, HEP, PP4, OPFX, MEM, prof)
+    arm("s_vpp_plain", "VPP2, plain residual", base, HEP, VPP2, OPFX, MEM, PLAIN)
+    arm("s_vpp_cap15", "VPP2, routed, sync-free (capacity 1.5)", base, HEP, VPP2, OPFX, MEM, cap15)
+    arm("s_vpp_mbs2", "VPP2, routed, micro batch 2 (8 micro-batches per pipeline)", base, HEP,
+        VPP2, OPFX, MEM, {B + "micro_batch_size": 2})
+    arm("s_vpp_moon", "VPP2, routed, MoonEP", base, VPP2, MEM, MOON,
+        {"aux.array_tag": "_moonmem"})
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -387,6 +409,11 @@ if __name__ == "__main__":
          PROD_AUX.replace("suite: b1", "suite: b2") + common(PROD_PARAMS, iters=15, time="00:30:00",
                                                             startup=1500, stall=600, step_s=15.0),
          ep_prod2())
+    dump("ep_prod3_mn5.yaml",
+         "The production model on 8 nodes, round 3: profiles at full depth (docs/ep_fp8_speed.md, phase B).",
+         PROD_AUX.replace("suite: b1", "suite: b3") + common(PROD_PARAMS.replace(
+             "    train_iters", "    train_iters"), iters=12, time="00:30:00", startup=1500,
+             stall=600, step_s=15.0), ep_prod3())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
