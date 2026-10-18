@@ -450,6 +450,11 @@ def ep_prod5():
     arm("u_moon_prof", "profile: MoonEP, VPP2, routed", base, VPP2, moon, prof)
     arm("u_hep_prof", "profile: HybridEP grouped path, VPP2, routed", base, HEP, VPP2, OPFX, MEM,
         prof)
+    arm("u_hep_plain_prof", "profile: HybridEP grouped path, VPP2, plain residual", base, HEP, VPP2,
+        OPFX, MEM, PLAIN, prof)
+    arm("u_hep_mhc4_prof", "profile: HybridEP grouped path, VPP2, dense mHC-4", base, HEP, VPP2,
+        OPFX, MEM, prof, {B + "mhc_expansion_rate": 4, B + "mhc_routed_topk": 0,
+                          B + "mhc_routed_reversible": False})
     return arms
 
 
