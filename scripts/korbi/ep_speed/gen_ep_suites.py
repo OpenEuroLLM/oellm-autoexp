@@ -390,6 +390,24 @@ def qwen3_a3b_best():
     return arms
 
 
+def qwen3_a3b_r5():
+    """Qwen3-30B-A3B round 5 (real text): MoonEP after the wgrad / zero-copy / saved-activation
+    changes; HybridEP's comm SMs."""
+    arms, arm = arms_builder()
+    base = dict(Q3VPP, **REALDATA)
+    moon = {**MOON, **MEM, "aux.array_tag": "_moonmem"}
+    sms = lambda n: {B + "moe_flex_dispatcher_num_sms": n}  # noqa: E731
+    arm("d_moon64", "MoonEP, 64 comm SMs", base, moon, sms(64))
+    arm("d_moon80", "MoonEP, 80 comm SMs", base, moon, sms(80))
+    arm("d_moon64_force", "MoonEP, 64 SMs, forced balancing", base, moon, sms(64),
+        {B + "moe_router_force_load_balancing": True})
+    arm("d_moon64_gbs4096", "MoonEP, 64 SMs, gbs 4096", base, moon, sms(64),
+        {"aux.gbs": 4096, B + "train_iters": 8})
+    arm("d_hep_sms16", "HybridEP grouped path, 16 SMs (exp_irene)", base, HEP, OPFX, MEM, sms(16))
+    arm("d_hep_sms48", "HybridEP grouped path, 48 SMs", base, HEP, OPFX, MEM, sms(48))
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -627,6 +645,19 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, qwen3_a3b_best())
+    dump("ep_qwen3d_mn5.yaml",
+         "Qwen3-30B-A3B on 8 nodes, round 5: MoonEP fixes, comm SMs (docs/ep_fp8_speed.md, phase Q).",
+         """
+aux:
+  family: q3a3b
+  suite: q5
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON, qwen3_a3b_r5())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
