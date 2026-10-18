@@ -169,6 +169,29 @@ full recompute, EP4 HybridEP, routed residual 2 of 8 unless "plain". 12-15 steps
 - Fixes along the way: `pad_routing_map` in place (fused router), ncclep `num_topk` (TE 2.19),
   document masking + paged-stash retry (the cu_seqlens stash is replayed: `rewind()`).
 
+## 5. Phase Q: Qwen3-30B-A3B first (user, 2026-10-18: reach exp_irene's 170+ with standard attention)
+
+exp_irene (branch `exp_irene`): Qwen3-30B-A3B (48 x attention + MoE, 32 q / 4 kv heads x 128,
+128 x 768 top-8, ~50k vocab, 4k), PP4 x VPP2 balanced (7/7/7/6/7/7/6/1 + head), EP4 HybridEP,
+full recompute, mbs 4, gbs 4096, **forced load balancing**: 185.8 bf16 / 182.1 fp8-delayed on 8 nodes.
+Ours: the same model as HybridModel `*E` x 48 on the hybrid-ep image (`ep_qwen3_mn5.yaml`, q1,
+8 nodes, gbs 1024, 15 steps):
+
+| arm | TFLOP/s | tok/s/GPU | mem | note |
+|---|---:|---:|---:|---|
+| q_ref (exp_irene's layout, real routing) | 152.0 | 5,848 | 81 % | |
+| q_ref_force (forced balancing) | 198.0 | 7,621 | 55 % | > exp_irene's 185.8 |
+| q_opfx_force (grouped path, forced) | **201.4** | 7,750 | 55 % | the balanced ceiling |
+| q_opfx (grouped path) | 162.5 | 6,254 | 99 % | OOM at step 6 (imbalance grows the buffers) |
+| q_opfx_mem (+ NCCL 4 ch + expandable segments) | 160.2 | 6,163 | 51 % | |
+| **q_moon (MoonEP, real routing)** | **171.5** | 6,602 | 56 % | balanced by construction: +13 % over q_ref |
+| q_opfx_fp8b / q_opfx_fp8eb | 156.0 / 153.9 | | | fp8 still slower |
+| q_opfx_cap (sync-free 1.5) | 84.6 | | | over-budget steps re-run (paged stash) |
+| q_opfx_sel (selective recompute) | fail | | | TE: ScaledSwiGLU recompute needs the sm100 fused MLP |
+
+- The imbalance of real (step-1..15) routing costs 25 % (152 vs 198); **MoonEP recovers 40 % of
+  it** with real routing. MoonEP slice after zero-copy combine: 149.2 (+3 %), 172.2 at mbs 2.
+
 ## GPU-h ledger
 
 | suite | what | GPU-h (est.) |
