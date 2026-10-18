@@ -1935,6 +1935,12 @@ gap is that the residual arms ran without the CUDA graphs h5_moe uses.
 - **4R-x s1 (running):** keyed 3-of-8 + mixing of the picked streams, + pick balancing; the seed
   noise of a gap (h5_moe and keyed 3-of-8 at seed 1235, paired with each other); keyed 3-of-8 speed
   with CUDA graphs on attn (300 steps).
+- **4R-y (s1, running; user 2026-10-18: the routed residual must stay a CHEAP axis, so 2 and 1 of
+  8, not 3):** keyed 2-of-8 + pick balancing; + mixing of the picked streams; free routing 2-of-8
+  (no forced main stream); free keyed 1-of-8 + balancing (3 rows of stream state per token and
+  sublayer). New in Megatron: `mhc_routed_free` -- all k picked by score; the write carries a
+  straight-through gate p / sg(p) (softmax over all n logits; value 1) so the selection learns at
+  k = 1, where the read weight is constant; balancing covers all n streams.
 
 ### 11.0 Original round-4 outline
 
