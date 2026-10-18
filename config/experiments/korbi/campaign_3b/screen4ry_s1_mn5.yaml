@@ -83,7 +83,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: [attn]
+          backend.megatron.cuda_graph_modules: [attn, moe_router, moe_preprocess]
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
@@ -97,7 +97,7 @@ sweep:
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 8
           backend.megatron.mhc_routed_topk: 2
-          backend.megatron.cuda_graph_impl: none
+          backend.megatron.cuda_graph_impl: local
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.mhc_routed_reversible: false
           backend.megatron.mhc_routed_key_dim: 64
@@ -135,7 +135,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: [attn]
+          backend.megatron.cuda_graph_modules: [attn, moe_router, moe_preprocess]
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
@@ -149,7 +149,7 @@ sweep:
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 8
           backend.megatron.mhc_routed_topk: 2
-          backend.megatron.cuda_graph_impl: none
+          backend.megatron.cuda_graph_impl: local
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.mhc_routed_reversible: false
           backend.megatron.mhc_routed_key_dim: 64
@@ -188,7 +188,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: [attn]
+          backend.megatron.cuda_graph_modules: [attn, moe_router, moe_preprocess]
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
@@ -202,7 +202,7 @@ sweep:
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 8
           backend.megatron.mhc_routed_topk: 2
-          backend.megatron.cuda_graph_impl: none
+          backend.megatron.cuda_graph_impl: local
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.mhc_routed_reversible: false
           backend.megatron.mhc_routed_key_dim: 64
@@ -241,7 +241,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: [attn]
+          backend.megatron.cuda_graph_modules: [attn, moe_router, moe_preprocess]
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
@@ -255,7 +255,7 @@ sweep:
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 8
           backend.megatron.mhc_routed_topk: 1
-          backend.megatron.cuda_graph_impl: none
+          backend.megatron.cuda_graph_impl: local
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.mhc_routed_reversible: false
           backend.megatron.mhc_routed_key_dim: 64

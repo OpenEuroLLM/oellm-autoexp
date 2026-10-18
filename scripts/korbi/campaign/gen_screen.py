@@ -633,6 +633,18 @@ def flag_smoke(size: str):
               "job.est_steps": 200})]
 
 
+# Rounds 4R / 4R-x / 4R-y restarted with CUDA graphs (user 2026-10-18): per-layer graphs on the
+# attention / mixer layers and the MoE router + preprocess graphs; the routing statistics stay on
+# (graph-safe: arch_metrics graph mode, the MoE trackers record inside the router graph). The arms
+# resumed from their step-1000 checkpoints; graphed and eager runs agree within the run-to-run
+# noise of these MoE runs (§11.7).
+CG4 = {B + "cuda_graph_impl": "local", B + "cuda_graph_modules": ["attn", "moe_router", "moe_preprocess"]}
+
+
+def _graphed(arms):
+    return [(n, c, {**kv, **CG4}) for n, c, kv in arms]
+
+
 def arms4r(size: str):
     """Round 4R (user 2026-10-18): the residual arms again with the residual-stream diagnostics
     on (stream sizes per layer, read / pick shares, write strengths; every 25 steps), to find
@@ -651,7 +663,7 @@ def arms4r(size: str):
         ("h5_moe_routed8_k3_key", "routed 3 of 8, content-key router (new)",
          {**pool["h5_moe_routed8_key"], B + "mhc_routed_topk": 3, **diag}),
     ]
-    return out
+    return _graphed(out)
 
 
 def arms4rx(size: str):
@@ -666,13 +678,13 @@ def arms4rx(size: str):
     key8 = {**pool["h5_moe_routed8"], B + "mhc_routed_reversible": False, B + "mhc_routed_key_dim": 64}
     k3 = {**key8, B + "mhc_routed_topk": 3}
     if size == "s2":
-        return [
+        return _graphed([
             ("h5_moe_mhc2_diag", "mHC-2 (the s2 leader in round 4)", {**pool["h5_moe_mhc2"], **diag}),
             ("h5_moe_routed8_key_diag", "routed 2 of 8, content-key router", {**key8, **diag}),
             ("h5_moe_routed8_k3_key", "routed 3 of 8, content-key router", {**k3, **diag}),
-        ]
+        ])
     seed2 = {B + "seed": 1235}
-    return [
+    return _graphed([
         ("h5_moe_routed8_k3_key_mix", "routed 3 of 8, keyed, + mixing of the picked streams",
          {**k3, B + "mhc_routed_mix": True, **diag}),
         ("h5_moe_routed8_k3_key_bal", "routed 3 of 8, keyed, + pick balancing (bias rate 1e-3)",
@@ -683,7 +695,7 @@ def arms4rx(size: str):
         ("h5_moe_routed8_k3_key_cg", "routed 3 of 8, keyed, CUDA graphs on attn (speed only, 300 steps)",
          {**k3, B + "cuda_graph_impl": "local", B + "cuda_graph_modules": ["attn"],
           B + "exit_interval": 300, "job.est_steps": 300}),
-    ]
+    ])
 
 
 def arms4ry(size: str):
@@ -697,7 +709,7 @@ def arms4ry(size: str):
     key2 = {**pool["h5_moe_routed8"], B + "mhc_routed_reversible": False,
             B + "mhc_routed_key_dim": 64, B + "mhc_routed_balance_rate": 1e-3, **diag}
     free = {B + "mhc_routed_free": True}
-    return [
+    return _graphed([
         ("h5_moe_r8k2_key_bal", "routed 2 of 8, keyed, pick balancing", key2),
         ("h5_moe_r8k2_key_mix_bal", "routed 2 of 8, keyed, balancing, mixing of the picked streams",
          {**key2, B + "mhc_routed_mix": True}),
@@ -705,7 +717,7 @@ def arms4ry(size: str):
          {**key2, **free}),
         ("h5_moe_r8k1_free_key_bal", "routed 1 of 8, free, keyed, balancing (the cheapest)",
          {**key2, **free, B + "mhc_routed_topk": 1}),
-    ]
+    ])
 
 
 def write4():
