@@ -281,6 +281,42 @@ def ep_prod3():
     return arms
 
 
+# Qwen3-30B-A3B (exp_irene's MN5 benchmark, 185.8 TFLOP/s bf16 with forced balancing):
+# 48 x (attention + MoE), hidden 2048, 32 q heads / 4 kv groups x 128, qk-norm, RoPE 1e6, 128
+# experts x 768 top-8, no shared expert, softmax router + aux loss 1e-3; ~50k vocabulary, 4k
+# sequence, mbs 4; PP4 x VPP2 balanced layout (7/7/7/6/7/7/6/1 + head), EP4 HybridEP, full recompute
+Q3VPP = {"aux.pattern": vpp_pattern("*" * 48, (7, 7, 7, 6, 7, 7, 6, 1)),
+         B + "pipeline_model_parallel_size": 4, B + "overlap_p2p_comm": True,
+         B + "moe_router_fusion": True, "backend.env.CUDA_DEVICE_MAX_CONNECTIONS": "8"}
+
+
+def qwen3_a3b():
+    """Qwen3-30B-A3B on 8 nodes: reach / beat exp_irene's 170-186 TFLOP/s on our stack first
+    (user, 2026-10-18), then carry the levers to the hybrid."""
+    arms, arm = arms_builder()
+    base = dict(Q3VPP)
+    force = {B + "moe_router_force_load_balancing": True}
+    sel = {B + "recompute_granularity": "selective", B + "recompute_method": None,
+           B + "recompute_num_layers": None,
+           B + "recompute_modules": ["core_attn", "moe_act", "layernorm"]}
+    arm("q_ref", "exp_irene's layout, HybridEP, bf16, real routing", base, HEP)
+    arm("q_ref_force", "+ forced balanced routing (exp_irene's benchmark setting)", base, HEP, force)
+    arm("q_opfx", "grouped-tensor op-fuser experts", base, HEP, OPFX)
+    arm("q_opfx_force", "grouped path, forced balancing", base, HEP, OPFX, force)
+    arm("q_opfx_cap", "grouped path, sync-free (capacity 1.5)", base, HEP, OPFX,
+        {B + "moe_expert_rank_capacity_factor": 1.5})
+    arm("q_opfx_mem", "grouped path, NCCL 4 channels + expandable segments", base, HEP, OPFX, MEM)
+    arm("q_opfx_gbs4096", "grouped path, gbs 4096 (exp_irene's; 4x fewer bubbles)", base, HEP,
+        OPFX, {"aux.gbs": 4096})
+    arm("q_opfx_fp8eb", "grouped path, fp8 blockwise in the experts only", base, HEP, OPFX, FP8B_E)
+    arm("q_opfx_fp8b", "grouped path, fp8 blockwise everywhere", base, HEP, OPFX, FP8B)
+    arm("q_opfx_sel", "grouped path, selective recompute (core_attn, moe_act, layernorm)", base,
+        HEP, OPFX, MEM, sel)
+    arm("q_moon", "MoonEP: balanced dispatch with real routing", base, MOON,
+        {"aux.array_tag": "_moon"})
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -363,6 +399,58 @@ SLICE_PARAMS = """    num_experts: 160
     liger_fused_linear_cross_entropy_chunk_size: 4096
 """
 
+Q3_COMMON = """
+backend:
+  megatron:
+    hidden_size: 2048
+    num_attention_heads: 32
+    num_query_groups: 4
+    kv_channels: 128
+    ffn_hidden_size: 6144
+    qk_layernorm: true
+    position_embedding_type: rope
+    rotary_base: 1000000
+    untie_embeddings_and_output_weights: true
+    vocab_size: 50303
+    seq_length: 4096
+    max_position_embeddings: 4096
+    num_experts: 128
+    moe_ffn_hidden_size: 768
+    moe_router_topk: 8
+    moe_grouped_gemm: true
+    moe_token_dispatcher_type: flex
+    moe_flex_dispatcher_backend: hybridep
+    moe_router_load_balancing_type: aux_loss
+    moe_aux_loss_coeff: 0.001
+    moe_router_dtype: fp32
+    moe_permute_fusion: true
+    expert_model_parallel_size: ${aux.ep}
+    tensor_model_parallel_size: 1
+    micro_batch_size: 4
+    global_batch_size: ${aux.gbs}
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 1
+    cuda_graph_impl: none
+    cuda_graph_modules: []
+    log_interval: 1
+    train_iters: 15
+job:
+  est_step_time_s: 20.0
+  est_startup_min: 10.0
+slurm:
+  template_path: templates/marenostrum_watchdog.sbatch
+  srun_opts: "--overlap "
+  env:
+    WATCHDOG_SCRIPT: scripts/korbi/hybrid_speed/job_watchdog.py
+    WATCHDOG_PYSPY: ${aux.hybrid_env}/py-spy
+    WATCHDOG_STARTUP_S: "1500"
+    WATCHDOG_STALL_S: "600"
+    WATCHDOG_INTERVAL_S: "15"
+  sbatch:
+    nodes: ${aux.nodes}
+    time: "00:30:00"
+"""
 PROD_AUX = """
 aux:
   family: epprod
@@ -414,6 +502,19 @@ if __name__ == "__main__":
          PROD_AUX.replace("suite: b1", "suite: b3") + common(PROD_PARAMS.replace(
              "    train_iters", "    train_iters"), iters=12, time="00:30:00", startup=1500,
              stall=600, step_s=15.0), ep_prod3())
+    dump("ep_qwen3_mn5.yaml",
+         "Qwen3-30B-A3B on 8 nodes: exp_irene's layout on our stack, then the EP / fp8 levers (docs/ep_fp8_speed.md, phase Q).",
+         """
+aux:
+  family: q3a3b
+  suite: q1
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON, qwen3_a3b())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
