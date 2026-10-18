@@ -208,7 +208,17 @@ data_mn5_256k, so the 262k LM head is in the FLOPs as in their 185.8):
 
 - On exp_irene's own benchmark setting (forced balancing, 256k vocab) our stack gives **215 vs
   185.8** (+16 %: grouped-tensor experts, memory settings, the hybrid-ep image's TE 2.19 / torch 2.14).
-- With real routing on real text, HybridEP reaches 169 (mock data's skew: 160); MoonEP pending.
+- With real routing on real text, HybridEP reaches 169 (mock data's skew: 160).
+
+**Round 3b / 4 (real text): MoonEP with real routing = 185.1 (32 comm SMs), 186.5 (48),
+187.6 (64)** -- +11 % over HybridEP (167.7-169.2) and above exp_irene's forced-balance 185.8.
+MoonEP forced 193.3 vs HybridEP forced 214.5: its overhead. Profile (c_moon_prof vs
+c_hep_force_prof, per step): grouped GEMMs 4.66 s vs 3.58 s, of which wgrad 2.07 vs 1.07 s (the 32
+prefetch slots are mostly empty, but an empty group with accumulate=True still reads and writes
+its whole fp32 block), 1.06 s device-to-device copies (comm-buffer boundary), MoonEP comm kernels
+~3.3 s vs HybridEP dispatch/combine/permute ~3.2 s. Fixed in round 5: prefetch-slot wgrad without
+accumulation, zero-copy combine backward, the weighted-SwiGLU output saved instead of recomputed.
+micro batch 8 OOMs with the 262k head.
 
 ## GPU-h ledger
 
