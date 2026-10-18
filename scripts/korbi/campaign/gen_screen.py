@@ -734,13 +734,18 @@ def arms5(size: str):
     document masking, CUDA graphs (attention + MoE router) with the routing statistics, angular
     MuOwn without warmup, stable only, exit at 4000 steps of a 4BT schedule (gbs 64 x 8k = round
     4's token batch). Every arm at equal active and total MoE parameters (144 x w, top-3 + shared
-    w), mixers / residuals / MoE shape varied one at a time."""
+    w), mixers / residuals / MoE shape varied one at a time. CUDA graphs on the MoE router
+    only (document masking: no static capture of the attention / mixer layers)."""
     hidden, blocks, heads, ffn, lr = R4_SIZES[size]
     pool = dict((n, kv) for n, _, kv in arms4(size))
     # literals (sweep-entry values do not reach the base config's train_iters interpolation):
     # 4BT schedule at 64 x 8192 = 7629 steps, exit at 4000 (round 4's token batch and protocol)
+    # CUDA graphs on the MoE router / preprocess only: document masking hands the attention /
+    # mixer layers a cu_seqlens whose length changes every micro-batch (no static capture; fla's
+    # varlen kernels also read it on the host); the router sees a fixed [t, 1, h]
+    cg5 = {B + "cuda_graph_impl": "local", B + "cuda_graph_modules": ["moe_router", "moe_preprocess"]}
     base = {**FLAG8K, "aux.seq": 8192, B + "micro_batch_size": 1, B + "global_batch_size": 64,
-            "aux.gbs": 64, B + "train_iters": 7629, **CG4}
+            "aux.gbs": 64, B + "train_iters": 7629, **cg5}
     h5 = {**pool["h5_moe"], **base}
     mlr = {B + "residual_mixer_lr_mult": 0.25}
     mhc = lambda n: {B + "mhc": True, B + "mhc_expansion_rate": n, **mlr}  # noqa: E731

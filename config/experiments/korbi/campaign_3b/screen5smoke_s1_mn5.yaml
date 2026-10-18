@@ -75,7 +75,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: [attn, moe_router, moe_preprocess]
+          backend.megatron.cuda_graph_modules: [moe_router, moe_preprocess]
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
@@ -122,7 +122,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: [attn, moe_router, moe_preprocess]
+          backend.megatron.cuda_graph_modules: [moe_router, moe_preprocess]
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
@@ -184,7 +184,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: [attn, moe_router, moe_preprocess]
+          backend.megatron.cuda_graph_modules: [moe_router, moe_preprocess]
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
@@ -240,7 +240,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: [attn, moe_router, moe_preprocess]
+          backend.megatron.cuda_graph_modules: [moe_router, moe_preprocess]
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
@@ -299,7 +299,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: [attn, moe_router, moe_preprocess]
+          backend.megatron.cuda_graph_modules: [moe_router, moe_preprocess]
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
@@ -358,7 +358,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: [attn, moe_router, moe_preprocess]
+          backend.megatron.cuda_graph_modules: [moe_router, moe_preprocess]
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
@@ -478,7 +478,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: [attn, moe_router, moe_preprocess]
+          backend.megatron.cuda_graph_modules: [moe_router, moe_preprocess]
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
@@ -534,7 +534,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: [attn, moe_router, moe_preprocess]
+          backend.megatron.cuda_graph_modules: [moe_router, moe_preprocess]
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
@@ -591,7 +591,7 @@ sweep:
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
           backend.megatron.moe_expert_viability_metrics: true
-          backend.megatron.cuda_graph_modules: [attn, moe_router, moe_preprocess]
+          backend.megatron.cuda_graph_modules: [moe_router, moe_preprocess]
           backend.megatron.moe_router_score_function: sigmoid
           backend.megatron.moe_router_enable_expert_bias: true
           backend.megatron.moe_router_bias_update_rate: 0.001
