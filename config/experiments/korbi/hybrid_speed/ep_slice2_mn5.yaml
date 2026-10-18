@@ -149,6 +149,8 @@ sweep:
           backend.megatron.moe_shared_expert_intermediate_size: 768
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
+          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
+          aux.array_tag: _moon
         # MoonEP + routed residual 2 of 8
         - aux.arm: moon_routed
           backend.megatron.linear_beta_max: 2.0
@@ -171,6 +173,8 @@ sweep:
           backend.megatron.moe_shared_expert_intermediate_size: 768
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
+          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
+          aux.array_tag: _moon
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 8
           backend.megatron.mhc_routed_topk: 2
@@ -317,6 +321,8 @@ sweep:
           backend.megatron.moe_shared_expert_intermediate_size: 768
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
+          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
+          aux.array_tag: _moon
           backend.megatron.profile: true
           backend.megatron.use_pytorch_profiler: true
           backend.megatron.profile_ranks: [0]

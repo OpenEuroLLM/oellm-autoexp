@@ -110,7 +110,19 @@ def ep_slice():
     return arms
 
 
-MOON = {B + "moe_token_dispatcher_type": "flex", B + "moe_flex_dispatcher_backend": "moonep"}
+# MoonEP needs NVLink multicast (NVSwitch) for its plan broadcast; MN5's 4-GPU H100 boards have
+# none: the image's MoonEP + container/patches/moonep-no-multicast.patch (unicast stores) in
+# $HYBRID_ENV/pylibs_moonep, first on PYTHONPATH (an array of its own: the env is in the srun line)
+MOON = {B + "moe_token_dispatcher_type": "flex", B + "moe_flex_dispatcher_backend": "moonep",
+        "backend.env.PYTHONPATH": "${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:"
+        "flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}",
+        "aux.array_tag": "_moon"}
+FP8B_E = dict(FP8B, **{B + "fp8_experts_only": True})
+FP8T_E = dict(FP8T, **{B + "fp8_experts_only": True})
+# sync-free HybridEP: a static per-rank receive budget (tokens over it are dropped; 1.25 x the
+# mean) -> no host sync for the expert token counts (needs the op fuser)
+CAP = {B + "moe_expert_rank_capacity_factor": 1.25}
+TEPROJ = {B + "linear_te_projections": True}
 # rank 0 torch profile of steps 20-22 (kernel_summary.py); the throughput is read from steps < 20
 PROF = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
         B + "profile_step_start": 20, B + "profile_step_end": 22}
@@ -150,6 +162,26 @@ def ep_slice_internode():
     arm("a2a_opfx", "alltoall + grouped-tensor path, EP8", base, A2A, OPFX)
     arm("hep_ep4", "control: HybridEP EP4 within the node (DP 8, expert DP 2)", base, HEP,
         {"aux.ep": 4})
+    return arms
+
+
+def ep_slice3():
+    """Phase A, round 3 (after the profiles): experts-only fp8, sync-free HybridEP, mbs 2, TE
+    projections in CKDA (fused wgrad accumulation), MoonEP without multicast."""
+    arms, arm = arms_builder()
+    base = dict(RECIPE, **PROD)
+    arm("opfx", "reference: HybridEP + grouped-tensor op-fuser path, bf16", base, HEP, OPFX)
+    arm("opfx_fp8eb", "fp8 blockwise in the routed experts only", base, HEP, OPFX, FP8B_E)
+    arm("opfx_fp8et", "fp8 tensorwise in the routed experts only", base, HEP, OPFX, FP8T_E)
+    arm("opfx_cap", "sync-free HybridEP (rank capacity 1.25)", base, HEP, OPFX, CAP)
+    arm("opfx_te", "TE projections in the CKDA mixers", base, HEP, OPFX, TEPROJ)
+    arm("opfx_mbs2", "micro batch 2 (2x tokens per expert GEMM)", base, HEP, OPFX,
+        {B + "micro_batch_size": 2})
+    arm("opfx_cap_te_fp8eb", "sync-free + TE projections + experts-only fp8 blockwise", base, HEP,
+        OPFX, CAP, TEPROJ, FP8B_E)
+    arm("opfx_cap_te", "sync-free + TE projections, bf16", base, HEP, OPFX, CAP, TEPROJ)
+    arm("moon", "MoonEP (no-multicast patch), bf16", base, MOON)
+    arm("moon_mbs2", "MoonEP, micro batch 2", base, MOON, {B + "micro_batch_size": 2})
     return arms
 
 
@@ -244,6 +276,10 @@ if __name__ == "__main__":
          "EP backends x fp8 on one node, round 2: fixes, MoonEP, profiles (docs/ep_fp8_speed.md, phase A).",
          SLICE_AUX.replace("suite: e1", "suite: e2") + common(SLICE_PARAMS, iters=30, time="00:20:00",
                                                              step_s=3.0), ep_slice2())
+    dump("ep_slice3_mn5.yaml",
+         "EP backends x fp8 on one node, round 3 (docs/ep_fp8_speed.md, phase A).",
+         SLICE_AUX.replace("suite: e1", "suite: e4") + common(SLICE_PARAMS, iters=30, time="00:20:00",
+                                                             step_s=3.0), ep_slice3())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")

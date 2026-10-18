@@ -1,0 +1,131 @@
+From b768fdda7eb351b6f34700199a08c56f3f834c49 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Korbinian=20P=C3=B6ppel?= <korbip@korbip.de>
+Date: Sun, 18 Oct 2026 22:39:53 +0200
+Subject: [PATCH] No-multicast fallback: plan broadcast via per-rank unicast
+ stores (MOONEP_MULTICAST=auto|0|1)
+
+---
+ moonep/api.py      | 31 +++++++++++++++++++++++++++----
+ moonep/planning.py | 20 +++++++++++++++-----
+ 2 files changed, 42 insertions(+), 9 deletions(-)
+
+diff --git a/moonep/api.py b/moonep/api.py
+index d6f32cc..a3356ea 100644
+--- a/moonep/api.py
++++ b/moonep/api.py
+@@ -97,6 +97,21 @@ def _validate_rank_strided_pool(pool: torch.Tensor) -> int:
+     return rank_stride
+ 
+ 
++def _use_multicast() -> bool:
++    """NVLink multicast (NVSwitch) for the plan broadcast, else per-rank unicast stores.
++
++    ``MOONEP_MULTICAST``: ``auto`` (default: when the device supports it), ``1``, ``0``.
++    """
++    from .buffer import nvl_multicast_supported
++
++    mode = os.environ.get("MOONEP_MULTICAST", "auto").lower()
++    if mode in ("0", "false", "off"):
++        return False
++    if mode in ("1", "true", "on"):
++        return True
++    return bool(nvl_multicast_supported())
++
++
+ def _num_sms_dedup_from_env(max_sms: int) -> int:
+     """Resolve the local epilogue/prologue SM count.
+ 
+@@ -325,7 +340,8 @@ def _create_context(
+ 
+     # Chunk size must satisfy both VMM mapping and multicast binding.
+     gran = get_vmm_granularity()
+-    mc_gran = get_multicast_granularity(R)
++    use_mc = _use_multicast()
++    mc_gran = get_multicast_granularity(R) if use_mc else 1
+     chunk_align_bytes = max(gran, mc_gran)
+     meta_chunk_bytes = meta_chunk_logical * 4
+     meta_chunk_padded = _align_up(meta_chunk_bytes, chunk_align_bytes) // 4
+@@ -350,9 +366,15 @@ def _create_context(
+     # Allocate NVLink shared buffers
+     # ================================================================
+     hidden_buf = create_nvl_dist_tensor([NvS_padded, H], torch.bfloat16, rank, R, group=group)
+-    meta_buf, meta_mc = create_nvl_dist_multicast_tensor(
+-        [meta_chunk_padded], torch.int32, rank, R, group=group,
+-    )
++    if use_mc:
++        meta_buf, meta_mc = create_nvl_dist_multicast_tensor(
++            [meta_chunk_padded], torch.int32, rank, R, group=group,
++        )
++    else:
++        meta_buf = create_nvl_dist_tensor(
++            [meta_chunk_padded], torch.int32, rank, R, group=group,
++        )
++        meta_mc = meta_buf  # unused: planning stores to every rank's chunk instead
+ 
+     # Zero the barrier region on all ranks
+     for r in range(R):
+@@ -398,6 +420,7 @@ def _create_context(
+         'hidden_buf': hidden_buf,
+         'meta_buf': meta_buf,
+         'meta_mc': meta_mc,
++        'use_multicast': use_mc,
+         # Meta layout
+         'meta_chunk_padded': meta_chunk_padded,
+         'WEIGHTS_OFF': WEIGHTS_OFF,
+diff --git a/moonep/planning.py b/moonep/planning.py
+index 0ee30aa..bb91921 100644
+--- a/moonep/planning.py
++++ b/moonep/planning.py
+@@ -328,7 +328,8 @@ def _pd_issue_g2s(meta, smem_stage, src_begin, logical_count, mbar):
+ class PlanningKernel:
+     def __init__(self, R, E, S, K, NvS_capacity, NvS, num_vblocks, meta_stride,
+                  TPE_OFF, PLAN_OFF, BARRIER_OFF, TOPK0_OFF, ORDER_OFF, ORDER0_OFF,
+-                 token_padding, num_sms):
++                 token_padding, num_sms, use_mc=True):
++        self.use_mc = use_mc
+         self.R, self.E, self.S, self.K = R, E, S, K
+         self.N = self.S * self.K
+         self.NvS_capacity, self.NvS, self.num_vblocks = NvS_capacity, NvS, num_vblocks
+@@ -918,8 +919,16 @@ class PlanningKernel:
+             for i in cutlass.range(pid * num_threads + tid, nvec, num_sms * num_threads):
+                 a0 = meta[PB + i * 4 + 0]; a1 = meta[PB + i * 4 + 1]
+                 a2 = meta[PB + i * 4 + 2]; a3 = meta[PB + i * 4 + 3]
+-                addr = (mc.iterator + (PLAN_OFF + i * 4)).toint()
+-                multimem_st_v4(addr.ir_value(), a0, a1, a2, a3)
++                if cutlass.const_expr(self.use_mc):
++                    addr = (mc.iterator + (PLAN_OFF + i * 4)).toint()
++                    multimem_st_v4(addr.ir_value(), a0, a1, a2, a3)
++                else:
++                    # no NVLink multicast (no NVSwitch, e.g. 4-GPU H100 boards): one
++                    # unicast store into every rank's chunk; the cross-rank barrier
++                    # that follows publishes them as it does for copy_v4_remote
++                    for r in cutlass.range_constexpr(R):
++                        addr = (meta.iterator + (r * ms + PLAN_OFF + i * 4)).toint()
++                        st_global_v4_s32(addr.ir_value(), a0, a1, a2, a3)
+         order = cute.make_tensor(meta.iterator + (rank * ms + ORDER_OFF), cute.make_layout((N,)))
+         if cutlass.const_expr(R > 1):
+             if rank != 0:
+@@ -1106,10 +1115,10 @@ class PlanningKernel:
+ @functools.lru_cache(maxsize=None)
+ def _get_compiled(R, E, S, K, NvS_capacity, NvS, num_vblocks, meta_stride,
+                   TPE_OFF, PLAN_OFF, BARRIER_OFF, TOPK0_OFF, ORDER_OFF, ORDER0_OFF,
+-                  token_padding, num_sms):
++                  token_padding, num_sms, use_mc=True):
+     k = PlanningKernel(R, E, S, K, NvS_capacity, NvS, num_vblocks, meta_stride,
+                        TPE_OFF, PLAN_OFF, BARRIER_OFF, TOPK0_OFF, ORDER_OFF, ORDER0_OFF,
+-                       token_padding, num_sms)
++                       token_padding, num_sms, use_mc)
+     i32 = make_ptr(Int32, 0, cute.AddressSpace.gmem, assumed_align=16)
+     return cute.compile(k, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32,
+                         i32, i32, i32, i32, Int32(0), cuda.CUstream(0))
+@@ -1134,6 +1143,7 @@ def _launch_planning_kernel(ctx, topk, tpe, dst, cu_seqlens,
+         int(ctx['ORDER0_OFF']),
+         int(ctx['token_padding']),
+         int(ctx['num_sms']),
++        bool(ctx.get('use_multicast', True)),
+     )
+ 
+     def p16(t):  # large buffers 16B aligned -> allows coalesced/vectorized access
+-- 
+2.43.0
+

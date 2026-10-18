@@ -289,6 +289,7 @@ fp4_recipe: nvfp4  # choices: ['nvfp4', 'custom'] | If set, enables the use of F
 fp8: null  # choices: ['e4m3', 'hybrid'] | If set, enables the use of FP8 precision through Transformer Engine. There are 2 predefined choices (1) 'e4m3' uniformly uses e4m3 for all FP8 tensors, (2) 'hybrid' uses e4m3 for all FP8 activation and weight tensors and e5m2 for all FP8 output activation gradient tensors.
 fp8_amax_compute_algo: most_recent  # choices: ['most_recent', 'max'] | Algorithm used for choosing the `amax` value for the scaling factor computation. There are 2 predefined choices: `max` chooses the largest `amax` in the history window, while `most_recent` always chooses the most recently seen value.
 fp8_amax_history_len: 1  # The length of the amax history window used for scaling factor computation.
+fp8_experts_only: false  # Run only the routed experts (TEGroupedMLP) in fp8; every other layer (attention, linear mixers, shared experts, dense MLPs) stays bf16. For models whose dense GEMMs are too small to gain from fp8 while the grouped expert GEMMs do. Needs fp8 with a non-delayed recipe.
 fp8_interval: 1  # DEPRECATED from TransformerEngine v1.8.0. This flag is ignored. Controls how often the scaling factor is recomputed.
 fp8_margin: 0  # Margin for the scaling factor computation.
 fp8_output_proj: false  # If True, run the LM-head output projection with a TE ColumnParallelLinear under the MXFP8 autocast context. Only active when fp8=True and fp8_recipe='mxfp8'.

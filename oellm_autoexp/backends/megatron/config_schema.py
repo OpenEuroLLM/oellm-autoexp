@@ -923,6 +923,12 @@ class MegatronConfig(ConfigInterface):
     # If True, retains first and last N TransformerBlocks in BF16 as opposed to FP8.
     first_last_layers_bf16: bool = False
 
+    # Run only the routed experts (TEGroupedMLP) in fp8; every other layer (attention, linear
+    # mixers, shared experts, dense MLPs) stays bf16. For models whose dense GEMMs are too
+    # small to gain from fp8 while the grouped expert GEMMs do. Needs fp8 with a non-delayed
+    # recipe.
+    fp8_experts_only: bool = False
+
     # Number of layers at the start of the model to keep in BF16 precision when
     # first_last_layers_bf16 is True.
     num_layers_at_start_in_bf16: int = 1

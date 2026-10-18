@@ -2339,6 +2339,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "fp8_experts_only": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Run only the routed experts (TEGroupedMLP) in fp8; every other layer (attention, linear mixers, shared experts, dense MLPs) stays bf16. For models whose dense GEMMs are too small to gain from fp8 while the grouped expert GEMMs do. Needs fp8 with a non-delayed recipe.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "fp8_interval": MegatronArgMetadata(
         arg_type=int,
         default=1,
@@ -9907,6 +9915,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=1,
+    ),
+    "fp8_experts_only": MegatronActionSpec(
+        option_strings=("--fp8-experts-only",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "fp8_interval": MegatronActionSpec(
         option_strings=("--fp8-interval",), action_type="store", nargs=None, const=None, default=1
