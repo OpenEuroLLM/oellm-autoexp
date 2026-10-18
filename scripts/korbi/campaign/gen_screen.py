@@ -686,7 +686,31 @@ def arms4rx(size: str):
     ]
 
 
+def arms4ry(size: str):
+    """Round 4R-y (user 2026-10-18): the routed residual as the CHEAP scaling axis -- 2 of 8 and
+    1 of 8 (each sublayer moves 2k + 1 rows of stream state), keyed, with pick balancing; mixing
+    of the picked streams; free routing (mhc_routed_free: all k picked by score, no forced main
+    stream; at k = 1 one of the 8 streams per sublayer, learning through the straight-through
+    write gate). Same protocol as round 4 (pairs with its h5_moe and routed arms)."""
+    pool = dict((n, kv) for n, _, kv in arms4(size))
+    diag = {B + "arch_metrics_interval": 25}
+    key2 = {**pool["h5_moe_routed8"], B + "mhc_routed_reversible": False,
+            B + "mhc_routed_key_dim": 64, B + "mhc_routed_balance_rate": 1e-3, **diag}
+    free = {B + "mhc_routed_free": True}
+    return [
+        ("h5_moe_r8k2_key_bal", "routed 2 of 8, keyed, pick balancing", key2),
+        ("h5_moe_r8k2_key_mix_bal", "routed 2 of 8, keyed, balancing, mixing of the picked streams",
+         {**key2, B + "mhc_routed_mix": True}),
+        ("h5_moe_r8k2_free_key_bal", "routed 2 of 8, free (no forced main stream), keyed, balancing",
+         {**key2, **free}),
+        ("h5_moe_r8k1_free_key_bal", "routed 1 of 8, free, keyed, balancing (the cheapest)",
+         {**key2, **free, B + "mhc_routed_topk": 1}),
+    ]
+
+
 def write4():
+    _write4("s1", "screen4ry", "Round 4R-y: the routed residual as a cheap axis (2 / 1 of 8)",
+            arms4ry("s1"))
     for size in ("s1", "s2"):
         _write4(size, "screen4rx", "Round 4R extension: residual scaling and routed-residual levers",
                 arms4rx(size))

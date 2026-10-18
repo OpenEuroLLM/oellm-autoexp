@@ -4318,6 +4318,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "mhc_routed_free": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Routed residual streams: pick all mhc_routed_topk streams by score instead of stream 0 plus the top-(k-1) others, so topk 1 routes each sublayer to one of the n streams (the cheapest routed residual: 3 rows of stream state moved per token and sublayer). The write carries a straight-through gate p / sg(p) (p: the softmax over all n routing logits at the picked streams; value 1), so the selection learns from the write also at topk 1, where the read weights are constant. Balancing then covers all n streams. Not with mhc_routed_reversible.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "mhc_routed_key_dim": MegatronArgMetadata(
         arg_type=int,
         default=0,
@@ -11573,6 +11581,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0.0,
+    ),
+    "mhc_routed_free": MegatronActionSpec(
+        option_strings=("--mhc-routed-free",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "mhc_routed_key_dim": MegatronActionSpec(
         option_strings=("--mhc-routed-key-dim",),

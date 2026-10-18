@@ -1564,6 +1564,15 @@ class MegatronConfig(ConfigInterface):
     # 0 disables.
     mhc_routed_balance_rate: float = 0.0
 
+    # Routed residual streams: pick all mhc_routed_topk streams by score instead of stream 0
+    # plus the top-(k-1) others, so topk 1 routes each sublayer to one of the n streams (the
+    # cheapest routed residual: 3 rows of stream state moved per token and sublayer). The
+    # write carries a straight-through gate p / sg(p) (p: the softmax over all n routing
+    # logits at the picked streams; value 1), so the selection learns from the write also at
+    # topk 1, where the read weights are constant. Balancing then covers all n streams. Not
+    # with mhc_routed_reversible.
+    mhc_routed_free: bool = False
+
     # Enable Block Attention Residuals (arXiv:2603.15031): replace the uniformly-weighted
     # residual accumulation with learned softmax attention over depth. Bounds hidden-state
     # magnitude, which otherwise grows as O(L) under PreNorm. Mutually exclusive with mhc.
