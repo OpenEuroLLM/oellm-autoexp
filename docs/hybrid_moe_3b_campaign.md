@@ -1961,6 +1961,16 @@ inside the router graph (no capture early-return, no host syncs or host-to-devic
 per stage under partial graphs). Tested: graphed runs accumulate exactly the eager counts and
 statistics; the tests fail with graph mode off, with warmup recording, or with the old early-return.
 
+**Balanced vs collapsed (s1, 10-step mean loss at step 900, vs h5_moe 3.311; pick entropy
+attn / MoE sublayers):** plain routed 2-of-8 3.292 (0.14 / 0.15: collapsed onto 1-2 streams), keyed
+2-of-8 3.287 (0.33 / 0.26), keyed 2-of-8 + balancing 3.291 (0.79 / 0.77), + mixing 3.301, keyed
+3-of-8 3.292 (0.79 / 0.82), + balancing 3.288 (0.84 / 0.91); keyed 3-of-8 + mixing 3.393 at 700
+(h5_moe 3.425). Balancing de-collapses the picks but the loss does not move yet: all within ~0.005
+(run-to-run noise ~0.02). "Routed 2-of-8" is 1 + 1 of 8: the main stream always, one of the other
+7 by the router (input: the main stream; keyed: + per-stream key tags). **Free keyed 1-of-8 fails:
+3.706 (+0.40)** -- every sublayer then reads from one stream only, losing the main residual path;
+stopped.
+
 **Graphed restart:** rounds 4R / 4R-x / 4R-y continue with CUDA graphs on the attention / mixer
 layers and the MoE router + preprocess (`CG4` in gen_screen.py), each arm resumed from its step-1000
 checkpoint. Round 4 (s1 done, s2 near) and 4G finish as they started. Measured graph gain at s1: the
