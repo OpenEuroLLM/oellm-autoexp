@@ -368,6 +368,28 @@ def qwen3_a3b_real():
     return arms
 
 
+def qwen3_a3b_best():
+    """Qwen3-30B-A3B round 4 (real text, 256k): the best knobs combined, and profiles of MoonEP
+    vs the forced-balance HybridEP ceiling (MoonEP's ~10 % overhead: q2 m_force 180 vs 201)."""
+    arms, arm = arms_builder()
+    base = dict(Q3VPP, **REALDATA)
+    moon = {**MOON, **MEM, "aux.array_tag": "_moonmem"}
+    sms = lambda n: {B + "moe_flex_dispatcher_num_sms": n}  # noqa: E731
+    prof = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
+            B + "profile_step_start": 6, B + "profile_step_end": 8, B + "train_iters": 10}
+    long = {"aux.gbs": 4096, B + "train_iters": 8}
+    arm("c_moon_sms64", "MoonEP, 64 comm SMs", base, moon, sms(64))
+    arm("c_moon_sms48_mbs8", "MoonEP, 48 SMs, micro batch 8", base, moon, sms(48),
+        {B + "micro_batch_size": 8})
+    arm("c_moon_best", "MoonEP, 48 SMs, micro batch 8, gbs 4096", base, moon, sms(48),
+        {B + "micro_batch_size": 8}, long)
+    arm("c_moon_prof", "profile: MoonEP, 48 SMs", base, moon, sms(48), prof)
+    arm("c_hep_force_prof", "profile: HybridEP grouped path, forced balancing", base, HEP, OPFX,
+        MEM, {B + "moe_router_force_load_balancing": True}, prof)
+    arm("c_hep_prof", "profile: HybridEP grouped path, real routing", base, HEP, OPFX, MEM, prof)
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -592,6 +614,19 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, qwen3_a3b_real())
+    dump("ep_qwen3c_mn5.yaml",
+         "Qwen3-30B-A3B on 8 nodes, round 4: best knobs + profiles (docs/ep_fp8_speed.md, phase Q).",
+         """
+aux:
+  family: q3a3b
+  suite: q4
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON, qwen3_a3b_best())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
