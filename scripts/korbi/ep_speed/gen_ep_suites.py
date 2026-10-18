@@ -342,6 +342,32 @@ def qwen3_a3b_moon():
     return arms
 
 
+# real text instead of mock tokens (mock data repeats: lm loss -> 0.1, and its routing is far more
+# skewed than real text's): one large datamix4 prefix (fast index build) with the OELLM 256k
+# tokenizer, as exp_irene's data_mn5_256k (so the 262k LM head is in the FLOPs, as theirs)
+REALDATA = {B + "mock_data": False, B + "tokenizer_type": "HuggingFaceTokenizer",
+            B + "tokenizer_model": "/gpfs/projects/ehpc533/tokenizers/tokenizer-256k",
+            B + "vocab_size": None, B + "padded_vocab_size": 262144,
+            B + "data_path": ["/gpfs/projects/ehpc533/preprocessed/openeurollm-tokenized-256k/"
+                              "nemotron-cc/nemotron-mha-10p-sample"],
+            B + "split": "100,0,0", B + "num_workers": 8}
+
+
+def qwen3_a3b_real():
+    """Qwen3-30B-A3B round 3 on real text with the 256k tokenizer (exp_irene's setting)."""
+    arms, arm = arms_builder()
+    base = dict(Q3VPP, **REALDATA)
+    moonmem = {**MOON, **MEM, "aux.array_tag": "_moonmem"}
+    force = {B + "moe_router_force_load_balancing": True}
+    arm("r_ref", "exp_irene's layout, HybridEP, real text", base, HEP)
+    arm("r_opfx_mem", "HybridEP grouped path + memory settings", base, HEP, OPFX, MEM)
+    arm("r_opfx_mem_force", "HybridEP grouped path, forced balancing (exp_irene's benchmark)", base,
+        HEP, OPFX, MEM, force)
+    arm("r_moon", "MoonEP + memory settings", base, moonmem)
+    arm("r_moon_force", "MoonEP, forced balancing", base, moonmem, force)
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -553,6 +579,19 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, qwen3_a3b_moon())
+    dump("ep_qwen3r_mn5.yaml",
+         "Qwen3-30B-A3B on 8 nodes, round 3: real text, 256k tokenizer (docs/ep_fp8_speed.md, phase Q).",
+         """
+aux:
+  family: q3a3b
+  suite: q3
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON, qwen3_a3b_real())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
