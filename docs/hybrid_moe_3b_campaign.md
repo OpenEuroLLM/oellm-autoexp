@@ -1942,6 +1942,31 @@ gap is that the residual arms ran without the CUDA graphs h5_moe uses.
   straight-through gate p / sg(p) (softmax over all n logits; value 1) so the selection learns at
   k = 1, where the read weight is constant; balancing covers all n streams.
 
+### 11.7 Run-to-run noise, graph-safe routing statistics, graphed restart (2026-10-18 night)
+
+**Run-to-run noise is large in these MoE runs.** Same config, seed and data order, no CUDA graphs
+(round 4 vs its 4R repeat; 10-step mean losses -- round 4 logged every step, 4R every 10, which made
+a 2.3-nat "difference" at step 10 a logging artefact): routed 2-of-8 +0.016 / -0.021 / -0.026 /
+-0.021 at steps 300 / 500 / 600 / 800; keyed 2-of-8 -0.035 / -0.007 / -0.002 at 300 / 500 / 600;
+mHC-2 +0.005 / +0.002. Graphed vs eager (keyed 3-of-8): -0.025 at 300 -- the same size, so not a
+graph effect: nondeterministic kernels (MoE permute / scatter atomics, all-to-all, fla backward)
+amplified by the chaotic early phase (lr 4e-3, no warmup). Single-run s1 gaps of 0.01-0.03 are
+inside this band; round 4's "plain routed 2-of-8 gains ~0" is likely a bad draw (its repeat runs
+0.021-0.026 lower). Decisions need repeats (or a deterministic mode, cost to be measured).
+
+**Routing statistics under CUDA graphs** (Megatron e16420cf1): arch metrics graph mode (record on
+every step, capture included, in-place into static buffers; reports are interval means; not in the
+warmup passes of graph creation) and the MoE router-health / expert-viability trackers recording
+inside the router graph (no capture early-return, no host syncs or host-to-device copies; viability
+per stage under partial graphs). Tested: graphed runs accumulate exactly the eager counts and
+statistics; the tests fail with graph mode off, with warmup recording, or with the old early-return.
+
+**Graphed restart:** rounds 4R / 4R-x / 4R-y continue with CUDA graphs on the attention / mixer
+layers and the MoE router + preprocess (`CG4` in gen_screen.py), each arm resumed from its step-1000
+checkpoint. Round 4 (s1 done, s2 near) and 4G finish as they started. Measured graph gain at s1: the
+residual arms 30.4k -> 42.6k tok/s/GPU with attention graphs only (the MoE-router graphs come on top);
+at A3B ~0 (GPU already 88-93 % busy).
+
 ### 11.0 Original round-4 outline
 
 
