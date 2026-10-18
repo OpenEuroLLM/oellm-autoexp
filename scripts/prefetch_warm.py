@@ -37,7 +37,12 @@ def log(msg: str) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--prefix", required=True, help="dataset prefix (without .bin/.idx)")
+    p.add_argument(
+        "--prefix",
+        required=True,
+        help="dataset prefix (without .bin/.idx), a comma-separated blend of prefixes, or "
+        "json:<path> -- the --split blend of a Megatron per_split_data_args_path JSON",
+    )
     p.add_argument(
         "--cache-dir", required=True, help="dir with the cached *-GPTDataset-* .npy files"
     )
@@ -465,8 +470,29 @@ def run_mirror(args, bin_path, make_doc_stream) -> int:
     return 0
 
 
+def resolve_prefixes(prefix: str, split: str) -> str:
+    """``json:<path>``: the ``split`` entry of a Megatron per-split data JSON ("w1 p1 w2 p2 ...",
+    as --per-split-data-args-path takes it) -> comma-separated prefixes (the weights come from
+    the BlendedDataset cache, as for a plain blend). Anything else is returned unchanged."""
+    if not prefix.startswith("json:"):
+        return prefix
+    import json
+
+    with open(prefix[len("json:"):]) as f:
+        entry = json.load(f)[split]
+    tokens = entry.split() if isinstance(entry, str) else [str(t) for t in entry]
+    if len(tokens) > 1 and len(tokens) % 2 == 0:
+        try:
+            float(tokens[0])
+            tokens = tokens[1::2]  # weighted: keep the prefixes
+        except ValueError:
+            pass
+    return ",".join(tokens)
+
+
 def main() -> int:
     args = parse_args()
+    args.prefix = resolve_prefixes(args.prefix, args.split)
     bin_path = args.prefix + ".bin"
     idx_path = args.prefix + ".idx"
 

@@ -1,0 +1,13 @@
+# Hybrid-architecture image on NGC PyTorch 26.09 (torch 2.14, TE 2.19, FA4) on MareNostrum 5
+# (ehpc533): NVRx, CuTe DSL + cute-triadic-gdn, mamba_ssm / causal_conv1d (sm_90 + sm_100),
+# TileLang, power retention -- no EP libraries. Built from
+# container/megatron/MegatronTraining-hybrid.def.in (container/megatron/build_hybrid.sh).
+# Megatron-LM, flash-linear-attention and cute_kernels come from the synced checkout on
+# PYTHONPATH (set by the experiment).
+class_name: Container
+image: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/container/MegatronTraining-hybrid_x86_64_202610161937.sif
+runtime: singularity
+bind: ["/gpfs"]
+env:
+  MACHINE_NAME: MARENOSTRUM
+python: "python"

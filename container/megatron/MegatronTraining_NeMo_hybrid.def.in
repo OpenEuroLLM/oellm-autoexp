@@ -47,23 +47,26 @@ mkdir -p /workspace/oellm-autoexp/provenance
 mkdir -p /workspace/cache
 cd /workspace
 
-# NeMo's Python is the uv venv /opt/venv (system site-packages visible); everything goes
-# into it with uv, as NeMo installs it.
-uvpip() { uv pip install --python /opt/venv/bin/python --no-cache "$@"; }
+# NeMo's Python is the uv venv /opt/venv, which inherits the NGC system site-packages
+# (torch, torchdata, ... live there, not in the venv). Install into it with pip run by the
+# venv's interpreter: uv only counts packages inside the venv as installed, so the torch pin
+# from the constraints (2.13.0a0+...nv26.6, on no index) makes uv's resolution fail.
+vpip() { /opt/venv/bin/python -m pip install --no-cache-dir "$@"; }
 
 /opt/venv/bin/python /workspace/oellm-autoexp/container/gen_constraints.py \
     --output /workspace/constraints.installed.txt \
     --exclude pip setuptools wheel huggingface_hub apache-tvm-ffi \
-              tilelang nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base megatron-core
+              tilelang nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-core \
+              nvidia-cutlass-dsl-libs-cu12 nvidia-cutlass-dsl-libs-cu13 megatron-core
 
 if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
-    uvpip -c /workspace/constraints.installed.txt -r "/workspace/${REQUIREMENTS_BASENAME}"
+    vpip -c /workspace/constraints.installed.txt -r "/workspace/${REQUIREMENTS_BASENAME}"
 fi
-uvpip -c /workspace/constraints.installed.txt -e /workspace/oellm-autoexp
+vpip -c /workspace/constraints.installed.txt -e /workspace/oellm-autoexp
 
 # Our Megatron (submodules/Megatron-LM, oellm/v0.19-hybrid) comes from PYTHONPATH, as in the
 # other hybrid images; NeMo's megatron-core 0.19.1 would shadow it.
-uv pip uninstall --python /opt/venv/bin/python megatron-core || true
+/opt/venv/bin/python -m pip uninstall -y megatron-core || true
 
 # ---------------------------------------------------------------------------
 # Hybrid-architecture extras (oellm-autoexp feat/hybrid-v0.19). Already in NeMo and kept:
@@ -72,14 +75,14 @@ uv pip uninstall --python /opt/venv/bin/python megatron-core || true
 # The CuTe DSL cute-triadic-gdn / cute_kernels are built against (NeMo ships 4.5.0), and
 # TileLang for the FLA TileLang paths (NeMo ships 0.1.8; its torch pin is overridden by the
 # image's constraints).
-uvpip -c /workspace/constraints.installed.txt "nvidia-cutlass-dsl[cu13]==4.7.1" cuda-python
-uvpip -c /workspace/constraints.installed.txt "tilelang>=0.1.15"
-uvpip --no-deps "git+https://github.com/OliverSieberling/cute-triadic-gdn"
+vpip -c /workspace/constraints.installed.txt "nvidia-cutlass-dsl[cu13]==4.7.1" cuda-python
+vpip -c /workspace/constraints.installed.txt "tilelang>=0.1.15"
+vpip --no-deps "git+https://github.com/OliverSieberling/cute-triadic-gdn"
 # Liger's fused linear cross-entropy (liger_fused_linear_cross_entropy).
-uvpip --no-deps "liger-kernel>=0.6"
+vpip --no-deps "liger-kernel>=0.6"
 # Power retention (the `power` linear variant): the public Triton kernels; vidrial only
 # for its Python utilities (the CUDA backends are not used).
-uvpip --no-deps "vidrial==0.2.1" "git+https://github.com/m-a-n-i-f-e-s-t/retention"
+vpip --no-deps "vidrial==0.2.1" "git+https://github.com/m-a-n-i-f-e-s-t/retention@e0e69051b1bd3fb96102690bbe332b501c67246b"
 # vidrial clones its CUTLASS fork next to itself on first import; compute nodes are
 # offline and site-packages is read-only at run time, so check it out here.
 # (in Python: envsubst would blank a shell variable holding the path)
@@ -88,6 +91,21 @@ import importlib.util, os, shutil, subprocess
 dst = os.path.join(os.path.dirname(importlib.util.find_spec("vidrial").origin), "cutlass")
 subprocess.check_call(["git", "clone", "--depth", "1", "https://github.com/m-a-n-i-f-e-s-t/cutlass.git", dst])
 shutil.rmtree(os.path.join(dst, ".git"))
+PY
+# retention renders its Triton kernels into <retention>/<module>/_rendered on every import:
+# read-only in the image (build %test, run time). The file is only a debug dump (the kernel
+# is compiled from the string, registered in linecache for Triton): make writing it optional.
+/opt/venv/bin/python - <<'PY'
+import importlib.util, pathlib
+p = pathlib.Path(importlib.util.find_spec("retention").origin).parent / "kernelgen.py"
+s = p.read_text()
+mk = "    rendered_dir.mkdir(exist_ok=True)\n"
+wr = "        with open(file_path, 'w') as f:\n            f.write(final_code)\n"
+assert s.count(mk) == 1 and s.count(wr) == 1, "retention kernelgen.py changed; revisit the patch"
+s = s.replace(mk, "    try:\n        rendered_dir.mkdir(exist_ok=True)\n    except OSError:  # read-only image\n        pass\n")
+s = s.replace(wr, "        try:\n            with open(file_path, 'w') as f:\n                f.write(final_code)\n"
+                  "        except OSError:  # read-only image: the dump is for debugging only\n            pass\n")
+p.write_text(s)
 PY
 
 # ---------------------------------------------------------------------------
@@ -114,15 +132,18 @@ export TORCH_CUDA_ARCH_LIST="9.0;10.0"   # sm_90: H100/GH200, sm_100: B200/GB200
 export MAX_JOBS=${MAX_JOBS:-16}
 # MoonEP: CUDA extension + CuTe DSL kernels, NVLink-only (VMM-mapped peer buffers), no
 # NVSHMEM. --no-deps: it pins nvidia-cutlass-dsl 4.6.2; the version above is kept.
-uvpip --no-deps --no-build-isolation \
+vpip --no-deps --no-build-isolation \
     "git+https://github.com/MoonshotAI/MoonEP.git@d86fda40329de4002e0cade6817df7b4b5512ee5" || \
     echo "WARNING: MoonEP not installed"
 # UCCL-EP: DeepEP's Buffer API over GPU-initiated RDMA; its gain is across nodes (EFA,
 # CX7 InfiniBand, Broadcom, AMD NICs).
-git clone --depth 1 https://github.com/uccl-project/uccl.git /tmp/uccl && \
-    (cd /tmp/uccl/ep && /opt/venv/bin/python setup.py install) || \
+# Build trees go to /opt/build, inside the image: /tmp in %post is the host's, so two
+# builds running at once would share (and delete) each other's sources there.
+vpip nanobind || true   # UCCL-EP's setup.py builds its bindings with it
+git clone --depth 1 https://github.com/uccl-project/uccl.git /opt/build/uccl && \
+    (cd /opt/build/uccl/ep && /opt/venv/bin/python setup.py install) || \
     echo "WARNING: UCCL-EP not installed"
-rm -rf /tmp/uccl
+rm -rf /opt/build/uccl
 
 # At run time: NeMo's venv first on PATH (apptainer drops `export PATH` from %environment,
 # and the host PATH it forwards would otherwise pick a host / the system interpreter), and
@@ -135,7 +156,7 @@ mkdir -p /tmp/deep_ep_build/jit 2>/dev/null || true
 EOFENV
 chmod +x /.singularity.d/env/91-nemo-venv.sh
 
-rm -rf /root/.cache 2>/dev/null || true
+rm -rf /opt/build /root/.cache 2>/dev/null || true
 uv cache clean 2>/dev/null || true
 
 %runscript
@@ -147,11 +168,20 @@ cd /workspace/oellm-autoexp
 exec "$@"
 
 %test
+set -e   # every check counts, not only the last command's exit status
 # apptainer passes the host environment into %test; host cache dirs (e.g.
 # TORCHINDUCTOR_CACHE_DIR=/mnt/data/...) are not writable here and break `import torch._dynamo`.
 export TORCHINDUCTOR_CACHE_DIR=/tmp/oellm_test_cache/inductor
 export TRITON_CACHE_DIR=/tmp/oellm_test_cache/triton
 export TORCH_EXTENSIONS_DIR=/tmp/oellm_test_cache/torch_extensions
+# HOME is /root (read-only) under --fakeroot; tilelang, triton etc. create ~/.<tool> on import.
+export HOME=/tmp/oellm_test_cache/home
+mkdir -p /tmp/oellm_test_cache/home
+# deep_ep_cpp needs libnvidia-ml.so.1, a driver library absent without --nv (the build): load
+# the CUDA stub for the import test, after any real driver library already on the path.
+mkdir -p /tmp/oellm_test_cache/stubs
+ln -sf /usr/local/cuda/lib64/stubs/libnvidia-ml.so /tmp/oellm_test_cache/stubs/libnvidia-ml.so.1
+export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}:/tmp/oellm_test_cache/stubs
 trap 'rm -rf /tmp/oellm_test_cache' EXIT   # /tmp is the host's here, not the image's
 cd /workspace/oellm-autoexp
 /opt/venv/bin/python scripts/run_autoexp.py --help >/dev/null

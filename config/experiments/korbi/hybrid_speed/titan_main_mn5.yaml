@@ -91,3 +91,7 @@ sweep:
         - {aux.arm: dense130m_mbs16}
         - {aux.arm: dense130m_flex}
         - {aux.arm: dense130m_flex_flash}
+        # GraphTrainer: whole-step graph, full Inductor (attention: aux.attn)
+        - {aux.arm: dense130m_graph}
+        - {aux.arm: dense130m_graph_mbs16}
+        - {aux.arm: dense130m_graph_mbs32}

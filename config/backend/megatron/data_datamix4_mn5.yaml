@@ -21,5 +21,7 @@ max_position_embeddings: 4096
 dataloader_type: cyclic
 num_workers: 8
 num_dataset_builder_threads: 32
+# one cache per output dir: concurrent jobs writing one shared index cache race (np.load EOFError /
+# "mmap length is greater than file size" in the readers); experiment configs pin it per run
 data_cache_path: ${oc.env:OUTPUT_DIR,./output}/data_cache_datamix4
 create_attention_mask_in_dataloader: false

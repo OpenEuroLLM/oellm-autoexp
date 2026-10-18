@@ -1,0 +1,11 @@
+# marenostrum_hybrid_ngc plus the expert-parallel communication libraries: DeepEP with
+# HybridEP (flex dispatcher backends deepep / hybridep; ncclep comes with TE), MoonEP, UCCL-EP.
+# Built from container/megatron/MegatronTraining-hybrid-ep.def.in
+# (DEFINITION=MegatronTraining-hybrid-ep container/megatron/build_hybrid.sh).
+class_name: Container
+image: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/container/MegatronTraining-hybrid-ep_x86_64_202610161948.sif
+runtime: singularity
+bind: ["/gpfs"]
+env:
+  MACHINE_NAME: MARENOSTRUM
+python: "python"

@@ -1,0 +1,4 @@
+.                            feat/hybrid-v0.19 df970e9 dirty=e261419f54c5
+submodules/Megatron-LM       oellm/v0.19-hybrid 7d72539b4 dirty=7e9aa1c07fc2
+flash-linear-attention       feat/hybrid-kernels 865c378 dirty=da39a3ee5e6b
+submodules/cute_kernels      main 0dfbdd9 dirty=da39a3ee5e6b

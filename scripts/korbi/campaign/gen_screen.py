@@ -3,7 +3,8 @@
     python scripts/korbi/campaign/gen_screen.py
 
 Two sizes (s1: hidden 768 x 12 blocks, the speed suite's geometry; s2: hidden 1024 x 20 blocks),
-datamix4 (OELLM 256k vocabulary, tied embeddings), equal lr / bs per size, WSD to aux.tokens.
+datamix4 (OELLM 256k vocabulary, tied embeddings), equal lr / bs per size, stable only (no cooldown)
+to aux.tokens; arms are compared on the stable-phase loss.
 Arms differ from the size's base in ONE feature; d_ffn is set per arm so that the non-embedding
 parameters match the base within 1 % (config/experiments/korbi/campaign_3b/param_match.json, from
 scripts/korbi/campaign/count_params.py; arms missing there use the base d_ffn and are marked).
@@ -26,19 +27,39 @@ SIZES = {
     "s2": (1024, 20, 16, 2816, 1e-3, 64),
 }
 
+# round-1 CKDA as first screened: spread alpha init and a linear output gate (NOT the reference
+# CKDA; kept so the h_ckda* arms regenerate as they ran)
 CKDA = {B + "experimental_attention_variant": "complex_kda", B + "linear_beta_max": 2.0,
         B + "linear_output_gate": "linear", B + "linear_drop_qkv_silu": True,
         B + "linear_gate_init_style": "spread"}
+# the reference CKDA (config/experiments/korbi/complex_kda/sweep_spec.yaml): both ranges
+# extended (signed_sigmoid2 alpha, beta_max 2), BOTH inits standard (alpha "shipped", bias-free
+# beta), low-rank output gate, no q/k/v SiLU. The campaign's CKDA from here on.
+CKDA_STD = {B + "experimental_attention_variant": "complex_kda", B + "linear_beta_max": 2.0,
+            B + "linear_gate_activation": "signed_sigmoid2", B + "linear_gate_init_style": "shipped",
+            B + "linear_output_gate": "lowrank", B + "linear_drop_qkv_silu": True}
+# triadic CKDA (megatron/core/ssm/triadic.py, base ckda: signed gate, negative eigenvalues,
+# standard inits), E = 4 slices per head
+TRI_CKDA = {B + "experimental_attention_variant": "triadic", B + "linear_triadic_base": "ckda",
+            B + "linear_triadic_e": 4}
 
 
-def hybrid(blocks: int, mixer: str = "L") -> str:
-    assert blocks % 4 == 0
-    return f"{mixer}-{mixer}-{mixer}-*-" * (blocks // 4)
+def hybrid(blocks: int, mixer: str = "L", ratio: int = 3, engram_at: tuple[int, ...] = ()) -> str:
+    """``ratio`` linear blocks per attention block (3:1 -> L-L-L-*-); ``engram_at``: block indices
+    that get an Engram layer (N) in front."""
+    period = ratio + 1
+    assert blocks % period == 0, f"{blocks} blocks do not divide into {ratio}:1"
+    out = []
+    for i in range(blocks):
+        mix = "*" if i % period == ratio else mixer
+        out.append(("N" if i in engram_at else "") + f"{mix}-")
+    return "".join(out)
 
 
 def arms(blocks: int):
     lin = lambda v: {"aux.pattern": hybrid(blocks), B + "experimental_attention_variant": v}  # noqa: E731
     xsa = {B + "exclusive_self_attention": True}
+    gdn128 = {B + "linear_key_head_dim": 128, B + "linear_value_head_dim": 128}
     gate = {B + "attention_output_gate": True}
     return [
         ("attn", "base: attention (qk-norm, RoPE) + SwiGLU", {}),
@@ -49,26 +70,112 @@ def arms(blocks: int):
          {"aux.pattern": hybrid(blocks), **CKDA, **xsa}),
         ("h_ckda_gate", "3:1 CKDA hybrid, gated attention",
          {"aux.pattern": hybrid(blocks), **CKDA, **gate}),
+        ("h_ckda_std", "3:1 CKDA (reference: standard inits, low-rank gate) : attention hybrid",
+         {"aux.pattern": hybrid(blocks), **CKDA_STD}),
+        ("h_ckda_std_xsa", "3:1 CKDA (standard inits) hybrid, XSA in the attention layers",
+         {"aux.pattern": hybrid(blocks), **CKDA_STD, **xsa}),
+        ("h_tri_ckda", "3:1 triadic CKDA (E=4) : attention hybrid",
+         {"aux.pattern": hybrid(blocks), **TRI_CKDA}),
+        ("h_tri_ckda_xsa", "3:1 triadic CKDA (E=4) hybrid, XSA in the attention layers",
+         {"aux.pattern": hybrid(blocks), **TRI_CKDA, **xsa}),
         ("h_kda", "3:1 KDA : attention hybrid", lin("kda")),
         ("h_kda_xsa", "3:1 KDA hybrid, XSA", {**lin("kda"), **xsa}),
         ("h_gdn", "3:1 Gated DeltaNet : attention hybrid", lin("gated_delta_net")),
+        # the multilingual sweep's GDN arms (architecture_scaling_variants/multilingual/
+        # gdn3_scaling_all.yaml, qwen35_scaling_all.yaml): GDN heads of 128 (k = query groups,
+        # v = heads), NoPE attention; qwen35 adds the attention output gate, partial RoPE (25 %)
+        # and zero-centred norm gamma (Qwen3.5 / Qwen3-Next dense block)
+        # (screen2b ran both with fused_qk_norm_rope false; the fused path now covers NoPE and
+        # zero-centred gamma, numerically the same)
+        ("h_gdn_nope", "3:1 GDN (heads of 128) : NoPE attention hybrid (multilingual gdn3_nope)",
+         {**lin("gated_delta_net"), **gdn128, B + "position_embedding_type": "none"}),
+        ("h_gdn_qwen35", "3:1 GDN : gated attention, partial RoPE, zero-centred norm (Qwen3.5-like)",
+         {**lin("gated_delta_net"), **gdn128, **gate, B + "position_embedding_type": "rope",
+          B + "rotary_percent": 0.25, B + "layernorm_zero_centered_gamma": True}),
         ("h_mlstm", "3:1 mLSTM : attention hybrid", lin("mlstm")),
     ]
 
 
+def arms3(blocks: int):
+    """Level-1 round 3 (docs §10): the hybrid recipe -- NoPE attention with qk-norm, XSA and the
+    output gate, XSA also in the linear (CKDA) layers -- and the residual / memory variants on it."""
+    # layout (user 2026-10-17): head dim 128 everywhere, Qwen3.5-proportioned. At hidden 768:
+    # attention 6 q heads x 128 with GQA (2 KV groups; Qwen3.5-4B: 4:1), linear mixers 6 heads x
+    # 128 (width 768 = hidden); the Qwen3.5-like GDN 6 key / 12 value heads x 128 (Qwen3.5-4B:
+    # key width 0.8x, value 1.6x hidden, v:k heads 2:1)
+    geo = {B + "num_attention_heads": 6, B + "num_query_groups": 2, B + "kv_channels": 128,
+           B + "linear_key_head_dim": 128, B + "linear_value_head_dim": 128,
+           B + "linear_num_key_heads": 6, B + "linear_num_value_heads": 6}
+    xsa = {B + "exclusive_self_attention": True}
+    attn_h = {B + "position_embedding_type": "none", B + "attention_output_gate": True, **xsa}
+    lxsa = {B + "linear_xsa": True}
+    h3 = {"aux.pattern": hybrid(blocks), **geo, **CKDA_STD, **attn_h, **lxsa}
+    nocg = {B + "cuda_graph_impl": "none"}
+    mhc = {B + "mhc": True, B + "mhc_expansion_rate": 4}
+    seed2 = {B + "seed": 1235}
+    # (nGPT scales q / k by s_qk, which the fused q/k-norm + RoPE kernel does not do: off)
+    ngpt = {B + "ngpt": True, B + "weight_normalizer": True, B + "fused_qk_norm_rope": False}
+    qwen = {**[a for a in arms(blocks) if a[0] == "h_gdn_qwen35"][0][2], **geo,
+            B + "linear_num_value_heads": 12}
+    ref = {**geo, **xsa}
+    return [
+        ("attn_ref", "attention + qk-norm + XSA (RoPE): the reference transformer", ref),
+        ("attn_ref_seed2", "attn_ref, seed 1235", {**ref, **seed2}),
+        ("h3", "3:1 CKDA (std) + linear XSA; attention NoPE + qk-norm + XSA + gate", h3),
+        ("h3_seed2", "h3, seed 1235", {**h3, **seed2}),
+        # the short arms' paired references (added 2026-10-18): Megatron's data order depends on
+        # train_iters, so the 4000-step arms see other batches than the 4BT validation arms
+        # (per-step loss residual correlation -0.02 vs +1.00 paired); these two run the short
+        # arms' exact schedule (4000 steps, seed 1234)
+        ("attn_ref_4k", "attn_ref, 4000 steps: the short arms' paired reference", ref),
+        ("h3_4k", "h3, 4000 steps: the short arms' paired h3", h3),
+        ("h5", "5:1 CKDA hybrid, same recipe (2 attention layers: 6x less KV cache)",
+         {**h3, "aux.pattern": hybrid(blocks, ratio=5)}),
+        ("h3_tri", "3:1 triadic CKDA (E=4), same recipe", {**h3, **TRI_CKDA}),
+        ("h3_nolxsa", "h3 without XSA in the linear layers (ablation)",
+         {k: v for k, v in h3.items() if k != B + "linear_xsa"}),
+        ("qwen35", "Qwen3.5-like GDN hybrid (gated attention, partial RoPE, zero-centred norm; "
+         "GDN 6 key / 12 value heads x 128)", qwen),
+        ("h3_mhc4", "h3 + mHC, 4 residual streams", {**h3, **mhc}),
+        ("h3_routed", "h3 + routed residual, 2 of 4 streams", {**h3, **mhc, **nocg, B + "mhc_routed_topk": 2}),
+        # routed-residual extensions (Megatron 931938bdf): the router also reads a 64-channel tag
+        # of every stream (content-key routing; gain 0 at init = the positional router), and the
+        # nGPT LERP write (needs ngpt: h3_ngpt is its baseline)
+        ("h3_routed_key", "h3 + routed residual (2 of 4), content-key router over all streams",
+         {**h3, **mhc, **nocg, B + "mhc_routed_topk": 2, B + "mhc_routed_key_dim": 64}),
+        ("h3_ngpt", "h3 in nGPT form (normalized weights / hidden states, LERP residuals)",
+         {**h3, **ngpt}),
+        ("h3_routed_lerp", "h3_ngpt + routed residual (2 of 4) with the nGPT LERP write",
+         {**h3, **ngpt, **mhc, **nocg, B + "mhc_routed_topk": 2, B + "mhc_lerp": True}),
+        ("h3_routed_key_lerp", "h3_ngpt + routed residual, content-key router, LERP write",
+         {**h3, **ngpt, **mhc, **nocg, B + "mhc_routed_topk": 2, B + "mhc_routed_key_dim": 64,
+          B + "mhc_lerp": True}),
+        ("h3_attnres", "h3 + block attention residuals (4 blocks)",
+         {**h3, **nocg, B + "attn_res": True, B + "attn_res_num_blocks": 4}),
+        ("h3_engram", "h3 + Engram n-gram memory before blocks 2 and 8 (tables not matched: sparse)",
+         {**h3, "aux.pattern": hybrid(blocks, engram_at=(1, 7)), B + "engram_ngram_orders": [2, 3],
+          B + "engram_table_parallel": "dp"}),
+    ]
+
+
+VALIDATION3 = ("attn_ref", "h3")
+R3_KEY = "r3b:"  # param_match.json keys of round 3 (r3b: the head-dim-128 / GQA layout)
+NOT_MATCHED = {"h3_engram": "h3"}  # Engram tables are sparse lookups (like embeddings): h3's d_ffn
+
+
 HEADER = """# @package _global_
 # GENERATED by scripts/korbi/campaign/gen_screen.py -- edit there.
-# Parameter-matched feature screen, size {size}: hidden {hidden} x {blocks} blocks, {heads} heads
-# of 64, d_ffn {ffn} (base), datamix4, lr {lr}, gbs {gbs} x 4096, WSD (1 % warmup, 20 % linear
-# cooldown) to aux.tokens. Arms: one feature each; d_ffn matched per arm ({matched}).
+# {title}, size {size}: hidden {hidden} x {blocks} blocks, {heads} heads
+# of 64, d_ffn {ffn} (base), datamix4, lr {lr}, gbs {gbs} x 4096, 1000-step warmup, then constant
+# (stable only, no cooldown) to aux.tokens. Arms: one feature each; d_ffn matched per arm ({matched}).
 defaults:
   - base_train_mn5
   - _self_
 
 aux:
-  suite: screen_{size}
+  suite: {suite}
   family: {size}
-  tokens: 2.0e9
+  tokens: {tokens}
   gbs: {gbs}
   pattern: "{pattern}"
 
@@ -82,11 +189,15 @@ backend:
     linear_num_key_heads: {heads}
     linear_num_value_heads: {heads}
     lr: {lr}
-    min_lr: {min_lr}
-    lr_decay_style: WSD
-    lr_wsd_decay_style: linear
-    lr_wsd_decay_iters: "${{oc.eval:'int(0.2 * ${{backend.megatron.train_iters}})'}}"
-    lr_warmup_iters: "${{oc.eval:'max(100, int(0.01 * ${{backend.megatron.train_iters}}))'}}"
+    min_lr: {lr}
+    # stable only: no cooldown. Arms are compared on the stable-phase loss; at equal lr / gbs the
+    # stable ranking is the cooled one (round 1: Spearman 0.98-1.00 over 4 screens of 9 arms).
+    # Round-1 screens ran WSD (20 % linear cooldown to lr / 10).
+    lr_decay_style: constant
+    lr_wsd_decay_iters: null
+    # 1000 warmup steps (the round-1 AdamW screen ran max(100, 1 %) = 100; angular MuOwn runs
+    # override it to 0)
+    lr_warmup_iters: 1000
     eval_interval: 500
     eval_iters: 20
 
@@ -108,19 +219,549 @@ sweep:
 """
 
 
+# screen 2 (round 1b): the valid setup -- AdamW with a 1000-step warmup, stable only, gbs 128
+# ("common value" at 4k sequence and ~120M), lr: s1 2e-3 (warmup study: 2e-3 / 4e-3 within 0.003
+# at 1000 warmup steps), s2 scaled by the ComplexKDA law (N2/N1)^-0.417 -> 1.25e-3
+SIZES2 = {
+    "s1": (768, 12, 12, 2048, 2e-3, 128),
+    "s2": (1024, 20, 16, 2816, 1.25e-3, 128),
+}
+# short-run protocol (docs §9.6): every arm to SHORT_STEPS, then compared through its fitted
+# curve; the validation arms run to the full budget (tokens below) to check the extrapolation
+SHORT_STEPS = 4000
+VALIDATION_ARMS = ("attn", "h_ckda_std_xsa", "h_gdn_qwen35")
+ARMS2 = ["attn", "attn_xsa", "attn_gate", "h_ckda_std", "h_ckda_std_xsa", "h_tri_ckda",
+         "h_tri_ckda_xsa", "h_gdn", "h_gdn_nope", "h_gdn_qwen35"]
+
+
+# round 3B (docs §10.3): MoE design on the round-3 attention base (attn_ref, head dim 128 / GQA),
+# an MoE FFN in every block, ACTIVE FFN width matched to attn_ref's d_ffn 2048 by construction
+# (top-k x expert width (+ shared) = 2048; the router adds 768 x E per layer). EP 4 on 1 node,
+# the speed suite's MoE stack; per-layer router / expert-viability metrics to TB / wandb.
+MOE = {B + "moe_grouped_gemm": True, B + "moe_token_dispatcher_type": "alltoall",
+       B + "moe_router_dtype": "fp32", B + "moe_permute_fusion": True,
+       B + "expert_model_parallel_size": 4, B + "moe_router_load_balancing_type": "aux_loss",
+       B + "moe_aux_loss_coeff": 1e-3, B + "moe_per_layer_logging": True,
+       B + "moe_expert_viability_metrics": True,
+       # attention only in CUDA graphs: the per-layer router statistics are not graph-safe
+       B + "cuda_graph_modules": ["attn"]}
+# optimizers at their round-1 optima (gbs 128): AdamW 2e-3 with 1000 warmup steps, angular MuOwn
+# 4e-3 without warmup
+OPT3B = {"adamw": {"aux.lr": 2e-3, "aux.warmup_iters": 1000},
+         "am": {"aux.lr": 4e-3, "aux.warmup_iters": 0, B + "optimizer": "angular_muown"}}
+
+
+def moe(experts: int, width: int, topk: int, shared: int | None = None, **extra):
+    return {B + "num_experts": experts, B + "moe_ffn_hidden_size": width, B + "moe_router_topk": topk,
+            B + "moe_shared_expert_intermediate_size": shared, **MOE, **extra}
+
+
+def arms3b(blocks: int):
+    """(name, comment, overrides) per design; every one runs with both optimizers (OPT3B)."""
+    ref = next(a for a in arms3(blocks) if a[0] == "attn_ref")[2]
+    pat = "*E" * blocks
+    base = {**ref, "aux.pattern": pat, **moe(64, 512, 4)}
+    sig = {B + "moe_router_score_function": "sigmoid"}
+    bias = {**sig, B + "moe_router_enable_expert_bias": True, B + "moe_router_bias_update_rate": 1e-3}
+    return [
+        ("dense", "attn_ref, dense FFN 2048 (the dense twin)", {**ref, B + "ffn_hidden_size": 2048}),
+        ("e16k4", "16 x 512, top-4 (4x sparse)", {**base, **moe(16, 512, 4)}),
+        ("e32k4", "32 x 512, top-4 (8x sparse)", {**base, **moe(32, 512, 4)}),
+        ("e64k4", "64 x 512, top-4 (16x sparse): the base", base),
+        ("e128k4", "128 x 512, top-4 (32x sparse)", {**base, **moe(128, 512, 4)}),
+        ("e32k2w1024", "granularity: 32 x 1024, top-2 (16x sparse)", {**base, **moe(32, 1024, 2)}),
+        ("e128k8w256", "granularity: 128 x 256, top-8 (16x sparse)", {**base, **moe(128, 256, 8)}),
+        ("e64k3s512", "64 x 512, top-3 + shared expert 512", {**base, **moe(64, 512, 3, 512)}),
+        ("aux1e-2", "base, aux loss 1e-2", {**base, B + "moe_aux_loss_coeff": 1e-2}),
+        ("sigmoid", "base, sigmoid router (aux 1e-3): separates the score function from the bias",
+         {**base, **sig}),
+        ("bias", "base, aux-loss-free expert bias (sigmoid, rate 1e-3, no aux loss)",
+         {**base, **bias, B + "moe_router_load_balancing_type": "none", B + "moe_aux_loss_coeff": 0.0}),
+        ("bias_aux1e-4", "base, expert bias + aux loss 1e-4 (sigmoid)",
+         {**base, **bias, B + "moe_aux_loss_coeff": 1e-4}),
+        ("lr_half", "base at lr x 0.5", {**base, "lr_scale": 0.5}),
+        ("lr_x2", "base at lr x 2", {**base, "lr_scale": 2.0}),
+        ("gbs64", "base at gbs 64, equal tokens (8000 steps)", {**base, "aux.gbs": 64}),
+        ("gbs256", "base at gbs 256, equal tokens (2000 steps)", {**base, "aux.gbs": 256}),
+    ]
+
+
+def arms3b_64x(blocks: int):
+    """64x sparsity (user 2026-10-18: the 80B-A3B class, ~43x total / active at s1's attention
+    share), angular MuOwn only, the ladder's router (softmax + aux 1e-3) so the sparsity step from
+    e128k4 is clean; micro batch 4 (e128k4 used 94 % of the memory at 8; same gbs, same data
+    order)."""
+    base = dict(arms3b(blocks)[3][2])  # e64k4
+    mbs4 = {B + "micro_batch_size": 4}
+    return [
+        ("e256k4", "256 x 512, top-4 (64x sparse)", {**base, **moe(256, 512, 4), **mbs4}),
+        ("e512k8w256", "512 x 256, top-8 (64x sparse, fine)", {**base, **moe(512, 256, 8), **mbs4}),
+    ]
+
+
+HEADER3B = """# @package _global_
+# GENERATED by scripts/korbi/campaign/gen_screen.py -- edit there.
+# Round 3B (docs §10.3): MoE design on the round-3 attention base (attn_ref: hidden {hidden} x
+# {blocks} blocks, 6 q heads x 128, GQA 2), an MoE FFN in every block with the active FFN width
+# matched to the dense twin's 2048; sparsity, granularity, shared expert, router balancing, and
+# lr / gbs, each with AdamW (2e-3, 1000 warmup) and angular MuOwn (4e-3, no warmup). Stable
+# only, {steps} steps at gbs 128 (equal tokens {tokens:.3g} for every arm), every step logged.
+defaults:
+  - base_train_mn5
+  - _self_
+
+aux:
+  suite: screen3b_s1
+  family: s1
+  tokens: {tokens}
+  gbs: 128
+  lr: 2.0e-3
+  warmup_iters: 1000
+  pattern: "{pattern}"
+
+backend:
+  megatron:
+    hidden_size: {hidden}
+    ffn_hidden_size: 2048
+    lr: ${{aux.lr}}
+    min_lr: ${{aux.lr}}
+    lr_decay_style: constant
+    lr_wsd_decay_iters: null
+    lr_warmup_iters: ${{aux.warmup_iters}}
+    log_interval: 1
+    eval_interval: 500
+    eval_iters: 20
+
+job:
+  array_group: ${{aux.suite}}
+  est_step_time_s: 1.2
+
+slurm:
+  sbatch:
+    time: "04:00:00"
+
+sweep:
+  type: product
+  store_sweep_json: true
+  filter: "\\\\${{oc.eval:'len(\\\\${{aux.only}}) == 0 or \\"\\\\${{aux.arm}}\\" in \\\\${{aux.only}}'}}"
+  groups:
+    - type: list
+      configs:
+"""
+
+
+def write3b():
+    hidden, blocks = SIZES2["s1"][:2]
+    tokens = SHORT_STEPS * 128 * 4096
+    lines = [HEADER3B.format(hidden=hidden, blocks=blocks, steps=SHORT_STEPS, tokens=tokens,
+                             pattern="*-" * blocks)]
+    n = 0
+    for opt, okv in OPT3B.items():
+        for name, comment, kv in arms3b(blocks) + (arms3b_64x(blocks) if opt == "am" else []):
+            kv = {**okv, **kv}
+            # literals (a sweep-entry interpolation resolves against the base config)
+            kv["aux.lr"] = kv["aux.lr"] * kv.pop("lr_scale", 1.0)
+            lines.append(f"        # {comment} [{opt}]\n        - aux.arm: {opt}_{name}\n")
+            for k, v in kv.items():
+                val = yaml.safe_dump(v, default_flow_style=True).strip().removesuffix("...").strip()
+                lines.append(f"          {k}: {val}\n")
+            n += 1
+    (OUT / "screen3b_s1_mn5.yaml").write_text("".join(lines))
+    print(f"screen3b_s1_mn5.yaml: {n} arms")
+
+
+# round 3C (docs §10.6, user 2026-10-18): the residual variants under angular MuOwn (warmup,
+# mixer lr), routed 8 streams, mixed / pure-linear stacks with triadic `T` layers, nGPT's own lr
+# sweep (4BT + cooldown), and the N trend at s2 (exit_interval protocol).
+AM = {B + "optimizer": "angular_muown", B + "lr": 4e-3, B + "min_lr": 4e-3, B + "lr_warmup_iters": 0}
+ADAMW = {B + "optimizer": "adam", B + "lr": 2e-3, B + "min_lr": 2e-3, B + "lr_warmup_iters": 1000}
+R3C_KEY = "r3c:"  # param_match.json keys of the new round-3C stacks (s1); "r3c2:" at s2
+
+
+def period6(*mixers: str) -> str:
+    """12 blocks as 2 periods of the 6 given mixers (each followed by an MLP)."""
+    assert len(mixers) == 6
+    return "".join(f"{m}-" for m in mixers) * 2
+
+
+def arms3c(blocks: int):
+    """(name, comment, overrides, param_match key) for the s1 short suite (paired with round 3:
+    4000 steps, seed 1234, gbs 128)."""
+    r3 = {a[0]: a[2] for a in arms3(blocks)}
+    h3, mhc4, routed, attnres = r3["h3"], r3["h3_mhc4"], r3["h3_routed"], r3["h3_attnres"]
+    nolxsa = {k: v for k, v in h3.items() if k != B + "linear_xsa"}
+    tri = {B + "linear_triadic_base": "ckda", B + "linear_triadic_e": 4}
+    mlr = {B + "residual_mixer_lr_mult": 0.25}
+    wu = {B + "lr_warmup_iters": 1000}
+    out = []
+    # angular MuOwn maturity: warmup, and the mixers' Adam lr (4e-3 x 0.25 = 1e-3)
+    for name, base, key in (("h3", h3, "h3"), ("h3_mhc4", mhc4, "h3_mhc4"),
+                            ("h3_routed", routed, "h3_routed"), ("h3_attnres", attnres, "h3_attnres")):
+        out.append((f"{name}_wu1k", f"{name}, angular MuOwn with a 1000-step warmup",
+                    {**base, **AM, **wu}, R3_KEY + key))
+        if name != "h3":
+            out.append((f"{name}_mlr025", f"{name}, angular MuOwn, residual-mixer lr x 0.25",
+                        {**base, **AM, **mlr}, R3_KEY + key))
+    # routed 8 streams, 2 active; mHC 8 as its dense-mixing counterpart
+    r8 = {**routed, B + "mhc_expansion_rate": 8}
+    out += [
+        ("h3_routed8", "h3 + routed residual, 8 streams, 2 active (angular MuOwn)", {**r8, **AM},
+         R3C_KEY + "h3_routed8"),
+        ("adamw_h3_routed8", "h3 + routed residual, 8 streams, 2 active (AdamW)", {**r8, **ADAMW},
+         R3C_KEY + "adamw_h3_routed8"),
+        ("h3_mhc8", "h3 + mHC, 8 streams (angular MuOwn)", {**mhc4, B + "mhc_expansion_rate": 8, **AM},
+         R3C_KEY + "h3_mhc8"),
+    ]
+    # mixed / pure-linear stacks (no linear XSA), angular MuOwn
+    out += [
+        ("h5_nolxsa", "attn 1 + CKDA 5 (reference)",
+         {**nolxsa, "aux.pattern": hybrid(blocks, ratio=5), **AM}, R3C_KEY + "h5_nolxsa"),
+        ("h5_tri1", "attn 1 + triadic CKDA 1 + CKDA 4",
+         {**nolxsa, **tri, "aux.pattern": period6("L", "L", "T", "L", "L", "*"), **AM},
+         R3C_KEY + "h5_tri1"),
+        ("lin_ckda", "pure linear: CKDA 6",
+         {**nolxsa, "aux.pattern": period6(*"LLLLLL"), **AM}, R3C_KEY + "lin_ckda"),
+        ("lin_tri1_e4", "pure linear: triadic CKDA 1 (E = 4) + CKDA 5",
+         {**nolxsa, **tri, "aux.pattern": period6("L", "L", "T", "L", "L", "L"), **AM},
+         R3C_KEY + "lin_tri1_e4"),
+        ("lin_tri1_e8", "pure linear: triadic CKDA 1 (E = 8) + CKDA 5",
+         {**nolxsa, **tri, B + "linear_triadic_e": 8,
+          "aux.pattern": period6("L", "L", "T", "L", "L", "L"), **AM}, R3C_KEY + "lin_tri1_e8"),
+    ]
+    return out
+
+
+def arms3c_ngpt(blocks: int):
+    """nGPT's own lr sweep (AdamW, no warmup) to 4BT with a 20 % linear WSD cooldown to lr / 10,
+    next to h3 (no linear XSA) with the same schedule under both optimizers: final cooled losses
+    (nGPT's curve crosses the others twice, so stable short runs cannot judge it)."""
+    r3 = {a[0]: a[2] for a in arms3(blocks)}
+    h3 = {k: v for k, v in r3["h3"].items() if k != B + "linear_xsa"}
+    ngpt = {B + "ngpt": True, B + "weight_normalizer": True, B + "fused_qk_norm_rope": False}
+    steps = int(4.0e9) // (128 * 4096)
+    wsd = {B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear",
+           B + "lr_wsd_decay_iters": int(0.2 * steps)}
+    out = []
+    for lr in (4e-3, 8e-3, 1.6e-2):
+        out.append((f"ngpt_lr{lr:g}", f"h3 (no linear XSA) in nGPT form, AdamW lr {lr:g}, no warmup, WSD",
+                    {**h3, **ngpt, **ADAMW, B + "lr": lr, B + "min_lr": lr / 10, B + "lr_warmup_iters": 0,
+                     **wsd}, R3C_KEY + f"ngpt_lr{lr:g}"))
+    out += [
+        ("adamw_h3", "h3 (no linear XSA), AdamW 2e-3, 1000 warmup, WSD",
+         {**h3, **ADAMW, B + "min_lr": 2e-4, **wsd}, R3C_KEY + "adamw_h3"),
+        ("am_h3", "h3 (no linear XSA), angular MuOwn 4e-3, no warmup, WSD",
+         {**h3, **AM, B + "min_lr": 4e-4, **wsd}, R3C_KEY + "am_h3"),
+    ]
+    return out
+
+
+def arms3c_s2(blocks: int):
+    """The N trend at s2 (hidden 1024 x 20 blocks, head dim 128: 8 q heads / 2 KV groups, CKDA
+    8 heads), angular MuOwn, no linear XSA. exit_interval protocol: train_iters = 4BT for every arm,
+    exit at 4000, so short and full arms share the data order and winners extend by resuming."""
+    geo = {B + "num_attention_heads": 8, B + "num_query_groups": 2, B + "kv_channels": 128,
+           B + "linear_key_head_dim": 128, B + "linear_value_head_dim": 128,
+           B + "linear_num_key_heads": 8, B + "linear_num_value_heads": 8}
+    # the round-3 recipes (built at s1's 12 blocks: arms3 also builds 5:1, which 20 blocks do
+    # not divide into), re-patterned for ``blocks``
+    r3 = {a[0]: a[2] for a in arms3(SIZES2["s1"][1])}
+    pat = {"attn_ref": "*-" * blocks}
+
+    def strip(name):
+        d = {k: v for k, v in r3[name].items() if k != B + "linear_xsa"}
+        d["aux.pattern"] = pat.get(name, hybrid(blocks))
+        return d
+
+    ex = {B + "exit_interval": SHORT_STEPS, "job.est_steps": SHORT_STEPS}
+    return [
+        ("attn_ref", "attention + qk-norm + XSA (RoPE)", {**strip("attn_ref"), **geo, **AM, **ex},
+         "r3c2:attn_ref"),
+        ("h3", "CKDA 3:1, no linear XSA", {**strip("h3"), **geo, **AM, **ex}, "r3c2:h3"),
+        # 4 residual streams OOM at mbs 8 (s2 smoke, 2026-10-18): mbs 4, same gbs and data order
+        ("h3_mhc4", "h3 + mHC-4", {**strip("h3_mhc4"), **geo, **AM, **ex, B + "micro_batch_size": 4},
+         "r3c2:h3_mhc4"),
+        ("h3_routed", "h3 + routed residual (2 of 4)",
+         {**strip("h3_routed"), **geo, **AM, **ex, B + "micro_batch_size": 4}, "r3c2:h3_routed"),
+    ]
+
+
+def write3c(pm):
+    hidden1, blocks1 = SIZES2["s1"][:2]
+    hidden2, blocks2, _, ffn2, _, _ = SIZES2["s2"]
+    for fname, suite, size, (hidden, blocks, ffn), tokens, pool, title in (
+        ("screen3c_s1_mn5.yaml", "screen3c_s1", "s1", (hidden1, blocks1, 2048),
+         SHORT_STEPS * 128 * 4096, arms3c(blocks1),
+         "Round 3C: residual variants under angular MuOwn, routed-8, mixed / pure-linear stacks"),
+        ("screen3c_ngpt_s1_mn5.yaml", "screen3c_ngpt_s1", "s1", (hidden1, blocks1, 2048), "4.0e9",
+         arms3c_ngpt(blocks1), "Round 3C: nGPT lr sweep to 4BT with a cooldown, h3 references"),
+        ("screen3c_s2_mn5.yaml", "screen3c_s2", "s2", (hidden2, blocks2, ffn2), "4.0e9",
+         arms3c_s2(blocks2), "Round 3C: N trend at s2 (exit_interval 4000 of 4BT)"),
+    ):
+        lines = [HEADER.format(title=title, suite=suite, size=size, hidden=hidden, tokens=tokens,
+                               blocks=blocks, heads=12 if size == "s1" else 16, ffn=ffn, lr=2e-3,
+                               gbs=128, pattern="*-" * blocks, matched="per arm (param_match.json)",
+                               time="10:00:00", step_s=0.6 if size == "s1" else 1.6)]
+        unmatched = []
+        for name, comment, kv, key in pool:
+            kv = dict(kv)
+            entry = pm.get(size, {}).get(key)
+            if entry:
+                kv[B + "ffn_hidden_size"] = entry["ffn"]
+                comment += f" (d_ffn {entry['ffn']}, non-emb {entry['non_emb'] / 1e6:.1f}M)"
+            else:
+                unmatched.append(name)
+                comment += " (d_ffn not matched yet)"
+            lines.append(f"        # {comment}\n        - aux.arm: {name}\n")
+            for k, v in kv.items():
+                val = yaml.safe_dump(v, default_flow_style=True).strip().removesuffix("...").strip()
+                lines.append(f"          {k}: {val}\n")
+        (OUT / fname).write_text("".join(lines))
+        print(f"{fname}: {len(pool)} arms" + (f", NOT matched: {' '.join(unmatched)}" if unmatched else ""))
+
+
+# round 4 (docs §11, user 2026-10-18): the MoE hybrid with a residual stream, plus LatentMoE.
+# Base: round-3B MoE recipe at 48x (144 routed experts, top-3 + 1 shared expert of the expert
+# width: the 80-90B-A3B class; 64x OOMed at s2 on one node), sigmoid
+# router + expert bias + aux 1e-4), CKDA 5:1 (reference CKDA, no linear XSA), attention NoPE +
+# qk-norm + XSA + gate; angular MuOwn without warmup, matrix scale 0.2, residual mixers at lr x
+# 0.25 (§10.7). exit_interval protocol: train_iters = 4BT for every arm, exit at 4000 (equal data
+# order, finalists extend by resuming).
+R4_SIZES = {  # hidden, blocks, q heads (x 128, 2 KV groups), active FFN (= dense twin), lr
+    "s1": (768, 12, 6, 2048, 4e-3),
+    "s2": (1024, 18, 8, 2816, 2.5e-3),  # 18 blocks: 5:1 needs blocks % 6 == 0
+}
+
+
+def arms4(size: str):
+    hidden, blocks, heads, ffn, lr = R4_SIZES[size]
+    w = ffn // 4  # expert width: top-3 routed + 1 shared = the dense twin's active FFN
+    geo = {B + "num_attention_heads": heads, B + "num_query_groups": 2, B + "kv_channels": 128,
+           B + "linear_key_head_dim": 128, B + "linear_value_head_dim": 128,
+           B + "linear_num_key_heads": heads, B + "linear_num_value_heads": heads}
+    opt = {B + "optimizer": "angular_muown", B + "lr": lr, B + "min_lr": lr,
+           B + "lr_warmup_iters": 0}
+    ex = {B + "exit_interval": SHORT_STEPS, "job.est_steps": SHORT_STEPS}
+    router = {B + "moe_router_score_function": "sigmoid", B + "moe_router_enable_expert_bias": True,
+              B + "moe_router_bias_update_rate": 1e-3, B + "moe_aux_loss_coeff": 1e-4,
+              # mbs 2 (gbs and data order unchanged): mbs 4 OOMed (no activation recompute)
+              B + "micro_batch_size": 2}
+    base_moe = {**moe(144, w, 3, w), **router}
+    attn_pat = "*E" * blocks
+    hyb_pat = hybrid(blocks, ratio=5).replace("-", "E")
+    attn = {**geo, B + "exclusive_self_attention": True, "aux.pattern": attn_pat}
+    h5 = {**geo, **CKDA_STD, B + "position_embedding_type": "none",
+          B + "attention_output_gate": True, B + "exclusive_self_attention": True,
+          "aux.pattern": hyb_pat}
+    mlr = {B + "residual_mixer_lr_mult": 0.25}
+    nocg = {B + "cuda_graph_impl": "none"}
+    routed = lambda n, **kw: {B + "mhc": True, B + "mhc_expansion_rate": n,  # noqa: E731
+                              B + "mhc_routed_topk": 2, **nocg, **mlr, **kw}
+    mhc4 = {B + "mhc": True, B + "mhc_expansion_rate": 4, **nocg, **mlr}
+    common = {**opt, **ex}
+    out = [
+        ("attn_moe", "all-attention MoE (RoPE + qk-norm + XSA): the reference", {**attn, **base_moe, **common}),
+        ("h5_moe", "CKDA 5:1 MoE", {**h5, **base_moe, **common}),
+        ("h5_moe_routed4", "+ routed residual, 2 of 4 streams", {**h5, **base_moe, **common, **routed(4)}),
+        ("h5_moe_routed8", "+ routed residual, 2 of 8 streams, reversible",
+         {**h5, **base_moe, **common, **routed(8, **{B + "mhc_routed_reversible": True})}),
+        ("h5_moe_mhc4", "+ mHC, 4 streams", {**h5, **base_moe, **common, **mhc4}),
+        # the routing control (user 2026-10-18): dense mHC over 2 streams touches as many
+        # streams per sublayer as routed 2-of-n (n = 4 / 8 held); if it matches them, the
+        # routing adds nothing beyond 2 active streams
+        ("h5_moe_mhc2", "+ mHC, 2 streams (the routing control)",
+         {**h5, **base_moe, **common, **mhc4, B + "mhc_expansion_rate": 2}),
+    ]
+    if size == "s1":
+        lat = hidden // 2
+        out += [
+            ("h5_moe_routed8_mlr0125", "routed 2 of 8, mixer lr x 0.125",
+             {**h5, **base_moe, **common, **routed(8, **{B + "mhc_routed_reversible": True}),
+              B + "residual_mixer_lr_mult": 0.125}),
+            ("h5_moe_routed8_mlr05", "routed 2 of 8, mixer lr x 0.5",
+             {**h5, **base_moe, **common, **routed(8, **{B + "mhc_routed_reversible": True}),
+              B + "residual_mixer_lr_mult": 0.5}),
+            ("h5_moe_routed8_k3", "routed 3 of 8 (stream 0 + 2 others: each stream about as "
+             "active as in 2 of 4), reversible",
+             {**h5, **base_moe, **common, **routed(8, **{B + "mhc_routed_reversible": True}),
+              B + "mhc_routed_topk": 3}),
+            ("h5_moe_routed8_key", "routed 2 of 8, content-key router (64 channels)",
+             {**h5, **base_moe, **common, **routed(8, **{B + "mhc_routed_key_dim": 64})}),
+            # LatentMoE (moe_latent_size): routed experts in a latent of hidden / 2 (the shared
+            # expert stays at full width). lat2: 2x the experts and the top-k -> equal active
+            # expert compute, total expert parameters and dispatch volume; lat2_half: same
+            # experts / top-k -> half of each
+            ("h5_moe_lat2", f"LatentMoE, latent {lat}: 288 x {w}, top-6 + shared (equal cost)",
+             {**h5, **moe(288, w, 6, w), **router, **common, B + "moe_latent_size": lat}),
+            ("h5_moe_lat2_half", f"LatentMoE, latent {lat}: 144 x {w}, top-3 + shared (half cost)",
+             {**h5, **base_moe, **common, B + "moe_latent_size": lat}),
+        ]
+    return out
+
+
+def arms4g(size: str):
+    """Round 4G, MoE granularity (user 2026-10-18): h5_moe (144 x w, top-3 + shared) with the
+    experts split finer at fixed sparsity (E / k = 48), fixed active and total expert parameters
+    (E x w and k x w constant) and the same shared expert -- only the expert width and the top-k
+    change. Granularity 4 d / w_expert: s1 h5_moe 6, g2 12, g4 24 (Qwen3-30B-A3B ~11,
+    Qwen3-Next-80B-A3B 16, DeepSeek-V3 14). Pairs with screen4's h5_moe (same data order)."""
+    hidden, blocks, heads, ffn, lr = R4_SIZES[size]
+    w = ffn // 4
+    h5_moe = dict((n, kv) for n, _, kv in arms4(size))["h5_moe"]
+    out = []
+    for g in (2, 4):
+        out.append((f"h5_moe_g{g}", f"granularity x{g}: {144 * g} x {w // g}, top-{3 * g} + shared {w}",
+                    {**h5_moe, B + "num_experts": 144 * g, B + "moe_ffn_hidden_size": w // g,
+                     B + "moe_router_topk": 3 * g}))
+    return out
+
+
+# The flag mix at 8k with document masking (data_flag_mn5.yaml's keys; the base config composes
+# datamix4, so its per-split file is switched off here)
+FLAG8K = {B + "per_split_data_args_path": None,
+          B + "data_args_path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/flag_datamix_mn5.txt",
+          B + "split": "998,2,0", B + "seq_length": 8192, B + "max_position_embeddings": 8192,
+          B + "dataloader_inter_document_masking": True, B + "num_workers": 16,
+          B + "dataloader_prefetch_factor": 8}
+
+
+def flag_smoke(size: str):
+    """Smoke of the flag mix at 8k with document masking (user 2026-10-18): the round-4 best bet
+    (CKDA 5:1 + routed 2 of 8 + MoE) for 200 steps at mbs 1 (= mbs 2's tokens at 4k)."""
+    arm = dict((n, kv) for n, _, kv in arms4(size))["h5_moe_routed8"]
+    return [("flag8k_h5_moe_routed8", "flag mix, 8k, document masking: routed 2 of 8, reversible",
+             {**arm, **FLAG8K, B + "micro_batch_size": 1, B + "exit_interval": 200,
+              "job.est_steps": 200})]
+
+
+def arms4r(size: str):
+    """Round 4R (user 2026-10-18): the residual arms again with the residual-stream diagnostics
+    on (stream sizes per layer, read / pick shares, write strengths; every 25 steps), to find
+    why dense mHC diverged (mHC-4 NaN at step 24 / 32, mHC-2 at 1935 under MoE) and why plain
+    routed 2-of-8 gained nothing while its content-keyed and 3-of-8 variants did; plus keyed
+    3-of-8. Same protocol and data order as round 4 (pairs with its runs)."""
+    pool = dict((n, kv) for n, _, kv in arms4(size))
+    diag = {B + "arch_metrics_interval": 25}
+    key = {B + "mhc_routed_key_dim": 64}
+    out = [
+        ("h5_moe_mhc4_diag", "mHC-4 (diverged at step 24 in round 4)", {**pool["h5_moe_mhc4"], **diag}),
+        ("h5_moe_mhc2_diag", "mHC-2 (diverged at step 1935 in round 4)", {**pool["h5_moe_mhc2"], **diag}),
+        ("h5_moe_routed8_diag", "routed 2 of 8, reversible (gained ~0 in round 4)",
+         {**pool["h5_moe_routed8"], **diag}),
+        ("h5_moe_routed8_key_diag", "routed 2 of 8, content-key router", {**pool["h5_moe_routed8_key"], **diag}),
+        ("h5_moe_routed8_k3_key", "routed 3 of 8, content-key router (new)",
+         {**pool["h5_moe_routed8_key"], B + "mhc_routed_topk": 3, **diag}),
+    ]
+    return out
+
+
+def arms4rx(size: str):
+    """Round 4R extension (user 2026-10-18). s2: does the residual gain grow with size
+    (mHC-2, keyed 2-of-8 and 3-of-8, paired with screen4_s2's h5_moe). s1: what could make the
+    routed residual pay -- mixing the picked streams (mhc_routed_mix), balancing the picks
+    (mhc_routed_balance_rate), the seed noise of a gap (seed 1235 changes init AND data order: the
+    two seed-2 arms pair with each other), and its speed with per-layer CUDA graphs on the
+    attention layers as the h5_moe reference has (round 4's residual arms ran without graphs)."""
+    pool = dict((n, kv) for n, _, kv in arms4(size))
+    diag = {B + "arch_metrics_interval": 25}
+    key8 = {**pool["h5_moe_routed8"], B + "mhc_routed_reversible": False, B + "mhc_routed_key_dim": 64}
+    k3 = {**key8, B + "mhc_routed_topk": 3}
+    if size == "s2":
+        return [
+            ("h5_moe_mhc2_diag", "mHC-2 (the s2 leader in round 4)", {**pool["h5_moe_mhc2"], **diag}),
+            ("h5_moe_routed8_key_diag", "routed 2 of 8, content-key router", {**key8, **diag}),
+            ("h5_moe_routed8_k3_key", "routed 3 of 8, content-key router", {**k3, **diag}),
+        ]
+    seed2 = {B + "seed": 1235}
+    return [
+        ("h5_moe_routed8_k3_key_mix", "routed 3 of 8, keyed, + mixing of the picked streams",
+         {**k3, B + "mhc_routed_mix": True, **diag}),
+        ("h5_moe_routed8_k3_key_bal", "routed 3 of 8, keyed, + pick balancing (bias rate 1e-3)",
+         {**k3, B + "mhc_routed_balance_rate": 1e-3, **diag}),
+        ("h5_moe_seed2", "h5_moe, seed 1235 (pairs with h5_moe_routed8_k3_key_seed2 only)",
+         {**pool["h5_moe"], **seed2}),
+        ("h5_moe_routed8_k3_key_seed2", "routed 3 of 8, keyed, seed 1235", {**k3, **seed2}),
+        ("h5_moe_routed8_k3_key_cg", "routed 3 of 8, keyed, CUDA graphs on attn (speed only, 300 steps)",
+         {**k3, B + "cuda_graph_impl": "local", B + "cuda_graph_modules": ["attn"],
+          B + "exit_interval": 300, "job.est_steps": 300}),
+    ]
+
+
+def write4():
+    for size in ("s1", "s2"):
+        _write4(size, "screen4rx", "Round 4R extension: residual scaling and routed-residual levers",
+                arms4rx(size))
+    _write4("s1", "screen4r", "Round 4R: residual arms with the stream diagnostics", arms4r("s1"))
+    _write4("s1", "flagsmoke", "Flag mix smoke at 8k with document masking", flag_smoke("s1"))
+    for size, (hidden, blocks, heads, ffn, lr) in R4_SIZES.items():
+        _write4(size, "screen4", "Round 4: the MoE hybrid with a residual stream + LatentMoE",
+                arms4(size))
+    for size in ("s1",):
+        _write4(size, "screen4g", "Round 4G: MoE granularity at fixed sparsity and parameters",
+                arms4g(size))
+
+
+def _write4(size, prefix, title, pool):
+    hidden, blocks, heads, ffn, lr = R4_SIZES[size]
+    lines = [HEADER.format(title=title,
+                           suite=f"{prefix}_{size}", size=size, hidden=hidden, tokens="4.0e9",
+                           blocks=blocks, heads=heads, ffn=ffn, lr=lr, gbs=128,
+                           pattern="*-" * blocks, matched="MoE: active FFN equal by construction",
+                           time="12:00:00" if size == "s2" else "08:00:00",
+                           step_s=1.0 if size == "s1" else 2.5)]
+    for name, comment, kv in pool:
+        lines.append(f"        # {comment}\n        - aux.arm: {name}\n")
+        for k, v in kv.items():
+            val = yaml.safe_dump(v, default_flow_style=True).strip().removesuffix("...").strip()
+            lines.append(f"          {k}: {val}\n")
+    (OUT / f"{prefix}_{size}_mn5.yaml").write_text("".join(lines))
+    print(f"{prefix}_{size}_mn5.yaml: {len(pool)} arms")
+
+
 def main():
     pm_path = OUT / "param_match.json"
     pm = json.loads(pm_path.read_text()) if pm_path.exists() else {}
-    for size, (hidden, blocks, heads, ffn, lr, gbs) in SIZES.items():
+    for prefix, sizes, keep, title in (
+            ("screen", SIZES, None, "Parameter-matched feature screen (round 1)"),
+            ("screen2", SIZES2, ARMS2, "Parameter-matched feature screen 2 (AdamW, 1000-step warmup, stable)"),
+            ("screen3", {"s1": SIZES2["s1"]}, None, "Level-1 round 3: hybrid recipe + residual / memory variants")):
+        write(prefix, sizes, keep, title, pm)
+    write3b()
+    write3c(pm)
+    write4()
+
+
+def write(prefix, sizes, keep, title, pm):
+    for size, (hidden, blocks, heads, ffn, lr, gbs) in sizes.items():
         table = pm.get(size, {})
-        lines = [HEADER.format(size=size, hidden=hidden, blocks=blocks, heads=heads, ffn=ffn, lr=lr,
-                               min_lr=lr / 10, gbs=gbs, pattern="*-" * blocks,
+        # screen 2 runs 4BT: at gbs 128 that is ~6.6k stable steps, where the single-run curve
+        # fits extrapolate (round 1: backtest within 1 % for 47/68 runs > 6.5k stable steps, vs
+        # 8/44 at 2.5-6.5k)
+        tokens = "4.0e9" if prefix in ("screen2", "screen3") else "2.0e9"
+        lines = [HEADER.format(title=title, suite=f"{prefix}_{size}", size=size, hidden=hidden, tokens=tokens,
+                               blocks=blocks, heads=heads, ffn=ffn, lr=lr,
+                               gbs=gbs, pattern="*-" * blocks,
                                matched=f"{len(table)} arms counted" if table else "NOT YET COUNTED",
                                time="02:00:00" if size == "s1" else "05:00:00",
                                step_s=0.6 if size == "s1" else 1.6)]
-        for name, comment, kv in arms(blocks):
+        pool = arms3(blocks) if prefix == "screen3" else arms(blocks)
+        chosen = [a for a in pool if keep is None or a[0] in keep]
+        for name, comment, kv in chosen:
             kv = dict(kv)
-            entry = table.get(name)
+            # memory at s2 (gbs unchanged): triadic CKDA OOMs at mbs 8 and 4, the GDN arms with
+            # heads of 128 at mbs 8
+            if prefix in ("screen2", "screen3"):
+                # short runs (user decision): end at SHORT_STEPS through the config; the validation
+                # arms run the suite's full budget to check the curve-fit extrapolation
+                if name not in (VALIDATION_ARMS if prefix == "screen2" else VALIDATION3):
+                    kv["aux.tokens"] = SHORT_STEPS * gbs * 4096
+            if size == "s2" and name.startswith("h_tri"):
+                kv[B + "micro_batch_size"] = 2
+            if size == "s2" and name in ("h_gdn_nope", "h_gdn_qwen35"):
+                kv[B + "micro_batch_size"] = 4
+            kp = R3_KEY if prefix == "screen3" else ""
+            entry = table.get(kp + name) or (table.get(kp + NOT_MATCHED[name]) if prefix == "screen3" and name in NOT_MATCHED else None)
+            if prefix == "screen3" and name.endswith(("_seed2", "_4k")):
+                entry = table.get(kp + name.removesuffix("_seed2").removesuffix("_4k"))
             if entry:
                 kv[B + "ffn_hidden_size"] = entry["ffn"]
                 comment += f" (d_ffn {entry['ffn']}, non-emb {entry['non_emb'] / 1e6:.1f}M)"
@@ -130,8 +771,9 @@ def main():
             for k, v in kv.items():
                 val = yaml.safe_dump(v, default_flow_style=True).strip().removesuffix("...").strip()
                 lines.append(f"          {k}: {val}\n")
-        (OUT / f"screen_{size}_mn5.yaml").write_text("".join(lines))
-        print(f"screen_{size}_mn5.yaml: {len(arms(blocks))} arms, {len(table)} matched")
+        (OUT / f"{prefix}_{size}_mn5.yaml").write_text("".join(lines))
+        print(f"{prefix}_{size}_mn5.yaml: {len(chosen)} arms, "
+              f"{sum(((R3_KEY if prefix == 'screen3' else '') + a[0]) in table for a in chosen)} matched")
 
 
 if __name__ == "__main__":

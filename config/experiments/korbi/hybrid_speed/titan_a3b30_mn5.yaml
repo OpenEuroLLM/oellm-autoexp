@@ -1,0 +1,60 @@
+# @package _global_
+# Upstream torchtitan (main) twin of the Megatron A3B-30B attention arm (speed_a3b30_mn5.yaml,
+# arms attn / attn_tuned): 48 x (GQA attention + 128 x 768 top-8 MoE), hidden 2048, 262k
+# vocabulary, 8 nodes, gbs 1024 x 4096. Recipes a3b30* in oellm_autoexp/titan_recipes/
+# hybrid_speed.py: FSDP2 over all 32 ranks + EP, full activation remat, compiled regions; arms
+# change the dispatcher (alltoall / DeepEP / HybridEP), EP, remat, micro batch. Compare on
+# tok/s/GPU (titan and Megatron count FLOPs differently).
+#
+#   scripts/korbi/mn5_autoexp_bg.sh titan_a3b scripts/run_autoexp.py --yes \
+#       --config-name experiments/korbi/hybrid_speed/titan_a3b30_mn5 aux.suite=ta1
+defaults:
+  - titan_main_mn5
+  - _self_
+
+aux:
+  suite: ta1
+  arm: a3b30
+  steps: 15
+  nodes: 8
+  only: []
+
+backend:
+  # one launcher per node (srun, one task per node), static rendezvous on the first node
+  command: >-
+    python -m torch.distributed.run --nnodes $SLURM_NNODES --node-rank $SLURM_NODEID
+    --nproc-per-node 4 --master-addr $MASTER_ADDR --master-port $MASTER_PORT
+    --local-ranks-filter 0 --role rank --tee 3 -m torchtitan.train
+    --module oellm_autoexp.titan_recipes.hybrid_speed --config ${aux.arm}
+    --output-dir ${job.base_output_dir}/out
+  env:
+    # per job: concurrent jobs compiling into one cache contend on its locks
+    TORCHINDUCTOR_CACHE_DIR: "${oc.env:OUTPUT_DIR,./output}/hybrid_speed/inductor_cache/$SLURM_JOB_ID"
+    CUDA_DEVICE_MAX_CONNECTIONS: "8"
+
+job:
+  est_step_time_s: 60
+
+slurm:
+  sbatch:
+    nodes: ${aux.nodes}
+    time: "00:45:00"
+
+sweep:
+  type: list
+  store_sweep_json: true
+  filter: "\\${oc.eval:'len(\\${aux.only}) == 0 or \"\\${aux.arm}\" in \\${aux.only}'}"
+  groups:
+    - type: list
+      configs:
+        - {aux.arm: a3b30}
+        - {aux.arm: a3b30_ep8}
+        - {aux.arm: a3b30_deepep}
+        - {aux.arm: a3b30_hybridep}
+        - {aux.arm: a3b30_hybridep_cg}
+        - {aux.arm: a3b30_selective}
+        - {aux.arm: a3b30_mbs2}
+        - {aux.arm: a3b30_mbs8}
+        - {aux.arm: a3b30_hybridep_selective}
+        - {aux.arm: a3b30_hybridep_mbs8}
+        - {aux.arm: a3b30_hybridep_mbs8_selective}

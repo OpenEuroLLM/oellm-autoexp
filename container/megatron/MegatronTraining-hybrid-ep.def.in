@@ -1,9 +1,9 @@
-Bootstrap: localimage
+Bootstrap: docker
 From: ${BASE_IMAGE}
 
-# Expert-parallel communication libraries on top of a built hybrid image
-# (MegatronTraining-hybrid.def.in), so they can be rebuilt or dropped without recompiling
-# that image:
+# Standalone hybrid-architecture image with the expert-parallel communication libraries:
+# the full MegatronTraining-hybrid.def.in (NGC PyTorch, NVRx, CuTe DSL + cute-triadic-gdn,
+# mamba_ssm / causal_conv1d, TileLang, power retention) followed by
 #   - DeepEP with HybridEP: the flex token dispatcher's `deepep` / `hybridep` backends
 #     (moe_token_dispatcher_type=flex, moe_flex_dispatcher_backend=...);
 #   - MoonEP (MoonshotAI): load-balanced EP via dynamically planned redundant experts;
@@ -12,11 +12,10 @@ From: ${BASE_IMAGE}
 # %test reports whether its TE build ships it. MoonEP and UCCL-EP are not wired into
 # Megatron's dispatcher yet.
 #
-# Build:
-#   container/build_container.sh \
-#     --definition MegatronTraining-hybrid-ep \
-#     --base-image /path/to/MegatronTraining-hybrid_<arch>_<stamp>.sif \
-#     --output <container cache dir> --append-date
+# Everything up to the DeepEP block in %post (and the first %test block) mirrors
+# MegatronTraining-hybrid.def.in: change both together.
+#
+# Build:  DEFINITION=MegatronTraining-hybrid-ep container/megatron/build_hybrid.sh [OUTPUT_DIR]
 #
 # Only shell forms that build_container.sh's envsubst leaves alone are used in %post:
 # literals, command substitutions, defaulted expansions and heredocs (envsubst blanks
@@ -26,21 +25,132 @@ From: ${BASE_IMAGE}
     Author OpenSci
     Version 0.1.0
     Base ${BASE_IMAGE}
-    Description Megatron hybrid-architecture image + EP communication libraries: DeepEP/HybridEP, MoonEP, UCCL-EP
+    Description Megatron hybrid-architecture container + EP libraries (DeepEP/HybridEP, MoonEP, UCCL-EP): NGC PyTorch (26.09: torch 2.14, TE 2.19, FA4), NVRx, CuTe DSL + cute-triadic-gdn, TileLang, power retention, mamba_ssm
 
 %environment
+    export PYTHONUNBUFFERED=1
+    export PYTHONPATH=/workspace/oellm-autoexp:${PYTHONPATH}
+    export OELLM_AUTOEXP_CACHE=/workspace/cache
+    export HF_HOME=/workspace/cache/hf
     # HybridEP was built with its multi-node (RDMA) path; intra-node EP does not use it.
     export HYBRID_EP_MULTINODE=1
 
 %files
+    ${REPO_ROOT} /workspace/oellm-autoexp
+    ${REQUIREMENTS_PATH} /workspace/${REQUIREMENTS_BASENAME}
+    ${PROVENANCE_PATH} /workspace/oellm-autoexp/provenance/container_provenance.json
     ${REPO_ROOT}/submodules/Megatron-LM/docker/patches/deepep.patch /workspace/deepep.patch
-    ${PROVENANCE_PATH} /workspace/oellm-autoexp/provenance/container_provenance_ep.json
 
 %post
-set -e
+mkdir -p /workspace/oellm-autoexp/provenance
+mkdir -p /workspace/cache
 cd /workspace
-export TORCH_CUDA_ARCH_LIST="9.0;10.0"   # sm_90: H100/GH200, sm_100: B200/GB200
+
+python3 -m pip install --upgrade pip setuptools packaging wheel
+
+python3 /workspace/oellm-autoexp/container/gen_constraints.py \
+    --output /workspace/constraints.installed.txt \
+    --exclude pip setuptools wheel huggingface_hub apache-tvm-ffi
+
+if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
+    python3 -m pip install --no-cache-dir \
+        -c /workspace/constraints.installed.txt \
+        -r "/workspace/${REQUIREMENTS_BASENAME}"
+fi
+
+if [ -d "/workspace/oellm-autoexp/submodules/Megatron-LM" ]; then
+    python3 -m pip install --no-cache-dir \
+        -c /workspace/constraints.installed.txt \
+        -e /workspace/oellm-autoexp/submodules/Megatron-LM
+fi
+
+python3 -m pip install --no-cache-dir \
+    -c /workspace/constraints.installed.txt \
+    -e /workspace/oellm-autoexp
+
+python3 -m pip uninstall -y megatron-core || true
+
+# ---------------------------------------------------------------------------
+# Hybrid-architecture extras (oellm-autoexp feat/hybrid-v0.19) on an NGC PyTorch base
+# (26.09 by default, torch >= 2.12): NVRx, the CuTe DSL stack for cute-triadic-gdn, and mamba_ssm /
+# causal_conv1d compiled against this torch. FLA (the ComplexKDA fork) stays
+# outside the image, on PYTHONPATH, as for the other hybrid images.
+# ---------------------------------------------------------------------------
+python3 -m pip install --no-cache-dir --no-deps "nvidia-resiliency-ext==0.6.0"
+# The CuTe DSL: the base's version where it ships one (FlashAttention 4 depends on it;
+# the constraints keep it), else the version cute-triadic-gdn is built against.
+python3 -c "import cutlass" 2>/dev/null || \
+    python3 -m pip install --no-cache-dir -c /workspace/constraints.installed.txt \
+        "nvidia-cutlass-dsl[cu13]==4.7.1"
+python3 -m pip install --no-cache-dir -c /workspace/constraints.installed.txt cuda-python
+python3 -m pip install --no-cache-dir --no-deps \
+    "git+https://github.com/OliverSieberling/cute-triadic-gdn"
+# mamba_ssm / causal_conv1d: built from source against the image's torch (sm_90: H100/GH200,
+# sm_100: B200/GB200). FORCE_BUILD skips the prebuilt-wheel lookup (those target older torch).
+export TORCH_CUDA_ARCH_LIST="9.0;10.0"
 export MAX_JOBS=${MAX_JOBS:-16}
+CAUSAL_CONV1D_FORCE_BUILD=TRUE python3 -m pip install --no-cache-dir --no-build-isolation \
+    -c /workspace/constraints.installed.txt "causal-conv1d>=1.5"
+# mamba-ssm's setup.py hardcodes -std=c++17, but torch >= 2.12 headers require C++20, and it
+# adds -gencode for nine archs regardless of TORCH_CUDA_ARCH_LIST: patch both in the sdist.
+# --no-deps: its pins (tilelang==0.1.8, cutlass-dsl 4.6.1 via quack) would downgrade the
+# image's; the Mamba3 tilelang/cute paths that need them are import-guarded.
+# Build trees go to /opt/build, inside the image: /tmp in %post is the host's, so two
+# builds running at once would share (and delete) each other's sources there.
+mkdir -p /opt/build/mamba_src
+python3 -m pip download --no-cache-dir --no-deps --no-build-isolation --no-binary mamba-ssm \
+    -d /opt/build/mamba_src "mamba-ssm==2.3.2.post1"
+tar xzf /opt/build/mamba_src/mamba_ssm-2.3.2.post1.tar.gz -C /opt/build/mamba_src
+cd /opt/build/mamba_src/mamba_ssm-2.3.2.post1
+python3 - <<'PY'
+import pathlib, re
+p = pathlib.Path("setup.py")
+s = p.read_text()
+assert s.count('"-std=c++17"') == 4, "mamba-ssm setup.py changed; revisit the patch"
+s = s.replace('"-std=c++17"', '"-std=c++20"')
+s = re.sub(r'( *)cc_flag\.append\("-gencode"\)\n *cc_flag\.append\("arch=compute_(\d+),code=sm_\d+"\)\n',
+           lambda m: m.group(0) if m.group(2) in ("90", "100") else m.group(1) + "pass\n", s)
+p.write_text(s)
+PY
+MAMBA_FORCE_BUILD=TRUE python3 -m pip install --no-cache-dir --no-build-isolation --no-deps .
+cd /workspace
+rm -rf /opt/build/mamba_src
+python3 -m pip install --no-cache-dir --no-deps \
+    "git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git@v0.2.0" || \
+    echo "WARNING: emerging-optimizers not installed (Muon-family optimizers need it)"
+# TileLang (TVM-based tile DSL), for kernels written in it later (power retention, ...);
+# its own torch pin is overridden by the image's constraints.
+python3 -m pip install --no-cache-dir \
+    -c /workspace/constraints.installed.txt \
+    "tilelang>=0.1.15"
+# Power retention (the `power` linear variant): the public Triton kernels; vidrial only
+# for its Python utilities (the CUDA backends are not used).
+python3 -m pip install --no-cache-dir --no-deps "vidrial==0.2.1" \
+    "git+https://github.com/m-a-n-i-f-e-s-t/retention@e0e69051b1bd3fb96102690bbe332b501c67246b"
+# vidrial clones its CUTLASS fork next to itself on first import; compute nodes are
+# offline and site-packages is read-only at run time, so check it out here.
+# (in Python: envsubst would blank a shell variable holding the path)
+python3 - <<'PY'
+import importlib.util, os, shutil, subprocess
+dst = os.path.join(os.path.dirname(importlib.util.find_spec("vidrial").origin), "cutlass")
+subprocess.check_call(["git", "clone", "--depth", "1", "https://github.com/m-a-n-i-f-e-s-t/cutlass.git", dst])
+shutil.rmtree(os.path.join(dst, ".git"))
+PY
+# retention renders its Triton kernels into <retention>/<module>/_rendered on every import:
+# read-only in the image (build %test, run time). The file is only a debug dump (the kernel
+# is compiled from the string, registered in linecache for Triton): make writing it optional.
+python3 - <<'PY'
+import importlib.util, pathlib
+p = pathlib.Path(importlib.util.find_spec("retention").origin).parent / "kernelgen.py"
+s = p.read_text()
+mk = "    rendered_dir.mkdir(exist_ok=True)\n"
+wr = "        with open(file_path, 'w') as f:\n            f.write(final_code)\n"
+assert s.count(mk) == 1 and s.count(wr) == 1, "retention kernelgen.py changed; revisit the patch"
+s = s.replace(mk, "    try:\n        rendered_dir.mkdir(exist_ok=True)\n    except OSError:  # read-only image\n        pass\n")
+s = s.replace(wr, "        try:\n            with open(file_path, 'w') as f:\n                f.write(final_code)\n"
+                  "        except OSError:  # read-only image: the dump is for debugging only\n            pass\n")
+p.write_text(s)
+PY
 
 # ---------------------------------------------------------------------------
 # DeepEP with HybridEP, as Megatron-LM/docker/Dockerfile.ci.dev: the commit Megatron
@@ -51,14 +161,23 @@ export MAX_JOBS=${MAX_JOBS:-16}
 # ---------------------------------------------------------------------------
 apt-get update
 apt-get install -y --no-install-recommends --allow-change-held-packages \
-    rdma-core libibverbs-dev libnvidia-ml-dev
+    rdma-core libibverbs-dev
+# DeepEP links -lcuda and -l:libnvidia-ml.so.1, both driver libraries that are not bound in
+# at build time: link against the CUDA toolkit stubs (the driver provides them at run time).
+mkdir -p /opt/build/cuda_link_stubs
+ln -sf /usr/local/cuda/lib64/stubs/libnvidia-ml.so /opt/build/cuda_link_stubs/libnvidia-ml.so.1
 mkdir -p /opt/rdma-core/build
 ln -sfn /usr/include /opt/rdma-core/build/include
 ln -sfn "/usr/lib/$(uname -m)-linux-gnu" /opt/rdma-core/build/lib
 test -f "/usr/lib/$(uname -m)-linux-gnu/libmlx5.so" || \
     ln -sf "/usr/lib/$(uname -m)-linux-gnu/libmlx5.so.1" "/usr/lib/$(uname -m)-linux-gnu/libmlx5.so"
 
-python3 -m pip install --no-cache-dir "nvidia-nvshmem-cu13==3.4.5"
+# NVSHMEM: the base's torch links its system NVSHMEM (NGC 26.09: 3.7.2) but loads the pip
+# wheel first when one is installed, so the wheel must be that exact version (an older one
+# breaks `import torch`: undefined symbol nvshmem_selected_device_transport). The wheel is
+# still needed: NGC strips libnvshmem_device.a, which DeepEP links statically.
+python3 -m pip install --no-cache-dir "nvidia-nvshmem-cu13==$(python3 -c 'import glob, re; l = glob.glob("/usr/lib/*/nvshmem/*/libnvshmem_host.so.3.*.*"); assert len(l) == 1, l; print(re.search(r"so\.(\d+\.\d+\.\d+)$", l[0]).group(1))')"
+python3 -c "import torch"   # fail here, not inside DeepEP's setup.py, if the versions differ
 # DeepEP links -l:libnvshmem_host.so (unversioned); the wheel ships only the soname.
 python3 - <<'PY'
 import os, nvidia.nvshmem
@@ -68,16 +187,16 @@ if not os.path.exists(dst):
     os.symlink("libnvshmem_host.so.3", dst)
 PY
 
-git clone https://github.com/deepseek-ai/DeepEP.git /tmp/DeepEP
-cd /tmp/DeepEP
+git clone https://github.com/deepseek-ai/DeepEP.git /opt/build/DeepEP
+cd /opt/build/DeepEP
 git fetch origin de0dd1185142c727b9c118aeb4cc4702e34deeba
 git checkout FETCH_HEAD
 patch -p1 < /workspace/deepep.patch
+LIBRARY_PATH=/usr/local/cuda/lib64/stubs:/opt/build/cuda_link_stubs:${LIBRARY_PATH:-} \
 HYBRID_EP_MULTINODE=1 RDMA_CORE_HOME=/opt/rdma-core/build \
     python3 -m pip install --no-cache-dir --no-build-isolation --no-deps -v .
 cd /workspace
-rm -rf /tmp/DeepEP /workspace/deepep.patch
-apt-get purge -y libnvidia-ml-dev
+rm -rf /opt/build/DeepEP /workspace/deepep.patch /opt/build/cuda_link_stubs
 apt-get autoremove -y
 rm -rf /var/lib/apt/lists/*
 
@@ -110,12 +229,13 @@ python3 -m pip install --no-cache-dir --no-build-isolation --no-deps \
     "git+https://github.com/MoonshotAI/MoonEP.git@d86fda40329de4002e0cade6817df7b4b5512ee5" || \
     echo "WARNING: MoonEP not installed"
 # UCCL-EP: its gain is across nodes (EFA, CX7 InfiniBand, Broadcom, AMD NICs).
-git clone --depth 1 https://github.com/uccl-project/uccl.git /tmp/uccl && \
-    (cd /tmp/uccl/ep && python3 setup.py install) || \
+python3 -m pip install --no-cache-dir nanobind || true   # UCCL-EP's setup.py builds its bindings with it
+git clone --depth 1 https://github.com/uccl-project/uccl.git /opt/build/uccl && \
+    (cd /opt/build/uccl/ep && python3 setup.py install) || \
     echo "WARNING: UCCL-EP not installed"
-rm -rf /tmp/uccl
+rm -rf /opt/build/uccl
 
-rm -rf /root/.cache 2>/dev/null || true
+rm -rf /opt/build /root/.cache 2>/dev/null || true
 python3 -m pip cache purge 2>/dev/null || true
 
 %runscript
@@ -127,6 +247,35 @@ cd /workspace/oellm-autoexp
 exec "$@"
 
 %test
+set -e   # every check counts, not only the last command's exit status
+# apptainer passes the host environment into %test; host cache dirs (e.g.
+# TORCHINDUCTOR_CACHE_DIR=/mnt/data/...) are not writable here and break `import torch._dynamo`.
+export TORCHINDUCTOR_CACHE_DIR=/tmp/oellm_test_cache/inductor
+export TRITON_CACHE_DIR=/tmp/oellm_test_cache/triton
+export TORCH_EXTENSIONS_DIR=/tmp/oellm_test_cache/torch_extensions
+# HOME is /root (read-only) under --fakeroot; tilelang, triton etc. create ~/.<tool> on import.
+export HOME=/tmp/oellm_test_cache/home
+mkdir -p /tmp/oellm_test_cache/home
+# deep_ep_cpp needs libnvidia-ml.so.1, a driver library absent without --nv (the build): load
+# the CUDA stub for the import test, after any real driver library already on the path.
+mkdir -p /tmp/oellm_test_cache/stubs
+ln -sf /usr/local/cuda/lib64/stubs/libnvidia-ml.so /tmp/oellm_test_cache/stubs/libnvidia-ml.so.1
+export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}:/tmp/oellm_test_cache/stubs
+trap 'rm -rf /tmp/oellm_test_cache' EXIT   # /tmp is the host's here, not the image's
+cd /workspace/oellm-autoexp
+python scripts/run_autoexp.py --help >/dev/null
+python - <<'PY'
+import importlib.metadata as m
+import torch
+major, minor = (int(x) for x in torch.__version__.split(".")[:2])
+assert (major, minor) >= (2, 12), torch.__version__
+for mod in ("transformer_engine", "nvidia_resiliency_ext", "cutlass", "cute_triadic_gdn",
+            "mamba_ssm", "causal_conv1d", "triton", "tilelang", "retention.triton"):
+    __import__(mod)
+print("torch", torch.__version__, "| cutlass-dsl", m.version("nvidia-cutlass-dsl"),
+      "| mamba-ssm", m.version("mamba-ssm"), "| nvrx", m.version("nvidia-resiliency-ext"),
+      "| tilelang", m.version("tilelang"))
+PY
 python - <<'PY'
 import importlib.metadata as m
 import deep_ep
@@ -145,5 +294,7 @@ for name, mod in (("ncclep (TE NCCL EP)", "transformer_engine.pytorch.ep"),
 PY
 
 %help
+    Build with container/build_container.sh and run via
+    `apptainer exec MegatronTraining.sif python -m oellm_autoexp.plan`.
     MegatronTraining-hybrid plus DeepEP/HybridEP, MoonEP and UCCL-EP. Select a backend with
     moe_token_dispatcher_type=flex and moe_flex_dispatcher_backend=deepep|hybridep|ncclep.

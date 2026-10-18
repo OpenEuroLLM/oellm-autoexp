@@ -69,16 +69,23 @@ def parse_log(path: Path) -> dict:
 
 def run_logs(suite: Path) -> dict[str, Path]:
     """{arm: newest log}: per-arm dirs (single jobs) or the array dir <suite>/<suite>
-    (slurm-<job>_<task>.log, the arm named by task_<task>.sh's output path)."""
-    out = {}
+    (slurm-<job>_<task>.log). The arm is read from the log itself (its first "<suite>/<arm>/"
+    path), not from task_<task>.sh: a re-render of the suite (e.g. a rerun of one arm with
+    aux.only) renumbers the task scripts, so the task index no longer names the old logs' arms."""
+    out, mtime = {}, {}
     arr = suite / suite.name
+    pat = re.compile(rf"{re.escape(suite.name)}/([A-Za-z0-9_.-]+)/".encode())
     if arr.is_dir():
-        for task in arr.glob("task_*.sh"):
-            i = task.stem.split("_")[1]
-            m = re.search(rf"{re.escape(suite.name)}/([A-Za-z0-9_.]+)/", task.read_text())
-            logs = sorted(arr.glob(f"slurm-*_{i}.log"), key=lambda p: p.stat().st_mtime)
-            if m and logs:
-                out[m.group(1)] = logs[-1]
+        for log in arr.glob("slurm-*.log"):
+            with log.open("rb") as f:
+                m = pat.search(f.read(4 << 20))
+            if not m:
+                continue
+            arm, t = m.group(1).decode(), log.stat().st_mtime
+            if arm == suite.name:
+                continue
+            if arm not in out or t > mtime[arm]:
+                out[arm], mtime[arm] = log, t
     for arm_dir in (p for p in suite.iterdir() if p.is_dir() and p.name != suite.name):
         logs = sorted(arm_dir.glob("slurm-*.log"), key=lambda p: p.stat().st_mtime)
         if logs and arm_dir.name not in out:

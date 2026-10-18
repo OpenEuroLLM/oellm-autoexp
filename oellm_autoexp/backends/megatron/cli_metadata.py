@@ -2446,7 +2446,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "fused_qk_norm_rope": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="Self-attention with qk_layernorm (RMSNorm) and RoPE: one Triton kernel from the fused QKV projection to normed, rotated q / k and v, and one back (megatron/core/fusions/fused_qk_norm_rope.py) instead of split + two norms + two RoPEs (+ concat in the backward). Raises if a layer does not qualify (training only).",
+        help="Self-attention with qk_layernorm (RMSNorm), with RoPE or NoPE: one Triton kernel from the fused QKV projection to normed (and, with RoPE, rotated) q / k and v, and one back (megatron/core/fusions/fused_qk_norm_rope.py) instead of split + two norms + two RoPEs (+ concat in the backward). Raises if a layer does not qualify (training only).",
         choices=None,
         nargs=0,
         element_type=None,
@@ -3582,6 +3582,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "linear_te_projections": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Replace the projections of the fla-based linear mixers (complex_kda) -- plain nn.Linear -- by Transformer Engine linears (megatron/core/ssm/fla_te_linear.py): weight-gradient accumulation fused into the wgrad GEMM (gradient_accumulation_fusion) instead of a separate add per micro-batch, and fp8-eligible. Same parameter names, shapes and init.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "linear_triadic_base": MegatronArgMetadata(
         arg_type=str,
         default="kda",
@@ -4310,6 +4318,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "mhc_routed_key_dim": MegatronArgMetadata(
+        arg_type=int,
+        default=0,
+        help="Routed residual streams: content-based routing. The router also reads the first mhc_routed_key_dim channels of every stream (a tag) and adds the score g <q(s_0), W_k tag_j> / sqrt(d) to the routing logits, with the gain g initialized to 0 (so it starts as the positional router). Costs n * mhc_routed_key_dim more elements read per token and sublayer. 0 disables.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "mhc_routed_mix": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -4329,7 +4345,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "mhc_routed_topk": MegatronArgMetadata(
         arg_type=int,
         default=0,
-        help="Routed residual streams (MoE-like residual sparsity, routed_residual.py): with k > 0 each sublayer reads and writes only stream 0 plus the top k-1 of the other mhc_expansion_rate - 1 streams (chosen per token by a router on stream 0), with no stream mixing, so it moves (2k+1) of the n streams instead of all of them. 0 is dense mHC. Requires mhc=True; not combinable with mhc_lerp.",
+        help="Routed residual streams (MoE-like residual sparsity, routed_residual.py): with k > 0 each sublayer reads and writes only stream 0 plus the top k-1 of the other mhc_expansion_rate - 1 streams (chosen per token by a router on stream 0), with no stream mixing, so it moves (2k+1) of the n streams instead of all of them. 0 is dense mHC. Requires mhc=True. With mhc_lerp (and ngpt) the write is an nGPT LERP step of each selected stream, its step alpha scaled by the router's write weight (lerp normalization approx, analytic or direct; not with mhc_routed_mix).",
         choices=None,
         nargs=None,
         element_type=None,
@@ -6421,6 +6437,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help="Reset posistion ids after end-of-document token.",
         choices=None,
         nargs=0,
+        element_type=None,
+    ),
+    "residual_mixer_lr_mult": MegatronArgMetadata(
+        arg_type=float,
+        default=1.0,
+        help="Learning-rate multiplier of the residual-stream mixers (mHC, routed residual, block attention residuals). Under Muon-family optimizers these parameters run on Adam at the shared lr.",
+        choices=None,
+        nargs=None,
         element_type=None,
     ),
     "residual_norm_wd_mult": MegatronArgMetadata(
@@ -10951,6 +10975,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=8192,
     ),
+    "linear_te_projections": MegatronActionSpec(
+        option_strings=("--linear-te-projections",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "linear_triadic_base": MegatronActionSpec(
         option_strings=("--linear-triadic-base",),
         action_type="store",
@@ -11542,6 +11573,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0.0,
+    ),
+    "mhc_routed_key_dim": MegatronActionSpec(
+        option_strings=("--mhc-routed-key-dim",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
     ),
     "mhc_routed_mix": MegatronActionSpec(
         option_strings=("--mhc-routed-mix",),
@@ -13292,6 +13330,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "residual_mixer_lr_mult": MegatronActionSpec(
+        option_strings=("--residual-mixer-lr-mult",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=1.0,
     ),
     "residual_norm_wd_mult": MegatronActionSpec(
         option_strings=("--residual-norm-wd-mult",),

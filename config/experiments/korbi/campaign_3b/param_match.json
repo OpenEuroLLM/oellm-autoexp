@@ -1,9 +1,9 @@
 {
  "s1": {
   "attn": {
-   "ffn": 2048,
-   "non_emb": 84960000,
-   "measured_at_base_ffn": 84960000
+   "total": 286281984,
+   "non_emb": 84955392,
+   "ffn": 2048
   },
   "attn_gate": {
    "ffn": 1792,
@@ -31,9 +31,9 @@
    "measured_at_base_ffn": 91330000
   },
   "h_gdn": {
-   "ffn": 1856,
-   "non_emb": 85201584,
-   "measured_at_base_ffn": 90510000
+   "total": 286530456,
+   "non_emb": 85203864,
+   "ffn": 1856
   },
   "h_kda": {
    "ffn": 1984,
@@ -44,13 +44,218 @@
    "ffn": 1984,
    "non_emb": 85130528,
    "measured_at_base_ffn": 86900000
+  },
+  "h_ckda_std": {
+   "total": 286461228,
+   "non_emb": 85134636,
+   "ffn": 1984
+  },
+  "h_ckda_std_xsa": {
+   "total": 286461228,
+   "non_emb": 85134636,
+   "ffn": 1984
+  },
+  "h_tri_ckda": {
+   "total": 285691404,
+   "non_emb": 84364812,
+   "ffn": 1920
+  },
+  "h_tri_ckda_xsa": {
+   "total": 285691404,
+   "non_emb": 84364812,
+   "ffn": 1920
+  },
+  "h_gdn_nope": {
+   "total": 286613976,
+   "non_emb": 85287384,
+   "ffn": 896
+  },
+  "h_gdn_qwen35": {
+   "total": 286613976,
+   "non_emb": 85287384,
+   "ffn": 832
+  },
+  "r3:attn_ref": {
+   "total": 286281984,
+   "non_emb": 84955392,
+   "ffn": 2048
+  },
+  "r3:h3": {
+   "total": 286461228,
+   "non_emb": 85134636,
+   "ffn": 1920
+  },
+  "r3:h5": {
+   "total": 286087928,
+   "non_emb": 84761336,
+   "ffn": 1920
+  },
+  "r3:h3_tri": {
+   "total": 285691404,
+   "non_emb": 84364812,
+   "ffn": 1856
+  },
+  "r3:h3_nolxsa": {
+   "total": 286461228,
+   "non_emb": 85134636,
+   "ffn": 1920
+  },
+  "r3:qwen35": {
+   "total": 286613976,
+   "non_emb": 85287384,
+   "ffn": 832
+  },
+  "r3:h3_mhc4": {
+   "total": 286461876,
+   "non_emb": 85135284,
+   "ffn": 1856
+  },
+  "r3:h3_routed": {
+   "total": 286608900,
+   "non_emb": 85282308,
+   "ffn": 1920
+  },
+  "r3:h3_attnres": {
+   "total": 286498092,
+   "non_emb": 85171500,
+   "ffn": 1920
+  },
+  "r3b:attn_ref": {
+   "total": 286283520,
+   "non_emb": 84956928,
+   "ffn": 2048
+  },
+  "r3b:h3": {
+   "total": 286420662,
+   "non_emb": 85094070,
+   "ffn": 1856
+  },
+  "r3b:h5": {
+   "total": 286239292,
+   "non_emb": 84912700,
+   "ffn": 1856
+  },
+  "r3b:h3_tri": {
+   "total": 286920486,
+   "non_emb": 85593894,
+   "ffn": 1856
+  },
+  "r3b:h3_nolxsa": {
+   "total": 286420662,
+   "non_emb": 85094070,
+   "ffn": 1856
+  },
+  "r3b:qwen35": {
+   "total": 286559064,
+   "non_emb": 85232472,
+   "ffn": 1216
+  },
+  "r3b:h3_mhc4": {
+   "total": 286421310,
+   "non_emb": 85094718,
+   "ffn": 1792
+  },
+  "r3b:h3_routed": {
+   "total": 286568334,
+   "non_emb": 85241742,
+   "ffn": 1856
+  },
+  "r3b:h3_attnres": {
+   "total": 286457526,
+   "non_emb": 85130934,
+   "ffn": 1856
+  },
+  "r3b:h3_routed_key": {
+   "total": 286076838,
+   "non_emb": 84750246,
+   "ffn": 1792
+  },
+  "r3b:h3_ngpt": {
+   "total": 286439094,
+   "non_emb": 85112502,
+   "ffn": 1856
+  },
+  "r3b:h3_routed_lerp": {
+   "total": 286586766,
+   "non_emb": 85260174,
+   "ffn": 1856
+  },
+  "r3b:h3_routed_key_lerp": {
+   "total": 286095270,
+   "non_emb": 84768678,
+   "ffn": 1792
+  },
+  "r3c:h3_routed8": {
+   "total": 286715982,
+   "non_emb": 85389390,
+   "ffn": 1856
+  },
+  "r3c:adamw_h3_routed8": {
+   "total": 286715982,
+   "non_emb": 85389390,
+   "ffn": 1856
+  },
+  "r3c:h3_mhc8": {
+   "total": 285832830,
+   "non_emb": 84506238,
+   "ffn": 1408
+  },
+  "r3c:h5_nolxsa": {
+   "total": 286239292,
+   "non_emb": 84912700,
+   "ffn": 1856
+  },
+  "r3c:h5_tri1": {
+   "total": 286350364,
+   "non_emb": 85023772,
+   "ffn": 1856
+  },
+  "r3c:lin_ckda": {
+   "total": 285876552,
+   "non_emb": 84549960,
+   "ffn": 1856
+  },
+  "r3c:lin_tri1_e4": {
+   "total": 285987624,
+   "non_emb": 84661032,
+   "ffn": 1856
+  },
+  "r3c:lin_tri1_e8": {
+   "total": 286098696,
+   "non_emb": 84772104,
+   "ffn": 1856
+  },
+  "r3c:ngpt_lr0.004": {
+   "total": 286439094,
+   "non_emb": 85112502,
+   "ffn": 1856
+  },
+  "r3c:adamw_h3": {
+   "total": 286420662,
+   "non_emb": 85094070,
+   "ffn": 1856
+  },
+  "r3c:ngpt_lr0.008": {
+   "total": 286439094,
+   "non_emb": 85112502,
+   "ffn": 1856
+  },
+  "r3c:ngpt_lr0.016": {
+   "total": 286439094,
+   "non_emb": 85112502,
+   "ffn": 1856
+  },
+  "r3c:am_h3": {
+   "total": 286420662,
+   "non_emb": 85094070,
+   "ffn": 1856
   }
  },
  "s2": {
   "attn": {
-   "ffn": 2816,
-   "non_emb": 256950000,
-   "measured_at_base_ffn": 256950000
+   "total": 525381120,
+   "non_emb": 256945664,
+   "ffn": 2816
   },
   "attn_gate": {
    "ffn": 2496,
@@ -78,9 +283,9 @@
    "measured_at_base_ffn": 275100000
   },
   "h_gdn": {
-   "ffn": 2560,
-   "non_emb": 257621360,
-   "measured_at_base_ffn": 273350000
+   "total": 526056480,
+   "non_emb": 257621024,
+   "ffn": 2560
   },
   "h_kda": {
    "ffn": 2752,
@@ -91,6 +296,56 @@
    "ffn": 2752,
    "non_emb": 257407840,
    "measured_at_base_ffn": 261340000
+  },
+  "h_ckda_std": {
+   "total": 525841200,
+   "non_emb": 257405744,
+   "ffn": 2752
+  },
+  "h_ckda_std_xsa": {
+   "total": 525841200,
+   "non_emb": 257405744,
+   "ffn": 2752
+  },
+  "h_tri_ckda": {
+   "total": 524867760,
+   "non_emb": 256432304,
+   "ffn": 2688
+  },
+  "h_tri_ckda_xsa": {
+   "total": 524867760,
+   "non_emb": 256432304,
+   "ffn": 2688
+  },
+  "h_gdn_nope": {
+   "total": 526241760,
+   "non_emb": 257806304,
+   "ffn": 1280
+  },
+  "h_gdn_qwen35": {
+   "total": 523620320,
+   "non_emb": 255184864,
+   "ffn": 1152
+  },
+  "r3c2:attn_ref": {
+   "total": 525383680,
+   "non_emb": 256948224,
+   "ffn": 2816
+  },
+  "r3c2:h3": {
+   "total": 527030520,
+   "non_emb": 258595064,
+   "ffn": 2624
+  },
+  "r3c2:h3_mhc4": {
+   "total": 527031600,
+   "non_emb": 258596144,
+   "ffn": 2560
+  },
+  "r3c2:h3_routed": {
+   "total": 523426400,
+   "non_emb": 254990944,
+   "ffn": 2560
   }
  }
 }

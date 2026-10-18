@@ -26,7 +26,9 @@ def installed_map():
         )
         if not name:
             continue
-        out[canonicalize_name(name)] = dist.version
+        # distributions() follows sys.path: keep the first copy, the one that imports
+        # (a venv with system site-packages, e.g. NeMo's /opt/venv, shadows older ones).
+        out.setdefault(canonicalize_name(name), dist.version)
     return out
 
 

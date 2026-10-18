@@ -827,8 +827,8 @@ class MegatronConfig(ConfigInterface):
     # (only with bias_swiglu_fusion and no bias).
     swiglu_triton: bool = False
 
-    # Self-attention with qk_layernorm (RMSNorm) and RoPE: one Triton kernel from the fused
-    # QKV projection to normed, rotated q / k and v, and one back
+    # Self-attention with qk_layernorm (RMSNorm), with RoPE or NoPE: one Triton kernel from
+    # the fused QKV projection to normed (and, with RoPE, rotated) q / k and v, and one back
     # (megatron/core/fusions/fused_qk_norm_rope.py) instead of split + two norms + two RoPEs
     # (+ concat in the backward). Raises if a layer does not qualify (training only).
     fused_qk_norm_rope: bool = False
@@ -1163,6 +1163,12 @@ class MegatronConfig(ConfigInterface):
 
     # Output of a zero-computation expert: "identity" (the input) or "zero".
     moe_zero_expert_type: str = "identity"
+
+    # Replace the projections of the fla-based linear mixers (complex_kda) -- plain nn.Linear
+    # -- by Transformer Engine linears (megatron/core/ssm/fla_te_linear.py): weight-gradient
+    # accumulation fused into the wgrad GEMM (gradient_accumulation_fusion) instead of a
+    # separate add per micro-batch, and fp8-eligible. Same parameter names, shapes and init.
+    linear_te_projections: bool = False
 
     # Latent projection dimension for MoE. If None, MoE latent projections are not used.
     moe_latent_size: int | None = None
@@ -1506,7 +1512,9 @@ class MegatronConfig(ConfigInterface):
     # each sublayer reads and writes only stream 0 plus the top k-1 of the other
     # mhc_expansion_rate - 1 streams (chosen per token by a router on stream 0), with no
     # stream mixing, so it moves (2k+1) of the n streams instead of all of them. 0 is dense
-    # mHC. Requires mhc=True; not combinable with mhc_lerp.
+    # mHC. Requires mhc=True. With mhc_lerp (and ngpt) the write is an nGPT LERP step of each
+    # selected stream, its step alpha scaled by the router's write weight (lerp normalization
+    # approx, analytic or direct; not with mhc_routed_mix).
     mhc_routed_topk: int = 0
 
     # Per-layer embeddings (PLE, Gemma 3n / Gemma 4; token_embeddings.py): each chosen layer
@@ -1543,6 +1551,13 @@ class MegatronConfig(ConfigInterface):
     # stream dtype's rounding, which reaches only the router gradients. Not with
     # mhc_routed_mix.
     mhc_routed_reversible: bool = False
+
+    # Routed residual streams: content-based routing. The router also reads the first
+    # mhc_routed_key_dim channels of every stream (a tag) and adds the score g <q(s_0), W_k
+    # tag_j> / sqrt(d) to the routing logits, with the gain g initialized to 0 (so it starts
+    # as the positional router). Costs n * mhc_routed_key_dim more elements read per token and
+    # sublayer. 0 disables.
+    mhc_routed_key_dim: int = 0
 
     # Routed residual streams: update rate of the aux-loss-free selection bias that balances
     # how often each stream is picked (as moe_router_bias_update_rate; 1e-3 is DeepSeek-V3's).
@@ -1717,6 +1732,11 @@ class MegatronConfig(ConfigInterface):
 
     # Learning-rate multiplier of the Engram (N-layer) tables, which also get no weight decay.
     engram_lr_mult: float = 5.0
+
+    # Learning-rate multiplier of the residual-stream mixers (mHC, routed residual, block
+    # attention residuals). Under Muon-family optimizers these parameters run on Adam at the
+    # shared lr.
+    residual_mixer_lr_mult: float = 1.0
 
     # Multiplier on --weight-decay for the word-embedding matrix (2-D param whose name
     # contains word_embeddings). Default 1.0 = decay like every other weight. 0.0 excludes the

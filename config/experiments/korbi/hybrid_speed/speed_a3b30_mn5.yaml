@@ -11,6 +11,8 @@ aux:
   nodes: 8
   ep: 4
   gbs: 1024
+  topk: 8
+  expert_ffn: 768
 
 backend:
   megatron:
@@ -124,3 +126,885 @@ sweep:
         - aux.arm: ckda_pp2
           backend.megatron.pipeline_model_parallel_size: 2
           aux.pattern: LELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*E|LELELE*ELELELE*ELELELE*ELELELE*ELELELE*ELELELE*E
+        # balanced VPP2 pipeline layout (head + loss on their own segment)
+        - aux.arm: ckda_vpp
+          aux.pattern: LELELE*ELELELE|*ELELELE*ELELE|LE*ELELELE*ELE|LELE*ELELELE|*ELELELE*ELELE|LE*ELELELE*ELE|LELE*ELELELE|*E
+        # VPP2 layout + router fusion, P2P overlap, 8 CUDA connections
+        - aux.arm: ckda_tuned
+          aux.pattern: LELELE*ELELELE|*ELELELE*ELELE|LE*ELELELE*ELE|LELE*ELELELE|*ELELELE*ELELE|LE*ELELELE*ELE|LELE*ELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+        # tuned + forced load balancing (benchmark only, as exp_irene's 185.8)
+        - aux.arm: ckda_tuned_flb
+          aux.pattern: LELELE*ELELELE|*ELELELE*ELELE|LE*ELELELE*ELE|LELE*ELELELE|*ELELELE*ELELE|LE*ELELELE*ELE|LELE*ELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.moe_router_force_load_balancing: true
+        # all-attention, VPP2 layout + router fusion, P2P overlap, 8 connections (the torchtitan twin's reference)
+        - aux.arm: attn_tuned
+          aux.pattern: '*E*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E|*E'
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+        # all-attention, tuned + forced load balancing (exp_irene's setting)
+        - aux.arm: attn_tuned_flb
+          aux.pattern: '*E*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E|*E'
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.moe_router_force_load_balancing: true
+        # PP8 x VPP2 (16 segments, head + loss on its own), tuned flags
+        - aux.arm: ckda_pp8_vpp_tuned
+          aux.pattern: LELELE*E|LELELE|*ELELE|LE*ELE|LELE*E|LELELE|*ELELE|LE*ELE|LELE*E|LELELE|*ELELE|LE*ELE|LELE*E|LELELE|*ELELELE|*E
+          backend.megatron.pipeline_model_parallel_size: 8
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+        # PP8 x VPP2 tuned, micro batch 2 (A3B-80B: OOM at mbs 4)
+        - aux.arm: ckda_pp8_vpp_tuned_mbs2
+          aux.pattern: LELELE*E|LELELE|*ELELE|LE*ELE|LELE*E|LELELE|*ELELE|LE*ELE|LELE*E|LELELE|*ELELE|LE*ELE|LELE*E|LELELE|*ELELELE|*E
+          backend.megatron.pipeline_model_parallel_size: 8
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+        # tuned, global batch 4096 (exp_irene's; 4x fewer bubbles)
+        - aux.arm: ckda_tuned_gbs4096
+          aux.pattern: LELELE*ELELELE|*ELELELE*ELELE|LE*ELELELE*ELE|LELE*ELELELE|*ELELELE*ELELE|LE*ELELELE*ELE|LELE*ELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          aux.gbs: 4096
+          backend.megatron.train_iters: 10
+        # round-3/3B recipe: CKDA 5:1 + attention NoPE/XSA/gate + MoE sigmoid/bias/shared, tuned VPP2
+        - aux.arm: r3_ckda5
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+        # r3_ckda5 + mHC, 4 residual streams
+        - aux.arm: r3_ckda5_mhc4
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 4
+        # r3_ckda5 + mHC-4, micro batch 2 (4x residual activations)
+        - aux.arm: r3_ckda5_mhc4_mbs2
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.micro_batch_size: 2
+        # r3_ckda5 + routed residual, 8 streams, 2 active
+        - aux.arm: r3_ckda5_routed8
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 8
+          backend.megatron.mhc_routed_topk: 2
+        # r3_ckda5, micro batch 2
+        - aux.arm: r3_ckda5_mbs2
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.micro_batch_size: 2
+        # r3_ckda5 + routed residual (8 streams, 2 active), micro batch 2
+        - aux.arm: r3_ckda5_routed8_mbs2
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 8
+          backend.megatron.mhc_routed_topk: 2
+          backend.megatron.micro_batch_size: 2
+        # r3_ckda5 + mHC-4, full recompute every 2 layers, micro batch 4
+        - aux.arm: r3_ckda5_mhc4_rc2_mbs4
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.recompute_num_layers: 2
+          backend.megatron.micro_batch_size: 4
+        # r3_ckda5, full recompute every 2 layers, micro batch 4
+        - aux.arm: r3_ckda5_rc2_mbs4
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.recompute_num_layers: 2
+          backend.megatron.micro_batch_size: 4
+        # r3_ckda5 + mHC-4, full recompute every 2 layers, micro batch 2
+        - aux.arm: r3_ckda5_mhc4_rc2_mbs2
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.recompute_num_layers: 2
+          backend.megatron.micro_batch_size: 2
+        # r3_ckda5, full recompute every 2 layers, micro batch 2
+        - aux.arm: r3_ckda5_rc2_mbs2
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.recompute_num_layers: 2
+          backend.megatron.micro_batch_size: 2
+        # r3_ckda5 + mHC-4, full recompute every 4 layers, micro batch 2
+        - aux.arm: r3_ckda5_mhc4_rc4_mbs2
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.recompute_num_layers: 4
+          backend.megatron.micro_batch_size: 2
+        # r3_ckda5, full recompute every 4 layers, micro batch 2
+        - aux.arm: r3_ckda5_rc4_mbs2
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.recompute_num_layers: 4
+          backend.megatron.micro_batch_size: 2
+        # r3_ckda5 + mHC-4, full recompute every 4 layers, micro batch 4
+        - aux.arm: r3_ckda5_mhc4_rc4_mbs4
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.recompute_num_layers: 4
+          backend.megatron.micro_batch_size: 4
+        # r3_ckda5, full recompute every 4 layers, micro batch 4
+        - aux.arm: r3_ckda5_rc4_mbs4
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.recompute_num_layers: 4
+          backend.megatron.micro_batch_size: 4
+        # r3_ckda5 + routed (8 of 2), full recompute every 4 layers, mbs 2
+        - aux.arm: r3_ckda5_routed8_rc4_mbs2
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 8
+          backend.megatron.mhc_routed_topk: 2
+          backend.megatron.recompute_num_layers: 4
+          backend.megatron.micro_batch_size: 2
+        # r3_ckda5 + routed (8 of 2), reversible, sublayer recompute, mbs 4
+        - aux.arm: r3_ckda5_routed8_rev
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 8
+          backend.megatron.mhc_routed_topk: 2
+          backend.megatron.mhc_routed_reversible: true
+        # r3_ckda5 + routed (8 of 2), reversible, sublayer recompute, mbs 2
+        - aux.arm: r3_ckda5_routed8_rev_mbs2
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 8
+          backend.megatron.mhc_routed_topk: 2
+          backend.megatron.mhc_routed_reversible: true
+          backend.megatron.micro_batch_size: 2
+        # r3_ckda5 + routed (8 of 2), not reversible, sublayer recompute, mbs 4
+        - aux.arm: r3_ckda5_routed8_sub
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 8
+          backend.megatron.mhc_routed_topk: 2
+        # routed (8 of 2), reversible, mbs 2, PP4 without VPP
+        - aux.arm: r3_ckda5_routed8_rev_mbs2_novpp
+          aux.pattern: LELELELELE*ELELELELELE*E|LELELELELE*ELELELELELE*E|LELELELELE*ELELELELELE*E|LELELELELE*ELELELELELE*E
+          backend.megatron.moe_router_fusion: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 8
+          backend.megatron.mhc_routed_topk: 2
+          backend.megatron.mhc_routed_reversible: true
+          backend.megatron.micro_batch_size: 2
+        # routed (8 of 2), not reversible, mbs 2, VPP2
+        - aux.arm: r3_ckda5_routed8_sub_mbs2
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 8
+          backend.megatron.mhc_routed_topk: 2
+          backend.megatron.micro_batch_size: 2
+        # routed (8 of 2), reversible, mbs 1, VPP2
+        - aux.arm: r3_ckda5_routed8_rev_mbs1
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 8
+          backend.megatron.mhc_routed_topk: 2
+          backend.megatron.mhc_routed_reversible: true
+          backend.megatron.micro_batch_size: 1
+        # r3_ckda5 + LatentMoE 1024, 2x experts and routed top-k (equal cost)
+        - aux.arm: r3_ckda5_lat2
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'2 * (${aux.topk} - 1)'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.moe_latent_size: 1024
+          backend.megatron.num_experts: ${oc.eval:'2 * ${backend.megatron.num_experts}'}
+        # r3_ckda5 + LatentMoE 1024, same experts / top-k (half cost)
+        - aux.arm: r3_ckda5_lat2_half
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.moe_latent_size: 1024
+        # all-attention twin of r3_ckda5 (RoPE + qk-norm + XSA, same MoE recipe)
+        - aux.arm: r3_attn
+          aux.pattern: '*E*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E|*E'
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+        # r3_ckda5, selective recompute, micro batch 2
+        - aux.arm: r3_ckda5_sel_mbs2
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.recompute_granularity: selective
+          backend.megatron.recompute_method: null
+          backend.megatron.recompute_num_layers: null
+          backend.megatron.recompute_modules: [moe_act, layernorm]
+          backend.megatron.micro_batch_size: 2
+        # r3_ckda5 + mHC-4, selective recompute, micro batch 2
+        - aux.arm: r3_ckda5_mhc4_sel_mbs2
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.recompute_granularity: selective
+          backend.megatron.recompute_method: null
+          backend.megatron.recompute_num_layers: null
+          backend.megatron.recompute_modules: [moe_act, layernorm]
+          backend.megatron.micro_batch_size: 2
+        # r3_ckda5 + routed (8 streams, 2 active), selective recompute, micro batch 2
+        - aux.arm: r3_ckda5_routed8_sel_mbs2
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 8
+          backend.megatron.mhc_routed_topk: 2
+          backend.megatron.recompute_granularity: selective
+          backend.megatron.recompute_method: null
+          backend.megatron.recompute_num_layers: null
+          backend.megatron.recompute_modules: [moe_act, layernorm]
+          backend.megatron.micro_batch_size: 2
+        # r3_ckda5, selective recompute, micro batch 1
+        - aux.arm: r3_ckda5_sel_mbs1
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.recompute_granularity: selective
+          backend.megatron.recompute_method: null
+          backend.megatron.recompute_num_layers: null
+          backend.megatron.recompute_modules: [moe_act, layernorm]
+          backend.megatron.micro_batch_size: 1
+        # r3_ckda5 + mHC-4, selective recompute, micro batch 1
+        - aux.arm: r3_ckda5_mhc4_sel_mbs1
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 4
+          backend.megatron.recompute_granularity: selective
+          backend.megatron.recompute_method: null
+          backend.megatron.recompute_num_layers: null
+          backend.megatron.recompute_modules: [moe_act, layernorm]
+          backend.megatron.micro_batch_size: 1
+        # r3_ckda5 + routed (8 streams, 2 active), selective recompute, micro batch 1
+        - aux.arm: r3_ckda5_routed8_sel_mbs1
+          aux.pattern: LELELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ELELELE|LELE*ELELELELE|LE*ELELELELELE|*ELELELELELE|*E
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 8
+          backend.megatron.mhc_routed_topk: 2
+          backend.megatron.recompute_granularity: selective
+          backend.megatron.recompute_method: null
+          backend.megatron.recompute_num_layers: null
+          backend.megatron.recompute_modules: [moe_act, layernorm]
+          backend.megatron.micro_batch_size: 1
+        # r3_ckda5 on PP8 x VPP2, micro batch 2
+        - aux.arm: r3_ckda5_pp8
+          aux.pattern: LELELELE|LE*ELE|LELELE|LE*ELE|LELELE|LE*ELE|LELELE|LE*ELE|LELELE|LE*ELE|LELELE|LE*ELE|LELELE|LE*ELE|LELELELE|*E
+          backend.megatron.pipeline_model_parallel_size: 8
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+        # r3_ckda5 + mHC-4 on PP8 x VPP2, micro batch 2
+        - aux.arm: r3_ckda5_mhc4_pp8
+          aux.pattern: LELELELE|LE*ELE|LELELE|LE*ELE|LELELE|LE*ELE|LELELE|LE*ELE|LELELE|LE*ELE|LELELE|LE*ELE|LELELE|LE*ELE|LELELELE|*E
+          backend.megatron.pipeline_model_parallel_size: 8
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 4
+        # r3_ckda5 + routed residual (8 streams, 2 active) on PP8 x VPP2, mbs 2
+        - aux.arm: r3_ckda5_routed8_pp8
+          aux.pattern: LELELELE|LE*ELE|LELELE|LE*ELE|LELELE|LE*ELE|LELELE|LE*ELE|LELELE|LE*ELE|LELELE|LE*ELE|LELELE|LE*ELE|LELELELE|*E
+          backend.megatron.pipeline_model_parallel_size: 8
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 8
+          backend.megatron.mhc_routed_topk: 2
+        # all-attention twin on PP8 x VPP2, micro batch 2
+        - aux.arm: r3_attn_pp8
+          aux.pattern: '*E*E*E*E|*E*E*E|*E*E*E|*E*E*E|*E*E*E|*E*E*E|*E*E*E|*E*E*E|*E*E*E|*E*E*E|*E*E*E|*E*E*E|*E*E*E|*E*E*E|*E*E*E*E|*E'
+          backend.megatron.pipeline_model_parallel_size: 8
+          backend.megatron.micro_batch_size: 2
+          backend.megatron.moe_router_fusion: true
+          backend.megatron.overlap_p2p_comm: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          aux.array_tag: _conn8
+          backend.megatron.exclusive_self_attention: true
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_router_topk: ${oc.eval:'${aux.topk} - 1'}
+          backend.megatron.moe_shared_expert_intermediate_size: ${aux.expert_ffn}

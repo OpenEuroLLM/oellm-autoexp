@@ -119,7 +119,11 @@ def main():
     ap.add_argument("config")
     ap.add_argument("--arms", nargs="*")
     ap.add_argument("--match")
+    ap.add_argument("--target-non-emb", type=float,
+                    help="match every arm to this non-embedding count (instead of an arm of the suite, "
+                         "e.g. a reference counted in another suite)")
     ap.add_argument("--write")
+    ap.add_argument("--key-prefix", default="", help="prefix of the arm keys written to param_match.json")
     a = ap.parse_args()
     with tempfile.TemporaryDirectory() as td:
         cmds = render(a.config, Path(td))
@@ -132,8 +136,8 @@ def main():
         res[arm] = dict(total=total, non_emb=total - 262144 * hidden, ffn=ffn, hidden=hidden,
                         n_mlp=n_mlp(args), args=args)
         print(f"{arm:16s} total {total / 1e6:8.2f}M  non-emb {res[arm]['non_emb'] / 1e6:8.2f}M  d_ffn {ffn}")
-    if a.match:
-        target = res[a.match]["non_emb"]
+    if a.match or a.target_non_emb:
+        target = res[a.match]["non_emb"] if a.match else a.target_non_emb
         for arm, r in res.items():
             if arm == a.match:
                 continue
@@ -147,10 +151,12 @@ def main():
                 total, hidden = count(args)
                 r.update(total=total, non_emb=total - 262144 * hidden, ffn=ffn, args=args)
             print(f"matched {arm:16s} d_ffn {r['ffn']:5d}  non-emb {r['non_emb'] / 1e6:8.2f}M "
-                  f"({100 * (r['non_emb'] / target - 1):+.2f}% vs {a.match})")
+                  f"({100 * (r['non_emb'] / target - 1):+.2f}% vs {a.match or f'{target / 1e6:.2f}M'})")
     if a.write:
         pm = json.loads(PM.read_text()) if PM.exists() else {}
-        pm[a.write] = {arm: {k: r[k] for k in ("total", "non_emb", "ffn")} for arm, r in res.items()}
+        # merge: counting a subset of arms keeps the other arms' matches
+        pm.setdefault(a.write, {}).update(
+            {a.key_prefix + arm: {k: r[k] for k in ("total", "non_emb", "ffn")} for arm, r in res.items()})
         PM.write_text(json.dumps(pm, indent=1) + "\n")
         print(f"wrote {PM} [{a.write}]")
 

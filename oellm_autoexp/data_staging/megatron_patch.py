@@ -71,6 +71,42 @@ def apply_windowed_shuffle() -> bool:
     return True
 
 
+def apply_cyclic_sequential() -> bool:
+    """With the windowed shuffle on, make ``dataloader_type=cyclic`` read the (already
+    shuffled) dataset in order and repeat it at the end, instead of Megatron's per-epoch
+    ``randperm`` over all samples (MegatronPretrainingRandomSampler), which would undo the
+    locality the prefetcher relies on. Within an epoch the order is the ``single`` sampler's
+    (rank r takes micro batch r of every ``micro_batch_size x dp`` window); epochs past the
+    first repeat it (``cyclic_iter`` re-enters ``__iter__``). Only active with
+    OELLM_SHUFFLE_LANES (the windowed shuffle provides the mixing); a no-op otherwise.
+    """
+    if not os.environ.get("OELLM_SHUFFLE_LANES"):
+        return False
+    import megatron.training.datasets.data_samplers as DS
+
+    sampler = DS.MegatronPretrainingRandomSampler
+    if getattr(sampler, "_oellm_sequential", False):
+        return True
+
+    def __iter__(self):
+        window = self.micro_batch_times_data_parallel_size
+        active = self.total_samples - self.last_batch_size  # whole windows only
+        self.epoch = self.consumed_samples // active
+        start = self.consumed_samples % active
+        assert start % window == 0
+        if isinstance(self.dataset, DS.RandomSeedDataset):
+            self.dataset.set_epoch(self.epoch)
+        lo = self.data_parallel_rank * self.micro_batch_size
+        for base in range(start, active, window):
+            self.consumed_samples += window
+            yield list(range(base + lo, base + lo + self.micro_batch_size))
+
+    sampler.__iter__ = __iter__
+    sampler._oellm_sequential = True
+    LOGGER.info("OELLM: cyclic sampler reads the windowed-shuffled dataset in order (repeats at the end)")
+    return True
+
+
 def apply_cursor() -> bool:
     """Write training's consumption progress (consumed_train_samples) to a
     node-local cursor file each iteration, so the prefetcher can pace
@@ -109,6 +145,7 @@ def apply_cursor() -> bool:
 
 def apply() -> bool:
     apply_windowed_shuffle()
+    apply_cyclic_sequential()
     apply_cursor()
     mirror_dir = os.environ.get("OELLM_MIRROR_DIR")
     if not mirror_dir:
@@ -123,8 +160,9 @@ def apply() -> bool:
 
     _orig = M.IndexedDataset.initialize
 
-    def initialize(self, path_prefix, multimodal, mmap, object_storage_config=None):
-        _orig(self, path_prefix, multimodal, mmap, object_storage_config)
+    # pass-through: Megatron >= 0.19 adds fast_cache_load / sequences_per_dataset / dtype_code
+    def initialize(self, path_prefix, multimodal, mmap, object_storage_config=None, *args, **kwargs):
+        _orig(self, path_prefix, multimodal, mmap, object_storage_config, *args, **kwargs)
         if object_storage_config is None:
             bin_path = M.get_bin_path(path_prefix)
             try:
