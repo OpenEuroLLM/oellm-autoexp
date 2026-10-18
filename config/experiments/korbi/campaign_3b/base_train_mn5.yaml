@@ -54,7 +54,9 @@ backend:
     save_interval: ${backend.megatron.train_iters}
     non_persistent_ckpt_type: global
     non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
-    non_persistent_save_interval: 1000
+    # every 250 steps (s1 ~13 min, s2 ~25 min): restarts / config switches lose little (user
+    # 2026-10-18). Two rolling checkpoints on disk per run (~90 GB at s1); scratch quota 146 TB.
+    non_persistent_save_interval: 250
     # per run: array tasks sharing one index cache race on it (EOFError / mmap size errors)
     data_cache_path: ${job.base_output_dir}/data_cache
     # building the per-run index of the 156-prefix blend from GPFS can take > 10 min (one rank
