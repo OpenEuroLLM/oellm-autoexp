@@ -1,0 +1,17 @@
+# marenostrum_ehpc533 plus the in-job watchdog (templates/marenostrum_watchdog.sbatch,
+# scripts/korbi/hybrid_speed/job_watchdog.py): per-node GPU memory trace, and on a hang (no
+# Megatron iteration for WATCHDOG_STALL_S, or none within WATCHDOG_STARTUP_S) py-spy stacks of
+# every rank + a memory verdict in the job log, then scancel. Files: <log dir>/watchdog/<jobid>/.
+defaults:
+  - marenostrum_ehpc533
+  - _self_
+
+template_path: templates/marenostrum_watchdog.sbatch
+srun_opts: "--overlap "
+
+env:
+  WATCHDOG_SCRIPT: "${oc.env:OELLM_REPO,.}/scripts/korbi/hybrid_speed/job_watchdog.py"
+  WATCHDOG_PYSPY: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/py-spy
+  WATCHDOG_STARTUP_S: "1200"
+  WATCHDOG_STALL_S: "300"
+  WATCHDOG_INTERVAL_S: "15"

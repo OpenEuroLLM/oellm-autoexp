@@ -1093,10 +1093,13 @@ class MegatronConfig(ConfigInterface):
     moe_enable_deepep: bool = False
 
     # [Experimental] The backend to use for flex token dispatcher. The default is "deepep".
-    # Options are "deepep", "hybridep", and "ncclep". Currently only "hybridep" backend
-    # supports the MNNVL case. "ncclep" uses NVIDIA NCCL Expert Parallelism via
-    # TransformerEngine's transformer_engine.pytorch.ep API.
-    moe_flex_dispatcher_backend: Literal["deepep", "hybridep", "ncclep"] = "deepep"
+    # Options are "deepep", "hybridep", "ncclep" and "moonep". Currently only "hybridep"
+    # backend supports the MNNVL case. "ncclep" uses NVIDIA NCCL Expert Parallelism via
+    # TransformerEngine's transformer_engine.pytorch.ep API. "moonep" (MoonshotAI MoonEP,
+    # NVLink only) balances the per-rank load with dynamically prefetched redundant experts;
+    # it replaces the experts module too (megatron/core/transformer/moe/moonep.py: SwiGLU, no
+    # bias, bf16).
+    moe_flex_dispatcher_backend: Literal["deepep", "hybridep", "ncclep", "moonep"] = "deepep"
 
     # Fuse token rearrangement ops during token dispatching for HybridEP.
     moe_permute_fusion_into_hybridep: bool = False

@@ -4577,8 +4577,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "moe_flex_dispatcher_backend": MegatronArgMetadata(
         arg_type=str,
         default="deepep",
-        help='[Experimental] The backend to use for flex token dispatcher. The default is "deepep". Options are "deepep", "hybridep", and "ncclep". Currently only "hybridep" backend supports the MNNVL case. "ncclep" uses NVIDIA NCCL Expert Parallelism via TransformerEngine\'s transformer_engine.pytorch.ep API.',
-        choices=("deepep", "hybridep", "ncclep"),
+        help='[Experimental] The backend to use for flex token dispatcher. The default is "deepep". Options are "deepep", "hybridep", "ncclep" and "moonep". Currently only "hybridep" backend supports the MNNVL case. "ncclep" uses NVIDIA NCCL Expert Parallelism via TransformerEngine\'s transformer_engine.pytorch.ep API. "moonep" (MoonshotAI MoonEP, NVLink only) balances the per-rank load with dynamically prefetched redundant experts; it replaces the experts module too (megatron/core/transformer/moe/moonep.py: SwiGLU, no bias, bf16).',
+        choices=("deepep", "hybridep", "ncclep", "moonep"),
         nargs=None,
         element_type=None,
     ),
