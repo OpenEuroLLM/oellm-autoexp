@@ -453,6 +453,69 @@ def ep_prod5():
     return arms
 
 
+def hybrid_ladder():
+    """Why the hybrid costs half the TFLOP/s of Qwen3-30B-A3B (user, 2026-10-19): one change
+    per rung from Qwen3 (~195 with MoonEP) to the production hybrid (plain residual), all at 4M
+    tokens per step, real text, MoonEP 64 SMs, VPP2 balanced 48-block layout, full recompute,
+    8 nodes. Plus a Qwen3.5-35B-A3B-like hybrid (GDN 3:1 + gated attention, 256 x 512 top-8 +
+    gated shared expert: standard, well-supported features), which should reach ~200."""
+    arms, arm = arms_builder()
+    moon = {**MOON, **MEM, "aux.array_tag": "_moonmem", B + "moe_flex_dispatcher_num_sms": 64}
+    base = {**Q3VPP, **REALDATA, **moon}
+    s8k = {B + "seq_length": 8192, B + "max_position_embeddings": 8192, "aux.gbs": 512}
+    doc = {B + "dataloader_inter_document_masking": True}
+    nodoc = {B + "dataloader_inter_document_masking": False}
+    mbs1 = {B + "micro_batch_size": 1, B + "liger_fused_linear_cross_entropy_chunk_size": 2048}
+    hmoe = {B + "num_experts": 160, B + "moe_ffn_hidden_size": 768, B + "moe_router_topk": 5,
+            B + "moe_shared_expert_intermediate_size": 768, B + "moe_router_score_function": "sigmoid",
+            B + "moe_router_enable_expert_bias": True, B + "moe_router_bias_update_rate": 1e-3,
+            B + "moe_aux_loss_coeff": 1e-4, "aux.topk": 5}
+    hattn = {B + "num_attention_heads": 16, B + "num_query_groups": 2,
+             B + "position_embedding_type": "none", B + "attention_output_gate": True,
+             B + "exclusive_self_attention": True}
+    ckda = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (7, 7, 7, 6, 7, 7, 6, 1)),
+            B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+            B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+            B + "linear_num_value_heads": 16, B + "linear_beta_max": 2.0,
+            B + "linear_gate_activation": "signed_sigmoid2", B + "linear_gate_init_style": "shipped",
+            B + "linear_output_gate": "lowrank", B + "linear_drop_qkv_silu": True}
+    arm("l1_s8k_mbs2", "Qwen3, 8k, mbs 2 (16k tokens per micro-batch, as 4k x 4)", base, s8k, nodoc,
+        {B + "micro_batch_size": 2})
+    arm("l2_s8k_mbs1", "Qwen3, 8k, mbs 1 (half the tokens per expert GEMM)", base, s8k, nodoc, mbs1)
+    arm("l3_doc", "+ document masking", base, s8k, doc, mbs1)
+    arm("l4_hmoe", "+ the hybrid's MoE (160 x 768 top-5 + shared, sigmoid + expert bias)", base, s8k,
+        doc, mbs1, hmoe)
+    arm("l5_hattn", "+ the hybrid's attention (16 x 128 heads, 2 kv, gate, XSA, NoPE), all-attention",
+        base, s8k, doc, mbs1, hmoe, hattn)
+    arm("l6_ckda", "+ CKDA 5:1 = the production hybrid, plain residual", base, s8k, doc, mbs1, hmoe,
+        hattn, ckda)
+    arm("l6_ckda_gbs128", "the production hybrid at gbs 128 (the phase-B batch: 1M tokens)", base,
+        s8k, doc, mbs1, hmoe, hattn, ckda, {"aux.gbs": 128})
+    arm("l6_ckda_mbs2", "the production hybrid at mbs 2", base, s8k, doc, hmoe, hattn, ckda,
+        {B + "micro_batch_size": 2})
+    # Qwen3.5-35B-A3B (exp_irene's qwen3_5_moe_35BA3B_v019 shapes, 262k vocabulary)
+    q35 = {"aux.pattern": vpp_pattern("LLL*" * 10, (6, 6, 6, 3, 6, 6, 6, 1)),
+           B + "experimental_attention_variant": "gated_delta_net", B + "linear_conv_kernel_dim": 4,
+           B + "linear_key_head_dim": 128, B + "linear_value_head_dim": 128,
+           B + "linear_num_key_heads": 16, B + "linear_num_value_heads": 32,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2, B + "kv_channels": 256,
+           B + "attention_output_gate": True, B + "rotary_base": 10000000, B + "rotary_percent": 0.25,
+           B + "layernorm_zero_centered_gamma": True, B + "num_experts": 256,
+           B + "moe_ffn_hidden_size": 512, B + "moe_router_topk": 8,
+           B + "moe_shared_expert_intermediate_size": 512, B + "moe_shared_expert_gate": True,
+           B + "moe_router_load_balancing_type": "global_aux_loss", "aux.topk": 8,
+           "aux.expert_ffn": 512}
+    arm("q35_moon", "Qwen3.5-35B-A3B, MoonEP, 4k, mbs 4", base, q35)
+    arm("q35g_moon", "Qwen3.5-35B-A3B with Megatron's native GDN (G layers), MoonEP", base, q35,
+        {"aux.pattern": vpp_pattern("GGG*" * 10, (6, 6, 6, 3, 6, 6, 6, 1)),
+         B + "experimental_attention_variant": None})
+    arm("q35_hep", "Qwen3.5-35B-A3B, HybridEP grouped path", {**Q3VPP, **REALDATA}, q35, HEP, OPFX,
+        MEM)
+    arm("q35_hep_force", "Qwen3.5-35B-A3B, HybridEP, forced balancing (exp_irene's benchmark)",
+        {**Q3VPP, **REALDATA}, q35, HEP, OPFX, MEM, {B + "moe_router_force_load_balancing": True})
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -726,6 +789,19 @@ aux:
          PROD_AUX.replace("suite: b1", "suite: b5") + common(PROD_PARAMS, iters=10, time="00:30:00",
                                                             startup=1500, stall=600, step_s=15.0),
          ep_prod5())
+    dump("ep_ladder_mn5.yaml",
+         "Qwen3-30B-A3B -> production hybrid ladder, and Qwen3.5-35B-A3B (docs/ep_fp8_speed.md, phase H).",
+         """
+aux:
+  family: ladder
+  suite: h1
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON, hybrid_ladder())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
