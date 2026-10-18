@@ -180,6 +180,9 @@ def ep_slice3():
     arm("opfx_cap_te_fp8eb", "sync-free + TE projections + experts-only fp8 blockwise", base, HEP,
         OPFX, CAP, TEPROJ, FP8B_E)
     arm("opfx_cap_te", "sync-free + TE projections, bf16", base, HEP, OPFX, CAP, TEPROJ)
+    arm("opfx_cap_mbs2", "sync-free, micro batch 2", base, HEP, OPFX, CAP, {B + "micro_batch_size": 2})
+    arm("opfx_mbs2_fp8eb", "micro batch 2, experts-only fp8 blockwise", base, HEP, OPFX, FP8B_E,
+        {B + "micro_batch_size": 2})
     arm("moon", "MoonEP (no-multicast patch), bf16", base, MOON)
     arm("moon_mbs2", "MoonEP, micro batch 2", base, MOON, {B + "micro_batch_size": 2})
     return arms

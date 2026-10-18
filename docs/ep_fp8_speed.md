@@ -64,7 +64,49 @@ job log, and scancels. Short wall times on top.
 One 5:1 period (6 blocks) at the production layer shapes (hidden 2048, 160 x 768 top-5 + shared,
 EP4 = 40 experts per GPU), 8k, mbs 1, gbs 32, no recompute, PP1, vocabulary 32k.
 
-(results pending)
+**Round 1 (e1) + 2 (e2), 30 steps, median of steps >= 8-10** (TFLOP/s = Megatron's count; the
+slice has no recompute, so it is not comparable with the full-recompute A3B numbers):
+
+| arm | tok/s/GPU | TFLOP/s | vs hep | mem | note |
+|---|---:|---:|---:|---:|---|
+| **hep** (flex / HybridEP) | 74,224 | 162.6 | 1.00 | 62 % | reference |
+| hep_fuse (permute fused into the dispatch) | 74,644 | 163.6 | 1.01 | | |
+| hep_force (forced balanced routing) | 74,403 | 163.0 | 1.00 | | balance is not the limit here (random-init router, EP4) |
+| **hep_opfx** (TE grouped-tensor path, `NVTE_CUTEDSL_FUSED_GROUPED_MLP=1` + op fuser) | **77,073** | **168.9** | **1.04** | 62 % | one group_quantize + one cuBLASLt grouped GEMM, CUDA m_splits |
+| hep_opf (op fuser alone) | fail | | | | Megatron asserts: SwiGLU needs the CuTe switch |
+| hep_ovl (EP a2a overlap) | 73,534 | 161.1 | 0.99 | 69 % | nothing to overlap at PP1 / one micro-batch in flight |
+| dep (flex / DeepEP) | 65,940 | 144.5 | 0.89 | | dep_ovl 0.90 |
+| nep (flex / ncclep) | 69,137 | 151.5 | 0.93 | | after the TE 2.19 `ep_bootstrap(num_topk)` fix |
+| a2a (alltoall) | 67,504 | 147.9 | 0.91 | | |
+| hep_fp8t / hep_fp8b (fp8 tensorwise / blockwise, legacy path) | 59,820 / 66,845 | 131.1 / 146.5 | 0.81 / 0.90 | | |
+| hep_fp8t_opfx / hep_fp8b_opfx (fp8 on the grouped path) | 66,831 / 70,996 | 146.4 / 155.6 | 0.90 / 0.96 | | still below bf16 (0.92 of hep_opfx) |
+| dep_fp8b / a2a_fp8b | 58,593 / 58,884 | 128.4 / 129.0 | 0.79 / 0.79 | | a2a_fp8b after the pad_routing_map fix |
+| hep_routed / hep_opfx_routed (routed residual 2 of 8) | 66,255 / 69,319 | 145.2 / 151.9 | 0.89 / 0.93 | | the routed residual costs 10 % |
+| dep_routed | 59,235 | 129.8 | 0.80 | | |
+
+**EP8 across two nodes (e3, DP 8):** ncclep 55,675 tok/s (122.0) = 0.87 of HybridEP EP4 within the
+node (63,774, 139.7; same 2 nodes, expert DP 2) and 1.31x alltoall EP8 (42,529). **HybridEP and
+DeepEP do not run internode on MN5**: HybridEP's DOCA path asserts in `cuMemHostRegister(...,
+IOMEMORY)` of the NIC doorbell (`internode_doca.cu:124`: GPU-initiated RDMA needs a GPU mapping of
+NIC MMIO, a driver setting MN5 nodes lack); DeepEP's internode kernels assume 8 GPUs per NVLink
+domain (2 x 4 GPUs are taken for one 8-GPU node: "No NVLink connection between GPU 0 and GPU 0").
+**ncclep is the internode EP backend on MN5.**
+
+**MoonEP** needs NVLink multicast (NVSwitch) for its plan broadcast (`cuMulticastGetGranularity`
+fails: "operation not supported"); MN5's 4-GPU boards have direct NVLink only. Patched
+(`container/patches/moonep-no-multicast.patch`: unicast stores into every rank's chunk, then the
+existing cross-rank barrier; `MOONEP_MULTICAST=auto|0|1`), installed as
+`$HYBRID_ENV/pylibs_moonep` (the image's build + the patched Python), first on PYTHONPATH.
+
+**Where the time goes (rank-0 profiles, one step = 8 micro-batches):** bf16 grouped path 911 ms
+window, GPU busy 87 %: GEMM 286 ms, of which the grouped expert **wgrad** GEMMs 75 ms vs 17 ms for
+the forward ones (fp32 main-grad accumulation at ~1k tokens per expert: memory-bound), CKDA
+kernels 150 ms, elementwise 111 ms (fp32 grad adds 32 ms, bf16 adds 29 ms), HybridEP dispatch /
+combine 60 ms + permute / unpermute 42 ms, optimizer 31 ms (expert DP 1). fp8 blockwise: GEMM
+-45 ms, but +81 ms of quantization: 3,854 per-call `block_scaled_cast_transpose` launches (34 ms)
+in the dense TE linears (attention, shared expert: too small for fp8) and 41 ms of grouped
+quantization in the experts; GPU busy 81 %. -> experts-only fp8 (`fp8_experts_only`, new),
+sync-free dispatch, more tokens per expert GEMM (round 3).
 
 ## GPU-h ledger
 
