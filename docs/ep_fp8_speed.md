@@ -108,6 +108,38 @@ in the dense TE linears (attention, shared expert: too small for fp8) and 41 ms 
 quantization in the experts; GPU busy 81 %. -> experts-only fp8 (`fp8_experts_only`, new),
 sync-free dispatch, more tokens per expert GEMM (round 3).
 
+**Round 3 (e4 / e4b), reference = the grouped path (opfx, 168.5 TFLOP/s):**
+
+| arm | tok/s/GPU | TFLOP/s | vs opfx | mem |
+|---|---:|---:|---:|---:|
+| opfx_cap (sync-free HybridEP, rank capacity 1.25) | 77,898 | 170.7 | 1.01 | 62 % |
+| opfx_te (TE projections in CKDA) | 75,438 | 165.3 | 0.98 | 62 % |
+| opfx_cap_te | 77,766 | 170.4 | 1.01 | 61 % |
+| **opfx_mbs2** (micro batch 2) | 85,198 | 186.7 | **1.11** | 87 % |
+| **opfx_cap_mbs2** | 85,313 | **186.9** | **1.11** | **73 %** |
+| opfx_fp8eb / opfx_fp8et (fp8 in the routed experts only) | 72,266 / 68,251 | 158.3 / 149.5 | 0.94 / 0.89 | 63 % |
+| opfx_mbs2_fp8eb | 81,908 | 179.5 | 0.96 of mbs2 | 83 % |
+| opfx_cap_te_fp8eb | 72,032 | 157.8 | 0.94 | 63 % |
+
+- **More tokens per expert GEMM is the per-layer lever** (+11 % at mbs 2): the grouped wgrad is
+  memory-bound at ~1k tokens per expert. The static receive budget of the sync-free dispatch also
+  cuts memory (73 vs 87 %: fewer allocator size classes).
+- **fp8 does not pay on H100 for this model, even experts-only on the grouped path** (0.94 of
+  bf16 blockwise, 0.89 tensorwise; 0.96 at mbs 2). The expert GEMMs are fwd ~17 ms, dgrad ~11 ms,
+  wgrad ~75 ms per step: fp8 speeds up the first two, the memory-bound wgrad (fp32 main-grad
+  accumulation) not at all, and the grouped quantization (41 ms/step) eats what is left.
+- **fp8 dispatch (quantize before the all-to-all) does not change that**: HybridEP can send
+  uint8 + per-128 fp32 scales (DeepSeek-style 1x128) and TE 2.19's op-fuser GroupedLinear takes a
+  pre-quantized GroupedTensor, but rebuilding the columnwise copy the wgrad needs
+  (`group_requantize_inplace`) is MXFP8-only (Blackwell); for 1x128 blockwise on Hopper the
+  receiver would dequantize and requantize itself. The only saving left is half the dispatch
+  bytes (~15 ms of a 900 ms step, < 2 %). Not built; worth revisiting on Blackwell (MXFP8: TE's
+  NCCL-EP `dispatch_fwd_quant_recipe` does exactly this).
+
+**MoonEP:** 4-GPU test against a dense fp32 reference passes (balanced and skewed routing, prefetched
+copies 3 per step: output / dx / dprobs / dW1 / dW2 within 0.5 %, bf16 level;
+tests/unit_tests/transformer/moe/test_moonep.py, job 47506054).
+
 ## GPU-h ledger
 
 | suite | what | GPU-h (est.) |
