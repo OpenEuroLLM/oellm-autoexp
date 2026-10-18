@@ -27,7 +27,7 @@ python3 -m pip install --upgrade pip setuptools packaging wheel
 
 python3 /workspace/oellm-autoexp/container/gen_constraints.py \
     --output /workspace/constraints.installed.txt \
-    --exclude pip setuptools wheel huggingface_hub
+    --exclude pip setuptools wheel huggingface_hub apache-tvm-ffi
 
 if [ -f "/workspace/${REQUIREMENTS_BASENAME}" ]; then
     python3 -m pip install --no-cache-dir \
@@ -62,12 +62,36 @@ python3 -c "import cutlass" 2>/dev/null || \
 python3 -m pip install --no-cache-dir -c /workspace/constraints.installed.txt cuda-python
 python3 -m pip install --no-cache-dir --no-deps \
     "git+https://github.com/OliverSieberling/cute-triadic-gdn"
-# mamba_ssm / causal_conv1d: built from source against the image's torch (H100 + B200)
+# mamba_ssm / causal_conv1d: built from source against the image's torch (sm_90: H100/GH200,
+# sm_100: B200/GB200). FORCE_BUILD skips the prebuilt-wheel lookup (those target older torch).
 export TORCH_CUDA_ARCH_LIST="9.0;10.0"
 export MAX_JOBS=${MAX_JOBS:-16}
-python3 -m pip install --no-cache-dir --no-build-isolation \
-    -c /workspace/constraints.installed.txt \
-    "causal-conv1d>=1.5" "mamba-ssm>=2.2.4"
+CAUSAL_CONV1D_FORCE_BUILD=TRUE python3 -m pip install --no-cache-dir --no-build-isolation \
+    -c /workspace/constraints.installed.txt "causal-conv1d>=1.5"
+# mamba-ssm's setup.py hardcodes -std=c++17, but torch >= 2.12 headers require C++20, and it
+# adds -gencode for nine archs regardless of TORCH_CUDA_ARCH_LIST: patch both in the sdist.
+# --no-deps: its pins (tilelang==0.1.8, cutlass-dsl 4.6.1 via quack) would downgrade the
+# image's; the Mamba3 tilelang/cute paths that need them are import-guarded.
+# Build trees go to /opt/build, inside the image: /tmp in %post is the host's, so two
+# builds running at once would share (and delete) each other's sources there.
+mkdir -p /opt/build/mamba_src
+python3 -m pip download --no-cache-dir --no-deps --no-build-isolation --no-binary mamba-ssm \
+    -d /opt/build/mamba_src "mamba-ssm==2.3.2.post1"
+tar xzf /opt/build/mamba_src/mamba_ssm-2.3.2.post1.tar.gz -C /opt/build/mamba_src
+cd /opt/build/mamba_src/mamba_ssm-2.3.2.post1
+python3 - <<'PY'
+import pathlib, re
+p = pathlib.Path("setup.py")
+s = p.read_text()
+assert s.count('"-std=c++17"') == 4, "mamba-ssm setup.py changed; revisit the patch"
+s = s.replace('"-std=c++17"', '"-std=c++20"')
+s = re.sub(r'( *)cc_flag\.append\("-gencode"\)\n *cc_flag\.append\("arch=compute_(\d+),code=sm_\d+"\)\n',
+           lambda m: m.group(0) if m.group(2) in ("90", "100") else m.group(1) + "pass\n", s)
+p.write_text(s)
+PY
+MAMBA_FORCE_BUILD=TRUE python3 -m pip install --no-cache-dir --no-build-isolation --no-deps .
+cd /workspace
+rm -rf /opt/build/mamba_src
 python3 -m pip install --no-cache-dir --no-deps \
     "git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git@v0.2.0" || \
     echo "WARNING: emerging-optimizers not installed (Muon-family optimizers need it)"
@@ -79,12 +103,34 @@ python3 -m pip install --no-cache-dir \
 # Power retention (the `power` linear variant): the public Triton kernels; vidrial only
 # for its Python utilities (the CUDA backends are not used).
 python3 -m pip install --no-cache-dir --no-deps "vidrial==0.2.1" \
-    "git+https://github.com/m-a-n-i-f-e-s-t/retention"
+    "git+https://github.com/m-a-n-i-f-e-s-t/retention@e0e69051b1bd3fb96102690bbe332b501c67246b"
 # vidrial clones its CUTLASS fork next to itself on first import; compute nodes are
 # offline and site-packages is read-only at run time, so check it out here.
-VIDRIAL_DIR=$(python3 -c "import importlib.util, os; print(os.path.dirname(importlib.util.find_spec('vidrial').origin))")
-git clone --depth 1 https://github.com/m-a-n-i-f-e-s-t/cutlass.git "$VIDRIAL_DIR/cutlass"
-rm -rf "$VIDRIAL_DIR/cutlass/.git"
+# (in Python: envsubst would blank a shell variable holding the path)
+python3 - <<'PY'
+import importlib.util, os, shutil, subprocess
+dst = os.path.join(os.path.dirname(importlib.util.find_spec("vidrial").origin), "cutlass")
+subprocess.check_call(["git", "clone", "--depth", "1", "https://github.com/m-a-n-i-f-e-s-t/cutlass.git", dst])
+shutil.rmtree(os.path.join(dst, ".git"))
+PY
+# retention renders its Triton kernels into <retention>/<module>/_rendered on every import:
+# read-only in the image (build %test, run time). The file is only a debug dump (the kernel
+# is compiled from the string, registered in linecache for Triton): make writing it optional.
+python3 - <<'PY'
+import importlib.util, pathlib
+p = pathlib.Path(importlib.util.find_spec("retention").origin).parent / "kernelgen.py"
+s = p.read_text()
+mk = "    rendered_dir.mkdir(exist_ok=True)\n"
+wr = "        with open(file_path, 'w') as f:\n            f.write(final_code)\n"
+assert s.count(mk) == 1 and s.count(wr) == 1, "retention kernelgen.py changed; revisit the patch"
+s = s.replace(mk, "    try:\n        rendered_dir.mkdir(exist_ok=True)\n    except OSError:  # read-only image\n        pass\n")
+s = s.replace(wr, "        try:\n            with open(file_path, 'w') as f:\n                f.write(final_code)\n"
+                  "        except OSError:  # read-only image: the dump is for debugging only\n            pass\n")
+p.write_text(s)
+PY
+
+rm -rf /opt/build /root/.cache 2>/dev/null || true
+python3 -m pip cache purge 2>/dev/null || true
 
 %runscript
 cd /workspace/oellm-autoexp
@@ -95,6 +141,16 @@ cd /workspace/oellm-autoexp
 exec "$@"
 
 %test
+set -e   # every check counts, not only the last command's exit status
+# apptainer passes the host environment into %test; host cache dirs (e.g.
+# TORCHINDUCTOR_CACHE_DIR=/mnt/data/...) are not writable here and break `import torch._dynamo`.
+export TORCHINDUCTOR_CACHE_DIR=/tmp/oellm_test_cache/inductor
+export TRITON_CACHE_DIR=/tmp/oellm_test_cache/triton
+export TORCH_EXTENSIONS_DIR=/tmp/oellm_test_cache/torch_extensions
+# HOME is /root (read-only) under --fakeroot; tilelang, triton etc. create ~/.<tool> on import.
+export HOME=/tmp/oellm_test_cache/home
+mkdir -p /tmp/oellm_test_cache/home
+trap 'rm -rf /tmp/oellm_test_cache' EXIT   # /tmp is the host's here, not the image's
 cd /workspace/oellm-autoexp
 python scripts/run_autoexp.py --help >/dev/null
 python - <<'PY'

@@ -6,6 +6,11 @@
 # --fakeroot (a host shell, not a user-namespaced one) and ~60 GB scratch space.
 #
 #   container/megatron/build_hybrid.sh [OUTPUT_DIR]   (from the feat/hybrid-v0.19 checkout)
+#   DEFINITION=MegatronTraining-hybrid-ep container/megatron/build_hybrid.sh [OUTPUT_DIR]
+#       (standalone variant that adds DeepEP/HybridEP, MoonEP and UCCL-EP)
+#   DEFINITION=MegatronTraining_NeMo_hybrid container/megatron/build_hybrid.sh [OUTPUT_DIR]
+#       (the same feature set on NeMo 26.08.01, which ships DeepEP/HybridEP, mamba_ssm and
+#        NVRx prebuilt; BASE_IMAGE defaults to nvcr.io/nvidia/nemo:26.08.01 for it)
 #
 # Then copy the .sif to marenostrum_new:/gpfs/projects/ehpc533/users/korbip/hybrid_v019/container/
 set -euo pipefail
@@ -16,10 +21,14 @@ mkdir -p "$OUT" "$SCRATCH/apptainer_tmp" "$SCRATCH/apptainer_cache"
 export APPTAINER_TMPDIR="$SCRATCH/apptainer_tmp"
 export APPTAINER_CACHEDIR="$SCRATCH/apptainer_cache"
 export MAX_JOBS="${MAX_JOBS:-16}"   # parallel nvcc jobs for mamba_ssm / causal_conv1d
-BASE_IMAGE="${BASE_IMAGE:-nvcr.io/nvidia/pytorch:26.09-py3}"
+DEFINITION="${DEFINITION:-MegatronTraining-hybrid}"
+case "$DEFINITION" in
+    *NeMo*) BASE_IMAGE="${BASE_IMAGE:-nvcr.io/nvidia/nemo:26.08.01}" ;;
+    *) BASE_IMAGE="${BASE_IMAGE:-nvcr.io/nvidia/pytorch:26.09-py3}" ;;
+esac
 cd "$HERE/.."
 ./build_container.sh \
-    --definition MegatronTraining-hybrid \
+    --definition "$DEFINITION" \
     --base-image "$BASE_IMAGE" \
     --output "$OUT" \
-    --container-cmd apptainer 2>&1 | tee "$OUT/build_hybrid_${BASE_IMAGE##*:}.log"
+    --container-cmd apptainer 2>&1 | tee "$OUT/build_${DEFINITION#MegatronTraining-}_${BASE_IMAGE##*:}.log"

@@ -18,7 +18,7 @@ From: ${BASE_IMAGE}
 if [ -f /workspace/oellm-autoexp/container/gen_constraints.py ]; then
     python3 /workspace/oellm-autoexp/container/gen_constraints.py \
         --output /workspace/constraints.mamba.txt \
-        --exclude pip setuptools wheel
+        --exclude pip setuptools wheel apache-tvm-ffi
     CONSTRAINTS="-c /workspace/constraints.mamba.txt"
 else
     echo "WARNING: gen_constraints.py not found in base image, installing unconstrained"

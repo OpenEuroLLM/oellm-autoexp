@@ -1,0 +1,12 @@
+# Hybrid-architecture image on NeMo 26.08.01 (NGC PyTorch 26.06: torch 2.13, TE 2.18): NeMo's
+# DeepEP/HybridEP, mamba_ssm, NVRx, emerging-optimizers, plus CuTe DSL 4.7.1 + cute-triadic-gdn,
+# TileLang, Liger, power retention, MoonEP, UCCL-EP. Python is NeMo's venv (/opt/venv, first
+# on PATH inside the image). Built from container/megatron/MegatronTraining_NeMo_hybrid.def.in
+# (DEFINITION=MegatronTraining_NeMo_hybrid container/megatron/build_hybrid.sh).
+class_name: Container
+image: ${oc.env:HYBRID_ENV,/gpfs/projects/ehpc533/users/korbip/hybrid_v019}/container/MegatronTraining_NeMo_hybrid_x86_64_202610161958.sif
+runtime: singularity
+bind: ["/gpfs"]
+env:
+  MACHINE_NAME: MARENOSTRUM
+python: "python"
