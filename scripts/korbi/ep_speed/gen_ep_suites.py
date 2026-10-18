@@ -202,8 +202,13 @@ PP2V = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (13, 12, 12, 11)),
 PP4U = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (15, 15, 14, 4)),
         B + "pipeline_model_parallel_size": 4}
 PP2U = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (26, 22)), B + "pipeline_model_parallel_size": 2}
-PLAIN = {B + "mhc": False, B + "mhc_routed_topk": None, B + "mhc_routed_reversible": False,
-         B + "mhc_expansion_rate": None}
+PLAIN = {B + "mhc": False, B + "mhc_routed_topk": None, B + "mhc_routed_reversible": False}
+# ~14 GiB of a 63 GiB GPU is not PyTorch's at the production layout (b1 VPP2 OOM: 47.9 GiB
+# allocated, 63.2 GiB in use): NCCL buffers (the base config forces 32 channels per peer on every
+# communicator), EP buffers, workspaces. NCCL at 4 channels + the expandable-segment allocator
+# (the sbatch exports differ: an array of their own).
+MEM = {"slurm.env.NCCL_MIN_NCHANNELS": "4", "slurm.env.NCCL_NCHANNELS_PER_PEER": "4",
+       "backend.env.PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True", "aux.array_tag": "_mem"}
 NEP2 = dict(NEP, **{B + "moe_expert_rank_capacity_factor": 2.0})
 PRODSEQ = {B + "seq_length": 8192, B + "max_position_embeddings": 8192,
            B + "dataloader_inter_document_masking": True}
@@ -246,6 +251,9 @@ def ep_prod2():
         HEP, PP4U, OPFX, {B + "recompute_method": "block", B + "recompute_num_layers": 24})
     arm("q_un_r2", "uneven PP4, checkpoint every 2 layers (one block)", base, HEP, PP4U, OPFX,
         {B + "recompute_num_layers": 2})
+    arm("q_un_mem", "uneven PP4, NCCL 4 channels + expandable segments", base, HEP, PP4U, OPFX, MEM)
+    arm("q_vpp_mem", "VPP2 (head on its own segment), NCCL 4 channels + expandable segments", base,
+        HEP, VPP2, OPFX, MEM)
     arm("q_nep8_un", "ncclep EP8 (capacity 2.0), uneven PP4", base, NEP2, PP4U, OPFX, {"aux.ep": 8})
     arm("q_nep8_pp2u", "ncclep EP8 (capacity 2.0), PP2 26/22", base, NEP2, PP2U, OPFX, {"aux.ep": 8})
     return arms
