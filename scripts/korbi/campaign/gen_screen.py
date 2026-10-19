@@ -810,6 +810,11 @@ def arms5(size: str):
                     own_cache({**h5, B + "seed": 1235})))
         out.append(("h5_moe_rr28_seed2", "h5_moe_rr28, seed 1235",
                     own_cache({**h5, **rr, B + "seed": 1235})))
+    if size == "s2":
+        # compact angular-MuOwn row states in the checkpoints (Megatron: ANGULAR_MUOWN_COMPACT_CKPT):
+        # the weight-shaped form cost ~76 GB of host staging per s2 save and OOM-killed the nodes
+        # three times; s2 restarted from step 0 with it (a run keeps one format throughout)
+        out = [(n, c, {**kv, "backend.env.ANGULAR_MUOWN_COMPACT_CKPT": "1"}) for n, c, kv in out]
     if size == "s3":
         # 4 nodes, 144 experts over EP16 (9 per GPU; all-to-all across nodes, HybridEP is
         # intra-node only). 2 nodes / EP8 OOMed at step 1 (54 GB: 1.5B expert parameters per GPU
