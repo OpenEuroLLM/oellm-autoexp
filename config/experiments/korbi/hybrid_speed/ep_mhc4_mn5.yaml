@@ -7,7 +7,7 @@ defaults:
 
 aux:
   family: mhc
-  suite: m1
+  suite: m2
   pattern: "*E"
   nodes: 8
   ep: 4
@@ -119,6 +119,9 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 2048
           aux.gbs: 256
           backend.megatron.train_iters: 15
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
           backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
@@ -178,6 +181,9 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 2048
           aux.gbs: 256
           backend.megatron.train_iters: 15
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
           backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
@@ -238,6 +244,9 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 2048
           aux.gbs: 512
           backend.megatron.train_iters: 15
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
           backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
@@ -297,6 +306,9 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 2048
           aux.gbs: 256
           backend.megatron.train_iters: 15
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: hybridep
           backend.megatron.use_transformer_engine_op_fuser: true
@@ -357,6 +369,9 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 2048
           aux.gbs: 512
           backend.megatron.train_iters: 15
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: hybridep
           backend.megatron.use_transformer_engine_op_fuser: true
@@ -416,6 +431,9 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 2048
           aux.gbs: 512
           backend.megatron.train_iters: 15
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: hybridep
           backend.megatron.use_transformer_engine_op_fuser: true
@@ -475,6 +493,9 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 2048
           aux.gbs: 256
           backend.megatron.train_iters: 15
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
           backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
@@ -536,6 +557,9 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 2048
           aux.gbs: 256
           backend.megatron.train_iters: 15
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
           backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
@@ -597,6 +621,9 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 2048
           aux.gbs: 512
           backend.megatron.train_iters: 15
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
           backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
@@ -657,6 +684,9 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 2048
           aux.gbs: 512
           backend.megatron.train_iters: 15
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
           backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
@@ -715,6 +745,9 @@ sweep:
           backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 2048
           aux.gbs: 256
           backend.megatron.train_iters: 15
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
           backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}

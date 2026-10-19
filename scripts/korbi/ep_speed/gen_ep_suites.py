@@ -848,13 +848,15 @@ def mhc4_graphs():
     moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
     hep = {**HEP, **OPFX, **MEM, **fla, "aux.array_tag": "_memfla"}
     base = {**Q3VPP, **REALDATA}
+    # exp_irene's host settings: +16 % tok/s on the doc-masked hybrid (k1: 5,965 -> 6,909)
+    gc = {B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False}
     hyb = {**RECIPE, **PROD, **PRODSEQ, B + "micro_batch_size": 1,
            B + "num_attention_heads": 16, B + "num_query_groups": 2,
            B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
            B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
            B + "linear_num_value_heads": 16, "aux.topk": 5,
            B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2, "aux.gbs": 512,
-           B + "train_iters": 15}
+           B + "train_iters": 15, **gc}
     p2 = {B + "seq_length": 16384, B + "max_position_embeddings": 16384,
           B + "dataloader_document_segment_length": 8192, "aux.gbs": 256}
     mhc4 = {B + "mhc": True, B + "mhc_expansion_rate": 4, B + "mhc_routed_topk": 0,
@@ -1326,7 +1328,7 @@ aux:
          """
 aux:
   family: mhc
-  suite: m1
+  suite: m2
   pattern: "*E"
   nodes: 8
   ep: 4
