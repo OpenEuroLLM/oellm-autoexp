@@ -666,6 +666,36 @@ def docmask_fix3():
     return arms
 
 
+def docmask_pack():
+    """Packed sequences take micro batch 1, and mbs 1 at 8k is the doc-masked models' main cost
+    (twice the micro-batches of mbs 2: host + p2p overhead, smaller expert GEMMs). Pack k x 8k tokens
+    into one micro-batch with a document boundary at every 8,192 tokens
+    (--dataloader-document-segment-length): exactly k contiguous 8k samples (NoPE / per-document
+    RoPE positions), 4M tokens per step as before."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    hyb = {**RECIPE, **PROD, **PRODSEQ, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2}
+    pack = lambda k: {B + "seq_length": 8192 * k, B + "max_position_embeddings": 8192 * k,  # noqa: E731
+                      B + "dataloader_document_segment_length": 8192, "aux.gbs": 512 // k}
+    base = {**Q3VPP, **REALDATA}
+    arm("z_plain_p2", "hybrid plain, 2 x 8k per micro-batch", base, hyb, moon, PLAIN, pack(2))
+    arm("z_plain_p4", "hybrid plain, 4 x 8k per micro-batch", base, hyb, moon, PLAIN, pack(4))
+    arm("z_routed_p2_hep", "hybrid routed, 2 x 8k, HybridEP grouped path", base, hyb, HEP, OPFX, MEM,
+        fla, {"aux.array_tag": "_memfla"}, ROUTED, pack(2))
+    arm("z_routed_p2_moon", "hybrid routed, 2 x 8k, MoonEP", base, hyb, moon, ROUTED, pack(2))
+    arm("z_q3doc_p2", "Qwen3 doc-masked, 2 x 8k per micro-batch", base, moon,
+        {B + "dataloader_inter_document_masking": True, B + "fused_qk_norm_rope": False,
+         B + "micro_batch_size": 1, B + "liger_fused_linear_cross_entropy_chunk_size": 2048},
+        pack(2))
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -1030,6 +1060,19 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, docmask_fix3())
+    dump("ep_docpack_mn5.yaml",
+         "Document masking: k x 8k packs per micro-batch (docs/ep_fp8_speed.md, phase H).",
+         """
+aux:
+  family: ladder
+  suite: h6
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON, docmask_pack())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")

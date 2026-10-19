@@ -941,6 +941,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "dataloader_document_segment_length": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="With --dataloader-inter-document-masking: also cut every sample at each multiple of this many tokens (a document boundary + position reset there). A sample of k x N tokens then trains exactly as k contiguous samples of N tokens in one packed micro-batch: fewer, larger micro-batches (packed sequences take micro batch 1) at the same context length N.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "dataloader_fast_cache_load": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -8763,6 +8771,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=True,
         default=False,
+    ),
+    "dataloader_document_segment_length": MegatronActionSpec(
+        option_strings=("--dataloader-document-segment-length",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
     ),
     "dataloader_fast_cache_load": MegatronActionSpec(
         option_strings=("--dataloader-fast-cache-load",),

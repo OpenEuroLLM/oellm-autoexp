@@ -3054,6 +3054,12 @@ class MegatronConfig(ConfigInterface):
     # also restarts RoPE at every document boundary, making --reset-position-ids redundant.
     dataloader_inter_document_masking: bool = False
 
+    # With --dataloader-inter-document-masking: also cut every sample at each multiple of this
+    # many tokens (a document boundary + position reset there). A sample of k x N tokens then
+    # trains exactly as k contiguous samples of N tokens in one packed micro-batch: fewer,
+    # larger micro-batches (packed sequences take micro batch 1) at the same context length N.
+    dataloader_document_segment_length: int | None = None
+
     # With --dataloader-inter-document-masking, print this rank's cu_seqlens for the first N
     # calls to get_batch. cu_seqlens is a few dozen bytes, so logging it is far cheaper than
     # any runtime cross-check -- and unlike a collective it cannot deadlock against the
