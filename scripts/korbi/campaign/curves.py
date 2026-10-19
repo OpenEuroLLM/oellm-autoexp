@@ -57,11 +57,14 @@ FIXED = {"drop": 1e-5, "drop_exponent": 0.0, "shape": 1.0}
 ANCHOR = True
 
 
+FIT_START = 200.0  # first fitted step: max(warmup, FIT_START); --fit-start (1500 for angular MuOwn, §9.12)
+
+
 def fit_stable(t, y, warmup, total, block):
     sched = WSDScheduleConfig(total=int(total), warmup=int(warmup), decay=0)
     # from the end of the warmup (at least step 200): a single power law in LR-area time misfits
     # the warmup's fast initial drop by 2-4 % (losspred findings), which would dominate short runs
-    curve = block_curve("run", t, y, block=block, start=max(float(warmup), 200.0), max_steps=200.0,
+    curve = block_curve("run", t, y, block=block, start=max(float(warmup), FIT_START), max_steps=200.0,
                         rel_width=0.05)
     cfg = FamilyFitConfig(time="lr_area", fixed=dict(FIXED), anchor_init=ANCHOR)
     fit = fit_family({"run": curve}, {"run": sched}, cfg, init_loss=float(y[0]) if ANCHOR else None)
@@ -91,7 +94,7 @@ def fit_form(t, y, warmup, total, block, form):
     from scipy.optimize import least_squares
 
     sched = WSDScheduleConfig(total=int(total), warmup=int(warmup), decay=0)
-    curve = block_curve("run", t, y, block=block, start=max(float(warmup), 200.0), max_steps=200.0,
+    curve = block_curve("run", t, y, block=block, start=max(float(warmup), FIT_START), max_steps=200.0,
                         rel_width=0.05)
     name = {"pl": "power law", "pl_exp": "power law + exp", "pl_pl": "2 power laws"}[form]
     f, starts, (lo, hi) = _losspred_forms()(sched, float(y[0]), float(curve.z.min()))[name]
@@ -202,6 +205,8 @@ def main():
     ap.add_argument("--max-backtest", type=float, default=0.01)
     ap.add_argument("--max-spike", type=float, default=0.05, help="spike height (log-loss) that makes a run unhealthy")
     ap.add_argument("--block", type=int, default=20)
+    ap.add_argument("--fit-start", type=float, default=200.0,
+                    help="first fitted step: max(warmup, this); 1500 for angular MuOwn (docs §9.12)")
     ap.add_argument("--csv", type=Path)
     ap.add_argument("--data-correction", action="store_true",
                     help="fit train - delta(t), delta = the train - validation gap shared by all runs "
@@ -213,6 +218,8 @@ def main():
     ap.add_argument("--no-anchor", action="store_true",
                     help="fit t0 freely instead of anchoring the curve at the initial loss")
     a = ap.parse_args()
+    global FIT_START
+    FIT_START = a.fit_start
     global ANCHOR, FORM
     ANCHOR = not a.no_anchor
     FORM = a.form

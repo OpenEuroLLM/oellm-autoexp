@@ -67,12 +67,34 @@ def parse_log(path: Path) -> dict:
                 tok_s=get("tok_s"), gbs=get("gbs"), val=sorted(dict(val).items()))
 
 
+class MergedLog:
+    """The newest log of an arm that was restarted (a CUDA-graph switch, a resume): reads as all
+    of its logs in order, oldest first, so ``parse_log`` -- which keeps the LAST record per
+    iteration -- sees the whole run, the resumed log taking over from its restart point. Every
+    other path attribute (``.parent``, ``.name``, ``.stat``) is the newest log's."""
+
+    def __init__(self, logs):
+        self.logs = [Path(p) for p in logs]
+
+    def read_text(self, *args, **kwargs):
+        return "\n".join(p.read_text(*args, **kwargs) for p in self.logs)
+
+    def __getattr__(self, name):
+        return getattr(self.logs[-1], name)
+
+    def __fspath__(self):
+        return str(self.logs[-1])
+
+    def __str__(self):
+        return str(self.logs[-1])
+
+
 def run_logs(suite: Path) -> dict[str, Path]:
     """{arm: newest log}: per-arm dirs (single jobs) or the array dir <suite>/<suite>
     (slurm-<job>_<task>.log). The arm is read from the log itself (its first "<suite>/<arm>/"
     path), not from task_<task>.sh: a re-render of the suite (e.g. a rerun of one arm with
     aux.only) renumbers the task scripts, so the task index no longer names the old logs' arms."""
-    out, mtime = {}, {}
+    out, every = {}, {}
     arr = suite / suite.name
     pat = re.compile(rf"{re.escape(suite.name)}/([A-Za-z0-9_.-]+)/".encode())
     if arr.is_dir():
@@ -81,11 +103,13 @@ def run_logs(suite: Path) -> dict[str, Path]:
                 m = pat.search(f.read(4 << 20))
             if not m:
                 continue
-            arm, t = m.group(1).decode(), log.stat().st_mtime
+            arm = m.group(1).decode()
             if arm == suite.name:
                 continue
-            if arm not in out or t > mtime[arm]:
-                out[arm], mtime[arm] = log, t
+            every.setdefault(arm, []).append(log)
+        for arm, logs in every.items():
+            logs.sort(key=lambda p: p.stat().st_mtime)
+            out[arm] = logs[0] if len(logs) == 1 else MergedLog(logs)
     for arm_dir in (p for p in suite.iterdir() if p.is_dir() and p.name != suite.name):
         logs = sorted(arm_dir.glob("slurm-*.log"), key=lambda p: p.stat().st_mtime)
         if logs and arm_dir.name not in out:

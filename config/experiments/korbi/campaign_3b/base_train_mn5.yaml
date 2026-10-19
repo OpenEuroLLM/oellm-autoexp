@@ -95,6 +95,15 @@ job:
       action:
         class_name: CancelAction
         reason: "non-finite grad norm -- the run diverged"
+    # A diverged run need not go NaN: free routed 2-of-8 ran from step ~200 to 2500 at grad norms
+    # 1e2 -> 1e8 (healthy runs: 0.2-1.3 before the 1.0 clip) with the loss stuck at 5.5-8.7.
+    - name: exploding_grad_norm
+      pattern: "grad norm: [0-9]{5,}\\."
+      pattern_type: regex
+      match_once: true
+      action:
+        class_name: CancelAction
+        reason: "grad norm >= 1e4 -- the run diverged"
 
 slurm:
   sbatch:

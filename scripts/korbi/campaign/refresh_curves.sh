@@ -25,7 +25,7 @@ if [ $# -gt 0 ]; then
 else
     mapfile -t suites < <(ls -d "$LOGS"/*/)
 fi
-uv run --project ../loss_prediction python scripts/korbi/campaign/curves.py "${suites[@]}" \
+uv run --project ../loss_prediction python scripts/korbi/campaign/curves.py "${suites[@]}" ${CURVES_ARGS:-} \
     --csv "$OUT/curves_all.csv" 2>/dev/null | grep -v Warning > "$OUT/curves_all.md"
 uv run --project ../loss_prediction python scripts/korbi/campaign/curves_summary.py "$OUT/curves_all.csv"
 echo "wrote $OUT/curves_all.csv, $OUT/curves_all.md"
