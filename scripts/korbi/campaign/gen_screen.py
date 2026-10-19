@@ -806,6 +806,12 @@ def arms5(size: str):
           B + "moe_latent_size": hidden // 2}),
     ]
     if size == "s1":
+        # after round 4 (user 2026-10-19): mHC is the residual; does 8 streams add over 4, and do
+        # the two winners (mHC-4, LatentMoE) combine? (the routed-residual arms are called off)
+        out.append(("h5_moe_mhc8", "+ mHC, 8 streams", {**h5, **mhc(8)}))
+        out.append(("h5_moe_mhc4_lat2", f"mHC-4 + LatentMoE, latent {hidden // 2}: 288 x {w}, top-6",
+                    {**h5, **mhc(4), B + "num_experts": 288, B + "moe_router_topk": 6,
+                     B + "moe_latent_size": hidden // 2}))
         out.append(("h5_moe_seed2", "h5_moe, seed 1235 (noise: pairs with h5_moe_rr28_seed2)",
                     own_cache({**h5, B + "seed": 1235})))
         out.append(("h5_moe_rr28_seed2", "h5_moe_rr28, seed 1235",
