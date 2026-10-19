@@ -214,6 +214,28 @@ text, MoonEP 64 SMs, VPP2, full recompute, 4M tokens per step):
   the 8k attention FLOPs). TFLOP/s is not comparable across these architectures; tok/s and the
   compute-busy share are. Single-feature rungs (masking, MoE, attention) in h1b.
 
+**Single-feature rungs (h1b) -- document masking is the culprit:**
+
+| rung (Qwen3, 8k, mbs 1) | tok/s/GPU | TFLOP/s |
+|---|---:|---:|
+| reference (l2) | 5,867 | 196.1 |
+| + the hybrid's MoE only | 6,210 | 190.6 |
+| + the hybrid's attention only | 6,653 | 158.1 |
+| **+ document masking only (l3)** | **4,242** | **114.0** |
+| + masking + MoE (l4) | 4,475 | 108.3 |
+
+The hybrid's MoE and attention are *faster* per token (fewer FLOPs, hence lower TFLOP/s);
+**document masking alone costs 28 % of the throughput**. The GPU-idle gaps of the doc-masked
+hybrid (20 us - 0.5 ms: 1.9 s of a 13.7 s window, vs 0.9 % for Qwen3) start in the checkpointed
+layer forward / recompute and in cuDNN `FusedAttnFunc` (host-heavy on packed THD batches),
+the kernel rate is 11.7k/s (Qwen3: 5.3k/s): launch-bound. Next: FlashAttention varlen (h3), the
+hybrid without masking as the bound. The rebalanced VPP2 layout (h2) does not help (79.2 vs 77.3).
+
+**Qwen3.5-35B-A3B:** one-node slices run at 153-177 TFLOP/s for every variant (FLA / native GDN,
+attention hd 256 / 128): nothing pathological. On 8 nodes its first two steps are Triton
+autotuning of the GDN kernels (368 s, 194 s); step 3: 21.8 s = ~6,000 tok/s/GPU. Rerun with an
+hour (h1c).
+
 ## 5. Phase Q: Qwen3-30B-A3B first (user, 2026-10-18: reach exp_irene's 170+ with standard attention)
 
 exp_irene (branch `exp_irene`): Qwen3-30B-A3B (48 x attention + MoE, 32 q / 4 kv heads x 128,
