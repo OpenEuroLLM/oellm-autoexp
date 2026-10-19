@@ -1231,6 +1231,42 @@ def moon_chunks2():
     return arms
 
 
+def ctx16k_scale():
+    """16k context everywhere (user 2026-10-19). mHC-4 at 16k tokens per micro-batch OOMs on 8
+    nodes (expert optimizer state over 2 expert-data-parallel replicas); with more nodes the
+    distributed optimizer splits it over more replicas (~27 -> ~20 -> ~17 GB static per GPU at
+    8 / 16 / 32 nodes). Does mHC-4 (and + Engram) fit, and at what tok/s. 32 micro-batches per
+    pipeline at every size (gbs = 32 x DP)."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    gc = {B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False,
+          B + "dataloader_prefetch_factor": 8}
+    base = {**Q3VPP, **REALDATA, **gc}
+    pat = vpp_pattern("LLLLL*" * 8, (7, 7, 7, 6, 6, 6, 6, 3))
+    hyb = {**RECIPE, **PROD, **PRODSEQ, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2,
+           B + "train_iters": 12, "aux.pattern": pat,
+           B + "seq_length": 16384, B + "max_position_embeddings": 16384}
+    mhc4 = {B + "mhc": True, B + "mhc_expansion_rate": 4, B + "mhc_routed_topk": 0,
+            B + "mhc_routed_reversible": False, B + "recompute_num_layers": 2}
+    nodes = lambda n: {"aux.nodes": n, "aux.gbs": 32 * n, "slurm.sbatch.nodes": n,  # noqa: E731
+                       "aux.array_tag": "_moonmemfla_%dn" % n}
+    eng = {"aux.pattern": with_engram(pat, (1, 31)), B + "engram_ngram_orders": [2, 3],
+           B + "engram_table_parallel": "dp", B + "engram_table_size": 1048576,
+           "backend.env.ENGRAM_STEP_LOOKUP": "1", "aux.array_tag": "_moonmemfla_engstep"}
+    arm("g_plain_16n", "plain residual, 16k, 16 nodes (reference)", base, hyb, moon, PLAIN, nodes(16))
+    arm("g_mhc4_16n", "mHC-4, 16k, 16 nodes", base, hyb, moon, mhc4, nodes(16))
+    arm("g_mhc4_32n", "mHC-4, 16k, 32 nodes", base, hyb, moon, mhc4, nodes(32))
+    arm("g_mhc4_eng_32n", "mHC-4 + 2 Engram layers (1M rows, step lookup), 16k, 32 nodes", base, hyb,
+        moon, mhc4, nodes(32), eng)
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -1759,6 +1795,17 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), engram_cost2())
+    dump("ep_ctx16k_mn5.yaml", "16k context at 16 / 32 nodes: mHC-4 and Engram memory (docs/ep_fp8_speed.md).", """
+aux:
+  family: ctx16k
+  suite: g1
+  pattern: "*E"
+  nodes: 16
+  ep: 4
+  gbs: 512
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), ctx16k_scale())
     dump("ep_tokspeed_mn5.yaml",
          "tok/s/GPU: exp_irene's host settings, the CKDA share of document masking, Qwen3.5 like-for-like "
          "(docs/ep_fp8_speed.md, phase T).",
