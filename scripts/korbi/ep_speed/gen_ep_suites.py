@@ -987,6 +987,41 @@ def shared_overlap():
     return arms
 
 
+def pipe_balance():
+    """The all-stage profile (p2) of the GC'd hybrid: stages 0 / 1 (14 layers) are 71 % busy, the
+    last (7 layers + the 262k head) 57 % and waits 2.8 s / step; and rank 0 idles ~0.5 s per step
+    in the dataloader -- document masking fetches all of a step's micro-batches before the schedule
+    (packed_doc_attention), more than the 8 workers x prefetch 2 hold. Rebalanced VPP2 layout
+    (13 / 13 / 13 / 9 layers per stage) and a deeper prefetch queue."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    gc = {B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False}
+    base = {**Q3VPP, **REALDATA, **gc}
+    hyb = {**RECIPE, **PROD, **PRODSEQ, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2, "aux.gbs": 512,
+           B + "train_iters": 15}
+    p2 = {B + "seq_length": 16384, B + "max_position_embeddings": 16384,
+          B + "dataloader_document_segment_length": 8192, "aux.gbs": 256}
+    mhc4 = {B + "mhc": True, B + "mhc_expansion_rate": 4, B + "mhc_routed_topk": 0,
+            B + "mhc_routed_reversible": False, B + "recompute_num_layers": 2}
+    pf = {B + "dataloader_prefetch_factor": 8}
+    bal = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (7, 7, 7, 6, 6, 6, 6, 3))}
+    arm("t_ref", "hybrid plain, 2 x 8k, MoonEP, GC (reference)", base, hyb, moon, PLAIN, p2)
+    arm("t_pf8", "+ dataloader prefetch 8 (8 workers)", base, hyb, moon, PLAIN, p2, pf)
+    arm("t_bal", "+ rebalanced VPP2 layout 7/7/7/6/6/6/6/3", base, hyb, moon, PLAIN, p2, bal)
+    arm("t_pf8_bal", "+ both", base, hyb, moon, PLAIN, p2, pf, bal)
+    arm("t_plain_mbs1_pf8_bal", "plain, 8k mbs 1, both (the like-for-like for mHC-4)", base, hyb, moon,
+        PLAIN, pf, bal)
+    arm("t_mhc4_pf8_bal", "mHC-4, 8k mbs 1, checkpoint every 2 layers, both", base, hyb, moon, mhc4, pf,
+        bal)
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -1449,6 +1484,17 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:45:00"'), shared_overlap())
+    dump("ep_pipebal_mn5.yaml", "Pipeline balance + dataloader prefetch for the hybrid (docs/ep_fp8_speed.md, phase T).", """
+aux:
+  family: pipe
+  suite: t1
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), pipe_balance())
     dump("ep_tokspeed_mn5.yaml",
          "tok/s/GPU: exp_irene's host settings, the CKDA share of document masking, Qwen3.5 like-for-like "
          "(docs/ep_fp8_speed.md, phase T).",
