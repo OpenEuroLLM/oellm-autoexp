@@ -1147,6 +1147,43 @@ def engram_cost():
     return arms
 
 
+def moon_chunks2():
+    """c1 again after the fixes (Megatron ed30ba6b0): the chunked pipeline with every cross-stream
+    tensor recorded (c1's illegal address under memory pressure), and the MoonEP experts as one
+    2-D parameter per expert (angular MuOwn orthogonalizes them; d1's MuOwn arm had trained them
+    with Adam at the MuOwn lr). MuOwn at the s1 lr and at the transfer law's s3 value."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    ch = lambda n: {"backend.env.MOONEP_CHUNKS": str(n), "aux.array_tag": "_moonch%d" % n}  # noqa: E731
+    gc = {B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False,
+          B + "dataloader_prefetch_factor": 8}
+    base = {**Q3VPP, **REALDATA, **gc}
+    hyb = {**RECIPE, **PROD, **PRODSEQ, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2, "aux.gbs": 512,
+           B + "train_iters": 15,
+           "aux.pattern": vpp_pattern("LLLLL*" * 8, (7, 7, 7, 6, 6, 6, 6, 3)),
+           B + "mhc": True, B + "mhc_expansion_rate": 4, B + "mhc_routed_topk": 0,
+           B + "mhc_routed_reversible": False, B + "recompute_num_layers": 2}
+    muown = lambda lr: {B + "optimizer": "angular_muown", B + "lr": lr, B + "min_lr": lr,  # noqa: E731
+                        B + "residual_mixer_lr_mult": 0.25}
+    q3 = {B + "train_iters": 12}
+    arm("c_q3_ch1", "Qwen3-30B-A3B 4k mbs 4, MoonEP (reference, per-expert params)", base, moon, q3)
+    arm("c_q3_ch2", "Qwen3-30B-A3B, 2 chunks", base, moon, q3, ch(2))
+    arm("c_q3_ch4", "Qwen3-30B-A3B, 4 chunks", base, moon, q3, ch(4))
+    arm("c_mhc4_ch1", "hybrid + mHC-4, 8k mbs 1, MoonEP (reference)", base, hyb, moon)
+    arm("c_mhc4_ch2", "hybrid + mHC-4, 2 chunks", base, hyb, moon, ch(2))
+    arm("c_mhc4_muown", "hybrid + mHC-4, angular MuOwn 4e-3 (now on the experts too)", base, hyb, moon,
+        muown(4e-3))
+    arm("c_mhc4_muown_lr18", "hybrid + mHC-4, angular MuOwn 1.8e-3 (transfer law, s3)", base, hyb, moon,
+        muown(1.8e-3))
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -1653,6 +1690,17 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), engram_cost())
+    dump("ep_moonch2_mn5.yaml", "MoonEP chunked pipeline + per-expert params (docs/ep_fp8_speed.md, phase C).", """
+aux:
+  family: moonch
+  suite: c2
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), moon_chunks2())
     dump("ep_tokspeed_mn5.yaml",
          "tok/s/GPU: exp_irene's host settings, the CKDA share of document masking, Qwen3.5 like-for-like "
          "(docs/ep_fp8_speed.md, phase T).",
