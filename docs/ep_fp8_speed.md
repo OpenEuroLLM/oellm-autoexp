@@ -451,6 +451,15 @@ unfinished -> garbage plan. Fixed in e5993202b (histogram / top-k / weights comp
 wait); 1-node X7a (1 chunk, separate stream, no debug) runs clean, 928 ms/it. The 8-node c2b rerun
 (Qwen3 1/2/4 chunks, mHC-4 1/2 chunks) measures the overlap gain.
 
+c2b (8 nodes, fixed code): chunking is a loss. mHC-4 8k: 1 chunk 5,035 tok/s/GPU (85.6 TFLOP/s,
+mem 0.67), 2 chunks 4,309 (-14 %, mem 0.75); Qwen3 2 / 4 chunks OOM (1 chunk 6,831). Losses match
+to 4 digits through step 3 and drift only from the step-5 spike (bf16 chaos), so the path is
+correct. Why it loses: every chunk has its own Buffer, plan and pools, so the redundant-expert
+weight push (prefetch) and the grad reduce -- which scale with experts, not tokens -- run once per
+chunk (x2 / x4 traffic, x2 under recompute too), the grouped GEMMs get half the rows, and the extra
+pools cost memory. Keep MOONEP_CHUNKS=1; a chunked path would need one shared plan / prefetch for
+all chunks (only the token movement chunked), which MoonEP's Buffer does not offer.
+
 ## 7. Conclusions and recommended settings (2026-10-19)
 
 **> 250 TFLOP/s is not reached; ~195-203 is the practical ceiling on MN5 for Qwen3-30B-A3B with real
