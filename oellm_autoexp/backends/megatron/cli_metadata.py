@@ -1157,6 +1157,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "depth_memory_covariance_dtype": MegatronArgMetadata(
+        arg_type=str,
+        default="float32",
+        help='LDM "cute": dtype of the running covariance P ("float32" or "bfloat16"; the paper\'s BF16 default can drift indefinite in deep stacks).',
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "depth_memory_groups": MegatronArgMetadata(
         arg_type=int,
         default=16,
@@ -1173,6 +1181,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "depth_memory_impl": MegatronArgMetadata(
+        arg_type=str,
+        default="reference",
+        help='LDM implementation. "reference": every write\'s state is an autograd tensor, kept on the layers (no CUDA graphs). "torch": the state in a static workspace with the paper\'s unwinding backward (depth_memory_state.py), the residual as [s, b, 2, h] streams -- CUDA-graph capturable. "cute": the same with the paper\'s CuTe DSL kernels (cute_kernels cute_ldm; Hopper / Blackwell).',
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "depth_memory_key_dim": MegatronArgMetadata(
         arg_type=int,
         default=8,
@@ -1185,6 +1201,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=float,
         default=0.99,
         help="Initial forgetting factor of every LDM write (learned per group).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "depth_memory_window": MegatronArgMetadata(
+        arg_type=int,
+        default=4,
+        help='LDM "cute": the window E of deferred writes (the paper: 4).',
         choices=None,
         nargs=None,
         element_type=None,
@@ -9065,6 +9089,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=1.0,
     ),
+    "depth_memory_covariance_dtype": MegatronActionSpec(
+        option_strings=("--depth-memory-covariance-dtype",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="float32",
+    ),
     "depth_memory_groups": MegatronActionSpec(
         option_strings=("--depth-memory-groups",),
         action_type="store",
@@ -9079,6 +9110,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=None,
         default=32,
     ),
+    "depth_memory_impl": MegatronActionSpec(
+        option_strings=("--depth-memory-impl",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="reference",
+    ),
     "depth_memory_key_dim": MegatronActionSpec(
         option_strings=("--depth-memory-key-dim",),
         action_type="store",
@@ -9092,6 +9130,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0.99,
+    ),
+    "depth_memory_window": MegatronActionSpec(
+        option_strings=("--depth-memory-window",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=4,
     ),
     "deterministic_mode": MegatronActionSpec(
         option_strings=("--deterministic-mode",),

@@ -146,10 +146,13 @@ delta_offload_bytes_across_pp_ranks: 0  # Difference of offload bytes across PP 
 deprecated_use_mcore_models: false  # DEPRECATED. Use the implementation from megatron core.Now ignored and mcore models are the default.
 depth_memory: false  # Linear Depth Memory (LDM, arXiv:2610.18809, megatron/core/transformer/depth_memory.py): next to the residual stream, every token carries a matrix memory of the sublayer outputs over depth, fit by recursive least squares; every sublayer reads x + M q and writes its output. HybridStack only, pipeline_model_parallel_size == 1, no CUDA graphs, no full activation recompute. Mutually exclusive with mhc and attn_res.
 depth_memory_alpha: 1.0  # Initial inverse covariance P = alpha I (ridge 1 / alpha) of the LDM fit.
+depth_memory_covariance_dtype: float32  # LDM "cute": dtype of the running covariance P ("float32" or "bfloat16"; the paper's BF16 default can drift indefinite in deep stacks).
 depth_memory_groups: 16  # LDM memory groups G (value width hidden_size / G per group; the paper: 16).
 depth_memory_hidden_dim: 32  # Width H of LDM's address networks (the paper: 32 at 400M, 64 at 1.5B).
+depth_memory_impl: reference  # LDM implementation. "reference": every write's state is an autograd tensor, kept on the layers (no CUDA graphs). "torch": the state in a static workspace with the paper's unwinding backward (depth_memory_state.py), the residual as [s, b, 2, h] streams -- CUDA-graph capturable. "cute": the same with the paper's CuTe DSL kernels (cute_kernels cute_ldm; Hopper / Blackwell).
 depth_memory_key_dim: 8  # LDM key / query width K per group (the paper's main setting: 8).
 depth_memory_lambda_init: 0.99  # Initial forgetting factor of every LDM write (learned per group).
+depth_memory_window: 4  # LDM "cute": the window E of deferred writes (the paper: 4).
 deterministic_mode: false  # If true, code that has deterministic execution will be chosen. This usually means slower execution, but is good for debugging and testing. Defaults to False.
 diag_activations: false  # Log the RMSNorm denominator sqrt(mean(x^2)) and the mean of the input to every norm, plus a non-finite count, from the first microbatch of a diagnostic iteration. This is the one collector with a real cost (bandwidth-bound, ~20 GB of reads for a 64-layer 32B model).
 diag_clip_events: false  # Track gradient-clipping events on EVERY step (a streak can only be counted that way) and report the streak length, the fired fraction, the smallest clip coefficient and the mean/min/max of the pre-clip total norm -- the clip denominator -- over the logging interval. Free, and independent of --diagnostics-interval.

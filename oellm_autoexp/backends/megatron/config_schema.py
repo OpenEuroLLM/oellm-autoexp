@@ -1641,6 +1641,20 @@ class MegatronConfig(ConfigInterface):
     # Initial inverse covariance P = alpha I (ridge 1 / alpha) of the LDM fit.
     depth_memory_alpha: float = 1.0
 
+    # LDM implementation. "reference": every write's state is an autograd tensor, kept on the
+    # layers (no CUDA graphs). "torch": the state in a static workspace with the paper's
+    # unwinding backward (depth_memory_state.py), the residual as [s, b, 2, h] streams --
+    # CUDA-graph capturable. "cute": the same with the paper's CuTe DSL kernels (cute_kernels
+    # cute_ldm; Hopper / Blackwell).
+    depth_memory_impl: str = "reference"
+
+    # LDM "cute": the window E of deferred writes (the paper: 4).
+    depth_memory_window: int = 4
+
+    # LDM "cute": dtype of the running covariance P ("float32" or "bfloat16"; the paper's BF16
+    # default can drift indefinite in deep stacks).
+    depth_memory_covariance_dtype: str = "float32"
+
     # Number of unique layers in the looped block. 0 disables looping entirely.
     loop_block_layers: int = 0
 
