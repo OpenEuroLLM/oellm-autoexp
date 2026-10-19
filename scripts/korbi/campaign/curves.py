@@ -154,6 +154,11 @@ def analyze(arm, log, det, a, delta=None):
     row = {"arm": arm, "iters": int(t[-1]), "total": sched.total, "warmup": sched.warmup,
            "gbs": meta["gbs"], "tokens_seen": int(t[-1]) * meta["gbs"] * meta["seq"],
            "stable_end_loss": float(np.mean(ys[-max(len(ys) // 50, 5):]))}
+    # throughput: median over the logged steps past 200 (compile / warm-up excluded)
+    late = d["it"] >= min(200, d["it"][len(d["it"]) // 2])
+    for key, col in (("tok_s", "tok_s_gpu"), ("tflops", "tflops_gpu")):
+        vals = d[key][late]
+        row[col] = float(np.nanmedian(vals)) if np.isfinite(vals).any() else np.nan
     # health over the whole run
     h = t >= 20
     sp, rg = det(t[h], y[h])
@@ -258,11 +263,12 @@ def main():
             r["suite"] = suite.name
             r["data_corrected"] = delta is not None
             rows.append(r)
-    cols = ["suite", "arm", "iters", "warmup", "stable_end_loss", "E", "alpha", "fit_rmse",
+    cols = ["suite", "arm", "iters", "warmup", "stable_end_loss", "tok_s_gpu", "tflops_gpu",
+            "E", "alpha", "fit_rmse",
             "backtest_err", "flattening", "spikes", "max_spike", "growth", "healthy", "extrapolable"] + \
         [f"pred_{t:.0e}" for t in a.predict_tokens]
     fmt = {"E": ".3f", "alpha": ".3f", "fit_rmse": ".4f", "backtest_err": "+.4f", "flattening": "+.4f",
-           "max_spike": ".3f", "stable_end_loss": ".4f"}
+           "max_spike": ".3f", "stable_end_loss": ".4f", "tok_s_gpu": ",.0f", "tflops_gpu": ".1f"}
     print("| " + " | ".join(cols) + " |")
     print("|" + "---|" * len(cols))
     for r in rows:
