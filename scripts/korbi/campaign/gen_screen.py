@@ -806,8 +806,10 @@ def arms5(size: str):
         out.append(("h5_moe_rr28_seed2", "h5_moe_rr28, seed 1235",
                     own_cache({**h5, **rr, B + "seed": 1235})))
     if size == "s3":
-        # 2 nodes; 144 experts over EP8 (all-to-all crosses nodes; HybridEP is intra-node only)
-        nodes = {"slurm.sbatch.nodes": 2, B + "expert_model_parallel_size": 8}
+        # 4 nodes, 144 experts over EP16 (9 per GPU; all-to-all across nodes, HybridEP is
+        # intra-node only). 2 nodes / EP8 OOMed at step 1 (54 GB: 1.5B expert parameters per GPU
+        # with unsharded optimizer state + the 8k activations)
+        nodes = {"slurm.sbatch.nodes": 4, B + "expert_model_parallel_size": 16}
         out = [(n, c, {**kv, **nodes}) for n, c, kv in out
                if n in ("qwen35_moe", "h5_moe", "h5_moe_mhc4", "h5_moe_rr28")]
     return out

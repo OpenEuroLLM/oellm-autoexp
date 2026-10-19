@@ -69,7 +69,7 @@ sweep:
           backend.megatron.moe_token_dispatcher_type: alltoall
           backend.megatron.moe_router_dtype: fp32
           backend.megatron.moe_permute_fusion: true
-          backend.megatron.expert_model_parallel_size: 8
+          backend.megatron.expert_model_parallel_size: 16
           backend.megatron.moe_router_load_balancing_type: aux_loss
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
@@ -106,7 +106,7 @@ sweep:
           backend.megatron.rotary_percent: 0.25
           backend.megatron.layernorm_zero_centered_gamma: true
           backend.megatron.fused_qk_norm_rope: false
-          slurm.sbatch.nodes: 2
+          slurm.sbatch.nodes: 4
         # ours: CKDA 5:1 + NoPE / qk-norm / XSA / gated attention, MoE
         - aux.arm: h5_moe
           backend.megatron.num_attention_heads: 10
@@ -134,7 +134,7 @@ sweep:
           backend.megatron.moe_token_dispatcher_type: alltoall
           backend.megatron.moe_router_dtype: fp32
           backend.megatron.moe_permute_fusion: true
-          backend.megatron.expert_model_parallel_size: 8
+          backend.megatron.expert_model_parallel_size: 16
           backend.megatron.moe_router_load_balancing_type: aux_loss
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
@@ -164,7 +164,7 @@ sweep:
           backend.megatron.train_iters: 7629
           backend.megatron.cuda_graph_impl: local
           backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
-          slurm.sbatch.nodes: 2
+          slurm.sbatch.nodes: 4
         # + mHC, 4 streams (DeepSeek's)
         - aux.arm: h5_moe_mhc4
           backend.megatron.num_attention_heads: 10
@@ -192,7 +192,7 @@ sweep:
           backend.megatron.moe_token_dispatcher_type: alltoall
           backend.megatron.moe_router_dtype: fp32
           backend.megatron.moe_permute_fusion: true
-          backend.megatron.expert_model_parallel_size: 8
+          backend.megatron.expert_model_parallel_size: 16
           backend.megatron.moe_router_load_balancing_type: aux_loss
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
@@ -225,7 +225,7 @@ sweep:
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 4
           backend.megatron.residual_mixer_lr_mult: 0.25
-          slurm.sbatch.nodes: 2
+          slurm.sbatch.nodes: 4
         # + routed residual 1 + 1 of 8, keyed, pick balancing
         - aux.arm: h5_moe_rr28
           backend.megatron.num_attention_heads: 10
@@ -253,7 +253,7 @@ sweep:
           backend.megatron.moe_token_dispatcher_type: alltoall
           backend.megatron.moe_router_dtype: fp32
           backend.megatron.moe_permute_fusion: true
-          backend.megatron.expert_model_parallel_size: 8
+          backend.megatron.expert_model_parallel_size: 16
           backend.megatron.moe_router_load_balancing_type: aux_loss
           backend.megatron.moe_aux_loss_coeff: 0.0001
           backend.megatron.moe_per_layer_logging: true
@@ -289,4 +289,4 @@ sweep:
           backend.megatron.mhc_routed_key_dim: 64
           backend.megatron.mhc_routed_balance_rate: 0.001
           backend.megatron.residual_mixer_lr_mult: 0.25
-          slurm.sbatch.nodes: 2
+          slurm.sbatch.nodes: 4
