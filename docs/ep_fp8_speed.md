@@ -440,10 +440,16 @@ mHC-4 at 16k fits at 32 nodes (it OOMs at 8: the expert optimizer state is split
 of 2 expert-data-parallel replicas) and runs 6.5 % faster than at 8k mbs 1. (The 16-node mHC-4 arm
 left no log; rerun pending.)
 
-**Chunked MoonEP pipeline (MOONEP_CHUNKS):** passes the 4-GPU unit tests but hits an illegal
-address in real training (reproduced on 1 node without CUDA_LAUNCH_BLOCKING; clean with it):
-cross-stream tensor lifetimes. Forward records added (ed30ba6b0), backward records (1afbbf65e) in
-test.
+**Chunked MoonEP pipeline (MOONEP_CHUNKS):** passed the 4-GPU unit tests but hit an illegal
+address / instruction in every real training run since c1 (clean with CUDA_LAUNCH_BLOCKING or with
+the communication on the compute stream). Bisected on 1 node with debug switches
+(MOONEP_FORCE_CHUNKED=1: one chunk on the comm stream; MOONEP_CHUNK_STREAM=same; MOONEP_PDL=0;
+MOONEP_CHUNK_DEBUG=keepalive|serial|fullserial): keepalive, serial, PDL off all failed; fullserial
+(comm waits for compute before every op) passed. Cause: the per-chunk tokens-per-expert histogram
+was computed on the compute stream *after* `comm.wait_stream(cur)`, so MoonEP's planning read it
+unfinished -> garbage plan. Fixed in e5993202b (histogram / top-k / weights computed before the
+wait); 1-node X7a (1 chunk, separate stream, no debug) runs clean, 928 ms/it. The 8-node c2b rerun
+(Qwen3 1/2/4 chunks, mHC-4 1/2 chunks) measures the overlap gain.
 
 ## 7. Conclusions and recommended settings (2026-10-19)
 
