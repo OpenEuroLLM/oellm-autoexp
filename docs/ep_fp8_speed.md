@@ -397,6 +397,54 @@ its own stream under the MoonEP dispatch / combine, the flex dispatcher's call o
   identical arm (6,942), so the gain is within the job-to-job spread; t1 / the next suite pair it again.
   Qwen3.5-like: +0.4 % (its shared expert is 512 wide, a small share of the step).
 
+## 6c. MoonEP for the production recipe, Engram, 16k context (2026-10-19 evening)
+
+**Correctness fixes (Megatron ep-fp8-speed-r5, tested):**
+- MoonEP + angular MuOwn: the experts were one 3-D parameter, which the emerging-optimizer split
+  sends to the Adam fallback (at the MuOwn lr: unstable). Now one 2-D parameter per expert
+  (TEGroupedMLP names / sharded keys), fetched through the owning submodules' `__call__` (the
+  overlapped param all-gather finishes in their forward pre-hooks), registered in expert order
+  (the gather chain), and laid out back to back via `param.contiguous_group` in all three buffer
+  layouts (plain DDP, distributed, layer-wise optimizer): zero-copy `[n, ...]` views again.
+- MoonEP `reduce_grad` race: it pulls peers' reduce pools; fenced with MoonEP's inter-rank sync.
+- Engram + full recompute + PP > 1: the recompute read a later micro-batch's token ids;
+  `checkpointed_forward` now restores them. Engram also supports document masking now.
+
+**c2 (8 nodes):**
+
+| arm | tok/s/GPU | TFLOP/s |
+|---|---:|---:|
+| Qwen3-30B-A3B, MoonEP, per-expert params (zero-copy) | 6,872 | 196.4 |
+| hybrid + mHC-4, 8k mbs 1, Adam | 5,070 | 86.1 |
+| hybrid + mHC-4, angular MuOwn 4e-3 (experts orthogonalized now) | 4,868 | 82.7 |
+| hybrid + mHC-4, angular MuOwn 1.8e-3 | 4,859 | 82.5 |
+| plain, 16k context (t1's 2 x 8k packs: 7,250) | 7,148 | 122.3 |
+
+MuOwn costs ~4 % (its step); losses are stable. 16k context costs 1.4 % against the 8k-cut packs.
+
+**e2 (8 nodes, hybrid + mHC-4, 8k):** no Engram 5,080; 2 Engram layers, per-micro-batch lookup
+4,799 (-5.5 %); 2 layers 1M rows, step-level lookup 4,854 (-4.4 %); 4 layers 1M, step lookup 4,623
+(-9.0 %). The step lookup gains ~1 point: under mHC most of an Engram layer's cost is its mHC
+read / write of the 4 streams, not the row exchange. (2 layers 262k rows with the step lookup ran
+at 2,217: unexplained, to be rerun.)
+
+**g1: 16k context at scale (document-masked, MoonEP, GC, prefetch 8, layout 7/7/7/6/6/6/6/3):**
+
+| arm | nodes | tok/s/GPU | TFLOP/s | mem |
+|---|---:|---:|---:|---:|
+| plain residual | 16 | 7,103 | 121.3 | 0.58 |
+| **mHC-4 (checkpoint every 2 layers)** | **32** | **5,398** | 92.2 | 0.64 |
+| mHC-4 + 2 Engram layers (1M rows, step lookup) | 32 | 5,220 | 89.3 | 0.64 |
+
+mHC-4 at 16k fits at 32 nodes (it OOMs at 8: the expert optimizer state is split over 8 instead
+of 2 expert-data-parallel replicas) and runs 6.5 % faster than at 8k mbs 1. (The 16-node mHC-4 arm
+left no log; rerun pending.)
+
+**Chunked MoonEP pipeline (MOONEP_CHUNKS):** passes the 4-GPU unit tests but hits an illegal
+address in real training (reproduced on 1 node without CUDA_LAUNCH_BLOCKING; clean with it):
+cross-stream tensor lifetimes. Forward records added (ed30ba6b0), backward records (1afbbf65e) in
+test.
+
 ## 7. Conclusions and recommended settings (2026-10-19)
 
 **> 250 TFLOP/s is not reached; ~195-203 is the practical ceiling on MN5 for Qwen3-30B-A3B with real
