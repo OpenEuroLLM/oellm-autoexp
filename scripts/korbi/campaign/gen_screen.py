@@ -818,8 +818,10 @@ def write5():
     smoke = [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})
              for n, c, kv in arms5("s1")]
     # (the 2-node s3 layout cannot share the 1-node array: checked separately)
+    smoke3 = [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})
+              for n, c, kv in arms5("s3")]
     for size, prefix, pool in [(z, "screen5", arms5(z)) for z in ("s1", "s2", "s3")] + [
-            ("s1", "screen5smoke", smoke)]:
+            ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)]:
         hidden, blocks, heads, ffn, lr = R4_SIZES[size]
         lines = [HEADER.format(
             title="Round 5: the architecture decision on the production data setting (flag, 8k)",
