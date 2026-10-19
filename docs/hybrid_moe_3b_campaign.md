@@ -1977,6 +1977,30 @@ checkpoint. Round 4 (s1 done, s2 near) and 4G finish as they started. Measured g
 residual arms 30.4k -> 42.6k tok/s/GPU with attention graphs only (the MoE-router graphs come on top);
 at A3B ~0 (GPU already 88-93 % busy).
 
+### 11.8 Round 4 learning-curve fits and health (2026-10-19; `refresh_curves.sh`, fit from 1500)
+
+`dump/campaign_3b/curves_all.md` (refreshed every 2 h for rounds 4 / 5). Per run: L = E + A (tau
++ t0)^-alpha in LR-area time, fit on the stable training loss from step 1500 (angular MuOwn,
+§9.12); health from losspred's spike / monotonicity detectors.
+
+**Smooth and healthy:** every finished round-4 run (s1 12, s2 6, 4G 2) has 0 spikes, no growth
+regime, fit RMSE 0.0056-0.0058 (log-loss; per-step logging) and a per-run backtest (fit the first
+half, predict the end) of +0.4 to +0.7 % -- the same sign for all: the curves bend down slightly
+faster than one power law (flattening -0.002 to -0.004). The 4R / 4R-x / 4R-y runs, restarted with
+graphs, fit as smoothly (RMSE ~0.002 on 10-step means) once their logs are merged (analyze.py
+MergedLog; before, the fits saw only the resumed log). Exceptions: free routed 2-of-8 diverged
+without a NaN (grad norm 1e2 -> 1e8 from step ~200, loss 5.5 -> 8.7; cancelled; the monitor now
+cancels at grad norm >= 1e4); the s2 4R-x arms show one early spike (0.035-0.039) before step 1100;
+dense mHC's NaN (round 4 s1) shows no precursor in the loss.
+
+**Extrapolations (10BT, s1 / s2):** s1: h5_moe 2.654, attn_moe 2.642, routed 2-of-4 2.639, keyed
+2-of-8 2.636, routed 3-of-8 2.628, LatentMoE (equal cost) 2.618, plain routed 2-of-8 2.669, lat2
+half 2.682; s2: h5_moe 2.530, attn_moe 2.528, mHC-2 2.509, routed 2-of-4 2.520, routed 2-of-8 2.539.
+**But the seed pair says these are not resolved:** h5_moe seed 1235 (other init AND data order)
+extrapolates to 2.617 at 10BT vs 2.654 -- a 0.037 spread (0.013 at 4BT), larger than every gap
+above. Single-run extrapolations to 10BT are not discriminative; round 5 decides on joint fits
+(shared exponent prior, joint_fit.py --alpha-prior) and on paired seeds of the deciding arms.
+
 ### 11.0 Original round-4 outline
 
 
