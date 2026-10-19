@@ -521,6 +521,37 @@ def hybrid_ladder():
     return arms
 
 
+def hybrid_balance():
+    """The hybrid's pipeline is stage-imbalanced (rank 0 computes 1.3x the last stage, which
+    waits): profiles of all four stages, and a rebalanced VPP2 layout (7/7/7/5 | 6/6/6/4 + head:
+    13 / 13 / 13 / 9 blocks + the ~4-block head per stage). Real text, 8k doc-masked, mbs 1,
+    gbs 512, MoonEP 64 SMs unless HybridEP."""
+    arms, arm = arms_builder()
+    moon = {**MOON, **MEM, "aux.array_tag": "_moonmem", B + "moe_flex_dispatcher_num_sms": 64}
+    hyb = {**RECIPE, **PROD, **REALDATA, **PRODSEQ, "aux.gbs": 512, B + "micro_batch_size": 1,
+           # the hybrid's attention / CKDA widths (the shared block is Qwen3's)
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048}
+    bal = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (7, 7, 7, 5, 6, 6, 6, 4)),
+           B + "pipeline_model_parallel_size": 4, B + "overlap_p2p_comm": True}
+    prof4 = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 8, 16, 24],
+             B + "profile_step_start": 5, B + "profile_step_end": 7, B + "train_iters": 9}
+    arm("v_plain_prof4", "hybrid plain, VPP2 7/7/7/6/7/7/6/1, profiles of all 4 stages", hyb, VPP2,
+        moon, PLAIN, prof4)
+    arm("v_plain_bal", "hybrid plain, rebalanced VPP2", hyb, bal, moon, PLAIN)
+    arm("v_plain_bal_prof4", "hybrid plain, rebalanced VPP2, profiles of all 4 stages", hyb, bal,
+        moon, PLAIN, prof4)
+    arm("v_routed_bal_hep", "hybrid routed, rebalanced VPP2, HybridEP grouped path", hyb, bal,
+        ROUTED, HEP, OPFX, MEM)
+    arm("v_routed_bal_moon", "hybrid routed, rebalanced VPP2, MoonEP", hyb, bal, ROUTED, moon)
+    arm("v_q3_prof4", "Qwen3-30B-A3B, MoonEP, profiles of all 4 stages", {**Q3VPP, **REALDATA},
+        moon, prof4)
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -807,6 +838,19 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, hybrid_ladder())
+    dump("ep_balance_mn5.yaml",
+         "Pipeline balance of the hybrid, profiles of all stages (docs/ep_fp8_speed.md, phase H).",
+         """
+aux:
+  family: ladder
+  suite: h2
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON, hybrid_balance())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
