@@ -613,6 +613,31 @@ def docmask_fix():
     return arms
 
 
+def docmask_fix2():
+    """The CKDA adapter's cu_seqlens cache is now per micro-batch (fla's varlen index preparation
+    and its host syncs ran again on every PP / VPP micro-batch switch) + FLA_TENSOR_CACHE_SIZE 64."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    hyb = {**REALDATA, **RECIPE, **PROD, **PRODSEQ, "aux.gbs": 512, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2}
+    flash = {B + "attention_backend": "flash"}
+    prof = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
+            B + "profile_step_start": 6, B + "profile_step_end": 8, B + "train_iters": 10}
+    arm("x_plain", "hybrid plain, doc-masked, cu_seqlens cache fix", {**Q3VPP}, hyb, moon, PLAIN)
+    arm("x_plain_flash", "+ FlashAttention varlen", {**Q3VPP}, hyb, moon, PLAIN, flash)
+    arm("x_plain_mbs2", "+ micro batch 2", {**Q3VPP}, hyb, moon, PLAIN, {B + "micro_batch_size": 2})
+    arm("x_plain_prof", "profile", {**Q3VPP}, hyb, moon, PLAIN, prof)
+    arm("x_routed_moon", "routed residual, MoonEP, cu_seqlens cache fix", {**Q3VPP}, hyb, moon, ROUTED)
+    arm("x_routed_hep", "routed residual, HybridEP grouped path, cu_seqlens cache fix", {**Q3VPP},
+        hyb, HEP, OPFX, MEM, fla, {"aux.array_tag": "_memfla"}, ROUTED)
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -951,6 +976,19 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, docmask_fix())
+    dump("ep_docmask2_mn5.yaml",
+         "Document masking: cu_seqlens cache fix (docs/ep_fp8_speed.md, phase H).",
+         """
+aux:
+  family: ladder
+  suite: h4
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON, docmask_fix2())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
