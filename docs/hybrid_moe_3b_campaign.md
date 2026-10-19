@@ -2015,6 +2015,46 @@ training. Fix (Megatron 0f73ea01c): Sinkhorn in log space (logsumexp), the same 
 finite gradients at any spread; it covers dense mHC, its fused coefficient path and the routed
 mixing. Validation: mHC-4 (s1, 4R) rerun fresh, routed 3-of-8 + mixing resumed from 2250.
 
+### 11.10 Round 4 final (2026-10-19): stable loss at step 4000
+
+**Measured loss at step 4000 is reproducible; the 10BT extrapolation is not.** The two seed pairs
+(other init AND data order) agree at step 4000 to 0.0003 (h5_moe 2.9002 / 2.8999) and 0.0001
+(keyed routed 3-of-8 2.8814 / 2.8813), while their 10BT extrapolations differ by 0.037 / 0.010. So
+the gaps at 4000 below are resolved; the extrapolations are only a guide (joint fits next).
+
+| s1 arm (vs h5_moe 2.900) | loss @4000 | gap |
+|---|---:|---:|
+| mHC-4 (log-space Sinkhorn, 4R) | 2.851 | -0.049 |
+| routed 3-of-8, keyed + mixing | 2.870 | -0.030 |
+| mHC-2 (4R) | 2.875 | -0.025 |
+| LatentMoE equal cost | 2.880 | -0.021 |
+| routed 3-of-8 keyed | 2.881 | -0.019 |
+| routed 3-of-8 keyed + balancing | 2.885 | -0.015 |
+| routed 2-of-8 keyed | 2.888 | -0.013 |
+| routed 2-of-8 keyed + balancing | 2.888 | -0.012 |
+| granularity x2 / x4 | 2.891 / 2.895 | -0.009 / -0.005 |
+| routed 2-of-8 plain | 2.896 | -0.004 |
+| routed 2-of-8 keyed + balancing + mixing | 2.898 | -0.002 |
+| all-attention MoE | 2.898 | -0.002 |
+
+s2 (vs h5_moe 2.787): routed 3-of-8 keyed 2.757 (-0.030), mHC-2 2.758 / 2.762 (-0.029 / -0.025),
+routed 2-of-8 keyed 2.780 (-0.007).
+
+Reading: mHC-4 is the best residual by a wide margin once Sinkhorn is fixed (§11.9). By the
+decision rule the 1 + 1-of-8 routed residual does not earn its place (-0.004 / -0.013): the
+routed variants that come close need 3 active streams + keys + mixing, losing the "cheap axis"
+premise. LatentMoE helps (-0.021), granularity alone little. All-attention = hybrid at 4k (round 5
+tests 8k doc-masked). Throughput of mHC-4 vs the routed residual at the production layout: EP agent.
+
+### 12.1 Round 5 status (2026-10-19 morning)
+
+s1: 13 arms (06:34; 3 done, 10 running). s2: 11 arms -- the first launch died at the second
+checkpoint save (host OOM: 431 of 503 GB; 16 dataloader workers x prefetch 8 per rank ~400 GB
+baseline + the host-side optimizer-state expansion of the save), resumed from step 250 with 8 workers
+/ prefetch 2. s3: 4 arms on 4 nodes / EP16 (2 nodes / EP8 OOMed at step 1); qwen35_moe smoke 9.3k
+tok/s/GPU, 75 % memory. **Production note:** 16 workers x prefetch 8 leaves little host-memory
+headroom (s1 nodes peak at ~423 GB of 503) -- check before the main runs, especially at saves.
+
 ### 11.0 Original round-4 outline
 
 
