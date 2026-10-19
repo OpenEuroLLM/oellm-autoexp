@@ -327,6 +327,23 @@ Qwen3's 6,823, yet 126 vs 195 TFLOP/s.
 8 nodes for reference: Qwen3 195.1 (gbs 1024) / 203.0 (gbs 4096); Qwen3.5-like 126.4; hybrid 2 x 8k
 94.5-96.0; routed residual (mbs 1, HybridEP) 69-73.
 
+**Context length (q9 / q9b, Qwen3-30B-A3B, 8 nodes, MoonEP 64 SMs + memory settings, real text +
+routing, full recompute; medians of steps 3-8):**
+
+| context | mbs | gbs (tokens) | TFLOP/s | tok/s/GPU |
+|---|---:|---:|---:|---:|
+| 4k (q5, reference) | 4 | 1024 (4M) | 195.1 | 6,823 |
+| 8k | 2 | 2048 (16M) | 214.9 | 6,431 |
+| 16k | 1 | 1024 (16M) | 236.2 | 5,484 |
+| 16k | 1 | 2048 (32M) | 236.1 | 5,481 |
+| **24k** | 1 | 640 (15.7M) | **252.8** | 4,791 |
+| 32k | 1 | 512 | OOM | |
+
+**> 250 model TFLOP/s is reached at 24k, but it is accounting, not speed**: the quadratic
+attention FLOPs grow with the context, tok/s falls (-30 % vs 4k). The doubled batch at 16k does not
+help (not bubble-limited). For the tok/s objective (user, 2026-10-19: optimize tok/s/GPU, not only
+TFLOP/s) short context with a large batch stays best.
+
 ## 7. Conclusions and recommended settings (2026-10-19)
 
 **> 250 TFLOP/s is not reached; ~195-203 is the practical ceiling on MN5 for Qwen3-30B-A3B with real

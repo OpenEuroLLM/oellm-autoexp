@@ -788,6 +788,53 @@ def qwen3_context():
     return arms
 
 
+def tok_speed():
+    """tok/s/GPU (user, 2026-10-19: optimize tok/s, not only TFLOP/s). exp_irene's host-side
+    settings (manual GC every 10 steps aligned across ranks, no mmap of the .bin files) on the
+    host-bound doc-masked hybrid and on Qwen3; what document masking costs inside CKDA (CKDA
+    restarts only at the 8k packs, attention keeps the document mask; benchmark only); the
+    no-masking bound at the same 16k tokens per micro-batch; Qwen3.5-like as exp_irene ran it
+    (HybridEP, forced balancing, gbs 4096: 6,971 tok/s/GPU)."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    gc = {B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False}
+    base = {**Q3VPP, **REALDATA}
+    hyb = {**RECIPE, **PROD, **PRODSEQ, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2, **PLAIN,
+           B + "seq_length": 16384, B + "max_position_embeddings": 16384,
+           B + "dataloader_document_segment_length": 8192, "aux.gbs": 256, B + "train_iters": 15}
+    q35 = {"aux.pattern": vpp_pattern("GGG*" * 10, (6, 6, 6, 3, 6, 6, 6, 1)),
+           B + "experimental_attention_variant": None, B + "linear_conv_kernel_dim": 4,
+           B + "linear_key_head_dim": 128, B + "linear_value_head_dim": 128,
+           B + "linear_num_key_heads": 16, B + "linear_num_value_heads": 32,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2, B + "kv_channels": 256,
+           B + "attention_output_gate": True, B + "rotary_base": 10000000, B + "rotary_percent": 0.25,
+           B + "layernorm_zero_centered_gamma": True, B + "num_experts": 256,
+           B + "moe_ffn_hidden_size": 512, B + "moe_router_topk": 8,
+           B + "moe_shared_expert_intermediate_size": 512, B + "moe_shared_expert_gate": True,
+           B + "moe_router_load_balancing_type": "global_aux_loss", "aux.topk": 8}
+    arm("k_hyb", "hybrid plain, doc-masked 2 x 8k packs (reference, z_plain_p2)", base, hyb, moon)
+    arm("k_hyb_gc", "+ manual GC every 10 steps, no mmap", base, hyb, moon, gc)
+    arm("k_hyb_attnmask", "document mask in attention only (CKDA restarts at the 8k packs)", base, hyb,
+        moon, {"backend.env.CKDA_BENCH_SEGMENT_ONLY": "8192"})
+    arm("k_hyb_nodoc", "no document masking, 8k mbs 2 (16k tokens per micro-batch: the bound)", base,
+        hyb, moon, {B + "dataloader_inter_document_masking": False, B + "seq_length": 8192,
+                    B + "max_position_embeddings": 8192, B + "dataloader_document_segment_length": None,
+                    B + "micro_batch_size": 2})
+    arm("k_q3_gc", "Qwen3-30B-A3B 4k mbs 4 + manual GC, no mmap (ref q5: 6,823 tok/s)", base, moon, gc,
+        {B + "train_iters": 12})
+    arm("k_q35_force", "Qwen3.5-like, HybridEP grouped, forced balancing, gbs 4096, manual GC "
+        "(exp_irene: 6,971 tok/s/GPU)", base, q35, HEP, OPFX, MEM, fla, gc,
+        {"aux.array_tag": "_memfla", B + "moe_router_force_load_balancing": True, "aux.gbs": 4096,
+         B + "train_iters": 8, "backend.env.TRITON_CACHE_DIR": "${oc.env:OUTPUT_DIR}/triton_cache"})
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -1204,6 +1251,20 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, qwen3_offload())
+    dump("ep_tokspeed_mn5.yaml",
+         "tok/s/GPU: exp_irene's host settings, the CKDA share of document masking, Qwen3.5 like-for-like "
+         "(docs/ep_fp8_speed.md, phase T).",
+         """
+aux:
+  family: tok
+  suite: k1
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:50:00"'), tok_speed())
     dump("ep_qwen3ctx_mn5.yaml",
          "Qwen3-30B-A3B TFLOP/s vs context length (docs/ep_fp8_speed.md, phase Q).",
          """
