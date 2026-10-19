@@ -5,7 +5,8 @@ Runs on the host (python3 >= 3.6, no dependencies), one instance per node, launc
 background by templates/marenostrum_watchdog.sbatch next to the training step.
 
 Every node: samples nvidia-smi (memory used / total, utilisation) every WATCHDOG_INTERVAL_S
-into <dir>/mem_<host>.csv and keeps the per-GPU peak.
+into <dir>/mem_<host>.csv and keeps the per-GPU peak; host memory (used = total - available)
+into <dir>/host_<host>.csv.
 
 Node 0 also follows the job's stdout log (Megatron's "iteration N/" lines). The job is stuck
 when no iteration appears within WATCHDOG_STARTUP_S of the start, or the iteration counter
@@ -71,6 +72,16 @@ def gpu_sample():
     return rows
 
 
+def host_sample():
+    """(used, total) host memory in MiB from /proc/meminfo (used = total - available)."""
+    try:
+        info = dict(line.split(":", 1) for line in open("/proc/meminfo"))
+        total = int(info["MemTotal"].split()[0]) // 1024
+        return total - int(info["MemAvailable"].split()[0]) // 1024, total
+    except (OSError, KeyError, ValueError):
+        return 0, 0
+
+
 def last_iteration(path, state):
     """Scan the log incrementally; return the largest iteration seen so far."""
     try:
@@ -131,6 +142,7 @@ def main():
     dry = os.environ.get("WATCHDOG_DRY_RUN", "0") == "1"
     stall_flag = os.path.join(wdir, "STALL")
     csv = open(os.path.join(wdir, "mem_%s.csv" % host), "a")
+    host_csv = open(os.path.join(wdir, "host_%s.csv" % host), "a")  # time, used MiB, total MiB
     peak = {}
     t0 = time.time()
     state = {}
@@ -145,6 +157,8 @@ def main():
             csv.write("%d,%d,%d,%d,%d\n" % (int(now), idx, used, total, util))
             peak[idx] = max(peak.get(idx, 0), used)
         csv.flush()
+        host_csv.write("%d,%d,%d\n" % ((int(now),) + host_sample()))
+        host_csv.flush()
         if os.path.exists(stall_flag) and not dumped:
             dump_stacks(os.path.join(wdir, "stacks_%s.txt" % host), pyspy)
             dumped = True

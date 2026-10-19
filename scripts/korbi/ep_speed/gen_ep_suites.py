@@ -768,6 +768,8 @@ def qwen3_offload():
     arm("o_moe_off", "recompute moe, offload the attention activations", base, off)
     arm("o_moe_off_half", "recompute moe, offload half of the attention activations", base, off,
         {B + "activation_offload_fraction": 0.5})
+    arm("o_moe_off_gbs4096", "recompute moe, offload the attention activations, gbs 4096", base, off,
+        {"aux.gbs": 4096, B + "train_iters": 8})
     return arms
 
 
