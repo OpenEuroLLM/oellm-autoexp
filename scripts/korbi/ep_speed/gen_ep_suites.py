@@ -949,6 +949,43 @@ def mhc4_memory():
     return arms
 
 
+def shared_overlap():
+    """MoonEP + moe_shared_expert_overlap (the shared expert's fc1 / fc2 on their own stream, under the
+    MoonEP dispatch / combine), on the two models with a shared expert. Correctness: same seed and
+    data order as the reference arm -> the loss curves must agree."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    gc = {B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False}
+    ovl = {B + "moe_shared_expert_overlap": True}
+    base = {**Q3VPP, **REALDATA, **gc}
+    hyb = {**RECIPE, **PROD, **PRODSEQ, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2, **PLAIN,
+           B + "seq_length": 16384, B + "max_position_embeddings": 16384,
+           B + "dataloader_document_segment_length": 8192, "aux.gbs": 256, B + "train_iters": 15}
+    q35 = {"aux.pattern": vpp_pattern("GGG*" * 10, (6, 6, 6, 3, 6, 6, 6, 1)),
+           B + "experimental_attention_variant": None, B + "linear_conv_kernel_dim": 4,
+           B + "linear_key_head_dim": 128, B + "linear_value_head_dim": 128,
+           B + "linear_num_key_heads": 16, B + "linear_num_value_heads": 32,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2, B + "kv_channels": 256,
+           B + "attention_output_gate": True, B + "rotary_base": 10000000, B + "rotary_percent": 0.25,
+           B + "layernorm_zero_centered_gamma": True, B + "num_experts": 256,
+           B + "moe_ffn_hidden_size": 512, B + "moe_router_topk": 8,
+           B + "moe_shared_expert_intermediate_size": 512, B + "moe_shared_expert_gate": True,
+           B + "moe_router_load_balancing_type": "global_aux_loss", "aux.topk": 8,
+           "aux.gbs": 2048, B + "train_iters": 10,
+           "backend.env.TRITON_CACHE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/triton_cache_ep"}
+    arm("s_hyb_ref", "hybrid plain, 2 x 8k, MoonEP, GC (reference)", base, hyb, moon)
+    arm("s_hyb_shov", "hybrid plain, 2 x 8k, MoonEP, GC + shared-expert overlap", base, hyb, moon, ovl)
+    arm("s_q35_ref", "Qwen3.5-like, 4k mbs 4, MoonEP, GC (reference)", base, q35, moon)
+    arm("s_q35_shov", "Qwen3.5-like, 4k mbs 4, MoonEP, GC + shared-expert overlap", base, q35, moon, ovl)
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -1400,6 +1437,17 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), mhc4_memory())
+    dump("ep_shov_mn5.yaml", "MoonEP + shared-expert overlap (docs/ep_fp8_speed.md, phase S).", """
+aux:
+  family: shov
+  suite: s1
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:45:00"'), shared_overlap())
     dump("ep_tokspeed_mn5.yaml",
          "tok/s/GPU: exp_irene's host settings, the CKDA share of document masking, Qwen3.5 like-for-like "
          "(docs/ep_fp8_speed.md, phase T).",
