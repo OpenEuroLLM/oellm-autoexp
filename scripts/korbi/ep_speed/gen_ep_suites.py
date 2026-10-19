@@ -487,9 +487,14 @@ def hybrid_ladder():
     arm("l1_s8k_mbs2", "Qwen3, 8k, mbs 2 (16k tokens per micro-batch, as 4k x 4)", base, s8k, nodoc,
         {B + "micro_batch_size": 2})
     arm("l2_s8k_mbs1", "Qwen3, 8k, mbs 1 (half the tokens per expert GEMM)", base, s8k, nodoc, mbs1)
-    arm("l3_doc", "+ document masking", base, s8k, doc, mbs1)
+    nofq = {B + "fused_qk_norm_rope": False}  # the fused q/k-norm + RoPE does not take packed seqs
+    arm("l3_doc", "+ document masking", base, s8k, doc, mbs1, nofq)
     arm("l4_hmoe", "+ the hybrid's MoE (160 x 768 top-5 + shared, sigmoid + expert bias)", base, s8k,
-        doc, mbs1, hmoe)
+        doc, mbs1, hmoe, nofq)
+    arm("l2_hmoe_nodoc", "Qwen3 8k mbs 1 + the hybrid's MoE, no document masking", base, s8k, nodoc,
+        mbs1, hmoe)
+    arm("l2_hattn_nodoc", "Qwen3 8k mbs 1 + the hybrid's attention, no document masking", base, s8k,
+        nodoc, mbs1, hattn)
     arm("l5_hattn", "+ the hybrid's attention (16 x 128 heads, 2 kv, gate, XSA, NoPE), all-attention",
         base, s8k, doc, mbs1, hmoe, hattn)
     arm("l6_ckda", "+ CKDA 5:1 = the production hybrid, plain residual", base, s8k, doc, mbs1, hmoe,
