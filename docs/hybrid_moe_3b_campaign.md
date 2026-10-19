@@ -2001,6 +2001,20 @@ extrapolates to 2.617 at 10BT vs 2.654 -- a 0.037 spread (0.013 at 4BT), larger 
 above. Single-run extrapolations to 10BT are not discriminative; round 5 decides on joint fits
 (shared exponent prior, joint_fit.py --alpha-prior) and on paired seeds of the deciding arms.
 
+### 11.9 The dense-mHC NaN: Sinkhorn's clamped normalizations (2026-10-19)
+
+Every NaN in rounds 4 / 4R / 4R-x went through a Sinkhorn projection -- dense mHC-4 (step ~30,
+reproducible), mHC-2 (step 1935) and the routed residual WITH mixing (step 2290) -- while no
+routed run without mixing ever did. The exp / normalize form clamped the column and row sums at
+1e-8: once the mixing logits spread beyond ~20 (the dynamic part grows), a whole column underflows
+after the max subtraction, its sum hits the clamp, the forward returns a different matrix (0.9 off
+at scale 20) and the backward of x / sum scales by ~1 / eps^2: NaN gradients with a finite loss --
+exactly the observed signature (the loss looked healthy, the grad norm was NaN). Not reproducible
+on random tokens at hidden 256 or at full s1 shapes (200 steps, AdamW): the spread needs real
+training. Fix (Megatron 0f73ea01c): Sinkhorn in log space (logsumexp), the same fixed point,
+finite gradients at any spread; it covers dense mHC, its fused coefficient path and the routed
+mixing. Validation: mHC-4 (s1, 4R) rerun fresh, routed 3-of-8 + mixing resumed from 2250.
+
 ### 11.0 Original round-4 outline
 
 
