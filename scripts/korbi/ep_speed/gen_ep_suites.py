@@ -696,6 +696,41 @@ def docmask_pack():
     return arms
 
 
+def large_scale():
+    """The best configurations on 16 nodes (64 GPUs, DP 16): Qwen3-30B-A3B, the plain doc-masked
+    production hybrid (2 x 8k packs), Qwen3.5-35B-A3B-like; MoonEP 64 SMs + memory settings, real
+    text, 256k vocabulary, full recompute, PP4 x VPP2, EP4."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    base = {**Q3VPP, **REALDATA}
+    hyb = {**RECIPE, **PROD, **PRODSEQ, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2,
+           B + "seq_length": 16384, B + "max_position_embeddings": 16384,
+           B + "dataloader_document_segment_length": 8192}
+    q35 = {"aux.pattern": vpp_pattern("GGG*" * 10, (6, 6, 6, 3, 6, 6, 6, 1)),
+           B + "experimental_attention_variant": None, B + "linear_conv_kernel_dim": 4,
+           B + "linear_key_head_dim": 128, B + "linear_value_head_dim": 128,
+           B + "linear_num_key_heads": 16, B + "linear_num_value_heads": 32,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2, B + "kv_channels": 256,
+           B + "attention_output_gate": True, B + "rotary_base": 10000000, B + "rotary_percent": 0.25,
+           B + "layernorm_zero_centered_gamma": True, B + "num_experts": 256,
+           B + "moe_ffn_hidden_size": 512, B + "moe_router_topk": 8,
+           B + "moe_shared_expert_intermediate_size": 512, B + "moe_shared_expert_gate": True,
+           B + "moe_router_load_balancing_type": "global_aux_loss", "aux.topk": 8}
+    arm("f_q3_gbs1024", "Qwen3-30B-A3B, 16 nodes, gbs 1024 (4M tokens)", base, moon)
+    arm("f_q3_gbs2048", "Qwen3-30B-A3B, 16 nodes, gbs 2048 (8M tokens)", base, moon, {"aux.gbs": 2048})
+    arm("f_hyb_p2", "production hybrid (plain), doc-masked 2 x 8k packs, 16 nodes, gbs 512 (8M)",
+        base, hyb, moon, PLAIN, {"aux.gbs": 512})
+    arm("f_q35", "Qwen3.5-35B-A3B-like, native GDN, 16 nodes, gbs 2048 (8M)", base, q35, moon,
+        {"aux.gbs": 2048})
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -1073,6 +1108,19 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, docmask_pack())
+    dump("ep_large_mn5.yaml",
+         "The best configurations on 16 nodes (docs/ep_fp8_speed.md, phase L).",
+         """
+aux:
+  family: large
+  suite: l1
+  pattern: "*E"
+  nodes: 16
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:45:00"'), large_scale())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
