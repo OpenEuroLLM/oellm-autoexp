@@ -978,11 +978,12 @@ def shared_overlap():
            B + "moe_shared_expert_intermediate_size": 512, B + "moe_shared_expert_gate": True,
            B + "moe_router_load_balancing_type": "global_aux_loss", "aux.topk": 8,
            "aux.gbs": 2048, B + "train_iters": 10,
-           "backend.env.TRITON_CACHE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/triton_cache_ep"}
+           "backend.env.TRITON_CACHE_DIR": "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/triton_cache_ep",
+           "aux.array_tag": "_moonmemfla_q35"}
     arm("s_hyb_ref", "hybrid plain, 2 x 8k, MoonEP, GC (reference)", base, hyb, moon)
     arm("s_hyb_shov", "hybrid plain, 2 x 8k, MoonEP, GC + shared-expert overlap", base, hyb, moon, ovl)
-    arm("s_q35_ref", "Qwen3.5-like, 4k mbs 4, MoonEP, GC (reference)", base, q35, moon)
-    arm("s_q35_shov", "Qwen3.5-like, 4k mbs 4, MoonEP, GC + shared-expert overlap", base, q35, moon, ovl)
+    arm("s_q35_ref", "Qwen3.5-like, 4k mbs 4, MoonEP, GC (reference)", base, moon, q35)
+    arm("s_q35_shov", "Qwen3.5-like, 4k mbs 4, MoonEP, GC + shared-expert overlap", base, moon, q35, ovl)
     return arms
 
 

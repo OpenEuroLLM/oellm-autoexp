@@ -216,6 +216,15 @@ sweep:
           backend.megatron.manual_gc: true
           backend.megatron.manual_gc_interval: 10
           backend.megatron.mmap_bin_files: false
+          backend.megatron.moe_token_dispatcher_type: flex
+          backend.megatron.moe_flex_dispatcher_backend: moonep
+          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
+          aux.array_tag: _moonmemfla_q35
+          slurm.env.NCCL_MIN_NCHANNELS: '4'
+          slurm.env.NCCL_NCHANNELS_PER_PEER: '4'
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+          backend.env.FLA_TENSOR_CACHE_SIZE: '64'
+          backend.megatron.moe_flex_dispatcher_num_sms: 64
           backend.megatron.experimental_attention_variant: null
           backend.megatron.linear_conv_kernel_dim: 4
           backend.megatron.linear_key_head_dim: 128
@@ -239,15 +248,6 @@ sweep:
           aux.gbs: 2048
           backend.megatron.train_iters: 10
           backend.env.TRITON_CACHE_DIR: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/triton_cache_ep
-          backend.megatron.moe_token_dispatcher_type: flex
-          backend.megatron.moe_flex_dispatcher_backend: moonep
-          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
-          aux.array_tag: _moonmemfla
-          slurm.env.NCCL_MIN_NCHANNELS: '4'
-          slurm.env.NCCL_NCHANNELS_PER_PEER: '4'
-          backend.env.PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
-          backend.env.FLA_TENSOR_CACHE_SIZE: '64'
-          backend.megatron.moe_flex_dispatcher_num_sms: 64
         # Qwen3.5-like, 4k mbs 4, MoonEP, GC + shared-expert overlap
         - aux.arm: s_q35_shov
           aux.pattern: GEGEGE*EGEGE|GE*EGEGEGE*E|GEGEGE*EGEGE|GE*EGE|GEGE*EGEGEGE|*EGEGEGE*EGE|GEGE*EGEGEGE|*E
@@ -266,6 +266,15 @@ sweep:
           backend.megatron.manual_gc: true
           backend.megatron.manual_gc_interval: 10
           backend.megatron.mmap_bin_files: false
+          backend.megatron.moe_token_dispatcher_type: flex
+          backend.megatron.moe_flex_dispatcher_backend: moonep
+          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
+          aux.array_tag: _moonmemfla_q35
+          slurm.env.NCCL_MIN_NCHANNELS: '4'
+          slurm.env.NCCL_NCHANNELS_PER_PEER: '4'
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+          backend.env.FLA_TENSOR_CACHE_SIZE: '64'
+          backend.megatron.moe_flex_dispatcher_num_sms: 64
           backend.megatron.experimental_attention_variant: null
           backend.megatron.linear_conv_kernel_dim: 4
           backend.megatron.linear_key_head_dim: 128
@@ -289,13 +298,4 @@ sweep:
           aux.gbs: 2048
           backend.megatron.train_iters: 10
           backend.env.TRITON_CACHE_DIR: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/triton_cache_ep
-          backend.megatron.moe_token_dispatcher_type: flex
-          backend.megatron.moe_flex_dispatcher_backend: moonep
-          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
-          aux.array_tag: _moonmemfla
-          slurm.env.NCCL_MIN_NCHANNELS: '4'
-          slurm.env.NCCL_NCHANNELS_PER_PEER: '4'
-          backend.env.PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
-          backend.env.FLA_TENSOR_CACHE_SIZE: '64'
-          backend.megatron.moe_flex_dispatcher_num_sms: 64
           backend.megatron.moe_shared_expert_overlap: true
