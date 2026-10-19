@@ -1022,6 +1022,82 @@ def pipe_balance():
     return arms
 
 
+def moon_chunks():
+    """MoonEP chunked pipeline (MOONEP_CHUNKS): a chunk's dispatch / combine on a communication stream
+    under another chunk's expert GEMMs (exposed MoonEP comm: ~16 % of Qwen3's step, ~10 % of the
+    hybrid's). Qwen3-30B-A3B and the production hybrid with mHC-4 (the model's residual from now
+    on: user 2026-10-19), with GC, prefetch 8 and the rebalanced layout."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    ch = lambda n, sms=64: {"backend.env.MOONEP_CHUNKS": str(n), "aux.array_tag": "_moonch%d_%d" % (n, sms),  # noqa: E731
+                            B + "moe_flex_dispatcher_num_sms": sms}
+    gc = {B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False,
+          B + "dataloader_prefetch_factor": 8}
+    ovl = {B + "moe_shared_expert_overlap": True}
+    base = {**Q3VPP, **REALDATA, **gc}
+    hyb = {**RECIPE, **PROD, **PRODSEQ, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2, "aux.gbs": 512,
+           B + "train_iters": 15,
+           "aux.pattern": vpp_pattern("LLLLL*" * 8, (7, 7, 7, 6, 6, 6, 6, 3)),
+           B + "mhc": True, B + "mhc_expansion_rate": 4, B + "mhc_routed_topk": 0,
+           B + "mhc_routed_reversible": False, B + "recompute_num_layers": 2}
+    q3 = {B + "train_iters": 12}
+    arm("c_q3_ch1", "Qwen3-30B-A3B 4k mbs 4, MoonEP (reference)", base, moon, q3)
+    arm("c_q3_ch2", "Qwen3-30B-A3B, 2 chunks", base, moon, q3, ch(2))
+    arm("c_q3_ch4", "Qwen3-30B-A3B, 4 chunks", base, moon, q3, ch(4))
+    arm("c_q3_ch2_sm32", "Qwen3-30B-A3B, 2 chunks, 32 comm SMs", base, moon, q3, ch(2, 32))
+    arm("c_mhc4_ch1", "hybrid + mHC-4, 8k mbs 1, MoonEP (reference)", base, hyb, moon)
+    arm("c_mhc4_ch1_ovl", "hybrid + mHC-4, shared-expert overlap", base, hyb, moon, ovl)
+    arm("c_mhc4_ch2", "hybrid + mHC-4, 2 chunks", base, hyb, moon, ch(2))
+    arm("c_mhc4_ch2_ovl", "hybrid + mHC-4, 2 chunks + the shared expert under the first dispatch", base,
+        hyb, moon, ch(2), ovl)
+    return arms
+
+
+def mhc4_memory2():
+    """Spend mHC-4's memory headroom (t1: stage 0 peaks at ~36 of 63 GiB allocated at 8k mbs 1 with
+    a checkpoint every 2 layers): recompute fewer layers (block recompute: N layers of each chunk
+    recomputed, the rest keep their activations -- saves their extra forward), or more tokens per
+    micro-batch; and the production optimizer (angular MuOwn: one momentum buffer instead of Adam's
+    two, plus its Newton-Schulz step)."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    gc = {B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False,
+          B + "dataloader_prefetch_factor": 8}
+    base = {**Q3VPP, **REALDATA, **gc}
+    hyb = {**RECIPE, **PROD, **PRODSEQ, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2, "aux.gbs": 512,
+           B + "train_iters": 15,
+           "aux.pattern": vpp_pattern("LLLLL*" * 8, (7, 7, 7, 6, 6, 6, 6, 3)),
+           B + "mhc": True, B + "mhc_expansion_rate": 4, B + "mhc_routed_topk": 0,
+           B + "mhc_routed_reversible": False}
+    p2 = {B + "seq_length": 16384, B + "max_position_embeddings": 16384,
+          B + "dataloader_document_segment_length": 8192, "aux.gbs": 256}
+    rn = lambda n: {B + "recompute_method": "uniform", B + "recompute_num_layers": n}  # noqa: E731
+    blk = lambda n: {B + "recompute_method": "block", B + "recompute_num_layers": n}  # noqa: E731
+    muown = {B + "optimizer": "angular_muown", B + "lr": 4e-3, B + "min_lr": 4e-3,
+             B + "residual_mixer_lr_mult": 0.25}
+    arm("d_r2", "mHC-4, 8k mbs 1, checkpoint every 2 layers (reference, t1)", base, hyb, moon, rn(2))
+    arm("d_blk6", "block recompute: 6 layers of each chunk recomputed (1 of 7 kept)", base, hyb, moon,
+        blk(6))
+    arm("d_blk5", "block recompute: 5 of each chunk recomputed (2 of 7 kept)", base, hyb, moon, blk(5))
+    arm("d_p2_r2", "2 x 8k packs, checkpoint every 2 layers", base, hyb, moon, p2, rn(2))
+    arm("d_p2_r1", "2 x 8k packs, checkpoint every layer", base, hyb, moon, p2, rn(1))
+    arm("d_r2_muown", "angular MuOwn (production optimizer), checkpoint every 2 layers", base, hyb,
+        moon, rn(2), muown)
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -1495,6 +1571,28 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), pipe_balance())
+    dump("ep_moonch_mn5.yaml", "MoonEP chunked pipeline (docs/ep_fp8_speed.md, phase C).", """
+aux:
+  family: moonch
+  suite: c1
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), moon_chunks())
+    dump("ep_mhc4mem2_mn5.yaml", "mHC-4: spend the memory headroom (docs/ep_fp8_speed.md, phase M).", """
+aux:
+  family: mhc
+  suite: d1
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), mhc4_memory2())
     dump("ep_tokspeed_mn5.yaml",
          "tok/s/GPU: exp_irene's host settings, the CKDA share of document masking, Qwen3.5 like-for-like "
          "(docs/ep_fp8_speed.md, phase T).",
