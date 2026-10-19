@@ -291,6 +291,28 @@ micro batch 8 OOMs with the 262k head.
 forced 206.0 (vs HybridEP forced 214.5: overhead now ~4 %). HybridEP comm SMs 16 / 48: 169.9 /
 170.0 (no effect).
 
+**Document-masking fixes (h3b-h6), production hybrid plain residual, 8 nodes, real text, MoonEP:**
+
+| setup | TFLOP/s | tok/s/GPU |
+|---|---:|---:|
+| 8k doc-masked, mbs 1 (l6) | 77.3 | 4,551 |
+| + CKDA per-micro-batch cu_seqlens cache | 79.4 | 4,680 |
+| + no Mamba-only total_tokens / seq_idx (two syncs per micro-batch and stage) | 83.5 | 4,910 |
+| **+ 2 x 8k per micro-batch (`--dataloader-document-segment-length 8192`, seq 16k, gbs 256)** | **96.0** | **5,650** |
+| 4 x 8k per micro-batch | OOM | |
+| no document masking at all (the bound) | 110.2 | 6,288 |
+| routed residual, HybridEP, mbs 1, fixes | 69.2 | 4,080 |
+| routed residual + MoonEP, 2 x 8k | OOM | |
+
+FlashAttention varlen (`attention_backend: flash`) hangs on packed batches (no iteration in 10 min).
+
+**FLOP accounting across architectures:** Megatron counts the GDN / KDA delta rule in its recurrent
+form (`heads x d^2 x 4` FMAs per token) -- the model-FLOP convention -- so a linear-attention layer
+counts a few MFLOP per token where softmax attention at 4k counts ~67. Counted GFLOP per token:
+Qwen3-30B-A3B 28.6, Qwen3.5-35B-A3B-like 19.5, the production hybrid 17.0. At equal tok/s the
+hybrids therefore report 0.6-0.7x the TFLOP/s: Qwen3.5-like runs at 6,486 tok/s/GPU = 95 % of
+Qwen3's 6,823, yet 126 vs 195 TFLOP/s.
+
 ## 6. Conclusions so far (2026-10-19)
 
 **Standard attention + MoE (Qwen3-30B-A3B, 8 nodes, real text, 256k vocab, real routing): 195-203
