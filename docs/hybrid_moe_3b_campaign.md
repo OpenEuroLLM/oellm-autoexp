@@ -2197,3 +2197,31 @@ it wins.
 **Arm** `screen5_s1/h5_moe_ldm`: h5_moe + LDM with the paper's setting (G 16, K 8, address
 width 32, λ₀ 0.99, α 1; all LDM parameters on Adam at 0.25 × 4e-3 = the paper's 1e-3), no
 CUDA graphs (as h5_moe_attnres); paired with round 5's h5_moe / h5_moe_mhc4 / h5_moe_attnres.
+
+### 12.4 LDM and AttnRes with kernels and CUDA graphs (user 2026-10-19)
+
+Both depth schemes kept their state on the layers (a Python object a CUDA graph cannot see) and so
+ran without graphs. Now both have a **stream form**: the state travels as `hidden_states`
+`[s, b, slots, h]` through the mHC plumbing (TransformerLayer read / write, the Mamba / Engram
+adapter, the MoE partial-graph path), so per-layer graphs and the MoE router graphs capture them.
+
+- **Block AttnRes** (`attn_res_impl: streams`, Megatron a6c61a449 / bd1d165d3): slot 0 the
+  embedding, slot 1 + j block j; the block being filled sits in the next free slot (sealing moves
+  nothing), every sublayer reads a static slice (its source count) through the compiled
+  aggregation and its write replaces one slot. = the state form (outputs and gradients, 2 / 3
+  blocks), graph replay = eager bit for bit, and -- new -- full activation recompute works.
+- **LDM** (`depth_memory_impl: torch | cute`, Megatron d6e2a9544 / 8ad746dc4): the state (M, P)
+  lives in a static workspace allocated once per token count (a graph bakes its addresses); every
+  write site runs the paper's fused step (write its output, then read with the next site's query)
+  at a fixed step index, and owns that next query network (so a layer's graph touches only its
+  own parameters); the residual travels as `[x, r_next]`. The backward unwinds M from per-step
+  tapes (no per-layer state kept: ≈ 70 MB per sublayer at s1 instead of ≈ 200). `torch`: our
+  PyTorch unwinding (the oracle; = the reference implementation in outputs and every gradient).
+  `cute`: the paper's CuTe DSL kernels (forward, window-end and interior backward, E = 4 windows;
+  vendored MIT into cute_kernels `cute_ldm` ac737f9 with a static workspace in place of their
+  per-forward SegmentState; untuned shapes run the default schedule), = the torch oracle on H100
+  (reads and all input gradients, 1-11 steps, D 48 / 64 / 128, fp32 / bf16 covariance), graph
+  replay = eager bit for bit. Limits: pipeline parallelism 1, no full activation recompute yet (a
+  recomputed step would rewrite the workspace; a read-only recompute from the tapes is the fix).
+
+Speed in round 5's setting: suite `speed5res_s1` (100 steps per arm).
