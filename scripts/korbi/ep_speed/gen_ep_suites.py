@@ -728,6 +728,10 @@ def large_scale():
         base, hyb, moon, PLAIN, {"aux.gbs": 512})
     arm("f_q35", "Qwen3.5-35B-A3B-like, native GDN, 16 nodes, gbs 2048 (8M)", base, q35, moon,
         {"aux.gbs": 2048})
+    arm("f_hyb_p2_gbs1024", "production hybrid (plain), 2 x 8k packs, 16 nodes, gbs 1024 (16M)",
+        base, hyb, moon, PLAIN, {"aux.gbs": 1024, B + "train_iters": 10})
+    arm("f_q35_gbs4096", "Qwen3.5-35B-A3B-like, 16 nodes, gbs 4096 (16M)", base, q35, moon,
+        {"aux.gbs": 4096, B + "train_iters": 8})
     return arms
 
 
