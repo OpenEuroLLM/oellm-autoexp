@@ -1231,6 +1231,37 @@ def moon_chunks2():
     return arms
 
 
+def ckpt_offload():
+    """RECOMPUTE_OFFLOAD=1 (megatron/core/tensor_parallel/checkpoint_offload.py): the recompute
+    chunks' inputs -- with mHC-4 the 4-wide stream state, 8.4 of the 11.9 GiB of activations on
+    the first stage at 8k (MEM_TRACE_DIR) -- in pinned host memory. Does it cost tok/s at 8k, and
+    does mHC-4 at 16k tokens per micro-batch then fit on 8 nodes (OOM without)."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    gc = {B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False,
+          B + "dataloader_prefetch_factor": 8}
+    base = {**Q3VPP, **REALDATA, **gc}
+    pat = vpp_pattern("LLLLL*" * 8, (7, 7, 7, 6, 6, 6, 6, 3))
+    hyb = {**RECIPE, **PROD, **PRODSEQ, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2, "aux.gbs": 512,
+           B + "train_iters": 15, "aux.pattern": pat,
+           B + "mhc": True, B + "mhc_expansion_rate": 4, B + "mhc_routed_topk": 0,
+           B + "mhc_routed_reversible": False, B + "recompute_num_layers": 2}
+    off = {"backend.env.RECOMPUTE_OFFLOAD": "1", "aux.array_tag": "_moonoff"}
+    ctx16 = {B + "seq_length": 16384, B + "max_position_embeddings": 16384, "aux.gbs": 256}
+    arm("o_mhc4_8k", "mHC-4, 8k mbs 1 (reference)", base, hyb, moon)
+    arm("o_mhc4_8k_off", "mHC-4, 8k mbs 1, checkpoint inputs on the host", base, hyb, moon, off)
+    arm("o_mhc4_16k_off", "mHC-4, 16k, checkpoint inputs on the host", base, hyb, moon, off, ctx16)
+    arm("o_mhc4_16k_off_r1", "mHC-4, 16k, host checkpoints, one layer per recompute chunk", base, hyb,
+        moon, off, ctx16, {B + "recompute_num_layers": 1})
+    return arms
+
+
 def ctx16k_scale():
     """16k context everywhere (user 2026-10-19). mHC-4 at 16k tokens per micro-batch OOMs on 8
     nodes (expert optimizer state over 2 expert-data-parallel replicas); with more nodes the
@@ -1795,6 +1826,17 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), engram_cost2())
+    dump("ep_ckptoff_mn5.yaml", "Recompute checkpoint inputs on the host (docs/ep_fp8_speed.md).", """
+aux:
+  family: ckptoff
+  suite: o1
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 512
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), ckpt_offload())
     dump("ep_ctx16k_mn5.yaml", "16k context at 16 / 32 nodes: mHC-4 and Engram memory (docs/ep_fp8_speed.md).", """
 aux:
   family: ctx16k
