@@ -896,9 +896,11 @@ def speed5_profiled(size: str = "s1"):
     with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
     steps were too short -- plain, mHC-4 and AttnRes all ran at ~32k tok/s/GPU there."""
     keep = ("h5_moe", "h5_moe_mhc4", "h5_moe_attnres_streams", "h5_moe_ldm_cute", "h5_moe_ldm_torch")
+    # no evaluation (its forward-only micro-batches entered one profile window), window 250-253
     prof = {B + "exit_interval": 300, "job.est_steps": 300, B + "profile": True,
-            B + "use_pytorch_profiler": True, B + "profile_step_start": 200,
-            B + "profile_step_end": 203, B + "profile_ranks": [0]}
+            B + "use_pytorch_profiler": True, B + "profile_step_start": 250,
+            B + "profile_step_end": 253, B + "profile_ranks": [0],
+            B + "eval_interval": 100000, B + "eval_iters": 0}
     return [(n, c, {**kv, **prof}) for n, c, kv in speed5_residuals(size) if n in keep]
 
 

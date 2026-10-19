@@ -113,9 +113,11 @@ sweep:
           backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
           backend.megatron.profile: true
           backend.megatron.use_pytorch_profiler: true
-          backend.megatron.profile_step_start: 200
-          backend.megatron.profile_step_end: 203
+          backend.megatron.profile_step_start: 250
+          backend.megatron.profile_step_end: 253
           backend.megatron.profile_ranks: [0]
+          backend.megatron.eval_interval: 100000
+          backend.megatron.eval_iters: 0
         # mHC-4 (router graphs)
         - aux.arm: h5_moe_mhc4
           backend.megatron.num_attention_heads: 6
@@ -181,9 +183,11 @@ sweep:
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.profile: true
           backend.megatron.use_pytorch_profiler: true
-          backend.megatron.profile_step_start: 200
-          backend.megatron.profile_step_end: 203
+          backend.megatron.profile_step_start: 250
+          backend.megatron.profile_step_end: 253
           backend.megatron.profile_ranks: [0]
+          backend.megatron.eval_interval: 100000
+          backend.megatron.eval_iters: 0
         # AttnRes, stream form (router graphs)
         - aux.arm: h5_moe_attnres_streams
           backend.megatron.num_attention_heads: 6
@@ -249,9 +253,11 @@ sweep:
           backend.megatron.attn_res_impl: streams
           backend.megatron.profile: true
           backend.megatron.use_pytorch_profiler: true
-          backend.megatron.profile_step_start: 200
-          backend.megatron.profile_step_end: 203
+          backend.megatron.profile_step_start: 250
+          backend.megatron.profile_step_end: 253
           backend.megatron.profile_ranks: [0]
+          backend.megatron.eval_interval: 100000
+          backend.megatron.eval_iters: 0
         # LDM stream form, torch unwinding (router graphs)
         - aux.arm: h5_moe_ldm_torch
           backend.megatron.num_attention_heads: 6
@@ -320,9 +326,11 @@ sweep:
           backend.megatron.depth_memory_impl: torch
           backend.megatron.profile: true
           backend.megatron.use_pytorch_profiler: true
-          backend.megatron.profile_step_start: 200
-          backend.megatron.profile_step_end: 203
+          backend.megatron.profile_step_start: 250
+          backend.megatron.profile_step_end: 253
           backend.megatron.profile_ranks: [0]
+          backend.megatron.eval_interval: 100000
+          backend.megatron.eval_iters: 0
         # LDM stream form, the paper's CuTe kernels (router graphs)
         - aux.arm: h5_moe_ldm_cute
           backend.megatron.num_attention_heads: 6
@@ -391,6 +399,8 @@ sweep:
           backend.megatron.depth_memory_impl: cute
           backend.megatron.profile: true
           backend.megatron.use_pytorch_profiler: true
-          backend.megatron.profile_step_start: 200
-          backend.megatron.profile_step_end: 203
+          backend.megatron.profile_step_start: 250
+          backend.megatron.profile_step_end: 253
           backend.megatron.profile_ranks: [0]
+          backend.megatron.eval_interval: 100000
+          backend.megatron.eval_iters: 0
