@@ -460,6 +460,43 @@ chunk (x2 / x4 traffic, x2 under recompute too), the grouped GEMMs get half the 
 pools cost memory. Keep MOONEP_CHUNKS=1; a chunked path would need one shared plan / prefetch for
 all chunks (only the token movement chunked), which MoonEP's Buffer does not offer.
 
+## 6d. mHC-4 memory: recompute checkpoints on the host (2026-10-20)
+
+User priority: memory first, pipeline parallelism must stay usable.
+
+**Where the time goes** (`bench_mhc_fuse.py`, 1 H100 64 GB, copy bandwidth 1,453 GB/s, 4 x 2048
+streams, 8k tokens): coefficients + read fwd 0.42 ms (28 % of the HBM bound), its backward
+1.22 ms (17 %), write fwd 0.25 ms (83 %), write bwd 0.70 ms (47 %); sublayer 2.61 ms (33 %). The
+speed lever is the coefficients + read backward (a per-sublayer kernel, nothing crosses layers).
+For comparison: DeepSeek's TileKernels do not fuse write and next read in the forward either
+(projection GEMM, then one coefficients + Sinkhorn + read kernel, write separate); their
+cross-layer kernel is `mhc_multilayer_recompute` -- streams rebuilt from C-wide layer outputs and
+mixes in the backward, a memory measure.
+
+**Where the memory goes** (`MEM_TRACE_DIR` hook in train_step, any pipeline stage;
+`mem_peak.py`; 8 nodes, 8k, PP4 x VPP2, recompute 2 layers / chunk): first stage peaks at
+45.2 GiB allocated -- 33.6 GiB static (parameters, grads, optimizer, MoonEP pools) + 11.9 GiB
+activations, of which 8.4 GiB are 67 checkpointed 4-wide stream states (128 MB each), 1.0 GiB the
+embedding expanded to streams, 0.6 GiB pipeline receive buffers. Last stage: 33.5 GiB.
+
+**RECOMPUTE_OFFLOAD=1** (`megatron/core/tensor_parallel/checkpoint_offload.py`): a recompute
+chunk's input goes to pinned host memory (side stream) once the next chunk of the same model
+chunk / micro-batch is checkpointed; in the backward it is copied back one chunk ahead. The last
+chunk of each sequence and leaf inputs (receive buffers, held by the schedule anyway) stay.
+Per-stage only: the pipeline schedule and its p2p tensors are untouched. Unit test: bit-identical
+gradients, the GPU copies freed (a fetched copy must get requires_grad back -- without it the
+gradient to the earlier chunks is cut silently).
+
+| 8 nodes, mHC-4 (o1 / o1b) | tok/s/GPU | TFLOP/s |
+|---|---:|---:|
+| 8k mbs 1, reference | 5,084 | 86.3 |
+| 8k + offload | 5,014 (-1.4 %) | 85.3 |
+| **16k + offload** (OOM without on 8 nodes) | **5,408 (+6.4 %)** | 92.5 |
+| 16k + offload, 1 layer / recompute chunk | 5,383 | 92.1 |
+
+16k with offload on 8 nodes matches 16k on 32 nodes without (5,398). Losses: identical to the
+reference through step 2, then run-to-run noise (same spread as two reference runs).
+
 ## 7. Conclusions and recommended settings (2026-10-19)
 
 **> 250 TFLOP/s is not reached; ~195-203 is the practical ceiling on MN5 for Qwen3-30B-A3B with real
