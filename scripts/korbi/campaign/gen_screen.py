@@ -916,8 +916,11 @@ def arms5ldm(size: str = "s1"):
            B + "depth_memory_key_dim": 8, B + "depth_memory_hidden_dim": 32}
     out = []
     for mult, tag in ((0.125, "0125"), (0.25, "025"), (0.5, "05"), (1.0, "1")):
+        # 8 data workers x prefetch 4 (FLAG8K's 4 x 2 capped s1 at ~23.8k tok/s/GPU for every arm;
+        # 16 x 8 OOM-killed s2 nodes at saves): restarted with it from the step-~500 checkpoints
         out.append((f"h5_moe_ldmc_lr{tag}", f"LDM (CuTe, router graphs), its lr x{mult} of 4e-3",
-                    {**h5, **ldm, B + "residual_mixer_lr_mult": mult}))
+                    {**h5, **ldm, B + "residual_mixer_lr_mult": mult, B + "num_workers": 8,
+                     B + "dataloader_prefetch_factor": 4}))
     return out
 
 
