@@ -904,6 +904,10 @@ def ep_profile():
            B + "dataloader_document_segment_length": 8192, "aux.gbs": 256}
     arm("p_q3_moon", "Qwen3-30B-A3B 4k mbs 4, MoonEP, profiled", base, moon, prof)
     arm("p_hyb_moon", "hybrid plain, 2 x 8k, MoonEP, profiled", base, hyb, moon, prof)
+    # p2: every pipeline stage (first rank of each: PP is the outermost rank dimension), with GC
+    gc = {B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False}
+    arm("p_hyb_gc_stages", "hybrid plain, 2 x 8k, MoonEP, GC, profiled on all 4 stages", base, hyb,
+        moon, prof, gc, {B + "profile_ranks": [0, 8, 16, 24]})
     return arms
 
 
