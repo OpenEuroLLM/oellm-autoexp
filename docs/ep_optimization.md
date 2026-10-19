@@ -89,3 +89,101 @@ streams) if cheap. Note: sending only the changed rows across a boundary would s
 1 + 1 of 8 per sublayer, (6/7)^24 = 2.5 % of the non-main rows survive a PP4 stage untouched (16 %
 per VPP2 chunk) -- so if (a) dominates, the levers would be lower precision for the 7 non-main
 streams at the boundary, NVLink-local stage placement, or 1 + 1 of 4.
+
+**[EP agent, 2026-10-19 02:00]** Will do the split. Rank-0 profiles of routed vs plain at the
+production layout (real text, 8k doc-masked, VPP2, memory settings) are queued (b5:
+u_hep_prof / u_moon_prof); I'll add plain and mHC-4 profiles at the same layout and report (a)
+exposed PP p2p (SendRecv kernel time not overlapped with compute), (b) the routed read / write /
+router kernels, (c) memory (peak, micro-batches in flight) here. In flight as well (user request):
+a ladder from Qwen3-30B-A3B (195 TFLOP/s) to the production hybrid, one change per rung (8k,
+mbs 1, document masking, the hybrid MoE, the hybrid attention, CKDA 5:1, gbs 128 vs 512), and a
+Qwen3.5-35B-A3B-like hybrid (GDN 3:1).
+
+**[EP agent, 2026-10-19 02:45] Hybrid vs Qwen3 gap, first answer** (ladder, 8 nodes, real text,
+MoonEP, VPP2): Qwen3 8k mbs 1 196 TFLOP/s / 5,867 tok/s -> + doc masking + hybrid MoE + hybrid
+attention (all-attention) 87 / 4,898 -> + CKDA 5:1 77 / 4,551. CKDA itself costs ~7 % tok/s; the
+TFLOP/s halving is mostly fewer counted FLOPs per token (top-5+1 vs top-8, 16 vs 32 heads, masked
+attention), the real speed gap is ~20 % in tok/s. Exposed-time breakdown (routed hybrid, VPP2):
+stage 0 compute-busy 55 % (Qwen3: 76 %), exposed PP p2p 20 % (last stage 40 %), host-idle 16 %:
+the pipeline is stage-imbalanced (head + Liger CE ~ 4 blocks, not 10) -> rebalanced layout
+7/7/7/5 | 6/6/6/4 + head in test. Routed vs plain profiles (your a/b/c split) done next.
+
+**[EP agent, 2026-10-19 03:00] Routed residual cost split (your a/b/c)** -- production hybrid, real
+text 8k doc-masked, VPP2 7/7/7/6/7/7/6/1, PP4 x EP4 HybridEP, memory settings, stage-0 rank,
+per step (`scripts/korbi/ep_speed/trace_breakdown.py`):
+
+| | routed 2 of 8 | plain | delta |
+|---|---:|---:|---:|
+| step | 3,975 ms | 3,415 ms | +560 ms (+16 %) |
+| (a) exposed PP p2p (SendRecv, no compute running) | 846 ms | 385 ms | **+461 ms (82 % of the delta)** |
+| (b) compute busy (all compute kernels) | 2,061 ms | 1,991 ms | +70 ms (routed read/write/router kernels ~181 ms) |
+| (c) memory peak; host-idle | 65 %; 710 ms | 53 %; 638 ms | +12 pts; +72 ms |
+
+mHC-4 (4 dense streams) OOMs at this layout (VPP2, mbs 1, 8k). So (a) dominates: the levers are
+the boundary payload (bf16 -> fp8 for the 7 non-main streams would halve it; 1 + 1 of 4 halves it
+too) or fewer PP boundaries. Separately, both variants are host-idle ~19 % of the step at stage 0
+(Qwen3: 2 %) -- investigating that next, it is the larger lever for every hybrid.
+
+**[EP agent, 2026-10-19 05:30] Document masking is the main hybrid cost (not CKDA).** Single-feature
+rungs on Qwen3-30B-A3B (8 nodes, 8k, mbs 1): reference 5,867 tok/s/GPU; + hybrid MoE 6,210; + hybrid
+attention 6,653; **+ document masking 4,242 (-28 %)**. The doc-masked hybrid is kernel-launch /
+host-bound (20 us-0.5 ms GPU gaps: 14 % of the step vs 0.9 % for Qwen3). Two host-sync fixes in
+Megatron branch `ep-fp8-speed` (math unchanged), worth taking for round 5 once measured (h5, queued):
+(1) `pretrain_hybrid.py`: `PackedSeqParams.total_tokens` (Mamba-only) cost two device syncs per
+micro-batch on every stage (`.item()` + the `seq_idx` repeat_interleave) -> only set with Mamba
+layers; (2) `complex_kda.py`: the cu_seqlens conversion cache held one micro-batch, so under PP /
+VPP interleaving fla re-ran its varlen index preparation (host syncs) in every CKDA call -> cache
+per micro-batch (+ env `FLA_TENSOR_CACHE_SIZE=64`). Also testing FlashAttention varlen
+(`attention_backend: flash`) vs cuDNN for the packed attention. Qwen3.5-35B-A3B-like (native GDN 3:1,
+MoonEP, 4k mbs 4, 8 nodes): 126.7 TFLOP/s first number.
+
+**[EP agent, 2026-10-19 08:00] Measured (8 nodes, real text, 8k doc-masked, VPP2, MoonEP 64 SMs, plain
+residual, gbs 512 = 4M tokens):** no fixes 77.3 TFLOP/s / 4,551 tok/s/GPU; + CKDA cu_seqlens cache
+79.4 / 4,680; + the packed-path sync fix 83.2 / 4,896 (+7.6 %). Same model without document masking:
+110.2 / 6,288 -- masking still costs ~22 %, mostly because packed sequences force micro batch 1
+(2x the micro-batches: host + p2p overhead, half-size expert GEMMs). In test (h6): **k x 8k packs per
+micro-batch with a document boundary every 8,192 tokens** (new `--dataloader-document-segment-length
+8192`, Megatron `ep-fp8-speed`): exactly k contiguous 8k samples per micro-batch (same context
+length, NoPE / per-document positions), half / a quarter of the micro-batches. FlashAttention varlen
+(`attention_backend: flash`) hangs on packed batches in this image: keep cuDNN. Qwen3.5-35B-A3B-like
+(4k, mbs 4, no masking): HybridEP 112.4, MoonEP 126.4, HybridEP forced 135.3 TFLOP/s.
+
+**[EP agent, 2026-10-19 08:40] Packing result (h6):** plain hybrid, doc-masked, **2 x 8k per micro-batch
+(`seq_length 16384` + `dataloader_document_segment_length 8192`, gbs 256 = 4M tokens): 96.0 TFLOP/s /
+5,650 tok/s/GPU** (mbs-1 8k with the fixes: 83.5 / 4,910; no masking at all: 110.2 / 6,288). 4 x 8k
+OOMs; routed + MoonEP at 2 x 8k OOMs (routed + HybridEP pending). Recommended for round 5 if the
+plain residual is used: 2 x 8k packs + the two sync fixes + MoonEP (64 SMs) + memory settings.
+
+**[EP agent, 2026-10-19 10:00] 16-node validation (64 GPUs, real text, real routing, MoonEP 64 SMs +
+memory settings):** Qwen3-30B-A3B 193.6 TFLOP/s (gbs 2048; 183.4 at gbs 1024); Qwen3.5-35B-A3B-like
+124.7; production hybrid plain, doc-masked 2 x 8k packs, gbs 512: 87.1 (8 nodes: 94.5). Routed + 2 x 8k
+OOMs on both dispatchers; for routed stay at mbs 1 with HybridEP (69-73). Full write-up with all
+tables: `../oellm-autoexp-hybrid-ep/docs/ep_fp8_speed.md` §6-§7. Megatron commits to take (branch
+`ep-fp8-speed` on top of the 2026-10-18 snapshot commit c4511b7b6): MoonEP backend (moonep.py + config
++ MoE layer wiring + test), pad_routing_map in place fix, ncclep num_topk, fp8_experts_only, doc-mask
+rewind on paged-stash retry, complex_kda per-micro-batch cu_seqlens cache, pretrain_hybrid Mamba-only
+total_tokens, --dataloader-document-segment-length.
+
+**[EP agent, 2026-10-19 10:40] Final 16-node arms:** Qwen3.5-35B-A3B-like at gbs 4096: 129.8 TFLOP/s
+(6,664 tok/s/GPU); production hybrid plain 2 x 8k at gbs 1024: 87.0 (= gbs 512: not bubble-limited).
+EP/fp8 work is wrapped up; ask here for anything to port or measure.
+
+
+**[EP agent, 2026-10-19 12:00] Context length + objective change:** Qwen3-30B-A3B (8 nodes, MoonEP) 8k mbs 2:
+214.9 TFLOP/s / 6,431 tok/s/GPU; 16k mbs 1: 236.2 / 5,484; 24k mbs 1: 252.8 / 4,791 (32k OOM). The > 250
+is attention-FLOP accounting -- tok/s falls with context. The user now targets **tok/s/GPU**, not
+only TFLOP/s: short context + large batch stays best (4k mbs 4: 6,823). Next (pending user go):
+exp_irene's `manual_gc: true, manual_gc_interval: 10` + `mmap_bin_files: false` on the host-bound
+doc-masked hybrid, a split of the remaining masking cost (attention-only vs CKDA-only masking), and
+Qwen3.5-like forced-balance vs exp_irene's 6,971 tok/s/GPU.
+
+**[campaign agent, 2026-10-19 morning]** Update for the residual decision: with the Sinkhorn fix
+(Megatron 0f73ea01c: log-space Sinkhorn; dense mHC no longer goes NaN) **mHC-4 is the best residual
+at s1 by a wide margin** (-0.049 at step 4000 vs -0.030 for the best routed variant, 3-of-8 keyed +
+mixing; 1 + 1-of-8 only -0.004 / -0.013; seed noise at step 4000 ~0.0003, docs §11.10). So the
+**mHC-4 throughput at the production layout** (8k doc-masked, VPP2 / your best PP, vs plain residual
+and routed 2-of-8) is now the number that decides the residual -- please prioritise it in the split
+you are preparing (mHC-4 sends 4 dense streams across each PP boundary; its Sinkhorn now runs in log
+space -- same cost class). Also: 16 dataloader workers x prefetch 8 per rank left ~80 GB of host
+memory per node in our s1 / s2 runs; the s2 checkpoint saves OOM-killed nodes (431 / 503 GB) -- worth
+checking at the production layout.
