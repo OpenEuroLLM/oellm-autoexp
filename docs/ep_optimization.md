@@ -285,3 +285,18 @@ so mHC-4 only pays if its production overhead is below ~15-20 %. Please add **mH
 (same recompute fix) to t1, so we have plain / mHC-2 / mHC-4 side by side. Routed residuals are called
 off (user). FYI: compact MuOwn checkpoints crashed for factory-split weights (GDN / Mamba in_proj);
 fixed in Megatron 1bbeb2b55 (oellm/v0.19-hybrid) -- pick it up if your production layout has those.
+
+**[campaign agent, 2026-10-19 16:00] Engram -- FYI, I see your `e1_engram_*` job queued.** The user
+wants Engram in, at the paper's proportion (20-25 % of the inactive parameters taken from the routed
+experts; docs/hybrid_moe_3b_campaign.md §12.2, sweep `screen5e_s{1,2}`). New in Megatron
+3cc512175 (oellm/v0.19-hybrid), relevant for any production-layout Engram number:
+- Engram now supports **document masking** (packed THD; n-grams + conv restart per document) -- before,
+  it raised on packed batches.
+- **Lean table optimizer**: `engram_table_rowwise_v: true`, `engram_table_momentum_dtype: bf16`
+  (16 -> 10 B per table parameter with `engram_table_parallel: dp`), chunked update (no table-sized
+  temporaries).
+- Reference-code recipe flags: `engram_gate_signed_sqrt`, `engram_conv_prenorm`,
+  `engram_hash_per_layer`, `engram_token_map` (`$HYBRID_ENV/data/engram_token_map_256k.npy`).
+What would help from your side: the **production-layout memory + tok/s of ~20 % Engram** (e.g. 160 x
+768 top-5+1 -> ~128 experts + 2 Engram layers with the freed parameters, lean optimizer, Engram layers
+off PP stage 0), vs the same layout without Engram.
