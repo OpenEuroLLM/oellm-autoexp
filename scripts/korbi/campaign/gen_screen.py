@@ -891,6 +891,17 @@ def arms5e(size: str):
     return out
 
 
+def speed5_profiled(size: str = "s1"):
+    """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
+    with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
+    steps were too short -- plain, mHC-4 and AttnRes all ran at ~32k tok/s/GPU there."""
+    keep = ("h5_moe", "h5_moe_mhc4", "h5_moe_attnres_streams", "h5_moe_ldm_cute", "h5_moe_ldm_torch")
+    prof = {B + "exit_interval": 300, "job.est_steps": 300, B + "profile": True,
+            B + "use_pytorch_profiler": True, B + "profile_step_start": 200,
+            B + "profile_step_end": 203, B + "profile_ranks": [0]}
+    return [(n, c, {**kv, **prof}) for n, c, kv in speed5_residuals(size) if n in keep]
+
+
 def speed5_residuals(size: str = "s1"):
     """Throughput of the residual variants in round 5's setting (flag mix, 8k, document masking,
     MoE router / preprocess CUDA graphs), 100 steps each (user 2026-10-19: proper kernels and CUDA
@@ -930,7 +941,8 @@ def write5():
     smoke_e = lambda z: [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})  # noqa: E731
                          for n, c, kv in arms5e(z)]
     for size, prefix, pool in [(z, "screen5", arms5(z)) for z in ("s1", "s2", "s3")] + [
-            ("s1", "speed5res", speed5_residuals("s1"))] + [
+            ("s1", "speed5res", speed5_residuals("s1")),
+            ("s1", "speed5prof", speed5_profiled("s1"))] + [
             ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)] + [
             (z, p, arms) for z in ("s1", "s2")
             for p, arms in (("screen5e", arms5e(z)), ("screen5esmoke", smoke_e(z)))]:
