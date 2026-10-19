@@ -812,6 +812,15 @@ def arms5(size: str):
         out.append(("h5_moe_mhc4_lat2", f"mHC-4 + LatentMoE, latent {hidden // 2}: 288 x {w}, top-6",
                     {**h5, **mhc(4), B + "num_experts": 288, B + "moe_router_topk": 6,
                      B + "moe_latent_size": hidden // 2}))
+        # Linear Depth Memory (user 2026-10-19; arXiv:2610.18809, ELLIS / MPI Tübingen): next to
+        # the plain residual, a per-token matrix memory of the sublayer outputs over depth, fit by
+        # recursive least squares; the paper's setting G 16, K 8, address width 32 (400M), Adam at
+        # the residual-mixer lr (0.25 x 4e-3 = the paper's 1e-3). Reference formulation (autograd
+        # keeps every write's K x h fp32 state): no CUDA graphs, s1 only
+        out.append(("h5_moe_ldm", "+ Linear Depth Memory (G 16, K 8, H 32)",
+                    {**h5, B + "depth_memory": True, B + "depth_memory_groups": 16,
+                     B + "depth_memory_key_dim": 8, B + "depth_memory_hidden_dim": 32, **mlr,
+                     B + "cuda_graph_impl": "none", B + "cuda_graph_modules": []}))
         out.append(("h5_moe_seed2", "h5_moe, seed 1235 (noise: pairs with h5_moe_rr28_seed2)",
                     own_cache({**h5, B + "seed": 1235})))
         out.append(("h5_moe_rr28_seed2", "h5_moe_rr28, seed 1235",
