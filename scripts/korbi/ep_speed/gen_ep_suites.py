@@ -638,6 +638,34 @@ def docmask_fix2():
     return arms
 
 
+def docmask_fix3():
+    """Document masking, round 3: the packed path no longer syncs twice per micro-batch on every
+    stage (Mamba-only total_tokens / seq_idx) + the CKDA per-micro-batch cu_seqlens cache."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    s8k = {B + "seq_length": 8192, B + "max_position_embeddings": 8192, "aux.gbs": 512,
+           B + "micro_batch_size": 1, B + "liger_fused_linear_cross_entropy_chunk_size": 2048}
+    doc = {B + "dataloader_inter_document_masking": True, B + "fused_qk_norm_rope": False}
+    hyb = {**RECIPE, **PROD, **PRODSEQ, "aux.gbs": 512, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2}
+    flash = {B + "attention_backend": "flash"}
+    base = {**Q3VPP, **REALDATA}
+    arm("y_q3doc", "Qwen3 8k doc-masked (l3) with the sync fix", base, moon, s8k, doc)
+    arm("y_q3doc_flash", "Qwen3 8k doc-masked, sync fix, FlashAttention varlen", base, moon, s8k, doc,
+        flash)
+    arm("y_plain", "hybrid plain, doc-masked, sync + cache fixes", base, hyb, moon, PLAIN)
+    arm("y_plain_flash", "hybrid plain, doc-masked, fixes + FlashAttention varlen", base, hyb, moon,
+        PLAIN, flash)
+    arm("y_routed_hep", "hybrid routed, HybridEP grouped path, fixes", base, hyb, HEP, OPFX, MEM, fla,
+        {"aux.array_tag": "_memfla"}, ROUTED)
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -989,6 +1017,19 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, docmask_fix2())
+    dump("ep_docmask3_mn5.yaml",
+         "Document masking: host-sync fixes (docs/ep_fp8_speed.md, phase H).",
+         """
+aux:
+  family: ladder
+  suite: h5
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON, docmask_fix3())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
