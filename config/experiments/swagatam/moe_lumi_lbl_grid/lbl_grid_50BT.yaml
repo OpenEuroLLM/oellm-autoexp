@@ -1,0 +1,180 @@
+# @package _global_
+#
+# 50BT load-balancing grid on the wider 0.9B MoE (20L, E64/K4) on LUMI
+# standard-g. Same monitoring setup as router_stability_long_bsz128.yaml,
+# with a larger model, global batch 1024, and a 12-run sweep:
+#
+#   lr {5e-4, 1e-3}
+#     x balancing {aux-loss 1e-2, QB quantile balancing, DeepSeek expert bias}
+#     x shared expert {none, one}
+#
+# QB is Megatron's quantile_balancing router: a per-expert bias (qb_beta)
+# updated once per global batch. Aux loss must be 0 for that arm. The EMA
+# on qb_beta stays at the submodule default of 0.0, so each step replaces
+# the bias with the latest global-batch quantile.
+#
+# DeepSeek bias pairs expert bias (update rate 1e-3) with seq aux loss at
+# 1e-4, as in the V3 configs. Megatron requires a sigmoid score for the
+# bias flag, so only this arm switches off softmax.
+#
+# One shared expert uses moe_ffn_hidden_size (1280), the same intermediate
+# width as one routed expert. Those runs use top-k 3 so active experts
+# stay at 4 (3 routed + 1 shared). Runs without a shared expert keep top-k 4.
+#
+# Submit all 12:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/swagatam/moe_lumi_lbl_grid/lbl_grid_50BT \
+#     --submit-and-exit
+#
+# Submit one index:
+#   uv run --python 3.12 python scripts/run_autoexp.py \
+#     --config-name experiments/swagatam/moe_lumi_lbl_grid/lbl_grid_50BT \
+#     --array-subset 0 --submit-and-exit
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/sparse_models: qwen3_sparse_0.9B_ne_experts_64_wider_20L
+  - _self_
+
+container:
+  env:
+    WANDB_TAGS: "lumi,lbl_grid,50BT,0.9B_wider_20L"
+
+index: 0
+stage: ""
+
+job:
+  name: "${backend.megatron.aux.model_name}_experts_${backend.megatron.num_experts}topk${backend.megatron.moe_router_topk}_PP${backend.megatron.pipeline_model_parallel_size}_${stage}_${backend.megatron.aux.se_tag}_lr${backend.megatron.lr}_bsz${backend.megatron.global_batch_size}_50BT"
+  base_output_dir: "/scratch/project_462001516/experiments/${backend.megatron.wandb_project}/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    ### lumi specific configs
+    masked_softmax_fusion: False
+    gradient_accumulation_fusion: False
+    bias_dropout_fusion: False
+    bias_swiglu_fusion: False
+    apply_rope_fusion: False
+    log_progress: False
+    num_workers: 6
+    num_dataset_builder_threads: 6
+    trust_remote_code: True
+    ### lumi specific configs end
+
+    # 50BT at gbsz=1024, seq_length=4096 -> 11921 iters.
+    train_iters: "${oc.eval:'(50_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})'}"
+    eval_iters: 50
+    # ~1BT between evals. At gbsz=1024, seq_length=4096 -> 239 iters.
+    eval_interval: "${oc.eval:'(1_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})'}"
+    # ~2BT between checkpoints at gbsz=1024 (model calibration: 512000 // gbsz).
+    save_interval: 500
+
+    moe_grouped_gemm: True
+    use_distributed_optimizer: True
+    # Save Adam moments, the WSD scheduler step, and RNG so a resubmit of the
+    # same job resumes from latest_checkpointed_iteration.txt.
+    no_save_optim: False
+    no_save_rng: False
+    wandb_exp_name: "${job.name}"
+    wandb_project: "moe_lumi_lbl_grid"
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: "${job.base_output_dir}/tensorboard"
+
+    data_args_path: null
+    per_split_data_args_path: /scratch/project_465002530/datasets/multilingual_oellm/datamix4-per-split.json
+    split: null
+    tokenizer_type: HuggingFaceTokenizer
+    tokenizer_model: openeurollm/tokenizer-256k
+    data_cache_path: /scratch/project_462001516/users/swagatam/cache/MEGATRON_262k/${job.name}
+
+    seq_length: 4096
+    max_position_embeddings: 4096
+    # ~8.4BT of warmup at gbsz=1024. Same iter count as the 0.4B long runs.
+    lr_warmup_iters: 2000
+    lr_wsd_decay_iters: "${oc.eval:'int(((50_000_000_000 + ${backend.megatron.seq_length} * ${backend.megatron.global_batch_size} - 1) // (${backend.megatron.seq_length} * ${backend.megatron.global_batch_size})) * 0.2)'}"
+
+    # Override the model yaml (mbs 16, PP 2, EP 4).
+    micro_batch_size: 1
+    global_batch_size: 1024
+    pipeline_model_parallel_size: 1
+    expert_model_parallel_size: 8
+
+    lr: 5.e-4
+    moe_aux_loss_coeff: 0.0
+    moe_z_loss_coeff: 1.e-3
+    moe_router_enable_expert_bias: False
+    moe_router_quantile_balancing_ema: 0.0
+    moe_expert_viability_metrics: True
+    moe_masked_layer_validation: True
+    moe_masked_layer_eval_iters: 8
+
+    aux:
+      se_tag: nose
+
+  env:
+    TOKENIZERS_PARALLELISM: "false"
+    HF_HUB_OFFLINE: "0"
+    TRITON_HOME: /tmp/triton_cache
+
+# 2 lr x 3 balancing methods x 2 shared-expert settings = 12 runs.
+sweep:
+  type: product
+  groups:
+    - type: list
+      configs:
+        - backend.megatron.lr: 5.e-4
+        - backend.megatron.lr: 1.e-3
+    - type: list
+      configs:
+        - stage: aux
+          backend.megatron.moe_router_load_balancing_type: aux_loss
+          backend.megatron.moe_aux_loss_coeff: 1.e-2
+          backend.megatron.moe_router_score_function: softmax
+          backend.megatron.moe_router_enable_expert_bias: False
+        - stage: qb
+          backend.megatron.moe_router_load_balancing_type: quantile_balancing
+          backend.megatron.moe_aux_loss_coeff: 0.0
+          backend.megatron.moe_router_score_function: softmax
+          backend.megatron.moe_router_enable_expert_bias: False
+          backend.megatron.moe_router_quantile_balancing_ema: 0.0
+        - stage: dsbias
+          backend.megatron.moe_router_load_balancing_type: seq_aux_loss
+          backend.megatron.moe_aux_loss_coeff: 1.e-4
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: True
+          backend.megatron.moe_router_bias_update_rate: 1.e-3
+    - type: list
+      configs:
+        - backend.megatron.aux.se_tag: nose
+          backend.megatron.moe_router_topk: 4
+          backend.megatron.moe_shared_expert_intermediate_size: null
+        - backend.megatron.aux.se_tag: se1
+          backend.megatron.moe_router_topk: 3
+          backend.megatron.moe_shared_expert_intermediate_size: 1280
+
+slurm:
+  # nid005019 has hung mid-run in three separate jobs (21846649, 21848346,
+  # 21931375) with "HW Exception ... GPU Hang" on its first four GCDs.
+  sbatch_extra_directives:
+    - "--exclude=nid005019"
+  env:
+    MASTER_PORT: "9999"
+    USE_ROCM_AITER_ROPE_BACKEND: "0"
+  srun_opts: "--label --cpu-bind=mask_cpu:0xfe000000000000,0xfe00000000000000,0xfe0000,0xfe000000,0xfe,0xfe00,0xfe00000000,0xfe0000000000 "
+  sbatch:
+    nodes: 8
+    account: "project_462001516"
+    partition: standard-g
+    time: "1-23:59:59"
+    # time: "55:00"
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "
