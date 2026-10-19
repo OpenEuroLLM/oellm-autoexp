@@ -339,7 +339,11 @@ Recompute less, last attempt (q7, Qwen3, MoonEP, memory settings): selective rec
 MoE layers (`recompute_modules: [moe]`, also + layernorm, + core_attn) OOMs at the first step on
 64 GB -- keeping the attention layers' activations for 48 layers x the in-flight VPP micro-batches
 does not fit. Block recompute keeping 2 of 14 layers per chunk OOMed too (q6). Full recompute is
-required on MN5, and with it ~200 model TFLOP/s is the ceiling we measured.
+required on MN5, and with it ~200 model TFLOP/s is the ceiling we measured. Offloading the
+attention-side activations to the host instead (`fine_grained_activation_offloading`, offload_modules
+attn_norm / qkv_linear / core_attn / attn_proj / mlp_norm, with MoE-only recompute, q8) fails in
+Megatron's offload handler after the first step under PP4 x VPP2 ("Chunk mismatch" in
+`ChunkOffloadHandler`): not usable with the interleaved schedule as is.
 
 What to use (all in Megatron `ep-fp8-speed` / the `ep_*` suites):
 1. **Memory settings** (NCCL 4 channels per peer, expandable segments): required to fit / avoid OOMs.
