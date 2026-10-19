@@ -1259,6 +1259,19 @@ def ckpt_offload():
     arm("o_mhc4_16k_off", "mHC-4, 16k, checkpoint inputs on the host", base, hyb, moon, off, ctx16)
     arm("o_mhc4_16k_off_r1", "mHC-4, 16k, host checkpoints, one layer per recompute chunk", base, hyb,
         moon, off, ctx16, {B + "recompute_num_layers": 1})
+    # o2 (user 2026-10-20: match the plain residual's ~7k with mHC-4, larger micro-batches):
+    # mbs 2 at 16k with gbs 512 keeps 32 micro-batches per pipeline (same bubble as mbs 1 at 256)
+    plain = {B + "mhc": False, B + "recompute_num_layers": 1}
+    mbs2 = {B + "micro_batch_size": 2, "aux.gbs": 512}
+    gbs512 = {"aux.gbs": 512}
+    arm("o_plain_16k", "plain residual, 16k mbs 1 (reference)", base, hyb, moon, ctx16, plain)
+    arm("o_plain_16k_mbs2", "plain residual, 16k mbs 2", base, hyb, moon, ctx16, plain, mbs2)
+    arm("o_plain_16k_mbs2_off", "plain residual, 16k mbs 2, host checkpoints", base, hyb, moon, off,
+        ctx16, plain, mbs2)
+    arm("o_mhc4_16k_off_gbs512", "mHC-4, 16k mbs 1, host checkpoints, 64 micro-batches", base, hyb,
+        moon, off, ctx16, gbs512)
+    arm("o_mhc4_16k_mbs2_off", "mHC-4, 16k mbs 2, host checkpoints", base, hyb, moon, off, ctx16,
+        mbs2)
     return arms
 
 
