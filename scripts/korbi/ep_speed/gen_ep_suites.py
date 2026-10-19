@@ -907,6 +907,44 @@ def ep_profile():
     return arms
 
 
+def mhc4_memory():
+    """mHC-4 OOMs at the production layout (m2: stage 0 fills 63 GiB in step 2 -- full recompute keeps
+    every layer's input, 4 residual streams = 4x the plain residual, x the in-flight VPP micro-batches).
+    Keep fewer layer inputs (full recompute, uniform, N layers per checkpoint: same compute, larger
+    recompute peak) or fewer in-flight micro-batches (no VPP)."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    gc = {B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False}
+    base = {**Q3VPP, **REALDATA}
+    hyb = {**RECIPE, **PROD, **PRODSEQ, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2, "aux.gbs": 512,
+           B + "train_iters": 15, **gc}
+    p2 = {B + "seq_length": 16384, B + "max_position_embeddings": 16384,
+          B + "dataloader_document_segment_length": 8192, "aux.gbs": 256}
+    mhc4 = {B + "mhc": True, B + "mhc_expansion_rate": 4, B + "mhc_routed_topk": 0,
+            B + "mhc_routed_reversible": False}
+    rn = lambda n: {B + "recompute_num_layers": n}  # noqa: E731
+    pp4 = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (12, 12, 12, 12)), B + "pipeline_model_parallel_size": 4,
+           B + "overlap_p2p_comm": True}
+    arm("n_mhc4_r2", "mHC-4, 8k mbs 1, checkpoint every 2 layers", base, hyb, moon, mhc4, rn(2))
+    arm("n_mhc4_r3", "mHC-4, 8k mbs 1, checkpoint every 3 layers", base, hyb, moon, mhc4, rn(3))
+    arm("n_mhc4_r7", "mHC-4, 8k mbs 1, one checkpoint per VPP chunk (7 layers)", base, hyb, moon, mhc4,
+        rn(7))
+    arm("n_mhc4_p2_r3", "mHC-4, 2 x 8k, checkpoint every 3 layers", base, hyb, moon, mhc4, p2, rn(3))
+    arm("n_mhc4_pp4", "mHC-4, 8k mbs 1, PP4 without VPP (fewer in-flight micro-batches)", base, hyb,
+        moon, mhc4, pp4)
+    arm("n_mhc4_pp4_r3", "mHC-4, 8k mbs 1, PP4 without VPP, checkpoint every 3 layers", base, hyb, moon,
+        mhc4, pp4, rn(3))
+    arm("n_plain_r3", "plain, 2 x 8k, checkpoint every 3 layers (cost of the coarser checkpoints)", base,
+        hyb, moon, PLAIN, p2, rn(3))
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -1347,6 +1385,17 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, ep_profile())
+    dump("ep_mhc4mem_mn5.yaml", "mHC-4 memory at the production layout (docs/ep_fp8_speed.md, phase M).", """
+aux:
+  family: mhc
+  suite: m3
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), mhc4_memory())
     dump("ep_tokspeed_mn5.yaml",
          "tok/s/GPU: exp_irene's host settings, the CKDA share of document masking, Qwen3.5 like-for-like "
          "(docs/ep_fp8_speed.md, phase T).",
