@@ -28,7 +28,7 @@ COMM = [
 
 def union(intervals):
     out = []
-    for s, e in sorted(intervals):
+    for s, e in sorted(tuple(i) for i in intervals):
         if out and s <= out[-1][1]:
             out[-1][1] = max(out[-1][1], e)
         else:
@@ -78,7 +78,7 @@ def main():
     grep_t = {p: 0.0 for p in pats}
     for e in kern:
         name = e.get("name", "")
-        iv = (e["ts"], e["ts"] + e["dur"])
+        iv = [e["ts"], e["ts"] + e["dur"]]
         for kind, rx in COMM:
             if rx.search(name):
                 comm[kind].append(iv)
