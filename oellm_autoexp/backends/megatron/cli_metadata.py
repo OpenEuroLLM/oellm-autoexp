@@ -3255,6 +3255,20 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "moe_router_quantile_balancing_ema": MegatronArgMetadata(
+        arg_type=float,
+        default=0.0,
+        help=(
+            "EMA coefficient for the quantile-balancing per-expert bias (qb_beta), used"
+            " only when moe_router_load_balancing_type is quantile_balancing. At each"
+            " global batch the bias is updated as qb_beta = ema * qb_beta + (1 - ema)"
+            " * local_quantile. The default 0.0 replaces the bias with the latest"
+            " global-batch quantile estimate."
+        ),
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "moe_router_dtype": MegatronArgMetadata(
         arg_type=str,
         default=None,
@@ -3319,10 +3333,19 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
             " corresponds to the load balancing loss used in GShard and"
             ' SwitchTransformer; "seq_aux_loss" corresponds to the load balancing loss'
             " used in DeepSeekV2, which computes the loss for each individual sample;"
-            ' "sinkhorn" corresponds to the balancing algorithm used in S-BASE, and'
+            ' "sinkhorn" corresponds to the balancing algorithm used in S-BASE;'
+            ' "quantile_balancing" (QB) uses dual coordinate descent on a per-expert'
+            " bias and requires moe_aux_loss_coeff = 0; and"
             ' "none" implies no load balancing. The default is "aux_loss".'
         ),
-        choices=("aux_loss", "seq_aux_loss", "global_aux_loss", "sinkhorn", "none"),
+        choices=(
+            "aux_loss",
+            "seq_aux_loss",
+            "global_aux_loss",
+            "sinkhorn",
+            "quantile_balancing",
+            "none",
+        ),
         nargs="+",
         element_type=str,
     ),
@@ -8180,6 +8203,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0.001,
+    ),
+    "moe_router_quantile_balancing_ema": MegatronActionSpec(
+        option_strings=("--moe-router-quantile-balancing-ema",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0.0,
     ),
     "moe_router_dtype": MegatronActionSpec(
         option_strings=("--moe-router-dtype",),

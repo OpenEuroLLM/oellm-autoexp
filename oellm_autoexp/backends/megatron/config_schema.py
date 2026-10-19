@@ -1532,10 +1532,17 @@ class MegatronConfig(ConfigInterface):
     # Determines the load balancing strategy for the router. "aux_loss" corresponds to the
     # load balancing loss used in GShard and SwitchTransformer; "seq_aux_loss" corresponds to
     # the load balancing loss used in DeepSeekV2, which computes the loss for each individual
-    # sample; "sinkhorn" corresponds to the balancing algorithm used in S-BASE, and "none"
-    # implies no load balancing. The default is "aux_loss".
+    # sample; "sinkhorn" corresponds to the balancing algorithm used in S-BASE;
+    # "quantile_balancing" (QB) uses dual coordinate descent on a per-expert bias and
+    # requires moe_aux_loss_coeff = 0; "none" implies no load balancing. The default is
+    # "aux_loss".
     moe_router_load_balancing_type: Literal[
-        "aux_loss", "seq_aux_loss", "global_aux_loss", "sinkhorn", "none"
+        "aux_loss",
+        "seq_aux_loss",
+        "global_aux_loss",
+        "sinkhorn",
+        "quantile_balancing",
+        "none",
     ] = "aux_loss"
 
     # Data type for routing computation and expert output weighted averaging. Fp32/fp64
@@ -1586,6 +1593,11 @@ class MegatronConfig(ConfigInterface):
     # experts with more assigned tokens. The default value 1e-3 is same as that used in
     # DeepSeekV3.
     moe_router_bias_update_rate: float = 0.001
+
+    # EMA coefficient for the quantile-balancing per-expert bias (qb_beta). Used only when
+    # moe_router_load_balancing_type is "quantile_balancing". 0.0 replaces the bias with the
+    # latest global-batch quantile estimate each step.
+    moe_router_quantile_balancing_ema: float = 0.0
 
     # [Experimental] Force override routing to balance token distribution using random logits
     # for MoE routers, supporting naive top-k and group-limited top-k. This experimental
