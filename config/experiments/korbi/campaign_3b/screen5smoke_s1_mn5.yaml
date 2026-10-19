@@ -92,8 +92,8 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 16
-          backend.megatron.dataloader_prefetch_factor: 8
+          backend.megatron.num_workers: 8
+          backend.megatron.dataloader_prefetch_factor: 2
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -141,8 +141,8 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 16
-          backend.megatron.dataloader_prefetch_factor: 8
+          backend.megatron.num_workers: 8
+          backend.megatron.dataloader_prefetch_factor: 2
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -205,8 +205,8 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 16
-          backend.megatron.dataloader_prefetch_factor: 8
+          backend.megatron.num_workers: 8
+          backend.megatron.dataloader_prefetch_factor: 2
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -262,8 +262,8 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 16
-          backend.megatron.dataloader_prefetch_factor: 8
+          backend.megatron.num_workers: 8
+          backend.megatron.dataloader_prefetch_factor: 2
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -322,8 +322,8 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 16
-          backend.megatron.dataloader_prefetch_factor: 8
+          backend.megatron.num_workers: 8
+          backend.megatron.dataloader_prefetch_factor: 2
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -382,8 +382,8 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 16
-          backend.megatron.dataloader_prefetch_factor: 8
+          backend.megatron.num_workers: 8
+          backend.megatron.dataloader_prefetch_factor: 2
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -445,8 +445,8 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 16
-          backend.megatron.dataloader_prefetch_factor: 8
+          backend.megatron.num_workers: 8
+          backend.megatron.dataloader_prefetch_factor: 2
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -504,8 +504,8 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 16
-          backend.megatron.dataloader_prefetch_factor: 8
+          backend.megatron.num_workers: 8
+          backend.megatron.dataloader_prefetch_factor: 2
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -561,8 +561,8 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 16
-          backend.megatron.dataloader_prefetch_factor: 8
+          backend.megatron.num_workers: 8
+          backend.megatron.dataloader_prefetch_factor: 2
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -625,8 +625,8 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 16
-          backend.megatron.dataloader_prefetch_factor: 8
+          backend.megatron.num_workers: 8
+          backend.megatron.dataloader_prefetch_factor: 2
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -683,8 +683,8 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 16
-          backend.megatron.dataloader_prefetch_factor: 8
+          backend.megatron.num_workers: 8
+          backend.megatron.dataloader_prefetch_factor: 2
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -748,8 +748,8 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 16
-          backend.megatron.dataloader_prefetch_factor: 8
+          backend.megatron.num_workers: 8
+          backend.megatron.dataloader_prefetch_factor: 2
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -805,8 +805,8 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 16
-          backend.megatron.dataloader_prefetch_factor: 8
+          backend.megatron.num_workers: 8
+          backend.megatron.dataloader_prefetch_factor: 2
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64

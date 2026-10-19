@@ -622,8 +622,10 @@ def arms4g(size: str):
 FLAG8K = {B + "per_split_data_args_path": None,
           B + "data_args_path": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/flag_datamix_mn5.txt",
           B + "split": "998,2,0", B + "seq_length": 8192, B + "max_position_embeddings": 8192,
-          B + "dataloader_inter_document_masking": True, B + "num_workers": 16,
-          B + "dataloader_prefetch_factor": 8}
+          B + "dataloader_inter_document_masking": True,
+          # 8 workers, prefetch 2 (round 4's): 16 x prefetch 8 (the production GPFS fix) put ~400 GB
+          # of host memory into 64 workers per node; the checkpoint save then OOM-killed s2 nodes
+          B + "num_workers": 8, B + "dataloader_prefetch_factor": 2}
 
 
 def flag_smoke(size: str):
