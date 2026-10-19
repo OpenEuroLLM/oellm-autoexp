@@ -2169,3 +2169,31 @@ Cost ≈ 5 × 13 + 27 ≈ 95 GPU-h.
   on the two stages that hold them, ≈ 0.45 GB standard / ≈ 0.3 GB lean; on an 8-node test
   layout (8 ranks per stage) ≈ 7 GB / 4.4 GB on those stages -- place the Engram layers off
   the tightest stage (stage 0 holds the embedding).
+
+### 12.3 Linear Depth Memory arm (user 2026-10-19)
+
+González-Martínez, Nazari, Rusch, Liu, "Depth Memory" (arXiv 2610.18809, ELLIS Institute /
+MPI-IS Tübingen; code github.com/davidgonmar/depth-memory, MIT). **LDM** keeps the plain
+residual stream and adds, per token, a matrix memory M (G groups × K × h/G) of the sublayer
+outputs over depth, fit by recursive least squares with an inverse key covariance P (G × K × K)
+and learned per-group forgetting: every sublayer reads `x + γ·M(g·q)` (query from the incoming
+stream) and writes its output `δ` under a key of the updated stream; the embedding is written
+first and read once more before the LM head. ≈ 1 % more parameters. Paper: lowest perplexity
+vs PreLN / mHC-4 / Block AttnRes at 400M @ 50B and 1.5B @ 100B (1.5B val ppl 9.15 vs mHC 9.25,
+AttnRes 9.26, PreLN 9.48); its throughput (CuTe kernels, state unwinding + windowed writes)
+beats mHC in training.
+
+**Here** (Megatron e6c54f610, `megatron/core/transformer/depth_memory.py`): the reference
+formulation as a HybridStack depth scheme (the Block-AttnRes route: the state is stashed on the
+layers; read / write around every TransformerLayer sublayer and every Mamba / Engram layer
+through the ResidualSchemeAdapter). Per-token, so document masking needs nothing. Tested: the
+RLS writes reproduce the closed-form weighted ridge solution of the paper's Eq. 6 exactly;
+read / write / gradients; packed = separate in the hybrid (cluster). Limits of this first
+version: autograd keeps every write's fp32 state (K × h per token per sublayer: ≈ 5 GB per 8k
+micro-batch at s1, too much for s2's 50 GB), no CUDA graphs, PP 1, no full recompute -- the
+paper's unwinding backward (only u, κ, k, q̃, λ, P_{l-1} saved per write) is the next step if
+it wins.
+
+**Arm** `screen5_s1/h5_moe_ldm`: h5_moe + LDM with the paper's setting (G 16, K 8, address
+width 32, λ₀ 0.99, α 1; all LDM parameters on Adam at 0.25 × 4e-3 = the paper's 1e-3), no
+CUDA graphs (as h5_moe_attnres); paired with round 5's h5_moe / h5_moe_mhc4 / h5_moe_attnres.
