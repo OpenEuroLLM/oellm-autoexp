@@ -1147,6 +1147,45 @@ def engram_cost():
     return arms
 
 
+def engram_cost2():
+    """e1 again with the step-level row lookup (ENGRAM_STEP_LOOKUP=1, Megatron 188f79afd: one
+    exchange per step and layer) and the recompute fix (82182a72a: e1's recompute read a later
+    micro-batch's ids). Engram (hashed n-gram tables, `N` layers) in the production hybrid with mHC-4, using the
+    memory headroom: tables sharded over the stage's data-parallel ranks ("dp": fp32 rows + Adam
+    on the owner, rows looked up by all-to-all), now with document masking (Megatron f5ecba30d).
+    Placement as the campaign's (before blocks 2 and 8 of 12): before blocks 2 and 32 of 48."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    gc = {B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False,
+          B + "dataloader_prefetch_factor": 8}
+    base = {**Q3VPP, **REALDATA, **gc}
+    pat = vpp_pattern("LLLLL*" * 8, (7, 7, 7, 6, 6, 6, 6, 3))
+    hyb = {**RECIPE, **PROD, **PRODSEQ, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2, "aux.gbs": 512,
+           B + "train_iters": 15, "aux.pattern": pat,
+           B + "mhc": True, B + "mhc_expansion_rate": 4, B + "mhc_routed_topk": 0,
+           B + "mhc_routed_reversible": False, B + "recompute_num_layers": 2}
+    eng = lambda blocks, rows: {"aux.pattern": with_engram(pat, blocks),  # noqa: E731
+                                B + "engram_ngram_orders": [2, 3], B + "engram_table_parallel": "dp",
+                                B + "engram_table_size": rows}
+    step = {"backend.env.ENGRAM_STEP_LOOKUP": "1", "aux.array_tag": "_moonmemfla_engstep"}
+    arm("e_ref", "hybrid + mHC-4, 8k mbs 1 (reference, no Engram)", base, hyb, moon)
+    arm("e_eng2", "+ 2 Engram layers, 262k rows, per-micro-batch lookup", base, hyb, moon,
+        eng((1, 31), 262144))
+    arm("e_eng2_step", "+ 2 Engram layers, 262k rows, step-level lookup", base, hyb, moon,
+        eng((1, 31), 262144), step)
+    arm("e_eng2_1m_step", "+ 2 Engram layers, 1M rows, step-level lookup", base, hyb, moon,
+        eng((1, 31), 1048576), step)
+    arm("e_eng4_1m_step", "+ 4 Engram layers, 1M rows, step-level lookup", base, hyb, moon,
+        eng((1, 13, 25, 37), 1048576), step)
+    return arms
+
+
 def moon_chunks2():
     """c1 again after the fixes (Megatron ed30ba6b0): the chunked pipeline with every cross-stream
     tensor recorded (c1's illegal address under memory pressure), and the MoonEP experts as one
@@ -1709,6 +1748,17 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), moon_chunks2())
+    dump("ep_engram2_mn5.yaml", "Engram, step-level lookup (docs/ep_fp8_speed.md, phase E).", """
+aux:
+  family: engram
+  suite: e2
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), engram_cost2())
     dump("ep_tokspeed_mn5.yaml",
          "tok/s/GPU: exp_irene's host settings, the CKDA share of document masking, Qwen3.5 like-for-like "
          "(docs/ep_fp8_speed.md, phase T).",
