@@ -335,6 +335,12 @@ needed: block recompute keeping even 2 of 14 layers per chunk OOMs at 64 GB -- 2
 ~267 TFLOP/s of executed bf16 work. The remaining exposed time is MoonEP's (serial) EP comm
 (~15 % of the step) and pipeline p2p (~7 %); EP a2a overlap is excluded by full recompute.
 
+Recompute less, last attempt (q7, Qwen3, MoonEP, memory settings): selective recompute of only the
+MoE layers (`recompute_modules: [moe]`, also + layernorm, + core_attn) OOMs at the first step on
+64 GB -- keeping the attention layers' activations for 48 layers x the in-flight VPP micro-batches
+does not fit. Block recompute keeping 2 of 14 layers per chunk OOMed too (q6). Full recompute is
+required on MN5, and with it ~200 model TFLOP/s is the ceiling we measured.
+
 What to use (all in Megatron `ep-fp8-speed` / the `ep_*` suites):
 1. **Memory settings** (NCCL 4 channels per peer, expandable segments): required to fit / avoid OOMs.
 2. **MoonEP** (`moe_flex_dispatcher_backend: moonep`, `moe_flex_dispatcher_num_sms: 64`,
