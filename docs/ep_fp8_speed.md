@@ -195,6 +195,25 @@ of compute kernels over all streams; exposed = a comm kernel runs and no compute
   10.5 its FLOPs suggest). Rebalanced VPP2 layout next: 7/7/7/5 | 6/6/6/4 + head.
 - The hybrid is **host-bound** 16 % of the time at stage 0 (Qwen3 + MoonEP: 2 %).
 
+**The ladder (h1): Qwen3-30B-A3B -> the production hybrid, one change per rung** (8 nodes, real
+text, MoonEP 64 SMs, VPP2, full recompute, 4M tokens per step):
+
+| rung | TFLOP/s | tok/s/GPU |
+|---|---:|---:|
+| Qwen3, 4k, mbs 4 (q5) | 195.1 | 6,823 |
+| l1: 8k, mbs 2 | 209.6 | 6,273 |
+| l2: 8k, mbs 1 | 196.1 | 5,867 |
+| l5: + document masking + the hybrid MoE + the hybrid attention (all-attention) | 87.4 | 4,898 |
+| l6: + CKDA 5:1 = the production hybrid (plain residual) | 77.3 | 4,551 |
+| l6 at gbs 128 / mbs 2 | 90.1 / 86.0 | 5,295 / 5,067 |
+
+- **CKDA is not the main cost** (l5 -> l6: -7 % tok/s).
+- **Most of the TFLOP/s gap is FLOP accounting, not speed**: l2 -> l5 loses 17 % of the tok/s
+  but 55 % of the TFLOP/s. The hybrid recipe does far fewer model FLOPs per token (top-5 + 1
+  shared instead of top-8, 16 instead of 32 query heads, and document masking removes most of
+  the 8k attention FLOPs). TFLOP/s is not comparable across these architectures; tok/s and the
+  compute-busy share are. Single-feature rungs (masking, MoE, attention) in h1b.
+
 ## 5. Phase Q: Qwen3-30B-A3B first (user, 2026-10-18: reach exp_irene's 170+ with standard attention)
 
 exp_irene (branch `exp_irene`): Qwen3-30B-A3B (48 x attention + MoE, 32 q / 4 kv heads x 128,
