@@ -89,3 +89,21 @@ for T in (8192, 16384):
         mixer.write(streams, x + f, h_post, h_res).backward(g_streams)
 
     row("sublayer fwd + bwd", timed(sublayer), 3 * S + 2 * X + 5 * S + 3 * X)
+
+    from megatron.core.transformer import mhc_fused
+
+    mhc_fused.ENABLED = True
+
+    def fused_read():
+        link = mhc_fused.ReadWriteLink()
+        return mhc_fused.coeffs_and_read(mixer, streams, link), link
+
+    with torch.no_grad():
+        row("FUSED fwd coeffs + read", timed(fused_read), S + X)
+
+    def fused_sublayer():
+        (x, _, h_post, h_res), link = fused_read()
+        mixer.write(streams, x + f, h_post, h_res, link=link).backward(g_streams)
+
+    row("FUSED sublayer fwd + bwd", timed(fused_sublayer), 3 * S + 2 * X + 5 * S + 3 * X)
+    mhc_fused.ENABLED = False
