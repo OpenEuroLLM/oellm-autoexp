@@ -3057,6 +3057,10 @@ class MegatronConfig(ConfigInterface):
     # Reset self attention mask after end-of-document token.
     reset_attention_mask: bool = False
 
+    # Prepend the tokenizer BOS token to every document at load time (the tokenized data
+    # carries only an EOD at each document end).
+    dataloader_add_bos: bool = False
+
     # Return cu_seqlens marking document boundaries within each sample so that attention is
     # restricted to individual documents. Note that --reset-attention-mask does NOT achieve
     # this: the GPT layer specs pin attn_mask_type to causal and TE only reads attention_mask

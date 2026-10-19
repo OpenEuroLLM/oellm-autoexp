@@ -933,6 +933,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "dataloader_add_bos": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Prepend the tokenizer BOS token to every document at load time (the tokenized data carries only an EOD at each document end).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "dataloader_defer_npy_index_mmap": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -8772,6 +8780,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=False,
         default=True,
+    ),
+    "dataloader_add_bos": MegatronActionSpec(
+        option_strings=("--dataloader-add-bos",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "dataloader_defer_npy_index_mmap": MegatronActionSpec(
         option_strings=("--dataloader-defer-npy-index-mmap",),
