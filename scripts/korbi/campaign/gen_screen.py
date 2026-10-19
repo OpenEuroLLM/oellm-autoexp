@@ -625,7 +625,9 @@ FLAG8K = {B + "per_split_data_args_path": None,
           B + "dataloader_inter_document_masking": True,
           # 8 workers, prefetch 2 (round 4's): 16 x prefetch 8 (the production GPFS fix) put ~400 GB
           # of host memory into 64 workers per node; the checkpoint save then OOM-killed s2 nodes
-          B + "num_workers": 8, B + "dataloader_prefetch_factor": 2,
+          # (4 per rank since 2026-10-19 noon: each worker's own heap on top of the ~36 GB index
+          # each rank shares copy-on-write with its workers; s2 nodes ran at ~405 of 503 GB)
+          B + "num_workers": 4, B + "dataloader_prefetch_factor": 2,
           # manual GC every 10 steps + no mmap of the .bin files (exp_irene's settings): the
           # doc-masked hybrid is host-bound and Python-GC stalls cost 16 % (EP agent k1, 8 nodes)
           B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False}
