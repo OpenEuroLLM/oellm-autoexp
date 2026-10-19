@@ -320,7 +320,9 @@ Qwen3's 6,823, yet 126 vs 195 TFLOP/s.
 | Qwen3-30B-A3B | MoonEP 64 SMs + memory settings, gbs 2048 (8M tokens) | **193.6** | 6,773 |
 | Qwen3-30B-A3B | same, gbs 1024 | 183.4 | 6,416 |
 | Qwen3.5-35B-A3B-like (native GDN 3:1) | same, gbs 2048 | 124.7 | 6,399 |
+| Qwen3.5-35B-A3B-like | same, gbs 4096 (16M) | 129.8 | 6,664 |
 | production hybrid, plain residual | doc-masked 2 x 8k packs, sync fixes, gbs 512 (8M) | 87.1 | 5,126 |
+| production hybrid, plain residual | same, gbs 1024 (16M): not bubble-limited | 87.0 | 5,115 |
 
 8 nodes for reference: Qwen3 195.1 (gbs 1024) / 203.0 (gbs 4096); Qwen3.5-like 126.4; hybrid 2 x 8k
 94.5-96.0; routed residual (mbs 1, HybridEP) 69-73.
@@ -355,5 +357,5 @@ p2p of the 8 streams; levers: fp8 / fewer streams at the boundary, fewer PP stag
 
 ## GPU-h ledger
 
-Total used: ~690 GPU-h of the 1,000 (sacct over all ep suites: e1-e4 slices, b1-b5 production
+Total used: 678.5 GPU-h of the 1,000 (sacct over all ep suites: e1-e4 slices, b1-b5 production
 model, q1-q6 Qwen3, h1-h6 ladder / document masking, l1-l2 16 nodes, MoonEP unit tests).
