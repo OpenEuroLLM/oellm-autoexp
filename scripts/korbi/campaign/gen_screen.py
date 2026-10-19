@@ -891,6 +891,15 @@ def arms5e(size: str):
     return out
 
 
+def speed5_ab(size: str = "s1"):
+    """Concurrent A/B of the wall clock (user 2026-10-20): plain / mHC-4 / LDM (CuTe) side by side
+    for 600 steps, no profiler -- the tok/s of runs started at different times differ by 10-30 %
+    on MN5 (GPFS / node load), so only arms that run together compare."""
+    keep = ("h5_moe", "h5_moe_mhc4", "h5_moe_ldm_cute")
+    ab = {B + "exit_interval": 600, "job.est_steps": 600}
+    return [(n, c, {**kv, **ab}) for n, c, kv in speed5_residuals(size) if n in keep]
+
+
 def arms5ldm(size: str = "s1"):
     """LDM learning-rate sweep (user 2026-10-19): the round-5 s1 LDM arm (reference, no graphs)
     trails mHC-4 by ~0.008 at matched steps, against the paper's -0.010..-0.013 LEAD; the one knob
@@ -963,7 +972,8 @@ def write5():
     for size, prefix, pool in [(z, "screen5", arms5(z)) for z in ("s1", "s2", "s3")] + [
             ("s1", "speed5res", speed5_residuals("s1")),
             ("s1", "speed5prof", speed5_profiled("s1")),
-            ("s1", "screen5ldm", arms5ldm("s1"))] + [
+            ("s1", "screen5ldm", arms5ldm("s1")),
+            ("s1", "speed5ab", speed5_ab("s1"))] + [
             ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)] + [
             (z, p, arms) for z in ("s1", "s2")
             for p, arms in (("screen5e", arms5e(z)), ("screen5esmoke", smoke_e(z)))]:
