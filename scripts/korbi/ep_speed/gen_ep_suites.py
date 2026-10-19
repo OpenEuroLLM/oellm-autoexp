@@ -1272,6 +1272,12 @@ def ckpt_offload():
         moon, off, ctx16, gbs512)
     arm("o_mhc4_16k_mbs2_off", "mHC-4, 16k mbs 2, host checkpoints", base, hyb, moon, off, ctx16,
         mbs2)
+    # o3: Triton mHC coefficients + read (megatron/core/transformer/mhc_fused.py)
+    fused = {"backend.env.MHC_FUSED_READ": "1", "aux.array_tag": "_moonofffused"}
+    arm("o_mhc4_16k_off_gbs512_fused", "mHC-4, 16k mbs 1, host checkpoints, fused mHC read", base,
+        hyb, moon, off, ctx16, gbs512, fused)
+    arm("o_mhc4_16k_mbs2_off_fused", "mHC-4, 16k mbs 2, host checkpoints, fused mHC read", base, hyb,
+        moon, off, ctx16, mbs2, fused)
     return arms
 
 
