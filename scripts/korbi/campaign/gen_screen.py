@@ -924,6 +924,25 @@ def arms5ldm(size: str = "s1"):
     return out
 
 
+def arms5ldm2(size: str = "s1"):
+    """The LDM lr sweep again, fast (user 2026-10-20): 2 nodes per arm (data parallel 8, EP 4 in a
+    node; global batch 64 x 8k and the data order unchanged, so the curves still pair with round
+    5's), 8 data workers x prefetch 4, from step 0 -- plus LDM x2.0 (the best lr was the grid's
+    top) and mHC-4 with its mixer lr x1.0 (never swept; fixed at x0.25 since round 4)."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    fast = {"slurm.sbatch.nodes": 2, B + "num_workers": 8, B + "dataloader_prefetch_factor": 4}
+    ldm = {B + "depth_memory": True, B + "depth_memory_impl": "cute", B + "depth_memory_groups": 16,
+           B + "depth_memory_key_dim": 8, B + "depth_memory_hidden_dim": 32}
+    out = []
+    for mult, tag in ((0.125, "0125"), (0.25, "025"), (0.5, "05"), (1.0, "1"), (2.0, "2")):
+        out.append((f"h5_moe_ldmc_lr{tag}", f"LDM (CuTe, router graphs), its lr x{mult} of 4e-3",
+                    {**h5, **ldm, **fast, B + "residual_mixer_lr_mult": mult}))
+    mhc4 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe_mhc4"]
+    out.append(("h5_moe_mhc4_lr1", "mHC-4, its mixer lr x1.0 of 4e-3 (round 5: x0.25)",
+                {**mhc4, **fast, B + "residual_mixer_lr_mult": 1.0}))
+    return out
+
+
 def speed5_profiled(size: str = "s1"):
     """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
     with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
@@ -980,7 +999,8 @@ def write5():
             ("s1", "speed5res", speed5_residuals("s1")),
             ("s1", "speed5prof", speed5_profiled("s1")),
             ("s1", "screen5ldm", arms5ldm("s1")),
-            ("s1", "speed5ab", speed5_ab("s1"))] + [
+            ("s1", "speed5ab", speed5_ab("s1")),
+            ("s1", "screen5ldm2", arms5ldm2("s1"))] + [
             ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)] + [
             (z, p, arms) for z in ("s1", "s2")
             for p, arms in (("screen5e", arms5e(z)), ("screen5esmoke", smoke_e(z)))]:
