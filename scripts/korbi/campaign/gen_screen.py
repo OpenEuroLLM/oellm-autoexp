@@ -891,6 +891,32 @@ def arms5e(size: str):
     return out
 
 
+def speed5_residuals(size: str = "s1"):
+    """Throughput of the residual variants in round 5's setting (flag mix, 8k, document masking,
+    MoE router / preprocess CUDA graphs), 100 steps each (user 2026-10-19: proper kernels and CUDA
+    graphs for AttnRes and LDM): the stream forms (graph-capturable) against the state forms."""
+    pool = dict((n, kv) for n, _, kv in arms5(size))
+    h5 = pool["h5_moe"]
+    short = {B + "exit_interval": 100, "job.est_steps": 100}
+    nocg = {B + "cuda_graph_impl": "none", B + "cuda_graph_modules": []}
+    ldm = {B + "depth_memory": True, B + "depth_memory_groups": 16, B + "depth_memory_key_dim": 8,
+           B + "depth_memory_hidden_dim": 32, B + "residual_mixer_lr_mult": 0.25}
+    attnres = {B + "attn_res": True, B + "attn_res_num_blocks": 4}
+    arms = [
+        ("h5_moe", "plain residual (router graphs)", h5),
+        ("h5_moe_mhc4", "mHC-4 (router graphs)", pool["h5_moe_mhc4"]),
+        ("h5_moe_attnres", "AttnRes, state form (no graphs)", pool["h5_moe_attnres"]),
+        ("h5_moe_attnres_streams", "AttnRes, stream form (router graphs)",
+         {**h5, **attnres, B + "attn_res_impl": "streams"}),
+        ("h5_moe_ldm", "LDM reference (no graphs)", {**h5, **ldm, **nocg}),
+        ("h5_moe_ldm_torch", "LDM stream form, torch unwinding (router graphs)",
+         {**h5, **ldm, B + "depth_memory_impl": "torch"}),
+        ("h5_moe_ldm_cute", "LDM stream form, the paper's CuTe kernels (router graphs)",
+         {**h5, **ldm, B + "depth_memory_impl": "cute"}),
+    ]
+    return [(n, c, {**kv, **short}) for n, c, kv in arms]
+
+
 def write5():
     steps_s = {"s1": 3.0, "s2": 6.0, "s3": 7.0}
     times = {"s1": "08:00:00", "s2": "12:00:00", "s3": "12:00:00"}
@@ -904,6 +930,7 @@ def write5():
     smoke_e = lambda z: [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})  # noqa: E731
                          for n, c, kv in arms5e(z)]
     for size, prefix, pool in [(z, "screen5", arms5(z)) for z in ("s1", "s2", "s3")] + [
+            ("s1", "speed5res", speed5_residuals("s1"))] + [
             ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)] + [
             (z, p, arms) for z in ("s1", "s2")
             for p, arms in (("screen5e", arms5e(z)), ("screen5esmoke", smoke_e(z)))]:

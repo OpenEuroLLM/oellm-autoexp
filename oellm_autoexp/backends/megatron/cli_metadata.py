@@ -426,6 +426,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "attn_res_impl": MegatronArgMetadata(
+        arg_type=str,
+        default="state",
+        help='Block AttnRes implementation. "state": the sources as a Python list stashed on the layers (not CUDA-graph capturable). "streams": the sources as one [s, b, slots, h] tensor through the mHC plumbing, each sublayer reading a static slice and replacing one slot (HybridStack only, CUDA-graph capturable, pipeline_model_parallel_size == 1, no LERP).',
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "attn_res_lerp": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -8466,6 +8474,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
     ),
     "attn_res": MegatronActionSpec(
         option_strings=("--attn-res",), action_type="store_true", nargs=0, const=True, default=False
+    ),
+    "attn_res_impl": MegatronActionSpec(
+        option_strings=("--attn-res-impl",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="state",
     ),
     "attn_res_lerp": MegatronActionSpec(
         option_strings=("--attn-res-lerp",),
