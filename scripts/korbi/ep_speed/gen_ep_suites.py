@@ -584,6 +584,35 @@ def q35_slice():
     return arms
 
 
+def docmask_fix():
+    """Document masking costs Qwen3 28 % of its tok/s (h1b: 5,867 -> 4,242): cuDNN fused attention on
+    packed (THD) batches is host-heavy (FusedAttnFunc gaps). FlashAttention varlen instead; the
+    hybrid without masking as the bound; Qwen3.5 again with a longer limit (its first two steps
+    were Triton autotuning)."""
+    arms, arm = arms_builder()
+    moon = {**MOON, **MEM, "aux.array_tag": "_moonmem", B + "moe_flex_dispatcher_num_sms": 64}
+    base = {**Q3VPP, **REALDATA, **moon}
+    s8k = {B + "seq_length": 8192, B + "max_position_embeddings": 8192, "aux.gbs": 512,
+           B + "micro_batch_size": 1, B + "liger_fused_linear_cross_entropy_chunk_size": 2048}
+    doc = {B + "dataloader_inter_document_masking": True, B + "fused_qk_norm_rope": False}
+    flash = {B + "attention_backend": "flash"}
+    prof = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
+            B + "profile_step_start": 6, B + "profile_step_end": 8, B + "train_iters": 10}
+    hyb = {**RECIPE, **PROD, **PRODSEQ, "aux.gbs": 512, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2, **PLAIN}
+    arm("w_q3doc_flash", "Qwen3 8k doc-masked, FlashAttention varlen", base, s8k, doc, flash)
+    arm("w_q3doc_prof", "Qwen3 8k doc-masked, cuDNN fused attention, profiled", base, s8k, doc, prof)
+    arm("w_hyb_flash", "hybrid plain, doc-masked, FlashAttention varlen", base, hyb, flash)
+    arm("w_hyb_nodoc", "hybrid plain, no document masking (the bound)", base, hyb,
+        {B + "dataloader_inter_document_masking": False})
+    arm("w_hyb_doc_prof", "hybrid plain, doc-masked, profiled", base, hyb, prof)
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -909,6 +938,19 @@ aux:
     overlap_param_gather: false
     liger_fused_linear_cross_entropy_chunk_size: 4096
 """, iters=12, time="00:20:00", step_s=3.0), q35_slice())
+    dump("ep_docmask_mn5.yaml",
+         "Document-masking cost and fix (docs/ep_fp8_speed.md, phase H).",
+         """
+aux:
+  family: ladder
+  suite: h3
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON, docmask_fix())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
