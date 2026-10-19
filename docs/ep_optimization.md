@@ -211,3 +211,33 @@ is running from feat/hybrid-v0.19 / oellm/v0.19-hybrid):
 3. **No sync to MN5's main checkout** (`hybrid_v019/autoexp`) from your side -- I sync after running our
    regression tests (residual streams, CUDA graphs, packed docs, MuOwn checkpoints) on the merged head.
 Reply here when pushed (Megatron sha + autoexp sha).
+
+**[EP agent, 2026-10-19 12:20] Merged + pushed (your guardrails):**
+- **Megatron** `oellm/v0.19-hybrid` = **56f2d4681** (fast-forward of 0f73ea01c, 17 commits). Default-path
+  changes to know about (all behaviour-preserving, tested): `pad_routing_map` out of place (same values;
+  fixed an in-place error with the fused router); complex_kda per-micro-batch `cu_seqlens` cache
+  (identity-checked, doc masking only); pretrain_hybrid skips `total_tokens` / `seq_idx` (Mamba-only
+  inputs, 2 device syncs per micro-batch) when the pattern string has no `M` -- pattern-less layouts keep
+  them; `get_fp8_context(..., experts=False)` (no-op unless `fp8_experts_only`). Everything else is
+  opt-in: moonep backend, `fp8_experts_only`, `--dataloader-document-segment-length`, ncclep
+  `num_topk`, paged-stash `rewind`, fine-grained offload chunk fix (PR #7908 port, offload only),
+  `CKDA_BENCH_SEGMENT_ONLY` env (benchmark only).
+- **autoexp** `feat/hybrid-v0.19` = **fe52c78** (merge onto origin 2ba2dc1, your tree + our new files
+  only: ep_* suites, scripts/korbi/ep_speed, watchdog sbatch/slurm/script, moonep patch,
+  docs/ep_fp8_speed.md; mirrors regenerated with the scripts -- only the new opt-in flags; no conflicts,
+  none of your files changed). `pytest tests` (minus GPU export): 709 passed, 7 skipped. Not synced to MN5.
+
+**k1 results (8 nodes, real text, MoonEP 64 SMs, memory settings) -- take the first one now:**
+| arm | tok/s/GPU | TFLOP/s |
+|---|---:|---:|
+| hybrid plain, doc-masked 2 x 8k packs (ref) | 5,965 | 101.5 |
+| **+ `manual_gc: true`, `manual_gc_interval: 10`, `mmap_bin_files: false`** | **6,909 (+16 %)** | **117.4** |
+| CKDA restarts only at the 8k packs (doc mask in attention only) | 5,805 | 98.7 |
+| no document masking, 8k mbs 2 (no GC) | 6,574 | 115.2 |
+| Qwen3-30B-A3B 4k mbs 4 + GC (ref 6,823) | 6,830 | 195.2 |
+| Qwen3.5-like, HybridEP, forced balancing, gbs 4096, GC (exp_irene: 6,971) | 7,239 | 141.0 |
+- **Manual GC** (exp_irene's setting) removes Python-GC stalls on the host-bound doc-masked hybrid:
+  +16 %; no effect on Qwen3 (not host-bound). Cheap and safe -- recommend for round 5 / production.
+- **CKDA document masking costs nothing** (CKDA-unmasked is not faster); the masked hybrid with GC
+  beats the unmasked one without GC.
+- mHC-4 suite relaunched with GC as m2 (11 arms, mHC-4 vs plain vs routed, CUDA graphs); results here.

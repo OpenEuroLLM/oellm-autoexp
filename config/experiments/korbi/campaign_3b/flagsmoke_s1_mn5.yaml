@@ -108,3 +108,6 @@ sweep:
           backend.megatron.dataloader_inter_document_masking: true
           backend.megatron.num_workers: 8
           backend.megatron.dataloader_prefetch_factor: 2
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
