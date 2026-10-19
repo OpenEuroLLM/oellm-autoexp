@@ -753,6 +753,24 @@ def qwen3_moe_recompute():
     return arms
 
 
+def qwen3_offload():
+    """Qwen3-30B-A3B: recompute only the MoE layers, offload the attention-side activations to the
+    host instead of keeping (OOM, q7) or recomputing them (full recompute)."""
+    arms, arm = arms_builder()
+    moon = {**MOON, **MEM, "backend.env.FLA_TENSOR_CACHE_SIZE": "64",
+            "backend.env.NVTE_CPU_OFFLOAD_V1": "1", "aux.array_tag": "_moonmemoff",
+            B + "moe_flex_dispatcher_num_sms": 64}
+    base = {**Q3VPP, **REALDATA, **moon}
+    off = {B + "recompute_granularity": "selective", B + "recompute_method": None,
+           B + "recompute_num_layers": None, B + "recompute_modules": ["moe"],
+           B + "fine_grained_activation_offloading": True,
+           B + "offload_modules": ["attn_norm", "qkv_linear", "core_attn", "attn_proj", "mlp_norm"]}
+    arm("o_moe_off", "recompute moe, offload the attention activations", base, off)
+    arm("o_moe_off_half", "recompute moe, offload half of the attention activations", base, off,
+        {B + "activation_offload_fraction": 0.5})
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -1156,6 +1174,19 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, qwen3_moe_recompute())
+    dump("ep_qwen3o_mn5.yaml",
+         "Qwen3-30B-A3B: MoE recompute + attention activation offloading (docs/ep_fp8_speed.md, phase Q).",
+         """
+aux:
+  family: q3a3b
+  suite: q8
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON, qwen3_offload())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
