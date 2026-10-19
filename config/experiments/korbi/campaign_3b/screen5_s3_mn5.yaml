@@ -98,12 +98,14 @@ sweep:
           aux.gbs: 64
           backend.megatron.train_iters: 7629
           backend.megatron.cuda_graph_impl: local
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
           backend.megatron.linear_key_head_dim: 128
           backend.megatron.linear_value_head_dim: 128
           backend.megatron.linear_num_key_heads: 10
           backend.megatron.linear_num_value_heads: 20
           backend.megatron.rotary_percent: 0.25
           backend.megatron.layernorm_zero_centered_gamma: true
+          backend.megatron.fused_qk_norm_rope: false
           slurm.sbatch.nodes: 2
         # ours: CKDA 5:1 + NoPE / qk-norm / XSA / gated attention, MoE
         - aux.arm: h5_moe
@@ -161,6 +163,7 @@ sweep:
           aux.gbs: 64
           backend.megatron.train_iters: 7629
           backend.megatron.cuda_graph_impl: local
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
           slurm.sbatch.nodes: 2
         # + mHC, 4 streams (DeepSeek's)
         - aux.arm: h5_moe_mhc4
@@ -218,6 +221,7 @@ sweep:
           aux.gbs: 64
           backend.megatron.train_iters: 7629
           backend.megatron.cuda_graph_impl: local
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 4
           backend.megatron.residual_mixer_lr_mult: 0.25
@@ -278,6 +282,7 @@ sweep:
           aux.gbs: 64
           backend.megatron.train_iters: 7629
           backend.megatron.cuda_graph_impl: local
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 8
           backend.megatron.mhc_routed_topk: 2

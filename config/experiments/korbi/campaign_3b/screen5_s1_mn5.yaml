@@ -99,6 +99,8 @@ sweep:
           aux.gbs: 64
           backend.megatron.train_iters: 7629
           backend.megatron.cuda_graph_impl: local
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
+          backend.megatron.fused_qk_norm_rope: false
         # Qwen3.5-like GDN 3:1 + gated attention, same MoE: main run A's proxy
         - aux.arm: qwen35_moe
           backend.megatron.num_attention_heads: 6
@@ -146,12 +148,14 @@ sweep:
           aux.gbs: 64
           backend.megatron.train_iters: 7629
           backend.megatron.cuda_graph_impl: local
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
           backend.megatron.linear_key_head_dim: 128
           backend.megatron.linear_value_head_dim: 128
           backend.megatron.linear_num_key_heads: 6
           backend.megatron.linear_num_value_heads: 12
           backend.megatron.rotary_percent: 0.25
           backend.megatron.layernorm_zero_centered_gamma: true
+          backend.megatron.fused_qk_norm_rope: false
         # ours: CKDA 5:1 + NoPE / qk-norm / XSA / gated attention, MoE
         - aux.arm: h5_moe
           backend.megatron.num_attention_heads: 6
@@ -208,6 +212,7 @@ sweep:
           aux.gbs: 64
           backend.megatron.train_iters: 7629
           backend.megatron.cuda_graph_impl: local
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
         # + mHC, 4 streams (DeepSeek's)
         - aux.arm: h5_moe_mhc4
           backend.megatron.num_attention_heads: 6
@@ -264,6 +269,7 @@ sweep:
           aux.gbs: 64
           backend.megatron.train_iters: 7629
           backend.megatron.cuda_graph_impl: local
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 4
           backend.megatron.residual_mixer_lr_mult: 0.25
@@ -323,6 +329,7 @@ sweep:
           aux.gbs: 64
           backend.megatron.train_iters: 7629
           backend.megatron.cuda_graph_impl: local
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 2
           backend.megatron.residual_mixer_lr_mult: 0.25
@@ -382,6 +389,7 @@ sweep:
           aux.gbs: 64
           backend.megatron.train_iters: 7629
           backend.megatron.cuda_graph_impl: local
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 8
           backend.megatron.mhc_routed_topk: 2
@@ -444,6 +452,7 @@ sweep:
           aux.gbs: 64
           backend.megatron.train_iters: 7629
           backend.megatron.cuda_graph_impl: none
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
           backend.megatron.attn_res: true
           backend.megatron.attn_res_num_blocks: 4
         # MoE granularity x2: 288 x 256, top-6 + shared 512
@@ -502,6 +511,194 @@ sweep:
           aux.gbs: 64
           backend.megatron.train_iters: 7629
           backend.megatron.cuda_graph_impl: local
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
+        # + routed residual 1 + 1 of 8, keyed, balancing, mixing of the picked
+        - aux.arm: h5_moe_rr28_mix
+          backend.megatron.num_attention_heads: 6
+          backend.megatron.num_query_groups: 2
+          backend.megatron.kv_channels: 128
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_value_head_dim: 128
+          backend.megatron.linear_num_key_heads: 6
+          backend.megatron.linear_num_value_heads: 6
+          backend.megatron.experimental_attention_variant: complex_kda
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          aux.pattern: LELELELELE*ELELELELELE*E
+          backend.megatron.num_experts: 144
+          backend.megatron.moe_ffn_hidden_size: 512
+          backend.megatron.moe_router_topk: 3
+          backend.megatron.moe_shared_expert_intermediate_size: 512
+          backend.megatron.moe_grouped_gemm: true
+          backend.megatron.moe_token_dispatcher_type: alltoall
+          backend.megatron.moe_router_dtype: fp32
+          backend.megatron.moe_permute_fusion: true
+          backend.megatron.expert_model_parallel_size: 4
+          backend.megatron.moe_router_load_balancing_type: aux_loss
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_per_layer_logging: true
+          backend.megatron.moe_expert_viability_metrics: true
+          backend.megatron.cuda_graph_modules: [moe_router, moe_preprocess]
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.micro_batch_size: 1
+          backend.megatron.optimizer: angular_muown
+          backend.megatron.lr: 0.004
+          backend.megatron.min_lr: 0.004
+          backend.megatron.lr_warmup_iters: 0
+          backend.megatron.exit_interval: 4000
+          job.est_steps: 4000
+          backend.megatron.per_split_data_args_path: null
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/flag_datamix_mn5.txt
+          backend.megatron.split: 998,2,0
+          backend.megatron.seq_length: 8192
+          backend.megatron.max_position_embeddings: 8192
+          backend.megatron.dataloader_inter_document_masking: true
+          backend.megatron.num_workers: 16
+          backend.megatron.dataloader_prefetch_factor: 8
+          aux.seq: 8192
+          backend.megatron.global_batch_size: 64
+          aux.gbs: 64
+          backend.megatron.train_iters: 7629
+          backend.megatron.cuda_graph_impl: local
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 8
+          backend.megatron.mhc_routed_topk: 2
+          backend.megatron.mhc_routed_key_dim: 64
+          backend.megatron.mhc_routed_balance_rate: 0.001
+          backend.megatron.residual_mixer_lr_mult: 0.25
+          backend.megatron.mhc_routed_mix: true
+        # LatentMoE, latent 384: 288 x 512, top-6 + shared (equal cost)
+        - aux.arm: h5_moe_lat2
+          backend.megatron.num_attention_heads: 6
+          backend.megatron.num_query_groups: 2
+          backend.megatron.kv_channels: 128
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_value_head_dim: 128
+          backend.megatron.linear_num_key_heads: 6
+          backend.megatron.linear_num_value_heads: 6
+          backend.megatron.experimental_attention_variant: complex_kda
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          aux.pattern: LELELELELE*ELELELELELE*E
+          backend.megatron.num_experts: 288
+          backend.megatron.moe_ffn_hidden_size: 512
+          backend.megatron.moe_router_topk: 6
+          backend.megatron.moe_shared_expert_intermediate_size: 512
+          backend.megatron.moe_grouped_gemm: true
+          backend.megatron.moe_token_dispatcher_type: alltoall
+          backend.megatron.moe_router_dtype: fp32
+          backend.megatron.moe_permute_fusion: true
+          backend.megatron.expert_model_parallel_size: 4
+          backend.megatron.moe_router_load_balancing_type: aux_loss
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_per_layer_logging: true
+          backend.megatron.moe_expert_viability_metrics: true
+          backend.megatron.cuda_graph_modules: [moe_router, moe_preprocess]
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.micro_batch_size: 1
+          backend.megatron.optimizer: angular_muown
+          backend.megatron.lr: 0.004
+          backend.megatron.min_lr: 0.004
+          backend.megatron.lr_warmup_iters: 0
+          backend.megatron.exit_interval: 4000
+          job.est_steps: 4000
+          backend.megatron.per_split_data_args_path: null
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/flag_datamix_mn5.txt
+          backend.megatron.split: 998,2,0
+          backend.megatron.seq_length: 8192
+          backend.megatron.max_position_embeddings: 8192
+          backend.megatron.dataloader_inter_document_masking: true
+          backend.megatron.num_workers: 16
+          backend.megatron.dataloader_prefetch_factor: 8
+          aux.seq: 8192
+          backend.megatron.global_batch_size: 64
+          aux.gbs: 64
+          backend.megatron.train_iters: 7629
+          backend.megatron.cuda_graph_impl: local
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
+          backend.megatron.moe_latent_size: 384
+        # routed residual (keyed, balancing, mixing) + LatentMoE
+        - aux.arm: h5_moe_rr28_mix_lat2
+          backend.megatron.num_attention_heads: 6
+          backend.megatron.num_query_groups: 2
+          backend.megatron.kv_channels: 128
+          backend.megatron.linear_key_head_dim: 128
+          backend.megatron.linear_value_head_dim: 128
+          backend.megatron.linear_num_key_heads: 6
+          backend.megatron.linear_num_value_heads: 6
+          backend.megatron.experimental_attention_variant: complex_kda
+          backend.megatron.linear_beta_max: 2.0
+          backend.megatron.linear_gate_activation: signed_sigmoid2
+          backend.megatron.linear_gate_init_style: shipped
+          backend.megatron.linear_output_gate: lowrank
+          backend.megatron.linear_drop_qkv_silu: true
+          backend.megatron.position_embedding_type: none
+          backend.megatron.attention_output_gate: true
+          backend.megatron.exclusive_self_attention: true
+          aux.pattern: LELELELELE*ELELELELELE*E
+          backend.megatron.num_experts: 288
+          backend.megatron.moe_ffn_hidden_size: 512
+          backend.megatron.moe_router_topk: 6
+          backend.megatron.moe_shared_expert_intermediate_size: 512
+          backend.megatron.moe_grouped_gemm: true
+          backend.megatron.moe_token_dispatcher_type: alltoall
+          backend.megatron.moe_router_dtype: fp32
+          backend.megatron.moe_permute_fusion: true
+          backend.megatron.expert_model_parallel_size: 4
+          backend.megatron.moe_router_load_balancing_type: aux_loss
+          backend.megatron.moe_aux_loss_coeff: 0.0001
+          backend.megatron.moe_per_layer_logging: true
+          backend.megatron.moe_expert_viability_metrics: true
+          backend.megatron.cuda_graph_modules: [moe_router, moe_preprocess]
+          backend.megatron.moe_router_score_function: sigmoid
+          backend.megatron.moe_router_enable_expert_bias: true
+          backend.megatron.moe_router_bias_update_rate: 0.001
+          backend.megatron.micro_batch_size: 1
+          backend.megatron.optimizer: angular_muown
+          backend.megatron.lr: 0.004
+          backend.megatron.min_lr: 0.004
+          backend.megatron.lr_warmup_iters: 0
+          backend.megatron.exit_interval: 4000
+          job.est_steps: 4000
+          backend.megatron.per_split_data_args_path: null
+          backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/flag_datamix_mn5.txt
+          backend.megatron.split: 998,2,0
+          backend.megatron.seq_length: 8192
+          backend.megatron.max_position_embeddings: 8192
+          backend.megatron.dataloader_inter_document_masking: true
+          backend.megatron.num_workers: 16
+          backend.megatron.dataloader_prefetch_factor: 8
+          aux.seq: 8192
+          backend.megatron.global_batch_size: 64
+          aux.gbs: 64
+          backend.megatron.train_iters: 7629
+          backend.megatron.cuda_graph_impl: local
+          backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
+          backend.megatron.mhc: true
+          backend.megatron.mhc_expansion_rate: 8
+          backend.megatron.mhc_routed_topk: 2
+          backend.megatron.mhc_routed_key_dim: 64
+          backend.megatron.mhc_routed_balance_rate: 0.001
+          backend.megatron.residual_mixer_lr_mult: 0.25
+          backend.megatron.mhc_routed_mix: true
+          backend.megatron.moe_latent_size: 384
         # h5_moe, seed 1235 (noise: pairs with h5_moe_rr28_seed2)
         - aux.arm: h5_moe_seed2
           backend.megatron.num_attention_heads: 6

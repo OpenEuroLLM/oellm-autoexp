@@ -728,6 +728,15 @@ def hybrid_every(blocks: int, period: int, mixer: str) -> str:
     return "".join(("*" if i % period == period - 1 else mixer) + "E" for i in range(blocks))
 
 
+R5_CACHE = "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5"
+# seed-1235 arms: no data_cache_path in the entry -> base_train's per-run cache (another order;
+# two of them would race on a shared one)
+own_cache = lambda kv: {k: v for k, v in kv.items() if k != B + "data_cache_path"}  # noqa: E731
+# document masking hands TE a packed batch: RoPE per document is TE's unfused-path job, the
+# fused q/k-norm + RoPE kernel rejects packed batches with RoPE
+NOFUSED_ROPE = {B + "fused_qk_norm_rope": False}
+
+
 def arms5(size: str):
     """Round 5 (docs §12): the architecture decision before the two main runs (a Qwen3.5-35B-A3B
     replica and our 2-3B-active hybrid), on the production data setting: the flag mix at 8k with
@@ -744,8 +753,11 @@ def arms5(size: str):
     # mixer layers a cu_seqlens whose length changes every micro-batch (no static capture; fla's
     # varlen kernels also read it on the host); the router sees a fixed [t, 1, h]
     cg5 = {B + "cuda_graph_impl": "local", B + "cuda_graph_modules": ["moe_router", "moe_preprocess"]}
+    # one dataset index for every seed-1234 arm of every size (same schedule, seed, seq, split):
+    # built once (screen5 prebuild), then only read -- concurrent BUILDS of one cache race, and
+    # each run building its own index of the 452-prefix flag mix took 12-45 min at startup
     base = {**FLAG8K, "aux.seq": 8192, B + "micro_batch_size": 1, B + "global_batch_size": 64,
-            "aux.gbs": 64, B + "train_iters": 7629, **cg5}
+            "aux.gbs": 64, B + "train_iters": 7629, **cg5, B + "data_cache_path": R5_CACHE}
     h5 = {**pool["h5_moe"], **base}
     mlr = {B + "residual_mixer_lr_mult": 0.25}
     mhc = lambda n: {B + "mhc": True, B + "mhc_expansion_rate": n, **mlr}  # noqa: E731
@@ -764,8 +776,9 @@ def arms5(size: str):
             B + "layernorm_zero_centered_gamma": True}
     out = [
         ("attn_moe", "all-attention MoE (RoPE + qk-norm + XSA): is the hybrid worth it at 8k",
-         {**pool["attn_moe"], **base}),
-        ("qwen35_moe", "Qwen3.5-like GDN 3:1 + gated attention, same MoE: main run A's proxy", qwen),
+         {**pool["attn_moe"], **base, **NOFUSED_ROPE}),
+        ("qwen35_moe", "Qwen3.5-like GDN 3:1 + gated attention, same MoE: main run A's proxy",
+         {**qwen, **NOFUSED_ROPE}),
         ("h5_moe", "ours: CKDA 5:1 + NoPE / qk-norm / XSA / gated attention, MoE", h5),
         ("h5_moe_mhc4", "+ mHC, 4 streams (DeepSeek's)", {**h5, **mhc(4)}),
         ("h5_moe_mhc2", "+ mHC, 2 streams", {**h5, **mhc(2)}),
@@ -775,11 +788,21 @@ def arms5(size: str):
           B + "cuda_graph_impl": "none", B + "cuda_graph_modules": []}),
         ("h5_moe_g2", f"MoE granularity x2: {144 * 2} x {w // 2}, top-6 + shared {w}",
          {**h5, B + "num_experts": 288, B + "moe_ffn_hidden_size": w // 2, B + "moe_router_topk": 6}),
+        # candidates from round 4 (user 2026-10-19): the routed residual with mixing of the picked
+        # streams; LatentMoE at equal cost (round 4 s1: best 10BT extrapolation, one seed); both
+        ("h5_moe_rr28_mix", "+ routed residual 1 + 1 of 8, keyed, balancing, mixing of the picked",
+         {**h5, **rr, B + "mhc_routed_mix": True}),
+        ("h5_moe_lat2", f"LatentMoE, latent {hidden // 2}: 288 x {w}, top-6 + shared (equal cost)",
+         {**h5, B + "num_experts": 288, B + "moe_router_topk": 6, B + "moe_latent_size": hidden // 2}),
+        ("h5_moe_rr28_mix_lat2", "routed residual (keyed, balancing, mixing) + LatentMoE",
+         {**h5, **rr, B + "mhc_routed_mix": True, B + "num_experts": 288, B + "moe_router_topk": 6,
+          B + "moe_latent_size": hidden // 2}),
     ]
     if size == "s1":
         out.append(("h5_moe_seed2", "h5_moe, seed 1235 (noise: pairs with h5_moe_rr28_seed2)",
-                    {**h5, B + "seed": 1235}))
-        out.append(("h5_moe_rr28_seed2", "h5_moe_rr28, seed 1235", {**h5, **rr, B + "seed": 1235}))
+                    own_cache({**h5, B + "seed": 1235})))
+        out.append(("h5_moe_rr28_seed2", "h5_moe_rr28, seed 1235",
+                    own_cache({**h5, **rr, B + "seed": 1235})))
     if size == "s3":
         # 2 nodes; 144 experts over EP8 (all-to-all crosses nodes; HybridEP is intra-node only)
         nodes = {"slurm.sbatch.nodes": 2, B + "expert_model_parallel_size": 8}
