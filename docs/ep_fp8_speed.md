@@ -313,27 +313,47 @@ Qwen3-30B-A3B 28.6, Qwen3.5-35B-A3B-like 19.5, the production hybrid 17.0. At eq
 hybrids therefore report 0.6-0.7x the TFLOP/s: Qwen3.5-like runs at 6,486 tok/s/GPU = 95 % of
 Qwen3's 6,823, yet 126 vs 195 TFLOP/s.
 
-## 6. Conclusions so far (2026-10-19)
+## 6. Large scale (16 nodes, 64 GPUs; real text, 256k vocab, real routing, full recompute, PP4 x VPP2, EP4)
 
-**Standard attention + MoE (Qwen3-30B-A3B, 8 nodes, real text, 256k vocab, real routing): 195-203
-TFLOP/s** with MoonEP (64 comm SMs) + the memory settings, vs 169 for HybridEP and exp_irene's
-185.8 with *forced* balancing (ours forced: HybridEP 215, MoonEP 206). The levers, in order:
-balanced EP dispatch (MoonEP, +15 % over HybridEP with real routing), the memory settings (needed
-to fit at all), the TE grouped-tensor expert path, gbs 4096 (+4 %). Not: fp8 (any recipe), EP a2a
-overlap, sync-free HybridEP, block (partial) recompute (OOM), DeepEP / ncclep / alltoall.
+| model | setup | TFLOP/s | tok/s/GPU |
+|---|---|---:|---:|
+| Qwen3-30B-A3B | MoonEP 64 SMs + memory settings, gbs 2048 (8M tokens) | **193.6** | 6,773 |
+| Qwen3-30B-A3B | same, gbs 1024 | 183.4 | 6,416 |
+| Qwen3.5-35B-A3B-like (native GDN 3:1) | same, gbs 2048 | 124.7 | 6,399 |
+| production hybrid, plain residual | doc-masked 2 x 8k packs, sync fixes, gbs 512 (8M) | 87.1 | 5,126 |
 
-**The hybrid at half the TFLOP/s:** mostly accounting (fewer counted FLOPs per token: top-5+1,
-16 heads, masked attention) plus a real ~20-28 % tok/s loss from document masking, which makes
-the run host-bound (GPU gaps 14 % of the step). Fixes in test: the packed path's two device
-syncs per micro-batch (Mamba-only metadata) and the CKDA cu_seqlens cache. FlashAttention varlen
-hangs on packed batches in this image. The routed residual adds a 16 % step cost at full depth,
-82 % of it exposed pipeline p2p (8 streams per boundary).
+8 nodes for reference: Qwen3 195.1 (gbs 1024) / 203.0 (gbs 4096); Qwen3.5-like 126.4; hybrid 2 x 8k
+94.5-96.0; routed residual (mbs 1, HybridEP) 69-73.
 
-**Qwen3.5-35B-A3B-like (GDN 3:1, 256 x 512 top-8, 4k, mbs 4): 126-127 TFLOP/s** (FLA or native
-GDN, MoonEP); one-node slices run at 153-177 without recompute.
+## 7. Conclusions and recommended settings (2026-10-19)
+
+**> 250 TFLOP/s is not reached; ~195-203 is the practical ceiling on MN5 for Qwen3-30B-A3B with real
+routing** (exp_irene's best: 185.8 with forced balancing; ours forced: 215). With full recompute --
+needed: block recompute keeping even 2 of 14 layers per chunk OOMs at 64 GB -- 200 model TFLOP/s is
+~267 TFLOP/s of executed bf16 work. The remaining exposed time is MoonEP's (serial) EP comm
+(~15 % of the step) and pipeline p2p (~7 %); EP a2a overlap is excluded by full recompute.
+
+What to use (all in Megatron `ep-fp8-speed` / the `ep_*` suites):
+1. **Memory settings** (NCCL 4 channels per peer, expandable segments): required to fit / avoid OOMs.
+2. **MoonEP** (`moe_flex_dispatcher_backend: moonep`, `moe_flex_dispatcher_num_sms: 64`,
+   `$HYBRID_ENV/pylibs_moonep` first on PYTHONPATH) for standard-residual models: +15 % over HybridEP
+   with real routing. HybridEP + the TE grouped-tensor experts (`use_transformer_engine_op_fuser` +
+   `NVTE_CUTEDSL_FUSED_GROUPED_MLP=1`) otherwise, and for the routed residual (MoonEP + routed is
+   slower / OOMs at 2 x 8k).
+3. **Document masking:** the two host-sync fixes + `--dataloader-document-segment-length 8192` with
+   2 x 8k packs (+24 % over the starting point for the hybrid, +16 % for doc-masked Qwen3).
+4. Large global batches (16+ micro-batches per pipeline; 32 better).
+5. Not: fp8 on H100 at these shapes (0.89-0.96x, also experts-only, also on the grouped path; fp8
+   dispatch would save < 2 %), DeepEP / ncclep / alltoall (slower; ncclep is the only internode EP and
+   traps on overflow), sync-free HybridEP at capacity <= 2 (step re-runs), FlashAttention varlen on
+   packed batches (hangs), UCCL-EP (not in the image).
+
+**Why the hybrids report fewer TFLOP/s:** FLOP accounting (linear attention counts a few MFLOP per
+token) -- Qwen3.5-like runs at 95 % of Qwen3's tok/s -- plus, for the production recipe, document
+masking (fixed in part above) and the routed residual (16 % step cost, 82 % of it exposed pipeline
+p2p of the 8 streams; levers: fp8 / fewer streams at the boundary, fewer PP stages).
 
 ## GPU-h ledger
 
-| suite | what | GPU-h (est.) |
-|---|---|---:|
-| e1 | phase A, 20 arms x 1 node x <= 20 min | <= 27 |
+Total used: ~690 GPU-h of the 1,000 (sacct over all ep suites: e1-e4 slices, b1-b5 production
+model, q1-q6 Qwen3, h1-h6 ladder / document masking, l1-l2 16 nodes, MoonEP unit tests).
