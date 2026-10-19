@@ -92,8 +92,8 @@ sweep:
           backend.megatron.lr: 0.004
           backend.megatron.min_lr: 0.004
           backend.megatron.lr_warmup_iters: 0
-          backend.megatron.exit_interval: 600
-          job.est_steps: 600
+          backend.megatron.exit_interval: 130
+          job.est_steps: 130
           backend.megatron.per_split_data_args_path: null
           backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/flag_datamix_mn5.txt
           backend.megatron.split: 998,2,0
@@ -152,8 +152,8 @@ sweep:
           backend.megatron.lr: 0.004
           backend.megatron.min_lr: 0.004
           backend.megatron.lr_warmup_iters: 0
-          backend.megatron.exit_interval: 600
-          job.est_steps: 600
+          backend.megatron.exit_interval: 130
+          job.est_steps: 130
           backend.megatron.per_split_data_args_path: null
           backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/flag_datamix_mn5.txt
           backend.megatron.split: 998,2,0
@@ -215,8 +215,8 @@ sweep:
           backend.megatron.lr: 0.004
           backend.megatron.min_lr: 0.004
           backend.megatron.lr_warmup_iters: 0
-          backend.megatron.exit_interval: 600
-          job.est_steps: 600
+          backend.megatron.exit_interval: 130
+          job.est_steps: 130
           backend.megatron.per_split_data_args_path: null
           backend.megatron.data_args_path: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/flag_datamix_mn5.txt
           backend.megatron.split: 998,2,0

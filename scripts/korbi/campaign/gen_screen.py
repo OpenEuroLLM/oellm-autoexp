@@ -892,11 +892,12 @@ def arms5e(size: str):
 
 
 def speed5_ab(size: str = "s1"):
-    """Concurrent A/B of the wall clock (user 2026-10-20): plain / mHC-4 / LDM (CuTe) side by side
-    for 600 steps, no profiler -- the tok/s of runs started at different times differ by 10-30 %
-    on MN5 (GPFS / node load), so only arms that run together compare."""
+    """Concurrent A/B of the wall clock (user 2026-10-20): plain / mHC-4 / LDM (CuTe) side by side,
+    no profiler -- the tok/s of runs started at different times differ by 10-30 % on MN5 (GPFS /
+    node load), so only arms that run together compare. 130 steps: the median over steps 60-130
+    (user: ~50 steps past the warm-up suffice)."""
     keep = ("h5_moe", "h5_moe_mhc4", "h5_moe_ldm_cute")
-    ab = {B + "exit_interval": 600, "job.est_steps": 600}
+    ab = {B + "exit_interval": 130, "job.est_steps": 130}
     return [(n, c, {**kv, **ab}) for n, c, kv in speed5_residuals(size) if n in keep]
 
 
