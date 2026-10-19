@@ -1098,6 +1098,55 @@ def mhc4_memory2():
     return arms
 
 
+def with_engram(pattern: str, before_blocks) -> str:
+    """Insert an Engram layer (`N`) before the given 0-indexed blocks (mixer + MoE) of a
+    pipe-separated hybrid pattern."""
+    out, block = [], 0
+    for ch in pattern:
+        if ch not in "E|":
+            if block in before_blocks:
+                out.append("N")
+            block += 1
+        out.append(ch)
+    return "".join(out)
+
+
+def engram_cost():
+    """Engram (hashed n-gram tables, `N` layers) in the production hybrid with mHC-4, using the
+    memory headroom: tables sharded over the stage's data-parallel ranks ("dp": fp32 rows + Adam
+    on the owner, rows looked up by all-to-all), now with document masking (Megatron f5ecba30d).
+    Placement as the campaign's (before blocks 2 and 8 of 12): before blocks 2 and 32 of 48."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    gc = {B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False,
+          B + "dataloader_prefetch_factor": 8}
+    base = {**Q3VPP, **REALDATA, **gc}
+    pat = vpp_pattern("LLLLL*" * 8, (7, 7, 7, 6, 6, 6, 6, 3))
+    hyb = {**RECIPE, **PROD, **PRODSEQ, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2, "aux.gbs": 512,
+           B + "train_iters": 15, "aux.pattern": pat,
+           B + "mhc": True, B + "mhc_expansion_rate": 4, B + "mhc_routed_topk": 0,
+           B + "mhc_routed_reversible": False, B + "recompute_num_layers": 2}
+    eng = lambda blocks, rows: {"aux.pattern": with_engram(pat, blocks),  # noqa: E731
+                                B + "engram_ngram_orders": [2, 3], B + "engram_table_parallel": "dp",
+                                B + "engram_table_size": rows}
+    arm("e_ref", "hybrid + mHC-4, 8k mbs 1 (reference, no Engram)", base, hyb, moon)
+    arm("e_eng2", "+ 2 Engram layers, 262k rows per table (8 tables x 64: 134M params per layer)",
+        base, hyb, moon, eng((1, 31), 262144))
+    arm("e_eng2_1m", "+ 2 Engram layers, 1M rows per table (537M params per layer)", base, hyb, moon,
+        eng((1, 31), 1048576))
+    arm("e_eng2_4m", "+ 2 Engram layers, 4M rows per table (2.1B params per layer)", base, hyb, moon,
+        eng((1, 31), 4194304))
+    arm("e_eng4_1m", "+ 4 Engram layers (before blocks 2, 14, 26, 38), 1M rows", base, hyb, moon,
+        eng((1, 13, 25, 37), 1048576))
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -1593,6 +1642,17 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), mhc4_memory2())
+    dump("ep_engram_mn5.yaml", "Engram in the production hybrid with mHC-4 (docs/ep_fp8_speed.md, phase E).", """
+aux:
+  family: engram
+  suite: e1
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), engram_cost())
     dump("ep_tokspeed_mn5.yaml",
          "tok/s/GPU: exp_irene's host settings, the CKDA share of document masking, Qwen3.5 like-for-like "
          "(docs/ep_fp8_speed.md, phase T).",
