@@ -497,6 +497,40 @@ gradient to the earlier chunks is cut silently).
 16k with offload on 8 nodes matches 16k on 32 nodes without (5,398). Losses: identical to the
 reference through step 2, then run-to-run noise (same spread as two reference runs).
 
+### 6d-2. Larger micro-batches (o2) and the fused mHC read (MHC_FUSED_READ=1)
+
+o2 (8 nodes, 16k, gbs 512 = 32 micro-batches / pipeline at mbs 2):
+
+| arm | tok/s/GPU | TFLOP/s |
+|---|---:|---:|
+| plain 16k mbs 1 (gbs 256) | 7,133 | 122.0 |
+| plain 16k mbs 2 | OOM | - |
+| **plain 16k mbs 2 + offload** | **7,539** | 128.9 |
+| mHC-4 16k mbs 1 + offload (gbs 512) | 5,635 | 96.4 |
+| mHC-4 16k mbs 2 + offload | 5,717 | 97.6 |
+
+Larger micro-batches help both by a few %; the mHC gap (~24 %) is the mHC kernels: 24 sublayers
+per stage x (4.8 ms fwd + bwd + 1.2 ms recompute fwd) at 16k is ~35 us per token and GPU,
+the measured difference is 39.5 us. Bandwidth floor: the 4-wide state read + written per sublayer
+(fwd, recompute, bwd: ~56 C bytes / token) puts even perfect fusion near 7.1k (plain 7.5k).
+
+`megatron/core/transformer/mhc_fused.py` (per sublayer, nothing crosses layers or stages):
+Triton projection (tensor cores) + sum of squares, coefficients incl. log-space Sinkhorn per token
+in registers (backward replays the sweeps in an L2 scratch), read; backward: d_h_pre, one
+autotuned kernel for d_streams + d_phi (the write's stream gradient joins it through a
+ReadWriteLink: no autograd accumulation pass). Tests: single read against fp32 (fused closer than
+compiled on every gradient), two-sublayer chain.
+
+| 1 GPU, one sublayer fwd + bwd | 8k | 16k |
+|---|---:|---:|
+| compiled (current) | 2.59 ms | 4.74 ms |
+| fused | 1.80 ms (-30 %) | 3.46 ms (-27 %) |
+
+Per kernel (8k): write bwd 0.34 ms, d_streams 0.34, write fwd 0.20, d_h_pre 0.12, projection 0.11,
+read 0.10, coefficients 0.01 / 0.02 -- all near the HBM bound now; what is left is the number of
+passes (the next step: the read backward of sublayer k+1 and the write backward of sublayer k in
+one pass).
+
 ## 7. Conclusions and recommended settings (2026-10-19)
 
 **> 250 TFLOP/s is not reached; ~195-203 is the practical ceiling on MN5 for Qwen3-30B-A3B with real
