@@ -923,6 +923,12 @@ class MegatronConfig(ConfigInterface):
     # If True, retains first and last N TransformerBlocks in BF16 as opposed to FP8.
     first_last_layers_bf16: bool = False
 
+    # Run only the routed experts (TEGroupedMLP) in fp8; every other layer (attention, linear
+    # mixers, shared experts, dense MLPs) stays bf16. For models whose dense GEMMs are too
+    # small to gain from fp8 while the grouped expert GEMMs do. Needs fp8 with a non-delayed
+    # recipe.
+    fp8_experts_only: bool = False
+
     # Number of layers at the start of the model to keep in BF16 precision when
     # first_last_layers_bf16 is True.
     num_layers_at_start_in_bf16: int = 1
@@ -1093,10 +1099,13 @@ class MegatronConfig(ConfigInterface):
     moe_enable_deepep: bool = False
 
     # [Experimental] The backend to use for flex token dispatcher. The default is "deepep".
-    # Options are "deepep", "hybridep", and "ncclep". Currently only "hybridep" backend
-    # supports the MNNVL case. "ncclep" uses NVIDIA NCCL Expert Parallelism via
-    # TransformerEngine's transformer_engine.pytorch.ep API.
-    moe_flex_dispatcher_backend: Literal["deepep", "hybridep", "ncclep"] = "deepep"
+    # Options are "deepep", "hybridep", "ncclep" and "moonep". Currently only "hybridep"
+    # backend supports the MNNVL case. "ncclep" uses NVIDIA NCCL Expert Parallelism via
+    # TransformerEngine's transformer_engine.pytorch.ep API. "moonep" (MoonshotAI MoonEP,
+    # NVLink only) balances the per-rank load with dynamically prefetched redundant experts;
+    # it replaces the experts module too (megatron/core/transformer/moe/moonep.py: SwiGLU, no
+    # bias, bf16).
+    moe_flex_dispatcher_backend: Literal["deepep", "hybridep", "ncclep", "moonep"] = "deepep"
 
     # Fuse token rearrangement ops during token dispatching for HybridEP.
     moe_permute_fusion_into_hybridep: bool = False
@@ -3054,6 +3063,12 @@ class MegatronConfig(ConfigInterface):
     # for padding and arbitrary mask types, so the dataloader mask is silently discarded. This
     # also restarts RoPE at every document boundary, making --reset-position-ids redundant.
     dataloader_inter_document_masking: bool = False
+
+    # With --dataloader-inter-document-masking: also cut every sample at each multiple of this
+    # many tokens (a document boundary + position reset there). A sample of k x N tokens then
+    # trains exactly as k contiguous samples of N tokens in one packed micro-batch: fewer,
+    # larger micro-batches (packed sequences take micro batch 1) at the same context length N.
+    dataloader_document_segment_length: int | None = None
 
     # With --dataloader-inter-document-masking, print this rank's cu_seqlens for the first N
     # calls to get_batch. cu_seqlens is a few dozen bytes, so logging it is far cheaper than

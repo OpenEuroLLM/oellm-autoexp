@@ -941,6 +941,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "dataloader_document_segment_length": MegatronArgMetadata(
+        arg_type=int,
+        default=None,
+        help="With --dataloader-inter-document-masking: also cut every sample at each multiple of this many tokens (a document boundary + position reset there). A sample of k x N tokens then trains exactly as k contiguous samples of N tokens in one packed micro-batch: fewer, larger micro-batches (packed sequences take micro batch 1) at the same context length N.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "dataloader_fast_cache_load": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -2337,6 +2345,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help="The length of the amax history window used for scaling factor computation.",
         choices=None,
         nargs=None,
+        element_type=None,
+    ),
+    "fp8_experts_only": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="Run only the routed experts (TEGroupedMLP) in fp8; every other layer (attention, linear mixers, shared experts, dense MLPs) stays bf16. For models whose dense GEMMs are too small to gain from fp8 while the grouped expert GEMMs do. Needs fp8 with a non-delayed recipe.",
+        choices=None,
+        nargs=0,
         element_type=None,
     ),
     "fp8_interval": MegatronArgMetadata(
@@ -4585,8 +4601,8 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "moe_flex_dispatcher_backend": MegatronArgMetadata(
         arg_type=str,
         default="deepep",
-        help='[Experimental] The backend to use for flex token dispatcher. The default is "deepep". Options are "deepep", "hybridep", and "ncclep". Currently only "hybridep" backend supports the MNNVL case. "ncclep" uses NVIDIA NCCL Expert Parallelism via TransformerEngine\'s transformer_engine.pytorch.ep API.',
-        choices=("deepep", "hybridep", "ncclep"),
+        help='[Experimental] The backend to use for flex token dispatcher. The default is "deepep". Options are "deepep", "hybridep", "ncclep" and "moonep". Currently only "hybridep" backend supports the MNNVL case. "ncclep" uses NVIDIA NCCL Expert Parallelism via TransformerEngine\'s transformer_engine.pytorch.ep API. "moonep" (MoonshotAI MoonEP, NVLink only) balances the per-rank load with dynamically prefetched redundant experts; it replaces the experts module too (megatron/core/transformer/moe/moonep.py: SwiGLU, no bias, bf16).',
+        choices=("deepep", "hybridep", "ncclep", "moonep"),
         nargs=None,
         element_type=None,
     ),
@@ -8764,6 +8780,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=True,
         default=False,
     ),
+    "dataloader_document_segment_length": MegatronActionSpec(
+        option_strings=("--dataloader-document-segment-length",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=None,
+    ),
     "dataloader_fast_cache_load": MegatronActionSpec(
         option_strings=("--dataloader-fast-cache-load",),
         action_type="store_true",
@@ -9915,6 +9938,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=1,
+    ),
+    "fp8_experts_only": MegatronActionSpec(
+        option_strings=("--fp8-experts-only",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "fp8_interval": MegatronActionSpec(
         option_strings=("--fp8-interval",), action_type="store", nargs=None, const=None, default=1
