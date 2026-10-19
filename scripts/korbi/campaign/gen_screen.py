@@ -897,7 +897,10 @@ def speed5_ab(size: str = "s1"):
     node load), so only arms that run together compare. 130 steps: the median over steps 60-130
     (user: ~50 steps past the warm-up suffice)."""
     keep = ("h5_moe", "h5_moe_mhc4", "h5_moe_ldm_cute")
-    ab = {B + "exit_interval": 130, "job.est_steps": 130}
+    # 16 workers x prefetch 8: with FLAG8K's 4 x 2 every arm ran at the same ~23.8k (data-bound;
+    # 2026-10-20 A/B); 130 steps without checkpoint saves stay clear of the save-time host OOM
+    ab = {B + "exit_interval": 130, "job.est_steps": 130, B + "num_workers": 16,
+          B + "dataloader_prefetch_factor": 8}
     return [(n, c, {**kv, **ab}) for n, c, kv in speed5_residuals(size) if n in keep]
 
 
