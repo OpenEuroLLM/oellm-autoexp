@@ -291,6 +291,25 @@ micro batch 8 OOMs with the 262k head.
 forced 206.0 (vs HybridEP forced 214.5: overhead now ~4 %). HybridEP comm SMs 16 / 48: 169.9 /
 170.0 (no effect).
 
+## 6. Conclusions so far (2026-10-19)
+
+**Standard attention + MoE (Qwen3-30B-A3B, 8 nodes, real text, 256k vocab, real routing): 195-203
+TFLOP/s** with MoonEP (64 comm SMs) + the memory settings, vs 169 for HybridEP and exp_irene's
+185.8 with *forced* balancing (ours forced: HybridEP 215, MoonEP 206). The levers, in order:
+balanced EP dispatch (MoonEP, +15 % over HybridEP with real routing), the memory settings (needed
+to fit at all), the TE grouped-tensor expert path, gbs 4096 (+4 %). Not: fp8 (any recipe), EP a2a
+overlap, sync-free HybridEP, block (partial) recompute (OOM), DeepEP / ncclep / alltoall.
+
+**The hybrid at half the TFLOP/s:** mostly accounting (fewer counted FLOPs per token: top-5+1,
+16 heads, masked attention) plus a real ~20-28 % tok/s loss from document masking, which makes
+the run host-bound (GPU gaps 14 % of the step). Fixes in test: the packed path's two device
+syncs per micro-batch (Mamba-only metadata) and the CKDA cu_seqlens cache. FlashAttention varlen
+hangs on packed batches in this image. The routed residual adds a 16 % step cost at full depth,
+82 % of it exposed pipeline p2p (8 streams per boundary).
+
+**Qwen3.5-35B-A3B-like (GDN 3:1, 256 x 512 top-8, 4k, mbs 4): 126-127 TFLOP/s** (FLA or native
+GDN, MoonEP); one-node slices run at 153-177 without recompute.
+
 ## GPU-h ledger
 
 | suite | what | GPU-h (est.) |
