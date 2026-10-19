@@ -783,6 +783,8 @@ def qwen3_context():
     arm("c_8k_mbs2", "8k, mbs 2, gbs 2048 (16M tokens)", base, ctx(8192, 2, 2048))
     arm("c_16k_mbs1", "16k, mbs 1, gbs 1024 (16M tokens)", base, ctx(16384, 1, 1024))
     arm("c_32k_mbs1", "32k, mbs 1, gbs 512 (16M tokens)", base, ctx(32768, 1, 512))
+    arm("c_24k_mbs1", "24k, mbs 1, gbs 640 (15.7M tokens)", base, ctx(24576, 1, 640))
+    arm("c_16k_gbs2048", "16k, mbs 1, gbs 2048 (32M tokens: fewer bubbles)", base, ctx(16384, 1, 2048))
     return arms
 
 

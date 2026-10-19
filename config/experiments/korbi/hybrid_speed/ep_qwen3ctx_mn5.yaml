@@ -163,3 +163,63 @@ sweep:
           backend.megatron.micro_batch_size: 1
           aux.gbs: 512
           backend.megatron.train_iters: 8
+        # 24k, mbs 1, gbs 640 (15.7M tokens)
+        - aux.arm: c_24k_mbs1
+          aux.pattern: '*E*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E|*E'
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.overlap_p2p_comm: true
+          backend.megatron.moe_router_fusion: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          backend.megatron.mock_data: false
+          backend.megatron.tokenizer_type: HuggingFaceTokenizer
+          backend.megatron.tokenizer_model: /gpfs/projects/ehpc533/tokenizers/tokenizer-256k
+          backend.megatron.vocab_size: null
+          backend.megatron.padded_vocab_size: 262144
+          backend.megatron.data_path: [/gpfs/projects/ehpc533/preprocessed/openeurollm-tokenized-256k/nemotron-cc/nemotron-mha-10p-sample]
+          backend.megatron.split: 100,0,0
+          backend.megatron.num_workers: 8
+          backend.megatron.moe_token_dispatcher_type: flex
+          backend.megatron.moe_flex_dispatcher_backend: moonep
+          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
+          aux.array_tag: _moonmemfla
+          slurm.env.NCCL_MIN_NCHANNELS: '4'
+          slurm.env.NCCL_NCHANNELS_PER_PEER: '4'
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+          backend.env.FLA_TENSOR_CACHE_SIZE: '64'
+          backend.megatron.moe_flex_dispatcher_num_sms: 64
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 2048
+          backend.megatron.seq_length: 24576
+          backend.megatron.max_position_embeddings: 24576
+          backend.megatron.micro_batch_size: 1
+          aux.gbs: 640
+          backend.megatron.train_iters: 8
+        # 16k, mbs 1, gbs 2048 (32M tokens: fewer bubbles)
+        - aux.arm: c_16k_gbs2048
+          aux.pattern: '*E*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E*E|*E*E*E*E*E*E|*E'
+          backend.megatron.pipeline_model_parallel_size: 4
+          backend.megatron.overlap_p2p_comm: true
+          backend.megatron.moe_router_fusion: true
+          backend.env.CUDA_DEVICE_MAX_CONNECTIONS: '8'
+          backend.megatron.mock_data: false
+          backend.megatron.tokenizer_type: HuggingFaceTokenizer
+          backend.megatron.tokenizer_model: /gpfs/projects/ehpc533/tokenizers/tokenizer-256k
+          backend.megatron.vocab_size: null
+          backend.megatron.padded_vocab_size: 262144
+          backend.megatron.data_path: [/gpfs/projects/ehpc533/preprocessed/openeurollm-tokenized-256k/nemotron-cc/nemotron-mha-10p-sample]
+          backend.megatron.split: 100,0,0
+          backend.megatron.num_workers: 8
+          backend.megatron.moe_token_dispatcher_type: flex
+          backend.megatron.moe_flex_dispatcher_backend: moonep
+          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
+          aux.array_tag: _moonmemfla
+          slurm.env.NCCL_MIN_NCHANNELS: '4'
+          slurm.env.NCCL_NCHANNELS_PER_PEER: '4'
+          backend.env.PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+          backend.env.FLA_TENSOR_CACHE_SIZE: '64'
+          backend.megatron.moe_flex_dispatcher_num_sms: 64
+          backend.megatron.liger_fused_linear_cross_entropy_chunk_size: 2048
+          backend.megatron.seq_length: 16384
+          backend.megatron.max_position_embeddings: 16384
+          backend.megatron.micro_batch_size: 1
+          aux.gbs: 2048
+          backend.megatron.train_iters: 8
