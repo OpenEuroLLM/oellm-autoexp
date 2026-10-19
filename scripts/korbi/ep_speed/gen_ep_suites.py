@@ -735,6 +735,24 @@ def large_scale():
     return arms
 
 
+def qwen3_moe_recompute():
+    """Qwen3-30B-A3B: recompute only the MoE layers (MoonEP dispatch included), keep the attention
+    layers' activations -- attention is ~half of a layer's forward FLOPs at 4k, so this saves about
+    half of full recompute's extra forward if it fits in 64 GB (full recompute: 61 %)."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    base = {**Q3VPP, **REALDATA, **moon}
+    sel = lambda mods: {B + "recompute_granularity": "selective", B + "recompute_method": None,  # noqa: E731
+                        B + "recompute_num_layers": None, B + "recompute_modules": mods}
+    arm("g_moe", "selective recompute: moe", base, sel(["moe"]))
+    arm("g_moe_ln", "selective recompute: moe, layernorm", base, sel(["moe", "layernorm"]))
+    arm("g_moe_attn", "selective recompute: moe, core_attn", base, sel(["moe", "core_attn"]))
+    arm("g_moe_gbs4096", "selective recompute: moe, gbs 4096", base, sel(["moe"]),
+        {"aux.gbs": 4096, B + "train_iters": 8})
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -1125,6 +1143,19 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:45:00"'), large_scale())
+    dump("ep_qwen3g_mn5.yaml",
+         "Qwen3-30B-A3B: MoE-only recompute (docs/ep_fp8_speed.md, phase Q).",
+         """
+aux:
+  family: q3a3b
+  suite: q7
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON, qwen3_moe_recompute())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
