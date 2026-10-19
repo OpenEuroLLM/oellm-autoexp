@@ -835,6 +835,52 @@ def tok_speed():
     return arms
 
 
+def mhc4_graphs():
+    """The residual decision (campaign agent, 2026-10-19: mHC-4 is the best residual by far): mHC-4
+    (4 dense streams, log-space Sinkhorn) at the production layout vs plain and routed 2 of 8, 8k
+    doc-masked, VPP2; CUDA graphs for the host-bound hybrid -- the router / dispatch preprocess
+    graphs the campaign runs use, and the attention / CKDA sublayer (static shapes only without
+    document masking: the bound of what graphs buy)."""
+    arms, arm = arms_builder()
+    fla = {"backend.env.FLA_TENSOR_CACHE_SIZE": "64"}
+    moon = {**MOON, **MEM, **fla, "aux.array_tag": "_moonmemfla", B + "moe_flex_dispatcher_num_sms": 64}
+    hep = {**HEP, **OPFX, **MEM, **fla, "aux.array_tag": "_memfla"}
+    base = {**Q3VPP, **REALDATA}
+    hyb = {**RECIPE, **PROD, **PRODSEQ, B + "micro_batch_size": 1,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2,
+           B + "experimental_attention_variant": "complex_kda", B + "linear_key_head_dim": 128,
+           B + "linear_value_head_dim": 128, B + "linear_num_key_heads": 16,
+           B + "linear_num_value_heads": 16, "aux.topk": 5,
+           B + "liger_fused_linear_cross_entropy_chunk_size": 2048, **VPP2, "aux.gbs": 512,
+           B + "train_iters": 15}
+    p2 = {B + "seq_length": 16384, B + "max_position_embeddings": 16384,
+          B + "dataloader_document_segment_length": 8192, "aux.gbs": 256}
+    mhc4 = {B + "mhc": True, B + "mhc_expansion_rate": 4, B + "mhc_routed_topk": 0,
+            B + "mhc_routed_reversible": False}
+    cg = lambda *mods: {B + "cuda_graph_impl": "local", B + "cuda_graph_modules": list(mods)}  # noqa: E731
+    nodoc = {B + "dataloader_inter_document_masking": False, B + "micro_batch_size": 2}
+    arm("m_plain_p2", "plain residual, 2 x 8k, MoonEP (reference on the rebased Megatron)", base, hyb,
+        moon, PLAIN, p2)
+    arm("m_mhc4_p2", "mHC-4, 2 x 8k, MoonEP", base, hyb, moon, mhc4, p2)
+    arm("m_mhc4", "mHC-4, 8k mbs 1, MoonEP", base, hyb, moon, mhc4)
+    arm("m_mhc4_p2_hep", "mHC-4, 2 x 8k, HybridEP grouped path", base, hyb, hep, mhc4, p2)
+    arm("m_mhc4_hep", "mHC-4, 8k mbs 1, HybridEP grouped path", base, hyb, hep, mhc4)
+    arm("m_routed_hep", "routed 2 of 8, 8k mbs 1, HybridEP grouped path (reference)", base, hyb, hep,
+        ROUTED)
+    arm("m_plain_p2_cgr", "plain, 2 x 8k, MoonEP + CUDA graphs: router + preprocess", base, hyb, moon,
+        PLAIN, p2, cg("moe_router", "moe_preprocess"))
+    arm("m_plain_p2_cga", "plain, 2 x 8k, MoonEP + CUDA graphs: attn + router + preprocess", base, hyb,
+        moon, PLAIN, p2, cg("attn", "moe_router", "moe_preprocess"))
+    arm("m_plain_nodoc_cga", "plain, no masking, 8k mbs 2, MoonEP + CUDA graphs attn + router + "
+        "preprocess", base, hyb, moon, PLAIN, nodoc, {"aux.gbs": 512},
+        cg("attn", "moe_router", "moe_preprocess"))
+    arm("m_plain_nodoc", "plain, no masking, 8k mbs 2, MoonEP (graph-free reference)", base, hyb, moon,
+        PLAIN, nodoc, {"aux.gbs": 512})
+    arm("m_mhc4_p2_cgr", "mHC-4, 2 x 8k, MoonEP + CUDA graphs: router + preprocess", base, hyb, moon,
+        mhc4, p2, cg("moe_router", "moe_preprocess"))
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -1251,6 +1297,19 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, qwen3_offload())
+    dump("ep_mhc4_mn5.yaml",
+         "mHC-4 at the production layout + CUDA graphs for the hybrid (docs/ep_fp8_speed.md, phase M).",
+         """
+aux:
+  family: mhc
+  suite: m1
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:40:00"'), mhc4_graphs())
     dump("ep_tokspeed_mn5.yaml",
          "tok/s/GPU: exp_irene's host settings, the CKDA share of document masking, Qwen3.5 like-for-like "
          "(docs/ep_fp8_speed.md, phase T).",
