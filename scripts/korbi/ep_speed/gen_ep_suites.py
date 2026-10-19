@@ -821,7 +821,7 @@ def tok_speed():
     arm("k_hyb", "hybrid plain, doc-masked 2 x 8k packs (reference, z_plain_p2)", base, hyb, moon)
     arm("k_hyb_gc", "+ manual GC every 10 steps, no mmap", base, hyb, moon, gc)
     arm("k_hyb_attnmask", "document mask in attention only (CKDA restarts at the 8k packs)", base, hyb,
-        moon, {"backend.env.CKDA_BENCH_SEGMENT_ONLY": "8192"})
+        moon, {"backend.env.CKDA_BENCH_SEGMENT_ONLY": "8192", "aux.array_tag": "_moonmemfla_seg"})
     arm("k_hyb_nodoc", "no document masking, 8k mbs 2 (16k tokens per micro-batch: the bound)", base,
         hyb, moon, {B + "dataloader_inter_document_masking": False, B + "seq_length": 8192,
                     B + "max_position_embeddings": 8192, B + "dataloader_document_segment_length": None,
