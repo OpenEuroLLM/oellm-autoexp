@@ -211,14 +211,19 @@ encoder_num_layers: null  # Number of encoder transformer layers.
 encoder_seq_length: null  # Maximum encoder sequence length to process.This should be exclusive of --seq-length
 end_weight_decay: null  # End of run weight decay coefficient for L2 regularization.
 engram_conv_kernel_size: 4  # Kernel of Engram's depthwise causal conv (dilation = the largest n-gram order).
+engram_conv_prenorm: false  # RMS-normalize the gated value before Engram's causal conv (the reference code's ShortConv): Y = SiLU(conv(RMSNorm(v~))) + v~.
 engram_embed_dim: 64  # Width of one Engram table row; the memory vector concatenates len(engram_ngram_orders) * engram_num_heads rows.
+engram_gate_signed_sqrt: false  # Engram gate as in DeepSeek's reference code (engram_demo_v1.py): the scaled key-query dot product goes through a signed square root, sign(x) sqrt(|x|), before the sigmoid, which keeps the gate out of saturation. False: sigmoid of the dot product.
+engram_hash_per_layer: false  # Hash multipliers of their own for every Engram layer (the reference code seeds them per layer), so two Engram layers do not share their n-gram collisions. False: one set of multipliers for all Engram layers.
 engram_lr_mult: 5.0  # Learning-rate multiplier of the Engram (N-layer) tables, which also get no weight decay.
 engram_ngram_orders:  # N-gram orders an Engram (`N`) layer hashes, e.g. 2 3 for bigrams and trigrams.
 - 2
 - 3
 engram_num_heads: 4  # Hash heads per n-gram order; each head has its own table.
 engram_table_fp32: true  # Keep the Engram tables as fp32 parameters under bf16/fp16 training. Their rows receive small, sparse gradients; an fp32 table accumulates them in fp32 and is its own optimizer master copy, so it costs about what a bf16 table plus its fp32 master and bf16 gradient do. The lookups are cast to the compute dtype.
+engram_table_momentum_dtype: fp32  # choices: ['fp32', 'bf16'] | Storage dtype of the sharded tables' Adam first moment (the update arithmetic stays fp32); bf16 saves 2 B per table parameter.
 engram_table_parallel: tp  # How Engram tables are distributed. "tp": rows sharded over tensor parallelism, replicated over data parallelism (DDP reduces their dense gradient). "dp": rows sharded over every rank of the pipeline stage (tensor x data x context parallel), looked up with all-to-all and updated by EngramTableOptimizer from sparse row gradients -- no table-sized gradient traffic; requires engram_table_fp32.
+engram_table_rowwise_v: false  # Sharded Engram / product-key tables (engram_table_parallel="dp"): one Adam second moment per table row instead of per entry (saves 4 B per table parameter).
 engram_table_size: 262144  # Rows per Engram hash table (rounded up to distinct primes, one per head).
 engram_token_map: null  # Path to a .npy int array mapping token id -> canonical id (Engram's tokenizer compression, e.g. NFKC + lowercasing). None hashes the raw token ids.
 eod_mask_loss: false  # Mask loss for the end of document tokens.

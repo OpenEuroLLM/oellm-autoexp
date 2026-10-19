@@ -437,6 +437,20 @@ class MegatronConfig(ConfigInterface):
     # Kernel of Engram's depthwise causal conv (dilation = the largest n-gram order).
     engram_conv_kernel_size: int = 4
 
+    # Engram gate as in DeepSeek's reference code (engram_demo_v1.py): the scaled key-query
+    # dot product goes through a signed square root, sign(x) sqrt(|x|), before the sigmoid,
+    # which keeps the gate out of saturation. False: sigmoid of the dot product.
+    engram_gate_signed_sqrt: bool = False
+
+    # RMS-normalize the gated value before Engram's causal conv (the reference code's
+    # ShortConv): Y = SiLU(conv(RMSNorm(v~))) + v~.
+    engram_conv_prenorm: bool = False
+
+    # Hash multipliers of their own for every Engram layer (the reference code seeds them per
+    # layer), so two Engram layers do not share their n-gram collisions. False: one set of
+    # multipliers for all Engram layers.
+    engram_hash_per_layer: bool = False
+
     # Exclusive self attention (Zhai 2026, arXiv:2603.09078): orthogonalize every attention
     # output head against the token's own value vector (fused Triton kernel, together with the
     # output gate when attention_output_gate is set).
@@ -1751,6 +1765,14 @@ class MegatronConfig(ConfigInterface):
 
     # Learning-rate multiplier of the Engram (N-layer) tables, which also get no weight decay.
     engram_lr_mult: float = 5.0
+
+    # Sharded Engram / product-key tables (engram_table_parallel="dp"): one Adam second moment
+    # per table row instead of per entry (saves 4 B per table parameter).
+    engram_table_rowwise_v: bool = False
+
+    # Storage dtype of the sharded tables' Adam first moment (the update arithmetic stays
+    # fp32); bf16 saves 2 B per table parameter.
+    engram_table_momentum_dtype: Literal["fp32", "bf16"] = "fp32"
 
     # Learning-rate multiplier of the residual-stream mixers (mHC, routed residual, block
     # attention residuals). Under Muon-family optimizers these parameters run on Adam at the

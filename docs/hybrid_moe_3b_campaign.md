@@ -2121,3 +2121,51 @@ node, survives this session).
 **Budget:** s1 ~10 arms x ~13 GPU-h, s2 8 x ~27, s3 4 x ~50 -> ~550 GPU-h; then lr sweeps (3 lr
 for the 2 finalists at s1 / s2, ~160) and the 6BT extensions (~100): ~800 GPU-h, ending near 4.4k
 of the 7k hard limit.
+
+### 12.2 Engram allocation sweep (user 2026-10-19)
+
+**Why.** Round 3's Engram (−0.055 to −0.078 at s1, the largest single gain) was a dense model
+with ≈ 271M of tables added on top, not parameter-matched: a capacity gain, not a proportion.
+Cheng et al. 2026 (arXiv 2601.07372) fix total and active parameters and split the INACTIVE
+parameters between routed experts and Engram tables: the loss is U-shaped with its best at
+ρ ≈ 75–80 % experts (20–25 % Engram) at both scales they test (5.7B / 568M active and
+9.9B / 993M), a shallow U (−0.014 at the optimum vs pure MoE). Engram-27B: 5.7B tables of
+26.7B total (≈ 25 % of the inactive). Memorization ("forking", arXiv 2610.00394): n-gram tables
+open a train / validation gap at epoch boundaries under data REPLAY (rare contexts drive it,
+bigger tables worse); a single pass is unaffected -- watch repeated (up-weighted) sources.
+
+**Arms** (`gen_screen.py` `arms5e`, suites `screen5e_s{1,2}`; baseline = round 5's `h5_moe`,
+same data order / cache / seed): h5_moe gives up routed experts (144 → E) for Engram tables of
+the freed parameters (per expert 3·h·w, one MoE per block), in two Engram layers (before the
+2nd and the middle block), 2- and 3-grams, 8 hash heads × 64 per order, per-layer hashes, the
+reference code's signed-sqrt gate and pre-normed conv, DeepSeek's tokenizer compression
+(`engram_token_map.py`: OELLM 256k → 175,231 ids, 66.8 %), tables at 5 × lr, sharded over the
+stage (`engram_table_parallel: dp`).
+
+| arm | experts | Engram tables | share of inactive |
+|---|---:|---:|---:|
+| s1 h5_moe (round 5) | 144 | 0 | 0 % |
+| s1 h5_moe_eng11 | 128 | 226M | 11 % |
+| s1 h5_moe_eng20 | 116 | 396M | 20 % |
+| s1 h5_moe_eng34 | 96 | 679M | 34 % |
+| s1 h5_moe_eng20_lean | 116 | 396M, lean table optimizer | 20 % |
+| s1 h5_moe_eng20_lrx2p5 | 116 | 396M, tables at 2.5 × lr | 20 % |
+| s2 h5_moe_eng20 | 116 | 1.09B | 20 % |
+
+The Engram projections add ≈ 1.6M active parameters per Engram layer (≈ 2 % of s1's active).
+Cost ≈ 5 × 13 + 27 ≈ 95 GPU-h.
+
+**Megatron work for it** (oellm/v0.19-hybrid 3cc512175):
+- Document masking: the n-gram hashes and the dilated causal conv restart at every document
+  (positions from cu_seqlens on the device, no host sync); packed = separate, tested.
+- The reference code's gate (`engram_gate_signed_sqrt`), conv pre-norm (`engram_conv_prenorm`),
+  per-layer hash multipliers (`engram_hash_per_layer`).
+- **Memory**: the tables live sharded over the stage's tensor × data × context ranks, so their
+  GPU cost per parameter is (fp32 table 4 + fp32 gradient buffer 4 + Adam 8) = 16 B / (stage
+  ranks). The lean table optimizer (`engram_table_rowwise_v`: one second moment per row;
+  `engram_table_momentum_dtype: bf16`) cuts it to ≈ 10 B; the update now runs over row chunks
+  (torch's foreach Adam allocated several table-sized fp32 temporaries). Production estimate
+  (≈ 7B of tables, 2 Engram layers, 128 ranks per pipeline stage): ≈ 27M parameters per GPU
+  on the two stages that hold them, ≈ 0.45 GB standard / ≈ 0.3 GB lean; on an 8-node test
+  layout (8 ranks per stage) ≈ 7 GB / 4.4 GB on those stages -- place the Engram layers off
+  the tightest stage (stage 0 holds the embedding).

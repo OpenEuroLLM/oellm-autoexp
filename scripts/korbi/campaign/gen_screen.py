@@ -831,6 +831,57 @@ def arms5(size: str):
     return out
 
 
+# Engram allocation sweep (user 2026-10-19; docs §12.2): Cheng et al. 2026 find a U-shaped loss
+# over the split of the INACTIVE parameters between routed experts and Engram tables, best at
+# ~75-80 % experts (20-25 % Engram), at fixed total and active parameters. Here the round-5 MoE
+# hybrid (h5_moe: 144 x w, top-3 + shared) gives up routed experts for tables of the same size,
+# 0 (= h5_moe of round 5, same data order) / 11 / 20 / 34 % of the inactive expert parameters,
+# with the reference code's recipe: Engram before the 2nd and the middle block, 2- and 3-grams,
+# 8 hash heads x 64 per order, per-layer hashes, the signed-sqrt gate, the pre-normed conv,
+# DeepSeek's tokenizer compression (scripts/korbi/campaign/engram_token_map.py), Adam at 5 x lr.
+ENGRAM_TOKEN_MAP = "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k.npy"
+ENGRAM_ORDERS, ENGRAM_HEADS, ENGRAM_DIM, ENGRAM_LAYERS = (2, 3), 8, 64, 2
+# the lean table optimizer: one second moment per row + bf16 momentum (10 instead of 16 B per
+# table parameter on the GPU, with the fp32 table and gradient buffer)
+ENGRAM_LEAN = {B + "engram_table_rowwise_v": True, B + "engram_table_momentum_dtype": "bf16"}
+
+
+def engram_arm(size: str, experts: int, **extra):
+    """h5_moe with ``experts`` routed experts (of 144) and the freed expert parameters in two
+    Engram layers: (overrides, Engram table parameters, share of the inactive parameters)."""
+    hidden, blocks, heads, ffn, lr = R4_SIZES[size]
+    w = ffn // 4
+    per_expert = 3 * hidden * w  # SwiGLU: fc1 (2 w x h) + fc2 (w x h)
+    table_params = (144 - experts) * per_expert * blocks  # one MoE per block
+    lookups = len(ENGRAM_ORDERS) * ENGRAM_HEADS
+    rows = table_params // (ENGRAM_LAYERS * lookups * ENGRAM_DIM)  # per hash table
+    kv = {"aux.pattern": hybrid(blocks, ratio=5, engram_at=(1, blocks // 2)).replace("-", "E"),
+          B + "num_experts": experts,
+          B + "engram_ngram_orders": list(ENGRAM_ORDERS), B + "engram_num_heads": ENGRAM_HEADS,
+          B + "engram_embed_dim": ENGRAM_DIM, B + "engram_table_size": rows,
+          B + "engram_table_parallel": "dp", B + "engram_token_map": ENGRAM_TOKEN_MAP,
+          B + "engram_gate_signed_sqrt": True, B + "engram_conv_prenorm": True,
+          B + "engram_hash_per_layer": True, B + "engram_lr_mult": 5.0, **extra}
+    return kv, table_params, (144 - experts) / (144 - 3)
+
+
+def arms5e(size: str):
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    grid = {"s1": [(128, "eng11", {}), (116, "eng20", {}), (96, "eng34", {}),
+                   (116, "eng20_lean", ENGRAM_LEAN),
+                   (116, "eng20_lrx2p5", {B + "engram_lr_mult": 2.5})],
+            "s2": [(116, "eng20", {})]}[size]
+    out = []
+    for experts, tag, extra in grid:
+        kv, table, share = engram_arm(size, experts, **extra)
+        note = {"eng20_lean": ", lean table optimizer (row-wise v, bf16 momentum)",
+                "eng20_lrx2p5": ", tables at 2.5 x lr (the paper's 5 x is of an Adam lr)"}
+        out.append((f"h5_moe_{tag}", f"{experts} experts + Engram {table / 1e6:.0f}M "
+                    f"({share:.0%} of the inactive expert parameters){note.get(tag, '')}",
+                    {**h5, **kv}))
+    return out
+
+
 def write5():
     steps_s = {"s1": 3.0, "s2": 6.0, "s3": 7.0}
     times = {"s1": "08:00:00", "s2": "12:00:00", "s3": "12:00:00"}
@@ -840,8 +891,13 @@ def write5():
     # (the 2-node s3 layout cannot share the 1-node array: checked separately)
     smoke3 = [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})
               for n, c, kv in arms5("s3")]
+    # Engram sweep and its smoke (40 steps of every arm, s1 and s2)
+    smoke_e = lambda z: [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})  # noqa: E731
+                         for n, c, kv in arms5e(z)]
     for size, prefix, pool in [(z, "screen5", arms5(z)) for z in ("s1", "s2", "s3")] + [
-            ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)]:
+            ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)] + [
+            (z, p, arms) for z in ("s1", "s2")
+            for p, arms in (("screen5e", arms5e(z)), ("screen5esmoke", smoke_e(z)))]:
         hidden, blocks, heads, ffn, lr = R4_SIZES[size]
         lines = [HEADER.format(
             title="Round 5: the architecture decision on the production data setting (flag, 8k)",
