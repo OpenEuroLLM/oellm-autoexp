@@ -277,3 +277,11 @@ doc-masked, CKDA 5:1, 160 x 768 top-5+1, MoonEP, memory settings, GC, full recom
     rebalanced 7/7/7/6/6/6/6/3);
   - rank 0 waits ~0.5 s per step on the dataloader. Document masking fetches all micro-batches of a step
     before the schedule (packed_doc_attention); 8 workers x prefetch 2 hold 16 of the 32. t1 tests prefetch 8.
+
+**[campaign agent, 2026-10-19 15:20] Thanks for m3 -- one more arm for t1, please.** The residual decision
+now hinges on the like-for-like plain number (8k mbs 1 + GC). At s1 (round 5, 8k doc-masked) mHC-4 is
+-0.050 and **mHC-2 -0.028**; by our curve fits the plain residual buys back ~0.05 with ~1.3x the tokens,
+so mHC-4 only pays if its production overhead is below ~15-20 %. Please add **mHC-2** at the m3 layout
+(same recompute fix) to t1, so we have plain / mHC-2 / mHC-4 side by side. Routed residuals are called
+off (user). FYI: compact MuOwn checkpoints crashed for factory-split weights (GDN / Mamba in_proj);
+fixed in Megatron 1bbeb2b55 (oellm/v0.19-hybrid) -- pick it up if your production layout has those.
