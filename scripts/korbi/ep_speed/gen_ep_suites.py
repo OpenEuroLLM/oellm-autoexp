@@ -771,6 +771,21 @@ def qwen3_offload():
     return arms
 
 
+def qwen3_context():
+    """Qwen3-30B-A3B TFLOP/s vs context length (attention FLOPs grow with it): 8k / 16k / 32k at
+    16M tokens per step, MoonEP 64 SMs + memory settings, real text (no document masking)."""
+    arms, arm = arms_builder()
+    moon = {**MOON, **MEM, "backend.env.FLA_TENSOR_CACHE_SIZE": "64", "aux.array_tag": "_moonmemfla",
+            B + "moe_flex_dispatcher_num_sms": 64}
+    base = {**Q3VPP, **REALDATA, **moon, B + "liger_fused_linear_cross_entropy_chunk_size": 2048}
+    ctx = lambda L, mbs, gbs: {B + "seq_length": L, B + "max_position_embeddings": L,  # noqa: E731
+                               B + "micro_batch_size": mbs, "aux.gbs": gbs, B + "train_iters": 8}
+    arm("c_8k_mbs2", "8k, mbs 2, gbs 2048 (16M tokens)", base, ctx(8192, 2, 2048))
+    arm("c_16k_mbs1", "16k, mbs 1, gbs 1024 (16M tokens)", base, ctx(16384, 1, 1024))
+    arm("c_32k_mbs1", "32k, mbs 1, gbs 512 (16M tokens)", base, ctx(32768, 1, 512))
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -1187,6 +1202,19 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, qwen3_offload())
+    dump("ep_qwen3ctx_mn5.yaml",
+         "Qwen3-30B-A3B TFLOP/s vs context length (docs/ep_fp8_speed.md, phase Q).",
+         """
+aux:
+  family: q3a3b
+  suite: q9
+  pattern: "*E"
+  nodes: 8
+  ep: 4
+  gbs: 1024
+  topk: 8
+  expert_ffn: 768
+""" + Q3_COMMON.replace('time: "00:30:00"', 'time: "00:50:00"'), qwen3_context())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
