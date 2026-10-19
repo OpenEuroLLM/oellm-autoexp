@@ -344,6 +344,42 @@ attention FLOPs grow with the context, tok/s falls (-30 % vs 4k). The doubled ba
 help (not bubble-limited). For the tok/s objective (user, 2026-10-19: optimize tok/s/GPU, not only
 TFLOP/s) short context with a large batch stays best.
 
+## 6b. tok/s phase (user, 2026-10-19: optimise tok/s/GPU, not only TFLOP/s)
+
+**k1 (8 nodes, real text, MoonEP 64 SMs + memory settings):**
+
+| arm | tok/s/GPU | TFLOP/s |
+|---|---:|---:|
+| hybrid plain, doc-masked 2 x 8k packs (reference) | 5,965 | 101.5 |
+| **+ `manual_gc: true`, `manual_gc_interval: 10`, `mmap_bin_files: false` (exp_irene)** | **6,909** | **117.4** |
+| CKDA restarts only at the 8k packs (`CKDA_BENCH_SEGMENT_ONLY`; doc mask in attention only) | 5,805 | 98.7 |
+| no document masking, 8k mbs 2 (no GC) | 6,574 | 115.2 |
+| Qwen3-30B-A3B 4k mbs 4 + GC (ref q5: 6,823) | 6,830 | 195.2 |
+| Qwen3.5-like, HybridEP grouped, forced balancing, gbs 4096, GC (exp_irene: 6,971) | 7,239 | 141.0 |
+
+- **Manual GC is +16 % on the host-bound doc-masked hybrid** (Python's threshold GC stalls single
+  ranks mid-step; aligned GC every 10 steps removes it) and nothing on Qwen3. With it the production
+  hybrid (plain residual) runs more tok/s than Qwen3-30B-A3B.
+- **Document masking inside CKDA is free** (varlen cu_seqlens; the GPU work equals the unmasked
+  case and the host prep is cached). A literal forget-gate reset is not needed for speed, and is not
+  safe with the chunk kernels anyway (`safe_gate` bounds the log-gate below; the intra-chunk
+  exp(+-cumsum g) factorisation overflows at -inf). Its only use would be CUDA-graph capture of the
+  CKDA sublayer (static grid).
+- Like-for-like with exp_irene on Qwen3.5: +4 %.
+
+**q8b: recompute less by offloading (Qwen3, MoE-only recompute + attention activations offloaded,
+with the PR #7908 port -- the "Chunk mismatch" crash is gone):**
+
+| arm | tok/s/GPU | TFLOP/s | mem |
+|---|---:|---:|---:|
+| full recompute, gbs 1024 / 4096 (refs) | 6,830 / ~7,100 | 195.2 / 203.0 | 0.61 |
+| offload, gbs 1024 | 5,653 | 161.6 | 0.96 |
+| offload, gbs 4096 | 6,347 | 181.4 | 0.96 |
+| offload half | OOM | | |
+
+Offloading ~250 GiB per GPU per step each way does not hide behind compute on MN5: full recompute
+stays faster (-17 % / -11 %). Recompute is not the lever on 64 GB H100s.
+
 ## 7. Conclusions and recommended settings (2026-10-19)
 
 **> 250 TFLOP/s is not reached; ~195-203 is the practical ceiling on MN5 for Qwen3-30B-A3B with real
