@@ -1181,6 +1181,14 @@ def moon_chunks2():
         muown(4e-3))
     arm("c_mhc4_muown_lr18", "hybrid + mHC-4, angular MuOwn 1.8e-3 (transfer law, s3)", base, hyb, moon,
         muown(1.8e-3))
+    # 2 x 8k packs vs a real 16k context (user 2026-10-19): the same 16k tokens per micro-batch;
+    # only documents > 8k differ (cut at 8k by the packs, whole at 16k: more attention for those)
+    plain16 = {B + "mhc": False, B + "mhc_routed_topk": 0, B + "mhc_routed_reversible": False,
+               B + "recompute_num_layers": 1, B + "seq_length": 16384,
+               B + "max_position_embeddings": 16384, "aux.gbs": 256}
+    arm("c_plain_p2", "plain, 2 x 8k packs (16k micro-batch, a document boundary every 8k)", base, hyb,
+        moon, plain16, {B + "dataloader_document_segment_length": 8192})
+    arm("c_plain_16k", "plain, 16k context, document masking only", base, hyb, moon, plain16)
     return arms
 
 
