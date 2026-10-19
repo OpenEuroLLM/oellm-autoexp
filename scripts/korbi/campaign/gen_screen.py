@@ -891,6 +891,23 @@ def arms5e(size: str):
     return out
 
 
+def arms5ldm(size: str = "s1"):
+    """LDM learning-rate sweep (user 2026-10-19): the round-5 s1 LDM arm (reference, no graphs)
+    trails mHC-4 by ~0.008 at matched steps, against the paper's -0.010..-0.013 LEAD; the one knob
+    not tuned is LDM's own lr (its parameters on Adam at residual_mixer_lr_mult x 4e-3; the paper
+    tuned per method, LDM's optimum 1e-3 of AdamW). The CuTe stream form with the MoE router graphs,
+    multipliers 0.125 / 0.25 / 0.5 / 1.0 (Adam 5e-4 / 1e-3 / 2e-3 / 4e-3); x0.25 also checks the
+    CuTe numerics (bf16 memory) against the reference run. Same data order as round 5."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    ldm = {B + "depth_memory": True, B + "depth_memory_impl": "cute", B + "depth_memory_groups": 16,
+           B + "depth_memory_key_dim": 8, B + "depth_memory_hidden_dim": 32}
+    out = []
+    for mult, tag in ((0.125, "0125"), (0.25, "025"), (0.5, "05"), (1.0, "1")):
+        out.append((f"h5_moe_ldmc_lr{tag}", f"LDM (CuTe, router graphs), its lr x{mult} of 4e-3",
+                    {**h5, **ldm, B + "residual_mixer_lr_mult": mult}))
+    return out
+
+
 def speed5_profiled(size: str = "s1"):
     """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
     with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
@@ -945,7 +962,8 @@ def write5():
                          for n, c, kv in arms5e(z)]
     for size, prefix, pool in [(z, "screen5", arms5(z)) for z in ("s1", "s2", "s3")] + [
             ("s1", "speed5res", speed5_residuals("s1")),
-            ("s1", "speed5prof", speed5_profiled("s1"))] + [
+            ("s1", "speed5prof", speed5_profiled("s1")),
+            ("s1", "screen5ldm", arms5ldm("s1"))] + [
             ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)] + [
             (z, p, arms) for z in ("s1", "s2")
             for p, arms in (("screen5e", arms5e(z)), ("screen5esmoke", smoke_e(z)))]:
