@@ -180,6 +180,21 @@ full recompute, EP4 HybridEP, routed residual 2 of 8 unless "plain". 12-15 steps
 MoonEP helps the plain hybrid (+3 %) but loses with the routed residual (to be profiled: the
 routed sublayer recompute re-runs the MoE forward, i.e. MoonEP's planning / prefetch / dispatch).
 
+**Why the hybrid is at half of Qwen3's TFLOP/s: exposed time** (`trace_breakdown.py`: union
+of compute kernels over all streams; exposed = a comm kernel runs and no compute kernel does):
+
+| per step | Qwen3 + MoonEP (rank 0) | hybrid routed, VPP2 (rank 0 / rank 24) |
+|---|---:|---:|
+| compute busy | 76 % | 55 % / 43 % |
+| exposed PP p2p | 7 % | 20 % / 40 % |
+| EP comm (not overlapped) | 15 % | 5 % / 3 % |
+| idle (no kernel at all: host-bound) | 2 % | 16 % / 7 % |
+
+- The last stage computes less (1.58 s vs 2.05 s per step on stage 0) and waits more: the
+  pipeline is **stage-imbalanced**, the 262k head with the Liger fused CE costs ~4 blocks (not the
+  10.5 its FLOPs suggest). Rebalanced VPP2 layout next: 7/7/7/5 | 6/6/6/4 + head.
+- The hybrid is **host-bound** 16 % of the time at stage 0 (Qwen3 + MoonEP: 2 %).
+
 ## 5. Phase Q: Qwen3-30B-A3B first (user, 2026-10-18: reach exp_irene's 170+ with standard attention)
 
 exp_irene (branch `exp_irene`): Qwen3-30B-A3B (48 x attention + MoE, 32 q / 4 kv heads x 128,
