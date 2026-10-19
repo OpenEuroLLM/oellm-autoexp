@@ -552,6 +552,33 @@ def hybrid_balance():
     return arms
 
 
+def q35_slice():
+    """Qwen3.5-35B-A3B ran at ~10 TFLOP/s on 8 nodes (h1): isolate the component on one node,
+    8 layers, 4k, mbs 2, no recompute, rank-0 profiles."""
+    arms, arm = arms_builder()
+    prof = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0],
+            B + "profile_step_start": 6, B + "profile_step_end": 8}
+    q35 = {B + "experimental_attention_variant": "gated_delta_net", B + "linear_conv_kernel_dim": 4,
+           B + "linear_key_head_dim": 128, B + "linear_value_head_dim": 128,
+           B + "linear_num_key_heads": 16, B + "linear_num_value_heads": 32,
+           B + "num_attention_heads": 16, B + "num_query_groups": 2, B + "kv_channels": 256,
+           B + "attention_output_gate": True, B + "rotary_base": 10000000, B + "rotary_percent": 0.25,
+           B + "layernorm_zero_centered_gamma": True, B + "num_experts": 256,
+           B + "moe_ffn_hidden_size": 512, B + "moe_router_topk": 8,
+           B + "moe_shared_expert_intermediate_size": 512, B + "moe_shared_expert_gate": True,
+           B + "moe_router_load_balancing_type": "global_aux_loss", "aux.topk": 8}
+    base = dict(HEP, **OPFX, **q35, **prof)
+    arm("s35_fla", "Qwen3.5 slice: FLA GDN (L) 3:1 + attention hd 256", base,
+        {"aux.pattern": "LELELE*ELELELE*E"})
+    arm("s35_native", "Qwen3.5 slice: native GDN (G) 3:1 + attention hd 256", base,
+        {"aux.pattern": "GEGEGE*EGEGEGE*E", B + "experimental_attention_variant": None})
+    arm("s35_attn256", "attention-only, hd 256 (16 heads, 2 kv)", base, {"aux.pattern": "*E" * 8})
+    arm("s35_attn128", "attention-only, hd 128 (16 heads, 2 kv)", base,
+        {"aux.pattern": "*E" * 8, B + "kv_channels": 128})
+    arm("s35_gdn_only", "FLA GDN only (no attention)", base, {"aux.pattern": "LE" * 8})
+    return arms
+
+
 # Shared model / layout block of every EP family: the production model's widths (hidden 2048,
 # 16 q heads x 128, 2 kv groups, CKDA 16 x 128, 262k vocabulary) and exp_irene's MN5 layout
 # (TP1, EP4, flex / HybridEP); {params} holds the family's own keys (shape, layout, recompute).
@@ -851,6 +878,32 @@ aux:
   topk: 8
   expert_ffn: 768
 """ + Q3_COMMON, hybrid_balance())
+    dump("ep_q35slice_mn5.yaml",
+         "Qwen3.5-35B-A3B one-node slice: which component is slow (docs/ep_fp8_speed.md, phase H).",
+         """
+aux:
+  family: q35slice
+  suite: s1
+  pattern: "LELELE*ELELELE*E"
+  nodes: 1
+  ep: 4
+  gbs: 32
+  topk: 8
+  expert_ffn: 512
+""" + common("""    num_experts: 256
+    moe_ffn_hidden_size: 512
+    moe_router_topk: 8
+    vocab_size: 32768
+    seq_length: 4096
+    max_position_embeddings: 4096
+    micro_batch_size: 2
+    pipeline_model_parallel_size: 1
+    recompute_granularity: null
+    recompute_method: null
+    recompute_num_layers: null
+    overlap_param_gather: false
+    liger_fused_linear_cross_entropy_chunk_size: 4096
+""", iters=12, time="00:20:00", step_s=3.0), q35_slice())
     dump("ep_slice8_mn5.yaml",
          "EP8 across two nodes at the production layer shapes (docs/ep_fp8_speed.md, phase A2).",
          SLICE_AUX.replace("suite: e1", "suite: e3").replace("family: epslice", "family: epslice8")
