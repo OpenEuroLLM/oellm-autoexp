@@ -380,6 +380,23 @@ with the PR #7908 port -- the "Chunk mismatch" crash is gone):**
 Offloading ~250 GiB per GPU per step each way does not hide behind compute on MN5: full recompute
 stays faster (-17 % / -11 %). Recompute is not the lever on 64 GB H100s.
 
+**s1: MoonEP + `moe_shared_expert_overlap`** (Megatron 0260b263a: the shared expert's fc1 / fc2 on
+its own stream under the MoonEP dispatch / combine, the flex dispatcher's call order). 8 nodes, GC:
+
+| arm | tok/s/GPU | TFLOP/s |
+|---|---:|---:|
+| hybrid plain, 2 x 8k packs (reference) | 6,543 | 111.2 |
+| + shared-expert overlap | 6,968 | 118.5 |
+| Qwen3.5-like, 4k mbs 4, gbs 2048 (reference) | 6,712 | 130.8 |
+| + shared-expert overlap | 6,741 | 131.4 |
+
+- Correct: same seed and data order, the losses agree to 4-5 digits for steps 1-3 (hybrid step 3
+  12.7565 / 12.7561, Qwen3.5 step 4 14.261 / 14.272), then drift apart as any two runs do at the
+  benchmark lr (both show the same step-5 spike).
+- Speed: +6.5 % on the hybrid against its same-day reference, but that reference ran 6 % below m2's
+  identical arm (6,942), so the gain is within the job-to-job spread; t1 / the next suite pair it again.
+  Qwen3.5-like: +0.4 % (its shared expert is 512 wide, a small share of the step).
+
 ## 7. Conclusions and recommended settings (2026-10-19)
 
 **> 250 TFLOP/s is not reached; ~195-203 is the practical ceiling on MN5 for Qwen3-30B-A3B with real
