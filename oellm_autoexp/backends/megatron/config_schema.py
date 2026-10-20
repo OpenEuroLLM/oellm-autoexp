@@ -1493,6 +1493,13 @@ class MegatronConfig(ConfigInterface):
     # pipeline_model_parallel_size == 1 for now.
     mhc: bool = False
 
+    # mHC per transformer layer instead of per sublayer (HybridStack): the layers up to and
+    # including each MLP / MoE layer form one block (e.g. ``L E``) with one stream read at its
+    # first layer and one write of the block's update at its last; plain residual inside.
+    # Halves the mHC applications of a mixer + MoE pattern. Requires mhc (dense, additive).
+    # See megatron/core/transformer/mhc_block.py.
+    mhc_per_layer: bool = False
+
     # Number of residual streams n. n=1 degenerates to a standard residual. The paper uses
     # n=4, reporting 6.7% training-time overhead at that setting. Costs n-times the residual
     # activation memory and n-times the pipeline inter-stage payload.
