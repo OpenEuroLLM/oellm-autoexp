@@ -4449,7 +4449,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "mhc_per_layer": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="mHC per transformer layer instead of per sublayer (HybridStack): the layers up to and including each MLP / MoE layer form one block (e.g. ``L E``) with one stream read at its first layer and one write of the block's update at its last; plain residual inside. Halves the mHC applications of a mixer + MoE pattern. Requires mhc (dense, additive). See megatron/core/transformer/mhc_block.py.",
+        help="mHC per transformer layer instead of per sublayer (HybridStack): the layers up to and including each MLP / MoE layer form one block (e.g. ``L E``) with one stream read at its first layer and one write of the block's update at its last; plain residual inside. Halves the mHC applications of a mixer + MoE pattern. Requires mhc (dense, additive), or Linear Depth Memory in its stream form (one read of x + r per block and one fused write of the block's update + next read: the depth-memory steps halve too). See megatron/core/transformer/mhc_block.py.",
         choices=None,
         nargs=0,
         element_type=None,
