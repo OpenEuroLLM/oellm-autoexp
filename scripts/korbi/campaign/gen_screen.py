@@ -1023,6 +1023,26 @@ def arms5kron_scale(size: str):
     return out
 
 
+def arms5udecay(size: str):
+    """Angular MuOwn's hidden U-decay (user via the EP agent, 2026-10-20): Megatron's defaults
+    (angular_muown_u_decay_schedule poly, scale 1e-3, p 1) multiply the direction step by
+    m(t) = 1 / (1 + 0.001 t) ON TOP of the lr schedule (0.2 at step 4000, ~0.001 at 1M steps);
+    every MuOwn arm so far carried it. Here it is off (p = 0: m = 1) on round 5's plain h5_moe,
+    paired with round 5's h5_moe of the size (decay on, same data order), with a sweep of the
+    direction step (the lr was tuned with the decay): angular_muown_extra_scale_factor -- it scales
+    the U step alone, so the Adam-routed parameters (row magnitudes, embeddings, norms) keep their lr
+    -- x1 / x0.5 / x0.25 of 0.2 at s1, x1 / x0.5 at s2. The fair comparison -- the decay in the
+    visible schedule vs the hidden one -- follows as cooldown branches from step 4000."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    workers = {"s1": (8, 4), "s2": (6, 3)}[size]
+    off = {**h5, B + "angular_muown_u_decay_p": 0.0, B + "num_workers": workers[0],
+           B + "dataloader_prefetch_factor": workers[1]}
+    mults = (1.0, 0.5, 0.25) if size == "s1" else (1.0, 0.5)
+    tag = lambda m: "" if m == 1.0 else f"_u{m:g}".replace(".", "")  # noqa: E731
+    return [(f"h5_moe_udoff{tag(m)}", f"angular MuOwn U-decay off, direction step x{m:g} ({0.2 * m:g})",
+             {**off, B + "angular_muown_extra_scale_factor": 0.2 * m}) for m in mults]
+
+
 def speed5_profiled(size: str = "s1"):
     """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
     with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
@@ -1088,6 +1108,7 @@ def write5():
             ("s2", "screen5ldm2", arms5ldm2_s2()),
             ("s1", "screen5kron", arms5kron("s1")),
             *[(z, "screen5kronscale", arms5kron_scale(z)) for z in ("s1", "s2", "s3")],
+            *[(z, "screen5udecay", arms5udecay(z)) for z in ("s1", "s2")],
             ("s1", "screen5kronsmoke", [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})
                                         for n, c, kv in arms5kron("s1")])] + [
             ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)] + [
