@@ -940,6 +940,10 @@ def arms5ldm2(size: str = "s1"):
     mhc4 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe_mhc4"]
     out.append(("h5_moe_mhc4_lr1", "mHC-4, its mixer lr x1.0 of 4e-3 (round 5: x0.25)",
                 {**mhc4, **fast, B + "residual_mixer_lr_mult": 1.0}))
+    # the 2-node runs do not pair with round 5's 1-node runs (+-0.04 per window at step 500 for the
+    # same arm), so the references run in this setup too: mHC-4 at round 5's x0.25, and plain
+    out.append(("h5_moe_mhc4", "mHC-4, mixer lr x0.25 (round 5's), 2 nodes", {**mhc4, **fast}))
+    out.append(("h5_moe", "plain residual, 2 nodes", {**h5, **fast}))
     return out
 
 
