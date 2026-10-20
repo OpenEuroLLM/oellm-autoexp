@@ -2359,7 +2359,9 @@ will measure K 8 / 4.
   Together they make ~90 % (the sites are roughly additive). Per transformer layer (one site per
   block, -0.040) lands a bit below mixer-only.
 
-**Running:** s2 plain vs mHC-4 x0.25 vs LDM x2.0 (round 5d), the size check for LDM.
+**Round 5d, s2 (2-node setup, final; vs the same-setup plain run):** LDM x2.0 -0.052
+(10B -0.047), mHC-4 x0.25 -0.044 (10B -0.041). LDM still leads at s2, by 0.008 (0.014 at s1). Its
+gap shrinks with size like mHC-4's (s1 -> s2: -0.068 -> -0.052, -0.054 -> -0.044).
 - Budget: ~5.6k of 7k GPU-h used before round 5d (~+270).
 
 ### 12.6 KronLSTM as the linear mixer (user 2026-10-20)
@@ -2397,3 +2399,25 @@ A_kk (.) A_vv), so it costs about KDA plus a value Gram.
   - The sign parity takes FLA's CP prefix.
   - Tests: CP2 / CP4 vs one process (cut, aligned and spanning documents), and Megatron CP=2 vs
     CP=1.
+
+**Verified on H100 (MN5, 2026-10-20):**
+- Packed documents through the hybrid with attention: 4/4.
+- Megatron CP=2 vs CP=1 (outputs, input and parameter gradients, both gates).
+- FLA CP relay on NCCL: 16/16.
+- Signed gate and fp32 edge kernel tests: 14/14.
+- The upstream kernel suite: 141/143 locally. The 2 failures are the fp32 K128 x V256 case, which
+  exceeds a 3090 Ti's shared memory.
+
+**Speed:** ~39k tok/s/GPU in round 5d's 2-node s1 setting, as fast as CKDA.
+
+**Screen (`screen5kron_s1`, 2-node, paired with screen5ldm2's CKDA `h5_moe`).** The first launch
+died at step ~490: a transient GPFS `Permission denied` on the flag data hit all ranks at 17:05:18.
+It is resumed from step 250. Mean gap vs CKDA per step window:
+
+| arm | 200-300 | 300-400 | 400-490 |
+|---|---:|---:|---:|
+| KronLSTM (paper's gates) | +0.117 | +0.055 | +0.039 |
+| KronLSTM, f in [-1, 1] + beta in [0, 2] | +0.460 | +0.414 | +0.352 |
+
+The extended ranges start far behind; no NaNs, grad norms normal. To be checked against the gate
+statistics (CKDA's init carried over) after step 500.
