@@ -1330,6 +1330,11 @@ def ckpt_offload():
     # K 8 at mbs 2 OOMs (11-slot boundary tensors, 1.4 GB each at 32k tokens): mbs 1
     arm("o_ldm8_16k_mbs1", "LDM K 8 (CuTe, segments), 16k mbs 1, gbs 512, host checkpoints", base,
         hyb, moon, off, ctx16, gbs512, fused, ldm)
+    # half the checkpoints (the 11-slot offload is the bound): 4 layers per recompute chunk
+    arm("o_ldm8_16k_mbs1_r4", "LDM K 8, 16k mbs 1, 4 layers per recompute chunk, offload last", base,
+        hyb, moon, off, ctx16, gbs512, fused, ldm,
+        {B + "recompute_num_layers": 4, "backend.env.RECOMPUTE_OFFLOAD_LAST": "1",
+         "aux.array_tag": "_ldmlast"})
     # LDM K 8 at mbs 1 = 2,852 tok/s/GPU (mHC-4 5,921): where the time goes
     arm("p_ldm8_16k_mbs1", "profile: LDM K 8, 16k mbs 1, host checkpoints (last too)", base, hyb,
         moon, off, ctx16, fused, ldm, prof, {"backend.env.RECOMPUTE_OFFLOAD_LAST": "1",
