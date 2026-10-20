@@ -2342,9 +2342,58 @@ will measure K 8 / 4.
   effect that fades with tokens; still under study.
 - Hybrid: **CKDA 5:1 over Qwen3.5-like GDN 3:1 and all-attention** at every size.
 
-**Running (round 5d, 2-node setup):**
-- s1: LDM x4.0; LDM x2.0 with K = 4 (half the state, ~mHC-4's payload; the paper loses 0.005);
-  LDM x2.0 at the mixer sublayers only / at the MoE sublayers only (`depth_memory_sites`, 12 sites
-  each, to find where the gain sits).
-- s2: plain vs mHC-4 x0.25 vs LDM x2.0 -- the size check for LDM.
+**Round 5d, s1 (2-node setup, final; gaps vs the same plain run as above):**
+
+| arm | gap @4000 | trend | 10B |
+|---|---:|---|---:|
+| LDM x2.0 (above) | -0.068 | flat | -0.070 |
+| LDM x4.0 | -0.062 | shrinking (-0.073 at step 1000) | -0.052 |
+| LDM x2.0, K = 4 | -0.051 | flat | -0.052 |
+| LDM x2.0, mixer sublayers only | -0.048 | slightly shrinking | -0.046 |
+| LDM x2.0, MoE sublayers only | -0.014 | flat | -0.011 |
+
+- **lr x2.0 is LDM's optimum.** x4.0 leads early and then loses its edge.
+- **K = 4 keeps 75 % of K = 8's gain**, below mHC-4 per sublayer (-0.054), at ~25 KB vs 35 KB per
+  token. So K = 8 it is, if the state is affordable.
+- **The gain sits at the mixer sublayers:** mixer-only gets 70 % of the full gain, MoE-only 20 %.
+  Together they make ~90 % (the sites are roughly additive). Per transformer layer (one site per
+  block, -0.040) lands a bit below mixer-only.
+
+**Running:** s2 plain vs mHC-4 x0.25 vs LDM x2.0 (round 5d), the size check for LDM.
 - Budget: ~5.6k of 7k GPU-h used before round 5d (~+270).
+
+### 12.6 KronLSTM as the linear mixer (user 2026-10-20)
+
+KronLSTM (github.com/NX-AI/KronLSTM, arXiv 2610.26834) replaces the delta rule's vector residual
+with the scalar association v^T S k: one rank-1 write along k v^T per token. A write interferes
+only with pairs that overlap in both key and value. It has separate forget / erase / write gates.
+The chunkwise form is DeltaNet's WY/UT scheme on the Kronecker features k (x) v (Gram
+A_kk (.) A_vv), so it costs about KDA plus a value Gram.
+
+**Integration**
+- Ops and layer are vendored from 3d800c9 into our FLA fork (`fla/ops/kronlstm`,
+  `fla.layers.KronLSTM`).
+- The Megatron mixer is `experimental_attention_variant: kronlstm` (`fla_hybrid.KronLSTM`).
+- **Document resets:** packed THD batches pass `cu_seqlens`, which restarts the recurrence, the
+  sign parity and the short conv per document. Test: packed = separate through the hybrid.
+- **Extended ranges, as CKDA over KDA:**
+  - *beta in [0, 2]* is KronLSTM's own `allow_neg_eigval` (`linear_fla_allow_neg_eigval`). It sets
+    s = 2 in beta* = s beta / ||v||^2, the negative-eigenvalue half of the contraction range.
+  - *Forget gate in [-1, 1]* (`linear_fla_gate: signed_sigmoid2`) uses Complex KDA's gate and
+    standard init, run through a sign gauge. With P_t the running sign product per key dim
+    (reset per document), the unsigned kernels on (P q, P k) are exact: every use of q and k is
+    bilinear against the state, and ||P k|| = ||k|| keeps the unit-norm key. Tested against the
+    naive signed recurrence, dense and packed.
+- **Context parallelism.** FLA's KCP compresses a rank's effect on the incoming state into a K x K
+  transition, which needs a transition acting on the key axis only. KronLSTM's score
+  (gamma k)^T S_0 v contracts both axes, so the map S_0 -> S_C is KV x KV. The op therefore
+  relays the state instead:
+  - Grams, inverse and decay-scaled keys run on all ranks at once.
+  - The forward scans run in rank order, each from the previous rank's final state.
+  - The read-out runs in parallel again.
+  - The backward does the same in reverse: dh0 goes to the previous rank as its dht.
+  - A rank whose first document starts on it does not wait. Only the scans serialize (a fraction
+    of the layer).
+  - The sign parity takes FLA's CP prefix.
+  - Tests: CP2 / CP4 vs one process (cut, aligned and spanning documents), and Megatron CP=2 vs
+    CP=1.

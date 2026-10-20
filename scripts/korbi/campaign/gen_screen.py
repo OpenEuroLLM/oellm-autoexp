@@ -978,6 +978,26 @@ def arms5ldm2_s2():
             ("h5_moe_ldmc_lr2", "LDM (CuTe) x2.0", {**pool["h5_moe"], **ldm, **fast})]
 
 
+def arms5kron(size: str = "s1"):
+    """KronLSTM (user 2026-10-20; github.com/NX-AI/KronLSTM, the Kronecker delta rule) in place of
+    CKDA as the 5:1 mixer, plain residual, round 5d's 2-node setting -- pairs with screen5ldm2's
+    2-node h5_moe (CKDA) run, same data order. The paper's layer (softplus forget gate in (0, 1],
+    beta in [0, 1]) and the extended ranges as CKDA over KDA: the signed forget gate in [-1, 1]
+    (Complex KDA's signed_sigmoid2 with its standard init, via the sign gauge) and beta in [0, 2].
+    Head grid as CKDA (128-wide, hidden / 128 heads). The layer's dense output gate is
+    hidden x hidden per mixer (CKDA's is low rank): more parameters, reported with the result."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    fast = {"slurm.sbatch.nodes": 2, B + "num_workers": 8, B + "dataloader_prefetch_factor": 4}
+    kron = {**{k: v for k, v in h5.items() if k not in CKDA_STD},
+            B + "experimental_attention_variant": "kronlstm", **fast}
+    return [
+        ("h5_moe_kron", "KronLSTM 5:1 (softplus forget gate, beta in [0, 1])",
+         {**kron, B + "linear_fla_gate": "softplus", B + "linear_fla_allow_neg_eigval": False}),
+        ("h5_moe_kron_ext", "KronLSTM 5:1, forget gate in [-1, 1] and beta in [0, 2]",
+         {**kron, B + "linear_fla_gate": "signed_sigmoid2", B + "linear_fla_allow_neg_eigval": True}),
+    ]
+
+
 def speed5_profiled(size: str = "s1"):
     """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
     with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
@@ -1040,7 +1060,10 @@ def write5():
             ("s1", "screen5ldm", arms5ldm("s1")),
             ("s1", "speed5ab", speed5_ab("s1")),
             ("s1", "screen5ldm2", arms5ldm2("s1")),
-            ("s2", "screen5ldm2", arms5ldm2_s2())] + [
+            ("s2", "screen5ldm2", arms5ldm2_s2()),
+            ("s1", "screen5kron", arms5kron("s1")),
+            ("s1", "screen5kronsmoke", [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})
+                                        for n, c, kv in arms5kron("s1")])] + [
             ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)] + [
             (z, p, arms) for z in ("s1", "s2")
             for p, arms in (("screen5e", arms5e(z)), ("screen5esmoke", smoke_e(z)))]:

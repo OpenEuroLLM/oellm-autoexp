@@ -363,6 +363,7 @@ class MegatronConfig(ConfigInterface):
             "complex_kda",
             "triadic",
             "power",
+            "kronlstm",
         ]
         | None
     ) = None
@@ -528,6 +529,19 @@ class MegatronConfig(ConfigInterface):
     # triadic mixer apply it here; the FLA layers (kda, signed_kda, complex_kda) need the
     # ComplexKDA fork's xsa option.
     linear_xsa: bool = False
+
+    # KronLSTM (variant "kronlstm", fla.layers.kronlstm via megatron/core/ssm/fla_hybrid.py):
+    # learn the write (target) gate c; the forget gate is linear_fla_gate ("softplus" is
+    # KronLSTM's own, the signed gates give f in [-1, 1] through the sign gauge), beta in [0,
+    # 2] is linear_fla_allow_neg_eigval.
+    linear_kronlstm_target_gate: bool = True
+
+    # KronLSTM: beta gates the erase only and the target gate alone the write (the paper's
+    # default); needs linear_kronlstm_target_gate.
+    linear_kronlstm_decouple_erase: bool = True
+
+    # KronLSTM: L2-normalise v per head (the paper's default).
+    linear_kronlstm_normalize_v: bool = True
 
     # Power retention (variant "power", megatron/core/ssm/power_retention.py): the even degree
     # of the (q . k)^deg similarity; the state per head is binom(d+deg-1, deg) x (d+1). The
