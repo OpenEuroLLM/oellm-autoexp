@@ -1278,6 +1278,14 @@ def ckpt_offload():
         hyb, moon, off, ctx16, gbs512, fused)
     arm("o_mhc4_16k_mbs2_off_fused", "mHC-4, 16k mbs 2, host checkpoints, fused mHC read", base, hyb,
         moon, off, ctx16, mbs2, fused)
+    # o4: torch profiles of rank 0 (first stage) and 31 (last stage), steps 5-6, gbs 128
+    prof = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 31],
+            B + "profile_step_start": 5, B + "profile_step_end": 6, B + "train_iters": 7,
+            "aux.gbs": 128}
+    arm("p_mhc4_16k_mbs2", "profile: mHC-4 16k mbs 2, host checkpoints, fused mHC read", base, hyb,
+        moon, off, ctx16, mbs2, fused, prof)
+    arm("p_plain_16k_mbs2", "profile: plain 16k mbs 2, host checkpoints", base, hyb, moon, off, ctx16,
+        plain, mbs2, prof)
     return arms
 
 
