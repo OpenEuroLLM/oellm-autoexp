@@ -106,4 +106,35 @@ for T in (8192, 16384):
         mixer.write(streams, x + f, h_post, h_res, link=link).backward(g_streams)
 
     row("FUSED sublayer fwd + bwd", timed(fused_sublayer), 3 * S + 2 * X + 5 * S + 3 * X)
+
+    # a chain of 4 sublayers (the reads 2..4 also run the previous write's backward), per sublayer
+    mixers = [mixer] + [MHCMixer(C, N).cuda() for _ in range(3)]
+    for m_ in mixers[1:]:
+        with torch.no_grad():
+            m_.phi.normal_(0, 0.02)
+
+    def chain(fused):
+        def run():
+            s = streams
+            for m_ in mixers:
+                if fused:
+                    link = mhc_fused.ReadWriteLink()
+                    x, _, h_post, h_res = mhc_fused.coeffs_and_read(m_, s, link)
+                else:
+                    link = None
+                    x, _, h_post, h_res = m_.coeffs_and_read(s)
+                s = m_.write(s, x + f, h_post, h_res, link=link)
+            s.backward(g_streams)
+        return run
+
+    mhc_fused.ENABLED = False
+    t_c = timed(chain(False)) / 4
+    mhc_fused.ENABLED = True
+    row("chain/4: compiled", t_c, 3 * S + 2 * X + 5 * S + 3 * X)
+    row("chain/4: FUSED (+ write bwd in read bwd)", timed(chain(True)) / 4,
+        3 * S + 2 * X + 5 * S + 3 * X)
+    mhc_fused.FUSE_WRITE_BWD = False
+    row("chain/4: FUSED (separate write bwd)", timed(chain(True)) / 4,
+        3 * S + 2 * X + 5 * S + 3 * X)
+    mhc_fused.FUSE_WRITE_BWD = True
     mhc_fused.ENABLED = False
