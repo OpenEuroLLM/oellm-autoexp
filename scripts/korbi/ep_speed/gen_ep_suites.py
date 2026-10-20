@@ -1286,6 +1286,12 @@ def ckpt_offload():
         moon, off, ctx16, mbs2, fused, prof)
     arm("p_plain_16k_mbs2", "profile: plain 16k mbs 2, host checkpoints", base, hyb, moon, off, ctx16,
         plain, mbs2, prof)
+    # o5 (user 2026-10-20): mHC-4 per transformer layer (mixer + MoE block; mhc_block.py)
+    per_layer = {B + "mhc_per_layer": True}
+    arm("o_mhc4l_16k_mbs2_off_fused", "mHC-4 per layer, 16k mbs 2, host checkpoints, fused read", base,
+        hyb, moon, off, ctx16, mbs2, fused, per_layer)
+    arm("o_mhc4l_16k_off_gbs512_fused", "mHC-4 per layer, 16k mbs 1, host checkpoints, fused read",
+        base, hyb, moon, off, ctx16, gbs512, fused, per_layer)
     return arms
 
 
