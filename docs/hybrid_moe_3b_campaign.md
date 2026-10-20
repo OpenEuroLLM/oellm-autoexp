@@ -2421,3 +2421,15 @@ It is resumed from step 250. Mean gap vs CKDA per step window:
 
 The extended ranges start far behind; no NaNs, grad norms normal. To be checked against the gate
 statistics (CKDA's init carried over) after step 500.
+
+**Extended-gate arm, final (step 4000):**
+- Loss 2.3418 vs CKDA 2.2774 (same 2-node run), gap +0.066.
+- The gap per 500-step window falls steadily: +0.180 / +0.114 / +0.093 / +0.082 / +0.074 / +0.070
+  / +0.066.
+- Trend a + b ln t: +0.032 at 4BT, -0.007 at 10BT. It is a drifting gap, so it is extrapolated less
+  reliably (the backtest overshot such gaps by up to 0.015).
+- Speed 38.4k vs 37.8k tok/s/GPU (+1.5 %).
+- +4.0M non-expert parameters (the dense output gate).
+
+The paper's-gate arm was relaunched twice: the GPFS fault, then a CUBLAS execution failure at
+startup on as07r4b02 / as07r4b13, now excluded.
