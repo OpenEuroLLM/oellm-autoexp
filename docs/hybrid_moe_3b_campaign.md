@@ -2294,8 +2294,8 @@ rerun in this setup:
 (The LDM multiplier scales LDM's own parameters' Adam lr: x2.0 = 8e-3.)
 
 - **LDM needs a high lr of its own.** Round 5's LDM ran at x0.25 (1 node) and trailed mHC-4 by about
-  0.008. At x2.0 it is the best residual: 0.014 ahead of mHC-4 at step 1500 and 0.014 at step
-  4000. LDM's gap is flat while mHC-4's shrinks, so the lead widens to ~0.027 at 10B. The optimum
+  0.008. At x2.0 it is the best residual: ahead of mHC-4 (x0.25) by 0.005 at step 1500 and 0.014 at
+  step 4000. LDM's gap is flat while mHC-4's shrinks, so the lead widens to ~0.027 at 10B. The optimum
   may lie above x2.0 (the grid's edge); x4.0 is queued.
 - **mHC-4 stays at mixer lr x0.25.**
 - **Per transformer layer** (`mhc_per_layer`: one read + one write per mixer + MoE block) keeps 59 %
