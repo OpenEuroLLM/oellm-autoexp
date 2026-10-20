@@ -2225,3 +2225,126 @@ adapter, the MoE partial-graph path), so per-layer graphs and the MoE router gra
   recomputed step would rewrite the workspace; a read-only recompute from the tapes is the fix).
 
 Speed in round 5's setting: suite `speed5res_s1` (100 steps per arm).
+
+### 12.5 Round 5 results (2026-10-20)
+
+All gaps are paired loss differences vs our plain hybrid (`h5_moe`: CKDA 5:1, NoPE / qk-norm /
+XSA / gated attention, 144 x w top-3 + shared MoE) at matched steps with the same data order,
+step 4000 = 2.1B tokens (flag mix, 8k, document masking). The 10B column is the
+gap trend `a + b ln t`, fitted from step 1000 (`scripts/korbi/campaign/gap_trend.py`). In the
+backtest (fit 1000-2000, predict 4000) flat gaps predicted to +-0.005, drifting gaps overshot by
+up to 0.015 (shown in brackets). Single seed: the s1 seed pair differs by ~0.002. Active / total
+sizes estimated from the configs: s1 ~85M / ~2.1B, s2 ~230M / ~5.7B, s3 ~490M / ~12B (non-emb).
+
+**Round 5 grid (1 node per arm; s1 / s2 / s3):**
+
+| variant | s1 @4000 (10B) | s2 @4000 (10B) | s3 @4000 (10B) | with size | with tokens |
+|---|---:|---:|---:|---|---|
+| mHC-4 (mixer lr x0.25) | -0.051 (-0.048) | -0.040 (-0.039) | -0.037 (-0.038) | shrinks ~N^-0.18 | flat |
+| mHC-2 | -0.028 (-0.025) | -0.020 (-0.017) | | shrinks faster | flat |
+| mHC-8 | -0.053 (-0.054) | | | (= mHC-4) | flat |
+| mHC-4 x LatentMoE | -0.054 ((-0.067)) | | | | widening |
+| LatentMoE (288 x w, top-6, latent h/2) | -0.008 ((-0.022)) | -0.007 ((-0.023)) | | stable | widening |
+| Block AttnRes (4 blocks) | -0.002 ((-0.029)) | +0.023 ((-0.008)) | | worse | closing |
+| MoE granularity x2 | +0.000 | -0.001 | | none | none |
+| routed residual 1+1 of 8 (dropped) | -0.007 (+0.024) | | +0.010 (s3 @3130) | | rising |
+| Qwen3.5-like (GDN 3:1, gated attn) | +0.023 (+0.032) | +0.012 (+0.025) | +0.004 (+0.028) | shrinks at 2B tokens | rising |
+| all-attention MoE | +0.007 ((+0.033)) | -0.004 ((+0.023)) | | | rising |
+
+- **Our hybrid** wins against Qwen3.5 and all-attention at every size. At fixed 2B tokens the lead
+  narrows with size, but it grows with tokens: about +0.025 to +0.03 at 10B tokens at all sizes.
+- **mHC-4:** flat with tokens, shrinking with size (~N^-0.18; about -0.027 extrapolated to ~3B
+  active). mHC-8 adds nothing over mHC-4; mHC-2 is half as good and shrinks faster.
+- **LatentMoE:** the one MoE change that holds across size and widens with tokens.
+  Granularity x2 does nothing. AttnRes gets worse at s2: dropped.
+
+**Engram allocation (§12.2; Engram tables replace routed experts at equal total and active
+parameters):**
+
+| share of the inactive parameters | s1 @4000 (10B) | s2 @4000 (10B) |
+|---|---:|---:|
+| 11 % (128 experts) | -0.012 ((-0.005)) | |
+| 20 % (116) | -0.015 ((-0.007)) | -0.018 ((-0.012)) |
+| 20 %, lean table optimizer | -0.016 ((-0.009)) | |
+| 20 %, tables at 2.5 x lr | -0.013 ((-0.007)) | |
+| 34 % (96) | -0.018 ((-0.013)) | |
+
+- **The Engram gain shrinks with tokens**, unlike mHC (a memorization-like early benefit), and is
+  slightly larger at s2.
+- **"More table" is better up to 34 %** at s1. That disagrees with the paper's 20-25 % optimum,
+  where the U was flat (-0.014 at the optimum). Undecided.
+- **The lean table optimizer** (row-wise v, bf16 momentum: 16 -> 10 B per table parameter) costs no
+  quality. Production cost: 2 Engram layers -5.4 % throughput (EP agent).
+
+**Residual variants, 2-node suite (`screen5ldm2_s1`, data parallel 8).** The 2-node runs do not
+pair with the 1-node ones (+-0.04 per window at step 500 for the same arm), so plain and mHC-4 were
+rerun in this setup:
+
+| arm (same 2-node setup) | final loss | gap @4000 | trend | 10B | s1 tok/s/GPU (concurrent, 1 node) |
+|---|---:|---:|---|---:|---:|
+| plain | 2.3689 | | | | 40,476 |
+| **LDM (CuTe) x2.0, per sublayer** | **2.3007** | **-0.068** | flat | **-0.070** | 32,404 (-20 %) |
+| LDM x1.0 | 2.3077 | -0.061 | flat | -0.062 | |
+| LDM x0.5 | 2.3095 | -0.060 | flat | -0.060 | |
+| mHC-4, mixer lr x0.25 | 2.3155 | -0.054 | shrinking | -0.043 | 32,800 (-19 %) |
+| mHC-4, mixer lr x1.0 | 2.3258 | -0.043 | shrinking | -0.029 | |
+| LDM x2.0, per transformer layer | 2.3295 | -0.040 | slightly shrinking | -0.036 | 36,667 (-9 %) |
+| mHC-4 x0.25, per transformer layer | 2.3324 | -0.037 | slightly shrinking | -0.035 | 36,171 (-11 %) |
+
+(The LDM multiplier scales LDM's own parameters' Adam lr: x2.0 = 8e-3.)
+
+- **LDM needs a high lr of its own.** Round 5's LDM ran at x0.25 (1 node) and trailed mHC-4 by about
+  0.008. At x2.0 it is the best residual: 0.014 ahead of mHC-4 at step 1500 and 0.014 at step
+  4000. LDM's gap is flat while mHC-4's shrinks, so the lead widens to ~0.027 at 10B. The optimum
+  may lie above x2.0 (the grid's edge); x4.0 is queued.
+- **mHC-4 stays at mixer lr x0.25.**
+- **Per transformer layer** (`mhc_per_layer`: one read + one write per mixer + MoE block) keeps 59 %
+  (LDM) / 69 % (mHC-4) of the per-sublayer gain, for half the s1 overhead. Gains are sublinear in
+  the number of mixing sites. LDM, with its input-dependent reads, loses more.
+- **At equal compute at s1** (about 0.19 loss per ln of tokens from the fits): LDM per sublayer
+  ~-0.026, LDM per layer ~-0.022, mHC-4 per layer ~-0.017, mHC-4 per sublayer ~-0.012 (shrinking).
+
+**LDM at mHC-4's speed (§12.4).** The CuTe stream form (static workspace, fused address networks,
+cached launch arguments) runs LDM at mHC-4's tok/s at s1 (32.4k vs 32.8k concurrent). Its GPU
+compute is 5 % below mHC-4's (139.6 vs 146.4 ms per micro-batch). The earlier "2x slower" was the
+reference implementation (no graphs, fp32 per-layer state) plus the data-loader cap below.
+
+**Production layout (EP agent, `../oellm-autoexp-hybrid-ep/docs/ep_fp8_speed.md` §6d):** 8 nodes,
+16k, PP4 x VPP2, recompute offload to the host, fused mHC read:
+
+| arm | tok/s/GPU |
+|---|---:|
+| plain, mbs 2 | 7,539 |
+| mHC-4 | 6,026 (-20 %) |
+| mHC-4 per layer | 6,217 (-18 %) |
+
+Per layer halves the mHC kernels but the step barely moves: the pipeline p2p of the 4-wide state
+(512 MB per message) is the bound. LDM at scale needs its state (x, r, M, P) to cross recompute
+chunks and stages. That is 35 KB per token at K = 8 vs mHC-4's 16 KB, which hurts in exactly this
+p2p-bound regime. The EP agent has segmented LDM working (state across chunks / stages, the
+next-window gradient folded into dM at boundaries; Megatron 66ce624ac on ep-fp8-speed-r5) and
+will measure K 8 / 4.
+
+**Measurement lessons (round 5).**
+- **FLAG8K's 4 data workers x prefetch 2** (the fix for the s2 save-time host OOM) capped every s1
+  arm at ~23.8k tok/s/GPU: plain, mHC-4 and LDM matched per log interval. Runs launched after
+  2026-10-19 noon were slowed; their losses are unaffected. s1 now uses 8 x 4, s2 6 x 3; size
+  workers per layout and check tok/s against a known-good run.
+- **Wall-clock A/Bs:** concurrent arms, ~50 steps past warm-up. tok/s drifts 10-30 % with the
+  launch time on MN5.
+- **GPU compute per micro-batch** from torch-profile traces (normalized by the cross-entropy kernel
+  count, evaluation out of the window) is the robust speed measure.
+
+**Decisions so far**
+- Residual: **LDM per sublayer at lr x2.0 or higher**, if it holds at s2 and if the at-scale state
+  is affordable at the production layout. Else mHC-4 per sublayer.
+- Keep **LatentMoE** as a candidate for the main run (stacks on mHC-4 at s1). **Engram** is a small
+  effect that fades with tokens; still under study.
+- Hybrid: **CKDA 5:1 over Qwen3.5-like GDN 3:1 and all-attention** at every size.
+
+**Running (round 5d, 2-node setup):**
+- s1: LDM x4.0; LDM x2.0 with K = 4 (half the state, ~mHC-4's payload; the paper loses 0.005);
+  LDM x2.0 at the mixer sublayers only / at the MoE sublayers only (`depth_memory_sites`, 12 sites
+  each, to find where the gain sits).
+- s2: plain vs mHC-4 x0.25 vs LDM x2.0 -- the size check for LDM.
+- Budget: ~5.6k of 7k GPU-h used before round 5d (~+270).
