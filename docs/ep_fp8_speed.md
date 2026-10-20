@@ -531,6 +531,15 @@ read 0.10, coefficients 0.01 / 0.02 -- all near the HBM bound now; what is left 
 passes (the next step: the read backward of sublayer k+1 and the write backward of sublayer k in
 one pass).
 
+**8 nodes, o3** (16k, offload): fused read mbs 1 / gbs 512 **5,921** (+5.1 % over 5,635), mbs 2
+**6,026** (+5.4 % over 5,717); losses identical through step 2, then run-to-run noise.
+
+**Read backward of k+1 + write backward of k in one kernel** (MHC_FUSED_WRITE_BWD=1, WriteRecord on
+the stream state; falls back at recompute-chunk / stage boundaries): correct (4 tests incl. a second
+consumer of the intermediate state) but slower on H100 -- per sublayer in a 4-sublayer chain, 8k:
+compiled 2.36 ms, separate write backward **1.57**, combined v1 1.76 (255 registers, 120-136
+spilled), v2 token-major + d_phi GEMM 1.63; 16k: 4.31 / **3.03** / 3.40 / 3.13. Off by default.
+
 ## 7. Conclusions and recommended settings (2026-10-19)
 
 **> 250 TFLOP/s is not reached; ~195-203 is the practical ceiling on MN5 for Qwen3-30B-A3B with real
