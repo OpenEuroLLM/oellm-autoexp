@@ -3687,6 +3687,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "linear_kronlstm_neg_eigval_init_bias": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="KronLSTM with linear_fla_allow_neg_eigval (s = 2): bias the erase and target gates at init (-ln 3) so s * beta and s * c start at mean 0.5, mostly in [0, 1] -- as with s = 1 -- while the full [0, 2] stays reachable.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "linear_kronlstm_normalize_v": MegatronArgMetadata(
         arg_type=bool,
         default=True,
@@ -11269,6 +11277,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=False,
         default=True,
+    ),
+    "linear_kronlstm_neg_eigval_init_bias": MegatronActionSpec(
+        option_strings=("--linear-kronlstm-neg-eigval-init-bias",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "linear_kronlstm_normalize_v": MegatronActionSpec(
         option_strings=(

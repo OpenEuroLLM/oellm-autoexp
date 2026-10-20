@@ -1043,6 +1043,18 @@ def arms5udecay(size: str):
              {**off, B + "angular_muown_extra_scale_factor": 0.2 * m}) for m in mults]
 
 
+def arms5kron_ext(size: str):
+    """KronLSTM's extended ranges at every size (user 2026-10-21), started as the paper's layer: the
+    signed forget gate with Complex KDA's shipped init (A_log = 0, f = +exp(-dt) in (0, 1) at step
+    0: positive bias), and beta in [0, 2] with the erase and target gates biased to start at mean
+    0.5, mostly in [0, 1] (linear_kronlstm_neg_eigval_init_bias; s = 2 doubles the write as well as
+    the erase). Own suite (the kronscale suites have running arms); pairs with round 5's h5_moe."""
+    kron = arms5kron_scale(size)[0][2]
+    return [("h5_moe_kron_extb", "KronLSTM 5:1, f in [-1, 1] + beta in [0, 2], gates started in [0, 1]",
+             {**kron, B + "linear_fla_gate": "signed_sigmoid2", B + "linear_fla_allow_neg_eigval": True,
+              B + "linear_kronlstm_neg_eigval_init_bias": True})]
+
+
 def speed5_profiled(size: str = "s1"):
     """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
     with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
@@ -1108,6 +1120,7 @@ def write5():
             ("s2", "screen5ldm2", arms5ldm2_s2()),
             ("s1", "screen5kron", arms5kron("s1")),
             *[(z, "screen5kronscale", arms5kron_scale(z)) for z in ("s1", "s2", "s3")],
+            *[(z, "screen5kronext", arms5kron_ext(z)) for z in ("s1", "s2", "s3")],
             *[(z, "screen5udecay", arms5udecay(z)) for z in ("s1", "s2")],
             ("s1", "screen5kronsmoke", [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})
                                         for n, c, kv in arms5kron("s1")])] + [
