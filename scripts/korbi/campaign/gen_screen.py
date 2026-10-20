@@ -1013,7 +1013,14 @@ def arms5kron_scale(size: str):
     workers = {"s1": (8, 4), "s2": (6, 3)}.get(size)
     if workers:
         kron.update({B + "num_workers": workers[0], B + "dataloader_prefetch_factor": workers[1]})
-    return [("h5_moe_kron", "KronLSTM 5:1 (paper's gates), round 5's setting", kron)]
+    out = [("h5_moe_kron", "KronLSTM 5:1 (paper's gates), round 5's setting", kron)]
+    if size == "s1":
+        # the extended ranges again, with the signed gate's init fixed (FLA f82079c: A_log = 0 as in
+        # Complex KDA; the screen's arm ran with 96 % of the forget gates saturated at |f| = 1)
+        out.append(("h5_moe_kron_ext", "KronLSTM 5:1, f in [-1, 1] + beta in [0, 2] (init fixed)",
+                    {**kron, B + "linear_fla_gate": "signed_sigmoid2",
+                     B + "linear_fla_allow_neg_eigval": True}))
+    return out
 
 
 def speed5_profiled(size: str = "s1"):
