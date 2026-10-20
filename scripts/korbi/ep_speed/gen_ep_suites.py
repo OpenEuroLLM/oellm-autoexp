@@ -1316,6 +1316,17 @@ def ckpt_offload():
         moon, off, ctx16, mbs2, fused, pp4)
     arm("o_mhc4l_16k_mbs2_v1", "mHC-4 per layer, 16k mbs 2, host checkpoints, fused read, PP4 no VPP",
         base, hyb, moon, off, ctx16, mbs2, fused, per_layer, pp4)
+    # o8: Linear Depth Memory at scale (depth_memory_segments: the state in the streams across
+    # recompute chunks and stages; CuTe kernels, window 4, fp32 running covariance)
+    ldm = {B + "mhc": False, B + "mhc_routed_topk": 0, B + "mhc_routed_reversible": False,
+           B + "depth_memory": True, B + "depth_memory_impl": "cute",
+           B + "depth_memory_segments": True, B + "depth_memory_groups": 16,
+           B + "depth_memory_key_dim": 8, B + "depth_memory_hidden_dim": 32,
+           B + "depth_memory_covariance_dtype": "float32", B + "depth_memory_window": 4}
+    arm("o_ldm8_16k_mbs2", "LDM K 8 (CuTe, segments), 16k mbs 2, host checkpoints", base, hyb, moon,
+        off, ctx16, mbs2, fused, ldm)
+    arm("o_ldm4_16k_mbs2", "LDM K 4 (CuTe, segments), 16k mbs 2, host checkpoints", base, hyb, moon,
+        off, ctx16, mbs2, fused, ldm, {B + "depth_memory_key_dim": 4})
     return arms
 
 
