@@ -1327,6 +1327,9 @@ def ckpt_offload():
         off, ctx16, mbs2, fused, ldm)
     arm("o_ldm4_16k_mbs2", "LDM K 4 (CuTe, segments), 16k mbs 2, host checkpoints", base, hyb, moon,
         off, ctx16, mbs2, fused, ldm, {B + "depth_memory_key_dim": 4})
+    # K 8 at mbs 2 OOMs (11-slot boundary tensors, 1.4 GB each at 32k tokens): mbs 1
+    arm("o_ldm8_16k_mbs1", "LDM K 8 (CuTe, segments), 16k mbs 1, gbs 512, host checkpoints", base,
+        hyb, moon, off, ctx16, gbs512, fused, ldm)
     return arms
 
 
