@@ -540,6 +540,37 @@ consumer of the intermediate state) but slower on H100 -- per sublayer in a 4-su
 compiled 2.36 ms, separate write backward **1.57**, combined v1 1.76 (255 registers, 120-136
 spilled), v2 token-major + d_phi GEMM 1.63; 16k: 4.31 / **3.03** / 3.40 / 3.13. Off by default.
 
+### 6d-3. Profile, per-layer mHC-4, pipeline layouts (2026-10-20)
+
+**Profile** (o4 / o4b, gbs 128 = 8 micro-batches, rank 0 / 31, per step): mHC-4 adds 822 ms over
+plain on rank 0: mHC kernels 466 ms, exposed pipeline p2p +346 ms (the 4-wide payload, 512 MB per
+message at 16k mbs 2), offload copies +306 ms (side stream, mostly hidden). Per-layer mHC-4 halves
+the mHC kernels (233 ms) but the step only drops 4,160 -> 4,078 ms: the freed compute becomes p2p
+wait (exposed p2p 1,103 -> 1,156 ms) -- the pipeline is the bound now.
+
+**Per-layer mHC-4** (`mhc_per_layer`, megatron/core/transformer/mhc_block.py; one read / write per
+mixer + MoE block, plain residual inside, write of h_end - x; recompute chunks snap to blocks; a
+stage / virtual chunk must end with a block): 8 nodes, 16k, offload, fused read --
+mbs 2 **6,217** tok/s/GPU (per-sublayer 6,026, +3.2 %), mbs 1 / gbs 512 5,960. The first version
+(fp32 round trip for h_end - x: ~4 extra passes per block) gave only 6,051.
+
+| 8 nodes, 16k mbs 2, offload | PP4 x VPP2 | PP4 no VPP (15/15/14/4) | PP2 x VPP4 |
+|---|---:|---:|---:|
+| plain | **7,539** | 6,878 | OOM |
+| mHC-4 (fused read) | 6,026 | 5,706 | OOM |
+| mHC-4 per layer | **6,217** | 5,962 | OOM |
+
+No VPP: 3 instead of 7 stage crossings per micro-batch, but the bubble (3/32) costs more than the
+p2p saves; memory drops to 0.45-0.52 (from 0.66-0.82). PP2: static memory doubles, OOM even plain.
+
+**LDM at the production shape** (bench_ldm.py, h 2048, G 16, K 8, D 128, chain of 8 sites, fwd + bwd
+per site): CuTe 1.99 ms at 8k, 3.53 ms at 16k (untuned schedules); torch 14.5 / 28.3 ms. mHC-4
+fused sublayer: 1.57 / 3.03 ms. State per token: CuTe M bf16 [G, K, D] + packed P fp32 = ~35 KB
+(mHC-4 16 KB). At scale LDM still needs a state that crosses recompute chunks and pipeline stages
+(the workspace holds one micro-batch: PP 1, no full recompute) -- and the CuTe backward's windows
+(E = 4) read the next window's tapes, so windows must align with chunk / stage boundaries or that
+data must be carried across them.
+
 ## 7. Conclusions and recommended settings (2026-10-19)
 
 **> 250 TFLOP/s is not reached; ~195-203 is the practical ceiling on MN5 for Qwen3-30B-A3B with real
