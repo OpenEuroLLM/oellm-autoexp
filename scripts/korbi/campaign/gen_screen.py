@@ -998,6 +998,24 @@ def arms5kron(size: str = "s1"):
     ]
 
 
+def arms5kron_scale(size: str):
+    """KronLSTM's scaling (user 2026-10-20): the paper's layer (softplus forget gate, beta in
+    [0, 1]; it trailed CKDA by +0.02 at step 1000 in the 2-node screen, the extended ranges by
+    +0.15) as the 5:1 mixer in round 5's own setting at s1 / s2 / s3 (1 node; s3 4 nodes, EP16),
+    so each arm pairs with round 5's CKDA h5_moe of its size (same data order). The fused qkv_proj
+    is split for angular MuOwn as complex_kda's three projections are (Megatron b8c7069b7)."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    kron = {**{k: v for k, v in h5.items() if k not in CKDA_STD},
+            B + "experimental_attention_variant": "kronlstm", B + "linear_fla_gate": "softplus",
+            B + "linear_fla_allow_neg_eigval": False}
+    # data workers per layout (FLAG8K's 4 x 2 capped s1 at ~23.8k tok/s/GPU; s2 OOM-killed
+    # nodes at saves with 16 x 8): loss unaffected, the tok/s comparable to round 5d
+    workers = {"s1": (8, 4), "s2": (6, 3)}.get(size)
+    if workers:
+        kron.update({B + "num_workers": workers[0], B + "dataloader_prefetch_factor": workers[1]})
+    return [("h5_moe_kron", "KronLSTM 5:1 (paper's gates), round 5's setting", kron)]
+
+
 def speed5_profiled(size: str = "s1"):
     """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
     with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
@@ -1062,6 +1080,7 @@ def write5():
             ("s1", "screen5ldm2", arms5ldm2("s1")),
             ("s2", "screen5ldm2", arms5ldm2_s2()),
             ("s1", "screen5kron", arms5kron("s1")),
+            *[(z, "screen5kronscale", arms5kron_scale(z)) for z in ("s1", "s2", "s3")],
             ("s1", "screen5kronsmoke", [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})
                                         for n, c, kv in arms5kron("s1")])] + [
             ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)] + [
