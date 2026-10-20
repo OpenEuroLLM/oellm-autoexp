@@ -1046,13 +1046,14 @@ def arms5udecay(size: str):
 def arms5kron_ext(size: str):
     """KronLSTM's extended ranges at every size (user 2026-10-21), started as the paper's layer: the
     signed forget gate with Complex KDA's shipped init (A_log = 0, f = +exp(-dt) in (0, 1) at step
-    0: positive bias), and beta in [0, 2] with the erase and target gates biased to start at mean
-    0.5, mostly in [0, 1] (linear_kronlstm_neg_eigval_init_bias; s = 2 doubles the write as well as
-    the erase). Own suite (the kronscale suites have running arms); pairs with round 5's h5_moe."""
+    0: positive bias), and beta in [0, 2] with the erase gate biased to start at mean 0.5, mostly in
+    [0, 1] (linear_kronlstm_neg_eigval_init_bias). The write gate stays c in [0, 1] by construction
+    (linear_kronlstm_unit_write: the op's s = 2 would double it). Own suite (the kronscale suites
+    have running arms); pairs with round 5's h5_moe."""
     kron = arms5kron_scale(size)[0][2]
-    return [("h5_moe_kron_extb", "KronLSTM 5:1, f in [-1, 1] + beta in [0, 2], gates started in [0, 1]",
+    return [("h5_moe_kron_extb", "KronLSTM 5:1, f in [-1, 1] + erase in [0, 2] (started in [0, 1]), write in [0, 1]",
              {**kron, B + "linear_fla_gate": "signed_sigmoid2", B + "linear_fla_allow_neg_eigval": True,
-              B + "linear_kronlstm_neg_eigval_init_bias": True})]
+              B + "linear_kronlstm_neg_eigval_init_bias": True, B + "linear_kronlstm_unit_write": True})]
 
 
 def speed5_profiled(size: str = "s1"):

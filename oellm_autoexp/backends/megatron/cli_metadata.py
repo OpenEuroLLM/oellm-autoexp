@@ -3690,7 +3690,7 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
     "linear_kronlstm_neg_eigval_init_bias": MegatronArgMetadata(
         arg_type=bool,
         default=False,
-        help="KronLSTM with linear_fla_allow_neg_eigval (s = 2): bias the erase and target gates at init (-ln 3) so s * beta and s * c start at mean 0.5, mostly in [0, 1] -- as with s = 1 -- while the full [0, 2] stays reachable.",
+        help="KronLSTM with linear_fla_allow_neg_eigval (s = 2): bias the erase gate at init (-ln 3) so s * beta starts at mean 0.5, mostly in [0, 1] -- as with s = 1 -- while the full [0, 2] stays reachable.",
         choices=None,
         nargs=0,
         element_type=None,
@@ -3707,6 +3707,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         arg_type=bool,
         default=True,
         help='KronLSTM (variant "kronlstm", fla.layers.kronlstm via megatron/core/ssm/fla_hybrid.py): learn the write (target) gate c; the forget gate is linear_fla_gate ("softplus" is KronLSTM\'s own, the signed gates give f in [-1, 1] through the sign gauge), beta in [0, 2] is linear_fla_allow_neg_eigval.',
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "linear_kronlstm_unit_write": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="KronLSTM with linear_fla_allow_neg_eigval (s = 2): keep the write c in [0, 1] by construction. The op's s scales the write cap as well as the erase, so without this the write is s * c in [0, 2]; with it only the erase is extended (s * beta in [0, 2]).",
         choices=None,
         nargs=0,
         element_type=None,
@@ -11304,6 +11312,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=False,
         default=True,
+    ),
+    "linear_kronlstm_unit_write": MegatronActionSpec(
+        option_strings=("--linear-kronlstm-unit-write",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "linear_num_key_heads": MegatronActionSpec(
         option_strings=("--linear-num-key-heads",),

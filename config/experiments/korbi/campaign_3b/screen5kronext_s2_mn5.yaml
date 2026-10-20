@@ -51,7 +51,7 @@ sweep:
   groups:
     - type: list
       configs:
-        # KronLSTM 5:1, f in [-1, 1] + beta in [0, 2], gates started in [0, 1]
+        # KronLSTM 5:1, f in [-1, 1] + erase in [0, 2] (started in [0, 1]), write in [0, 1]
         - aux.arm: h5_moe_kron_extb
           backend.megatron.num_attention_heads: 8
           backend.megatron.num_query_groups: 2
@@ -110,3 +110,4 @@ sweep:
           backend.megatron.linear_fla_gate: signed_sigmoid2
           backend.megatron.linear_fla_allow_neg_eigval: true
           backend.megatron.linear_kronlstm_neg_eigval_init_bias: true
+          backend.megatron.linear_kronlstm_unit_write: true

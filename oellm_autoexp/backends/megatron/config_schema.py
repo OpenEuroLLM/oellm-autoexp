@@ -543,10 +543,15 @@ class MegatronConfig(ConfigInterface):
     # KronLSTM: L2-normalise v per head (the paper's default).
     linear_kronlstm_normalize_v: bool = True
 
-    # KronLSTM with linear_fla_allow_neg_eigval (s = 2): bias the erase and target gates at
-    # init (-ln 3) so s * beta and s * c start at mean 0.5, mostly in [0, 1] -- as with s = 1
-    # -- while the full [0, 2] stays reachable.
+    # KronLSTM with linear_fla_allow_neg_eigval (s = 2): bias the erase gate at init (-ln 3)
+    # so s * beta starts at mean 0.5, mostly in [0, 1] -- as with s = 1 -- while the full [0,
+    # 2] stays reachable.
     linear_kronlstm_neg_eigval_init_bias: bool = False
+
+    # KronLSTM with linear_fla_allow_neg_eigval (s = 2): keep the write c in [0, 1] by
+    # construction. The op's s scales the write cap as well as the erase, so without this the
+    # write is s * c in [0, 2]; with it only the erase is extended (s * beta in [0, 2]).
+    linear_kronlstm_unit_write: bool = False
 
     # Power retention (variant "power", megatron/core/ssm/power_retention.py): the even degree
     # of the (q . k)^deg similarity; the state per head is binom(d+deg-1, deg) x (d+1). The
