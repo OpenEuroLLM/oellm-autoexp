@@ -1213,6 +1213,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "depth_memory_sites": MegatronArgMetadata(
+        arg_type=str,
+        default="all",
+        help='LDM stream form: the sublayers with a depth-memory read / write -- "all", "mixer" (attention, linear mixers, Mamba, Engram) or "mlp" (MLP / MoE); the others keep the plain residual and pass the pending read on to the next site (ablation of where the gain sits).',
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "depth_memory_window": MegatronArgMetadata(
         arg_type=int,
         default=4,
@@ -9153,6 +9161,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0.99,
+    ),
+    "depth_memory_sites": MegatronActionSpec(
+        option_strings=("--depth-memory-sites",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="all",
     ),
     "depth_memory_window": MegatronActionSpec(
         option_strings=("--depth-memory-window",),

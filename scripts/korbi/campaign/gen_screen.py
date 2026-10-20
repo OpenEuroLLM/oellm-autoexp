@@ -950,7 +950,32 @@ def arms5ldm2(size: str = "s1"):
     out.append(("h5_moe_ldmc_lr2_pl", "LDM x2.0 per transformer layer",
                 {**h5, **ldm, **fast, B + "residual_mixer_lr_mult": 2.0, **pl}))
     out.append(("h5_moe_mhc4_pl", "mHC-4 x0.25 per transformer layer", {**mhc4, **fast, **pl}))
+    # round 5d (user 2026-10-20): LDM lr x4.0 (x2.0 was the grid's edge), K = 4 (half the state,
+    # ~ mHC-4's 4h: the production pipeline payload), and where the gain sits -- LDM at the
+    # mixer sublayers only / at the MoE sublayers only (12 sites each, as per layer)
+    ldm2 = {**h5, **ldm, **fast, B + "residual_mixer_lr_mult": 2.0}
+    out.append(("h5_moe_ldmc_lr4", "LDM x4.0", {**h5, **ldm, **fast,
+                                                B + "residual_mixer_lr_mult": 4.0}))
+    out.append(("h5_moe_ldmc_lr2_k4", "LDM x2.0, K = 4", {**ldm2, B + "depth_memory_key_dim": 4}))
+    out.append(("h5_moe_ldmc_lr2_mixer", "LDM x2.0 at the mixer sublayers only",
+                {**ldm2, B + "depth_memory_sites": "mixer"}))
+    out.append(("h5_moe_ldmc_lr2_mlp", "LDM x2.0 at the MoE sublayers only",
+                {**ldm2, B + "depth_memory_sites": "mlp"}))
     return out
+
+
+def arms5ldm2_s2():
+    """s2 confirmation (user 2026-10-20): LDM x2.0 vs mHC-4 x0.25 vs plain at s2, 2 nodes each
+    (they pair with each other only), 6 data workers x prefetch 3 (s2 nodes OOM-killed at saves
+    with 16 x 8; 4 x 2 is data-bound)."""
+    pool = dict((n, kv) for n, _, kv in arms5("s2"))
+    fast = {"slurm.sbatch.nodes": 2, B + "num_workers": 6, B + "dataloader_prefetch_factor": 3}
+    ldm = {B + "depth_memory": True, B + "depth_memory_impl": "cute", B + "depth_memory_groups": 16,
+           B + "depth_memory_key_dim": 8, B + "depth_memory_hidden_dim": 32,
+           B + "residual_mixer_lr_mult": 2.0}
+    return [("h5_moe", "plain residual", {**pool["h5_moe"], **fast}),
+            ("h5_moe_mhc4", "mHC-4, mixer lr x0.25", {**pool["h5_moe_mhc4"], **fast}),
+            ("h5_moe_ldmc_lr2", "LDM (CuTe) x2.0", {**pool["h5_moe"], **ldm, **fast})]
 
 
 def speed5_profiled(size: str = "s1"):
@@ -1014,7 +1039,8 @@ def write5():
             ("s1", "speed5prof", speed5_profiled("s1")),
             ("s1", "screen5ldm", arms5ldm("s1")),
             ("s1", "speed5ab", speed5_ab("s1")),
-            ("s1", "screen5ldm2", arms5ldm2("s1"))] + [
+            ("s1", "screen5ldm2", arms5ldm2("s1")),
+            ("s2", "screen5ldm2", arms5ldm2_s2())] + [
             ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)] + [
             (z, p, arms) for z in ("s1", "s2")
             for p, arms in (("screen5e", arms5e(z)), ("screen5esmoke", smoke_e(z)))]:

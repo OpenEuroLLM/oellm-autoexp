@@ -1664,6 +1664,12 @@ class MegatronConfig(ConfigInterface):
     # cute_ldm; Hopper / Blackwell).
     depth_memory_impl: str = "reference"
 
+    # LDM stream form: the sublayers with a depth-memory read / write -- "all", "mixer"
+    # (attention, linear mixers, Mamba, Engram) or "mlp" (MLP / MoE); the others keep the
+    # plain residual and pass the pending read on to the next site (ablation of where the gain
+    # sits).
+    depth_memory_sites: str = "all"
+
     # LDM "cute": the window E of deferred writes (the paper: 4).
     depth_memory_window: int = 4
 
