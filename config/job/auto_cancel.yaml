@@ -38,6 +38,18 @@ log_events:
     action:
       class_name: CancelAction
       reason: "Inactive Log"
+  - name: nccl_abort
+    pattern: "Abort START"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "NCCL Abort detected in logs"
+  - name: dataloading_mem_limit
+    pattern: "Bus error"
+    pattern_type: substring
+    action:
+      class_name: CancelAction
+      reason: "Filesystem hang in dataloading"
 
 state_events:
   - name: "failed"
