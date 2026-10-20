@@ -1127,6 +1127,7 @@ sweep:
           backend.env.FLA_TENSOR_CACHE_SIZE: '64'
           backend.megatron.moe_flex_dispatcher_num_sms: 64
           backend.env.RECOMPUTE_OFFLOAD: '1'
+          backend.env.MHC_FUSED_READ: '1'
         # mHC-4, 16k mbs 2, host checkpoints, fused read, PP2 x VPP4
         - aux.arm: o_mhc4_16k_mbs2_pp2
           aux.pattern: LELELELELE*ELELE|LELELE*ELE|LELELELE*ELELE|LELELE*ELE|LELELELE*ELELE|LELELE*ELE|LELELELE*ELELE|LELELE*E

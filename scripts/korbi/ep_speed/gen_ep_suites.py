@@ -1298,7 +1298,7 @@ def ckpt_offload():
     pp2 = {"aux.pattern": vpp_pattern("LLLLL*" * 8, (8, 5, 7, 5, 7, 5, 7, 4)),
            B + "pipeline_model_parallel_size": 2, "aux.array_tag": "_moonofffused_pp2"}
     arm("o_plain_16k_mbs2_pp2", "plain, 16k mbs 2, host checkpoints, PP2 x VPP4", base, hyb, moon,
-        off, ctx16, plain, mbs2, pp2)
+        off, ctx16, plain, mbs2, fused, pp2)  # MHC_FUSED_READ: no-op without mHC, one array
     arm("o_mhc4_16k_mbs2_pp2", "mHC-4, 16k mbs 2, host checkpoints, fused read, PP2 x VPP4", base,
         hyb, moon, off, ctx16, mbs2, fused, pp2)
     arm("o_mhc4l_16k_mbs2_pp2", "mHC-4 per layer, 16k mbs 2, host checkpoints, fused read, PP2 x VPP4",
