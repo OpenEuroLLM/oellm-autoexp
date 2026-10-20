@@ -1340,6 +1340,30 @@ def ckpt_offload():
         moon, off, ctx16, fused, ldm, prof, {"backend.env.RECOMPUTE_OFFLOAD_LAST": "1",
                                               B + "train_iters": 8, B + "profile_step_start": 6,
                                               B + "profile_step_end": 7})
+    # o9 (user 2026-10-20: Engram goes in, 20-30 % of the inactive parameters): the campaign's
+    # sizing rule (gen_screen.engram_arm) at the production MoE -- the freed experts' parameters
+    # in two Engram layers (before blocks 1 and 24 of 48), orders (2, 3) x 8 heads, dim 64, the
+    # reference gate / conv pre-norm / per-layer hashes, the lean table optimizer, step lookup
+    per_expert = 3 * 2048 * 768
+
+    def engram(experts):
+        rows = (160 - experts) * per_expert * 48 // (2 * 16 * 64)
+        return {"aux.pattern": with_engram(pat, (1, 24)), B + "num_experts": experts,
+                B + "engram_ngram_orders": [2, 3], B + "engram_num_heads": 8,
+                B + "engram_embed_dim": 64, B + "engram_table_size": rows,
+                B + "engram_table_parallel": "dp",
+                B + "engram_token_map": "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k.npy",
+                B + "engram_gate_signed_sqrt": True, B + "engram_conv_prenorm": True,
+                B + "engram_hash_per_layer": True, B + "engram_lr_mult": 5.0,
+                B + "engram_table_rowwise_v": True, B + "engram_table_momentum_dtype": "bf16",
+                "backend.env.ENGRAM_STEP_LOOKUP": "1", "aux.array_tag": "_moonofffused_eng"}
+    arm("o_mhc4_16k_mbs2_eng0", "mHC-4, 16k mbs 2, offload, fused read (reference, 160 experts)",
+        base, hyb, moon, off, ctx16, mbs2, fused, {"backend.env.ENGRAM_STEP_LOOKUP": "1",
+                                                     "aux.array_tag": "_moonofffused_eng"})
+    arm("o_mhc4_16k_mbs2_eng21", "mHC-4 + Engram 21 % (128 experts + 7.2B table params)", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(128))
+    arm("o_mhc4_16k_mbs2_eng31", "mHC-4 + Engram 31 % (112 experts + 10.9B table params)", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112))
     return arms
 
 
