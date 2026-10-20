@@ -2121,3 +2121,107 @@ node, survives this session).
 **Budget:** s1 ~10 arms x ~13 GPU-h, s2 8 x ~27, s3 4 x ~50 -> ~550 GPU-h; then lr sweeps (3 lr
 for the 2 finalists at s1 / s2, ~160) and the 6BT extensions (~100): ~800 GPU-h, ending near 4.4k
 of the 7k hard limit.
+
+### 12.2 Engram allocation sweep (user 2026-10-19)
+
+**Why.** Round 3's Engram (−0.055 to −0.078 at s1, the largest single gain) was a dense model
+with ≈ 271M of tables added on top, not parameter-matched: a capacity gain, not a proportion.
+Cheng et al. 2026 (arXiv 2601.07372) fix total and active parameters and split the INACTIVE
+parameters between routed experts and Engram tables: the loss is U-shaped with its best at
+ρ ≈ 75–80 % experts (20–25 % Engram) at both scales they test (5.7B / 568M active and
+9.9B / 993M), a shallow U (−0.014 at the optimum vs pure MoE). Engram-27B: 5.7B tables of
+26.7B total (≈ 25 % of the inactive). Memorization ("forking", arXiv 2610.00394): n-gram tables
+open a train / validation gap at epoch boundaries under data REPLAY (rare contexts drive it,
+bigger tables worse); a single pass is unaffected -- watch repeated (up-weighted) sources.
+
+**Arms** (`gen_screen.py` `arms5e`, suites `screen5e_s{1,2}`; baseline = round 5's `h5_moe`,
+same data order / cache / seed): h5_moe gives up routed experts (144 → E) for Engram tables of
+the freed parameters (per expert 3·h·w, one MoE per block), in two Engram layers (before the
+2nd and the middle block), 2- and 3-grams, 8 hash heads × 64 per order, per-layer hashes, the
+reference code's signed-sqrt gate and pre-normed conv, DeepSeek's tokenizer compression
+(`engram_token_map.py`: OELLM 256k → 175,231 ids, 66.8 %), tables at 5 × lr, sharded over the
+stage (`engram_table_parallel: dp`).
+
+| arm | experts | Engram tables | share of inactive |
+|---|---:|---:|---:|
+| s1 h5_moe (round 5) | 144 | 0 | 0 % |
+| s1 h5_moe_eng11 | 128 | 226M | 11 % |
+| s1 h5_moe_eng20 | 116 | 396M | 20 % |
+| s1 h5_moe_eng34 | 96 | 679M | 34 % |
+| s1 h5_moe_eng20_lean | 116 | 396M, lean table optimizer | 20 % |
+| s1 h5_moe_eng20_lrx2p5 | 116 | 396M, tables at 2.5 × lr | 20 % |
+| s2 h5_moe_eng20 | 116 | 1.09B | 20 % |
+
+The Engram projections add ≈ 1.6M active parameters per Engram layer (≈ 2 % of s1's active).
+Cost ≈ 5 × 13 + 27 ≈ 95 GPU-h.
+
+**Megatron work for it** (oellm/v0.19-hybrid 3cc512175):
+- Document masking: the n-gram hashes and the dilated causal conv restart at every document
+  (positions from cu_seqlens on the device, no host sync); packed = separate, tested.
+- The reference code's gate (`engram_gate_signed_sqrt`), conv pre-norm (`engram_conv_prenorm`),
+  per-layer hash multipliers (`engram_hash_per_layer`).
+- **Memory**: the tables live sharded over the stage's tensor × data × context ranks, so their
+  GPU cost per parameter is (fp32 table 4 + fp32 gradient buffer 4 + Adam 8) = 16 B / (stage
+  ranks). The lean table optimizer (`engram_table_rowwise_v`: one second moment per row;
+  `engram_table_momentum_dtype: bf16`) cuts it to ≈ 10 B; the update now runs over row chunks
+  (torch's foreach Adam allocated several table-sized fp32 temporaries). Production estimate
+  (≈ 7B of tables, 2 Engram layers, 128 ranks per pipeline stage): ≈ 27M parameters per GPU
+  on the two stages that hold them, ≈ 0.45 GB standard / ≈ 0.3 GB lean; on an 8-node test
+  layout (8 ranks per stage) ≈ 7 GB / 4.4 GB on those stages -- place the Engram layers off
+  the tightest stage (stage 0 holds the embedding).
+
+### 12.3 Linear Depth Memory arm (user 2026-10-19)
+
+González-Martínez, Nazari, Rusch, Liu, "Depth Memory" (arXiv 2610.18809, ELLIS Institute /
+MPI-IS Tübingen; code github.com/davidgonmar/depth-memory, MIT). **LDM** keeps the plain
+residual stream and adds, per token, a matrix memory M (G groups × K × h/G) of the sublayer
+outputs over depth, fit by recursive least squares with an inverse key covariance P (G × K × K)
+and learned per-group forgetting: every sublayer reads `x + γ·M(g·q)` (query from the incoming
+stream) and writes its output `δ` under a key of the updated stream; the embedding is written
+first and read once more before the LM head. ≈ 1 % more parameters. Paper: lowest perplexity
+vs PreLN / mHC-4 / Block AttnRes at 400M @ 50B and 1.5B @ 100B (1.5B val ppl 9.15 vs mHC 9.25,
+AttnRes 9.26, PreLN 9.48); its throughput (CuTe kernels, state unwinding + windowed writes)
+beats mHC in training.
+
+**Here** (Megatron e6c54f610, `megatron/core/transformer/depth_memory.py`): the reference
+formulation as a HybridStack depth scheme (the Block-AttnRes route: the state is stashed on the
+layers; read / write around every TransformerLayer sublayer and every Mamba / Engram layer
+through the ResidualSchemeAdapter). Per-token, so document masking needs nothing. Tested: the
+RLS writes reproduce the closed-form weighted ridge solution of the paper's Eq. 6 exactly;
+read / write / gradients; packed = separate in the hybrid (cluster). Limits of this first
+version: autograd keeps every write's fp32 state (K × h per token per sublayer: ≈ 5 GB per 8k
+micro-batch at s1, too much for s2's 50 GB), no CUDA graphs, PP 1, no full recompute -- the
+paper's unwinding backward (only u, κ, k, q̃, λ, P_{l-1} saved per write) is the next step if
+it wins.
+
+**Arm** `screen5_s1/h5_moe_ldm`: h5_moe + LDM with the paper's setting (G 16, K 8, address
+width 32, λ₀ 0.99, α 1; all LDM parameters on Adam at 0.25 × 4e-3 = the paper's 1e-3), no
+CUDA graphs (as h5_moe_attnres); paired with round 5's h5_moe / h5_moe_mhc4 / h5_moe_attnres.
+
+### 12.4 LDM and AttnRes with kernels and CUDA graphs (user 2026-10-19)
+
+Both depth schemes kept their state on the layers (a Python object a CUDA graph cannot see) and so
+ran without graphs. Now both have a **stream form**: the state travels as `hidden_states`
+`[s, b, slots, h]` through the mHC plumbing (TransformerLayer read / write, the Mamba / Engram
+adapter, the MoE partial-graph path), so per-layer graphs and the MoE router graphs capture them.
+
+- **Block AttnRes** (`attn_res_impl: streams`, Megatron a6c61a449 / bd1d165d3): slot 0 the
+  embedding, slot 1 + j block j; the block being filled sits in the next free slot (sealing moves
+  nothing), every sublayer reads a static slice (its source count) through the compiled
+  aggregation and its write replaces one slot. = the state form (outputs and gradients, 2 / 3
+  blocks), graph replay = eager bit for bit, and -- new -- full activation recompute works.
+- **LDM** (`depth_memory_impl: torch | cute`, Megatron d6e2a9544 / 8ad746dc4): the state (M, P)
+  lives in a static workspace allocated once per token count (a graph bakes its addresses); every
+  write site runs the paper's fused step (write its output, then read with the next site's query)
+  at a fixed step index, and owns that next query network (so a layer's graph touches only its
+  own parameters); the residual travels as `[x, r_next]`. The backward unwinds M from per-step
+  tapes (no per-layer state kept: ≈ 70 MB per sublayer at s1 instead of ≈ 200). `torch`: our
+  PyTorch unwinding (the oracle; = the reference implementation in outputs and every gradient).
+  `cute`: the paper's CuTe DSL kernels (forward, window-end and interior backward, E = 4 windows;
+  vendored MIT into cute_kernels `cute_ldm` ac737f9 with a static workspace in place of their
+  per-forward SegmentState; untuned shapes run the default schedule), = the torch oracle on H100
+  (reads and all input gradients, 1-11 steps, D 48 / 64 / 128, fp32 / bf16 covariance), graph
+  replay = eager bit for bit. Limits: pipeline parallelism 1, no full activation recompute yet (a
+  recomputed step would rewrite the workspace; a read-only recompute from the tapes is the fix).
+
+Speed in round 5's setting: suite `speed5res_s1` (100 steps per arm).

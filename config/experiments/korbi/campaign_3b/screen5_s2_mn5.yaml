@@ -92,8 +92,11 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 8
+          backend.megatron.num_workers: 4
           backend.megatron.dataloader_prefetch_factor: 2
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -101,6 +104,7 @@ sweep:
           backend.megatron.cuda_graph_impl: local
           backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
           backend.megatron.fused_qk_norm_rope: false
+          backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
         # Qwen3.5-like GDN 3:1 + gated attention, same MoE: main run A's proxy
         - aux.arm: qwen35_moe
           backend.megatron.num_attention_heads: 8
@@ -141,8 +145,11 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 8
+          backend.megatron.num_workers: 4
           backend.megatron.dataloader_prefetch_factor: 2
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -156,6 +163,7 @@ sweep:
           backend.megatron.rotary_percent: 0.25
           backend.megatron.layernorm_zero_centered_gamma: true
           backend.megatron.fused_qk_norm_rope: false
+          backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
         # ours: CKDA 5:1 + NoPE / qk-norm / XSA / gated attention, MoE
         - aux.arm: h5_moe
           backend.megatron.num_attention_heads: 8
@@ -205,14 +213,18 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 8
+          backend.megatron.num_workers: 4
           backend.megatron.dataloader_prefetch_factor: 2
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
           backend.megatron.train_iters: 7629
           backend.megatron.cuda_graph_impl: local
           backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
+          backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
         # + mHC, 4 streams (DeepSeek's)
         - aux.arm: h5_moe_mhc4
           backend.megatron.num_attention_heads: 8
@@ -262,8 +274,11 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 8
+          backend.megatron.num_workers: 4
           backend.megatron.dataloader_prefetch_factor: 2
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -273,6 +288,7 @@ sweep:
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 4
           backend.megatron.residual_mixer_lr_mult: 0.25
+          backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
         # + mHC, 2 streams
         - aux.arm: h5_moe_mhc2
           backend.megatron.num_attention_heads: 8
@@ -322,8 +338,11 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 8
+          backend.megatron.num_workers: 4
           backend.megatron.dataloader_prefetch_factor: 2
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -333,6 +352,7 @@ sweep:
           backend.megatron.mhc: true
           backend.megatron.mhc_expansion_rate: 2
           backend.megatron.residual_mixer_lr_mult: 0.25
+          backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
         # + routed residual 1 + 1 of 8, keyed, pick balancing
         - aux.arm: h5_moe_rr28
           backend.megatron.num_attention_heads: 8
@@ -382,8 +402,11 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 8
+          backend.megatron.num_workers: 4
           backend.megatron.dataloader_prefetch_factor: 2
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -396,6 +419,7 @@ sweep:
           backend.megatron.mhc_routed_key_dim: 64
           backend.megatron.mhc_routed_balance_rate: 0.001
           backend.megatron.residual_mixer_lr_mult: 0.25
+          backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
         # + block attention residuals (4 blocks; no CUDA graphs: not verified)
         - aux.arm: h5_moe_attnres
           backend.megatron.num_attention_heads: 8
@@ -445,8 +469,11 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 8
+          backend.megatron.num_workers: 4
           backend.megatron.dataloader_prefetch_factor: 2
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -455,6 +482,7 @@ sweep:
           backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
           backend.megatron.attn_res: true
           backend.megatron.attn_res_num_blocks: 4
+          backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
         # MoE granularity x2: 288 x 352, top-6 + shared 704
         - aux.arm: h5_moe_g2
           backend.megatron.num_attention_heads: 8
@@ -504,14 +532,18 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 8
+          backend.megatron.num_workers: 4
           backend.megatron.dataloader_prefetch_factor: 2
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
           backend.megatron.train_iters: 7629
           backend.megatron.cuda_graph_impl: local
           backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
+          backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
         # + routed residual 1 + 1 of 8, keyed, balancing, mixing of the picked
         - aux.arm: h5_moe_rr28_mix
           backend.megatron.num_attention_heads: 8
@@ -561,8 +593,11 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 8
+          backend.megatron.num_workers: 4
           backend.megatron.dataloader_prefetch_factor: 2
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -576,6 +611,7 @@ sweep:
           backend.megatron.mhc_routed_balance_rate: 0.001
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.mhc_routed_mix: true
+          backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
         # LatentMoE, latent 512: 288 x 704, top-6 + shared (equal cost)
         - aux.arm: h5_moe_lat2
           backend.megatron.num_attention_heads: 8
@@ -625,8 +661,11 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 8
+          backend.megatron.num_workers: 4
           backend.megatron.dataloader_prefetch_factor: 2
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -634,6 +673,7 @@ sweep:
           backend.megatron.cuda_graph_impl: local
           backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
           backend.megatron.moe_latent_size: 512
+          backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
         # routed residual (keyed, balancing, mixing) + LatentMoE
         - aux.arm: h5_moe_rr28_mix_lat2
           backend.megatron.num_attention_heads: 8
@@ -683,8 +723,11 @@ sweep:
           backend.megatron.seq_length: 8192
           backend.megatron.max_position_embeddings: 8192
           backend.megatron.dataloader_inter_document_masking: true
-          backend.megatron.num_workers: 8
+          backend.megatron.num_workers: 4
           backend.megatron.dataloader_prefetch_factor: 2
+          backend.megatron.manual_gc: true
+          backend.megatron.manual_gc_interval: 10
+          backend.megatron.mmap_bin_files: false
           aux.seq: 8192
           backend.megatron.global_batch_size: 64
           aux.gbs: 64
@@ -699,3 +742,4 @@ sweep:
           backend.megatron.residual_mixer_lr_mult: 0.25
           backend.megatron.mhc_routed_mix: true
           backend.megatron.moe_latent_size: 512
+          backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'

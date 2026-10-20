@@ -625,7 +625,12 @@ FLAG8K = {B + "per_split_data_args_path": None,
           B + "dataloader_inter_document_masking": True,
           # 8 workers, prefetch 2 (round 4's): 16 x prefetch 8 (the production GPFS fix) put ~400 GB
           # of host memory into 64 workers per node; the checkpoint save then OOM-killed s2 nodes
-          B + "num_workers": 8, B + "dataloader_prefetch_factor": 2}
+          # (4 per rank since 2026-10-19 noon: each worker's own heap on top of the ~36 GB index
+          # each rank shares copy-on-write with its workers; s2 nodes ran at ~405 of 503 GB)
+          B + "num_workers": 4, B + "dataloader_prefetch_factor": 2,
+          # manual GC every 10 steps + no mmap of the .bin files (exp_irene's settings): the
+          # doc-masked hybrid is host-bound and Python-GC stalls cost 16 % (EP agent k1, 8 nodes)
+          B + "manual_gc": True, B + "manual_gc_interval": 10, B + "mmap_bin_files": False}
 
 
 def flag_smoke(size: str):
@@ -801,10 +806,30 @@ def arms5(size: str):
           B + "moe_latent_size": hidden // 2}),
     ]
     if size == "s1":
+        # after round 4 (user 2026-10-19): mHC is the residual; does 8 streams add over 4, and do
+        # the two winners (mHC-4, LatentMoE) combine? (the routed-residual arms are called off)
+        out.append(("h5_moe_mhc8", "+ mHC, 8 streams", {**h5, **mhc(8)}))
+        out.append(("h5_moe_mhc4_lat2", f"mHC-4 + LatentMoE, latent {hidden // 2}: 288 x {w}, top-6",
+                    {**h5, **mhc(4), B + "num_experts": 288, B + "moe_router_topk": 6,
+                     B + "moe_latent_size": hidden // 2}))
+        # Linear Depth Memory (user 2026-10-19; arXiv:2610.18809, ELLIS / MPI Tübingen): next to
+        # the plain residual, a per-token matrix memory of the sublayer outputs over depth, fit by
+        # recursive least squares; the paper's setting G 16, K 8, address width 32 (400M), Adam at
+        # the residual-mixer lr (0.25 x 4e-3 = the paper's 1e-3). Reference formulation (autograd
+        # keeps every write's K x h fp32 state): no CUDA graphs, s1 only
+        out.append(("h5_moe_ldm", "+ Linear Depth Memory (G 16, K 8, H 32)",
+                    {**h5, B + "depth_memory": True, B + "depth_memory_groups": 16,
+                     B + "depth_memory_key_dim": 8, B + "depth_memory_hidden_dim": 32, **mlr,
+                     B + "cuda_graph_impl": "none", B + "cuda_graph_modules": []}))
         out.append(("h5_moe_seed2", "h5_moe, seed 1235 (noise: pairs with h5_moe_rr28_seed2)",
                     own_cache({**h5, B + "seed": 1235})))
         out.append(("h5_moe_rr28_seed2", "h5_moe_rr28, seed 1235",
                     own_cache({**h5, **rr, B + "seed": 1235})))
+    if size == "s2":
+        # compact angular-MuOwn row states in the checkpoints (Megatron: ANGULAR_MUOWN_COMPACT_CKPT):
+        # the weight-shaped form cost ~76 GB of host staging per s2 save and OOM-killed the nodes
+        # three times; s2 restarted from step 0 with it (a run keeps one format throughout)
+        out = [(n, c, {**kv, "backend.env.ANGULAR_MUOWN_COMPACT_CKPT": "1"}) for n, c, kv in out]
     if size == "s3":
         # 4 nodes, 144 experts over EP16 (9 per GPU; all-to-all across nodes, HybridEP is
         # intra-node only). 2 nodes / EP8 OOMed at step 1 (54 GB: 1.5B expert parameters per GPU
@@ -813,6 +838,153 @@ def arms5(size: str):
         out = [(n, c, {**kv, **nodes}) for n, c, kv in out
                if n in ("qwen35_moe", "h5_moe", "h5_moe_mhc4", "h5_moe_rr28")]
     return out
+
+
+# Engram allocation sweep (user 2026-10-19; docs §12.2): Cheng et al. 2026 find a U-shaped loss
+# over the split of the INACTIVE parameters between routed experts and Engram tables, best at
+# ~75-80 % experts (20-25 % Engram), at fixed total and active parameters. Here the round-5 MoE
+# hybrid (h5_moe: 144 x w, top-3 + shared) gives up routed experts for tables of the same size,
+# 0 (= h5_moe of round 5, same data order) / 11 / 20 / 34 % of the inactive expert parameters,
+# with the reference code's recipe: Engram before the 2nd and the middle block, 2- and 3-grams,
+# 8 hash heads x 64 per order, per-layer hashes, the signed-sqrt gate, the pre-normed conv,
+# DeepSeek's tokenizer compression (scripts/korbi/campaign/engram_token_map.py), Adam at 5 x lr.
+ENGRAM_TOKEN_MAP = "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/engram_token_map_256k.npy"
+ENGRAM_ORDERS, ENGRAM_HEADS, ENGRAM_DIM, ENGRAM_LAYERS = (2, 3), 8, 64, 2
+# the lean table optimizer: one second moment per row + bf16 momentum (10 instead of 16 B per
+# table parameter on the GPU, with the fp32 table and gradient buffer)
+ENGRAM_LEAN = {B + "engram_table_rowwise_v": True, B + "engram_table_momentum_dtype": "bf16"}
+
+
+def engram_arm(size: str, experts: int, **extra):
+    """h5_moe with ``experts`` routed experts (of 144) and the freed expert parameters in two
+    Engram layers: (overrides, Engram table parameters, share of the inactive parameters)."""
+    hidden, blocks, heads, ffn, lr = R4_SIZES[size]
+    w = ffn // 4
+    per_expert = 3 * hidden * w  # SwiGLU: fc1 (2 w x h) + fc2 (w x h)
+    table_params = (144 - experts) * per_expert * blocks  # one MoE per block
+    lookups = len(ENGRAM_ORDERS) * ENGRAM_HEADS
+    rows = table_params // (ENGRAM_LAYERS * lookups * ENGRAM_DIM)  # per hash table
+    kv = {"aux.pattern": hybrid(blocks, ratio=5, engram_at=(1, blocks // 2)).replace("-", "E"),
+          B + "num_experts": experts,
+          B + "engram_ngram_orders": list(ENGRAM_ORDERS), B + "engram_num_heads": ENGRAM_HEADS,
+          B + "engram_embed_dim": ENGRAM_DIM, B + "engram_table_size": rows,
+          B + "engram_table_parallel": "dp", B + "engram_token_map": ENGRAM_TOKEN_MAP,
+          B + "engram_gate_signed_sqrt": True, B + "engram_conv_prenorm": True,
+          B + "engram_hash_per_layer": True, B + "engram_lr_mult": 5.0, **extra}
+    return kv, table_params, (144 - experts) / (144 - 3)
+
+
+def arms5e(size: str):
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    grid = {"s1": [(128, "eng11", {}), (116, "eng20", {}), (96, "eng34", {}),
+                   (116, "eng20_lean", ENGRAM_LEAN),
+                   (116, "eng20_lrx2p5", {B + "engram_lr_mult": 2.5})],
+            "s2": [(116, "eng20", {})]}[size]
+    out = []
+    for experts, tag, extra in grid:
+        kv, table, share = engram_arm(size, experts, **extra)
+        note = {"eng20_lean": ", lean table optimizer (row-wise v, bf16 momentum)",
+                "eng20_lrx2p5": ", tables at 2.5 x lr (the paper's 5 x is of an Adam lr)"}
+        out.append((f"h5_moe_{tag}", f"{experts} experts + Engram {table / 1e6:.0f}M "
+                    f"({share:.0%} of the inactive expert parameters){note.get(tag, '')}",
+                    {**h5, **kv}))
+    return out
+
+
+def speed5_ab(size: str = "s1"):
+    """Concurrent A/B of the wall clock (user 2026-10-20): plain / mHC-4 / LDM (CuTe) side by side,
+    no profiler -- the tok/s of runs started at different times differ by 10-30 % on MN5 (GPFS /
+    node load), so only arms that run together compare. 130 steps: the median over steps 60-130
+    (user: ~50 steps past the warm-up suffice)."""
+    keep = ("h5_moe", "h5_moe_mhc4", "h5_moe_ldm_cute")
+    # 16 workers x prefetch 8: with FLAG8K's 4 x 2 every arm ran at the same ~23.8k (data-bound;
+    # 2026-10-20 A/B); 130 steps without checkpoint saves stay clear of the save-time host OOM
+    ab = {B + "exit_interval": 130, "job.est_steps": 130, B + "num_workers": 16,
+          B + "dataloader_prefetch_factor": 8}
+    return [(n, c, {**kv, **ab}) for n, c, kv in speed5_residuals(size) if n in keep]
+
+
+def arms5ldm(size: str = "s1"):
+    """LDM learning-rate sweep (user 2026-10-19): the round-5 s1 LDM arm (reference, no graphs)
+    trails mHC-4 by ~0.008 at matched steps, against the paper's -0.010..-0.013 LEAD; the one knob
+    not tuned is LDM's own lr (its parameters on Adam at residual_mixer_lr_mult x 4e-3; the paper
+    tuned per method, LDM's optimum 1e-3 of AdamW). The CuTe stream form with the MoE router graphs,
+    multipliers 0.125 / 0.25 / 0.5 / 1.0 (Adam 5e-4 / 1e-3 / 2e-3 / 4e-3); x0.25 also checks the
+    CuTe numerics (bf16 memory) against the reference run. Same data order as round 5."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    ldm = {B + "depth_memory": True, B + "depth_memory_impl": "cute", B + "depth_memory_groups": 16,
+           B + "depth_memory_key_dim": 8, B + "depth_memory_hidden_dim": 32}
+    out = []
+    for mult, tag in ((0.125, "0125"), (0.25, "025"), (0.5, "05"), (1.0, "1")):
+        # 8 data workers x prefetch 4 (FLAG8K's 4 x 2 capped s1 at ~23.8k tok/s/GPU for every arm;
+        # 16 x 8 OOM-killed s2 nodes at saves): restarted with it from the step-~500 checkpoints
+        out.append((f"h5_moe_ldmc_lr{tag}", f"LDM (CuTe, router graphs), its lr x{mult} of 4e-3",
+                    {**h5, **ldm, B + "residual_mixer_lr_mult": mult, B + "num_workers": 8,
+                     B + "dataloader_prefetch_factor": 4}))
+    return out
+
+
+def arms5ldm2(size: str = "s1"):
+    """The LDM lr sweep again, fast (user 2026-10-20): 2 nodes per arm (data parallel 8, EP 4 in a
+    node; global batch 64 x 8k and the data order unchanged, so the curves still pair with round
+    5's), 8 data workers x prefetch 4, from step 0 -- plus LDM x2.0 (the best lr was the grid's
+    top) and mHC-4 with its mixer lr x1.0 (never swept; fixed at x0.25 since round 4)."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    fast = {"slurm.sbatch.nodes": 2, B + "num_workers": 8, B + "dataloader_prefetch_factor": 4}
+    ldm = {B + "depth_memory": True, B + "depth_memory_impl": "cute", B + "depth_memory_groups": 16,
+           B + "depth_memory_key_dim": 8, B + "depth_memory_hidden_dim": 32}
+    out = []
+    for mult, tag in ((0.125, "0125"), (0.25, "025"), (0.5, "05"), (1.0, "1"), (2.0, "2")):
+        out.append((f"h5_moe_ldmc_lr{tag}", f"LDM (CuTe, router graphs), its lr x{mult} of 4e-3",
+                    {**h5, **ldm, **fast, B + "residual_mixer_lr_mult": mult}))
+    mhc4 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe_mhc4"]
+    out.append(("h5_moe_mhc4_lr1", "mHC-4, its mixer lr x1.0 of 4e-3 (round 5: x0.25)",
+                {**mhc4, **fast, B + "residual_mixer_lr_mult": 1.0}))
+    # the 2-node runs do not pair with round 5's 1-node runs (+-0.04 per window at step 500 for the
+    # same arm), so the references run in this setup too: mHC-4 at round 5's x0.25, and plain
+    out.append(("h5_moe_mhc4", "mHC-4, mixer lr x0.25 (round 5's), 2 nodes", {**mhc4, **fast}))
+    out.append(("h5_moe", "plain residual, 2 nodes", {**h5, **fast}))
+    return out
+
+
+def speed5_profiled(size: str = "s1"):
+    """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
+    with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
+    steps were too short -- plain, mHC-4 and AttnRes all ran at ~32k tok/s/GPU there."""
+    keep = ("h5_moe", "h5_moe_mhc4", "h5_moe_attnres_streams", "h5_moe_ldm_cute", "h5_moe_ldm_torch")
+    # no evaluation in the window (its forward-only micro-batches entered one profile window;
+    # eval_iters 0 leaves an empty validation set: "no sample to consume"), window 250-253
+    prof = {B + "exit_interval": 300, "job.est_steps": 300, B + "profile": True,
+            B + "use_pytorch_profiler": True, B + "profile_step_start": 250,
+            B + "profile_step_end": 253, B + "profile_ranks": [0],
+            B + "eval_interval": 100000, B + "eval_iters": 1}
+    return [(n, c, {**kv, **prof}) for n, c, kv in speed5_residuals(size) if n in keep]
+
+
+def speed5_residuals(size: str = "s1"):
+    """Throughput of the residual variants in round 5's setting (flag mix, 8k, document masking,
+    MoE router / preprocess CUDA graphs), 100 steps each (user 2026-10-19: proper kernels and CUDA
+    graphs for AttnRes and LDM): the stream forms (graph-capturable) against the state forms."""
+    pool = dict((n, kv) for n, _, kv in arms5(size))
+    h5 = pool["h5_moe"]
+    short = {B + "exit_interval": 100, "job.est_steps": 100}
+    nocg = {B + "cuda_graph_impl": "none", B + "cuda_graph_modules": []}
+    ldm = {B + "depth_memory": True, B + "depth_memory_groups": 16, B + "depth_memory_key_dim": 8,
+           B + "depth_memory_hidden_dim": 32, B + "residual_mixer_lr_mult": 0.25}
+    attnres = {B + "attn_res": True, B + "attn_res_num_blocks": 4}
+    arms = [
+        ("h5_moe", "plain residual (router graphs)", h5),
+        ("h5_moe_mhc4", "mHC-4 (router graphs)", pool["h5_moe_mhc4"]),
+        ("h5_moe_attnres", "AttnRes, state form (no graphs)", pool["h5_moe_attnres"]),
+        ("h5_moe_attnres_streams", "AttnRes, stream form (router graphs)",
+         {**h5, **attnres, B + "attn_res_impl": "streams"}),
+        ("h5_moe_ldm", "LDM reference (no graphs)", {**h5, **ldm, **nocg}),
+        ("h5_moe_ldm_torch", "LDM stream form, torch unwinding (router graphs)",
+         {**h5, **ldm, B + "depth_memory_impl": "torch"}),
+        ("h5_moe_ldm_cute", "LDM stream form, the paper's CuTe kernels (router graphs)",
+         {**h5, **ldm, B + "depth_memory_impl": "cute"}),
+    ]
+    return [(n, c, {**kv, **short}) for n, c, kv in arms]
 
 
 def write5():
@@ -824,8 +996,18 @@ def write5():
     # (the 2-node s3 layout cannot share the 1-node array: checked separately)
     smoke3 = [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})
               for n, c, kv in arms5("s3")]
+    # Engram sweep and its smoke (40 steps of every arm, s1 and s2)
+    smoke_e = lambda z: [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})  # noqa: E731
+                         for n, c, kv in arms5e(z)]
     for size, prefix, pool in [(z, "screen5", arms5(z)) for z in ("s1", "s2", "s3")] + [
-            ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)]:
+            ("s1", "speed5res", speed5_residuals("s1")),
+            ("s1", "speed5prof", speed5_profiled("s1")),
+            ("s1", "screen5ldm", arms5ldm("s1")),
+            ("s1", "speed5ab", speed5_ab("s1")),
+            ("s1", "screen5ldm2", arms5ldm2("s1"))] + [
+            ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)] + [
+            (z, p, arms) for z in ("s1", "s2")
+            for p, arms in (("screen5e", arms5e(z)), ("screen5esmoke", smoke_e(z)))]:
         hidden, blocks, heads, ffn, lr = R4_SIZES[size]
         lines = [HEADER.format(
             title="Round 5: the architecture decision on the production data setting (flag, 8k)",

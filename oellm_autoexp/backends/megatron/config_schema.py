@@ -437,6 +437,20 @@ class MegatronConfig(ConfigInterface):
     # Kernel of Engram's depthwise causal conv (dilation = the largest n-gram order).
     engram_conv_kernel_size: int = 4
 
+    # Engram gate as in DeepSeek's reference code (engram_demo_v1.py): the scaled key-query
+    # dot product goes through a signed square root, sign(x) sqrt(|x|), before the sigmoid,
+    # which keeps the gate out of saturation. False: sigmoid of the dot product.
+    engram_gate_signed_sqrt: bool = False
+
+    # RMS-normalize the gated value before Engram's causal conv (the reference code's
+    # ShortConv): Y = SiLU(conv(RMSNorm(v~))) + v~.
+    engram_conv_prenorm: bool = False
+
+    # Hash multipliers of their own for every Engram layer (the reference code seeds them per
+    # layer), so two Engram layers do not share their n-gram collisions. False: one set of
+    # multipliers for all Engram layers.
+    engram_hash_per_layer: bool = False
+
     # Exclusive self attention (Zhai 2026, arXiv:2603.09078): orthogonalize every attention
     # output head against the token's own value vector (fused Triton kernel, together with the
     # output gate when attention_output_gate is set).
@@ -1607,10 +1621,53 @@ class MegatronConfig(ConfigInterface):
     # residual performs.
     attn_res_query_init_std: float = 0.0
 
+    # Block AttnRes implementation. "state": the sources as a Python list stashed on the
+    # layers (not CUDA-graph capturable). "streams": the sources as one [s, b, slots, h]
+    # tensor through the mHC plumbing, each sublayer reading a static slice and replacing one
+    # slot (HybridStack only, CUDA-graph capturable, pipeline_model_parallel_size == 1, no
+    # LERP).
+    attn_res_impl: str = "state"
+
     # Compose Block AttnRes with the nGPT LERP residual: accumulate each block via a LERP step
     # toward the normalized sublayer output instead of a plain sum, keeping block summaries on
     # the unit sphere rather than growing with block size. Requires ngpt=True.
     attn_res_lerp: bool = False
+
+    # Linear Depth Memory (LDM, arXiv:2610.18809, megatron/core/transformer/depth_memory.py):
+    # next to the residual stream, every token carries a matrix memory of the sublayer outputs
+    # over depth, fit by recursive least squares; every sublayer reads x + M q and writes its
+    # output. HybridStack only, pipeline_model_parallel_size == 1, no CUDA graphs, no full
+    # activation recompute. Mutually exclusive with mhc and attn_res.
+    depth_memory: bool = False
+
+    # LDM key / query width K per group (the paper's main setting: 8).
+    depth_memory_key_dim: int = 8
+
+    # LDM memory groups G (value width hidden_size / G per group; the paper: 16).
+    depth_memory_groups: int = 16
+
+    # Width H of LDM's address networks (the paper: 32 at 400M, 64 at 1.5B).
+    depth_memory_hidden_dim: int = 32
+
+    # Initial forgetting factor of every LDM write (learned per group).
+    depth_memory_lambda_init: float = 0.99
+
+    # Initial inverse covariance P = alpha I (ridge 1 / alpha) of the LDM fit.
+    depth_memory_alpha: float = 1.0
+
+    # LDM implementation. "reference": every write's state is an autograd tensor, kept on the
+    # layers (no CUDA graphs). "torch": the state in a static workspace with the paper's
+    # unwinding backward (depth_memory_state.py), the residual as [s, b, 2, h] streams --
+    # CUDA-graph capturable. "cute": the same with the paper's CuTe DSL kernels (cute_kernels
+    # cute_ldm; Hopper / Blackwell).
+    depth_memory_impl: str = "reference"
+
+    # LDM "cute": the window E of deferred writes (the paper: 4).
+    depth_memory_window: int = 4
+
+    # LDM "cute": dtype of the running covariance P ("float32" or "bfloat16"; the paper's BF16
+    # default can drift indefinite in deep stacks).
+    depth_memory_covariance_dtype: str = "float32"
 
     # Number of unique layers in the looped block. 0 disables looping entirely.
     loop_block_layers: int = 0
@@ -1758,6 +1815,14 @@ class MegatronConfig(ConfigInterface):
 
     # Learning-rate multiplier of the Engram (N-layer) tables, which also get no weight decay.
     engram_lr_mult: float = 5.0
+
+    # Sharded Engram / product-key tables (engram_table_parallel="dp"): one Adam second moment
+    # per table row instead of per entry (saves 4 B per table parameter).
+    engram_table_rowwise_v: bool = False
+
+    # Storage dtype of the sharded tables' Adam first moment (the update arithmetic stays
+    # fp32); bf16 saves 2 B per table parameter.
+    engram_table_momentum_dtype: Literal["fp32", "bf16"] = "fp32"
 
     # Learning-rate multiplier of the residual-stream mixers (mHC, routed residual, block
     # attention residuals). Under Muon-family optimizers these parameters run on Adam at the
@@ -3063,6 +3128,10 @@ class MegatronConfig(ConfigInterface):
 
     # Reset self attention mask after end-of-document token.
     reset_attention_mask: bool = False
+
+    # Prepend the tokenizer BOS token to every document at load time (the tokenized data
+    # carries only an EOD at each document end).
+    dataloader_add_bos: bool = False
 
     # Return cu_seqlens marking document boundaries within each sample so that attention is
     # restricted to individual documents. Note that --reset-attention-mask does NOT achieve

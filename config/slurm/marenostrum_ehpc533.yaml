@@ -26,6 +26,9 @@ env:
   # PyTorch at the production layout. 4 makes VPP2 / uneven PP fit with the routed residual at
   # no speed cost (EP agent, docs/ep_optimization.md, 2026-10-19).
   NCCL_MIN_NCHANNELS: "4"
+  # Inductor's parallel-compile pool: one worker process per CPU per rank (132 idle processes on a
+  # 4-rank node, 2026-10-19) on hosts that OOM-killed nodes at checkpoint saves; compile in-process
+  TORCHINDUCTOR_COMPILE_THREADS: "1"
   NCCL_NCHANNELS_PER_PEER: "4"
 
 sbatch:

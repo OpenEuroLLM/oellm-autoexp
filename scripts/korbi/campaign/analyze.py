@@ -37,6 +37,7 @@ FIELD = {
     "lr": re.compile(r"learning rate: ([0-9.Ee+-]+)"),
     "gnorm": re.compile(r"grad norm: ([0-9.Ee+-]+)"),
     "tok_s": re.compile(r"Tok/s/GPU\): ([0-9.]+)"),
+    "tflops": re.compile(r"TFLOP/s/GPU\): ([0-9.]+)"),
     "gbs": re.compile(r"global batch size:\s+(\d+)"),
 }
 VAL = re.compile(r"validation loss at iteration\s+(\d+).*?lm loss value: ([0-9.Ee+-]+)")
@@ -64,7 +65,8 @@ def parse_log(path: Path) -> dict:
     its = np.array(sorted(by_it))
     get = lambda k: np.array([by_it[i][k] for i in its])  # noqa: E731
     return dict(it=its, total=total, loss=get("loss"), lr=get("lr"), gnorm=get("gnorm"),
-                tok_s=get("tok_s"), gbs=get("gbs"), val=sorted(dict(val).items()))
+                tok_s=get("tok_s"), tflops=get("tflops"), gbs=get("gbs"),
+                val=sorted(dict(val).items()))
 
 
 class MergedLog:
