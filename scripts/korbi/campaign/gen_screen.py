@@ -896,7 +896,7 @@ def speed5_ab(size: str = "s1"):
     no profiler -- the tok/s of runs started at different times differ by 10-30 % on MN5 (GPFS /
     node load), so only arms that run together compare. 130 steps: the median over steps 60-130
     (user: ~50 steps past the warm-up suffice)."""
-    keep = ("h5_moe", "h5_moe_mhc4", "h5_moe_ldm_cute")
+    keep = ("h5_moe", "h5_moe_mhc4", "h5_moe_ldm_cute", "h5_moe_mhc4_pl", "h5_moe_ldm_cute_pl")
     # 16 workers x prefetch 8: with FLAG8K's 4 x 2 every arm ran at the same ~23.8k (data-bound;
     # 2026-10-20 A/B); 130 steps without checkpoint saves stay clear of the save-time host OOM
     ab = {B + "exit_interval": 130, "job.est_steps": 130, B + "num_workers": 16,
@@ -944,6 +944,12 @@ def arms5ldm2(size: str = "s1"):
     # same arm), so the references run in this setup too: mHC-4 at round 5's x0.25, and plain
     out.append(("h5_moe_mhc4", "mHC-4, mixer lr x0.25 (round 5's), 2 nodes", {**mhc4, **fast}))
     out.append(("h5_moe", "plain residual, 2 nodes", {**h5, **fast}))
+    # per transformer layer (user 2026-10-20; mhc_per_layer: one read + one write per mixer + MoE
+    # block, plain residual inside -- half the residual-scheme work), at each one's best lr
+    pl = {B + "mhc_per_layer": True}
+    out.append(("h5_moe_ldmc_lr2_pl", "LDM x2.0 per transformer layer",
+                {**h5, **ldm, **fast, B + "residual_mixer_lr_mult": 2.0, **pl}))
+    out.append(("h5_moe_mhc4_pl", "mHC-4 x0.25 per transformer layer", {**mhc4, **fast, **pl}))
     return out
 
 
@@ -983,6 +989,10 @@ def speed5_residuals(size: str = "s1"):
          {**h5, **ldm, B + "depth_memory_impl": "torch"}),
         ("h5_moe_ldm_cute", "LDM stream form, the paper's CuTe kernels (router graphs)",
          {**h5, **ldm, B + "depth_memory_impl": "cute"}),
+        ("h5_moe_mhc4_pl", "mHC-4 per transformer layer (router graphs)",
+         {**pool["h5_moe_mhc4"], B + "mhc_per_layer": True}),
+        ("h5_moe_ldm_cute_pl", "LDM (CuTe) per transformer layer (router graphs)",
+         {**h5, **ldm, B + "depth_memory_impl": "cute", B + "mhc_per_layer": True}),
     ]
     return [(n, c, {**kv, **short}) for n, c, kv in arms]
 
