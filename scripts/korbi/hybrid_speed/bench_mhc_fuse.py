@@ -131,8 +131,10 @@ for T in (8192, 16384):
     t_c = timed(chain(False)) / 4
     mhc_fused.ENABLED = True
     row("chain/4: compiled", t_c, 3 * S + 2 * X + 5 * S + 3 * X)
-    row("chain/4: FUSED (+ write bwd in read bwd)", timed(chain(True)) / 4,
-        3 * S + 2 * X + 5 * S + 3 * X)
+    for kern in (1, 2):
+        mhc_fused.FUSE_WRITE_BWD_KERNEL = kern
+        row(f"chain/4: FUSED (+ write bwd in read bwd, v{kern})", timed(chain(True)) / 4,
+            3 * S + 2 * X + 5 * S + 3 * X)
     mhc_fused.FUSE_WRITE_BWD = False
     row("chain/4: FUSED (separate write bwd)", timed(chain(True)) / 4,
         3 * S + 2 * X + 5 * S + 3 * X)
