@@ -1976,6 +1976,7 @@ sweep:
           backend.env.RECOMPUTE_OFFLOAD: '1'
           backend.env.MHC_FUSED_READ: '1'
           backend.env.ENGRAM_STEP_LOOKUP: '1'
+          backend.env.RECOMPUTE_OFFLOAD_LAST: '1'
         # mHC-4 + Engram 21 % (128 experts + 7.2B table params)
         - aux.arm: o_mhc4_16k_mbs2_eng21
           aux.pattern: LENLELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ENLELELE|LELE*ELELELE|LELE*ELELELE|LELE*ELELELE|LELE*E
@@ -2055,6 +2056,7 @@ sweep:
           backend.megatron.engram_table_rowwise_v: true
           backend.megatron.engram_table_momentum_dtype: bf16
           backend.env.ENGRAM_STEP_LOOKUP: '1'
+          backend.env.RECOMPUTE_OFFLOAD_LAST: '1'
         # mHC-4 + Engram 31 % (112 experts + 10.9B table params)
         - aux.arm: o_mhc4_16k_mbs2_eng31
           aux.pattern: LENLELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ENLELELE|LELE*ELELELE|LELE*ELELELE|LELE*ELELELE|LELE*E
@@ -2134,3 +2136,4 @@ sweep:
           backend.megatron.engram_table_rowwise_v: true
           backend.megatron.engram_table_momentum_dtype: bf16
           backend.env.ENGRAM_STEP_LOOKUP: '1'
+          backend.env.RECOMPUTE_OFFLOAD_LAST: '1'

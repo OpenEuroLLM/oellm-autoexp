@@ -1356,9 +1356,11 @@ def ckpt_offload():
                 B + "engram_gate_signed_sqrt": True, B + "engram_conv_prenorm": True,
                 B + "engram_hash_per_layer": True, B + "engram_lr_mult": 5.0,
                 B + "engram_table_rowwise_v": True, B + "engram_table_momentum_dtype": "bf16",
-                "backend.env.ENGRAM_STEP_LOOKUP": "1", "aux.array_tag": "_moonofffused_eng"}
+                "backend.env.ENGRAM_STEP_LOOKUP": "1", "backend.env.RECOMPUTE_OFFLOAD_LAST": "1",
+                "aux.array_tag": "_moonofffused_eng"}
     arm("o_mhc4_16k_mbs2_eng0", "mHC-4, 16k mbs 2, offload, fused read (reference, 160 experts)",
         base, hyb, moon, off, ctx16, mbs2, fused, {"backend.env.ENGRAM_STEP_LOOKUP": "1",
+                                                     "backend.env.RECOMPUTE_OFFLOAD_LAST": "1",
                                                      "aux.array_tag": "_moonofffused_eng"})
     arm("o_mhc4_16k_mbs2_eng21", "mHC-4 + Engram 21 % (128 experts + 7.2B table params)", base,
         hyb, moon, off, ctx16, mbs2, fused, engram(128))
