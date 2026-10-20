@@ -1670,6 +1670,13 @@ class MegatronConfig(ConfigInterface):
     # sits).
     depth_memory_sites: str = "all"
 
+    # LDM "torch" / "cute": carry the state (M, P) in the streams ([x, r, state slots]) across
+    # recompute chunks and pipeline stages, each chunk (or stage, without recompute) its own
+    # sequence of steps -- full activation recompute and pipeline parallelism
+    # (depth_memory_state.py, SegmentEnter / SegmentExit). Pipeline parallelism needs full
+    # recompute (one workspace per stage holds one segment's tapes).
+    depth_memory_segments: bool = False
+
     # LDM "cute": the window E of deferred writes (the paper: 4).
     depth_memory_window: int = 4
 

@@ -1213,6 +1213,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "depth_memory_segments": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help='LDM "torch" / "cute": carry the state (M, P) in the streams ([x, r, state slots]) across recompute chunks and pipeline stages, each chunk (or stage, without recompute) its own sequence of steps -- full activation recompute and pipeline parallelism (depth_memory_state.py, SegmentEnter / SegmentExit). Pipeline parallelism needs full recompute (one workspace per stage holds one segment\'s tapes).',
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "depth_memory_sites": MegatronArgMetadata(
         arg_type=str,
         default="all",
@@ -9161,6 +9169,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0.99,
+    ),
+    "depth_memory_segments": MegatronActionSpec(
+        option_strings=("--depth-memory-segments",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "depth_memory_sites": MegatronActionSpec(
         option_strings=("--depth-memory-sites",),
