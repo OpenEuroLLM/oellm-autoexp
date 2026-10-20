@@ -1292,6 +1292,8 @@ def ckpt_offload():
         hyb, moon, off, ctx16, mbs2, fused, per_layer)
     arm("o_mhc4l_16k_off_gbs512_fused", "mHC-4 per layer, 16k mbs 1, host checkpoints, fused read",
         base, hyb, moon, off, ctx16, gbs512, fused, per_layer)
+    arm("p_mhc4l_16k_mbs2", "profile: mHC-4 per layer 16k mbs 2, host checkpoints, fused read", base,
+        hyb, moon, off, ctx16, mbs2, fused, per_layer, prof)
     # o6: PP2 x VPP4 (half the stage boundaries: the 4-wide pipeline payload was +346 ms exposed
     # per step in the o4 profile); 8 chunks balanced for the LM head on the last one
     # (rank 0 = chunks 0, 2, 4, 6: 29 blocks; rank 1 = 19 blocks + the head, ~10.5 blocks)
