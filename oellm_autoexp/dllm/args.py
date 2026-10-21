@@ -39,7 +39,7 @@ def add_bd_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         "--bd-block-schedule",
         type=str,
         default="",
-        help='block size schedule "frac:B,frac:B"; empty means a constant --bd-block-size',
+        help='block size schedule "frac:B,frac:B"; empty or "none" means a constant --bd-block-size',
     )
     group.add_argument(
         "--bd-token-shift",

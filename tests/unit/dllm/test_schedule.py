@@ -17,8 +17,8 @@ from oellm_autoexp.dllm.schedule import (
 )
 
 
-@pytest.mark.parametrize("spec", ["", "  ", "\t \n"])
-def test_blank_spec_means_no_schedule(spec: str) -> None:
+@pytest.mark.parametrize("spec", ["", "  ", "\t \n", "none", " None "])
+def test_blank_or_none_spec_means_no_schedule(spec: str) -> None:
     assert parse_block_schedule(spec) == []
 
 

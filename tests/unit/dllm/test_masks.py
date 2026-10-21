@@ -205,6 +205,28 @@ def test_build_block_mask_on_cpu_with_and_without_batch() -> None:
         assert torch.equal(dense_blocks, expected_blocks)
 
 
+def test_mask_builders_refuse_a_grid_the_mask_is_not_built_for() -> None:
+    """A document mask needs its number of rows as the batch size (batch None
+    would apply row 0's skipped and full blocks to every row), and the grid
+    must be 2L (BD3) or L (AR)."""
+    length, block = 16, 4
+    doc_ids = compute_doc_ids(_random_x0(length, _BATCH, seed=11), EOD_ID)
+    bd3_docs = make_bd3_mask_mod(length, block, doc_ids)
+    for batch in (None, 1, _BATCH + 1):
+        with pytest.raises(ValueError, match="batch must be"):
+            build_block_mask(bd3_docs, batch, 2 * length, 2 * length, "cpu")
+    with pytest.raises(ValueError, match="batch must be"):
+        materialize_mask(bd3_docs, 1, 2 * length, 2 * length)
+    with pytest.raises(ValueError, match="built for q_len = kv_len"):
+        materialize_mask(make_bd3_mask_mod(length, block, None), 1, length, length)
+    with pytest.raises(ValueError, match="built for q_len = kv_len"):
+        build_block_mask(make_ar_mask_mod(length, None), None, 2 * length, 2 * length, "cpu")
+    ar_docs = make_ar_mask_mod(length, doc_ids)
+    with pytest.raises(ValueError, match="batch must be"):
+        build_block_mask(ar_docs, None, length, length, "cpu")
+    assert materialize_mask(ar_docs, _BATCH, length, length).shape == (_BATCH, length, length)
+
+
 @pytest.mark.parametrize(("length", "block"), [(16, 4), (24, 8), (32, 8)])
 def test_noisy_rows_do_not_depend_on_tokens_of_their_own_block(length: int, block: int) -> None:
     """D-039: whether a token of block k is EOD never changes the mask rows of block k's noisy

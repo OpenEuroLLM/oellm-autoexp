@@ -657,3 +657,13 @@ def test_block_schedule_selects_block_size_by_iteration() -> None:
         call = model.decoder.calls[-1]
         mask = materialize_mask(call.block_mask.mask_mod, 1, 2 * _L, 2 * _L)
         assert torch.equal(mask[0], dense_bd3_reference(_L, expected_block, None))
+
+
+def test_block_size_before_the_first_step_uses_the_loaded_iteration() -> None:
+    """Before the training loop sets curr_iteration (validation of a resumed
+    run), the block size follows args.iteration of the loaded checkpoint."""
+    model = _make_model(schedule="0:4,0.5:8", block_size=8)
+    del model.args.curr_iteration
+    for loaded, expected_block in ((0, 4), (49, 4), (60, 8)):
+        model.args.iteration = loaded
+        assert model.current_block_size() == expected_block

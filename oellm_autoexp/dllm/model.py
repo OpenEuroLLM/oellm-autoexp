@@ -89,11 +89,20 @@ class BlockDiffusionGPTModel(GPTModel):
         return super().train(mode)
 
     def current_block_size(self) -> int:
-        """Return the block size B for the current iteration (spec section
-        8)."""
-        iteration = int(getattr(self.args, "curr_iteration", 0) or 0)
+        """Return the block size B for the current iteration (spec section 8).
+
+        Megatron sets ``args.curr_iteration`` inside the training loop. Before the first step,
+        for example in a validation round of a resumed run, ``args.iteration`` holds the
+        iteration of the loaded checkpoint.
+        """
+        iteration = getattr(self.args, "curr_iteration", None)
+        if iteration is None:
+            iteration = getattr(self.args, "iteration", 0) or 0
         return block_size_at(
-            iteration, int(self.args.train_iters), self.block_schedule, int(self.args.bd_block_size)
+            int(iteration),
+            int(self.args.train_iters),
+            self.block_schedule,
+            int(self.args.bd_block_size),
         )
 
     def _noise_generator(self, device: torch.device) -> torch.Generator:

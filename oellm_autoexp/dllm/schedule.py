@@ -11,23 +11,24 @@ def parse_block_schedule(spec: str) -> list[tuple[float, int]]:
     """Parse a ``--bd-block-schedule`` string into a list of entries.
 
     The string is a comma-separated list of ``fraction:block_size`` items, for example
-    ``"0:4,0.15:8"``. Spaces around items and around ``:`` are ignored. An empty string or a
-    string of whitespace means that no schedule is set.
+    ``"0:4,0.15:8"``. Spaces around items and around ``:`` are ignored. An empty string, a
+    string of whitespace, or ``none`` (any case) means that no schedule is set. Jobs pass
+    ``none`` so that the flag is explicit on the command line.
 
     Args:
         spec: The schedule string. The first fraction must be exactly 0, and the fractions must
             strictly increase.
 
     Returns:
-        The entries in the order they were written. The list is empty if ``spec`` is empty or
-        contains only whitespace.
+        The entries in the order they were written. The list is empty if ``spec`` is empty,
+        contains only whitespace, or is ``none``.
 
     Raises:
         ValueError: If an item does not contain exactly one ``:``, a fraction is not a float in
             ``[0, 1)``, a block size is not an integer ``>= 1``, the first fraction is not
             exactly 0, or the fractions do not strictly increase.
     """
-    if not spec.strip():
+    if not spec.strip() or spec.strip().lower() == "none":
         return []
     entries: list[tuple[float, int]] = []
     for position, item in enumerate(spec.split(","), start=1):

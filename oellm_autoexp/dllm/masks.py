@@ -151,7 +151,7 @@ def make_bd3_mask_mod(L: int, B: int, doc_ids: Tensor | None) -> _MaskMod:
             allowed = allowed & (n2n | (q_doc == doc_ids[b, kv_pos]))
         return allowed
 
-    return mask_mod
+    return _with_grid(mask_mod, 2 * L, doc_ids)
 
 
 def make_ar_mask_mod(L: int, doc_ids: Tensor | None) -> _MaskMod:
@@ -178,7 +178,49 @@ def make_ar_mask_mod(L: int, doc_ids: Tensor | None) -> _MaskMod:
             allowed = allowed & (doc_ids[b, q_idx] == doc_ids[b, kv_idx])
         return allowed
 
+    return _with_grid(mask_mod, L, doc_ids)
+
+
+def _with_grid(mask_mod: _MaskMod, length: int, doc_ids: Tensor | None) -> _MaskMod:
+    """Record the grid a mask_mod is built for, so that the builders below can
+    check it.
+
+    Args:
+        mask_mod: The mask_mod closure.
+        length: Number of query and of key positions (2L for BD3, L for AR).
+        doc_ids: The document ids the closure reads, or None.
+
+    Returns:
+        mask_mod, with the attributes ``grid_length`` and ``doc_rows`` (None without doc_ids).
+    """
+    mask_mod.grid_length = length
+    mask_mod.doc_rows = None if doc_ids is None else int(doc_ids.shape[0])
     return mask_mod
+
+
+def _check_grid(mask_mod: _MaskMod, batch: int | None, q_len: int, kv_len: int) -> None:
+    """Check a grid against the one a mask_mod of this module is built for.
+
+    A mask_mod that reads document ids must get its number of document rows as the batch size.
+    With batch None, FlexAttention builds the block mask from row 0 only, and the compiled kernel
+    applies row 0's skipped and full blocks to every row.
+
+    Args:
+        mask_mod: A mask_mod built by this module. Other callables are not checked.
+        batch: Batch size, or None for a mask that does not depend on the batch index.
+        q_len: Number of query positions.
+        kv_len: Number of key and value positions.
+
+    Raises:
+        ValueError: If batch differs from the number of document rows, or if q_len or kv_len
+            differs from the grid length of the mask_mod.
+    """
+    rows = getattr(mask_mod, "doc_rows", None)
+    if rows is not None and batch != rows:
+        raise ValueError(f"the mask reads document ids of {rows} rows, so batch must be {rows}")
+    length = getattr(mask_mod, "grid_length", None)
+    if length is not None and (q_len, kv_len) != (length, length):
+        raise ValueError(f"the mask is built for q_len = kv_len = {length}, got {q_len}, {kv_len}")
 
 
 def dense_bd3_reference(L: int, B: int, doc_ids_row: Sequence[int] | None) -> Tensor:
@@ -278,7 +320,11 @@ def materialize_mask(
 
     Returns:
         Boolean tensor with shape [batch, q_len, kv_len].
+
+    Raises:
+        ValueError: If the sizes do not match the mask_mod (see ``_check_grid``).
     """
+    _check_grid(mask_mod, batch, q_len, kv_len)
     b = torch.arange(batch, device=device).view(-1, 1, 1)
     h = torch.zeros((1, 1, 1), dtype=torch.long, device=device)
     q = torch.arange(q_len, device=device).view(1, -1, 1)
@@ -311,7 +357,11 @@ def build_block_mask(
 
     Returns:
         The FlexAttention BlockMask.
+
+    Raises:
+        ValueError: If the sizes do not match the mask_mod (see ``_check_grid``).
     """
+    _check_grid(mask_mod, batch, q_len, kv_len)
     return create_block_mask(
         mask_mod,
         B=batch,
