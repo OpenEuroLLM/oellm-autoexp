@@ -1406,6 +1406,12 @@ def ckpt_offload():
     arm("o_eng31_duplex_leaf", "... + RECOMPUTE_OFFLOAD_LEAF (receive buffers to the host)", base,
         hyb, moon, off, ctx16, mbs2, fused, engram(112), mb,
         {"backend.env.RECOMPUTE_OFFLOAD_LEAF": "1", "aux.array_tag": "_moonofffused_eng_dupleaf"})
+    # o13: overlap the pipeline p2p in the warm-up and flush phases too (the 512 MB 4-stream
+    # messages are exposed there: profile 6d-3)
+    arm("o_eng31_dupleaf_wf", "... + overlap_p2p_comm_warmup_flush", base, hyb, moon, off, ctx16,
+        mbs2, fused, engram(112), mb,
+        {"backend.env.RECOMPUTE_OFFLOAD_LEAF": "1", B + "overlap_p2p_comm_warmup_flush": True,
+         "aux.array_tag": "_moonofffused_eng_dupleafwf"})
     arm("o_eng31_ncclinfo", "Engram 31 % candidate, 3 steps with NCCL INIT / NET logging", base, hyb,
         moon, off, ctx16, mbs2, fused, engram(112), mb, stage("nccl", "0,1", ""),
         {"slurm.env.NCCL_DEBUG": "INFO", "slurm.env.NCCL_DEBUG_SUBSYS": "INIT,NET",
