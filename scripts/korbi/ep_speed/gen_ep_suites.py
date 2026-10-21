@@ -112,9 +112,12 @@ def ep_slice():
 
 # MoonEP needs NVLink multicast (NVSwitch) for its plan broadcast; MN5's 4-GPU H100 boards have
 # none: the image's MoonEP + container/patches/moonep-no-multicast.patch (unicast stores) in
-# $HYBRID_ENV/pylibs_moonep, first on PYTHONPATH (an array of its own: the env is in the srun line)
+# $HYBRID_ENV/pylibs_moonep, first on PYTHONPATH (an array of its own: the env is in the srun line).
+# pylibs_moonep2 (2026-10-21): + container/patches/moonep-barrier-timeout.patch (cross-rank
+# barrier timeout MOONEP_BARRIER_TIMEOUT_S, default 600 s; 100 s trapped the per-micro-batch
+# Engram lookup runs on their first step)
 MOON = {B + "moe_token_dispatcher_type": "flex", B + "moe_flex_dispatcher_backend": "moonep",
-        "backend.env.PYTHONPATH": "${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:"
+        "backend.env.PYTHONPATH": "${aux.hybrid_env}/pylibs_moonep2:.:submodules/Megatron-LM:"
         "flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}",
         "aux.array_tag": "_moon"}
 FP8B_E = dict(FP8B, **{B + "fp8_experts_only": True})

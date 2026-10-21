@@ -90,7 +90,7 @@ sweep:
           backend.megatron.num_workers: 8
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
-          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
+          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep2:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
           aux.array_tag: _moonmem
           slurm.env.NCCL_MIN_NCHANNELS: '4'
           slurm.env.NCCL_NCHANNELS_PER_PEER: '4'
@@ -113,7 +113,7 @@ sweep:
           backend.megatron.num_workers: 8
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
-          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
+          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep2:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
           aux.array_tag: _moonmem
           slurm.env.NCCL_MIN_NCHANNELS: '4'
           slurm.env.NCCL_NCHANNELS_PER_PEER: '4'
@@ -137,7 +137,7 @@ sweep:
           backend.megatron.num_workers: 8
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
-          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
+          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep2:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
           aux.array_tag: _moonmem
           slurm.env.NCCL_MIN_NCHANNELS: '4'
           slurm.env.NCCL_NCHANNELS_PER_PEER: '4'
@@ -163,7 +163,7 @@ sweep:
           backend.megatron.num_workers: 8
           backend.megatron.moe_token_dispatcher_type: flex
           backend.megatron.moe_flex_dispatcher_backend: moonep
-          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
+          backend.env.PYTHONPATH: ${aux.hybrid_env}/pylibs_moonep2:.:submodules/Megatron-LM:flash-linear-attention:submodules/cute_kernels:${aux.images.${aux.image}.libs}
           aux.array_tag: _moonmem
           slurm.env.NCCL_MIN_NCHANNELS: '4'
           slurm.env.NCCL_NCHANNELS_PER_PEER: '4'
