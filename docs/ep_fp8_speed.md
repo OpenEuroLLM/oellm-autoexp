@@ -676,6 +676,17 @@ chunk (2 layers) on stage 3 OOMs, 0/0/1/2 too. A chunk's activations at 16k x mb
 micro-batches in flight are far more than the ~3-4 GiB freed: per-stage recompute is out at
 this shape.
 
+**Profile of the candidate** (p_cand, gbs 128 = 8 micro-batches, ranks 0 / 31, kernel_summary.py):
+rank 0 GPU time ~9.4 s / step: pipeline SendRecv 3.4 s (mostly waiting: the bubble is 3/16 at
+gbs 128, 3/64 at 512), offload D2H 1.25 s (side stream), mHC kernels ~0.62 s (write 223 ms at
+~1.4 TB/s, near the roof; read 123, proj 102, dstreams 86, write backward 86), small copies
+~0.2 s spread over MoonEP dispatch, AccumulateGrad, reshape clones, router casts
+(scratchpad copy_sites.py: kernels -> launching CPU op chain). Left in mHC: the write fused with
+the next sublayer's projection (one stream read, ~100 ms = ~1 %). Rank 31: the Liger LM-head
+loop's weight gradient (mm -> .float() -> add into the bf16 buffer per 2048-token chunk) costs
+~0.55 s / step (142 ms copies + 412 ms fp32 adds) -> LIGER_WGRAD_ADDMM=1 (one in-place GEMM per
+chunk; o21 pending).
+
 Failure note: MN5 nodes as07r3b27, as06r2b26, as05r3b28 killed jobs at launch on 2026-10-21
 (torchrun NUMA binding: AssertionError("Invalid device id")), one more node gave "CUDA error:
 unknown error" mid-run; exclude with +slurm.sbatch.exclude.
