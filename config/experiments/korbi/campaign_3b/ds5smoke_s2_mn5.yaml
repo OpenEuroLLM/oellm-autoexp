@@ -121,5 +121,4 @@ sweep:
           slurm.sbatch.time: 02:00:00
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
           backend.env.DOWNSTREAM_EVAL_FILE: /gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/requests.jsonl
-          backend.env.DOWNSTREAM_EVAL_OUT: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b/ds_screen5_s2_h5_moe.json
           backend.env.DOWNSTREAM_EVAL_TASKS: arc_easy,passkey

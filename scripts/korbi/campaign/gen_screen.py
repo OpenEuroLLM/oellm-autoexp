@@ -1235,8 +1235,8 @@ def arms5downstream(size: str, src_suite: str, arms, ckpt: str = "ckpt", tasks: 
     out = []
     for a in arms:
         src = f"{RUNS5}/{src_suite}/{a}"
-        env = {"backend.env.DOWNSTREAM_EVAL_FILE": DOWNSTREAM,
-               "backend.env.DOWNSTREAM_EVAL_OUT": f"{RUNS5}/ds_{src_suite}_{a}{'_' + extra['tag'] if extra else ''}.json"}
+        # results land in the eval run's save dir (<suite>/<arm>/ckpt/downstream.json): one env per array
+        env = {"backend.env.DOWNSTREAM_EVAL_FILE": DOWNSTREAM}
         if tasks:
             env["backend.env.DOWNSTREAM_EVAL_TASKS"] = tasks
         ev = {B + "skip_train": True, B + "eval_iters": 1, B + "no_load_optim": True, B + "no_load_rng": True,
