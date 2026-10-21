@@ -630,6 +630,30 @@ a slow node set (51 s / step from the first step). A memory knob, opt-in, not a 
 Stage 0 remains the limit (47.0 + ~8 GiB non-PyTorch, ~8 GiB headroom): the per-step Engram
 lookup still does not fit (it needs > 8 GiB there) -- that needs layers moved off stage 0.
 
+**Grouped Engram step lookup** (ENGRAM_STEP_GROUP=G with ENGRAM_STEP_LOOKUP=1, Megatron
+c7499dbb2): the step's micro-batches in groups of G, each group's rows exchanged at its first
+forward and its row gradients sent to their owners after its last backward (multi-GPU tests:
+pipelined, recomputed order). Fits where the whole-step lookup OOMs; o16 (one launch): **groups
+of 8 5,662 vs per-micro-batch 5,608 tok/s/GPU (+1.0 %)**; o15: groups of 4 / 8 5,648 / 5,639,
++ leaf offload 5,607.
+
+**Non-PyTorch memory** (MEM_BREAKDOWN=1, o16, stage 0 / others): CUDA context 0.52, default
+process group 0.33, **model-parallel NCCL communicators 3.52 / 3.11** (eager init: device_id is
+bound), MoonEP buffer 0.94 + NVLink pools 0.74, rest ~1.9 / 1.5 (lazy communicators, kernel
+images) = 7.93 / 7.5 GiB.
+
+**MoonEP barrier trap**: 3 per-micro-batch-lookup runs died on their first step with "MoonEP
+cross_rank_barrier timeout (100s), trapping" -> "unspecified launch failure": one EP rank is in
+the Engram row exchange (a blocking collective over DP, across nodes) while its node peers wait
+in MoonEP. `$HYBRID_ENV/pylibs_moonep2` = + container/patches/moonep-barrier-timeout.patch
+(MOONEP_BARRIER_TIMEOUT_S, default 600 s); the o16 per-micro-batch arm ran through with it.
+
+**Recompile limit in the mHC write**: with document masking b = 1, and the [s, 1, n, C] streams
+arrive with two strides at the batch dim (the Engram memory is transposed from [b, s]); Dynamo
+guards on it, recompiles `_mhc_write` up to its limit (8) and runs the rest eager. Megatron
+5c9debec1 gives contiguous inputs their canonical strides (a view) before the compiled calls:
+one graph. A/B o17 (pending).
+
 Failure note: MN5 nodes as07r3b27, as06r2b26, as05r3b28 killed jobs at launch on 2026-10-21
 (torchrun NUMA binding: AssertionError("Invalid device id")), one more node gave "CUDA error:
 unknown error" mid-run; exclude with +slurm.sbatch.exclude.
