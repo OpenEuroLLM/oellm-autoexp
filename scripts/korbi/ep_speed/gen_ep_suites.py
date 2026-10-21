@@ -1394,6 +1394,14 @@ def ckpt_offload():
         hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, stage("muown", "0,1", ""),
         {B + "optimizer": "angular_muown", B + "lr": 4e-3, B + "min_lr": 4e-3,
          B + "residual_mixer_lr_mult": 0.25})
+    # o12: checkpoint_offload with one copy stream per direction (Megatron "one side stream per
+    # direction"): the single stream ran the D2H offloads 130-180 ms (median) behind their free
+    dup = {"aux.array_tag": "_moonofffused_eng_duplex"}
+    arm("o_eng31_duplex", "Engram 31 % per-mb lookup, duplex offload streams (vs o_mhc4_16k_mbs2_eng31_mb)",
+        base, hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, dup)
+    arm("o_eng31_duplex_last01", "... + offload last on stages 0, 1 only (vs o_eng31_last01)", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, dup,
+        {"backend.env.RECOMPUTE_OFFLOAD_LAST": "0,1"})
     arm("o_eng31_ncclinfo", "Engram 31 % candidate, 3 steps with NCCL INIT / NET logging", base, hyb,
         moon, off, ctx16, mbs2, fused, engram(112), mb, stage("nccl", "0,1", ""),
         {"slurm.env.NCCL_DEBUG": "INFO", "slurm.env.NCCL_DEBUG_SUBSYS": "INIT,NET",
