@@ -116,6 +116,7 @@ sweep:
           backend.megatron.lr_decay_iters: 4800
           backend.megatron.lr_wsd_decay_iters: 800
           backend.megatron.override_opt_param_scheduler: true
+          backend.megatron.allow_new_param_groups_on_load: true
         # p = 1/2, cooled down 4000 -> 4800
         - aux.arm: h5_moe_p05
           backend.megatron.num_attention_heads: 6
@@ -183,6 +184,7 @@ sweep:
           backend.megatron.lr_decay_iters: 4800
           backend.megatron.lr_wsd_decay_iters: 800
           backend.megatron.override_opt_param_scheduler: true
+          backend.megatron.allow_new_param_groups_on_load: true
         # p = 0, direction step 0.05, cooled down 4000 -> 4800
         - aux.arm: h5_moe_p0_u025
           backend.megatron.num_attention_heads: 6
@@ -250,3 +252,4 @@ sweep:
           backend.megatron.lr_decay_iters: 4800
           backend.megatron.lr_wsd_decay_iters: 800
           backend.megatron.override_opt_param_scheduler: true
+          backend.megatron.allow_new_param_groups_on_load: true

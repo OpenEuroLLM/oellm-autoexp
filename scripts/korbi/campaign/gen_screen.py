@@ -1103,6 +1103,9 @@ def arms5udcool(size: str):
     lr = h5[B + "lr"]
     cool = {B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": 4800,
             B + "lr_wsd_decay_iters": 800, B + "min_lr": lr / 10, B + "override_opt_param_scheduler": True,
+            # min_lr is part of the optimizer's param-group key: load each group's state from its
+            # structurally equivalent saved group, keeping the new lr bounds
+            B + "allow_new_param_groups_on_load": True,
             B + "exit_interval": 4800, "job.est_steps": 800}
     workers = {"s1": (8, 4), "s2": (6, 3)}[size]
     w = {B + "num_workers": workers[0], B + "dataloader_prefetch_factor": workers[1]}
