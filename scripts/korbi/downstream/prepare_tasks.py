@@ -14,7 +14,8 @@ Scoring: sum log p(cont | ctx) per item; "mc" -> acc (argmax) and acc_norm (per 
 
 Tasks (lm-eval-harness's prompts): HellaSwag (first 2000 of validation), ARC-Easy / -Challenge
 (test), PIQA (validation), Winogrande (xl validation, partial scoring), LAMBADA (OpenAI, first 2000),
-and a passkey retrieval (Mohtashami & Jaggi 2023) at 2k-32k tokens, keys scored as a 10-way choice.
+a passkey retrieval (Mohtashami & Jaggi 2023) at 2k-32k tokens, keys scored as a 10-way choice, and
+a multi-key retrieval in natural text (RULER-style: 16 facts, one asked; 10-way vs the other facts).
 """
 
 import json
@@ -99,6 +100,49 @@ def passkey_rows(tok, lengths=(2048, 4096, 8192, 16384, 32768), depths=(0.1, 0.5
     return rows
 
 
+WORDS = ("apple river candle mirror garden pencil violin tunnel harbor lantern meadow rocket "
+         "saddle thunder velvet window anchor basket castle desert falcon glacier helmet island "
+         "jacket kettle ladder marble needle orchard pepper quarry ribbon silver timber umbrella").split()
+
+
+def kv_rows(tok, raw_path, lengths=(2048, 4096, 8192, 16384, 32768), n=20, pairs=16, seed=1):
+    """Multi-key retrieval in natural text (RULER's multi-key NIAH): `pairs` facts "The special
+    number for <word> is <NNNNN>." spread evenly through natural filler (LAMBADA / HellaSwag passages),
+    then asked for one; scored as a 10-way choice against the other inserted numbers."""
+    rng = random.Random(seed)
+    texts = []
+    with open(raw_path) as f:
+        for line in f:
+            q = json.loads(line)
+            if q["task"] in ("lambada", "hellaswag"):
+                texts.append(q["items"][0]["ctx"] + q["items"][0]["cont"])
+    filler = tok.encode(" ".join(texts), add_special_tokens=False)
+    rows = []
+    for L in lengths:
+        for j in range(n):
+            words = rng.sample(WORDS, pairs)
+            vals = rng.sample(range(10000, 100000), pairs)
+            facts = [tok.encode(f" The special number for {w} is {v}. ", add_special_tokens=False)
+                     for w, v in zip(words, vals)]
+            ask = rng.randrange(pairs)
+            question = tok.encode(f" What is the special number for {words[ask]}? The special number for "
+                                  f"{words[ask]} is", add_special_tokens=False)
+            body = L - sum(map(len, facts)) - len(question) - 8
+            start = rng.randrange(0, len(filler) - body)
+            hay = filler[start:start + body]
+            seg = len(hay) // pairs
+            ctx = [tok.bos_token_id]
+            for i, fact in enumerate(facts):
+                ctx += hay[i * seg:(i + 1) * seg] + fact
+            ctx += hay[pairs * seg:] + question
+            others = [v for i, v in enumerate(vals) if i != ask]
+            keys = [vals[ask]] + rng.sample(others, 9)
+            items = [{"ctx": ctx, "cont": tok.encode(f" {k}", add_special_tokens=False), "nchars": 6} for k in keys]
+            rows.append({"task": f"kvret_{L // 1024}k", "qid": len(rows), "gold": 0, "kind": "mc",
+                         "asked_pos": ask / (pairs - 1), "items": items})
+    return rows
+
+
 def tokenize(out, tokdir):
     from transformers import AutoTokenizer
 
@@ -119,6 +163,9 @@ def tokenize(out, tokdir):
             g.write(json.dumps(r) + "\n")
             n += 1
         for r in passkey_rows(tok):
+            g.write(json.dumps(r) + "\n")
+            n += 1
+        for r in kv_rows(tok, out / "raw.jsonl"):
             g.write(json.dumps(r) + "\n")
             n += 1
     print(f"{n} questions -> {out / 'requests.jsonl'}")
