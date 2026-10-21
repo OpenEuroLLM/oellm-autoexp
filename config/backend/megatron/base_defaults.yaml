@@ -460,6 +460,7 @@ linear_key_head_dim: 128  # Query and key head dimension for the gated delta net
 linear_kronlstm_decouple_erase: true  # KronLSTM: beta gates the erase only and the target gate alone the write (the paper's default); needs linear_kronlstm_target_gate.
 linear_kronlstm_neg_eigval_init_bias: false  # KronLSTM with linear_fla_allow_neg_eigval (s = 2): bias the erase gate at init (-ln 3) so s * beta starts at mean 0.5, mostly in [0, 1] -- as with s = 1 -- while the full [0, 2] stays reachable.
 linear_kronlstm_normalize_v: true  # KronLSTM: L2-normalise v per head (the paper's default).
+linear_kronlstm_output_gate: linear  # KronLSTM's output gate: "linear" (the paper's dense hidden x value_dim projection) or "lowrank" (complex_kda's hidden -> head_dim -> value_dim, its parameter count).
 linear_kronlstm_target_gate: true  # KronLSTM (variant "kronlstm", fla.layers.kronlstm via megatron/core/ssm/fla_hybrid.py): learn the write (target) gate c; the forget gate is linear_fla_gate ("softplus" is KronLSTM's own, the signed gates give f in [-1, 1] through the sign gauge), beta in [0, 2] is linear_fla_allow_neg_eigval.
 linear_kronlstm_unit_write: false  # KronLSTM with linear_fla_allow_neg_eigval (s = 2): keep the write c in [0, 1] by construction. The op's s scales the write cap as well as the erase, so without this the write is s * c in [0, 2]; with it only the erase is extended (s * beta in [0, 2]).
 linear_num_key_heads: 16  # Number of query and key heads for the gated delta net.

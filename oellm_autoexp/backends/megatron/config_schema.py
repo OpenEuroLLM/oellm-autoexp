@@ -548,6 +548,10 @@ class MegatronConfig(ConfigInterface):
     # 2] stays reachable.
     linear_kronlstm_neg_eigval_init_bias: bool = False
 
+    # KronLSTM's output gate: "linear" (the paper's dense hidden x value_dim projection) or
+    # "lowrank" (complex_kda's hidden -> head_dim -> value_dim, its parameter count).
+    linear_kronlstm_output_gate: str = "linear"
+
     # KronLSTM with linear_fla_allow_neg_eigval (s = 2): keep the write c in [0, 1] by
     # construction. The op's s scales the write cap as well as the erase, so without this the
     # write is s * c in [0, 2]; with it only the erase is extended (s * beta in [0, 2]).

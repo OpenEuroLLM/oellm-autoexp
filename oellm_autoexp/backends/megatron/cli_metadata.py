@@ -3703,6 +3703,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "linear_kronlstm_output_gate": MegatronArgMetadata(
+        arg_type=str,
+        default="linear",
+        help='KronLSTM\'s output gate: "linear" (the paper\'s dense hidden x value_dim projection) or "lowrank" (complex_kda\'s hidden -> head_dim -> value_dim, its parameter count).',
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "linear_kronlstm_target_gate": MegatronArgMetadata(
         arg_type=bool,
         default=True,
@@ -11302,6 +11310,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=0,
         const=False,
         default=True,
+    ),
+    "linear_kronlstm_output_gate": MegatronActionSpec(
+        option_strings=("--linear-kronlstm-output-gate",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="linear",
     ),
     "linear_kronlstm_target_gate": MegatronActionSpec(
         option_strings=(

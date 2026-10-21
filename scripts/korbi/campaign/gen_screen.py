@@ -1066,6 +1066,15 @@ def arms5udecay_sqrt(size: str):
              {**off, B + "angular_muown_u_decay_p": 0.5})]
 
 
+def arms5kron_lowrank(size: str):
+    """CKLSTM (the extended ranges, screen5kronext's arm) with complex_kda's low-rank output gate
+    (user 2026-10-21): parameter-matched to CKDA, so the comparison is the recurrence alone (the
+    dense gate is +hidden x hidden per mixer). Pairs with round 5's h5_moe and with screen5kronext."""
+    ext = arms5kron_ext(size)[0][2]
+    return [("h5_moe_kron_extb_lr", "CKLSTM 5:1 with complex_kda's low-rank output gate",
+             {**ext, B + "linear_kronlstm_output_gate": "lowrank"})]
+
+
 def speed5_profiled(size: str = "s1"):
     """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
     with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
@@ -1132,6 +1141,7 @@ def write5():
             ("s1", "screen5kron", arms5kron("s1")),
             *[(z, "screen5kronscale", arms5kron_scale(z)) for z in ("s1", "s2", "s3")],
             *[(z, "screen5kronext", arms5kron_ext(z)) for z in ("s1", "s2", "s3")],
+            *[(z, "screen5kronlr", arms5kron_lowrank(z)) for z in ("s1", "s2", "s3")],
             *[(z, "screen5udecay", arms5udecay(z)) for z in ("s1", "s2")],
             *[(z, "screen5udecaysqrt", arms5udecay_sqrt(z)) for z in ("s1", "s2")],
             ("s1", "screen5kronsmoke", [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})
