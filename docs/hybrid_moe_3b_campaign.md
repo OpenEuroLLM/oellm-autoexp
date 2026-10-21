@@ -2433,3 +2433,32 @@ statistics (CKDA's init carried over) after step 500.
 
 The paper's-gate arm was relaunched twice: the GPFS fault, then a CUBLAS execution failure at
 startup on as07r4b02 / as07r4b13, now excluded.
+
+### 12.7 Angular MuOwn's hidden direction decay (user 2026-10-21)
+
+Megatron's AngularMuown multiplies the direction step by kappa_t = (1 + c t)^-p, on top of the lr
+schedule, with defaults c = 1e-3 and p = 1. That gives kappa = 0.2 at step 4000 and ~1e-3 at 1M
+steps. Every MuOwn arm so far carried it; the Adam-trained parameters (row magnitudes, embeddings,
+norms, LDM / mHC mixers) never did.
+
+**The paper's rationale** (arXiv 2606.23637, github.com/fhueb/angular-muown):
+- Plain Muown's unnormalized direction rows grow as ~sqrt(t), so the same update rotates them less:
+  an implicit angular decay of ~t^-1/2.
+- AngularMuown normalizes the rows, which removes that mechanism, so it schedules the decay
+  explicitly. The paper presents the schedule as horizonless and pairs it with WSD; for cosine
+  schedules the README switches it off (p = 0).
+- The evidence goes up to 10B tokens and 0.5B dense / 1.1B MoE models.
+- Nothing on fine-tuning, on long runs, or on choosing c relative to the run length.
+
+**Our caveats:**
+- **The decay counts steps, not tokens.** The screens' 64 x 8k batch vs production's 512 x 16k
+  differs by 16x in tokens per step, so the screens' kappa doesn't transfer to production.
+- **p = 1 is unsustainable for long runs.** It essentially freezes the directions by 1M steps.
+
+**Tests (paired with round 5's h5_moe, which has p = 1):**
+- `screen5udecay`: p = 0, with a direction-step sweep via `angular_muown_extra_scale_factor`.
+  s1: 0.2 / 0.1 / 0.05. s2: 0.2 / 0.1.
+- `screen5udecaysqrt`: p = 1/2 (Muown's implicit rate; kappa ~0.03 at 1M steps), at s1 and s2.
+- Cooldown branches from step 4000, giving the visible-schedule vs hidden-decay comparison.
+
+The production value stays open until these are in.
