@@ -199,12 +199,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps({"shard": args.shard, "documents": count, "output": str(args.output)}))
         return 0
     total = 0
+    status = 0
     for prefix in args.prefix:
         info = inspect_prefix(prefix, args.tokenizer)
         total += info["num_tokens"]
         print(json.dumps({"prefix": prefix, **info}, ensure_ascii=False))
+        if "len_tokenizer" in info and info["max_token_id"] >= info["len_tokenizer"]:
+            print(json.dumps({"error": f"{prefix}: max token id >= len(tokenizer)"}))
+            status = 1
     print(json.dumps({"total_tokens": total}))
-    return 0
+    return status
 
 
 if __name__ == "__main__":

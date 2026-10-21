@@ -144,7 +144,11 @@ def make_bd3_mask_mod(L: int, B: int, doc_ids: Tensor | None) -> _MaskMod:
         c2c = ~q_noisy & ~kv_noisy & (kv_blk <= q_blk)  # block-causal, full inside own block
         allowed = n2n | n2c | c2c  # clean never attends to noisy
         if doc_ids is not None:
-            allowed = allowed & (doc_ids[b, q_pos] == doc_ids[b, kv_pos])
+            # D-039: a noisy query takes the document of its block start, which the earlier clean
+            # blocks determine, so masked tokens of its own block never shape the mask. Noisy
+            # keys of the own block stay visible across a document boundary.
+            q_doc = torch.where(q_noisy, doc_ids[b, q_blk * B], doc_ids[b, q_pos])
+            allowed = allowed & (n2n | (q_doc == doc_ids[b, kv_pos]))
         return allowed
 
     return mask_mod
@@ -209,13 +213,16 @@ def dense_bd3_reference(L: int, B: int, doc_ids_row: Sequence[int] | None) -> Te
             both_noisy = q_noisy and kv_noisy
             noisy_to_clean = q_noisy and not kv_noisy
             both_clean = not q_noisy and not kv_noisy
+            own_noisy_block = both_noisy and q_blk == kv_blk
             allowed = (
-                (both_noisy and q_blk == kv_blk)
+                own_noisy_block
                 or (noisy_to_clean and kv_blk < q_blk)
                 or (both_clean and kv_blk <= q_blk)
             )
-            if allowed and docs is not None:
-                allowed = docs[q_pos] == docs[kv_pos]
+            if allowed and docs is not None and not own_noisy_block:
+                # D-039: a noisy query uses the document of its block start.
+                q_doc = docs[q_blk * B] if q_noisy else docs[q_pos]
+                allowed = q_doc == docs[kv_pos]
             row.append(bool(allowed))
         rows.append(row)
     return torch.tensor(rows, dtype=torch.bool).reshape(2 * L, 2 * L)

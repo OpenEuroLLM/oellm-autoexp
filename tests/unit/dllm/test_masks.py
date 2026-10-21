@@ -203,3 +203,27 @@ def test_build_block_mask_on_cpu_with_and_without_batch() -> None:
         )
         dense_blocks = block_mask.to_dense().bool().reshape(rows, n_q_blocks, n_kv_blocks)
         assert torch.equal(dense_blocks, expected_blocks)
+
+
+@pytest.mark.parametrize(("length", "block"), [(16, 4), (24, 8), (32, 8)])
+def test_noisy_rows_do_not_depend_on_tokens_of_their_own_block(length: int, block: int) -> None:
+    """D-039: whether a token of block k is EOD never changes the mask rows of block k's noisy
+    queries, so the doc mask cannot reveal masked content."""
+    gen = torch.Generator().manual_seed(length + block)
+    x0 = torch.randint(0, 6, (1, length), generator=gen)
+    x0[0, block - 1] = 7  # one document boundary before block 1
+    for k in range(length // block):
+        for offset in range(block):
+            pos = k * block + offset
+            with_eod = x0.clone()
+            with_eod[0, pos] = 7
+            without_eod = x0.clone()
+            without_eod[0, pos] = 3
+            rows = []
+            for variant in (with_eod, without_eod):
+                docs = compute_doc_ids(variant, 7)
+                mask = materialize_mask(
+                    make_bd3_mask_mod(length, block, docs), 1, 2 * length, 2 * length
+                )
+                rows.append(mask[0, k * block : (k + 1) * block])
+            assert torch.equal(rows[0], rows[1]), f"block {k}, position {pos}"

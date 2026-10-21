@@ -121,7 +121,10 @@ class BlockDiffusionFlexAttention(torch.nn.Module):
         self.softmax_scale = softmax_scale
 
     def get_extra_state(self) -> None:
-        """Return no extra state, so the module adds no checkpoint keys.
+        """Return None as the extra state.
+
+        torch still writes a ``core_attention._extra_state`` key (value None), as for MegaDLMs
+        ``TorchFlexAttention``, so checkpoints of both modules have the same keys.
 
         Returns:
             None.

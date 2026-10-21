@@ -21,6 +21,7 @@ SHARD=$(printf %02d "${SLURM_ARRAY_TASK_ID}")
 INPUT="${DATA_DIR}/raw/fineweb-edu-jsonl/shard_${SHARD}.jsonl"
 PREFIX="${DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_${SHARD}"
 mkdir -p "$(dirname "${PREFIX}")"
+test -s "${INPUT}" || { echo "shard ${SHARD}: missing input ${INPUT}" >&2; exit 1; }
 
 echo "shard ${SHARD}: ${INPUT} -> ${PREFIX}_text_document.{bin,idx} on $(hostname)"
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=submodules/MegaDLMs \
@@ -32,4 +33,6 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=submodules/MegaDLMs \
     --tokenizer-model Qwen/Qwen3-0.6B-Base \
     --append-eod \
     --workers "${SLURM_CPUS_PER_TASK}"
+test -s "${PREFIX}_text_document.bin" && test -s "${PREFIX}_text_document.idx" \
+  || { echo "shard ${SHARD}: missing output ${PREFIX}_text_document.{bin,idx}" >&2; exit 1; }
 echo "shard ${SHARD}: done"

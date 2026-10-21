@@ -126,6 +126,12 @@ def model_provider(pre_process: bool = True, post_process: bool = True) -> Block
     """
     args = get_args()
     validate_bd_args(args)
+    real_vocab = get_tokenizer().vocab_size  # len(tokenizer) for the HF tokenizer
+    if args.mask_token != real_vocab:
+        raise ValueError(
+            f"--mask-token {args.mask_token} must equal len(tokenizer) = {real_vocab} "
+            "(dllm-bd3-spec section 12)"
+        )
     if args.use_legacy_models:
         raise ValueError("legacy models are not supported")
     if args.spec is not None or args.num_experts:

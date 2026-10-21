@@ -82,6 +82,26 @@ def _with_documents(x0: torch.Tensor, seed: int) -> torch.Tensor:
     return torch.where(is_eod, torch.full_like(x0, _EOD_ID), x0)
 
 
+def _with_block_aligned_documents(x0: torch.Tensor, block: int, seed: int) -> torch.Tensor:
+    """Return x0 with EOD ids at about half of the block-final positions.
+
+    Under the D-039 doc rule, I2 holds when every document boundary falls on a block boundary.
+
+    Args:
+        x0: Clean token ids, LongTensor [b, L].
+        block: Block size B.
+        seed: Seed of the generator that picks the EOD positions.
+
+    Returns:
+        LongTensor [b, L] with the same shape as x0.
+    """
+    gen = torch.Generator().manual_seed(seed)
+    x0 = torch.where(x0 == _EOD_ID, x0 + 1, x0)  # random tokens may already hold the EOD id
+    block_final = (torch.arange(x0.shape[1]) % block) == block - 1
+    is_eod = (torch.rand(x0.shape, generator=gen) < 0.5) & block_final
+    return torch.where(is_eod, torch.full_like(x0, _EOD_ID), x0)
+
+
 def _token_ce(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     """Return the cross entropy of each target from logits.
 
@@ -103,14 +123,18 @@ def _token_ce(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
 def test_i2_noisy_and_clean_streams_agree_at_every_layer(
     length: int, block: int, with_docs: bool
 ) -> None:
-    """I2: with xt == x0, hidden[:, :L] equals hidden[:, L:] at every layer."""
+    """I2: with xt == x0, hidden[:, :L] equals hidden[:, L:] at every layer.
+
+    With documents, the boundaries fall on block boundaries (spec section 11, D-039).
+    """
     model = _make_model()
     x0 = _random_tokens(_BATCH, length, seed=length + block)
     doc_ids = None
     if with_docs:
-        x0 = _with_documents(x0, seed=block)
+        x0 = _with_block_aligned_documents(x0, block, seed=block)
         doc_ids = compute_doc_ids(x0, _EOD_ID)
-        assert int(doc_ids.max()) > 0, "the document split must not be trivial"
+        if block < length:
+            assert int(doc_ids.max()) > 0, "the document split must not be trivial"
     ids = torch.cat([x0, x0], dim=1)
     positions = torch.cat([torch.arange(length), torch.arange(length)]).expand(_BATCH, -1)
     mask = bd3_dense_mask(length, block, doc_ids, _BATCH)
