@@ -1167,10 +1167,17 @@ def arms5udadapt(size: str = "s1"):
         with its step untuned."""
     h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
     lr = h5[B + "lr"]
+    workers = {"s1": (8, 4), "s2": (6, 3)}[size]
     sched = {B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": 4800,
              B + "lr_wsd_decay_iters": 800, B + "min_lr": lr / 10, B + "exit_interval": 4800,
-             "job.est_steps": 4800, B + "num_workers": 8, B + "dataloader_prefetch_factor": 4, **BAD_NODES}
+             "job.est_steps": 4800, B + "num_workers": workers[0], B + "dataloader_prefetch_factor": workers[1],
+             **BAD_NODES}
     base = {**h5, **sched}
+    if size == "s2":
+        # the s2 confirmation of the recommendation (user 2026-10-21): p = 1/2 at direction step 0.1;
+        # pairs with screen5udcool_s2's cooled p = 1 branch and round 5's s2 h5_moe
+        return [("h5_moe_p05_u05", "AngularMuown p = 1/2, direction step 0.1",
+                 {**base, B + "angular_muown_u_decay_p": 0.5, B + "angular_muown_extra_scale_factor": 0.1})]
     return [("h5_moe_radius", "AngularMuown radius schedule (c 0.0074, lambda 0.083: kappa* 0.3)",
              {**base, B + "angular_muown_u_decay_schedule": "radius", B + "angular_muown_u_decay_scale": 0.0074,
               B + "angular_muown_u_radius_lambda": 0.083}),
@@ -1320,6 +1327,7 @@ def write5():
             *[(z, "screen5kronpfb", arms5kron_pfb(z)) for z in ("s2", "s3")],
             ("s1", "screen5off", arms5offset("s1")),
             ("s1", "screen5udadapt", arms5udadapt("s1")),
+            ("s2", "screen5udadapt", arms5udadapt("s2")),
             *[(z, "quanteval5", arms5quant(z)) for z in ("s2", "s3")],
             ("s3", "screen5s3cool", arms5s3cool("s3")),
             ("s2", "ds5smoke", arms5downstream("s2", "screen5_s2", ["h5_moe"], ckpt="ckpt", tasks="arc_easy,passkey")),
