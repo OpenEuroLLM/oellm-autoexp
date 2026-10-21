@@ -1,0 +1,31 @@
+# Qwen3-tokenized FineWeb-Edu sample-10BT for the dllm ablations (P2).
+# 16 shards by parquet row group (oellm_autoexp/dllm/data_prep.py), tokenized with the Qwen3
+# tokenizer and an EOD (<|endoftext|>, 151643) after every document
+# (oellm_autoexp/dllm/tokenize_fineweb_edu.sbatch). Shards 00-14 train; shard 15 is held out and
+# serves as both the validation and the test split.
+train_data_path:
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_00_text_document
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_01_text_document
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_02_text_document
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_03_text_document
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_04_text_document
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_05_text_document
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_06_text_document
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_07_text_document
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_08_text_document
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_09_text_document
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_10_text_document
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_11_text_document
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_12_text_document
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_13_text_document
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_14_text_document
+valid_data_path:
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_15_text_document
+test_data_path:
+  - ${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_15_text_document
+split: null
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: Qwen/Qwen3-0.6B-Base
+
+aux:
+  dataset: fineweb_edu_10BT_qwen3
