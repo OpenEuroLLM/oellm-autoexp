@@ -2490,3 +2490,49 @@ Q4_K_M does. Suites `quanteval5{,q4}_{s2,s3}`.
 - **Caveats:**
   - **Method:** plain RTN, not Q4_K's optimized scales, so absolute deltas are an upper bound.
   - **Checkpoints:** stable-phase, not cooled.
+
+### 12.9 Downstream and long-context evaluation of the cooled s3 models (user 2026-10-21)
+
+**Models.** Round 5's s3 runs, cooled 4000 -> 4800 (WSD to lr / 10, `screen5s3cool_s3`). Cooled
+training loss (paired, same data order):
+
+| arm | train loss (4700-4800) | gap to CKDA |
+|---|---:|---:|
+| CKDA + mHC-4 | 2.0952 | -0.035 |
+| CKDA 5:1 | 2.1304 | |
+| Qwen3.5-like | 2.1325 | +0.002 |
+
+**Method.** The in-Megatron evaluator (`DOWNSTREAM_EVAL_FILE`, Megatron 907935d56; no HF conversion
+exists for the hybrids) with lm-eval-harness prompts (`scripts/korbi/downstream/prepare_tasks.py`).
+Suites `ds5_s3` (full precision) and `ds5q4_s3` (4-bit weights).
+
+**Benchmarks** (acc in %; HellaSwag and ARC-C length-normalized; LAMBADA greedy last word):
+
+| task | CKDA + mHC-4 | CKDA | Qwen3.5-like | +- |
+|---|---:|---:|---:|---:|
+| HellaSwag | **41.7** | 40.0 | 41.1 | 1.1 |
+| ARC-Easy | 54.5 | 54.7 | 54.3 | 1.0 |
+| ARC-Challenge | 25.4 | 25.1 | 25.3 | 1.3 (chance 25) |
+| PIQA | **67.0** | 65.3 | 65.1 | 1.1 |
+| Winogrande | 52.3 | 52.4 | 51.5 | 1.4 |
+| LAMBADA (NLL / token) | **36.3 (3.02)** | 36.0 (3.17) | 30.4 (3.47) | 1.1 |
+| mean (HS, ARC-E, PIQA, Wino, LAMBADA) | **50.3** | 49.7 | 48.4 | |
+
+**Long context** (10-way, chance 0.10, 50 questions per length; training length 8k). The multi-key
+retrieval places 16 facts in natural text and asks for one; the passkey task saturates at 1.00 for
+all three at every length.
+
+| multi-key retrieval | 2k | 4k | 8k | 16k | 32k |
+|---|---:|---:|---:|---:|---:|
+| CKDA + mHC-4 | 0.96 | 0.86 | 0.88 | **0.82** | **0.84** |
+| CKDA | 0.90 | 0.86 | 0.88 | 0.50 | 0.24 |
+| Qwen3.5-like | 0.76 | 0.78 | 0.76 | 0.36 | 0.26 |
+
+- **Most benchmarks cannot separate the models at this size** (490M active, 2.5B tokens).
+- **LAMBADA does: about +6 points for both NoPE hybrids** over the Qwen3.5-like arm.
+- **mHC-4 gives length generalization in retrieval.** It holds 0.84 at 4x the training length,
+  where plain CKDA and the Qwen3.5-like arm fall to ~0.25. This was not expected.
+- **4-bit weights change nothing beyond noise:** benchmarks within +-1 point, LAMBADA -0.8,
+  retrieval unchanged (0.84 at 32k).
+- **Recipe confirmed:** CKDA 5:1 + mHC-4 leads on loss, matches or beats on benchmarks, and wins
+  clearly on long-context retrieval, all holding at Q4.
