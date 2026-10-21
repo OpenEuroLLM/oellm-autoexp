@@ -40,7 +40,9 @@ overlap_grad_reduce: true
 overlap_param_gather: true
 calculate_per_token_loss: true
 create_attention_mask_in_dataloader: false
-num_workers: 2
+# Each sample is a random read from GPFS (median 140-300 ms cold, one read after another per
+# micro-batch in a worker); 8 workers per rank keep the GPUs fed (D-047).
+num_workers: 8
 seed: 1234
 
 # Disable fusions that conflict with diffusion or require TE >= 1.4 (same as qwen3_0.1B_ne_dlm.yaml).
