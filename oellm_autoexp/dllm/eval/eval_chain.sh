@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Evaluation chain for one model on one GPU (PLAN 6d):
+# Evaluation chain for one model (PLAN 6d):
 #   1. export: MegaDLMs checkpoint -> Hugging Face directory (CPU; skipped when EVAL_CKPT is empty,
 #      then EVAL_HF_BASE itself is evaluated),
 #   2. M1: validation NELBO (bd3) or exact NLL (ar) on the held-out split (eval_nelbo.py),
@@ -21,6 +21,8 @@
 #                       none skips GSM8K)
 #   EVAL_GSM8K_N        number of GSM8K test problems (default 250)
 #   EVAL_TAU            confidence threshold of the dynamic mode (default 0.9)
+#   EVAL_PARALLEL       1 runs M1 and the GSM8K modes at the same time, one per visible GPU, with
+#                       one log each in $EVAL_DIR/logs (default 0: one after another)
 set -euo pipefail
 : "${EVAL_RUN:?}" "${EVAL_DIR:?}" "${EVAL_HF_BASE:?}" "${EVAL_OBJECTIVE:?}" "${EVAL_DATA_PREFIX:?}"
 mkdir -p "$EVAL_DIR"
@@ -40,25 +42,59 @@ else
   echo "[eval] 1/3 no checkpoint: evaluating $MODEL"
 fi
 
+# One task per result file: its name and its shell-quoted command.
+NAMES=()
+COMMANDS=()
+add_task() {
+  NAMES+=("$1")
+  shift
+  COMMANDS+=("$(printf '%q ' "$@")")
+}
 if [ "${EVAL_NUM_SEQS:-1000}" -gt 0 ]; then
-  echo "[eval] 2/3 M1 ($EVAL_OBJECTIVE) -> $EVAL_DIR/$EVAL_RUN.m1.json"
-  python -m oellm_autoexp.dllm.eval.eval_nelbo --model "$MODEL" \
+  add_task m1 python -m oellm_autoexp.dllm.eval.eval_nelbo --model "$MODEL" \
     --data-prefix "$EVAL_DATA_PREFIX" --num-sequences "${EVAL_NUM_SEQS:-1000}" \
     --objective "$EVAL_OBJECTIVE" --out "$EVAL_DIR/$EVAL_RUN.m1.json"
-else
-  echo "[eval] 2/3 M1 skipped"
 fi
-
 MODES="${EVAL_MODES:-static,dynamic}"
 if [ "$MODES" != "none" ]; then
   IFS=',' read -r -a MODE_LIST <<< "$MODES"
   for mode in "${MODE_LIST[@]}"; do
-    echo "[eval] 3/3 GSM8K $mode -> $EVAL_DIR/$EVAL_RUN.gsm8k_$mode.json"
-    python -m oellm_autoexp.dllm.eval.eval_gsm8k --model "$MODEL" --mode "$mode" \
-      --tau "${EVAL_TAU:-0.9}" --n "${EVAL_GSM8K_N:-250}" \
+    add_task "gsm8k_$mode" python -m oellm_autoexp.dllm.eval.eval_gsm8k --model "$MODEL" \
+      --mode "$mode" --tau "${EVAL_TAU:-0.9}" --n "${EVAL_GSM8K_N:-250}" \
       --out "$EVAL_DIR/$EVAL_RUN.gsm8k_$mode.json"
   done
+fi
+
+if [ "${EVAL_PARALLEL:-0}" = "1" ] && [ "${#NAMES[@]}" -gt 1 ]; then
+  if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
+    IFS=',' read -r -a GPUS <<< "$CUDA_VISIBLE_DEVICES"
+  else
+    mapfile -t GPUS < <(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 )))
+  fi
+  mkdir -p "$EVAL_DIR/logs"
+  PIDS=()
+  for i in "${!NAMES[@]}"; do
+    gpu="${GPUS[$(( i % ${#GPUS[@]} ))]}"
+    log="$EVAL_DIR/logs/$EVAL_RUN.${NAMES[$i]}.log"
+    echo "[eval] ${NAMES[$i]} on GPU $gpu -> $log"
+    CUDA_VISIBLE_DEVICES="$gpu" bash -c "${COMMANDS[$i]}" > "$log" 2>&1 &
+    PIDS+=($!)
+  done
+  failed=0
+  for i in "${!PIDS[@]}"; do
+    if wait "${PIDS[$i]}"; then
+      echo "[eval] ${NAMES[$i]} done"
+    else
+      echo "[eval] ${NAMES[$i]} FAILED; last lines of its log:"
+      tail -n 20 "$EVAL_DIR/logs/$EVAL_RUN.${NAMES[$i]}.log"
+      failed=1
+    fi
+  done
+  [ "$failed" = "0" ] || exit 1
 else
-  echo "[eval] 3/3 GSM8K skipped"
+  for i in "${!NAMES[@]}"; do
+    echo "[eval] ${NAMES[$i]}"
+    bash -c "${COMMANDS[$i]}"
+  done
 fi
 echo "[eval] done"

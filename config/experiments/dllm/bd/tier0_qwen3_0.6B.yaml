@@ -26,17 +26,30 @@ backend:
   aux:
     difflm_args: "--mask-token ${backend.megatron.aux.mask_token_id} --base-model vanilla --model-running-mode difflm-noshift --attention-mask-type no_mask --difflm-varilen-prob 0"
     bd_args: "--bd-objective bd3 --bd-block-size 8 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
+    # Evaluate (M1 only for tier 0) in the same job after the last iteration.
+    dist_prefix: "./oellm_autoexp/dllm/train_then_eval.sh "
+  env:
+    EVAL_RUN: ${job.name}
+    EVAL_DIR: "${oc.env:OUTPUT_DIR}/dllm-ablations/eval"
+    EVAL_HF_BASE: ${backend.megatron.aux.hf_repo}
+    EVAL_DATA_PREFIX: "${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_15_text_document"
+    EVAL_MODES: none
+    EVAL_PARALLEL: "1"
   megatron:
     train_iters: 954
     lr: 3.0e-5
     lr_warmup_iters: 50  # max(50, 1 percent of train_iters)
+    aux:
+      walltime_s: 36000
+    # Save and stop 60 min before the time limit (time for the evaluation); resubmit to resume.
+    exit_duration_in_mins: ${oc.subi:${oc.divi:${.aux.walltime_s},60},60}
 
 slurm:
   sbatch:
     _non_strict: true
     nodes: 1
     partition: gpu_h100
-    time: "${oc.slurmtime:21600}"
+    time: "${oc.slurmtime:${backend.megatron.aux.walltime_s}}"
 
 sweep:
   type: list

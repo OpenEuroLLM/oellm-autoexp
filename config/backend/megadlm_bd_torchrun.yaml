@@ -10,7 +10,7 @@ class_name: MegatronBackend
 python_cmd: "python"  # not used anyways
 full_schema_validation: false
 launcher_script: "./oellm_autoexp/dllm/pretrain_block_difflm.py"
-dist_cmd: "torchrun ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n  %',' %',\
+dist_cmd: "${.aux.dist_prefix}torchrun ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n  %',' %',\
  ${oc.cliargs:${.torchrun_args}}}}\\\n   ${.launcher_script}"
 torchrun_args:
   nproc_per_node: ${slurm.sbatch.gpus_per_node}
@@ -40,5 +40,8 @@ env:
 aux:
   difflm_args: ""
   bd_args: ""
+  # Prefix of the torchrun command. "./oellm_autoexp/dllm/train_then_eval.sh " evaluates the final
+  # checkpoint in the same job (the tier experiments set the EVAL_* variables in backend.env).
+  dist_prefix: ""
 
 full_cmd: "${.dist_cmd} ${oc.join:'',${oc.mapcondtmpl:'\\-\\-.*','\\\n   %',' %',${oc.argsmegatron:${backend.megatron}}}} ${.aux.difflm_args} ${.aux.bd_args}"
