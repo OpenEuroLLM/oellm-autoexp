@@ -1455,6 +1455,10 @@ def ckpt_offload():
         arm(f"o_cand_{tag}", f"candidate (groups of 8, lazy groups, leaf offload), skip {skip or '-'}",
             base, hyb, moon, off, ctx16, mbs2, fused, engram(112), memb, cand,
             {"backend.env.RECOMPUTE_SKIP_CHUNKS": skip, "aux.array_tag": f"_moonofffused_cand_{tag}"})
+    # o21: the LM-head weight gradient by one in-place GEMM per chunk (LIGER_WGRAD_ADDMM)
+    arm("o_cand_addmm", "candidate + LIGER_WGRAD_ADDMM", base, hyb, moon, off, ctx16, mbs2, fused,
+        engram(112), memb, cand, {"backend.env.LIGER_WGRAD_ADDMM": "1",
+                                  "aux.array_tag": "_moonofffused_cand_addmm"})
     # p_cand: torch profile of the candidate (ranks 0 / 31, steps 5-6, gbs 128, as the o4 profiles):
     # what is left in mHC after the stride fix
     prof_c = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 31],
