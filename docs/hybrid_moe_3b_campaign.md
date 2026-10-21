@@ -2536,3 +2536,26 @@ all three at every length.
   retrieval unchanged (0.84 at 32k).
 - **Recipe confirmed:** CKDA 5:1 + mHC-4 leads on loss, matches or beats on benchmarks, and wins
   clearly on long-context retrieval, all holding at Q4.
+
+**Results (2026-10-21).** Paired training loss at the end of the 800-step cooldown, s1. p = 0 is
+`screen5udecay`; radius, hyper and p = 1/2 at step 0.1 are `screen5udadapt`, which run the
+schedule in one job.
+
+| decay | s1 4700-4800 | gap to p = 1 | s2 (p = 1/2, step 0.2) |
+|---|---:|---:|---:|
+| p = 1 (default) | 2.2243 | | |
+| p = 1/2, direction step 0.1 | 2.2431 | **+0.019** | |
+| radius (c 0.0074, lambda 0.083: kappa -> 0.3) | 2.2436 | +0.019 | |
+| p = 1/2, direction step 0.2 | 2.2562 | +0.032 | +0.008 |
+| p = 0, direction step 0.05 | 2.2618 | +0.037 | |
+| hyper | stopped | | |
+
+- **hyper fails.** The gradient / previous-momentum correlation stays negative (-0.08 to -0.12,
+  gradient noise), so kappa hits its floor (0.02) by step 2000 and the loss stalls.
+- **radius adds nothing over p = 1/2** at this horizon.
+- **p = 1 keeps a ~0.02 lead at s1.** The horizon is short (4000 steps), the gaps were still
+  closing at the end of the cooldown, and the gap shrinks with size (untuned p = 1/2: s1 +0.032,
+  s2 +0.008).
+- **Recommendation for the main runs:** p = 1/2 with the direction step halved
+  (`angular_muown_extra_scale_factor` 0.1): kappa ~0.03 at 1M steps instead of p = 1's ~0.001.
+- **MuOwn's speed cost at production** is ~0.4 % (EP agent, corrected from 2 %).
