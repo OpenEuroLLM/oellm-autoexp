@@ -1321,6 +1321,8 @@ def write5():
             *[(z, "quanteval5", arms5quant(z)) for z in ("s2", "s3")],
             ("s3", "screen5s3cool", arms5s3cool("s3")),
             ("s2", "ds5smoke", arms5downstream("s2", "screen5_s2", ["h5_moe"], ckpt="ckpt", tasks="arc_easy,passkey")),
+            ("s2", "ds5kv", arms5downstream("s2", "screen5_s2", ["h5_moe", "qwen35_moe", "attn_moe"], tasks="kvret",
+                                             extra={"tag": "kv"})),
             *[(z, "quanteval5q4", arms5quant(z, "4")) for z in ("s2", "s3")],
             *[(z, "screen5udecay", arms5udecay(z)) for z in ("s1", "s2")],
             *[(z, "screen5udecaysqrt", arms5udecay_sqrt(z)) for z in ("s1", "s2")],
