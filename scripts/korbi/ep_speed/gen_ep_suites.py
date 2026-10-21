@@ -1439,6 +1439,14 @@ def ckpt_offload():
         off, ctx16, mbs2, fused, engram(112), mb, timers,
         {B + "optimizer": "angular_muown", B + "lr": 4e-3, B + "min_lr": 4e-3,
          B + "residual_mixer_lr_mult": 0.25, "aux.array_tag": "_moonofffused_eng_tmuown"})
+    # o19: no eager NCCL communicators for the single-rank groups (~0.38 GiB each, 6-7 of them)
+    arm("o_eng31_grp8_mb", "Engram 31 %, groups of 8, MEM_BREAKDOWN (reference of o19)", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112), memb,
+        {"backend.env.ENGRAM_STEP_GROUP": "8", "aux.array_tag": "_moonofffused_eng_grp8mb"})
+    arm("o_eng31_grp8_lazy", "... + MEGATRON_LAZY_SINGLETON_GROUPS", base, hyb, moon, off, ctx16,
+        mbs2, fused, engram(112), memb,
+        {"backend.env.ENGRAM_STEP_GROUP": "8", "backend.env.MEGATRON_LAZY_SINGLETON_GROUPS": "1",
+         "aux.array_tag": "_moonofffused_eng_grp8lazy"})
     arm("o_eng31_ncclinfo", "Engram 31 % candidate, 3 steps with NCCL INIT / NET logging", base, hyb,
         moon, off, ctx16, mbs2, fused, engram(112), mb, stage("nccl", "0,1", ""),
         {"slurm.env.NCCL_DEBUG": "INFO", "slurm.env.NCCL_DEBUG_SUBSYS": "INIT,NET",
