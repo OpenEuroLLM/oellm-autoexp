@@ -1180,6 +1180,32 @@ def arms5udadapt(size: str = "s1"):
              {**base, B + "angular_muown_u_decay_p": 0.5, B + "angular_muown_extra_scale_factor": 0.1})]
 
 
+RUNS5 = "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b"
+
+
+def arms5quant(size: str):
+    """4-bit robustness (user 2026-10-21): round 5's step-4000 checkpoints evaluated twice -- full
+    precision and weight-only 4-bit (QUANT_EVAL_BITS=4, groups of 32 along the input dim, close to
+    llama.cpp's Q4_K; embeddings / output / routers / norms / residual mixers kept; Megatron
+    a33f2abd1) -- on the same validation batches, in each run's own layout. Evaluation only
+    (skip_train, model weights only): our hybrid vs the Qwen3.5-like and all-attention arms."""
+    pool = dict((n, kv) for n, _, kv in arms5(size))
+    arms = {"s2": ("h5_moe", "h5_moe_mhc4", "qwen35_moe", "attn_moe"),
+            "s3": ("h5_moe", "h5_moe_mhc4", "qwen35_moe")}[size]
+    out = []
+    for a in arms:
+        src = f"{RUNS5}/screen5_{size}/{a}"
+        ev = {B + "skip_train": True, B + "eval_iters": 50, B + "no_load_optim": True,
+              B + "no_load_rng": True, B + "load": f"{src}/ckpt",
+              B + "non_persistent_global_ckpt_dir": f"{src}/ckpt_rolling", "job.est_steps": 1,
+              "slurm.sbatch.time": "01:00:00", **BAD_NODES}
+        for tag, bits in (("fp", None), ("q4", "4")):
+            env = {"backend.env.QUANT_EVAL_BITS": bits} if bits else {}
+            out.append((f"{a}_{tag}", f"{a}, step 4000, {'4-bit weights' if bits else 'full precision'}",
+                        {**pool[a], **ev, **env}))
+    return out
+
+
 def speed5_profiled(size: str = "s1"):
     """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
     with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
@@ -1250,6 +1276,7 @@ def write5():
             *[(z, "screen5kronpfb", arms5kron_pfb(z)) for z in ("s2", "s3")],
             ("s1", "screen5off", arms5offset("s1")),
             ("s1", "screen5udadapt", arms5udadapt("s1")),
+            *[(z, "quanteval5", arms5quant(z)) for z in ("s2", "s3")],
             *[(z, "screen5udecay", arms5udecay(z)) for z in ("s1", "s2")],
             *[(z, "screen5udecaysqrt", arms5udecay_sqrt(z)) for z in ("s1", "s2")],
             *[(z, "screen5udcool", arms5udcool(z)) for z in ("s1", "s2")],
