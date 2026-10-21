@@ -110,7 +110,7 @@ sweep:
           backend.megatron.linear_fla_allow_neg_eigval: false
           backend.megatron.linear_kronlstm_output_gate: lowrank
           backend.megatron.linear_kronlstm_forget_offset: 0.01239
-          slurm.sbatch.exclude: as07r3b27,as06r2b26
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28
         # CKDA + forget offset 0.01239
         - aux.arm: h5_moe_off
           backend.megatron.num_attention_heads: 6
@@ -172,4 +172,4 @@ sweep:
           backend.megatron.cuda_graph_impl: local
           backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
           backend.megatron.linear_gate_forget_offset: 0.01239
-          slurm.sbatch.exclude: as07r3b27,as06r2b26
+          slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28

@@ -1132,7 +1132,7 @@ def arms5kron_pfb(size: str):
 
 
 # MN5 nodes that kill jobs at launch (torchrun NUMA binding: "Invalid device id"; EP agent 2026-10-21)
-BAD_NODES = {"slurm.sbatch.exclude": "as07r3b27,as06r2b26"}
+BAD_NODES = {"slurm.sbatch.exclude": "as07r3b27,as06r2b26,as05r3b28"}
 # the polar forget gate's init cap, |f| <= cos(pi * 0.05), as a fixed decay: -log cos(0.157)
 POLAR_OFFSET = round(-math.log(math.cos(math.pi * 0.05)), 5)
 
@@ -1150,6 +1150,34 @@ def arms5offset(size: str = "s1"):
              {**kron, B + "linear_kronlstm_forget_offset": POLAR_OFFSET, **BAD_NODES}),
             ("h5_moe_off", f"CKDA + forget offset {POLAR_OFFSET}",
              {**h5, **w, B + "linear_gate_forget_offset": POLAR_OFFSET, **BAD_NODES})]
+
+
+def arms5udadapt(size: str = "s1"):
+    """AngularMuown's adaptive direction schedules (user 2026-10-21; Megatron 43dc8243c), each over
+    the whole schedule in one run -- stable to step 4000, then WSD linear to lr / 10 at 4800, the
+    data order of round 5 (train_iters unchanged) -- so they pair with screen5udcool's p = 1 / 1/2 / 0
+    branches and with round 5's h5_moe (p = 1) in the stable phase:
+      radius: one shared radius, kappa = 1 / rho, rho^2 <- (1 - 2 lr lambda) rho^2 + c (lr/max_lr)^2;
+        c = 0.0074, lambda = 0.083: kappa falls as (1 + c t)^-1/2 at first and settles at
+        kappa* = 1 / sqrt(c tau) = 0.3 within ~1500-3000 steps (tau = 1 / (2 lr lambda) = 1500):
+        an equilibrium step instead of a decay that keeps going (lambda alone would only show after
+        ~10k steps);
+      hyper: log kappa learnt from the gradient / previous-momentum correlation (defaults);
+      p = 1/2 at half the direction step (0.1): the s2 cooldown left p = 1/2 only 0.008 behind p = 1,
+        with its step untuned."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    lr = h5[B + "lr"]
+    sched = {B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": 4800,
+             B + "lr_wsd_decay_iters": 800, B + "min_lr": lr / 10, B + "exit_interval": 4800,
+             "job.est_steps": 4800, B + "num_workers": 8, B + "dataloader_prefetch_factor": 4, **BAD_NODES}
+    base = {**h5, **sched}
+    return [("h5_moe_radius", "AngularMuown radius schedule (c 0.0074, lambda 0.083: kappa* 0.3)",
+             {**base, B + "angular_muown_u_decay_schedule": "radius", B + "angular_muown_u_decay_scale": 0.0074,
+              B + "angular_muown_u_radius_lambda": 0.083}),
+            ("h5_moe_hyper", "AngularMuown hypergradient schedule (hyper_lr 0.02, floor 0.02)",
+             {**base, B + "angular_muown_u_decay_schedule": "hyper"}),
+            ("h5_moe_p05_u05", "AngularMuown p = 1/2, direction step 0.1",
+             {**base, B + "angular_muown_u_decay_p": 0.5, B + "angular_muown_extra_scale_factor": 0.1})]
 
 
 def speed5_profiled(size: str = "s1"):
@@ -1221,6 +1249,7 @@ def write5():
             *[(z, "screen5kronlr", arms5kron_lowrank(z)) for z in ("s1", "s2", "s3")],
             *[(z, "screen5kronpfb", arms5kron_pfb(z)) for z in ("s2", "s3")],
             ("s1", "screen5off", arms5offset("s1")),
+            ("s1", "screen5udadapt", arms5udadapt("s1")),
             *[(z, "screen5udecay", arms5udecay(z)) for z in ("s1", "s2")],
             *[(z, "screen5udecaysqrt", arms5udecay_sqrt(z)) for z in ("s1", "s2")],
             *[(z, "screen5udcool", arms5udcool(z)) for z in ("s1", "s2")],
