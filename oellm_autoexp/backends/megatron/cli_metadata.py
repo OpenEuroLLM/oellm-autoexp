@@ -426,6 +426,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "attention_length_scaling": MegatronArgMetadata(
+        arg_type=str,
+        default="none",
+        help='Length-dependent attention temperature: query i scaled by f(n_i), n_i its keys (position in its document + 1). "logn": max(1, log n / log base), parameter-free (evaluation beyond the training length); "ssmax": s_h log n with a learnt s per head (Scalable-Softmax, init 1 / log base). Not with context parallelism or inference contexts.',
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "attention_length_scaling_base": MegatronArgMetadata(
+        arg_type=int,
+        default=8192,
+        help="The length where the scaling is 1 (the training sequence length).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "attention_output_gate": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -8615,6 +8631,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=0.1,
+    ),
+    "attention_length_scaling": MegatronActionSpec(
+        option_strings=("--attention-length-scaling",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="none",
+    ),
+    "attention_length_scaling_base": MegatronActionSpec(
+        option_strings=("--attention-length-scaling-base",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=8192,
     ),
     "attention_output_gate": MegatronActionSpec(
         option_strings=("--attention-output-gate",),

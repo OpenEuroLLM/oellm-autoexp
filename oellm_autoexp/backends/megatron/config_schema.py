@@ -564,6 +564,15 @@ class MegatronConfig(ConfigInterface):
     # KronLSTM write gate c = 2 sigmoid(.) - 1 in [-1, 1] (mean 0.5 at init).
     linear_kronlstm_signed_write: bool = False
 
+    # Length-dependent attention temperature: query i scaled by f(n_i), n_i its keys (position
+    # in its document + 1). "logn": max(1, log n / log base), parameter-free (evaluation
+    # beyond the training length); "ssmax": s_h log n with a learnt s per head (Scalable-
+    # Softmax, init 1 / log base). Not with context parallelism or inference contexts.
+    attention_length_scaling: str = "none"
+
+    # The length where the scaling is 1 (the training sequence length).
+    attention_length_scaling_base: int = 8192
+
     # KronLSTM: a fixed extra decay per step on every forget channel (log|f| - offset); 0.012
     # is the polar forget gate's init cap without its angle.
     linear_kronlstm_forget_offset: float = 0.0

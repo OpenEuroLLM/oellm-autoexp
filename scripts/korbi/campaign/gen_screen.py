@@ -1359,6 +1359,18 @@ def write5():
                  ("ckda", "screen5_s3", "h5_moe", dict((n, kv) for n, _, kv in arms5("s3"))["h5_moe"]),
                  ("ckda_mhc4", "screen5_s3", "h5_moe_mhc4", dict((n, kv) for n, _, kv in arms5("s3"))["h5_moe_mhc4"])],
                 tasks="kvret,passkey,lambada")),
+            # is the 4x-length retrieval breakdown softmax dilution? the same checkpoints (+ Qwen3.5-like)
+            # with parameter-free log-n attention scaling beyond 8k (Megatron 754aebf15), retrieval only
+            ("s3", "ds5logn", arms5downstream_any(
+                [(n, su, a, {**kv, B + "attention_length_scaling": "logn",
+                             B + "attention_length_scaling_base": 8192})
+                 for n, su, a, kv in [
+                     ("kron_paper", "screen5kronlr_s3", "h5_moe_kron_lr", arms5kron_lowrank("s3")[0][2]),
+                     ("kron_polar", "screen5kronpfb_s3", "h5_moe_kron_lr_pfb", arms5kron_pfb("s3")[0][2]),
+                     ("ckda", "screen5_s3", "h5_moe", dict((n, kv) for n, _, kv in arms5("s3"))["h5_moe"]),
+                     ("ckda_mhc4", "screen5_s3", "h5_moe_mhc4", dict((n, kv) for n, _, kv in arms5("s3"))["h5_moe_mhc4"]),
+                     ("qwen35", "screen5_s3", "qwen35_moe", dict((n, kv) for n, _, kv in arms5("s3"))["qwen35_moe"])]],
+                tasks="kvret")),
             ("s3", "ds5q4", arms5downstream("s3", "screen5s3cool_s3", ["h5_moe_mhc4", "h5_moe", "qwen35_moe"],
                                             extra={"tag": "q4", "bits": "4"})),
             *[(z, "quanteval5q4", arms5quant(z, "4")) for z in ("s2", "s3")],
