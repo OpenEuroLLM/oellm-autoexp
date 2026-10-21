@@ -685,7 +685,12 @@ gbs 128, 3/64 at 512), offload D2H 1.25 s (side stream), mHC kernels ~0.62 s (wr
 the next sublayer's projection (one stream read, ~100 ms = ~1 %). Rank 31: the Liger LM-head
 loop's weight gradient (mm -> .float() -> add into the bf16 buffer per 2048-token chunk) costs
 ~0.55 s / step (142 ms copies + 412 ms fp32 adds) -> LIGER_WGRAD_ADDMM=1 (one in-place GEMM per
-chunk; o21 pending).
+chunk; test: as accurate as the default vs an fp32 reference). o21 (one launch): **5,749 ->
+5,876 tok/s/GPU (+2.2 %)**, loss at step 15 7.752 vs 7.744.
+
+**Candidate after the second pass** (mHC-4 + Engram 31 %, ENGRAM_STEP_GROUP=8, canonical mHC
+strides, MEGATRON_LAZY_SINGLETON_GROUPS=1, RECOMPUTE_OFFLOAD_LEAF=1, LIGER_WGRAD_ADDMM=1, MoonEP
+pylibs_moonep2): **5,876 tok/s/GPU, 100.7 TFLOP/s** (5,601 at the start of 2026-10-21: +4.9 %).
 
 Failure note: MN5 nodes as07r3b27, as06r2b26, as05r3b28 killed jobs at launch on 2026-10-21
 (torchrun NUMA binding: AssertionError("Invalid device id")), one more node gave "CUDA error:
