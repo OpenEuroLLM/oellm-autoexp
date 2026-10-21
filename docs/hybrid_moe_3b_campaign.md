@@ -2559,3 +2559,20 @@ schedule in one job.
 - **Recommendation for the main runs:** p = 1/2 with the direction step halved
   (`angular_muown_extra_scale_factor` 0.1): kappa ~0.03 at 1M steps instead of p = 1's ~0.001.
 - **MuOwn's speed cost at production** is ~0.4 % (EP agent, corrected from 2 %).
+
+**KronLSTM's long-context retrieval in our setting** (`ds5kron_s3`; s3, step 4000, uncooled for all
+four; 10-way, 50 per length):
+
+| multi-key retrieval | 2k | 4k | 8k | 16k | 32k | LAMBADA acc (NLL) |
+|---|---:|---:|---:|---:|---:|---:|
+| KronLSTM, paper gates | 0.80 | 0.86 | 0.86 | 0.82 | 0.24 | 31.0 (3.52) |
+| KronLSTM, polar forget + erase | **0.98** | 0.88 | **0.94** | **0.94** | 0.20 | 29.6 (3.66) |
+| CKDA | 0.80 | 0.74 | 0.80 | 0.56 | 0.24 | 30.8 (3.53) |
+| CKDA + mHC-4 | 0.96 | **0.90** | 0.88 | 0.86 | **0.76** | **32.5 (3.39)** |
+
+- **The KronLSTM paper's retrieval advantage holds up to 2x the training length:** 0.82-0.94 vs
+  plain CKDA's 0.56 at 16k.
+- **At 4x it collapses with plain CKDA (~0.2).** Only mHC-4 generalizes there.
+- **CKDA + mHC-4 matches KronLSTM (polar) within 16k** and also leads on LAMBADA and loss.
+- **CKLSTM stays off the main run.**
+- **Untested:** KronLSTM polar + mHC-4.
