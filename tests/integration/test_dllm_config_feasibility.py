@@ -49,7 +49,16 @@ _DUMMY_ENVS: dict[str, str] = {
 # ── Test ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("config_name", discover_dllm_experiments(_CONFIG_DIR), ids=_experiment_id)
+_DLLM_CONFIGS: list[str] = discover_dllm_experiments(_CONFIG_DIR)
+
+
+def test_discovery_finds_dllm_experiments() -> None:
+    """Guard against an empty parametrization (for example a wrong working
+    directory)."""
+    assert _DLLM_CONFIGS, "no dllm experiments found under config/experiments/dllm"
+
+
+@pytest.mark.parametrize("config_name", _DLLM_CONFIGS, ids=_experiment_id)
 def test_dllm_experiment_config_is_feasible(
     config_name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -62,6 +71,7 @@ def test_dllm_experiment_config_is_feasible(
         monkeypatch.setenv(key, val)
     if "USER" not in os.environ:
         monkeypatch.setenv("USER", "dummy_user")
+    monkeypatch.setenv("PWD", str(Path.cwd()))
 
     config_setup = ConfigSetup(
         config_name=config_name,

@@ -13,6 +13,10 @@ aux:
   experiment_group: "megadlm-8b"
 
 backend:
+  # The MegaDLMs settings live in backend.megatron.aux (see the backend config); the
+  # megadlm_torchrun full_cmd only appends backend.aux.difflm_args, so pass them through.
+  aux:
+    difflm_args: "--model-running-mode ${backend.megatron.aux.model_running_mode} --base-model ${backend.megatron.aux.base_model} --attention-mask-type ${backend.megatron.aux.attention_mask_type} --mask-token ${backend.megatron.aux.mask_token}"
   megatron:
     # ── 10k-step stability run ──────────────────────────────────────────────
     train_iters: 10000

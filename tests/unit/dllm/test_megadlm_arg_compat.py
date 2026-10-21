@@ -17,7 +17,7 @@ import pytest
 from oellm_autoexp.config.loader import load_config_reference
 from oellm_autoexp.config.schema import ConfigSetup
 from oellm_autoexp.dllm.render import (
-    ARGPARSER_FILES,
+    argparser_files_for,
     discover_dllm_experiments,
     extract_script_flags,
     parse_accepted_flags,
@@ -47,7 +47,6 @@ _MEGADLM_SOURCES: tuple[Path, ...] = (
     REPO_ROOT / "submodules/MegaDLMs/megatron/training/arguments.py",
     REPO_ROOT / "submodules/MegaDLMs/custom_args/difflm.py",
 )
-_ACCEPTED_SOURCES: tuple[Path, ...] = tuple(REPO_ROOT / rel for rel in ARGPARSER_FILES)
 _DLLM_CONFIGS: list[str] = discover_dllm_experiments(_CONFIG_DIR)
 _SANITY_FLAGS: tuple[str, ...] = (
     "--seq-length",
@@ -69,6 +68,7 @@ def _set_render_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     if "USER" not in os.environ:
         monkeypatch.setenv("USER", "dummy_user")
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("PWD", str(REPO_ROOT))
 
 
 def test_parser_sources_declare_expected_flags() -> None:
@@ -102,8 +102,10 @@ def test_dllm_experiment_flags_are_accepted(
     for command in commands:
         emitted.update(extract_script_flags(command, launcher))
 
-    unknown = sorted(emitted - parse_accepted_flags(_ACCEPTED_SOURCES))
-    assert not unknown, f"{config_name}: flags not accepted by MegaDLMs: {unknown}"
+    assert emitted, f"{config_name}: no flags found after the launcher {launcher}"
+    accepted = parse_accepted_flags(REPO_ROOT / rel for rel in argparser_files_for(launcher))
+    unknown = sorted(emitted - accepted)
+    assert not unknown, f"{config_name}: flags not accepted by {launcher}: {unknown}"
 
 
 _LAUNCHER = "./submodules/MegaDLMs/pretrain_difflm.py"
@@ -132,3 +134,17 @@ def test_extract_script_flags_requires_the_launcher_token() -> None:
     command = f"torchrun --nproc-per-node 1 {_LAUNCHER} --bf16"
     with pytest.raises(ValueError, match="pretrain_block_difflm.py"):
         extract_script_flags(command, "./submodules/MegaDLMs/pretrain_block_difflm.py")
+
+
+def test_bd_flags_are_accepted_only_by_the_block_diffusion_launcher() -> None:
+    """--bd-* flags pass for pretrain_block_difflm.py and fail for MegaDLMs' pretrain_difflm.py."""
+    block = parse_accepted_flags(
+        REPO_ROOT / rel
+        for rel in argparser_files_for("./oellm_autoexp/dllm/pretrain_block_difflm.py")
+    )
+    plain = parse_accepted_flags(REPO_ROOT / rel for rel in argparser_files_for(_LAUNCHER))
+    assert "--bd-block-size" in block
+    assert "--bd-block-size" not in plain
+    assert "--mask-token" in block and "--mask-token" in plain
+    with pytest.raises(ValueError):
+        argparser_files_for("./some/other_launcher.py")

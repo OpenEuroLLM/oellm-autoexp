@@ -20,12 +20,38 @@ from oellm_autoexp.config.schema import BackendInterface, ConfigSetup, RootConfi
 from oellm_autoexp.orchestrator import build_execution_plan
 
 # Argparse sources that define the flags a dllm launch may pass. Paths are relative to the
-# repository root. oellm_autoexp/dllm/args.py does not exist yet; missing paths are skipped.
-ARGPARSER_FILES: tuple[str, ...] = (
+# repository root. MegaDLMs' own launcher accepts only the MegaDLMs flags; the block-diffusion
+# launcher chains them with the --bd-* flags of oellm_autoexp/dllm/args.py.
+MEGADLMS_ARGPARSER_FILES: tuple[str, ...] = (
     "submodules/MegaDLMs/megatron/training/arguments.py",
     "submodules/MegaDLMs/custom_args/difflm.py",
-    "oellm_autoexp/dllm/args.py",
 )
+ARGPARSER_FILES: tuple[str, ...] = (*MEGADLMS_ARGPARSER_FILES, "oellm_autoexp/dllm/args.py")
+LAUNCHER_ARGPARSER_FILES: dict[str, tuple[str, ...]] = {
+    "pretrain_difflm.py": MEGADLMS_ARGPARSER_FILES,
+    "pretrain_block_difflm.py": ARGPARSER_FILES,
+}
+
+
+def argparser_files_for(launcher_script: str) -> tuple[str, ...]:
+    """Return the argparse sources that the given launcher script parses its
+    flags with.
+
+    Args:
+        launcher_script: Launcher path from the backend config, for example
+            ``"./oellm_autoexp/dllm/pretrain_block_difflm.py"``.
+
+    Returns:
+        The repository-relative argparse source files for that launcher.
+
+    Raises:
+        ValueError: If the launcher is not a known dllm launcher.
+    """
+    name = os.path.basename(launcher_script)
+    if name not in LAUNCHER_ARGPARSER_FILES:
+        raise ValueError(f"unknown dllm launcher {launcher_script!r}")
+    return LAUNCHER_ARGPARSER_FILES[name]
+
 
 _LINE_CONTINUATION = re.compile(r"\\\r?\n")
 
@@ -101,7 +127,7 @@ def render_launch_commands(config_name: str, config_dir: Path) -> list[str]:
         One launch command string per planned job, in plan order.
 
     Raises:
-        ValueError: If a planned job does not carry a ``RootConfig``.
+        TypeError: If a planned job does not carry a ``RootConfig``.
     """
     config_setup = ConfigSetup(
         pwd=os.path.abspath(os.curdir),
@@ -113,7 +139,7 @@ def render_launch_commands(config_name: str, config_dir: Path) -> list[str]:
     commands: list[str] = []
     for job in plan.jobs:
         if not isinstance(job.config, RootConfig):
-            raise ValueError("JobPlan.config must be RootConfig")
+            raise TypeError("JobPlan.config must be RootConfig")
         backend = job.config.backend.instantiate(BackendInterface)
         commands.append(backend.build_launch_command())
     return commands
