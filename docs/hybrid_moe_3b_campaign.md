@@ -2576,3 +2576,23 @@ four; 10-way, 50 per length):
 - **CKDA + mHC-4 matches KronLSTM (polar) within 16k** and also leads on LAMBADA and loss.
 - **CKLSTM stays off the main run.**
 - **Untested:** KronLSTM polar + mHC-4.
+
+**Is the 4x breakdown softmax dilution?** (`ds5logn_s3`.) The same s3 step-4000 checkpoints, with
+parameter-free log-n attention scaling beyond 8k: query i scaled by max(1, log n_i / log 8192),
+`attention_length_scaling: logn`, Megatron 754aebf15. Multi-key retrieval, without -> with
+scaling (the <= 8k results are identical, as they must be):
+
+| model | 16k | 32k |
+|---|---:|---:|
+| KronLSTM, paper gates | 0.82 -> 0.88 | 0.24 -> 0.48 |
+| KronLSTM, polar gates | 0.94 -> 0.94 | 0.20 -> 0.28 |
+| CKDA | 0.56 -> 0.62 | 0.24 -> 0.40 |
+| CKDA + mHC-4 | 0.86 -> 0.88 | 0.76 -> **0.90** |
+| Qwen3.5-like | -> 0.30 | -> 0.24 |
+
+- **Dilution is a large part of it** for the NoPE models.
+- **Scaling does not fully recover the plain mixers;** mHC-4 still provides most of the length
+  generalization.
+- **The RoPE arm is not helped:** its failure is positional extrapolation.
+- **Next:** learnt SSMax in training (`attention_length_scaling: ssmax`, s per head, init 1 / log
+  base).
