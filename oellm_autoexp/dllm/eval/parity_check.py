@@ -172,8 +172,9 @@ def main() -> int:
     from megatron.training.checkpointing import load_checkpoint
     from megatron.training.utils import unwrap_model
 
-    from oellm_autoexp.dllm.pretrain_block_difflm import model_provider
+    from oellm_autoexp.dllm.pretrain_block_difflm import model_provider, skip_legacy_fused_kernels
 
+    skip_legacy_fused_kernels()
     initialize_megatron(
         extra_args_provider=_parity_extra_args_provider,
         args_defaults={"tokenizer_type": "HuggingFaceTokenizer"},

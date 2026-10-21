@@ -1,5 +1,6 @@
 # Exact package versions of the native (no-container) GPU stack of the dllm launcher on Snellius
-# (.venv-gpu, Python 3.12.3 from the /sw 2024 module tree), from pip freeze of build job 28427716.
+# (.venv-gpu, Python 3.12.3 from the /sw 2024 module tree), from pip freeze of build job 28427716,
+# plus pandas (imported by megatron/core/datasets/gpt_dataset.py).
 # Build: oellm_autoexp/dllm/build_native_stack_snellius.sbatch (torch from
 # https://download.pytorch.org/whl/cu126; Transformer Engine compiled with --no-build-isolation
 # against this torch, CUDA 12.6, cuDNN 9.5 and NCCL 2.22 headers from /sw, NVTE_CUDA_ARCHS=90;
@@ -71,6 +72,7 @@ opentelemetry-proto==1.45.1
 opentelemetry-sdk==1.45.1
 opentelemetry-semantic-conventions==0.66b1
 packaging==26.3
+pandas==3.0.6
 pillow==13.0.0
 platformdirs==4.13.5
 protobuf==7.36.2
@@ -80,6 +82,7 @@ pybind11==3.1.0
 pydantic==2.14.1
 pydantic_core==2.50.1
 Pygments==2.21.0
+python-dateutil==2.9.0.post0
 PyYAML==6.0.3
 regex==2026.9.29
 requests==2.34.2
@@ -97,10 +100,10 @@ tiktoken==0.14.0
 tokenizers==0.22.2
 torch==2.13.0+cu126
 tqdm==4.70.1
-transformers==5.14.1
 transformer_engine==2.16.0
 transformer_engine_cu12==2.16.0
 transformer_engine_torch==2.16.0
+transformers==5.14.1
 triton==3.7.1
 typer==0.27.3
 typing-inspection==0.4.4

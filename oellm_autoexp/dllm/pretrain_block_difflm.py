@@ -297,8 +297,22 @@ def install_throughput_log() -> None:
     megatron_training.training_log = training_log
 
 
+def skip_legacy_fused_kernels() -> None:
+    """Make ``megatron.legacy.fused_kernels.load`` a no-op.
+
+    MegaDLMs' ``initialize_megatron`` calls it unconditionally. It only runs
+    ``$CUDA_HOME/bin/nvcc -V`` and creates a build directory inside the submodule; the legacy
+    kernels it prepares serve legacy models, which this launcher refuses. The native stack has no
+    CUDA toolkit, so the nvcc call would fail there.
+    """
+    from megatron.legacy import fused_kernels
+
+    fused_kernels.load = lambda args: None
+
+
 def main() -> None:
     """Entry point: Megatron ``pretrain`` with the chained argument provider."""
+    skip_legacy_fused_kernels()
     train_valid_test_datasets_provider.is_distributed = True
     # Compiled flex_attention compiles once per mask shape (batch size, block size); keep the
     # Dynamo cache large enough that a block schedule or eval batches never fall back to eager.

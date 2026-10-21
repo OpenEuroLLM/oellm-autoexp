@@ -30,6 +30,9 @@ env:
   # Converted checkpoints are torch-format pickles (spec section 13), and jobs run offline.
   TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD: "1"
   HF_HUB_OFFLINE: "1"
+  # W&B runs are written to megatron.wandb_save_dir; upload them with `wandb sync <dir>`. Jobs do
+  # not depend on W&B credentials on the compute nodes.
+  WANDB_MODE: offline
 
 # MegaDLMs flags (difflm_args) and launcher flags (bd_args) are appended verbatim to full_cmd,
 # because build_cmdline_args only emits keys of the stock Megatron schema.

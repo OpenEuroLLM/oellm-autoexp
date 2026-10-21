@@ -43,7 +43,7 @@ nvcc --version | tail -2
 "$VENV/bin/pip" install --upgrade pip setuptools wheel
 "$VENV/bin/pip" install "torch==2.13.0" --index-url https://download.pytorch.org/whl/cu126
 "$VENV/bin/pip" install "transformers==5.14.1" safetensors einops regex sentencepiece tiktoken \
-    nltk pybind11 packaging six tensorboard wandb pyarrow ninja psutil
+    nltk pybind11 packaging six tensorboard wandb pyarrow ninja psutil pandas
 "$VENV/bin/pip" install --no-build-isolation \
     "transformer_engine[pytorch]==2.16.0" "transformer_engine_cu12==2.16.0"
 # Transformer Engine 2.16 looks for the pip CUDA runtime in nvidia/cudart (or cu13/, cuda_cudart/),
@@ -51,6 +51,10 @@ nvcc --version | tail -2
 # "cudart shared object not found" when no CUDA toolkit is loaded at run time.
 SITE="$("$VENV/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
 [ -e "$SITE/nvidia/cudart" ] || ln -s cuda_runtime "$SITE/nvidia/cudart"
+# MegaDLMs builds its dataset helpers with `python3-config --extension-suffix`. A venv has no
+# python3-config, so the build would take the system Python's suffix (cpython-39), which this
+# Python cannot import.
+[ -e "$VENV/bin/python3-config" ] || ln -s "$EBROOTPYTHON/bin/python3-config" "$VENV/bin/python3-config"
 "$VENV/bin/pip" check || true
 "$VENV/bin/python" - <<'EOF'
 import importlib.metadata as md
