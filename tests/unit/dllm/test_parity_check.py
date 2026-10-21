@@ -17,6 +17,7 @@ from oellm_autoexp.dllm.eval.parity_check import (
     add_parity_args,
     compare_logits,
     i3_compare,
+    parity_dtype,
     parity_verdict,
 )
 
@@ -72,3 +73,11 @@ def test_add_parity_args_defaults() -> None:
     assert args.parity_hf == "x"
     assert args.parity_num_seqs == 4
     assert args.parity_seq_len == 512
+
+
+def test_parity_dtype_follows_the_megatron_run() -> None:
+    """The HF side runs in the Megatron dtype; without --bf16 or --fp16 both
+    sides are fp32."""
+    assert parity_dtype(bf16=True, fp16=False) is torch.bfloat16
+    assert parity_dtype(bf16=False, fp16=True) is torch.float16
+    assert parity_dtype(bf16=False, fp16=False) is torch.float32

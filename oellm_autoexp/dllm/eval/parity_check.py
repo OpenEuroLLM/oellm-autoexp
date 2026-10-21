@@ -39,6 +39,24 @@ TOP1_MIN = 0.99
 KL_MAX = 1e-3
 
 
+def parity_dtype(bf16: bool, fp16: bool) -> torch.dtype:
+    """Return the dtype of the Megatron run (``--bf16``, ``--fp16``, else fp32)
+    for the HF side.
+
+    Args:
+        bf16: Megatron's ``args.bf16``.
+        fp16: Megatron's ``args.fp16``.
+
+    Returns:
+        ``torch.bfloat16``, ``torch.float16`` or ``torch.float32``.
+    """
+    if bf16:
+        return torch.bfloat16
+    if fp16:
+        return torch.float16
+    return torch.float32
+
+
 def compare_logits(reference: Tensor, candidate: Tensor, real_vocab: int) -> dict[str, float]:
     """Compare two logit tensors over the real vocabulary.
 
@@ -198,8 +216,10 @@ def main() -> int:
     if rank == 0:
         from transformers import AutoModelForCausalLM
 
+        # HF runs in the Megatron dtype; the chain runs the check in fp32 (D-046).
+        hf_dtype = parity_dtype(args.bf16, args.fp16)
         hf = AutoModelForCausalLM.from_pretrained(
-            args.parity_hf, dtype=torch.bfloat16, attn_implementation="sdpa"
+            args.parity_hf, dtype=hf_dtype, attn_implementation="sdpa"
         ).cuda()
         hf.eval()
         with torch.no_grad():
@@ -211,6 +231,7 @@ def main() -> int:
             "load": args.load,
             "hf": args.parity_hf,
             "tensor_model_parallel_size": args.tensor_model_parallel_size,
+            "dtype": str(hf_dtype).removeprefix("torch."),
             "num_seqs": args.parity_num_seqs,
             "seq_len": args.parity_seq_len,
             "real_vocab": real_vocab,
