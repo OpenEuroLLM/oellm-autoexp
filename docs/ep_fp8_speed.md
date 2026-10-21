@@ -652,7 +652,23 @@ in MoonEP. `$HYBRID_ENV/pylibs_moonep2` = + container/patches/moonep-barrier-tim
 arrive with two strides at the batch dim (the Engram memory is transposed from [b, s]); Dynamo
 guards on it, recompiles `_mhc_write` up to its limit (8) and runs the rest eager. Megatron
 5c9debec1 gives contiguous inputs their canonical strides (a view) before the compiled calls:
-one graph. A/B o17 (pending).
+one graph. A/B o17 (same time, groups of 8): **5,646 -> 5,776 tok/s/GPU (+2.3 %)**, memory 0.95 ->
+0.89, no recompile-limit warnings.
+
+**Angular MuOwn's cost** (o18, timers via logging_level 20): optimizer 230-260 ms vs Adam's
+54-83 ms per step (+~0.18 s of 46 s, 0.4 %); tok/s 5,689 vs 5,727 (-0.7 %). The -2.1 % of o11b
+was launch noise: nothing to optimize there.
+
+**Single-rank NCCL groups** (MEM_BREAKDOWN per group): each costs ~0.38 GiB under the bound
+device (eager init), the real groups 0.03-0.19. At TP = CP = ETP = 1: TP, CP, TP x CP, ETP, both
+GTP-remat groups, position embedding (stage 0). MEGATRON_LAZY_SINGLETON_GROUPS=1 (Megatron
+parallel_state.create_group; multi-GPU test) creates them unbound, then binds the device for a
+lazy init: o19 model-parallel communicators 3.52 -> 0.86 GiB, non-PyTorch **7.93 -> 6.03 GiB**
+(stage 0; 7.5 -> 5.6 elsewhere: a few are lazily created at a first collective), stage 0 in
+use 62.4 -> 58.9 GiB; 5,778 vs 5,740 tok/s/GPU (no cost).
+
+**Candidate now**: mHC-4 + Engram 31 %, groups-of-8 step lookup, canonical strides, lazy
+singleton groups: **~5,780 tok/s/GPU** (from 5,601 this morning, +3.2 %).
 
 Failure note: MN5 nodes as07r3b27, as06r2b26, as05r3b28 killed jobs at launch on 2026-10-21
 (torchrun NUMA binding: AssertionError("Invalid device id")), one more node gave "CUDA error:
