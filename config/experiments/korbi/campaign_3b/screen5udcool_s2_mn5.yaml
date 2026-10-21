@@ -118,6 +118,7 @@ sweep:
           backend.megatron.lr_wsd_decay_iters: 800
           backend.megatron.override_opt_param_scheduler: true
           backend.megatron.allow_new_param_groups_on_load: true
+          backend.env.ANGULAR_MUOWN_LEGACY_FACTORY_ROWS: '1'
         # p = 1/2, cooled down 4000 -> 4800
         - aux.arm: h5_moe_p05
           backend.megatron.num_attention_heads: 8

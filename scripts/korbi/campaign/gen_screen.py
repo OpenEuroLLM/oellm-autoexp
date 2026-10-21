@@ -1109,7 +1109,9 @@ def arms5udcool(size: str):
             B + "exit_interval": 4800, "job.est_steps": 800}
     workers = {"s1": (8, 4), "s2": (6, 3)}[size]
     w = {B + "num_workers": workers[0], B + "dataloader_prefetch_factor": workers[1]}
-    out = [("h5_moe_p1", "p = 1 (default), cooled down 4000 -> 4800", {**h5, **w, **cool}),
+    # round 5's s2 checkpoint has the pre-1bbeb2b55 compact layout for factory weights
+    legacy = {"backend.env.ANGULAR_MUOWN_LEGACY_FACTORY_ROWS": "1"} if size == "s2" else {}
+    out = [("h5_moe_p1", "p = 1 (default), cooled down 4000 -> 4800", {**h5, **w, **cool, **legacy}),
            ("h5_moe_p05", "p = 1/2, cooled down 4000 -> 4800",
             {**arms5udecay_sqrt(size)[0][2], **cool})]
     if size == "s1":
