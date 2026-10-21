@@ -1671,9 +1671,12 @@ class MegatronConfig(ConfigInterface):
     # over all n * h. 'compute': the paper's x = (x_c, x_m) with every sublayer (mixer and MLP
     # / MoE) reading and writing stream 0 only -- the compute part x_c, d = hidden_size -- the
     # memory streams starting at zero and the head reading stream 0 (the paper's appendix-B
-    # variant: temporal mixing on x_c only). 'mhc': dense mHC (read / write / stream mixer)
-    # with the internal attention after each mixer sublayer's write. 'none' disables. Requires
-    # mhc (dense: no routed residual, no mhc_lerp, no mhc_per_layer).
+    # variant: temporal mixing on x_c only). 'full': the paper's low-rank temporal mixing --
+    # each mixer sublayer reads all n * h dims through a latent down-projection n h -> h and
+    # writes through an up-projection h -> n h (8 h^2 parameters per mixer; the mixer keeps
+    # width h), MLP / MoE on x_c as in 'compute'. 'mhc': dense mHC (read / write / stream
+    # mixer) with the internal attention after each mixer sublayer's write. 'none' disables.
+    # Requires mhc (dense: no routed residual, no mhc_lerp, no mhc_per_layer).
     mhc_internal_attention: str = "none"
 
     # Heads of the internal attention (over the h-wide stream tokens); 0 =

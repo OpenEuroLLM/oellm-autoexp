@@ -1154,21 +1154,39 @@ def arms5offset(size: str = "s1"):
 
 def arms5iat(size: str = "s1"):
     """Internal attention over the residual streams (IAT, openreview LGFDpZioyZ; user 2026-10-22;
-    Megatron 8d5fd0296): per token, the 4 d-wide streams attend to each other after every mixer
-    sublayer (shared d x d Q / K / V / O, learned stream positions; ~4 d^2 params per mixer layer).
-    The mixers keep width d (user: "compute dimension strictly as for mHC"), so both arms pair with
-    round 5's h5_moe / h5_moe_mhc4:
+    Megatron mhc_internal_attention): per token, the 4 d-wide streams attend to each other after
+    every mixer sublayer (shared d x d Q / K / V / O, learned stream positions). The mixers keep
+    width d, so all arms pair with round 5's h5_moe / h5_moe_mhc4:
       iat4: the paper's x = (x_c, x_m), m = 3d; every sublayer on x_c (stream 0), memory starts at
         zero, head on x_c -- the paper's appendix-B variant (temporal mixing on x_c only, worse than
-        the plain transformer on TinyStories; the full-width low-rank one was clearly better);
-      mhc4_iat: mHC-4 (its read / write / stream mixer, mixer lr x0.25) + the internal attention."""
+        the plain transformer on TinyStories);
+      iat4_full: the paper's low-rank temporal mixing through a latent: each mixer reads
+        down(4d -> d) of all streams and writes up(d -> 4d) (user: "latent downprojection");
+      mhc4_iat: mHC-4 (its read / write / stream mixer, mixer lr x0.25) + the internal attention.
+    Total parameters matched to the references through the routed experts' width (user:
+    "compensate ... with MLP params / experts"; 144 experts and EP 4 kept): per mixer layer the
+    internal attention adds 4 d^2 + 8 d (2.37M at s1), the latent read / write 8 d^2 (4.72M); one
+    unit of expert width is 144 x 3 d per MoE layer (0.33M at s1) -> width 512 - 8 (IAttn; -0.29M
+    per layer net) and 512 - 24 (full; -0.88M), multiples of 8. Active parameters stay higher
+    (+2.4M / +7.1M per block): the method's cost, reported with tok/s."""
     pool = dict((n, kv) for n, _, kv in arms5(size))
+    hidden, *_ = R4_SIZES[size]
     w = {B + "num_workers": 8, B + "dataloader_prefetch_factor": 4}
-    iat = lambda mode: {B + "mhc_internal_attention": mode}  # noqa: E731
-    return [("h5_moe_iat4", "IAT compute mode: 4 streams, sublayers on x_c, internal attention",
-             {**pool["h5_moe_mhc4"], **w, **iat("compute"), **BAD_NODES}),
-            ("h5_moe_mhc4_iat", "mHC-4 + internal attention after every mixer",
-             {**pool["h5_moe_mhc4"], **w, **iat("mhc"), **BAD_NODES})]
+    unit = 144 * 3 * hidden  # one unit of routed-expert width, per MoE layer
+
+    def iat(mode, ref):
+        extra = 4 * hidden ** 2 + 8 * hidden + (8 * hidden ** 2 if mode == "full" else 0)
+        cut = round(extra / unit / 8) * 8
+        width = ref[B + "moe_ffn_hidden_size"] - cut
+        return {**ref, **w, B + "mhc_internal_attention": mode, B + "moe_ffn_hidden_size": width,
+                **BAD_NODES}
+
+    mhc4 = pool["h5_moe_mhc4"]
+    return [("h5_moe_iat4", "IAT compute mode: sublayers on x_c, internal attention",
+             iat("compute", mhc4)),
+            ("h5_moe_iat4_full", "IAT full: latent read / write of all 4d by the mixers",
+             iat("full", mhc4)),
+            ("h5_moe_mhc4_iat", "mHC-4 + internal attention after every mixer", iat("mhc", mhc4))]
 
 
 def arms5udadapt(size: str = "s1"):
