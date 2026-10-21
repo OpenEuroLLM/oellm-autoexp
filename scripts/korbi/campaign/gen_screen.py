@@ -1183,7 +1183,7 @@ def arms5udadapt(size: str = "s1"):
 RUNS5 = "/gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/autoexp/campaign_3b"
 
 
-def arms5quant(size: str):
+def arms5quant(size: str, bits: str | None = None):
     """4-bit robustness (user 2026-10-21): round 5's step-4000 checkpoints evaluated twice -- full
     precision and weight-only 4-bit (QUANT_EVAL_BITS=4, groups of 32 along the input dim, close to
     llama.cpp's Q4_K; embeddings / output / routers / norms / residual mixers kept; Megatron
@@ -1199,10 +1199,11 @@ def arms5quant(size: str):
               B + "no_load_rng": True, B + "load": f"{src}/ckpt",
               B + "non_persistent_global_ckpt_dir": f"{src}/ckpt_rolling", "job.est_steps": 1,
               "slurm.sbatch.time": "01:00:00", **BAD_NODES}
-        for tag, bits in (("fp", None), ("q4", "4")):
-            env = {"backend.env.QUANT_EVAL_BITS": bits} if bits else {}
-            out.append((f"{a}_{tag}", f"{a}, step 4000, {'4-bit weights' if bits else 'full precision'}",
-                        {**pool[a], **ev, **env}))
+        # one suite per precision: an array job shares one script header (env included)
+        env = {"backend.env.QUANT_EVAL_BITS": bits} if bits else {}
+        tag = f"q{bits}" if bits else "fp"
+        out.append((f"{a}_{tag}", f"{a}, step 4000, {f'{bits}-bit weights' if bits else 'full precision'}",
+                    {**pool[a], **ev, **env}))
     return out
 
 
@@ -1277,6 +1278,7 @@ def write5():
             ("s1", "screen5off", arms5offset("s1")),
             ("s1", "screen5udadapt", arms5udadapt("s1")),
             *[(z, "quanteval5", arms5quant(z)) for z in ("s2", "s3")],
+            *[(z, "quanteval5q4", arms5quant(z, "4")) for z in ("s2", "s3")],
             *[(z, "screen5udecay", arms5udecay(z)) for z in ("s1", "s2")],
             *[(z, "screen5udecaysqrt", arms5udecay_sqrt(z)) for z in ("s1", "s2")],
             *[(z, "screen5udcool", arms5udcool(z)) for z in ("s1", "s2")],
