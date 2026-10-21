@@ -74,7 +74,7 @@ untie_embeddings_and_output_weights: True
 
 # Normalization
 normalization: RMSNorm
-norm_epsilon: 1.e-6
+layernorm_epsilon: 1.e-6
 bf16: True
 
 # Disable dropout
