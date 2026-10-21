@@ -1086,6 +1086,35 @@ def arms5kron_lowrank(size: str):
     return out
 
 
+# the step-4000 checkpoints each cooldown branch starts from (hard-linked into the branch's
+# ckpt_rolling before the launch: scripts/korbi/campaign/link_branch_ckpt.sh)
+UDCOOL_FROM = {"h5_moe_p1": "screen5_{z}/h5_moe", "h5_moe_p05": "screen5udecaysqrt_{z}/h5_moe_udp05",
+               "h5_moe_p0_u025": "screen5udecay_{z}/h5_moe_udoff_u025"}
+
+
+def arms5udcool(size: str):
+    """Angular MuOwn's U-decay, the fair comparison (user 2026-10-20/21): each schedule cooled down
+    the visible way -- WSD, linear to lr / 10 over steps 4000-4800 -- from its own step-4000
+    checkpoint (same data order: train_iters unchanged, the branch resumes at 4000), so the hidden
+    decay's annealing advantage in the stable phase is matched by the visible one. p = 1 (round 5's
+    h5_moe), p = 1/2 (screen5udecaysqrt) and, at s1, p = 0 at direction step 0.05 (the best p = 0
+    arm; s2's best p = 0 arm died at step 3360 from a node failure, past the point of interest)."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    lr = h5[B + "lr"]
+    cool = {B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": 4800,
+            B + "lr_wsd_decay_iters": 800, B + "min_lr": lr / 10, B + "override_opt_param_scheduler": True,
+            B + "exit_interval": 4800, "job.est_steps": 800}
+    workers = {"s1": (8, 4), "s2": (6, 3)}[size]
+    w = {B + "num_workers": workers[0], B + "dataloader_prefetch_factor": workers[1]}
+    out = [("h5_moe_p1", "p = 1 (default), cooled down 4000 -> 4800", {**h5, **w, **cool}),
+           ("h5_moe_p05", "p = 1/2, cooled down 4000 -> 4800",
+            {**arms5udecay_sqrt(size)[0][2], **cool})]
+    if size == "s1":
+        out.append(("h5_moe_p0_u025", "p = 0, direction step 0.05, cooled down 4000 -> 4800",
+                    {**dict((n, kv) for n, _, kv in arms5udecay(size))["h5_moe_udoff_u025"], **cool}))
+    return out
+
+
 def speed5_profiled(size: str = "s1"):
     """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
     with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
@@ -1155,6 +1184,7 @@ def write5():
             *[(z, "screen5kronlr", arms5kron_lowrank(z)) for z in ("s1", "s2", "s3")],
             *[(z, "screen5udecay", arms5udecay(z)) for z in ("s1", "s2")],
             *[(z, "screen5udecaysqrt", arms5udecay_sqrt(z)) for z in ("s1", "s2")],
+            *[(z, "screen5udcool", arms5udcool(z)) for z in ("s1", "s2")],
             ("s1", "screen5kronsmoke", [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})
                                         for n, c, kv in arms5kron("s1")])] + [
             ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)] + [
