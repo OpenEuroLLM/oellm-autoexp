@@ -692,6 +692,34 @@ chunk; test: as accurate as the default vs an fp32 reference). o21 (one launch):
 strides, MEGATRON_LAZY_SINGLETON_GROUPS=1, RECOMPUTE_OFFLOAD_LEAF=1, LIGER_WGRAD_ADDMM=1, MoonEP
 pylibs_moonep2): **5,876 tok/s/GPU, 100.7 TFLOP/s** (5,601 at the start of 2026-10-21: +4.9 %).
 
+### 6d-6. Larger Engram tables (2026-10-22)
+
+Memory per table parameter (engram_table_parallel "dp", lean optimizer): fp32 row 4 B, dense fp32
+gradient buffer 4 B, bf16 momentum 2 B (+ one fp32 second moment per row): 10 B. The tables are
+sharded over their stage's 8 GPUs (tp_dp_cp: the node's 4 EP ranks x the stage's 2 nodes);
+the two layers (before blocks 1 and 24) sit on stage 0 and stage 3 (VPP2 layout 7/7/7/6 |
+6/6/6/3), so stages 1 and 2 hold none.
+
+**Sparse table gradients** (ENGRAM_SPARSE_GRAD=1, Megatron engram_sharded.SparseRowGrad): the
+lookups' backwards append (row, gradient) pairs, coalesced into sorted unique rows; TableAdam
+scatters each chunk's rows into a zero chunk, so the update is the exact dense one (rows without
+a gradient still move by their momentum); the norm reads the coalesced values, the chained clip
+scales them through EngramTableOptimizer.clip_sparse_grads. 10 -> 6 B per table parameter.
+Tests: buffer = dense buffer, TableAdam over it = TableAdam over the dense buffer (4 steps, one
+without gradients), both step-lookup tests in both modes (4 GPUs).
+
+| o22 (one launch) | tok/s/GPU | stage 0 / 3 in use (GiB) | loss @15 |
+|---|---:|---:|---:|
+| candidate + LIGER_WGRAD_ADDMM (dense gradients) | 5,782 | 57.43 / 52.79 | 7.748 |
+| + ENGRAM_SPARSE_GRAD | 5,802 | 55.28 / 50.72 | 7.731 |
+| + tables 2x (21.8B) | 5,858 | 59.25 / 54.67 | 7.727 |
+
+Table size costs no throughput (compute and lookup traffic scale with tokens). Ceiling with the
+tables on their own stages (3 GiB margin): ~12.6B on stage 0 + ~19B on stage 3 = **~32B**.
+40B needs the tables spread over the pipeline axis too (each GPU 1/32 of both: 40B x 6 B / 32 =
+7.5 GB on every GPU), which needs the row exchange at points where all stages are in step
+(step start / end) -- next.
+
 Failure note: MN5 nodes as07r3b27, as06r2b26, as05r3b28 killed jobs at launch on 2026-10-21
 (torchrun NUMA binding: AssertionError("Invalid device id")), one more node gave "CUDA error:
 unknown error" mid-run; exclude with +slurm.sbatch.exclude.
