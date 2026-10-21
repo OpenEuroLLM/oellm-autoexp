@@ -1447,6 +1447,14 @@ def ckpt_offload():
         mbs2, fused, engram(112), memb,
         {"backend.env.ENGRAM_STEP_GROUP": "8", "backend.env.MEGATRON_LAZY_SINGLETON_GROUPS": "1",
          "aux.array_tag": "_moonofffused_eng_grp8lazy"})
+    # o20: the freed memory (lazy singleton groups, receive-buffer offload) for less recompute
+    # on the later stages (OOM in o10b without them)
+    cand = {"backend.env.ENGRAM_STEP_GROUP": "8", "backend.env.MEGATRON_LAZY_SINGLETON_GROUPS": "1",
+            "backend.env.RECOMPUTE_OFFLOAD_LEAF": "1"}
+    for tag, skip in (("base", ""), ("s0001", "0,0,0,1"), ("s0012", "0,0,1,2")):
+        arm(f"o_cand_{tag}", f"candidate (groups of 8, lazy groups, leaf offload), skip {skip or '-'}",
+            base, hyb, moon, off, ctx16, mbs2, fused, engram(112), memb, cand,
+            {"backend.env.RECOMPUTE_SKIP_CHUNKS": skip, "aux.array_tag": f"_moonofffused_cand_{tag}"})
     arm("o_eng31_ncclinfo", "Engram 31 % candidate, 3 steps with NCCL INIT / NET logging", base, hyb,
         moon, off, ctx16, mbs2, fused, engram(112), mb, stage("nccl", "0,1", ""),
         {"slurm.env.NCCL_DEBUG": "INFO", "slurm.env.NCCL_DEBUG_SUBSYS": "INIT,NET",
