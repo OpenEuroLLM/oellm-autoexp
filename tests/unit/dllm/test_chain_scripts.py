@@ -177,3 +177,76 @@ def test_eval_chain_reports_a_failed_parallel_task(tmp_path: Path) -> None:
     result = _run(["bash", str(EVAL_CHAIN)], env)
     assert result.returncode == 1
     assert "m1 FAILED" in result.stdout
+
+
+STAGE_DATA = REPO_ROOT / "oellm_autoexp/dllm/stage_data.sh"
+
+
+def _dataset(tmp_path: Path, *names: str) -> list[str]:
+    data = tmp_path / "data"
+    data.mkdir()
+    prefixes = []
+    for name in names:
+        (data / f"{name}.bin").write_bytes(b"\x01" * 4096)
+        (data / f"{name}.idx").write_bytes(b"\x02" * 64)
+        prefixes.append(str(data / name))
+    return prefixes
+
+
+def _recording_command(tmp_path: Path) -> tuple[Path, Path]:
+    """A command that writes each argument, and whether <arg>.bin exists, to a
+    file."""
+    record = tmp_path / "args.txt"
+    script = tmp_path / "record.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        f'for a in "$@"; do if [ -f "$a.bin" ]; then echo "$a bin"; else echo "$a"; fi; done > {record}\n'
+        'exit "${RECORD_EXIT:-0}"\n'
+    )
+    script.chmod(0o755)
+    return script, record
+
+
+def test_stage_data_copies_rewrites_and_deletes_the_local_copy(tmp_path: Path) -> None:
+    prefix_a, prefix_b = _dataset(tmp_path, "shard_00_text_document", "shard_15_text_document")
+    command, record = _recording_command(tmp_path)
+    local = tmp_path / "local"
+    local.mkdir()
+    args = [str(command), "--train-data-path", "1.0", prefix_a, "--valid-data-path", prefix_b,
+            "--data-cache-path", str(tmp_path / "cache")]  # fmt: skip
+    result = _run(["bash", str(STAGE_DATA), *args], {"DLLM_LOCAL_SCRATCH": str(local)})
+    assert result.returncode == 0, result.stderr
+    lines = record.read_text().splitlines()
+    staged = [line.removesuffix(" bin") for line in lines if line.endswith(" bin")]
+    assert len(staged) == 2
+    assert all(path.startswith(f"{local}/dllm-data/") for path in staged)
+    assert {Path(path).name.split("_", 1)[1] for path in staged} == {
+        "shard_00_text_document",
+        "shard_15_text_document",
+    }
+    assert lines[:2] == ["--train-data-path", "1.0"]
+    assert lines[2].endswith("_shard_00_text_document bin")
+    assert lines[3] == "--valid-data-path"
+    assert lines[4].endswith("_shard_15_text_document bin")
+    assert lines[5:] == ["--data-cache-path", str(tmp_path / "cache")]
+    assert not (local / "dllm-data").exists()
+
+
+def test_stage_data_keeps_the_paths_without_local_scratch(tmp_path: Path) -> None:
+    (prefix,) = _dataset(tmp_path, "shard_00_text_document")
+    command, record = _recording_command(tmp_path)
+    env = {"TMPDIR": str(tmp_path), "SLURM_JOB_ID": "0"}
+    result = _run(["bash", str(STAGE_DATA), str(command), "--train-data-path", prefix], env)
+    assert result.returncode == 0, result.stderr
+    assert record.read_text().splitlines() == ["--train-data-path", f"{prefix} bin"]
+
+
+def test_stage_data_deletes_the_copy_after_a_failed_command(tmp_path: Path) -> None:
+    (prefix,) = _dataset(tmp_path, "shard_00_text_document")
+    command, _ = _recording_command(tmp_path)
+    local = tmp_path / "local"
+    local.mkdir()
+    env = {"DLLM_LOCAL_SCRATCH": str(local), "RECORD_EXIT": "3"}
+    result = _run(["bash", str(STAGE_DATA), str(command), "--train-data-path", prefix], env)
+    assert result.returncode == 3
+    assert not (local / "dllm-data").exists()
