@@ -63,4 +63,6 @@ job:
 slurm:
   sbatch:
     nodes: 1
-    time: "1:00:00"
+    # 10,000 iterations of 128 x 2048 tokens on 4 GPUs need about 5.5 h at the efficiency that
+    # megadlm-8b.yaml reports (~9.7 s/iter for 8B); 1 h ended in a timeout after ~1,800 steps.
+    time: "${oc.slurmtime:28800}"

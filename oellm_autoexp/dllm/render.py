@@ -30,6 +30,9 @@ ARGPARSER_FILES: tuple[str, ...] = (*MEGADLMS_ARGPARSER_FILES, "oellm_autoexp/dl
 LAUNCHER_ARGPARSER_FILES: dict[str, tuple[str, ...]] = {
     "pretrain_difflm.py": MEGADLMS_ARGPARSER_FILES,
     "pretrain_block_difflm.py": ARGPARSER_FILES,
+    "parity_check.py": (*ARGPARSER_FILES, "oellm_autoexp/dllm/eval/parity_check.py"),
+    # The conversion chain passes its arguments to pretrain_block_difflm.py and parity_check.py.
+    "convert_chain.sh": ARGPARSER_FILES,
 }
 
 

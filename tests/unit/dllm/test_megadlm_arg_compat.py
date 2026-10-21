@@ -10,6 +10,8 @@ Run with:
 from __future__ import annotations
 
 import os
+import re
+import shlex
 from pathlib import Path
 
 import pytest
@@ -106,6 +108,62 @@ def test_dllm_experiment_flags_are_accepted(
     accepted = parse_accepted_flags(REPO_ROOT / rel for rel in argparser_files_for(launcher))
     unknown = sorted(emitted - accepted)
     assert not unknown, f"{config_name}: flags not accepted by {launcher}: {unknown}"
+
+
+# Flags that every block-diffusion job must set explicitly, so that a lost or misspelled
+# backend.aux.bd_args cannot silently fall back to the launcher defaults.
+_BD_LAUNCHERS = ("pretrain_block_difflm.py", "convert_chain.sh")
+_BD_REQUIRED_FLAGS = (
+    "--bd-objective",
+    "--bd-block-size",
+    "--bd-token-shift",
+    "--bd-complementary-mask",
+    "--bd-loss-weighting",
+    "--bd-t-min",
+    "--bd-t-max",
+    "--bd-doc-mask",
+    "--mask-token",
+    "--difflm-varilen-prob",
+)
+
+
+def _flag_values(command: str, launcher: str) -> dict[str, list[str]]:
+    """Map each flag after the launcher to the value tokens that follow it."""
+    tokens = shlex.split(re.sub(r"\\\r?\n", " ", command))
+    name = os.path.basename(launcher)
+    start = next(i for i, token in enumerate(tokens) if token.endswith(name)) + 1
+    values: dict[str, list[str]] = {}
+    current = None
+    for token in tokens[start:]:
+        if token.startswith("--"):
+            current = token.split("=", 1)[0]
+            values.setdefault(current, [])
+            if "=" in token:
+                values[current].append(token.split("=", 1)[1])
+        elif current is not None:
+            values[current].append(token)
+    return values
+
+
+@pytest.mark.parametrize("config_name", _DLLM_CONFIGS, ids=_experiment_id)
+def test_block_diffusion_jobs_set_their_flags_explicitly(
+    config_name: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Block-diffusion jobs pass every core --bd-* flag, the mask token, and
+    varilen 0."""
+    _set_render_env(monkeypatch, tmp_path)
+    root = load_config_reference(
+        config_setup=ConfigSetup(config_name=config_name, config_dir=str(_CONFIG_DIR))
+    )
+    launcher = root.backend.launcher_script
+    if os.path.basename(launcher) not in _BD_LAUNCHERS:
+        return  # MegaDLMs' own launcher has no --bd-* flags
+    for command in render_launch_commands(config_name, _CONFIG_DIR):
+        values = _flag_values(command, launcher)
+        missing = [flag for flag in _BD_REQUIRED_FLAGS if not values.get(flag)]
+        assert not missing, f"{config_name}: missing explicit flags {missing}"
+        varilen = values["--difflm-varilen-prob"][-1]
+        assert float(varilen) == 0.0, f"{config_name}: --difflm-varilen-prob {varilen} != 0"
 
 
 _LAUNCHER = "./submodules/MegaDLMs/pretrain_difflm.py"
