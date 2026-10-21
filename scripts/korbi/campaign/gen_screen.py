@@ -1207,6 +1207,23 @@ def arms5quant(size: str, bits: str | None = None):
     return out
 
 
+def arms5s3cool(size: str = "s3"):
+    """Cooled s3 models for the downstream / long-context / 4-bit evals (user 2026-10-21): round 5's
+    s3 runs continued from their step-4000 checkpoints with WSD linear to lr / 10 over 4000 -> 4800
+    (same data order; the checkpoints hard-linked by link_branch_ckpt.sh): our recipe's residual
+    (CKDA 5:1 + mHC-4), plain CKDA, and the Qwen3.5-like arm."""
+    pool = dict((n, kv) for n, _, kv in arms5(size))
+    out = []
+    for a, note in (("h5_moe_mhc4", "CKDA 5:1 + mHC-4"), ("h5_moe", "CKDA 5:1"), ("qwen35_moe", "Qwen3.5-like")):
+        lr = pool[a][B + "lr"]
+        cool = {B + "lr_decay_style": "WSD", B + "lr_wsd_decay_style": "linear", B + "lr_decay_iters": 4800,
+                B + "lr_wsd_decay_iters": 800, B + "min_lr": lr / 10, B + "override_opt_param_scheduler": True,
+                B + "allow_new_param_groups_on_load": True, B + "exit_interval": 4800, "job.est_steps": 800,
+                **BAD_NODES}
+        out.append((a, f"{note}, cooled 4000 -> 4800", {**pool[a], **cool}))
+    return out
+
+
 def speed5_profiled(size: str = "s1"):
     """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
     with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
@@ -1278,6 +1295,7 @@ def write5():
             ("s1", "screen5off", arms5offset("s1")),
             ("s1", "screen5udadapt", arms5udadapt("s1")),
             *[(z, "quanteval5", arms5quant(z)) for z in ("s2", "s3")],
+            ("s3", "screen5s3cool", arms5s3cool("s3")),
             *[(z, "quanteval5q4", arms5quant(z, "4")) for z in ("s2", "s3")],
             *[(z, "screen5udecay", arms5udecay(z)) for z in ("s1", "s2")],
             *[(z, "screen5udecaysqrt", arms5udecay_sqrt(z)) for z in ("s1", "s2")],
