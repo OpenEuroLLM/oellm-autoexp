@@ -1234,6 +1234,22 @@ def arms5s3cool(size: str = "s3"):
 DOWNSTREAM = "/gpfs/projects/ehpc533/users/korbip/hybrid_v019/data/downstream/requests.jsonl"
 
 
+def arms5downstream_any(entries, tasks: str = ""):
+    """arms5downstream for any runs: entries = [(name, src suite, src arm, its training config)]."""
+    out = []
+    for name, suite, arm, kv in entries:
+        src = f"{RUNS5}/{suite}/{arm}"
+        env = {"backend.env.DOWNSTREAM_EVAL_FILE": DOWNSTREAM}
+        if tasks:
+            env["backend.env.DOWNSTREAM_EVAL_TASKS"] = tasks
+        ev = {B + "skip_train": True, B + "eval_iters": 1, B + "no_load_optim": True, B + "no_load_rng": True,
+              B + "load": f"{src}/ckpt", B + "non_persistent_global_ckpt_dir": f"{src}/ckpt_rolling",
+              B + "cuda_graph_impl": "none", B + "cuda_graph_modules": [],
+              "job.est_steps": 1, "slurm.sbatch.time": "02:00:00", **BAD_NODES}
+        out.append((name, f"{arm} ({suite}, latest checkpoint): downstream eval", {**kv, **ev, **env}))
+    return out
+
+
 def arms5downstream(size: str, src_suite: str, arms, ckpt: str = "ckpt", tasks: str = "", extra=None):
     """In-Megatron downstream / passkey evaluation (Megatron 907935d56) of finished checkpoints:
     evaluation only (skip_train, model weights only), each run's own layout; the requests from
@@ -1335,6 +1351,14 @@ def write5():
                                              extra={"tag": "kv"})),
             # the cooled s3 models (screen5s3cool, step 4800): every task, full precision and 4-bit
             ("s3", "ds5", arms5downstream("s3", "screen5s3cool_s3", ["h5_moe_mhc4", "h5_moe", "qwen35_moe"])),
+            # KronLSTM's long-context retrieval in our setting (user 2026-10-21): the s3 step-4000
+            # checkpoints of KronLSTM (paper / polar gates, low-rank output gate) and CKDA (plain / + mHC-4)
+            ("s3", "ds5kron", arms5downstream_any(
+                [("kron_paper", "screen5kronlr_s3", "h5_moe_kron_lr", arms5kron_lowrank("s3")[0][2]),
+                 ("kron_polar", "screen5kronpfb_s3", "h5_moe_kron_lr_pfb", arms5kron_pfb("s3")[0][2]),
+                 ("ckda", "screen5_s3", "h5_moe", dict((n, kv) for n, _, kv in arms5("s3"))["h5_moe"]),
+                 ("ckda_mhc4", "screen5_s3", "h5_moe_mhc4", dict((n, kv) for n, _, kv in arms5("s3"))["h5_moe_mhc4"])],
+                tasks="kvret,passkey,lambada")),
             ("s3", "ds5q4", arms5downstream("s3", "screen5s3cool_s3", ["h5_moe_mhc4", "h5_moe", "qwen35_moe"],
                                             extra={"tag": "q4", "bits": "4"})),
             *[(z, "quanteval5q4", arms5quant(z, "4")) for z in ("s2", "s3")],
