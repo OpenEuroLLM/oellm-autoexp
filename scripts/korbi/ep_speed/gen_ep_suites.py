@@ -1373,6 +1373,17 @@ def ckpt_offload():
         off, ctx16, mbs2, fused, engram(128), mb)
     arm("o_mhc4_16k_mbs2_eng31_mb", "mHC-4 + Engram 31 %, per-micro-batch lookup", base, hyb, moon,
         off, ctx16, mbs2, fused, engram(112), mb)
+    # o10: per-stage memory use -- offload the last chunks only where many micro-batches are in
+    # flight (stages 0, 1), and skip the recompute of the last chunks on the later stages
+    stage = lambda tag, last, skip: {"backend.env.RECOMPUTE_OFFLOAD_LAST": last,  # noqa: E731
+                                     "backend.env.RECOMPUTE_SKIP_CHUNKS": skip,
+                                     "aux.array_tag": "_moonofffused_eng_" + tag}
+    arm("o_eng31_last01", "Engram 31 % production candidate, offload last on stages 0, 1 only",
+        base, hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, stage("l01", "0,1", ""))
+    arm("o_eng31_last01_skip0012", "... + no recompute of the last 0/0/1/2 chunks per stage", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, stage("l01s0012", "0,1", "0,0,1,2"))
+    arm("o_eng31_last01_skip0124", "... + no recompute of the last 0/1/2/4 chunks per stage", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, stage("l01s0124", "0,1", "0,1,2,4"))
     return arms
 
 
