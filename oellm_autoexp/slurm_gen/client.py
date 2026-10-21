@@ -75,6 +75,9 @@ class BaseSlurmClient(SlurmClientInterface, RegistrableConfigInterface):
     def squeue(self) -> dict[str, str]:  # pragma: no cover - interface
         raise NotImplementedError
 
+    def update_excludes(self, job_id: str, nodelist: str) -> None:  # pragma: no cover - interface
+        raise NotImplementedError
+
 
 @dataclass(kw_only=True)
 class BaseSlurmClientConfig(ConfigInterface):
@@ -100,6 +103,8 @@ class FakeSlurmClient(BaseSlurmClient):
         super().__init__(config)
         self._jobs: dict[str, SlurmJob] = {}
         self._next_id = 1
+        # job_id -> last nodelist passed to update_excludes (test introspection)
+        self._excludes: dict[str, str] = {}
 
     def submit(self, slurm_config: SlurmConfig) -> str:
         job_id = str(self._next_id)
@@ -145,6 +150,10 @@ class FakeSlurmClient(BaseSlurmClient):
     def squeue(self) -> dict[str, str]:
         return {job_id: job.state for job_id, job in self._jobs.items()}
 
+    def update_excludes(self, job_id: str, nodelist: str) -> None:
+        """Record an exclude-node update (simulates ``scontrol update``)."""
+        self._excludes[job_id] = nodelist
+
     def get_job(self, job_id: str) -> SlurmJob:
         return self._jobs[job_id]
 
@@ -188,6 +197,7 @@ class SlurmClientConfig(BaseSlurmClientConfig):
     squeue_cmd: str = "squeue"
     scancel_cmd: str = "scancel"
     sacct_cmd: str = "sacct"
+    scontrol_cmd: str = "scontrol"
 
 
 @register
@@ -340,6 +350,23 @@ class SlurmClient(BaseSlurmClient):
 
     def job_ids_by_name(self, name: str) -> list[str]:
         return [job_id for job_id, job in self._jobs.items() if job.config.name == name]
+
+    def update_excludes(self, job_id: str, nodelist: str) -> None:
+        """Update a pending job's excluded-node list via ``scontrol update``.
+
+        Only pending jobs can be edited live; SLURM rejects the update for
+        running jobs (the caller is expected to restrict to PENDING). ``nodelist``
+        replaces the job's current excluded-node list (pass the full deduped
+        list). The scontrol parameter is ``ExcNodeList`` (the field shown by
+        ``scontrol show job``); ``ExcludeNodes`` - the sbatch/#SBATCH spelling -
+        is rejected by scontrol with "Update of this parameter is not supported".
+        """
+        cmd = shlex.split(self.config.scontrol_cmd)
+        full_cmd = [*cmd, "update", f"JobId={job_id}", f"ExcNodeList={nodelist}"]
+        LOGGER.info("update_excludes: %s", " ".join(full_cmd))
+        proc = run_command(full_cmd)
+        if proc.returncode != 0:
+            raise RuntimeError(f"scontrol update failed for job {job_id}: {proc.stderr.strip()}")
 
     def _check_sacct_for_missing_jobs(
         self, job_ids: list[str], job_id_to_key: dict[str, str]

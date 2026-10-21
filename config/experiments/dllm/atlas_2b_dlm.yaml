@@ -6,8 +6,8 @@
 
 defaults:
   - /backend: megadlm_torchrun
-  - /container: snellius
-  - /slurm: snellius
+  - /container: snellius_megadlm
+  - /slurm: snellius_megadlm
   - /job: auto_restart
   - /sweep: none
   - override /backend/megatron: dllm/atlas_2b_dlm

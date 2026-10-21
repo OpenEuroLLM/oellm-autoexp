@@ -4,8 +4,8 @@
 
 defaults:
   - /backend: megadlm_torchrun
-  - /container: snellius
-  - /slurm: snellius
+  - /container: snellius_megadlm
+  - /slurm: snellius_megadlm
   - /job: default
   - /sweep: none
   - override /backend/megatron: dllm/qwen3_0.1B_ne_dlm

@@ -79,6 +79,20 @@ def patch_config_and_tokenizer(hf_path: Path, tokenizer_path: str) -> None:
             changed.append(f"  {attr}: {config.get(attr)} -> {tok_val}")
             config[attr] = tok_val
 
+    # Normalise RoPE base to a version-agnostic top-level `rope_theta`.
+    # transformers >= 5 records the base under `rope_parameters` and the
+    # top-level `rope_theta` is left unset — so the Qwen3Config class default
+    # (10000) fills in. transformers 4.x Qwen3 reads that top-level `rope_theta`
+    # and ignores `rope_parameters`, silently using 10000 even when the model was
+    # trained with a different base (e.g. 100000). Mirror the real value from
+    # `rope_parameters` up to the top level so every transformers version agrees.
+    rope_params = config.get("rope_parameters")
+    if isinstance(rope_params, dict) and rope_params.get("rope_theta") is not None:
+        real_theta = rope_params["rope_theta"]
+        if config.get("rope_theta") != real_theta:
+            changed.append(f"  rope_theta: {config.get('rope_theta')} -> {real_theta}")
+            config["rope_theta"] = real_theta
+
     if changed:
         print("Patching config.json:")
         for line in changed:

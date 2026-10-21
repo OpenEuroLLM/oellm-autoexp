@@ -21,6 +21,8 @@ git clone https://github.com/OpenEuroLLM/oellm-autoexp.git --recurse-submodules
 Then, install it to have the basic requirements installed:
 ```bash
 pip install -e .
+# or by way of uv
+uv sync
 ```
 
 ### Environment variables
@@ -41,16 +43,19 @@ The environment variables used in the `config/` here are:
 If you have your own container, just use the cli override: `container.image=PATH_TO_YOUR_CONTAINER` or define it in your experiment yaml.
 
 ## Cluster setup: LUMI notes
-- Install prerequisites outside the container (rccl-tuner, cray-python, etc.) following the LUMI docs. (SEE: https://github.com/sfantao/rccl-tuner.git)
-- Build the Megatron container from the provided defs (see `container/megatron/MegatronTrainingLumi.def.in`) so the correct ROCm + network tuning ends up inside the image.
-- Export the usual SLURM/paths (at a minimum `SLURM_ACCOUNT`, `SLURM_PARTITION[_DEBUG]`, `CONTAINER_CACHE_DIR`, `OUTPUT_DIR`) in your profile—scripts read them automatically.
-### Quickstart using pre-configured enviroment and default values,
+- HF_HOME should be set to the shared one in the project scratch.
+- Containers lie in /scratch/project_465002530/containers/ and the image meant for autoExp is AutoExp_*.sif
+
+### UV environment and sanity check
 ```
     git clone https://github.com/OpenEuroLLM/oellm-autoexp.git --recurse-submodules
-    # using uv
+    # Install uv
     curl -LsSf https://astral.sh/uv/install.sh | sh
-    # uv creates a python virtual environment matching pyproject.toml-file on the fly. inode-count for env ~2k.
-    SLURM_ACCOUNT=project_462000963 SLURM_PARTITION=dev-g uv run --python 3.12 python scripts/run_autoexp.py --config-name experiments/megatron_lumi_speed_test
+    # Make sure the uv binary is in $PATH
+    uv sync
+    # uv creates a python virtual environment matching to .venv by default based on pyproject.toml-file. Inode-count for the env ~2k.
+    # Use the speed test config to confirm everything's working. The job should finish in ~5 mins and have throughput of around 70 tflops and 5.8k TKS/GCD/S
+    SLURM_ACCOUNT=project_465002530 SLURM_PARTITION=dev-g uv run python scripts/run_autoexp.py --config-name experiments/megatron_lumi_speed_test
 ```
 
 ## Cluster setup: MARENOSTRUM notes

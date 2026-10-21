@@ -7,6 +7,7 @@ import re
 from datetime import datetime, UTC
 from functools import lru_cache
 from math import sqrt as _sqrt
+from pathlib import Path
 from collections.abc import Mapping
 
 from omegaconf import DictConfig, ListConfig, OmegaConf
@@ -233,6 +234,41 @@ def oc_slurmtime(seconds: int | float) -> str:
     return f"{days}-{hours}:{minutes}:{sec}"
 
 
+def oc_exclude_nodes(path: str, sep: str = ",") -> str | None:
+    """Read a node-exclusion list file and return a SLURM nodelist string.
+
+    The file is expected to hold one node name per line; blank lines and lines
+    starting with ``#`` are ignored, and entries may also be comma- or
+    whitespace-separated within a line. Duplicates are dropped while preserving
+    first-seen order. The resulting nodes are joined with ``sep`` (default
+    ``","``) so the value can be dropped straight into ``#SBATCH --exclude=``.
+
+    A missing or effectively empty file yields ``None`` so the caller (e.g. the
+    sbatch directive builder) omits the ``--exclude`` directive entirely rather
+    than emitting an empty one.
+
+    This is registered with ``use_cache=False`` so each config resolution / script
+    generation re-reads the current on-disk list (the monitor grows it over time).
+    """
+    target = Path(str(path)).expanduser()
+    if not target.exists():
+        return None
+    nodes: list[str] = []
+    seen: set[str] = set()
+    for line in target.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        for token in re.split(r"[,\s]+", line):
+            token = token.strip()
+            if token and token not in seen:
+                seen.add(token)
+                nodes.append(token)
+    if not nodes:
+        return None
+    return sep.join(nodes)
+
+
 def _validate_eval_expression(expr: str) -> None:
     normalized = expr.replace(" ", "")
     if any(token in normalized for token in _FORBIDDEN_EVAL_TOKENS):
@@ -291,6 +327,9 @@ def register_default_resolvers(force: bool = False) -> None:
     OmegaConf.register_new_resolver("oc.mapcondtmpl", oc_map_cond_template, replace=True)
     OmegaConf.register_new_resolver("oc.mapeval", oc_map_eval, replace=True)
     OmegaConf.register_new_resolver("oc.slurmtime", oc_slurmtime, replace=True)
+    OmegaConf.register_new_resolver(
+        "oc.exclude_nodes", oc_exclude_nodes, replace=True, use_cache=False
+    )
 
     _REGISTRATION_SENTINEL["registered"] = True
 

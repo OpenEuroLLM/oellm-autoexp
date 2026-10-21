@@ -55,7 +55,7 @@ backend:
     attention_dropout: 0.0
     hidden_dropout: 0.0
     normalization: RMSNorm
-    layernorm_epsilon: 1.e-5
+    norm_epsilon: 1.e-5
     qk_layernorm: True
     bf16: True
     swiglu: True

@@ -90,6 +90,7 @@ class ContainerConfig(ConfigInterface):
 @dataclass(kw_only=True)
 class SlurmJobConfig(SlurmJobConfigBase):
     base_output_dir: str = field(default_factory=MISSING)
+    chain_repeat: int = 1
 
 
 @dataclass(kw_only=True)

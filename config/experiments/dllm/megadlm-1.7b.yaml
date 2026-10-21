@@ -3,8 +3,8 @@
 defaults:
   - /experiments/base
   - /backend: megadlm_torchrun
-  - /container: snellius
-  - /slurm: snellius
+  - /container: snellius_megadlm
+  - /slurm: snellius_megadlm
   - /backend/megatron: [base, dllm/megadlm-1.7b]
   - /sweep: none
   - _self_

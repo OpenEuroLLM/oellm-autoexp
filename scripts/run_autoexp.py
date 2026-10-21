@@ -23,6 +23,7 @@ from oellm_autoexp.orchestrator import (
     ExecutionPlan,
     render_job_scripts,
     submit_jobs,
+    chain_submit_jobs,
     run_loop,
 )
 from oellm_autoexp.utils.logging_config import configure_logging
@@ -44,6 +45,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--submit-and-exit",
         action="store_true",
         help="Submit jobs to SLURM then exit immediately (no monitoring loop)",
+    )
+    parser.add_argument(
+        "--chain",
+        action="store_true",
+        help=(
+            "Submit all jobs to Slurm immediately as a dependency chain "
+            "(job N+1 gets --dependency=afterok:jobN), so they are pre-queued "
+            "and benefit from scheduling priority."
+        ),
+    )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        metavar="N",
+        help="With --chain: submit each job N times sequentially (useful for wall-time chaining).",
     )
     parser.add_argument(
         "--monitor-state-dir",
@@ -286,7 +303,16 @@ def main(argv: list[str] | None = None) -> None:
         overrides=args.overrides,
     )
 
-    res = submit_jobs(plan, no_error_catching=args.debug, local_mode=args.local)
+    use_chain = args.chain or any(
+        getattr(job.config.job, "chain_repeat", 1) > 1 for job in plan.jobs
+    )
+    if use_chain:
+        if args.local:
+            print("--chain is not supported with --local mode", file=sys.stderr)
+            return
+        res = chain_submit_jobs(plan, no_error_catching=args.debug, repeat=args.repeat)
+    else:
+        res = submit_jobs(plan, no_error_catching=args.debug, local_mode=args.local)
 
     if args.no_monitor or args.submit_and_exit:
         res.loop.observe_once()

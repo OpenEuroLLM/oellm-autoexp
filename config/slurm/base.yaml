@@ -8,7 +8,7 @@ array: false
 launcher_cmd: "python"
 launcher_env_passthrough: false
 env:
-  HF_HOME: ${oc.env:HF_HOME}
+  HF_HOME: ${oc.env:HF_HOME,""}
   WANDB_MODE: offline
 srun: {}
 sbatch:

@@ -15,7 +15,7 @@ ffn_hidden_size: 6144
 swiglu: true
 vocab_size: 50289
 normalization: RMSNorm
-layernorm_epsilon: 1.0e-6
+norm_epsilon: 1.0e-6
 rotary_base: 10000
 add_bias_linear: false
 position_embedding_type: rope

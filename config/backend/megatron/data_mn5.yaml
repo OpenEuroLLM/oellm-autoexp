@@ -1,0 +1,8 @@
+# MN5 tokenised Megatron data (gpt-neox-20b tokenizer).
+# Paths are absolute because project data lives under /gpfs/projects/ehpc533/preprocessed/.
+data_path:
+  - /gpfs/projects/ehpc533/preprocessed/gpt-neox-20b/nemotron-cc/1.0/Nemotron-cc-2024-HQ-LUMI-sample-valid/high-all
+data_cache_path: ${oc.env:OUTPUT_DIR}/data_cache
+split: "989,10,1"
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: /gpfs/projects/ehpc533/tokenizers/gpt-neox-20b
