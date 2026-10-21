@@ -2462,3 +2462,31 @@ norms, LDM / mHC mixers) never did.
 - Cooldown branches from step 4000, giving the visible-schedule vs hidden-decay comparison.
 
 The production value stays open until these are in.
+
+### 12.8 4-bit robustness (user 2026-10-21)
+
+Round 5's step-4000 checkpoints evaluated twice on the same 50 validation batches: full
+precision, and weight-only 4-bit (`QUANT_EVAL_BITS=4`, Megatron a33f2abd1). The 4-bit setting is
+asymmetric round-to-nearest in groups of 32 along the input dim, close to llama.cpp's Q4_K.
+Embeddings, output layer, routers, norms, residual mixers and 1-D gate vectors are kept, as
+Q4_K_M does. Suites `quanteval5{,q4}_{s2,s3}`.
+
+| size | arm | full | 4-bit | delta |
+|---|---|---:|---:|---:|
+| s2 | CKDA hybrid | 2.2004 | 2.2053 | +0.0049 |
+| s2 | CKDA + mHC-4 | 2.1603 | 2.1650 | +0.0047 |
+| s2 | Qwen3.5-like | 2.2138 | 2.2194 | +0.0056 |
+| s2 | all-attention | 2.1971 | 2.2020 | +0.0049 |
+| s3 | CKDA hybrid | 2.1651 | 2.1692 | +0.0041 |
+| s3 | CKDA + mHC-4 | 2.1273 | 2.1312 | +0.0039 |
+| s3 | Qwen3.5-like | 2.1686 | 2.1733 | +0.0047 |
+
+- **No extra sensitivity from our components.** The signed-gate recurrence and mHC lose
+  0.004-0.005; the Qwen3.5-like arm loses 0.005-0.006.
+- **The lead over Qwen3.5-like holds or grows under 4-bit:**
+  - CKDA hybrid: -0.0134 -> -0.0141 at s2, -0.0035 -> -0.0041 at s3;
+  - CKDA + mHC-4: -0.053 -> -0.054 at s2.
+- **The cost shrinks with size** (s2 -> s3).
+- **Caveats:**
+  - **Method:** plain RTN, not Q4_K's optimized scales, so absolute deltas are an upper bound.
+  - **Checkpoints:** stable-phase, not cooled.
