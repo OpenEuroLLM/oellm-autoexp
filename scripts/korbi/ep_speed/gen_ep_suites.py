@@ -1389,6 +1389,11 @@ def ckpt_offload():
         arm(f"o_eng31_sm{sms}", f"Engram 31 % candidate, MoonEP {sms} SMs", base, hyb, moon, off,
             ctx16, mbs2, fused, engram(112), mb, stage(f"sm{sms}", "0,1", ""),
             {B + "moe_flex_dispatcher_num_sms": sms})
+    # the campaign's optimizer: angular MuOwn (all speed numbers above are Adam); its step cost
+    arm("o_eng31_muown", "Engram 31 % candidate with angular MuOwn (4e-3, mixer lr x0.25)", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, stage("muown", "0,1", ""),
+        {B + "optimizer": "angular_muown", B + "lr": 4e-3, B + "min_lr": 4e-3,
+         B + "residual_mixer_lr_mult": 0.25})
     arm("o_eng31_ncclinfo", "Engram 31 % candidate, 3 steps with NCCL INIT / NET logging", base, hyb,
         moon, off, ctx16, mbs2, fused, engram(112), mb, stage("nccl", "0,1", ""),
         {"slurm.env.NCCL_DEBUG": "INFO", "slurm.env.NCCL_DEBUG_SUBSYS": "INIT,NET",
