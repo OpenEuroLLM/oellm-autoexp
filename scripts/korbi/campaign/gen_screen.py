@@ -1056,6 +1056,16 @@ def arms5kron_ext(size: str):
               B + "linear_kronlstm_neg_eigval_init_bias": True, B + "linear_kronlstm_unit_write": True})]
 
 
+def arms5udecay_sqrt(size: str):
+    """Angular MuOwn's U-decay at p = 1/2 (user 2026-10-21): kappa = (1 + 0.001 t)^-1/2 -- the
+    t^-1/2 that plain Muown's growing row norms give implicitly (arXiv 2606.23637, Table 1),
+    sustainable to ~1M steps (kappa ~0.03 there; p = 1: ~0.001). Default direction step (0.2).
+    Pairs with round 5's h5_moe (p = 1) and screen5udecay's p = 0 arms; own suite (those run)."""
+    off = arms5udecay(size)[0][2]
+    return [("h5_moe_udp05", "angular MuOwn U-decay p = 1/2 (c = 0.001), direction step 0.2",
+             {**off, B + "angular_muown_u_decay_p": 0.5})]
+
+
 def speed5_profiled(size: str = "s1"):
     """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
     with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
@@ -1123,6 +1133,7 @@ def write5():
             *[(z, "screen5kronscale", arms5kron_scale(z)) for z in ("s1", "s2", "s3")],
             *[(z, "screen5kronext", arms5kron_ext(z)) for z in ("s1", "s2", "s3")],
             *[(z, "screen5udecay", arms5udecay(z)) for z in ("s1", "s2")],
+            *[(z, "screen5udecaysqrt", arms5udecay_sqrt(z)) for z in ("s1", "s2")],
             ("s1", "screen5kronsmoke", [(n, c, {**kv, B + "exit_interval": 40, "job.est_steps": 40})
                                         for n, c, kv in arms5kron("s1")])] + [
             ("s1", "screen5smoke", smoke), ("s3", "screen5smoke", smoke3)] + [
