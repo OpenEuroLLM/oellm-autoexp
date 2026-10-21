@@ -1455,6 +1455,14 @@ def ckpt_offload():
         arm(f"o_cand_{tag}", f"candidate (groups of 8, lazy groups, leaf offload), skip {skip or '-'}",
             base, hyb, moon, off, ctx16, mbs2, fused, engram(112), memb, cand,
             {"backend.env.RECOMPUTE_SKIP_CHUNKS": skip, "aux.array_tag": f"_moonofffused_cand_{tag}"})
+    # p_cand: torch profile of the candidate (ranks 0 / 31, steps 5-6, gbs 128, as the o4 profiles):
+    # what is left in mHC after the stride fix
+    prof_c = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 31],
+              B + "profile_step_start": 5, B + "profile_step_end": 6, B + "train_iters": 7,
+              "aux.gbs": 128}
+    arm("p_cand", "profile: candidate (Engram 31 %, groups of 8, lazy groups, leaf offload)", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112), cand, prof_c,
+        {"aux.array_tag": "_moonofffused_cand_prof"})
     arm("o_eng31_ncclinfo", "Engram 31 % candidate, 3 steps with NCCL INIT / NET logging", base, hyb,
         moon, off, ctx16, mbs2, fused, engram(112), mb, stage("nccl", "0,1", ""),
         {"slurm.env.NCCL_DEBUG": "INFO", "slurm.env.NCCL_DEBUG_SUBSYS": "INIT,NET",
