@@ -1067,12 +1067,23 @@ def arms5udecay_sqrt(size: str):
 
 
 def arms5kron_lowrank(size: str):
-    """CKLSTM (the extended ranges, screen5kronext's arm) with complex_kda's low-rank output gate
-    (user 2026-10-21): parameter-matched to CKDA, so the comparison is the recurrence alone (the
-    dense gate is +hidden x hidden per mixer). Pairs with round 5's h5_moe and with screen5kronext."""
-    ext = arms5kron_ext(size)[0][2]
-    return [("h5_moe_kron_extb_lr", "CKLSTM 5:1 with complex_kda's low-rank output gate",
-             {**ext, B + "linear_kronlstm_output_gate": "lowrank"})]
+    """KronLSTM with complex_kda's low-rank output gate (user 2026-10-21: low-rank from now on, so
+    the comparison with CKDA is the recurrence alone, parameter-matched), in round 5's setting,
+    paired with its h5_moe: the paper's gates at s1 / s2 / s3, and at s1 the polar gates (FLA
+    fab34df) -- f = m cos(theta) with m the paper's softplus gate (its short- and long-memory spread)
+    and the angle starting near 0, so each arm starts as the paper's layer: the forget angle alone,
+    + the erase angle (1 - beta = r cos(phi): beta in [0, 2], the write kept in [0, 1]), + the
+    signed write c in [-1, 1]."""
+    paper = {**arms5kron_scale(size)[0][2], B + "linear_kronlstm_output_gate": "lowrank"}
+    out = [("h5_moe_kron_lr", "KronLSTM 5:1, paper's gates, low-rank output gate", paper)]
+    if size == "s1":
+        f = {**paper, B + "linear_kronlstm_forget_angle": True}
+        fb = {**f, B + "linear_kronlstm_erase_angle": True}
+        out += [("h5_moe_kron_lr_pf", "+ polar forget gate (f = m cos theta)", f),
+                ("h5_moe_kron_lr_pfb", "+ polar forget and erase gates", fb),
+                ("h5_moe_kron_lr_pfbc", "+ polar forget and erase gates, signed write c in [-1, 1]",
+                 {**fb, B + "linear_kronlstm_signed_write": True})]
+    return out
 
 
 def speed5_profiled(size: str = "s1"):

@@ -51,8 +51,8 @@ sweep:
   groups:
     - type: list
       configs:
-        # CKLSTM 5:1 with complex_kda's low-rank output gate
-        - aux.arm: h5_moe_kron_extb_lr
+        # KronLSTM 5:1, paper's gates, low-rank output gate
+        - aux.arm: h5_moe_kron_lr
           backend.megatron.num_attention_heads: 8
           backend.megatron.num_query_groups: 2
           backend.megatron.kv_channels: 128
@@ -107,8 +107,6 @@ sweep:
           backend.megatron.data_cache_path: /gpfs/scratch/ehpc533/users/korbip/hybrid_v019_runs/data_cache_flag8k_r5
           backend.env.ANGULAR_MUOWN_COMPACT_CKPT: '1'
           backend.megatron.experimental_attention_variant: kronlstm
-          backend.megatron.linear_fla_gate: signed_sigmoid2
-          backend.megatron.linear_fla_allow_neg_eigval: true
-          backend.megatron.linear_kronlstm_neg_eigval_init_bias: true
-          backend.megatron.linear_kronlstm_unit_write: true
+          backend.megatron.linear_fla_gate: softplus
+          backend.megatron.linear_fla_allow_neg_eigval: false
           backend.megatron.linear_kronlstm_output_gate: lowrank

@@ -3687,6 +3687,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=0,
         element_type=None,
     ),
+    "linear_kronlstm_erase_angle": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="KronLSTM polar erase gate: kept eigenvalue 1 - beta = r cos(phi) per head (beta in [0, 2], the write kept in [0, 1]), starting at the s = 1 beta.",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
+    "linear_kronlstm_forget_angle": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="KronLSTM polar forget gate f = m cos(theta): magnitude m the softplus gate (linear_fla_gate softplus), angle theta = pi sigmoid(.) per key dimension, starting near 0 (f in [-m, m]).",
+        choices=None,
+        nargs=0,
+        element_type=None,
+    ),
     "linear_kronlstm_neg_eigval_init_bias": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -3709,6 +3725,14 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         help='KronLSTM\'s output gate: "linear" (the paper\'s dense hidden x value_dim projection) or "lowrank" (complex_kda\'s hidden -> head_dim -> value_dim, its parameter count).',
         choices=None,
         nargs=None,
+        element_type=None,
+    ),
+    "linear_kronlstm_signed_write": MegatronArgMetadata(
+        arg_type=bool,
+        default=False,
+        help="KronLSTM write gate c = 2 sigmoid(.) - 1 in [-1, 1] (mean 0.5 at init).",
+        choices=None,
+        nargs=0,
         element_type=None,
     ),
     "linear_kronlstm_target_gate": MegatronArgMetadata(
@@ -11294,6 +11318,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         const=False,
         default=True,
     ),
+    "linear_kronlstm_erase_angle": MegatronActionSpec(
+        option_strings=("--linear-kronlstm-erase-angle",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
+    "linear_kronlstm_forget_angle": MegatronActionSpec(
+        option_strings=("--linear-kronlstm-forget-angle",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
+    ),
     "linear_kronlstm_neg_eigval_init_bias": MegatronActionSpec(
         option_strings=("--linear-kronlstm-neg-eigval-init-bias",),
         action_type="store_true",
@@ -11317,6 +11355,13 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default="linear",
+    ),
+    "linear_kronlstm_signed_write": MegatronActionSpec(
+        option_strings=("--linear-kronlstm-signed-write",),
+        action_type="store_true",
+        nargs=0,
+        const=True,
+        default=False,
     ),
     "linear_kronlstm_target_gate": MegatronActionSpec(
         option_strings=(

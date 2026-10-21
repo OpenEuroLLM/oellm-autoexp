@@ -552,6 +552,18 @@ class MegatronConfig(ConfigInterface):
     # "lowrank" (complex_kda's hidden -> head_dim -> value_dim, its parameter count).
     linear_kronlstm_output_gate: str = "linear"
 
+    # KronLSTM polar forget gate f = m cos(theta): magnitude m the softplus gate
+    # (linear_fla_gate softplus), angle theta = pi sigmoid(.) per key dimension, starting near
+    # 0 (f in [-m, m]).
+    linear_kronlstm_forget_angle: bool = False
+
+    # KronLSTM polar erase gate: kept eigenvalue 1 - beta = r cos(phi) per head (beta in [0,
+    # 2], the write kept in [0, 1]), starting at the s = 1 beta.
+    linear_kronlstm_erase_angle: bool = False
+
+    # KronLSTM write gate c = 2 sigmoid(.) - 1 in [-1, 1] (mean 0.5 at init).
+    linear_kronlstm_signed_write: bool = False
+
     # KronLSTM with linear_fla_allow_neg_eigval (s = 2): keep the write c in [0, 1] by
     # construction. The op's s scales the write cap as well as the erase, so without this the
     # write is s * c in [0, 2]; with it only the erase is extended (s * beta in [0, 2]).
