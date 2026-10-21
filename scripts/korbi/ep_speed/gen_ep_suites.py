@@ -1459,6 +1459,19 @@ def ckpt_offload():
     arm("o_cand_addmm", "candidate + LIGER_WGRAD_ADDMM", base, hyb, moon, off, ctx16, mbs2, fused,
         engram(112), memb, cand, {"backend.env.LIGER_WGRAD_ADDMM": "1",
                                   "aux.array_tag": "_moonofffused_cand_addmm"})
+    # o22: Engram table gradients for the touched rows only (ENGRAM_SPARSE_GRAD: 10 -> 6 B per
+    # table parameter), and the tables at 2x (21.8B) on top of it
+    addmm = {"backend.env.LIGER_WGRAD_ADDMM": "1"}
+    sparse = {"backend.env.ENGRAM_SPARSE_GRAD": "1"}
+    eng = engram(112)
+    eng2x = dict(eng, **{B + "engram_table_size": 2 * eng[B + "engram_table_size"]})
+    arm("o_cand2", "candidate + LIGER_WGRAD_ADDMM (reference of o22)", base, hyb, moon, off, ctx16,
+        mbs2, fused, eng, memb, cand, addmm, {"aux.array_tag": "_moonofffused_cand2"})
+    arm("o_cand2_sparse", "... + ENGRAM_SPARSE_GRAD", base, hyb, moon, off, ctx16, mbs2, fused, eng,
+        memb, cand, addmm, sparse, {"aux.array_tag": "_moonofffused_cand2_sparse"})
+    arm("o_cand2_sparse_t2x", "... + ENGRAM_SPARSE_GRAD, tables 2x (21.8B)", base, hyb, moon, off,
+        ctx16, mbs2, fused, eng2x, memb, cand, addmm, sparse,
+        {"aux.array_tag": "_moonofffused_cand2_sparse_t2x"})
     # p_cand: torch profile of the candidate (ranks 0 / 31, steps 5-6, gbs 128, as the o4 profiles):
     # what is left in mHC after the stride fix
     prof_c = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 31],
