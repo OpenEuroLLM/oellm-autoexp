@@ -73,4 +73,4 @@ slurm:
     gpus_per_node: ${backend.megatron.tensor_model_parallel_size}
     cpus_per_task: ${oc.muli:16,${backend.megatron.tensor_model_parallel_size}}
     exclusive: null  # TP GPUs only, not the whole node
-    time: "${oc.slurmtime:7200}"
+    time: "${oc.slurmtime:14400}"
