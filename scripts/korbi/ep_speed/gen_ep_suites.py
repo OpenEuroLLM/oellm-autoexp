@@ -1384,6 +1384,15 @@ def ckpt_offload():
         hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, stage("l01s0012", "0,1", "0,0,1,2"))
     arm("o_eng31_last01_skip0124", "... + no recompute of the last 0/1/2/4 chunks per stage", base,
         hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, stage("l01s0124", "0,1", "0,1,2,4"))
+    # o11: MoonEP's SM budget with the hybrid (tuned to 64 on Qwen3), and an NCCL network check
+    for sms in (32, 48):
+        arm(f"o_eng31_sm{sms}", f"Engram 31 % candidate, MoonEP {sms} SMs", base, hyb, moon, off,
+            ctx16, mbs2, fused, engram(112), mb, stage(f"sm{sms}", "0,1", ""),
+            {B + "moe_flex_dispatcher_num_sms": sms})
+    arm("o_eng31_ncclinfo", "Engram 31 % candidate, 3 steps with NCCL INIT / NET logging", base, hyb,
+        moon, off, ctx16, mbs2, fused, engram(112), mb, stage("nccl", "0,1", ""),
+        {"slurm.env.NCCL_DEBUG": "INFO", "slurm.env.NCCL_DEBUG_SUBSYS": "INIT,NET",
+         B + "train_iters": 3})
     return arms
 
 
