@@ -670,6 +670,12 @@ use 62.4 -> 58.9 GiB; 5,778 vs 5,740 tok/s/GPU (no cost).
 **Candidate now**: mHC-4 + Engram 31 %, groups-of-8 step lookup, canonical strides, lazy
 singleton groups: **~5,780 tok/s/GPU** (from 5,601 this morning, +3.2 %).
 
+**Less recompute with the freed memory** (o20): the candidate + leaf offload runs at 5,743 with
+stage 0 / 1 / 2 / 3 at 57.4 / 44.4 / 44.4 / 52.9 GiB in use; skipping the recompute of even one
+chunk (2 layers) on stage 3 OOMs, 0/0/1/2 too. A chunk's activations at 16k x mbs 2 times the
+micro-batches in flight are far more than the ~3-4 GiB freed: per-stage recompute is out at
+this shape.
+
 Failure note: MN5 nodes as07r3b27, as06r2b26, as05r3b28 killed jobs at launch on 2026-10-21
 (torchrun NUMA binding: AssertionError("Invalid device id")), one more node gave "CUDA error:
 unknown error" mid-run; exclude with +slurm.sbatch.exclude.
