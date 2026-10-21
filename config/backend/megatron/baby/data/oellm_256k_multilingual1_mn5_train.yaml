@@ -1,0 +1,20 @@
+# @package backend.megatron
+# Dataset related settings for the baby anneal on MN5 (multilingual1 mix)
+max_position_embeddings: ${.seq_length}
+split: '99,1,0'
+create_attention_mask_in_dataloader: false
+
+# Data paths
+# multilingual1 mix: the 109 multilingual entries of training-data-collection/flag/datamix.txt
+# (weights sum to 0.176; Megatron renormalises). Absolute-path copy of
+# config/experiments/alex/multilingual1.txt, since data_args_path is read verbatim.
+data_args_path: ${oc.env:PROJECT_DIR}/config/experiments/alex/multilingual1_mn5.txt
+
+# Tokenizer (shipped with the converted checkpoint; len 262145)
+tokenizer_type: HuggingFaceTokenizer
+tokenizer_model: /gpfs/projects/ehpc533/tokenizers/oellm-262k # /gpfs/projects/ehpc533/tokenizers/tokenizer-256k
+
+seq_length: 4096
+dataloader_type: "cyclic"
+num_workers: 4
+num_dataset_builder_threads: 64
