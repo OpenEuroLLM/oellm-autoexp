@@ -1472,6 +1472,18 @@ def ckpt_offload():
     arm("o_cand2_sparse_t2x", "... + ENGRAM_SPARSE_GRAD, tables 2x (21.8B)", base, hyb, moon, off,
         ctx16, mbs2, fused, eng2x, memb, cand, addmm, sparse,
         {"aux.array_tag": "_moonofffused_cand2_sparse_t2x"})
+    # o23: VPP layout 1,8,8,8 | 12,5,5,1 puts the Engram layers (before blocks 1 and 24) on
+    # stages 1 and 3 instead of 0 and 3: stage 1 has the most room (no embedding); 13 / 13 / 13
+    # / 9 blocks + head per stage as before. Today's tables (layout cost), then 36B and 40B.
+    pat_a = vpp_pattern("LLLLL*" * 8, (1, 8, 8, 8, 12, 5, 5, 1))
+    lay_a = {"aux.pattern": with_engram(pat_a, (1, 24))}
+    for tag, total in (("t1x", None), ("36b", 36.0), ("40b", 40.0)):
+        size = eng[B + "engram_table_size"]
+        if total is not None:
+            size = int(size * total / 10.9) // 64 * 64
+        arm(f"o_layA_{tag}", f"layout 1,8,8,8|12,5,5,1, sparse table grads, tables {total or 10.9}B",
+            base, hyb, moon, off, ctx16, mbs2, fused, eng, memb, cand, addmm, sparse, lay_a,
+            {B + "engram_table_size": size, "aux.array_tag": f"_moonofffused_laya_{tag}"})
     # p_cand: torch profile of the candidate (ranks 0 / 31, steps 5-6, gbs 128, as the o4 profiles):
     # what is left in mHC after the stride fix
     prof_c = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 31],
