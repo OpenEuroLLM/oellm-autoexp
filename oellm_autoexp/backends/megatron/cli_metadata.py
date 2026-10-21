@@ -4583,6 +4583,22 @@ MEGATRON_ARG_METADATA: Mapping[str, MegatronArgMetadata] = {
         nargs=None,
         element_type=None,
     ),
+    "mhc_internal_attention": MegatronArgMetadata(
+        arg_type=str,
+        default="none",
+        help="Internal attention over the mHC streams (Internal Attention Transformer, ICLR 2027 submission \"Internal Attention: Growing Token Representations Without Growing the FFN or the KV Cache\"; internal_attention.py): after every mixer sublayer, the token's n streams of width h attend to each other (bidirectional, per token: no KV cache) with shared h x h Q / K / V / O maps and a learned position vector per stream, as a pre-norm residual over all n * h. 'compute': the paper's x = (x_c, x_m) with every sublayer (mixer and MLP / MoE) reading and writing stream 0 only -- the compute part x_c, d = hidden_size -- the memory streams starting at zero and the head reading stream 0 (the paper's appendix-B variant: temporal mixing on x_c only). 'mhc': dense mHC (read / write / stream mixer) with the internal attention after each mixer sublayer's write. 'none' disables. Requires mhc (dense: no routed residual, no mhc_lerp, no mhc_per_layer).",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
+    "mhc_internal_attention_heads": MegatronArgMetadata(
+        arg_type=int,
+        default=0,
+        help="Heads of the internal attention (over the h-wide stream tokens); 0 = num_attention_heads.",
+        choices=None,
+        nargs=None,
+        element_type=None,
+    ),
     "mhc_lerp": MegatronArgMetadata(
         arg_type=bool,
         default=False,
@@ -12122,6 +12138,20 @@ MEGATRON_ACTION_SPECS: Mapping[str, MegatronActionSpec] = {
         nargs=None,
         const=None,
         default=4,
+    ),
+    "mhc_internal_attention": MegatronActionSpec(
+        option_strings=("--mhc-internal-attention",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default="none",
+    ),
+    "mhc_internal_attention_heads": MegatronActionSpec(
+        option_strings=("--mhc-internal-attention-heads",),
+        action_type="store",
+        nargs=None,
+        const=None,
+        default=0,
     ),
     "mhc_lerp": MegatronActionSpec(
         option_strings=("--mhc-lerp",), action_type="store_true", nargs=0, const=True, default=False

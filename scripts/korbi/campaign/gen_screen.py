@@ -1152,6 +1152,25 @@ def arms5offset(size: str = "s1"):
              {**h5, **w, B + "linear_gate_forget_offset": POLAR_OFFSET, **BAD_NODES})]
 
 
+def arms5iat(size: str = "s1"):
+    """Internal attention over the residual streams (IAT, openreview LGFDpZioyZ; user 2026-10-22;
+    Megatron 8d5fd0296): per token, the 4 d-wide streams attend to each other after every mixer
+    sublayer (shared d x d Q / K / V / O, learned stream positions; ~4 d^2 params per mixer layer).
+    The mixers keep width d (user: "compute dimension strictly as for mHC"), so both arms pair with
+    round 5's h5_moe / h5_moe_mhc4:
+      iat4: the paper's x = (x_c, x_m), m = 3d; every sublayer on x_c (stream 0), memory starts at
+        zero, head on x_c -- the paper's appendix-B variant (temporal mixing on x_c only, worse than
+        the plain transformer on TinyStories; the full-width low-rank one was clearly better);
+      mhc4_iat: mHC-4 (its read / write / stream mixer, mixer lr x0.25) + the internal attention."""
+    pool = dict((n, kv) for n, _, kv in arms5(size))
+    w = {B + "num_workers": 8, B + "dataloader_prefetch_factor": 4}
+    iat = lambda mode: {B + "mhc_internal_attention": mode}  # noqa: E731
+    return [("h5_moe_iat4", "IAT compute mode: 4 streams, sublayers on x_c, internal attention",
+             {**pool["h5_moe_mhc4"], **w, **iat("compute"), **BAD_NODES}),
+            ("h5_moe_mhc4_iat", "mHC-4 + internal attention after every mixer",
+             {**pool["h5_moe_mhc4"], **w, **iat("mhc"), **BAD_NODES})]
+
+
 def arms5udadapt(size: str = "s1"):
     """AngularMuown's adaptive direction schedules (user 2026-10-21; Megatron 43dc8243c), each over
     the whole schedule in one run -- stable to step 4000, then WSD linear to lr / 10 at 4800, the
@@ -1342,6 +1361,7 @@ def write5():
             *[(z, "screen5kronlr", arms5kron_lowrank(z)) for z in ("s1", "s2", "s3")],
             *[(z, "screen5kronpfb", arms5kron_pfb(z)) for z in ("s2", "s3")],
             ("s1", "screen5off", arms5offset("s1")),
+            ("s1", "screen5iat", arms5iat("s1")),
             ("s1", "screen5udadapt", arms5udadapt("s1")),
             ("s2", "screen5udadapt", arms5udadapt("s2")),
             *[(z, "quanteval5", arms5quant(z)) for z in ("s2", "s3")],

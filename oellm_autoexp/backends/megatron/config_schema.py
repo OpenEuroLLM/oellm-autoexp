@@ -1663,6 +1663,23 @@ class MegatronConfig(ConfigInterface):
     # streams. Not with mhc_routed_reversible.
     mhc_routed_free: bool = False
 
+    # Internal attention over the mHC streams (Internal Attention Transformer, ICLR 2027
+    # submission "Internal Attention: Growing Token Representations Without Growing the FFN or
+    # the KV Cache"; internal_attention.py): after every mixer sublayer, the token's n streams
+    # of width h attend to each other (bidirectional, per token: no KV cache) with shared h x
+    # h Q / K / V / O maps and a learned position vector per stream, as a pre-norm residual
+    # over all n * h. 'compute': the paper's x = (x_c, x_m) with every sublayer (mixer and MLP
+    # / MoE) reading and writing stream 0 only -- the compute part x_c, d = hidden_size -- the
+    # memory streams starting at zero and the head reading stream 0 (the paper's appendix-B
+    # variant: temporal mixing on x_c only). 'mhc': dense mHC (read / write / stream mixer)
+    # with the internal attention after each mixer sublayer's write. 'none' disables. Requires
+    # mhc (dense: no routed residual, no mhc_lerp, no mhc_per_layer).
+    mhc_internal_attention: str = "none"
+
+    # Heads of the internal attention (over the h-wide stream tokens); 0 =
+    # num_attention_heads.
+    mhc_internal_attention_heads: int = 0
+
     # Enable Block Attention Residuals (arXiv:2603.15031): replace the uniformly-weighted
     # residual accumulation with learned softmax attention over depth. Bounds hidden-state
     # magnitude, which otherwise grows as O(L) under PreNorm. Mutually exclusive with mhc.
