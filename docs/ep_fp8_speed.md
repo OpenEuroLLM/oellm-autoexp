@@ -599,6 +599,34 @@ offload (~5.2 s of copies per profiled step) and the stalls it causes (EP peers 
 MoonEP's inter-rank sync), not the LDM kernels (0.87 s). Next step if wanted: unwind M in the
 backward instead of checkpointing it (~5 instead of 11 widths per chunk).
 
+### 6d-5. The optimization list on the Engram-31 candidate (2026-10-21)
+
+Candidate: mHC-4 (fused read), Engram 31 % (112 experts), per-micro-batch lookup, 16k mbs 2,
+offload incl. last chunks, Adam, 8 nodes; reference **5,601** tok/s/GPU (o9e). Runs of one
+launch are A/B-comparable; across launches tok/s moves by ~1-2 % here (o12 vs o12s: same arm,
+5,535 vs 5,601).
+
+| arm | tok/s/GPU | mem | result |
+|---|---:|---:|---|
+| offload last only on stages 0, 1 (o10b) | 5,585 | 0.84 | no gain: the later stages' last chunks are not in the way |
+| + no recompute of the last 0/0/1/2 or 0/1/2/4 chunks per stage | OOM | | stage 3 (14 GiB non-PyTorch + 44 GiB) has no room |
+| MoonEP 32 / 48 SMs (o11b; default 64) | 5,425 / 5,514 | | **keep 64** |
+| angular MuOwn instead of Adam (o11b) | 5,467 | 0.82 | optimizer step **-2.1 %** (~1 s / step) |
+| duplex offload streams (o12) | 5,535-5,601 | 0.88 | neutral: the D2H lag stays (median 177 ms): PCIe bandwidth, not stream order |
+| overlap_p2p_comm_warmup_flush (o13) | hang | | MoonEP cross_rank_barrier timeout, then launch failure: not usable with MoonEP |
+
+Memory traces (MEM_TRACE_DIR, iteration 2, ranks 0/8/16/24) of the candidate: peaks 48.5 /
+38.7 / 38.2 / 44.4 GiB allocated (+~14 GiB non-PyTorch). On the middle stages ~10 x 512 MB are
+pipeline receive buffers (one per micro-batch in flight) and ~9 x 512 MB chunk outputs whose
+offload copy has not finished yet (the block frees only when the D2H copy is done). The receive
+buffers were not offloaded: they are leaves the schedule keeps for their .grad, and off the
+first stage the chunk input is their [s, b, 4, h] view. RECOMPUTE_OFFLOAD_LEAF=1 (Megatron
+771c9989a + 1fd902533) moves the leaf's / view base's .data to the host and back before the
+recompute (same gradients bitwise, unit tests). Speed + trace: o14 (pending).
+
+Failure note: MN5 nodes as07r3b27 and as06r2b26 kill jobs at launch (torchrun NUMA binding:
+AssertionError("Invalid device id")); exclude with +slurm.sbatch.exclude.
+
 ## 7. Conclusions and recommended settings (2026-10-19)
 
 **> 250 TFLOP/s is not reached; ~195-203 is the practical ceiling on MN5 for Qwen3-30B-A3B with real
