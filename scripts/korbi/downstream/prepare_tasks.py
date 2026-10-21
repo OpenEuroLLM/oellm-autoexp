@@ -105,7 +105,7 @@ WORDS = ("apple river candle mirror garden pencil violin tunnel harbor lantern m
          "jacket kettle ladder marble needle orchard pepper quarry ribbon silver timber umbrella").split()
 
 
-def kv_rows(tok, raw_path, lengths=(2048, 4096, 8192, 16384, 32768), n=20, pairs=16, seed=1):
+def kv_rows(tok, raw_path, lengths=(2048, 4096, 8192, 16384, 32768), n=50, pairs=16, seed=1):
     """Multi-key retrieval in natural text (RULER's multi-key NIAH): `pairs` facts "The special
     number for <word> is <NNNNN>." spread evenly through natural filler (LAMBADA / HellaSwag passages),
     then asked for one; scored as a 10-way choice against the other inserted numbers."""
