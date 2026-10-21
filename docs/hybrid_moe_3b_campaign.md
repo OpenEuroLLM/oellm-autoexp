@@ -2596,3 +2596,22 @@ scaling (the <= 8k results are identical, as they must be):
 - **The RoPE arm is not helped:** its failure is positional extrapolation.
 - **Next:** learnt SSMax in training (`attention_length_scaling: ssmax`, s per head, init 1 / log
   base).
+
+### 12.10 Internal attention over the residual streams (IAT; user 2026-10-22)
+
+"Internal Attention: Growing Token Representations Without Growing the FFN or the KV Cache"
+(openreview LGFDpZioyZ): a token x = (x_c, x_m); per token, its k chunks attend to each other
+(shared c x c Q/K/V/O, learned chunk positions, pre-norm over d + m), after each temporal mixer;
+the FFN and head see x_c only. Evidence is tiny-scale (TinyStories d = 64: transformer 1.942,
+mHC-5 1.916, IAT 1.824; the variant with temporal attention on x_c only 1.955, appendix B).
+
+Megatron `mhc_internal_attention` (8d5fd0296, a2f7be60b) plugs into the mHC stream plumbing (4 streams =
+chunks, c = d, m = 3d; PP payload / recompute as mHC-4); mixers keep width d:
+`compute` (all sublayers on x_c = stream 0, memory starts at 0, head on x_c),
+`full` (each mixer reads a latent down(4d -> d) of all streams and writes up(d -> 4d): the
+paper's low-rank temporal mixing; +8 d^2 per mixer), `mhc` (mHC-4 + the internal attention).
+
+**screen5iat_s1** (array 47748532, ~41 GPU-h): h5_moe_iat4 / h5_moe_iat4_full / h5_moe_mhc4_iat,
+round-5 protocol, paired with h5_moe / h5_moe_mhc4. Total params matched via the routed-expert
+width (IAttn +2.37M per mixer layer -> width 504; full +7.08M -> 488; 144 experts, EP 4); active
+params stay higher (+2.4M / +7.1M per block), reported with tok/s.
