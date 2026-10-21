@@ -622,10 +622,17 @@ offload copy has not finished yet (the block frees only when the D2H copy is don
 buffers were not offloaded: they are leaves the schedule keeps for their .grad, and off the
 first stage the chunk input is their [s, b, 4, h] view. RECOMPUTE_OFFLOAD_LEAF=1 (Megatron
 771c9989a + 1fd902533) moves the leaf's / view base's .data to the host and back before the
-recompute (same gradients bitwise, unit tests). Speed + trace: o14 (pending).
+recompute (same gradients bitwise, unit tests). Trace o14s3 (vs the candidate): peaks
+**47.0 / 34.2 / 34.7 / 41.9 GiB** (from 48.5 / 38.7 / 38.2 / 44.4: -1.5 / -4.5 / -3.5 / -2.5);
+the receive buffers are gone from the live set. Speed: 5,528 (traced; duplex traced 5,601, so
+<= ~1 %: ~10 % more D2H traffic on the middle stages, where PCIe is the bound); o14b's 5,111 was
+a slow node set (51 s / step from the first step). A memory knob, opt-in, not a speed win.
+Stage 0 remains the limit (47.0 + ~14 GiB): the per-step Engram lookup (+~6 GiB there) still
+does not fit -- that needs layers moved off stage 0.
 
-Failure note: MN5 nodes as07r3b27 and as06r2b26 kill jobs at launch (torchrun NUMA binding:
-AssertionError("Invalid device id")); exclude with +slurm.sbatch.exclude.
+Failure note: MN5 nodes as07r3b27, as06r2b26, as05r3b28 killed jobs at launch on 2026-10-21
+(torchrun NUMA binding: AssertionError("Invalid device id")), one more node gave "CUDA error:
+unknown error" mid-run; exclude with +slurm.sbatch.exclude.
 
 ## 7. Conclusions and recommended settings (2026-10-19)
 
