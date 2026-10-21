@@ -1,0 +1,11 @@
+# Native (no container) runtime of the dllm launcher on Snellius. Apptainer is unavailable on
+# Snellius while CVE-2026-98260 is mitigated, so jobs activate the pip venv .venv-gpu instead of
+# the megatron-torch-2.13 image: torch 2.13.0+cu126, Transformer Engine 2.16.0 compiled against it
+# (CUDA 12.6 and cuDNN 9.5 from /sw, sm_90), transformers 5.14.1. Exact pins:
+# oellm_autoexp/dllm/requirements-native-snellius.txt; build: oellm_autoexp/dllm/build_native_stack_snellius.sbatch.
+# Use it together with config/slurm/snellius_megadlm_native.yaml, and never mix it with the
+# container stack inside one study.
+class_name: Venv
+venv_path: ${oc.env:PROJECT_DIR,${oc.env:PWD}}/.venv-gpu
+env:
+  MACHINE_NAME: "SNELLIUS"

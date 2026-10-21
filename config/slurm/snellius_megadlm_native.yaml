@@ -1,0 +1,21 @@
+defaults:
+  - snellius_megadlm
+  - _self_
+
+# snellius_megadlm without singularity (see config/container/snellius_megadlm_native.yaml).
+# The job exports the backend env and activates the native venv. No modules are loaded at
+# run time: the venv's Python carries an rpath, and torch and Transformer Engine use the CUDA,
+# cuDNN and NCCL libraries of their pip wheels (a /sw cuDNN module would shadow torch's pinned
+# cuDNN).
+env:
+  # The container value (/.singularity.d/libs) does not exist natively; empty lets Triton find
+  # the driver's libcuda through ldconfig.
+  TRITON_LIBCUDA_PATH: ""
+  TRITON_CACHE_DIR: ${oc.env:TRITON_CACHE_DIR,${oc.env:OUTPUT_DIR}/cache/triton}
+  TORCHINDUCTOR_CACHE_DIR: ${oc.env:TORCHINDUCTOR_CACHE_DIR,${oc.env:OUTPUT_DIR}/cache/torchinductor}
+  CUDA_CACHE_PATH: ${oc.env:CUDA_CACHE_PATH,${oc.env:OUTPUT_DIR}/cache/nv}
+launcher_cmd: "${oc.join:' ',${oc.maptmpl:'export %=\\'$%\\' ; \\\n',${oc.dict.keys:.env}}} \
+  export LOCAL_ADDR=$(nslookup $(hostname) | grep \"Address: \" | sed \"s/Address: //\" | tail) ; \\\n\
+  export RANK=$SLURM_PROCID ; export LOCAL_RANK=$SLURM_LOCALID ; \\\n\
+  ${oc.join:'',${oc.mapkeyvaltmpl:'export %k=%v ; \\\n',${backend.env}}} \
+  source ${container.venv_path}/bin/activate ; \\\n"
