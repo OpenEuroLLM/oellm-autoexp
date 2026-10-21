@@ -1,0 +1,36 @@
+# Qwen3-0.6B-Base size for block-diffusion (bd3) training. Architecture from the HF config.json of
+# Qwen/Qwen3-0.6B-Base. pretrained_checkpoint is the converted checkpoint (spec section 13). When the
+# run's own load directory is empty, MegaDLMs megatron/training/checkpointing.py loads it with
+# finetune semantics.
+defaults:
+  - /backend/megatron/qwen3_base@_here_
+  - /backend/megatron/dllm/bd/bd_train_defaults@_here_
+  - /backend/megatron/dllm/bd/data_qwen3_fineweb_edu@_here_
+  - _self_
+
+# Architecture (Qwen3-0.6B-Base config.json)
+num_layers: 28
+hidden_size: 1024
+ffn_hidden_size: 3072
+num_attention_heads: 16
+num_query_groups: 8
+group_query_attention: true
+kv_channels: 128
+untie_embeddings_and_output_weights: false
+norm_epsilon: 1.0e-6
+rotary_base: 1000000
+qk_layernorm: true
+normalization: RMSNorm
+swiglu: true
+add_bias_linear: false
+make_vocab_size_divisible_by: 128
+
+tensor_model_parallel_size: 1
+micro_batch_size: 4
+
+pretrained_checkpoint: "${oc.env:OUTPUT_DIR}/dllm-ablations/converted/qwen3_0.6B_tp1"
+
+aux:
+  model_name: qwen3-0.6B-base
+  mask_token_id: 151669  # len(tokenizer) of Qwen3; spec section 12
+  hf_repo: Qwen/Qwen3-0.6B-Base

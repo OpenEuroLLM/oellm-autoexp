@@ -27,7 +27,7 @@ from oellm_autoexp.dllm.render import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-_CONFIG_DIR = Path("config")
+_CONFIG_DIR = REPO_ROOT / "config"
 _MEGADLM_ARGUMENTS = REPO_ROOT / "submodules/MegaDLMs/megatron/training/arguments.py"
 
 if not _MEGADLM_ARGUMENTS.exists():
@@ -99,7 +99,9 @@ def test_dllm_experiment_flags_are_accepted(
     root = load_config_reference(
         config_setup=ConfigSetup(config_name=config_name, config_dir=str(_CONFIG_DIR))
     )
-    launcher = root.backend.launcher_script
+    launcher = getattr(root.backend, "launcher_script", None)
+    if launcher is None:
+        pytest.skip(f"{config_name}: no launcher script, so no MegaDLMs flags to check")
     emitted: set[str] = set()
     for command in commands:
         emitted.update(extract_script_flags(command, launcher))
@@ -111,17 +113,21 @@ def test_dllm_experiment_flags_are_accepted(
 
 
 # Flags that every block-diffusion job must set explicitly, so that a lost or misspelled
-# backend.aux.bd_args cannot silently fall back to the launcher defaults.
+# backend.aux.bd_args cannot silently fall back to the launcher defaults. The list holds every
+# --bd-* flag of the launcher (checked below); jobs pass "--bd-block-schedule none" for a
+# constant block size.
 _BD_LAUNCHERS = ("pretrain_block_difflm.py", "convert_chain.sh")
 _BD_REQUIRED_FLAGS = (
     "--bd-objective",
     "--bd-block-size",
+    "--bd-block-schedule",
     "--bd-token-shift",
     "--bd-complementary-mask",
     "--bd-loss-weighting",
     "--bd-t-min",
     "--bd-t-max",
     "--bd-doc-mask",
+    "--bd-val-seed",
     "--mask-token",
     "--difflm-varilen-prob",
 )
@@ -155,9 +161,9 @@ def test_block_diffusion_jobs_set_their_flags_explicitly(
     root = load_config_reference(
         config_setup=ConfigSetup(config_name=config_name, config_dir=str(_CONFIG_DIR))
     )
-    launcher = root.backend.launcher_script
-    if os.path.basename(launcher) not in _BD_LAUNCHERS:
-        return  # MegaDLMs' own launcher has no --bd-* flags
+    launcher = getattr(root.backend, "launcher_script", None)
+    if launcher is None or os.path.basename(launcher) not in _BD_LAUNCHERS:
+        return  # no launcher, or MegaDLMs' own launcher: no --bd-* flags
     for command in render_launch_commands(config_name, _CONFIG_DIR):
         values = _flag_values(command, launcher)
         missing = [flag for flag in _BD_REQUIRED_FLAGS if not values.get(flag)]
@@ -195,14 +201,19 @@ def test_extract_script_flags_requires_the_launcher_token() -> None:
 
 
 def test_bd_flags_are_accepted_only_by_the_block_diffusion_launcher() -> None:
-    """--bd-* flags pass for pretrain_block_difflm.py and fail for MegaDLMs' pretrain_difflm.py."""
+    """--bd-* flags pass for pretrain_block_difflm.py and fail for MegaDLMs' pretrain_difflm.py.
+
+    The block launcher's --bd-* flags are exactly the --bd-* flags of _BD_REQUIRED_FLAGS, so a
+    new flag cannot be left out of the explicit-flag check.
+    """
     block = parse_accepted_flags(
         REPO_ROOT / rel
         for rel in argparser_files_for("./oellm_autoexp/dllm/pretrain_block_difflm.py")
     )
     plain = parse_accepted_flags(REPO_ROOT / rel for rel in argparser_files_for(_LAUNCHER))
-    assert "--bd-block-size" in block
-    assert "--bd-block-size" not in plain
+    bd_flags = {flag for flag in block if flag.startswith("--bd-")}
+    assert bd_flags == {flag for flag in _BD_REQUIRED_FLAGS if flag.startswith("--bd-")}
+    assert not bd_flags & plain
     assert "--mask-token" in block and "--mask-token" in plain
     with pytest.raises(ValueError):
         argparser_files_for("./some/other_launcher.py")

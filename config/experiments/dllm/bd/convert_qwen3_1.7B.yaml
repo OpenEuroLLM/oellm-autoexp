@@ -1,0 +1,76 @@
+# @package _global_
+# Conversion chain for Qwen3-1.7B-Base (dllm-bd3-spec section 13), one native job on TP GPUs:
+# template (1 iteration, mock data, lr 0) -> convert (CPU) -> parity against HF + I3 (GPU).
+# The converted checkpoint lands in $OUTPUT_DIR/dllm-ablations/converted/qwen3_1.7B_tp<TP>, which
+# the size config loads as --pretrained-checkpoint. The converter refuses an output directory that
+# already holds a converted checkpoint, so remove <out>/release before you run the job again.
+# Render: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/convert_qwen3_1.7B --dry-run
+# Submit: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/convert_qwen3_1.7B --submit-and-exit
+# Other TP: append backend.megatron.tensor_model_parallel_size=<TP> to either command.
+
+defaults:
+  - /backend: megadlm_bd_torchrun
+  - /container: snellius_megadlm_native
+  - /slurm: snellius_megadlm_native
+  - /job: default
+  - /sweep: none
+  - override /backend/megatron: dllm/bd/qwen3_1.7B_base
+  - _self_
+
+job:
+  name: "convert_qwen3_1.7B_tp${backend.megatron.tensor_model_parallel_size}"
+  base_output_dir: "${oc.env:OUTPUT_DIR}/dllm-ablations/${job.name}"
+  log_path: ${.base_output_dir}/slurm-%j.log
+  log_path_current: ${.base_output_dir}/current.log
+  config_path: ${.base_output_dir}/config-%j.yaml
+  config_path_current: ${.base_output_dir}/current.yaml
+
+backend:
+  launcher_script: "./oellm_autoexp/dllm/convert/convert_chain.sh"
+  # The chain script starts its own single-node torchrun for the template and parity steps.
+  # Override dist_cmd, not full_cmd: an experiment-level full_cmd makes the composed config resolve
+  # the megatron interpolations (lr_decay_iters = train_iters) before the overrides below apply.
+  dist_cmd: "${.launcher_script}"
+  env:
+    CHAIN_HF: ${backend.megatron.aux.hf_repo}
+    CHAIN_TEMPLATE: ${backend.megatron.save}
+    CHAIN_OUT: "${oc.env:OUTPUT_DIR}/dllm-ablations/converted/qwen3_1.7B_tp${backend.megatron.tensor_model_parallel_size}"
+    CHAIN_DATA_PREFIX: "${oc.env:DATA_DIR}/qwen3_tokenized/fineweb_edu_10BT/shard_15_text_document"
+    CHAIN_NPROC: "${backend.megatron.tensor_model_parallel_size}"
+  aux:
+    difflm_args: "--mask-token ${backend.megatron.aux.mask_token_id} --base-model vanilla --model-running-mode difflm-noshift --attention-mask-type no_mask --difflm-varilen-prob 0"
+    bd_args: "--bd-objective bd3 --bd-block-size 8 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
+  megatron:
+    # Template run: one iteration on mock data with lr 0; save the model only, load nothing.
+    train_iters: 1
+    mock_data: true
+    train_data_path: null
+    valid_data_path: null
+    test_data_path: null
+    lr: 0.0
+    min_lr: 0.0
+    lr_decay_style: constant
+    lr_warmup_iters: 0
+    lr_wsd_decay_iters: null
+    global_batch_size: ${.micro_batch_size}
+    eval_iters: 0
+    eval_interval: 1000000
+    log_interval: 1
+    save: ${job.base_output_dir}/template
+    save_interval: 1
+    no_save_optim: true
+    no_save_rng: true
+    load: null
+    pretrained_checkpoint: null
+    wandb_project: ""  # Megatron's default: no W&B run
+    tensorboard_dir: null
+
+slurm:
+  sbatch:
+    _non_strict: true
+    nodes: 1
+    partition: gpu_h100
+    gpus_per_node: ${backend.megatron.tensor_model_parallel_size}
+    cpus_per_task: ${oc.muli:16,${backend.megatron.tensor_model_parallel_size}}
+    exclusive: null  # TP GPUs only, not the whole node
+    time: "${oc.slurmtime:3600}"
