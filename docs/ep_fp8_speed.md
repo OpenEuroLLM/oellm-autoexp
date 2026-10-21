@@ -609,14 +609,14 @@ launch are A/B-comparable; across launches tok/s moves by ~1-2 % here (o12 vs o1
 | arm | tok/s/GPU | mem | result |
 |---|---:|---:|---|
 | offload last only on stages 0, 1 (o10b) | 5,585 | 0.84 | no gain: the later stages' last chunks are not in the way |
-| + no recompute of the last 0/0/1/2 or 0/1/2/4 chunks per stage | OOM | | stage 3 (14 GiB non-PyTorch + 44 GiB) has no room |
+| + no recompute of the last 0/0/1/2 or 0/1/2/4 chunks per stage | OOM | | stage 3 (OOM message: 57.2 GiB PyTorch + ~6 GiB non-PyTorch) has no room |
 | MoonEP 32 / 48 SMs (o11b; default 64) | 5,425 / 5,514 | | **keep 64** |
 | angular MuOwn instead of Adam (o11b) | 5,467 | 0.82 | optimizer step **-2.1 %** (~1 s / step) |
 | duplex offload streams (o12) | 5,535-5,601 | 0.88 | neutral: the D2H lag stays (median 177 ms): PCIe bandwidth, not stream order |
 | overlap_p2p_comm_warmup_flush (o13) | hang | | MoonEP cross_rank_barrier timeout, then launch failure: not usable with MoonEP |
 
 Memory traces (MEM_TRACE_DIR, iteration 2, ranks 0/8/16/24) of the candidate: peaks 48.5 /
-38.7 / 38.2 / 44.4 GiB allocated (+~14 GiB non-PyTorch). On the middle stages ~10 x 512 MB are
+38.7 / 38.2 / 44.4 GiB allocated; non-PyTorch memory (CUDA context + kernels, NCCL communicators, MoonEP buffers; from the OOM messages) is ~7.9 GiB on stage 0, ~6.0 GiB on stage 3. On the middle stages ~10 x 512 MB are
 pipeline receive buffers (one per micro-batch in flight) and ~9 x 512 MB chunk outputs whose
 offload copy has not finished yet (the block frees only when the D2H copy is done). The receive
 buffers were not offloaded: they are leaves the schedule keeps for their .grad, and off the
@@ -627,8 +627,8 @@ recompute (same gradients bitwise, unit tests). Trace o14s3 (vs the candidate): 
 the receive buffers are gone from the live set. Speed: 5,528 (traced; duplex traced 5,601, so
 <= ~1 %: ~10 % more D2H traffic on the middle stages, where PCIe is the bound); o14b's 5,111 was
 a slow node set (51 s / step from the first step). A memory knob, opt-in, not a speed win.
-Stage 0 remains the limit (47.0 + ~14 GiB): the per-step Engram lookup (+~6 GiB there) still
-does not fit -- that needs layers moved off stage 0.
+Stage 0 remains the limit (47.0 + ~8 GiB non-PyTorch, ~8 GiB headroom): the per-step Engram
+lookup still does not fit (it needs > 8 GiB there) -- that needs layers moved off stage 0.
 
 Failure note: MN5 nodes as07r3b27, as06r2b26, as05r3b28 killed jobs at launch on 2026-10-21
 (torchrun NUMA binding: AssertionError("Invalid device id")), one more node gave "CUDA error:
