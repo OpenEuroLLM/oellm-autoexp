@@ -152,7 +152,7 @@ def _check_result(result: dict[str, Any], mode: str, count: int) -> None:
         str(2 * i + 1) for i in range(count)
     ]
     for record in result["records"]:
-        assert set(record) == {"index", "prediction", "gold", "correct"}
+        assert set(record) == {"index", "prediction", "gold", "correct", "completion"}
         assert record["correct"] == (record["prediction"] == record["gold"])
 
 

@@ -266,7 +266,8 @@ def evaluate(
     Returns:
         A dict with ``accuracy`` (percent), ``n``, ``correct``, ``mode``, ``mean_tpf_decode``,
         ``mean_tpf_all`` (the means of the per-problem values), and ``records``. Each record has
-        ``index``, ``prediction``, ``gold``, and ``correct``.
+        ``index``, ``prediction``, ``gold``, ``correct``, and ``completion`` (the decoded text up
+        to the first EOS).
 
     Raises:
         ValueError: If the mode, a setting, or the problem list is not supported.
@@ -331,7 +332,13 @@ def evaluate(
             prediction = extract_answer(text)
             correct = prediction is not None and prediction == gold
             records.append(
-                {"index": index, "prediction": prediction, "gold": gold, "correct": correct}
+                {
+                    "index": index,
+                    "prediction": prediction,
+                    "gold": gold,
+                    "correct": correct,
+                    "completion": text,
+                }
             )
             tpf_decode.append(decode_tpf)
             tpf_all.append(all_tpf)
