@@ -1412,6 +1412,19 @@ def ckpt_offload():
         mbs2, fused, engram(112), mb,
         {"backend.env.RECOMPUTE_OFFLOAD_LEAF": "1", B + "overlap_p2p_comm_warmup_flush": True,
          "aux.array_tag": "_moonofffused_eng_dupleafwf"})
+    # o15: the Engram step lookup in groups of G micro-batches (ENGRAM_STEP_GROUP; the whole-step
+    # lookup OOMs on stage 0), MEM_BREAKDOWN=1 (non-PyTorch memory: MoonEP buffer / pools, NCCL)
+    memb = {"backend.env.MEM_BREAKDOWN": "1"}
+    arm("o_eng31_mbref", "Engram 31 % per-micro-batch lookup (reference of o15)", base, hyb, moon,
+        off, ctx16, mbs2, fused, engram(112), mb, memb, {"aux.array_tag": "_moonofffused_eng_mbref"})
+    for g in (4, 8):
+        arm(f"o_eng31_grp{g}", f"Engram 31 %, step lookup in groups of {g} micro-batches", base,
+            hyb, moon, off, ctx16, mbs2, fused, engram(112), memb,
+            {"backend.env.ENGRAM_STEP_GROUP": str(g), "aux.array_tag": f"_moonofffused_eng_grp{g}"})
+    arm("o_eng31_grp8_leaf", "... groups of 8 + RECOMPUTE_OFFLOAD_LEAF", base, hyb, moon, off,
+        ctx16, mbs2, fused, engram(112), memb,
+        {"backend.env.ENGRAM_STEP_GROUP": "8", "backend.env.RECOMPUTE_OFFLOAD_LEAF": "1",
+         "aux.array_tag": "_moonofffused_eng_grp8leaf"})
     arm("o_eng31_ncclinfo", "Engram 31 % candidate, 3 steps with NCCL INIT / NET logging", base, hyb,
         moon, off, ctx16, mbs2, fused, engram(112), mb, stage("nccl", "0,1", ""),
         {"slurm.env.NCCL_DEBUG": "INFO", "slurm.env.NCCL_DEBUG_SUBSYS": "INIT,NET",
