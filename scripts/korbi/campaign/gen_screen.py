@@ -1120,6 +1120,16 @@ def arms5udcool(size: str):
     return out
 
 
+def arms5kron_pfb(size: str):
+    """CKLSTM's best s1 variant at s2 / s3 (user 2026-10-21, budget raised to 7.5k GPU-h): the polar
+    forget and erase gates with the low-rank output gate (s1: +0.003 at step 4000, trend -0.005 to
+    -0.008 at 10B tokens vs CKDA). Own suite (screen5kronlr's suites hold finished runs); pairs with
+    round 5's h5_moe and with screen5kronlr's paper-gate arm of the size."""
+    paper = arms5kron_lowrank(size)[0][2]
+    return [("h5_moe_kron_lr_pfb", "KronLSTM 5:1, polar forget and erase gates, low-rank output gate",
+             {**paper, B + "linear_kronlstm_forget_angle": True, B + "linear_kronlstm_erase_angle": True})]
+
+
 def speed5_profiled(size: str = "s1"):
     """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
     with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
@@ -1187,6 +1197,7 @@ def write5():
             *[(z, "screen5kronscale", arms5kron_scale(z)) for z in ("s1", "s2", "s3")],
             *[(z, "screen5kronext", arms5kron_ext(z)) for z in ("s1", "s2", "s3")],
             *[(z, "screen5kronlr", arms5kron_lowrank(z)) for z in ("s1", "s2", "s3")],
+            *[(z, "screen5kronpfb", arms5kron_pfb(z)) for z in ("s2", "s3")],
             *[(z, "screen5udecay", arms5udecay(z)) for z in ("s1", "s2")],
             *[(z, "screen5udecaysqrt", arms5udecay_sqrt(z)) for z in ("s1", "s2")],
             *[(z, "screen5udcool", arms5udcool(z)) for z in ("s1", "s2")],
