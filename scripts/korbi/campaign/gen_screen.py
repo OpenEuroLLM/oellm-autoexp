@@ -1243,6 +1243,8 @@ def arms5downstream(size: str, src_suite: str, arms, ckpt: str = "ckpt", tasks: 
               B + "load": f"{src}/{ckpt}", B + "non_persistent_global_ckpt_dir": f"{src}/ckpt_rolling",
               B + "cuda_graph_impl": "none", B + "cuda_graph_modules": [],
               "job.est_steps": 1, "slurm.sbatch.time": "02:00:00", **BAD_NODES}
+        if extra and extra.get("bits"):
+            env["backend.env.QUANT_EVAL_BITS"] = extra["bits"]
         out.append((a, f"{a} ({src_suite}, {ckpt}): downstream + passkey", {**pool[a], **ev, **env,
                                                                             **((extra or {}).get("kv", {}))}))
     return out
@@ -1323,6 +1325,10 @@ def write5():
             ("s2", "ds5smoke", arms5downstream("s2", "screen5_s2", ["h5_moe"], ckpt="ckpt", tasks="arc_easy,passkey")),
             ("s2", "ds5kv", arms5downstream("s2", "screen5_s2", ["h5_moe", "qwen35_moe", "attn_moe"], tasks="kvret",
                                              extra={"tag": "kv"})),
+            # the cooled s3 models (screen5s3cool, step 4800): every task, full precision and 4-bit
+            ("s3", "ds5", arms5downstream("s3", "screen5s3cool_s3", ["h5_moe_mhc4", "h5_moe", "qwen35_moe"])),
+            ("s3", "ds5q4", arms5downstream("s3", "screen5s3cool_s3", ["h5_moe_mhc4", "h5_moe", "qwen35_moe"],
+                                            extra={"tag": "q4", "bits": "4"})),
             *[(z, "quanteval5q4", arms5quant(z, "4")) for z in ("s2", "s3")],
             *[(z, "screen5udecay", arms5udecay(z)) for z in ("s1", "s2")],
             *[(z, "screen5udecaysqrt", arms5udecay_sqrt(z)) for z in ("s1", "s2")],
