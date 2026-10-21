@@ -3519,6 +3519,8 @@ sweep:
           backend.env.ENGRAM_STEP_LOOKUP: '0'
           backend.env.RECOMPUTE_OFFLOAD_LAST: '1'
           backend.megatron.timing_log_level: 1
+          backend.megatron.logging_level: 20
+          backend.env.MEM_BREAKDOWN: '1'
         # Engram 31 % candidate, angular MuOwn, step timers
         - aux.arm: o_eng31_t_muown
           aux.pattern: LENLELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ENLELELE|LELE*ELELELE|LELE*ELELELE|LELE*ELELELE|LELE*E
@@ -3600,6 +3602,8 @@ sweep:
           backend.env.ENGRAM_STEP_LOOKUP: '0'
           backend.env.RECOMPUTE_OFFLOAD_LAST: '1'
           backend.megatron.timing_log_level: 1
+          backend.megatron.logging_level: 20
+          backend.env.MEM_BREAKDOWN: '1'
           backend.megatron.optimizer: angular_muown
           backend.megatron.lr: 0.004
           backend.megatron.min_lr: 0.004

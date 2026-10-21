@@ -1430,7 +1430,9 @@ def ckpt_offload():
          "aux.array_tag": "_moonofffused_eng_grp8leaf"})
     # o15t: where angular MuOwn's ~2 % go (layer-wise distributed: grads all-reduced instead of
     # reduce-scattered, NS on 1/DP of the matrices, the params broadcast): step timers, A/B
-    timers = {B + "timing_log_level": 1, B + "train_iters": 12}
+    # (the timers go to logger.info: logging_level 20; MEM_BREAKDOWN: per-group NCCL memory)
+    timers = {B + "timing_log_level": 1, B + "train_iters": 12, B + "logging_level": 20,
+              "backend.env.MEM_BREAKDOWN": "1"}
     arm("o_eng31_t_adam", "Engram 31 % candidate, Adam, step timers", base, hyb, moon, off, ctx16,
         mbs2, fused, engram(112), mb, timers, {"aux.array_tag": "_moonofffused_eng_tadam"})
     arm("o_eng31_t_muown", "Engram 31 % candidate, angular MuOwn, step timers", base, hyb, moon,
