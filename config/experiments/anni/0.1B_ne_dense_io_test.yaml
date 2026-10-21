@@ -1,0 +1,89 @@
+# @package _global_
+
+# Filesystem I/O test on LUMI: 0.1B NE dense model with the real datamix4 data
+# (156 train + 156 valid prefixes on project_462001516) and torch_dist
+# checkpointing incl. optimizer state, to measure the per-rank Lustre load of a
+# realistic training job (code imports + data + checkpoint save/load).
+#
+# Run 1 (fresh start, builds the data index cache, saves at iter 10 and 20):
+#   uv run --python 3.12 scripts/run_autoexp.py \
+#     --config-name experiments/anni/0.1B_ne_dense_io_test \
+#     'backend.python_cmd="bash scripts/debug/strace_rank.sh python"' \
+#     --submit-and-exit
+#
+# Run 2 (resume: loads the iter-20 checkpoint, reads the cached data indices):
+#   same command plus  backend.megatron.train_iters=30
+#
+# Per-job checkpoint file count (strace only sees rank 0's own shards):
+#   find <base_output_dir>/checkpoints -type f | wc -l
+
+defaults:
+  - /backend: megatron
+  - /container: lumi
+  - /slurm: lumi
+  - /job: default
+  - /sweep: none
+  - /backend/megatron: base
+  - /backend/megatron/multilingual_scaling/models: qwen3_dense_0.1B_ne # model configs
+  - /backend/megatron/multilingual_scaling/data: oellm_256k_lumi # tokenizer, seq_length; data paths overridden below
+  - _self_
+
+index: 0
+stage: ""
+
+job:
+  name: "0.1B_ne_dense_io_test"
+  base_output_dir: "/scratch/project_465002530/users/amoisala/oellm-autoexp/config/experiments/anni/${job.name}"
+  log_path: ${slurm.sbatch.error}
+
+backend:
+  megatron:
+    # DATA: datamix4 per-split manifest from this repo (oellm_256k_lumi's
+    # data_args_path lives on the expired project_462000963)
+    data_args_path: null
+    per_split_data_args_path: config/backend/megatron/multilingual_scaling/data/datamix4_lumi_per_split_v19.json
+    train_data_path: null
+    valid_data_path: null
+    test_data_path: null
+    split: null
+    data_cache_path: "/scratch/project_465002530/users/$USER/megatron_cache/${job.name}" # unique per run: avoids concurrent-job cache races
+    num_workers: 6 # Ville's suggestion since otherwise all of the 7 available CPUs per tasks would have a dataloader
+    num_dataset_builder_threads: 6
+
+    # CHECKPOINTING: two saves in run 1 (iter 10 + final), load on resume
+    save: "${job.base_output_dir}/checkpoints"
+    load: "${job.base_output_dir}/checkpoints"
+    save_interval: 10
+    # optimizer and rng state are saved (no_save_optim / no_save_rng left unset), as in production
+
+    train_iters: 20
+    lr_decay_iters: 100 # fixed, so run 2 can raise train_iters without a scheduler mismatch on load
+    lr_warmup_iters: 0 # model default (2000) would exceed train_iters for a short test run
+    lr_wsd_decay_iters: 1
+    eval_iters: 1
+    eval_interval: 1000
+    micro_batch_size: 2
+    global_batch_size: 64
+    lr: 5.e-4
+
+    wandb_exp_name: ${job.name}
+    wandb_project: null # Disabled
+    wandb_entity: openeurollm-project
+    wandb_save_dir: "${job.base_output_dir}"
+    tensorboard_dir: null # Disabled
+
+    # need to be set on lumi for ROCm based models to work
+    add_bias_linear: false
+    gradient_accumulation_fusion: false
+    masked_softmax_fusion: false
+
+slurm:
+  sbatch:
+    nodes: 1
+    account: "project_465002530"
+    time: "00:10:00"
+    partition: dev-g
+    output: "${job.base_output_dir}/logs/stdout-%j.log"
+    error: "${job.base_output_dir}/logs/stderr-%j.log"
+  srun:
+    kill_on_bad_exit: "1 "
