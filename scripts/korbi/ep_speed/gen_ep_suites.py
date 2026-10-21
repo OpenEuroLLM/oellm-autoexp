@@ -1402,6 +1402,10 @@ def ckpt_offload():
     arm("o_eng31_duplex_last01", "... + offload last on stages 0, 1 only (vs o_eng31_last01)", base,
         hyb, moon, off, ctx16, mbs2, fused, engram(112), mb, dup,
         {"backend.env.RECOMPUTE_OFFLOAD_LAST": "0,1", "aux.array_tag": "_moonofffused_eng_duplex01"})
+    # ... + the pipeline receive buffers (leaf chunk inputs, held by the schedule for .grad) too
+    arm("o_eng31_duplex_leaf", "... + RECOMPUTE_OFFLOAD_LEAF (receive buffers to the host)", base,
+        hyb, moon, off, ctx16, mbs2, fused, engram(112), mb,
+        {"backend.env.RECOMPUTE_OFFLOAD_LEAF": "1", "aux.array_tag": "_moonofffused_eng_dupleaf"})
     arm("o_eng31_ncclinfo", "Engram 31 % candidate, 3 steps with NCCL INIT / NET logging", base, hyb,
         moon, off, ctx16, mbs2, fused, engram(112), mb, stage("nccl", "0,1", ""),
         {"slurm.env.NCCL_DEBUG": "INFO", "slurm.env.NCCL_DEBUG_SUBSYS": "INIT,NET",
