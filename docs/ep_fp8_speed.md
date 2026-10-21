@@ -571,6 +571,34 @@ fused sublayer: 1.57 / 3.03 ms. State per token: CuTe M bf16 [G, K, D] + packed 
 (E = 4) read the next window's tapes, so windows must align with chunk / stage boundaries or that
 data must be carried across them.
 
+### 6d-4. Engram at production scale, LDM at scale (2026-10-21)
+
+**Engram** (campaign sizing rule: the freed expert parameters in 2 Engram layers before blocks
+1 and 24 of 48; orders (2, 3) x 8 heads, dim 64, reference gate / conv pre-norm / per-layer
+hashes, lean table optimizer), mHC-4, 16k mbs 2, offload incl. the last chunks
+(RECOMPUTE_OFFLOAD_LAST=1), 8 nodes:
+
+| arm | tok/s/GPU | vs ref | mem |
+|---|---:|---:|---:|
+| 160 experts, no Engram (offload last) | 5,929 | | 0.81 |
+| (same, last chunks on the GPU) | 6,070 | | 0.83 |
+| Engram 21 % (128 experts + 7.25B table) | 5,571 | -6.0 % | 0.88 |
+| **Engram 31 % (112 experts + 10.9B table)** | **5,601** | **-5.5 %** | 0.88 |
+
+The per-step lookup (ENGRAM_STEP_LOOKUP=1) OOMs on stage 0 (it holds all 32 micro-batches' rows
++ grads for the step: 39.7 GiB before the forward-backward vs ~33.6 without Engram); the
+per-micro-batch lookup fits. Merge regression fixed: the step lookup passed [1, docs + 1]
+cu_seqlens to the 1-D document_positions. Model: ~27.5B + 10.9B Engram = ~38.4B total, ~2.2B
+active non-embedding.
+
+**LDM at scale** (depth_memory_segments: the state [x, r, M, P] in the streams across recompute
+chunks and stages, the CuTe window fold at segment boundaries; tests: segments = one sequence
+with and without full recompute, torch + CuTe): K 8 at 16k mbs 1 = **2,852 tok/s/GPU** (mHC-4
+5,921), mbs 2 OOM, recompute 4 layers / chunk OOM. Profile: the 11-slot checkpoints' PCIe
+offload (~5.2 s of copies per profiled step) and the stalls it causes (EP peers spinning in
+MoonEP's inter-rank sync), not the LDM kernels (0.87 s). Next step if wanted: unwind M in the
+backward instead of checkpointing it (~5 instead of 11 widths per chunk).
+
 ## 7. Conclusions and recommended settings (2026-10-19)
 
 **> 250 TFLOP/s is not reached; ~195-203 is the practical ceiling on MN5 for Qwen3-30B-A3B with real
