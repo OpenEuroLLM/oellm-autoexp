@@ -1425,6 +1425,15 @@ def ckpt_offload():
         ctx16, mbs2, fused, engram(112), memb,
         {"backend.env.ENGRAM_STEP_GROUP": "8", "backend.env.RECOMPUTE_OFFLOAD_LEAF": "1",
          "aux.array_tag": "_moonofffused_eng_grp8leaf"})
+    # o15t: where angular MuOwn's ~2 % go (layer-wise distributed: grads all-reduced instead of
+    # reduce-scattered, NS on 1/DP of the matrices, the params broadcast): step timers, A/B
+    timers = {B + "timing_log_level": 1, B + "train_iters": 12}
+    arm("o_eng31_t_adam", "Engram 31 % candidate, Adam, step timers", base, hyb, moon, off, ctx16,
+        mbs2, fused, engram(112), mb, timers, {"aux.array_tag": "_moonofffused_eng_tadam"})
+    arm("o_eng31_t_muown", "Engram 31 % candidate, angular MuOwn, step timers", base, hyb, moon,
+        off, ctx16, mbs2, fused, engram(112), mb, timers,
+        {B + "optimizer": "angular_muown", B + "lr": 4e-3, B + "min_lr": 4e-3,
+         B + "residual_mixer_lr_mult": 0.25, "aux.array_tag": "_moonofffused_eng_tmuown"})
     arm("o_eng31_ncclinfo", "Engram 31 % candidate, 3 steps with NCCL INIT / NET logging", base, hyb,
         moon, off, ctx16, mbs2, fused, engram(112), mb, stage("nccl", "0,1", ""),
         {"slurm.env.NCCL_DEBUG": "INFO", "slurm.env.NCCL_DEBUG_SUBSYS": "INIT,NET",
