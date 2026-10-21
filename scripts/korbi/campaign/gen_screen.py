@@ -13,6 +13,7 @@ scripts/korbi/campaign/count_params.py; arms missing there use the base d_ffn an
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import yaml
@@ -1130,6 +1131,27 @@ def arms5kron_pfb(size: str):
              {**paper, B + "linear_kronlstm_forget_angle": True, B + "linear_kronlstm_erase_angle": True})]
 
 
+# MN5 nodes that kill jobs at launch (torchrun NUMA binding: "Invalid device id"; EP agent 2026-10-21)
+BAD_NODES = {"slurm.sbatch.exclude": "as07r3b27,as06r2b26"}
+# the polar forget gate's init cap, |f| <= cos(pi * 0.05), as a fixed decay: -log cos(0.157)
+POLAR_OFFSET = round(-math.log(math.cos(math.pi * 0.05)), 5)
+
+
+def arms5offset(size: str = "s1"):
+    """Shorter memory horizons, without the polar angle (user 2026-10-21): the s1 checkpoints show
+    the polar forget gate never turns negative and acts as an init cap |f| <= 0.988 (p90 horizon
+    ~280 -> ~80 tokens). A fixed extra decay per step (forget_offset = -log 0.988) on
+    KronLSTM's paper gates (low-rank output gate; compare screen5kronlr's h5_moe_kron_lr /
+    _pfb) and on CKDA (round 5's h5_moe with the offset: does the reference mixer gain the same?)."""
+    h5 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe"]
+    kron = arms5kron_lowrank(size)[0][2]
+    w = {B + "num_workers": 8, B + "dataloader_prefetch_factor": 4}
+    return [("h5_moe_kron_lr_off", f"KronLSTM paper gates + forget offset {POLAR_OFFSET}",
+             {**kron, B + "linear_kronlstm_forget_offset": POLAR_OFFSET, **BAD_NODES}),
+            ("h5_moe_off", f"CKDA + forget offset {POLAR_OFFSET}",
+             {**h5, **w, B + "linear_gate_forget_offset": POLAR_OFFSET, **BAD_NODES})]
+
+
 def speed5_profiled(size: str = "s1"):
     """speed5_residuals for 300 steps with a torch profile of steps 200-203 (rank 0; summarise
     with scripts/korbi/hybrid_speed/kernel_summary.py <arm dir>): where LDM's time goes. 100
@@ -1198,6 +1220,7 @@ def write5():
             *[(z, "screen5kronext", arms5kron_ext(z)) for z in ("s1", "s2", "s3")],
             *[(z, "screen5kronlr", arms5kron_lowrank(z)) for z in ("s1", "s2", "s3")],
             *[(z, "screen5kronpfb", arms5kron_pfb(z)) for z in ("s2", "s3")],
+            ("s1", "screen5off", arms5offset("s1")),
             *[(z, "screen5udecay", arms5udecay(z)) for z in ("s1", "s2")],
             *[(z, "screen5udecaysqrt", arms5udecay_sqrt(z)) for z in ("s1", "s2")],
             *[(z, "screen5udcool", arms5udcool(z)) for z in ("s1", "s2")],

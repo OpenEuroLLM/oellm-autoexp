@@ -564,6 +564,10 @@ class MegatronConfig(ConfigInterface):
     # KronLSTM write gate c = 2 sigmoid(.) - 1 in [-1, 1] (mean 0.5 at init).
     linear_kronlstm_signed_write: bool = False
 
+    # KronLSTM: a fixed extra decay per step on every forget channel (log|f| - offset); 0.012
+    # is the polar forget gate's init cap without its angle.
+    linear_kronlstm_forget_offset: float = 0.0
+
     # KronLSTM with linear_fla_allow_neg_eigval (s = 2): keep the write c in [0, 1] by
     # construction. The op's s scales the write cap as well as the erase, so without this the
     # write is s * c in [0, 2]; with it only the erase is extended (s * beta in [0, 2]).
@@ -737,6 +741,10 @@ class MegatronConfig(ConfigInterface):
     # Lower bound on the decay gate's pre-activation, for complex_kda. Clamps how fast a
     # channel may forget within one step.
     linear_gate_lower_bound: float = -5.0
+
+    # complex_kda: a fixed extra decay per step on every channel (log|alpha| - offset, clamped
+    # at linear_gate_lower_bound): shorter memory horizons.
+    linear_gate_forget_offset: float = 0.0
 
     # Shape of the output gate, for complex_kda. ``"lowrank"`` factorises it through a
     # bottleneck; ``"linear"`` is a single projection. This changes the parameter count, so it
@@ -1988,8 +1996,11 @@ class MegatronConfig(ConfigInterface):
     # supported for AngularMuown.
     angular_muown_tp_mode: Literal["duplicated", "distributed"] = "duplicated"
 
-    # Internal decay schedule for the AngularMuown directional step multiplier
-    angular_muown_u_decay_schedule: Literal["poly", "cosine"] = "poly"
+    # Internal decay schedule for the AngularMuown directional step multiplier: poly, cosine,
+    # or the adaptive radius (one shared radius state, growing with the steps and shrinking
+    # with --angular-muown-u-radius-lambda) or hyper (log multiplier learnt from the gradient
+    # / previous-momentum correlation)
+    angular_muown_u_decay_schedule: Literal["poly", "cosine", "radius", "hyper"] = "poly"
 
     # Scale for the poly U-decay schedule. Set --angular-muown-u-decay-p 0 to disable decay.
     angular_muown_u_decay_scale: float = 0.001
@@ -2006,6 +2017,15 @@ class MegatronConfig(ConfigInterface):
 
     # Floor of the cosine U-decay schedule
     angular_muown_u_decay_min_multiplier: float = 0.0
+
+    # radius schedule: shrink rate of the shared radius (a weight decay on it)
+    angular_muown_u_radius_lambda: float = 0.0
+
+    # hyper schedule: step on log kappa per unit gradient / momentum correlation
+    angular_muown_u_hyper_lr: float = 0.02
+
+    # hyper schedule: floor on the direction multiplier
+    angular_muown_u_hyper_min_multiplier: float = 0.02
 
     # Disable the batched AngularMuown step and update one parameter at a time
     angular_muown_batched_step: bool = True

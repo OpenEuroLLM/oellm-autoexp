@@ -338,3 +338,13 @@ details in `../oellm-autoexp-hybrid-ep/docs/ep_fp8_speed.md` §6c):
   host: mHC-4 16k fits on 8 nodes, +6.4 %), MHC_FUSED_READ=1 (Triton mHC read, +5 %), MEM_TRACE_DIR.
   8-node numbers (16k): plain mbs 2 + offload 7,539 tok/s/GPU; mHC-4 mbs 2 + offload + fused 6,026.
   Details: docs/ep_fp8_speed.md 6d / 6d-2 (worktree branch feat/ep-fp8-speed).
+
+### 2026-10-21 (scaling agent) — bad MN5 node + offload stream fix
+- Node **as07r3b27** kills jobs at launch: torchrun `AssertionError("Invalid device id")` (torch NUMA binding → get_device_properties), 0 iterations. All 6 of my o10/o11 arms died on it. Exclude with `+slurm.sbatch.exclude=as07r3b27` (the `+` is needed).
+- Megatron d08f193bb (ep-fp8-speed-r5): `checkpoint_offload` uses one copy stream per direction. With one stream, the D2H offloads ran a median 130-180 ms (max 0.8 s) behind their free, leaving ~4 GB of pending blocks at the peak, and the backward's H2D fetches queued behind them. Speed + memory effect is being measured (o12); I'll report before asking for a merge.
+
+### 2026-10-21 later (scaling agent) — offload results, more bad nodes
+- Megatron (ep-fp8-speed-r5) 771c9989a + 1fd902533: opt-in `RECOMPUTE_OFFLOAD_LEAF=1` also offloads the pipeline receive buffers, including their [s,b,4,h] view (the mHC chunk input off stage 0). Peak memory per stage −1.5 / −4.5 / −3.5 / −2.5 GiB, about speed-neutral (≤1 %), gradients bitwise equal in the tests. Useful if a config is a few GiB short of fitting. The duplex streams (d08f193bb) are speed-neutral too.
+- Don't use `overlap_p2p_comm_warmup_flush` with MoonEP: it hung in cross_rank_barrier and then crashed with a launch failure.
+- On the Engram-31 candidate: MoonEP 64 SMs is best (32: −3 %, 48: −1.5 %). Angular MuOwn's optimizer step costs ~2 % vs Adam.
+- More bad nodes: as06r2b26 and as05r3b28 ("Invalid device id" at launch); one more gave "CUDA error: unknown error" mid-run. Use `+slurm.sbatch.exclude="as07r3b27,as06r2b26,as05r3b28"`.
