@@ -53,7 +53,8 @@ SITE="$("$VENV/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purel
 [ -e "$SITE/nvidia/cudart" ] || ln -s cuda_runtime "$SITE/nvidia/cudart"
 # MegaDLMs builds its dataset helpers with `python3-config --extension-suffix`. A venv has no
 # python3-config, so the build would take the system Python's suffix (cpython-39), which this
-# Python cannot import.
+# Python cannot import. Jobs build the helpers with the system g++ (no modules at run time); a
+# build with the GCC 13 module needs GLIBCXX_3.4.32, which /lib64/libstdc++.so.6 lacks.
 [ -e "$VENV/bin/python3-config" ] || ln -s "$EBROOTPYTHON/bin/python3-config" "$VENV/bin/python3-config"
 "$VENV/bin/pip" check || true
 "$VENV/bin/python" - <<'EOF'
