@@ -1,0 +1,50 @@
+# @package _global_
+# Throughput probe (PLAN 5c): 20 iterations of the R00 bd3 setup at global batch 256 on one node,
+# from random weights (throughput does not depend on them), with no evaluation and no checkpoints.
+# The launcher prints " bd throughput | iteration N | tokens/s/GPU: X |" at every iteration.
+# One job per size, TP and micro-batch, for example:
+#   PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/probe_qwen3 \
+#     --submit-and-exit backend/megatron=dllm/bd/qwen3_8B_base \
+#     backend.megatron.tensor_model_parallel_size=4 backend.megatron.micro_batch_size=2
+
+defaults:
+  - /backend: megadlm_bd_torchrun
+  - /container: snellius_megadlm_native
+  - /slurm: snellius_megadlm_native
+  - /job: default
+  - /sweep: none
+  - override /backend/megatron: dllm/bd/qwen3_0.6B_base
+  - _self_
+
+job:
+  name: "probe_${backend.megatron.aux.model_name}_tp${backend.megatron.tensor_model_parallel_size}_mbs${backend.megatron.micro_batch_size}"
+  base_output_dir: "${oc.env:OUTPUT_DIR}/dllm-ablations/probes/${job.name}"
+  log_path: ${.base_output_dir}/slurm-%j.log
+  log_path_current: ${.base_output_dir}/current.log
+  config_path: ${.base_output_dir}/config-%j.yaml
+  config_path_current: ${.base_output_dir}/current.yaml
+
+backend:
+  aux:
+    difflm_args: "--mask-token ${backend.megatron.aux.mask_token_id} --base-model vanilla --model-running-mode difflm-noshift --attention-mask-type no_mask --difflm-varilen-prob 0"
+    bd_args: "--bd-objective bd3 --bd-block-size 8 --bd-block-schedule none --bd-token-shift 0 --bd-complementary-mask 0 --bd-loss-weighting elbo --bd-t-min 0.0 --bd-t-max 1.0 --bd-doc-mask 1 --bd-val-seed 1234"
+  megatron:
+    train_iters: 20
+    lr_warmup_iters: 5
+    log_interval: 1
+    eval_iters: 0
+    eval_interval: 1000000
+    valid_data_path: null
+    test_data_path: null
+    save: null
+    load: null
+    pretrained_checkpoint: null
+    wandb_project: ""  # Megatron's default: no W&B run
+    tensorboard_dir: null
+
+slurm:
+  sbatch:
+    _non_strict: true
+    nodes: 1
+    partition: gpu_h100
+    time: "${oc.slurmtime:2700}"

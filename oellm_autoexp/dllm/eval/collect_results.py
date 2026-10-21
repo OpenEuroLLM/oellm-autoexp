@@ -63,7 +63,8 @@ _NUM = r"\d+(?:\.\d+)?"
 _SIZE = rf"{_NUM}B(?:_[a-z]+)?"
 _LR = rf"{_NUM}(?:e[-+]?\d+)?"
 _TOKENS = rf"{_NUM}[KMB]"
-_SCHEDULE = rf"{_NUM}:\d+(?:,{_NUM}:\d+)*"
+# Run names may spell the schedule 0:4,0.15:8 as 0-4_0.15-8, which keeps ':' and ',' out of paths.
+_SCHEDULE = rf"{_NUM}:\d+(?:,{_NUM}:\d+)*|{_NUM}-\d+(?:_{_NUM}-\d+)*"
 _BD3_RE = re.compile(
     rf"bd3-q3_(?P<size>{_SIZE})-B(?P<block_size>\d+)"
     rf"-sh(?P<token_shift>[01])-cm(?P<complementary>[01])"
@@ -75,6 +76,19 @@ _AR_RE = re.compile(rf"ar-q3_(?P<size>{_SIZE})-lr(?P<lr>{_LR})-T(?P<tokens>{_TOK
 _THROUGHPUT_RE = re.compile(
     r"bd throughput \| iteration\s+\d+ \| tokens/s/GPU: (?P<value>[-+]?\d+(?:\.\d+)?)"
 )
+
+
+def _schedule_text(text: str) -> str | None:
+    """Return the schedule field of a run name as ``--bd-block-schedule`` text,
+    or None for ``none``.
+
+    The path-safe spelling ``0-4_0.15-8`` becomes ``0:4,0.15:8``.
+    """
+    if text == "none":
+        return None
+    if ":" in text:
+        return text
+    return ",".join(item.replace("-", ":") for item in text.split("_"))
 
 
 def _parse_lr(text: str, name: str) -> float:
@@ -133,7 +147,7 @@ def parse_run_name(name: str) -> dict[str, Any]:
             "t_min": t_min,
             "t_max": t_max,
             "doc_mask": int(groups["doc_mask"]),
-            "schedule": None if groups["schedule"] == "none" else groups["schedule"],
+            "schedule": _schedule_text(groups["schedule"]),
             "lr": _parse_lr(groups["lr"], name),
             "tokens": _parse_tokens(groups["tokens"], name),
         }

@@ -185,6 +185,17 @@ def test_parse_bd3_run_name_with_schedule_and_uniform_weighting() -> None:
     assert parsed["tokens"] == 500_000_000
 
 
+def test_parse_bd3_run_name_with_path_safe_schedule() -> None:
+    """The spelling 0-4_0.15-8 (no ':' or ',' in paths) parses to the flag text
+    0:4,0.15:8."""
+    name = "bd3-q3_0.6B-B8-sh0-cm0-welbo-t0_1-dm1-sc0-4_0.15-8-lr3e-5-T2B"
+    parsed = cr.parse_run_name(name)
+    assert parsed["schedule"] == "0:4,0.15:8"
+    assert parsed["block_size"] == 8
+    assert parsed["lr"] == 3e-5
+    assert parsed["tokens"] == 2_000_000_000
+
+
 def test_parse_ar_run_name_has_no_block_diffusion_fields() -> None:
     parsed = cr.parse_run_name(AR_NAME)
     assert parsed["objective"] == "ar"
