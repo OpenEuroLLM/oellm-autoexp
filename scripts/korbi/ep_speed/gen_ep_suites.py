@@ -1366,6 +1366,13 @@ def ckpt_offload():
         hyb, moon, off, ctx16, mbs2, fused, engram(128))
     arm("o_mhc4_16k_mbs2_eng31", "mHC-4 + Engram 31 % (112 experts + 10.9B table params)", base,
         hyb, moon, off, ctx16, mbs2, fused, engram(112))
+    # the step lookup holds the rows (+ grads) of all 32 micro-batches for the whole step: OOM on
+    # stage 0 (39.7 GiB before the forward-backward vs ~33.6 without Engram) -- per micro-batch
+    mb = {"backend.env.ENGRAM_STEP_LOOKUP": "0"}
+    arm("o_mhc4_16k_mbs2_eng21_mb", "mHC-4 + Engram 21 %, per-micro-batch lookup", base, hyb, moon,
+        off, ctx16, mbs2, fused, engram(128), mb)
+    arm("o_mhc4_16k_mbs2_eng31_mb", "mHC-4 + Engram 31 %, per-micro-batch lookup", base, hyb, moon,
+        off, ctx16, mbs2, fused, engram(112), mb)
     return arms
 
 
