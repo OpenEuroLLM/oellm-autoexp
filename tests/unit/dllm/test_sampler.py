@@ -472,6 +472,30 @@ def test_rejects_block_size_below_one() -> None:
         BlockDiffusionSampler(_tiny_model(), 0, _MASK_ID, 0, _REAL_VOCAB, _NO_EOS)
 
 
+def test_rejects_attn_implementation_other_than_sdpa() -> None:
+    model = _tiny_model()
+    model.config._attn_implementation = "eager"
+    with pytest.raises(ValueError, match="sdpa"):
+        BlockDiffusionSampler(model, _BLOCK, _MASK_ID, 0, _REAL_VOCAB, _NO_EOS)
+
+
+def test_rejects_layer_types_other_than_full_attention() -> None:
+    model = _tiny_model()
+    model.config.layer_types = ["sliding_attention", "full_attention"]
+    with pytest.raises(ValueError, match="full-attention"):
+        BlockDiffusionSampler(model, _BLOCK, _MASK_ID, 0, _REAL_VOCAB, _NO_EOS)
+
+
+def test_rejects_mask_id_at_the_model_vocabulary_size() -> None:
+    with pytest.raises(ValueError, match="mask_id"):
+        BlockDiffusionSampler(_tiny_model(), _BLOCK, 48, 0, _REAL_VOCAB, _NO_EOS)  # vocab size 48
+
+
+def test_rejects_real_vocab_above_the_model_vocabulary_size() -> None:
+    with pytest.raises(ValueError, match="real_vocab"):
+        BlockDiffusionSampler(_tiny_model(), _BLOCK, _MASK_ID, 0, 49, _NO_EOS)  # vocab size is 48
+
+
 def test_rejects_steps_in_dynamic_mode() -> None:
     with pytest.raises(ValueError, match="steps"):
         _sampler(_tiny_model()).generate(_PROMPT, 4, mode="dynamic", steps=2)
@@ -496,3 +520,39 @@ def test_rejects_negative_max_new_tokens() -> None:
 def test_rejects_prompt_id_outside_the_real_vocabulary() -> None:
     with pytest.raises(ValueError, match="prompt ids"):
         _sampler(_tiny_model()).generate([3, _MASK_ID], 4)
+
+
+_PADDED_REAL_VOCAB = 40  # M = 40 and ids 41..47 are padding rows, so the vocabulary has 48 ids
+
+
+def _model_with_padding_on_top() -> transformers.Qwen3ForCausalLM:
+    """Return the tiny model with a large logit bias on ids 40 and up.
+
+    The bias makes the mask id and the padding rows win every argmax
+    over the full vocabulary, so only the real-vocabulary restriction of
+    the sampler keeps them out.
+    """
+    model = _tiny_model()
+    bias = torch.zeros(model.config.vocab_size)
+    bias[_PADDED_REAL_VOCAB:] = 1e3
+
+    def add_bias(module: torch.nn.Module, args: tuple, output: torch.Tensor) -> torch.Tensor:
+        return output + bias.to(output)
+
+    model.lm_head.register_forward_hook(add_bias)
+    return model
+
+
+def test_padding_rows_are_never_emitted_even_when_they_win_the_argmax() -> None:
+    model = _model_with_padding_on_top()
+    with torch.no_grad():
+        full = model(input_ids=torch.tensor([_PROMPT])).logits[0, -1]
+    assert int(full.argmax()) >= _PADDED_REAL_VOCAB  # over all ids, M or padding wins
+    sampler = BlockDiffusionSampler(
+        model, _BLOCK, _PADDED_REAL_VOCAB, 0, _PADDED_REAL_VOCAB, _NO_EOS
+    )
+    static = sampler.generate(_PROMPT, 12, mode="static")
+    dynamic = sampler.generate(_PROMPT, 12, mode="dynamic", tau=0.0)
+    for result in (static, dynamic):
+        assert len(result.tokens) == 12
+        assert max(result.tokens) < _PADDED_REAL_VOCAB
