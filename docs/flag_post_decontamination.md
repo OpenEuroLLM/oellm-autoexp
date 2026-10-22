@@ -118,8 +118,13 @@ ssh jupiter
 D=/e/scratch/e-sta-openeurollm/$USER/flag-decon; mkdir -p $D; cd $D   # extract_refs.py copied here
 apptainer exec --cleanenv -B /e /e/project1/e-sta-openeurollm/container/oellm-eval-vllm.sif \
     python extract_refs.py --hf-home /e/scratch/e-sta-openeurollm/$USER/flag-evals/hf_home --out refs.jsonl.gz
-# 1. JUPITER -> MN5 (needs the MN5 key on JUPITER, or `ssh -A jupiter` with it in the local agent)
+# 1. JUPITER -> MN5. Directly (needs the MN5 key on JUPITER, or `ssh -A jupiter` with it loaded in
+#    the local agent):
 rsync -av --progress $D/refs.jsonl.gz* eit847786@transfer1.bsc.es:/gpfs/scratch/ehpc533/users/korbip/flag_decon_v1/refs/
+#    or, as done on 2026-10-22 (132 MB: 14 s each way), relayed through the workstation:
+scp jupiter:$D/refs.jsonl.gz jupiter:$D/refs.jsonl.gz.manifest.tsv ./refs/ && \
+    rsync -a ./refs/ marenostrum_new:/gpfs/scratch/ehpc533/users/korbip/flag_decon_v1/refs/
+#    sha256 on both sides: refs.jsonl.gz fdeceb5b868d9ffb..., manifest aa9b1aee69c77a31...
 # 2. local: sync the code snapshot
 ./sync_to_marenostrum.sh decon
 # 3..8. MN5 login node, in $R/autoexp_decon (one step per launch, each waits for the previous)

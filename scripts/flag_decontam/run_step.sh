@@ -32,7 +32,7 @@ grep -E '/(agenttrove|megamath|dclm)-' "$WORK/shards_all.txt$t" | awk -F/ '!seen
 for f in shards_all shards_count shards_roundtrip; do mv -f "$WORK/$f.txt$t" "$WORK/$f.txt"; done
 echo "[$step] node ${SLURM_NODEID:-0}/${SLURM_NNODES:-1} on $(hostname), work $WORK"
 case $step in
-selftest)  python -m pytest scripts/flag_decontam/test_flag_decontam.py -q -p no:cacheprovider -o addopts="" ;;
+selftest)  python scripts/flag_decontam/test_flag_decontam.py ;;
 build)     python scripts/flag_decontam/build_table.py --work "$WORK" --refs "$REFS" "$@" ;;
 roundtrip) python scripts/flag_decontam/verify.py roundtrip --shards "$WORK/shards_roundtrip.txt" "$@" ;;
 count)     # counts/ keeps one file per node and GPU: remove it before counting with a new table

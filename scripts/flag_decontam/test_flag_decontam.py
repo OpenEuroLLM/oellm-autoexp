@@ -1,6 +1,7 @@
 """End-to-end test of the flag decontamination on a synthetic Megatron dataset (CPU; GPU if any).
 
     python -m pytest scripts/flag_decontam/test_flag_decontam.py -q
+    python scripts/flag_decontam/test_flag_decontam.py        # without pytest (the MN5 image)
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ import subprocess
 import sys
 
 import numpy as np
-import pytest
 import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -60,8 +60,7 @@ def test_hash_cpu_gpu_agree():
             assert torch.equal(h, ngram_hashes(c.cuda(), n).cpu())
 
 
-@pytest.fixture()
-def setup(tmp_path):
+def make_setup(tmp_path):
     rng = np.random.default_rng(1)
     lut = make_lut()
     seg_a = rng.integers(4, 501, 40)          # long segment -> n = 13
@@ -111,8 +110,8 @@ def setup(tmp_path):
     return root, work, prefix, tmp_path
 
 
-def test_end_to_end(setup):
-    root, work, prefix, tmp = setup
+def test_end_to_end(tmp_path):
+    root, work, prefix, tmp = make_setup(tmp_path)
     (tmp / "shards.txt").write_text(prefix + "\n")
     units = scan.plan_units([prefix], 5000, 0)
     assert len(units) > 10 and units[-1][2] == Index(prefix + ".idx").seq_count
@@ -137,17 +136,14 @@ def test_end_to_end(setup):
 
     # Megatron reads the new index against the old .bin
     sys.path.insert(0, os.path.join(HERE, "..", "..", "submodules", "Megatron-LM"))
-    try:
-        from megatron.core.datasets.indexed_dataset import IndexedDataset
-    except Exception as e:  # pragma: no cover
-        pytest.skip(f"megatron not importable: {e}")
+    from megatron.core.datasets.indexed_dataset import IndexedDataset
     ds = IndexedDataset(str(out / "src" / "shard_0000_text_document"))
     assert len(ds.document_indices) - 1 == 198
     assert np.array_equal(ds.get(17), np.fromfile(prefix + ".bin", np.int32, count=int(old.lengths[18]), offset=int(old.pointers[18])))
 
 
-def test_resume_and_count(setup):
-    root, work, prefix, tmp = setup
+def test_resume_and_count(tmp_path):
+    root, work, prefix, tmp = make_setup(tmp_path)
     units = scan.plan_units([prefix], 5000, 20000)
     assert sum(u[3] for u in units) >= 20000 and sum(u[3] for u in units[:-1]) < 20000
     args = argparse.Namespace(mode="count", work=str(work), root=str(root), part=0, min_hits=3)
@@ -164,3 +160,15 @@ def test_filter_index_multi_sequence_docs():
     lengths, pointers, doc_idx = filter_index(I, np.array([True, False, True]))
     assert lengths.tolist() == [5, 6, 8, 9] and pointers.tolist() == [0, 20, 72, 104]
     assert doc_idx.tolist() == [0, 2, 4]
+
+
+if __name__ == "__main__":
+    import inspect
+    import tempfile
+    from pathlib import Path
+    for name, fn in list(globals().items()):
+        if name.startswith("test_"):
+            with tempfile.TemporaryDirectory() as d:
+                fn(*([Path(d)] if inspect.signature(fn).parameters else []))
+            print(f"PASSED {name}", flush=True)
+    print("all passed")
