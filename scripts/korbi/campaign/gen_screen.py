@@ -1280,6 +1280,20 @@ def arms5opt(size: str = "s1"):
     return out
 
 
+def arms5r7(size: str = "s2"):
+    """The attention ratio 7:1 for the main run (user 2026-10-22: 7:1, NSA2 sparsification later on
+    top) with mHC-4: attention every 8th block (s2's 18 blocks: blocks 8 and 16, 2 trailing CKDA
+    blocks -- 2 attention layers instead of 5:1's 3), everything else as round 5's h5_moe_mhc4 of
+    the size, so it pairs with that run (loss) and its retrieval evals (ds5lc). Non-expert
+    parameters differ slightly (one attention layer less, one CKDA layer more), reported."""
+    hidden, blocks, *_ = R4_SIZES[size]
+    mhc4 = dict((n, kv) for n, _, kv in arms5(size))["h5_moe_mhc4"]
+    w = {"s1": (8, 4), "s2": (6, 3)}[size]
+    return [("h5_moe_mhc4_r7", "CKDA 7:1 (attention every 8th block) + mHC-4",
+             {**mhc4, "aux.pattern": hybrid_every(blocks, 8, "L"), B + "num_workers": w[0],
+              B + "dataloader_prefetch_factor": w[1], **BAD_NODES})]
+
+
 def arms5udadapt(size: str = "s1"):
     """AngularMuown's adaptive direction schedules (user 2026-10-21; Megatron 43dc8243c), each over
     the whole schedule in one run -- stable to step 4000, then WSD linear to lr / 10 at 4800, the
@@ -1505,6 +1519,7 @@ def write5():
             ("s1", "screen5iat", arms5iat("s1")),
             *[(z, "screen5ckl", arms5ckl(z)) for z in ("s1", "s2")],
             *[(z, "screen5opt", arms5opt(z)) for z in ("s1", "s2")],
+            ("s2", "screen5r7", arms5r7("s2")),
             ("s2", "screen5ssmax", arms5ssmax("s2")),
             # CKLSTM experiment C (user 2026-10-22): the harder long-context set (requests_longctx:
             # 64k long-document loss by position, 64-fact retrieval, variable tracking, 16-fact
