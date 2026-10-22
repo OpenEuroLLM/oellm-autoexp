@@ -78,6 +78,9 @@ def test_tier_job_flags_match_their_run_names(
         assert int(flags["--seq-length"]) == _L + 1, name
         iters = math.ceil(run["tokens"] / (_BASE_GLOBAL_BATCH * _L))
         assert int(flags["--train-iters"]) == iters, name
+        # PARAMS training: warmup max(min_warmup_iters 50, 1 percent); per-token loss (spec 7).
+        assert int(flags["--lr-warmup-iters"]) == max(50, math.ceil(0.01 * iters)), name
+        assert "--calculate-per-token-loss" in flags, name
         if run["objective"] == "ar":
             continue
         assert int(flags["--bd-block-size"]) == run["block_size"], name

@@ -18,7 +18,14 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TRAIN_THEN_EVAL = REPO_ROOT / "oellm_autoexp/dllm/train_then_eval.sh"
 EVAL_CHAIN = REPO_ROOT / "oellm_autoexp/dllm/eval/eval_chain.sh"
-_EVAL_KEYS = ("EVAL_CKPT", "EVAL_OBJECTIVE", "EVAL_BLOCK_SIZE", "EVAL_TOKEN_SHIFT", "EVAL_MASK_ID")
+_EVAL_KEYS = (
+    "EVAL_CKPT",
+    "EVAL_OBJECTIVE",
+    "EVAL_BLOCK_SIZE",
+    "EVAL_TOKEN_SHIFT",
+    "EVAL_MASK_ID",
+    "EVAL_DOC_MASK",
+)
 
 
 def _run(cmd: list[str], env: dict[str, str]) -> subprocess.CompletedProcess:
@@ -79,8 +86,37 @@ def test_evaluation_takes_its_settings_from_the_training_flags(tmp_path: Path) -
         "EVAL_BLOCK_SIZE": "16",  # last schedule entry, the block size at the end of training
         "EVAL_TOKEN_SHIFT": "1",
         "EVAL_MASK_ID": "151669",
+        "EVAL_DOC_MASK": "1",
         "EVAL_MODES": "",
     }
+
+
+def test_evaluation_keeps_the_runs_document_mask_and_reads_none_in_any_case(
+    tmp_path: Path,
+) -> None:
+    """R09 trains with --bd-doc-mask 0, so its M1 must use the same attention
+    rule."""
+    save = tmp_path / "checkpoints"
+    save.mkdir()
+    (save / "latest_checkpointed_iteration.txt").write_text("100")
+    stub, out = _stub_eval(tmp_path)
+    flags = _train_flags(save, "--bd-doc-mask", "0")
+    flags[flags.index("--bd-block-schedule") + 1] = " NONE "
+    result = _run(["bash", str(TRAIN_THEN_EVAL), *flags], {"EVAL_CHAIN_CMD": stub})
+    assert result.returncode == 0, result.stderr
+    settings = _settings(out)
+    assert (settings["EVAL_DOC_MASK"], settings["EVAL_BLOCK_SIZE"]) == ("0", "8")
+
+
+def test_missing_save_or_train_iters_is_reported(tmp_path: Path) -> None:
+    stub, out = _stub_eval(tmp_path)
+    flags = _train_flags(tmp_path)
+    flags.remove("--train-iters")
+    flags.remove("100")
+    result = _run(["bash", str(TRAIN_THEN_EVAL), *flags], {"EVAL_CHAIN_CMD": stub})
+    assert result.returncode == 0, result.stderr
+    assert "WARNING" in result.stdout
+    assert not out.exists()
 
 
 def test_ar_run_is_evaluated_with_block_size_one_and_ar_decoding(tmp_path: Path) -> None:
@@ -250,3 +286,49 @@ def test_stage_data_deletes_the_copy_after_a_failed_command(tmp_path: Path) -> N
     result = _run(["bash", str(STAGE_DATA), str(command), "--train-data-path", prefix], env)
     assert result.returncode == 3
     assert not (local / "dllm-data").exists()
+
+
+def test_eval_chain_exports_the_checkpoint_and_names_the_ar_result(tmp_path: Path) -> None:
+    """The export gets the run's settings, M1 its document mask, and mode ar
+    its result name."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "calls.txt"
+    (bin_dir / "python").write_text(f'#!/usr/bin/env bash\necho "$*" >> {calls}\n')
+    (bin_dir / "python").chmod(0o755)
+    env = _chain_env(
+        tmp_path,
+        bin_dir,
+        EVAL_CKPT="/ckpt",
+        EVAL_BLOCK_SIZE="1",
+        EVAL_TOKEN_SHIFT="1",
+        EVAL_MASK_ID="151669",
+        EVAL_DOC_MASK="0",
+        EVAL_MODES="ar",
+    )
+    result = _run(["bash", str(EVAL_CHAIN)], env)
+    assert result.returncode == 0, result.stderr
+    export, m1, gsm8k = calls.read_text().splitlines()
+    model = f"{tmp_path}/eval/hf/run"
+    assert export.split() == [
+        "-m", "oellm_autoexp.dllm.convert.megadlm_to_hf_qwen3", "--megatron", "/ckpt",
+        "--hf-base", "Qwen/Qwen3-0.6B-Base", "--out", model, "--block-size", "1",
+        "--token-shift", "1", "--mask-token-id", "151669", "--layout", "te",
+    ]  # fmt: skip
+    assert "--doc-mask 0" in m1 and f"--model {model}" in m1
+    assert gsm8k.endswith(f"--out {tmp_path}/eval/run.gsm8k_ar.json")
+
+
+def test_stage_data_needs_a_command(tmp_path: Path) -> None:
+    result = _run(["bash", str(STAGE_DATA)], {})
+    assert result.returncode == 64
+    assert "usage" in result.stderr
+
+
+def test_stage_data_falls_back_when_the_override_directory_is_missing(tmp_path: Path) -> None:
+    (prefix,) = _dataset(tmp_path, "shard_00_text_document")
+    command, record = _recording_command(tmp_path)
+    env = {"DLLM_LOCAL_SCRATCH": str(tmp_path / "absent")}
+    result = _run(["bash", str(STAGE_DATA), str(command), "--train-data-path", prefix], env)
+    assert result.returncode == 0, result.stderr
+    assert record.read_text().splitlines() == ["--train-data-path", f"{prefix} bin"]

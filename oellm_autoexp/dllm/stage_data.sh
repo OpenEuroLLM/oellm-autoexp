@@ -8,12 +8,14 @@
 # other arguments stay. The local directory is the job's own node-local scratch directory:
 # DLLM_LOCAL_SCRATCH when set, else /scratch-local/<user>.<job id> or a TMPDIR below /scratch-local.
 # Without one, or without free space for the data plus 10 percent, the command runs on the
-# original paths. Each node of a multi-node job stages its own copy.
+# original paths. Each node of a multi-node job stages its own copy. The local paths name the job,
+# so Megatron's dataset index cache (keyed by the paths) is built again by every staged job.
 # `stage_data.sh --check` prints the local directory and its free space, and runs nothing.
 set -euo pipefail
 
 local_scratch() {
   if [ -n "${DLLM_LOCAL_SCRATCH:-}" ]; then
+    [ -d "$DLLM_LOCAL_SCRATCH" ] && [ -w "$DLLM_LOCAL_SCRATCH" ] || return 1
     echo "$DLLM_LOCAL_SCRATCH"
     return 0
   fi
@@ -43,6 +45,10 @@ if [ "${1:-}" = "--check" ]; then
   exit 0
 fi
 
+if [ "$#" -eq 0 ]; then
+  echo "usage: stage_data.sh <command> [args...] | stage_data.sh --check" >&2
+  exit 64
+fi
 ARGS=("$@")
 declare -A LOCAL_OF=()
 for arg in "${ARGS[@]}"; do
@@ -57,7 +63,7 @@ fi
 
 need=0
 for prefix in "${!LOCAL_OF[@]}"; do
-  need=$(( need + $(stat -c %s "$prefix.bin") + $(stat -c %s "$prefix.idx") ))
+  need=$(( need + $(stat -L -c %s "$prefix.bin") + $(stat -L -c %s "$prefix.idx") ))
 done
 avail=$(df --output=avail -B1 "$base" | tail -n 1)
 if [ "$avail" -lt $(( need + need / 10 )) ]; then
@@ -92,7 +98,7 @@ for pid in "${PIDS[@]}"; do
 done
 for prefix in "${!LOCAL_OF[@]}"; do
   for ext in bin idx; do
-    if [ "$(stat -c %s "$prefix.$ext")" != "$(stat -c %s "${LOCAL_OF[$prefix]}.$ext")" ]; then
+    if [ "$(stat -L -c %s "$prefix.$ext")" != "$(stat -c %s "${LOCAL_OF[$prefix]}.$ext")" ]; then
       echo "[stage_data] size mismatch for $prefix.$ext" >&2
       exit 1
     fi

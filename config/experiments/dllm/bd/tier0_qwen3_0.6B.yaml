@@ -40,6 +40,8 @@ backend:
     train_iters: 954
     lr: 3.0e-5
     lr_warmup_iters: 50  # max(50, 1 percent of train_iters)
+    # One index cache per run: runs that start together never write the same cache files.
+    data_cache_path: ${job.base_output_dir}/data_cache
     aux:
       walltime_s: 28800
     # Save and stop 60 min before the time limit (time for the evaluation); resubmit to resume.

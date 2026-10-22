@@ -1,6 +1,6 @@
 # @package _global_
 # Tier 1 (.claude/dllm/ABLATIONS.md): one factor at a time against R00 for Qwen3-0.6B-Base, 2B tokens
-# = 3815 iterations of 256 sequences x L = 2048, one node per run, learning rate 3e-5 from tier 0.
+# = 3815 iterations of 256 sequences x L = 2048, one node per run, learning rate 3e-5 (placeholder until the tier 0 decision).
 # R05 (complementary masking) halves the global and micro batch, so its FLOPs per step match R00.
 # R08 writes its schedule 0:4,0.15:8 as 0-4_0.15-8 in the run name (D-044). R10 is the AR control.
 # Render: PYTHONPATH=. python scripts/run_autoexp.py --config-name experiments/dllm/bd/tier1_qwen3_0.6B --dry-run

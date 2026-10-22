@@ -62,7 +62,7 @@ EXPECTED_TIER0 = [
 ]
 EXPECTED_TIER1 = [
     f"| {BD3_NAME} | none | 1.2000 | +0.00 | 30.5 | 29.0 | 2.40 | 400 | base |",
-    f"| {AR_NAME} | objective ar | 1.1000 | -8.33 | - | - | - | - |  |",
+    f"| {AR_NAME} | objective ar | 1.1000 | -8.33 | 33.2 | - | - | - | M2 = AR greedy |",
     f"| {BD3_B4_NAME} | B = 4 | 1.2030 | +0.25 | 31.0 | 30.0 | 2.50 | - | tie |",
 ]
 
@@ -125,6 +125,7 @@ def _write_eval_dir(root: Path) -> Path:
         {"accuracy": 30.0, "mean_tpf_decode": 2.5},
     )
     _write_json(eval_dir / f"{AR_NAME}.m1.json", {"bits_per_token": 1.1})
+    _write_json(eval_dir / f"{AR_NAME}.gsm8k_ar.json", {"accuracy": 33.2})
     _write_json(eval_dir / "qwen3-0.6B-base.m1.json", {"bits_per_token": 1.0})
     return eval_dir
 
@@ -244,10 +245,11 @@ def test_load_eval_dir_reads_each_metric_file(tmp_path: Path) -> None:
         {"accuracy": 29.0, "mean_tpf_decode": 2.4},
     )
     _write_json(tmp_path / f"{AR_NAME}.m1.json", {"bits_per_token": 1.1})
+    _write_json(tmp_path / f"{AR_NAME}.gsm8k_ar.json", {"accuracy": 33.2})
     _write_json(tmp_path / "parity.json", {"top1": 0.99})
     assert cr.load_eval_dir(tmp_path) == {
-        BD3_NAME: {"m1": 1.2, "m2_static": 30.5, "m2_dyn": 29.0, "m3": 2.4},
-        AR_NAME: {"m1": 1.1, "m2_static": None, "m2_dyn": None, "m3": None},
+        BD3_NAME: {"m1": 1.2, "m2_static": 30.5, "m2_dyn": 29.0, "m3": 2.4, "m2_ar": None},
+        AR_NAME: {"m1": 1.1, "m2_static": None, "m2_dyn": None, "m3": None, "m2_ar": 33.2},
     }
 
 
@@ -291,7 +293,7 @@ def test_tier1_table_reports_dm1_ties_and_missing_values() -> None:
     assert lines[3] == (
         f"| {BD3_B4_NAME} | B = 4 | 1.2030 | +0.25 | 31.0 | 30.0 | 2.50 | - | tie |"
     )
-    assert lines[4] == f"| {AR_NAME} | objective ar | - | - | - | - | - | - |  |"
+    assert lines[4] == f"| {AR_NAME} | objective ar | - | - | - | - | - | - | M2 = AR greedy |"
 
 
 def test_tier1_change_column_lists_every_changed_factor() -> None:

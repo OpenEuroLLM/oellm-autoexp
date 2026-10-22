@@ -17,12 +17,14 @@
 #   EVAL_OBJECTIVE      M1 estimator: bd3 or ar
 #   EVAL_DATA_PREFIX    Megatron .bin/.idx prefix of the held-out split
 #   EVAL_NUM_SEQS       M1 windows (default 1000; 0 skips M1)
+#   EVAL_DOC_MASK       document attention mask of M1, the run's --bd-doc-mask (default 1)
 #   EVAL_MODES          comma-separated GSM8K modes: ar, static, dynamic (default static,dynamic;
 #                       none skips GSM8K)
 #   EVAL_GSM8K_N        number of GSM8K test problems (default 250)
 #   EVAL_TAU            confidence threshold of the dynamic mode (default 0.9)
-#   EVAL_PARALLEL       1 runs M1 and the GSM8K modes at the same time, one per visible GPU, with
-#                       one log each in $EVAL_DIR/logs (default 0: one after another)
+#   EVAL_PARALLEL       1 runs M1 and the GSM8K modes at the same time, one per visible GPU (with
+#                       more tasks than GPUs, tasks share GPUs), with one log each in
+#                       $EVAL_DIR/logs (default 0: one after another)
 set -euo pipefail
 : "${EVAL_RUN:?}" "${EVAL_DIR:?}" "${EVAL_HF_BASE:?}" "${EVAL_OBJECTIVE:?}" "${EVAL_DATA_PREFIX:?}"
 mkdir -p "$EVAL_DIR"
@@ -53,7 +55,8 @@ add_task() {
 if [ "${EVAL_NUM_SEQS:-1000}" -gt 0 ]; then
   add_task m1 python -m oellm_autoexp.dllm.eval.eval_nelbo --model "$MODEL" \
     --data-prefix "$EVAL_DATA_PREFIX" --num-sequences "${EVAL_NUM_SEQS:-1000}" \
-    --objective "$EVAL_OBJECTIVE" --out "$EVAL_DIR/$EVAL_RUN.m1.json"
+    --objective "$EVAL_OBJECTIVE" --doc-mask "${EVAL_DOC_MASK:-1}" \
+    --out "$EVAL_DIR/$EVAL_RUN.m1.json"
 fi
 MODES="${EVAL_MODES:-static,dynamic}"
 if [ "$MODES" != "none" ]; then

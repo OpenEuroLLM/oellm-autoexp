@@ -231,7 +231,9 @@ def _read_number(path: Path, key: str) -> float:
 def _entry(results: dict[str, dict[str, float | None]], run: str) -> dict[str, float | None]:
     """Return the metric entry of a run, creating it with empty fields when
     needed."""
-    return results.setdefault(run, {"m1": None, "m2_static": None, "m2_dyn": None, "m3": None})
+    return results.setdefault(
+        run, {"m1": None, "m2_static": None, "m2_dyn": None, "m3": None, "m2_ar": None}
+    )
 
 
 def load_eval_dir(eval_dir: str | os.PathLike[str]) -> dict[str, dict[str, float | None]]:
@@ -240,14 +242,15 @@ def load_eval_dir(eval_dir: str | os.PathLike[str]) -> dict[str, dict[str, float
     The files are matched by suffix. ``<run>.m1.json`` gives ``m1`` (field
     ``bits_per_token``). ``<run>.gsm8k_static.json`` gives ``m2_static`` (field ``accuracy``
     in percent). ``<run>.gsm8k_dynamic.json`` gives ``m2_dyn`` (``accuracy``) and ``m3``
-    (``mean_tpf_decode``). Other files are ignored.
+    (``mean_tpf_decode``). ``<run>.gsm8k_ar.json`` (AR greedy decoding, the M2 of AR runs) gives
+    ``m2_ar`` (``accuracy``). Other files are ignored.
 
     Args:
         eval_dir: Directory with the evaluation JSON files.
 
     Returns:
-        Maps each run name to ``{"m1", "m2_static", "m2_dyn", "m3"}``. A field whose file is
-        absent is None.
+        Maps each run name to ``{"m1", "m2_static", "m2_dyn", "m3", "m2_ar"}``. A field whose
+        file is absent is None.
 
     Raises:
         FileNotFoundError: If ``eval_dir`` is not a directory.
@@ -272,6 +275,9 @@ def load_eval_dir(eval_dir: str | os.PathLike[str]) -> dict[str, dict[str, float
             entry = _entry(results, name[: -len(".gsm8k_dynamic.json")])
             entry["m2_dyn"] = _read_number(path, "accuracy")
             entry["m3"] = _read_number(path, "mean_tpf_decode")
+        elif name.endswith(".gsm8k_ar.json"):
+            entry = _entry(results, name[: -len(".gsm8k_ar.json")])
+            entry["m2_ar"] = _read_number(path, "accuracy")
     return results
 
 
@@ -433,11 +439,12 @@ def tier1_table(rows: Sequence[Mapping[str, Any]], base_run: str | None) -> str:
     dM1 = 100 * (M1 - M1_base) / M1_base, where the base is the row named ``base_run``. The
     base row is marked "base". Another row whose |dM1| is below 0.3 percent is marked "tie".
     The Change column lists the differences from the R00 configuration, and the LR difference
-    from the base run.
+    from the base run. An AR run shows its AR greedy GSM8K accuracy (``m2_ar``) in the M2 static
+    column, marked "M2 = AR greedy".
 
     Args:
-        rows: Tier 1 rows with ``run``, ``m1``, ``m2_static``, ``m2_dyn``, ``m3``, and ``m4``
-            (each may be None).
+        rows: Tier 1 rows with ``run``, ``m1``, ``m2_static``, ``m2_dyn``, ``m3``, ``m4``, and
+            ``m2_ar`` (each may be None or absent).
         base_run: Name of the R00 run, or None when there is no base yet. Without a base,
             dM1 shows "-".
 
@@ -464,12 +471,17 @@ def tier1_table(rows: Sequence[Mapping[str, Any]], base_run: str | None) -> str:
             dm1 = 100.0 * (m1 - base_m1) / base_m1
             if not is_base and abs(dm1) < TIE_DM1_PERCENT:
                 notes.append("tie")
+        parsed = parse_run_name(row["run"])
+        m2_static = row.get("m2_static")
+        if parsed["objective"] == "ar":
+            m2_static = row.get("m2_ar")
+            notes.append("M2 = AR greedy")
         cells = [
             str(row["run"]),
-            _describe_change(parse_run_name(row["run"]), base_lr),
+            _describe_change(parsed, base_lr),
             _fmt(m1, ".4f"),
             _fmt(dm1, "+.2f"),
-            _fmt(row.get("m2_static"), ".1f"),
+            _fmt(m2_static, ".1f"),
             _fmt(row.get("m2_dyn"), ".1f"),
             _fmt(row.get("m3"), ".2f"),
             _fmt(row.get("m4"), ".0f"),
