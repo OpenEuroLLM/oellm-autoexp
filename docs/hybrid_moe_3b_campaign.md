@@ -2611,7 +2611,7 @@ chunks, c = d, m = 3d; PP payload / recompute as mHC-4); mixers keep width d:
 `full` (each mixer reads a latent down(4d -> d) of all streams and writes up(d -> 4d): the
 paper's low-rank temporal mixing; +8 d^2 per mixer), `mhc` (mHC-4 + the internal attention).
 
-**screen5iat_s1**: h5_moe_iat4 / h5_moe_iat4_full / h5_moe_mhc4_iat, round-5 protocol, paired
+**screen5iat_s1** (array 47749014, ~42 GPU-h; cluster tests 34/34 passed): h5_moe_iat4 / h5_moe_iat4_full / h5_moe_mhc4_iat, round-5 protocol, paired
 with h5_moe / h5_moe_mhc4. Total params matched by whole routed experts (user: not by expert
 width, which would cost even more efficiency): IAttn +2.37M per mixer layer = 2 experts -> 142;
 full +7.08M = 6 experts -> 138; EP 2 (neither divides by 4), with a 300-step EP-2 mHC-4 speed
