@@ -2709,3 +2709,15 @@ AngularMuown PR: `angular_muown_simplified`, `muown_classical`). Stable to step 
   800 steps, to 0.1 of the rate.
 - `muown_classical`: AngularMuown's defaults, persistent direction norms.
 - s2: C = 8 and `muown_classical`.
+
+**LDM's long-context retrieval** (`ds5ldm(logn)_s2`; round 5d's 2-node s2 trio, same setup and data
+order, step 4000, uncooled; multi-key retrieval, 10-way, 50 per length; log-n beyond 8k in brackets):
+
+| s2 arm | 2k | 4k | 8k | 16k | 32k | LAMBADA |
+|---|---:|---:|---:|---:|---:|---:|
+| CKDA (plain) | 0.70 | 0.74 | 0.70 | 0.70 (0.76) | 0.38 (0.64) | 31.8 |
+| CKDA + mHC-4 | 0.66 | 0.64 | 0.70 | 0.60 (0.68) | **0.50 (0.72)** | 33.9 |
+| CKDA + LDM x2.0 | 0.56 | 0.54 | 0.62 | 0.38 (0.48) | 0.20 (0.38) | **34.5** |
+
+LDM has the best loss and LAMBADA but the worst retrieval at every length, and none of mHC-4's
+length generalization. **mHC-4 stays the residual.**
