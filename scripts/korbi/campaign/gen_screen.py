@@ -1296,7 +1296,7 @@ def arms5r7(size: str = "s2"):
 
 # one GPU per task (the tiny optimizer study: a model this small does not scale over 4 GPUs)
 ONE_GPU = {"slurm.sbatch.gres": "gpu:1", "slurm.sbatch.gpus_per_node": 1, "slurm.sbatch.cpus_per_task": 20,
-           "slurm.sbatch.exclusive": False, "slurm.srun.exclusive": False, "slurm.srun.cpus_per_task": 20,
+           "slurm.sbatch.exclusive": None, "slurm.srun.exclusive": False, "slurm.srun.cpus_per_task": 20,
            "slurm.env.SLURM_CPUS_PER_TASK": "20", "slurm.env.GPUS_PER_NODE": "1",
            "slurm.env.NUM_GPUS_PER_NODE": "1"}
 
