@@ -1250,6 +1250,15 @@ def arms5ckl(size: str = "s1"):
             for n, d, kv in arms]
 
 
+def arms5ckl2(size: str = "s2"):
+    """ckl_sgn_w2 at s2 (user 2026-10-23: the decoupled write up to 2, the closest analogue of CKDA's
+    range; at s1 the fastest-closing gap). Own suite (screen5ckl_s2 has running arms); same protocol,
+    paired with round 5's h5_moe_mhc4 of the size."""
+    w = {"s1": (8, 4), "s2": (6, 3)}[size]
+    return [(n, d, {**kv, B + "num_workers": w[0], B + "dataloader_prefetch_factor": w[1], **BAD_NODES})
+            for n, d, kv in _cklstm_variants(size) if n == "ckl_sgn_w2"]
+
+
 def arms5opt(size: str = "s1"):
     """The PR's optimizers (user 2026-10-22; Megatron feat/angular-muown-simplified) against AngularMuown
     p = 1 / p = 1/2 (screen5udcool_{size}'s cooled branches; same data order), each through the
@@ -1620,6 +1629,7 @@ def write5():
             ("s1", "screen5off", arms5offset("s1")),
             ("s1", "screen5iat", arms5iat("s1")),
             *[(z, "screen5ckl", arms5ckl(z)) for z in ("s1", "s2")],
+            ("s2", "screen5ckl2", arms5ckl2("s2")),
             *[(z, "screen5opt", arms5opt(z)) for z in ("s1", "s2")],
             ("s2", "screen5r7", arms5r7("s2")),
             ("s1", "opttinysmoke", arms5tiny(8, smoke=True)),
