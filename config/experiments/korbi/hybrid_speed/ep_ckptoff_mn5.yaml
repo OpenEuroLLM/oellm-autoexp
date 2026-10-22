@@ -4722,6 +4722,7 @@ sweep:
           slurm.sbatch.nodes: 128
           slurm.sbatch.time: 01:00:00
           slurm.env.WATCHDOG_STARTUP_S: '2700'
+          slurm.sbatch.qos: acc_xehpc
         # 8-node reference of s128: gbs 512, angular MuOwn, candidate, Engram 21.8B
         - aux.arm: s8_cand22
           aux.pattern: LENLELELELE*ELE|LELELELE*ELELE|LELELE*ELELELE|LELE*ENLELELE|LELE*ELELELE|LELE*ELELELE|LELE*ELELELE|LELE*E
