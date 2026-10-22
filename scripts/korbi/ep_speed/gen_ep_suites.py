@@ -1484,6 +1484,22 @@ def ckpt_offload():
         arm(f"o_layA_{tag}", f"layout 1,8,8,8|12,5,5,1, sparse table grads, tables {total or 10.9}B",
             base, hyb, moon, off, ctx16, mbs2, fused, eng, memb, cand, addmm, sparse, lay_a,
             {B + "engram_table_size": size, "aux.array_tag": f"_moonofffused_laya_{tag}"})
+    # s128 (user 2026-10-22): where the candidate stands at the production scale, 128 nodes, gbs
+    # 2048 (32 micro-batches per pipeline per step, as 512 on 8 nodes), angular MuOwn, 40B Engram
+    # tables (0.94 GB per GPU on the Engram stages at 128 GPUs per stage); 8-node reference with
+    # the same config at 21.8B tables (table size costs no throughput, o22; 40B does not fit there)
+    muown = {B + "optimizer": "angular_muown", B + "lr": 4e-3, B + "min_lr": 4e-3,
+             B + "residual_mixer_lr_mult": 0.25}
+    eng40 = dict(eng, **{B + "engram_table_size": int(eng[B + "engram_table_size"] * 40 / 10.9)
+                         // 64 * 64})
+    big = {"aux.nodes": 128, "slurm.sbatch.nodes": 128, "aux.gbs": 2048, B + "train_iters": 10,
+           "slurm.sbatch.time": "01:00:00", "slurm.env.WATCHDOG_STARTUP_S": "2700"}
+    arm("s128_cand40", "128 nodes, gbs 2048, angular MuOwn, candidate, Engram 40B", base, hyb,
+        moon, off, ctx16, mbs2, fused, eng40, memb, cand, addmm, sparse, muown, big,
+        {"aux.array_tag": "_moonofffused_s128"})
+    arm("s8_cand22", "8-node reference of s128: gbs 512, angular MuOwn, candidate, Engram 21.8B",
+        base, hyb, moon, off, ctx16, mbs2, fused, eng2x, memb, cand, addmm, sparse, muown,
+        {B + "train_iters": 10, "aux.array_tag": "_moonofffused_s8"})
     # p_cand: torch profile of the candidate (ranks 0 / 31, steps 5-6, gbs 128, as the o4 profiles):
     # what is left in mHC after the stride fix
     prof_c = {B + "profile": True, B + "use_pytorch_profiler": True, B + "profile_ranks": [0, 31],
