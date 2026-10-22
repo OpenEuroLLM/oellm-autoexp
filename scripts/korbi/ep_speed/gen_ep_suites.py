@@ -1496,7 +1496,8 @@ def ckpt_offload():
          B + "profile_step_start": 5, B + "profile_step_end": 6, B + "train_iters": 7,
          "aux.gbs": 128, "aux.array_tag": "_moonofffused_cand3_async_prof"})
     # s128 (user 2026-10-22): where the candidate stands at the production scale, 128 nodes, gbs
-    # 2048 (32 micro-batches per pipeline per step, as 512 on 8 nodes), angular MuOwn, 40B Engram
+    # 2048 (DP 128 at PP4: 8 micro-batches per pipeline per step, a quarter of the 8-node gbs 512
+    # runs' 32), angular MuOwn, 40B Engram
     # tables (0.94 GB per GPU on the Engram stages at 128 GPUs per stage); 8-node reference with
     # the same config at 21.8B tables (table size costs no throughput, o22; 40B does not fit there)
     muown = {B + "optimizer": "angular_muown", B + "lr": 4e-3, B + "min_lr": 4e-3,

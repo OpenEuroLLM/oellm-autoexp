@@ -27,6 +27,8 @@ aux:
   arm: mhc4_eng40
   nodes: 128
   ep: 4
+  # TODO(user / campaign): 2048 = 8 micro-batches per pipeline at DP 128 (19 % bubble at PP4 x
+  # VPP2); 8192 matches the 8-node speed runs' 32 (5 %); or more virtual stages / less PP
   gbs: 2048
   seq: 16384
   topk: 5
@@ -155,21 +157,23 @@ backend:
     wandb_entity: openeurollm-project
     wandb_exp_name: ${job.name}
     wandb_save_dir: ${job.base_output_dir}/wandb
-    # ---- checkpoints: rolling (latest only) every 250 steps (~3.2 h at ~46 s / step), a
-    # persistent one every 5000 (~2.7 days: about one per 3-day job); load = save resumes ----
+    # ---- checkpoints: rolling (latest only) every 1000 steps (~4 h at ~14 s / step), a
+    # persistent one every 15000 (~2.4 days: about one per 3-day job); load = save resumes ----
     save: ${job.base_output_dir}/ckpt
     load: ${job.base_output_dir}/ckpt
-    save_interval: 5000
+    save_interval: 15000
     non_persistent_ckpt_type: global
     non_persistent_global_ckpt_dir: ${job.base_output_dir}/ckpt_rolling
-    non_persistent_save_interval: 250
+    non_persistent_save_interval: 1000
     distributed_timeout_minutes: 45
 
 job:
   name: ${aux.suite}_${aux.arm}
   base_output_dir: "${oc.env:OUTPUT_DIR,'./output'}/${aux.experiment_group}/${aux.suite}/${aux.arm}"
   array_group: null
-  est_step_time_s: 46.0
+  # gbs 2048 at 128 nodes = DP 128 x 16 samples: 8 micro-batches per pipeline per step (a
+  # quarter of the 8-node speed runs' per-GPU work, bubble 3/16 at VPP2): ~12-15 s per step
+  est_step_time_s: 14.0
   est_startup_min: 15.0
   # TODO: the full production event set (config/job/auto_restart.yaml, as the 32B runs) once
   # merged with these; for now: resume on wall time, stop on divergence

@@ -750,9 +750,12 @@ dedup the node's requests over NVLink, then exchange rail to rail across nodes (
 node peers per GPU at 128 nodes). NCCL's PXN already routes through the rail NIC, so the gain is
 the dedup; built if the 128-node run shows the exchange matters.
 
-**128-node test** (s128): candidate, angular MuOwn, gbs 2048 (32 micro-batches per pipeline, as
-gbs 512 on 8 nodes), Engram 40B, 10 steps, QOS acc_xehpc (acc_ehpc caps jobs at 100 nodes).
-8-node reference (same config, 21.8B tables): **5,813 tok/s/GPU**.
+**128-node test** (s128): candidate, angular MuOwn, gbs 2048, Engram 40B, 10 steps, QOS
+acc_xehpc (acc_ehpc caps jobs at 100 nodes). CORRECTION: at PP4 the data-parallel size is
+GPUs / 4 = 128 at 128 nodes, so gbs 2048 is 16 samples = **8 micro-batches per pipeline** (bubble
+3/16 at VPP2), not the 32 of gbs 512 on 8 nodes (DP 8, bubble 3/64); 32 per pipeline at 128
+nodes is gbs 8192. The 8-node reference of the same config at gbs 512 (32 micro-batches):
+**5,813 tok/s/GPU**; the like-for-like 8-node point for gbs 2048 at 128 nodes is gbs 128.
 
 **Bad-node auto-exclusion** (config/slurm/marenostrum_autoexclude.yaml, after the JUPITER one;
 the speed suites use it): a shared list on the cluster (mn5_exclude_nodes.txt in $HYBRID_ENV),
