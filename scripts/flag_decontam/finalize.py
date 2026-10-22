@@ -90,27 +90,29 @@ def decide(shards, n_grams, frac, min_hits, max_docs):
     """Per shard (flagged pairs, their docs); the generic segments left out; docs per segment."""
     need = np.maximum(min_hits, np.ceil(frac * n_grams)).astype(np.int64)
     need[n_grams < min_hits] = np.iinfo(np.int64).max     # unmatchable segments never flag
-    flagged, seg_docs = {}, defaultdict(int)
+    S = len(n_grams)
+    flagged, seg_docs = {}, np.zeros(S, np.int64)
     for rel, (idx, hits, seq2doc) in shards.items():
         sel = hits[:, 2] >= need[hits[:, 1]] if len(hits) else np.zeros(0, bool)
         f, d = hits[sel], seq2doc[sel]
         flagged[rel] = (f, d)
         if len(f):
-            for s in np.unique(np.stack([d, f[:, 1]], 1), axis=0)[:, 1]:
-                seg_docs[int(s)] += 1
-    generic = {s for s, n in seg_docs.items() if n > max_docs}
-    if generic:
-        g = np.array(sorted(generic))
+            pairs = np.unique(d * S + f[:, 1])                 # distinct (doc, segment)
+            seg_docs += np.bincount(pairs % S, minlength=S)
+    generic = np.flatnonzero(seg_docs > max_docs)
+    if len(generic):
         for rel, (f, d) in flagged.items():
-            ok = ~np.isin(f[:, 1], g)
+            ok = ~np.isin(f[:, 1], generic)
             flagged[rel] = (f[ok], d[ok])
-    return flagged, generic, seg_docs
+    return flagged, set(generic.tolist()), seg_docs
 
 
 def report(rdir, frac, args, rows, shards, totals, flagged, generic, seg_docs, segs, src_names, n_grams, refs_text):
     os.makedirs(rdir, exist_ok=True)
+    S, nsrc = len(n_grams), len(src_names)
     by_src = defaultdict(lambda: [0, 0, 0, 0, 0])        # docs, tokens, docs dropped, tokens dropped, shards
-    by_bench = defaultdict(lambda: [set(), 0])            # flagged segments, (doc, segment) pairs
+    pair_per_src = np.zeros(nsrc, np.int64)               # (doc, segment) pairs per benchmark source
+    found = np.zeros(S, bool)
     for _, rel in rows:
         idx = shards[rel][0]
         f, d = flagged[rel]
@@ -122,33 +124,37 @@ def report(rdir, frac, args, rows, shards, totals, flagged, generic, seg_docs, s
         s[3] += int(doc_tokens(idx, dropped).sum()) if len(dropped) else 0
         s[4] += 1
         if len(f):
-            for _, sg in np.unique(np.stack([d, f[:, 1]], 1), axis=0):
-                b = by_bench[src_names[segs["src"][sg]]]
-                b[0].add(int(sg))
-                b[1] += 1
+            seg = np.unique(d * S + f[:, 1]) % S
+            found[seg] = True
+            pair_per_src += np.bincount(segs["src"][seg], minlength=nsrc)
     total = [sum(v[i] for v in by_src.values()) for i in range(4)]
     with open(os.path.join(rdir, "sources.tsv"), "w") as fh:
         fh.write("source\tshards\tdocs\ttokens\tdocs_dropped\ttokens_dropped\tdoc_pct\ttoken_pct\n")
         for k, (dd, t, ddr, tdr, ns) in sorted(by_src.items(), key=lambda x: -x[1][3]):
             fh.write(f"{k}\t{ns}\t{dd}\t{t}\t{ddr}\t{tdr}\t{100 * ddr / max(dd, 1):.4f}\t{100 * tdr / max(t, 1):.4f}\n")
-    seg_count = np.bincount(segs["src"], weights=(n_grams >= args.min_hits), minlength=len(src_names))
+    matchable = np.bincount(segs["src"], weights=(n_grams >= args.min_hits), minlength=nsrc)
+    seg_found = np.bincount(segs["src"][found], minlength=nsrc)
     with open(os.path.join(rdir, "benchmarks.tsv"), "w") as fh:
         fh.write("benchmark_source\tsegments_matchable\tsegments_found\tpct_found\tdoc_segment_pairs\n")
-        for k, (ss, nd) in sorted(by_bench.items(), key=lambda x: -x[1][1]):
-            m = int(seg_count[src_names.index(k)])
-            fh.write(f"{k}\t{m}\t{len(ss)}\t{100 * len(ss) / max(m, 1):.2f}\t{nd}\n")
-    applied = {s: n for s, n in seg_docs.items() if s not in generic}
+        for k in np.argsort(-pair_per_src):
+            if pair_per_src[k] == 0:
+                break
+            m = int(matchable[k])
+            fh.write(f"{src_names[k]}\t{m}\t{int(seg_found[k])}\t{100 * seg_found[k] / max(m, 1):.2f}\t{int(pair_per_src[k])}\n")
+    applied = seg_docs.copy()
+    applied[list(generic)] = 0
+    top = np.argsort(-applied)[:300]
     with open(os.path.join(rdir, "top_segments.tsv"), "w") as fh:
         fh.write("segment\tbenchmark_source\tdocs\tn_grams\ttext\n")
-        for sg in sorted(applied, key=lambda s: -applied[s])[:300]:
-            fh.write(f"{sg}\t{src_names[segs['src'][sg]]}\t{applied[sg]}\t{n_grams[sg]}\t{refs_text.get(sg, '')}\n")
+        for sg in top[applied[top] > 0]:
+            fh.write(f"{sg}\t{src_names[segs['src'][sg]]}\t{applied[sg]}\t{n_grams[sg]}\t{refs_text.get(int(sg), '')}\n")
     with open(os.path.join(rdir, "generic_segments.tsv"), "w") as fh:
         fh.write("segment\tbenchmark_source\tdocs\ttext\n")
-        for sg in sorted(generic, key=lambda s: -seg_docs[s]):
+        for sg in sorted(generic, key=lambda x: -seg_docs[x]):
             fh.write(f"{sg}\t{src_names[segs['src'][sg]]}\t{seg_docs[sg]}\t{refs_text.get(sg, '')}\n")
     rep = {"frac": frac, "min_hits": args.min_hits, "max_docs": args.max_docs, "shards": len(rows),
            "docs": total[0], "tokens": total[1], "docs_dropped": total[2], "tokens_dropped": total[3],
-           "token_pct_dropped": 100 * total[3] / max(total[1], 1), "segments_found": len(applied),
+           "token_pct_dropped": 100 * total[3] / max(total[1], 1), "segments_found": int((applied > 0).sum()),
            "generic_segments_skipped": len(generic), "dry_run": args.dry_run}
     with open(os.path.join(rdir, "report.json"), "w") as fh:
         json.dump(rep, fh, indent=1)
@@ -226,12 +232,12 @@ def main():
         totals[rel] = shard_totals(args.root, rel, idx)
     if incomplete:
         sys.exit(f"scan incomplete for {len(incomplete)} shards, e.g. {incomplete[:3]}: rerun scan.py --mode scan")
-    print(f"hits loaded: {sum(len(v[1]) for v in shards.values())} (document, segment) pairs", flush=True)
+    print(f"hits loaded: {sum(len(v[1]) for v in shards.values())} (sequence, segment) pairs", flush=True)
 
     decisions = {fr: decide(shards, n_grams, fr, args.min_hits, args.max_docs) for fr in args.frac}
     want = set()
     for _, generic, seg_docs in decisions.values():
-        want |= set(sorted(seg_docs, key=lambda s: -seg_docs[s])[:300]) | generic
+        want |= set(np.argsort(-seg_docs)[:300].tolist()) | generic
     refs_text = {}
     with gzip.open(meta["refs"], "rt", encoding="utf-8") as fh:
         for i, line in enumerate(fh):
