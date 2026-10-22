@@ -158,6 +158,38 @@ All jobs: account ehpc533, QOS acc_debug, snapshot `$R/autoexp_decon`. GPU-h = n
 | count | 47821047 | 2 x 0:03:32 | 0.5 | 105.5B sample tokens (first 2^28 of each of 419 ordinary shards) in ~80 s per GPU (~165M tok/s/GPU); `<pad>` in 12 shards, 1-79 per 268M tokens |
 | prune | (prune) | 1 x ~0:01 | 0.1 | n-grams seen > 50 times dropped: 51,995 (0.08 %); 64.45M kept. Histogram of sample counts: > 0: 936k, > 10: 148k, > 100: 32k, > 10000: 388. Matchable segments (>= 3 n-grams): 2,183,686 -> 2,182,710 (976 lost to pruning) |
 
+| scan | 47821245 | 8 x 0:42:44 | 22.8 | 13.55T tokens, ~175M tok/s/GPU; 50,718 unit files, 311M (sequence, segment) pairs with >= 3 n-grams (7.46 GB); mixture-vitae shards 3+4: 55 % of them |
+| finalize dry run (1st) | 47823965 | 1 x 0:47 | 3.1 | cancelled: per-pair Python loops over 310M pairs -> vectorised |
+| finalize dry run | 47825946 | 1 x ~0:20 | 1.3 | --frac 0.2 / 0.5 / 0.8: 9.28M / 3.95M / 1.48M docs, 96.3B / 44.1B / 16.2B tokens (0.71 / 0.33 / 0.12 %); 45 / 8 / 2 generic segments held back |
+
+### 4.1 Inspection of the matches (inspect_hits.py, 2026-10-23): the v1 matcher over-flags
+
+```bash
+cd $R/autoexp_decon_inspect   # login node, ~30 s per call
+singularity exec --cleanenv -B /gpfs ../container/MegatronTraining-hybrid-ep_x86_64_202610161948.sif \
+  python scripts/flag_decontam/inspect_hits.py --shard <shard key substring> --n 10 [--min-cov 0.5] [--bench gsm8k]
+```
+
+- **Scattered matches.** Coverage counts a segment's n-grams anywhere in the document. In
+  byte-fallback scripts (Tamil, Georgian, Telugu, Hindi) 13 tokens are ~4 characters, and a
+  40k-100k-token Wikipedia article "contains" 50-70 % of a short xcopa / include-base-44 sentence
+  spread over tens of thousands of tokens. Most of mixture-vitae's 170M pairs, and the long-document
+  sources' drops at 0.5 (finepdfs 1.68 % of its tokens, finepdfs-edu 1.34 %, hplt 0.32 %), come from this.
+- **Short generic segments.** Global-MMLU / ARC answer options ("la dure-mère et l'arachnoïde.")
+  and list fragments (`['Yes', 'Yes', 'No', 'Yes']`) match ordinary text and code (Global-MMLU:
+  1.88M pairs at 0.5).
+- **Real copies.** SQuAD (100 % of segments found) and CoQA (85 %) passages (Wikipedia); an
+  OpenBookQA question quoted in a paper (agenttrove); MATH500 / HumanEval / MBPP items (33-48 % of
+  segments found somewhere).
+- **agenttrove: no verbatim GSM8K** (6 incidental pairs at coverage <= 0.03), 22 MATH500 pairs at
+  >= 0.5 of 577 such pairs in the shard. Either rewritten variants (a sampled MATH problem with
+  changed numbers) or copies inside JSON-escaped text (`\n`, `\"`, `’`) the token matcher misses.
+
+Proposed v2 (pending the user's go-ahead, ~25 GPU-h rescan): locality (most distinct n-grams of a
+segment inside one window of ~2x its length; needs match positions), n per segment chosen so an
+n-gram spans >= ~30 characters (13 / 24 / 40), segments >= 20 canonical tokens and ~80 characters
+(no n = 8 path), and a recall audit on JSON-escaped agenttrove text.
+
 ## 5. Caveats
 
 - **Pairing with old runs breaks.** With `split 998,2,0` the validation documents and the
