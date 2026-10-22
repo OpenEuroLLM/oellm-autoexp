@@ -1,0 +1,163 @@
+"""Reference n-gram table for the flag decontamination (docs/flag_post_decontamination.md).
+
+    python scripts/flag_decontam/build_table.py --refs refs.jsonl.gz --work $WORK            # build
+    python scripts/flag_decontam/build_table.py --work $WORK --prune --max-count 50         # prune
+
+build: tokenise every reference segment with the training tokenizer, map it to the canonical
+stream (common.py), and hash its distinct n-grams (n = 13; n = 8 for segments with fewer than
+20 canonical tokens; segments with fewer than 8 can't be matched and are only counted). N-grams
+shared by more than --max-segments distinct segments are prompt / template text and dropped.
+Writes $WORK/table/{lut.npy, table.npz, segments.npz, sources.json, build_report.json}:
+  table.npz:    hash (sorted unique int64), csr_off / csr_seg (the segments of each hash)
+  segments.npz: per segment its source id, split id, n, its number of n-grams in the table
+                (n_grams); a segment's id is its line number in refs
+
+prune: drop the n-grams that `scan.py --mode count` found more than --max-count times in the
+sample of the training data (common phrases, licence headers, boilerplate), recompute n_grams,
+and keep the previous table as table_unpruned.npz.
+"""
+
+from __future__ import annotations
+
+import argparse
+import glob
+import gzip
+import json
+import os
+import sys
+from collections import Counter
+from multiprocessing import Pool
+
+import numpy as np
+import torch
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import SHORT_BELOW, build_lut, ngram_hashes  # noqa: E402
+
+TOKENIZER = "/gpfs/projects/ehpc533/tokenizers/tokenizer-256k/tokenizer.model"
+_sp = _lut = None
+
+
+def _init(tok_path, lut):
+    global _sp, _lut
+    import sentencepiece as spm
+    _sp = spm.SentencePieceProcessor(model_file=tok_path)
+    _lut = lut
+    torch.set_num_threads(1)
+
+
+def _hash_batch(texts):
+    out = []
+    for ids in _sp.encode(texts):
+        c = _lut[np.asarray(ids, dtype=np.int64)] if ids else np.zeros(0, np.int64)
+        c = c[c >= 0]
+        if len(c) < 8:
+            out.append((len(c), 0, None))
+            continue
+        n = 13 if len(c) >= SHORT_BELOW else 8
+        h = np.unique(ngram_hashes(torch.from_numpy(c), n).numpy())
+        out.append((len(c), n, h))
+    return out
+
+
+def make_table(hashes, seg_ids, n_segments, max_segments):
+    """Sorted unique hashes with their segments (CSR), dropping hashes of > max_segments segments."""
+    order = np.lexsort((seg_ids, hashes))
+    hashes, seg_ids = hashes[order], seg_ids[order]
+    uniq, nseg = np.unique(hashes, return_counts=True)
+    common = nseg > max_segments
+    seg_ids = seg_ids[np.repeat(~common, nseg)]
+    uniq, nseg = uniq[~common], nseg[~common]
+    csr_off = np.concatenate([[0], np.cumsum(nseg)]).astype(np.int64)
+    n_grams = np.bincount(seg_ids, minlength=n_segments).astype(np.int32)
+    return uniq, csr_off, seg_ids, n_grams, common
+
+
+def build(args):
+    import sentencepiece as spm
+    tdir = os.path.join(args.work, "table")
+    os.makedirs(tdir, exist_ok=True)
+    sp = spm.SentencePieceProcessor(model_file=args.tokenizer)
+    lut, keys = build_lut(sp)
+    np.save(os.path.join(tdir, "lut.npy"), lut)
+    print(f"lut: {len(lut)} ids -> {len(keys)} canonical, {(lut < 0).sum()} dropped", flush=True)
+
+    texts, src_of, split_of = [], [], []
+    srcs, splits = {}, {}
+    with gzip.open(args.refs, "rt", encoding="utf-8") as f:
+        for line in f:                      # segment id = line number in refs
+            r = json.loads(line)
+            texts.append(r["text"])
+            src_of.append(srcs.setdefault(r["src"], len(srcs)))
+            split_of.append(splits.setdefault(r["split"], len(splits)))
+    print(f"{len(texts)} segments from {len(srcs)} sources", flush=True)
+
+    B = 2000
+    batches = [texts[i:i + B] for i in range(0, len(texts), B)]
+    with Pool(args.procs, initializer=_init, initargs=(args.tokenizer, lut)) as pool:
+        res = [r for batch in pool.imap(_hash_batch, batches, chunksize=4) for r in batch]
+    ntok = np.array([r[0] for r in res], dtype=np.int64)
+    nsz = np.array([r[1] for r in res], dtype=np.int8)
+    seg_ids = np.concatenate([np.full(len(r[2]), i, np.int32) for i, r in enumerate(res) if r[2] is not None])
+    hashes = np.concatenate([r[2] for r in res if r[2] is not None])
+    print(f"{len(hashes)} (segment, n-gram) pairs; {int((nsz == 0).sum())} segments too short", flush=True)
+
+    uniq, csr_off, seg_ids, n_grams, common = make_table(hashes, seg_ids, len(texts), args.max_segments)
+    np.savez(os.path.join(tdir, "table.npz"), hash=uniq, csr_off=csr_off, csr_seg=seg_ids)
+    np.savez(os.path.join(tdir, "segments.npz"), src=np.array(src_of, np.int32), split=np.array(split_of, np.int16),
+             n=nsz, n_tokens=ntok, n_grams=n_grams, n_grams_built=n_grams.copy())
+    with open(os.path.join(tdir, "sources.json"), "w") as f:
+        json.dump({"sources": list(srcs), "splits": list(splits), "refs": os.path.abspath(args.refs)}, f, indent=1)
+    report = {
+        "segments": len(texts), "too_short": int((nsz == 0).sum()),
+        "n8_segments": int((nsz == 8).sum()), "n13_segments": int((nsz == 13).sum()),
+        "unique_ngrams": int(len(uniq)), "template_ngrams_dropped": int(common.sum()),
+        "max_segments": args.max_segments,
+        "too_short_by_source": dict(Counter(list(srcs)[s] for s, n in zip(src_of, nsz) if n == 0).most_common()),
+    }
+    with open(os.path.join(tdir, "build_report.json"), "w") as f:
+        json.dump(report, f, indent=1)
+    print(json.dumps({k: v for k, v in report.items() if k != "too_short_by_source"}), flush=True)
+
+
+def prune(args):
+    tdir = os.path.join(args.work, "table")
+    files = sorted(glob.glob(os.path.join(args.work, "counts", "*.npy")))
+    assert files, "no counts: run scan.py --mode count first"
+    tab = dict(np.load(os.path.join(tdir, "table.npz")))
+    counts = sum(np.load(f) for f in files)
+    assert len(counts) == len(tab["hash"]), "counts were made with another table"
+    drop = counts > args.max_count
+    nseg = np.diff(tab["csr_off"])
+    keep_pair = np.repeat(~drop, nseg)
+    seg = tab["csr_seg"][keep_pair]
+    os.replace(os.path.join(tdir, "table.npz"), os.path.join(tdir, "table_unpruned.npz"))
+    np.save(os.path.join(tdir, "counts_unpruned.npy"), counts)
+    np.savez(os.path.join(tdir, "table.npz"), hash=tab["hash"][~drop],
+             csr_off=np.concatenate([[0], np.cumsum(nseg[~drop])]).astype(np.int64), csr_seg=seg)
+    segs = dict(np.load(os.path.join(tdir, "segments.npz")))
+    segs["n_grams"] = np.bincount(seg, minlength=len(segs["n"])).astype(np.int32)
+    np.savez(os.path.join(tdir, "segments.npz"), **segs)
+    lost = (segs["n_grams_built"] > 0) & (segs["n_grams"] < 3)
+    rep = {"count_files": len(files), "max_count": args.max_count, "ngrams_dropped": int(drop.sum()),
+           "ngrams_kept": int((~drop).sum()), "segments_left_unmatchable": int(lost.sum())}
+    with open(os.path.join(tdir, "prune_report.json"), "w") as f:
+        json.dump(rep, f, indent=1)
+    print(json.dumps(rep), flush=True)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--work", required=True)
+    ap.add_argument("--refs")
+    ap.add_argument("--tokenizer", default=TOKENIZER)
+    ap.add_argument("--procs", type=int, default=min(os.cpu_count() or 1, 64))
+    ap.add_argument("--max-segments", type=int, default=10)
+    ap.add_argument("--prune", action="store_true")
+    ap.add_argument("--max-count", type=int, default=50)
+    args = ap.parse_args()
+    prune(args) if args.prune else build(args)
+
+
+if __name__ == "__main__":
+    main()
