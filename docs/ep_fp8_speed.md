@@ -720,6 +720,13 @@ tables on their own stages (3 GiB margin): ~12.6B on stage 0 + ~19B on stage 3 =
 7.5 GB on every GPU), which needs the row exchange at points where all stages are in step
 (step start / end) -- next.
 
+**Moving the tables by the VPP layout instead** (o23, layout 1,8,8,8 | 12,5,5,1: the layer before
+block 1 on stage 1, 13 / 13 / 13 / 9 blocks + head per stage as before): **4,582 tok/s/GPU
+(-21 %)** at today's tables; 36B fits (stage 1 / 3 at 60.7 / 61.8 GiB), 40B OOMs on stage 3. The
+interleaved schedule needs the virtual chunks balanced, not the stage totals: a micro-batch runs
+through all 8 chunks in order, so the 12-block chunk sets the pace. With balanced chunks
+block 1 is always on stage 0. Not usable.
+
 Failure note: MN5 nodes as07r3b27, as06r2b26, as05r3b28 killed jobs at launch on 2026-10-21
 (torchrun NUMA binding: AssertionError("Invalid device id")), one more node gave "CUDA error:
 unknown error" mid-run; exclude with +slurm.sbatch.exclude.
