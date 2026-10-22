@@ -727,6 +727,33 @@ interleaved schedule needs the virtual chunks balanced, not the stage totals: a 
 through all 8 chunks in order, so the 12-block chunk sets the pace. With balanced chunks
 block 1 is always on stage 0. Not usable.
 
+### 6d-7. Toward 128 nodes (2026-10-22)
+
+At 128 nodes (PP4: 128 GPUs per stage) the per-stage table sharding gives a 20B table 0.94 GB per
+GPU: table memory is a non-issue at production scale, so the cross-stage sharding is not built;
+the work goes into the exchange.
+
+**Async group exchanges** (ENGRAM_ASYNC_GROUPS=1, Megatron engram_sharded.GroupExchange): every
+group's rows hashed at the step start, the per-owner counts of all groups in one all-to-all (one
+host sync instead of one per group), each group's row exchange as async all-to-alls (owners
+gather on a side stream), issued one group ahead; the gradient flush on the side stream, joined
+in prepare_grads. Tests: the group test in all sparse x async combinations (4 GPUs). o24 (8
+nodes, one launch): 5,847 -> **5,760 tok/s/GPU (-1.5 %)**, memory 0.81 -> 0.91 -- at 8 nodes the
+synchronous exchanges were not on the critical path, and the side stream's allocator pool plus
+two groups in flight cost memory. Opt-in, off; to be judged at 128 nodes (128 ranks per
+exchange, straggler coupling). (NCCL's all-to-all runs as SendRecv kernels: the profile does not
+separate it from the pipeline p2p.)
+
+**Two-level exchange** (planned): the stage's shard group = EP group (the node's 4 GPUs, NVLink) x
+expert-data-parallel group (the rail across the stage's nodes), both existing Megatron groups:
+dedup the node's requests over NVLink, then exchange rail to rail across nodes (124 -> 31 cross-
+node peers per GPU at 128 nodes). NCCL's PXN already routes through the rail NIC, so the gain is
+the dedup; built if the 128-node run shows the exchange matters.
+
+**128-node test** (s128): candidate, angular MuOwn, gbs 2048 (32 micro-batches per pipeline, as
+gbs 512 on 8 nodes), Engram 40B, 10 steps, QOS acc_xehpc (acc_ehpc caps jobs at 100 nodes).
+8-node reference (same config, 21.8B tables): **5,813 tok/s/GPU**.
+
 Failure note: MN5 nodes as07r3b27, as06r2b26, as05r3b28 killed jobs at launch on 2026-10-21
 (torchrun NUMA binding: AssertionError("Invalid device id")), one more node gave "CUDA error:
 unknown error" mid-run; exclude with +slurm.sbatch.exclude.
