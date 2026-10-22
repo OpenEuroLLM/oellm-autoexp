@@ -120,6 +120,11 @@ def test_end_to_end(tmp_path):
     scan.worker(0, 1, units, args)
     out = tmp / "flag-decon"
     subprocess.run([sys.executable, os.path.join(HERE, "finalize.py"), "--work", str(work), "--root", str(root),
+                    "--out", str(out), "--dry-run", "--frac", "0.5,0.9"], check=True)
+    assert not out.exists()
+    for fr in ("0.5", "0.9"):
+        assert json.load(open(work / "_report" / f"frac_{fr}" / "report.json"))["docs_dropped"] == 2
+    subprocess.run([sys.executable, os.path.join(HERE, "finalize.py"), "--work", str(work), "--root", str(root),
                     "--out", str(out)], check=True)
     anomalies = json.load(open(work / "anomalies" / "scan_part000_gpu0.json"))
     assert len(anomalies) == 1 and anomalies[0]["max"] == V + 7
