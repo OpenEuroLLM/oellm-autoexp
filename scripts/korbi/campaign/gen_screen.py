@@ -1363,8 +1363,8 @@ def arms5tiny(gbs: int = 8, smoke: bool = False):
             "slurm.sbatch.time": "12:00:00", **ONE_GPU, **BAD_NODES}
     var = _opt_variants(lr)
     names = {8: list(var), 32: ["am_p1", "am_p0_s02", "muown_classical", "muown_cl_wd01", "muon_wd"]}[gbs]
-    if smoke:
-        names = ["am_p1", "muown_classical"]
+    if smoke:  # one arm: it builds the gbs's data index (concurrent builds of one cache race)
+        names = ["am_p1"]
     return [(n, f"tiny 7:1 + mHC-4, gbs {gbs}: {n}", {**tiny, **var[n]}) for n in names]
 
 
@@ -1614,6 +1614,7 @@ def write5():
             *[(z, "screen5opt", arms5opt(z)) for z in ("s1", "s2")],
             ("s2", "screen5r7", arms5r7("s2")),
             ("s1", "opttinysmoke", arms5tiny(8, smoke=True)),
+            ("s1", "opttinysmoke32", arms5tiny(32, smoke=True)),
             *[(z, "screen5opt2", arms5opt2(z)) for z in ("s1", "s2")],
             *[("s1", f"opttiny_b{g}", arms5tiny(g)) for g in (8, 32)],
             ("s2", "screen5ssmax", arms5ssmax("s2")),
