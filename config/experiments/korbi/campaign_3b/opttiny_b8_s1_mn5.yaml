@@ -128,11 +128,11 @@ sweep:
           slurm.sbatch.time: '12:00:00'
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
-          slurm.sbatch.cpus_per_task: 20
+          slurm.sbatch.cpus_per_task: 40
           slurm.sbatch.exclusive: null
           slurm.srun.exclusive: false
-          slurm.srun.cpus_per_task: 20
-          slurm.env.SLURM_CPUS_PER_TASK: '20'
+          slurm.srun.cpus_per_task: 40
+          slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
@@ -213,11 +213,11 @@ sweep:
           slurm.sbatch.time: '12:00:00'
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
-          slurm.sbatch.cpus_per_task: 20
+          slurm.sbatch.cpus_per_task: 40
           slurm.sbatch.exclusive: null
           slurm.srun.exclusive: false
-          slurm.srun.cpus_per_task: 20
-          slurm.env.SLURM_CPUS_PER_TASK: '20'
+          slurm.srun.cpus_per_task: 40
+          slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
@@ -299,11 +299,11 @@ sweep:
           slurm.sbatch.time: '12:00:00'
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
-          slurm.sbatch.cpus_per_task: 20
+          slurm.sbatch.cpus_per_task: 40
           slurm.sbatch.exclusive: null
           slurm.srun.exclusive: false
-          slurm.srun.cpus_per_task: 20
-          slurm.env.SLURM_CPUS_PER_TASK: '20'
+          slurm.srun.cpus_per_task: 40
+          slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
@@ -385,11 +385,11 @@ sweep:
           slurm.sbatch.time: '12:00:00'
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
-          slurm.sbatch.cpus_per_task: 20
+          slurm.sbatch.cpus_per_task: 40
           slurm.sbatch.exclusive: null
           slurm.srun.exclusive: false
-          slurm.srun.cpus_per_task: 20
-          slurm.env.SLURM_CPUS_PER_TASK: '20'
+          slurm.srun.cpus_per_task: 40
+          slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
@@ -472,11 +472,11 @@ sweep:
           slurm.sbatch.time: '12:00:00'
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
-          slurm.sbatch.cpus_per_task: 20
+          slurm.sbatch.cpus_per_task: 40
           slurm.sbatch.exclusive: null
           slurm.srun.exclusive: false
-          slurm.srun.cpus_per_task: 20
-          slurm.env.SLURM_CPUS_PER_TASK: '20'
+          slurm.srun.cpus_per_task: 40
+          slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
@@ -560,11 +560,11 @@ sweep:
           slurm.sbatch.time: '12:00:00'
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
-          slurm.sbatch.cpus_per_task: 20
+          slurm.sbatch.cpus_per_task: 40
           slurm.sbatch.exclusive: null
           slurm.srun.exclusive: false
-          slurm.srun.cpus_per_task: 20
-          slurm.env.SLURM_CPUS_PER_TASK: '20'
+          slurm.srun.cpus_per_task: 40
+          slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
@@ -648,11 +648,11 @@ sweep:
           slurm.sbatch.time: '12:00:00'
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
-          slurm.sbatch.cpus_per_task: 20
+          slurm.sbatch.cpus_per_task: 40
           slurm.sbatch.exclusive: null
           slurm.srun.exclusive: false
-          slurm.srun.cpus_per_task: 20
-          slurm.env.SLURM_CPUS_PER_TASK: '20'
+          slurm.srun.cpus_per_task: 40
+          slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
@@ -736,11 +736,11 @@ sweep:
           slurm.sbatch.time: '12:00:00'
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
-          slurm.sbatch.cpus_per_task: 20
+          slurm.sbatch.cpus_per_task: 40
           slurm.sbatch.exclusive: null
           slurm.srun.exclusive: false
-          slurm.srun.cpus_per_task: 20
-          slurm.env.SLURM_CPUS_PER_TASK: '20'
+          slurm.srun.cpus_per_task: 40
+          slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
@@ -821,11 +821,11 @@ sweep:
           slurm.sbatch.time: '12:00:00'
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
-          slurm.sbatch.cpus_per_task: 20
+          slurm.sbatch.cpus_per_task: 40
           slurm.sbatch.exclusive: null
           slurm.srun.exclusive: false
-          slurm.srun.cpus_per_task: 20
-          slurm.env.SLURM_CPUS_PER_TASK: '20'
+          slurm.srun.cpus_per_task: 40
+          slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
@@ -907,11 +907,11 @@ sweep:
           slurm.sbatch.time: '12:00:00'
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
-          slurm.sbatch.cpus_per_task: 20
+          slurm.sbatch.cpus_per_task: 40
           slurm.sbatch.exclusive: null
           slurm.srun.exclusive: false
-          slurm.srun.cpus_per_task: 20
-          slurm.env.SLURM_CPUS_PER_TASK: '20'
+          slurm.srun.cpus_per_task: 40
+          slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
@@ -993,11 +993,11 @@ sweep:
           slurm.sbatch.time: '12:00:00'
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
-          slurm.sbatch.cpus_per_task: 20
+          slurm.sbatch.cpus_per_task: 40
           slurm.sbatch.exclusive: null
           slurm.srun.exclusive: false
-          slurm.srun.cpus_per_task: 20
-          slurm.env.SLURM_CPUS_PER_TASK: '20'
+          slurm.srun.cpus_per_task: 40
+          slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
@@ -1082,11 +1082,11 @@ sweep:
           slurm.sbatch.time: '12:00:00'
           slurm.sbatch.gres: gpu:1
           slurm.sbatch.gpus_per_node: 1
-          slurm.sbatch.cpus_per_task: 20
+          slurm.sbatch.cpus_per_task: 40
           slurm.sbatch.exclusive: null
           slurm.srun.exclusive: false
-          slurm.srun.cpus_per_task: 20
-          slurm.env.SLURM_CPUS_PER_TASK: '20'
+          slurm.srun.cpus_per_task: 40
+          slurm.env.SLURM_CPUS_PER_TASK: '40'
           slurm.env.GPUS_PER_NODE: '1'
           slurm.env.NUM_GPUS_PER_NODE: '1'
           slurm.sbatch.exclude: as07r3b27,as06r2b26,as05r3b28,as04r5b05,as07r4b02
