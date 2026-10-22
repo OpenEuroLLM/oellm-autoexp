@@ -5,8 +5,8 @@
 
 Every node runs this once (part = SLURM_NODEID, nparts = SLURM_NNODES by default); it splits its
 share of the work into units of whole sequences (~--chunk-tokens tokens each) and runs one worker
-process per visible GPU. Per unit a worker reads the token range from the .bin (a prefetch thread
-keeps the next unit loading), maps it to the canonical stream, hashes the 8- and 13-gram windows
+process per visible GPU. Per unit a worker reads the token range from the .bin (--readers threads
+keep the next units loading), maps it to the canonical stream, hashes the 8- and 13-gram windows
 that stay inside one sequence and looks them up in the sorted reference table.
 
   count: per reference n-gram, how often it occurs (sampling the first --sample-tokens of every
@@ -15,11 +15,14 @@ that stay inside one sequence and looks them up in the sorted reference table.
          n-grams -> $WORK/hits/<shard key>/<first seq>.npz (seq, seg, matched). Thresholds are
          applied later (finalize.py), so they can change without rescanning. Units already done
          are skipped: a rerun resumes.
+Token ids outside the tokenizer's vocabulary are dropped from the canonical stream and reported
+($WORK/anomalies/*.json and a WARNING line).
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import queue
 import sys
@@ -51,7 +54,7 @@ def plan_units(prefixes, chunk_tokens, sample_tokens):
             before = int(csum[start - 1]) if start else 0
             if before >= limit:
                 break
-            end = int(np.searchsorted(csum, before + chunk_tokens, "right"))
+            end = int(np.searchsorted(csum, min(before + chunk_tokens, limit), "right"))
             end = min(max(end, start + 1), idx.seq_count)
             units.append((p, start, end, int(csum[end - 1]) - before))
             start = end
@@ -78,10 +81,17 @@ def read_unit(prefix, s0, s1, idx_cache):
     return toks, lengths
 
 
-def process(toks, lengths, s0, lut, table, csr_off, csr_seg, dev, mode, min_hits, counts):
+def process(toks, lengths, s0, lut, table, csr_off, csr_seg, dev, mode, min_hits, counts, bad_info):
     t = torch.from_numpy(toks.astype(np.int64, copy=False)).to(dev, non_blocking=True)
+    bad = (t < 0) | (t >= lut.shape[0])
+    n_bad = int(bad.sum())
+    if n_bad:   # ids outside the tokenizer's vocabulary: no reference contains them; drop and report
+        bad_info.append((n_bad, int(t[bad].min()), int(t[bad].max())))
+        t = torch.where(bad, 0, t)
     c = lut[t]
-    del t
+    if n_bad:
+        c[bad] = -1
+    del t, bad
     seq = torch.repeat_interleave(torch.arange(len(lengths), device=dev),
                                   torch.from_numpy(lengths).to(dev))
     keep = c >= 0
@@ -138,19 +148,38 @@ def worker(rank, ngpu, units, args):
         if args.mode == "scan" and os.path.exists(out):
             continue
         todo.append((u, out))
-    q: queue.Queue = queue.Queue(maxsize=2)
+    q: queue.Queue = queue.Queue(maxsize=2 * args.readers)
 
-    def reader():
+    def reader(k):
         cache = {}
-        for u, out in todo:
-            q.put((u, out, *read_unit(u[0], u[1], u[2], cache)))
+        try:
+            for u, out in todo[k::args.readers]:
+                q.put((u, out, *read_unit(u[0], u[1], u[2], cache)))
+        except BaseException as e:   # a read error must fail the job, not leave the worker waiting
+            q.put(e)
         q.put(None)
 
-    threading.Thread(target=reader, daemon=True).start()
-    t0, done_tok = time.time(), 0
-    while (item := q.get()) is not None:
+    for k in range(args.readers):    # np.fromfile releases the GIL: parallel GPFS streams
+        threading.Thread(target=reader, args=(k,), daemon=True).start()
+    t0, done_tok, finished = time.time(), 0, 0
+    anomalies = []
+    while finished < args.readers:
+        item = q.get()
+        if item is None:
+            finished += 1
+            continue
+        if isinstance(item, BaseException):
+            raise item
         (prefix, s0, s1, ntok), out, toks, lengths = item
-        res = process(toks, lengths, s0, lut, table, csr_off, csr_seg, dev, args.mode, args.min_hits, counts)
+        bad_info = []
+        res = process(toks, lengths, s0, lut, table, csr_off, csr_seg, dev, args.mode, args.min_hits, counts,
+                      bad_info)
+        if bad_info:
+            n, lo, hi = bad_info[0]
+            anomalies.append({"shard": os.path.relpath(prefix, args.root), "seqs": [s0, s1], "ids_out_of_range": n,
+                              "min": lo, "max": hi})
+            print(f"[node{args.part} gpu{rank}] WARNING {n} token ids outside the vocabulary (min {lo}, max {hi}) "
+                  f"in {shard_key(prefix, args.root)} seqs {s0}-{s1}", flush=True)
         if args.mode == "scan":
             os.makedirs(os.path.dirname(out), exist_ok=True)
             np.savez(out + ".tmp.npz", hits=res if res is not None else np.zeros((0, 3), np.int64),
@@ -161,6 +190,11 @@ def worker(rank, ngpu, units, args):
         print(f"[node{args.part} gpu{rank}] {shard_key(prefix, args.root)} seqs {s0}-{s1} "
               f"hits={0 if res is None else len(res)} | {done_tok / 1e9:.1f}B tok, "
               f"{done_tok / dt / 1e6:.0f} Mtok/s", flush=True)
+    if anomalies:
+        path = os.path.join(args.work, "anomalies", f"{args.mode}_part{args.part:03d}_gpu{rank}.json")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(anomalies, f, indent=1)
     if args.mode == "count":
         path = os.path.join(args.work, "counts", f"part{args.part:03d}_gpu{rank}.npy")
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -180,6 +214,7 @@ def main():
     ap.add_argument("--sample-tokens", type=int, default=0, help="count: tokens read per shard (0 = all)")
     ap.add_argument("--min-hits", type=int, default=3)
     ap.add_argument("--gpus", type=int, default=0, help="worker processes (default: visible GPUs)")
+    ap.add_argument("--readers", type=int, default=2, help="reader threads per worker")
     args = ap.parse_args()
 
     prefixes = [line.split()[-1] for line in open(args.shards) if line.strip()]

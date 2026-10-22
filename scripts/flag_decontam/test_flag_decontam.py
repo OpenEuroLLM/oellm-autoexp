@@ -79,6 +79,7 @@ def make_setup(tmp_path):
     plant(51, seg_c[15:], at=0)
     for d in range(len(docs)):
         docs[d] = np.concatenate([docs[d], [2]])   # <eos>, a control token
+    docs[120][5] = V + 7                           # an id outside the vocabulary: dropped, reported
 
     root = tmp_path / "flag"
     (root / "src").mkdir(parents=True)
@@ -115,11 +116,13 @@ def test_end_to_end(tmp_path):
     (tmp / "shards.txt").write_text(prefix + "\n")
     units = scan.plan_units([prefix], 5000, 0)
     assert len(units) > 10 and units[-1][2] == Index(prefix + ".idx").seq_count
-    args = argparse.Namespace(mode="scan", work=str(work), root=str(root), part=0, min_hits=3)
+    args = argparse.Namespace(mode="scan", work=str(work), root=str(root), part=0, min_hits=3, readers=2)
     scan.worker(0, 1, units, args)
     out = tmp / "flag-decon"
     subprocess.run([sys.executable, os.path.join(HERE, "finalize.py"), "--work", str(work), "--root", str(root),
                     "--out", str(out)], check=True)
+    anomalies = json.load(open(work / "anomalies" / "scan_part000_gpu0.json"))
+    assert len(anomalies) == 1 and anomalies[0]["max"] == V + 7
     removed = np.load(str(out / "src" / "shard_0000_text_document.removed.npz"))
     assert sorted(set(removed["doc"].tolist())) == [17, 99]
     old, new = Index(prefix + ".idx"), Index(str(out / "src" / "shard_0000_text_document.idx"))
@@ -145,8 +148,8 @@ def test_end_to_end(tmp_path):
 def test_resume_and_count(tmp_path):
     root, work, prefix, tmp = make_setup(tmp_path)
     units = scan.plan_units([prefix], 5000, 20000)
-    assert sum(u[3] for u in units) >= 20000 and sum(u[3] for u in units[:-1]) < 20000
-    args = argparse.Namespace(mode="count", work=str(work), root=str(root), part=0, min_hits=3)
+    assert 20000 <= sum(u[3] for u in units) < 23000          # stops at the first sequence past the limit
+    args = argparse.Namespace(mode="count", work=str(work), root=str(root), part=0, min_hits=3, readers=2)
     scan.worker(0, 1, units, args)
     counts = np.load(work / "counts" / "part000_gpu0.npy")
     assert counts.shape[0] == len(np.load(work / "table" / "table.npz")["hash"])
